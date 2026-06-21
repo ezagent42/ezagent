@@ -151,7 +151,6 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # Operator escape hatches (NOT domain lifecycle): bulk ops clear +
         # admin single-row maintenance. Explicitly low-level ops tools.
         "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex",
-        "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/snapshots_live.ex",
         # P5-0 one-shot MIGRATION task (NOT a lifecycle handler): the
         # `:kind_base` backfill CLEARS an un-migratable legacy JSON-column
         # session row (Allen 2026-06-12) so the go/no-go gate can reach zero. It

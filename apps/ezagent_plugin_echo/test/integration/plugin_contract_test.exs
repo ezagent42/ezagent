@@ -59,6 +59,9 @@ defmodule EzagentPluginEcho.Integration.PluginContractTest do
 
     assert {:ok, Ezagent.Behavior.Echo} =
              Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :receive)
+
+    assert {:ok, Ezagent.Behavior.Pty} =
+             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :write)
   end
 
   test "echo's echo.agent Template Class was published to TemplateRegistry" do

@@ -11,10 +11,7 @@ defmodule EzagentDomainUi.Pty.Terminal do
 
   ## Consumers
 
-  - `EzagentPluginLiveview.TerminalLive` — the full-page terminal at
-    `/identities/agents/:uri/terminal`.
-  - `EzagentPluginLiveview.AgentDetailLive` — the inline collapsible
-    PTY panel on the agent detail page.
+  - World conversation surfaces — the inline/full PTY panels for session agents.
   - `EzagentDomainUi.Pty.TerminalView` — the `:pty` SessionView tab in
     the /sessions view-switcher.
 

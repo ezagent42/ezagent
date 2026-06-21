@@ -160,6 +160,29 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
+  # LV→world parity PR-2b — upload authorization chokepoint. The world composer
+  # is a React island under `phx-update="ignore"`, so it cannot use the LiveView
+  # uploader (`live_file_input`/`consume_uploaded_entries`); uploads arrive over
+  # a decoupled HTTP POST. To keep upload authorization on the SAME path as
+  # message send (so they can never drift), the upload controller dispatches this
+  # action: the runtime authorizes it at the chokepoint (required `:attach` cap +
+  # provenance + workspace-isolation, exactly like `:send`), and `:attach` is
+  # co-granted with `:send` in the participation tier (Membership), so a member
+  # who may send may upload — and nobody else. The handler is a thin
+  # authorize-GATE: merely reaching it means the caller was authorized, so it
+  # does NO filesystem I/O (the controller stores the bytes after the `:ok`,
+  # keeping I/O out of the session actor) and mutates no slice.
+  action(:attach,
+    args: %{filename: :string},
+    returns: %{ok: :boolean},
+    caps: [:attach],
+    modes: [:call],
+    description:
+      "Authorize a file upload into the session (LV→world parity PR-2b). A thin " <>
+        "chokepoint gate: success means the caller holds the :attach cap; the " <>
+        "controller stores the bytes after this returns. No I/O, no slice change."
+  )
+
   action(:merge_member,
     args: %{from: :uri, to: :uri},
     returns: %{members: {:list, :uri}},
@@ -650,6 +673,20 @@ defmodule Ezagent.Behavior.Session do
        {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen}
      ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+  end
+
+  # --- :attach -----------------------------------------------------------
+
+  @doc """
+  Thin upload-authorization gate (LV→world parity PR-2b). The runtime authorizes
+  this action at the chokepoint (required `:attach` cap + provenance +
+  workspace-isolation) BEFORE calling the handler, so reaching here means the
+  caller is allowed to upload into this session. It performs NO filesystem I/O
+  (the upload controller stores the bytes after this `:ok`, keeping I/O off the
+  session actor) and mutates no slice — it simply acknowledges authorization.
+  """
+  def handle_attach(_args, _ctx) do
+    {:ok, %{ok: true}, []}
   end
 
   # --- :merge_member ------------------------------------------------------

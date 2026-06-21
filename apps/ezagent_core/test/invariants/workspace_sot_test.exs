@@ -19,7 +19,7 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
 
   This invariant gates the new discipline:
 
-  - Operator-facing files (LV, web, mix tasks) MUST use
+  - Operator-facing files (world, web, mix tasks) MUST use
     `Ezagent.Workspace.list_workspaces_for(`. They MUST NOT use the
     unscoped `Workspace.list_all(`, `Workspace.list_persisted(`, or
     `Workspace.Store.list_all(`.
@@ -28,7 +28,7 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
     APIs — see `@allowlist` justifications.
 
   Per `feedback_completion_requires_invariant_test`: this is the
-  gate that fails if a future LV reaches for the unscoped lister.
+  gate that fails if a future operator surface reaches for the unscoped lister.
   """
 
   use ExUnit.Case, async: true
@@ -39,7 +39,7 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
 
   # Operator-facing scope.
   @scoped_roots [
-    "apps/ezagent_plugin_liveview/lib",
+    "apps/ezagent_plugin_world/lib",
     "apps/ezagent_web/lib"
   ]
 
@@ -80,7 +80,7 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
     "apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.workspace.cleanup_cross_prefix_members.ex"
   ]
 
-  test "no operator-facing LV/web/mix-task file references unscoped workspace listers" do
+  test "no operator-facing world/web/mix-task file references unscoped workspace listers" do
     apps_root = Path.expand("../../../..", __DIR__)
 
     scoped_paths =

@@ -41,7 +41,6 @@ defmodule EzagentCore.Invariants.SessionCreateSinglePathTest do
       "apps/*/lib/**/*.ex",
       "apps/*/test/e2e/**/*.exs",
       "apps/ezagent_core/test/e2e/**/*.exs",
-      "apps/ezagent_plugin_liveview/test/**/*.exs",
       "apps/ezagent_web/test/**/*.exs"
     ]
     |> Enum.flat_map(fn pattern -> Path.wildcard(Path.join(root, pattern)) end)

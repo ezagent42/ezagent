@@ -84,13 +84,14 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       assert SessionBehavior.__behavior__?() == true
     end
 
-    test "declares the seven Session actions (:receive split out, merge_member added)" do
+    test "declares the Session actions (:receive split out; :attach + :merge_member added)" do
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added. PR-2 (im/session/
       # agent decomposition §OQ-4) — :receive removed (→ user.receive /
       # agent.receive). anon-user PR-2 — :merge_member added for login takeover.
       assert Enum.sort(SessionBehavior.__action_names__()) ==
                [
+                 :attach,
                  :join,
                  :leave,
                  :merge_member,

@@ -12,6 +12,7 @@ defmodule EzagentWeb.Endpoint do
     store: :cookie,
     key: "_ezagent_web_key",
     signing_salt: "TCQlAZge",
+    domain: ".ezagent.chat",
     same_site: "Lax"
   ]
 
@@ -75,9 +76,15 @@ defmodule EzagentWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # `:length` bounds the request body at the PARSER layer (before any pipeline /
+  # controller runs) — the real guard against a huge-body DoS (codex PR-2b #8).
+  # 12 MB covers one 10 MB world upload (LV `max_file_size` parity) + multipart
+  # overhead; `WorldUploadsController` then enforces the precise ≤10 MB/file and
+  # `build_message/3` the ≤5 files/message.
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
+    length: 12_000_000,
     json_decoder: Phoenix.json_library()
 
   plug Plug.MethodOverride

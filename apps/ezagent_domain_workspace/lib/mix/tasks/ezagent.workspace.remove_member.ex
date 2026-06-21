@@ -1,11 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Workspace.RemoveMember do
-  @shortdoc "Remove an entity URI from a workspace's member list — same path as the LV admin form"
+  @shortdoc "Remove an entity URI from a workspace's member list — same path as the operator UI"
   @moduledoc """
   Remove an entity URI from a workspace's member list via
-  `Ezagent.Workspace.remove_member/2` — the SAME function
-  `EzagentPluginLiveview.{WorkspaceDetailLive, UsersLive}`'s
-  `remove_member` event handlers call. CLI and LV share one code
-  path per Allen 2026-05-25 (`CLI/LV 同源派生`).
+  `Ezagent.Workspace.remove_member/2` — the SAME function the operator UI
+  calls. CLI and UI share one code path per Allen 2026-05-25
+  (`CLI/UI 同源派生`).
 
   ## Usage
 

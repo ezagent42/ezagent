@@ -399,7 +399,12 @@ defmodule Ezagent.Behavior.Session.Membership do
     end
   end
 
-  @member_chat_actions [:send, :leave]
+  # `:attach` (LV→world parity PR-2b) is co-granted with `:send`: a confirmed
+  # member who may post a message may also upload a file attachment to it. The
+  # upload controller dispatches `:session :attach`, which authorizes against
+  # this cap at the chokepoint (no `:send` alias — the runtime checks the
+  # dispatched action name, so upload needs its own real `:attach` cap).
+  @member_chat_actions [:send, :leave, :attach]
   @member_publisher_actions [:subscribe_from]
 
   @doc """

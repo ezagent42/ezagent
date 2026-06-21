@@ -22,8 +22,6 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   @manifest_path "apps/ezagent_core/test/architecture/arch_baseline_manifest.exs"
 
   @def_count_files %{
-    def_count_admin_live:
-      "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex",
     def_count_cc_agent: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex",
     def_count_orchestrator_tools: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex",
     def_count_session_creator:
@@ -93,7 +91,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `instance_set_gate` denial-telemetry caller/target enrichment (audit
     # handler no longer detaches on a per-instance denial) under the LOC gate.
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 168},
-    {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
+    {"apps/ezagent_core/lib/ezagent/behavior.ex", 454}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
@@ -268,7 +266,6 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     [
       oversized_modules_gt_1500: count_oversized(oversized, 1500),
       oversized_modules_gt_1000: count_oversized(oversized, 1000),
-      def_count_admin_live: def_count(:def_count_admin_live),
       def_count_cc_agent: def_count(:def_count_cc_agent),
       def_count_orchestrator_tools: def_count(:def_count_orchestrator_tools),
       def_count_session_creator: def_count(:def_count_session_creator),

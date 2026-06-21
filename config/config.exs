@@ -84,6 +84,10 @@ config :tailwind,
     cd: Path.expand("../apps/ezagent_web", __DIR__)
   ]
 
+config :ezagent_plugin_world,
+  world_module_url: "/assets/world/main.js",
+  world_css_url: "/assets/world/world.css"
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

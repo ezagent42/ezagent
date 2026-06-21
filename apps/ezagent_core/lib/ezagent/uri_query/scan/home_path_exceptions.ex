@@ -96,7 +96,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
      "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 657,
-     "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"}
+     "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
+    # world plugin layout data store — SPEC 2026-06-21 §4.2 explicitly
+    # stores runtime layout JSON under EZAGENT_HOME/world/layouts.
+    {"apps/ezagent_plugin_world/lib/ezagent/world/layout_manager.ex",
+     "Ezagent.World.LayoutManager.layout_dir/0", 190,
+     "world layout runtime data store under EZAGENT_HOME (SPEC 2026-06-21 §4.2)"}
   ]
 
   @exceptions @config_exceptions ++ @app_exceptions

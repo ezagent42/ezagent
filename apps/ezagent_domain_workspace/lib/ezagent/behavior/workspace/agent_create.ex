@@ -57,12 +57,10 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # =================================================================
   # `:create_agent` helpers (SPEC 2026-05-25-agent-create-cli-gui-parity)
   # =================================================================
-  # These mirror what was previously in
-  # `EzagentPluginLiveview.AgentNewLive` so the CLI and LV share one
-  # code path.
+  # These mirror the operator UI path so the CLI and UI share one code path.
 
   # CLI builds atom-keyed maps. The current dispatch path (local-
-  # in-process for the mix task + LV) preserves atom keys end-to-end.
+  # in-process for the mix task + UI) preserves atom keys end-to-end.
   defp coerce_create_args(args) do
     flavor = Map.get(args, :flavor)
     name = Map.get(args, :name)

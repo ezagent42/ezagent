@@ -15,8 +15,8 @@ defmodule Ezagent.Uploads.DownloadTokenTest do
     5. expiry / tamper rejection.
 
   The module lives in `ezagent_core` (not `ezagent_web`) so BOTH the web
-  controllers AND `ezagent_plugin_liveview` can mint/verify the SAME token
-  without the plugin depending on `ezagent_web` (three-tier isolation).
+  controllers AND operator surfaces can mint/verify the SAME token without a
+  plugin depending on `ezagent_web` (three-tier isolation).
   """
   use ExUnit.Case, async: true
 

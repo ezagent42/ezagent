@@ -1,11 +1,9 @@
 defmodule Mix.Tasks.Ezagent.Workspace.Create do
-  @shortdoc "Create a new workspace via the same path as the LV admin form"
+  @shortdoc "Create a new workspace via the same path as the operator UI"
   @moduledoc """
   Create a new workspace via `Ezagent.Workspace.create/2` — the SAME
-  function `EzagentPluginLiveview.WorkspacesLive`'s
-  `create_workspace` event handler calls. CLI and LV share one code
-  path; this task exists for parity per Allen 2026-05-25 directive
-  (`CLI/LV 同源派生`).
+  function the operator UI calls. CLI and UI share one code path; this task
+  exists for parity per Allen 2026-05-25 directive (`CLI/UI 同源派生`).
 
   ## Usage
 

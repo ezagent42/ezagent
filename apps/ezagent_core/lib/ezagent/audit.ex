@@ -441,6 +441,7 @@ defmodule Ezagent.Audit do
   # scenario_30_plugin_greenfield_test.exs's pre-detach workaround).
   defp uri_to_str(:vm_internal),
     do: :anonymous |> Ezagent.URI.system_principal() |> URI.to_string()
+
   defp uri_to_str(a) when is_atom(a), do: a |> Ezagent.URI.system_principal() |> URI.to_string()
   defp stringify(nil), do: nil
   defp stringify(a) when is_atom(a), do: Atom.to_string(a)

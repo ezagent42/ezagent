@@ -26,26 +26,22 @@
   #   Pre-existing on main (CI does not run arch.scan); surfaced by the
   #   2026-06-15 orchestrator-readiness work. Burn-down (extract the dialog
   #   scanner from server.ex into a sibling module) tracked in docs/futures/todo.md.
-  # arch-cap-bump: #55 doc-coverage (#863) added 49 @doc lines to
-  #   ezagent_plugin_liveview/.../admin/session_context.ex, pushing it 980→1301 —
-  #   it crosses 1000 on DOCUMENTATION, not logic (the LOC cap counts raw lines
-  #   incl. @doc). Now 3 >1000 modules: session_context.ex 1301, server.ex 1027,
-  #   kind.ex 1013; cap 2→3. (session_context lives in the LV app `world` replaces.)
   oversized_modules_gt_1000: 3,
-  def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
   #   gate (a readability seam-split — smaller functions). 29→30.
-  def_count_session_creator: 29, # ratchet-down: #154 extracted the orchestrator owner-notifier cluster → Ezagent.Orchestrator.OwnerNotifier (1071→936 LOC, 35→29 defs) 30→29
+  # ratchet-down: #154 extracted the orchestrator owner-notifier cluster → Ezagent.Orchestrator.OwnerNotifier (1071→936 LOC, 35→29 defs) 30→29
+  def_count_session_creator: 29,
   # arch-cap-bump: #154 genesis collapse — the admin-entity trust root added
   #   `admin_genesis_cap/0` + `admin_genesis_granter/0` (Stage 1) and predicate-A's
   #   `granted_by_entity?/2` clauses + `admin_invariant?/2` clauses + `same_uri?/2`
   #   (Stages 1+3). These are the small, focused recognizer/minter/predicate
   #   functions for the genesis trust root; co-located in capability.ex so minter +
   #   recognizer never drift. 22→28.
-  def_count_capability: 28, # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
+  # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
+  def_count_capability: 28,
   spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
@@ -53,7 +49,8 @@
   # session (whose `session` spawn fn restarts the per-orchestrator
   # SessionManager) after a BEAM restart. +1 module (sanctioned, so
   # off_chokepoint is unchanged).
-  spawn_registry_modules: 33, # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  spawn_registry_modules: 33,
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,
@@ -129,7 +126,13 @@
   # sanctioned raw `Home` (Decision D2), and is an exact-anchor exception in
   # `HomePathExceptions`. Reconciles with the uri_query.scan
   # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
-  raw_home_path_outside_core: 1,
+  #
+  # World PR-2 (SPEC 2026-06-21 §4.2) adds one more sanctioned outside-core
+  # caller: `Ezagent.World.LayoutManager.layout_dir/0`, the required
+  # EZAGENT_HOME-backed runtime layout JSON store. It is also exact-anchored in
+  # `HomePathExceptions`, so the hard-fail-new URI scanner still constrains it.
+  # arch-cap-bump: raw_home_path_outside_core: World PR-2 layout_dir/0 runtime layout store
+  raw_home_path_outside_core: 2,
   # Cleanup-1 FF-5 fix: `mcp_config_writer.ex` no longer hardcodes
   # `Path.expand("~/.ezagent")` — its default dir now resolves through the
   # post-Resource-unification `system://` seam (Ezagent.System.FsResolver). The
@@ -190,7 +193,8 @@
   #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
   #   false-negatives caught). Same-name defs across compile-time branches/quotes
   #   merge conservatively — documented only if EVERY branch is (+1 caught).
-  undocumented_public_defs: 392, # arch-cap-bump: #55 doc-coverage burn-down 441→392 (documented EzagentPluginLiveview.Admin.SessionContext)
+  # arch-cap-bump: #55 doc-coverage burn-down 441→392
+  undocumented_public_defs: 392,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

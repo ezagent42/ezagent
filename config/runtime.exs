@@ -69,6 +69,7 @@ if config_env() == :prod do
     check_origin:
       [
         "https://app.ezagent.chat",
+        "https://world.ezagent.chat",
         "http://100.64.0.27:10042",
         "http://localhost:10042",
         "http://127.0.0.1:10042"
@@ -76,8 +77,8 @@ if config_env() == :prod do
     secret_key_base: secret_key_base
 
   # Resource-unification P2 — upload download-token signing secret (core-owned
-  # config key), wired to the SAME SECRET_KEY_BASE so a token minted in
-  # ezagent_web / ezagent_plugin_liveview verifies identically.
+  # config key), wired to the SAME SECRET_KEY_BASE so a token minted by
+  # web/operator surfaces verifies identically.
   config :ezagent_core, Ezagent.Uploads.DownloadToken, secret_key_base: secret_key_base
 
   # ## Using releases

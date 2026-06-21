@@ -133,6 +133,8 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     agent_uri =
       URI.new!("entity://team-alpha/agent/test_missing-#{System.unique_integer([:positive])}")
 
+    put_flavor(agent_uri, "test")
+
     payload = %Payload{
       message_id: "m2",
       session_uri: URI.new!("session://team-alpha/default/missing"),

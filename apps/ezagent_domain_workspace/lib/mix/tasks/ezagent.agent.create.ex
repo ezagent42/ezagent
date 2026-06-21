@@ -4,10 +4,10 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   Create a new agent via the unified `Behavior.Workspace.:create_agent`
   dispatch path (SPEC `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`).
 
-  This task is now a thin wrapper over `Ezagent.Workspace.create_agent/3`
-  — the SAME function `EzagentPluginLiveview.AgentNewLive` calls. CLI
-  and LV share one code path; cc-flavor agents created via this task
-  now have a PTY (the bug the 2026-05-24 audit flagged is fixed).
+  This task is now a thin wrapper over `Ezagent.Workspace.create_agent/3` — the
+  SAME function the operator UI calls. CLI and UI share one code path; cc-flavor
+  agents created via this task now have a PTY (the bug the 2026-05-24 audit
+  flagged is fixed).
 
   ## Usage
 

@@ -50,6 +50,7 @@ defmodule Ezagent.Behavior.ChatTest do
                  :send,
                  :join,
                  :leave,
+                 :attach,
                  :merge_member,
                  :set_working_copy,
                  :set_legends,
@@ -136,7 +137,7 @@ defmodule Ezagent.Behavior.ChatTest do
                SessionBehavior.default_template_working_copy()
     end
 
-    test "interface/0 declares the 6 Session actions (:receive split out — PR-2)" do
+    test "interface/0 declares the Session actions (:receive split out — PR-2)" do
       keys = SessionBehavior.interface() |> Map.keys() |> Enum.sort()
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
@@ -144,6 +145,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # (now `user.receive` / `agent.receive`).
       assert keys ==
                [
+                 :attach,
                  :join,
                  :leave,
                  :merge_member,

@@ -10,10 +10,9 @@ defmodule EzagentWeb.UploadsController do
   check, and a ws-partitioned on-disk layout (`…/uploads/<ws>/<name>`).
 
   The legacy `GET /files/:filename` route is **fully retired** (Allen-approved,
-  2026-06-08) — no back-compat shim. The internal LiveView download links now
-  mint the SAME signed token (`Ezagent.Uploads.DownloadToken`, a core module both
-  `ezagent_web` and `ezagent_plugin_liveview` may depend on), so there is exactly
-  one authorization carrier for every download surface.
+  2026-06-08) — no back-compat shim. Internal operator download links now mint
+  the SAME signed token (`Ezagent.Uploads.DownloadToken`, a core module), so
+  there is exactly one authorization carrier for every download surface.
 
   ### Internal route — `GET /uploads/download?token=<token>` (authenticated)
 

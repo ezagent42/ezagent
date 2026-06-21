@@ -3,10 +3,9 @@ defmodule EzagentDomainUi.Routing.RoutingView do
   Session view: routing rules scoped to the current session.
 
   Per Allen V1 acceptance #2 (Feishu 2026-05-21) — `与 chat 并列的不应该是
-  Terminal，而是 routing 规则`: this SessionView is a peer of
-  `EzagentPluginLiveview.Views.ConversationView` (Chat) and
+  Terminal，而是 routing 规则`: this SessionView is a peer of Chat and
   `EzagentDomainUi.Pty.TerminalView` (Terminal). Tab order in the
-  view-switcher: Chat | Routing | Terminal.
+  view-switcher remains Chat | Routing | Terminal.
 
   ## Session-scoped semantics
 
@@ -29,9 +28,8 @@ defmodule EzagentDomainUi.Routing.RoutingView do
     `routing.disable_rule` / `routing.enable_rule`.
 
   Tier-2: the view itself is a stateless `Phoenix.Component` reading
-  `@session_routing_rules` (computed by the host LV, typically
-  `EzagentPluginLiveview.AdminLive`). Dispatch happens in the host LV
-  per the 3-tier UI architecture.
+  `@session_routing_rules` (computed by the host LiveView). Dispatch happens in
+  the host LiveView per the 3-tier UI architecture.
 
   Registered by `EzagentDomainUi.Application.start/2`.
   """

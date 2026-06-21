@@ -1,0 +1,358 @@
+defmodule EzagentWeb.WorldHostRoutingTest do
+  use EzagentWeb.ConnCase
+
+  import Phoenix.LiveViewTest
+
+  setup do
+    prior_home = System.get_env("EZAGENT_HOME")
+
+    home =
+      Path.join(System.tmp_dir!(), "ezagent_world_live_#{System.unique_integer([:positive])}")
+
+    System.put_env("EZAGENT_HOME", home)
+
+    on_exit(fn ->
+      if prior_home,
+        do: System.put_env("EZAGENT_HOME", prior_home),
+        else: System.delete_env("EZAGENT_HOME")
+
+      File.rm_rf!(home)
+    end)
+
+    :ok
+  end
+
+  test "world.ezagent.chat root mounts the world React shell", %{conn: conn} do
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, html} = live(conn, "/")
+
+    assert html =~ ~s(id="world-root")
+    assert has_element?(view, "#world-root[phx-hook='WorldRenderer'][phx-update='ignore']")
+    assert has_element?(view, "#world-root[data-world-component='sessions_table']")
+    assert html =~ URI.to_string(world_session_uri())
+    assert html =~ "layout_editor"
+  end
+
+  test "world sessions_table dispatch joins through Invocation.dispatch", %{conn: conn} do
+    caller = "entity://system/user/world_join_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+
+    :ok = create_read_only_user(caller_uri, [session_join_cap(caller_uri, session_uri)])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "sessions.join",
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
+  end
+
+  test "world.ezagent.chat sessions path stays inside the world scope", %{conn: conn} do
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, html} = live(conn, "/sessions")
+
+    assert html =~ ~s(id="world-root")
+    assert has_element?(view, "#world-root[data-world-component='sessions_table']")
+  end
+
+  test "world identities group paths stay inside the world scope", %{conn: conn} do
+    agent_uri = "entity://system/agent/world_route_agent"
+    encoded_agent = URI.encode_www_form(agent_uri)
+    user_uri = "entity://system/user/world_route_user"
+    encoded_user = URI.encode_www_form(user_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/identities", "identities"},
+      {"/identities/users", "users_table"},
+      {"/identities/agents", "agents_table"},
+      {"/identities/users/#{encoded_user}/caps", "entity_caps"},
+      {"/identities/agents/#{encoded_agent}/caps", "entity_caps"},
+      {"/identities/agents/#{encoded_agent}/api-keys", "agent_api_keys"},
+      {"/identities/agents/new", "agent_new_form"},
+      {"/identities/agents/#{encoded_agent}/extensions", "agent_extensions"},
+      {"/identities/agents/#{encoded_agent}/terminal", "pty_terminal"},
+      {"/identities/agents/#{encoded_agent}", "agent_detail"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
+  test "world admin group paths stay inside the world scope", %{conn: conn} do
+    session_uri = URI.to_string(world_session_uri())
+    encoded_session = URI.encode_www_form(session_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/admin", "dashboard"},
+      {"/admin/logs", "observability"},
+      {"/admin/registry", "entity_registry"},
+      {"/admin/snapshots", "snapshots"},
+      {"/admin/templates", "templates"},
+      {"/admin/caps", "caps_admin"},
+      {"/admin/audit/authz", "authz_audit"},
+      {"/admin/settings", "settings"},
+      {"/admin/routing", "routing"},
+      {"/admin/sessions/#{encoded_session}/external_mirror", "external_mirror"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
+  test "world workspace and plugin group paths stay inside the world scope", %{conn: conn} do
+    encoded_session = world_session_uri() |> URI.to_string() |> URI.encode_www_form()
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/workspaces", "workspaces_list"},
+      {"/workspaces/system", "workspace_detail"},
+      {"/plugins", "plugins"},
+      {"/plugins/feishu/bindings", "feishu_bindings"},
+      {"/plugins/auto/session", "auto_derive"},
+      {"/plugins/auto/session/#{encoded_session}", "auto_derive"},
+      {"/profile", "profile"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
+  test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
+    caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+
+    :ok = create_read_only_user(caller_uri, [])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "sessions.join",
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+  end
+
+  test "world layout manage dispatch persists and reloads for admin", %{conn: conn} do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    layout = persisted_order_layout(workspace_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "layout.manage",
+        "args" => %{"layout" => layout}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    assert ["sessions_table", "layout_editor"] =
+             workspace_uri
+             |> Ezagent.World.LayoutManager.read_layout()
+             |> Map.fetch!("components")
+             |> Enum.map(& &1["type"])
+
+    {:ok, _view, html} = live(conn, "/")
+    assert html =~ "sessions_table"
+    assert html =~ "layout_editor"
+  end
+
+  test "world layout manage affordance follows explicit cap grant", %{conn: conn} do
+    caller = "entity://system/user/world_layout_manager_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    workspace_uri = Ezagent.URI.workspace(:system)
+
+    :ok = create_read_only_user(caller_uri, [layout_manage_cap(caller_uri, workspace_uri)])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, _view, html} = live(conn, "/")
+
+    assert html =~ ~s(&quot;can_manage_layout&quot;:true)
+  end
+
+  test "world layout manage dispatch denies caller without manage cap", %{conn: conn} do
+    caller = "entity://system/user/world_layout_no_caps_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    layout = persisted_order_layout(Ezagent.URI.workspace(:system))
+
+    :ok = create_read_only_user(caller_uri, [])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "layout.manage",
+        "args" => %{"layout" => layout}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+  end
+
+  defp create_read_only_user(uri, caps) do
+    result =
+      case Ezagent.Users.create_read_only(uri, caps) do
+        {:ok, _} -> :ok
+        {:error, %Ecto.Changeset{errors: [uri: {"has already been taken", _}]}} -> :ok
+      end
+
+    with :ok <- result do
+      Ezagent.Entity.spawn_principal(uri)
+    end
+  end
+
+  defp world_session_uri do
+    workspace_uri = Ezagent.URI.workspace(:system)
+
+    workspace_uri
+    |> EzagentDomainInstanceMessage.list_sessions()
+    |> List.first()
+    |> case do
+      %URI{} = uri -> uri
+      _ -> Ezagent.URI.new!("session://system/default/main")
+    end
+  end
+
+  defp session_join_cap(caller_uri, session_uri) do
+    %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.Session,
+      action: :join,
+      instance: session_uri,
+      workspace_uri: Ezagent.URI.workspace(:system),
+      granted_by: caller_uri,
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp layout_manage_cap(caller_uri, workspace_uri) do
+    %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.World.Behavior.Layout,
+      action: :manage,
+      instance: Ezagent.URI.instance(workspace_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(workspace_uri),
+      granted_by: caller_uri,
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp persisted_order_layout(workspace_uri) do
+    [editor, sessions] = Ezagent.World.LayoutManager.default_layout(workspace_uri)["components"]
+
+    %{
+      "version" => 1,
+      "scope" => URI.to_string(workspace_uri),
+      "components" => [
+        %{sessions | "placement" => %{"x" => 0, "y" => 0, "w" => 12, "h" => 6}},
+        %{editor | "placement" => %{"x" => 0, "y" => 6, "w" => 12, "h" => 2}}
+      ]
+    }
+  end
+end

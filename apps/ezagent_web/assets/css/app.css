@@ -5,10 +5,7 @@
 @source "../css";
 @source "../js";
 @source "../../lib/ezagent_web";
-/* Phase 6 PR 3/10: scan plugin LVs + the domain UI component library
-   so their Tailwind classes (shadcn-style cards / badges / etc.) get
-   compiled into the output CSS. */
-@source "../../../ezagent_plugin_liveview/lib";
+/* Scan the domain UI component library for shared Tailwind classes. */
 @source "../../../ezagent_domain_ui/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.

@@ -9,12 +9,13 @@ defmodule Ezagent.Test.AuditCase do
   `Ecto.Adapters.SQL.Sandbox`'s per-test ownership lifecycle —
   flushing under a torn-down owner produces "Database busy" / "owner
   exited" errors that bleed into subsequent unrelated tests. (Diagnosed
-  2026-05-26 against `Ezagent.Kind.SnapshotTest` seed-0 failures and
-  ~22 `ezagent_plugin_liveview` "baseline flakes".)
+  2026-05-26 against `Ezagent.Kind.SnapshotTest` seed-0 failures and operator
+  UI baseline flakes.)
 
   Tests that actually verify audit writes (e.g.
-  `Ezagent.AuditTest`, `EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest`,
-  `EzagentPluginLiveview.ObservabilityLiveTest`) use this case to:
+  `Ezagent.AuditTest` and
+  `EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest`) use this
+  case to:
 
     1. `start_supervised!/1` the writer per-test (terminated on test exit
        so no cross-test residue).

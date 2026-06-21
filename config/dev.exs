@@ -46,12 +46,28 @@ config :ezagent_web, EzagentWeb.Endpoint,
   secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:ezagent_web, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:ezagent_web, ~w(--watch)]}
+    tailwind: {Tailwind, :install_and_run, [:ezagent_web, ~w(--watch)]},
+    npm: [
+      "--prefix",
+      Path.expand("../apps/ezagent_plugin_world/assets", __DIR__),
+      "run",
+      "dev",
+      "--",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      System.get_env("WORLD_VITE_PORT") || "5173"
+    ]
   ]
+
+config :ezagent_plugin_world,
+  world_module_url:
+    "http://localhost:#{System.get_env("WORLD_VITE_PORT") || "5173"}/src/main.tsx",
+  world_css_url: nil
 
 # Resource-unification P2 — upload download-token signing secret (core-owned
 # config key). Wired to the same value as the web endpoint's secret_key_base so
-# the token minted in ezagent_web/ezagent_plugin_liveview verifies identically.
+# tokens minted by web/operator surfaces verify identically.
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO"
 

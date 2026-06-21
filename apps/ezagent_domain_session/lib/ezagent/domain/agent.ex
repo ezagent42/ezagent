@@ -103,10 +103,10 @@ defmodule Ezagent.Domain.Agent do
     * np → `Ezagent.Domain.Python.Server.phase/1`
     * other → `:dead` (no subprocess concept)
 
-  Used by `EzagentPluginLiveview.TerminalLive` mount + refresh poll so
-  the badge stays consistent across flavors. Without this facade the
-  LV's 2s refresh would clobber the np `:python_phase` broadcast with
-  a stale cc-only `Pty.Server.phase/1` lookup (codex round-1 MED-1).
+  Used by operator terminal surfaces so the badge stays consistent across
+  flavors. Without this facade a generic refresh would clobber the np
+  `:python_phase` broadcast with a stale cc-only `Pty.Server.phase/1` lookup
+  (codex round-1 MED-1).
 
   This is the operator-visibility companion to `lifecycle_status/1`:
   the latter is the Kind's lifecycle (`:not_found | :registered |

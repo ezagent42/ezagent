@@ -5,8 +5,8 @@ defmodule EzagentWeb.CommandRoutes do
   The CmdK command palette's nav results are a projection of the
   Phoenix Router. Router routes are static (compile-time known) but a
   raw `%Phoenix.Router.Route{}` carries no human label — only a path,
-  a verb, and the LV module. `command_routes/0` filters the router to
-  the L1/L2 `live` pages (no path params) and attaches a curated
+  a verb, and the LiveView module. `command_routes/0` filters the router
+  to the L1/L2 `live` pages (no path params) and attaches a curated
   `%{label, path, icon, group}` per route from a hand-maintained map
   keyed by path.
 
@@ -14,14 +14,13 @@ defmodule EzagentWeb.CommandRoutes do
 
   This module — and `command_routes/0` — live in `ezagent_web`, the
   TOP tier. `Ezagent.UI.CommandSource` (Tier-2 `ezagent_domain_ui`)
-  and `EzagentPluginLiveview.CommandPaletteComponent` (Tier-3
-  `ezagent_plugin_liveview`) sit BELOW `ezagent_web` in the dependency
-  graph and MUST NOT call `EzagentWeb.Router`.
+  and the world plugin command palette sit BELOW `ezagent_web` in the
+  dependency graph and MUST NOT call `EzagentWeb.Router`.
 
   Nav data therefore flows DOWN only: `EzagentWeb.LiveAuth` installs an
   `on_mount` hook that calls `command_routes/0` and assigns
   `:cmdk_nav_routes` onto the socket; the LV inherits the assign and
-  passes it into the LiveComponent. The component never reaches up.
+  passes it into the world island. The island never reaches up.
 
   ## The curated map
 

@@ -130,7 +130,11 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       missing = Ezagent.URI.new!("entity://team-alpha/agent/dac-missing-target")
 
       cmd =
-        Ezagent.Cmd.new(missing, :probe, %{}, %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()})
+        Ezagent.Cmd.new(missing, :probe, %{}, %{
+          caller: :vm_internal,
+          reply: :ignore,
+          caps: MapSet.new()
+        })
 
       {:ok, :ok,
        [
@@ -141,7 +145,11 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     def handle_trigger_self_fail(_args, ctx) do
       cmd =
-        Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()})
+        Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{
+          caller: :vm_internal,
+          reply: :ignore,
+          caps: MapSet.new()
+        })
 
       {:ok, :ok,
        [
@@ -184,9 +192,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     :persistent_term.put({DacBehavior, :test_pid}, self())
 
     uri =
-      Ezagent.URI.new!(
-        "entity://team-alpha/agent/test_dac-#{System.unique_integer([:positive])}"
-      )
+      Ezagent.URI.new!("entity://team-alpha/agent/test_dac-#{System.unique_integer([:positive])}")
 
     on_exit(fn ->
       Application.delete_env(:ezagent_core, :p2_5c_force_commit_failure_uris)

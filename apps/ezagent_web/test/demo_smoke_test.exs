@@ -21,7 +21,7 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
 
   ## Bug 2 — Tailwind didn't scan plugin LV sources
 
-  Shadcn-style classes in ezagent_plugin_liveview + ezagent_domain_ui weren't
+  Shadcn-style classes in ezagent_domain_ui weren't
   in the compiled CSS bundle because the @source list only covered
   ezagent_web/lib. Pages rendered unstyled.
 
@@ -144,9 +144,8 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
              priv/static/assets/css/app.css is missing `bg-zinc-900` —
              the primary-button color from EzagentDomainUi.Components.
 
-             Tailwind likely didn't @source the plugin/domain LV paths.
+             Tailwind likely didn't @source the domain UI paths.
              Check apps/ezagent_web/assets/css/app.css for:
-               @source "../../../ezagent_plugin_liveview/lib"
                @source "../../../ezagent_domain_ui/lib"
 
              Then rerun `mix tailwind ezagent_web --minify`.

@@ -1,9 +1,8 @@
 defmodule Ezagent.Integration.CreateAgentDispatchTest do
   @moduledoc """
   Acceptance test for SPEC 2026-05-25-agent-create-cli-gui-parity:
-  the unified `Ezagent.Workspace.create_agent/3` facade — what BOTH
-  the CLI (`mix ezagent.agent.create`) and the LV
-  (`EzagentPluginLiveview.AgentNewLive`) call — dispatches the
+  the unified `Ezagent.Workspace.create_agent/3` facade — what BOTH the CLI
+  (`mix ezagent.agent.create`) and the operator UI call — dispatches the
   `Behavior.Workspace.:create_agent` action.
 
   Focused on the action's contract surface (validation + early-exit
