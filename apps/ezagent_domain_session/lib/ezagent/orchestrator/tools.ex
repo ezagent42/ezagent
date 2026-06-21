@@ -95,6 +95,8 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.MemberTemplate
+  alias Ezagent.Orchestrator.Tools.Migration
+  alias Ezagent.Orchestrator.Tools.Participants
   alias Ezagent.Orchestrator.Tools.Templates
   alias Ezagent.Orchestrator.Tools.ToolCatalog
 
@@ -177,6 +179,18 @@ defmodule Ezagent.Orchestrator.Tools do
       end
     end
   end
+
+  @doc """
+  Add a participant by reference.
+
+  `ref` may name an existing entity URI (join only), a source AgentTemplate URI
+  (spawn + join through `add_managed_member/4`), or a manifest file path (load,
+  spawn from manifest, then join). Existing humans receive invited join
+  authority and the session-scoped participation tier before the tool returns.
+  """
+  @spec add_participant(String.t() | URI.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  defdelegate add_participant(ref, role_name, opts \\ []), to: Participants
 
   # Spawn the member fresh from its source AgentTemplate. Reuses the PR-7
   # spawn path: `Agent.spawn_fresh/4` (records lineage under the
@@ -811,6 +825,10 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc "Snapshot the live session as the first version of a new SessionTemplate."
   @spec save_template_as(String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
   defdelegate save_template_as(new_name, opts \\ []), to: Templates
+
+  @doc "Migrate the live session to an immutable target SessionTemplate URI."
+  @spec migrate_session(URI.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  defdelegate migrate_session(target_session_template_uri, opts \\ []), to: Migration
 
   @doc "List visible AgentTemplate and SessionTemplate URIs, per-kind cap-gated."
   @spec list_templates(String.t() | nil, keyword()) ::

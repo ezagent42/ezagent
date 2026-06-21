@@ -3,6 +3,7 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
 
   @tool_names [
     :add_managed_member,
+    :add_participant,
     :update_member_template,
     :remove_member,
     :define_rule_set_rule,
@@ -10,6 +11,7 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
     :define_legend,
     :update_template,
     :save_template_as,
+    :migrate_session,
     :list_templates
   ]
 

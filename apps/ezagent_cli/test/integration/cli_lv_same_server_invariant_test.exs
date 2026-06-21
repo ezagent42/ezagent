@@ -24,10 +24,18 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
   process tree from the one this test inspects.
   """
   use ExUnit.Case, async: false
+  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.Entity.Session
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # The CLI tree is derived from BehaviorRegistry at invocation time.
+    # Keep this invariant independent from umbrella test ordering: earlier
+    # suites may alter registry state, but this test specifically needs the
+    # session.join action to exist.
+    :ok = Ezagent.CapabilityRegistry.register(Session, :join, SessionBehavior)
 
     # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
     # admin. Tests set the per-process override that

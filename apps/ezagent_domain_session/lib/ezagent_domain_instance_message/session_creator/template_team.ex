@@ -183,7 +183,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
        when is_binary(flavor) do
     slot =
       if is_binary(role_name) and role_name != "" do
-        role_name
+        "#{role_name}-#{source_template_hash(source_template_uri)}"
       else
         source_template_uri.path
         |> to_string()
@@ -192,6 +192,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
       end
 
     Ezagent.Entity.Agent.session_instance_name(slot, session_discriminator(session_uri))
+  end
+
+  defp source_template_hash(%URI{} = source_template_uri) do
+    :crypto.hash(:sha256, URI.to_string(source_template_uri))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 12)
   end
 
   @doc false

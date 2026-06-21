@@ -116,4 +116,54 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
       assert Template.template_name() == "curl.agent"
     end
   end
+
+  describe "compile/2" do
+    test "purely compiles resolved manifest instructions into curl template data" do
+      resolved = %{
+        instructions: "Acknowledge the customer briefly.",
+        skills: ["triage"]
+      }
+
+      params = %{
+        "provider" => "deepseek",
+        "api_url" => "https://api.deepseek.com/chat/completions",
+        "model" => "deepseek-chat",
+        "max_history" => 4
+      }
+
+      assert {:ok, data} = Template.compile(resolved, params)
+
+      assert data == %{
+               "provider" => "deepseek",
+               "api_url" => "https://api.deepseek.com/chat/completions",
+               "model" => "deepseek-chat",
+               "system_prompt" => "Acknowledge the customer briefly.",
+               "max_history" => 4
+             }
+    end
+
+    test "fails loud for non-optional manifest tools because curl has no MCP transport" do
+      resolved = %{
+        instructions: "Acknowledge the customer briefly.",
+        tools: [
+          %{
+            name: "notify_owner",
+            type: :action,
+            action: "entity://system/user/admin?action=notifications.notify",
+            caps: [%{"kind" => "user"}],
+            optional: false
+          }
+        ]
+      }
+
+      params = %{
+        "provider" => "deepseek",
+        "api_url" => "https://api.deepseek.com/chat/completions",
+        "model" => "deepseek-chat"
+      }
+
+      assert {:error, {:tools_unsupported, "curl", ["notify_owner"]}} =
+               Template.compile(resolved, params)
+    end
+  end
 end

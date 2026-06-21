@@ -197,6 +197,24 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
         }
       },
       %{
+        "name" => "migrate_session",
+        "description" =>
+          "Migrate this live session to an immutable SessionTemplate version. " <>
+            "Changed members are regenerated through update_member_template, " <>
+            "session-scoped routing rules are replaced, and a resumable ledger " <>
+            "is kept until the pin advances.",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "target_session_template_uri" => %{
+              "type" => "string",
+              "description" => "Immutable template://.../session/<name>@<hash> target."
+            }
+          },
+          "required" => ["target_session_template_uri"]
+        }
+      },
+      %{
         "name" => "list_templates",
         "description" =>
           "List the AgentTemplates and SessionTemplates visible to you in " <>

@@ -37,6 +37,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
   alias Ezagent.{AgentFlavorRegistry, AgentLineage, Behavior, Capability, KindRegistry}
   alias Ezagent.Entity.{Agent, Session, SessionTemplate, User}
+  alias Ezagent.TemplateTags
   alias Ezagent.Session.SessionManager
   alias Ezagent.AgentBridge.TokenStore
 
@@ -136,6 +137,13 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     {:ok, %{content: ^content}} = dispatch(uri, "template.write", %{content: content})
     :ok
+  end
+
+  defp template_hash(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.name!()
+    |> String.split("@", parts: 2)
+    |> List.last()
   end
 
   defp template_cap(kind, workspace_uri) do
@@ -289,6 +297,32 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     slice
   end
 
+  defp confirmed_user(prefix) do
+    uri = Ezagent.URI.user("team-alpha", "#{prefix}-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
+    uri
+  end
+
+  defp has_cap?(entity_uri, behavior, action, instance) do
+    Enum.any?(Ezagent.Identity.list_caps_for(entity_uri), fn
+      %Capability{} = cap ->
+        cap.kind == :session and cap.behavior == behavior and
+          Capability.action_of(cap) == action and cap.instance == instance
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_workspace_wide_session_cap?(entity_uri) do
+    Enum.any?(Ezagent.Identity.list_caps_for(entity_uri), fn
+      %Capability{} = cap -> cap.kind == :session and cap.instance == :any
+      _ -> false
+    end)
+  end
+
   describe "SessionManager lifecycle (codex C-rC fixes)" do
     test "ensure_for_session restarts the executor from the durable working copy (P1 self-heal)" do
       ctx = provision([:agent_template])
@@ -410,19 +444,21 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do
-    test "SessionManager.tool_names/0 is the 9-tool member + rule-set + template set" do
+    test "SessionManager.tool_names/0 is the member + participant + rule-set + template set" do
       assert MapSet.new(SessionManager.tool_names()) ==
                MapSet.new([
                  :add_managed_member,
+                 :add_participant,
                  :update_member_template,
                  :remove_member,
                  :define_rule_set_rule,
                  :define_prompt_template,
-                 :define_legend,
-                 :update_template,
-                 :save_template_as,
-                 :list_templates
-               ])
+                :define_legend,
+                :update_template,
+                :save_template_as,
+                :migrate_session,
+                :list_templates
+              ])
     end
   end
 
@@ -629,6 +665,33 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       assert URI.to_string(resolved) == URI.to_string(member_uri)
       assert slice.members[resolved].in_session_template == true
       assert slice.members[resolved].source_template_uri == ctx.backend_uri
+    end
+
+    test "add_participant invites an existing human with session-scoped participation", ctx do
+      operator = confirmed_user("operator")
+
+      assert {:ok, ^operator} =
+               run_tool(ctx.orch, "add_participant", %{
+                 "ref" => URI.to_string(operator),
+                 "role_name" => "operator"
+               })
+
+      slice = chat_slice(ctx.orch.session_uri)
+      resolved = Behavior.Session.role_name_to_uri(slice.members, "operator")
+      assert resolved == operator
+
+      assert has_cap?(operator, Behavior.Session, :join, ctx.orch.session_uri)
+      assert has_cap?(operator, Behavior.Session, :send, ctx.orch.session_uri)
+      assert has_cap?(operator, Behavior.Session, :leave, ctx.orch.session_uri)
+
+      assert has_cap?(
+               operator,
+               Behavior.Publisher.SessionImpl,
+               :subscribe_from,
+               ctx.orch.session_uri
+             )
+
+      refute has_workspace_wide_session_cap?(operator)
     end
 
     test "remove_member terminates the orchestrator's own worker (cap-#2 happy path)", ctx do
@@ -981,6 +1044,137 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
       assert %Ezagent.Ecto.KindSnapshot{kind_type: "session_template"} =
                Ezagent.Ecto.KindSnapshot.get(URI.to_string(new_uri))
+    end
+
+    test "update_template publishes by moving the current tag to the new hash" do
+      parent_content = %{
+        name: "mcp-publish-#{uniq()}",
+        description: "parent team",
+        members: [],
+        routing_rules: [],
+        prompt_templates: %{},
+        legends: %{},
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+        default_workspace_uri: @workspace_uri,
+        parent_template_uri: nil,
+        created_by: User.admin_uri(),
+        created_at: ~U[2026-05-22 00:00:00Z]
+      }
+
+      {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, @workspace_uri)
+      :ok = TemplateTags.put(@workspace_uri, parent_content.name, "current", template_hash(parent_uri), User.admin_uri())
+
+      session_uri = spawn_session()
+      orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
+      :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
+      on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
+
+      caps =
+        orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri, [
+          :agent_template,
+          :session_template
+        ])
+
+      {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
+      :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
+
+      {:ok, _} =
+        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+          orchestrator_uri: orchestrator_uri,
+          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+          session_template_uri: parent_uri
+        })
+
+      {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+      {:ok, _sm} =
+        SessionManager.ensure_started(
+          orchestrator_uri: orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri,
+          owner_uri: orchestrator_uri,
+          parent_template_uri: parent_uri
+        )
+
+      on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
+
+      orch = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
+
+      assert {:ok, %URI{} = new_uri} = run_tool(orch, "update_template", %{})
+      assert {:ok, template_hash(new_uri)} == TemplateTags.resolve(@workspace_uri, parent_content.name, "current")
+    end
+
+    test "migrate_session persists a ledger on injected failure and resumes to advance the pin" do
+      flavor = register_test_flavor()
+      source_v1 = Ezagent.URI.new!("template://team-alpha/agent/mig-v1-#{uniq()}")
+      source_v2 = Ezagent.URI.new!("template://team-alpha/agent/mig-v2-#{uniq()}")
+      :ok = create_agent_template(source_v1, flavor, "mig-v1")
+      :ok = create_agent_template(source_v2, flavor, "mig-v2")
+
+      ctx = provision_with_self_caps([:agent_template, :session_template])
+
+      assert {:ok, %URI{} = old_member_uri} =
+               run_tool(ctx, "add_managed_member", %{
+                 "source_agent_template_uri" => URI.to_string(source_v1),
+                 "role_name" => "worker",
+                 "in_session_template" => true
+               })
+
+      target_content = %{
+        name: "migrate-target-#{uniq()}",
+        description: "target team",
+        members: [
+          %{
+            uri: nil,
+            role_name: "worker",
+            in_session_template: true,
+            source_template_uri: source_v2
+          }
+        ],
+        routing_rules: [],
+        prompt_templates: %{},
+        legends: %{},
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+        default_workspace_uri: @workspace_uri,
+        parent_template_uri: nil,
+        created_by: User.admin_uri(),
+        created_at: ~U[2026-06-21 00:00:00Z]
+      }
+
+      {:ok, target_uri} = SessionTemplate.persist_version(target_content, @workspace_uri)
+
+      Application.put_env(:ezagent_domain_session, :migrate_session_fault, {:after_role_done, "worker"})
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_session, :migrate_session_fault)
+      end)
+
+      assert {:error, {:injected_migration_failure, "worker"}} =
+               run_tool(ctx, "migrate_session", %{
+                 "target_session_template_uri" => URI.to_string(target_uri)
+               })
+
+      failed_wc = Session.read_template_working_copy(ctx.session_uri)
+      assert Map.get(failed_wc, :session_template_uri) != target_uri
+      assert failed_wc.migration_ledger.target_session_template_uri == target_uri
+      assert failed_wc.migration_ledger.members["worker"] == :done
+
+      Application.delete_env(:ezagent_domain_session, :migrate_session_fault)
+
+      assert {:ok, %{session_template_uri: ^target_uri}} =
+               run_tool(ctx, "migrate_session", %{
+                 "target_session_template_uri" => URI.to_string(target_uri)
+               })
+
+      final_wc = Session.read_template_working_copy(ctx.session_uri)
+      assert final_wc.session_template_uri == target_uri
+      refute Map.has_key?(final_wc, :migration_ledger)
+
+      members = chat_slice(ctx.session_uri).members
+      refute Map.has_key?(members, old_member_uri)
+      assert Enum.any?(members, fn {_uri, meta} ->
+               meta.role_name == "worker" and meta.source_template_uri == source_v2
+             end)
     end
 
     test "update_template with a deleted parent → {:error, :parent_template_deleted}" do

@@ -107,6 +107,10 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
     |> Enum.reject(&String.contains?(&1, "/_build/"))
     |> Enum.reject(&String.contains?(&1, "/deps/"))
+    # E2E scenario modules live under `lib/.../e2e/scenarios/` only so the running
+    # node loads them; they are TEST FIXTURES that legitimately build raw setup
+    # URIs (same latitude as `test/`). Exclude them from the production URI scan.
+    |> Enum.reject(&String.contains?(&1, "/e2e/scenarios/"))
     |> Enum.uniq()
     |> Enum.sort()
   end

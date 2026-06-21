@@ -343,6 +343,9 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     # GrantRow.insert won't conflict.
     refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
            "a failed spawn must leave no orphaned credential grant"
+
+    assert :none = Ezagent.AgentFlavorAttributes.get(agent_uri),
+           "a failed spawn must not leave a cross-candidate flavor attribute"
   end
 
   test "a mint-conflict (concurrent duplicate) does NOT delete the winner's existing grant (codex r6)" do

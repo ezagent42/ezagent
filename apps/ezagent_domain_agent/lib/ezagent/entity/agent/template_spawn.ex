@@ -170,6 +170,64 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     Ezagent.Entity.AgentTemplate.to_template_data(content, instance_uri)
   end
 
+  @doc """
+  Spawn an agent from an AgentManifest executor.
+
+  This wraps the existing `spawn_from_template_content/5` path: each executor
+  candidate is rendered into transient AgentTemplate content, then delegated to
+  the normal spawn/rollback machinery. `fresh?: false` is a success because the
+  worker is already live at the target URI.
+  """
+  @spec spawn_from_manifest(
+          Ezagent.AgentManifest.t(),
+          map(),
+          URI.t(),
+          URI.t(),
+          URI.t(),
+          keyword()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  def spawn_from_manifest(
+        manifest,
+        slots,
+        instance_uri,
+        spawned_by_uri,
+        workspace_uri,
+        opts \\ []
+      )
+
+  def spawn_from_manifest(
+        %Ezagent.AgentManifest{} = manifest,
+        slots,
+        %URI{} = instance_uri,
+        %URI{} = spawned_by_uri,
+        %URI{} = workspace_uri,
+        opts
+      )
+      when is_map(slots) and is_list(opts) do
+    spawn_fun =
+      Keyword.get(opts, :spawn_fun, fn content, uri, spawned_by, workspace, spawn_opts ->
+        spawn_from_template_content(content, uri, spawned_by, workspace, spawn_opts)
+      end)
+
+    spawn_opts = Keyword.delete(opts, :spawn_fun)
+
+    try_manifest_flavors(
+      manifest.executor.flavor,
+      manifest,
+      slots,
+      instance_uri,
+      spawned_by_uri,
+      workspace_uri,
+      spawn_opts,
+      spawn_fun,
+      []
+    )
+  end
+
+  def spawn_from_manifest(_manifest, _slots, _instance, _spawned_by, _workspace, _opts),
+    do: {:error, :invalid_spawn_from_manifest_args}
+
   @doc false
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
           {:ok,
@@ -227,6 +285,74 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     {:error, :invalid_spawn_from_template_content_args}
   end
 
+  defp try_manifest_flavors(
+         [],
+         _manifest,
+         _slots,
+         _instance_uri,
+         _spawned_by_uri,
+         _workspace_uri,
+         _spawn_opts,
+         _spawn_fun,
+         attempts
+       ) do
+    {:error, {:no_backend, Enum.reverse(attempts)}}
+  end
+
+  defp try_manifest_flavors(
+         [flavor | rest],
+         manifest,
+         slots,
+         instance_uri,
+         spawned_by_uri,
+         workspace_uri,
+         spawn_opts,
+         spawn_fun,
+         attempts
+       ) do
+    with {:ok, content} <-
+           Ezagent.AgentManifest.to_template_content(
+             manifest,
+             flavor,
+             slots,
+             candidate_params(manifest, flavor)
+           ) do
+      case spawn_fun.(content, instance_uri, spawned_by_uri, workspace_uri, spawn_opts) do
+        {:ok, result} when is_map(result) ->
+          {:ok, Map.put(result, :chosen_flavor, flavor)}
+
+        {:error, reason} ->
+          try_manifest_flavors(
+            rest,
+            manifest,
+            slots,
+            instance_uri,
+            spawned_by_uri,
+            workspace_uri,
+            spawn_opts,
+            spawn_fun,
+            [{flavor, reason} | attempts]
+          )
+      end
+    end
+  end
+
+  defp candidate_params(%Ezagent.AgentManifest{} = manifest, flavor) do
+    manifest.executor.fallback
+    |> List.wrap()
+    |> Enum.find_value(%{}, fn
+      %{} = candidate ->
+        candidate_flavor = Map.get(candidate, "flavor") || Map.get(candidate, :flavor)
+
+        if candidate_flavor == flavor do
+          Map.get(candidate, "params") || Map.get(candidate, :params) || %{}
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
   # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
   # was just minted by this call's `resolve_cascade_content`), so on failure we
   # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
@@ -241,7 +367,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
        ) do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
-         :ok <- Ezagent.AgentFlavorAttributes.put(instance_uri, flavor),
          {:ok, workers, fresh?, instantiate_meta} <-
            instantiate_workers(template_class, data, workspace_uri) do
       instantiate_meta = put_respawn_flavor(instantiate_meta, template_content_map)
@@ -318,11 +443,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # (the agent never even came up).
         with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
              :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
+          :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
           {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
         else
           {:error, reason} ->
             undo_fresh_workers(workers)
             cleanup_partial_config_dirs(workers, template_class)
+            Ezagent.AgentFlavorAttributes.delete(instance_uri)
             # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
             # BEFORE instantiate; a post-spawn failure must not leave an orphaned
             # GrantRow (unique by agent_uri → would poison retries + leave a stale
@@ -336,6 +463,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # config_dir, but don't roll back on failure (we didn't create
         # the worker).
         _ = record_sandbox_state(workers, instantiate_meta, template_class)
+        :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       end
     else
@@ -348,6 +476,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # caller's OUTER `with` that does NOT delete). No-op when no grant was minted.
       {:error, _reason} = err ->
         revoke_cascade_grant_best_effort(instance_uri)
+        Ezagent.AgentFlavorAttributes.delete(instance_uri)
         err
     end
   end

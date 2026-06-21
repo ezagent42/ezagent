@@ -26,6 +26,47 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
       assert Ezagent.Kind.Template.namespace_of(CodexAgent) == "codex"
     end
 
+    test "purely compiles resolved manifest instructions into codex template data" do
+      resolved = %{instructions: "Inspect the repo before editing.", skills: []}
+
+      params = %{
+        "model" => "gpt-5",
+        "approval_policy" => "on-request",
+        "sandbox" => "workspace-write"
+      }
+
+      assert {:ok, data} = CodexAgent.compile(resolved, params)
+
+      assert data == %{
+               "instructions" => "Inspect the repo before editing.",
+               "model" => "gpt-5",
+               "approval_policy" => "on-request",
+               "sandbox" => "workspace-write"
+             }
+    end
+
+    test "compile emits manifest MCP entries with empty ctx_caps" do
+      resolved = %{
+        instructions: "Use tools only through dispatch.",
+        skills: [],
+        tools: [
+          %{
+            name: "notify_owner",
+            type: :action,
+            action: "entity://system/user/admin?action=notifications.notify",
+            caps: [%{"kind" => "user"}],
+            optional: false
+          }
+        ]
+      }
+
+      assert {:ok, data} = CodexAgent.compile(resolved, %{})
+
+      assert data["manifest_tools"] == resolved.tools
+      assert data["manifest_mcp_servers"]["notify_owner"]["ctx_caps"] == []
+      assert data["manifest_mcp_servers"]["notify_owner"]["tool_type"] == "action"
+    end
+
     test "copies source codex auth/config into the allocated target home" do
       source = source_codex_home()
       agent_uri = URI.new!("entity://system/agent/codex_home-#{uniq()}")

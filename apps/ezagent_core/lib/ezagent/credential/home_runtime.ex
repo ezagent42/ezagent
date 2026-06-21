@@ -187,7 +187,7 @@ defmodule Ezagent.Credential.HomeRuntime do
     with :ok <- recover_orphaned_or_fail(target) do
       case Map.get(tmpl, "cascade") do
         %{} = cascade -> materialize_cascade(agent_uri, target, cascade, template_module, opts)
-        _ -> materialize_single_reference(target, reference_dir, template_module, opts)
+        _ -> materialize_single_reference(target, reference_dir, tmpl, template_module, opts)
       end
     end
   end
@@ -236,7 +236,7 @@ defmodule Ezagent.Credential.HomeRuntime do
     end
   end
 
-  defp materialize_single_reference(target, reference_dir, template_module, opts) do
+  defp materialize_single_reference(target, reference_dir, tmpl, template_module, opts) do
     marker = Path.join(target, @config_complete_marker)
 
     cond do
@@ -247,14 +247,16 @@ defmodule Ezagent.Credential.HomeRuntime do
         {:ok, target}
 
       File.dir?(target) and has_user_credentials?(target, template_module) ->
-        stage_and_swap(reference_dir, target, marker, template_module, opts, overlay: target)
+        stage_and_swap(reference_dir, target, marker, template_module, tmpl, opts,
+          overlay: target
+        )
 
       true ->
-        stage_and_swap(reference_dir, target, marker, template_module, opts)
+        stage_and_swap(reference_dir, target, marker, template_module, tmpl, opts)
     end
   end
 
-  defp stage_and_swap(reference_dir, target, marker, template_module, opts, swap_opts \\ []) do
+  defp stage_and_swap(reference_dir, target, marker, template_module, tmpl, opts, swap_opts \\ []) do
     staging = "#{target}.staging-#{System.unique_integer([:positive])}"
     marker_name = Path.basename(marker)
     _ = File.rm_rf(staging)
@@ -262,6 +264,7 @@ defmodule Ezagent.Credential.HomeRuntime do
     with :ok <- File.mkdir_p(Path.dirname(target)),
          {:ok, _} <- File.cp_r(reference_dir, staging),
          :ok <- maybe_overlay(Keyword.get(swap_opts, :overlay), staging),
+         :ok <- apply_derived_config(staging, tmpl),
          :ok <- File.chmod(staging, 0o700),
          :ok <- chmod_credential_files(staging, template_module, opts),
          :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
@@ -284,6 +287,13 @@ defmodule Ezagent.Credential.HomeRuntime do
     case File.cp_r(src, staging) do
       {:ok, _} -> :ok
       {:error, reason, _path} -> {:error, reason}
+    end
+  end
+
+  defp apply_derived_config(staging, tmpl) when is_map(tmpl) do
+    case Map.get(tmpl, "claude_md") do
+      body when is_binary(body) -> File.write(Path.join(staging, "CLAUDE.md"), body)
+      _ -> :ok
     end
   end
 
