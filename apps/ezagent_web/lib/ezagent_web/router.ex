@@ -29,6 +29,14 @@ defmodule EzagentWeb.Router do
     plug :accepts, ["json"]
   end
 
+  scope "/", EzagentPluginWorld, host: "world." do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :world_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/", WorldLive
+    end
+  end
+
   scope "/", EzagentWeb do
     pipe_through :browser
 
@@ -109,7 +117,6 @@ defmodule EzagentWeb.Router do
     # Must be inside `:require_entity` so anonymous traffic can't spam
     # session-clearing POSTs.
     post "/workspaces/switch", WorkspaceSwitchController, :switch
-
   end
 
   scope "/", EzagentPluginLiveview do
