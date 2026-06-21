@@ -119,16 +119,16 @@ defmodule Ezagent.Message do
       values: [:customer_visible, :operator_only],
       default: :customer_visible
 
-    # VIRTUAL — the per-session ROUTE-INTO-THIS-SESSION timestamp
-    # (`message_routings.routed_at`) for the row, surfaced by the chat-feed
-    # queries via `select_merge` so the chat-feed cursor checkpoints on the SAME
-    # column the query orders/filters on (P4 codex r4 HIGH: a message id routed
-    # into a session LONG AFTER it was created must carry that session's own
-    # route time, not the message's CREATION time `messages.inserted_at`/
-    # `message_routings.inserted_at`; keying on creation time strands a relayed
-    # message behind the session's already-advanced cursor). Not persisted; nil
-    # otherwise.
-    field :routed_at, :utc_datetime_usec, virtual: true
+    # The ROUTE-INTO-THIS-SESSION timestamp — set fresh at `MessageStore.write/2`
+    # (= when the message entered THIS session). After the message
+    # session-scoping collapse (2026-06-21, multi-routing removed) this is a REAL
+    # column on `messages` (was virtual, surfaced from the dropped
+    # `message_routings.routed_at`). The chat-feed snapshot orders on it so a
+    # cross-session-FORWARDED message (a NEW copy in the target session, per the
+    # copy+ref model) windows at its arrival time here, not the original's
+    # creation time. `inserted_at` remains the message CREATION time for
+    # pagination + the customer feed.
+    field :routed_at, :utc_datetime_usec
   end
 
   @doc """

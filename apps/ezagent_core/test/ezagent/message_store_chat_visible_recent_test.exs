@@ -89,50 +89,11 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
     end
   end
 
-  describe "multi-session routing: routed_at is the ROUTE-INTO-THIS-SESSION time" do
-    test "the SAME message id routed into two sessions carries each session's OWN route time, NOT msg.inserted_at",
-         %{session: s_a, workspace: ws_a} do
-      # The PRODUCTION relay routes the SAME %Message{} (original, OLD
-      # inserted_at) into a second session — it does NOT mutate inserted_at.
-      old_inserted_at = ~U[2026-01-01 00:00:00.000000Z]
-
-      m =
-        Message.new(sender(), %{text: "shared", attachments: []},
-          visibility: :customer_visible,
-          inserted_at: old_inserted_at
-        )
-
-      {:ok, _} = MessageStore.write(m, s_a)
-
-      # Route the SAME %Message{} (same id, same OLD inserted_at) into session B
-      # — the realistic cross-session path. write/2 upserts the message row
-      # (on_conflict :nothing → keeps the shared inserted_at) and inserts B's
-      # routing with routed_at = a FRESH now.
-      s_b = session_uri()
-      ws_b = Ezagent.Capability.workspace_of(s_b)
-      :ok = Ezagent.WorkspaceRegistry.bind(s_b, ws_b)
-      {:ok, _} = MessageStore.write(m, s_b)
-
-      [row_a] = MessageStore.chat_visible_recent(s_a, 10)
-      [row_b] = MessageStore.chat_visible_recent(s_b, 10)
-
-      assert row_a.id == m.id and row_b.id == m.id
-
-      # Each session's routed_at is a fresh route timestamp — strictly AFTER the
-      # message's OLD creation time, and B's is at-or-after A's (B routed later).
-      assert DateTime.compare(row_a.routed_at, old_inserted_at) == :gt
-      assert DateTime.compare(row_b.routed_at, old_inserted_at) == :gt
-      assert DateTime.compare(row_b.routed_at, row_a.routed_at) in [:gt, :eq]
-
-      # The shared `messages.inserted_at` stays the OLD value for BOTH (the
-      # message row is shared) — proving routed_at ≠ messages.inserted_at, so the
-      # snapshot windows the relayed message at its route-into-session time.
-      assert row_a.inserted_at == old_inserted_at
-      assert row_b.inserted_at == old_inserted_at
-
-      _ = ws_a
-    end
-  end
+  # NOTE: the prior "multi-session routing: routed_at per-session for the SAME
+  # message id" describe block was removed with the message session-scoping
+  # collapse (2026-06-21) — a message id can no longer live in two sessions, so
+  # `routed_at` is simply this session's route/creation time (a real column,
+  # covered by "surfaces the per-session routed_at on each row" above).
 
   defp text(%Message{body: body}), do: Map.get(body, "text") || Map.get(body, :text)
 end

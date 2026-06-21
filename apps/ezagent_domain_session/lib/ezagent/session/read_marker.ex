@@ -285,10 +285,12 @@ defmodule Ezagent.Session.ReadMarker do
   end
 
   defp count_messages_in_session(session_str) do
+    # Message session-scoping (2026-06-21): count `messages` directly by
+    # `session_uri` (the `message_routings` join table was removed).
     Repo.one(
-      from(r in "message_routings",
-        where: r.session_uri == ^session_str,
-        select: count(r.message_id)
+      from(m in Ezagent.Message,
+        where: m.session_uri == ^session_str,
+        select: count(m.id)
       )
     ) || 0
   end
@@ -308,11 +310,9 @@ defmodule Ezagent.Session.ReadMarker do
 
       %DateTime{} = after_at ->
         Repo.one(
-          from(r in "message_routings",
-            join: msg in Ezagent.Message,
-            on: msg.id == r.message_id,
-            where: r.session_uri == ^session_str and msg.inserted_at > ^after_at,
-            select: count(r.message_id)
+          from(m in Ezagent.Message,
+            where: m.session_uri == ^session_str and m.inserted_at > ^after_at,
+            select: count(m.id)
           )
         ) || 0
     end
