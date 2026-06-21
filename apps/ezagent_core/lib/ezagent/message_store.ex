@@ -297,6 +297,82 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
+  Relabel one identity's message references inside a single session.
+
+  This is the sanctioned anon→login mutation path after message session-scoping:
+  only rows owned by `session_uri` are considered, and both `sender` and
+  `mentions` are rewritten from `from_uri` to `to_uri`. Authorization belongs to
+  the merge orchestrator; this function is only the scoped storage primitive.
+  """
+  @spec relabel_identity(URI.t(), URI.t(), URI.t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def relabel_identity(%URI{} = session_uri, %URI{} = from_uri, %URI{} = to_uri) do
+    from_str = URI.to_string(from_uri)
+
+    if from_str == URI.to_string(to_uri) do
+      {:ok, 0}
+    else
+      session_str = URI.to_string(session_uri)
+      workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+      Repo.transaction(fn ->
+        from(m in Message,
+          where: m.session_uri == ^session_str and m.workspace_uri == ^workspace_str
+        )
+        |> Repo.all()
+        |> Enum.reduce(0, fn %Message{} = message, count ->
+          case relabel_attrs(message, from_str, to_uri) do
+            [] ->
+              count
+
+            attrs ->
+              message
+              |> Ecto.Changeset.change(attrs)
+              |> Repo.update!()
+
+              count + 1
+          end
+        end)
+      end)
+      |> case do
+        {:ok, count} -> {:ok, count}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp relabel_attrs(%Message{} = message, from_str, %URI{} = to_uri) do
+    []
+    |> maybe_relabel_sender(message, from_str, to_uri)
+    |> maybe_relabel_mentions(message, from_str, to_uri)
+  end
+
+  defp maybe_relabel_sender(attrs, %Message{} = message, from_str, %URI{} = to_uri) do
+    if uri_string(message.sender) == from_str do
+      Keyword.put(attrs, :sender, to_uri)
+    else
+      attrs
+    end
+  end
+
+  defp maybe_relabel_mentions(attrs, %Message{} = message, from_str, %URI{} = to_uri) do
+    mentions = message.mentions || []
+
+    relabelled =
+      Enum.map(mentions, fn mention ->
+        if uri_string(mention) == from_str, do: to_uri, else: mention
+      end)
+
+    if Enum.map(relabelled, &uri_string/1) == Enum.map(mentions, &uri_string/1) do
+      attrs
+    else
+      Keyword.put(attrs, :mentions, relabelled)
+    end
+  end
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(uri) when is_binary(uri), do: uri
+
+  @doc """
   Single Message lookup by id. Returns `{:ok, message}` or `:error`.
 
   Used for `ref_id` chain following — if `msg.ref_id == "<id>"` and
