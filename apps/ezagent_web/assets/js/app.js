@@ -29,6 +29,7 @@ import {CountUp} from "./hooks/count_up"
 import {PtyTerminal} from "./hooks/pty_terminal"
 import {UriPicker} from "./hooks/uri_picker"
 import {ViewportMarkRead} from "./hooks/viewport_mark_read"
+import {WorldRenderer} from "../../../ezagent_plugin_world/assets/js/world_renderer"
 
 // Auto-scroll messages stream on new inserts AND preserve visual
 // position on history prepend.
@@ -86,7 +87,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead},
+  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead, WorldRenderer},
 })
 
 // Show progress bar on live navigation and form submits
@@ -166,4 +167,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
