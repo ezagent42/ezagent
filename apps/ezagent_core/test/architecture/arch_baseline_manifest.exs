@@ -185,7 +185,7 @@
   #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
   #   false-negatives caught). Same-name defs across compile-time branches/quotes
   #   merge conservatively — documented only if EVERY branch is (+1 caught).
-  undocumented_public_defs: 441, # ratchet-down: #154 cleanup deleted Behavior.Presence (its 5 undoc'd public defs) 446→441
+  undocumented_public_defs: 392, # arch-cap-bump: #55 doc-coverage burn-down 441→392 (documented EzagentPluginLiveview.Admin.SessionContext)
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
