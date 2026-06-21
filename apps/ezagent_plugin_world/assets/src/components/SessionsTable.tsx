@@ -1,6 +1,6 @@
 import {ArrowRight, Circle} from "lucide-react"
 
-import {Button} from "./ui/button"
+import {Button} from "./ui/primitives"
 
 type SessionRow = {
   uri: string

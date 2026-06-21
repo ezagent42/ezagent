@@ -1,6 +1,6 @@
 import {ArrowDown, ArrowUp, RotateCcw} from "lucide-react"
 
-import {Button} from "./ui/button"
+import {Button} from "./ui/primitives"
 
 type LayoutComponent = {
   id: string

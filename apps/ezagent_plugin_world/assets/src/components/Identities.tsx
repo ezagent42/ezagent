@@ -1,7 +1,7 @@
 import React from "react"
 import {BadgeCheck, Layers, Plus, Shield, UserRound, UsersRound} from "lucide-react"
 
-import {Button} from "./ui/button"
+import {Button} from "./ui/primitives"
 
 type IdentityRow = {
   uri: string
