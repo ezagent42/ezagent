@@ -84,6 +84,41 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert has_element?(view, "#world-root[data-world-component='sessions_table']")
   end
 
+  test "world identities group paths stay inside the world scope", %{conn: conn} do
+    agent_uri = "entity://system/agent/world_route_agent"
+    encoded_agent = URI.encode_www_form(agent_uri)
+    user_uri = "entity://system/user/world_route_user"
+    encoded_user = URI.encode_www_form(user_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/identities", "identities"},
+      {"/identities/users", "users_table"},
+      {"/identities/agents", "agents_table"},
+      {"/identities/users/#{encoded_user}/caps", "entity_caps"},
+      {"/identities/agents/#{encoded_agent}/caps", "entity_caps"},
+      {"/identities/agents/#{encoded_agent}/api-keys", "agent_api_keys"},
+      {"/identities/agents/new", "agent_new_form"},
+      {"/identities/agents/#{encoded_agent}/extensions", "agent_extensions"},
+      {"/identities/agents/#{encoded_agent}", "agent_detail"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
   test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
     caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
 
@@ -143,6 +178,26 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert html =~ "layout_editor"
   end
 
+  test "world layout manage affordance follows explicit cap grant", %{conn: conn} do
+    caller = "entity://system/user/world_layout_manager_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    workspace_uri = Ezagent.URI.workspace(:system)
+
+    :ok = create_read_only_user(caller_uri, [layout_manage_cap(caller_uri, workspace_uri)])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, _view, html} = live(conn, "/")
+
+    assert html =~ ~s(&quot;can_manage_layout&quot;:true)
+  end
+
   test "world layout manage dispatch denies caller without manage cap", %{conn: conn} do
     caller = "entity://system/user/world_layout_no_caps_#{System.unique_integer([:positive])}"
     layout = persisted_order_layout(Ezagent.URI.workspace(:system))
@@ -187,6 +242,18 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       action: :join,
       instance: session_uri,
       workspace_uri: Ezagent.URI.workspace(:system),
+      granted_by: caller_uri,
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp layout_manage_cap(caller_uri, workspace_uri) do
+    %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.World.Behavior.Layout,
+      action: :manage,
+      instance: Ezagent.URI.instance(workspace_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(workspace_uri),
       granted_by: caller_uri,
       granted_at: DateTime.utc_now()
     }
