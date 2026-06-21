@@ -86,11 +86,9 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     # --- identity domain: config evolution mutates config under the agent's own authority ---
     {"apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex", :identity} =>
       "ConfigEvolve reads sibling :identity caps to evolve config under the agent's own authority",
-    # --- curl template + api-keys LiveView: credential provisioning/management surfaces ---
+    # --- curl template: credential provisioning surface ---
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex", :api_keys} =>
       "curl Template Class copies a source agent's :api_keys at provisioning (cap-gated create flow)",
-    {"apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_api_keys_live.ex", :api_keys} =>
-      "the agent-api-keys management LiveView (cap-gated mount) renders the agent's own keys",
     # --- dynamic-key get_slice: the generic URI-query slice resolver ---
     {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
      @dynamic_key} =>

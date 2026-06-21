@@ -127,8 +127,15 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
     test "granted_by_entity?/1 rejects EXACTLY system://; accepts entity/session/workspace + sentinels" do
       refute Capability.granted_by_entity?(wildcard_cap(system_granter()))
       assert Capability.granted_by_entity?(wildcard_cap(entity_granter()))
-      assert Capability.granted_by_entity?(wildcard_cap(Ezagent.URI.new!("session://team-alpha/default/x")))
-      assert Capability.granted_by_entity?(wildcard_cap(Ezagent.URI.new!("workspace://team-alpha")))
+
+      assert Capability.granted_by_entity?(
+               wildcard_cap(Ezagent.URI.new!("session://team-alpha/default/x"))
+             )
+
+      assert Capability.granted_by_entity?(
+               wildcard_cap(Ezagent.URI.new!("workspace://team-alpha"))
+             )
+
       # Non-system sentinels pass — `cap/5` stamps `:plugin_declared`/nil on
       # legitimate authorizer caps; the GRANT chokepoint enforces entity granters.
       assert Capability.granted_by_entity?(wildcard_cap(:plugin_declared))

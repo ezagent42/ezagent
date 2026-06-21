@@ -8,8 +8,8 @@ defmodule Ezagent.UI.Form do
   via `form_fields/0` and render generically — no LV file needs to know
   what the module does.
 
-  This is the meta-enabler that lets future plugin authors ship
-  operator UI without touching `ezagent_plugin_liveview`.
+  This is the meta-enabler that lets future plugin authors ship operator UI
+  without touching the host web app.
 
   ## Callback
 

@@ -1,0 +1,392 @@
+defmodule Ezagent.World.WorkspacePluginActions do
+  @moduledoc """
+  Socket-side dispatch handlers for world workspace/plugin/profile surfaces.
+  """
+
+  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.LiveView, only: [push_event: 3]
+
+  alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
+
+  @doc "Route a workspace/plugin/profile world action to its handler."
+  @spec handle_dispatch(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def handle_dispatch(socket, "profile.display_name.edit", _args) do
+    put_world_state(socket, %{"editing_display_name" => true}, "ok")
+  end
+
+  def handle_dispatch(socket, "profile.display_name.cancel", _args) do
+    put_world_state(socket, %{"editing_display_name" => false}, "ok")
+  end
+
+  def handle_dispatch(socket, "profile.display_name.save", %{"display_name" => name})
+      when is_binary(name) do
+    save_display_name(socket, name)
+  end
+
+  def handle_dispatch(socket, "feishu.bind", %{"open_id" => open_id, "user_uri" => user_uri})
+      when is_binary(open_id) and is_binary(user_uri) do
+    bind_feishu_user(socket, open_id, user_uri)
+  end
+
+  def handle_dispatch(socket, "feishu.unbind", %{"open_id" => open_id}) when is_binary(open_id) do
+    unbind_feishu_user(socket, open_id)
+  end
+
+  def handle_dispatch(socket, "workspace.member.remove", %{"member_uri" => member_uri})
+      when is_binary(member_uri) do
+    remove_workspace_member(socket, member_uri)
+  end
+
+  def handle_dispatch(socket, "workspace.template.save", %{"template" => params})
+      when is_map(params) do
+    save_session_template(socket, params)
+  end
+
+  def handle_dispatch(socket, "auto_derive.default_source.set", %{"default_source" => params})
+      when is_map(params) do
+    set_default_source(socket, params)
+  end
+
+  def handle_dispatch(socket, "auto_derive.credential_grant.revoke", %{"agent_uri" => agent_uri})
+      when is_binary(agent_uri) do
+    revoke_credential_grant(socket, agent_uri)
+  end
+
+  def handle_dispatch(socket, _action, _args) do
+    {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
+  end
+
+  @doc "Save the current entity display name."
+  @spec save_display_name(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def save_display_name(socket, name) when is_binary(name) do
+    name = String.trim(name)
+
+    cond do
+      name == "" ->
+        put_world_state(
+          socket,
+          %{"profile_error" => "display_name_required"},
+          "error:display_name_required"
+        )
+
+      true ->
+        entity_uri = socket.assigns.current_entity_uri
+        entity_uri_str = URI.to_string(entity_uri)
+
+        case Ezagent.Entity.Profile.upsert(%{entity_uri: entity_uri_str, display_name: name}) do
+          {:ok, _profile} ->
+            put_world_state(
+              socket,
+              %{
+                "display_name" => name,
+                "editing_display_name" => false,
+                "profile_error" => nil,
+                "profile_notice" => "display_name_updated"
+              },
+              "ok"
+            )
+
+          {:error, changeset} ->
+            put_world_state(
+              socket,
+              %{"profile_error" => inspect(changeset.errors)},
+              "error:display_name_save_failed"
+            )
+        end
+    end
+  end
+
+  @doc "Bind a Feishu open_id to a local entity URI."
+  @spec bind_feishu_user(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def bind_feishu_user(socket, open_id, user_uri) do
+    open_id = String.trim(open_id)
+    user_uri = String.trim(user_uri)
+    caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
+
+    cond do
+      open_id == "" or user_uri == "" ->
+        put_feishu_bindings(socket, "error:binding_fields_required")
+
+      not valid_entity_uri?(caller, workspace, user_uri) ->
+        put_feishu_bindings(socket, "error:invalid_entity_uri")
+
+      true ->
+        user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
+        binding_policy = Module.concat([EzagentPluginFeishu, BindingPolicy])
+        bound_by = URI.to_string(caller)
+
+        with true <- Code.ensure_loaded?(user_binding),
+             {:ok, _row} <- apply(user_binding, :bind, [open_id, user_uri, bound_by]) do
+          if Code.ensure_loaded?(binding_policy) and
+               function_exported?(binding_policy, :apply, 2) do
+            _ = apply(binding_policy, :apply, [user_uri, bound_by])
+          end
+
+          put_feishu_bindings(socket, "ok")
+        else
+          false -> put_feishu_bindings(socket, "error:feishu_binding_unavailable")
+          {:error, reason} -> put_feishu_bindings(socket, "error:#{reason(reason)}")
+          other -> put_feishu_bindings(socket, "error:#{reason(other)}")
+        end
+    end
+  end
+
+  @doc "Remove a Feishu open_id binding."
+  @spec unbind_feishu_user(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def unbind_feishu_user(socket, open_id) when is_binary(open_id) do
+    open_id = String.trim(open_id)
+    user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
+
+    with true <- open_id != "",
+         true <- Code.ensure_loaded?(user_binding),
+         :ok <- apply(user_binding, :unbind, [open_id]) do
+      put_feishu_bindings(socket, "ok")
+    else
+      false -> put_feishu_bindings(socket, "error:open_id_required")
+      {:error, reason} -> put_feishu_bindings(socket, "error:#{reason(reason)}")
+      other -> put_feishu_bindings(socket, "error:#{reason(other)}")
+    end
+  end
+
+  @doc "Remove a member from the current workspace."
+  @spec remove_workspace_member(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def remove_workspace_member(socket, member_uri) when is_binary(member_uri) do
+    with %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
+         {:ok, %URI{scheme: "entity"} = member} <- Ezagent.URI.parse(String.trim(member_uri)),
+         workspace_name <- Ezagent.URI.workspace_name!(workspace_uri),
+         :ok <-
+           Ezagent.Workspace.remove_member(workspace_name, member, %{
+             caller: socket.assigns.current_entity_uri,
+             caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+           }) do
+      members =
+        case Ezagent.Workspace.Store.get_by_name(workspace_name) do
+          %{members: members} -> Enum.map(members || [], &uri_string/1)
+          _ -> []
+        end
+
+      put_world_state(socket, %{"members" => members}, "ok")
+    else
+      {:error, reason} ->
+        put_world_state(
+          socket,
+          %{"workspace_error" => reason(reason)},
+          "error:remove_member_failed"
+        )
+
+      _ ->
+        put_world_state(socket, %{"workspace_error" => "bad_member_uri"}, "error:bad_member_uri")
+    end
+  end
+
+  @doc "Create or update a SessionTemplate root version from the workspace template form."
+  @spec save_session_template(Phoenix.LiveView.Socket.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def save_session_template(socket, params) when is_map(params) do
+    name = params |> Map.get("name", "") |> to_string() |> String.trim()
+
+    caller = socket.assigns.current_entity_uri
+
+    with true <- name != "",
+         %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
+         workspace_name <- Ezagent.URI.name!(workspace_uri),
+         content <- session_template_content(params, workspace_uri),
+         :ok <- authorize_template_save(workspace_uri, caller, name, content),
+         {:ok, template_uri} <-
+           Ezagent.Entity.SessionTemplate.create(name, content,
+             caller: caller,
+             caps: [session_template_write_cap(workspace_uri, caller)],
+             workspace: workspace_name
+           ) do
+      put_world_state(
+        socket,
+        %{
+          "session_templates" => WorkspacePluginData.session_template_rows(workspace_name),
+          "template_notice" => "template_saved",
+          "template_error" => nil,
+          "last_template_uri" => uri_string(template_uri)
+        },
+        "ok"
+      )
+    else
+      false ->
+        put_world_state(
+          socket,
+          %{"template_error" => "template_name_required"},
+          "error:template_name_required"
+        )
+
+      {:error, reason} ->
+        put_world_state(
+          socket,
+          %{"template_error" => reason(reason), "template_notice" => nil},
+          "error:template_save_failed"
+        )
+
+      other ->
+        put_world_state(
+          socket,
+          %{"template_error" => reason(other), "template_notice" => nil},
+          "error:template_save_failed"
+        )
+    end
+  end
+
+  @doc "Set the credential default source shown on auto-derive detail."
+  @spec set_default_source(Phoenix.LiveView.Socket.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def set_default_source(socket, params) when is_map(params) do
+    result =
+      CredentialCascade.set_default_source(
+        params,
+        socket.assigns.current_entity_uri,
+        Map.get(socket.assigns, :current_caps, MapSet.new())
+      )
+
+    case result do
+      {:ok, _} ->
+        put_auto_notice(socket, "default_source_updated", "ok")
+
+      :ok ->
+        put_auto_notice(socket, "default_source_updated", "ok")
+
+      {:error, reason} ->
+        put_auto_notice(
+          socket,
+          "set_default_source_failed:#{reason(reason)}",
+          "error:set_default_source_failed"
+        )
+
+      other ->
+        put_auto_notice(
+          socket,
+          "set_default_source_failed:#{reason(other)}",
+          "error:set_default_source_failed"
+        )
+    end
+  rescue
+    err ->
+      put_auto_notice(
+        socket,
+        "set_default_source_failed:#{inspect(err)}",
+        "error:set_default_source_failed"
+      )
+  end
+
+  @doc "Revoke a credential grant from the auto-derive detail panel."
+  @spec revoke_credential_grant(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def revoke_credential_grant(socket, agent_uri) when is_binary(agent_uri) do
+    with {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(String.trim(agent_uri)),
+         true <- Ezagent.URI.type?(uri, :agent) do
+      case CredentialCascade.revoke_grant(
+             uri,
+             socket.assigns.current_entity_uri,
+             Map.get(socket.assigns, :current_caps, MapSet.new())
+           ) do
+        {:ok, _} ->
+          put_auto_notice(socket, "grant_revoked", "ok")
+
+        :ok ->
+          put_auto_notice(socket, "grant_revoked", "ok")
+
+        {:error, reason} ->
+          put_auto_notice(
+            socket,
+            "grant_revoke_failed:#{reason(reason)}",
+            "error:grant_revoke_failed"
+          )
+
+        other ->
+          put_auto_notice(
+            socket,
+            "grant_revoke_failed:#{reason(other)}",
+            "error:grant_revoke_failed"
+          )
+      end
+    else
+      _ -> put_auto_notice(socket, "grant_revoke_failed:bad_agent_uri", "error:bad_agent_uri")
+    end
+  end
+
+  defp put_feishu_bindings(socket, status) do
+    put_world_state(socket, %{"bindings" => WorkspacePluginData.list_feishu_bindings()}, status)
+  end
+
+  defp put_auto_notice(socket, notice, status) do
+    put_world_state(socket, %{"auto_derive_notice" => notice}, status)
+  end
+
+  defp session_template_content(params, %URI{} = workspace_uri) do
+    %{
+      description: params |> Map.get("description", "") |> to_string() |> String.trim(),
+      members: [],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: [],
+      default_workspace_uri: workspace_uri,
+      public_view: truthy?(Map.get(params, "public_view", false))
+    }
+  end
+
+  defp authorize_template_save(%URI{} = workspace_uri, %URI{} = caller, name, content) do
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :add_template)
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{name: name, template: content},
+           ctx: %{caller: caller, caps: MapSet.new(), reply: :ignore}
+         }) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, _} = error -> error
+      other -> {:error, other}
+    end
+  end
+
+  defp session_template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
+    %Ezagent.Capability{
+      kind: :session_template,
+      behavior: Ezagent.Behavior.Template,
+      action: :any,
+      instance: {:within_workspace, workspace_uri},
+      workspace_uri: workspace_uri,
+      granted_by: caller,
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp put_world_state(socket, updates, status) do
+    state = Map.merge(socket.assigns.world_state, updates)
+
+    {:noreply,
+     socket
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:last_dispatch_status, status)
+     |> push_event("world:state", updates)}
+  end
+
+  defp valid_entity_uri?(caller, workspace, user_uri) do
+    uri_options = Module.concat([Ezagent.UI, UriOptions])
+
+    Code.ensure_loaded?(uri_options) and
+      function_exported?(uri_options, :valid_for?, 4) and
+      apply(uri_options, :valid_for?, [caller, workspace, user_uri, [:entity]])
+  end
+
+  defp truthy?(value) when value in [true, "true", "on", "1", 1], do: true
+  defp truthy?(_), do: false
+
+  defp reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp reason(reason), do: inspect(reason)
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+end

@@ -7,19 +7,17 @@ defmodule Ezagent.Uploads.DownloadToken do
   ws-scoped** `resource://<ws>/uploads/<name>` URI plus its issue time and TTL.
   It is the SOLE authorization carrier for the `GET /uploads/download?token=`
   internal route, the public `GET /socialware/customer/download` feed route, and
-  the internal LiveView download links — replacing the retired participation-based
-  `/files/:filename` route (no back-compat shim).
+  the internal operator download links — replacing the retired
+  participation-based `/files/:filename` route (no back-compat shim).
 
   ## Why this lives in `ezagent_core`
 
-  Both `ezagent_web` (the download controllers) AND `ezagent_plugin_liveview`
-  (which renders the in-session attachment download links) must mint/verify the
+  `ezagent_web` download controllers and operator surfaces must mint/verify the
   SAME token. Per the three-tier boundary (`references/three-tier-structure.md`),
   a plugin MAY depend on `core` but MUST NOT depend on `ezagent_web` nor reach
   into web internals (Allen's north-star: plugin authors stay out of core/web).
   `core` already depends on `:phoenix` (for `Phoenix.Presence`/`Phoenix.Token`),
-  so the mint/verify primitive is a legitimate shared `core` capability — the
-  LiveView obtains it via a plain `core` call, never via a web module.
+  so the mint/verify primitive is a legitimate shared `core` capability.
 
   ## Security properties (all REQUIRED by OI-1)
 

@@ -91,19 +91,22 @@ defmodule Ezagent.World.LvParityTest do
   # (invite_member). `remove_member` stays pending — in LV it is WORKSPACE member
   # removal (`workspace_detail_live`, `Ezagent.Workspace.remove_member`), a
   # workspace-surface feature, not the session panel.
-  @pending_migration ~w(
-    create_session switch_view switch_to_pty_for_agent
-    remove_member
-    restart_orchestrator routing_rule_add_session routing_rule_toggle
-    toggle_debug_panel toggle_expand cmdk_open cmdk_close cmdk_query cmdk_select
-    set_default_source save_smtp send_test_email update_test_recipient
-    edit_display_name save_display_name cancel_edit_display_name
-    bind unbind
-    notification read_marker_updated cc_event cc_connected cc_disconnected
-    slice_changed audit_event authz_event
-  )
+  # PR-4 (session ops) landed: SessionsTable creates a new session through
+  # `Ezagent.Workspace.create_session/3`; conversation view switch + member PTY
+  # open push active view state; restart_orchestrator cap-checks
+  # OrchestratorAdmin :restart then repairs; per-session routing add/toggle
+  # dispatch Behavior.Routing; toggle_debug_panel/toggle_expand are client state.
+  # PR-5 landed: auto-derive detail renders credential cascade and dispatches
+  # default source / grant revoke through domain chokepoints; admin settings
+  # persists SMTP config + test-recipient/test-email state; profile inline
+  # display-name edit saves via Entity.Profile; Feishu bindings bind/unbind via
+  # the plugin binding APIs with UriOptions revalidation.
+  # PR-6 landed: command palette open/close/query/select uses CommandSource
+  # candidates; workspace.member.remove calls Ezagent.Workspace.remove_member/3;
+  # notification/read-marker/cc/audit/authz/slice inbound envelopes push to React.
+  @pending_migration []
 
-  @pending_baseline 30
+  @pending_baseline 0
 
   test "LV inventory has not silently shrunk below the recorded baseline" do
     assert length(@lv_events) >= @lv_events_baseline,

@@ -11,33 +11,26 @@ defmodule EzagentWeb.LiveAuthPresenceTest do
   assert on Presence side-effects.
   """
 
-  use ExUnit.Case
-  import Phoenix.ConnTest
+  use EzagentWeb.ConnCase
   import Phoenix.LiveViewTest
 
-  @endpoint EzagentWeb.Endpoint
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
-
-  defp admin_conn do
-    Phoenix.ConnTest.build_conn()
+  defp admin_conn(conn) do
+    conn
+    |> Map.put(:host, "world.ezagent.chat")
     |> Plug.Test.init_test_session(%{
-      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+      "current_workspace_uri" => "workspace://system"
     })
   end
 
   describe "LV mount tracks Presence on the connected socket" do
-    test "admin LV mount → Ezagent.Presence.present?(admin_uri) is true" do
+    test "world LV mount → Ezagent.Presence.present?(admin_uri) is true", %{conn: conn} do
       admin_uri = Ezagent.Entity.User.admin_uri()
 
       # Sanity: before mount, the admin URI is not tracked.
       refute Ezagent.Presence.present?(admin_uri)
 
-      {:ok, _lv, _html} = live(admin_conn(), "/admin/settings")
+      {:ok, _lv, _html} = live(admin_conn(conn), "/sessions")
 
       # After mount, Phoenix.Presence has the entry from THIS test's LV
       # socket. (The test process keeps the LV alive for the duration

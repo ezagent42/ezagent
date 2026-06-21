@@ -1,11 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Workspace.RemoveTemplate do
-  @shortdoc "Remove a session template from a workspace — same path as the LV admin form"
+  @shortdoc "Remove a session template from a workspace — same path as the operator UI"
   @moduledoc """
   Remove a session template from a workspace via
-  `Ezagent.Workspace.remove_template/2` — the SAME function
-  `EzagentPluginLiveview.WorkspaceDetailLive`'s `remove_template`
-  event handler calls. CLI and LV share one code path per Allen
-  2026-05-25 (`CLI/LV 同源派生`).
+  `Ezagent.Workspace.remove_template/2` — the SAME function the operator UI
+  calls. CLI and UI share one code path per Allen 2026-05-25
+  (`CLI/UI 同源派生`).
 
   ## Usage
 

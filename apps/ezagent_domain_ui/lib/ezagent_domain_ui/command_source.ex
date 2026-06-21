@@ -4,11 +4,10 @@ defmodule Ezagent.UI.CommandSource do
   palette.
 
   This is **NOT a registry** and **NOT a query over live registries**.
-  It is a pure function over data passed in by the caller. The caller
-  (`EzagentPluginLiveview.CommandPaletteComponent`) assembles
-  `candidates` by mapping the nav routes (delivered DOWN via the
-  `ezagent_web` `on_mount` assign — SPEC §2.2) and the `UriOptions`
-  entity/session options into `result()` shape, then calls `search/2`.
+  It is a pure function over data passed in by the caller. The caller assembles
+  `candidates` by mapping the nav routes (delivered DOWN via the `ezagent_web`
+  `on_mount` assign — SPEC §2.2) and the `UriOptions` entity/session options
+  into `result()` shape, then calls `search/2`.
 
   ## Dependency-direction (SPEC §2.3 — BLOCKER fix)
 

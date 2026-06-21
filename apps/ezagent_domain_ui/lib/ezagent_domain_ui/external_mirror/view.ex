@@ -6,15 +6,13 @@ defmodule EzagentDomainUi.ExternalMirror.View do
   **ExternalMirror Bindings** tab as a peer of Chat / Routing /
   Terminal. The tab shows the bindings registered for the current
   session (Lark chats, future Slack/Discord/game-room targets) with a
-  link to the per-session admin LV
-  (`/admin/sessions/:id/external_mirror`) for the full bind / unbind /
+  link to the routing bindings page for the full bind / unbind /
   audit-drilldown surface. The full ExternalMirror Domain SPEC lives
   at `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`.
 
-  This view is read-only — mutation goes through the per-session admin
-  LV. The compactness is deliberate: the operator-flow is "click into
-  a session, glance at its bindings, navigate to the admin LV if more
-  is needed."
+  This view is read-only — mutation goes through the routing bindings page. The
+  compactness is deliberate: the operator-flow is "click into a session, glance
+  at its bindings, navigate to the admin surface if more is needed."
 
   ## Source-of-truth read
 
@@ -24,9 +22,9 @@ defmodule EzagentDomainUi.ExternalMirror.View do
   empty state — the tab itself stays clickable (UX preference) but
   the row table is empty. This matches the admin LV's failure mode.
 
-  Tier-2: stateless `Phoenix.Component` reading `@session_bindings`
-  computed by the host LV (`EzagentPluginLiveview.AdminLive`).
-  Dispatch happens in the host LV per the 3-tier UI architecture.
+  Tier-2: stateless `Phoenix.Component` reading `@session_bindings` computed by
+  the host LiveView. Dispatch happens in the host LiveView per the 3-tier UI
+  architecture.
 
   Registered by `EzagentDomainUi.Application.start/2`.
   """
@@ -71,26 +69,12 @@ defmodule EzagentDomainUi.ExternalMirror.View do
           <code class="font-mono text-xs text-zinc-700 dark:text-zinc-300">
             {session_uri_string(@session_uri)}
           </code>
-          {gettext(". Full bind / unbind + audit drilldown lives on the per-session admin LV — ")}
-          <.link
-            navigate={
-              if @session_uri,
-                do:
-                  "/admin/sessions/" <>
-                    URI.encode_www_form(session_uri_string(@session_uri)) <>
-                    "/external_mirror",
-                else: "#"
-            }
-            class="text-blue-600 dark:text-blue-400 hover:underline"
-          >
-            {gettext("open admin LV")}
-          </.link>
-          {gettext(". Cross-session overview lives at")}
+          {gettext(". Full bind / unbind + audit drilldown lives on")}
           <.link
             navigate="/admin/routing?tab=bindings"
             class="text-blue-600 dark:text-blue-400 hover:underline"
           >
-            /admin/routing
+            {gettext("routing bindings")}
           </.link>
           {gettext(".")}
         </p>

@@ -70,6 +70,9 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
 
   test "north-star reached — 0 system principals remain (+ genesis collapsed to admin entity)" do
     assert length(Catalog.uris()) == 0
-    IO.puts("\n[north-star] system principals remaining to eliminate: 0 (genesis collapsed to entity://system/user/admin)\n")
+
+    IO.puts(
+      "\n[north-star] system principals remaining to eliminate: 0 (genesis collapsed to entity://system/user/admin)\n"
+    )
   end
 end

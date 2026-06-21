@@ -1,9 +1,14 @@
-defmodule EzagentPluginLiveview.CredentialCascadeUi do
-  @moduledoc false
+defmodule Ezagent.World.CredentialCascade do
+  @moduledoc """
+  JSON-safe credential cascade read/action helpers for the world auto-derive
+  detail surface.
+  """
 
   alias Ezagent.Credential.{GrantRow, UserDefaultSource}
   alias Ezagent.Invocation
 
+  @doc "Build the credential cascade panel state for an auto-derived agent detail."
+  @spec detail_for(URI.t(), map()) :: map() | nil
   def detail_for(%URI{} = agent_uri, detail) when is_map(detail) do
     case Ezagent.URI.type(agent_uri) do
       {:ok, "agent"} ->
@@ -18,16 +23,16 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
         source_uri = grant_source(grant) || string_field(resolution, :credential_source_uri)
 
         %{
-          agent_uri: URI.to_string(agent_uri),
-          flavor: flavor,
-          owner_uri: owner_uri,
-          workspace_uri: workspace_uri,
-          credential_source_uri: source_uri,
-          default_source_uri: default_source(owner_uri, workspace_uri, flavor),
-          layer_stack: layer_stack(resolution),
-          config_view: config_view(sandbox, respawn_data),
-          grant: grant_view(grant),
-          form: form_defaults(owner_uri, workspace_uri, flavor, source_uri)
+          "agent_uri" => jsonable(agent_uri),
+          "flavor" => flavor,
+          "owner_uri" => owner_uri,
+          "workspace_uri" => workspace_uri,
+          "credential_source_uri" => source_uri,
+          "default_source_uri" => default_source(owner_uri, workspace_uri, flavor),
+          "layer_stack" => layer_stack(resolution),
+          "config_view" => config_view(sandbox, respawn_data),
+          "grant" => grant_view(grant),
+          "form" => form_defaults(owner_uri, workspace_uri, flavor, source_uri)
         }
 
       _ ->
@@ -37,7 +42,9 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
 
   def detail_for(_agent_uri, _detail), do: nil
 
-  def set_default_source(params, caller_uri, caller_caps) do
+  @doc "Set the selected default credential source through the domain dispatch path."
+  @spec set_default_source(map(), URI.t() | nil, Enumerable.t()) :: term()
+  def set_default_source(params, caller_uri, caller_caps) when is_map(params) do
     owner_uri = Map.fetch!(params, "owner_uri")
 
     UserDefaultSource.set_via_dispatch(
@@ -51,6 +58,8 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
     )
   end
 
+  @doc "Revoke the current credential grant for an agent through its action."
+  @spec revoke_grant(URI.t(), URI.t() | nil, Enumerable.t()) :: term()
   def revoke_grant(%URI{} = agent_uri, caller_uri, caller_caps) do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.with_action(agent_uri, :credential_grant, :revoke_credential_grant),
@@ -62,18 +71,18 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
 
   defp layer_stack(resolution) do
     [
-      {"flavor-base", string_field(resolution, :flavor_base_uri)},
-      {"workspace", string_field(resolution, :workspace_layer_uri)},
-      {"user", string_field(resolution, :owner_uri)},
-      {"session", string_field(resolution, :session_uri)}
+      %{"level" => "flavor-base", "source" => string_field(resolution, :flavor_base_uri)},
+      %{"level" => "workspace", "source" => string_field(resolution, :workspace_layer_uri)},
+      %{"level" => "user", "source" => string_field(resolution, :owner_uri)},
+      %{"level" => "session", "source" => string_field(resolution, :session_uri)}
     ]
   end
 
   defp config_view(sandbox, respawn_data) do
     %{
-      config_dir_path: string_field(sandbox, :config_dir_path),
-      template_class: inspect(map_field(sandbox, :template_class)),
-      respawn_template_data: respawn_data
+      "config_dir_path" => string_field(sandbox, :config_dir_path),
+      "template_class" => inspect(map_field(sandbox, :template_class)),
+      "respawn_template_data" => jsonable(respawn_data)
     }
   end
 
@@ -81,12 +90,12 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
 
   defp grant_view(%GrantRow{} = row) do
     %{
-      agent_uri: row.agent_uri,
-      credential_source_uri: row.credential_source_uri,
-      approved_by: row.approved_by,
-      version: row.version,
-      status: if(row.revoked_at, do: "revoked", else: "active"),
-      revoked_at: row.revoked_at
+      "agent_uri" => row.agent_uri,
+      "credential_source_uri" => row.credential_source_uri,
+      "approved_by" => row.approved_by,
+      "version" => row.version,
+      "status" => if(row.revoked_at, do: "revoked", else: "active"),
+      "revoked_at" => datetime(row.revoked_at)
     }
   end
 
@@ -130,9 +139,8 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
   defp slice_state(slice) when is_map(slice), do: map_field(slice, :state) || slice
   defp slice_state(_), do: %{}
 
-  defp map_field(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, Atom.to_string(key))
-  end
+  defp map_field(map, key) when is_map(map),
+    do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 
   defp map_field(_map, _key), do: nil
 
@@ -144,4 +152,20 @@ defmodule EzagentPluginLiveview.CredentialCascadeUi do
       value -> inspect(value)
     end
   end
+
+  defp datetime(nil), do: nil
+  defp datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp datetime(other), do: inspect(other)
+
+  defp jsonable(%URI{} = uri), do: URI.to_string(uri)
+  defp jsonable(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp jsonable(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
+  defp jsonable(%MapSet{} = set), do: set |> MapSet.to_list() |> Enum.map(&jsonable/1)
+  defp jsonable(list) when is_list(list), do: Enum.map(list, &jsonable/1)
+
+  defp jsonable(map) when is_map(map),
+    do: map |> Map.new(fn {k, v} -> {to_string(k), jsonable(v)} end)
+
+  defp jsonable(atom) when is_atom(atom), do: Atom.to_string(atom)
+  defp jsonable(other), do: other
 end

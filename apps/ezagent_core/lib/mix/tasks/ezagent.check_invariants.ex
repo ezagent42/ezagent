@@ -260,7 +260,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           # files that legitimately mention the atom in their moduledoc
           # to explain the Phase 3d hard-flip rationale.
           "grep -rnE ':stub_grant' apps/ezagent_core/lib apps/ezagent_domain_session/lib " <>
-            "apps/ezagent_plugin_echo/lib apps/ezagent_web/lib apps/ezagent_plugin_liveview/lib " <>
+            "apps/ezagent_plugin_echo/lib apps/ezagent_web/lib apps/ezagent_plugin_world/lib " <>
             "--include='*.ex' 2>/dev/null " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v 'lib/ezagent/telemetry.ex' " <>

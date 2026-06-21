@@ -1,7 +1,8 @@
 import React from "react"
-import {ChevronUp, Paperclip, Send, UserPlus, X} from "lucide-react"
+import {Bug, ChevronUp, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
+import {PtyTerminalSurface} from "./PtyTerminal"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
@@ -45,22 +46,48 @@ type MemberRow = {
   kind?: string | null
 }
 
+type RoutingRule = {
+  id: number
+  table?: string | null
+  matcher?: string | null
+  receivers?: string[]
+  receivers_text?: string | null
+  source?: string | null
+  enabled?: boolean
+}
+
 export type ConversationState = {
+  active_pty_agent_uri?: string | null
+  active_view?: string | null
+  agent_detail_path?: string | null
+  agent_status?: {phase?: string; flavor?: string; [key: string]: unknown}
+  agent_uri?: string | null
   session_uri?: string | null
   caller_uri?: string | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
+  pty_alive?: boolean
+  pty_initial_buffer?: string
+  pty_phase?: string
+  routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   members?: MemberRow[]
 }
 
 type Props = {
   state: ConversationState
+  onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
+  onOpenPty: (sessionUri: string, agent: string) => void
+  onRestartOrchestrator: (sessionUri: string) => void
   onSend: (sessionUri: string, text: string, grants: string[]) => void
   onSwitch: (sessionUri: string) => void
+  onSwitchView: (sessionUri: string, view: string) => void
+  onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onPtyInput: (bytes: string) => void
+  onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
@@ -69,10 +96,27 @@ type Props = {
 // server-pushed `state.messages`. Within a mount, inbound `chat:message`
 // events append (sender sees their OWN cast'd message only via this bridge),
 // and `chat:older` prepends history.
-export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDisplayed, onInvite, onServerEvent}: Props) {
+export function Conversation({
+  state,
+  onAddRoutingRule,
+  onOpenPty,
+  onRestartOrchestrator,
+  onSend,
+  onSwitch,
+  onSwitchView,
+  onToggleRoutingRule,
+  onLoadOlder,
+  onMarkDisplayed,
+  onInvite,
+  onPtyInput,
+  onPtyResize,
+  onServerEvent,
+}: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
+  const routingRules = state.routing_rules || []
+  const activeView = state.active_view === "pty" ? "pty" : "chat"
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
@@ -84,6 +128,11 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   const [uploading, setUploading] = React.useState(false)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
+  const [debugOpen, setDebugOpen] = React.useState(false)
+  const [expanded, setExpanded] = React.useState(false)
+  const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
+  const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
+  const [ruleReceivers, setRuleReceivers] = React.useState("")
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
@@ -247,31 +296,89 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
     if (oldestCursor && sessionUri) onLoadOlder(sessionUri, oldestCursor)
   }
 
+  const submitRule = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!sessionUri) return
+    const receivers = ruleReceivers.trim()
+    if (!receivers) return
+    onAddRoutingRule(sessionUri, {
+      matcher_type: ruleMatcherType,
+      matcher_arg: ruleMatcherArg.trim(),
+      receivers,
+    })
+    setRuleMatcherType("always")
+    setRuleMatcherArg("")
+    setRuleReceivers("")
+  }
+
   return (
-    <div className="world-conversation-shell" data-world-component="conversation">
+    <div className="world-conversation-shell" data-world-component="conversation" data-expanded={expanded ? "true" : "false"}>
       <section className="world-section world-conversation">
       <div className="world-section-header">
         <div>
           <p className="world-eyebrow">Session</p>
           <h2>Conversation</h2>
         </div>
-        {sessions.length > 1 && (
-          <select
-            className="world-session-select"
-            value={sessionUri}
-            onChange={(event) => onSwitch(event.target.value)}
-            aria-label="Switch session"
-          >
-            {sessions.map((session) => (
-              <option key={session.uri} value={session.uri}>
-                {session.name || session.uri}
-              </option>
-            ))}
-          </select>
-        )}
+        <div className="world-conversation-tools">
+          {sessions.length > 1 && (
+            <select
+              className="world-session-select"
+              value={sessionUri}
+              onChange={(event) => onSwitch(event.target.value)}
+              aria-label="Switch session"
+            >
+              {sessions.map((session) => (
+                <option key={session.uri} value={session.uri}>
+                  {session.name || session.uri}
+                </option>
+              ))}
+            </select>
+          )}
+          <div className="world-segmented" aria-label="Session view">
+            <button
+              type="button"
+              className={activeView === "chat" ? "is-active" : ""}
+              onClick={() => sessionUri && onSwitchView(sessionUri, "chat")}
+              aria-label="Show chat"
+            >
+              <MessageSquare aria-hidden="true" />
+              Chat
+            </button>
+            <button
+              type="button"
+              className={activeView === "pty" ? "is-active" : ""}
+              onClick={() => sessionUri && onSwitchView(sessionUri, "pty")}
+              aria-label="Show terminal"
+            >
+              <TerminalSquare aria-hidden="true" />
+              PTY
+            </button>
+          </div>
+          <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
+            <RotateCcw aria-hidden="true" />
+          </Button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setDebugOpen((open) => !open)} aria-label="Toggle debug panel">
+            <Bug aria-hidden="true" />
+          </Button>
+          <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
+            <Maximize2 aria-hidden="true" />
+          </Button>
+        </div>
       </div>
 
-      <div className="world-conversation-stream" ref={scrollRef} data-message-count={messages.length}>
+      {activeView === "pty" ? (
+        <PtyTerminalSurface
+          state={{
+            ...state,
+            agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
+          }}
+          onInput={onPtyInput}
+          onResize={onPtyResize}
+          onServerEvent={onServerEvent}
+        />
+      ) : (
+      <>
+        <div className="world-conversation-stream" ref={scrollRef} data-message-count={messages.length}>
         {oldestCursor && (
           <div className="world-conversation-older">
             <Button size="sm" variant="secondary" onClick={loadOlder}>
@@ -323,9 +430,9 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
             )
           })
         )}
-      </div>
+        </div>
 
-      <form className="world-composer" onSubmit={submit}>
+        <form className="world-composer" onSubmit={submit}>
         <div className="world-composer-field">
           {mentionMatches.length > 0 && (
             <ul className="world-mention-menu" role="listbox" aria-label="Mention a member">
@@ -413,7 +520,13 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
             Send
           </Button>
         </div>
-      </form>
+        </form>
+      </>
+      )}
+
+      {debugOpen && (
+        <pre className="world-debug-panel">{JSON.stringify({sessionUri, activeView, members: members.length, messages: messages.length}, null, 2)}</pre>
+      )}
       </section>
 
       <aside className="world-section world-members" aria-label="Session members">
@@ -491,10 +604,79 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
                 />
                 <span className="world-member-name">{member.display_name || member.uri}</span>
                 <span className="world-member-kind">{member.kind || "other"}</span>
+                {member.kind === "agent" && (
+                  <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
+                    <TerminalSquare aria-hidden="true" />
+                  </Button>
+                )}
               </li>
             ))
           )}
         </ul>
+
+        <div className="world-routing-panel">
+          <div className="world-section-header world-section-header-compact">
+            <div>
+              <p className="world-eyebrow">Routing</p>
+              <h2>{routingRules.length}</h2>
+            </div>
+            <Route aria-hidden="true" />
+          </div>
+          <form className="world-routing-form" id="world-session-routing-form" onSubmit={submitRule}>
+            <select value={ruleMatcherType} onChange={(event) => setRuleMatcherType(event.target.value)} aria-label="Matcher type">
+              <option value="always">Always</option>
+              <option value="mention">Mention</option>
+              <option value="from">From</option>
+              <option value="text_contains">Text contains</option>
+            </select>
+            <input
+              value={ruleMatcherArg}
+              onChange={(event) => setRuleMatcherArg(event.target.value)}
+              placeholder={ruleMatcherType === "always" ? "No matcher argument" : "matcher argument"}
+              disabled={ruleMatcherType === "always"}
+              aria-label="Matcher argument"
+            />
+            <input
+              value={ruleReceivers}
+              onChange={(event) => setRuleReceivers(event.target.value)}
+              placeholder="entity://system/user/admin"
+              aria-label="Receivers"
+            />
+            <Button type="submit" size="sm" disabled={!ruleReceivers.trim()}>
+              <Plus aria-hidden="true" />
+              Add
+            </Button>
+          </form>
+          <ul className="world-routing-list">
+            {routingRules.length === 0 ? (
+              <li className="world-routing-empty">No session routing rules.</li>
+            ) : (
+              routingRules.map((rule) => (
+                <li key={`${rule.table}-${rule.id}`} className="world-routing-rule" data-enabled={rule.enabled ? "true" : "false"}>
+                  <div>
+                    <strong>{rule.matcher || `Rule ${rule.id}`}</strong>
+                    <span>{rule.receivers_text || (rule.receivers || []).join(", ")}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      sessionUri &&
+                      onToggleRoutingRule(sessionUri, {
+                        id: String(rule.id),
+                        table: rule.table || "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
+                        enabled: rule.enabled ? "true" : "false",
+                      })
+                    }
+                  >
+                    {rule.enabled ? "Disable" : "Enable"}
+                  </Button>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
       </aside>
     </div>
   )

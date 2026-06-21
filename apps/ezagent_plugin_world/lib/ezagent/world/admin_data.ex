@@ -18,6 +18,7 @@ defmodule Ezagent.World.AdminData do
   @spec state_for(route(), map()) :: map()
   def state_for(%{component: component} = route, opts) do
     workspace_uri = Map.get(opts, :workspace_uri)
+    caller_uri = Map.get(opts, :caller_uri)
 
     base = %{
       "component" => component,
@@ -26,10 +27,10 @@ defmodule Ezagent.World.AdminData do
       "workspace_uri" => encode_uri(workspace_uri)
     }
 
-    component_state(route, base, workspace_uri)
+    component_state(route, base, workspace_uri, caller_uri)
   end
 
-  defp component_state(%{component: "dashboard"}, base, _workspace_uri) do
+  defp component_state(%{component: "dashboard"}, base, _workspace_uri, _caller_uri) do
     kinds = Ezagent.KindRegistry.list_all()
 
     base
@@ -43,47 +44,40 @@ defmodule Ezagent.World.AdminData do
     |> Map.put("cc_orchestrator_status", cc_orchestrator_status())
   end
 
-  defp component_state(%{component: "observability"}, base, workspace_uri) do
+  defp component_state(%{component: "observability"}, base, workspace_uri, _caller_uri) do
     base
     |> Map.put("audit_rows", recent_invocations(25, workspace_uri))
     |> Map.put("bridges", bridges())
     |> Map.put("snapshots", snapshots(12, workspace_uri))
   end
 
-  defp component_state(%{component: "entity_registry"}, base, _workspace_uri) do
+  defp component_state(%{component: "entity_registry"}, base, _workspace_uri, _caller_uri) do
     Map.put(base, "entities", registry_rows())
   end
 
-  defp component_state(%{component: "snapshots"}, base, workspace_uri) do
+  defp component_state(%{component: "snapshots"}, base, workspace_uri, _caller_uri) do
     Map.put(base, "snapshots", snapshots(50, workspace_uri))
   end
 
-  defp component_state(%{component: "templates"}, base, _workspace_uri) do
+  defp component_state(%{component: "templates"}, base, _workspace_uri, _caller_uri) do
     Map.put(base, "templates", template_rows())
   end
 
-  defp component_state(%{component: "caps_admin"}, base, workspace_uri) do
+  defp component_state(%{component: "caps_admin"}, base, workspace_uri, _caller_uri) do
     base
     |> Map.put("grantable", grantable_caps())
     |> Map.put("default_grants", default_grants(workspace_uri))
   end
 
-  defp component_state(%{component: "authz_audit"}, base, workspace_uri) do
+  defp component_state(%{component: "authz_audit"}, base, workspace_uri, _caller_uri) do
     Map.put(base, "audit_rows", recent_invocations(100, workspace_uri))
   end
 
-  defp component_state(%{component: "settings"}, base, _workspace_uri) do
-    smtp_config = Ezagent.AppSettings.get("smtp_config") || %{}
-
-    Map.put(base, "settings", %{
-      "smtp_configured" => Ezagent.AppSettings.smtp_configured?(),
-      "smtp_keys" => smtp_config |> Map.keys() |> Enum.map(&to_string/1) |> Enum.sort()
-    })
-  rescue
-    err -> Map.put(base, "settings", %{"error" => inspect(err)})
+  defp component_state(%{component: "settings"}, base, _workspace_uri, caller_uri) do
+    Map.put(base, "settings", settings_state(caller_uri))
   end
 
-  defp component_state(%{component: "routing"}, base, _workspace_uri) do
+  defp component_state(%{component: "routing"}, base, _workspace_uri, _caller_uri) do
     base
     |> Map.put("rules", routing_rules())
     |> Map.put("external_mirror_bindings", external_mirror_bindings(25))
@@ -92,14 +86,47 @@ defmodule Ezagent.World.AdminData do
   defp component_state(
          %{component: "external_mirror", session_uri: session_uri},
          base,
-         _workspace_uri
+         _workspace_uri,
+         _caller_uri
        ) do
     base
     |> Map.put("session_uri", encode_uri(session_uri))
     |> Map.put("bindings", external_mirror_bindings_for(session_uri))
   end
 
-  defp component_state(_route, base, _workspace_uri), do: base
+  defp component_state(_route, base, _workspace_uri, _caller_uri), do: base
+
+  @doc "Build settings form state for world admin settings."
+  @spec settings_state(URI.t() | nil) :: map()
+  def settings_state(caller_uri) do
+    smtp_config = Ezagent.AppSettings.get("smtp_config") || %{}
+
+    %{
+      "smtp_configured" => Ezagent.AppSettings.smtp_configured?(),
+      "smtp" => %{
+        "host" => Map.get(smtp_config, "host", ""),
+        "port" => to_string(Map.get(smtp_config, "port", "")),
+        "username" => Map.get(smtp_config, "username", ""),
+        "from_address" => Map.get(smtp_config, "from_address", ""),
+        "tls" => Map.get(smtp_config, "tls", true),
+        "has_password" => Map.get(smtp_config, "password", "") not in [nil, ""]
+      },
+      "smtp_test_recipient" => default_test_recipient(caller_uri),
+      "smtp_test_result" => nil,
+      "smtp_flash" => nil
+    }
+  rescue
+    err -> %{"error" => inspect(err)}
+  end
+
+  defp default_test_recipient(%URI{} = caller_uri) do
+    case Ezagent.Entity.Profile.get(caller_uri) do
+      %{email: email} when is_binary(email) -> email
+      _ -> ""
+    end
+  end
+
+  defp default_test_recipient(_), do: ""
 
   defp count_scheme(kinds, scheme) do
     Enum.count(kinds, fn {uri_str, _pid} ->

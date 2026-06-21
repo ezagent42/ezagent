@@ -1,8 +1,8 @@
-defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
+defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
   @moduledoc """
-  Post-Phase-5 invariant (Allen 2026-05-17): CLI and LV must reach the
+  Post-Phase-5 invariant (Allen 2026-05-17): CLI and runtime UI must reach the
   SAME BEAM. Previously `mix ezagent` started its own VM and the dispatch
-  hit isolated state — LV couldn't see CLI mutations. That was a real
+  hit isolated state — the UI couldn't see CLI mutations. That was a real
   drift.
 
   Final design: `Mix.Tasks.Esr` connects via distributed Erlang RPC
@@ -12,15 +12,15 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
   serde.
 
   This test pins the invariant by:
-  1. Spawning a Session Kind in THIS test process's BEAM
-  2. Calling `EzagentCli.Exec.exec(["session", "join", ...])` directly
+  1. Spawning a User Kind in THIS test process's BEAM
+  2. Calling `EzagentCli.Exec.exec(["user", "grant_cap", ...])` directly
      (server-side path — same as what `:rpc.call` invokes on the
      runtime node in real CLI use)
-  3. Asserting the Session GenServer's state changed in THIS BEAM
-     (member list now contains the joined member)
+  3. Asserting the User GenServer's state changed in THIS BEAM
+     (the identity cap set now contains the granted cap)
 
   If a future refactor moves CLI back to spawning its own VM, the
-  member assertion will FAIL because the join happens in a separate
+  cap assertion will FAIL because the grant happens in a separate
   process tree from the one this test inspects.
   """
   use ExUnit.Case, async: false
@@ -56,41 +56,31 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     {:ok, caller_uri: test_user_uri}
   end
 
-  test "CLI server-side exec changes Session.session.members IN THIS BEAM", ctx do
-    session_name = "cli-same-server-test-#{System.unique_integer([:positive])}"
-    # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment.
-    session_uri = Ezagent.URI.new!("session://team-alpha/default/" <> session_name)
-    # PR-A: agent URIs include a type segment. Use the `test_` flavor
-    # (hardcoded in chat → Ezagent.Entity.Agent, no agent-flavor plugin
-    # needed) rather than `cc_`: this CLI-same-BEAM invariant only needs
-    # a spawnable generic agent member, and the cli suite does not load
-    # the cc plugin that registers the `cc` flavor — a `cc_` URI would
-    # fail `{:no_kind_module_for_agent, ...}`.
-    member_uri =
-      Ezagent.URI.new!("entity://team-alpha/agent/test_cli-member-#{System.unique_integer([:positive])}")
+  test "CLI server-side exec changes Identity caps IN THIS BEAM", ctx do
+    subject_uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/cli-runtime-isomorphism-subject-#{System.unique_integer([:positive])}"
+      )
 
-    # Spawn session in this BEAM
-    {:ok, session_pid} = Ezagent.SpawnRegistry.spawn(session_uri)
+    {:ok, _decoded} = Ezagent.Users.create(subject_uri, nil, [])
+    {:ok, subject_pid} = Ezagent.SpawnRegistry.spawn(subject_uri)
     Process.sleep(50)
 
-    # Spawn the agent so chat/join's lookup succeeds
-    {:ok, _agent_pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "test")
-    Process.sleep(50)
+    cap =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.World.Behavior.Layout,
+        :manage,
+        Ezagent.URI.new!("workspace://team-alpha"),
+        Ezagent.URI.new!("workspace://team-alpha")
+      )
+      |> Map.put(:granted_by, ctx.caller_uri)
+      |> Map.put(:granted_at, DateTime.utc_now())
 
-    member_uri_str = URI.to_string(member_uri)
+    cap_json = Jason.encode!(Ezagent.Capability.to_map(cap))
 
-    # Confirm member is NOT there yet (compare by URI string to dodge
-    # %URI{authority: ...} vs host-only equality quirk).
-    #
-    # Post-lifecycle two-container slice (SPEC 2026-05-29): the Kind
-    # Server state is `%{state: %{<slice> => %{state: _, transients: _}}}`,
-    # so the `:chat` slice's members live at `.state.session.state.members`
-    # (was the flat `.state.chat.members` pre-migration).
-    state_before = :sys.get_state(session_pid, 500)
-
-    refute Enum.any?(Map.keys(state_before.state.session.state.members), fn k ->
-             URI.to_string(k) == member_uri_str
-           end)
+    state_before = :sys.get_state(subject_pid, 500)
+    refute cap_present?(state_before, cap)
 
     # Mint a CLI token for a `team-alpha` workspace user — codex CLI/GUI audit
     # HIGH-1 closed the silent admin fallback, so Exec now requires
@@ -117,19 +107,12 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     result =
       EzagentCli.Exec.exec(
         [
-          "session",
-          "join",
-          "--session",
-          session_name,
-          # SPEC #366 (Allen 2026-05-26) — `--instance-class` is required
-          # for bare-name `--session <name>` promotion. The test spawned
-          # `session://team-alpha/default/<name>` above, so the class slot
-          # is the literal `"default"` here.
-          "--instance-class",
-          "default",
-          "--member",
-          URI.to_string(member_uri),
-          "--cast"
+          "user",
+          "grant_cap",
+          "--user",
+          URI.to_string(subject_uri),
+          "--cap",
+          cap_json
         ],
         token: plain_token,
         entity_uri: URI.to_string(caller_uri)
@@ -138,26 +121,16 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     assert result.exit_code == 0,
            "CLI exec returned non-zero: output=#{inspect(result.output)} exit=#{result.exit_code}"
 
-    # Give cast some time to land
-    Process.sleep(100)
+    state_after = :sys.get_state(subject_pid, 500)
 
-    # Confirm member NOW IS in the SAME GenServer this test spawned —
-    # proves the CLI exec ran in the same BEAM, not a separate VM
-    state_after = :sys.get_state(session_pid, 500)
-
-    member_present? =
-      Enum.any?(Map.keys(state_after.state.session.state.members), fn k ->
-        URI.to_string(k) == member_uri_str
-      end)
-
-    assert member_present?, """
-    CLI exec completed (exit 0) but member #{member_uri_str} is NOT in the
-    Session GenServer this test holds a pid for.
+    assert cap_present?(state_after, cap), """
+    CLI exec completed (exit 0) but cap #{inspect(Ezagent.Capability.identity_key(cap))} is NOT in the
+    User GenServer this test holds a pid for.
 
     Means CLI dispatched against a DIFFERENT BEAM than the test — breaks
-    CLI ↔ LV isomorphism.
+    CLI ↔ runtime UI isomorphism.
 
-    Members in this BEAM: #{inspect(Enum.map(Map.keys(state_after.state.session.state.members), &URI.to_string/1))}
+    Caps in this BEAM: #{inspect(Enum.map(state_after.state.identity.state.caps, &Ezagent.Capability.identity_key/1))}
     """
   end
 
@@ -173,5 +146,12 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
   test "CLI exec for unknown subcommand returns non-zero exit" do
     result = EzagentCli.Exec.exec(["totally_nonexistent_kind"])
     assert result.exit_code != 0
+  end
+
+  defp cap_present?(state, cap) do
+    target = Ezagent.Capability.identity_key(cap)
+
+    state.state.identity.state.caps
+    |> Enum.any?(&(Ezagent.Capability.identity_key(&1) == target))
   end
 end

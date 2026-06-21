@@ -145,8 +145,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   - `{:missing, %{template_uri: ...}}` — the Kind is not registered at
     all (seed failed at `ensure_kind/1` or app boot order issue).
 
-  Used by `EzagentPluginLiveview.PluginsLive` to surface a boot-time
-  status badge near the cc plugin card. Read-only — no side effects.
+  Used by operator plugin surfaces to show a boot-time status badge near the
+  cc plugin card. Read-only — no side effects.
   """
   @spec seed_status() :: {:ok | :partial | :missing, map()}
   def seed_status do

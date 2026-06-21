@@ -1,11 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Workspace.AddMember do
-  @shortdoc "Add an entity URI to a workspace's member list — same path as the LV admin form"
+  @shortdoc "Add an entity URI to a workspace's member list — same path as the operator UI"
   @moduledoc """
   Add an entity URI to a workspace's member list via
-  `Ezagent.Workspace.add_member/2` — the SAME function
-  `EzagentPluginLiveview.WorkspaceDetailLive`'s `add_member` event
-  handler calls. CLI and LV share one code path; this task exists
-  for parity per Allen 2026-05-25 directive (`CLI/LV 同源派生`).
+  `Ezagent.Workspace.add_member/2` — the SAME function the operator UI calls.
+  CLI and UI share one code path; this task exists for parity per Allen
+  2026-05-25 directive (`CLI/UI 同源派生`).
 
   ## Usage
 

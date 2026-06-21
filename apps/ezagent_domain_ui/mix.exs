@@ -17,7 +17,7 @@ defmodule EzagentDomainUi.MixProject do
   end
 
   # Phase 6 PR 3: ui domain — shadcn-like HEEx component primitives
-  # any plugin (including ezagent_plugin_liveview) can use to build pages.
+  # any plugin can use to build pages.
   #
   # Domain.Pty PR-C (2026-05-21) — promoted from library to OTP app to
   # register `EzagentDomainUi.Pty.TerminalView` as a SessionView at

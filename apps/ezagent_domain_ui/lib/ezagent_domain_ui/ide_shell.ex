@@ -51,8 +51,7 @@ defmodule EzagentDomainUi.IdeShell do
 
   Stateless `Phoenix.Component` (Tier-2 — zero LiveView/registry deps,
   per the UI Contract). The `:command_palette` slot is filled by the
-  Tier-3 `EzagentPluginLiveview.AppShell.app_shell/1`, which renders
-  the stateful `CommandPaletteComponent` LiveComponent — keeping the
+  Tier-3 host, which renders the stateful command palette — keeping the
   stateful piece out of the stateless-atom layer (SPEC §3).
 
   Nested-shell PR-3 deleted the old monolithic `ide_shell/1` once its

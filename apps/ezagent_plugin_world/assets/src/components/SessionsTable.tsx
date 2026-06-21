@@ -1,4 +1,5 @@
-import {ArrowRight, Circle} from "lucide-react"
+import React from "react"
+import {ArrowRight, Circle, Plus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
 
@@ -17,11 +18,26 @@ type SessionsState = {
 type SessionsTableProps = {
   state?: SessionsState
   onJoin?: (sessionUri: string) => void
+  onCreate?: (shortName: string, templateName: string) => void
 }
 
-export function SessionsTable({state, onJoin}: SessionsTableProps) {
+export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const sessions = state?.sessions || []
   const currentSessionUri = state?.current_session_uri
+  const [creating, setCreating] = React.useState(false)
+  const [shortName, setShortName] = React.useState("")
+  const [templateName, setTemplateName] = React.useState("default")
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const trimmed = shortName.trim()
+    const template = templateName.trim() || "default"
+    if (!trimmed) return
+    onCreate?.(trimmed, template)
+    setShortName("")
+    setTemplateName("default")
+    setCreating(false)
+  }
 
   return (
     <section className="world-section" aria-labelledby="sessions-title" data-world-component="sessions_table">
@@ -30,7 +46,41 @@ export function SessionsTable({state, onJoin}: SessionsTableProps) {
           <h2 id="sessions-title">Session activity</h2>
           <p>Rendered by React from LiveView state.</p>
         </div>
+        <Button
+          type="button"
+          size="sm"
+          variant={creating ? "secondary" : "default"}
+          onClick={() => setCreating((open) => !open)}
+          aria-label={creating ? "Close new session form" : "Create a new session"}
+        >
+          {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+          {creating ? "Close" : "New session"}
+        </Button>
       </div>
+
+      {creating && (
+        <form className="world-session-create" id="world-session-create-form" onSubmit={submit}>
+          <label htmlFor="world-session-short-name">Name</label>
+          <input
+            id="world-session-short-name"
+            value={shortName}
+            onChange={(event) => setShortName(event.target.value)}
+            placeholder="support-triage"
+            autoFocus
+          />
+          <label htmlFor="world-session-template">Template</label>
+          <input
+            id="world-session-template"
+            value={templateName}
+            onChange={(event) => setTemplateName(event.target.value)}
+            placeholder="default"
+          />
+          <Button type="submit" size="sm" disabled={!shortName.trim()}>
+            <Plus aria-hidden="true" />
+            Create
+          </Button>
+        </form>
+      )}
 
       <div className="world-table-wrap">
         <table className="world-table">

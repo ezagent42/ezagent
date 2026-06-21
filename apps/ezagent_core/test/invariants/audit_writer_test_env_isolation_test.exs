@@ -10,9 +10,9 @@ defmodule Ezagent.Invariants.AuditWriterTestEnvIsolationTest do
   `Ecto.Adapters.SQL.Sandbox`'s per-test ownership lifecycle their
   async flush stamps over connections owned by tests that have already
   exited, surfacing as "Database busy" + "owner exited" errors that
-  bleed into subsequent unrelated tests (the 4 `SnapshotTest` failures
-  + ~22 `ezagent_plugin_liveview` "baseline flakes"). Tests that need
-  the writers opt in via `use Ezagent.Test.AuditCase`.
+  bleed into subsequent unrelated tests (the 4 `SnapshotTest` failures plus
+  operator UI baseline flakes). Tests that need the writers opt in via
+  `use Ezagent.Test.AuditCase`.
 
   Per `feedback_completion_requires_invariant_test` — the architectural
   goal is "writer behaviour drifts cannot silently re-introduce the

@@ -29,20 +29,6 @@ defmodule EzagentWeb.GettextTest do
       assert Gettext.gettext(EzagentWeb.Gettext, "Sign in") == "登录"
     end
 
-    test "page header titles translate" do
-      # i18n full-coverage (Allen 2026-05-22) — the admin-UI page-header
-      # strings (Overview / Identities / Profile / Users) are wrapped in
-      # `ezagent_plugin_liveview`, which now owns its own
-      # `EzagentPluginLiveview.Gettext` backend (a plugin-owned backend
-      # keeps `mix gettext.extract` self-contained — see that module's
-      # moduledoc). They are translated there, NOT in EzagentWeb.Gettext.
-      Gettext.put_locale(EzagentPluginLiveview.Gettext, "zh_CN")
-      assert Gettext.gettext(EzagentPluginLiveview.Gettext, "Overview") == "概览"
-      assert Gettext.gettext(EzagentPluginLiveview.Gettext, "Identities") == "身份"
-      assert Gettext.gettext(EzagentPluginLiveview.Gettext, "Profile") == "个人资料"
-      assert Gettext.gettext(EzagentPluginLiveview.Gettext, "Users") == "用户"
-    end
-
     test "login form labels translate" do
       Gettext.put_locale(EzagentWeb.Gettext, "zh_CN")
       assert Gettext.gettext(EzagentWeb.Gettext, "Username or entity URI") == "用户名或实体 URI"

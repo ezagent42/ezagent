@@ -189,8 +189,8 @@ defmodule EzagentCore.Application do
   # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model their
   # async flush stamps over connections owned by tests that have
   # already exited, causing `Database busy` to bleed into subsequent
-  # tests (seen as ~22 "baseline flakes" in `ezagent_plugin_liveview`
-  # and the 4 `SnapshotTest` failures at seed 0). Test code that needs
+  # tests (seen as operator UI baseline flakes and the 4 `SnapshotTest`
+  # failures at seed 0). Test code that needs
   # to verify audit writes / periodic-snapshot writes opts in via
   # `Ezagent.Test.AuditCase`, which `start_supervised!`s the writer
   # AND `Sandbox.allow`s it onto the per-test connection.

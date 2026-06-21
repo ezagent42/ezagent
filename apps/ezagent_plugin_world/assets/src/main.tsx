@@ -35,8 +35,14 @@ type WorldMountOptions = {
 
 type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   can_manage_layout?: boolean
+  cmdk?: {
+    open?: boolean
+    query?: string
+    results?: Array<Record<string, unknown>>
+  }
   component?: string
   current_session_uri?: string | null
+  inbound_events?: Array<Record<string, unknown>>
   layout?: WorldLayout
   sessions?: Array<{
     uri: string
@@ -125,7 +131,19 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
               <h1>{state.title || pageTitle(state.component)}</h1>
             </div>
             <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}</div>
+            <button
+              id="world-cmdk-open"
+              className="world-button world-button-default"
+              type="button"
+              onClick={() => pushEvent?.("world:dispatch", {action: "cmdk.open", args: {}})}
+            >
+              Command
+            </button>
           </header>
+          <CommandPalette
+            cmdk={state.cmdk}
+            onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
+          />
 
           <div className="world-layout-grid" data-component-count={components.length}>
             {(components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]).map((component) =>
@@ -136,6 +154,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                   pushEvent?.("world:dispatch", {
                     action: "sessions.join",
                     args: {session_uri: sessionUri},
+                  })
+                },
+                onCreateSession: (shortName, templateName) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.create",
+                    args: {short_name: shortName, template_name: templateName},
                   })
                 },
                 onManageLayout: (nextLayout) => {
@@ -150,6 +174,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     action: "agents.create",
                     args: {agent},
                   })
+                },
+                onAdminAction: (action, args) => {
+                  pushEvent?.("world:dispatch", {action, args})
+                },
+                onWorkspacePluginAction: (action, args) => {
+                  pushEvent?.("world:dispatch", {action, args})
                 },
                 onChatSend: (sessionUri, text, grants) => {
                   pushEvent?.("world:dispatch", {
@@ -181,6 +211,36 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {session_uri: sessionUri, member},
                   })
                 },
+                onSessionViewSwitch: (sessionUri, view) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.view.switch",
+                    args: {session_uri: sessionUri, view},
+                  })
+                },
+                onOpenSessionPty: (sessionUri, agent) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.pty.open",
+                    args: {session_uri: sessionUri, agent},
+                  })
+                },
+                onRestartOrchestrator: (sessionUri) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.orchestrator.restart",
+                    args: {session_uri: sessionUri},
+                  })
+                },
+                onAddRoutingRule: (sessionUri, rule) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.routing.add",
+                    args: {session_uri: sessionUri, rule},
+                  })
+                },
+                onToggleRoutingRule: (sessionUri, rule) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.routing.toggle",
+                    args: {session_uri: sessionUri, ...rule},
+                  })
+                },
                 onPtyInput: (bytes) => {
                   pushEvent?.("pty_input", {bytes})
                 },
@@ -202,14 +262,66 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
   return <WorldHello title={props.title} caller={caller} />
 }
 
+function CommandPalette({
+  cmdk,
+  onAction,
+}: {
+  cmdk?: WorldState["cmdk"]
+  onAction: (action: string, args: Record<string, unknown>) => void
+}) {
+  const open = cmdk?.open === true
+  const query = String(cmdk?.query || "")
+  const results = cmdk?.results || []
+
+  if (!open) return null
+
+  return (
+    <div id="world-cmdk" className="world-cmdk" role="dialog" aria-modal="true">
+      <button className="world-cmdk-backdrop" type="button" aria-label="Close" onClick={() => onAction("cmdk.close", {})} />
+      <div className="world-cmdk-panel">
+        <input
+          autoFocus
+          value={query}
+          placeholder="Search"
+          onChange={(event) => onAction("cmdk.query", {query: event.target.value})}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") onAction("cmdk.close", {})
+          }}
+        />
+        <div className="world-cmdk-results">
+          {results.map((result) => (
+            <button
+              key={String(result.key)}
+              type="button"
+              onClick={() => onAction("cmdk.select", {key: String(result.key)})}
+            >
+              <span>{String(result.group || "Command")}</span>
+              <strong>{String(result.label || result.target || result.key)}</strong>
+            </button>
+          ))}
+          {results.length === 0 && <div className="world-cmdk-empty">No results</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 type RenderContext = {
   layout: WorldLayout
   state: WorldState
   onJoin: (sessionUri: string) => void
+  onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onAdminAction: (action: string, args: Record<string, unknown>) => void
+  onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
   onChatSend: (sessionUri: string, text: string, grants: string[]) => void
   onSessionSwitch: (sessionUri: string) => void
+  onSessionViewSwitch: (sessionUri: string, view: string) => void
+  onOpenSessionPty: (sessionUri: string, agent: string) => void
+  onRestartOrchestrator: (sessionUri: string) => void
+  onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
+  onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
@@ -231,7 +343,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
   }
 
   if (component.type === "sessions_table") {
-    return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
+    return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} onCreate={context.onCreateSession} />
   }
 
   if (component.type === "conversation") {
@@ -241,11 +353,18 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       <Conversation
         key={`conversation-${context.state.session_uri || "none"}`}
         state={context.state}
+        onAddRoutingRule={context.onAddRoutingRule}
+        onOpenPty={context.onOpenSessionPty}
+        onRestartOrchestrator={context.onRestartOrchestrator}
         onSend={context.onChatSend}
         onSwitch={context.onSessionSwitch}
+        onSwitchView={context.onSessionViewSwitch}
+        onToggleRoutingRule={context.onToggleRoutingRule}
         onLoadOlder={context.onLoadOlder}
         onMarkDisplayed={context.onMarkDisplayed}
         onInvite={context.onInvite}
+        onPtyInput={context.onPtyInput}
+        onPtyResize={context.onPtyResize}
         onServerEvent={context.onServerEvent}
       />
     )
@@ -264,11 +383,17 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
   }
 
   if (isAdminComponent(component.type)) {
-    return <AdminSurface key={component.id} state={{...context.state, component: component.type}} />
+    return <AdminSurface key={component.id} state={{...context.state, component: component.type}} onAction={context.onAdminAction} />
   }
 
   if (isWorkspacePluginComponent(component.type)) {
-    return <WorkspacePluginSurface key={component.id} state={{...context.state, component: component.type}} />
+    return (
+      <WorkspacePluginSurface
+        key={component.id}
+        state={{...context.state, component: component.type}}
+        onAction={context.onWorkspacePluginAction}
+      />
+    )
   }
 
   return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />

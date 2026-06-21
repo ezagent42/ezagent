@@ -11,7 +11,6 @@ defmodule EzagentCore.Architecture.OversizedModulesTest do
   end
 
   test "god-function def-count proxies do not grow beyond baseline" do
-    assert_at_or_below(:def_count_admin_live)
     assert_at_or_below(:def_count_cc_agent)
     assert_at_or_below(:def_count_orchestrator_tools)
     assert_at_or_below(:def_count_session_creator)

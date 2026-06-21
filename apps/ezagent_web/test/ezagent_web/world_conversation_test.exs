@@ -15,6 +15,9 @@ defmodule EzagentWeb.WorldConversationTest do
   import Phoenix.LiveViewTest
 
   alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.Routing.Matcher
+  alias Ezagent.Routing.RuleStore
+  alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   setup do
     prior_home = System.get_env("EZAGENT_HOME")
@@ -84,7 +87,9 @@ defmodule EzagentWeb.WorldConversationTest do
     # session regardless of liveness. This session URI is never spawned, so it
     # is absent from the live registry — yet a broadcast on its topic must
     # still reach the island.
-    cold_uri = Ezagent.URI.new!("session://system/default/coldsub-#{System.unique_integer([:positive])}")
+    cold_uri =
+      Ezagent.URI.new!("session://system/default/coldsub-#{System.unique_integer([:positive])}")
+
     encoded = cold_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
@@ -107,8 +112,11 @@ defmodule EzagentWeb.WorldConversationTest do
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
 
-    foreign_uri = Ezagent.URI.new!("session://system/default/other-#{System.unique_integer([:positive])}")
-    foreign_msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "foreign-should-drop"})
+    foreign_uri =
+      Ezagent.URI.new!("session://system/default/other-#{System.unique_integer([:positive])}")
+
+    foreign_msg =
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "foreign-should-drop"})
 
     # Direct send simulates an inbound from another subscribed workspace
     # session, isolating the source guard from PubSub timing.
@@ -176,7 +184,11 @@ defmodule EzagentWeb.WorldConversationTest do
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: MapSet.new([session_cap(member_uri, session_uri, :join)]), reply: :ignore}
+        ctx: %{
+          caller: member_uri,
+          caps: MapSet.new([session_cap(member_uri, session_uri, :join)]),
+          reply: :ignore
+        }
       })
       |> case do
         :ok -> :ok
@@ -200,13 +212,19 @@ defmodule EzagentWeb.WorldConversationTest do
 
     # @<segment> must land the member in msg.mentions — the recipient resolver
     # consumes this list, so a wrong parse silently routes nowhere.
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+    Phoenix.PubSub.subscribe(
+      EzagentCore.PubSub,
+      SessionBehavior.session_events_topic(session_uri)
+    )
 
     view
     |> element("#world-root")
     |> render_hook("world:dispatch", %{
       "action" => "chat.send",
-      "args" => %{"session_uri" => URI.to_string(session_uri), "text" => "ping @#{segment} please"}
+      "args" => %{
+        "session_uri" => URI.to_string(session_uri),
+        "text" => "ping @#{segment} please"
+      }
     })
 
     assert_receive {:chat_message, _src, %Ezagent.Message{} = msg}, 2_000
@@ -407,7 +425,10 @@ defmodule EzagentWeb.WorldConversationTest do
         "session" => "session://system/default/other"
       })
 
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+    Phoenix.PubSub.subscribe(
+      EzagentCore.PubSub,
+      SessionBehavior.session_events_topic(session_uri)
+    )
 
     view
     |> element("#world-root")
@@ -421,7 +442,11 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     assert_receive {:chat_message, _src, %Ezagent.Message{} = msg}, 2_000
-    attachments = msg.body |> Map.get(:attachments, Map.get(msg.body, "attachments", [])) |> Enum.map(&to_string/1)
+
+    attachments =
+      msg.body
+      |> Map.get(:attachments, Map.get(msg.body, "attachments", []))
+      |> Enum.map(&to_string/1)
 
     assert upload_uri in attachments
     refute Enum.any?(attachments, &(&1 =~ "evil.pdf"))
@@ -471,6 +496,187 @@ defmodule EzagentWeb.WorldConversationTest do
     assert html =~ ~s(data-last-dispatch="error:bad_member_uri")
   end
 
+  test "PR-4: session.create persists a new session and opens its conversation", %{conn: conn} do
+    short_name = "world-pr4-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default"
+      }
+    })
+
+    new_uri = Ezagent.URI.new!("session://system/default/#{short_name}")
+    encoded = new_uri |> URI.to_string() |> URI.encode_www_form()
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+
+    assert_push_event(view, "world:state", %{
+      "component" => "conversation",
+      "current_session_uri" => pushed_uri
+    })
+
+    assert pushed_uri == URI.to_string(new_uri)
+    assert new_uri in EzagentDomainInstanceMessage.list_sessions(Ezagent.URI.workspace(:system))
+  end
+
+  test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.view.switch",
+      "args" => %{"session_uri" => URI.to_string(session_uri), "view" => "pty"}
+    })
+
+    assert_push_event(view, "world:state", %{"active_view" => "pty"})
+  end
+
+  test "PR-4: switching to a member PTY records the active agent", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    agent = "entity://system/agent/world-pr4-pty"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.pty.open",
+      "args" => %{"session_uri" => URI.to_string(session_uri), "agent" => agent}
+    })
+
+    assert_push_event(view, "world:state", %{
+      "active_view" => "pty",
+      "active_pty_agent_uri" => ^agent
+    })
+  end
+
+  test "PR-4: restart_orchestrator denies a caller without the restart cap", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    caller = "entity://system/user/world_no_restart_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+
+    :ok = create_read_only_user(caller_uri, [session_cap(caller_uri, session_uri, :join)])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.orchestrator.restart",
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+  end
+
+  test "PR-4: session routing add scopes a rule to the current session", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    receiver = URI.to_string(Ezagent.Entity.User.admin_uri())
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.routing.add",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "rule" => %{
+            "matcher_type" => "always",
+            "receivers" => receiver
+          }
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    session_str = URI.to_string(session_uri)
+
+    assert Enum.any?(RuleStore.list(MentionRouting), fn row ->
+             case Matcher.from_json(row.matcher_data) do
+               {:ok, matcher} ->
+                 row.receivers == [receiver] and matcher_targets_session?(matcher, session_str)
+
+               _ ->
+                 false
+             end
+           end)
+  end
+
+  test "PR-4: session routing toggle disables and enables a scoped rule", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    matcher =
+      Matcher.all_of([
+        Matcher.in_session(session_uri),
+        Matcher.always()
+      ])
+
+    {:ok, %{id: rule_id}} =
+      RuleStore.add(
+        MentionRouting,
+        matcher,
+        [URI.to_string(Ezagent.Entity.User.admin_uri())],
+        Ezagent.Entity.User.admin_uri()
+      )
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.routing.toggle",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "id" => Integer.to_string(rule_id),
+          "table" => Atom.to_string(MentionRouting),
+          "enabled" => "true"
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    assert Enum.find(RuleStore.list(MentionRouting), &(&1.id == rule_id)).enabled == false
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.routing.toggle",
+      "args" => %{
+        "session_uri" => URI.to_string(session_uri),
+        "id" => Integer.to_string(rule_id),
+        "table" => Atom.to_string(MentionRouting),
+        "enabled" => "false"
+      }
+    })
+
+    assert Enum.find(RuleStore.list(MentionRouting), &(&1.id == rule_id)).enabled == true
+  end
+
   test "empty composer text is refused without dispatch", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
@@ -505,12 +711,22 @@ defmodule EzagentWeb.WorldConversationTest do
     assert has_element?(view, "#world-root[data-world-component='conversation']")
   end
 
-  test "ConversationData.build_message embeds parsed mentions + verified attachments", %{conn: _conn} do
+  test "ConversationData.build_message embeds parsed mentions + verified attachments", %{
+    conn: _conn
+  } do
     sender = Ezagent.URI.new!("entity://system/user/admin")
-    session = Ezagent.URI.new!("session://system/default/none-#{System.unique_integer([:positive])}")
+
+    session =
+      Ezagent.URI.new!("session://system/default/none-#{System.unique_integer([:positive])}")
 
     # mentions: cold session → empty members → only an explicit @entity:// URI survives.
-    msg = Ezagent.World.ConversationData.build_message(sender, "ping @entity://system/agent/codex-1", session)
+    msg =
+      Ezagent.World.ConversationData.build_message(
+        sender,
+        "ping @entity://system/agent/codex-1",
+        session
+      )
+
     assert Enum.map(msg.mentions, &URI.to_string/1) == ["entity://system/agent/codex-1"]
 
     # PR-2b: build_message/4 embeds the (already-verified) attachment URIs.
@@ -532,13 +748,228 @@ defmodule EzagentWeb.WorldConversationTest do
     assert attachment["href"] =~ "/uploads/download?token="
 
     plain_msg =
-      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: ["just-a-string"]})
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{
+        text: "x",
+        attachments: ["just-a-string"]
+      })
 
     assert [%{"name" => "just-a-string", "href" => nil}] =
              Ezagent.World.ConversationData.message_row(plain_msg)["attachments"]
   end
 
+  test "PR-5: profile.display_name.save updates the current entity profile", %{conn: conn} do
+    {:ok, view, _html} = live(admin_conn(conn), "/profile")
+    name = "World Admin #{System.unique_integer([:positive])}"
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "profile.display_name.save",
+        "args" => %{"display_name" => name}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    assert Ezagent.EntityPresenter.display("entity://system/user/admin") == name
+  end
+
+  test "PR-5: admin.smtp.save persists config and keeps an existing password on blank edit",
+       %{conn: conn} do
+    :ok =
+      Ezagent.AppSettings.put("smtp_config", %{
+        "host" => "old.example.test",
+        "port" => "587",
+        "username" => "old",
+        "password" => "secret",
+        "from_address" => "old@example.test",
+        "tls" => true
+      })
+
+    {:ok, view, _html} = live(admin_conn(conn), "/admin/settings")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "admin.smtp.save",
+        "args" => %{
+          "smtp" => %{
+            "host" => "smtp.example.test",
+            "port" => "2525",
+            "username" => "world",
+            "password" => "",
+            "from_address" => "world@example.test",
+            "tls" => "false"
+          }
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    assert %{
+             "host" => "smtp.example.test",
+             "port" => "2525",
+             "username" => "world",
+             "password" => "secret",
+             "from_address" => "world@example.test",
+             "tls" => false
+           } = Ezagent.AppSettings.get("smtp_config")
+  end
+
+  test "PR-5: feishu.bind and feishu.unbind manage user bindings from world", %{conn: conn} do
+    open_id = "ou_world_#{System.unique_integer([:positive])}"
+    user_uri = "entity://system/user/admin"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/plugins/feishu/bindings")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "feishu.bind",
+        "args" => %{"open_id" => open_id, "user_uri" => user_uri}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    assert Enum.any?(EzagentPluginFeishu.UserBinding.list_all(), &(&1.open_id == open_id))
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "feishu.unbind",
+        "args" => %{"open_id" => open_id}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    refute Enum.any?(EzagentPluginFeishu.UserBinding.list_all(), &(&1.open_id == open_id))
+  end
+
+  test "PR-6: cmdk.select resolves a server-side command key and patches", %{conn: conn} do
+    {:ok, view, _html} = live(admin_conn(conn), "/profile")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{"action" => "cmdk.open", "args" => %{}})
+
+    assert_push_event(view, "world:state", %{"cmdk" => %{"open" => true, "results" => results}})
+    assert Enum.any?(results, &(Map.get(&1, "key") == "nav:/sessions"))
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "cmdk.select",
+      "args" => %{"key" => "nav:/sessions"}
+    })
+
+    assert_patch(view, "/sessions")
+  end
+
+  test "PR-6: workspace.member.remove removes a workspace member through the facade",
+       %{conn: conn} do
+    member =
+      Ezagent.URI.new!("entity://system/user/world-remove-#{System.unique_integer([:positive])}")
+
+    :ok = create_read_only_user(member, [])
+
+    ws = Ezagent.Workspace.Store.get_by_name("system")
+    members = Enum.uniq_by([member | ws.members], &URI.to_string/1)
+    {:ok, _} = Ezagent.Workspace.Store.update_members("system", members)
+
+    {:ok, view, _html} = live(admin_conn(conn), "/workspaces/system")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "workspace.member.remove",
+        "args" => %{"member_uri" => URI.to_string(member)}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    ws_after = Ezagent.Workspace.Store.get_by_name("system")
+    refute Enum.any?(ws_after.members, &(URI.to_string(&1) == URI.to_string(member)))
+  end
+
+  test "PR-6: inbound non-chat envelopes are pushed to the React island", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    user_uri = Ezagent.Entity.User.admin_uri()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    envelopes = [
+      {"notification", {:notification, user_uri, %{body: %{text: "notice"}}}},
+      {"read_marker_updated",
+       {:read_marker_updated, session_uri, user_uri, %{source: :displayed}}},
+      {"cc_event", {:cc_event, %{event: "stdout"}}},
+      {"cc_connected",
+       {:cc_connected, Ezagent.URI.new!("entity://system/agent/cc"), %{tools: []}}},
+      {"cc_disconnected", {:cc_disconnected, Ezagent.URI.new!("entity://system/agent/cc")}},
+      {"slice_changed", {:slice_changed, %{uri: URI.to_string(user_uri), slice_key: :session}}},
+      {"audit_event", {:audit_event, %{target: "world"}}},
+      {"authz_event", {:authz_event, :ok, %{target: "world"}, DateTime.utc_now()}}
+    ]
+
+    for {type, envelope} <- envelopes do
+      send(view.pid, envelope)
+      assert_push_event(view, "world:inbound", %{"type" => ^type})
+    end
+  end
+
+  test "world template save persists public_view and created sessions are public", %{conn: conn} do
+    template_name = "world-public-#{System.unique_integer([:positive])}"
+    session_name = "world-public-session-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/workspaces/system")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "workspace.template.save",
+      "args" => %{
+        "template" => %{
+          "name" => template_name,
+          "description" => "Public socialware template",
+          "public_view" => true
+        }
+      }
+    })
+
+    assert_push_event(view, "world:state", %{"template_notice" => "template_saved"})
+
+    assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
+    assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+    assert Map.get(content, :public_view) == true
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{"short_name" => session_name, "template_name" => template_name}
+    })
+
+    session_uri = Ezagent.URI.new!("session://system/#{template_name}/#{session_name}")
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert Ezagent.Socialware.PublicView.public_view?(session_uri)
+  end
+
   # --- helpers ----------------------------------------------------------
+
+  defp find_session_template_uri!(template_name, workspace_name) do
+    prefix =
+      workspace_name
+      |> Ezagent.URI.template(:session, "#{template_name}@")
+      |> URI.to_string()
+
+    Ezagent.KindRegistry.list_all()
+    |> Enum.find_value(fn {uri_str, _pid} ->
+      if String.starts_with?(uri_str, prefix), do: Ezagent.URI.new!(uri_str)
+    end) ||
+      flunk("expected live SessionTemplate with prefix #{prefix}")
+  end
 
   defp world_state(view) do
     html = render(view)
@@ -586,6 +1017,23 @@ defmodule EzagentWeb.WorldConversationTest do
     |> List.first()
     |> case do
       %URI{} = uri -> uri
+      _ -> ensure_default_world_session!()
+    end
+  end
+
+  defp ensure_default_world_session! do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    create = &Ezagent.Workspace.create_session/3
+
+    case create.(
+           workspace_uri,
+           %{short_name: "main", template_name: "default"},
+           %{
+             caller: Ezagent.Entity.User.admin_uri(),
+             caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+           }
+         ) do
+      {:ok, %{session_uri: %URI{} = uri}} -> uri
       _ -> Ezagent.URI.new!("session://system/default/main")
     end
   end
@@ -601,4 +1049,17 @@ defmodule EzagentWeb.WorldConversationTest do
       granted_at: DateTime.utc_now()
     }
   end
+
+  defp matcher_targets_session?({:in_session, session_str}, session_str), do: true
+
+  defp matcher_targets_session?({:and, items}, session_str) when is_list(items),
+    do: Enum.any?(items, &matcher_targets_session?(&1, session_str))
+
+  defp matcher_targets_session?({:or, items}, session_str) when is_list(items),
+    do: Enum.any?(items, &matcher_targets_session?(&1, session_str))
+
+  defp matcher_targets_session?({:not, matcher}, session_str),
+    do: matcher_targets_session?(matcher, session_str)
+
+  defp matcher_targets_session?(_, _), do: false
 end

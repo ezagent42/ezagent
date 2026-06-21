@@ -35,10 +35,9 @@ defmodule Ezagent.Invariants.TemplateClassExtensionContractTest do
   #   loaded apps; plugin apps weren't enumerable. Fix: explicitly load
   #   a hardcoded list of umbrella apps.
   # - Round-3: the hardcoded list went stale (missed
-  #   ezagent_plugin_feishu, ezagent_plugin_liveview + any future
-  #   plugin), so a partial opt-in in a missed app would silently
-  #   ship. Fix: discover the umbrella apps from `apps/*` on disk so
-  #   new plugins are automatically covered.
+  #   ezagent_plugin_feishu + any future plugin), so a partial opt-in in a
+  #   missed app would silently ship. Fix: discover the umbrella apps from
+  #   `apps/*` on disk so new plugins are automatically covered.
   #
   # The discovery walks the umbrella's `apps/` dir relative to the
   # repository root. Works whether mix test runs from the umbrella

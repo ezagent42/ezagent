@@ -67,7 +67,7 @@ config :ezagent_plugin_world,
 
 # Resource-unification P2 — upload download-token signing secret (core-owned
 # config key). Wired to the same value as the web endpoint's secret_key_base so
-# the token minted in ezagent_web/ezagent_plugin_liveview verifies identically.
+# tokens minted by web/operator surfaces verify identically.
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO"
 

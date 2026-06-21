@@ -43,9 +43,49 @@ defmodule Ezagent.World.ConversationData do
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => member_options(session_uri),
+      "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions
     }
   end
+
+  @doc """
+  Routing rules scoped to `session_uri`, shaped for the conversation island.
+
+  Parses the shared MentionRouting store and keeps only matchers wrapped for
+  this session. This mirrors the LV read path without depending on the LV app.
+  """
+  @spec list_session_routing_rules(URI.t()) :: [map()]
+  def list_session_routing_rules(%URI{} = session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    Ezagent.Routing.RuleStore.list(EzagentDomainInstanceMessage.Routing.MentionRouting)
+    |> Enum.flat_map(fn row ->
+      case Ezagent.Routing.Matcher.from_json(row.matcher_data) do
+        {:ok, matcher} ->
+          if matcher_targets_session?(matcher, session_str) do
+            [
+              %{
+                "id" => row.id,
+                "table" => row.table_name,
+                "matcher" => inspect(matcher),
+                "receivers" => row.receivers,
+                "receivers_text" => Enum.join(row.receivers, ", "),
+                "source" => row.source,
+                "enabled" => row.enabled
+              }
+            ]
+          else
+            []
+          end
+
+        _ ->
+          []
+      end
+    end)
+    |> Enum.sort_by(& &1["id"])
+  end
+
+  def list_session_routing_rules(_), do: []
 
   @doc """
   Session members as `%{"uri" => ..., "display_name" => ..., "online" => bool,
@@ -253,11 +293,30 @@ defmodule Ezagent.World.ConversationData do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         Map.new(members, fn {uri, meta} ->
-          {URI.to_string(uri), is_map(meta) and Map.get(meta, :online, false) == true}
+          {encode_uri(uri), is_map(meta) and Map.get(meta, :online, false) == true}
         end)
 
       _ ->
         %{}
+    end
+  end
+
+  defp matcher_targets_session?(matcher, session_str) do
+    case matcher do
+      {:in_session, ^session_str} ->
+        true
+
+      {:and, items} when is_list(items) ->
+        Enum.any?(items, &matcher_targets_session?(&1, session_str))
+
+      {:or, items} when is_list(items) ->
+        Enum.any?(items, &matcher_targets_session?(&1, session_str))
+
+      {:not, inner} ->
+        matcher_targets_session?(inner, session_str)
+
+      _ ->
+        false
     end
   end
 

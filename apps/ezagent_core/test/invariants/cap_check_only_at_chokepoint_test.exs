@@ -57,7 +57,6 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # entry. The cc orchestrator dir no longer uses `matches?` (the cc
         # McpServer is a thin transport that dispatches), so it is NOT listed.
         "apps/ezagent_domain_session/lib/ezagent/",
-        "apps/ezagent_plugin_liveview/lib/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
         "apps/ezagent_core/lib/mix/tasks/"
@@ -98,8 +97,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       desc: "CapabilityRegistry.lookup outside dispatch + LV admin display",
       pattern: ~r/CapabilityRegistry\.(?:lookup|fetch|get)\b/,
       allowlist: [
-        "apps/ezagent_core/lib/ezagent/",
-        "apps/ezagent_plugin_liveview/lib/"
+        "apps/ezagent_core/lib/ezagent/"
       ]
     },
     %{
@@ -109,7 +107,6 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       allowlist: [
         "apps/ezagent_domain_identity/",
         "apps/ezagent_core/lib/ezagent/kind.ex",
-        "apps/ezagent_plugin_liveview/lib/",
         # PR-8 (transport #53 / O-4): the cc McpServer no longer reads caps —
         # it is a thin transport that dispatches; the orchestrator's delegated
         # caps are reconstructed SESSION-side via the `identity.list_caps`
@@ -176,7 +173,6 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       pattern: ~r/Identity\.grant_cap\b/,
       allowlist: [
         "apps/ezagent_domain_identity/lib/ezagent/",
-        "apps/ezagent_plugin_liveview/lib/",
         "apps/ezagent_domain_workspace/lib/mix/",
         "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex",
         # PR-9a (#53): AgentTemplate relocated to the ezagent_domain_agent app.

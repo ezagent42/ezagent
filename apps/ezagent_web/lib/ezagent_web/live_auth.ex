@@ -18,7 +18,7 @@ defmodule EzagentWeb.LiveAuth do
   Mounted via `live_session` block in the router:
 
       live_session :require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
-        live "/admin", EzagentPluginLiveview.AdminLive
+        live "/admin", EzagentPluginWorld.WorldLive, :admin
         # ...
       end
 

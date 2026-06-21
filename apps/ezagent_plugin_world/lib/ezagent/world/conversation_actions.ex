@@ -19,6 +19,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+  alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
   Route a `world:dispatch` conversation action to its handler (the dispatcher
@@ -58,6 +59,34 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &invite_member(socket, &1, member))
   end
 
+  def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
+      when is_binary(short_name) do
+    create_session(socket, short_name, Map.get(args, "template_name", "default"))
+  end
+
+  def handle_dispatch(socket, "session.view.switch", %{"session_uri" => sid, "view" => view})
+      when is_binary(view) do
+    with_session(socket, sid, &switch_view(socket, &1, view))
+  end
+
+  def handle_dispatch(socket, "session.pty.open", %{"session_uri" => sid, "agent" => agent})
+      when is_binary(agent) do
+    with_session(socket, sid, &switch_to_pty(socket, &1, agent))
+  end
+
+  def handle_dispatch(socket, "session.orchestrator.restart", %{"session_uri" => sid}) do
+    with_session(socket, sid, &restart_orchestrator(socket, &1))
+  end
+
+  def handle_dispatch(socket, "session.routing.add", %{"session_uri" => sid, "rule" => rule})
+      when is_map(rule) do
+    with_session(socket, sid, &add_routing_rule(socket, &1, rule))
+  end
+
+  def handle_dispatch(socket, "session.routing.toggle", %{"session_uri" => sid} = args) do
+    with_session(socket, sid, &toggle_routing_rule(socket, &1, args))
+  end
+
   def handle_dispatch(socket, _action, _args) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
   end
@@ -74,7 +103,11 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp on_session_error(socket, opts) do
-    Keyword.get(opts, :on_error, {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")})
+    Keyword.get(
+      opts,
+      :on_error,
+      {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
+    )
   end
 
   # Max attachments per message — server-enforced here (never trusts the client),
@@ -116,9 +149,14 @@ defmodule Ezagent.World.ConversationActions do
         })
 
       case result do
-        :ok -> {:noreply, assign(socket, :last_dispatch_status, "ok")}
-        {:ok, _} -> {:noreply, assign(socket, :last_dispatch_status, "ok")}
-        {:error, reason} -> {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        :ok ->
+          {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+        {:ok, _} ->
+          {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
       end
     end
   end
@@ -142,7 +180,8 @@ defmodule Ezagent.World.ConversationActions do
   """
   @spec mark_displayed(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def mark_displayed(socket, %URI{} = session_uri, msg_id) when is_binary(msg_id) and msg_id != "" do
+  def mark_displayed(socket, %URI{} = session_uri, msg_id)
+      when is_binary(msg_id) and msg_id != "" do
     _ =
       Ezagent.Session.ReadMarker.mark(
         session_uri,
@@ -152,6 +191,190 @@ defmodule Ezagent.World.ConversationActions do
       )
 
     {:noreply, socket}
+  end
+
+  @doc """
+  Create a new session in the caller's current workspace via
+  `Ezagent.Workspace.create_session/3`, then open its `?session=` deep-link.
+  """
+  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def create_session(socket, short_name, template_name)
+      when is_binary(short_name) and is_binary(template_name) do
+    workspace_uri = socket.assigns.current_workspace_uri
+    caller = socket.assigns.current_entity_uri
+    short_name = String.trim(short_name)
+    template_name = String.trim(template_name)
+
+    cond do
+      short_name == "" ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:short_name_required")}
+
+      template_name == "" ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:template_required")}
+
+      not match?(%URI{scheme: "workspace"}, workspace_uri) ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace")}
+
+      true ->
+        case create_session_result(
+               workspace_uri,
+               caller,
+               short_name,
+               template_name,
+               &Ezagent.Workspace.create_session/3
+             ) do
+          {:ok, %URI{} = session_uri} ->
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "ok")
+             |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+    end
+  end
+
+  @doc false
+  @spec create_session_result(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          String.t(),
+          (URI.t(), map(), map() -> term())
+        ) ::
+          {:ok, URI.t()} | {:error, term()}
+  def create_session_result(workspace_uri, caller, short_name, template_name, create)
+      when is_function(create, 3) do
+    case create.(
+           workspace_uri,
+           %{short_name: short_name, template_name: template_name},
+           %{caller: caller, caps: MapSet.new()}
+         ) do
+      {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_create_session_result, other}}
+    end
+  rescue
+    exception -> {:error, {:create_session_exception, exception}}
+  catch
+    :exit, reason -> {:error, {:create_session_exit, reason}}
+  end
+
+  @doc "Switch the active conversation sub-view (`chat` or `pty`)."
+  @spec switch_view(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty"] do
+    {:noreply, push_world_state(socket, %{"active_view" => view})}
+  end
+
+  def switch_view(socket, %URI{}, _view) do
+    {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
+  end
+
+  @doc "Switch the conversation panel to the PTY view for a member agent."
+  @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do
+    case parse_agent_uri(agent_str) do
+      {:ok, %URI{} = agent_uri} ->
+        subscribe_pty(agent_uri)
+
+        {:noreply,
+         push_world_state(socket, %{
+           "active_view" => "pty",
+           "active_pty_agent_uri" => uri_string(agent_uri),
+           "agent_uri" => uri_string(agent_uri),
+           "agent_detail_path" =>
+             "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
+           "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
+           "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
+           "pty_phase" => pty_phase(agent_uri)
+         })}
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_agent_uri")}
+    end
+  end
+
+  @doc """
+  Restart a session orchestrator for an admin caller.
+
+  This avoids caller-side cap enumeration/matching; PR #154 keeps cap checks
+  at dispatch chokepoints, and this repair helper is not a dispatch action.
+  """
+  @spec restart_orchestrator(Phoenix.LiveView.Socket.t(), URI.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def restart_orchestrator(socket, %URI{} = session_uri) do
+    if caller_can_restart_orchestrator?(socket, session_uri) do
+      workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+      case EzagentDomainInstanceMessage.repair_orchestrator(session_uri, workspace_uri) do
+        {:ok, ^session_uri, _meta} ->
+          {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+      end
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
+    end
+  end
+
+  @doc "Add a session-scoped mention-routing rule."
+  @spec add_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def add_routing_rule(socket, %URI{} = session_uri, params) when is_map(params) do
+    with {:ok, leaf_matcher} <- build_session_form_matcher(params),
+         receivers when is_list(receivers) and receivers != [] <-
+           parse_session_receivers(Map.get(params, "receivers", "")),
+         :ok <- revalidate_session_matcher_arg(socket, params),
+         :ok <- revalidate_session_receivers(socket, receivers),
+         matcher = wrap_in_session(leaf_matcher, session_uri),
+         {:ok, _} <-
+           dispatch_session_routing(socket, session_uri, :add_rule, %{
+             table: MentionRouting,
+             matcher_json: Ezagent.Routing.Matcher.to_json(matcher),
+             receivers: receivers
+           }) do
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "ok")
+       |> push_world_state(%{
+         "routing_rules" => ConversationData.list_session_routing_rules(session_uri)
+       })}
+    else
+      [] ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:receivers_required")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  @doc "Enable or disable a session-scoped routing rule."
+  @spec toggle_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def toggle_routing_rule(socket, %URI{} = session_uri, args) when is_map(args) do
+    with {id, ""} <- Integer.parse(to_string(Map.get(args, "id", ""))),
+         {:ok, table} <- safe_table_atom(Map.get(args, "table")),
+         action = if(Map.get(args, "enabled") == "true", do: :disable_rule, else: :enable_rule),
+         {:ok, _} <-
+           dispatch_session_routing(socket, session_uri, action, %{id: id, table: table}) do
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "ok")
+       |> push_world_state(%{
+         "routing_rules" => ConversationData.list_session_routing_rules(session_uri)
+       })}
+    else
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_rule_id")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
   end
 
   @doc """
@@ -176,7 +399,7 @@ defmodule Ezagent.World.ConversationActions do
         # registered-but-cold invitee (e.g. a user who hasn't logged in this
         # boot) is spawned from its snapshot first. Best-effort — a never-created
         # URI stays unspawned and the join below fails closed to an error status.
-        _ = Ezagent.SpawnRegistry.spawn(member_uri)
+        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
 
         result =
           Invocation.dispatch(%Invocation{
@@ -335,6 +558,197 @@ defmodule Ezagent.World.ConversationActions do
 
       _ ->
         []
+    end
+  end
+
+  defp push_world_state(socket, updates) when is_map(updates) do
+    state = Map.merge(Map.get(socket.assigns, :world_state, %{}), updates)
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "ok")
+    |> push_event("world:state", updates)
+  end
+
+  defp parse_agent_uri(value) when is_binary(value) do
+    with %URI{scheme: "entity"} = uri <- Ezagent.URI.new!(value),
+         true <- Ezagent.URI.type?(uri, :agent) do
+      {:ok, uri}
+    else
+      _ -> :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp subscribe_pty(%URI{} = agent_uri) do
+    Phoenix.PubSub.subscribe(
+      EzagentCore.PubSub,
+      Ezagent.Domain.Pty.Server.output_topic(agent_uri)
+    )
+
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, "pty:phase:" <> URI.to_string(agent_uri))
+  end
+
+  defp pty_phase(%URI{} = agent_uri) do
+    status = Ezagent.Domain.Pty.status(agent_uri)
+
+    cond do
+      is_atom(status[:phase]) -> Atom.to_string(status[:phase])
+      is_binary(status[:phase]) -> status[:phase]
+      status[:running] == true -> "running"
+      true -> "dead"
+    end
+  end
+
+  defp caller_can_restart_orchestrator?(socket, %URI{}) do
+    Ezagent.Identity.admin?(socket.assigns.current_entity_uri)
+  end
+
+  defp build_session_form_matcher(params) when is_map(params) do
+    type = Map.get(params, "matcher_type")
+    arg = Map.get(params, "matcher_arg")
+
+    case {type, arg} do
+      {"mention", text} when is_binary(text) and text != "" ->
+        {:ok, Ezagent.Routing.Matcher.mention(text)}
+
+      {"from", text} when is_binary(text) and text != "" ->
+        {:ok, Ezagent.Routing.Matcher.from(text)}
+
+      {"text_contains", text} when is_binary(text) and text != "" ->
+        {:ok, Ezagent.Routing.Matcher.text_contains(text)}
+
+      {"always", _} ->
+        {:ok, Ezagent.Routing.Matcher.always()}
+
+      _ ->
+        {:error, :invalid_matcher_form}
+    end
+  end
+
+  defp build_session_form_matcher(_), do: {:error, :invalid_matcher_form}
+
+  defp parse_session_receivers(value) do
+    values =
+      cond do
+        is_list(value) -> value
+        is_binary(value) -> String.split(value, ",", trim: true)
+        true -> []
+      end
+
+    for item <- values,
+        text = String.trim(to_string(item)),
+        text != "",
+        do: text
+  end
+
+  defp revalidate_session_matcher_arg(socket, %{
+         "matcher_type" => type,
+         "matcher_arg" => arg
+       })
+       when type in ["mention", "from"] and is_binary(arg) and arg != "" do
+    revalidate_session_uris(socket, [arg], [:entity])
+  end
+
+  defp revalidate_session_matcher_arg(_socket, _params), do: :ok
+
+  defp revalidate_session_receivers(socket, receivers) do
+    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
+      if Ezagent.Routing.Resolver.magic_token?(receiver) do
+        {:cont, :ok}
+      else
+        case revalidate_session_uris(socket, [receiver], [:entity, :session]) do
+          :ok -> {:cont, :ok}
+          {:error, _} = err -> {:halt, err}
+        end
+      end
+    end)
+  end
+
+  defp revalidate_session_uris(socket, uris, kinds) do
+    caller_uri = socket.assigns.current_entity_uri
+    workspace_uri = socket.assigns.current_workspace_uri
+
+    Enum.reduce_while(uris, :ok, fn uri, :ok ->
+      if uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_uri, uri}}}
+      end
+    end)
+  end
+
+  defp uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
+    Module.concat([Ezagent.UI, UriOptions])
+    |> apply(:valid_for?, [caller_uri, workspace_uri, uri, kinds])
+  rescue
+    _ -> false
+  end
+
+  defp wrap_in_session(matcher, %URI{} = session_uri) do
+    case matcher do
+      {:in_session, _} ->
+        matcher
+
+      leaf ->
+        Ezagent.Routing.Matcher.all_of([
+          Ezagent.Routing.Matcher.in_session(session_uri),
+          leaf
+        ])
+    end
+  end
+
+  defp safe_table_atom(s) when is_binary(s) do
+    {:ok, String.to_existing_atom(s)}
+  rescue
+    ArgumentError -> {:error, {:unknown_table, s}}
+  end
+
+  defp safe_table_atom(_), do: {:error, :unknown_table}
+
+  defp dispatch_session_routing(socket, %URI{} = session_uri, action, args) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(session_uri, :routing, action),
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: socket.assigns.current_entity_uri,
+        caps: MapSet.new(),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+
+  defp jsonable(value) do
+    cond do
+      match?(%URI{}, value) ->
+        URI.to_string(value)
+
+      match?(%DateTime{}, value) ->
+        DateTime.to_iso8601(value)
+
+      match?(%NaiveDateTime{}, value) ->
+        NaiveDateTime.to_iso8601(value)
+
+      is_struct(value) ->
+        value |> Map.from_struct() |> jsonable()
+
+      is_map(value) ->
+        Map.new(value, fn {k, v} -> {to_string(k), jsonable(v)} end)
+
+      is_list(value) ->
+        Enum.map(value, &jsonable/1)
+
+      is_atom(value) ->
+        Atom.to_string(value)
+
+      true ->
+        value
     end
   end
 

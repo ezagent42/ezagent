@@ -1,5 +1,5 @@
 import type React from "react"
-import {Activity, Database, Route, Settings, ShieldCheck, TableProperties} from "lucide-react"
+import {Activity, Database, Route, Send, Settings, ShieldCheck, TableProperties} from "lucide-react"
 
 type AdminState = {
   audit_rows?: Record<string, unknown>[]
@@ -15,14 +15,27 @@ type AdminState = {
   path?: string
   rules?: Record<string, unknown>[]
   session_uri?: string | null
-  settings?: Record<string, unknown>
+  settings?: {
+    error?: string
+    smtp?: Record<string, unknown>
+    smtp_configured?: boolean
+    smtp_flash?: string | null
+    smtp_test_recipient?: string
+    smtp_test_result?: string | null
+  }
   snapshots?: Record<string, unknown>[]
   templates?: Record<string, unknown>[]
   title?: string
   workspace_uri?: string | null
 }
 
-export function AdminSurface({state}: {state: AdminState}) {
+export function AdminSurface({
+  state,
+  onAction = () => undefined,
+}: {
+  state: AdminState
+  onAction?: (action: string, args: Record<string, unknown>) => void
+}) {
   switch (state.component) {
     case "observability":
       return <Observability state={state} />
@@ -37,7 +50,7 @@ export function AdminSurface({state}: {state: AdminState}) {
     case "authz_audit":
       return <DataTable component="authz_audit" title="Authz audit" rows={state.audit_rows || []} />
     case "settings":
-      return <SettingsPanel state={state} />
+      return <SettingsPanel state={state} onAction={onAction} />
     case "routing":
       return <RoutingPanel state={state} />
     case "external_mirror":
@@ -87,11 +100,121 @@ function CapsAdmin({state}: {state: AdminState}) {
   return <DataTable component="caps_admin" title="Capabilities" rows={rows} />
 }
 
-function SettingsPanel({state}: {state: AdminState}) {
+function SettingsPanel({
+  state,
+  onAction,
+}: {
+  state: AdminState
+  onAction: (action: string, args: Record<string, unknown>) => void
+}) {
+  const settings = state.settings || {}
+  const smtp = settings.smtp || {}
+  const [form, setForm] = React.useState({
+    host: String(smtp.host || ""),
+    port: String(smtp.port || ""),
+    username: String(smtp.username || ""),
+    password: "",
+    from_address: String(smtp.from_address || ""),
+    tls: smtp.tls !== false,
+  })
+  const [recipient, setRecipient] = React.useState(settings.smtp_test_recipient || "")
+
+  React.useEffect(() => {
+    const next = state.settings?.smtp || {}
+    setForm((current) => ({
+      ...current,
+      host: String(next.host || ""),
+      port: String(next.port || ""),
+      username: String(next.username || ""),
+      from_address: String(next.from_address || ""),
+      tls: next.tls !== false,
+      password: "",
+    }))
+    setRecipient(state.settings?.smtp_test_recipient || "")
+  }, [state.settings])
+
   return (
     <section className="world-section" data-world-component="settings">
       <Header eyebrow="Config" title="Settings" icon={<Settings />} />
-      <pre className="world-json">{JSON.stringify(state.settings || {}, null, 2)}</pre>
+      {settings.error && <p className="world-error">{settings.error}</p>}
+      <form
+        id="world-smtp-form"
+        className="world-form-grid"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onAction("admin.smtp.save", {smtp: form})
+        }}
+      >
+        <label>
+          Host
+          <input value={form.host} onChange={(event) => setForm({...form, host: event.target.value})} />
+        </label>
+        <label>
+          Port
+          <input value={form.port} onChange={(event) => setForm({...form, port: event.target.value})} />
+        </label>
+        <label>
+          Username
+          <input value={form.username} onChange={(event) => setForm({...form, username: event.target.value})} />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            placeholder={smtp.has_password ? "saved" : ""}
+            value={form.password}
+            onChange={(event) => setForm({...form, password: event.target.value})}
+          />
+        </label>
+        <label>
+          From address
+          <input value={form.from_address} onChange={(event) => setForm({...form, from_address: event.target.value})} />
+        </label>
+        <label className="world-checkbox-row">
+          <input
+            type="checkbox"
+            checked={form.tls}
+            onChange={(event) => setForm({...form, tls: event.target.checked})}
+          />
+          TLS
+        </label>
+        <div className="world-form-actions">
+          <button className="world-button world-button-primary" type="submit">
+            Save SMTP
+          </button>
+          <span className="world-muted-cell">{settings.smtp_configured ? "configured" : "not configured"}</span>
+        </div>
+      </form>
+      {settings.smtp_flash && <p className="world-notice">{settings.smtp_flash}</p>}
+
+      <form
+        id="world-smtp-test-form"
+        className="world-inline-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onAction("admin.smtp.test", {recipient})
+        }}
+      >
+        <label>
+          Test recipient
+          <input
+            value={recipient}
+            onChange={(event) => {
+              setRecipient(event.target.value)
+              onAction("admin.smtp.update_recipient", {recipient: event.target.value})
+            }}
+          />
+        </label>
+        <button className="world-button world-button-default" type="submit">
+          <Send size={16} />
+          Send test
+        </button>
+      </form>
+      {settings.smtp_test_result && (
+        <p className={settings.smtp_test_result.startsWith("ok:") ? "world-notice" : "world-error"}>
+          {settings.smtp_test_result}
+        </p>
+      )}
     </section>
   )
 }

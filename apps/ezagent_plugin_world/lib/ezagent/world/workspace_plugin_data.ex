@@ -57,15 +57,16 @@ defmodule Ezagent.World.WorkspacePluginData do
   defp component_state(%{component: "profile"}, base, _workspace_uri, %URI{} = caller_uri, caller_caps) do
     # Every world route is behind `live_session :world_require_entity`
     # (`LiveAuth.:require_entity` redirects+halts a nil entity), so the profile
-    # caller is ALWAYS a real authenticated entity. No `|| admin_uri()` default:
-    # let it crash on the impossible nil rather than silently leak admin's
-    # profile/caps to an unauthenticated caller (#154 / let-it-crash).
+    # caller is ALWAYS a real authenticated entity. Let it crash on the
+    # impossible nil rather than silently leak the admin profile/caps to an
+    # unauthenticated caller (#154 / let-it-crash).
     entity_uri = caller_uri
     entity_uri_str = encode_uri(entity_uri)
 
     base
     |> Map.put("entity_uri", entity_uri_str)
     |> Map.put("display_name", display_name(entity_uri_str))
+    |> Map.put("editing_display_name", false)
     |> Map.put("caps_count", caps_count(caller_caps, entity_uri))
     |> Map.put("caps_path", caps_path(entity_uri_str))
   end
@@ -85,11 +86,34 @@ defmodule Ezagent.World.WorkspacePluginData do
 
   defp component_state(%{component: "feishu_bindings"}, base, workspace_uri, caller_uri, _caps) do
     base
-    |> Map.put("bindings", feishu_bindings())
+    |> Map.put("bindings", list_feishu_bindings())
     |> Map.put("entity_options", entity_options(caller_uri, workspace_uri))
   end
 
   defp component_state(_route, base, _workspace_uri, _caller, _caps), do: base
+
+  @doc "List Feishu open_id to entity bindings for the world bindings panel."
+  @spec list_feishu_bindings() :: [map()]
+  def list_feishu_bindings do
+    user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
+
+    if Code.ensure_loaded?(user_binding) and function_exported?(user_binding, :list_all, 0) do
+      user_binding
+      |> apply(:list_all, [])
+      |> Enum.map(fn binding ->
+        %{
+          "open_id" => field(binding, :open_id),
+          "user_uri" => field(binding, :user_uri),
+          "bound_by" => field(binding, :bound_by),
+          "bound_at" => datetime(field(binding, :bound_at))
+        }
+      end)
+    else
+      []
+    end
+  rescue
+    err -> [%{"error" => inspect(err)}]
+  end
 
   defp list_workspaces(caller_uri, caller_caps) do
     Ezagent.Workspace.list_workspaces_for(caller_uri, caller_caps)
@@ -126,7 +150,7 @@ defmodule Ezagent.World.WorkspacePluginData do
           "not_found" => false,
           "live" => workspace_live?(ws.uri),
           "members" => Enum.map(ws.members || [], &encode_uri/1),
-          "session_templates" => template_rows(ws.session_templates || %{}),
+          "session_templates" => template_rows(ws.session_templates || %{}, ws.name),
           "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1)
         }
     end
@@ -143,25 +167,104 @@ defmodule Ezagent.World.WorkspacePluginData do
     end
   end
 
-  defp template_rows(templates) when is_map(templates) do
+  @doc "List SessionTemplate rows for a workspace detail surface."
+  @spec session_template_rows(String.t()) :: [map()]
+  def session_template_rows(workspace_name) when is_binary(workspace_name) do
+    workspace_name
+    |> live_session_template_rows()
+    |> Enum.sort_by(&{&1["name"], &1["uri"] || ""})
+  end
+
+  defp template_rows(templates, workspace_name) when is_map(templates) do
+    legacy_rows =
+      templates
+      |> legacy_template_rows()
+
+    session_rows = session_template_rows(workspace_name)
+
+    (session_rows ++ legacy_rows)
+    |> Enum.uniq_by(&{&1["source"], &1["name"], &1["uri"]})
+    |> Enum.sort_by(&{&1["name"], &1["source"]})
+  end
+
+  defp legacy_template_rows(templates) when is_map(templates) do
     templates
     |> Enum.map(fn {name, template} ->
       %{
         "name" => to_string(name),
+        "source" => "workspace_template",
         "class" => template_class(template),
         "members_count" => template_member_count(template),
+        "public_view" => public_view?(template),
         "status" => template_status(template),
         "body" => jsonable(template)
       }
     end)
-    |> Enum.sort_by(& &1["name"])
   end
+
+  defp live_session_template_rows(workspace_name) do
+    Ezagent.KindRegistry.list_all()
+    |> Enum.flat_map(fn {uri_str, pid} ->
+      with {:ok, uri} <- Ezagent.URI.parse(uri_str),
+           true <- session_template_for_workspace?(uri, workspace_name),
+           {:ok, _pid} <- Ezagent.Entity.Session.ensure_template_alive(uri),
+           {:ok, content} <- Ezagent.Entity.Session.read_template_content(uri) do
+        [
+          %{
+            "name" => template_family_name(uri, content),
+            "source" => "session_template",
+            "uri" => uri_str,
+            "alive" => is_pid(pid) and Process.alive?(pid),
+            "description" => template_description(content),
+            "members_count" => template_member_count(content),
+            "public_view" => public_view?(content),
+            "status" => "session_template",
+            "body" => jsonable(content)
+          }
+        ]
+      else
+        _ -> []
+      end
+    end)
+  end
+
+  defp session_template_for_workspace?(%URI{scheme: "template"} = uri, workspace_name) do
+    Ezagent.URI.type?(uri, :session) and
+      case Ezagent.URI.workspace_of(uri) do
+        %URI{} = ws_uri -> Ezagent.URI.name!(ws_uri) == workspace_name
+        _ -> false
+      end
+  end
+
+  defp session_template_for_workspace?(_, _), do: false
+
+  defp template_family_name(_uri, %{name: name}) when is_binary(name), do: name
+  defp template_family_name(_uri, %{"name" => name}) when is_binary(name), do: name
+
+  defp template_family_name(%URI{} = uri, _content) do
+    uri
+    |> URI.to_string()
+    |> String.split("/")
+    |> List.last()
+    |> to_string()
+    |> String.split("@")
+    |> List.first()
+  end
+
+  defp template_description(%{description: description}) when is_binary(description), do: description
+  defp template_description(%{"description" => description}) when is_binary(description), do: description
+  defp template_description(_), do: nil
 
   defp template_class(%{"class" => class}) when is_binary(class), do: class
   defp template_class(_), do: nil
 
   defp template_member_count(%{"members" => members}) when is_list(members), do: length(members)
+  defp template_member_count(%{members: members}) when is_list(members), do: length(members)
   defp template_member_count(_), do: 0
+
+  defp public_view?(%{public_view: true}), do: true
+  defp public_view?(%{"public_view" => true}), do: true
+  defp public_view?(_), do: false
 
   defp template_status(%{"class" => class}) when is_binary(class) do
     case Ezagent.TemplateRegistry.lookup(class) do
@@ -261,35 +364,22 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp auto_detail(detail) do
+    uri = Map.get(detail, :uri)
+
     %{
-      "uri" => encode_uri(Map.get(detail, :uri)),
+      "uri" => encode_uri(uri),
       "pid" => inspect(Map.get(detail, :pid)),
       "kind_module" => Map.get(detail, :kind_module),
       "slices" => jsonable(Map.get(detail, :slices, %{})),
-      "behaviors" => jsonable(Map.get(detail, :behaviors, []))
+      "behaviors" => jsonable(Map.get(detail, :behaviors, [])),
+      "credential_cascade" => credential_cascade(uri, detail)
     }
   end
 
-  defp feishu_bindings do
-    user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
+  defp credential_cascade(%URI{} = uri, detail),
+    do: Ezagent.World.CredentialCascade.detail_for(uri, detail)
 
-    if Code.ensure_loaded?(user_binding) and function_exported?(user_binding, :list_all, 0) do
-      user_binding
-      |> apply(:list_all, [])
-      |> Enum.map(fn binding ->
-        %{
-          "open_id" => field(binding, :open_id),
-          "user_uri" => field(binding, :user_uri),
-          "bound_by" => field(binding, :bound_by),
-          "bound_at" => datetime(field(binding, :bound_at))
-        }
-      end)
-    else
-      []
-    end
-  rescue
-    err -> [%{"error" => inspect(err)}]
-  end
+  defp credential_cascade(_uri, _detail), do: nil
 
   defp entity_options(caller_uri, workspace_uri) do
     Module.concat([Ezagent.UI, UriOptions])

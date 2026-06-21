@@ -1,21 +1,19 @@
 defmodule Mix.Tasks.Ezagent.Workspace.AddTemplate do
-  @shortdoc "Add a session template to a workspace — same path as the LV admin form"
+  @shortdoc "Add a session template to a workspace — same path as the operator UI"
   @moduledoc """
   Add a session template to a workspace via
-  `Ezagent.Workspace.add_template/3` — the SAME function
-  `EzagentPluginLiveview.WorkspaceDetailLive`'s `add_template` event
-  handler calls. CLI and LV share one code path per Allen 2026-05-25
-  (`CLI/LV 同源派生`).
+  `Ezagent.Workspace.add_template/3` — the SAME function the operator UI calls.
+  CLI and UI share one code path per Allen 2026-05-25 (`CLI/UI 同源派生`).
 
   ## Usage
 
       mix ezagent.workspace.add_template <workspace_name> <template_name> --json '<template_json>'
       mix ezagent.workspace.add_template <workspace_name> <template_name> --file <path_to_template.json>
 
-  The template body is a map; pass it as JSON via `--json` or
-  `--file`. The LV form composes the same map from its picker widgets
-  before calling `add_template/3` — the underlying contract is one
-  function with a map argument.
+  The template body is a map; pass it as JSON via `--json` or `--file`. The UI
+  form composes the same map from its picker widgets before calling
+  `add_template/3` — the underlying contract is one function with a map
+  argument.
 
   ## Example
 

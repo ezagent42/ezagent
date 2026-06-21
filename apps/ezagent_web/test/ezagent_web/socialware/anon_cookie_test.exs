@@ -65,10 +65,14 @@ defmodule EzagentWeb.Socialware.AnonCookieTest do
 
     test "a value signed with a foreign key never resolves", %{session: session} do
       forged =
-        Phoenix.Token.sign("a-different-secret-key-base-not-the-endpoints-aaaaaaaa", "wrong salt", %{
-          "external_user_name" => "#{AnonUser.prefix()}forged",
-          "session_uri" => URI.to_string(session)
-        })
+        Phoenix.Token.sign(
+          "a-different-secret-key-base-not-the-endpoints-aaaaaaaa",
+          "wrong salt",
+          %{
+            "external_user_name" => "#{AnonUser.prefix()}forged",
+            "session_uri" => URI.to_string(session)
+          }
+        )
 
       assert :error = AnonCookie.verify(forged, session)
     end

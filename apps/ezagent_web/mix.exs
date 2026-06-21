@@ -73,17 +73,11 @@ defmodule EzagentWeb.MixProject do
       # directly (anon-access mint/join/cookie). Declared as a prod dep so the
       # hard refs are backed by a declared umbrella dependency (the #57
       # `undeclared_umbrella_dep_test` gate); previously `ChatFeedAuth` was only
-      # transitively reachable via plugin_liveview/advisor (a latent layering
-      # hazard now closed).
+      # transitively reachable through another plugin/advisor path (a latent
+      # layering hazard now closed).
       {:ezagent_domain_socialware, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
       {:ezagent_domain_ui, in_umbrella: true},
-      # Plugin registration: ezagent_web's router references plugin LiveViews
-      # by module atom. Adding the plugin as a build-time dep ensures
-      # compile order (plugin compiles first, modules resolve in router).
-      # The plugin contract stays narrow — ezagent_web depends on it for
-      # routing only, not for code calls.
-      {:ezagent_plugin_liveview, in_umbrella: true},
       # World PR-0: host-scoped React/shadcn app mounted by LiveView.
       # Router references EzagentPluginWorld.WorldLive by module atom.
       {:ezagent_plugin_world, in_umbrella: true},

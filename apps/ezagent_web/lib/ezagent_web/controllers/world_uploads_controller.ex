@@ -66,7 +66,7 @@ defmodule EzagentWeb.WorldUploadsController do
       grant = mint_grant(conn, resource_uri, caller_uri, session_uri)
 
       json(conn, %{
-        "uri" => URI.to_string(resource_uri),
+        "uri" => uri_string(resource_uri),
         "name" => display_name(upload),
         "size" => file_size(upload),
         "grant" => grant
@@ -76,7 +76,9 @@ defmodule EzagentWeb.WorldUploadsController do
         conn |> put_status(:forbidden) |> json(%{"error" => "unauthorized"})
 
       {:error, :too_large} ->
-        conn |> put_status(:request_entity_too_large) |> json(%{"error" => "file too large (max 10 MB)"})
+        conn
+        |> put_status(:request_entity_too_large)
+        |> json(%{"error" => "file too large (max 10 MB)"})
 
       {:error, reason} ->
         Logger.debug(fn -> "WorldUploadsController: rejected upload: #{inspect(reason)}" end)
@@ -147,9 +149,9 @@ defmodule EzagentWeb.WorldUploadsController do
 
   defp mint_grant(conn, %URI{} = resource_uri, %URI{} = caller_uri, %URI{} = session_uri) do
     Phoenix.Token.sign(conn, @grant_salt, %{
-      "uri" => URI.to_string(resource_uri),
-      "caller" => URI.to_string(caller_uri),
-      "session" => URI.to_string(session_uri)
+      "uri" => uri_string(resource_uri),
+      "caller" => uri_string(caller_uri),
+      "session" => uri_string(session_uri)
     })
   end
 
@@ -164,4 +166,6 @@ defmodule EzagentWeb.WorldUploadsController do
       _ -> 0
     end
   end
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
 end
