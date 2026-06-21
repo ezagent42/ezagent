@@ -8,6 +8,8 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.Invocation
   alias EzagentPluginWorld.Layouts
 
+  @refresh_ms 2_000
+
   @impl true
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
@@ -53,6 +55,7 @@ defmodule EzagentPluginWorld.WorldLive do
     workspace = socket.assigns.current_workspace_uri
     layout = layout_for_route(route, workspace)
     state = state_for_route(route, socket, layout)
+    socket = maybe_subscribe_pty(socket, route)
 
     {:noreply,
      socket
@@ -65,6 +68,21 @@ defmodule EzagentPluginWorld.WorldLive do
   @impl true
   def handle_info(:push_world_state, socket) do
     {:noreply, push_event(socket, "world:state", socket.assigns.world_state)}
+  end
+
+  def handle_info(:refresh, %{assigns: %{world_state: %{"component" => "pty_terminal"}}} = socket) do
+    {:noreply, refresh_pty_state(socket)}
+  end
+
+  def handle_info(:refresh, socket), do: {:noreply, socket}
+
+  def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
+    {:noreply, push_event(socket, "pty_chunk", %{bytes: chunk})}
+  end
+
+  def handle_info({:pty_phase, _agent_uri, phase, _meta}, socket)
+      when phase in [:starting, :running, :dead] do
+    {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
   end
 
   @impl true
@@ -97,6 +115,27 @@ defmodule EzagentPluginWorld.WorldLive do
       ) do
     dispatch_agent_create(socket, agent_params)
   end
+
+  def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
+    case socket.assigns.world_state do
+      %{"component" => "pty_terminal", "agent_uri" => agent_uri_str} ->
+        with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+             :ok <- dispatch_pty_input(socket, agent_uri, bytes) do
+          {:noreply, socket}
+        else
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+
+          :error ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent_uri")}
+        end
+
+      _ ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:not_pty_route")}
+    end
+  end
+
+  def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
 
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
@@ -256,6 +295,25 @@ defmodule EzagentPluginWorld.WorldLive do
     {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent")}
   end
 
+  defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
+    target = Ezagent.URI.with_action(agent_uri, :pty, :write)
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :cast,
+           args: %{bytes: bytes},
+           ctx: %{
+             caller: socket.assigns.current_entity_uri,
+             caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+             reply: :ignore
+           }
+         }) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp world_module_url do
     Application.get_env(:ezagent_plugin_world, :world_module_url, "/assets/world/main.js")
   end
@@ -384,7 +442,7 @@ defmodule EzagentPluginWorld.WorldLive do
   defp parse_session_uri(_), do: :error
 
   defp route_for(params, uri) do
-    path = uri |> URI.parse() |> Map.get(:path, "/")
+    path = browser_path(uri)
 
     cond do
       path in ["/", "/sessions"] ->
@@ -537,6 +595,16 @@ defmodule EzagentPluginWorld.WorldLive do
           entity_uri: parse_entity_uri(encoded)
         }
 
+      match = Regex.run(~r{\A/identities/agents/([^/]+)/terminal\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "pty_terminal",
+          title: "Terminal",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
       match = Regex.run(~r{\A/identities/agents/([^/]+)\z}, path) ->
         [_full, encoded] = match
 
@@ -552,6 +620,18 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
+  defp browser_path(uri) when is_binary(uri) do
+    path =
+      uri
+      |> String.replace(~r{\Ahttps?://[^/]+}, "")
+      |> String.split(["?", "#"], parts: 2)
+      |> List.first()
+
+    if path in [nil, ""], do: "/", else: path
+  end
+
+  defp browser_path(_), do: "/"
+
   defp parse_entity_uri(encoded) when is_binary(encoded) do
     decoded = URI.decode_www_form(encoded)
 
@@ -564,6 +644,20 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_entity_uri(_), do: nil
+
+  defp parse_agent_uri(value) when is_binary(value) do
+    case Ezagent.URI.new!(value) do
+      %URI{scheme: "entity"} = uri ->
+        if Ezagent.URI.type?(uri, :agent), do: {:ok, uri}, else: :error
+
+      _ ->
+        :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp parse_agent_uri(_), do: :error
 
   defp parse_session_uri_param(encoded) when is_binary(encoded) do
     decoded = URI.decode_www_form(encoded)
@@ -617,6 +711,76 @@ defmodule EzagentPluginWorld.WorldLive do
   defp cap_scope_matches?(actual, needed), do: actual == needed
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
+
+  defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(
+        EzagentCore.PubSub,
+        Ezagent.Domain.Pty.Server.output_topic(agent_uri)
+      )
+
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, "pty:phase:" <> URI.to_string(agent_uri))
+      :timer.send_interval(@refresh_ms, :refresh)
+    end
+
+    socket
+  end
+
+  defp maybe_subscribe_pty(socket, _route), do: socket
+
+  defp refresh_pty_state(socket) do
+    case socket.assigns.world_state do
+      %{"agent_uri" => agent_uri_str} ->
+        with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str) do
+          update_pty_state(socket, %{
+            "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
+            "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
+            "pty_phase" => pty_phase(agent_uri)
+          })
+        else
+          _ -> socket
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp update_pty_state(socket, updates) when is_map(updates) do
+    state = Map.merge(socket.assigns.world_state, updates)
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> push_event("world:state", updates)
+  end
+
+  defp pty_phase(%URI{} = agent_uri) do
+    case Ezagent.Domain.Pty.status(agent_uri) do
+      %{phase: phase} when is_atom(phase) -> Atom.to_string(phase)
+      %{phase: phase} when is_binary(phase) -> phase
+      %{running: true} -> "running"
+      _ -> "dead"
+    end
+  end
+
+  defp jsonable(%URI{} = uri), do: URI.to_string(uri)
+  defp jsonable(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp jsonable(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp jsonable(%_struct{} = struct), do: struct |> Map.from_struct() |> jsonable()
+
+  defp jsonable(map) when is_map(map),
+    do: Map.new(map, fn {key, value} -> {to_string(key), jsonable(value)} end)
+
+  defp jsonable(list) when is_list(list), do: Enum.map(list, &jsonable/1)
+  defp jsonable(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> jsonable()
+  defp jsonable(atom) when is_atom(atom), do: Atom.to_string(atom)
+  defp jsonable(pid) when is_pid(pid), do: inspect(pid)
+  defp jsonable(port) when is_port(port), do: inspect(port)
+  defp jsonable(ref) when is_reference(ref), do: inspect(ref)
+  defp jsonable(value) when is_binary(value) or is_number(value) or is_boolean(value), do: value
+  defp jsonable(nil), do: nil
+  defp jsonable(other), do: inspect(other)
 
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)

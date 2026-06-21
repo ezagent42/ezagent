@@ -88,7 +88,8 @@ defmodule EzagentPluginEcho.Application do
   def behaviors do
     [
       {Ezagent.Entity.Echo, :say, Ezagent.Behavior.Echo},
-      {Ezagent.Entity.Echo, :receive, Ezagent.Behavior.Echo}
+      {Ezagent.Entity.Echo, :receive, Ezagent.Behavior.Echo},
+      {Ezagent.Entity.Echo, :write, Ezagent.Behavior.Pty}
     ]
   end
 

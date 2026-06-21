@@ -121,6 +121,24 @@ defmodule Ezagent.World.IdentityData do
     |> Map.merge(list_extensions(agent_uri, caller, caps))
   end
 
+  defp component_state(
+         %{component: "pty_terminal", entity_uri: agent_uri},
+         base,
+         _workspace,
+         _caller,
+         _caps
+       ) do
+    agent_uri_str = encode_uri(agent_uri)
+
+    base
+    |> Map.put("agent_uri", agent_uri_str)
+    |> Map.put("agent_detail_path", detail_path("agent", agent_uri_str))
+    |> Map.put("agent_status", agent_status(agent_uri))
+    |> Map.put("pty_alive", pty_alive?(agent_uri))
+    |> Map.put("pty_phase", pty_phase(agent_uri))
+    |> Map.put("pty_initial_buffer", pty_initial_buffer(agent_uri))
+  end
+
   defp component_state(_route, base, _workspace, _caller, _caps), do: base
 
   @doc "List entity rows for the identities and agents components."
@@ -276,6 +294,29 @@ defmodule Ezagent.World.IdentityData do
     _ -> nil
   end
 
+  defp pty_alive?(%URI{} = agent_uri), do: Ezagent.Domain.Pty.alive?(agent_uri)
+  defp pty_alive?(_), do: false
+
+  defp pty_phase(%URI{} = agent_uri) do
+    case Ezagent.Domain.Pty.status(agent_uri) do
+      %{phase: phase} when is_atom(phase) -> Atom.to_string(phase)
+      %{phase: phase} when is_binary(phase) -> phase
+      %{running: true} -> "running"
+      _ -> "dead"
+    end
+  end
+
+  defp pty_phase(_), do: "unknown"
+
+  defp pty_initial_buffer(%URI{} = agent_uri) do
+    case Ezagent.Domain.Pty.Server.snapshot_buffer(agent_uri) do
+      {:ok, buffer} when is_binary(buffer) -> buffer
+      _ -> ""
+    end
+  rescue
+    _ -> ""
+  end
+
   defp list_api_keys(%URI{} = agent_uri, caller_uri, caller_caps) do
     target = Ezagent.URI.with_action(agent_uri, :identity, :list_api_keys)
 
@@ -294,19 +335,10 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp lookup_creator_uri(%URI{} = agent_uri) do
-    slice_creator =
-      case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
-        {:ok, %{creator_uri: %URI{} = creator}} -> creator
-        _ -> nil
-      end
-
-    lineage_creator =
-      case Ezagent.AgentLineage.lookup(agent_uri) do
-        {:ok, %URI{} = creator} -> creator
-        _ -> nil
-      end
-
-    slice_creator || lineage_creator
+    case Ezagent.Behavior.ApiKeys.data_owner(agent_uri) do
+      %URI{} = creator -> creator
+      _ -> nil
+    end
   rescue
     _ -> nil
   end
@@ -385,11 +417,12 @@ defmodule Ezagent.World.IdentityData do
   defp workspace_name(%URI{scheme: "workspace"} = uri) do
     case Ezagent.URI.name(uri) do
       {:ok, name} -> name
-      :error -> "system"
+      :error -> raise ArgumentError, "workspace URI is missing a name: #{inspect(uri)}"
     end
   end
 
-  defp workspace_name(_), do: "system"
+  defp workspace_name(other),
+    do: raise(ArgumentError, "expected workspace URI, got: #{inspect(other)}")
 
   defp entity_matches_workspace?(_workspace_name, :all), do: true
   defp entity_matches_workspace?(workspace_name, workspace_name), do: true

@@ -26,9 +26,11 @@
   #   Pre-existing on main (CI does not run arch.scan); surfaced by the
   #   2026-06-15 orchestrator-readiness work. Burn-down (extract the dialog
   #   scanner from server.ex into a sibling module) tracked in docs/futures/todo.md.
-  # main sync #863: `EzagentPluginLiveview.Admin.SessionContext` landed documented
-  # but oversized at 1301 LOC. World PR-5 imports the new gate/doc baseline from
-  # main and does not edit `ezagent_plugin_liveview`; burn down upstream.
+  # arch-cap-bump: main sync #863 — `EzagentPluginLiveview.Admin.SessionContext`
+  # landed documented but oversized at 1301 LOC. World PR-5 imports the new
+  # gate/doc baseline from main and does not edit `ezagent_plugin_liveview`;
+  # burn down upstream.
+  # arch-cap-bump: oversized_modules_gt_1000: main sync #863 SessionContext 1301 LOC
   oversized_modules_gt_1000: 3,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
@@ -135,6 +137,7 @@
   # caller: `Ezagent.World.LayoutManager.layout_dir/0`, the required
   # EZAGENT_HOME-backed runtime layout JSON store. It is also exact-anchored in
   # `HomePathExceptions`, so the hard-fail-new URI scanner still constrains it.
+  # arch-cap-bump: raw_home_path_outside_core: World PR-2 layout_dir/0 runtime layout store
   raw_home_path_outside_core: 2,
   # Cleanup-1 FF-5 fix: `mcp_config_writer.ex` no longer hardcodes
   # `Path.expand("~/.ezagent")` — its default dir now resolves through the

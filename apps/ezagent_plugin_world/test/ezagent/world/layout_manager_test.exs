@@ -48,6 +48,10 @@ defmodule Ezagent.World.LayoutManagerTest do
     refute File.exists?(LayoutManager.layout_path(workspace_uri))
   end
 
+  test "registers the PTY terminal component type" do
+    assert MapSet.member?(LayoutManager.registered_component_types(), "pty_terminal")
+  end
+
   defp move_sessions_first(layout) do
     [editor, sessions] = layout["components"]
 

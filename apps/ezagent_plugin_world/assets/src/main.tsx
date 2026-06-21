@@ -4,6 +4,7 @@ import {createRoot, type Root} from "react-dom/client"
 import {AdminSurface} from "./components/Admin"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
+import {PtyTerminalSurface} from "./components/PtyTerminal"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
@@ -122,7 +123,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
               <p className="world-eyebrow">React/shadcn shell</p>
               <h1>{state.title || pageTitle(state.component)}</h1>
             </div>
-            <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace://system"}</div>
+            <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}</div>
           </header>
 
           <div className="world-layout-grid" data-component-count={components.length}>
@@ -149,6 +150,13 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onPtyInput: (bytes) => {
+                  pushEvent?.("pty_input", {bytes})
+                },
+                onPtyResize: (size) => {
+                  pushEvent?.("pty_resize", size)
+                },
+                onServerEvent,
               }),
             )}
           </div>
@@ -169,6 +177,9 @@ type RenderContext = {
   onJoin: (sessionUri: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onPtyInput: (bytes: string) => void
+  onPtyResize: (size: {cols: number; rows: number}) => void
+  onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
 function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
@@ -185,6 +196,18 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 
   if (component.type === "sessions_table") {
     return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
+  }
+
+  if (component.type === "pty_terminal") {
+    return (
+      <PtyTerminalSurface
+        key={component.id}
+        state={context.state}
+        onInput={context.onPtyInput}
+        onResize={context.onPtyResize}
+        onServerEvent={context.onServerEvent}
+      />
+    )
   }
 
   if (isAdminComponent(component.type)) {
@@ -228,6 +251,8 @@ function pageTitle(component: string | undefined) {
       return "Agent API keys"
     case "agent_extensions":
       return "Agent extensions"
+    case "pty_terminal":
+      return "Terminal"
     case "dashboard":
       return "Admin dashboard"
     case "observability":

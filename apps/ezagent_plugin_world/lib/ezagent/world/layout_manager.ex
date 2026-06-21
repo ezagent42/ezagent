@@ -26,6 +26,7 @@ defmodule Ezagent.World.LayoutManager do
                                 "feishu_bindings",
                                 "plugins",
                                 "profile",
+                                "pty_terminal",
                                 "routing",
                                 "sessions_table",
                                 "settings",
