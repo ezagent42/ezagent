@@ -551,6 +551,20 @@
   font-size: 12px;
 }
 
+.world-inline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.world-list {
+  display: grid;
+  gap: 8px;
+}
+
 .world-uri {
   overflow-wrap: anywhere;
   border-bottom: 1px solid var(--world-border);

@@ -317,6 +317,17 @@ defmodule EzagentPluginWorld.WorldLive do
     |> Map.put("can_manage_layout", false)
   end
 
+  defp state_for_route(%{group: :workspace_plugins} = route, socket, layout) do
+    route
+    |> Ezagent.World.WorkspacePluginData.state_for(%{
+      workspace_uri: socket.assigns.current_workspace_uri,
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+    })
+    |> Map.put("layout", layout)
+    |> Map.put("can_manage_layout", false)
+  end
+
   defp state_for_route(route, socket, layout) do
     route
     |> Ezagent.World.IdentityData.state_for(%{
@@ -400,6 +411,63 @@ defmodule EzagentPluginWorld.WorldLive do
 
       path == "/identities/agents/new" ->
         %{component: "agent_new_form", title: "New Agent", path: path}
+
+      path == "/workspaces" ->
+        %{
+          group: :workspace_plugins,
+          component: "workspaces_list",
+          title: "Workspaces",
+          path: path
+        }
+
+      match = Regex.run(~r{\A/workspaces/([^/]+)\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          group: :workspace_plugins,
+          component: "workspace_detail",
+          title: "Workspace Detail",
+          path: path,
+          name: URI.decode_www_form(encoded)
+        }
+
+      path == "/plugins" ->
+        %{group: :workspace_plugins, component: "plugins", title: "Plugins", path: path}
+
+      path == "/plugins/feishu/bindings" ->
+        %{
+          group: :workspace_plugins,
+          component: "feishu_bindings",
+          title: "Feishu Bindings",
+          path: path
+        }
+
+      match = Regex.run(~r{\A/plugins/auto/([^/]+)/([^/]+)\z}, path) ->
+        [_full, kind, encoded] = match
+
+        %{
+          group: :workspace_plugins,
+          component: "auto_derive",
+          title: "Auto Derive",
+          path: path,
+          kind: parse_existing_kind(kind),
+          entity_uri: parse_any_uri(encoded)
+        }
+
+      match = Regex.run(~r{\A/plugins/auto/([^/]+)\z}, path) ->
+        [_full, kind] = match
+
+        %{
+          group: :workspace_plugins,
+          component: "auto_derive",
+          title: "Auto Derive",
+          path: path,
+          kind: parse_existing_kind(kind),
+          entity_uri: nil
+        }
+
+      path == "/profile" ->
+        %{group: :workspace_plugins, component: "profile", title: "Profile", path: path}
 
       path == "/admin" ->
         %{group: :admin, component: "dashboard", title: "Admin Dashboard", path: path}
@@ -509,6 +577,24 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_session_uri_param(_), do: nil
+
+  defp parse_any_uri(encoded) when is_binary(encoded) do
+    encoded
+    |> URI.decode_www_form()
+    |> Ezagent.URI.new!()
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp parse_any_uri(_), do: nil
+
+  defp parse_existing_kind(kind) when is_binary(kind) do
+    String.to_existing_atom(kind)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp parse_existing_kind(_), do: nil
 
   defp layout_manage_affordance?(%URI{} = workspace_uri, caps) do
     Enum.any?(caps, &layout_manage_cap?(&1, workspace_uri))

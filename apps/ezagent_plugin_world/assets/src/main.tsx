@@ -6,6 +6,7 @@ import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
+import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
 import "./styles.css"
 
 type WorldLayout = {
@@ -30,7 +31,7 @@ type WorldMountOptions = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
-type WorldState = IdentitiesState & {
+type WorldState = IdentitiesState & WorkspacePluginState & {
   can_manage_layout?: boolean
   component?: string
   current_session_uri?: string | null
@@ -102,6 +103,15 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             </a>
             <a className={navClass(state.path, "/admin")} href="/admin">
               Admin
+            </a>
+            <a className={navClass(state.path, "/workspaces")} href="/workspaces">
+              Workspaces
+            </a>
+            <a className={navClass(state.path, "/plugins")} href="/plugins">
+              Plugins
+            </a>
+            <a className={navClass(state.path, "/profile")} href="/profile">
+              Profile
             </a>
           </nav>
         </aside>
@@ -181,6 +191,10 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     return <AdminSurface key={component.id} state={{...context.state, component: component.type}} />
   }
 
+  if (isWorkspacePluginComponent(component.type)) {
+    return <WorkspacePluginSurface key={component.id} state={{...context.state, component: component.type}} />
+  }
+
   return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
 }
 
@@ -188,7 +202,10 @@ function navClass(path: string | undefined, href: string) {
   const active =
     href === "/"
       ? path === "/" || path === undefined
-      : path === href || (href === "/identities" && path?.startsWith("/identities"))
+      : path === href ||
+        (href === "/identities" && path?.startsWith("/identities")) ||
+        (href === "/workspaces" && path?.startsWith("/workspaces")) ||
+        (href === "/plugins" && path?.startsWith("/plugins"))
 
   return active ? "world-nav-item world-nav-item-active" : "world-nav-item"
 }
@@ -231,6 +248,18 @@ function pageTitle(component: string | undefined) {
       return "Routing"
     case "external_mirror":
       return "External mirror"
+    case "workspaces_list":
+      return "Workspaces"
+    case "workspace_detail":
+      return "Workspace detail"
+    case "plugins":
+      return "Plugins"
+    case "profile":
+      return "Profile"
+    case "auto_derive":
+      return "Auto derive"
+    case "feishu_bindings":
+      return "Feishu bindings"
     default:
       return "Sessions"
   }
@@ -249,4 +278,8 @@ function isAdminComponent(type: string) {
     "snapshots",
     "templates",
   ].includes(type)
+}
+
+function isWorkspacePluginComponent(type: string) {
+  return ["auto_derive", "feishu_bindings", "plugins", "profile", "workspace_detail", "workspaces_list"].includes(type)
 }

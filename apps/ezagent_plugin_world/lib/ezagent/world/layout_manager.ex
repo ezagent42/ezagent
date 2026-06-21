@@ -22,12 +22,18 @@ defmodule Ezagent.World.LayoutManager do
                                 "identities",
                                 "layout_editor",
                                 "observability",
+                                "auto_derive",
+                                "feishu_bindings",
+                                "plugins",
+                                "profile",
                                 "routing",
                                 "sessions_table",
                                 "settings",
                                 "snapshots",
                                 "templates",
-                                "users_table"
+                                "users_table",
+                                "workspace_detail",
+                                "workspaces_list"
                               ])
   @layout_version 1
 

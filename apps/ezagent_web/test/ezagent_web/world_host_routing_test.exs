@@ -153,6 +153,36 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     end
   end
 
+  test "world workspace and plugin group paths stay inside the world scope", %{conn: conn} do
+    encoded_session = URI.encode_www_form("session://system/default/main")
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/workspaces", "workspaces_list"},
+      {"/workspaces/system", "workspace_detail"},
+      {"/plugins", "plugins"},
+      {"/plugins/feishu/bindings", "feishu_bindings"},
+      {"/plugins/auto/session", "auto_derive"},
+      {"/plugins/auto/session/#{encoded_session}", "auto_derive"},
+      {"/profile", "profile"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
   test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
     caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
 
