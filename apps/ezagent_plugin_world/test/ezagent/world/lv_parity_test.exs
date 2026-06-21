@@ -63,21 +63,34 @@ defmodule Ezagent.World.LvParityTest do
   # feishu bindings, auto-derive list, profile, admin dashboard/observability/
   # registry/snapshots/templates/caps/authz-audit/settings/routing, sessions
   # list, agent create, cap grant/revoke, set_password, filter.)
+  # PR-1 (session conversation core) landed + agent-browser-verified:
+  #   chat_compose      — text-only send via `:session :send` dispatch.
+  #                       @mention parsing + file attachments are PR-2 (the
+  #                       ratchet can't see sub-feature completeness, so:
+  #                       PR-1 chat_compose = TEXT ONLY).
+  #   load_older_messages — backwards history paging (`MessageStore.older_than`).
+  #   mark_displayed    — fire-and-forget read marker (once per message id).
+  #   switch_session    — `?session=` deep-link via push_patch → handle_params.
+  #   chat_message      — inbound bridge: session-topic broadcast → push_event.
+  # Owed enrichment recorded in later-PR scope (the entry is gone from the
+  # ratchet, so the reminder must live here + in the spec):
+  #   - switch_session member-panel refresh → PR-3.
+  #   - chat_compose @mention/upload → PR-2.
   @pending_migration ~w(
-    chat_compose validate_compose cancel_upload load_older_messages mark_displayed
-    create_session switch_session switch_view switch_to_pty_for_agent
+    validate_compose cancel_upload
+    create_session switch_view switch_to_pty_for_agent
     invite_member open_invite_modal close_invite_modal remove_member
     restart_orchestrator routing_rule_add_session routing_rule_toggle
     toggle_debug_panel toggle_expand cmdk_open cmdk_close cmdk_query cmdk_select
     set_default_source save_smtp send_test_email update_test_recipient
     edit_display_name save_display_name cancel_edit_display_name
     bind unbind
-    chat_message member_joined member_left member_offline member_presence
+    member_joined member_left member_offline member_presence
     notification read_marker_updated cc_event cc_connected cc_disconnected
     slice_changed audit_event authz_event
   )
 
-  @pending_baseline 44
+  @pending_baseline 39
 
   test "LV inventory has not silently shrunk below the recorded baseline" do
     assert length(@lv_events) >= @lv_events_baseline,

@@ -6,6 +6,7 @@ defmodule EzagentPluginWorld.WorldLive do
   use Phoenix.LiveView
 
   alias Ezagent.Invocation
+  alias Ezagent.World.ConversationActions
   alias EzagentPluginWorld.Layouts
 
   @refresh_ms 2_000
@@ -16,6 +17,16 @@ defmodule EzagentPluginWorld.WorldLive do
     workspace = Map.get(socket.assigns, :current_workspace_uri)
     sessions = list_sessions(workspace)
     current_session_uri = List.first(sessions)
+
+    # Inbound realtime bridge (parity-migration PR-1): subscribe to EVERY
+    # session in the caller's workspace at mount and filter by source in
+    # `handle_info`, mirroring AdminLive's subscription model. Session
+    # switching is a `push_patch` → `handle_params` (current-session swap
+    # + reload), so it touches NO subscriptions — there is no per-switch
+    # teardown/resubscribe race that could silently drop a message. The
+    # composer dispatch is `:cast`, so the sender sees its OWN message only
+    # via this inbound broadcast; subscribe-at-mount guarantees that.
+    socket = subscribe_session_events(socket, sessions)
 
     caller_payload = %{
       "entity_uri" => encode_uri(caller),
@@ -54,6 +65,7 @@ defmodule EzagentPluginWorld.WorldLive do
     route = route_for(params, uri)
     workspace = socket.assigns.current_workspace_uri
     layout = layout_for_route(route, workspace)
+    socket = maybe_set_current_session(socket, route)
     state = state_for_route(route, socket, layout)
     socket = maybe_subscribe_pty(socket, route)
 
@@ -64,6 +76,16 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:world_component, route.component)}
   end
+
+  # Conversation deep-link (`/sessions?session=<encoded>`) selects the
+  # in-view session; the inbound `:chat_message` filter compares against it.
+  defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
+    socket
+    |> assign(:current_session_uri, uri)
+    |> assign(:current_session_uri_str, encode_uri(uri))
+  end
+
+  defp maybe_set_current_session(socket, _route), do: socket
 
   @impl true
   def handle_info(:push_world_state, socket) do
@@ -84,6 +106,34 @@ defmodule EzagentPluginWorld.WorldLive do
       when phase in [:starting, :running, :dead] do
     {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
   end
+
+  # Inbound chat bridge (PR-1) — a `:session :send` dispatch broadcasts
+  # `{:chat_message, canonical_session_uri, %Message{}}` on the session's
+  # events topic (`Ezagent.Behavior.Session.handle_send/2`). Push the
+  # render-ready row to the React island ONLY when it belongs to the
+  # in-view session; foreign-session events (other subscribed sessions in
+  # the workspace) are dropped, mirroring AdminLive's source guard.
+  def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
+    if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
+      row = Ezagent.World.ConversationData.message_row(msg)
+      {:noreply, push_event(socket, "chat:message", %{"message" => row})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Legacy 2-tuple chat broadcast lacks a source session URI, so it cannot
+  # be safely routed to the in-view session — drop it (mirrors AdminLive).
+  def handle_info({:chat_message, %Ezagent.Message{}}, socket), do: {:noreply, socket}
+
+  # Subscribing to a session's events topic also delivers membership and
+  # presence events ({:member_joined,_}, {:member_left,_}, {:member_offline,
+  # _,_}, {:member_presence,...}) plus notification/slice envelopes. PR-1
+  # only renders the conversation stream; the members panel (PR-3) and
+  # notification flashes (PR-6) wire these explicitly. Until then drop any
+  # unhandled inbound so the LV never crashes on a topic event it doesn't
+  # yet present.
+  def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event(
@@ -114,6 +164,59 @@ defmodule EzagentPluginWorld.WorldLive do
         socket
       ) do
     dispatch_agent_create(socket, agent_params)
+  end
+
+  # PR-1 conversation core — composer send, history paging, read markers, and
+  # session switch. Thin clauses parse the session URI then delegate the body
+  # to `Ezagent.World.ConversationActions` (the `Admin.Compose` pattern), so
+  # the shell stays modular as later PRs grow the conversation surface.
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "chat.send", "args" => %{"session_uri" => session_uri_str, "text" => text}},
+        socket
+      )
+      when is_binary(text) do
+    with_session(socket, session_uri_str, &ConversationActions.send_message(socket, &1, text))
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "chat.load_older",
+          "args" => %{"session_uri" => session_uri_str, "before" => before}
+        },
+        socket
+      )
+      when is_binary(before) do
+    with_session(socket, session_uri_str, &ConversationActions.load_older(socket, &1, before),
+      on_error: {:noreply, socket}
+    )
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "chat.mark_displayed",
+          "args" => %{"session_uri" => session_uri_str, "msg_id" => msg_id}
+        },
+        socket
+      )
+      when is_binary(msg_id) and msg_id != "" do
+    with_session(socket, session_uri_str, &ConversationActions.mark_displayed(socket, &1, msg_id),
+      on_error: {:noreply, socket}
+    )
+  end
+
+  # Session switch re-uses the `?session=` deep-link contract (codex H2) via
+  # push_patch, flowing through `handle_params` like a CmdK/landing nav.
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "session.switch", "args" => %{"session_uri" => session_uri_str}},
+        socket
+      ) do
+    with_session(socket, session_uri_str, fn session_uri ->
+      {:noreply, push_patch(socket, to: "/sessions?session=#{encode_param(session_uri)}")}
+    end)
   end
 
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
@@ -197,20 +300,33 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp dispatch_session_join_ok(socket, %URI{} = session_uri) do
-    session_uri_str = URI.to_string(session_uri)
-
-    state =
-      socket.assigns.world_state
-      |> Map.put("current_session_uri", session_uri_str)
-
+    # PR-1: after a successful join, open the conversation for that session
+    # via the `?session=` deep-link (push_patch → handle_params loads the
+    # message stream + sets the inbound-filter session). The sessions table
+    # is thus a launcher into the conversation.
     {:noreply,
      socket
      |> assign(:current_session_uri, session_uri)
-     |> assign(:current_session_uri_str, session_uri_str)
-     |> assign(:world_state, state)
-     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:current_session_uri_str, URI.to_string(session_uri))
      |> assign(:last_dispatch_status, "ok")
-     |> push_event("world:state", state)}
+     |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+  end
+
+  # Parse a session URI param then run `fun` with it; on a malformed URI
+  # default to a `bad_session_uri` status (override with `:on_error` for
+  # actions that should silently no-op, e.g. fire-and-forget markers).
+  defp with_session(socket, session_uri_str, fun, opts \\ []) do
+    case parse_session_uri(session_uri_str) do
+      {:ok, session_uri} ->
+        fun.(session_uri)
+
+      :error ->
+        Keyword.get(
+          opts,
+          :on_error,
+          {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
+        )
+    end
   end
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
@@ -348,6 +464,10 @@ defmodule EzagentPluginWorld.WorldLive do
     }
   end
 
+  defp state_for_route(%{component: "conversation", session_uri: %URI{} = session_uri}, socket, layout) do
+    conversation_state(session_uri, socket, layout)
+  end
+
   defp state_for_route(%{component: "sessions_table"}, socket, layout) do
     sessions =
       socket.assigns.current_workspace_uri
@@ -430,6 +550,53 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp list_sessions(_), do: []
 
+  # --- Conversation (PR-1) ------------------------------------------------
+  #
+  # Shell concerns (PubSub subscription + param parsing) stay here; the pure
+  # read-path lives in `Ezagent.World.ConversationData`, derived entirely
+  # against core/domain survivors so the LiveView plugin can be deleted at
+  # parity-migration PR-7 (world carries ZERO references to it — grep gate).
+
+  defp subscribe_session_events(socket, sessions) do
+    if connected?(socket) do
+      for %URI{} = session_uri <- sessions do
+        Phoenix.PubSub.subscribe(
+          EzagentCore.PubSub,
+          Ezagent.Behavior.Session.session_events_topic(session_uri)
+        )
+      end
+    end
+
+    socket
+  end
+
+  defp conversation_session_param(params) when is_map(params) do
+    case Map.get(params, "session") do
+      encoded when is_binary(encoded) -> parse_session_uri_param(encoded)
+      _ -> nil
+    end
+  end
+
+  defp conversation_session_param(_), do: nil
+
+  defp conversation_state(%URI{} = session_uri, socket, layout) do
+    sessions =
+      socket.assigns.current_workspace_uri
+      |> list_sessions()
+      |> Enum.map(&session_row/1)
+
+    session_uri
+    |> Ezagent.World.ConversationData.state_for(%{
+      caller_uri: socket.assigns.current_entity_uri,
+      workspace_uri: socket.assigns.current_workspace_uri,
+      sessions: sessions
+    })
+    |> Map.put("layout", layout)
+    |> Map.put("can_manage_layout", false)
+  end
+
+  defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
+
   defp parse_session_uri(value) when is_binary(value) do
     case Ezagent.URI.new!(value) do
       %URI{scheme: "session"} = uri -> {:ok, uri}
@@ -446,7 +613,22 @@ defmodule EzagentPluginWorld.WorldLive do
 
     cond do
       path in ["/", "/sessions"] ->
-        %{component: "sessions_table", title: "Sessions", path: path}
+        # `?session=<encoded>` deep-links into the conversation view (codex
+        # H2 — the contract the command palette emits); bare `/sessions`
+        # keeps the launcher table (revisited when the in-header session
+        # selector lands in PR-4).
+        case conversation_session_param(params) do
+          %URI{} = session_uri ->
+            %{
+              component: "conversation",
+              title: "Conversation",
+              path: path,
+              session_uri: session_uri
+            }
+
+          nil ->
+            %{component: "sessions_table", title: "Sessions", path: path}
+        end
 
       path == "/identities" ->
         %{
@@ -711,6 +893,7 @@ defmodule EzagentPluginWorld.WorldLive do
   defp cap_scope_matches?(actual, needed), do: actual == needed
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
+  defp same_uri?(_, _), do: false
 
   defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
     if connected?(socket) do

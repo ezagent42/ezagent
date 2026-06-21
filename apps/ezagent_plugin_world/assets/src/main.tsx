@@ -2,6 +2,7 @@ import React from "react"
 import {createRoot, type Root} from "react-dom/client"
 
 import {AdminSurface} from "./components/Admin"
+import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
@@ -32,7 +33,7 @@ type WorldMountOptions = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
-type WorldState = IdentitiesState & WorkspacePluginState & {
+type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   can_manage_layout?: boolean
   component?: string
   current_session_uri?: string | null
@@ -150,6 +151,30 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onChatSend: (sessionUri, text) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "chat.send",
+                    args: {session_uri: sessionUri, text},
+                  })
+                },
+                onSessionSwitch: (sessionUri) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.switch",
+                    args: {session_uri: sessionUri},
+                  })
+                },
+                onLoadOlder: (sessionUri, before) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "chat.load_older",
+                    args: {session_uri: sessionUri, before},
+                  })
+                },
+                onMarkDisplayed: (sessionUri, msgId) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "chat.mark_displayed",
+                    args: {session_uri: sessionUri, msg_id: msgId},
+                  })
+                },
                 onPtyInput: (bytes) => {
                   pushEvent?.("pty_input", {bytes})
                 },
@@ -177,6 +202,10 @@ type RenderContext = {
   onJoin: (sessionUri: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onChatSend: (sessionUri: string, text: string) => void
+  onSessionSwitch: (sessionUri: string) => void
+  onLoadOlder: (sessionUri: string, before: string) => void
+  onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -196,6 +225,22 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 
   if (component.type === "sessions_table") {
     return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
+  }
+
+  if (component.type === "conversation") {
+    // Key by session so a switch (push_patch → new state) remounts the
+    // island fresh from the server-pushed message stream.
+    return (
+      <Conversation
+        key={`conversation-${context.state.session_uri || "none"}`}
+        state={context.state}
+        onSend={context.onChatSend}
+        onSwitch={context.onSessionSwitch}
+        onLoadOlder={context.onLoadOlder}
+        onMarkDisplayed={context.onMarkDisplayed}
+        onServerEvent={context.onServerEvent}
+      />
+    )
   }
 
   if (component.type === "pty_terminal") {
@@ -235,6 +280,8 @@ function navClass(path: string | undefined, href: string) {
 
 function pageTitle(component: string | undefined) {
   switch (component) {
+    case "conversation":
+      return "Conversation"
     case "identities":
       return "Identities"
     case "users_table":

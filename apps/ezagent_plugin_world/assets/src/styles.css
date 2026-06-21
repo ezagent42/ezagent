@@ -760,3 +760,110 @@
     flex-direction: column;
   }
 }
+
+/* --- Conversation (parity-migration PR-1) --- */
+.world-conversation {
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+}
+
+.world-session-select {
+  border: 1px solid var(--world-border);
+  border-radius: 6px;
+  background: var(--world-panel);
+  color: var(--world-foreground);
+  font-size: 13px;
+  padding: 6px 8px;
+  max-width: 280px;
+}
+
+.world-conversation-stream {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+
+.world-conversation-older {
+  display: flex;
+  justify-content: center;
+  padding-bottom: 4px;
+}
+
+.world-message {
+  border: 1px solid var(--world-border);
+  border-radius: 8px;
+  background: var(--world-background);
+  padding: 10px 12px;
+  max-width: 80%;
+}
+
+.world-message[data-mine="true"] {
+  align-self: flex-end;
+  background: var(--world-accent);
+  color: var(--world-accent-foreground);
+  border-color: var(--world-accent);
+}
+
+.world-message[data-sender-kind="agent"] {
+  border-left: 3px solid var(--world-accent);
+}
+
+.world-message-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.world-message-sender {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.world-message-at {
+  font-size: 11px;
+  color: var(--world-muted);
+}
+
+.world-message[data-mine="true"] .world-message-at {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.world-message-text {
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.world-message-attachments {
+  margin-top: 6px;
+  font-size: 12px;
+  list-style: disc;
+  padding-left: 18px;
+}
+
+.world-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--world-border);
+  padding: 12px 16px;
+}
+
+.world-composer-input {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  border: 1px solid var(--world-border);
+  border-radius: 6px;
+  background: var(--world-panel);
+  color: var(--world-foreground);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 10px 12px;
+}
