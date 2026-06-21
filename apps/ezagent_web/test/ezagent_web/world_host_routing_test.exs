@@ -107,6 +107,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       {"/identities/agents/#{encoded_agent}/api-keys", "agent_api_keys"},
       {"/identities/agents/new", "agent_new_form"},
       {"/identities/agents/#{encoded_agent}/extensions", "agent_extensions"},
+      {"/identities/agents/#{encoded_agent}/terminal", "pty_terminal"},
       {"/identities/agents/#{encoded_agent}", "agent_detail"}
     ]
 
