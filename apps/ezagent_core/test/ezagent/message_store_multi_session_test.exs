@@ -63,8 +63,15 @@ defmodule Ezagent.MessageStoreMultiSessionTest do
     {:ok, _} =
       MessageStore.write(Message.new(sender, %{text: "msg-B1", attachments: []}), session_b)
 
-    a_texts = MessageStore.recent_in_session(session_a, 100) |> Enum.map(& &1.body["text"]) |> MapSet.new()
-    b_texts = MessageStore.recent_in_session(session_b, 100) |> Enum.map(& &1.body["text"]) |> MapSet.new()
+    a_texts =
+      MessageStore.recent_in_session(session_a, 100)
+      |> Enum.map(& &1.body["text"])
+      |> MapSet.new()
+
+    b_texts =
+      MessageStore.recent_in_session(session_b, 100)
+      |> Enum.map(& &1.body["text"])
+      |> MapSet.new()
 
     assert "msg-A1" in a_texts
     refute "msg-A1" in b_texts
