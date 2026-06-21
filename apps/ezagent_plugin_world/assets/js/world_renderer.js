@@ -14,6 +14,7 @@ export const WorldRenderer = {
       const mod = await import(/* @vite-ignore */ moduleUrl)
       this._worldUnmount = mod.mountWorld(this.el, {
         layout: parseJson(this.el.dataset.layout, {}),
+        state: parseJson(this.el.dataset.worldState, {}),
         caller: parseJson(this.el.dataset.caller, {}),
         pushEvent: (event, payload, onReply) => {
           this.pushEventTo(this.el, event, payload, onReply)

@@ -34,6 +34,7 @@ defmodule EzagentWeb.Router do
 
     live_session :world_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/", WorldLive
+      live "/sessions", WorldLive
     end
   end
 
