@@ -184,3 +184,168 @@ Two ways to keep upload authz in parity with dispatch:
 PR-2b is HELD pending Allen's pick (A vs B). Migration proceeds with PR-4+
 meanwhile; upload is the least-critical conversation feature and must not ship
 with the draft's holes.
+
+---
+
+## Option B — full design (Allen approved 2026-06-21, Feishu)
+
+> Allen: "(B) 上传走派发链，记得继续坚持之前的 LV / CLI / API 原则." — route the
+> upload through the dispatch chain so ONE authorization path serves the web, CLI
+> and API surfaces. No duplicate dry-predicate (rejected draft's root cause).
+
+### Shape (one authz path = the dispatch chokepoint)
+
+```
+browser → POST /world/uploads (multipart: session, file)        [:browser + RequireEntity → CSRF + authed caller]
+  controller:
+    1. parse + bound-check (size ≤ 10MB, ≤ 5 files/msg enforced at send too)
+    2. store bytes to a CALLER/SESSION-scoped QUARANTINE dir (not the live store)
+    3. dispatch %Invocation{target: session :attach, mode: :call,
+                            args: %{quarantine_ref, filename, size, content_type},
+                            ctx: %{caller, caps, reply: :ignore}}
+       → AUTHORIZES AT THE CHOKEPOINT (required-cap + provenance + ws-isolation,
+         all the real dispatch decision — NOT a re-implemented matches?/2)
+    4. on {:error, _}  → DELETE the quarantine file, return 401/403 (no orphan)
+       on :ok          → handler has committed the file under the SESSION's
+                         workspace store + returned a signed attach-grant;
+                         controller responds 200 JSON {uri, name, size, grant}
+```
+
+### New Session action: `:attach` (the chokepoint)
+
+- Declared on `Ezagent.Behavior.Session` alongside `:send/:join/:leave`, with
+  **`caps: [:send]`** — upload shares SEND authority, so they can never drift
+  (the spec's original goal, now structural). A member who may `:send` may
+  `:attach`; nobody else. No new cap to grant, no participation-tier change.
+- Handler `handle_attach/2`:
+  1. resolve `session_ws = Ezagent.Capability.workspace_of(session_uri)`;
+     `workspace_name = Ezagent.URI.workspace_name!(session_ws)` (raise — no
+     silent default, closes the earlier #2 ws-binding finding by construction).
+  2. `stored_name = "#{Ecto.UUID.generate()}-#{sanitize(filename)}"`;
+     `uri = Ezagent.Uploads.store!(workspace_name, stored_name, quarantine_path)`
+     (moves quarantine→live store under the SESSION ws; `FsResolver` rejects
+     unsafe names before any byte).
+  3. mint `grant = Phoenix.Token.sign(EzagentWeb.Endpoint, "world_attach",
+     %{uri: URI.to_string(uri), caller: caller, session: session_uri})`.
+  4. return `{:ok, %{uri: uri, grant: grant}}`.
+- Pure-ish: the handler does a filesystem move + token sign; no slice mutation,
+  so it adds no persistent session state (avoids the slice-bloat alternative of a
+  `pending_attachments` map).
+
+### Closing codex's findings, by construction
+
+1. **#1 provenance / #2 ws-isolation** — gone: authorization IS the dispatch of
+   `:session :attach`, so it runs the SAME chokepoint (provenance filter +
+   `workspace_isolation_check` + required-cap resolution) as `:session :send`.
+   There is no second predicate to drift.
+2. **#3 client-URI laundering** — the signed **attach-grant** binds
+   `uri ↔ caller ↔ session`. On `chat.send` the client sends `grants: [...]`
+   (NOT raw URIs). `ConversationData.build_message/3` verifies each grant with
+   `Phoenix.Token.verify(.., "world_attach", grant, max_age: …)` and checks
+   `caller`/`session` match the sender + target before embedding the bound URI.
+   A forged or cross-session `resource://…/uploads/…` has no valid grant → dropped.
+3. **#4 file count** — `build_message/3` server-enforces `length(grants) ≤ 5`
+   (and the controller pre-checks per request); neither trusts the client.
+4. **#5 orphans** — (a) delete-on-reject: the controller removes the quarantine
+   file whenever `:attach` returns `{:error, _}`, so an unauthorized upload
+   commits zero bytes; (b) attached-but-never-sent: the grant has a `max_age`
+   (e.g. 1h) and the committed file is swept by a bounded TTL GC over the uploads
+   store (documented; the sweep is a follow-up, NOT a system principal — a plain
+   `mix ezagent` maintenance task / scheduled job).
+5. **#6 CSRF** — the route is in the existing `:browser` pipeline (CSRF token
+   from the page, plumbed through `mountWorld` like `caller`); a size guard caps
+   the multipart body before parse.
+
+### Three-surface parity (LV / CLI / API — Allen's reminder)
+
+Because attach is a real dispatch action, the SAME authorization is reachable
+from: the web controller (above), a CLI `mix ezagent session attach <session>
+<file>`, and any API caller issuing the `:session :attach` invocation. The web
+controller is just the HTTP adapter in front of the one dispatch — exactly the
+LV/CLI/API principle. (CLI/API adapters are thin and can land in this PR or a
+fast follow; the dispatch action is the shared core.)
+
+### Message render (download links) — unchanged from the draft
+
+`ConversationData.message_row/2`: for a `resource://<ws>/uploads/<name>`
+attachment, mint a signed `Ezagent.Uploads.DownloadToken` →
+`/uploads/download?token=<t>` (the existing authed download route re-checks
+participant at serve time, so minting does not widen access). Non-uploads URIs
+render as plain text.
+
+### Tests
+
+- `handle_attach/2`: authorized member (holds `:send`) → file committed under the
+  SESSION ws + valid grant returned; caller without `:send` → `{:error,
+  :unauthorized}`, no commit; cross-workspace caller → denied by the same
+  ws-isolation as `:send`; unsafe filename → rejected by `store!`.
+- Controller: 200 + grant on authorized; 401 + quarantine deleted on unauthorized
+  (assert the quarantine path no longer exists); 413 oversized; 422 bad params.
+- `build_message/3`: valid grant → bound URI embedded; forged/altered grant →
+  dropped; grant for a DIFFERENT session/caller → dropped; > 5 grants → refused.
+- `message_row/2`: mints a download-token link for an uploads URI.
+- agent-browser E2E (on the seeded home, `docs/guide/world-e2e-seed.md`): attach
+  a file → chip appears → send → message shows a working download link.
+
+### Ratchet + gates
+
+Remove `validate_compose` + `cancel_upload` from `@pending_migration`
+(current baseline 35 → 33; the spec's earlier "39→37" predates PR-3a's removals —
+reconcile to 33). Per-PR gates: world+web suites, invariants (incl
+`missing_cap_check_mutating_actions` — the new `:attach` MUST declare `caps:`),
+arch.scan, doc.scan, p13, no-LV grep, vite build, agent-browser + frontend-design.
+
+---
+
+## codex review of Option B (2026-06-21) → revisions (the design to implement)
+
+codex confirmed the architectural direction (authz through dispatch) and that
+`store!/3` arg-order (#3) + download-token (#6) are genuinely CLOSED. It found
+the rest needs these concrete fixes — folded in below as the binding design:
+
+1. **[HIGH] `caps: [:send]` on `:attach` does NOTHING.** The runtime sets the
+   *needed* action to the *dispatched* action name and `Capability.matches?`
+   requires held-action == needed-action (no alias) — `kind/runtime.ex:468-476`,
+   `capability/match.ex:34-37`. **FIX:** `:attach` declares **`caps: [:attach]`**
+   (a real cap) AND `:attach` is added to the confirmed-member participation tier
+   `@member_chat_actions` (`membership.ex:255` → `[:send, :leave, :attach]`), so a
+   member who is granted `:send` at join is co-granted `:attach`. "Upload shares
+   send authority" is now true by CO-GRANTING, not by a (non-functional) alias.
+   Unconfirmed/anon members (read-only tier) get neither — correct.
+2. **[HIGH→CLOSED-on-impl] dispatch gives provenance + ws-isolation + cap check**
+   for free once `:attach` exists — `kind/runtime.ex:157-162,557-563,652-690`.
+3. **[NEW-HOLE #4/#5] `store!/3` is `File.cp!`, not a move, and FS-I/O must not
+   run in the Kind.** `uploads.ex:103-104`. **FIX:** the `:attach` HANDLER is a
+   thin authorize-gate — it does NO filesystem I/O and NO slice mutation; merely
+   reaching `handle_attach/2` means the chokepoint authorized the caller, so it
+   returns `{:ok, %{ok: true}, []}`. The **controller** does the `store!` AFTER
+   the `:ok` dispatch (in the web request process, never the session actor), then
+   **always deletes the quarantine file** (success OR failure — `cp!` leaves it),
+   in an `after`-style cleanup. On `{:error, _}` the controller deletes quarantine
+   and returns 403, committing zero bytes.
+4. **[#7 replay] same-caller/same-session grant replay is ACCEPTED** (documented):
+   the grant binds `uri/caller/session` with a `max_age`; a caller replaying their
+   own grant only re-attaches their own file — harmless. Cross-caller/cross-session
+   is blocked by the binding. No nonce/jti ledger (keeps it stateless, no table).
+5. **[#8 size guard] cap the multipart body at the PARSER layer**, not the
+   controller/router — `Plug.Parsers` runs in `endpoint.ex:79-87` before the
+   pipeline. **FIX:** the upload route uses a scoped parser with a `:length`
+   limit (≈11 MB to cover one 10 MB file + overhead); the controller additionally
+   rejects any single entry > 10 MB and > 5 entries. CSRF still applies (route in
+   `:browser`).
+
+### Net file touch-list
+
+- `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex` — `action(:attach,
+  caps: [:attach], modes: [:call], ...)` + `handle_attach/2` (thin gate).
+- `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex` —
+  `@member_chat_actions` += `:attach`.
+- `apps/ezagent_web/lib/ezagent_web/controllers/world_uploads_controller.ex` (new)
+  + route (scoped parser `:length`) in `router.ex`.
+- `apps/ezagent_plugin_world/lib/ezagent/world/conversation_data.ex` —
+  `build_message/3` verifies grants → embeds bound URIs (≤5); `message_row/2`
+  mints download-token links for `resource://…/uploads/…`.
+- `apps/ezagent_plugin_world/assets/src/components/Conversation.tsx` + `main.tsx`
+  — paperclip + hidden file input, FormData POST with CSRF, pending chips (✕ =
+  client-only `cancel_upload` parity), pre-flight validate (`validate_compose`).
+- Tests as listed above; ratchet 35 → 33.

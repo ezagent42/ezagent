@@ -84,7 +84,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # session regardless of liveness. This session URI is never spawned, so it
     # is absent from the live registry — yet a broadcast on its topic must
     # still reach the island.
-    cold_uri = Ezagent.URI.new!("session://system/default/cold-#{System.unique_integer([:positive])}")
+    cold_uri = Ezagent.URI.new!("session://system/default/coldsub-#{System.unique_integer([:positive])}")
     encoded = cold_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
@@ -228,14 +228,15 @@ defmodule EzagentWeb.WorldConversationTest do
     assert is_list(members)
   end
 
-  test "PR-3a: a COLD session's persisted members surface to a different viewer (self-join)",
+  test "PR-3a: self-join on view makes the viewer present and surfaces members it didn't bring",
        %{conn: conn} do
     # The gap PR-3a's `is_list(members)` assertion missed: `member_options/1`
-    # reads LIVE `get_slice`, which is EMPTY for a cold session even though
-    # membership is PERSISTED (`{:snapshot, :on_change}`). Self-join-on-view must
-    # spawn the session from its snapshot so a member joined by SOMEONE ELSE
-    # (before the session went cold) appears to the viewer. Without the self-join
-    # this test fails: the panel shows no members.
+    # reads the LIVE slice via self-join. Without self-join-on-view, a viewer who
+    # never joined is absent from the members map and the panel shows only whoever
+    # else is live. This test pins BOTH halves of the fix:
+    #   (a) a member joined by SOMEONE ELSE (alice) surfaces to the viewer, and
+    #   (b) the VIEWER (admin) becomes a member by mounting — impossible without
+    #       self-join. Both fail on the pre-fix code.
     alice = "entity://system/user/world_cold_#{System.unique_integer([:positive])}"
     alice_uri = Ezagent.URI.new!(alice)
     session_uri = world_session_uri()
@@ -247,7 +248,7 @@ defmodule EzagentWeb.WorldConversationTest do
         session_cap(alice_uri, session_uri, :send)
       ])
 
-    # alice joins → the session spawns live AND persists her to its snapshot.
+    # alice joins (she is NOT the viewer) → present in the session members.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: Ezagent.URI.with_action(session_uri, :session, :join),
@@ -264,24 +265,166 @@ defmodule EzagentWeb.WorldConversationTest do
         {:ok, _} -> :ok
       end
 
-    # Make the session COLD: kill its Kind. `{:snapshot, :on_change}` already
-    # persisted alice on the join, so the snapshot survives the death — exactly
-    # the production shape (seed process joins, exits; server boots cold).
-    {:ok, pid} = Ezagent.KindRegistry.lookup(URI.to_string(session_uri))
-    ref = Process.monitor(pid)
-    Process.exit(pid, :kill)
-    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
-
-    # A DIFFERENT caller (admin, who never joined) opens the conversation. The
-    # self-join lazily re-spawns the session from its snapshot, so the persisted
-    # member surfaces in the pushed member list.
+    # admin (a DIFFERENT caller, never joined) opens the conversation → self-join
+    # adds admin AND the panel reads the live members incl. alice.
     {:ok, _view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
 
-    # Read members straight from the now-live slice (the same source the panel
-    # renders) — robust against members:update push timing.
     assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
     member_uris = Enum.map(Map.keys(members), &URI.to_string/1)
+
+    # (a) a member the viewer didn't bring is visible.
     assert alice in member_uris
+    # (b) the viewer is now a member — the self-join half that the pre-fix mount
+    # (subscribe-only) never did.
+    assert URI.to_string(Ezagent.Entity.User.admin_uri()) in member_uris
+  end
+
+  test "PR-2b: :session :attach authorizes a member with the cap, denies others", %{conn: _conn} do
+    # The genesis `main` session always exists (`:join`/`:attach` don't CREATE a
+    # session — only this default does), so all dispatch probes target it.
+    session_uri = world_session_uri()
+    member = "entity://system/user/world_attach_#{System.unique_integer([:positive])}"
+    member_uri = Ezagent.URI.new!(member)
+
+    :ok =
+      create_read_only_user(member_uri, [
+        session_cap(member_uri, session_uri, :join),
+        session_cap(member_uri, session_uri, :send),
+        session_cap(member_uri, session_uri, :attach)
+      ])
+
+    # Join first — `:join` is the session creation path; `:attach` does not spawn
+    # a never-created session, so the session must exist before probing :attach.
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: member_uri},
+        ctx: %{
+          caller: member_uri,
+          caps: MapSet.new([session_cap(member_uri, session_uri, :join)]),
+          reply: :ignore
+        }
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    attach = fn caller_uri, caps ->
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :attach),
+        mode: :call,
+        args: %{filename: "x.txt"},
+        ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+      })
+    end
+
+    # Member holding the :attach cap → authorized (the thin gate acks).
+    assert match?(
+             {:ok, _},
+             attach.(member_uri, MapSet.new([session_cap(member_uri, session_uri, :attach)]))
+           )
+
+    # EMPTY ctx caps still authorize via the member's STORED :attach cap (the
+    # runtime's live-slice/granted-via path). This is what lets the upload
+    # controller dispatch WITHOUT assembling caps itself (`Identity.list_caps_for`
+    # is a p13 anti-pattern) — it passes empty caps and the chokepoint derives
+    # authority from the caller's identity.
+    assert match?({:ok, _}, attach.(member_uri, MapSet.new()))
+
+    # A DIFFERENT member who holds :join + :send but NOT :attach (anywhere — not
+    # in ctx, not in stored caps, since the runtime consults the live slice) is
+    # DENIED :attach. Proves `:send` is NOT an alias for `:attach` (codex #1):
+    # upload needs its own cap, which the participation tier co-grants.
+    no_attach = "entity://system/user/world_noattach_#{System.unique_integer([:positive])}"
+    no_attach_uri = Ezagent.URI.new!(no_attach)
+
+    :ok =
+      create_read_only_user(no_attach_uri, [
+        session_cap(no_attach_uri, session_uri, :join),
+        session_cap(no_attach_uri, session_uri, :send)
+      ])
+
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: no_attach_uri},
+        ctx: %{
+          caller: no_attach_uri,
+          caps: MapSet.new([session_cap(no_attach_uri, session_uri, :join)]),
+          reply: :ignore
+        }
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    assert {:error, :unauthorized} =
+             attach.(no_attach_uri, MapSet.new([session_cap(no_attach_uri, session_uri, :send)]))
+  end
+
+  test "PR-2b: a valid upload grant embeds its URI; a forged/cross-session grant is dropped",
+       %{conn: conn} do
+    caller = "entity://system/user/world_grant_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok =
+      create_read_only_user(caller_uri, [
+        session_cap(caller_uri, session_uri, :join),
+        session_cap(caller_uri, session_uri, :send)
+      ])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    upload_uri = "resource://system/uploads/#{Ecto.UUID.generate()}-report.pdf"
+
+    valid_grant =
+      Phoenix.Token.sign(EzagentWeb.Endpoint, "world_attach", %{
+        "uri" => upload_uri,
+        "caller" => caller,
+        "session" => URI.to_string(session_uri)
+      })
+
+    # A grant bound to a DIFFERENT session must NOT attach (laundering attempt).
+    foreign_grant =
+      Phoenix.Token.sign(EzagentWeb.Endpoint, "world_attach", %{
+        "uri" => "resource://system/uploads/#{Ecto.UUID.generate()}-evil.pdf",
+        "caller" => caller,
+        "session" => "session://system/default/other"
+      })
+
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "chat.send",
+      "args" => %{
+        "session_uri" => URI.to_string(session_uri),
+        "text" => "see attached",
+        "grants" => [valid_grant, foreign_grant, "not-a-token"]
+      }
+    })
+
+    assert_receive {:chat_message, _src, %Ezagent.Message{} = msg}, 2_000
+    attachments = msg.body |> Map.get(:attachments, Map.get(msg.body, "attachments", [])) |> Enum.map(&to_string/1)
+
+    assert upload_uri in attachments
+    refute Enum.any?(attachments, &(&1 =~ "evil.pdf"))
   end
 
   test "empty composer text is refused without dispatch", %{conn: conn} do
@@ -316,6 +459,39 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert_patch(view, "/sessions?session=#{encoded}")
     assert has_element?(view, "#world-root[data-world-component='conversation']")
+  end
+
+  test "ConversationData.build_message embeds parsed mentions + verified attachments", %{conn: _conn} do
+    sender = Ezagent.URI.new!("entity://system/user/admin")
+    session = Ezagent.URI.new!("session://system/default/none-#{System.unique_integer([:positive])}")
+
+    # mentions: cold session → empty members → only an explicit @entity:// URI survives.
+    msg = Ezagent.World.ConversationData.build_message(sender, "ping @entity://system/agent/codex-1", session)
+    assert Enum.map(msg.mentions, &URI.to_string/1) == ["entity://system/agent/codex-1"]
+
+    # PR-2b: build_message/4 embeds the (already-verified) attachment URIs.
+    att = Ezagent.URI.new!("resource://system/uploads/#{Ecto.UUID.generate()}-doc.pdf")
+    msg2 = Ezagent.World.ConversationData.build_message(sender, "see doc", session, [att])
+    embedded = msg2.body |> Map.get(:attachments, Map.get(msg2.body, "attachments", []))
+    assert Enum.map(embedded, &to_string/1) == [URI.to_string(att)]
+  end
+
+  test "ConversationData.message_row mints a download link for uploads, plain label otherwise (PR-2b)",
+       %{conn: _conn} do
+    att = Ezagent.URI.new!("resource://system/uploads/#{Ecto.UUID.generate()}-report.pdf")
+
+    upload_msg =
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: [att]})
+
+    [attachment] = Ezagent.World.ConversationData.message_row(upload_msg)["attachments"]
+    assert attachment["name"] == "report.pdf"
+    assert attachment["href"] =~ "/uploads/download?token="
+
+    plain_msg =
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: ["just-a-string"]})
+
+    assert [%{"name" => "just-a-string", "href" => nil}] =
+             Ezagent.World.ConversationData.message_row(plain_msg)["attachments"]
   end
 
   # --- helpers ----------------------------------------------------------

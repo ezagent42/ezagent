@@ -116,13 +116,19 @@ defmodule Ezagent.World.ConversationData do
   Construct a chat `Ezagent.Message` for the composer.
 
   Parses @mentions server-side against the session's authoritative members
-  (never trusting a client-supplied recipient list). PR-2b (file upload) will
-  populate attachments; legend_triggers stay empty until that enrichment.
+  (never trusting a client-supplied recipient list). `attachments` are
+  `resource://…/uploads/…` URIs ALREADY VERIFIED by the caller
+  (`ConversationActions.send_message/4` checks each upload grant's signature +
+  caller/session binding before passing them here — PR-2b anti-laundering), so
+  this function trusts the list it is given. `legend_triggers` stay empty.
   """
-  @spec build_message(URI.t(), String.t(), URI.t()) :: Ezagent.Message.t()
-  def build_message(%URI{} = sender, text, %URI{} = session_uri) when is_binary(text) do
+  @spec build_message(URI.t(), String.t(), URI.t(), [URI.t()]) :: Ezagent.Message.t()
+  def build_message(sender, text, session_uri, attachments \\ [])
+
+  def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
+      when is_binary(text) and is_list(attachments) do
     mentions = parse_mentions(text, member_options(session_uri))
-    Ezagent.Message.new(sender, %{text: text, attachments: []}, mentions: mentions)
+    Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 
   @doc "Render-ready row for a single message (resolves the sender display)."
@@ -180,15 +186,59 @@ defmodule Ezagent.World.ConversationData do
   defp body_text(%{"text" => t}) when is_binary(t), do: t
   defp body_text(_), do: ""
 
-  # PR-1 renders attachments as plain labels; PR-2 (file upload) replaces
-  # this with signed download links (`Ezagent.Uploads.DownloadToken`).
+  # Each attachment renders as `%{"name", "href"}`: an uploads `resource://…`
+  # URI gets a signed `DownloadToken` link (the existing authed `/uploads/download`
+  # route re-checks the participant at serve time, so minting does not widen
+  # access — same contract as LV `att_to_link/1`); any other value renders as a
+  # plain label with no href (PR-2b).
   defp body_attachments(%{attachments: list}) when is_list(list),
-    do: Enum.map(list, &attachment_label/1)
+    do: Enum.map(list, &attachment_row/1)
 
   defp body_attachments(%{"attachments" => list}) when is_list(list),
-    do: Enum.map(list, &attachment_label/1)
+    do: Enum.map(list, &attachment_row/1)
 
   defp body_attachments(_), do: []
+
+  defp attachment_row(att) do
+    case attachment_uri(att) do
+      %URI{scheme: "resource"} = uri -> uploads_attachment_row(uri)
+      _ -> %{"name" => attachment_label(att), "href" => nil}
+    end
+  end
+
+  defp uploads_attachment_row(%URI{} = uri) do
+    name = uri |> URI.to_string() |> Path.basename() |> strip_uuid_prefix()
+
+    case safe_mint_download(uri) do
+      {:ok, token} -> %{"name" => name, "href" => "/uploads/download?token=#{token}"}
+      :error -> %{"name" => name, "href" => nil}
+    end
+  end
+
+  defp safe_mint_download(%URI{} = uri) do
+    {:ok, Ezagent.Uploads.DownloadToken.mint!(uri)}
+  rescue
+    _ -> :error
+  end
+
+  # Stored names are `<uuid>-<sanitized>`; show the human part in the link label.
+  defp strip_uuid_prefix(name) when is_binary(name) do
+    case Regex.run(~r/^[0-9a-fA-F-]{36}-(.+)$/, name) do
+      [_, rest] -> rest
+      _ -> name
+    end
+  end
+
+  defp attachment_uri(%URI{} = uri), do: uri
+
+  defp attachment_uri(s) when is_binary(s) do
+    case Ezagent.URI.parse(s) do
+      {:ok, %URI{} = uri} -> uri
+      _ -> s
+    end
+  end
+
+  defp attachment_uri(other), do: other
 
   defp attachment_label(%URI{} = uri), do: URI.to_string(uri)
   defp attachment_label(s) when is_binary(s), do: s

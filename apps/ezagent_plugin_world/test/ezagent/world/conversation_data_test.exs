@@ -52,14 +52,9 @@ defmodule Ezagent.World.ConversationDataTest do
     assert parsed("plain message, email a@b.test is not a mention-at-start") == []
   end
 
-  test "build_message embeds parsed mentions so the domain routes them" do
-    # build_message reads members from the session slice; with no live session
-    # the slice is empty, so only an explicit @entity:// URI (which needs no
-    # member list) survives — proving the mentions reach msg.mentions.
-    sender = Ezagent.URI.new!("entity://system/user/admin")
-    session = Ezagent.URI.new!("session://system/default/none-#{System.unique_integer([:positive])}")
-    msg = ConversationData.build_message(sender, "ping @entity://system/agent/codex-1", session)
-
-    assert Enum.map(msg.mentions, &URI.to_string/1) == ["entity://system/agent/codex-1"]
-  end
+  # NOTE: `build_message/3,4` and `message_row/1` tests live in
+  # `EzagentWeb.WorldConversationTest` (a sandbox-backed `ConnCase`), NOT here:
+  # they resolve entity display names / download tokens through the Repo, so they
+  # need Ecto-sandbox ownership. This module stays `async: true` + DB-free
+  # (pure `parse_mentions`), which is exactly why the parse tests are fast here.
 end

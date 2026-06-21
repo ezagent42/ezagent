@@ -139,6 +139,13 @@ defmodule EzagentWeb.Router do
     # Replaces the retired participation-based `/files/:filename` route.
     get "/uploads/download", UploadsController, :download
 
+    # LV→world parity PR-2b — the world composer's cap-authorized upload POST.
+    # The React island can't use the LiveView uploader (`phx-update="ignore"`),
+    # so files arrive here; the controller dispatches `:session :attach`
+    # (authorized at the same chokepoint as `:session :send`), then stores the
+    # bytes under the target session's workspace and returns a signed grant.
+    post "/world/uploads", WorldUploadsController, :create
+
     # Phase 9 PR-5 (SPEC v3 §6.4 amended): workspace switcher endpoint.
     # Logged-in users POST here from the top-left workspace dropdown;
     # controller clears session + redirects to /login?workspace=<target>.

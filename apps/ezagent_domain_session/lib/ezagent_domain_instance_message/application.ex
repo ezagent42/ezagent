@@ -778,20 +778,18 @@ defmodule EzagentDomainInstanceMessage.Application do
     :ok = CapabilityRegistry.register(Session, :send, SessionBehavior)
     :ok = CapabilityRegistry.register(Session, :join, SessionBehavior)
     :ok = CapabilityRegistry.register(Session, :leave, SessionBehavior)
-    # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
-    # orchestrator slot tools write the durable `template_working_copy`
-    # field via `?action=session.set_working_copy` on the Session Kind.
+    # LV→world parity PR-2b — upload chokepoint (`?action=session.attach`, cap
+    # co-granted with `:send` in the participation tier; gates the HTTP upload).
+    :ok = CapabilityRegistry.register(Session, :attach, SessionBehavior)
+    # Phase 7 completion PR-4 (SPEC §1.6) — Generator + orchestrator slot tools
+    # write durable `template_working_copy` via `?action=session.set_working_copy`.
     :ok = CapabilityRegistry.register(Session, :set_working_copy, SessionBehavior)
-    # team-routing-unification §3.6 (PR-6) — the session-scoped legend
-    # registry is written via `?action=session.set_legends` on the Session Kind
-    # (orchestrator / system-internal authority — same class as
-    # :set_working_copy; the PR-7 template materialization path will use it).
+    # team-routing-unification §3.6 (PR-6) — session-scoped legend registry via
+    # `?action=session.set_legends` (orchestrator / system-internal authority).
     :ok = CapabilityRegistry.register(Session, :set_legends, SessionBehavior)
-    # team-routing-unification §3.4/§3.7 (PR-7) — the session-scoped named
-    # prompt-template map is written via `?action=session.set_prompt_templates`
-    # on the Session Kind (same orchestrator / system-internal authority class
-    # as :set_legends; the PR-7 template materialization path uses it to
-    # install a template's `prompt_templates`).
+    # team-routing-unification §3.4/§3.7 (PR-7) — session-scoped named
+    # prompt-template map via `?action=session.set_prompt_templates` (same
+    # orchestrator authority; PR-7 materialization installs `prompt_templates`).
     :ok = CapabilityRegistry.register(Session, :set_prompt_templates, SessionBehavior)
     # PR-2 (§OQ-4) — `:receive` split per Kind into two first-class Behaviors.
     # PR-9a (#53) — `{Agent, :receive}` moved to `EzagentDomainAgent.Application`

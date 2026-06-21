@@ -88,8 +88,7 @@ defmodule EzagentPluginWorld.WorldLive do
     |> ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
-    # Self-join on view + push members (parity with LV `maybe_self_join`; see
-    # `ConversationActions.self_join/2` for the cold-session rationale).
+    # Self-join on view + push members (see `ConversationActions.self_join/2`).
     |> ConversationActions.self_join(uri)
     |> ConversationActions.push_members()
   end
@@ -196,11 +195,12 @@ defmodule EzagentPluginWorld.WorldLive do
   # the shell stays modular as later PRs grow the conversation surface.
   def handle_event(
         "world:dispatch",
-        %{"action" => "chat.send", "args" => %{"session_uri" => session_uri_str, "text" => text}},
+        %{"action" => "chat.send", "args" => %{"session_uri" => sid, "text" => text} = args},
         socket
       )
       when is_binary(text) do
-    with_session(socket, session_uri_str, &ConversationActions.send_message(socket, &1, text))
+    grants = Map.get(args, "grants", [])
+    with_session(socket, sid, &ConversationActions.send_message(socket, &1, text, grants))
   end
 
   def handle_event(

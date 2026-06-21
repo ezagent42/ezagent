@@ -20,22 +20,34 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
 
+  # Max attachments per message — server-enforced here (never trusts the client),
+  # mirroring the LV `max_entries`. codex PR-2b #4.
+  @max_attachments 5
+  # Upload-grant TTL (1h) — bounds how long a minted `:attach` grant is replayable.
+  @grant_max_age 3_600
+  @grant_salt "world_attach"
+
   @doc """
   Send a chat message into a session via the `:session :send` dispatch
   (`:cast`, mirroring `Admin.Compose.submit/2`). The cast'd message returns
   to the sender through the inbound bridge, so no optimistic insert is done.
-  Empty/whitespace text is refused without a dispatch.
+  Empty/whitespace text is refused without a dispatch. `grants` are signed
+  upload tokens verified before their URIs are attached (PR-2b).
   """
-  @spec send_message(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+  @spec send_message(Phoenix.LiveView.Socket.t(), URI.t(), String.t(), [String.t()]) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def send_message(socket, %URI{} = session_uri, text) when is_binary(text) do
+  def send_message(socket, session_uri, text, grants \\ [])
+
+  def send_message(socket, %URI{} = session_uri, text, grants)
+      when is_binary(text) and is_list(grants) do
     caller = socket.assigns.current_entity_uri
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    attachments = verify_grants(socket, grants, caller, session_uri)
 
-    if String.trim(text) == "" do
+    if String.trim(text) == "" and attachments == [] do
       {:noreply, assign(socket, :last_dispatch_status, "error:empty_message")}
     else
-      msg = ConversationData.build_message(caller, text, session_uri)
+      msg = ConversationData.build_message(caller, text, session_uri, attachments)
       target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       result =
@@ -180,6 +192,39 @@ defmodule Ezagent.World.ConversationActions do
 
       _ ->
         socket
+    end
+  end
+
+  # Verify upload grants (PR-2b anti-laundering, codex #3). Each grant is a
+  # `Phoenix.Token` minted by `WorldUploadsController` after a successful
+  # `:session :attach` dispatch, binding `uri ↔ caller ↔ session`. A message may
+  # only embed a `resource://…/uploads/…` URI whose grant: (a) verifies (MAC +
+  # TTL) against THIS endpoint, and (b) was issued to THIS caller for THIS
+  # session. A forged/expired/cross-session grant — or a raw URI with no grant —
+  # yields nothing, so a client cannot launder an arbitrary uploads URI into a
+  # message. At most `@max_attachments` are accepted (server-enforced count).
+  defp verify_grants(socket, grants, %URI{} = caller, %URI{} = session_uri) do
+    caller_str = URI.to_string(caller)
+    session_str = URI.to_string(session_uri)
+
+    grants
+    |> Enum.filter(&is_binary/1)
+    |> Enum.take(@max_attachments)
+    |> Enum.flat_map(&verify_grant(socket, &1, caller_str, session_str))
+  end
+
+  defp verify_grants(_socket, _grants, _caller, _session), do: []
+
+  defp verify_grant(socket, grant, caller_str, session_str) do
+    case Phoenix.Token.verify(socket, @grant_salt, grant, max_age: @grant_max_age) do
+      {:ok, %{"uri" => uri_str, "caller" => ^caller_str, "session" => ^session_str}} ->
+        case Ezagent.URI.parse(uri_str) do
+          {:ok, %URI{} = uri} -> [uri]
+          _ -> []
+        end
+
+      _ ->
+        []
     end
   end
 

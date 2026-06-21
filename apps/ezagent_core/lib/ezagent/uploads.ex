@@ -104,4 +104,36 @@ defmodule Ezagent.Uploads do
     File.cp!(tmp_path, dest)
     uri
   end
+
+  @doc """
+  Store a client upload by its RAW filename: generate a collision-proof
+  `<uuid>-<sanitized>` stored name, then `store!/3` it under `workspace_name`.
+  Returns `{uri, stored_name}`. Owning the naming here keeps every upload surface
+  (the world HTTP controller, and any CLI/API adapter) on ONE sanitize + naming
+  path, so an unsafe client name can't reach `store!`.
+  """
+  @spec store_upload!(String.t(), String.t(), String.t()) :: {URI.t(), String.t()}
+  def store_upload!(workspace_name, client_filename, tmp_path)
+      when is_binary(workspace_name) and is_binary(tmp_path) do
+    stored_name = "#{Ecto.UUID.generate()}-#{sanitize_stored_name(client_filename)}"
+    {store!(workspace_name, stored_name, tmp_path), stored_name}
+  end
+
+  @doc """
+  Sanitize a client filename into a safe stored-name segment: basename only,
+  non-`[\\w.-]` runs collapsed to `_`, clamped to 200 chars, never empty.
+  """
+  @spec sanitize_stored_name(term()) :: String.t()
+  def sanitize_stored_name(name) when is_binary(name) do
+    name
+    |> Path.basename()
+    |> String.replace(~r/[^\w\.\-]+/, "_")
+    |> String.slice(0, 200)
+    |> case do
+      "" -> "file"
+      s -> s
+    end
+  end
+
+  def sanitize_stored_name(_), do: "file"
 end

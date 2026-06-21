@@ -74,18 +74,9 @@ defmodule EzagentPluginLiveview.Admin.Compose do
     end)
   end
 
-  defp sanitize_filename(name) when is_binary(name) do
-    name
-    |> Path.basename()
-    |> String.replace(~r/[^\w\.\-]+/, "_")
-    |> String.slice(0, 200)
-    |> case do
-      "" -> "file"
-      s -> s
-    end
-  end
-
-  defp sanitize_filename(_), do: "file"
+  # Delegates to the shared core sanitizer (one upload-naming path across LV +
+  # the world upload controller; LV→world parity PR-2b).
+  defp sanitize_filename(name), do: Ezagent.Uploads.sanitize_stored_name(name)
 
   defp send_chat_message(socket, text, attachments, mentions, legend_triggers) do
     msg =
