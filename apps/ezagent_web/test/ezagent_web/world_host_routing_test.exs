@@ -36,14 +36,14 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert html =~ ~s(id="world-root")
     assert has_element?(view, "#world-root[phx-hook='WorldRenderer'][phx-update='ignore']")
     assert has_element?(view, "#world-root[data-world-component='sessions_table']")
-    assert html =~ "session://system/default/main"
+    assert html =~ URI.to_string(world_session_uri())
     assert html =~ "layout_editor"
   end
 
   test "world sessions_table dispatch joins through Invocation.dispatch", %{conn: conn} do
     caller = "entity://system/user/world_join_#{System.unique_integer([:positive])}"
     caller_uri = Ezagent.URI.new!(caller)
-    session_uri = Ezagent.URI.new!("session://system/default/main")
+    session_uri = world_session_uri()
 
     :ok = create_read_only_user(caller_uri, [session_join_cap(caller_uri, session_uri)])
 
@@ -62,11 +62,11 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       |> element("#world-root")
       |> render_hook("world:dispatch", %{
         "action" => "sessions.join",
-        "args" => %{"session_uri" => "session://system/default/main"}
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
       })
 
     assert html =~ ~s(data-last-dispatch="ok")
-    assert html =~ ~s(data-current-session-uri="session://system/default/main")
+    assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
   end
 
   test "world.ezagent.chat sessions path stays inside the world scope", %{conn: conn} do
@@ -121,7 +121,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   end
 
   test "world admin group paths stay inside the world scope", %{conn: conn} do
-    session_uri = "session://system/default/main"
+    session_uri = URI.to_string(world_session_uri())
     encoded_session = URI.encode_www_form(session_uri)
 
     conn =
@@ -155,7 +155,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   end
 
   test "world workspace and plugin group paths stay inside the world scope", %{conn: conn} do
-    encoded_session = URI.encode_www_form("session://system/default/main")
+    encoded_session = world_session_uri() |> URI.to_string() |> URI.encode_www_form()
 
     conn =
       conn
@@ -186,6 +186,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
     caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+
+    :ok = create_read_only_user(caller_uri, [])
 
     conn =
       conn
@@ -202,7 +206,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       |> element("#world-root")
       |> render_hook("world:dispatch", %{
         "action" => "sessions.join",
-        "args" => %{"session_uri" => "session://system/default/main"}
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
       })
 
     assert html =~ ~s(data-last-dispatch="error:unauthorized")
@@ -265,7 +269,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   test "world layout manage dispatch denies caller without manage cap", %{conn: conn} do
     caller = "entity://system/user/world_layout_no_caps_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
     layout = persisted_order_layout(Ezagent.URI.workspace(:system))
+
+    :ok = create_read_only_user(caller_uri, [])
 
     conn =
       conn
@@ -297,6 +304,18 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     with :ok <- result do
       Ezagent.Entity.spawn_principal(uri)
+    end
+  end
+
+  defp world_session_uri do
+    workspace_uri = Ezagent.URI.workspace(:system)
+
+    workspace_uri
+    |> EzagentDomainInstanceMessage.list_sessions()
+    |> List.first()
+    |> case do
+      %URI{} = uri -> uri
+      _ -> Ezagent.URI.new!("session://system/default/main")
     end
   end
 

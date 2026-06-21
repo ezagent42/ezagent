@@ -1,6 +1,6 @@
 import {PanelsTopLeft, PlugZap} from "lucide-react"
 
-import {Button} from "./ui/button"
+import {Button} from "./ui/primitives"
 
 type WorldHelloProps = {
   title?: string
