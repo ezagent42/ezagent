@@ -11,8 +11,9 @@ defmodule EzagentWeb.Socialware.AnonCookieTest do
       (fail-closed → caller mints fresh);
     * a non-anon principal cannot be signed into a cookie.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Socialware.AnonBinding
   alias EzagentWeb.Socialware.AnonCookie
   alias Ezagent.Socialware.AnonUser
 
@@ -43,6 +44,48 @@ defmodule EzagentWeb.Socialware.AnonCookieTest do
       assert {:ok, recovered} = AnonCookie.verify(value, session)
       assert URI.to_string(recovered) == URI.to_string(anon)
       assert AnonUser.anon_uri?(recovered)
+    end
+  end
+
+  describe "verify_any/1" do
+    test "recovers anon and session from a signed cookie confirmed by AnonBinding", %{
+      session: session
+    } do
+      anon = anon_for(session)
+      assert {:ok, _binding} = AnonBinding.touch(anon, session, DateTime.utc_now())
+      assert {:ok, value} = AnonCookie.sign(anon, session)
+
+      assert {:ok, {recovered_anon, recovered_session}} = AnonCookie.verify_any(value)
+      assert URI.to_string(recovered_anon) == URI.to_string(anon)
+      assert URI.to_string(recovered_session) == URI.to_string(session)
+    end
+
+    test "rejects a valid signed cookie when the binding is missing", %{session: session} do
+      anon = anon_for(session)
+      assert {:ok, value} = AnonCookie.sign(anon, session)
+
+      assert :error = AnonCookie.verify_any(value)
+    end
+
+    test "rejects a valid signed cookie when binding points at another session", %{
+      session: session,
+      other: other
+    } do
+      anon = anon_for(session)
+      assert {:ok, _binding} = AnonBinding.touch(anon, other, DateTime.utc_now())
+      assert {:ok, value} = AnonCookie.sign(anon, session)
+
+      assert :error = AnonCookie.verify_any(value)
+    end
+
+    test "rejects forgery and binding-only non-possession", %{session: session} do
+      anon = anon_for(session)
+      assert {:ok, _binding} = AnonBinding.touch(anon, session, DateTime.utc_now())
+      assert {:ok, value} = AnonCookie.sign(anon, session)
+
+      assert :error = AnonCookie.verify_any(value <> "x")
+      assert :error = AnonCookie.verify_any(URI.to_string(anon))
+      assert :error = AnonCookie.verify_any(nil)
     end
   end
 

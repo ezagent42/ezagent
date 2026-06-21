@@ -253,10 +253,12 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
                "must not checkpoint past a row outside the recency window"
     end
 
-    test "CROSS-SESSION: a message committed in session A is NOT customer-committed for session B that merely routes the same message id (codex P3-2 r3 HIGH-2)",
+    test "CROSS-SESSION: a message committed in session A is NOT in session B's customer feed (session-scoped isolation)",
          ctx do
-      # Session B in the SAME workspace, routing the SAME message id as A. Only A
-      # has a committed settlement for it. B must NOT borrow A's commit state.
+      # Post message-session-scoping (2026-06-21): a message belongs to exactly
+      # ONE session, so cross-session isolation is STRUCTURAL — B simply has no
+      # row for A's message. (Pre-collapse this guarded against B "borrowing" A's
+      # commit via shared-id multi-routing, which can no longer be expressed.)
       session_b = session_uri()
 
       {:ok, _pid} =
@@ -273,10 +275,11 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
           visibility: :customer_visible
         )
 
-      {:ok, written} = MessageStore.write(msg, session_b)
-      {:ok, _} = MessageStore.write(written, ctx.session)
+      # The message belongs to session A only (a second write of the same id is a
+      # no-op conflict — there is no multi-routing).
+      {:ok, written} = MessageStore.write(msg, ctx.session)
 
-      # Commit a settlement binding the message in session A ONLY.
+      # Commit a settlement binding the message in session A.
       {:ok, _} =
         Settlement.begin(%{
           turn_id: "turn-xsess",
@@ -292,16 +295,16 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       a_ids = ctx.session |> MessageStore.committed_customer_visible(100) |> Enum.map(& &1.id)
       b_ids = session_b |> MessageStore.committed_customer_visible(100) |> Enum.map(& &1.id)
 
-      assert written.id in a_ids, "session A (which committed it) sees the message"
-      refute written.id in b_ids, "session B must NOT borrow A's committed settlement"
+      assert written.id in a_ids, "session A (which owns + committed it) sees the message"
+      refute written.id in b_ids, "session B has no row for A's message"
 
-      # The by-id gate (used by the replay augment) must also deny B.
+      # The by-id gate (used by the replay augment) is also session-scoped.
       b_byid =
         session_b
         |> MessageStore.committed_customer_visible_by_ids([written.id])
         |> Enum.map(& &1.id)
 
-      refute written.id in b_byid, "the by-id gate must also bind the settlement to the session"
+      refute written.id in b_byid, "the by-id gate is bound to the session"
 
       # And B's customer feed snapshot does not show it.
       {:ok, snap_b} = CustomerFeed.snapshot(session_b, token_b)

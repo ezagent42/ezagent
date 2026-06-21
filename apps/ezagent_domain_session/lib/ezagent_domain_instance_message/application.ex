@@ -775,14 +775,15 @@ defmodule EzagentDomainInstanceMessage.Application do
   defp bind_session_workspace(_other), do: :ok
 
   defp register_session_behaviors do
-    :ok = CapabilityRegistry.register(Session, :send, SessionBehavior)
-    :ok = CapabilityRegistry.register(Session, :join, SessionBehavior)
-    :ok = CapabilityRegistry.register(Session, :leave, SessionBehavior)
-    # LV→world parity PR-2b — upload chokepoint (`?action=session.attach`, cap
-    # co-granted with `:send` in the participation tier; gates the HTTP upload).
-    :ok = CapabilityRegistry.register(Session, :attach, SessionBehavior)
-    # Phase 7 completion PR-4 (SPEC §1.6) — Generator + orchestrator slot tools
-    # write durable `template_working_copy` via `?action=session.set_working_copy`.
+    for action <- [:send, :join, :leave, :attach, :merge_member] do
+      :ok = CapabilityRegistry.register(Session, action, SessionBehavior)
+    end
+
+    # LV→world parity PR-2b — `:attach` is the upload chokepoint
+    # (`?action=session.attach`, cap co-granted with `:send` in the participation
+    # tier; gates the HTTP upload). Phase 7 completion PR-4 (SPEC §1.6) — the
+    # Generator + the orchestrator slot tools write the durable
+    # `template_working_copy` field via `?action=session.set_working_copy`.
     :ok = CapabilityRegistry.register(Session, :set_working_copy, SessionBehavior)
     # team-routing-unification §3.6 (PR-6) — session-scoped legend registry via
     # `?action=session.set_legends` (orchestrator / system-internal authority).
@@ -799,7 +800,6 @@ defmodule EzagentDomainInstanceMessage.Application do
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.
-
     # PR #146 (SPEC v2 §5.7) — session-scoped routing rule mutations
     # dispatch to `session://<name>?action=routing.<action>` against
     # the Session Kind. The synthetic `routing-admin://default`

@@ -86,6 +86,7 @@ defmodule EzagentWeb.SessionPrincipal do
     |> configure_session(renew: true)
     |> put_session(:current_entity_uri, canonical)
     |> put_session(:current_workspace_uri, URI.to_string(workspace_uri))
+    |> EzagentWeb.Socialware.AnonTakeover.maybe_takeover(entity_uri)
   end
 
   def put(_conn, other, _opts) do

@@ -183,6 +183,14 @@ defmodule Ezagent.Behavior.Session do
         "controller stores the bytes after this returns. No I/O, no slice change."
   )
 
+  action(:merge_member,
+    args: %{from: :uri, to: :uri},
+    returns: %{members: {:list, :uri}},
+    caps: [:merge_member],
+    modes: [:call],
+    description: "Atomically relabel one session member URI to another"
+  )
+
   action(:set_working_copy,
     args: %{template_working_copy: :map},
     returns: %{template_working_copy: :map},
@@ -679,6 +687,13 @@ defmodule Ezagent.Behavior.Session do
   """
   def handle_attach(_args, _ctx) do
     {:ok, %{ok: true}, []}
+  end
+
+  # --- :merge_member ------------------------------------------------------
+
+  @doc false
+  def handle_merge_member(%{from: %URI{} = from_uri, to: %URI{} = to_uri}, ctx) do
+    Membership.do_merge_member(from_uri, to_uri, ctx, __MODULE__)
   end
 
   # --- :set_working_copy -------------------------------------------------

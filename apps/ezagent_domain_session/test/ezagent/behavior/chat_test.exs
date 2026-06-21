@@ -51,6 +51,7 @@ defmodule Ezagent.Behavior.ChatTest do
                  :join,
                  :leave,
                  :attach,
+                 :merge_member,
                  :set_working_copy,
                  :set_legends,
                  :set_prompt_templates
@@ -147,6 +148,7 @@ defmodule Ezagent.Behavior.ChatTest do
                  :attach,
                  :join,
                  :leave,
+                 :merge_member,
                  :send,
                  :set_legends,
                  :set_prompt_templates,
@@ -1187,6 +1189,156 @@ defmodule Ezagent.Behavior.ChatTest do
       refute Map.has_key?(new_slice.members, member_uri)
       refute Map.has_key?(new_slice.monitors, ref)
       refute Map.has_key?(new_slice.last_seen, member_uri)
+    end
+  end
+
+  describe "invoke(:merge_member, ...)" do
+    test "joins the login user, removes anon, rewrites last_message, and repoints read markers" do
+      session_uri =
+        Ezagent.URI.new!(
+          "session://team-alpha/default/merge-fresh-#{System.unique_integer([:positive])}"
+        )
+
+      bind_to_default(session_uri)
+
+      anon_uri =
+        Ezagent.URI.new!("entity://team-alpha/user/anon-#{System.unique_integer([:positive])}")
+
+      login_uri =
+        Ezagent.URI.new!("entity://team-alpha/user/login-#{System.unique_integer([:positive])}")
+
+      other_uri =
+        Ezagent.URI.new!("entity://team-alpha/user/other-#{System.unique_integer([:positive])}")
+
+      {:ok, login_pid} = GenServer.start_link(__MODULE__.NoopServer, login_uri)
+
+      last_message =
+        Message.new(anon_uri, %{text: "anon footprint", attachments: []},
+          mentions: [anon_uri, other_uri]
+        )
+
+      msg_id =
+        Message.new(other_uri, %{text: "seen", attachments: []})
+        |> MessageStore.write(session_uri)
+        |> then(fn {:ok, msg} -> msg.id end)
+
+      assert {:ok, :updated} =
+               Ezagent.Session.ReadMarker.mark(session_uri, anon_uri, msg_id, :read)
+
+      anon_ref = make_ref()
+
+      slice = %{
+        members: %{anon_uri => %{online: true, role_name: "visitor"}},
+        monitors: %{anon_ref => anon_uri},
+        last_seen: %{anon_uri => ~U[2026-06-21 01:00:00.000000Z]},
+        owner_uri: other_uri,
+        last_message: last_message,
+        last_message_id: last_message.id
+      }
+
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
+
+      assert {:ok, new_slice, %{members: members}, effects} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
+                 Ezagent.Behavior.Session,
+                 :merge_member,
+                 slice,
+                 %{from: anon_uri, to: login_uri},
+                 ctx
+               )
+
+      refute Map.has_key?(new_slice.members, anon_uri)
+      assert %{online: true} = new_slice.members[login_uri]
+      assert login_uri in members
+      refute anon_uri in members
+      refute Map.has_key?(new_slice.monitors, anon_ref)
+      refute Map.has_key?(new_slice.last_seen, anon_uri)
+      assert new_slice.owner_uri == other_uri
+      assert new_slice.last_message.sender == login_uri
+      assert new_slice.last_message.mentions == [login_uri, other_uri]
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, login_uri, :read) == msg_id
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, anon_uri, :read) == nil
+
+      assert Enum.any?(
+               effects,
+               &match?(
+                 {:notify, _,
+                  {:session_membership_change, ^session_uri, {:member_left, ^anon_uri}}},
+                 &1
+               )
+             )
+
+      assert Enum.any?(
+               effects,
+               &match?(
+                 {:notify, _,
+                  {:session_membership_change, ^session_uri, {:member_joined, ^login_uri}}},
+                 &1
+               )
+             )
+
+      GenServer.stop(login_pid)
+    end
+
+    test "dedupes when login user is already a member and is idempotent on re-run" do
+      session_uri =
+        Ezagent.URI.new!(
+          "session://team-alpha/default/merge-dedup-#{System.unique_integer([:positive])}"
+        )
+
+      bind_to_default(session_uri)
+
+      anon_uri =
+        Ezagent.URI.new!("entity://team-alpha/user/anon-#{System.unique_integer([:positive])}")
+
+      login_uri =
+        Ezagent.URI.new!("entity://team-alpha/user/login-#{System.unique_integer([:positive])}")
+
+      {:ok, login_pid} = GenServer.start_link(__MODULE__.NoopServer, login_uri)
+
+      slice = %{
+        members: %{
+          anon_uri => %{online: false},
+          login_uri => %{online: true, role_name: "confirmed"}
+        },
+        monitors: %{},
+        last_seen: %{anon_uri => ~U[2026-06-21 01:00:00.000000Z]},
+        owner_uri: login_uri,
+        last_message: Message.new(anon_uri, %{text: "hi", attachments: []}, mentions: [anon_uri]),
+        last_message_id: "m-last"
+      }
+
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
+
+      assert {:ok, merged, _result, _effects} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
+                 Ezagent.Behavior.Session,
+                 :merge_member,
+                 slice,
+                 %{from: anon_uri, to: login_uri},
+                 ctx
+               )
+
+      assert Map.keys(merged.members) == [login_uri]
+      assert merged.members[login_uri].role_name == "confirmed"
+      assert merged.last_message.sender == login_uri
+      assert merged.last_message.mentions == [login_uri]
+
+      assert {:ok, rerun, _result, _effects} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
+                 Ezagent.Behavior.Session,
+                 :merge_member,
+                 merged,
+                 %{from: anon_uri, to: login_uri},
+                 ctx
+               )
+
+      assert Map.keys(rerun.members) == [login_uri]
+      assert rerun.members[login_uri].role_name == "confirmed"
+      assert rerun.last_message.sender == login_uri
+      assert rerun.last_message.mentions == [login_uri]
+
+      GenServer.stop(login_pid)
     end
   end
 

@@ -39,10 +39,22 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultRulesMigrationTest do
   # delete-protected.
   defp wipe_system_defaults do
     for row <- system_default_rows() do
-      :ok = RuleStore.delete(row.id, force: true)
+      delete_system_default(row.id)
     end
 
     :ok
+  end
+
+  defp delete_system_default(id, attempts_left \\ 5) do
+    RuleStore.delete(id, force: true)
+  rescue
+    error in Exqlite.Error ->
+      if attempts_left > 0 and Exception.message(error) =~ "Database busy" do
+        Process.sleep(25)
+        delete_system_default(id, attempts_left - 1)
+      else
+        reraise error, __STACKTRACE__
+      end
   end
 
   # Insert an OLD-shape system_default row: `{:always} → [$session_members]`.
