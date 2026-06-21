@@ -213,6 +213,21 @@ defmodule EzagentWeb.WorldConversationTest do
     assert member in Enum.map(msg.mentions, &URI.to_string/1)
   end
 
+  test "PR-3a: an inbound membership event pushes a members update to the panel",
+       %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    # A membership/presence event on the in-view session re-reads members and
+    # pushes them to the React panel (PR-1 dropped these; PR-3a handles them).
+    send(view.pid, {:member_joined, Ezagent.URI.new!("entity://system/agent/codex-x")})
+
+    assert_push_event(view, "members:update", %{"members" => members})
+    assert is_list(members)
+  end
+
   test "empty composer text is refused without dispatch", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()

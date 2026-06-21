@@ -82,6 +82,24 @@ defmodule Ezagent.World.ConversationActions do
     {:noreply, socket}
   end
 
+  @doc """
+  Re-read the in-view session's members and push them to the React members
+  panel (PR-3a inbound membership/presence handler). No-op off the
+  conversation route (no session in view).
+  """
+  @spec push_members(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def push_members(socket) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri ->
+        push_event(socket, "members:update", %{
+          "members" => ConversationData.member_options(session_uri)
+        })
+
+      _ ->
+        socket
+    end
+  end
+
   defp reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason(reason), do: inspect(reason)
 end

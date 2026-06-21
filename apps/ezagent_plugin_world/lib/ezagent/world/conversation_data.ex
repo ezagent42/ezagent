@@ -48,19 +48,28 @@ defmodule Ezagent.World.ConversationData do
   end
 
   @doc """
-  Session members as `%{"uri" => ..., "display_name" => ...}` rows for the
-  composer's @mention autocomplete. Reads the authoritative session slice
-  (`Ezagent.Kind.get_slice/2`) — the same source the server-side mention
-  parse uses, so the dropdown and routing can't drift.
+  Session members as `%{"uri" => ..., "display_name" => ..., "online" => bool,
+  "kind" => "user"|"agent"|"other"}` rows. Reads the authoritative session
+  slice (`Ezagent.Kind.get_slice/2`) — the same source the server-side mention
+  parse uses, so the @mention dropdown, the members panel, and routing can't
+  drift. The panel (PR-3a) shows presence; the autocomplete ignores it.
   """
   @spec member_options(URI.t()) :: [map()]
   def member_options(%URI{} = session_uri) do
-    uris = member_uris(session_uri)
+    presence = member_presence(session_uri)
+    uris = Map.keys(presence)
     display_map = Ezagent.EntityPresenter.display_many(uris)
 
     uris
     |> Enum.sort()
-    |> Enum.map(fn uri -> %{"uri" => uri, "display_name" => Map.get(display_map, uri, uri)} end)
+    |> Enum.map(fn uri ->
+      %{
+        "uri" => uri,
+        "display_name" => Map.get(display_map, uri, uri),
+        "online" => Map.get(presence, uri, false),
+        "kind" => sender_kind(uri)
+      }
+    end)
   end
 
   @doc """
@@ -188,13 +197,17 @@ defmodule Ezagent.World.ConversationData do
   defp datetime_iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp datetime_iso(_), do: nil
 
-  defp member_uris(%URI{} = session_uri) do
+  # %{uri_string => online_bool} from the session slice members map (values
+  # carry an `:online` flag). Empty for a cold/unknown session.
+  defp member_presence(%URI{} = session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
-        members |> Map.keys() |> Enum.map(&URI.to_string/1)
+        Map.new(members, fn {uri, meta} ->
+          {URI.to_string(uri), is_map(meta) and Map.get(meta, :online, false) == true}
+        end)
 
       _ ->
-        []
+        %{}
     end
   end
 

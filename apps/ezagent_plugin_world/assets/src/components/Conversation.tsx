@@ -21,6 +21,8 @@ type SessionRow = {
 type MemberRow = {
   uri: string
   display_name?: string | null
+  online?: boolean
+  kind?: string | null
 }
 
 export type ConversationState = {
@@ -50,8 +52,8 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
-  const members = state.members || []
 
+  const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
@@ -119,6 +121,11 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
       setOldestCursor(batch.oldest_cursor ?? null)
     })
 
+    onServerEvent("members:update", (payload) => {
+      const next = payload as {members?: MemberRow[]}
+      if (next.members) setMembers(next.members)
+    })
+
     return undefined
   }, [onServerEvent])
 
@@ -154,7 +161,8 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   }
 
   return (
-    <section className="world-section world-conversation" data-world-component="conversation">
+    <div className="world-conversation-shell" data-world-component="conversation">
+      <section className="world-section world-conversation">
       <div className="world-section-header">
         <div>
           <p className="world-eyebrow">Session</p>
@@ -270,7 +278,39 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
           Send
         </Button>
       </form>
-    </section>
+      </section>
+
+      <aside className="world-section world-members" aria-label="Session members">
+        <div className="world-section-header world-section-header-compact">
+          <div>
+            <p className="world-eyebrow">Members</p>
+            <h2>{members.length}</h2>
+          </div>
+        </div>
+        <ul className="world-members-list">
+          {members.length === 0 ? (
+            <li className="world-members-empty">No members yet.</li>
+          ) : (
+            members.map((member) => (
+              <li
+                key={member.uri}
+                className="world-member"
+                data-kind={member.kind || "other"}
+                data-online={member.online ? "true" : "false"}
+              >
+                <span
+                  className="world-member-dot"
+                  data-online={member.online ? "true" : "false"}
+                  aria-hidden="true"
+                />
+                <span className="world-member-name">{member.display_name || member.uri}</span>
+                <span className="world-member-kind">{member.kind || "other"}</span>
+              </li>
+            ))
+          )}
+        </ul>
+      </aside>
+    </div>
   )
 }
 

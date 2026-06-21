@@ -131,6 +131,21 @@ defmodule EzagentPluginWorld.WorldLive do
   # be safely routed to the in-view session — drop it (mirrors AdminLive).
   def handle_info({:chat_message, %Ezagent.Message{}}, socket), do: {:noreply, socket}
 
+  # Membership + presence inbound (PR-3a) — re-read the in-view session's
+  # member rows and push them to the members panel. Covers join/leave (2-tuple),
+  # offline (3-tuple last-seen), and presence (online flip).
+  def handle_info({tag, %URI{}}, socket) when tag in [:member_joined, :member_left] do
+    {:noreply, ConversationActions.push_members(socket)}
+  end
+
+  def handle_info({:member_offline, %URI{}, _at}, socket) do
+    {:noreply, ConversationActions.push_members(socket)}
+  end
+
+  def handle_info({:member_presence, _session_uri, _member_uri, _meta}, socket) do
+    {:noreply, ConversationActions.push_members(socket)}
+  end
+
   # Subscribing to a session's events topic also delivers membership and
   # presence events ({:member_joined,_}, {:member_left,_}, {:member_offline,
   # _,_}, {:member_presence,...}) plus notification/slice envelopes. PR-1

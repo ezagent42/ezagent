@@ -1055,3 +1055,92 @@
     transition: none;
   }
 }
+
+/* --- Conversation shell + members panel (PR-3a) --- */
+.world-conversation-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+}
+
+.world-members {
+  display: flex;
+  flex-direction: column;
+  max-height: min(72vh, 760px);
+}
+
+.world-members-list {
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.world-members-empty {
+  padding: 10px 8px;
+  color: var(--world-muted);
+  font-size: 13px;
+}
+
+.world-member {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 6px;
+}
+
+.world-member:hover {
+  background: var(--world-background);
+}
+
+.world-member-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--world-border);
+  flex: none;
+}
+
+.world-member-dot[data-online="true"] {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.16);
+}
+
+.world-member-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--world-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.world-member[data-kind="agent"] .world-member-name {
+  font-family: var(--world-mono);
+  font-size: 12px;
+}
+
+.world-member-kind {
+  font-family: var(--world-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--world-muted);
+}
+
+@media (max-width: 880px) {
+  .world-conversation-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .world-members {
+    max-height: 220px;
+  }
+}

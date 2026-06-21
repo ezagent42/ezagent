@@ -76,6 +76,10 @@ defmodule Ezagent.World.LvParityTest do
   # ratchet, so the reminder must live here + in the spec):
   #   - switch_session member-panel refresh → PR-3.
   #   - chat_compose @mention/upload → PR-2.
+  # PR-3a (members panel) landed: the inbound membership/presence surface —
+  # member_joined / member_left / member_offline / member_presence — now
+  # re-reads the session members and pushes them to the React panel. invite/
+  # remove (the WRITE side) is PR-3b.
   @pending_migration ~w(
     validate_compose cancel_upload
     create_session switch_view switch_to_pty_for_agent
@@ -85,12 +89,11 @@ defmodule Ezagent.World.LvParityTest do
     set_default_source save_smtp send_test_email update_test_recipient
     edit_display_name save_display_name cancel_edit_display_name
     bind unbind
-    member_joined member_left member_offline member_presence
     notification read_marker_updated cc_event cc_connected cc_disconnected
     slice_changed audit_event authz_event
   )
 
-  @pending_baseline 39
+  @pending_baseline 35
 
   test "LV inventory has not silently shrunk below the recorded baseline" do
     assert length(@lv_events) >= @lv_events_baseline,
