@@ -19,7 +19,7 @@
 
 ## Human-assist prerequisites (flag, do NOT block PR-0 dev on these)
 
-- **DNS + Cloudflare tunnel** for `world.ezagent.chat` (prod) — Allen provisions. Dev uses the Host-resolver override, so PR-0..N proceed without it.
+- **DNS + Cloudflare tunnel** for `world.ezagent.chat` — DOABLE LOCALLY (creds in `~/.cloudflared/`: cert.pem + tunnel `7339e970...` already serving `app.ezagent.chat → :10042`). Add ingress `world.ezagent.chat → http://localhost:10042` + `cloudflared tunnel route dns 7339e970-1a2b-4f03-84c9-a1ea50965eba world.ezagent.chat` + reload. ⚠ Mutates prod DNS → confirm with Allen before running. Dev uses the Host-resolver override, so PR-0..N proceed without it.
 - **B1 grantee decision** — default in SPEC §4.2 (grant `:manage` to the workspace admin entity / `entity://system/user/admin` for system workspace). Proceed on the default unless Allen overrides.
 
 ---
