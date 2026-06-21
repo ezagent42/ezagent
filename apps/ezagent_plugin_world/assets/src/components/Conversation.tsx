@@ -18,12 +18,18 @@ type SessionRow = {
   name?: string | null
 }
 
+type MemberRow = {
+  uri: string
+  display_name?: string | null
+}
+
 export type ConversationState = {
   session_uri?: string | null
   caller_uri?: string | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
   sessions?: SessionRow[]
+  members?: MemberRow[]
 }
 
 type Props = {
@@ -44,12 +50,54 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
+  const members = state.members || []
 
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
+  const [mentionQuery, setMentionQuery] = React.useState<string | null>(null)
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
+  const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
+
+  // @mention autocomplete: the open token is the @word immediately before the
+  // caret. Inserting the member's URI path segment keeps it a single bare
+  // token the server-side parser resolves (display names may contain spaces).
+  const mentionMatches = React.useMemo(() => {
+    if (mentionQuery === null) return []
+    const q = mentionQuery.toLowerCase()
+    return members
+      .filter((m) => {
+        const seg = uriSegment(m.uri).toLowerCase()
+        const name = (m.display_name || "").toLowerCase()
+        return q === "" || seg.includes(q) || name.includes(q)
+      })
+      .slice(0, 6)
+  }, [mentionQuery, members])
+
+  const onComposerChange = (value: string, caret: number) => {
+    setText(value)
+    const upto = value.slice(0, caret)
+    const m = upto.match(/(?:^|[^\p{L}\p{N}_])@([A-Za-z0-9._-]*)$/u)
+    setMentionQuery(m ? m[1] : null)
+  }
+
+  const insertMention = (member: MemberRow) => {
+    const el = inputRef.current
+    const caret = el ? el.selectionStart : text.length
+    const upto = text.slice(0, caret)
+    const rest = text.slice(caret)
+    const replaced = upto.replace(/@([A-Za-z0-9._-]*)$/u, `@${uriSegment(member.uri)} `)
+    const next = replaced + rest
+    setText(next)
+    setMentionQuery(null)
+    requestAnimationFrame(() => {
+      if (!el) return
+      el.focus()
+      const pos = replaced.length
+      el.setSelectionRange(pos, pos)
+    })
+  }
 
   React.useEffect(() => {
     if (!onServerEvent) return undefined
@@ -174,20 +222,49 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
       </div>
 
       <form className="world-composer" onSubmit={submit}>
-        <textarea
-          className="world-composer-input"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault()
-              submit(event)
-            }
-          }}
-          placeholder="Type a message…"
-          rows={2}
-          aria-label="Message"
-        />
+        <div className="world-composer-field">
+          {mentionMatches.length > 0 && (
+            <ul className="world-mention-menu" role="listbox" aria-label="Mention a member">
+              {mentionMatches.map((member) => (
+                <li key={member.uri}>
+                  <button
+                    type="button"
+                    className="world-mention-option"
+                    onMouseDown={(event) => {
+                      // mousedown (not click) so the textarea doesn't blur first
+                      event.preventDefault()
+                      insertMention(member)
+                    }}
+                  >
+                    <span className="world-mention-handle">@{uriSegment(member.uri)}</span>
+                    {member.display_name && member.display_name !== uriSegment(member.uri) && (
+                      <span className="world-mention-name">{member.display_name}</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <textarea
+            ref={inputRef}
+            className="world-composer-input"
+            value={text}
+            onChange={(event) => onComposerChange(event.target.value, event.target.selectionStart)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && mentionQuery !== null) {
+                setMentionQuery(null)
+                return
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault()
+                submit(event)
+              }
+            }}
+            placeholder="Type a message…  @ to mention"
+            rows={2}
+            aria-label="Message"
+          />
+        </div>
         <Button type="submit" size="sm" disabled={!text.trim()}>
           <Send aria-hidden="true" />
           Send
@@ -201,6 +278,14 @@ function formatAt(at: string) {
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return at
   return date.toLocaleString()
+}
+
+// Last path segment of an entity URI (e.g. entity://system/agent/codex-1 →
+// "codex-1") — a clean single token the server-side mention parser resolves.
+function uriSegment(uri: string) {
+  const noQuery = uri.split(/[?#]/)[0]
+  const parts = noQuery.split("/").filter(Boolean)
+  return parts[parts.length - 1] || uri
 }
 
 // Runtime kind-tag — the viewer's own turns read "YOU"; agents and other

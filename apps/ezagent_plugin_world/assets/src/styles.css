@@ -959,8 +959,62 @@
   background: var(--world-panel);
 }
 
-.world-composer-input {
+.world-composer-field {
+  position: relative;
   flex: 1;
+}
+
+.world-mention-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--world-panel);
+  border: 1px solid var(--world-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  z-index: 20;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.world-mention-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: var(--world-foreground);
+}
+
+.world-mention-option:hover,
+.world-mention-option:focus-visible {
+  background: var(--world-agent-tint);
+  outline: none;
+}
+
+.world-mention-handle {
+  font-family: var(--world-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--world-agent-edge);
+}
+
+.world-mention-name {
+  font-size: 12px;
+  color: var(--world-muted);
+}
+
+.world-composer-input {
+  width: 100%;
   resize: vertical;
   min-height: 46px;
   max-height: 180px;

@@ -156,6 +156,63 @@ defmodule EzagentWeb.WorldConversationTest do
     assert pushed["sender"] == caller
   end
 
+  test "PR-2a: a joined member appears in member_options and @name lands as a recipient",
+       %{conn: conn} do
+    member = "entity://system/user/world_mention_#{System.unique_integer([:positive])}"
+    member_uri = Ezagent.URI.new!(member)
+    segment = Ezagent.URI.name!(member_uri)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok =
+      create_read_only_user(member_uri, [
+        session_cap(member_uri, session_uri, :join),
+        session_cap(member_uri, session_uri, :send)
+      ])
+
+    # Join so the member lands in the session slice members map.
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: member_uri},
+        ctx: %{caller: member_uri, caps: MapSet.new([session_cap(member_uri, session_uri, :join)]), reply: :ignore}
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => member,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    # member_options (the autocomplete source) includes the joined member.
+    state = world_state(view)
+    member_uris = for m <- state["members"] || [], do: m["uri"]
+    assert member in member_uris
+
+    # @<segment> must land the member in msg.mentions — the recipient resolver
+    # consumes this list, so a wrong parse silently routes nowhere.
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "chat.send",
+      "args" => %{"session_uri" => URI.to_string(session_uri), "text" => "ping @#{segment} please"}
+    })
+
+    assert_receive {:chat_message, _src, %Ezagent.Message{} = msg}, 2_000
+    assert member in Enum.map(msg.mentions, &URI.to_string/1)
+  end
+
   test "empty composer text is refused without dispatch", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
@@ -191,6 +248,25 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   # --- helpers ----------------------------------------------------------
+
+  defp world_state(view) do
+    html = render(view)
+
+    [_, json] = Regex.run(~r/data-world-state="([^"]*)"/, html)
+
+    json
+    |> html_unescape()
+    |> Jason.decode!()
+  end
+
+  defp html_unescape(s) do
+    s
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&amp;", "&")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
+  end
 
   defp admin_conn(conn) do
     conn

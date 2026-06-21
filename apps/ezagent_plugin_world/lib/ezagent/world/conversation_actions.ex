@@ -32,7 +32,7 @@ defmodule Ezagent.World.ConversationActions do
     if String.trim(text) == "" do
       {:noreply, assign(socket, :last_dispatch_status, "error:empty_message")}
     else
-      msg = ConversationData.build_message(caller, text)
+      msg = ConversationData.build_message(caller, text, session_uri)
       target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       result =
