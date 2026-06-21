@@ -22,4 +22,16 @@ defmodule EzagentPluginWorld.Application do
       version: "0.1.0"
     }
   end
+
+  @impl Ezagent.Plugin
+  def behaviors do
+    [
+      {Ezagent.Entity.Workspace, :manage, Ezagent.World.Behavior.Layout}
+    ]
+  end
+
+  @impl Ezagent.Plugin
+  def after_boot do
+    Ezagent.World.LayoutBootstrap.ensure_system_admin_manage_cap()
+  end
 end

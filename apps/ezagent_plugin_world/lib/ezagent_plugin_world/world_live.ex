@@ -20,8 +20,8 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => encode_uri(workspace)
     }
 
-    layout = sessions_layout(workspace)
-    state = sessions_state(sessions, current_session_uri, workspace)
+    layout = layout_for(workspace)
+    state = sessions_state(sessions, current_session_uri, workspace, layout, caller)
 
     if connected?(socket), do: send(self(), :push_world_state)
 
@@ -57,6 +57,14 @@ defmodule EzagentPluginWorld.WorldLive do
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
     end
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "layout.manage", "args" => %{"layout" => layout}},
+        socket
+      ) do
+    dispatch_layout_manage(socket, layout)
   end
 
   def handle_event("world:dispatch", _params, socket) do
@@ -135,6 +143,49 @@ defmodule EzagentPluginWorld.WorldLive do
      |> push_event("world:state", state)}
   end
 
+  defp dispatch_layout_manage(socket, layout) when is_map(layout) do
+    workspace_uri = socket.assigns.current_workspace_uri
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    target = Ezagent.URI.with_action(workspace_uri, :layout, :manage)
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: %{layout: layout},
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      })
+
+    case result do
+      {:ok, %{layout: saved_layout}} ->
+        dispatch_layout_manage_ok(socket, saved_layout)
+
+      {:ok, %{"layout" => saved_layout}} ->
+        dispatch_layout_manage_ok(socket, saved_layout)
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+    end
+  end
+
+  defp dispatch_layout_manage(socket, _layout) do
+    {:noreply, assign(socket, :last_dispatch_status, "error:invalid_layout")}
+  end
+
+  defp dispatch_layout_manage_ok(socket, saved_layout) do
+    state = Map.put(socket.assigns.world_state, "layout", saved_layout)
+
+    {:noreply,
+     socket
+     |> assign(:layout_json, Jason.encode!(saved_layout))
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:last_dispatch_status, "ok")
+     |> push_event("world:state", %{"layout" => saved_layout})}
+  end
+
   defp world_module_url do
     Application.get_env(:ezagent_plugin_world, :world_module_url, "/assets/world/main.js")
   end
@@ -143,26 +194,13 @@ defmodule EzagentPluginWorld.WorldLive do
     Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
   end
 
-  defp sessions_layout(%URI{} = workspace_uri) do
-    workspace = URI.to_string(workspace_uri)
+  defp layout_for(%URI{} = workspace_uri),
+    do: Ezagent.World.LayoutManager.read_layout(workspace_uri)
 
-    %{
-      "version" => 1,
-      "scope" => workspace,
-      "components" => [
-        %{
-          "id" => "sessions-table",
-          "type" => "sessions_table",
-          "placement" => %{"x" => 0, "y" => 0, "w" => 12, "h" => 6},
-          "props" => %{"title" => "Sessions"}
-        }
-      ]
-    }
-  end
+  defp layout_for(_),
+    do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
-  defp sessions_layout(_), do: sessions_layout(Ezagent.URI.workspace(:system))
-
-  defp sessions_state(sessions, current_session_uri, workspace_uri) do
+  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caller) do
     workspace = encode_uri(workspace_uri)
     current_session = encode_uri(current_session_uri)
 
@@ -170,6 +208,8 @@ defmodule EzagentPluginWorld.WorldLive do
       "component" => "sessions_table",
       "current_session_uri" => current_session,
       "workspace_uri" => workspace,
+      "layout" => layout,
+      "can_manage_layout" => default_layout_manager?(workspace_uri, caller),
       "sessions" => Enum.map(sessions, &session_row/1)
     }
   end
@@ -203,6 +243,15 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_session_uri(_), do: :error
+
+  defp default_layout_manager?(%URI{} = workspace_uri, %URI{} = caller) do
+    same_uri?(workspace_uri, Ezagent.URI.workspace(:system)) and
+      URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri())
+  end
+
+  defp default_layout_manager?(_, _), do: false
+
+  defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
 
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)

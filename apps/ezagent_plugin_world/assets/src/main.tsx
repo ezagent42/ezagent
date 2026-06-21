@@ -1,14 +1,18 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
 
+import {LayoutEditor} from "./components/LayoutEditor"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import "./styles.css"
 
 type WorldLayout = {
+  version?: number
+  scope?: string
   components?: Array<{
     id: string
     type: string
+    placement?: {x?: number; y?: number; w?: number; h?: number}
     props?: Record<string, unknown>
   }>
 }
@@ -25,8 +29,10 @@ type WorldMountOptions = {
 }
 
 type WorldState = {
+  can_manage_layout?: boolean
   component?: string
   current_session_uri?: string | null
+  layout?: WorldLayout
   sessions?: Array<{
     uri: string
     name?: string | null
@@ -51,34 +57,104 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
 }
 
 function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent}: WorldMountOptions) {
+  const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
 
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
     onServerEvent("world:state", (payload) => {
-      setState((current) => ({...current, ...(payload as WorldState)}))
+      const next = payload as WorldState
+
+      setState((current) => ({...current, ...next}))
+      if (next.layout) setCurrentLayout(next.layout)
     })
 
     return undefined
   }, [onServerEvent])
 
+  const components = [...(currentLayout.components || [])].sort(
+    (a, b) => (a.placement?.y || 0) - (b.placement?.y || 0),
+  )
+
+  if (components.length > 0 || state.component === "sessions_table") {
+    return (
+      <div className="world-screen">
+        <aside className="world-sidebar" aria-label="World navigation">
+          <div className="world-mark">W</div>
+          <nav className="world-nav">
+            <a className="world-nav-item world-nav-item-active" href="/">
+              Overview
+            </a>
+            <a className="world-nav-item" href="/sessions">
+              Sessions
+            </a>
+          </nav>
+        </aside>
+
+        <main className="world-main">
+          <header className="world-header">
+            <div>
+              <p className="world-eyebrow">React/shadcn shell</p>
+              <h1>Sessions</h1>
+            </div>
+            <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace://system"}</div>
+          </header>
+
+          <div className="world-layout-grid" data-component-count={components.length}>
+            {(components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]).map((component) =>
+              renderLayoutComponent(component, {
+                layout: currentLayout,
+                state,
+                onJoin: (sessionUri) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "sessions.join",
+                    args: {session_uri: sessionUri},
+                  })
+                },
+                onManageLayout: (nextLayout) => {
+                  setCurrentLayout(nextLayout)
+                  pushEvent?.("world:dispatch", {
+                    action: "layout.manage",
+                    args: {layout: nextLayout},
+                  })
+                },
+              }),
+            )}
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   const component = layout?.components?.[0]
   const props = (component?.props || {}) as {title?: string}
 
-  if (component?.type === "sessions_table" || state.component === "sessions_table") {
+  return <WorldHello title={props.title} caller={caller} />
+}
+
+type RenderContext = {
+  layout: WorldLayout
+  state: WorldState
+  onJoin: (sessionUri: string) => void
+  onManageLayout: (layout: WorldLayout) => void
+}
+
+function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
+  if (component.type === "layout_editor") {
     return (
-      <SessionsTable
-        state={state}
-        onJoin={(sessionUri) => {
-          pushEvent?.("world:dispatch", {
-            action: "sessions.join",
-            args: {session_uri: sessionUri},
-          })
-        }}
+      <LayoutEditor
+        key={component.id}
+        layout={context.layout}
+        canManage={context.state.can_manage_layout === true}
+        onManageLayout={context.onManageLayout}
       />
     )
   }
 
-  return <WorldHello title={props.title} caller={caller} />
+  if (component.type === "sessions_table") {
+    return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
+  }
+
+  return null
 }
