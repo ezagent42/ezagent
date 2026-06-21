@@ -761,11 +761,28 @@
   }
 }
 
-/* --- Conversation (parity-migration PR-1) --- */
+/* --- Conversation (parity-migration PR-1) ---
+   Subject: an operator<->agent session console in an agent runtime (PTYs,
+   cc/codex/curl flavors). Signature: speaker identity reads as a runtime
+   label — a mono uppercase kind-tag per turn — and an agent's voice is set
+   in mono on a faint terminal tint, so the stream reads like a typed
+   transcript rather than generic chat bubbles. Human turns are the one
+   filled-accent element; everything else stays quiet. */
+:root {
+  --world-mono: "SF Mono", "JetBrains Mono", "DejaVu Sans Mono", ui-monospace,
+    Menlo, Consolas, monospace;
+  --world-agent-tint: #f0fdfa;
+  --world-agent-edge: #0f766e;
+}
+
 .world-conversation {
   display: flex;
   flex-direction: column;
-  max-height: 70vh;
+  max-height: min(72vh, 760px);
+}
+
+.world-conversation .world-section-header {
+  gap: 16px;
 }
 
 .world-session-select {
@@ -774,8 +791,13 @@
   background: var(--world-panel);
   color: var(--world-foreground);
   font-size: 13px;
-  padding: 6px 8px;
+  padding: 7px 9px;
   max-width: 280px;
+}
+
+.world-session-select:focus-visible {
+  outline: 2px solid var(--world-accent);
+  outline-offset: 1px;
 }
 
 .world-conversation-stream {
@@ -783,87 +805,199 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px;
+  gap: 14px;
+  padding: 20px 18px;
+  background:
+    linear-gradient(var(--world-panel), var(--world-panel)) padding-box,
+    repeating-linear-gradient(
+      transparent,
+      transparent 31px,
+      rgba(15, 23, 42, 0.03) 31px,
+      rgba(15, 23, 42, 0.03) 32px
+    );
 }
 
 .world-conversation-older {
   display: flex;
   justify-content: center;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
 }
 
+/* A turn: kind-tag eyebrow + head (speaker / time) + body. */
 .world-message {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 78%;
+  padding: 10px 13px 11px;
   border: 1px solid var(--world-border);
-  border-radius: 8px;
-  background: var(--world-background);
-  padding: 10px 12px;
-  max-width: 80%;
+  border-radius: 10px;
+  background: var(--world-panel);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
 }
 
+/* Agent turn — terminal vernacular: faint tint, accent edge, mono body. */
+.world-message[data-sender-kind="agent"] {
+  align-self: flex-start;
+  background: var(--world-agent-tint);
+  border-color: #99f6e4;
+  border-left: 3px solid var(--world-agent-edge);
+}
+
+.world-message[data-sender-kind="agent"] .world-message-text {
+  font-family: var(--world-mono);
+  font-size: 13px;
+}
+
+/* Human (other user) turn — quiet neutral card, left aligned. */
+.world-message[data-sender-kind="user"] {
+  align-self: flex-start;
+}
+
+/* The one bold element: the viewer's own turns, filled accent, right. */
 .world-message[data-mine="true"] {
   align-self: flex-end;
   background: var(--world-accent);
-  color: var(--world-accent-foreground);
   border-color: var(--world-accent);
+  color: var(--world-accent-foreground);
 }
 
-.world-message[data-sender-kind="agent"] {
-  border-left: 3px solid var(--world-accent);
+.world-message[data-mine="true"] .world-message-kind,
+.world-message[data-mine="true"] .world-message-sender {
+  color: var(--world-accent-foreground);
 }
 
-.world-message-meta {
+.world-message[data-mine="true"] .world-message-at {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.world-message-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 4px;
+  gap: 14px;
+}
+
+.world-message-kind {
+  font-family: var(--world-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--world-agent-edge);
+}
+
+.world-message[data-sender-kind="user"] .world-message-kind {
+  color: var(--world-muted);
 }
 
 .world-message-sender {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--world-foreground);
 }
 
 .world-message-at {
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--world-muted);
+  white-space: nowrap;
 }
 
-.world-message[data-mine="true"] .world-message-at {
-  color: rgba(255, 255, 255, 0.75);
-}
-
-.world-message-text {
+/* Two-class specificity (0,2,0) to beat the global `.world-section p`
+   (0,1,1) muted rule, which would otherwise wash out the body copy. */
+.world-message .world-message-text {
+  margin: 0;
   font-size: 14px;
+  line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: var(--world-foreground);
+}
+
+.world-message[data-mine="true"] .world-message-text {
+  color: var(--world-accent-foreground);
 }
 
 .world-message-attachments {
-  margin-top: 6px;
+  margin: 2px 0 0;
   font-size: 12px;
-  list-style: disc;
-  padding-left: 18px;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+}
+
+.world-message-attachments li {
+  font-family: var(--world-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.world-message[data-mine="true"] .world-message-attachments li {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.world-conversation-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--world-muted);
+  font-size: 13.5px;
+  max-width: 38ch;
+  line-height: 1.55;
 }
 
 .world-composer {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   border-top: 1px solid var(--world-border);
-  padding: 12px 16px;
+  padding: 14px 16px;
+  background: var(--world-panel);
 }
 
 .world-composer-input {
   flex: 1;
   resize: vertical;
-  min-height: 44px;
+  min-height: 46px;
+  max-height: 180px;
   border: 1px solid var(--world-border);
-  border-radius: 6px;
-  background: var(--world-panel);
+  border-radius: 8px;
+  background: var(--world-background);
   color: var(--world-foreground);
+  font: inherit;
   font-size: 14px;
-  font-family: inherit;
-  padding: 10px 12px;
+  line-height: 1.5;
+  padding: 11px 13px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.world-composer-input::placeholder {
+  color: var(--world-muted);
+}
+
+.world-composer-input:focus-visible {
+  outline: none;
+  border-color: var(--world-accent);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.16);
+}
+
+@media (max-width: 640px) {
+  .world-message {
+    max-width: 92%;
+  }
+
+  .world-composer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world-composer-input {
+    transition: none;
+  }
 }

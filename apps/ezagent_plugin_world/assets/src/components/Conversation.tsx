@@ -139,19 +139,23 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
         )}
 
         {messages.length === 0 ? (
-          <p className="world-empty">No messages yet. Say something to start the conversation.</p>
+          <p className="world-conversation-empty">
+            No turns in this session yet. Send the first message to start the transcript.
+          </p>
         ) : (
           messages.map((message) => {
             const mine = message.sender === callerUri
+            const kind = message.sender_kind || "other"
             return (
               <div
                 key={message.id}
                 className="world-message"
                 data-msg-id={message.id}
-                data-sender-kind={message.sender_kind || "other"}
+                data-sender-kind={kind}
                 data-mine={mine ? "true" : "false"}
               >
-                <div className="world-message-meta">
+                <span className="world-message-kind">{kindLabel(kind, mine)}</span>
+                <div className="world-message-head">
                   <span className="world-message-sender">{message.sender_display || message.sender}</span>
                   {message.at && <span className="world-message-at">{formatAt(message.at)}</span>}
                 </div>
@@ -197,4 +201,14 @@ function formatAt(at: string) {
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return at
   return date.toLocaleString()
+}
+
+// Runtime kind-tag — the viewer's own turns read "YOU"; agents and other
+// humans carry their participant class so the transcript shows at a glance
+// who is a person and who is an agent.
+function kindLabel(kind: string, mine: boolean) {
+  if (mine) return "You"
+  if (kind === "agent") return "Agent"
+  if (kind === "user") return "User"
+  return "Participant"
 }
