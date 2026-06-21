@@ -1,6 +1,7 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
 
+import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
@@ -28,7 +29,7 @@ type WorldMountOptions = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
-type WorldState = {
+type WorldState = IdentitiesState & {
   can_manage_layout?: boolean
   component?: string
   current_session_uri?: string | null
@@ -83,11 +84,20 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
         <aside className="world-sidebar" aria-label="World navigation">
           <div className="world-mark">W</div>
           <nav className="world-nav">
-            <a className="world-nav-item world-nav-item-active" href="/">
+            <a className={navClass(state.path, "/")} href="/">
               Overview
             </a>
-            <a className="world-nav-item" href="/sessions">
+            <a className={navClass(state.path, "/sessions")} href="/sessions">
               Sessions
+            </a>
+            <a className={navClass(state.path, "/identities")} href="/identities">
+              Identities
+            </a>
+            <a className={navClass(state.path, "/identities/users")} href="/identities/users">
+              Users
+            </a>
+            <a className={navClass(state.path, "/identities/agents")} href="/identities/agents">
+              Agents
             </a>
           </nav>
         </aside>
@@ -96,7 +106,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
           <header className="world-header">
             <div>
               <p className="world-eyebrow">React/shadcn shell</p>
-              <h1>Sessions</h1>
+              <h1>{state.title || pageTitle(state.component)}</h1>
             </div>
             <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace://system"}</div>
           </header>
@@ -119,6 +129,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {layout: nextLayout},
                   })
                 },
+                onCreateAgent: (agent) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.create",
+                    args: {agent},
+                  })
+                },
               }),
             )}
           </div>
@@ -138,6 +154,7 @@ type RenderContext = {
   state: WorldState
   onJoin: (sessionUri: string) => void
   onManageLayout: (layout: WorldLayout) => void
+  onCreateAgent: (agent: Record<string, unknown>) => void
 }
 
 function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
@@ -156,5 +173,37 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
   }
 
-  return null
+  return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+}
+
+function navClass(path: string | undefined, href: string) {
+  const active =
+    href === "/"
+      ? path === "/" || path === undefined
+      : path === href || (href === "/identities" && path?.startsWith("/identities"))
+
+  return active ? "world-nav-item world-nav-item-active" : "world-nav-item"
+}
+
+function pageTitle(component: string | undefined) {
+  switch (component) {
+    case "identities":
+      return "Identities"
+    case "users_table":
+      return "Users"
+    case "agents_table":
+      return "Agents"
+    case "entity_caps":
+      return "Entity caps"
+    case "agent_detail":
+      return "Agent detail"
+    case "agent_new_form":
+      return "New agent"
+    case "agent_api_keys":
+      return "Agent API keys"
+    case "agent_extensions":
+      return "Agent extensions"
+    default:
+      return "Sessions"
+  }
 }
