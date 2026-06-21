@@ -138,3 +138,49 @@ agent-browser E2E + frontend-design visual.
 This endpoint replaces LV's `live_file_input`/`consume_uploaded_entries` upload
 path; at PR-7 those LV upload sites (`admin_live.ex`, `compose.ex`,
 `session_editor.ex`) are deleted with the app.
+
+---
+
+## codex adversarial review (2026-06-21) — SPEC REJECTED, needs redesign
+
+codex found the draft authorization is unsafe. Findings (sev / claim / fix):
+
+1. **[HIGH] Missing #154 provenance filter.** The dry `matches?/2` accepts
+   stale/forged `system://`-granted caps the dispatch chokepoint rejects.
+   Dispatch applies `Capability.granted_by_entity?/1` (Kind.ex:237-248,
+   Kind.Runtime:557-563) BEFORE `matches?`. Upload must apply the same filter.
+2. **[HIGH] Missing workspace isolation.** Dispatch step 5.6
+   `Kind.Runtime.workspace_isolation_check` (627-690) is not in the dry check,
+   so upload and `:session :send` drift for cross-workspace callers.
+3. **[HIGH] Client-supplied attachment-URI laundering.** Client sends
+   attachment URIs on `chat.send`; download authz only proves a filename
+   appears in an attaching message (uploads_controller.ex:134-155), so any
+   known `resource://<ws>/uploads/<name>` can be laundered into a tokenized
+   link. Bind uploaded URIs server-side to caller/session/attempt (ledger or
+   signed attach-grant), validate message attachments against it before mint.
+4. **[MED] 5-file cap not server-enforced** — enforce at send/build_message.
+5. **[MED] Orphan uploads / storage-exhaustion** — cancel is client-only + GC
+   deferred (vs LV consume-on-send). Specify delete-on-cancel or bounded TTL GC.
+6. **[LOW] CSRF after multipart parse** — parser runs before pipeline; add a
+   route size/pre-parser guard.
+
+**Root cause:** the draft recreates dispatch authorization OUTSIDE the dispatch
+chokepoint. `Capability.matches?/2` ALONE is not the dispatch decision (which
+also does provenance + ws-isolation + required-cap resolution, all PRIVATE in
+`Kind.Runtime`). No `Ezagent.Authz` / dry-authorize predicate exists.
+
+### Redesign decision (BIG — flagged to Allen 2026-06-21)
+
+Two ways to keep upload authz in parity with dispatch:
+- **(A) Extract a shared dry predicate** `Ezagent.Authz.can?(caller_caps,
+  target, action)` from `Kind.Runtime` (required-cap + provenance + ws-iso),
+  used by BOTH dispatch and the upload controller. Touches the #154 chokepoint.
+- **(B, RECOMMENDED) Route upload THROUGH dispatch.** Controller stores to a
+  caller/session-bound quarantine, then dispatches a real session action
+  (`:session :attach`) that authorizes at the chokepoint + commits the file
+  binding into an upload ledger. ONE authz path (the chokepoint), no duplicate
+  predicate, and the ledger closes finding #3 by construction.
+
+PR-2b is HELD pending Allen's pick (A vs B). Migration proceeds with PR-4+
+meanwhile; upload is the least-critical conversation feature and must not ship
+with the draft's holes.
