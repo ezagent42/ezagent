@@ -21,7 +21,7 @@ LV = SSR/comms shell (no prod Node tier) · React+shadcn owns rendering · compo
 
 ## Human-assist prerequisites (codex cannot do these; proceed on dev without them)
 
-1. **DNS + Cloudflare tunnel** for `world.ezagent.chat` (prod) — Allen provisions. Dev uses agent-browser `--host-resolver-rules="MAP world.ezagent.chat <tailnet-ip>"` so all dev PRs proceed without it. **Verify this dev-access reaches the world scope as the FIRST action in PR-0.**
+1. **DNS + Cloudflare tunnel** for `world.ezagent.chat` — DOABLE LOCALLY (creds in `~/.cloudflared/`: cert.pem + tunnel `7339e970...` already routing `app.ezagent.chat → :10042`). Add ingress `world.ezagent.chat → http://localhost:10042` + `cloudflared tunnel route dns 7339e970-1a2b-4f03-84c9-a1ea50965eba world.ezagent.chat` + reload. ⚠ Mutates **prod DNS** → confirm with Allen before running. Dev does NOT need it: use agent-browser `--host-resolver-rules="MAP world.ezagent.chat <tailnet-ip>"` so all dev PRs proceed. **Verify this dev-access reaches the world scope as the FIRST action in PR-0.**
 2. **B1 grantee** — default: grant `:manage` to the workspace admin entity (`entity://system/user/admin` for the system workspace). Proceed on this unless Allen overrides.
 
 ## The verification gate (set this as codex's /goal) — the 7 criteria, paste-able
