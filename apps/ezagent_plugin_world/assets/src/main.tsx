@@ -1,6 +1,7 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
 
+import {AdminSurface} from "./components/Admin"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {SessionsTable} from "./components/SessionsTable"
@@ -99,6 +100,9 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             <a className={navClass(state.path, "/identities/agents")} href="/identities/agents">
               Agents
             </a>
+            <a className={navClass(state.path, "/admin")} href="/admin">
+              Admin
+            </a>
           </nav>
         </aside>
 
@@ -173,6 +177,10 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} />
   }
 
+  if (isAdminComponent(component.type)) {
+    return <AdminSurface key={component.id} state={{...context.state, component: component.type}} />
+  }
+
   return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
 }
 
@@ -203,7 +211,42 @@ function pageTitle(component: string | undefined) {
       return "Agent API keys"
     case "agent_extensions":
       return "Agent extensions"
+    case "dashboard":
+      return "Admin dashboard"
+    case "observability":
+      return "Observability"
+    case "entity_registry":
+      return "Entity registry"
+    case "snapshots":
+      return "Snapshots"
+    case "templates":
+      return "Templates"
+    case "caps_admin":
+      return "Capabilities"
+    case "authz_audit":
+      return "Authz audit"
+    case "settings":
+      return "Settings"
+    case "routing":
+      return "Routing"
+    case "external_mirror":
+      return "External mirror"
     default:
       return "Sessions"
   }
+}
+
+function isAdminComponent(type: string) {
+  return [
+    "authz_audit",
+    "caps_admin",
+    "dashboard",
+    "entity_registry",
+    "external_mirror",
+    "observability",
+    "routing",
+    "settings",
+    "snapshots",
+    "templates",
+  ].includes(type)
 }

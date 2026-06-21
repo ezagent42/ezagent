@@ -298,6 +298,21 @@
   font-size: 17px;
 }
 
+.world-section-header svg {
+  width: 18px;
+  height: 18px;
+  color: var(--world-accent);
+}
+
+.world-section-header-compact {
+  padding: 12px 16px;
+}
+
+.world-subsection {
+  border-top: 1px solid var(--world-border);
+  background: #ffffff;
+}
+
 .world-table-wrap {
   overflow-x: auto;
 }
@@ -529,6 +544,11 @@
   overflow-wrap: anywhere;
   color: var(--world-muted);
   font-size: 11px;
+}
+
+.world-muted-cell {
+  color: var(--world-muted);
+  font-size: 12px;
 }
 
 .world-uri {

@@ -13,10 +13,20 @@ defmodule Ezagent.World.LayoutManager do
                                 "agent_extensions",
                                 "agent_new_form",
                                 "agents_table",
+                                "authz_audit",
+                                "caps_admin",
+                                "dashboard",
                                 "entity_caps",
+                                "entity_registry",
+                                "external_mirror",
                                 "identities",
                                 "layout_editor",
+                                "observability",
+                                "routing",
                                 "sessions_table",
+                                "settings",
+                                "snapshots",
+                                "templates",
                                 "users_table"
                               ])
   @layout_version 1

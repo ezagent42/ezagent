@@ -119,6 +119,40 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     end
   end
 
+  test "world admin group paths stay inside the world scope", %{conn: conn} do
+    session_uri = "session://system/default/main"
+    encoded_session = URI.encode_www_form(session_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/admin", "dashboard"},
+      {"/admin/logs", "observability"},
+      {"/admin/registry", "entity_registry"},
+      {"/admin/snapshots", "snapshots"},
+      {"/admin/templates", "templates"},
+      {"/admin/caps", "caps_admin"},
+      {"/admin/audit/authz", "authz_audit"},
+      {"/admin/settings", "settings"},
+      {"/admin/routing", "routing"},
+      {"/admin/sessions/#{encoded_session}/external_mirror", "external_mirror"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      assert html =~ component
+    end
+  end
+
   test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
     caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
 
