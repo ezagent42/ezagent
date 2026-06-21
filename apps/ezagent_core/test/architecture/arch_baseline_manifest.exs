@@ -26,7 +26,10 @@
   #   Pre-existing on main (CI does not run arch.scan); surfaced by the
   #   2026-06-15 orchestrator-readiness work. Burn-down (extract the dialog
   #   scanner from server.ex into a sibling module) tracked in docs/futures/todo.md.
-  oversized_modules_gt_1000: 2,
+  # main sync #863: `EzagentPluginLiveview.Admin.SessionContext` landed documented
+  # but oversized at 1301 LOC. World PR-5 imports the new gate/doc baseline from
+  # main and does not edit `ezagent_plugin_liveview`; burn down upstream.
+  oversized_modules_gt_1000: 3,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
@@ -193,7 +196,8 @@
   #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
   #   false-negatives caught). Same-name defs across compile-time branches/quotes
   #   merge conservatively — documented only if EVERY branch is (+1 caught).
-  undocumented_public_defs: 392, # arch-cap-bump: #55 doc-coverage burn-down 441→392 (documented EzagentPluginLiveview.Admin.SessionContext)
+  # arch-cap-bump: #55 doc-coverage burn-down 441→392 (documented EzagentPluginLiveview.Admin.SessionContext)
+  undocumented_public_defs: 392,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
