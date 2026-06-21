@@ -328,7 +328,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   end
 
   defp excluded_file?(path) do
-    path == @scanner_path or String.contains?(path, "/test/")
+    # E2E scenario modules (`lib/ezagent/e2e/scenarios/`) are TEST FIXTURES that
+    # live under `lib/` only so the running node loads them (the harness resolves
+    # them at runtime; `test/` is not compiled into a `mix phx.server` node). They
+    # drive production chokepoints (create_session / SpawnRegistry.spawn) for
+    # setup, which is legitimate for a scenario but would otherwise inflate the
+    # production-caller fitness functions. Exclude them like `/test/`.
+    path == @scanner_path or String.contains?(path, "/test/") or
+      String.contains?(path, "/e2e/scenarios/")
   end
 
   defp relative(path), do: Path.relative_to(path, repo_root())

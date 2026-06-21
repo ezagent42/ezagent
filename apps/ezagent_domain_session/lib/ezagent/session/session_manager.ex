@@ -458,6 +458,12 @@ defmodule Ezagent.Session.SessionManager do
     end
   end
 
+  defp run_tool_op(:migrate_session, args, opts) do
+    with {:ok, target_uri} <- arg_uri(args, "target_session_template_uri") do
+      Tools.migrate_session(target_uri, opts)
+    end
+  end
+
   defp run_tool_op(:list_templates, args, opts) do
     Tools.list_templates(arg_optional_string(args, "name_filter"), opts)
   end

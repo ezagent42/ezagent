@@ -11,6 +11,7 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
     :define_legend,
     :update_template,
     :save_template_as,
+    :migrate_session,
     :list_templates
   ]
 

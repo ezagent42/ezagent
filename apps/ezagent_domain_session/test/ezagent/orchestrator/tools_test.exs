@@ -30,6 +30,8 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     :define_legend,
     :update_template,
     :save_template_as,
+    # spec-3 Phase 3: session-level, ledger-tracked re-point to a new template @hash
+    :migrate_session,
     :list_templates
   ]
 

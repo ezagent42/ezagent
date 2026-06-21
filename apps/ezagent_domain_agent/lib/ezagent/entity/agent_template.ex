@@ -179,6 +179,65 @@ defmodule Ezagent.Entity.AgentTemplate do
   def supervisor, do: EzagentDomainInstanceMessage.AgentTemplateSupervisor
 
   @doc """
+  Compute a content hash for an AgentTemplate version.
+
+  AgentTemplate's historical root URI remains versionless, but migrations need
+  edited member sources to mint a distinct immutable URI so
+  `update_member_template/3` can spawn-new before retiring the old worker.
+  """
+  @spec compute_version_hash(map()) :: String.t()
+  def compute_version_hash(content) when is_map(content) do
+    content
+    |> Map.drop([:created_at, :created_by, :version_hash, :version_tag, :name])
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc "Build a hash-addressed AgentTemplate URI: `template://<ws>/agent/<name>@<hash>`."
+  @spec build_versioned_uri(String.t(), String.t(), keyword()) :: URI.t()
+  def build_versioned_uri(name, version_hash, opts \\ [])
+      when is_binary(name) and is_binary(version_hash) do
+    workspace =
+      Keyword.get(opts, :workspace) ||
+        raise ArgumentError,
+              "Ezagent.Entity.AgentTemplate.build_versioned_uri/3 requires opts[:workspace]"
+
+    Ezagent.URI.template(workspace, :agent, "#{name}@#{version_hash}")
+  end
+
+  @doc """
+  Persist a hash-addressed AgentTemplate version under the bootstrap principal.
+
+  This is the mainline semantic seam for spec-3's "per-edit version minting".
+  Authoring/front-end publish code may wrap it with stricter caller-threaded
+  auth, but migration consumes only the resulting immutable source URI.
+  """
+  @spec persist_version_as_system(map(), URI.t() | String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def persist_version_as_system(content, workspace) when is_map(content) do
+    name = Map.get(content, :name) || Map.get(content, "name")
+    workspace_segment = workspace_segment(workspace)
+
+    cond do
+      not (is_binary(name) and name != "") ->
+        {:error, :missing_template_name}
+
+      is_nil(workspace_segment) ->
+        {:error, :invalid_workspace}
+
+      true ->
+        hash = compute_version_hash(content)
+        uri = build_versioned_uri(name, hash, workspace: workspace_segment)
+        versioned_content = Map.put(content, :version_hash, hash)
+
+        with {:ok, _pid} <- ensure_kind_alive(uri),
+             {:ok, _result} <- dispatch_write_as_system(uri, versioned_content) do
+          {:ok, uri}
+        end
+    end
+  end
+
+  @doc """
   Adapter — AgentTemplate `:template` slice content + a per-instance
   agent URI → the cc-flavored Template-Class data map (SPEC §1.5 (b)).
 
@@ -549,6 +608,25 @@ defmodule Ezagent.Entity.AgentTemplate do
       {:error, _} = err -> err
     end
   end
+
+  defp dispatch_write_as_system(%URI{} = uri, content) do
+    target = Ezagent.URI.with_action(uri, :template, :write)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{content: content},
+      ctx: %{
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp workspace_segment(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
+  defp workspace_segment(workspace) when is_binary(workspace), do: String.replace_prefix(workspace, "workspace://", "")
+  defp workspace_segment(_), do: nil
 
   defp normalize_caps_set(%MapSet{} = caps), do: caps
   defp normalize_caps_set(caps) when is_list(caps), do: MapSet.new(caps)

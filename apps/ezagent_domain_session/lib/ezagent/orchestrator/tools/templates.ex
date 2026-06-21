@@ -5,6 +5,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Entity.SessionTemplate
+  alias Ezagent.TemplateTags
 
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
   def update_template(opts \\ []) do
@@ -23,10 +24,14 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      SessionTemplate.persist_version(content, workspace_uri,
-        caller: caller_uri,
-        caps: caps
-      )
+      with {:ok, new_uri} <-
+             SessionTemplate.persist_version(content, workspace_uri,
+               caller: caller_uri,
+               caps: caps
+             ),
+           :ok <- publish_current(workspace_uri, parent_name, new_uri, caller_uri) do
+        {:ok, new_uri}
+      end
     end
   end
 
@@ -55,6 +60,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
              caps: caps
            ) do
         {:ok, new_uri} ->
+          :ok = publish_current(workspace_uri, new_name, new_uri, caller_uri)
           owner_uri = Keyword.get(opts, :owner, caller_uri)
           :ok = grant_owner_template_cap(owner_uri, new_uri, workspace_uri)
           {:ok, new_uri}
@@ -105,6 +111,18 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
       true ->
         {:error, :parent_template_deleted}
     end
+  end
+
+  defp publish_current(%URI{} = workspace_uri, template_name, %URI{} = template_uri, caller_uri)
+       when is_binary(template_name) do
+    TemplateTags.put(workspace_uri, template_name, "current", template_hash!(template_uri), caller_uri)
+  end
+
+  defp template_hash!(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.name!()
+    |> String.split("@", parts: 2)
+    |> List.last()
   end
 
   defp durable_snapshot_exists?(%URI{} = uri) do
