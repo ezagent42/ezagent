@@ -43,7 +43,7 @@ defmodule EzagentWeb.Socialware.AnonCookie do
   design OQ-11) is a deliberate later #51 unit — NOT built here.
   """
 
-  alias Ezagent.Socialware.AnonUser
+  alias Ezagent.Socialware.{AnonBinding, AnonUser}
 
   @cookie_name "socialware_anon"
   @salt "socialware anon visitor v1"
@@ -105,6 +105,32 @@ defmodule EzagentWeb.Socialware.AnonCookie do
   end
 
   def verify(_value, _session_uri), do: :error
+
+  @doc """
+  Verify a cookie without a pre-known session URI.
+
+  Used by the post-auth anon→login merge hook, where the request has a signed
+  cookie but does not yet know which public session minted it. Authority requires
+  BOTH intact signed-cookie possession and a matching `AnonBinding` row; binding
+  existence alone is never enough.
+  """
+  @spec verify_any(term()) :: {:ok, {URI.t(), URI.t()}} | :error
+  def verify_any(value) when is_binary(value) do
+    with {:ok, payload} <-
+           Phoenix.Token.verify(secret_key_base!(), @salt, value, max_age: :infinity),
+         %{"external_user_name" => name, "session_uri" => session_str}
+         when is_binary(name) and is_binary(session_str) <- payload,
+         {:ok, %URI{scheme: "session"} = session_uri} <- Ezagent.URI.parse(session_str),
+         {:ok, anon_uri} <- reconstruct(name, session_uri),
+         true <- AnonUser.anon_uri?(anon_uri),
+         %AnonBinding{session_uri: ^session_str} <- AnonBinding.get(anon_uri) do
+      {:ok, {anon_uri, session_uri}}
+    else
+      _ -> :error
+    end
+  end
+
+  def verify_any(_value), do: :error
 
   # Rebuild the anon-User URI from its name + the session's workspace. This MUST
   # mirror `AnonUser.mint/1` (workspace derived from the session) so the rebuilt URI
