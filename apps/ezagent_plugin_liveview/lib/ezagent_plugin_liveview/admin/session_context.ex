@@ -17,12 +17,28 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     EzagentDomainInstanceMessage.Routing.MentionRouting
   ]
 
+  @doc """
+  URI of the default `:main` session for `workspace_uri`.
+
+  For a `workspace://` URI, scopes the session to that workspace's name;
+  any other input falls back to the `:system` workspace.
+  """
   def default_main_session_uri(%URI{scheme: "workspace"} = workspace_uri),
     do: Ezagent.URI.session(Ezagent.URI.name!(workspace_uri), :default, :main)
 
   def default_main_session_uri(_),
     do: Ezagent.URI.session(:system, :default, :main)
 
+  @doc """
+  Switch the LiveView to `session_uri`, loading its messages and views.
+
+  Authorizes the view via `authorize_session_view/2` first; on success it
+  self-joins, assigns the session context, picks a `current_view` (keeps the
+  existing one if still applicable, else the first applicable view, else
+  `:conversation`), and resets the `:messages` stream. A
+  `:cross_workspace_denied` authorization failure assigns a `flash_error`
+  instead and leaves the current session unchanged.
+  """
   def select_session(socket, %URI{} = session_uri) do
     case authorize_session_view(socket, session_uri) do
       :ok ->
@@ -60,6 +76,14 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Authorize the caller to VIEW `session_uri` from the current socket.
+
+  Returns `:ok` when the session has no specific workspace (`:any`), when its
+  workspace matches the caller's `current_workspace_uri`, or when the caller
+  holds explicit cross-workspace authority; otherwise
+  `{:error, :cross_workspace_denied}`.
+  """
   def authorize_session_view(socket, %URI{} = session_uri) do
     caller_workspace = socket.assigns[:current_workspace_uri]
     target_workspace = Ezagent.Capability.workspace_of(session_uri)
@@ -82,6 +106,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Whether `caller_uri` holds any capability granting cross-workspace access.
+
+  Normalizes `caps` (list / `MapSet` / single) to a list and returns `true` if
+  any of them is a cross-workspace capability for `caller_uri`. A `nil` caller
+  never has cross-workspace authority.
+  """
   def caller_holds_cross_workspace_authority?(nil, _caps), do: false
 
   def caller_holds_cross_workspace_authority?(%URI{} = caller_uri, caps) do
@@ -95,6 +126,17 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     Enum.any?(caps_list, &Ezagent.Capability.cross_workspace?(&1, caller_uri))
   end
 
+  @doc """
+  Best-effort self-join of the caller to `session_uri` on a live socket.
+
+  No-op until the socket is `connected?/1` (so the join runs once, not on the
+  dead static render). When connected and the caller has both a URI and caps,
+  it just-in-time provisions the per-session `:join` cap (owner-rooted) then
+  dispatches `session.join`; on success it mounts the participation-tier caps.
+  Every failure (`:unauthorized`, cross-workspace, unregistered member, other)
+  is handled gracefully — a flash or a log — and returns the socket so the
+  caller can at least observe.
+  """
   def maybe_self_join(socket, %URI{} = session_uri) do
     if not connected?(socket) do
       socket
@@ -203,6 +245,15 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Assign every per-session derived value the admin view renders for `session_uri`.
+
+  Reads the session's members, legends, applicable views, scoped routing rules
+  and external-mirror bindings, builds invite/member option lists and the
+  session-info summary, computes orchestrator health and restart eligibility,
+  and assigns them all onto the socket (finishing with the routing URI option
+  lists). Used both on initial select and on refresh.
+  """
   def assign_session_context(socket, session_uri) do
     members = read_session_members(session_uri)
     member_uris = Enum.map(members, & &1.uri)
@@ -245,6 +296,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     |> assign_routing_uri_options()
   end
 
+  @doc """
+  Classify a session's orchestrator and whether the caller may restart it.
+
+  Returns `{health, can_restart?}`. `can_restart?` is `true` only when the
+  orchestrator is `:crashed` AND the caller holds the restart capability. A
+  session not bound to a workspace (or a non-URI input) yields `{nil, false}`.
+  """
   def compute_orchestrator_health(socket, %URI{} = session_uri) do
     case Ezagent.Orchestrator.Health.classify(session_uri) do
       {:ok, health} ->
@@ -261,6 +319,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def compute_orchestrator_health(_socket, _), do: {nil, false}
 
+  @doc """
+  Whether the socket's caller holds the orchestrator-restart capability.
+
+  Checks `caller_caps` against the `OrchestratorAdmin.restart` capability
+  scoped to `session_uri`'s workspace (`:any` when the session has none).
+  """
   def caller_can_restart_orchestrator?(socket, %URI{} = session_uri) do
     caps = Map.get(socket.assigns, :caller_caps, MapSet.new())
 
@@ -281,6 +345,11 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def caller_can_restart_orchestrator?(_socket, _), do: false
 
+  @doc """
+  Extract the orchestrator fields (`:orchestrator_uri`, `:orchestrator_status`,
+  `:orchestrator_error`) from a session-create result map into a flat meta map,
+  defaulting missing keys to `nil`.
+  """
   def session_create_meta(result) when is_map(result) do
     %{
       orchestrator_uri: Map.get(result, :orchestrator_uri),
@@ -289,6 +358,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     }
   end
 
+  @doc """
+  External-mirror bindings for `session_uri`, as the socket's caller.
+
+  Dispatches `ExternalMirror.list_bindings/2` with the caller's identity and
+  caps; returns the binding list or `[]` on any error or exception (the admin
+  view degrades to "no bindings" rather than crashing).
+  """
   def list_session_bindings(socket, %URI{} = session_uri) do
     ctx = %{
       caller: Map.get(socket.assigns, :caller_uri) || socket.assigns.current_entity_uri,
@@ -306,6 +382,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def list_session_bindings(_socket, _), do: []
 
+  @doc """
+  Invitable entities for `session_uri`, excluding existing members.
+
+  Lists the caller's visible entities in the session's workspace and rejects
+  any whose URI is already in `member_uris`. Returns `[]` when the socket has
+  no current entity URI.
+  """
   def invite_options_for(socket, session_uri, member_uris) do
     case Map.get(socket.assigns, :current_entity_uri) do
       %URI{} = caller_uri ->
@@ -320,10 +403,22 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Workspace URI to scope invites to, using the socket's current session.
+
+  Convenience over `invite_workspace_uri/2` that reads
+  `current_session_uri` from the socket assigns.
+  """
   def invite_workspace_uri(socket) do
     invite_workspace_uri(socket, Map.get(socket.assigns, :current_session_uri))
   end
 
+  @doc """
+  Workspace URI to scope invites to for `session_uri`.
+
+  Prefers the session's own workspace; falls back to the socket's
+  `current_workspace_uri` when the session has none (or the arg is not a URI).
+  """
   def invite_workspace_uri(socket, %URI{} = session_uri) do
     case Ezagent.Capability.workspace_of(session_uri) do
       %URI{} = ws -> ws
@@ -333,6 +428,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def invite_workspace_uri(socket, _), do: socket.assigns.current_workspace_uri
 
+  @doc """
+  Reset the invite UI after a successful invite.
+
+  Re-derives the session context (so the new member appears), closes the invite
+  modal, clears any flash error, and returns a `{:noreply, socket}` reply tuple.
+  """
   def invite_ok(socket, session_uri) do
     {:noreply,
      socket
@@ -341,6 +442,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
      |> assign(:flash_error, nil)}
   end
 
+  @doc """
+  Assign the entity / receiver option lists for the routing-rule form.
+
+  Computes both from the caller and the routing workspace
+  (`routing_workspace_uri/1`) and assigns `:routing_entity_options` and
+  `:routing_receiver_options`.
+  """
   def assign_routing_uri_options(socket) do
     caller_uri = socket.assigns.current_entity_uri
     workspace_uri = routing_workspace_uri(socket)
@@ -350,6 +458,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     |> assign(:routing_receiver_options, routing_receiver_options(caller_uri, workspace_uri))
   end
 
+  @doc """
+  Receiver options for a routing rule: the broadcast token plus entities/sessions.
+
+  Prepends an "all session members (broadcast)" option (keyed by the resolver's
+  session-members token) ahead of the caller's visible entities and sessions in
+  `workspace_uri`.
+  """
   def routing_receiver_options(caller_uri, workspace_uri) do
     broadcast = %{
       uri: Ezagent.Routing.Resolver.session_members_token(),
@@ -361,6 +476,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     [broadcast | Ezagent.UI.UriOptions.entities_and_sessions(caller_uri, workspace_uri)]
   end
 
+  @doc """
+  Workspace URI used to scope routing-rule options.
+
+  Prefers the current session's workspace; falls back to the socket's
+  `current_workspace_uri` when there is no session or the session has no
+  workspace.
+  """
   def routing_workspace_uri(socket) do
     case Map.get(socket.assigns, :current_session_uri) do
       %URI{} = session_uri ->
@@ -374,6 +496,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Order session views by the fixed `@view_display_order`.
+
+  Views whose `:id` appears in the order list come first in that order; any
+  unlisted view sorts after them, ordered by `:id`.
+  """
   def sort_views(views) do
     Enum.sort_by(views, fn %{id: id} ->
       case Enum.find_index(@view_display_order, &(&1 == id)) do
@@ -383,6 +511,9 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end)
   end
 
+  @doc """
+  The socket's `:current_view`, defaulting to `:conversation` when unset.
+  """
   def current_view_or_default(socket) do
     case Map.get(socket.assigns, :current_view) do
       nil -> :conversation
@@ -390,6 +521,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Resolve the view module to render for `current_view_id`.
+
+  Returns the matching view's `:module` from `applicable`; if none matches,
+  falls back to the registered `:conversation` view module, and finally to
+  `ConversationView` if even that lookup fails.
+  """
   def view_module_for(applicable, current_view_id) do
     case Enum.find(applicable, &(&1.id == current_view_id)) do
       %{module: mod} ->
@@ -403,10 +541,23 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Re-run `assign_session_context/2` for the socket's current session.
+
+  Used to refresh members, views and routing after a mutation.
+  """
   def refresh_views_and_members(socket) do
     assign_session_context(socket, socket.assigns.current_session_uri)
   end
 
+  @doc """
+  Build the header summary map for `session_uri`.
+
+  Returns `%{member_count, workspace_uri, created_at, generator}`. Note
+  `created_at` is the timestamp of the session's MOST RECENT message
+  (`MessageStore.recent_in_session/2` ordered newest-first), used as a proxy
+  for activity; `generator` is the spawning template info or `nil`.
+  """
   def build_session_info(%URI{} = session_uri, members) do
     workspace_str =
       case Ezagent.WorkspaceRegistry.lookup(session_uri) do
@@ -428,6 +579,15 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     }
   end
 
+  @doc """
+  Spawning-template ("generator") summary for a live session, or `nil`.
+
+  Returns `nil` when the session isn't running, has no session slice, or has no
+  orchestrator template and no agent slots. Otherwise returns a map describing
+  the working copy: `orchestrator_template_uri`, `agent_slots`, the count of
+  `filled` vs `pending` slots, and the `description`. Any exception degrades to
+  `nil`.
+  """
   def load_generator_info(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       :error ->
@@ -464,6 +624,14 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     _ -> nil
   end
 
+  @doc """
+  Routing rules scoped to `session_uri`, across the session routing tables.
+
+  Scans `@routing_tables_for_session`, parses each rule's matcher (skipping
+  invalid ones), keeps only matchers that target this session, and returns a
+  display-shaped map per rule (id, table name, matcher + repr, receivers +
+  repr, source, enabled), sorted by id.
+  """
   def list_session_scoped_rules(%URI{} = session_uri) do
     session_str = URI.to_string(session_uri)
 
@@ -492,6 +660,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def list_session_scoped_rules(_), do: []
 
+  @doc """
+  Parse stored matcher JSON into a matcher term.
+
+  Returns the matcher on success, or the `:invalid` sentinel (not an
+  `{:error, _}` tuple) on any parse failure, so callers can filter it out.
+  """
   def parse_matcher(matcher_data) do
     case Ezagent.Routing.Matcher.from_json(matcher_data) do
       {:ok, m} -> m
@@ -499,6 +673,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Whether a routing matcher references `session_str`.
+
+  True for an `{:in_session, s}` leaf matching the session, and recursively
+  through `:and` / `:or` (any) and `:not` (inner) combinators; any other
+  matcher returns `false`.
+  """
   def matcher_targets_session?({:in_session, s}, session_str), do: s == session_str
 
   def matcher_targets_session?({:and, items}, s) when is_list(items),
@@ -512,6 +693,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def matcher_targets_session?(_, _), do: false
 
+  @doc """
+  Feishu chat IDs bound to `session_uri`, or `[]` when the Feishu plugin is absent.
+
+  Guards on the optional `EzagentPluginFeishu.InboundChatLookup` module being
+  loaded so the admin view works without the Feishu plugin.
+  """
   def feishu_chat_ids_for(%URI{} = session_uri) do
     if Code.ensure_loaded?(EzagentPluginFeishu.InboundChatLookup) do
       EzagentPluginFeishu.InboundChatLookup.chat_ids_for(session_uri)
@@ -649,6 +836,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   defp elem_or_nil({:ok, value}), do: value
   defp elem_or_nil(:error), do: nil
 
+  @doc """
+  Convert a view-id string to its existing atom safely.
+
+  Returns `{:ok, atom}` for a known atom, or `:error` (no new atoms are
+  created) when the string isn't an existing atom or isn't a binary.
+  """
   def safe_view_id(s) when is_binary(s) do
     {:ok, String.to_existing_atom(s)}
   rescue
@@ -657,11 +850,17 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def safe_view_id(_), do: :error
 
+  @doc """
+  Count currently-registered agent Kinds (entity URIs of type `:agent`).
+  """
   def count_alive_agents do
     Ezagent.KindRegistry.list_all()
     |> Enum.count(fn {uri_str, _pid} -> entity_type?(uri_str, :agent) end)
   end
 
+  @doc """
+  Count connected agent bridges, or `0` when the bridge registry is unavailable.
+  """
   def count_connected_bridges do
     if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do
       length(Ezagent.AgentBridge.Registry.list_connected())
@@ -670,6 +869,9 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  The `:ezagent_core` application version as a string, or `"dev"` if unset.
+  """
   def ezagent_version do
     case Application.spec(:ezagent_core, :vsn) do
       nil -> "dev"
@@ -677,13 +879,30 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  PubSub topic for a session's events; delegates to
+  `Ezagent.Behavior.Session.session_events_topic/1`.
+  """
   def session_events_topic(%URI{} = uri), do: Ezagent.Behavior.Session.session_events_topic(uri)
 
+  @doc """
+  List sessions in a workspace.
+
+  Delegates to `EzagentDomainInstanceMessage.list_sessions/1` for a
+  `workspace://` URI; returns `[]` for anything else.
+  """
   def list_sessions_for(%URI{scheme: "workspace"} = workspace_uri),
     do: EzagentDomainInstanceMessage.list_sessions(workspace_uri)
 
   def list_sessions_for(_), do: []
 
+  @doc """
+  Load the most recent messages of a session as render-ready rows.
+
+  Fetches up to `@message_limit` newest messages, reverses them to
+  chronological (oldest-first) order, and maps them through
+  `messages_to_rows/1` for the message stream.
+  """
   def load_session_messages(%URI{} = session_uri) do
     session_uri
     |> Ezagent.MessageStore.recent_in_session(@message_limit)
@@ -691,6 +910,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     |> messages_to_rows()
   end
 
+  @doc """
+  Cursor (oldest visible `:at` timestamp) for "load older" paging.
+
+  Takes the `:at` of the FIRST row — which, given the oldest-first ordering
+  produced by `load_session_messages/1`, is the oldest currently-loaded
+  message. Returns `nil` when there are no rows / no DateTime.
+  """
   def oldest_cursor(rows) do
     case rows do
       [%{at: %DateTime{} = at} | _] -> at
@@ -698,6 +924,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
+  @doc """
+  Log a non-ready orchestrator status seen while rehydrating a session.
+
+  No-op (returns `:ok`) when the meta's `:orchestrator_status` is `:ready`;
+  otherwise logs the status and error for diagnostics. Always returns `:ok`.
+  """
   def log_orchestrator_status_on_rehydrate(session_uri, meta) when is_map(meta) do
     case Map.get(meta, :orchestrator_status) do
       :ready ->
@@ -746,8 +978,23 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   # are broadcast solely on the legacy topic. The deprecated shim's
   # `BridgeRegistry.topic/0` delegated to `legacy_topic/0`, so this call
   # preserves that behavior after removing the shim.
+  @doc """
+  PubSub topic the admin view subscribes to for bridge connect/disconnect events.
+
+  Deliberately the LEGACY topic (`esr:cc_channel:bridges`), not the generic
+  AgentBridge topic, because the `{:cc_connected, _, _}` / `{:cc_disconnected,
+  _}` messages admin_live handles are broadcast only there.
+  """
   def bridge_topic_safely, do: Ezagent.AgentBridge.Registry.legacy_topic()
 
+  @doc """
+  Render-ready row for a single message.
+
+  Resolves the sender's display name and kind (`:user` / `:agent` / `:other`)
+  and extracts body text + attachment links into a map keyed for the message
+  stream. For batches prefer `messages_to_rows/1`, which resolves display names
+  in one query.
+  """
   def message_to_row(%Ezagent.Message{} = msg) do
     sender_str = URI.to_string(msg.sender)
 
@@ -762,6 +1009,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     }
   end
 
+  @doc """
+  Render-ready rows for a list of messages.
+
+  Like `message_to_row/1` but resolves all sender display names in a single
+  `EntityPresenter.display_many/1` batch, avoiding per-row lookups.
+  """
   def messages_to_rows(messages) when is_list(messages) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)
     display_map = Ezagent.EntityPresenter.display_many(sender_uris)
@@ -838,6 +1091,14 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   defp display_name(<<_uuid::binary-size(36), "-", rest::binary>>), do: rest
   defp display_name(other), do: other
 
+  @doc """
+  Build a routing matcher from a session-routing form's params.
+
+  Maps `"matcher_type"` (`"mention"` / `"from"` / `"text_contains"` — each
+  requiring a non-empty `"matcher_arg"` — or `"always"`) to the corresponding
+  `Ezagent.Routing.Matcher` constructor, returning `{:ok, matcher}`. Anything
+  else returns `{:error, :invalid_matcher_form}`.
+  """
   def build_session_form_matcher(%{"matcher_type" => "mention", "matcher_arg" => arg})
       when is_binary(arg) and arg != "",
       do: {:ok, Ezagent.Routing.Matcher.mention(arg)}
@@ -855,6 +1116,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def build_session_form_matcher(_), do: {:error, :invalid_matcher_form}
 
+  @doc """
+  Normalize session-routing receivers into a trimmed, non-empty list.
+
+  Accepts either a list of strings or a comma-separated string; trims each
+  entry and drops blanks. Any other input yields `[]`.
+  """
   def parse_session_receivers(list) when is_list(list) do
     list
     |> Enum.map(&String.trim/1)
@@ -870,6 +1137,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def parse_session_receivers(_), do: []
 
+  @doc """
+  Validate a matcher form's `"matcher_arg"` as an entity URI when applicable.
+
+  For `"mention"` / `"from"` matchers with a non-empty arg, checks the arg is a
+  valid entity URI for the caller (via `revalidate_session_uris/3`); returns
+  `:ok` for any other matcher type or empty arg (nothing to validate).
+  """
   def revalidate_session_matcher_arg(socket, %{
         "matcher_type" => type,
         "matcher_arg" => arg
@@ -880,6 +1154,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def revalidate_session_matcher_arg(_socket, _params), do: :ok
 
+  @doc """
+  Validate that every URI in `uris` is allowed for the caller, of the given `kinds`.
+
+  Checks each against `UriOptions.valid_for?/4` for the caller and routing
+  workspace; returns `:ok` if all pass, or halts with
+  `{:error, {:invalid_uri, uri}}` on the first that doesn't.
+  """
   def revalidate_session_uris(socket, uris, kinds) do
     caller_uri = socket.assigns.current_entity_uri
     workspace_uri = routing_workspace_uri(socket)
@@ -893,6 +1174,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end)
   end
 
+  @doc """
+  Validate each routing receiver as a magic token or an allowed entity/session URI.
+
+  Magic tokens (e.g. the broadcast token) pass unconditionally; every other
+  receiver must be a caller-valid entity or session URI. Returns `:ok` if all
+  pass, else halts with the first `{:error, _}`.
+  """
   def revalidate_session_receivers(socket, receivers) do
     Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
       cond do
@@ -908,6 +1196,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end)
   end
 
+  @doc """
+  Scope a matcher to `session_uri`.
+
+  Returns an already-`{:in_session, _}` matcher unchanged; otherwise wraps the
+  leaf in an `all_of([in_session(session_uri), leaf])` so a session-scoped rule
+  only fires within that session.
+  """
   def wrap_in_session({:in_session, _} = m, _session_uri), do: m
 
   def wrap_in_session(leaf, %URI{} = session_uri) do
@@ -917,12 +1212,25 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     ])
   end
 
+  @doc """
+  Convert a routing-table-name string to its existing atom safely.
+
+  Returns `{:ok, atom}` for a known atom, or `{:error, {:unknown_table, s}}`
+  when the string is not an existing atom (no new atoms are created).
+  """
   def safe_table_atom(s) when is_binary(s) do
     {:ok, String.to_existing_atom(s)}
   rescue
     ArgumentError -> {:error, {:unknown_table, s}}
   end
 
+  @doc """
+  Dispatch a `routing` behavior action on the current session.
+
+  Targets `current_session_uri` with `?action=routing.<action>`, dispatched as
+  a `:call` with the caller's identity/caps and replies routed to the caller's
+  inbox (`{:caller_inbox, self()}`).
+  """
   def dispatch_session_routing(socket, action, args) do
     session_uri = socket.assigns.current_session_uri
     target = Ezagent.URI.with_action(session_uri, :routing, action)
@@ -939,6 +1247,12 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     })
   end
 
+  @doc """
+  Extract the workspace name from a URI (struct or string), or `nil`.
+
+  Accepts a `URI` struct or a URI string (parsed leniently — a parse failure
+  yields `nil`); returns the workspace name or `nil` when the URI carries none.
+  """
   def workspace_name_from_uri(nil), do: nil
 
   def workspace_name_from_uri(%URI{} = uri) do
@@ -960,6 +1274,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   def workspace_name_from_uri(_), do: nil
 
+  @doc """
+  Session-template names available in the current workspace, sorted.
+
+  Reads the workspace store by the `current_workspace_uri`'s name and returns
+  the sorted keys of its `:session_templates` map; returns `[]` when there is
+  no workspace or it has no templates.
+  """
   def template_class_options_for(assigns) do
     case Map.get(assigns, :current_workspace_uri) do
       %URI{scheme: "workspace"} = workspace_uri ->
