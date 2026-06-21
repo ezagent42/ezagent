@@ -53,7 +53,7 @@ export type IdentitiesState = {
   agent_status?: Record<string, unknown>
   agent_uri?: string | null
   agents?: IdentityRow[]
-  api_keys?: ApiKeyRow[] | {error?: string}
+  api_keys?: ApiKeyRow[] | {error?: string; unsupported?: boolean}
   bridge?: Record<string, unknown> | null
   can_edit?: boolean
   caps?: CapRow[] | {error?: string}
@@ -339,6 +339,17 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
 function AgentApiKeys({state}: {state: IdentitiesState}) {
   const keys = Array.isArray(state.api_keys) ? state.api_keys : []
   const error = !Array.isArray(state.api_keys) ? state.api_keys?.error : undefined
+  const unsupported = !Array.isArray(state.api_keys) ? state.api_keys?.unsupported : false
+
+  if (unsupported) {
+    return (
+      <section className="world-section" data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
+        <SectionHeader eyebrow="Secrets" title="Agent API keys" />
+        <p className="world-uri">{state.agent_uri}</p>
+        <Empty label="This agent flavor does not support API keys." />
+      </section>
+    )
+  }
 
   return (
     <section className="world-section" data-world-component="agent_api_keys" aria-labelledby="api-keys-title">

@@ -327,6 +327,12 @@ defmodule Ezagent.World.IdentityData do
            ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync}
          }) do
       {:ok, %{api_keys: list}} when is_list(list) -> Enum.map(list, &jsonable/1)
+      # Graceful-degrade off the REAL dispatch result (no parallel flavor→behavior
+      # table that could drift from what the Kind actually registers): a flavor
+      # whose Kind doesn't implement Behavior.ApiKeys (echo/np) replies
+      # `{:unknown_action, :list_api_keys}`. Surface that as a clean "unsupported"
+      # marker so the page shows a friendly notice instead of a raw error tuple.
+      {:error, {:unknown_action, _}} -> %{"unsupported" => true}
       {:error, reason} -> %{"error" => inspect(reason)}
       other -> %{"error" => inspect(other)}
     end
