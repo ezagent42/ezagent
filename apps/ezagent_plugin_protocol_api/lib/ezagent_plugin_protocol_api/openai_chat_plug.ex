@@ -91,6 +91,46 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
+  # Poll KindRegistry until agent appears (post-init activation completes).
+  defp wait_for_kind_registry(agent_uri) do
+    deadline = :erlang.monotonic_time(:millisecond) + 10_000
+    wait_for_kind_registry(agent_uri, deadline)
+  end
+
+  defp wait_for_kind_registry(agent_uri, deadline) do
+    if :erlang.monotonic_time(:millisecond) >= deadline do
+      :ok
+    else
+      case Ezagent.KindRegistry.lookup(agent_uri) do
+        {:ok, _pid} -> :ok
+        :error ->
+          Process.sleep(200)
+          wait_for_kind_registry(agent_uri, deadline)
+      end
+    end
+  end
+
+  # Register flavor attribute so AgentModuleResolver can find the Kind module.
+  defp maybe_register_flavor(agent_uri) do
+    flavor = flavor_from_uri(agent_uri)
+    if flavor, do: Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+  end
+
+  defp flavor_from_uri(agent_uri) do
+    path = agent_uri.path || ""
+    rest = String.replace_leading(path, "/", "")
+    name = List.last(String.split(rest, "/")) || ""
+    name = List.last(String.split(rest, "/"))
+    cond do
+      String.starts_with?(name, "curl_") -> "curl"
+      String.starts_with?(name, "cc_") -> "cc"
+      String.starts_with?(name, "codex_") -> "codex"
+      String.starts_with?(name, "echo_") -> "echo"
+      true -> nil
+    end
+  end
+  defp flavor_from_uri(_), do: nil
+
   defp extract_id_from_path(conn) do
     path = conn.request_path
     case String.split(path, "/v1/chat/completions/") do
@@ -139,6 +179,10 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
+    # Register flavor attribute so AgentModuleResolver can find the Kind module.
+    # The URI name prefix determines the flavor (e.g. "curl_e2e" → "curl").
+    maybe_register_flavor(agent)
+
     case SpawnRegistry.spawn(agent) do
       {:ok, _pid} -> Logger.info("ProtocolApi: agent spawned OK")
       {:error, :already_started} -> Logger.info("ProtocolApi: agent already started")
@@ -146,6 +190,12 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
         Logger.error("ProtocolApi: agent spawn failed: #{inspect(reason)}")
         {:error, 500, "spawn_failed", inspect(reason)}
     end
+
+    # Wait for agent post-init activation. Freshly spawned agents need time
+    # for handle_continue callbacks to register in KindRegistry AND snapshot
+    # writes to flush to DB (needed by AgentBridge load_sandbox_respawn).
+    wait_for_kind_registry(agent)
+    Process.sleep(3000)
 
     target = URI.with_action(session_uri, :session, :join)
     cmd = %Ezagent.Cmd{
