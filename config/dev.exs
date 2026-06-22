@@ -4,6 +4,11 @@ import Config
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
 
+# task #87 — in dev, email goes to the in-memory Local adapter (preview at
+# /dev/mailbox if mounted) so confirmation/reset links work with no SMTP.
+# Prod uses the compile-pinned SMTP adapter (config.exs) + runtime smtp_config.
+config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
+
 # Configure your database
 #
 # Path follows the same env-var logic as `Ezagent.Home` (which lives in
