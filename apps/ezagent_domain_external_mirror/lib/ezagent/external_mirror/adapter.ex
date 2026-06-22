@@ -66,7 +66,7 @@ defmodule Ezagent.ExternalMirror.Adapter do
   inside this callback creates a dispatch-during-dispatch deadlock
   because `:bind` is itself a dispatched action.
 
-  ## P3-1 adapter KIND axis — `:push` vs `:pull`
+  ## P3-1 adapter KIND axis — `:push` | `:pull` | `:request_scoped`
 
   Every adapter has a **kind** (`adapter_kind/0`), resolved via
   `kind_of/1`:
@@ -87,6 +87,16 @@ defmodule Ezagent.ExternalMirror.Adapter do
     the json-render map for a session on demand. Required callbacks:
     `render/2` + `cap_subject/0` (plus the id/name/description trio).
 
+  - `:request_scoped` — protocol-api P0 (2026-06-22). An inbound HTTP
+    adapter whose binding lives for ONE request (the HTTP response/SSE
+    IS the transport). Like `:push` it declares a paired Binding module
+    (Grill-5), but the Domain spawns NO long-lived Worker — the caller's
+    HTTP handler owns the transport lifecycle. Required callbacks: same
+    as `:push` (`binding_module/0`, `cap_subject/0`,
+    `target_ownership_check/2`, `event_to_payload/1`) plus the
+    id/name/description trio. `target_ownership_check/2` and
+    `event_to_payload/1` may be no-ops (the real transport is HTTP).
+
   `adapter_kind/0` is an OPTIONAL callback with a back-compat default of
   `:push` (resolved through `kind_of/1`), so EXISTING adapters (Feishu
   mirror, the test adapters) remain valid WITHOUT declaring it. The
@@ -104,7 +114,7 @@ defmodule Ezagent.ExternalMirror.Adapter do
   Worker; `:pull` is served on demand by its caller's Phoenix channel and
   has no per-binding transport.
   """
-  @type adapter_kind :: :push | :pull
+  @type adapter_kind :: :push | :pull | :request_scoped
 
   @typedoc """
   Per-adapter cap subject shape returned from `cap_subject/0`. The

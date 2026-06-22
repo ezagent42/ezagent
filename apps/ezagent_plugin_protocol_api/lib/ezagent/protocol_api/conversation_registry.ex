@@ -27,7 +27,12 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
   Returns `{:ok, session_uri}` — either the existing bound session or a
   freshly-spawned one.
   """
-  @spec resolve(String.t(), URI.t(), URI.t()) :: {:ok, URI.t()} | {:error, term()}
+  @spec resolve(String.t() | nil, URI.t(), URI.t()) :: {:ok, URI.t()} | {:error, term()}
+  # Stateless (handoff §2.2): no conversation_id → ephemeral, unbound session
+  def resolve(nil, workspace_uri, bound_by) do
+    create_stateless(workspace_uri, bound_by)
+  end
+
   def resolve(conversation_id, workspace_uri, bound_by)
       when is_binary(conversation_id) and is_struct(workspace_uri, URI) and
              is_struct(bound_by, URI) do
@@ -38,6 +43,27 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
       {:error, :not_found} ->
         create_and_bind(conversation_id, workspace_uri, bound_by)
     end
+  end
+
+  # Stateless session: spawn without external_mirror_bindings entry.
+  defp create_stateless(workspace_uri, bound_by) do
+    workspace_name = Ezagent.URI.stable_key(workspace_uri) |> String.replace("://", "_")
+    name = "stateless_#{stateless_suffix()}"
+    session_uri = Ezagent.URI.session(:system, "generic", name)
+
+    with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),
+         :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri) do
+      Logger.info("ProtocolApi: stateless session #{Ezagent.URI.stable_key(session_uri)}")
+      {:ok, session_uri}
+    else
+      {:error, reason} ->
+        Logger.error("ProtocolApi: stateless session failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp stateless_suffix do
+    :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
   end
 
   defp lookup(conversation_id) do

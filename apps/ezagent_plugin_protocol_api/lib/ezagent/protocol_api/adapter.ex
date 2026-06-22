@@ -1,11 +1,11 @@
 defmodule Ezagent.ProtocolApi.Adapter do
   @moduledoc """
-  Protocol API ExternalAdapter — `:push` for now.
+  Protocol API ExternalAdapter — `:request_scoped` (handoff §2.4).
 
-  P0 declares this as `:push` with minimal no-op callbacks to satisfy the
-  plugin contract (Grill-5 compile check). The REAL transport is the HTTP
-  response in `OpenaiChatPlug`. P1 will introduce the request-scoped
-  binding variant to `adapter.ex` and reshape this.
+  The binding is REQUEST-SCOPED: lives for one HTTP request. No Worker is spawned; OpenaiChatPlug owns the transport.
+  
+  
+  
   """
 
   @behaviour Ezagent.ExternalMirror.Adapter
@@ -28,7 +28,7 @@ defmodule Ezagent.ProtocolApi.Adapter do
   end
 
   @impl true
-  def adapter_kind, do: :push
+  def adapter_kind, do: :request_scoped
 
   @impl true
   def binding_module, do: Ezagent.ProtocolApi.Binding

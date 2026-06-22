@@ -36,4 +36,10 @@ defmodule EzagentPluginProtocolApi.Application do
 
   @impl Ezagent.Plugin
   def children, do: []
+
+  @impl Ezagent.Plugin
+  def after_boot do
+    Ezagent.ProtocolApi.PendingReplyStore.init()
+    :ok
+  end
 end

@@ -216,6 +216,17 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     ]
   end
 
+  # P0 protocol-api: request-scoped is structurally like :push (same transport
+  # contract — binding, ownership, event-to-payload), but the binding lives for
+  # one HTTP request rather than being operator-bound / long-lived (handoff §2.4).
+  defp kind_specific_required(:request_scoped) do
+    [
+      binding_module: 0,
+      target_ownership_check: 2,
+      event_to_payload: 1
+    ]
+  end
+
   defp kind_specific_required(:pull) do
     [render: 2]
   end

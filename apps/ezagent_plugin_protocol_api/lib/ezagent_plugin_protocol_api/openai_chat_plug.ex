@@ -1,12 +1,14 @@
 defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   @moduledoc """
   `POST /v1/chat/completions` — OpenAI-compatible inbound endpoint.
-  Flow: parse → auth → resolve session → build Message →
-  subscribe Publisher → dispatch session.send → wait reply → return JSON.
+
+  Ack-then-async-reply (handoff §2.3): POST returns `{id, status:"processing"}`
+  immediately; a background Task waits for the agent reply; the client polls
+  `GET /v1/chat/completions/:id` to retrieve the result.
   """
   import Plug.Conn
   alias Ezagent.{Invocation, Message, Router, SpawnRegistry, URI}
-  alias Ezagent.ProtocolApi.{ApiKeyStore, ConversationRegistry, ReplyWaiter}
+  alias Ezagent.ProtocolApi.{ApiKeyStore, ConversationRegistry, PendingReplyStore, ReplyWaiter}
   @behaviour Plug
   @deadline_ms 120_000
 
@@ -15,12 +17,16 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
   @impl Plug
   def call(conn, _opts) do
-    case conn.method do
-      "POST" -> handle_post(conn)
-      _ -> json_error(conn, 405, "only POST is supported")
+    case {conn.method, extract_id_from_path(conn)} do
+      {"POST", _} -> handle_post(conn)
+      {"GET", {:ok, id}} -> handle_retrieve(conn, id)
+      {"GET", _} -> json_error(conn, 400, "missing request id in path")
+      _ -> json_error(conn, 405, "only POST/GET is supported")
     end
   end
 
+  # Ack-then-async-reply (handoff §2.3): validate + set up synchronously,
+  # spawn background Task for the waiter, return ack immediately.
   defp handle_post(conn) do
     with {:ok, body} <- parse_body(conn),
          {:ok, token} <- extract_bearer(conn),
@@ -31,17 +37,65 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          :ok <- ensure_session_live(session_uri),
          :ok <- join_agent(session_uri, entity_uri, target_agent),
          {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
-         {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      # target_agent: the agent that handles the request (from API key config, default echo)
       agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
-      case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
-        {:ok, reply_msg} -> json_response(conn, 200, build_openai_response(request_id, reply_msg))
-        {:error, :timeout} -> json_error(conn, 504, "timed out waiting for agent reply")
-      end
+
+      # Register pending request, spawn background waiter (subscribes + waits in Task)
+      PendingReplyStore.put_pending(request_id)
+      spawn_waiter(request_id, agent, session_uri, entity_uri)
+
+      # Return ack immediately
+      json_response(conn, 202, %{
+        "id" => request_id,
+        "object" => "chat.completion.pending",
+        "status" => "processing",
+        "retrieve_url" => "/v1/chat/completions/#{request_id}"
+      })
     else
       {:error, status, code, detail} -> json_error(conn, status, "#{code}: #{detail}")
       {:error, reason} -> json_error(conn, 400, inspect(reason))
+    end
+  end
+
+  # Background task: subscribe to Publisher, wait for reply, store result.
+  defp spawn_waiter(request_id, agent, session_uri, entity_uri) do
+    Task.start(fn ->
+      # Subscribe to Publisher from THIS task's PID
+      with {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri) do
+        case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
+          {:ok, reply_msg} ->
+            PendingReplyStore.put_reply(request_id, build_openai_response(request_id, reply_msg))
+          {:error, :timeout} ->
+            PendingReplyStore.put_error(request_id, "timed out waiting for agent reply")
+        end
+      else
+        {:error, reason} ->
+          PendingReplyStore.put_error(request_id, "subscribe failed: #{inspect(reason)}")
+      end
+    end)
+  end
+
+  # GET /v1/chat/completions/:id — retrieve async result.
+  defp handle_retrieve(conn, request_id) do
+    case PendingReplyStore.get(request_id) do
+      {:ok, :pending} ->
+        json_response(conn, 200, %{"id" => request_id, "status" => "processing"})
+      {:ok, reply} ->
+        PendingReplyStore.delete(request_id)
+        json_response(conn, 200, reply)
+      {:error, error} ->
+        PendingReplyStore.delete(request_id)
+        json_response(conn, 200, %{"id" => request_id, "status" => "error", "error" => error})
+      :not_found ->
+        json_error(conn, 404, "request #{request_id} not found")
+    end
+  end
+
+  defp extract_id_from_path(conn) do
+    path = conn.request_path
+    case String.split(path, "/v1/chat/completions/") do
+      [_, id] when byte_size(id) > 0 -> {:ok, id}
+      _ -> :error
     end
   end
 
@@ -66,18 +120,14 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp extract_conversation_id(body, conn) do
+    # Durable path: explicit conversation_id in body or header
     case Map.get(body, "conversation_id") do
-      id when is_binary(id) and id != "" ->
-        {:ok, id}
-
+      id when is_binary(id) and id != "" -> {:ok, id}
       _ ->
         case Plug.Conn.get_req_header(conn, "x-conversation-id") do
-          [id | _] when id != "" ->
-            {:ok, id}
-
-          _ ->
-            {:error, 400, "missing_conversation_id",
-             "conversation_id field or X-Conversation-Id header required"}
+          [id | _] when id != "" -> {:ok, id}
+          # Stateless fallback (handoff §2.2): no conversation_id → ephemeral session
+          _ -> {:ok, nil}
         end
     end
   end
@@ -147,8 +197,8 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp subscribe_publisher(session_uri, entity_uri) do
+    # Subscribe from the CALLING process (Task PID for async, Plug PID for sync)
     target = URI.with_action(session_uri, :publisher, :subscribe_from)
-
     cmd = %Ezagent.Cmd{
       target: target,
       action: :subscribe_from,
