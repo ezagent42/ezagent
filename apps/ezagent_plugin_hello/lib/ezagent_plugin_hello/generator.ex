@@ -36,7 +36,7 @@ defmodule EzagentPluginHello.Generator do
   @doc "Generate a page spec from `user_text` and land it on `session_uri`'s Surface."
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
-    with {:ok, %{content: content}} <- call_llm(user_text),
+    with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), user_text),
          {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
       summary = page_summary(spec)
@@ -48,7 +48,65 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  defp call_llm(user_text) do
+  @doc """
+  Plan a request into `{:simple}` or `{:complex, %{title, sections}}` — the
+  Phase-1 orchestrator's pre-classification (decision D-1). Calls the planner LLM;
+  a failed/ambiguous reply degrades to `{:simple}` so generation always proceeds.
+  """
+  @spec decompose(String.t()) :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  def decompose(user_text) when is_binary(user_text) do
+    case call_llm(Prompts.decompose_system(), user_text) do
+      {:ok, %{content: content}} -> parse_plan(content)
+      {:error, _} -> {:simple}
+    end
+  end
+
+  @doc """
+  Parse the planner's reply into a plan. Pure. Anything that is not an explicit,
+  well-formed `complex` plan with ≥2 usable section briefs degrades to `{:simple}`
+  (the hard floor — fan-out is opt-in, only when it clearly pays off). Section ids
+  are assigned deterministically (`"s0"`, `"s1"`, …), NEVER taken from the LLM, so
+  no untrusted strings become turn subtask keys.
+  """
+  @spec parse_plan(term()) :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  def parse_plan(content) when is_binary(content) do
+    case Spec.extract(content) do
+      {:ok, %{"mode" => "complex"} = plan} ->
+        case briefs_of(plan) do
+          briefs when length(briefs) >= 2 ->
+            title = plan |> Map.get("title", "") |> to_string()
+
+            sections =
+              briefs
+              |> Enum.with_index()
+              |> Enum.map(fn {brief, i} -> %{id: "s#{i}", brief: brief} end)
+
+            {:complex, %{title: title, sections: sections}}
+
+          _ ->
+            {:simple}
+        end
+
+      _ ->
+        {:simple}
+    end
+  end
+
+  def parse_plan(_), do: {:simple}
+
+  defp briefs_of(%{"sections" => sections}) when is_list(sections) do
+    sections
+    |> Enum.map(fn
+      %{"brief" => b} when is_binary(b) -> String.trim(b)
+      %{"title" => t} when is_binary(t) -> String.trim(t)
+      _ -> nil
+    end)
+    |> Enum.reject(&(&1 in [nil, ""]))
+  end
+
+  defp briefs_of(_), do: []
+
+  defp call_llm(system, user_text) do
     case api_key() do
       key when is_binary(key) and key != "" ->
         ApiClient.chat_completion(%{
@@ -56,7 +114,7 @@ defmodule EzagentPluginHello.Generator do
           api_key: key,
           model: model(),
           messages: [
-            %{role: "system", content: Prompts.page_gen_system()},
+            %{role: "system", content: system},
             %{role: "user", content: user_text}
           ]
         })
