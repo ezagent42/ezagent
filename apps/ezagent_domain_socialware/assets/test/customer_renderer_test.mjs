@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {createBaseRegistry, renderJsonNode, renderTree} from "../js/json_render.mjs"
+import {createBaseRegistry, renderJsonNode, renderTree} from "../js/catalog_render.mjs"
 
 let sandpackRenderCount = 0
 

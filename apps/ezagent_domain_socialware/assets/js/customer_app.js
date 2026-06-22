@@ -2,7 +2,8 @@ import {Socket} from "phoenix"
 import React, {useEffect, useMemo, useState} from "react"
 import {createRoot} from "react-dom/client"
 import {Sandpack} from "@codesandbox/sandpack-react"
-import {createBaseRegistry, renderJsonNode} from "./json_render.mjs"
+import {createBaseRegistry, renderJsonNode} from "./catalog_render.mjs"
+import {isValidTree} from "./catalog.mjs"
 
 function boot(root) {
   const sessionUri = root.dataset.sessionUri
@@ -101,9 +102,17 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
 
   // Centered single-column reading width. The sw-customer-shell contract class
   // is kept (E2E asserts on it); Tailwind layout classes sit alongside.
+  //
+  // `data-catalog-valid` is a NON-destructive conformance signal: the approved
+  // page is rendered regardless (the renderer fails closed per node), but a tree
+  // that does not conform to the Zod catalog is flagged for observability/E2E.
+  const page = snapshot.page || emptyPage()
   return React.createElement(
     "div",
-    {className: "sw-customer-shell mx-auto flex w-full max-w-2xl flex-col gap-6"},
+    {
+      className: "sw-customer-shell mx-auto flex w-full max-w-2xl flex-col gap-6",
+      "data-catalog-valid": String(isValidTree(page)),
+    },
     React.createElement(
       "header",
       {className: "flex flex-col gap-1"},
@@ -119,7 +128,7 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
       )
     ),
     React.createElement(ChatPane, {messages: snapshot.messages || []}),
-    renderJsonNode(React, snapshot.page || emptyPage(), registry)
+    renderJsonNode(React, page, registry)
   )
 }
 

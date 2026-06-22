@@ -265,7 +265,10 @@ defmodule Ezagent.World.ConversationActions do
   @doc "Switch the active conversation sub-view (`chat` or `pty`)."
   @spec switch_view(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty"] do
+  # "page" (TEMPORARY): the hello operator page-preview view. Proper world
+  # surfacing of registered SessionViews is Phase 3; this just toggles the
+  # active view so the React UI can embed the customer surface.
+  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty", "page"] do
     {:noreply, push_world_state(socket, %{"active_view" => view})}
   end
 

@@ -81,6 +81,7 @@ defmodule EzagentWeb.MixProject do
       # World PR-0: host-scoped React/shadcn app mounted by LiveView.
       # Router references EzagentPluginWorld.WorldLive by module atom.
       {:ezagent_plugin_world, in_umbrella: true},
+      {:ezagent_plugin_hello, in_umbrella: true},
       {:ezagent_plugin_echo, in_umbrella: true},
       # Phase 5 PR 6: Feishu webhook route forwards to
       # EzagentPluginFeishu.WebhookPlug — needed at compile time so the

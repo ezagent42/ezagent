@@ -1,0 +1,97 @@
+defmodule EzagentPluginHello.PageView do
+  @moduledoc """
+  Operator `SessionView` for a hello session's page surface — the un-degraded
+  operator render.
+
+  Socialware's own `PageView` renders the Surface tree with a tiny 5-type
+  server-side HEEx renderer, which does NOT know hello's catalog
+  (page/section/card/heading/button/image) and shows "Unsupported node" for them.
+  This view instead emits a `<div phx-hook="HelloRenderer" data-spec=…>` that
+  hydrates hello's `@json-render` island (`/assets/hello/main.js`, the SAME
+  renderer the customer surface uses) INSIDE the world LiveView shell — so the
+  operator sees the real rendered page.
+
+  Registered via `Ezagent.UI.SessionViewRegistry` from
+  `EzagentPluginHello.Application.start/2`; world renders any registered
+  SessionView generically, so this needs no edit to world (handoff §6/§117).
+  """
+
+  @behaviour Ezagent.UI.SessionView
+  use Phoenix.Component
+
+  alias Ezagent.Behavior.Surface
+
+  @impl true
+  def id, do: :hello_page
+
+  @impl true
+  def label, do: "Page"
+
+  @impl true
+  def icon, do: "panel-top"
+
+  @impl true
+  def applies_to?(%URI{} = session_uri) do
+    Ezagent.URI.type?(session_uri, :hello) and
+      match?({:ok, surface} when is_map(surface), Ezagent.Kind.get_slice(session_uri, :surface))
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  def applies_to?(_), do: false
+
+  @impl true
+  def render(assigns) do
+    assigns = assign_new(assigns, :surface, fn -> load_surface(assigns[:session_uri]) end)
+
+    assigns =
+      assigns
+      |> assign(:tree, Surface.operator_tree(assigns[:surface] || %{}))
+      |> assign(:module_url, module_url())
+
+    ~H"""
+    <div id="hello-page-view" class="flex-1 overflow-auto bg-white dark:bg-zinc-950 min-h-0 p-5">
+      <div
+        :if={is_nil(@tree)}
+        id="hello-page-empty"
+        class="h-full min-h-64 flex items-center justify-center text-sm text-zinc-500 dark:text-zinc-400"
+      >
+        No page version yet.
+      </div>
+
+      <div
+        :if={not is_nil(@tree)}
+        id="hello-page-renderer"
+        phx-hook="HelloRenderer"
+        phx-update="ignore"
+        data-hello-module-url={@module_url}
+        data-spec={Jason.encode!(@tree)}
+      >
+      </div>
+    </div>
+    """
+  end
+
+  # Operator-only: the customer surface renders the approved tree through the
+  # socialware customer SPA, not this SessionView. (external_render?/0 +
+  # external_render/1 are optional callbacks — omitted → operator-only.)
+
+  defp module_url do
+    Application.get_env(:ezagent_plugin_hello, :hello_module_url, "/assets/hello/main.js")
+  end
+
+  defp load_surface(%URI{} = session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, surface} -> surface
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  catch
+    _, _ -> %{}
+  end
+
+  defp load_surface(_), do: %{}
+end
