@@ -4,6 +4,13 @@ import Config
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
 
+# Dev session cookie has NO domain (host-only) — a `.ezagent.chat` cookie (the
+# prod default in config.exs) is rejected by the browser on `localhost` /
+# `world.localhost`, leaving the session empty and breaking CSRF/login. Host-only
+# means the cookie works on whatever dev host you use (just be consistent: the
+# operator console lives under `world.localhost`).
+config :ezagent_web, session_cookie_domain: nil
+
 # Configure your database
 #
 # Path follows the same env-var logic as `Ezagent.Home` (which lives in

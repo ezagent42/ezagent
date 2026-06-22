@@ -33,7 +33,12 @@ config :ezagent_domain_session,
 
 config :ezagent_web,
   ecto_repos: [EzagentCore.Repo],
-  generators: [context_app: :ezagent_core]
+  generators: [context_app: :ezagent_core],
+  # Session-cookie domain (read at compile time by EzagentWeb.Endpoint). Production
+  # is fronted by the `*.ezagent.chat` tunnels, so the cookie is shared across the
+  # `app.` / `world.` subdomains. `dev.exs` overrides this to `nil` (host-only) so
+  # login works on `localhost` / `world.localhost`.
+  session_cookie_domain: ".ezagent.chat"
 
 # Configures the endpoint
 config :ezagent_web, EzagentWeb.Endpoint,
