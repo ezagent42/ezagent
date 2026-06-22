@@ -93,6 +93,14 @@ config :ezagent_plugin_world,
   world_module_url: "/assets/world/main.js",
   world_css_url: "/assets/world/world.css"
 
+# The hello @json-render operator island. Unlike world (which serves its island
+# from a Vite dev server in dev), hello ships a PRE-BUILT bundle
+# (apps/ezagent_plugin_hello/assets → priv/static/assets/hello), so the same URL
+# works in dev and prod. Rebuild with: cd apps/ezagent_plugin_hello/assets &&
+# PATH=~/.local/linux-node/bin:$PATH npm run build
+config :ezagent_plugin_hello,
+  hello_module_url: "/assets/hello/main.js"
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

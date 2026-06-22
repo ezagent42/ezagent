@@ -36,7 +36,14 @@ defmodule EzagentPluginHello.Application do
   require Logger
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    result = Ezagent.Plugin.boot(__MODULE__)
+    # Register the operator @json-render page view (un-degrades the console's
+    # render of a hello session). The registry is init'd by ezagent_domain_ui,
+    # which boots before this plugin (a declared dep).
+    _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
+    result
+  end
 
   # Phase 2 — register the `session.hello` Template Class so a hello app is
   # creatable through the substrate's generic Tier-3 create path (the one world's

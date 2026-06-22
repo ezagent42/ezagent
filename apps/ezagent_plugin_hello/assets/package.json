@@ -1,0 +1,21 @@
+{
+  "name": "@ezagent/hello",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@json-render/core": "0.19.0",
+    "@json-render/react": "0.19.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
