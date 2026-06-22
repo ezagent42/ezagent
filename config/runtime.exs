@@ -6,28 +6,28 @@ import Config
 # and secrets from environment variables or elsewhere. Do not define
 # any compile-time configuration in here, as it won't be applied.
 
-# Dev DB path comes from EZAGENT_HOME so the working tree stays clean
-# (Phase 6 PR 1). Test keeps its own ephemeral DB in repo root via
-# config/test.exs (Sandbox pool, gitignored). Prod still requires
-# DATABASE_PATH env.
 if config_env() == :dev do
-  File.mkdir_p!(Ezagent.Home.path(:db))
-
   config :ezagent_core, EzagentCore.Repo,
-    database: Path.join(Ezagent.Home.path(:db), "ezagent_core.db")
+    username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
+    password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),
+    hostname: System.get_env("POSTGRES_HOST", "127.0.0.1"),
+    port: String.to_integer(System.get_env("POSTGRES_PORT", "55432")),
+    database: System.get_env("POSTGRES_DB", "ezagent_pg_compat_dev"),
+    priv: "priv/repo_pg"
 end
 
 # The block below contains prod specific runtime configuration.
 if config_env() == :prod do
-  database_path =
-    System.get_env("DATABASE_PATH") ||
+  database_url =
+    System.get_env("DATABASE_URL") ||
       raise """
-      environment variable DATABASE_PATH is missing.
-      For example: /etc/ezagent_core/ezagent_core.db
+      environment variable DATABASE_URL is missing.
+      For example: ecto://USER:PASS@HOST/DATABASE
       """
 
   config :ezagent_core, EzagentCore.Repo,
-    database: database_path,
+    url: database_url,
+    priv: "priv/repo_pg",
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5")
 
   # The secret key base is used to sign/encrypt cookies and other secrets.

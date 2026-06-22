@@ -48,8 +48,8 @@ defmodule Ezagent.Session.ReadMarkerTest do
         workspace_uri: URI.to_string(Ezagent.Capability.workspace_of(session_uri)),
         session_uri: URI.to_string(session_uri),
         sender: URI.to_string(sender),
-        mentions: Jason.encode!([]),
-        body: Jason.encode!(%{text: "hi", attachments: []}),
+        mentions: [],
+        body: %{text: "hi", attachments: []},
         ref_id: nil,
         inserted_at: inserted_at
       }
@@ -141,7 +141,7 @@ defmodule Ezagent.Session.ReadMarkerTest do
       user = unique_user_uri("unread_conf")
 
       m1 = insert_message(session, user, inserted_at: ~U[2026-01-01 12:00:00.000000Z])
-      m2 = insert_message(session, user, inserted_at: ~U[2026-01-01 12:00:01.000000Z])
+      _m2 = insert_message(session, user, inserted_at: ~U[2026-01-01 12:00:01.000000Z])
       m3 = insert_message(session, user, inserted_at: ~U[2026-01-01 12:00:02.000000Z])
 
       # delivered = m3 (most recent), but read = m1 (older). HIGHEST

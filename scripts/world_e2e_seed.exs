@@ -42,9 +42,12 @@ ensure_member = fn uri_str, label ->
 
   # 1. registered user row carrying its own narrow join+send grants.
   case Ezagent.Users.create_read_only(uri, [join_cap, send_cap]) do
-    {:ok, _} -> Logger.info("seed: created user #{uri_str}")
+    {:ok, _} ->
+      Logger.info("seed: created user #{uri_str}")
+
     {:error, %Ecto.Changeset{errors: [uri: {"has already been taken", _}]}} ->
       Logger.info("seed: user #{uri_str} already exists")
+
     other ->
       Logger.error("seed: create_read_only #{uri_str} -> #{inspect(other)}")
   end
@@ -82,10 +85,11 @@ end
 ensure_member.("entity://system/user/alice", "alice")
 ensure_member.("entity://system/user/bob", "bob")
 
-# Admin login password for the agent-browser E2E (idempotent). Admin authority
-# is by identity (`Ezagent.Identity.admin?/1`), not caps — a password row is all
-# the web login needs. Set a known dev value so the browser can sign in.
+# Admin login credentials for the agent-browser E2E (idempotent). Since task
+# #87, the login form authenticates by email + password, so the seed must bind a
+# verified email profile as well as setting a password.
 admin_uri = Ezagent.Entity.User.admin_uri()
+admin_email = System.get_env("WORLD_E2E_ADMIN_EMAIL") || "admin@ezagent.chat"
 admin_pw = System.get_env("WORLD_E2E_ADMIN_PW") || "worlddev"
 
 case Ezagent.Users.set_password(admin_uri, admin_pw) do
@@ -102,9 +106,24 @@ case Ezagent.Users.set_password(admin_uri, admin_pw) do
     Logger.error("seed: admin set_password -> #{inspect(other)}")
 end
 
+case Ezagent.Entity.Profile.upsert(%{
+       entity_uri: URI.to_string(admin_uri),
+       display_name: "Admin",
+       email: admin_email
+     }) do
+  {:ok, _} -> Logger.info("seed: admin email bound (#{admin_email})")
+  other -> Logger.error("seed: admin email bind -> #{inspect(other)}")
+end
+
+case Ezagent.Users.mark_email_verified(admin_uri) do
+  {:ok, _} -> Logger.info("seed: admin email verified (#{admin_email})")
+  other -> Logger.error("seed: admin email verify -> #{inspect(other)}")
+end
+
 encoded = session |> URI.to_string() |> URI.encode_www_form()
 
 IO.puts("\n=== world E2E seed complete ===")
 IO.puts("session : #{URI.to_string(session)}")
 IO.puts("deep-link: /sessions?session=#{encoded}")
+IO.puts("admin   : #{admin_email} / #{admin_pw}")
 IO.puts("members : alice, bob (persisted; show offline until their Kinds are live)\n")

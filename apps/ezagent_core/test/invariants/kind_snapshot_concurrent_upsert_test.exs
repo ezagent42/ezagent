@@ -1,26 +1,10 @@
 defmodule Ezagent.Invariants.KindSnapshotConcurrentUpsertTest do
   @moduledoc """
-  2026-05-26 (Allen "请重试" directive) — pins the `Database busy`
-  retry behaviour in `Ezagent.Ecto.KindSnapshot.upsert/5`.
-
-  SQLite is single-writer at the file level. Before the bounded
-  retry was added (PR #364 follow-up), concurrent `Kind.spawn` calls
-  raced their initial-snapshot inserts and exactly one of them got
-  back `%Exqlite.Error{message: "Database busy"}` from
-  `Ecto.Adapters.SQL.raise_sql_call_error/1`, which propagated up
-  through `Kind.Server.init/1`'s `{:stop, {:persistence_failed, _}}`
-  return value and surfaced in the caller's `SpawnRegistry.spawn`
-  return as `{:error, {:persistence_failed, %Exqlite.Error{...}}}`.
-
-  3 production tests hit this race:
-
-    - `Ezagent.Integration.CapsDenialE2ETest` Scenario 4
-    - `EzagentCore.Invariants.CrossWorkspaceIsolationTest` (two scenarios)
-
-  This invariant pins **N concurrent upserts to N distinct URIs all
-  succeed**. SQLite's writer lock is file-scoped, so even distinct
-  rows block each other under load — without retry, ~half raise
-  `Database busy`.
+  Pins that `Ezagent.Ecto.KindSnapshot.upsert/5` remains safe under
+  concurrent writes to distinct URIs. PostgreSQL should handle this path
+  without row-level contention; transient retry is still isolated in
+  `Ezagent.Persistence.TransientRetry` for deadlocks, serialization failures,
+  and connection interruptions.
 
   We deliberately do NOT test concurrent upsert to the SAME URI here.
   In production, `KindRegistry.put_new/1` (Kind.Server.init/1 step 1)
@@ -38,13 +22,11 @@ defmodule Ezagent.Invariants.KindSnapshotConcurrentUpsertTest do
 
   alias Ezagent.Ecto.KindSnapshot
 
-  # Keep numbers modest — SQLite's single-writer ceiling is real even
-  # WITH retry; the goal is to prove the retry works under realistic
-  # concurrency (≥3 concurrent Kind spawns is the production hot
-  # path), not to stress-test sqlite itself.
+  # Keep numbers modest; the goal is to prove the production hot path for
+  # concurrent Kind spawns, not to run a database load test.
   @parallel_concurrency 10
 
-  test "concurrent upserts to distinct URIs all succeed (retry covers Database busy)" do
+  test "concurrent upserts to distinct URIs all succeed" do
     workspace_uri = "workspace://system"
 
     tasks =
@@ -70,8 +52,8 @@ defmodule Ezagent.Invariants.KindSnapshotConcurrentUpsertTest do
     assert failures == [],
            """
            Concurrent upserts to distinct URIs failed.
-           This indicates the `Database busy` retry in
-           `KindSnapshot.do_upsert_with_retry/4` has regressed.
+           This indicates the snapshot persistence path is not safe under
+           ordinary concurrent Kind spawns.
 
            Failed results: #{inspect(failures)}
            """

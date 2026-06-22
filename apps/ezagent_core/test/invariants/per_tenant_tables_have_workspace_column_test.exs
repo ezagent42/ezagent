@@ -169,7 +169,7 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   describe "DB-side invariant" do
     for {_schema_module, table_name} <- @per_tenant_schemas do
       test "#{table_name} table has workspace_uri column with NOT NULL" do
-        info = pragma_table_info(unquote(table_name))
+        info = table_columns(unquote(table_name))
 
         column = Enum.find(info, fn col -> col.name == "workspace_uri" end)
 
@@ -177,7 +177,7 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
                "#{unquote(table_name)} has no `workspace_uri` column in the DB. " <>
                  "Run `mix ezagent.db.reset && mix ecto.migrate` if a migration is missing."
 
-        assert column.notnull == 1,
+        assert column.notnull,
                "#{unquote(table_name)}.workspace_uri exists but is NULLABLE — the " <>
                  "Phase 9 PR-6 migration should set NOT NULL. Check the migration's " <>
                  "`modify :workspace_uri, ..., null: false, from: ...` step."
@@ -186,14 +186,14 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
 
     for table_name <- @per_tenant_schemaless_tables do
       test "#{table_name} (schemaless) table has workspace_uri column with NOT NULL" do
-        info = pragma_table_info(unquote(table_name))
+        info = table_columns(unquote(table_name))
 
         column = Enum.find(info, fn col -> col.name == "workspace_uri" end)
 
         assert column,
                "#{unquote(table_name)} has no `workspace_uri` column in the DB."
 
-        assert column.notnull == 1,
+        assert column.notnull,
                "#{unquote(table_name)}.workspace_uri must be NOT NULL — the audit " <>
                  "writer fills the column on every insert per Phase 9 PR-6."
       end
@@ -238,23 +238,30 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # ---------------------------------------------------------------------
   # Helpers
 
-  defp pragma_table_info(table_name) do
-    {:ok, %{rows: rows, columns: cols}} =
-      Repo.query("PRAGMA table_info(#{table_name})")
+  defp table_columns(table_name) do
+    {:ok, %{rows: rows}} =
+      Repo.query(
+        """
+        SELECT column_name, is_nullable, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+        ORDER BY ordinal_position
+        """,
+        [table_name]
+      )
 
-    col_names = Enum.map(cols, &String.to_atom/1)
-
-    Enum.map(rows, fn row ->
-      Enum.zip(col_names, row) |> Map.new()
+    Enum.map(rows, fn [name, nullable, data_type] ->
+      %{name: name, notnull: nullable == "NO", type: data_type}
     end)
   end
 
   defp list_db_tables do
     {:ok, %{rows: rows}} =
       Repo.query("""
-      SELECT name FROM sqlite_master
-      WHERE type='table' AND name NOT LIKE 'sqlite_%'
-      ORDER BY name
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      ORDER BY table_name
       """)
 
     Enum.map(rows, fn [name] -> name end)

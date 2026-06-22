@@ -3,28 +3,24 @@ defmodule Ezagent.Home.Migration do
   Full-home backup + restore for `$EZAGENT_HOME/$EZAGENT_PROFILE/` — the
   complete-migration capability (home portability #120).
 
-  A backup is a **consistent** snapshot of one profile home: the SQLite
+  A backup is a **consistent** snapshot of one profile home: the PostgreSQL
   database (the source of truth — Kind snapshots, users, caps, sessions,
   routing rules all live here), plus the on-disk config trees the DB
   *references* (`cc-agents/`, `codex/`, `credentials/`, `snapshots/`,
   `plugins/`, `uploads/`, `inbox/`). Restoring it onto a different machine
   or a different path fully reconstitutes the system.
 
-  ## SQLite-consistency model
+  ## PostgreSQL consistency model
 
   This task is **Category A** (CLI/GUI parity audit 2026-05-24 — FS ops
   that run *around* the runtime BEAM, like `ezagent.home.adopt_db`). It does
   NOT start the runtime. The chosen safety model is:
 
-    * **`VACUUM INTO`** via the `sqlite3` CLI to produce the DB copy. This
-      reads a single consistent transaction view and writes a brand-new,
-      fully-checkpointed database file — correct even if a `-wal` exists,
-      and never touches the live DB's files. (Falls back to a
-      `wal_checkpoint(TRUNCATE)` + raw copy only if `sqlite3` is absent.)
-    * Because `VACUUM INTO` takes a read transaction, a backup taken while
-      the server is *running* is still internally consistent. For a
-      guaranteed-quiescent backup, stop the server first — documented, not
-      enforced.
+    * **`pg_dump --format=custom`** produces a transactionally-consistent
+      dump of the configured Repo database without touching live table files.
+    * **`pg_restore --clean --if-exists`** restores that dump into the
+      currently configured Repo database. The target DB is intentionally
+      controlled by Repo config / `DATABASE_URL`, not by `$EZAGENT_HOME`.
 
   ## Path portability
 
@@ -45,11 +41,15 @@ defmodule Ezagent.Home.Migration do
   """
 
   alias Ezagent.Home
+  alias Ezagent.Ecto.KindSnapshot
+  alias EzagentCore.Repo
+
+  import Ecto.Query
 
   @manifest_name "MANIFEST.json"
-  @db_basename "ezagent_core.db"
+  @db_dump_basename "ezagent_core.dump"
 
-  # Subdirs included in a backup. db/ is handled specially (VACUUM INTO).
+  # Subdirs included in a backup. db/ is handled specially (pg_dump).
   # Excluded (ephemeral / host-local, rebuilt on boot): logs/, pty-pids/,
   # runtime/ (node cookie). See audit doc.
   @backup_subdirs ~w(cc-agents codex credentials snapshots plugins uploads inbox)
@@ -98,51 +98,33 @@ defmodule Ezagent.Home.Migration do
     end
   end
 
-  # VACUUM INTO produces a consistent, checkpointed copy of the live DB.
   defp stage_db(src_profile_dir, staging) do
-    src_db = Path.join([src_profile_dir, "db", @db_basename])
-
-    if File.exists?(src_db) do
-      File.mkdir_p!(Path.join(staging, "db"))
-      dst_db = Path.join([staging, "db", @db_basename])
-      consistent_db_copy(src_db, dst_db)
-    else
-      # No DB yet (fresh home) — nothing to copy; restore will start empty.
-      :ok
-    end
+    _ = src_profile_dir
+    File.mkdir_p!(Path.join(staging, "db"))
+    dump = Path.join([staging, "db", @db_dump_basename])
+    pg_dump(dump)
   end
 
   @doc false
   # Public-ish for testing the consistency primitive in isolation.
-  def consistent_db_copy(src_db, dst_db) do
-    case System.find_executable("sqlite3") do
-      nil ->
-        # Fallback: checkpoint the WAL into the main file via the NIF, then
-        # raw-copy the (now self-contained) DB file.
-        checkpoint_then_copy(src_db, dst_db)
+  def pg_dump(dst_dump) when is_binary(dst_dump) do
+    with {:ok, pg_dump} <- find_pg_tool("pg_dump"),
+         {:ok, url} <- repo_database_url() do
+      File.rm(dst_dump)
 
-      sqlite3 ->
-        # VACUUM INTO writes a fresh, fully-checkpointed DB; reads a single
-        # consistent snapshot of `src_db`. dst must NOT pre-exist.
-        File.rm(dst_db)
+      args = [
+        "--format=custom",
+        "--no-owner",
+        "--no-acl",
+        "--file",
+        dst_dump,
+        url
+      ]
 
-        case System.cmd(sqlite3, [src_db, "VACUUM INTO '#{dst_db}'"], stderr_to_stdout: true) do
-          {_out, 0} -> :ok
-          {out, code} -> {:error, {:vacuum_into_failed, code, String.trim(out)}}
-        end
-    end
-  end
-
-  defp checkpoint_then_copy(src_db, dst_db) do
-    case Exqlite.Sqlite3.open(src_db, mode: :readwrite) do
-      {:ok, conn} ->
-        _ = Exqlite.Sqlite3.execute(conn, "PRAGMA wal_checkpoint(TRUNCATE);")
-        :ok = Exqlite.Sqlite3.close(conn)
-        File.cp!(src_db, dst_db)
-        :ok
-
-      {:error, reason} ->
-        {:error, {:db_open_failed, reason}}
+      case System.cmd(pg_dump, args, stderr_to_stdout: true) do
+        {_out, 0} -> :ok
+        {out, code} -> {:error, {:pg_dump_failed, code, String.trim(out)}}
+      end
     end
   end
 
@@ -173,7 +155,8 @@ defmodule Ezagent.Home.Migration do
       "source_profile" => Home.profile(),
       "included_subdirs" => @backup_subdirs,
       "excluded_subdirs" => @excluded_subdirs,
-      "db_basename" => @db_basename
+      "db_dump_basename" => @db_dump_basename,
+      "database" => repo_database_metadata()
     }
 
     File.write(Path.join(staging, @manifest_name), Jason.encode!(manifest, pretty: true))
@@ -250,10 +233,17 @@ defmodule Ezagent.Home.Migration do
         copy_tree(src_root, target_profile_dir)
         ensure_runtime_skeleton(target_profile_dir)
 
+        case restore_db(src_root) do
+          :ok -> :ok
+          {:error, _} = err -> throw(err)
+        end
+
         case rewrite_paths(target_profile_dir, manifest["source_profile_dir"]) do
           {:ok, n} -> {:ok, {target_profile_dir, n}}
           {:error, _} = err -> err
         end
+      catch
+        {:error, _} = err -> err
       after
         if tarball?(from_path), do: File.rm_rf(src_root)
       end
@@ -308,11 +298,11 @@ defmodule Ezagent.Home.Migration do
     end
   end
 
-  # Copy everything except the manifest into the target profile dir.
+  # Copy everything except the manifest and database dump into the target profile dir.
   defp copy_tree(src_root, target_profile_dir) do
     src_root
     |> File.ls!()
-    |> Enum.reject(&(&1 == @manifest_name))
+    |> Enum.reject(&(&1 in [@manifest_name, "db"]))
     |> Enum.each(fn name ->
       src = Path.join(src_root, name)
       dst = Path.join(target_profile_dir, name)
@@ -338,7 +328,7 @@ defmodule Ezagent.Home.Migration do
 
   @doc """
   Rewrite every persisted absolute path under `source_profile_dir` inside
-  the restored DB's `kind_snapshots.state_binary` blobs to point at
+  the configured Repo's `kind_snapshots.state_binary` blobs to point at
   `target_profile_dir`. Returns `{:ok, rows_rewritten}`.
 
   Idempotent: a path already under the target prefix is left untouched.
@@ -346,75 +336,54 @@ defmodule Ezagent.Home.Migration do
   @spec rewrite_paths(String.t(), String.t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def rewrite_paths(target_profile_dir, source_profile_dir)
       when is_binary(target_profile_dir) and is_binary(source_profile_dir) do
-    db = Path.join([target_profile_dir, "db", @db_basename])
-
     cond do
-      not File.exists?(db) ->
-        # No DB in the backup (fresh home) — nothing to rewrite.
-        {:ok, 0}
-
       source_profile_dir == target_profile_dir ->
         # Same path (in-place restore) — no rewrite needed.
         {:ok, 0}
 
       true ->
-        do_rewrite(db, source_profile_dir, target_profile_dir)
+        do_rewrite(source_profile_dir, target_profile_dir)
     end
   end
 
   @doc false
-  # Test seam: rewrite a specific DB file's snapshot paths from `src_prefix`
-  # to `dst_prefix` directly (the public `rewrite_paths/2` derives the DB
-  # location from the *target* profile dir, which assumes an already-restored
-  # tree). Used by the home-migration regression test.
-  def rewrite_paths_for_test(db, src_prefix, dst_prefix)
-      when is_binary(db) and is_binary(src_prefix) and is_binary(dst_prefix) do
-    do_rewrite(db, src_prefix, dst_prefix)
+  # Test seam retained for existing focused tests; PostgreSQL rewrite always
+  # uses the currently configured Repo, so the first argument is ignored.
+  def rewrite_paths_for_test(_db, src_prefix, dst_prefix)
+      when is_binary(src_prefix) and is_binary(dst_prefix) do
+    do_rewrite(src_prefix, dst_prefix)
   end
 
-  defp do_rewrite(db, src_prefix, dst_prefix) do
-    case Exqlite.Sqlite3.open(db, mode: :readwrite) do
-      {:ok, conn} ->
-        try do
-          rows = select_snapshots(conn)
+  defp do_rewrite(src_prefix, dst_prefix) do
+    with_repo(fn ->
+      rows = select_snapshots()
 
-          rewritten =
-            Enum.reduce(rows, 0, fn {uri, bin}, acc ->
-              case maybe_rewrite_blob(bin, src_prefix, dst_prefix) do
-                :unchanged -> acc
-                {:changed, new_bin} -> update_snapshot(conn, uri, new_bin) + acc
-              end
-            end)
+      rewritten =
+        Enum.reduce(rows, 0, fn {uri, bin}, acc ->
+          case maybe_rewrite_blob(bin, src_prefix, dst_prefix) do
+            :unchanged -> acc
+            {:changed, new_bin} -> update_snapshot(uri, new_bin) + acc
+          end
+        end)
 
-          {:ok, rewritten}
-        after
-          Exqlite.Sqlite3.close(conn)
-        end
-
-      {:error, reason} ->
-        {:error, {:db_open_failed, reason}}
-    end
+      {:ok, rewritten}
+    end)
   end
 
-  defp select_snapshots(conn) do
-    {:ok, stmt} =
-      Exqlite.Sqlite3.prepare(
-        conn,
-        "SELECT uri, state_binary FROM kind_snapshots WHERE state_binary IS NOT NULL"
-      )
-
-    {:ok, rows} = Exqlite.Sqlite3.fetch_all(conn, stmt)
-    Enum.map(rows, fn [uri, bin] -> {uri, bin} end)
+  defp select_snapshots do
+    from(s in KindSnapshot,
+      where: not is_nil(s.state_binary),
+      select: {s.uri, s.state_binary}
+    )
+    |> Repo.all()
   end
 
-  defp update_snapshot(conn, uri, new_bin) do
-    {:ok, stmt} =
-      Exqlite.Sqlite3.prepare(conn, "UPDATE kind_snapshots SET state_binary = ?1 WHERE uri = ?2")
+  defp update_snapshot(uri, new_bin) do
+    {count, _} =
+      from(s in KindSnapshot, where: s.uri == ^uri)
+      |> Repo.update_all(set: [state_binary: new_bin])
 
-    :ok = Exqlite.Sqlite3.bind_blob(stmt, 1, new_bin)
-    :ok = Exqlite.Sqlite3.bind_text(stmt, 2, uri)
-    :done = Exqlite.Sqlite3.step(conn, stmt)
-    1
+    count
   end
 
   # Decode the snapshot term, deep-rewrite any string with the src prefix,
@@ -511,6 +480,125 @@ defmodule Ezagent.Home.Migration do
     case :os.type() do
       {:unix, _} -> File.chmod(path, mode)
       _ -> :ok
+    end
+  end
+
+  defp restore_db(src_root) do
+    dump = Path.join([src_root, "db", @db_dump_basename])
+
+    if File.regular?(dump) do
+      pg_restore(dump)
+    else
+      :ok
+    end
+  end
+
+  @doc false
+  def pg_restore(src_dump) when is_binary(src_dump) do
+    with {:ok, pg_restore} <- find_pg_tool("pg_restore"),
+         {:ok, url} <- repo_database_url() do
+      args = [
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--no-acl",
+        "--dbname",
+        url,
+        src_dump
+      ]
+
+      case System.cmd(pg_restore, args, stderr_to_stdout: true) do
+        {_out, 0} -> :ok
+        {out, code} -> pg_restore_error(code, String.trim(out))
+      end
+    end
+  end
+
+  defp pg_restore_error(code, out) do
+    if benign_transaction_timeout_restore_warning?(out) do
+      :ok
+    else
+      {:error, {:pg_restore_failed, code, out}}
+    end
+  end
+
+  defp benign_transaction_timeout_restore_warning?(out) do
+    String.contains?(out, ~s(unrecognized configuration parameter "transaction_timeout")) and
+      String.contains?(out, "SET transaction_timeout = 0") and
+      String.contains?(out, "errors ignored on restore: 1")
+  end
+
+  defp find_pg_tool(name) do
+    case System.find_executable(name) do
+      nil -> {:error, {:missing_executable, name}}
+      path -> {:ok, path}
+    end
+  end
+
+  defp repo_database_url do
+    config = Repo.config()
+
+    cond do
+      url = config[:url] ->
+        {:ok, url}
+
+      database = config[:database] ->
+        username = to_string(config[:username] || "")
+        password = config[:password]
+        hostname = to_string(config[:hostname] || "localhost")
+        port = config[:port] || 5432
+
+        userinfo =
+          case {username, password} do
+            {"", _} -> ""
+            {user, nil} -> URI.encode_www_form(user) <> "@"
+            {user, pass} -> URI.encode_www_form(user) <> ":" <> URI.encode_www_form(pass) <> "@"
+          end
+
+        {:ok, "postgresql://#{userinfo}#{hostname}:#{port}/#{database}"}
+
+      true ->
+        {:error, :repo_database_not_configured}
+    end
+  end
+
+  defp repo_database_metadata do
+    config = Repo.config()
+
+    %{
+      "adapter" => "postgrex",
+      "hostname" => to_string(config[:hostname] || ""),
+      "port" => config[:port],
+      "database" => config[:database],
+      "username" => config[:username],
+      "has_password" => not is_nil(config[:password]) and config[:password] != ""
+    }
+  end
+
+  defp with_repo(fun) do
+    case Process.whereis(Repo) do
+      nil ->
+        with :ok <- ensure_repo_dependencies_started() do
+          {:ok, pid} = Repo.start_link()
+
+          try do
+            fun.()
+          after
+            GenServer.stop(pid)
+          end
+        end
+
+      _pid ->
+        fun.()
+    end
+  end
+
+  defp ensure_repo_dependencies_started do
+    with {:ok, _} <- Application.ensure_all_started(:ecto_sql),
+         {:ok, _} <- Application.ensure_all_started(:postgrex) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:repo_dependency_start_failed, reason}}
     end
   end
 end

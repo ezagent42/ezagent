@@ -1,10 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Home.Backup do
-  @shortdoc "Back up the active EZAGENT_HOME profile (db + config dirs) for migration"
+  @shortdoc "Back up the active EZAGENT_HOME profile and configured PostgreSQL DB"
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (FS op around the BEAM).**
   > Like `ezagent.home.adopt_db` / `ezagent.home.init`, this is intentionally
-  > NOT a dispatched op — it copies the SQLite DB + on-disk config trees at the
-  > filesystem layer. Stays as `mix ezagent.home.*`; do NOT migrate to
+  > NOT a dispatched op — it dumps the PostgreSQL DB + copies on-disk config
+  > trees around the runtime. Stays as `mix ezagent.home.*`; do NOT migrate to
   > `mix ezagent`.
 
   Complete-migration capability (home portability #120). Produces a
@@ -25,9 +25,9 @@ defmodule Mix.Tasks.Ezagent.Home.Backup do
 
   ## What's included
 
-  - `db/ezagent_core.db` — the source of truth (users, caps, sessions,
-    routing rules, Kind snapshots). Copied via SQLite `VACUUM INTO` for a
-    consistent, fully-checkpointed snapshot (safe even with a live `-wal`).
+  - `db/ezagent_core.dump` — `pg_dump --format=custom` output for the
+    configured Repo database (users, caps, sessions, routing rules, Kind
+    snapshots).
   - `cc-agents/`, `codex/`, `credentials/`, `snapshots/`, `plugins/`,
     `uploads/`, `inbox/` — the on-disk trees the DB references.
 
@@ -37,16 +37,14 @@ defmodule Mix.Tasks.Ezagent.Home.Backup do
 
   ## Safety
 
-  `VACUUM INTO` reads a single consistent transaction, so a backup taken
+  `pg_dump` reads a transactionally consistent snapshot, so a backup taken
   while the server runs is internally consistent. For a guaranteed-quiescent
-  copy, stop the server first.
+  filesystem tree, stop the server first.
   """
   use Mix.Task
 
   @impl Mix.Task
   def run(argv) do
-    Application.ensure_all_started(:exqlite)
-
     {opts, _, _} = OptionParser.parse(argv, switches: [out: :string])
 
     out =

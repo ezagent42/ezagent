@@ -75,24 +75,21 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
      "operator mix-task helper, app-not-started"},
     # operator mix-task: ezagent.home.backup
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.backup.ex",
-     "Mix.Tasks.Ezagent.Home.Backup.run/1", 62, "operator mix-task, app-not-started"},
-    # operator mix-task: ezagent.home.adopt_db
-    {"apps/ezagent_core/lib/mix/tasks/ezagent.home.adopt_db.ex",
-     "Mix.Tasks.Ezagent.Home.AdoptDb.run/1", 61, "operator mix-task, app-not-started"},
+     "Mix.Tasks.Ezagent.Home.Backup.run/1", 60, "operator mix-task, app-not-started"},
     # operator mix-task: ezagent.bootstrap
+    {"apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap.ex", "Mix.Tasks.Ezagent.Bootstrap.run/1",
+     88, "operator mix-task, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap.ex", "Mix.Tasks.Ezagent.Bootstrap.run/1",
      89, "operator mix-task, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap.ex", "Mix.Tasks.Ezagent.Bootstrap.run/1",
      90, "operator mix-task, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap.ex", "Mix.Tasks.Ezagent.Bootstrap.run/1",
      91, "operator mix-task, app-not-started"},
-    {"apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap.ex", "Mix.Tasks.Ezagent.Bootstrap.run/1",
-     92, "operator mix-task, app-not-started"},
     # operator migration tooling
     {"apps/ezagent_core/lib/ezagent/home/migration.ex", "Ezagent.Home.Migration.backup/1", 79,
      "operator migration tooling, app-not-started (D2)"},
     {"apps/ezagent_core/lib/ezagent/home/migration.ex", "Ezagent.Home.Migration.write_manifest/2",
-     172, "operator migration tooling, app-not-started (D2)"},
+     154, "operator migration tooling, app-not-started (D2)"},
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
      "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 657,

@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Bootstrap do
-  @shortdoc "One-command ESR install: home.init + home.adopt_db + ecto.migrate + health-check"
+  @shortdoc "One-command ESR install: home.init + ecto.migrate + health-check"
 
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (bootstrap).**
@@ -25,10 +25,9 @@ defmodule Mix.Tasks.Ezagent.Bootstrap do
      skeleton (credentials, db, snapshots, logs, plugins). Idempotent.
   2. **`mix deps.get`** — ensures dependency tree is present (no-op if
      already fetched).
-  3. **`mix ezagent.home.adopt_db`** — moves any repo-root `ezagent_core_dev.db`
-     into `$EZAGENT_HOME/<profile>/db/ezagent_core.db`. Idempotent — no-op if
-     already migrated.
-  4. **`mix ecto.create`** + **`mix ecto.migrate`** — ensures the SQLite
+  3. **`mix ezagent.home.adopt_db`** — compatibility no-op after PostgreSQL
+     migration; retained so old bootstrap scripts remain idempotent.
+  4. **`mix ecto.create`** + **`mix ecto.migrate`** — ensures the PostgreSQL
      DB exists and schema is current. No-op on schema-current.
   5. **Health check** — opens an Ecto connection and runs a trivial
      query (`SELECT 1`). Confirms config + DB are wired correctly

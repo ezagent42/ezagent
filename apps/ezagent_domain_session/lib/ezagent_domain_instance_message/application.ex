@@ -587,6 +587,10 @@ defmodule EzagentDomainInstanceMessage.Application do
     # (`seed_default_session_template/0`) turns a `{:error, _}` into a hard
     # boot crash; the test caller tolerates it (Sandbox). Logging stays so
     # the failure is visible regardless of which caller handles it.
+    hash = Ezagent.Entity.SessionTemplate.compute_version_hash(content)
+    uri = Ezagent.Entity.SessionTemplate.build_uri("default", hash, workspace: workspace_name)
+    :ok = clear_live_template_without_snapshot(uri)
+
     case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
       {:ok, _uri} ->
         :ok
@@ -610,6 +614,14 @@ defmodule EzagentDomainInstanceMessage.Application do
       Logger.error("seed_default_session_template raised #{inspect(e)} — §3 boot invariant.")
 
       {:error, {:seed_default_session_template_raised, e}}
+  end
+
+  defp clear_live_template_without_snapshot(uri) do
+    if Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri)) == nil do
+      Ezagent.Kind.terminate(uri)
+    else
+      :ok
+    end
   end
 
   defp workspace_uri!(%URI{scheme: "workspace"} = workspace_uri), do: workspace_uri

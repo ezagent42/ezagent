@@ -7,6 +7,8 @@ defmodule Ezagent.World.AdminData do
   mutation chokepoints for future form work.
   """
 
+  import Ecto.Query
+
   @type route :: %{
           component: String.t(),
           title: String.t(),
@@ -171,54 +173,38 @@ defmodule Ezagent.World.AdminData do
   end
 
   defp recent_invocations(limit, workspace_uri) do
-    {where, params} = workspace_filter_sql(workspace_uri)
-
-    sql =
-      "SELECT target, action, authz, duration_us, workspace_uri, inserted_at " <>
-        "FROM invocations #{where} ORDER BY id DESC LIMIT ?#{length(params) + 1}"
-
-    case EzagentCore.Repo.query(sql, params ++ [limit]) do
-      {:ok, %{rows: rows}} ->
-        Enum.map(rows, fn [target, action, authz, duration_us, workspace, inserted_at] ->
-          %{
-            "target" => target,
-            "action" => action,
-            "authz" => authz,
-            "duration_us" => duration_us,
-            "workspace_uri" => workspace,
-            "inserted_at" => inspect(inserted_at)
-          }
-        end)
-
-      {:error, reason} ->
-        [%{"error" => inspect(reason)}]
-    end
+    "invocations"
+    |> where_workspace(workspace_uri)
+    |> order_by([i], desc: field(i, :id))
+    |> limit(^limit)
+    |> select([i], %{
+      "target" => field(i, :target),
+      "action" => field(i, :action),
+      "authz" => field(i, :authz),
+      "duration_us" => field(i, :duration_us),
+      "workspace_uri" => field(i, :workspace_uri),
+      "inserted_at" => field(i, :inserted_at)
+    })
+    |> EzagentCore.Repo.all()
+    |> Enum.map(&inspect_timestamp(&1, "inserted_at"))
   rescue
     err -> [%{"error" => inspect(err)}]
   end
 
   defp snapshots(limit, workspace_uri) do
-    {where, params} = workspace_filter_sql(workspace_uri)
-
-    sql =
-      "SELECT uri, kind_type, version, workspace_uri, updated_at FROM kind_snapshots " <>
-        "#{where} ORDER BY updated_at DESC LIMIT ?#{length(params) + 1}"
-
-    case EzagentCore.Repo.query(sql, params ++ [limit]) do
-      {:ok, %{rows: rows}} ->
-        Enum.map(rows, fn [uri, kind_type, version, workspace, updated_at] ->
-          %{
-            "uri" => uri,
-            "kind_type" => kind_type,
-            "version" => version,
-            "workspace_uri" => workspace,
-            "updated_at" => inspect(updated_at)
-          }
-        end)
-
-      {:error, reason} ->
-        [%{"error" => inspect(reason)}]
-    end
+    "kind_snapshots"
+    |> where_workspace(workspace_uri)
+    |> order_by([s], desc: field(s, :updated_at))
+    |> limit(^limit)
+    |> select([s], %{
+      "uri" => field(s, :uri),
+      "kind_type" => field(s, :kind_type),
+      "version" => field(s, :version),
+      "workspace_uri" => field(s, :workspace_uri),
+      "updated_at" => field(s, :updated_at)
+    })
+    |> EzagentCore.Repo.all()
+    |> Enum.map(&inspect_timestamp(&1, "updated_at"))
   rescue
     err -> [%{"error" => inspect(err)}]
   end
@@ -256,25 +242,19 @@ defmodule Ezagent.World.AdminData do
   end
 
   defp external_mirror_bindings(limit) do
-    sql =
-      "SELECT session_uri, adapter_id, target_id, workspace_uri, bound_at " <>
-        "FROM external_mirror_bindings ORDER BY bound_at DESC LIMIT ?1"
-
-    case EzagentCore.Repo.query(sql, [limit]) do
-      {:ok, %{rows: rows}} ->
-        Enum.map(rows, fn [session_uri, adapter_id, target_id, workspace_uri, bound_at] ->
-          %{
-            "session_uri" => session_uri,
-            "adapter_id" => adapter_id,
-            "target_id" => target_id,
-            "workspace_uri" => workspace_uri,
-            "bound_at" => inspect(bound_at)
-          }
-        end)
-
-      {:error, reason} ->
-        [%{"error" => inspect(reason)}]
-    end
+    from(b in "external_mirror_bindings",
+      order_by: [desc: field(b, :bound_at)],
+      limit: ^limit,
+      select: %{
+        "session_uri" => field(b, :session_uri),
+        "adapter_id" => field(b, :adapter_id),
+        "target_id" => field(b, :target_id),
+        "workspace_uri" => field(b, :workspace_uri),
+        "bound_at" => field(b, :bound_at)
+      }
+    )
+    |> EzagentCore.Repo.all()
+    |> Enum.map(&inspect_timestamp(&1, "bound_at"))
   rescue
     err -> [%{"error" => inspect(err)}]
   end
@@ -282,23 +262,18 @@ defmodule Ezagent.World.AdminData do
   defp external_mirror_bindings_for(%URI{} = session_uri) do
     session = URI.to_string(session_uri)
 
-    case EzagentCore.Repo.query(
-           "SELECT adapter_id, target_id, workspace_uri, bound_at FROM external_mirror_bindings WHERE session_uri = ?1 ORDER BY bound_at DESC",
-           [session]
-         ) do
-      {:ok, %{rows: rows}} ->
-        Enum.map(rows, fn [adapter_id, target_id, workspace_uri, bound_at] ->
-          %{
-            "adapter_id" => adapter_id,
-            "target_id" => target_id,
-            "workspace_uri" => workspace_uri,
-            "bound_at" => inspect(bound_at)
-          }
-        end)
-
-      {:error, reason} ->
-        [%{"error" => inspect(reason)}]
-    end
+    from(b in "external_mirror_bindings",
+      where: field(b, :session_uri) == ^session,
+      order_by: [desc: field(b, :bound_at)],
+      select: %{
+        "adapter_id" => field(b, :adapter_id),
+        "target_id" => field(b, :target_id),
+        "workspace_uri" => field(b, :workspace_uri),
+        "bound_at" => field(b, :bound_at)
+      }
+    )
+    |> EzagentCore.Repo.all()
+    |> Enum.map(&inspect_timestamp(&1, "bound_at"))
   rescue
     err -> [%{"error" => inspect(err)}]
   end
@@ -328,11 +303,16 @@ defmodule Ezagent.World.AdminData do
     _ -> "unavailable"
   end
 
-  defp workspace_filter_sql(%URI{} = workspace_uri) do
-    {"WHERE workspace_uri = ?1", [URI.to_string(workspace_uri)]}
+  defp where_workspace(source, %URI{} = workspace_uri) do
+    workspace = URI.to_string(workspace_uri)
+    from(row in source, where: field(row, :workspace_uri) == ^workspace)
   end
 
-  defp workspace_filter_sql(_), do: {"", []}
+  defp where_workspace(source, _), do: from(row in source)
+
+  defp inspect_timestamp(row, field_name) do
+    Map.update(row, field_name, nil, &inspect/1)
+  end
 
   defp uri_scheme(uri_str) do
     case parse_uri(uri_str) do

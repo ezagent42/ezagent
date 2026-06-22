@@ -60,7 +60,11 @@ defmodule Ezagent.HomeTest do
     assert File.exists?(readme)
   end
 
-  test "Ezagent.Home.initialized? reflects skeleton presence", %{tmp: tmp} do
+  test "mix ezagent.home.restore loads config without starting the app before restore" do
+    assert ["app.config"] = Mix.Task.requirements(Mix.Task.get("ezagent.home.restore"))
+  end
+
+  test "Ezagent.Home.initialized? reflects skeleton presence", %{tmp: _tmp} do
     refute Ezagent.Home.initialized?()
     Mix.Task.rerun("ezagent.home.init", ["--inside-repo"])
     assert Ezagent.Home.initialized?()

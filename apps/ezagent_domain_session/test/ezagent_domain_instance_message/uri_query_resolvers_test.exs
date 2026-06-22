@@ -125,7 +125,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   # The socialware-config-object resource type stays self-authorizing — a bare
   # URI for it is NOT rejected by the config-dir guard (it delegates).
   test "config_dir still delegates a bare socialware-config-object resource URI (unchanged)" do
-    uri = Ezagent.URI.resource("system", "socialware-config-object", "missing")
+    uri = Ezagent.Socialware.ConfigProjection.object_uri(URI.new!("workspace://system"), Ecto.UUID.generate())
 
     refute match?(
              {:error, :config_dir_resource_requires_scope},

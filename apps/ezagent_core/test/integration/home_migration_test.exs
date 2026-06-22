@@ -2,9 +2,9 @@ defmodule Ezagent.Integration.HomeMigrationTest do
   @moduledoc """
   E2E for the complete-home migration capability (home portability #120).
 
-  Proves: seed throwaway home A (a real on-disk SQLite DB with snapshot rows
+  Proves: seed throwaway home A (snapshot rows in the PostgreSQL test DB
   + an on-disk per-agent config_dir file) → `Ezagent.Home.Migration.backup`
-  → `restore` into a DIFFERENT-path home B → boot the Repo against home B →
+  → `restore` into a DIFFERENT-path home B → read the restored Repo state →
   read back via the NORMAL read path (`Ezagent.Ecto.KindSnapshot.get/1` +
   `decode_state/1`, exactly what boot-time hydration uses) and assert:
 
@@ -14,10 +14,9 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     * the on-disk per-agent config_dir file content survived the copy;
     * `respawn_template_data`'s embedded absolute path was also rewritten.
 
-  Not `DataCase`: the migration is a filesystem+DB op around the runtime, so
-  the test manages its own real on-disk DBs by re-pointing
-  `EzagentCore.Repo`'s `:database` config and starting/stopping the Repo per
-  home — the same config-override pattern `mix ezagent.db.reset` uses.
+  Not `DataCase`: the migration is a filesystem+DB op around the runtime, and
+  `pg_dump` must see committed rows. The test uses a non-sandbox dynamic Repo
+  pointed at the configured PostgreSQL test database.
   """
   use ExUnit.Case, async: false
 
@@ -52,6 +51,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     db_a = Path.join([profile_dir_a, "db", "ezagent_core.db"])
     File.mkdir_p!(Path.dirname(db_a))
     boot_repo!(db_a)
+    clean_snapshots()
 
     # A User entity snapshot carrying caps — proves general DB content
     # survives migration (queried via the normal read path).
@@ -131,6 +131,8 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     assert File.regular?(backup)
 
     # --- RESTORE into home B (different path) ----------------------------
+    boot_repo!(db_a)
+
     {:ok, {^profile_dir_b, rewritten}} =
       Migration.restore(backup, home_b, profile, [])
 
@@ -140,7 +142,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
     # --- ASSERT via the NORMAL read path against home B ------------------
     db_b = Path.join([profile_dir_b, "db", "ezagent_core.db"])
-    assert File.exists?(db_b)
+    stop_repo()
     boot_repo!(db_b)
 
     # 1. User caps survived (general DB content intact).
@@ -194,6 +196,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     db_a = Path.join([home_a, profile, "db", "ezagent_core.db"])
     File.mkdir_p!(Path.dirname(db_a))
     boot_repo!(db_a)
+    clean_snapshots()
 
     {:ok, _} =
       SnapshotFixtures.upsert_kind_snapshot(
@@ -217,6 +220,8 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     File.mkdir_p!(target_profile_dir)
     File.write!(Path.join(target_profile_dir, "occupied"), "x")
 
+    boot_repo!(db_a)
+
     assert {:error, {:target_not_empty, ^target_profile_dir}} =
              Migration.restore(backup, home_b, profile, [])
 
@@ -230,9 +235,9 @@ defmodule Ezagent.Integration.HomeMigrationTest do
   # atom survives the decode → rewrite → re-encode cycle.
   #
   # NOTE on the `:safe`-decode bug found during manual e2e: the restore task
-  # starts only `:exqlite`, so a plugin's `template_class` atom is NOT in the
-  # atom table of that process — `binary_to_term/[:safe]` would reject the
-  # whole blob and silently skip the row ("rewrote 0"). That condition is
+  # may run in a process where a plugin's `template_class` atom is NOT in the
+  # atom table — `binary_to_term/[:safe]` would reject the whole blob and
+  # silently skip the row ("rewrote 0"). That condition is
   # CROSS-PROCESS (the atom was never created in the restore BEAM) and can't
   # be reproduced inside this single test BEAM (the atom we write is already
   # in our table). The guard for it is the manual e2e in the scenario doc
@@ -245,6 +250,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     db = Path.join([profile_dir, "db", "ezagent_core.db"])
     File.mkdir_p!(Path.dirname(db))
     boot_repo!(db)
+    clean_snapshots()
 
     # A unique atom that exists in THIS process's table (so we can write it)
     # but stands in for "an atom binary_to_term/[:safe] would reject when the
@@ -267,14 +273,11 @@ defmodule Ezagent.Integration.HomeMigrationTest do
         []
       )
 
-    stop_repo()
-
     new_profile_dir = Path.join([home_a, "moved", profile])
     assert {:ok, 1} = Migration.rewrite_paths_for_test(db, profile_dir, new_profile_dir)
 
     # Read back the raw blob WITHOUT :safe (as restore does) and confirm the
     # path moved and the exotic atom survived.
-    boot_repo!(db)
     row = KindSnapshot.get("entity://ws/agent/cc_x")
     decoded = :erlang.binary_to_term(row.state_binary)
     sb = decoded.sandbox.state
@@ -286,33 +289,30 @@ defmodule Ezagent.Integration.HomeMigrationTest do
   # --- repo lifecycle helpers ---------------------------------------------
   #
   # The full ezagent_core app already supervises `EzagentCore.Repo` against
-  # the test DB. We don't disturb it: instead we start a SECOND, dynamically-
-  # named Repo instance pointed at the throwaway on-disk DB and route
-  # `KindSnapshot`/`Repo` calls to it via `put_dynamic_repo/1`. That keeps
-  # the migration's read/write path 100% the production code, against a real
-  # file at the throwaway home — no sandbox, no name collision.
+  # the sandboxed test DB pool. We don't disturb it: instead we start a SECOND,
+  # dynamically-named Repo instance using a plain pool and route
+  # `KindSnapshot`/`Repo` calls to it via `put_dynamic_repo/1`. `pg_dump` sees
+  # committed rows, and the migration's read/write path remains production code.
 
-  defp boot_repo!(db_path) do
+  defp boot_repo!(_db_path) do
     stop_repo()
-    File.mkdir_p!(Path.dirname(db_path))
 
     config =
       @repo_config
-      |> Keyword.put(:database, db_path)
       |> Keyword.put(:pool_size, 2)
       |> Keyword.put(:name, :home_mig_repo)
-      # Plain (non-sandbox) pool — this test owns a real on-disk DB.
+      # Plain pool — `pg_dump` cannot see rows hidden inside Sandbox ownership.
       |> Keyword.delete(:pool)
 
     {:ok, pid} = Repo.start_link(config)
     Repo.put_dynamic_repo(:home_mig_repo)
 
-    # Run migrations directly against the dynamic repo we manage (NOT
-    # `with_repo`, which would try to start/own the repo itself and run in
-    # a Task that loses our process-local `put_dynamic_repo/1`).
-    Ecto.Migrator.run(Repo, migrations_path(), :up, all: true)
-
     Process.put(:home_mig_repo_pid, pid)
+    :ok
+  end
+
+  defp clean_snapshots do
+    Repo.delete_all(KindSnapshot)
     :ok
   end
 
@@ -325,10 +325,6 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     end
   rescue
     _ -> :ok
-  end
-
-  defp migrations_path do
-    Application.app_dir(:ezagent_core, ["priv", "repo", "migrations"])
   end
 
   defp with_env(key, value, fun) do

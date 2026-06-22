@@ -73,7 +73,7 @@ defmodule Ezagent.Invariants.BootstrapToServingTest do
         assert {:ok, %{rows: rows}} =
                  Ecto.Adapters.SQL.query(
                    EzagentCore.Repo,
-                   "SELECT name FROM sqlite_master WHERE type='table' AND name=?1",
+                   "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1",
                    [table]
                  )
 

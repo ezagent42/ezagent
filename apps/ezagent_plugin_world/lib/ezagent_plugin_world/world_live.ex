@@ -27,9 +27,6 @@ defmodule EzagentPluginWorld.WorldLive do
     caller_payload = %{
       "entity_uri" => encode_uri(caller),
       "workspace_uri" => encode_uri(workspace),
-      # task #87 — friendly identity for the UI (display name / email), falling
-      # back to the raw URI. The canonical entity_uri above is still the
-      # internal identity; this is display-only.
       "display_name" => caller_display_name(caller)
     }
 
@@ -998,20 +995,5 @@ defmodule EzagentPluginWorld.WorldLive do
   defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
   defp encode_uri(_), do: nil
 
-  # task #87 — friendly display identity for the UI: profile display_name, else
-  # email, else the raw URI. Runtime dispatch (apply/3) keeps the world plugin
-  # free of a compile-time dep on ezagent_domain_identity.
-  defp caller_display_name(nil), do: nil
-
-  defp caller_display_name(%URI{} = uri) do
-    if Code.ensure_loaded?(Ezagent.Entity.Profile) do
-      case apply(Ezagent.Entity.Profile, :get, [uri]) do
-        %{display_name: dn} when is_binary(dn) and dn != "" -> dn
-        %{email: e} when is_binary(e) and e != "" -> e
-        _ -> encode_uri(uri)
-      end
-    else
-      encode_uri(uri)
-    end
-  end
+  defp caller_display_name(uri), do: Ezagent.World.CallerDisplay.name(uri)
 end

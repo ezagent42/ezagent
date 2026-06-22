@@ -6,7 +6,12 @@ import Config
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :ezagent_core, EzagentCore.Repo,
-  database: Path.expand("../ezagent_core_test.db", __DIR__),
+  username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
+  password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),
+  hostname: System.get_env("POSTGRES_HOST", "127.0.0.1"),
+  port: String.to_integer(System.get_env("POSTGRES_PORT", "55432")),
+  database: "ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}",
+  priv: "priv/repo_pg",
   # Phase 9 (Allen 2026-05-21): integration tests that exercise the
   # full dispatch pipeline now hit the Repo from:
   #   - test-process sandbox checkout
@@ -29,15 +34,8 @@ config :ezagent_core, EzagentCore.Repo,
   # writer) and (b) the raised `busy_timeout` below — NOT a smaller pool.
   pool_size: 20,
   pool: Ecto.Adapters.SQL.Sandbox,
-  # #52 Mode-C fix: RAISE busy_timeout above the 2_000 ms ecto_sqlite3
-  # default (NOT "add WAL" — WAL + a 2 s busy_timeout are already the
-  # adapter defaults and config/test.exs overrides neither). A contending
-  # writer now WAITS up to 5 s for the single-writer lock instead of
-  # immediately raising `Exqlite.Error: database is locked`. journal_mode
-  # is left at the adapter default `:wal`.
-  busy_timeout: 5_000,
-  # Extend queue timeout for the same reason — under load tests can
-  # legitimately wait briefly for a connection.
+  # Extend queue timeout — under load tests can legitimately wait briefly for a
+  # connection.
   queue_target: 1000,
   queue_interval: 5000
 

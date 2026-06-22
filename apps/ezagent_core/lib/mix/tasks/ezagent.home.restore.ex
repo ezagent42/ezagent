@@ -1,10 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Home.Restore do
-  @shortdoc "Restore an ezagent-home backup into a target EZAGENT_HOME (rewrites paths)"
+  @shortdoc "Restore an ezagent-home backup and configured PostgreSQL DB"
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (FS op around the BEAM).**
-  > Like `ezagent.home.adopt_db`, this is intentionally NOT a dispatched op.
-  > It unpacks files + rewrites the SQLite DB before the runtime starts.
-  > Stays as `mix ezagent.home.*`.
+  > This is intentionally NOT a dispatched op. It unpacks files, restores the
+  > PostgreSQL dump, and rewrites persisted home paths before the runtime
+  > starts. Stays as `mix ezagent.home.*`.
 
   Complete-migration capability (home portability #120). Unpacks a backup
   produced by `mix ezagent.home.backup` into a target home + profile and
@@ -24,9 +24,10 @@ defmodule Mix.Tasks.Ezagent.Home.Restore do
 
   ## What it does
 
-  1. Copies db + config trees into `<home>/<profile>/`.
-  2. Recreates the ephemeral skeleton (`logs/`, `pty-pids/`, `runtime/`).
-  3. Rewrites the Sandbox slices in `kind_snapshots.state_binary` whose
+  1. Copies config trees into `<home>/<profile>/`.
+  2. Restores `db/ezagent_core.dump` into the currently configured Repo DB.
+  3. Recreates the ephemeral skeleton (`logs/`, `pty-pids/`, `runtime/`).
+  4. Rewrites the Sandbox slices in `kind_snapshots.state_binary` whose
      `config_dir_path` / `agent_config_dir` pointed at the SOURCE profile dir
      so they point at the TARGET profile dir. The source prefix is read from
      the backup's `MANIFEST.json`.
@@ -41,10 +42,10 @@ defmodule Mix.Tasks.Ezagent.Home.Restore do
   """
   use Mix.Task
 
+  @requirements ["app.config"]
+
   @impl Mix.Task
   def run(argv) do
-    Application.ensure_all_started(:exqlite)
-
     {opts, _, _} =
       OptionParser.parse(argv,
         switches: [from: :string, home: :string, profile: :string, force: :boolean]

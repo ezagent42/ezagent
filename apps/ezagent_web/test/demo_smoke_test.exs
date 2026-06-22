@@ -109,18 +109,11 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
              """
     end
 
-    test "database path lives under the EZAGENT_HOME db directory" do
-      db = Application.get_env(:ezagent_core, EzagentCore.Repo)[:database]
-      home_db = Ezagent.Home.path(:db)
+    test "Repo uses PostgreSQL with an explicit database name" do
+      config = Application.get_env(:ezagent_core, EzagentCore.Repo)
 
-      # Either the configured path is a subpath of home_db (dev/prod)
-      # OR it's the repo-local test DB (config/test.exs).
-      ok? =
-        String.starts_with?(db, home_db) or
-          String.ends_with?(db, "ezagent_core_test.db")
-
-      assert ok?,
-             "Repo database #{inspect(db)} should be under #{inspect(home_db)} or be the test DB"
+      assert EzagentCore.Repo.__adapter__() == Ecto.Adapters.Postgres
+      assert is_binary(config[:database]) and config[:database] != ""
     end
   end
 

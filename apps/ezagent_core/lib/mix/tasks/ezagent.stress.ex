@@ -536,24 +536,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp throughput(count, us), do: Float.round(count * 1_000_000 / us, 1)
 
   defp db_info do
-    repo = EzagentCore.Repo
-
-    journal =
-      case repo.query("PRAGMA journal_mode", []) do
-        {:ok, %{rows: [[mode]]}} -> mode
-        _ -> "?"
-      end
-
-    busy =
-      case repo.query("PRAGMA busy_timeout", []) do
-        {:ok, %{rows: [[t]]}} -> t
-        _ -> "?"
-      end
-
-    pool = repo.config()[:pool_size]
-    "journal_mode=#{journal} busy_timeout=#{busy} pool_size=#{pool}"
-  rescue
-    e -> "unavailable (#{inspect(e)})"
+    Ezagent.Persistence.DatabaseDiagnostics.summary()
   end
 
   defp append_jsonl(path, result) do

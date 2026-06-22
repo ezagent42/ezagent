@@ -44,7 +44,7 @@ defmodule EzagentCore.MixProject do
       # external Hex deps; the rule is "no umbrella deps".
       {:phoenix, "~> 1.8"},
       {:ecto_sql, "~> 3.13"},
-      {:ecto_sqlite3, ">= 0.0.0"},
+      {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.2"},
       {:yaml_elixir, "~> 2.9"}
       # bcrypt_elixir moved to ezagent_domain_identity in Phase 6 PR 2.

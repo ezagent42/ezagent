@@ -99,7 +99,6 @@ defmodule EzagentCore.Invariants.NoNilWorkspaceWritesTest do
     EzagentCore.Repo.insert(struct)
   rescue
     e in Ecto.ConstraintError -> {:error, e}
-    e in Exqlite.Error -> {:error, e}
     e -> {:error, e}
   end
 

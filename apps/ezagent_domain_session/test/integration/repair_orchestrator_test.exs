@@ -19,16 +19,13 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
   live gate is validated by the e2e, not this unit suite.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, SessionTemplate, User}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
     # Default template seed inside the checkout (idempotent) + admin alive.
     :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())

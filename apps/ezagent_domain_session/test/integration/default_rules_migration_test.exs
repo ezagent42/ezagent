@@ -48,8 +48,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultRulesMigrationTest do
   defp delete_system_default(id, attempts_left \\ 5) do
     RuleStore.delete(id, force: true)
   rescue
-    error in Exqlite.Error ->
-      if attempts_left > 0 and Exception.message(error) =~ "Database busy" do
+    error in DBConnection.ConnectionError ->
+      if attempts_left > 0 do
         Process.sleep(25)
         delete_system_default(id, attempts_left - 1)
       else

@@ -9,26 +9,13 @@ config :ezagent_web, :show_error_debug, true
 # Prod uses the compile-pinned SMTP adapter (config.exs) + runtime smtp_config.
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
 
-# Configure your database
-#
-# Path follows the same env-var logic as `Ezagent.Home` (which lives in
-# ezagent_core/lib and isn't loadable at config-time, so we inline the
-# logic here): `$EZAGENT_HOME / $EZAGENT_PROFILE / db / ezagent_core.db`,
-# defaulting to `~/.ezagent / default / db / ezagent_core.db`.
-#
-# Two evaluation points:
-#   compile-time (this file) — pinned at the moment `mix compile` runs;
-#     used by plain mix tasks (ezagent.user.set_password etc.) that don't
-#     evaluate runtime.exs.
-#   runtime — config/runtime.exs re-evaluates the same path so
-#     `EZAGENT_HOME=/other mix phx.server` picks up the override.
-#
-# Phase 6 PR 1 — see `mix ezagent.home.adopt_db` for one-time migration.
-esr_home_dev = System.get_env("EZAGENT_HOME", "~/.ezagent") |> Path.expand()
-esr_profile_dev = System.get_env("EZAGENT_PROFILE", "default")
-
 config :ezagent_core, EzagentCore.Repo,
-  database: Path.join([esr_home_dev, esr_profile_dev, "db", "ezagent_core.db"]),
+  username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
+  password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),
+  hostname: System.get_env("POSTGRES_HOST", "127.0.0.1"),
+  port: String.to_integer(System.get_env("POSTGRES_PORT", "55432")),
+  database: System.get_env("POSTGRES_DB", "ezagent_pg_compat_dev"),
+  priv: "priv/repo_pg",
   pool_size: 5,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true

@@ -1,0 +1,20 @@
+services:
+  pg-compat-postgres:
+    image: postgres:15
+    container_name: ezagent-pg-compat-audit-postgres
+    environment:
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      POSTGRES_DB: ezagent_pg_compat_dev
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - ezagent_pg_compat_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ezagent_pg_compat -d ezagent_pg_compat_dev"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ezagent_pg_compat_data:

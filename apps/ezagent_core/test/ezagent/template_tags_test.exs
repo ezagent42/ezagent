@@ -110,9 +110,8 @@ defmodule Ezagent.TemplateTagsTest do
 
     test "the NOT NULL constraint is enforced at the DB layer" do
       # A direct insert with a nil workspace_uri must be rejected by the
-      # `workspace_uri TEXT NOT NULL` column (invariant 14). SQLite
-      # raises on the constraint violation — the raise IS the proof
-      # that the column-level NOT NULL is in force.
+      # `workspace_uri` NOT NULL column (invariant 14). The database raise
+      # is the proof that the column-level NOT NULL is in force.
       row = %TemplateTags{
         workspace_uri: nil,
         name: "nil-ws-#{uniq()}",
@@ -122,11 +121,9 @@ defmodule Ezagent.TemplateTagsTest do
         updated_at: DateTime.utc_now()
       }
 
-      assert_raise Exqlite.Error,
-                   ~r/NOT NULL constraint failed: template_tags.workspace_uri/,
-                   fn ->
-                     EzagentCore.Repo.insert(row)
-                   end
+      assert_raise Postgrex.Error, ~r/null value in column "workspace_uri"/, fn ->
+        EzagentCore.Repo.insert(row)
+      end
     end
   end
 

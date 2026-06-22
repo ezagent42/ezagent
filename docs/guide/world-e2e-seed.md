@@ -32,9 +32,9 @@ EZAGENT_HOME=/tmp/ezagent_pr1_e2e mix run scripts/world_e2e_seed.exs
 This seeds, into `session://system/default/main`:
 - users `entity://system/user/alice` and `entity://system/user/bob`, each with a
   narrow per-session `:join` + `:send` cap, joined to the session;
-- the admin login password (`WORLD_E2E_ADMIN_PW`, default `worlddev`) so the
-  browser can sign in (admin authority is by identity, not caps — a password row
-  is all the web login needs).
+- the admin login email (`WORLD_E2E_ADMIN_EMAIL`, default `admin@ezagent.chat`)
+  and password (`WORLD_E2E_ADMIN_PW`, default `worlddev`) so the browser can
+  sign in through the email+password login form.
 
 The script prints the `?session=` deep-link.
 
@@ -65,7 +65,7 @@ $B --args "--host-resolver-rules=MAP world.ezagent.chat 127.0.0.1" \
    open "http://world.ezagent.chat:4020/login"
 
 # fill the two VISIBLE inputs and submit (skip the hidden _csrf_token)
-$B eval "var f=document.forms[0]; var v=[...f.querySelectorAll('input')].filter(i=>i.type!=='hidden'); var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(v[0],'entity://system/user/admin'); v[0].dispatchEvent(new Event('input',{bubbles:true})); s.call(v[1],'worlddev'); v[1].dispatchEvent(new Event('input',{bubbles:true})); f.submit();"
+$B eval "var f=document.forms[0]; var v=[...f.querySelectorAll('input')].filter(i=>i.type!=='hidden'); var s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(v[0],'admin@ezagent.chat'); v[0].dispatchEvent(new Event('input',{bubbles:true})); s.call(v[1],'worlddev'); v[1].dispatchEvent(new Event('input',{bubbles:true})); f.submit();"
 
 $B open "http://world.ezagent.chat:4020/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fmain"
 $B screenshot /tmp/world-members.png
