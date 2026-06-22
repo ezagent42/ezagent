@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {Moon, Sun} from "lucide-react"
+import {ArrowLeft, Boxes, ChevronDown, ChevronRight, Moon, Sun} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -132,14 +132,22 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
 
         <main className="min-w-0 flex-1 p-6">
           <header className="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">World</p>
-              <h1 className="text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
+            <div className="min-w-0">
+              <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
+              <h1 className="mt-1 text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
             </div>
             <div className="flex items-center gap-3">
-              <span className="font-mono text-xs text-muted-foreground">
-                {state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}
-              </span>
+              <a
+                href="/workspaces"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                title="Switch workspace"
+              >
+                <Boxes aria-hidden="true" className="h-3.5 w-3.5" />
+                <span className="max-w-[200px] truncate">
+                  {state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}
+                </span>
+                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+              </a>
               <ThemeToggle />
               <Button
                 id="world-cmdk-open"
@@ -320,19 +328,49 @@ function CommandPalette({
   )
 }
 
-// Shell navigation items (label, href). Rationalizing the Identities/Users/
-// Agents triple entry is PR-7 (nav IA); this PR only restyles the chrome.
+// Shell navigation items (label, href). PR-7 nav IA: Users/Agents are NOT
+// separate top-level entries — they are sub-views of Identities (reachable via
+// its All/Users/Agents filter bar), so the prior triple entry-point is collapsed
+// to a single Identities link.
 const NAV_ITEMS: Array<[string, string]> = [
   ["Overview", "/"],
   ["Sessions", "/sessions"],
   ["Identities", "/identities"],
-  ["Users", "/identities/users"],
-  ["Agents", "/identities/agents"],
   ["Admin", "/admin"],
   ["Workspaces", "/workspaces"],
   ["Plugins", "/plugins"],
   ["Profile", "/profile"],
 ]
+
+// The top-level section a (possibly deep) path belongs to — drives the
+// breadcrumb root + back link.
+function sectionRoot(path?: string): {label: string; href: string} | null {
+  if (!path) return null
+  if (path.startsWith("/identities")) return {label: "Identities", href: "/identities"}
+  if (path.startsWith("/admin")) return {label: "Admin", href: "/admin"}
+  if (path.startsWith("/workspaces")) return {label: "Workspaces", href: "/workspaces"}
+  if (path.startsWith("/plugins")) return {label: "Plugins", href: "/plugins"}
+  if (path.startsWith("/sessions")) return {label: "Sessions", href: "/sessions"}
+  return null
+}
+
+// Breadcrumb + back affordance for nested pages. Top-level pages (path === the
+// section root) render nothing — the h1 alone is the title.
+function Breadcrumbs({path, title}: {path?: string; title: string}) {
+  const root = sectionRoot(path)
+  if (!root || path === root.href) return null
+
+  return (
+    <nav className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-label="Breadcrumb">
+      <a href={root.href} className="inline-flex items-center gap-1 transition hover:text-foreground">
+        <ArrowLeft aria-hidden="true" className="h-3 w-3" />
+        {root.label}
+      </a>
+      <ChevronRight aria-hidden="true" className="h-3 w-3" />
+      <span className="text-foreground">{title}</span>
+    </nav>
+  )
+}
 
 function ThemeToggle() {
   const [dark, setDark] = React.useState(false)
