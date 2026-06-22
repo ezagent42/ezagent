@@ -10,11 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-22-login-email-password-only-design.md` (read it first).
 
+**Review status:** codex adversarial plan-review done (9 findings, all folded in): #3 password-only `Entity.authenticate/3` (HIGH), #9 domain→workspace resolver with 0/1/≥2 handling (HIGH), #2 magic-link kept working in PR-1, #4 `:current_entity_uri` session key, #5 `create/4` defaulted arg, #6 admin profile `display_name`, #7 testable `repair_admin_user/0`, #8 `mail_ready?`/Local-adapter helper, #1 lower(email) index tested via raw insert.
+
 ## Global Constraints
 
-- Branch: all PRs target `feat/login-email-password`; Allen merges to `main`. (Per-task-branch model.)
+- Branch: all PRs target `login-with-email`; Allen merges to `main`. (Per-task-branch model.)
 - Canonical identifier is the entity URI; never key by email. Construct user URIs via `Ezagent.URI.user(workspace, name)` — never by string concatenation (URI segment order is opaque).
-- Login authentication MUST go through `Ezagent.Entity.authenticate/2` (it does `ensure_spawned` + cap hydration) — never call `Users.verify_password/2` directly from the controller.
+- Login authentication MUST go through the `Ezagent.Entity` auth path (it does `ensure_spawned` + cap hydration) — never call `Users.verify_password/2` directly from the controller. **BUT the form must use a password-ONLY variant** (`Entity.authenticate/3` with `allow_user_tokens: false`): the existing `Entity.authenticate/2` tries the bearer-token path *first* (`entity.ex:72`), so a user typing their API token into the password field would authenticate — that affordance must be off on the form (Codex plan-review #3). The API/CLI bearer path keeps the token-accepting `/2`.
 - `users.confirmed` = anon-ness (do NOT overload). Email-verification = new `users.email_verified`.
 - Anti-enumeration: registration / reset-request / re-send return identical responses; constant-time `Bcrypt.no_user_verify/0` on the not-found branch; the "verify your email" message is shown ONLY after a correct password.
 - Secrets (CF API token) live only in runtime `Ezagent.AppSettings`, never in the repo.
@@ -47,6 +49,8 @@
 ## PR-1 — email-as-login backend + `email_verified`
 
 **Goal:** Backend can authenticate by email and gate on `email_verified`; canonical auth path unchanged for existing flows.
+
+> **Codex plan-review folded (2026-06-22):** PR-1 also adds `Entity.authenticate/3` password-only (finding #3), KEEPS magic-link working by moving `POST /login/magic` + `GET /auth/magic` into PR-1 (finding #2 — otherwise magic-link breaks in the PR-1→PR-3 gap), and uses the real session key `:current_entity_uri` (finding #4). `Users.create/3`→`/4` keeps a defaulted 4th arg (finding #5).
 
 ### Task 1.1: `email_verified` column migration
 
@@ -177,17 +181,31 @@ end
 ```
 
 - [ ] **Step 2:** In `profile.ex:43` change `unique_constraint(:email, name: :entity_profiles_email_index)` → `name: :entity_profiles_email_lower_index`.
-- [ ] **Step 3: Test** (profile_test) — inserting two profiles whose emails differ only by case returns `{:error, changeset}` on the second.
+- [ ] **Step 3: Test** (profile_test). Note (Codex #1): `Profile.upsert/1` already lowercases on write, so two `upsert`s with case-differing emails are identical post-normalize and the *existing* raw index already catches them — that doesn't prove the `lower(email)` index. To actually exercise the expression index, insert one row via `upsert` and a second **mixed-case raw row bypassing normalize** (direct `Repo.insert` of the schema struct) and assert the DB rejects it:
 
 ```elixir
-test "email uniqueness is case-insensitive" do
-  {:ok, _} = Ezagent.Entity.Profile.upsert(%{entity_uri: Ezagent.URI.user("system","u1") |> URI.to_string(), display_name: "U1", email: "Dup@Ex.com"})
-  assert {:error, _} = Ezagent.Entity.Profile.upsert(%{entity_uri: Ezagent.URI.user("system","u2") |> URI.to_string(), display_name: "U2", email: "dup@ex.com"})
+test "lower(email) unique index rejects a case-variant raw insert" do
+  {:ok, _} = Ezagent.Entity.Profile.upsert(%{entity_uri: Ezagent.URI.user("system","u1") |> URI.to_string(), display_name: "U1", email: "dup@ex.com"})
+  # Bypass normalize/upsert to feed a mixed-case email straight to the DB:
+  raw = %Ezagent.Entity.Profile{entity_uri: Ezagent.URI.user("system","u2") |> URI.to_string(), display_name: "U2", email: "DUP@ex.com", workspace_uri: "workspace://system"}
+  assert {:error, _} = EzagentCore.Repo.insert(raw)
 end
 ```
 
 - [ ] **Step 4:** `mix ecto.migrate` + run test → PASS.
 - [ ] **Step 5: Commit** — `git commit -m "feat(login): case-insensitive unique email index"`
+
+### Task 1.3b: `Entity.authenticate/3` password-only variant (Codex #3)
+
+**Files:** Modify `apps/ezagent_domain_identity/lib/ezagent/entity.ex`; Test `entity_test.exs`
+
+**Interfaces — Produces:** `Entity.authenticate(uri, secret, opts)` — `opts[:allow_user_tokens]` (default `true`, preserving `/2` behavior). When `false`, user-URI auth skips the `Token.verify` branch and only accepts the bcrypt password (still `ensure_spawned` + caps). `authenticate/2` delegates to `/3` with `allow_user_tokens: true`.
+
+- [ ] **Step 1: Failing test** — mint a bearer token for a user URI (`Ezagent.Entity.Token.mint/2`); `authenticate(uri, token, allow_user_tokens: false)` → `{:error, :invalid_credentials}`; `authenticate(uri, password, allow_user_tokens: false)` → `{:ok, _}`; `authenticate/2` with the token still → `{:ok, _}` (back-compat).
+- [ ] **Step 2: Run, verify fail.**
+- [ ] **Step 3: Implement** — add `def authenticate(uri, secret, opts)`; route `/2` to `/3` with `allow_user_tokens: true`. In `authenticate_user/3`, gate the `match?({:ok,_}, Token.verify(uri, secret))` branch behind `Keyword.get(opts, :allow_user_tokens, true)`.
+- [ ] **Step 4: Run, verify pass.**
+- [ ] **Step 5: Commit** — `git commit -m "feat(login): Entity.authenticate/3 password-only mode"`
 
 ### Task 1.4: email→URI login in the controller (primary `POST /login`)
 
@@ -204,7 +222,7 @@ test "POST /login with email+password creates session", %{conn: conn} do
   {:ok, _} = Ezagent.Entity.Profile.upsert(%{entity_uri: URI.to_string(uri), display_name: "L", email: "loginok@ex.com"})
   conn = post(conn, "/login", %{"email" => "loginok@ex.com", "password" => "secret123"})
   assert redirected_to(conn) == "/sessions"
-  assert get_session(conn, :entity_uri) == URI.to_string(uri)  # exact key per SessionPrincipal
+  assert get_session(conn, :current_entity_uri) == URI.to_string(uri)  # SessionPrincipal.put writes :current_entity_uri (Codex #4)
 end
 
 test "POST /login unverified email shows generic message after correct password, no session", %{conn: conn} do
@@ -252,7 +270,8 @@ defp verified?(_), do: false
 defp resolve_and_auth(email, password) do
   case Ezagent.Entity.Profile.by_email(email) do
     %{entity_uri: uri_str} ->
-      case Entity.authenticate(Ezagent.URI.new!(uri_str), password) do
+      # password-only: allow_user_tokens:false so a typed API token can't log in (Codex #3)
+      case Entity.authenticate(Ezagent.URI.new!(uri_str), password, allow_user_tokens: false) do
         {:ok, _} -> {:ok, uri_str}
         {:error, _} -> :error
       end
@@ -262,7 +281,8 @@ defp resolve_and_auth(email, password) do
   end
 end
 ```
-  Note: `gettext` "confirm your email" / "Invalid email or password" copy must match the test substrings. Confirm the exact session key with `SessionPrincipal.put/3` + `get_session` (read `session_principal.ex` — the test asserts the real key).
+  Note: `gettext` "confirm your email" / "Invalid email or password" copy must match the test substrings. `SessionPrincipal.put/3` writes `:current_entity_uri` (the test asserts that key).
+  **Also in this PR (Codex #2):** add `POST /login/magic` (mint `purpose:"login"` → `deliver_magic_link`) and keep `GET /auth/magic/:token` (consume expected `"login"`) so magic-link login does not break between PR-1 and PR-3. The magic-link *purpose* arg lands in PR-3 Task 3.1; until then `MagicLinkToken.mint/consume` default `"login"` keeps it working. Move the magic-link `@email_form` action to `/login/magic`.
 
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** — `git commit -m "feat(login): email+password POST /login via Entity.authenticate + email_verified gate"`
@@ -271,7 +291,7 @@ end
 
 - [ ] Run full gate suite (see Global Constraints). Fix any baseline drift.
 - [ ] Dispatch subagent adversarial review of the PR diff (model opus; ezagent-developer skill).
-- [ ] Admin-merge PR-1 into `feat/login-email-password`.
+- [ ] Admin-merge PR-1 into `login-with-email`.
 
 ---
 
@@ -295,7 +315,25 @@ end
 
 - [ ] **Step 1: Write failing tests** — `build_confirmation_email/2` and `build_password_reset_email/2` produce a Swoosh email whose `text_body` contains the url; `deliver_*` returns `{:ok,_}` under Local adapter.
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — add `build_confirmation_email/2`, `build_password_reset_email/2` (mirroring `build_magic_link_email/2` with appropriate subjects/copy), and `deliver_confirmation/2` + `deliver_password_reset/2`. For prod they reuse `smtp_runtime_config/1`; under the Local adapter `deliver/1` works with no runtime config — guard so that when the adapter is Local we call `deliver(email)` and otherwise the smtp_config path. (Read how `use Swoosh.Mailer` resolves the adapter; simplest: try the configured-adapter `deliver/1`, fall back to per-delivery smtp config only when adapter is SMTP.)
+- [ ] **Step 3: Implement** — add `build_confirmation_email/2`, `build_password_reset_email/2` (mirroring `build_magic_link_email/2`), and `deliver_confirmation/2` + `deliver_password_reset/2`.
+  **Codex #8 — `smtp_configured?/0` is NOT the right gate when the adapter is Local.** `deliver_magic_link/2` returns `{:error, :smtp_not_configured}` whenever the DB `smtp_config` is unset, regardless of adapter — so under the dev/test Local adapter, delivery would wrongly fail. Add a readiness helper and thread it through ALL deliver paths (including a tweak to `deliver_magic_link/2`):
+  ```elixir
+  # Local adapter (dev/test) is unconditionally ready; SMTP adapter needs smtp_config.
+  defp mail_ready? do
+    case Application.get_env(:ezagent_web, __MODULE__)[:adapter] do
+      Swoosh.Adapters.Local -> true
+      _ -> Ezagent.AppSettings.smtp_configured?()
+    end
+  end
+
+  defp deliver_built(email) do
+    case Application.get_env(:ezagent_web, __MODULE__)[:adapter] do
+      Swoosh.Adapters.Local -> deliver(email)                       # no runtime smtp config
+      _ -> deliver(email, smtp_runtime_config(Ezagent.AppSettings.get("smtp_config")))
+    end
+  end
+  ```
+  Each `deliver_*` checks `mail_ready?()` (else `{:error, :mail_not_configured}`) then calls `deliver_built/1`. `deliver_magic_link/2` is updated to use the same helpers so its behavior is consistent.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** — `git commit -m "feat(mail): confirmation + password-reset emails"`
 
@@ -332,12 +370,17 @@ end
 **Files:** Modify `apps/ezagent_domain_identity/lib/ezagent/registration.ex`; Test `registration_test.exs`
 
 **Interfaces — Produces:**
-- `Registration.workspace_for_email_domain(email) :: {:ok, workspace_name} | {:error, :domain_not_provisioned}` — maps the email domain to a pre-provisioned workspace; errors if none (no in-path workspace creation, per Codex #4).
+- `Registration.workspace_for_email_domain(email) :: {:ok, workspace_uri} | {:error, :domain_not_provisioned | :domain_ambiguous}` — maps the email domain to its registration workspace; errors if none, and errors on ambiguity (no in-path workspace creation, per Codex #4).
 - `Registration.register_with_password(email, password, display_name, opts) :: {:ok, uri} | {:error, term}` — creates a `confirmed:true, email_verified:false` user via `Users.create(uri, password, caps, email_verified: false)` in the derived workspace, upserts the profile, returns the URI.
 
-- [ ] **Step 1: Failing tests** — register with a provisioned-domain email creates an unverified user + profile and returns its URI; a non-provisioned domain returns `{:error, :domain_not_provisioned}`; a duplicate email returns `{:error, _}`.
+**Codex #9 — there is no existing unique domain→workspace function.** Today the rule layer exposes only `Workspace.any_workspace_accepts?/1` (boolean) and a reverse lookup that returns a **list** of workspaces (`magic_link_rule.ex:167`). A domain could therefore map to 0 OR several workspaces. `workspace_for_email_domain/1` MUST be authored with explicit cases:
+- 0 workspaces accept the domain → `{:error, :domain_not_provisioned}`.
+- exactly 1 → `{:ok, that_workspace}`.
+- ≥2 → `{:error, :domain_ambiguous}` (operator misconfiguration — registration refuses rather than guessing; logged). Document that admin must keep domain→workspace 1:1 for self-registration.
+
+- [ ] **Step 1: Failing tests** — register with a single-workspace-provisioned domain creates an unverified user + profile and returns its URI; a non-provisioned domain → `{:error, :domain_not_provisioned}`; a domain accepted by two workspaces → `{:error, :domain_ambiguous}`; a duplicate email → `{:error, _}`.
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — derive `handle` from email local-part (collision-suffixed; reuse any existing slug helper in `registration.ex`), resolve the workspace from the domain (consult `registration_domains`/workspace mapping — read `Registration.email_allowed?/1` for the existing allowlist shape and extend to return the workspace). Build the URI with `Ezagent.URI.user(workspace, handle)`. Reject if `Profile.by_email/1` already resolves.
+- [ ] **Step 3: Implement** — first read `registration.ex` (`email_allowed?/1`, `any_workspace_accepts?/1`) and `magic_link_rule.ex:167` reverse lookup to get the real list-returning API. Build `workspace_for_email_domain/1` on top of that list with the 0/1/≥2 cases above. Derive `handle` from the email local-part (collision-suffixed; reuse any existing slug helper). Build the URI with `Ezagent.URI.user(workspace_name, handle)`. Reject if `Profile.by_email/1` already resolves.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** — `git commit -m "feat(login): register_with_password + email-domain workspace resolution"`
 
@@ -402,11 +445,11 @@ end
 
 **Files:** Modify `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex` (`ensure_admin_user/0`); Test `application` boot test or a dedicated unit test of the repair fn
 
-**Interfaces — Produces:** `ensure_admin_user/0` — whether or not the admin row exists: set a password hash if absent (from app env `EZAGENT_ADMIN_PASSWORD`, else generate + `Logger.warning` once), upsert the admin profile email (`EZAGENT_ADMIN_EMAIL` or `admin@ezagent.chat`), set `email_verified = true`, preserve existing caps.
+**Interfaces — Produces:** `repair_admin_user/0` (public/testable, extracted from `ensure_admin_user/0` per Codex #7 — the latter is private AND skipped in test env, so tests can't reach it). Whether or not the admin row exists: set a password hash if absent (from app env `EZAGENT_ADMIN_PASSWORD`, else generate + `Logger.warning` once), upsert the admin profile **with `display_name`** (Codex #6 — `Profile.upsert/1` `validate_required([:entity_uri, :display_name, :workspace_uri])`) + email (`EZAGENT_ADMIN_EMAIL` or `admin@ezagent.chat`), set `email_verified = true`, preserve existing caps.
 
-- [ ] **Step 1: Failing test** — given an admin row with `password_hash: nil` and no profile, after `ensure_admin_user/0`: `Users.get_by_uri(admin).email_verified == true`, `verify_password(admin, env_pw) == true`, profile email set, caps unchanged.
+- [ ] **Step 1: Failing test** — call `repair_admin_user/0` directly (not boot-gated). Given an admin row with `password_hash: nil` and no profile, after the call: `Users.get_by_uri(admin).email_verified == true`, `verify_password(admin, env_pw) == true`, `Profile.get(admin).email` set, caps unchanged. Idempotent: a second call is a no-op (password not re-randomized).
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — refactor `ensure_admin_user/0` to a repair: on existing row, if `password_hash` nil → `Users.set_password(admin, admin_password())`; upsert profile via `Profile.upsert/1`; `Users.mark_email_verified(admin)`. `admin_password/0` reads env or generates+logs. Keep the DB-unavailable rescue.
+- [ ] **Step 3: Implement** — extract the repair body into `def repair_admin_user/0` (called from `ensure_admin_user/0`, which stays the boot entry). On the row: if `password_hash` nil → `Users.set_password(admin, admin_password())`; `Profile.upsert(%{entity_uri: admin_str, display_name: "Admin", email: admin_email()})`; `Users.mark_email_verified(admin)`. `admin_password/0` reads `EZAGENT_ADMIN_PASSWORD`, else generates + logs once. Idempotency: only set password when absent. Keep the DB-unavailable rescue.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** — `git commit -m "feat(login): idempotent admin email+password+verified bootstrap repair"`
 
@@ -438,4 +481,4 @@ end
 
 ## Execution Handoff
 
-Inline execution (Allen: "你来开发"), per-PR: implement → subagent adversarial review → full gates → admin-merge into `feat/login-email-password`. After the plan's own codex adversarial review lands and is folded in, begin PR-1.
+Inline execution (Allen: "你来开发"), per-PR: implement → subagent adversarial review → full gates → admin-merge into `login-with-email`. After the plan's own codex adversarial review lands and is folded in, begin PR-1.

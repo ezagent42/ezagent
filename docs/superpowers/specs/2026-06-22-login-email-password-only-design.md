@@ -372,7 +372,7 @@ everything downstream stay unchanged. No design choice here forecloses that swap
 
 ## PR breakdown (per-task-branch; Allen merges to main)
 
-All PRs target branch `feat/login-email-password`; the lead (Allen) merges the
+All PRs target branch `login-with-email`; the lead (Allen) merges the
 branch to `main`. Each PR: implement → subagent adversarial review → full gate
 suite → (admin-)merge into the task branch.
 
