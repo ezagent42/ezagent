@@ -21,7 +21,7 @@ These few artifacts cause most merge pain because they are large and central:
 
 1. **Partition by surface.** world is componentized: each surface is a `*.tsx` in `assets/src/components/` + a route clause in `world_live.ex` + a `*_data.ex` (reads) / `*_actions.ex` (writes) pair. **Adding a NEW surface is additive and nearly collision-free.** **Re-styling or restructuring an EXISTING surface needs a declared owner** (see §5) — do not edit a surface someone else owns without coordinating.
 2. **`styles.css` discipline.** During any beautification effort, either (a) serialize all `styles.css` edits to a single owner, or (b) co-locate styles per component as you migrate. Never have two efforts editing `styles.css` in parallel.
-3. **Small PRs, fast cadence, frequent rebase.** Land world changes in small PRs and merge to `main` quickly. **Do not open long-lived world branches** — `origin/world` / `origin/world-integrate` are already stale (0 ahead / 25+ behind main); long branches rot and produce massive conflicts. Branch off the latest `main` and rebase often.
+3. **Small PRs into the task branch; keep it rebased; the lead merges to `main`.** Per the standing handoff rule, work merges into the effort's own **task branch** (not `main` directly); the lead (Allen) merges the task branch → `main`. **Keep the task branch rebased on `main` frequently so it never rots** — `origin/world` / `origin/world-integrate` are the cautionary tale (0 ahead / 25+ behind main). Small PRs into the task branch + frequent rebase, never a months-long divergent branch.
 4. **Never block on a sibling effort.** If your work needs a change to a surface another effort owns, prefer an additive seam (a new component/action) over editing theirs; if you truly must, coordinate the edit window via §5.
 5. **Plugins reuse world's transport by pattern, not by edit.** A separate plugin (e.g. `hello`) that wants world's island bridge copies the `WorldRenderer`/`mountWorld` + `world:dispatch` pattern into its own bundle — it does **not** import world's bundle or edit world's files. world-internal edits are reserved for work that is genuinely *about* world.
 
@@ -57,6 +57,6 @@ Copy this into the handoff's conflict-avoidance section:
 - [ ] Declared which surfaces/files the effort owns; added a row to §5.
 - [ ] New surface (additive) vs. existing-surface edit (needs owner coordination) — stated which.
 - [ ] `styles.css` edit plan (serialized owner or per-component co-location) if restyling.
-- [ ] Branch off latest `main`; small PRs; rebase cadence.
+- [ ] Work on the effort's task branch; small PRs into it; rebase on `main` often; the lead merges the task branch → `main`.
 - [ ] Built in the shadcn/`@json-render` shape where the surface is data/form-shaped.
 - [ ] Listed the shared additive files it will touch (config, mix, manifest).
