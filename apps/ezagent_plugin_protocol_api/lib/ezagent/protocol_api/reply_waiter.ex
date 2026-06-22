@@ -1,6 +1,6 @@
 defmodule Ezagent.ProtocolApi.ReplyWaiter do
   @moduledoc """
-  Per-request reply waiter — the ONE delta from Feishu.
+  Per-request reply waiter.
   Blocks in receive loop, matches Publisher events by ref_id + sender.
   """
   alias Ezagent.Publisher.Event
@@ -20,20 +20,23 @@ defmodule Ezagent.ProtocolApi.ReplyWaiter do
     else
       receive do
         {:publisher_event, %Event{slice_key: :session, payload: payload}} ->
-          case match_reply(payload, request_id, target_agent_uri) do
-            {:ok, msg} -> {:ok, msg}
-            :no_match -> do_wait(request_id, target_agent_uri, deadline)
+          # Publisher event payload: %{new_slice: %{state: <slice_map>}}
+          # where slice_map has :last_message
+          case get_in(payload, [:new_slice, :state, :last_message]) do
+            %Ezagent.Message{} = msg ->
+              if msg.ref_id == request_id and msg.sender == target_agent_uri do
+                {:ok, msg}
+              else
+                do_wait(request_id, target_agent_uri, deadline)
+              end
+            _ ->
+              do_wait(request_id, target_agent_uri, deadline)
           end
-        {:publisher_event, _other} -> do_wait(request_id, target_agent_uri, deadline)
-        _other -> do_wait(request_id, target_agent_uri, deadline)
+        {:publisher_event, _} -> do_wait(request_id, target_agent_uri, deadline)
+        _ -> do_wait(request_id, target_agent_uri, deadline)
       after
         remaining -> {:error, :timeout}
       end
     end
   end
-
-  defp match_reply(%{new_slice: %{last_message: %Ezagent.Message{} = msg}}, request_id, target_agent_uri) do
-    if msg.ref_id == request_id and msg.sender == target_agent_uri, do: {:ok, msg}, else: :no_match
-  end
-  defp match_reply(_payload, _request_id, _target_agent_uri), do: :no_match
 end

@@ -88,19 +88,22 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   # P0: ensure the echo agent exists (spawn if needed), then join it to
   # the session so it can receive and reply to messages.
   defp join_agent(session_uri, entity_uri) do
+    require Logger
     echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
-    # Spawn the echo agent if it doesn't exist yet (idempotent).
-    # The disposable stack may not have seeded it via after_boot.
-    case SpawnRegistry.ensure_live(echo_agent) do
-      {:ok, _} ->
+    Logger.info("ProtocolApi: spawning echo agent...")
+
+    case SpawnRegistry.spawn(echo_agent) do
+      {:ok, _pid} ->
+        Logger.info("ProtocolApi: echo agent spawned OK")
         :ok
 
-      {:error, :not_found} ->
-        # Agent never created — create it now
-        _ = SpawnRegistry.spawn(echo_agent)
-
-      {:error, _} ->
+      {:error, :already_started} ->
+        Logger.info("ProtocolApi: echo agent already started")
         :ok
+
+      {:error, reason} ->
+        Logger.error("ProtocolApi: echo spawn failed: #{inspect(reason)}")
+        {:error, 500, "echo_spawn", inspect(reason)}
     end
 
     target = URI.with_action(session_uri, :session, :join)
@@ -112,10 +115,20 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
       ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
     }
 
+    Logger.info("ProtocolApi: joining echo to session...")
+
     case Router.dispatch(cmd) do
-      {:ok, _} -> :ok
-      :ok -> :ok
-      {:error, _} -> :ok
+      {:ok, _} ->
+        Logger.info("ProtocolApi: join OK")
+        :ok
+
+      :ok ->
+        Logger.info("ProtocolApi: join OK")
+        :ok
+
+      {:error, reason} ->
+        Logger.error("ProtocolApi: join failed: #{inspect(reason)}")
+        {:error, 500, "join_failed", inspect(reason)}
     end
   end
 
@@ -139,7 +152,16 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
         _ -> ""
       end
 
-    msg = Message.new(entity_uri, %{text: text, attachments: []}, id: request_id)
+    # $session_users only delivers to Users, not agents. Pass the echo agent
+    # as a mention so the $mentions routing rule delivers agent.receive to it.
+    echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
+
+    msg =
+      Message.new(entity_uri, %{text: text, attachments: []},
+        id: request_id,
+        mentions: [echo_agent]
+      )
+
     {:ok, request_id, msg}
   end
 
@@ -187,7 +209,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
           "index" => 0,
           "message" => %{
             "role" => "assistant",
-            "content" => Map.get(reply_msg.body, :text, "") || ""
+            "content" => Map.get(reply_msg.body, :text) || Map.get(reply_msg.body, "text") || ""
           },
           "finish_reason" => "stop"
         }
