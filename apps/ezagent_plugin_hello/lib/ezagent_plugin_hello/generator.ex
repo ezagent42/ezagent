@@ -4,14 +4,16 @@ defmodule EzagentPluginHello.Generator do
   GenServer process (so the slow LLM round-trip never blocks dispatch).
 
   `start/2` spawns a supervised Task (under `EzagentPluginHello.TaskSupervisor`);
-  `generate/2`:
+  `generate/2` PLANS the request (`decompose/1`) and either:
 
-    1. calls the LLM (`LLM.ApiClient`) with the page-gen system prompt + the
-       user's request;
-    2. extracts the `@json-render` JSON spec from the reply (`Spec.extract/1`);
-    3. validates it against the catalog (`Spec.validate/1` — out-of-catalog =
-       fail-closed, no page);
-    4. drives `TurnDriver.drive/3` to land the spec in `Surface` (the chokepoint).
+    * **simple** — one LLM call → catalog page → `TurnDriver.drive/3` (Phase 0); or
+    * **complex** — FANS OUT one concurrent worker per section, each building a
+      catalog sub-tree, assembled into one page (`Spec.compose_page/2`) and driven
+      onto the Surface (Phase 1).
+
+  Out-of-catalog output fails closed (`Spec.validate/1`); a failed section is
+  dropped and the page is composed from the survivors (single-page fallback if
+  none survive), so a turn always produces something.
 
   ## API config (Phase 0)
 
@@ -25,6 +27,9 @@ defmodule EzagentPluginHello.Generator do
   alias EzagentPluginHello.{Prompts, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
+  # Per-section worker deadline — a margin over the LLM client's 60s call timeout.
+  @section_timeout_ms 90_000
+
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
   @spec start(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
   def start(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -33,9 +38,31 @@ defmodule EzagentPluginHello.Generator do
     end)
   end
 
-  @doc "Generate a page spec from `user_text` and land it on `session_uri`'s Surface."
+  @doc """
+  Generate a page and land it on `session_uri`'s Surface. The orchestrator first
+  PLANS (`decompose/1`): a simple request takes the single-page path; a complex
+  one FANS OUT — one concurrent worker per section, each building a sub-tree,
+  assembled into one page (`Spec.compose_page/2`) and driven onto the Surface.
+
+  Worker fan-out runs as concurrent Tasks calling the same LLM path (decision:
+  Phase-1 keeps workers in-process; the curl-flavor `Entity.Agent` member-worker
+  fold via `add_managed_member` is a flagged follow-up — it needs a worker
+  credential cascade not yet wired. The orchestrator caps for that path are
+  already granted, see `App.ensure_app`).
+  """
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
+    case decompose(user_text) do
+      {:complex, %{title: title, sections: sections}} ->
+        generate_complex(session_uri, title, sections, user_text)
+
+      {:simple} ->
+        generate_simple(session_uri, user_text)
+    end
+  end
+
+  # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
+  defp generate_simple(session_uri, user_text) do
     with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), user_text),
          {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
@@ -45,6 +72,58 @@ defmodule EzagentPluginHello.Generator do
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
         err
+    end
+  end
+
+  # The Phase-1 fan-out path: build every section concurrently, assemble, drive.
+  # Sections that fail (LLM error / out-of-catalog) are dropped; the page is built
+  # from those that succeeded (in plan order). If NONE survive, fall back to the
+  # single-page path so the turn still produces something.
+  defp generate_complex(session_uri, title, sections, user_text) do
+    section_trees =
+      sections
+      |> Task.async_stream(
+        fn %{brief: brief} -> gen_section(brief) end,
+        max_concurrency: max(length(sections), 1),
+        timeout: @section_timeout_ms,
+        on_timeout: :kill_task
+      )
+      |> Enum.map(fn
+        {:ok, {:ok, tree}} -> tree
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case section_trees do
+      [] ->
+        Logger.warning(
+          "hello.Generator: all #{length(sections)} sections failed; single-page fallback"
+        )
+
+        generate_simple(session_uri, user_text)
+
+      trees ->
+        with {:ok, page} <- Spec.compose_page(title, trees) do
+          summary = "Generated a #{length(trees)}-section page: #{title}"
+          TurnDriver.drive(session_uri, page, summary)
+        else
+          {:error, reason} = err ->
+            Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
+            err
+        end
+    end
+  end
+
+  # One worker: build a single catalog sub-tree from a section brief.
+  defp gen_section(brief) do
+    with {:ok, %{content: content}} <- call_llm(Prompts.worker_section_system(), brief),
+         {:ok, raw} <- Spec.extract(content),
+         {:ok, node} <- Spec.validate(raw) do
+      {:ok, node}
+    else
+      other ->
+        Logger.warning("hello.Generator: section build failed: #{inspect(other)}")
+        :error
     end
   end
 
