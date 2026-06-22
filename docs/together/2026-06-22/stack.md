@@ -47,7 +47,7 @@ Both modify, vs main:
 
 | # | Task | Branch | Status | Close action |
 |---|---|---|---|---|
-| 1 | PostgreSQL-only migration | `pg-compat-audit` | ✅ ready | verify no residual SQLite + (re)run `mix precommit` under PG, FF → main, re-confirm backup/restore |
+| 1 | PostgreSQL-only migration | `pg-compat-audit` | ✅ **MERGED** `db1fb574` (on main `3768b8e3`) | done — see outcomes |
 | 2 | #83 world beautify + restructure | `world-beautify` | ⚠️ needs-rebase | rebase onto post-pg main, resolve 5-file conflict set, re-run gates **under PG** + vite build + visual check, merge |
 | 3 | hello @json-render plugin | `hello` (#891) | ⛓️ blocked-by-2 | rebase onto post-wb main, wire new plugin, re-run gates **under PG**, merge |
 
