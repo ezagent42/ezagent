@@ -1,11 +1,12 @@
 # Login: Email + Password Only — Design
 
 **Date:** 2026-06-22
-**Status:** Draft v4 — codex-adversarial-reviewed + all Allen decisions folded in
+**Status:** Draft v5 — codex-adversarial-reviewed twice (login design: 8 findings;
+invite-code design: 10 findings — all folded). All Allen decisions folded in
 (magic-link KEPT but SMTP-gated; self-build + OIDC seam; CF email via SMTP;
-**Decision 10: registration closed-by-default toggle + invite codes with quota,
-code carries target workspace**). PR-1 + PR-2 implemented on `login-with-email`.
-Invite-code addition (Decision 10) pending its own codex adversarial review.
+Decision 10 registration control + invite codes; random-suffix per-registrant
+workspace for open-no-invite mode). Implemented on `login-with-email`: PR-1, PR-2,
+PR-3 Task 3.1 (token purpose). PR-3 core (invite codes + registration) next.
 **Owner:** Claude (brainstorm with Allen)
 **Task:** #87 (login). Related: #88 (inbound email — separate), #82 (external-adapter), #83 (world beautification — separate), #65 (CF Workers).
 
@@ -133,31 +134,78 @@ canonical identifier*.)
 
 ### 0. Registration control & invite codes
 
-Self-registration gates, evaluated in order at `GET/POST /register`:
+Two `AppSettings`: `registration_open` (boolean, default **false**) and
+`registration_require_invite` (boolean). The three modes:
 
-1. `registration_open == false` (default) → registration is **closed**: `/register`
-   shows "registration is closed" and POST is refused. Only admin provisioning
-   creates users. This is the safe default for early launch.
-2. `registration_open == true` and `registration_require_invite == true` → the
-   registration form requires a valid invite **code**; POST validates and
-   consumes one use of it.
-3. `registration_open == true` and `registration_require_invite == false` → open
-   registration (still honors `registration_domains` for email-domain
-   allowlisting, if set).
+1. `registration_open == false` (default) → **closed**: the registration UI shows
+   "registration is closed" and POST is refused. Only admin provisioning creates
+   users. Safe default for early launch. **This gate is enforced at EVERY
+   self-registration entry point**, not just one route (Codex #1): the new
+   `/register` flow AND the legacy `/onboarding/workspace` + `/register/complete`
+   magic-link onboarding chain. PR-3 RETIRES the legacy self-registration chain
+   (moved earlier from PR-6) so no ungated path survives.
+2. open + `registration_require_invite == true` → a valid invite **code** is
+   required; POST validates and consumes one use.
+3. open + `registration_require_invite == false` → open registration; workspace
+   is the registrant's own freshly-created workspace named
+   `<handle>-<random-suffix>` (Allen 2026-06-22 — 0/many domain matches are
+   normal, don't hard-error; a random suffix guarantees a unique workspace),
+   created via the existing self-serve workspace-creation path (the one the old
+   onboarding used). The legacy `Registration.email_allowed?/1` /
+   `Workspace.any_workspace_accepts?/1` allowlist still applies if configured
+   (Codex #9 — the removed `registration_domains` AppSetting fallback is NOT
+   revived; we use the current workspace-rule mechanism). Invite-required mode
+   bypasses this allowlist (the code IS the authorization).
 
-**`invite_codes` table** (one row per code):
-`code` (unique, random), `workspace_uri` (the workspace the registrant joins —
-**authoritative**, removes domain→workspace guessing), `role` (optional, default
-member), `max_uses` (integer ≥ 1, default 1), `used_count` (default 0),
-`expires_at` (nullable), `created_by` (admin URI), `revoked_at` (nullable).
-A code is **valid** when not revoked, not expired, and `used_count < max_uses`.
-Consuming a code atomically increments `used_count` (guard against over-issue
-under concurrency via a conditional `UPDATE ... WHERE used_count < max_uses`).
+**`invite_codes` table** (Migration D, in `ezagent_core`; facade in
+`ezagent_domain_identity` beside `Users`/`Profile`/`MagicLinkToken` — Codex #2):
+`code` (unique, high-entropy random), `workspace_uri` (authoritative target —
+removes domain→workspace guessing), `role` (string, nullable), `max_uses`
+(integer ≥ 1, default 1, CHECK ≥ 1), `used_count` (default 0, CHECK ≥ 0 and
+≤ `max_uses` — Codex #10), `expires_at` (nullable), `created_by` (admin URI),
+`revoked_at` (nullable), timestamps. Unique index on `code`. A code is **valid**
+when not revoked, not expired, and `used_count < max_uses`.
 
-Admin mints/lists/revokes codes via a CLI task (`mix ezagent.invite.*`) and/or
-the admin UI. When an invite code is used, the registrant's workspace + role come
-from the code; the email-domain derivation (O1) is the fallback for the
-no-invite-required open mode only.
+**Consume + create are ONE transaction** (Codex #2). Registration runs an
+`Ecto.Multi` / `Repo.transaction`: (a) consume the code via a conditional
+`UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ? AND
+revoked_at IS NULL AND used_count < max_uses` and assert exactly 1 row affected
+(SQLite single-writer makes this the race gate); (b) create the user
+(`email_verified: false`, password set); (c) upsert the profile; (d) join the
+workspace. If any step fails the whole transaction rolls back, so a use is never
+burned without a user and a user is never created without consuming a use.
+
+**Workspace membership uses an AUTHORIZED path** (Codex #3, Decision #154
+no-unowned-permissions). The new member's workspace membership + caps are granted
+under the invite code's `created_by` (admin) authority — NOT the trusted
+`Workspace.add_member/2` self-authority facade (which the code reserves for
+in-VM CLI/loader callers). Registration goes through the cap-checked
+`add_member/3` (or equivalent) with the issuer as the granting authority.
+
+**`role`** is stored on the code and, for now, maps to the **standard member cap
+set** (same as a normal registrant) — there is no elevated-role model in
+`ezagent_domain_workspace` yet (Codex #4). The field is carried for forward
+compatibility; a richer role→caps mapping is a future task, explicitly out of
+scope here. (Documented so the field isn't mistaken for an active privilege.)
+
+**Self-registration does NOT reuse `create_principal/4`** (Codex #5 — it makes a
+passwordless, already-`email_verified:true` row). A new
+`Registration.register_with_password/…` creates the user inside the transaction
+with the password hash and `email_verified: false`.
+
+**Abuse/enumeration** (Codex #6): all registration failures (closed, invalid /
+revoked / expired / exhausted code, disallowed email/domain) return ONE generic
+message; codes are high-entropy; registration POST is rate-limited per-IP and
+per-code (extend `EzagentWeb.RateLimiter`, today login-only).
+
+**Revoke** (Codex #7) stops only FUTURE consumes; already-created users (even
+unconfirmed) are unaffected — revoking a code does not delete or block existing
+accounts.
+
+**Admin authority** (Codex #8): `mix ezagent.invite.*` (mint/list/revoke) runs
+in-VM and is the trusted boundary for now; a web/UI invite-admin surface would
+require an admin cap and workspace-scoped list/revoke — deferred to a follow-up,
+not in this PR.
 
 ### 1. Auth model — email as the login key (resolution step)
 
@@ -343,9 +391,11 @@ is **unchanged**.
   (magic-link login is kept, so the `:login` purpose stays live and is enforced
   at `/auth/magic/:token`). (Codex #3.)
 - **Migration D — `invite_codes`** (Decision 10): new table — `code` (unique),
-  `workspace_uri`, `role`, `max_uses` (default 1), `used_count` (default 0),
-  `expires_at` (nullable), `created_by`, `revoked_at` (nullable), timestamps.
-  Unique index on `code`.
+  `workspace_uri`, `role` (nullable), `max_uses` (default 1), `used_count`
+  (default 0), `expires_at` (nullable), `created_by`, `revoked_at` (nullable),
+  timestamps. Unique index on `code`. **CHECK constraints** (Codex #10):
+  `max_uses >= 1`, `used_count >= 0`, `used_count <= max_uses` — plus changeset
+  validations; the conditional UPDATE remains the concurrency gate.
 - No data backfill (no existing users).
 
 ## Out of scope
