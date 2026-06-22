@@ -38,7 +38,7 @@ defmodule Ezagent.Socialware.ChatFeed do
       cap-only `.Allow`, mirroring `CustomerFeedAdapter`);
     * the json-render output shape (`%{type: "container", ...}` — `chat_tree/1`
       mirrors `Surface.customer_tree` over chat messages);
-    * the SPA (`customer_app.js` / `json_render.mjs`) + Channel framework.
+    * the SPA (`customer_app.js` / `catalog_render.mjs`) + Channel framework.
 
   ## What is DIFFERENT (the only P4-specific code)
 
