@@ -27,13 +27,24 @@ bound to the web layer (`ezagent_web`). It gets its own umbrella app/plugin that
 any consumer (the world panel, the CLI, a future session-ingest path) can use
 without depending on world or web.
 
-The UI **panel** is hosted by world because world's React renderer
-(`world_renderer.js`) is the single owner of all admin UI today — no plugin ships
-its own React assets. world reaches the email capability the same way it already
-reaches `EzagentWeb.Mailer`: **runtime apply** (`Module.concat` +
-`function_exported?`), so there is **no compile-time `world → plugin_email`
-edge** and the acyclic gate stays satisfied. This mirrors the existing SMTP
-settings panel (which is likewise hosted in world and dispatches `admin.smtp.*`).
+The UI **panel** is hosted by world because world's React app is the single
+owner of all admin UI today — no plugin ships its own React assets, and admin
+components are hard-coded (`apps/ezagent_plugin_world/assets/src/components/Admin.tsx`).
+world reaches the email capability the same way it already reaches
+`EzagentWeb.Mailer`: **runtime apply** (`Module.concat` + `function_exported?`),
+so there is **no compile-time `world → plugin_email` edge** and the acyclic gate
+stays satisfied.
+
+**Correction (codex review):** `config_surface/0` does NOT render a panel — it is
+validated only as a plugin-list link entry
+(`apps/ezagent_core/lib/ezagent/plugin.ex:180-183`,
+`apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_data.ex:278-300`).
+World has no generic per-plugin route renderer; unknown paths fall back to
+sessions (`world_live.ex:807-808`). Therefore the email panel is **folded into
+the existing world `/admin/settings` component** — the exact place the SMTP panel
+already lives (an "Email" section beside the "SMTP" section in `Admin.tsx`), not a
+new plugin route. `config_surface/0` is omitted (or used only as an optional
+nav link), it is not load-bearing for the panel.
 
 ## 3. Architecture overview
 
@@ -53,7 +64,7 @@ settings panel (which is likewise hosted in world and dispatches `admin.smtp.*`)
                         │           Inbox.Imap  (future, deferred)  │
                         │                                           │
                         │  Mix.Tasks.Ezagent.Email   (CLI)          │
-                        │  plugin_info/0, config_surface/0 (route)  │
+                        │  plugin_info/0  (use Ezagent.Plugin)      │
                         └─────────────────────────────────────────┘
 ```
 
@@ -93,10 +104,13 @@ in prod → needs runtime `smtp_config`). The `smtp_config → Swoosh opts` mapp
 existing `smtp_runtime_config/1`. To avoid divergent copies, extract that mapping
 into a shared helper `Ezagent.Mail.SmtpOpts.from_config/1` placed in a layer both
 mailers depend on (a small module in `ezagent_domain_identity`, where
-`AppSettings` already lives), and have **both** `EzagentWeb.Mailer` and
-`Ezagent.Email.Mailer` call it. (Refactoring the web mailer to use the shared
-helper is in scope precisely because we are creating a second caller — leaving
-two copies of TLS-sensitive SMTP logic is a latent bug.)
+`AppSettings` already lives; `ezagent_web` already depends on identity —
+`apps/ezagent_web/mix.exs:62-63` — so no cycle), and have **both**
+`EzagentWeb.Mailer` and `Ezagent.Email.Mailer` call it. (Refactoring the web
+mailer to use the shared helper is in scope precisely because we are creating a
+second caller — leaving two copies of TLS-sensitive SMTP logic is a latent bug.)
+The helper is a **pure** map→keyword function — it MUST NOT pull `:swoosh` (or any
+transport dep) into `ezagent_domain_identity`; it only shapes options.
 
 ### 4.3 `Ezagent.Email.Inbox` (behaviour) + `Ezagent.Email.Inbox.CFWorker`
 
@@ -128,6 +142,14 @@ Set via the world panel (mirrors how `smtp_config` is saved by
 `pull_url`/`pull_token` are blank, `inbox/1` returns
 `{:error, :inbox_not_configured}`.
 
+**Token never leaves the server (codex review):** the world state map is
+serialized and `push_event`'d to the browser
+(`admin_actions.ex:105-120`, `world_live.ex:269-273`). The settings read-back
+therefore exposes only `has_token` (boolean), NEVER the raw `pull_token` — exactly
+the `has_password` masking the SMTP panel uses (`admin_data.ex:102-113`). On save,
+a blank `pull_token` field preserves the existing stored token (same
+blank-preserves-existing rule as the SMTP password).
+
 ### 4.5 `Mix.Tasks.Ezagent.Email` (CLI)
 
 - `mix ezagent.email send --to <addr> --subject <s> --body <b>`
@@ -139,33 +161,50 @@ Thin wrappers over `Ezagent.Email`. Print human-readable output; non-zero exit o
 
 ### 4.6 Plugin declaration
 
-`use Ezagent.Plugin`; `plugin_info/0` (slug `"email"`); `config_surface/0 =>
-%{kind: :route, path: "/settings/email", label: "邮箱"}` so world renders a nav
-entry/route for the panel. No kinds/behaviors/adapters/children needed.
+`use Ezagent.Plugin`; `plugin_info/0` (slug `"email"`). No
+kinds/behaviors/adapters/children needed. `config_surface/0` is left at its
+default (`nil`) — it does not host the panel (see §2 correction); an optional
+plugin-list link could be added later but is not required.
 
-### 4.7 World-hosted panel (in `ezagent_plugin_world`)
+**Boot wiring (codex review — required, else dead-at-boot):** a new plugin app
+compiles standalone but will not boot or be plugin-checked unless wired in. The
+plan MUST: (a) add `:ezagent_plugin_email` to `apps/ezagent_web/mix.exs` deps
+(enforced by `all_plugin_apps_wired_to_web_test`), (b) add it to the root release
+applications in `mix.exs`, and (c) give the app the standard plugin compiler/env
+setup (`compilers` + `ezagent_plugin:` env) so `:ezagent_plugin_check` runs.
+
+### 4.7 World-hosted panel (folded into the existing `/admin/settings`)
+
+The panel is an **Email section inside world's existing settings surface** — the
+same component that already renders the SMTP section — NOT a new route.
 
 - `Ezagent.World.AdminData.settings_state/1` adds an `"email"` block:
   `%{"configured" => bool, "config" => %{backend, pull_url, has_token},
      "inbox" => [records], "send" => %{to, subject, body}, "flash", "result"}`.
   The inbox list is populated on demand (see refresh action), not on every read.
-- `Ezagent.World.AdminActions.handle_dispatch/3` adds:
+- `Ezagent.World.AdminActions.handle_dispatch/3` adds (and the world dispatch
+  **whitelist** at `world_live.ex:219-222` must list these, like `admin.smtp.*`):
   - `"admin.email.save_config"` → write `email_inbox_config` to AppSettings.
   - `"admin.email.refresh"` → `Ezagent.Email.inbox/1` → put records into state.
   - `"admin.email.send"` → `Ezagent.Email.send/4` → status string.
   - `"admin.email.delete"` (`%{"key" => k}`) → `Ezagent.Email.delete/2` → refresh.
   All call `Ezagent.Email` via runtime apply (`Module.concat([Ezagent, Email])` +
   `function_exported?`), returning a clear error status if the plugin is absent.
-- `world_renderer.js` gains an Email settings panel component for the
-  `/settings/email` route: config sub-form, inbox list (refresh + per-row open +
-  delete-with-confirm), and a send form. Styling/layout reuse the SMTP panel.
+- `apps/ezagent_plugin_world/assets/src/components/Admin.tsx` gains an Email
+  section: config sub-form, inbox list (refresh + per-row open + delete-with-
+  confirm), and a send form. Styling/layout reuse the SMTP section.
 
 ### 4.8 Worker change — `DELETE /inbox/<key>`
 
-Add to `infra/cf-email-worker/src/worker.js` `fetch` handler: on
-`request.method === "DELETE"` and path `/inbox/<key>`, `env.EMAIL_INBOX.delete(key)`
-→ `204`. Keep Bearer-token auth. Bump README. Redeploy (`wrangler deploy`) and
-verify with `curl -X DELETE`.
+**Method-aware routing (codex review):** the current `fetch` handler matches by
+path only and does not check `request.method`
+(`infra/cf-email-worker/src/worker.js:47-64`), so a DELETE branch appended after
+the `/inbox/<key>` GET branch would be unreachable. Restructure to route by
+`{method, pathname}`: `GET /inbox` (list), `GET /inbox/<key>` (fetch),
+`DELETE /inbox/<key>` → `env.EMAIL_INBOX.delete(key)` → `204`; other methods →
+`405`. Keep the Bearer-token auth check first. Update README (currently documents
+GET only, `README.md:16-20`). Redeploy (`wrangler deploy`) and verify with
+`curl -X DELETE`.
 
 ## 5. Data flow
 
@@ -179,10 +218,23 @@ verify with `curl -X DELETE`.
 
 ## 6. Authorization
 
-Admin-only, identical to the existing SMTP settings panel: the world admin
-dispatch path is reachable only for callers with the admin capability (reuse the
-same gate the SMTP panel uses — no new cap subject). The CLI is an operator/node
-tool (already privileged). No anonymous/member access.
+**Codex review found the existing SMTP panel's gate is too weak to copy.** World
+`/admin*` routes use `RequireEntity` (`router.ex:32-35`,
+`require_entity.ex:6-9,31-34`), which admits **any** logged-in user or agent
+entity, and `admin.smtp.*` actions are merely whitelisted and delegated with no
+admin check (`world_live.ex:219-222`, `admin_actions.ex:14-25,34-53`). A
+`:require_admin` LiveAuth hook exists but is unused by the world block
+(`live_auth.ex:99-123`).
+
+Email send / delete / inbox-token-config are more sensitive than the display-only
+admin reads, so this round **adds a real admin gate** rather than inheriting the
+weak one: before dispatching any `admin.email.*` action (and, since we are here,
+the existing `admin.smtp.*` actions), assert the caller holds the admin
+capability — either by moving the world `/admin*` route block under
+`LiveAuth :require_admin`, or an action-level guard at the dispatch chokepoint.
+The plan picks the smaller-blast-radius option; **tightening `admin.smtp.*` is an
+in-scope security fix flagged to Allen** (it closes a pre-existing hole). The CLI
+is an operator/node tool (already privileged). No anonymous/member access.
 
 ## 7. Error handling
 
@@ -208,7 +260,10 @@ failures already swallow (don't bounce); nothing changes there.
 - World panel: `AdminData.settings_state` includes the email block;
   `handle_dispatch` for each `admin.email.*` action sets expected status —
   mirroring the existing SMTP panel tests.
-- Plugin: boots; `config_surface/0` passes the `:ezagent_plugin_check` compiler.
+- Plugin: boots; module passes the `:ezagent_plugin_check` compiler; wired into
+  `ezagent_web` deps + the release app list (`all_plugin_apps_wired_to_web_test`).
+- Admin gate: a non-admin entity is rejected from every `admin.email.*` action
+  (and `admin.smtp.*` after the tightening) — regression test for the new guard.
 - Worker `DELETE`: manual `curl` verification (documented in README), like the
   existing live receive→cache→pull check.
 
@@ -219,9 +274,22 @@ failures already swallow (don't bounce); nothing changes there.
   (plugin behaviour). **No** edge to `ezagent_web` or `ezagent_plugin_world`.
   world → plugin_email is runtime-apply only (no compile edge), same as the
   existing world → `EzagentWeb.Mailer` call.
+- **Plugin boot wiring** (codex review — §4.6): `:ezagent_plugin_email` added to
+  `apps/ezagent_web/mix.exs` deps (enforced by `all_plugin_apps_wired_to_web_test`),
+  to the root release applications (`mix.exs`), and given the standard plugin
+  `compilers`/`ezagent_plugin:` env so `:ezagent_plugin_check` runs. A plugin that
+  compiles but is unwired is dead at boot.
+- **`:httpc` runtime deps** (codex review): the email plugin's `mix.exs` lists
+  `:inets` and `:ssl` in `extra_applications` (same as `ezagent_plugin_feishu` /
+  `ezagent_plugin_curl_agent`, the existing `:httpc` callers). The CFWorker
+  backend centralizes one `:httpc` request helper (timeouts + status + JSON), and
+  **explicitly decides TLS verification** for `https://*.workers.dev` (mirror the
+  mailer's `verify_peer` + `:public_key.cacerts_get()` posture rather than leave
+  it implicit).
 - **`check_invariants` / path allowlists**: register the new app where the gate
   scripts enumerate apps (lesson: stale allowlists turned main red twice).
-- **`:ezagent_plugin_check` compiler**: `config_surface/0` is a valid `:route`.
+- **`:ezagent_plugin_check` compiler**: plugin module passes (no `config_surface`
+  route is required; default `nil` is valid).
 - **uri_query / doc gates**: facade + modules carry moduledocs with
   code-verified behavioral claims.
 
