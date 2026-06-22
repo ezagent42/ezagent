@@ -27,36 +27,31 @@ defmodule EzagentWeb.SessionController do
   # PR-E (SPEC v2 §G7): head + chrome moved to AuthBoundaryLayout so
   # `/register/complete` renders the same shell. Only the card body
   # (the credentials form + email section + hints) lives here.
+  # task #87 — login is email+password (primary). Magic-link is kept as an
+  # optional passwordless method, rendered only when SMTP is configured.
   @login_card_body """
       <p class="brand">ezagent</p>
       <h1>{{T_SIGN_IN}}</h1>
 
-      {{WORKSPACE_BANNER}}
-
       {{NOTICE}}
 
-      <p class="section-label">{{T_WITH_PASSWORD}}</p>
       {{CRED_ERROR}}
-      <form method="post" action="/login/credentials">
+      <form method="post" action="/login">
         <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-        {{WORKSPACE_HIDDEN}}
-        <label for="entity_uri">{{T_USERNAME_OR_URI}}</label>
-        <input type="text" id="entity_uri" name="entity_uri" placeholder="admin or full user URI" required autofocus>
-        <label for="secret">{{T_PASSWORD_OR_TOKEN}}</label>
-        <input type="password" id="secret" name="secret" required>
+        <label for="email">{{T_EMAIL_ADDRESS}}</label>
+        <input type="email" id="email" name="email" placeholder="you@example.com" required autofocus>
+        <label for="password">{{T_PASSWORD}}</label>
+        <input type="password" id="password" name="password" required>
         <button type="submit">{{T_SIGN_IN}}</button>
       </form>
 
-      <div class="divider"><span>{{T_OR}}</span></div>
-
-      <p class="section-label">{{T_WITH_EMAIL_MAGIC_LINK}}</p>
-      {{EMAIL_SECTION}}
-
-      <p class="hint">
-        Bare handles (<code>admin</code>) resolve in the selected workspace.
-        Full user or agent URIs are also accepted.
-        First-time admin: <code>mix ezagent.user.set_password &lt;admin-user-uri&gt; --password X</code>.
+      <p class="hint" style="text-align:center;margin-top:8px;">
+        <a href="/auth/reset">{{T_FORGOT_PASSWORD}}</a>
+        ·
+        <a href="/register">{{T_CREATE_ACCOUNT}}</a>
       </p>
+
+      {{EMAIL_SECTION}}
 
       <p class="hint" style="text-align:center;margin-top:8px;">
         <a href="?locale=en" style="color:var(--ink-dim);text-decoration:none;">English</a>
@@ -65,17 +60,18 @@ defmodule EzagentWeb.SessionController do
       </p>
   """
 
+  # Magic-link passwordless option — only shown when SMTP is configured
+  # (Allen 2026-06-22). Posts to /login/magic (NOT /login, which is now
+  # email+password).
   @email_form """
-  <form method="post" action="/login">
+  <div class="divider"><span>{{T_OR}}</span></div>
+  <p class="section-label">{{T_WITH_EMAIL_MAGIC_LINK}}</p>
+  <form method="post" action="/login/magic">
     <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-    <label for="email">{{T_EMAIL_ADDRESS}}</label>
-    <input type="email" id="email" name="email" placeholder="you@example.com" required>
+    <label for="magic_email">{{T_EMAIL_ADDRESS}}</label>
+    <input type="email" id="magic_email" name="email" placeholder="you@example.com" required>
     <button type="submit" class="secondary">{{T_EMAIL_ME_SIGN_IN_LINK}}</button>
   </form>
-  """
-
-  @email_disabled_notice """
-  <p class="disabled-notice">{{T_EMAIL_SIGN_IN_DISABLED}}</p>
   """
 
   # GET /login — unified login page with both credential and email forms.
@@ -87,10 +83,39 @@ defmodule EzagentWeb.SessionController do
     render_login_page(conn, workspace: Map.get(params, "workspace"))
   end
 
-  # POST /login — email magic-link submit. Renders the unified page with
-  # an anti-enumeration "if that email can sign in, we've sent a link"
-  # notice (identical response regardless of allowlist / rate-limit).
-  def create(conn, %{"email" => email}) when is_binary(email) do
+  # POST /login — email + password (task #87 primary login). Resolves the
+  # email to its canonical entity URI, authenticates password-only (no
+  # token-as-password), then gates on email_verified. Generic errors so the
+  # form does not leak which emails exist.
+  def create(conn, %{"email" => email, "password" => password})
+      when is_binary(email) and is_binary(password) do
+    email = email |> String.trim() |> String.downcase()
+
+    case resolve_and_auth(email, password) do
+      {:ok, uri_str} ->
+        if login_verified?(uri_str) do
+          conn
+          |> SessionPrincipal.put(uri_str, workspace: nil)
+          |> redirect(to: "/sessions")
+        else
+          # Shown ONLY after a correct password, so it does not reveal which
+          # emails are registered (anti-enumeration, Codex #7).
+          render_login_page(conn,
+            cred_error: gettext("Please confirm your email to finish signing in.")
+          )
+        end
+
+      :error ->
+        render_login_page(conn, cred_error: gettext("Invalid email or password."))
+    end
+  end
+
+  def create(conn, _params),
+    do: render_login_page(conn, cred_error: gettext("Email and password are required."))
+
+  # POST /login/magic — passwordless magic-link send (KEPT, SMTP-gated).
+  # Anti-enumeration: identical response regardless of allowlist / rate-limit.
+  def magic_create(conn, %{"email" => email}) when is_binary(email) do
     email = email |> String.trim() |> String.downcase()
     _ = maybe_send_magic_link(conn, email)
 
@@ -102,7 +127,7 @@ defmodule EzagentWeb.SessionController do
     render_login_page(conn, notice: notice)
   end
 
-  def create(conn, _params), do: new(conn, %{})
+  def magic_create(conn, _params), do: new(conn, %{})
 
   # GET /login/credentials — back-compat alias for /login. Renders the
   # same unified page; kept so any cached bookmark / external link still
@@ -192,7 +217,6 @@ defmodule EzagentWeb.SessionController do
   defp render_login_page(conn, opts) do
     notice = Keyword.get(opts, :notice, "")
     cred_error = Keyword.get(opts, :cred_error)
-    workspace = Keyword.get(opts, :workspace)
 
     cred_error_html =
       if cred_error,
@@ -201,55 +225,41 @@ defmodule EzagentWeb.SessionController do
 
     # Allen 2026-05-24: surface Phoenix flash on /login so a redirect
     # like `put_flash(:error, ...) |> redirect(to: "/login")` actually
-    # shows the user WHY they landed here. Mobile-visible styling
-    # (`.flash-mobile` — sticky-top + larger + high-contrast). Prepend
-    # to `notice` so it always appears at the top of the card.
+    # shows the user WHY they landed here. Prepend to `notice` so it
+    # always appears at the top of the card.
     flash_html = AuthBoundaryLayout.flash_html(conn)
     notice = flash_html <> notice
-
-    # Phase 9 PR-5 (SPEC v3 §6.4): show "Signing into <workspace>" banner
-    # when the login form was reached via the workspace switcher
-    # (logout-and-redirect with ?workspace=<name>). Bare-handle inputs
-    # will canonicalize into this workspace instead of `default`.
-    {workspace_banner, workspace_hidden} = workspace_form_bits(workspace)
 
     # Resolve i18n strings on the controller side (the login heredoc
     # is raw HTML, not a HEEx template, so we cannot inline gettext
     # macros — instead we placeholder-substitute pre-translated strings).
-    # Locale is set by EzagentWeb.Plugs.Locale earlier in the pipeline.
+    # task #87: magic-link is shown ONLY when SMTP is configured (Allen),
+    # otherwise the section is hidden entirely.
     email_section =
       if Ezagent.AppSettings.smtp_configured?() do
         @email_form
         |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
-        |> String.replace("{{WORKSPACE_HIDDEN}}", workspace_hidden)
+        |> String.replace("{{T_OR}}", esc(gettext("or")))
+        |> String.replace("{{T_WITH_EMAIL_MAGIC_LINK}}", esc(gettext("With email magic link")))
         |> String.replace("{{T_EMAIL_ADDRESS}}", esc(gettext("Email address")))
         |> String.replace(
           "{{T_EMAIL_ME_SIGN_IN_LINK}}",
           esc(gettext("Email me a sign-in link"))
         )
       else
-        @email_disabled_notice
-        |> String.replace(
-          "{{T_EMAIL_SIGN_IN_DISABLED}}",
-          esc(
-            gettext("Email sign-in is not enabled. An admin can turn it on in Settings → SMTP.")
-          )
-        )
+        ""
       end
 
     card_body =
       @login_card_body
       |> String.replace("{{NOTICE}}", notice)
       |> String.replace("{{CRED_ERROR}}", cred_error_html)
-      |> String.replace("{{WORKSPACE_BANNER}}", workspace_banner)
-      |> String.replace("{{WORKSPACE_HIDDEN}}", workspace_hidden)
       |> String.replace("{{EMAIL_SECTION}}", email_section)
       |> String.replace("{{T_SIGN_IN}}", esc(gettext("Sign in")))
-      |> String.replace("{{T_WITH_PASSWORD}}", esc(gettext("With password")))
-      |> String.replace("{{T_USERNAME_OR_URI}}", esc(gettext("Username or entity URI")))
-      |> String.replace("{{T_PASSWORD_OR_TOKEN}}", esc(gettext("Password or token")))
-      |> String.replace("{{T_OR}}", esc(gettext("or")))
-      |> String.replace("{{T_WITH_EMAIL_MAGIC_LINK}}", esc(gettext("With email magic link")))
+      |> String.replace("{{T_EMAIL_ADDRESS}}", esc(gettext("Email address")))
+      |> String.replace("{{T_PASSWORD}}", esc(gettext("Password")))
+      |> String.replace("{{T_FORGOT_PASSWORD}}", esc(gettext("Forgot password?")))
+      |> String.replace("{{T_CREATE_ACCOUNT}}", esc(gettext("Create account")))
       |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
 
     html =
@@ -292,25 +302,31 @@ defmodule EzagentWeb.SessionController do
     Map.get(params, "workspace") || Map.get(conn.query_params, "workspace")
   end
 
-  # Renders the workspace banner + hidden form field when a non-default
-  # workspace is requested. Returns empty strings for `nil` / `"system"`
-  # (the admin-login default) so the form is unchanged on the happy
-  # path (direct /login visit).
-  defp workspace_form_bits(nil), do: {"", ""}
-  defp workspace_form_bits("system"), do: {"", ""}
+  # task #87 — resolve the typed email to its canonical entity URI, then
+  # authenticate password-ONLY (no token-as-password on the form). Returns
+  # `{:ok, uri_str}` or `:error`. Constant-time on a missing email so the
+  # form does not leak which emails are registered.
+  defp resolve_and_auth(email, password) do
+    case Ezagent.Entity.Profile.by_email(email) do
+      %{entity_uri: uri_str} when is_binary(uri_str) ->
+        case Entity.authenticate(Ezagent.URI.new!(uri_str), password, allow_user_tokens: false) do
+          {:ok, _} -> {:ok, uri_str}
+          {:error, _} -> :error
+        end
 
-  defp workspace_form_bits(workspace) when is_binary(workspace) do
-    escaped = Plug.HTML.html_escape(workspace)
+      _ ->
+        Bcrypt.no_user_verify()
+        :error
+    end
+  end
 
-    banner =
-      ~s(<div class="info">Signing into workspace <code>) <>
-        escaped <>
-        ~s(</code>.</div>)
-
-    hidden =
-      ~s(<input type="hidden" name="workspace" value=") <> escaped <> ~s(">)
-
-    {banner, hidden}
+  # task #87 — form login is gated on email_verified (independent of the
+  # `confirmed` anon flag). Checked AFTER a correct password (anti-enumeration).
+  defp login_verified?(uri_str) do
+    case Ezagent.Users.get_by_uri(uri_str) do
+      %{email_verified: true} -> true
+      _ -> false
+    end
   end
 
   # Returns :ok always (caller ignores it — anti-enumeration: the HTTP

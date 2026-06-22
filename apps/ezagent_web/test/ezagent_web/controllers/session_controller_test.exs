@@ -4,37 +4,27 @@ defmodule EzagentWeb.SessionControllerTest do
 
   @endpoint EzagentWeb.Endpoint
 
-  describe "GET /login (unified login page)" do
-    test "renders the branded unified login (credentials + email sections)" do
+  describe "GET /login (email+password login page)" do
+    # task #87: login is email+password. The handle/URI form is removed.
+    test "renders the branded email+password form" do
       conn = build_conn() |> get("/login")
       body = html_response(conn, 200)
-      # Branding (Phase 8c PR-A)
       assert body =~ "ezagent"
       assert body =~ "Sign in"
-      # Credentials section
-      assert body =~ "With password"
-      assert body =~ ~s(action="/login/credentials")
-      assert body =~ "Username or entity URI"
-      # Email section header is always present; the inner form/notice
-      # depends on SMTP config.
-      assert body =~ "With email magic link"
+      assert body =~ ~s(name="email")
+      assert body =~ ~s(name="password")
+      assert body =~ ~s(action="/login")
+      # handle/URI login removed
+      refute body =~ ~s(name="entity_uri")
+      refute body =~ ~s(name="secret")
     end
 
-    test "/login/credentials renders the same unified page (back-compat)" do
-      conn = build_conn() |> get("/login/credentials")
-      body = html_response(conn, 200)
-      assert body =~ "With password"
-      assert body =~ "With email magic link"
-    end
-
-    # Regression: Allen 2026-05-20 — credentials form MUST POST to
-    # /login/credentials. Posting to /login routes to the email handler,
-    # which silently discards entity_uri/secret.
-    test "form action targets /login/credentials, not /login" do
+    # task #87 (Allen): magic-link is hidden when SMTP is unconfigured (the
+    # test DB has no smtp_config), so the page offers email+password only.
+    test "magic-link option hidden when SMTP not configured" do
       conn = build_conn() |> get("/login")
       body = html_response(conn, 200)
-      assert body =~ ~s(action="/login/credentials")
-      refute body =~ ~s(action="/login")
+      refute body =~ ~s(action="/login/magic")
     end
   end
 
@@ -65,7 +55,6 @@ defmodule EzagentWeb.SessionControllerTest do
       # bouncing through a second redirect. Cookie still empty.
       body = html_response(conn, 200)
       assert body =~ "Invalid URI or credentials."
-      assert body =~ "With password"
       refute Plug.Conn.get_session(conn, :current_entity_uri)
     end
 
@@ -173,19 +162,80 @@ defmodule EzagentWeb.SessionControllerTest do
     end
   end
 
-  describe "POST /login (email magic link)" do
-    test "renders unified page with anti-enumeration notice (regardless of email)" do
+  describe "POST /login (email+password) — task #87" do
+    test "valid email+password → session set + redirect to /sessions" do
+      n = System.unique_integer([:positive])
+      email = "loginok#{n}@ex.com"
+      uri = Ezagent.URI.user("team-alpha", "loginok#{n}")
+      {:ok, _} = Ezagent.Users.create(uri, "secret123", [], email_verified: true)
+
+      {:ok, _} =
+        Ezagent.Entity.Profile.upsert(%{
+          entity_uri: URI.to_string(uri),
+          display_name: "L",
+          email: email
+        })
+
       conn =
         build_conn()
         |> Plug.Test.init_test_session(%{})
-        |> post("/login", %{"email" => "nobody@example.com"})
+        |> post("/login", %{"email" => email, "password" => "secret123"})
+
+      assert redirected_to(conn) == "/sessions"
+      assert Plug.Conn.get_session(conn, :current_entity_uri) == URI.to_string(uri)
+    end
+
+    test "unverified email → generic 'confirm your email', no session (after correct password)" do
+      n = System.unique_integer([:positive])
+      email = "unv#{n}@ex.com"
+      uri = Ezagent.URI.user("team-alpha", "unv#{n}")
+      {:ok, _} = Ezagent.Users.create(uri, "secret123", [], email_verified: false)
+
+      {:ok, _} =
+        Ezagent.Entity.Profile.upsert(%{
+          entity_uri: URI.to_string(uri),
+          display_name: "U",
+          email: email
+        })
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> post("/login", %{"email" => email, "password" => "secret123"})
+
+      body = html_response(conn, 200)
+      assert body =~ "confirm your email"
+      refute Plug.Conn.get_session(conn, :current_entity_uri)
+    end
+
+    test "wrong password / unknown email → generic error, no session" do
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> post("/login", %{
+          "email" => "nobody#{System.unique_integer([:positive])}@ex.com",
+          "password" => "x"
+        })
+
+      body = html_response(conn, 200)
+      assert body =~ "Invalid email or password"
+      refute Plug.Conn.get_session(conn, :current_entity_uri)
+    end
+  end
+
+  describe "POST /login/magic (passwordless, SMTP-gated) — task #87" do
+    test "renders anti-enumeration notice regardless of email" do
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> post("/login/magic", %{"email" => "nobody@example.com"})
 
       body = html_response(conn, 200)
       assert body =~ "If that email can sign in"
-      # Notice renders on the same unified page (not a separate template).
-      assert body =~ "With password"
     end
+  end
 
+  describe "POST /login/credentials (legacy handle login — retired in PR-6)" do
     # Regression: Allen 2026-05-20 — bare handle "admin" must be accepted as
     # shortcut for "entity://system/user/admin"; session stores canonical URI.
     test "bare handle: 'foo' → authenticates as entity://team-alpha/user/foo, session stores canonical URI" do
@@ -231,20 +281,6 @@ defmodule EzagentWeb.SessionControllerTest do
 
       assert redirected_to(conn) == "/sessions"
       assert Plug.Conn.get_session(conn, :current_entity_uri) == uri
-    end
-  end
-
-  describe "credentials form" do
-    # Regression: Allen 2026-05-20 — the credentials form MUST POST to
-    # /login/credentials. Posting to /login routes to the email handler,
-    # which silently discards entity_uri/secret and re-renders the email
-    # page ("Email sign-in is not enabled yet"). This test guards the
-    # form action so a future template edit can't reintroduce the bug.
-    test "form action targets /login/credentials, not /login" do
-      conn = build_conn() |> get("/login/credentials")
-      body = html_response(conn, 200)
-      assert body =~ ~s(action="/login/credentials")
-      refute body =~ ~s(action="/login")
     end
   end
 

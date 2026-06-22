@@ -75,8 +75,12 @@ defmodule EzagentWeb.Router do
     end
 
     # Phase 4-completion Spec 05 §A.2.3 — controller-rendered login.
+    # task #87: POST /login is now email+password; magic-link send moved to
+    # POST /login/magic (kept, SMTP-gated). /login/credentials (handle/URI) is
+    # orphaned from the page and retired in PR-6.
     get "/login", SessionController, :new
     post "/login", SessionController, :create
+    post "/login/magic", SessionController, :magic_create
     get "/login/credentials", SessionController, :credentials_new
     post "/login/credentials", SessionController, :credentials_create
     delete "/logout", SessionController, :delete
