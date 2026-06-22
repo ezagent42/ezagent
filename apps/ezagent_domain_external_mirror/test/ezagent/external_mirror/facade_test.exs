@@ -22,7 +22,12 @@ defmodule Ezagent.ExternalMirrorTest do
   runs). See `Ezagent.ExternalMirror` moduledoc r2 HIGH-2 fix.
   """
 
-  use ExUnit.Case, async: false
+  # DataCase (not bare ExUnit.Case) so each test owns its Ecto sandbox connection
+  # — bare ExUnit.Case borrowed an unsandboxed connection that sibling
+  # spawn-storm tests' process exits could kill mid-query (`owner … exited`
+  # flake; same remedy pg applied to repair_orchestrator_test). All other
+  # external_mirror DB tests already use DataCase.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, ExternalMirror}
   alias Ezagent.ExternalMirror.AdapterRegistry
