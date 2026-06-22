@@ -33,7 +33,53 @@ user chat ──▶ HelloBuilder (Lifecycle behavior, session member)
 | 0.4 renderer + catalog | ✅ | `catalog.mjs` (Zod) + `catalog_render.mjs` (superset, fail-closed) |
 | 0.5 retire json_render.mjs, migrate customer surface | ✅ | json_render.mjs deleted; one renderer; advisor still renders (superset) |
 | 0.6 build wiring | ✅ customer / ⏸ operator | customer SPA needs NO fork (renderer in socialware domain). Operator phx-hook island deferred (not the DoD) |
-| 0.7 DoD | ✅ substrate + renderer + live assets / ⛔ pixel screenshot (env) | see "DoD evidence" below |
+| 0.7 DoD | ✅ **CLOSED** — anon visitor sees a real AI-generated page (user-confirmed) | see "Phase 0 closure" below |
+
+## Phase 0 closure (2026-06-22, round 2)
+
+The DoD is met end-to-end and **visually confirmed by Allen** in a browser: an
+anonymous visitor opens
+`/socialware/customer?session_uri=session://demo/hello/main` (no login, no token)
+and sees a **DeepSeek-generated** `@json-render` page ("Welcome to Bean & Leaf" →
+heading/text/`section` with two `card`s Espresso/Pour-over → "Visit us" `button`).
+The full loop ran live: prompt → DeepSeek (via proxy) → `Spec.validate` (catalog) →
+`Surface.put_version`+approve → tokenless-anon `CustomerFeed` → `catalog_render.mjs`.
+The generated tree was pulled over the customer WS and confirmed AI-authored (not
+the seed).
+
+Two fixes landed to get there (commit `0f668de9`):
+
+1. **LLM proxy.** `api.deepseek.com` is only reachable via the local Clash proxy
+   here; direct egress times out. `LLM.ApiClient` now routes through a configurable
+   proxy (`HELLO_LLM_PROXY` | `HTTPS_PROXY`, "host:port") on a **dedicated httpc
+   profile** (`:ezagent_hello_httpc`) — only hello's LLM calls are proxied.
+2. **Tokenless public CustomerFeed.** Key correction: **`/socialware/chat` is the
+   chat feed** (the conversation projected as nodes), **NOT** the generated page;
+   **`/socialware/customer` is the CustomerFeed = the approved Surface page**. The
+   earlier "Unauthorized" on `/socialware/chat` was a **stale anon cookie** from a
+   prior boot, not an authz bug (a fresh anon's chat join succeeds — verified over
+   WS). `CustomerController` gained a tokenless anonymous self-serve clause for
+   `public_view` sessions (the server mints a short-lived CustomerAuth token — the
+   same trust the chat-feed anon flow already grants for public_view). Non-public
+   sessions still fall through to 400. **Touches shared socialware/web — flagged
+   for the socialware owner per handoff §6.**
+
+Operator-side `@json-render` island (HelloRenderer hook + `PageView` + config)
+remains the one deferred 0.6 item (operator view, not the DoD; folds naturally
+into Phase 2/3).
+
+### Round-2 commits
+- `9e1e206a` tests + persistence fix · `e67268fd` identity dep · `b0622185` uri_query fix
+- `c7c9dd04` seed task + status doc · `3caf7a2f` opt-in in-node boot seed
+- `ad9279da` token CustomerFeed URL · `0f668de9` LLM proxy + tokenless public CustomerFeed
+
+### How to see it live (no browser needed on the server)
+```
+PORT=10042 HELLO_DEMO_SEED=1 HELLO_LLM_PROXY=127.0.0.1:7890 \
+  HELLO_DEMO_PROMPT="…a page description…" mix phx.server
+# then open (anonymous, public_view, no token):
+#   http://localhost:10042/socialware/customer?session_uri=session://demo/hello/main
+```
 
 ## Gates (all green)
 
