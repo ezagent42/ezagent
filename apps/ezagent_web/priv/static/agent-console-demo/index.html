@@ -388,56 +388,57 @@ const MATRIX = [
    fail:["冷→热：模板 → 活 session。授权是 Workspace :create_session（不是模板 :instantiate）","建后给 owner 授 session 级 Manage:any（behavior/workspace.ex:577）"],
    audit:"operator", gap:null},
   {op:"update_template / save_template_as", fn:"Orchestrator.Tools.update_template · save_template_as", file:"tools/templates.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.template（PROPOSED §7）",instance:"session S",ws:"acme"},
-   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":template（PROPOSED）",instance:"session S",ws:"acme"},
+   held:{kind:":session_template",behavior:"Template",action:":write",instance:"{:within_workspace, W}",ws:"acme"},
    needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new tmpl uri",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
-   fail:["热→冷：把活 session 的配置快照回写成模板"], audit:"operator + execution", gap:null},
+   fail:["热→冷：把活 session 的配置快照回写成模板","实现只 check_template_write_cap（**不要 within_session**，templates.ex）","⚠ 跨主体 Template 委托：非 owner 借编排器的 Template cap 写模板——Allen 决策项"],
+   audit:"operator + execution", gap:null},
   // ---------- HOT — live session management (via the Manage-gate) ----------
   {op:"Add member", fn:"Orchestrator.Tools.add_managed_member/4", file:"tools.ex:134", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":member（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["缺 Manage cap → fail-closed（Phase-1 gate）","role_name 是新别名：没有「未知 role」失败","非活 session：spawn/join 失败；失败会尝试补偿，但清理失败可能残留 worker（member_template.ex:312「may leak」）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Update member template", fn:"Orchestrator.Tools.update_member_template/3", file:"tools.ex:375", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":member（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["同 URI 重生 → :same_member_uri_use_reconfigure（member_template.ex:429）","regenerate 顺序：spawn-new-first → repoint → leave → join → best-effort terminate；清理失败可能残留 worker"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Remove member", fn:"Orchestrator.Tools.remove_member/2", file:"tools.ex:407", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":member（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":leave",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 role → {:ok, :already_removed}（幂等，不是拒绝）","terminate 未授权 → 立即 :unauthorized"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Add participant", fn:"Orchestrator.Tools.add_participant/3", file:"tools/participants.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":member（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["add_managed_member 的超集：接受 entity/template/manifest","type-transparent 邀请 + 授 join 权"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define rule-set rule", fn:"Orchestrator.Tools.define_rule_set_rule/3", file:"tools.ex:554", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":routing（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Routing",action:":add_rule",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 receiver role → {:unknown_member_role, r}（tools.ex:619）","named rule-set 强制单 receiver"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define prompt template", fn:"Orchestrator.Tools.define_prompt_template/3", file:"tools.ex:660", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":routing（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_prompt_templates",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["缺 {body} → {:error, :body_placeholder_required}（tools.ex:669）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define legend", fn:"Orchestrator.Tools.define_legend/5", file:"tools.ex:705", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":routing（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_legends",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
@@ -446,7 +447,7 @@ const MATRIX = [
    gap:"今天 define_legend 不校验 member_set / bound_rule_set（直写 map，tools.ex:705）— Console 应在前端/gate 加校验"},
   // ---------- HOT WORKFLOW ----------
   {op:"Migrate session", fn:"Orchestrator.Tools.migrate_session/2", file:"tools/migration.ex", temp:"hotwf",
-   gate:{kind:":session",behavior:"Manage",action:"manage.migrate（PROPOSED §7）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":migrate（PROPOSED）",instance:"session S",ws:"acme"},
    held:{kind:":session + :session_template",behavior:":any + Template",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:"多",behavior:"Session + Template",action:"多步",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
@@ -737,8 +738,9 @@ function submitCreateST(){
 function flowMigrateRun(){
   const req=nextReq();
   const steps=[{s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.migrate</code>（PROPOSED） → session S · session Manage cap ✓`},
-    {s:"ok",t:"Phase 2 · dry-run plan",d:`读 target → diff members（+1 / ~1）→ 写 ledger`}];
-  MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") steps.push({s:"ok",t:`迁移 role「${l.role}」`,d:"regenerate（spawn-new-first → leave → join）✓ → done"}); });
+    {s:"skip",t:"⚠ dry-run（PROPOSED，非现有语义）",d:`现有 <code>migrate_session</code> 读完 target <b>直接写 ledger 并执行、无 dry-run</b>（migration.ex:11）。这一步是 Console 设计的、待实现。`},
+    {s:"ok",t:"读 target → diff → 写 ledger → 执行",d:`真实顺序：read_target → changed_member_plan → ensure_ledger → run_member_plan（一气呵成）`}];
+  MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") steps.push({s:"ok",t:`迁移 role「${l.role}」`,d:"regenerate（spawn-new-first → leave → join → best-effort terminate）✓ → done"}); });
   steps.push({s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`});
   showExec('Migrate session <span class="badge defer">MVP 后置</span> — 模拟运行', steps, ()=>{
     MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") l.status="done"; });
@@ -1130,14 +1132,15 @@ routing(){ return `
 
 migrate(){ return `
   <div class="world-header"><h1>Migrate <span class="badge defer">MVP 后置</span> <span class="badge hot">热 · workflow</span></h1>
-  <p>多步有状态流程（非普通函数）：读 target → diff live members → 写 ledger → 重生成员 → 换 rule-set/prompt/legend。demo 展示设计，MVP 不实现。</p></div>
+  <p>多步有状态流程（非普通函数）：读 target → diff → 写 ledger → 重生成员 → 换 rule-set/prompt/legend。demo 展示设计，MVP 不实现。</p></div>
+  <div class="callout" style="margin-bottom:14px">⚠ <b>下面的 dry-run / removed 是 PROPOSED workflow UX，不是现有 <code>migrate_session</code> 语义</b>：现有后端**读完 target 直接写 ledger 并执行、没有 dry-run**（migration.ex:11），且 plan **只遍历 target 成员、不删除 target 里缺失的现有成员**（不产生 removed）。这里的"先看 diff 再确认"和 removed 是给 Console 设计、待实现的。</div>
   <div class="card">
     <dl class="kv"><dt>target</dt><dd><span class="uri">${MIGRATE_DIFF.target}</span></dd></dl>
-    <h3 style="margin-top:12px">Plan / Diff（dry-run）</h3>
+    <h3 style="margin-top:12px">Plan / Diff <span class="badge defer">PROPOSED dry-run</span></h3>
     <table><thead><tr><th>变更</th><th>role</th><th>详情</th></tr></thead><tbody>
       ${MIGRATE_DIFF.added.map(a=>`<tr><td><span class="badge live">+ added</span></td><td><b>${a.role}</b></td><td class="uri">${a.source}</td></tr>`).join("")}
       ${MIGRATE_DIFF.updated.map(u=>`<tr><td><span class="badge tag">~ updated</span></td><td><b>${u.role}</b></td><td><span class="uri">${u.from}</span> → <span class="uri">${u.to}</span></td></tr>`).join("")}
-      ${MIGRATE_DIFF.removed.length?MIGRATE_DIFF.removed.map(r=>`<tr><td><span class="badge hot">- removed</span></td><td>${r.role}</td><td></td></tr>`).join(""):`<tr><td colspan=3 class="muted">无 removed</td></tr>`}
+      <tr><td><span class="badge defer">- removed</span></td><td colspan=2 class="muted">现有 migrate_session <b>不产生 removed</b>（只遍历 target 成员）——removed 是 PROPOSED</td></tr>
     </tbody></table>
   </div>
   <div class="card"><h3>Ledger（进度）</h3>
