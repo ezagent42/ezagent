@@ -97,7 +97,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # world plugin layout data store — SPEC 2026-06-21 §4.2 explicitly
     # stores runtime layout JSON under EZAGENT_HOME/world/layouts.
     {"apps/ezagent_plugin_world/lib/ezagent/world/layout_manager.ex",
-     "Ezagent.World.LayoutManager.layout_dir/0", 190,
+     "Ezagent.World.LayoutManager.layout_dir/0", 164,
      "world layout runtime data store under EZAGENT_HOME (SPEC 2026-06-21 §4.2)"}
   ]
 

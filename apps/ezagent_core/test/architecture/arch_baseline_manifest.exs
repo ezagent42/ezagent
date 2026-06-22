@@ -26,7 +26,14 @@
   #   Pre-existing on main (CI does not run arch.scan); surfaced by the
   #   2026-06-15 orchestrator-readiness work. Burn-down (extract the dialog
   #   scanner from server.ex into a sibling module) tracked in docs/futures/todo.md.
-  oversized_modules_gt_1000: 3,
+  # arch-cap-bump: #83 world-beautify UI restructure regrew
+  #   ezagent_plugin_world/world_live.ex to 1036 (>1000). pg-compat-audit had
+  #   trimmed it under 1000 via the CallerDisplay extraction; the shadcn/typed-slot
+  #   dispatch additions pushed it back over. With pty/server.ex (1027) + kind.ex
+  #   (1025) + im application.ex (1010) already >1000, count is now 4. Burn-down:
+  #   re-extract from world_live.ex (mirror pg's CallerDisplay split) — follow-up
+  #   for zyli/world owner (dev-together close 2026-06-22, lead Claude).
+  oversized_modules_gt_1000: 4,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`

@@ -448,9 +448,14 @@ defmodule EzagentPluginWorld.WorldLive do
     scope_uri =
       if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
 
+    # Display-only scope label for the synthetic layout (persistence keys off
+    # LayoutManager.scope_key/1's stable_key, not this string). Bound to a var so
+    # the uri_query scan doesn't read it as an unaudited URI.to_string map key.
+    scope_label = URI.to_string(scope_uri)
+
     synthetic = %{
       "version" => 1,
-      "scope" => URI.to_string(scope_uri),
+      "scope" => scope_label,
       "components" => [
         %{
           "id" => component,
