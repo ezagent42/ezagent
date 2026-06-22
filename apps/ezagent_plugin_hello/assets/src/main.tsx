@@ -1,5 +1,5 @@
 import {createRoot, type Root} from "react-dom/client"
-import {Renderer, type Spec} from "@json-render/react"
+import {Renderer, JSONUIProvider, type Spec} from "@json-render/react"
 import {nestedToFlat} from "@json-render/core"
 import {registry} from "./registry"
 
@@ -27,7 +27,15 @@ export function mountHello(el: HTMLElement, opts: {spec?: Record<string, unknown
 
   const tree = opts.spec
   const spec: Spec | null = tree && typeof tree === "object" ? (nestedToFlat(tree) as Spec) : null
-  root.render(<Renderer spec={spec} registry={registry} fallback={Unknown} />)
+
+  // `JSONUIProvider` sets up the state/visibility/action/validation contexts the
+  // `Renderer` (and catalog components) need — rendering `<Renderer>` bare throws
+  // "useVisibility must be used within a VisibilityProvider".
+  root.render(
+    <JSONUIProvider registry={registry}>
+      <Renderer spec={spec} registry={registry} fallback={Unknown} />
+    </JSONUIProvider>,
+  )
 
   return () => {
     root.unmount()
