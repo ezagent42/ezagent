@@ -21,7 +21,7 @@ into one value (usually `ctx.caller`).
 | role | "who/what is this" | where it lives |
 |------|--------------------|----------------|
 | **caller** | the code path that mechanically invokes the dispatch — often an HTTP handler, a reconciler, an assembly effect; frequently NOT a person | `ctx.caller` |
-| **authorizer** | *what makes the action permitted* | **`ctx.caps`** — the cap set the dispatch carries. `Ezagent.Kind.Runtime`'s step-5.5 check reads `ctx.caps`, NOT `ctx.caller`. `ctx.caller` is consulted only for the `caller == data_owner` self-check. |
+| **authorizer** | *what makes the action permitted* | a matching cap from **`ctx.caps` OR `holds_cap(ctx.caller)`** — step-5.5 checks the carried `ctx.caps` first, then falls back to the caller's `:caps` slice (`runtime.ex:405`, see §3). `ctx.caller`'s *identity* is also consulted only for the `caller == data_owner` self-check, but its *held caps* ARE an authorizer source. (Earlier this row said "reads ctx.caps NOT caller" — that's the GRANT-chokepoint case where the caller is machinery without the cap; corrected 2026-06-22.) |
 | **granter** | the real, accountable **entity** recorded on the minted cap | `Capability.granted_by` |
 
 In the simple case (an admin grants a user a cap) all three coincide, so the distinction is
@@ -182,18 +182,16 @@ Manage-shaped (`behavior: Manage, action: :any, concrete instance`) cap.
 
 ## 6. `User.default_caps` — the universal baseline (and the per-session target)
 
-`apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` — `default_caps/1` gives EVERY user,
-at creation, one broad cap:
+`apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` — **as of the per-session refactor,
+`default_caps(workspace_uri)` now returns `[]`** (verify: `user.ex:175`). The per-session
+narrowing landed: a fresh user holds NO standing caps; session participation (`:send`/`:join`)
+is granted **per-session at join, by the session owner**.
 
-```
-%Capability{kind: :session, behavior: :any, action: :any, instance: :any,
-            workspace_uri: <user's workspace>, granted_by: system://bootstrap}
-```
-
-So today a user can participate in **any** session in their own workspace by default, and
-`Session.handle_join` does **not** grant the joining member per-session caps — membership is
-the gate, the broad baseline supplies the caps. (The Feishu bind's
-`BindingPolicy.apply` is just a re-grant of this same baseline for bound users.)
+> **Historical (pre-refactor, for context):** `default_caps/1` used to return one broad cap
+> `%Capability{kind: :session, behavior: :any, action: :any, instance: :any, workspace_uri: <ws>,
+> granted_by: system://bootstrap}` — so any user could participate in any session in their
+> workspace, and `Session.handle_join` granted no per-session caps. That broad baseline is gone
+> (corrected here 2026-06-22); do not assume a user has session caps by default.
 
 **Target model (the per-session refactor, in progress):** "a member not pulled into a
 session should not have that session's permissions." The baseline is narrowed and

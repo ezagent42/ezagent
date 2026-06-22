@@ -94,16 +94,16 @@ SessionTemplate stores agent_slots + routing_rules + orchestrator_template_uri +
 
 **Updated by Phase 9 (SPEC v3).** Per-tenant URIs (entity/session/template/resource) are 3-segment authority. `workspace://` and `system://` stay 2-segment.
 
-**Per-tenant schemes** (3-segment):
+**Per-tenant schemes** (3-segment, **workspace-FIRST** — SPEC v3 Amendment 2; authoritative `uri.ex` `per_tenant(scheme, workspace, type, name)`; corrected 2026-06-22, was documented type-first):
 
-    <scheme>://<type>/<workspace>/<name>[?action=<behavior>.<action>]
+    <scheme>://<workspace>/<type>/<name>[?action=<behavior>.<action>]
 
 | Scheme | Shape | Example |
 |--------|-------|---------|
-| `entity://` | `entity://<user|agent>/<workspace>/<name>` | `entity://user/default/admin`, `entity://agent/team-alpha/cc_demo` |
-| `session://` | `session://<template>/<workspace>/<name>` | `session://default/default/main` |
-| `template://` | `template://<type>/<workspace>/<name>` | `template://agent/default/cc-orch` |
-| `resource://` | `resource://<type>/<workspace>/<name>` | `resource://uploads/default/file-abc` |
+| `entity://` | `entity://<workspace>/<user|agent>/<name>` | `entity://default/user/admin`, `entity://team-alpha/agent/cc_demo` |
+| `session://` | `session://<workspace>/<template>/<name>` | `session://default/default/main` |
+| `template://` | `template://<workspace>/<type>/<name>` | `template://default/agent/cc-orch` |
+| `resource://` | `resource://<workspace>/<type>/<name>` | `resource://default/uploads/file-abc` |
 
 **Workspace + system schemes** (2-segment, unchanged):
 
