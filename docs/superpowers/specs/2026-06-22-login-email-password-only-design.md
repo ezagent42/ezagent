@@ -1,9 +1,10 @@
 # Login: Email + Password Only — Design
 
 **Date:** 2026-06-22
-**Status:** Draft v2 — codex-adversarial-reviewed (8 findings folded in) + Allen's
-4 follow-up answers folded in; O1/O2 resolved. Awaiting Allen's final review →
-writing-plans.
+**Status:** Draft v3 — codex-adversarial-reviewed (8 findings folded in) + all
+Allen decisions folded in (incl. magic-link KEPT but SMTP-gated; self-build with
+OIDC seam, no Logto now; CF email via SMTP regardless of host). O1/O2 resolved.
+Awaiting Allen's final review → writing-plans.
 **Owner:** Claude (brainstorm with Allen)
 **Task:** #87 (login). Related: #88 (inbound email — separate), #82 (external-adapter), #83 (world beautification — separate), #65 (CF Workers).
 
@@ -62,8 +63,14 @@ canonical identifier*.)
    confirmation link (the link only *verifies email ownership*; it is not a
    login method). Confirming sets a **new** `users.email_verified` flag — **not**
    the existing `confirmed` flag, which is the source of truth for anon-ness
-   (overloading it would mark real registrants as anonymous). Magic-link is
-   demoted from a login method to email-verification + password-reset only.
+   (overloading it would mark real registrants as anonymous).
+1a. **Magic-link login is KEPT** (Allen 2026-06-22) as an optional passwordless
+   login alongside email+password — *not* retired. It is made safe by the token
+   `purpose` field (a `:login` magic-link token cannot be replayed at confirm/
+   reset and vice-versa), so the endpoint can stay. **But it is hidden from the
+   login page when SMTP is not configured** (`smtp_configured?/0` false) — there
+   is no point offering a link the system cannot send. Email+password remains the
+   primary method and always shows.
 2. **Email transport = reuse the SMTP adapter pointed at Cloudflare.** CF Email
    Sending offers SMTP submission (`smtp.mx.cloudflare.net:465`, implicit TLS,
    username literal `api_token`, password = a CF API token with *Email Sending:
@@ -92,9 +99,10 @@ canonical identifier*.)
    is no email backfill, no `set_email` CLI, and no lockout concern.
 6. **Password reset is in this round** — emailed one-time link → set a new
    password. Reuses the one-time-token machinery, but tokens gain a **`purpose`
-   field** (`login`|`confirm`|`reset`) and the consumer enforces it; the
-   magic-link *login* endpoint is removed so a confirm/reset token can never be
-   replayed to obtain a session. Sent via the CF channel; domain ezagent.chat.
+   field** (`login`|`confirm`|`reset`) and each consumer enforces its own purpose,
+   so a confirm/reset token can never be replayed at the magic-link *login*
+   endpoint (which only accepts `:login`). Sent via the CF channel; domain
+   ezagent.chat.
 7. **World changes (keep simple)**: (a) restyle the server-rendered login page
    to a single email + password form (drop handle/URI + magic-link-as-login
    fields; add a "forgot password" link); (b) world authenticated identity
@@ -242,11 +250,12 @@ log in by email+password immediately and independently of mail delivery.
 
 ### 5. World / UI changes
 
-- **Login page** (`session_controller.ex` + its HEEx template): collapse to a
-  single email + password form. Remove the `entity_uri`/`secret`(token) fields
-  and the magic-link login form. Add links: "Create account" (registration) and
-  "Forgot password". Keep styling minimal and consistent; do not entangle with
-  #83.
+- **Login page** (`session_controller.ex` + its HEEx template): primary form is
+  email + password. Remove the `entity_uri`/`secret`(token) fields (the old
+  handle/URI path). **Keep the magic-link option, but render it only when
+  `smtp_configured?/0` is true** (Allen) — hidden otherwise. Add links: "Create
+  account" (registration) and "Forgot password". Keep styling minimal and
+  consistent; do not entangle with #83.
 - **World identity display** (`world_live.ex` + island): pass `display_name`
   (and/or email) from the profile to the React island and render that instead of
   the raw `entity://...` URI. The canonical URI is still used internally for
@@ -255,8 +264,10 @@ log in by email+password immediately and independently of mail delivery.
 ### 6. Routes (after)
 
 ```
-GET  /login                 -> email+password form
+GET  /login                 -> email+password form (+ magic-link option iff smtp_configured?)
 POST /login                 -> resolve email→uri, Entity.authenticate, email_verified gate, session
+POST /login/magic           -> send a magic-link (Token purpose=:login)  [KEPT]
+GET  /auth/magic/:token      -> consume magic-link, purpose==:login → session  [KEPT, purpose-gated]
 GET  /register              -> registration form
 POST /register              -> create user (confirmed:true, email_verified:false) + send confirm
 GET  /auth/confirm/:token   -> verify token(purpose=:confirm), set email_verified=true
@@ -268,12 +279,14 @@ DELETE|POST /logout         -> unchanged
 ```
 
 **Routes to retire (Codex finding #7 — this cleanup is larger than one form).**
-The router currently also exposes `GET|POST /login/credentials`,
-`GET /auth/magic/:token` (magic-link **login** consumer — must be removed so a
-confirm/reset token cannot be replayed to a session), `GET|POST
-/onboarding/workspace`, and `GET|POST /register/complete`. All of these are
-removed or folded into the new `/register` + `/auth/confirm` flow; PR-6
-enumerates each route, its controller action, and any template/link that
+The router currently also exposes `GET|POST /login/credentials` (handle/URI +
+secret — **removed**, replaced by email+password `POST /login`), `GET|POST
+/onboarding/workspace`, and `GET|POST /register/complete` (magic-link onboarding
+chain — **removed/folded** into `/register` + `/auth/confirm`). The magic-link
+*login* endpoint `GET /auth/magic/:token` is **kept** (Allen) but hardened with
+the `purpose == :login` check so confirm/reset tokens cannot be replayed there.
+PR-6 enumerates each retired route, its controller action, and any template/link
+that
 references it (e.g. login-page links, onboarding redirects). The API/CLI bearer
 path (`api_v1_controller.ex` `Authorization: Bearer` + `X-Ezagent-Entity-URI`)
 is **unchanged**.
@@ -288,8 +301,9 @@ is **unchanged**.
   `lower(email)` lookup. Run a duplicate-email **preflight** first that aborts
   with a report if any case-folded collisions exist. (Codex #8.)
 - **Migration C — token purpose**: add a `purpose` column to the one-time-token
-  table (`login`|`confirm`|`reset`); existing rows default to `:login` (then the
-  login consumer is removed). (Codex #3.)
+  table (`login`|`confirm`|`reset`); existing rows default to `:login`
+  (magic-link login is kept, so the `:login` purpose stays live and is enforced
+  at `/auth/magic/:token`). (Codex #3.)
 - No data backfill (no existing users).
 
 ## Out of scope
@@ -313,13 +327,28 @@ is **unchanged**.
   (case-insensitively), which would make the login key ambiguous.
 - **`email_verified` gate** prevents login before email ownership is proven;
   it is independent of the `confirmed` anon-ness flag.
-- **Tokens** (confirm + reset) are single-use, expiring, and **purpose-tagged**;
-  the magic-link login consumer is removed so no token can be replayed to mint a
-  session beyond its intended action.
+- **Tokens** (login + confirm + reset) are single-use, expiring, and
+  **purpose-tagged**; each consumer enforces its own purpose, so a confirm/reset
+  token cannot be replayed at the magic-link login endpoint (which accepts only
+  `:login`). Magic-link login is hidden when SMTP is unconfigured.
 - **Secrets** (CF API token) live only in runtime AppSettings, never in the
   repo.
 - **Backend token auth untouched** — agents/CLI keep working; only the human
   form drops the affordance.
+
+## Future extensibility — OIDC / third-party auth seam
+
+We are **self-building** auth (not adopting Logto/an external IdP now), because a
+third-party IdP only covers *authentication* while ezagent's complexity is in its
+URI + CapBAC *authorization* model, and it would add a stateful infra dependency
+against the lean / self-hostable direction. The *only* compelling future reason
+to adopt one is **social login / SSO / MFA**, which is not a current requirement.
+
+To keep that door open at low cost, credential verification is isolated behind a
+single seam: **email → canonical URI → `Entity.authenticate/2`**. A future OIDC
+provider (Logto, Auth0, Google, …) plugs in by resolving its identity to a
+canonical entity URI at that same boundary; the CapBAC/workspace/Kind model and
+everything downstream stay unchanged. No design choice here forecloses that swap.
 
 ## Testing & gates
 
@@ -363,13 +392,13 @@ suite → (admin-)merge into the task branch.
   `email_verified`). Honors `registration_domains`.
 - **PR-4 — password reset.** Request + reset endpoints and forms; purpose-tagged
   one-time tokens; tests.
-- **PR-5 — login page + world identity.** Collapse login UI to email+password
-  (+ "Create account"/"Forgot password" links); world identity display shows
-  display_name/email.
+- **PR-5 — login page + world identity.** Login UI = email+password primary +
+  magic-link option shown only when `smtp_configured?/0` + "Create account"/
+  "Forgot password" links; world identity display shows display_name/email.
 - **PR-6 — route retirement + bootstrap admin + docs.** Remove
-  `/login/credentials`, the magic-link **login** consumer `/auth/magic/:token`,
-  `/onboarding/workspace`, `/register/complete` and every template/link that
-  references them (enumerated); idempotent admin repair
+  `/login/credentials`, `/onboarding/workspace`, `/register/complete` and every
+  template/link that references them (enumerated); **keep** `/auth/magic/:token`
+  but enforce `purpose==:login`; idempotent admin repair
   (password/email/`email_verified`, preserve caps); update docs/guides; final
   E2E.
 
