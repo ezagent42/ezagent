@@ -59,7 +59,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
   defp create_and_bind(conversation_id, workspace_uri, bound_by) do
     ws = Ezagent.URI.stable_key(workspace_uri) |> String.replace("://", "_")
     name = "conv_#{ws}_#{short_id(conversation_id)}"
-    session_uri = Ezagent.URI.session(workspace_uri, "generic", name)
+    session_uri = Ezagent.URI.session(:system, "generic", name)
 
     with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),
          :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri),

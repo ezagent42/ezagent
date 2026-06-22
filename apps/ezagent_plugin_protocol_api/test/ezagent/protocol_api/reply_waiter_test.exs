@@ -7,7 +7,7 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
   describe "wait_for_reply/3" do
     test "returns {:ok, message} when matching ref_id found within deadline" do
       request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-      agent_uri = Ezagent.URI.new!("entity://agent/system/test_agent")
+      agent_uri = Ezagent.URI.new!("entity://system/agent/test_agent")
       deadline_ms = 500
 
       reply_msg = Message.new(agent_uri, %{text: "hello back"}, ref_id: request_id)
@@ -26,7 +26,7 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
 
     test "returns {:error, :timeout} when no matching event arrives" do
       request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-      agent_uri = Ezagent.URI.new!("entity://agent/system/test_agent")
+      agent_uri = Ezagent.URI.new!("entity://system/agent/test_agent")
 
       assert {:error, :timeout} =
                ReplyWaiter.wait_for_reply(request_id, agent_uri, 100)
@@ -35,7 +35,7 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
     test "ignores events with non-matching ref_id" do
       request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
       other_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-      agent_uri = Ezagent.URI.new!("entity://agent/system/test_agent")
+      agent_uri = Ezagent.URI.new!("entity://system/agent/test_agent")
       deadline_ms = 500
 
       other_msg = Message.new(agent_uri, %{text: "wrong"}, ref_id: other_id)
@@ -54,8 +54,8 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
 
     test "ignores events from wrong sender" do
       request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-      agent_uri = Ezagent.URI.new!("entity://agent/system/target")
-      wrong_agent = Ezagent.URI.new!("entity://agent/system/other")
+      agent_uri = Ezagent.URI.new!("entity://system/agent/target")
+      wrong_agent = Ezagent.URI.new!("entity://system/agent/other")
       deadline_ms = 500
 
       wrong_msg = Message.new(wrong_agent, %{text: "hi"}, ref_id: request_id)

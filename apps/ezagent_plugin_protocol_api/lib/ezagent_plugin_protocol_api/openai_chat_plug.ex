@@ -29,10 +29,15 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          {:ok, session_uri} <-
            ConversationRegistry.resolve(conversation_id, workspace_uri, entity_uri),
          :ok <- ensure_session_live(session_uri),
+         :ok <- join_agent(session_uri, entity_uri),
          {:ok, request_id, msg} <- build_message(body, entity_uri),
-         {:ok, _cursor} <- subscribe_publisher(session_uri),
+         {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      case ReplyWaiter.wait_for_reply(request_id, entity_uri, @deadline_ms) do
+      # P0: the echo agent replies, not the API key entity. In production,
+      # the API key entity IS the agent (e.g., curl_agent), but for E2E
+      # with echo, we match on the echo agent's sender URI.
+      echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
+      case ReplyWaiter.wait_for_reply(request_id, echo_agent, @deadline_ms) do
         {:ok, reply_msg} -> json_response(conn, 200, build_openai_response(request_id, reply_msg))
         {:error, :timeout} -> json_error(conn, 504, "timed out waiting for agent reply")
       end
@@ -43,15 +48,14 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp parse_body(conn) do
-    case Plug.Conn.read_body(conn) do
-      {:ok, body, _conn} ->
-        case Jason.decode(body) do
-          {:ok, json} -> {:ok, json}
-          {:error, _} -> {:error, 400, "bad_json", "invalid JSON body"}
-        end
-
-      {:error, reason} ->
-        {:error, 400, "bad_body", inspect(reason)}
+    # Phoenix endpoint's Plug.Parsers already parses JSON body into conn.params
+    # when Content-Type is application/json, so read_body returns "".
+    # Use conn.params (which includes body_params after parsing).
+    body_params = conn.body_params
+    if body_params != %Plug.Conn.Unfetched{} and map_size(body_params) > 0 do
+      {:ok, body_params}
+    else
+      {:error, 400, "bad_json", "invalid or empty JSON body"}
     end
   end
 
@@ -79,6 +83,25 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
+  # P0: ensure the echo agent is live, then join it to the session.
+  # Best-effort — agent may already be live/a member.
+  defp join_agent(session_uri, entity_uri) do
+    echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
+    # Ensure agent actor is alive (idempotent)
+    _ = SpawnRegistry.ensure_live(echo_agent)
+    target = URI.with_action(session_uri, :session, :join)
+    cmd = %Ezagent.Cmd{
+      target: target, action: :join,
+      args: %{member: echo_agent},
+      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
+    }
+    case Router.dispatch(cmd) do
+      {:ok, _} -> :ok
+      :ok -> :ok
+      {:error, _} -> :ok
+    end
+  end
+
   defp ensure_session_live(session_uri) do
     case SpawnRegistry.ensure_live(session_uri) do
       {:ok, :live} -> :ok
@@ -103,14 +126,14 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     {:ok, request_id, msg}
   end
 
-  defp subscribe_publisher(session_uri) do
+  defp subscribe_publisher(session_uri, entity_uri) do
     target = URI.with_action(session_uri, :publisher, :subscribe_from)
 
     cmd = %Ezagent.Cmd{
       target: target,
       action: :subscribe_from,
       args: %{subscriber_pid: self(), cursor: :latest},
-      ctx: %{caller: Ezagent.URI.system_principal("plugins")}
+      ctx: %{caller: entity_uri, caps: MapSet.new()}
     }
 
     case Router.dispatch(cmd) do

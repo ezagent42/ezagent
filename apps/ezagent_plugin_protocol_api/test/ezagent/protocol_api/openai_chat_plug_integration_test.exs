@@ -14,11 +14,11 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
     end
 
     test "returns 400 when conversation_id missing (valid API key)" do
-      key_id = "ik_#{System.unique_integer([:positive, :monotonic])}"
+      key_id = "ik#{System.unique_integer([:positive, :monotonic])}"
       hash = Bcrypt.hash_pwd_salt("s1")
       Repo.insert!(%ApiKeyStore{
         key_id: key_id, secret_hash: hash,
-        entity_uri: "entity://agent/system/echo_default",
+        entity_uri: "entity://system/agent/echo_default",
         workspace_uri: "workspace://system", label: "test",
         allowed_models: [], cap_policy: %{}
       })
@@ -33,11 +33,11 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
     end
 
     test "returns 400 when API key secret is wrong" do
-      key_id = "iw_#{System.unique_integer([:positive, :monotonic])}"
+      key_id = "iw#{System.unique_integer([:positive, :monotonic])}"
       hash = Bcrypt.hash_pwd_salt("right")
       Repo.insert!(%ApiKeyStore{
         key_id: key_id, secret_hash: hash,
-        entity_uri: "entity://agent/system/echo_default",
+        entity_uri: "entity://system/agent/echo_default",
         workspace_uri: "workspace://system", label: "test",
         allowed_models: [], cap_policy: %{}
       })
