@@ -52,7 +52,9 @@ The handoff mandates a request-scoped ExternalAdapter binding variant long-term.
 
 Default: **durable** `conversation_id ↔ session` binding via the existing `external_mirror_bindings` table (`adapter_id: "protocol_api"`, `target_id: conversation_id`). Stateless fallback (no conversation_id → ephemeral session from `messages[]` transcript) is P1.
 
-Session creation: `SpawnRegistry.spawn` via `generic_session` template class — identical to Feishu's `ensure_session_live`.
+Session creation:
+1. `SpawnRegistry.spawn(session_uri)` via `generic_session` template class
+2. `WorkspaceRegistry.bind(session_uri, workspace_uri)` — invariant 4; workspace_uri from the API key
 
 ### 3.3 Reply waiter — subscribe-before-dispatch
 
@@ -68,11 +70,11 @@ To eliminate the snapshot-before-subscribe race (same pattern as P3-2's lower-bo
 
 **Why `Message.id` as `request_id` (not a separate field):** The inbound Message already has a unique `id`. All bridge adapters echo the received message's `id` as the reply's `ref_id`. So the waiter matches `reply.ref_id == inbound_message.id` — no new field needed.
 
+**P0 pre-requisite — fix `curl_agent` `ref_id` gap.** Code review found `apps/ezagent_domain_agent/lib/ezagent/behavior/curl_agent.ex:302` does NOT pass `ref_id` to `Message.new/3`, unlike codex/cc/echo/np which all do. The `handle_receive` path must thread the inbound `msg.id` through to `handle_sync_result` → `maybe_reply_effect` → `Message.new(..., ref_id: in_msg.id)`. One-line fix; gate: curl reply messages carry `ref_id` after the change.
+
 ### 3.4 model → agent mapping (P0)
 
 In P0, the `model` field in the OpenAI request is validated against the API key's `allowed_models` whitelist, but the **target agent is fixed per API key**: the key's `entity_uri` IS the agent that handles the request. The caller does NOT control which agent runs — the API key does. Model→agent routing (allowing one key to target multiple agents by model name) is deferred to P2.
-
-### 3.5 API-key auth
 
 ### 3.5 API-key auth
 
@@ -114,10 +116,10 @@ Token format: `pk_<key_id>_<secret>` — `key_id` prefix enables indexed lookup 
 | 1 | `apps/ezagent_web/lib/ezagent_web/router.ex` | + `forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenaiChatPlug` |
 | 2 | Root `mix.exs` | + `ezagent_plugin_protocol_api: :permanent` in releases |
 
-### May need updating
+### Will need updating (confirmed by adversarial review)
 
+- `apps/ezagent_core/lib/mix/tasks/ezagent.arch.scan.ex` — **REQUIRED**: add `conversation_registry.ex` to `@spawn_registry_sanctioned_files` (plugin calls `SpawnRegistry.spawn` for session creation — rationale: `# protocol_api P0 — spawn session for durable conversation binding`)
 - `apps/ezagent_core/test/architecture/arch_baseline_manifest.exs` — if LOC/module counters exceed baseline
-- `apps/ezagent_core/lib/mix/tasks/ezagent.arch.scan.ex` — if plugin calls `SpawnRegistry.spawn` (likely, for session creation)
 
 ## 5. Phasing
 
