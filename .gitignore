@@ -47,6 +47,9 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 .cf-access.env
 .cf-access*.env
 
+# Local env vars (DEEPSEEK_KEY etc.) — operator-local, never commit.
+.env
+
 # Python bytecode cache
 __pycache__/
 *.pyc
