@@ -71,12 +71,11 @@ defmodule EzagentPluginHello.App do
   # Template Class create path) hits an already-bound session; that is success,
   # not an error.
   defp bind_workspace(session_uri, workspace) do
-    case Ezagent.WorkspaceRegistry.bind(session_uri, workspace) do
-      :ok -> :ok
-      {:error, {:already_registered, _}} -> :ok
-      {:already_registered, _} -> :ok
-      other -> other
-    end
+    # WorkspaceRegistry.bind/2 is an idempotent ETS upsert that always returns
+    # :ok — re-instantiating an existing hello app re-binds harmlessly. (Earlier
+    # this matched {:already_registered, _} error tuples the registry no longer
+    # returns; those clauses were dead under the current API.)
+    WorkspaceRegistry.bind(session_uri, workspace)
   end
 
   defp spawn_kind(kind_module, args) do
