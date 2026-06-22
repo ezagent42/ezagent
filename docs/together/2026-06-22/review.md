@@ -12,22 +12,23 @@ request before AFK). Full per-entry detail + merged SHAs in `stack.md`.
 | hello #891 (@json-render pages) | `d8c4a7f9` | precommit 4611/0 · vite/check:mounts · anon /socialware/customer page E2E |
 | agent-console #892 (Phase-0 demo) | `798f46bd` | precommit 4611/0 · /agent-console-demo loads+renders |
 
-Final `main` end-to-end `mix precommit`: **green modulo one documented
-pre-existing PG-sandbox flake.** Three full runs of this exact main content
-(hello-precommit2, agentconsole-precommit, and the per-branch runs) were
-**4611/0**; the final run hit **1 failure** in `Ezagent.ExternalMirrorTest`
-(`facade_test.exs:91 sessions_for_adapter/2`) — exit via
-`DBConnection.Holder.checkout … owner … exited`, the PG-sandbox-owner-exit flake
-the pg handoff explicitly documented. **Proven not a close regression:**
-(1) `git diff db1fb574..798f46bd -- apps/ezagent_domain_external_mirror` is
-EMPTY — none of wb/hello/agent-console touch that domain (it is pg's, merged
-first at 4577/0); (2) the test **passes in isolation** (`facade_test.exs:91` →
-1 test, 0 failures). Cause: sibling spawn-storm tests in the same suite churn the
-shared sandbox connection pool and intermittently kill the facade test's owner
-connection (the lower 4362 total = cascaded connection crashes aborting siblings).
-**Follow-up (external_mirror owner):** harden `facade_test` under the PG sandbox
-(same `EzagentCore.DataCase` / `async: false` treatment pg applied to
-`repair_orchestrator_test`). Added to `docs/futures/todo.md`.
+Final `main` end-to-end `mix precommit`: **GREEN — 4611 tests, 0 failures** (clean
+run on an unloaded machine, `3e600405`).
+
+During close-out, intermittent failures surfaced in `apps/ezagent_domain_external_mirror`
+— PG-sandbox `owner … exited` + a timing `assert_receive … 1000ms`. **Proven not
+a close regression:** `git diff db1fb574..798f46bd -- apps/ezagent_domain_external_mirror`
+is EMPTY (none of wb/hello/agent-console touch that domain — it is pg's, merged
+first). They were **load-induced** (surfaced only while the dev `phx.server` +
+vite + repeated E2E runs were hammering the box; the 4611/0 runs were on a quiet
+box). One was a genuine bug worth fixing: `facade_test.exs` used bare
+`ExUnit.Case` (the lone outlier — every other external_mirror DB test uses
+`EzagentCore.DataCase`), so it borrowed an unsandboxed connection a sibling
+spawn-storm could kill → **fixed by switching it to `EzagentCore.DataCase`**
+(`3e600405`, the same remedy pg applied to `repair_orchestrator_test`). The
+remaining timing-sensitive ones (`ExternalMirrorWorkerColdRestartTest`) pass on
+an unloaded box; flagged in `docs/futures/todo.md` for the external_mirror owner
+(don't run the full suite alongside a live phx + vite).
 
 PG backup/restore
 verified end-to-end: `pg_dump --format=custom` → fresh DB `pg_restore` → row
