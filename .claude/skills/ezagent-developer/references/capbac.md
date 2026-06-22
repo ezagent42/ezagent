@@ -75,11 +75,19 @@ the declared shape with concrete instance + workspace substituted) and authorize
 …plus `check_action_wildcard_grant_authorized/2` on the **grant** path (a wildcard-action
 grant needs admin authority or a scope-bounded instance).
 
-**Therefore the authorizer is `ctx.caps`.** If you build a dispatch whose `ctx.caps` does
-not contain a cap matching the needed authority, it is denied `:unauthorized` — no matter
-what `ctx.caller` or the cap's `granted_by` say. This is BLOCKER-1 of the chokepoint review:
-a grant tag that sets `caller`/`granted_by` but leaves `ctx.caps` empty fails closed on
-every admin/manager grant.
+**The authorizer is `ctx.caps` OR the caller's held caps** — a dispatch is authorized when
+EITHER `ctx.caps` contains a matching cap (path 1) OR the caller holds one in its `:caps`
+slice (path 2). `ctx.caller`'s `granted_by` is never an authorizer. **Do NOT read this as
+"empty `ctx.caps` ⇒ denied":** an empty `ctx.caps` still authorizes if `holds_cap(caller)`
+matches (e.g. a world action that threads `caps: MapSet.new()` but whose caller-entity holds
+the cap in its slice — contract drift, not a live bypass).
+
+The "empty `ctx.caps` fails closed" claim is **specific to the grant chokepoint** (BLOCKER-1):
+there the caller is grant *machinery* that does NOT hold the granted cap in its own slice, so
+path 2 cannot save it — a grant tag that sets `caller`/`granted_by` but leaves `ctx.caps`
+empty fails closed on every admin/manager grant. That is a property of the chokepoint, not of
+the general dispatch path. (If a design needs a HARD fail-closed on a normal dispatch — e.g.
+the Agent Console Manage-gate — enforce it at an explicit gate; do NOT assume empty caps denies.)
 
 Two authorization styles coexist; know which gates a given action:
 
