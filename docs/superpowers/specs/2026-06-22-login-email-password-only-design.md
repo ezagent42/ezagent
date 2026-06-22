@@ -1,7 +1,9 @@
 # Login: Email + Password Only — Design
 
 **Date:** 2026-06-22
-**Status:** Draft (awaiting Allen review)
+**Status:** Draft v2 — codex-adversarial-reviewed (8 findings folded in) + Allen's
+4 follow-up answers folded in; O1/O2 resolved. Awaiting Allen's final review →
+writing-plans.
 **Owner:** Claude (brainstorm with Allen)
 **Task:** #87 (login). Related: #88 (inbound email — separate), #82 (external-adapter), #83 (world beautification — separate), #65 (CF Workers).
 
@@ -58,28 +60,41 @@ canonical identifier*.)
 
 1. **Registration = email + password self-registration** with a one-time email
    confirmation link (the link only *verifies email ownership*; it is not a
-   login method). Confirming sets `users.confirmed = true`. Magic-link is
+   login method). Confirming sets a **new** `users.email_verified` flag — **not**
+   the existing `confirmed` flag, which is the source of truth for anon-ness
+   (overloading it would mark real registrants as anonymous). Magic-link is
    demoted from a login method to email-verification + password-reset only.
 2. **Email transport = reuse the SMTP adapter pointed at Cloudflare.** CF Email
    Sending offers SMTP submission (`smtp.mx.cloudflare.net:465`, implicit TLS,
    username literal `api_token`, password = a CF API token with *Email Sending:
-   Edit*). No new adapter, no new HTTP dependency. The transport stays
-   admin-configurable (self-host brings its own SMTP); CF is the provider *our
-   managed deployment* selects. Sender domain: **ezagent.chat** (Allen
-   onboards it for Email Sending; reuses `ezagent_cf_token` with the added
-   scope).
-3. **Dev/test default = a local/logger mailer** so confirmation/reset links
-   appear in logs — zero external dependency, so local dev and the disposable
-   E2E stack work without a real mail provider.
+   Edit*). No new adapter, no new HTTP dependency. CF and generic-SMTP are both
+   the **same compile-pinned `Swoosh.Adapters.SMTP`** differing only in the
+   runtime `smtp_config` (host/creds) — CF is a *preset* of that config, not a
+   different adapter. The transport stays admin-configurable (self-host brings
+   its own SMTP); CF is the preset *our managed deployment* selects. Sender
+   domain: **ezagent.chat** (Allen onboards it for Email Sending; reuses
+   `ezagent_cf_token` with the added scope).
+3. **Dev/test default = a compile-time logger/local adapter.** Because the
+   Swoosh adapter is fixed per-mailer at compile time (not switchable at
+   deliver-time), the dev/test default is set in `config/dev.exs` +
+   `config/test.exs` as `adapter: Swoosh.Adapters.Local` (or a logger adapter).
+   Confirmation/reset links then surface in logs / the local mailbox preview —
+   zero external dependency, so local dev and the disposable E2E stack work
+   without a real mail provider. (Prod stays SMTP/CF.)
 4. **Bootstrap admin** is provisioned with email + password directly
-   (`admin@ezagent.chat`, configurable) and `confirmed = true`, so first login
-   **never** depends on email delivery. Only self-registration needs a working
-   transport.
+   (`admin@ezagent.chat`, configurable) and `email_verified = true`, so first
+   login **never** depends on email delivery. The bootstrap is an **idempotent
+   repair**: if the admin row already exists, set a password when absent and
+   upsert the admin profile email + `email_verified`, **preserving existing
+   caps** — do not skip an already-present admin. Only self-registration needs a
+   working transport.
 5. **No existing-user migration.** There are no production users yet, so there
    is no email backfill, no `set_email` CLI, and no lockout concern.
 6. **Password reset is in this round** — emailed one-time link → set a new
-   password (reuses the existing one-time-token machinery, sent via the CF
-   channel; domain ezagent.chat).
+   password. Reuses the one-time-token machinery, but tokens gain a **`purpose`
+   field** (`login`|`confirm`|`reset`) and the consumer enforces it; the
+   magic-link *login* endpoint is removed so a confirm/reset token can never be
+   replayed to obtain a session. Sent via the CF channel; domain ezagent.chat.
 7. **World changes (keep simple)**: (a) restyle the server-rendered login page
    to a single email + password form (drop handle/URI + magic-link-as-login
    fields; add a "forgot password" link); (b) world authenticated identity
@@ -105,21 +120,37 @@ URI**, then verify the password against that URI.
 
 ```
 login(email, password):
-  uri = Profile.by_email(email)            # existing resolver, case-insensitive
-  if uri == nil:           -> invalid (generic error; constant-time)
-  user = Users.get_by_uri(uri)
-  if not user.confirmed:   -> "please confirm your email" (no session)
-  if Users.verify_password(uri, password): -> create session
-  else:                    -> invalid (generic error)
+  uri = Profile.by_email(email)            # existing resolver, lower(email)
+  if uri == nil:           -> Bcrypt.no_user_verify(); invalid (generic; constant-time)
+  case Entity.authenticate(uri, password):   # NOT verify_password directly — see below
+    {:ok, principal} ->
+      user = Users.get_by_uri(uri)
+      if user.email_verified: -> create session
+      else:                   -> generic "check your email to finish sign-up"
+                                 (shown only AFTER a correct password, so it
+                                  does not leak account existence)
+    :error -> invalid (generic error)
 ```
 
-- **Email uniqueness is required** for email to be a login key. Add a
-  case-insensitive **unique index** on `entity_profiles.email` (partial: where
-  email is not null). This makes `Profile.by_email/1` deterministic and is the
-  DB-level guard against duplicate-email accounts.
-- **`confirmed` gate**: only `confirmed = true` users can authenticate via the
-  form. Reuses the boolean already on `users`. (Bootstrap admin is created
-  `confirmed = true`.)
+- **Go through `Entity.authenticate/2`, not `Users.verify_password/2`.** The
+  existing credential path uses `Entity.authenticate/2`
+  (`entity.ex:48`), which not only verifies the password but spawns the
+  principal Kind and hydrates caps. Email login must reuse it (with a
+  password-only restriction in the form context) so authentication behavior does
+  not fork. (Codex finding #6.)
+- **`email_verified` gate, NOT `confirmed`.** `users.confirmed` already means
+  "non-anonymous" (`true` for real users via `Users.create/3`, `false` for
+  anonymous read-only viewers via `create_read_only/2` — `users.ex:109,162`).
+  Reusing it for "email verified" would conflate the two and break anon flows.
+  So we add a **new** `email_verified` boolean and gate the form login on it.
+  (Codex finding #1.)
+- **Email uniqueness.** A partial unique index on `entity_profiles.email`
+  already exists, but on the **raw** value, while `Profile.by_email/1` resolves
+  on `lower(email)`. Replace it with a partial unique index on `lower(email)`
+  (where email is not null), preceded by a duplicate-email **preflight** in the
+  migration that fails early if any case-folded collisions exist. (No existing
+  users → preflight is trivially empty, but the migration is written correctly.)
+  (Codex finding #8.)
 - Canonical identity is unchanged. We add a resolver call; we do **not** key
   users by email.
 
@@ -131,61 +162,83 @@ New registration form: **email, password, display name**.
 register(email, password, display_name):
   reject if email domain not in registration_domains (existing AppSetting)
   reject if Profile.by_email(email) already exists  (unique-index backstop)
-  workspace, handle = derive(email, display_name)   # see Open Question O1
+  workspace = workspace_for_email_domain(email)     # derived from email domain; see O1
+  handle    = derive_handle(email, display_name)    # local-part, collision-suffixed
   uri = URI.user(workspace, handle)
-  Users.create(uri, password_hash(password), default_caps, confirmed: false)
+  Users.create(uri, password_hash(password), default_caps)  # confirmed: true (real, non-anon)
+  set email_verified = false on the new user
   Profile.upsert(uri, display_name, email, workspace)
-  token = ConfirmToken.mint(uri)                     # one-time, expiring
+  token = Token.mint(uri, purpose: :confirm)         # one-time, expiring, purpose-tagged
   Mailer.deliver_confirmation(email, confirm_url(token))
 ```
 
-- Clicking the confirmation link (`GET /auth/confirm/:token`) marks
-  `confirmed = true` and logs the user in once (or routes to the login page).
-- Unconfirmed accounts cannot log in and can request a re-send (rate-limited via
+- The user is created **`confirmed: true`** (a real, non-anonymous human) but
+  **`email_verified: false`**. The two flags are independent (Codex finding #1).
+- Clicking the confirmation link (`GET /auth/confirm/:token`) verifies the token
+  `purpose == :confirm`, sets `email_verified = true`, and routes to login (it
+  does **not** itself mint a session — keeps confirm/login distinct).
+- Unverified accounts cannot log in and can request a re-send (rate-limited via
   the existing anti-enumeration machinery in `session_controller.ex`).
-- The confirmation token reuses the `MagicLinkToken` machinery
-  (one-time, expiring), repurposed to "verify email / set confirmed", not
-  "log in".
+- **Workspace = derived from email domain** (Allen). `alice@acme.com` → the
+  `acme` workspace. **Workspace provisioning constraint (Codex finding #4):**
+  `create_principal/4` assumes the workspace already exists and cannot mint one
+  with the right CapBAC authority. So the derived workspace **must pre-exist**:
+  the admin provisions a workspace when adding its domain to the
+  `registration_domains` allowlist (domain-allow and workspace-provision are
+  tied). A registrant from an allowed domain joins that existing workspace; no
+  new-workspace creation happens in the registration path.
+- **Change workspace later** (Allen: "用户进入后可以再改") — after entering, a
+  user can move/join a different workspace. That is a membership change handled
+  by existing workspace/membership affordances; this spec only fixes the
+  *initial* placement. See O1.
 
 ### 3. Password reset flow
 
 ```
-request_reset(email):  -> if Profile.by_email(email): mint reset token; send link
+request_reset(email):  -> if Profile.by_email(email): mint Token(purpose: :reset); send link
                           (always show the same "if the account exists…" message)
-GET  /auth/reset/:token -> render set-new-password form (token valid)
+GET  /auth/reset/:token -> if token valid AND purpose==:reset: render set-new-password form
 POST /auth/reset/:token -> set new password_hash; consume token; redirect to login
 ```
 
 Reuses the one-time-token machinery and the CF send channel. Tokens are
-single-use and expiring. No session is created by the reset link itself; the
-user logs in with the new password.
+single-use, expiring, and **purpose-tagged** (`:reset`); the consumer rejects a
+token whose purpose is not `:reset`. No session is created by the reset link
+itself; the user logs in with the new password. (Codex finding #3.)
 
-### 4. Email transport — provider abstraction
+### 4. Email transport
 
-Generalize the runtime mailer config from "SMTP only" to a **provider choice**
-held in `AppSettings`, resolved at deliver-time:
+**There is no "provider" abstraction — Cloudflare *is* SMTP.** (Allen, and Codex
+finding #2.) Swoosh fixes the adapter for a mailer at **compile time**
+(`config :ezagent_web, EzagentWeb.Mailer, adapter: …`, `api_client: false`); only
+the SMTP relay *options* are supplied at deliver-time from `AppSettings`. So we
+keep the **single existing `smtp_config`** and do not add any provider enum:
 
-- `provider = "smtp"` — existing behavior; admin supplies host/port/user/pass/from.
-- `provider = "cloudflare"` — a **preset** that fixes host=`smtp.mx.cloudflare.net`,
-  port=`465`, implicit TLS, username=`api_token`; admin supplies only the **API
-  token** (password) and the **from address** (`...@ezagent.chat`). Still goes
-  through `Swoosh.Adapters.SMTP` — no new adapter, no new dependency.
-- Dev/test default — `Swoosh.Adapters.Local` (or a logger adapter) selected in
-  `config/dev.exs` + `config/test.exs`, so confirmation/reset links are
-  surfaced (logs / local mailbox preview) without any configured provider. This
-  replaces today's "silently drop when unconfigured" dead-end for the
-  registration path.
+- **Prod — the existing `smtp_config`, filled with CF's values** (our managed
+  deployment): host `smtp.mx.cloudflare.net`, port `465`, implicit TLS, username
+  `api_token`, password = the CF API token (with *Email Sending: Edit*),
+  `from_address` `…@ezagent.chat`. Self-host fills the same fields with their own
+  relay. The admin settings UI may offer a one-click "fill Cloudflare defaults"
+  helper, but it is the same config — **no second adapter, no new dependency, no
+  provider switch.**
+- **Dev/test — compile-time Local adapter.** `config/dev.exs` and
+  `config/test.exs` set `adapter: Swoosh.Adapters.Local` (or a logger adapter).
+  Confirmation/reset links surface in logs / the local mailbox preview without
+  any configured relay. This removes today's "silently drop when SMTP
+  unconfigured" dead-end for the registration path.
 
 `Mailer` gains `deliver_confirmation/2` and `deliver_password_reset/2` alongside
-the existing `deliver_magic_link/2` (the latter may be retired once magic-link
-login is removed, or kept as the verification primitive). The
-`smtp_configured?/0` gate generalizes to `mail_configured?/0` (true when the
-selected provider has its required fields).
+the existing `deliver_magic_link/2` (the latter is retired with magic-link
+login). The `smtp_configured?/0` gate stays as the prod readiness check; in
+dev/test the Local adapter is always "ready".
 
-**Bootstrap admin**: `ensure_admin_user/0` is extended to set an admin email
-(default `admin@ezagent.chat`, configurable via app env) on the admin profile,
-a password (from app env / generated + logged once), and `confirmed = true`, so
-the admin can log in by email+password immediately and independently of mail.
+**Bootstrap admin** (Codex finding #5 — must be an idempotent **repair**, not a
+skip): `ensure_admin_user/0` is extended so that, whether or not the admin row
+already exists, it (a) sets a password hash if none is present (from app env, or
+generated and logged once — see O2), (b) upserts the admin `entity_profiles`
+email (default `admin@ezagent.chat`, app-env configurable), (c) sets
+`email_verified = true`, and (d) **preserves existing caps**. The admin can then
+log in by email+password immediately and independently of mail delivery.
 
 ### 5. World / UI changes
 
@@ -203,27 +256,40 @@ the admin can log in by email+password immediately and independently of mail.
 
 ```
 GET  /login                 -> email+password form
-POST /login                 -> resolve email→uri, verify password, create session
+POST /login                 -> resolve email→uri, Entity.authenticate, email_verified gate, session
 GET  /register              -> registration form
-POST /register              -> create unconfirmed user + send confirmation
-GET  /auth/confirm/:token   -> verify email, set confirmed=true
+POST /register              -> create user (confirmed:true, email_verified:false) + send confirm
+GET  /auth/confirm/:token   -> verify token(purpose=:confirm), set email_verified=true
 GET  /auth/reset            -> request-password-reset form
-POST /auth/reset            -> send reset link
-GET  /auth/reset/:token     -> set-new-password form
+POST /auth/reset            -> send reset link (Token purpose=:reset)
+GET  /auth/reset/:token     -> set-new-password form (token purpose=:reset)
 POST /auth/reset/:token     -> set new password
 DELETE|POST /logout         -> unchanged
 ```
 
-Removed/repurposed: `GET|POST /login/credentials` (handle/URI+secret) removed;
-the onboarding/`/register/complete` magic-link chain removed or folded into the
-new registration flow. The API/CLI bearer path (`api_v1_controller.ex`
-`Authorization: Bearer` + `X-Ezagent-Entity-URI`) is **unchanged**.
+**Routes to retire (Codex finding #7 — this cleanup is larger than one form).**
+The router currently also exposes `GET|POST /login/credentials`,
+`GET /auth/magic/:token` (magic-link **login** consumer — must be removed so a
+confirm/reset token cannot be replayed to a session), `GET|POST
+/onboarding/workspace`, and `GET|POST /register/complete`. All of these are
+removed or folded into the new `/register` + `/auth/confirm` flow; PR-6
+enumerates each route, its controller action, and any template/link that
+references it (e.g. login-page links, onboarding redirects). The API/CLI bearer
+path (`api_v1_controller.ex` `Authorization: Bearer` + `X-Ezagent-Entity-URI`)
+is **unchanged**.
 
 ## Data model changes
 
-- **Migration**: add a case-insensitive partial **unique index** on
-  `entity_profiles.email` (where email is not null). No column additions
-  (`confirmed` already exists; email already exists).
+- **Migration A — `email_verified`**: add a `email_verified` boolean column to
+  `users` (default `false`). Distinct from `confirmed` (anon-ness). (Codex #1.)
+- **Migration B — email uniqueness**: drop the existing **raw** partial unique
+  index on `entity_profiles.email` and add a partial unique index on
+  `lower(email)` (where email is not null), to match `Profile.by_email/1`'s
+  `lower(email)` lookup. Run a duplicate-email **preflight** first that aborts
+  with a report if any case-folded collisions exist. (Codex #8.)
+- **Migration C — token purpose**: add a `purpose` column to the one-time-token
+  table (`login`|`confirm`|`reset`); existing rows default to `:login` (then the
+  login consumer is removed). (Codex #3.)
 - No data backfill (no existing users).
 
 ## Out of scope
@@ -236,15 +302,20 @@ new registration flow. The API/CLI bearer path (`api_v1_controller.ex`
 
 ## Security considerations
 
-- **Account enumeration**: registration, login, reset, and re-send all return
+- **Account enumeration**: registration, reset-request, and re-send all return
   generic messages and reuse the existing rate-limiting / anti-enumeration
   machinery (`session_controller.ex:326`+). Constant-time password verification
-  (`Bcrypt.no_user_verify/0`) is preserved on the email-not-found branch.
-- **Unique email index** prevents two accounts sharing an email (which would
-  make the login key ambiguous).
-- **Confirmed gate** prevents login before email ownership is proven.
-- **Tokens** (confirm + reset) are single-use, expiring, and never log the user
-  in with elevated state beyond the intended action.
+  (`Bcrypt.no_user_verify/0`) is preserved on the email-not-found branch. The
+  "finish sign-up / verify your email" message is shown **only after a correct
+  password** (Codex #7), so an attacker without the password cannot use it to
+  probe which emails are registered.
+- **Unique `lower(email)` index** prevents two accounts sharing an email
+  (case-insensitively), which would make the login key ambiguous.
+- **`email_verified` gate** prevents login before email ownership is proven;
+  it is independent of the `confirmed` anon-ness flag.
+- **Tokens** (confirm + reset) are single-use, expiring, and **purpose-tagged**;
+  the magic-link login consumer is removed so no token can be replayed to mint a
+  session beyond its intended action.
 - **Secrets** (CF API token) live only in runtime AppSettings, never in the
   repo.
 - **Backend token auth untouched** — agents/CLI keep working; only the human
@@ -252,11 +323,15 @@ new registration flow. The API/CLI bearer path (`api_v1_controller.ex`
 
 ## Testing & gates
 
-- **Unit/integration**: email→uri resolution; unique-index rejection of
-  duplicate email; confirmed-gate blocks unconfirmed login; full
-  register→confirm→login and request-reset→reset→login cycles; provider
-  selection (smtp/cloudflare/logger) chooses the right Swoosh config;
-  bootstrap-admin can log in by email+password with no mail configured.
+- **Unit/integration**: email→uri resolution via `Entity.authenticate/2`
+  (spawn + cap hydration exercised); `lower(email)` unique-index rejection of
+  case-folded duplicate email; `email_verified` gate blocks unverified login
+  while leaving `confirmed`/anon flows untouched; token `purpose` enforced
+  (a `:reset` token rejected at confirm and vice-versa; no login replay); full
+  register→confirm→login and request-reset→reset→login cycles; the CF
+  `smtp_config` preset produces the right Swoosh SMTP options and dev/test uses
+  the Local adapter; bootstrap-admin idempotent repair sets password/email/
+  verified + preserves caps and can log in with no mail configured.
 - **E2E (disposable stack, agent-browser)**: register a new user (link captured
   from the logger adapter) → confirm → log in with email+password → land in
   world showing display name; admin email+password login; forgot-password cycle.
@@ -272,32 +347,42 @@ All PRs target branch `feat/login-email-password`; the lead (Allen) merges the
 branch to `main`. Each PR: implement → subagent adversarial review → full gate
 suite → (admin-)merge into the task branch.
 
-- **PR-1 — email-as-login backend.** Unique-index migration on
-  `entity_profiles.email`; email→uri resolution + `confirmed` gate in the login
-  path; backend tests. Behavior-preserving for existing auth dispatch.
-- **PR-2 — mail transport provider.** Provider abstraction in AppSettings
-  (smtp/cloudflare/logger); CF preset; dev/test logger default;
-  `deliver_confirmation` + `deliver_password_reset`; generalize the
-  `*_configured?` gate.
-- **PR-3 — self-registration.** Registration form + flow (email/password/
-  display name → unconfirmed user → confirmation email → confirm endpoint sets
-  confirmed). Honors `registration_domains`.
-- **PR-4 — password reset.** Request + reset endpoints and forms; one-time
-  tokens; tests.
+- **PR-1 — email-as-login backend.** Migration A (`email_verified` on `users`)
+  + Migration B (`lower(email)` unique index + duplicate preflight); email→uri
+  resolution routed through `Entity.authenticate/2` + `email_verified` gate in
+  the login path; backend tests. Behavior-preserving for existing auth dispatch
+  and untouched for `confirmed`/anon flows.
+- **PR-2 — mail transport.** Fill the existing `smtp_config` with CF's values
+  (no provider enum — CF *is* SMTP) + an optional "fill Cloudflare defaults"
+  helper; dev/test compile-time Local adapter; `deliver_confirmation` +
+  `deliver_password_reset`; keep `smtp_configured?/0` as the prod readiness check.
+- **PR-3 — self-registration.** Migration C (token `purpose`); registration form
+  + flow (email/password/display name → user `confirmed:true,
+  email_verified:false` in the **email-domain-derived workspace** (must pre-exist
+  — provisioned with the domain allow) → confirm email → `/auth/confirm` sets
+  `email_verified`). Honors `registration_domains`.
+- **PR-4 — password reset.** Request + reset endpoints and forms; purpose-tagged
+  one-time tokens; tests.
 - **PR-5 — login page + world identity.** Collapse login UI to email+password
-  (+ links); world identity display shows display_name/email.
-- **PR-6 — bootstrap admin + cleanup + docs.** Admin email+password+confirmed;
-  remove magic-link-as-login routes; update docs/guides; final E2E.
+  (+ "Create account"/"Forgot password" links); world identity display shows
+  display_name/email.
+- **PR-6 — route retirement + bootstrap admin + docs.** Remove
+  `/login/credentials`, the magic-link **login** consumer `/auth/magic/:token`,
+  `/onboarding/workspace`, `/register/complete` and every template/link that
+  references them (enumerated); idempotent admin repair
+  (password/email/`email_verified`, preserve caps); update docs/guides; final
+  E2E.
 
-## Open questions for review
+## Resolved (formerly open) questions
 
-- **O1 — self-registrant workspace + handle derivation.** A user URI needs a
-  workspace and a name. Proposed default (simplest, no interactive picker):
-  derive `handle` from the email local-part (collision-suffixed) and place the
-  user in their **own personal workspace** named from the handle, mirroring the
-  existing per-user pattern (`<username>-default` agent). Alternative: keep a
-  post-confirmation onboarding step where the user picks a workspace/handle.
-  **Recommend the auto-derive default; flagging for your call.**
-- **O2 — admin password source.** Bootstrap admin password from an app-env var
-  (operator-set) vs generated-and-logged-once on first boot. **Recommend
-  app-env with a generated fallback logged once.**
+- **O1 — self-registrant workspace + handle (RESOLVED, Allen 2026-06-22).**
+  Workspace is **derived from the email domain** (`alice@acme.com` → `acme`);
+  `handle` is derived from the email local-part (collision-suffixed). The derived
+  workspace must pre-exist — admin provisions it when allowing the domain in
+  `registration_domains` (Codex #4 constraint respected; no in-path workspace
+  creation). Users can move to a different workspace after entering, via existing
+  membership affordances (initial placement only is in this spec's scope).
+- **O2 — admin password source (RESOLVED, Allen 2026-06-22).** Bootstrap admin
+  password comes from an **app-env variable** (operator-set). If the env var is
+  unset on first boot, generate a random password and log it once (dev
+  convenience); prod sets the env var.
