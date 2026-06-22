@@ -3,7 +3,26 @@
 > **Date:** 2026-06-22 · **Author:** Claude (with the dev) · **Tracking:** task #84
 > **Branch:** `agent-console` (never `main`) · **Base:** `origin/main` @ `17830f1d`
 > **Authoritative inputs:** `docs/superpowers/handoffs/2026-06-22-agent-console-in-world-handoff.md` (Allen-confirmed), `docs/superpowers/notes/2026-06-22-agent-console-backend-research.md`, `docs/guide/world-coordination.md`.
-> **Status:** approved in brainstorm 2026-06-22; this spec drives the Phase-0 demo build only.
+> **Status:** brainstorm-approved 2026-06-22, then **revised after independent review (2026-06-22)** — see §0a. The authority half of the demo is being corrected; the Manage-gate is now a separate blocking proposal.
+> **Companion (blocking):** `docs/superpowers/specs/2026-06-22-agent-console-manage-gate-proposal.md` — the authorization protocol the LIVE half depends on. Needs Allen's sign-off; the MVP assumes it is resolved.
+
+## 0a. Post-review revision (2026-06-22)
+
+An independent review (verified against code) found the first demo's **authority modelling** unfit as a confirmation basis. The IA (cold/hot split) stands; the authority matrix + failure states are being corrected. Recorded here so the doc stays honest ahead of the demo-HTML rework:
+
+- **Manage-gate split out** → `…-manage-gate-proposal.md` (the two-phase protocol: operator Manage gate → reconstruct orchestrator authority server-side → dispatch → dual-principal audit). Blocks the LIVE half; Allen to sign off.
+- **Matrix: split Held vs Needed.** The held authority `{:within_session,S}` is NOT the needed lock — runtime substitutes a concrete session URI as the needed `instance` (`runtime.ex` `resolve_required_cap`). Show two cap columns.
+- **Matrix: two callers.** `authorization ctx.caller` = operator (Phase-1 gate); `execution ctx.caller` = orchestrator (Phase-2 dispatch). A single "caller" column is wrong (review A3).
+- **granter = `granted_by`, with evidence.** Not "always the operator" — a cold op's Template cap may have been granted by owner/admin/rule-configurer. Worked example should use an owner-granted-cap case so cold≠"three coincide" is honest.
+- **Failure states: replace fabricated/misattributed ones** with code-verified reality: `add_managed_member` has no "unknown role" failure (role_name is a NEW alias); `unknown_member_role` belongs to `define_rule_set_rule` receiver resolution (`tools.ex:619`); `remove_member` unknown role → `{:ok, :already_removed}` (idempotent, not a reject); same-URI → `:same_member_uri_use_reconfigure` (`member_template.ex:429`); `define_legend` does NOT validate member_set/bound_rule_set (a gap to label, not a failure to demo); there is no unified `session-not-live` error.
+- **Tag is ungated.** `TemplateTags` has `put/5`/`move/6` (not `tag/3`) and is an **unconditional DB write with no cap gate** — show it as a gap, not a fabricated `Template :write`.
+- **Add the missing cross-boundary ops** to the matrix: instantiate / create-session (cold→hot) and `update_template` / `save_template_as` (hot→cold).
+- **Agent contract: three layers.** Show stored fields / resolved effective contract / source file — do not invent a `soul` data column; surface role/tools/soul as they actually live (flavor extras + referenced config).
+- **Security panel.** cap grant/revoke + API-key status belong in an Agent-detail Security summary, not in team routing; never show secrets; the orchestrator has no `grant_cap` tool.
+- **Read-side authority** matters even for MVP's read-only topology (reads need an authorized path, not raw `Kind.get_slice`/`RuleStore.list`).
+- **capbac.md clarification** queued (pending explicit go): the dispatch path is `ctx.caps` OR `holds_cap(caller)`; "empty caps fails closed" is chokepoint-specific.
+
+The sections below are the ORIGINAL Phase-0 spec; where they conflict with §0a, §0a wins until the demo HTML is reworked to match.
 
 ## 0. Scope of THIS spec
 
