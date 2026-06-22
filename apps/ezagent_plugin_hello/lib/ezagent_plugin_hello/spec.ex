@@ -97,6 +97,30 @@ defmodule EzagentPluginHello.Spec do
   def validate(%{} = node), do: {:error, {:missing_type, node}}
   def validate(other), do: {:error, {:not_a_node, other}}
 
+  @doc """
+  Assemble `sections` (an ordered list of worker-produced page fragments — each a
+  catalog node map, typically a `section`) under one `page` root titled `title`,
+  then validate the whole tree. Returns `{:ok, page}` | `{:error, reason}`.
+
+  This is the Phase-1 fan-out compose step: the orchestrator concatenates each
+  worker's sub-tree into `page.children` and validates ONCE. Because `validate/1`
+  recurses, the assembled page is rejected if ANY worker emitted an out-of-catalog
+  node — the same fail-closed safety as a single generation, so one bad worker
+  never lands a page.
+  """
+  @spec compose_page(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
+  def compose_page(title, sections) when is_binary(title) and is_list(sections) do
+    page = %{
+      "type" => "page",
+      "props" => %{"title" => title},
+      "children" => sections
+    }
+
+    validate(page)
+  end
+
+  def compose_page(_title, _sections), do: {:error, :bad_args}
+
   @doc "A minimal default page used when a hello session has no generated page yet."
   @spec seed() :: map()
   def seed do
