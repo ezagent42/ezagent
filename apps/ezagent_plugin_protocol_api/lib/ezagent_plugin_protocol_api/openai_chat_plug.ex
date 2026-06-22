@@ -37,6 +37,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
       # the API key entity IS the agent (e.g., curl_agent), but for E2E
       # with echo, we match on the echo agent's sender URI.
       echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
+
       case ReplyWaiter.wait_for_reply(request_id, echo_agent, @deadline_ms) do
         {:ok, reply_msg} -> json_response(conn, 200, build_openai_response(request_id, reply_msg))
         {:error, :timeout} -> json_error(conn, 504, "timed out waiting for agent reply")
@@ -52,6 +53,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     # when Content-Type is application/json, so read_body returns "".
     # Use conn.params (which includes body_params after parsing).
     body_params = conn.body_params
+
     if body_params != %Plug.Conn.Unfetched{} and map_size(body_params) > 0 do
       {:ok, body_params}
     else
@@ -90,19 +92,26 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     # Spawn the echo agent if it doesn't exist yet (idempotent).
     # The disposable stack may not have seeded it via after_boot.
     case SpawnRegistry.ensure_live(echo_agent) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, :not_found} ->
         # Agent never created — create it now
         _ = SpawnRegistry.spawn(echo_agent)
-      {:error, _} -> :ok
+
+      {:error, _} ->
+        :ok
     end
 
     target = URI.with_action(session_uri, :session, :join)
+
     cmd = %Ezagent.Cmd{
-      target: target, action: :join,
+      target: target,
+      action: :join,
       args: %{member: echo_agent},
       ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
     }
+
     case Router.dispatch(cmd) do
       {:ok, _} -> :ok
       :ok -> :ok
