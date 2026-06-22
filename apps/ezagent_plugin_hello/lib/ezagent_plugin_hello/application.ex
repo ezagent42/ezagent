@@ -38,6 +38,13 @@ defmodule EzagentPluginHello.Application do
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
 
+  # Phase 2 — register the `session.hello` Template Class so a hello app is
+  # creatable through the substrate's generic Tier-3 create path (the one world's
+  # operator console drives via `session.create`). No world edit — world creates
+  # any registered session type generically.
+  @impl Ezagent.Plugin
+  def template_classes, do: [EzagentPluginHello.Template.HelloSession]
+
   @impl Ezagent.Plugin
   def plugin_info do
     %{

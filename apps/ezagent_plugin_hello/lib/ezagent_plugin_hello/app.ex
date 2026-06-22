@@ -33,7 +33,7 @@ defmodule EzagentPluginHello.App do
            ),
          :ok <-
            spawn_kind(Session, %{uri: session_uri, behaviors: Session.socialware_behaviors()}),
-         :ok <- WorkspaceRegistry.bind(session_uri, workspace),
+         :ok <- bind_workspace(session_uri, workspace),
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
          :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}),
@@ -67,10 +67,24 @@ defmodule EzagentPluginHello.App do
     )
   end
 
+  # Idempotent workspace bind — re-instantiating an existing hello app (the
+  # Template Class create path) hits an already-bound session; that is success,
+  # not an error.
+  defp bind_workspace(session_uri, workspace) do
+    case Ezagent.WorkspaceRegistry.bind(session_uri, workspace) do
+      :ok -> :ok
+      {:error, {:already_registered, _}} -> :ok
+      {:already_registered, _} -> :ok
+      other -> other
+    end
+  end
+
   defp spawn_kind(kind_module, args) do
     case Ezagent.Kind.spawn(kind_module, args) do
       {:ok, _pid} -> :ok
+      # Already-live Kind (re-instantiate of an existing app) is success.
       {:error, {:already_started, _pid}} -> :ok
+      {:error, {:already_registered, _uri}} -> :ok
       {:error, _} = err -> err
     end
   end
