@@ -312,248 +312,248 @@ export function Conversation({
   }
 
   return (
-    <div className="world-conversation-shell" data-world-component="conversation" data-expanded={expanded ? "true" : "false"}>
-      <section className="world-section world-conversation">
-      <div className="world-section-header">
-        <div>
-          <p className="world-eyebrow">Session</p>
-          <h2>Conversation</h2>
-        </div>
-        <div className="world-conversation-tools">
-          {sessions.length > 1 && (
-            <select
-              className="world-session-select"
-              value={sessionUri}
-              onChange={(event) => onSwitch(event.target.value)}
-              aria-label="Switch session"
-            >
-              {sessions.map((session) => (
-                <option key={session.uri} value={session.uri}>
-                  {session.name || session.uri}
-                </option>
-              ))}
-            </select>
-          )}
-          <div className="world-segmented" aria-label="Session view">
-            <button
-              type="button"
-              className={activeView === "chat" ? "is-active" : ""}
-              onClick={() => sessionUri && onSwitchView(sessionUri, "chat")}
-              aria-label="Show chat"
-            >
-              <MessageSquare aria-hidden="true" />
-              Chat
-            </button>
-            <button
-              type="button"
-              className={activeView === "pty" ? "is-active" : ""}
-              onClick={() => sessionUri && onSwitchView(sessionUri, "pty")}
-              aria-label="Show terminal"
-            >
-              <TerminalSquare aria-hidden="true" />
-              PTY
-            </button>
+    <div
+      className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_260px]"
+      data-world-component="conversation"
+      data-expanded={expanded ? "true" : "false"}
+    >
+      <section className="flex max-h-[min(72vh,760px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground">
+        <div className="flex items-center justify-between gap-4 border-b border-border p-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session</p>
+            <h2 className="text-[17px] font-semibold text-foreground">Conversation</h2>
           </div>
-          <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
-            <RotateCcw aria-hidden="true" />
-          </Button>
-          <Button type="button" size="sm" variant="secondary" onClick={() => setDebugOpen((open) => !open)} aria-label="Toggle debug panel">
-            <Bug aria-hidden="true" />
-          </Button>
-          <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
-            <Maximize2 aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
-
-      {activeView === "pty" ? (
-        // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
-        // Conversation, NOT route-mounted and NOT in the layout registry. The
-        // `data-world-subcomponent` marker tells the mount gate this is a
-        // sanctioned parent-owned mount, not a registry bypass.
-        <div data-world-subcomponent="pty_terminal">
-          <PtyTerminalSurface
-            state={{
-              ...state,
-              agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
-            }}
-            onInput={onPtyInput}
-            onResize={onPtyResize}
-            onServerEvent={onServerEvent}
-          />
-        </div>
-      ) : (
-      <>
-        <div className="world-conversation-stream" ref={scrollRef} data-message-count={messages.length}>
-        {oldestCursor && (
-          <div className="world-conversation-older">
-            <Button size="sm" variant="secondary" onClick={loadOlder}>
-              <ChevronUp aria-hidden="true" />
-              Load older
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {sessions.length > 1 && (
+              <select
+                className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground"
+                value={sessionUri}
+                onChange={(event) => onSwitch(event.target.value)}
+                aria-label="Switch session"
+              >
+                {sessions.map((session) => (
+                  <option key={session.uri} value={session.uri}>
+                    {session.name || session.uri}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="inline-flex items-center rounded-lg border border-border bg-muted p-0.5" aria-label="Session view">
+              <button type="button" className={segmentClass(activeView === "chat")} onClick={() => sessionUri && onSwitchView(sessionUri, "chat")} aria-label="Show chat">
+                <MessageSquare aria-hidden="true" className="h-[15px] w-[15px]" />
+                Chat
+              </button>
+              <button type="button" className={segmentClass(activeView === "pty")} onClick={() => sessionUri && onSwitchView(sessionUri, "pty")} aria-label="Show terminal">
+                <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
+                PTY
+              </button>
+            </div>
+            <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
+              <RotateCcw aria-hidden="true" />
+            </Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setDebugOpen((open) => !open)} aria-label="Toggle debug panel">
+              <Bug aria-hidden="true" />
+            </Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
+              <Maximize2 aria-hidden="true" />
             </Button>
           </div>
-        )}
+        </div>
 
-        {messages.length === 0 ? (
-          <p className="world-conversation-empty">
-            No turns in this session yet. Send the first message to start the transcript.
-          </p>
+        {activeView === "pty" ? (
+          // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
+          // Conversation, NOT route-mounted and NOT in the layout registry. The
+          // `data-world-subcomponent` marker tells the mount gate this is a
+          // sanctioned parent-owned mount, not a registry bypass.
+          <div data-world-subcomponent="pty_terminal">
+            <PtyTerminalSurface
+              state={{
+                ...state,
+                agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
+              }}
+              onInput={onPtyInput}
+              onResize={onPtyResize}
+              onServerEvent={onServerEvent}
+            />
+          </div>
         ) : (
-          messages.map((message) => {
-            const mine = message.sender === callerUri
-            const kind = message.sender_kind || "other"
-            return (
-              <div
-                key={message.id}
-                className="world-message"
-                data-msg-id={message.id}
-                data-sender-kind={kind}
-                data-mine={mine ? "true" : "false"}
-              >
-                <span className="world-message-kind">{kindLabel(kind, mine)}</span>
-                <div className="world-message-head">
-                  <span className="world-message-sender">{message.sender_display || message.sender}</span>
-                  {message.at && <span className="world-message-at">{formatAt(message.at)}</span>}
+          <>
+            <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-card px-[18px] py-5" ref={scrollRef} data-message-count={messages.length}>
+              {oldestCursor && (
+                <div className="flex justify-center pb-0.5">
+                  <Button size="sm" variant="secondary" onClick={loadOlder}>
+                    <ChevronUp aria-hidden="true" />
+                    Load older
+                  </Button>
                 </div>
-                {message.text && <p className="world-message-text">{message.text}</p>}
-                {message.attachments && message.attachments.length > 0 && (
-                  <ul className="world-message-attachments">
-                    {message.attachments.map((attachment, index) => (
-                      <li key={`${message.id}-att-${index}`}>
-                        {attachment.href ? (
-                          <a href={attachment.href} className="world-attachment-link">
-                            <Paperclip aria-hidden="true" />
-                            {attachment.name}
-                          </a>
-                        ) : (
-                          attachment.name
+              )}
+
+              {messages.length === 0 ? (
+                <p className="m-auto max-w-[38ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">
+                  No turns in this session yet. Send the first message to start the transcript.
+                </p>
+              ) : (
+                messages.map((message) => {
+                  const mine = message.sender === callerUri
+                  const kind = message.sender_kind || "other"
+                  return (
+                    <div
+                      key={message.id}
+                      className={bubbleClass(mine, kind)}
+                      data-msg-id={message.id}
+                      data-sender-kind={kind}
+                      data-mine={mine ? "true" : "false"}
+                    >
+                      <span className={bubbleKindClass(mine, kind)}>{kindLabel(kind, mine)}</span>
+                      <div className="flex items-baseline justify-between gap-3.5">
+                        <span className={mine ? "text-[12.5px] font-semibold text-primary-foreground" : "text-[12.5px] font-semibold text-foreground"}>
+                          {message.sender_display || message.sender}
+                        </span>
+                        {message.at && (
+                          <span className={mine ? "whitespace-nowrap text-[11px] tabular-nums text-primary-foreground/80" : "whitespace-nowrap text-[11px] tabular-nums text-muted-foreground"}>
+                            {formatAt(message.at)}
+                          </span>
                         )}
+                      </div>
+                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.attachments && message.attachments.length > 0 && (
+                        <ul className="m-0 mt-0.5 flex list-none flex-wrap gap-1.5 p-0">
+                          {message.attachments.map((attachment, index) => (
+                            <li
+                              key={`${message.id}-att-${index}`}
+                              className={mine ? "rounded-full bg-white/20 px-1.5 py-0.5 font-mono text-[11px]" : "rounded-full bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-[11px]"}
+                            >
+                              {attachment.href ? (
+                                <a href={attachment.href} className="inline-flex items-center gap-1 underline underline-offset-2">
+                                  <Paperclip aria-hidden="true" className="h-3 w-3" />
+                                  {attachment.name}
+                                </a>
+                              ) : (
+                                attachment.name
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            <form className="flex items-end gap-2.5 border-t border-border bg-card p-4" onSubmit={submit}>
+              <div className="relative flex-1">
+                {mentionMatches.length > 0 && (
+                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="Mention a member">
+                    {mentionMatches.map((member) => (
+                      <li key={member.uri}>
+                        <button
+                          type="button"
+                          className="flex w-full items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
+                          onMouseDown={(event) => {
+                            // mousedown (not click) so the textarea doesn't blur first
+                            event.preventDefault()
+                            insertMention(member)
+                          }}
+                        >
+                          <span className="font-mono text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300">@{uriSegment(member.uri)}</span>
+                          {member.display_name && member.display_name !== uriSegment(member.uri) && (
+                            <span className="text-xs text-muted-foreground">{member.display_name}</span>
+                          )}
+                        </button>
                       </li>
                     ))}
                   </ul>
                 )}
-              </div>
-            )
-          })
-        )}
-        </div>
-
-        <form className="world-composer" onSubmit={submit}>
-        <div className="world-composer-field">
-          {mentionMatches.length > 0 && (
-            <ul className="world-mention-menu" role="listbox" aria-label="Mention a member">
-              {mentionMatches.map((member) => (
-                <li key={member.uri}>
-                  <button
-                    type="button"
-                    className="world-mention-option"
-                    onMouseDown={(event) => {
-                      // mousedown (not click) so the textarea doesn't blur first
+                <textarea
+                  ref={inputRef}
+                  className="max-h-[180px] min-h-[46px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                  value={text}
+                  onChange={(event) => onComposerChange(event.target.value, event.target.selectionStart)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && mentionQuery !== null) {
+                      setMentionQuery(null)
+                      return
+                    }
+                    if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault()
-                      insertMention(member)
-                    }}
-                  >
-                    <span className="world-mention-handle">@{uriSegment(member.uri)}</span>
-                    {member.display_name && member.display_name !== uriSegment(member.uri) && (
-                      <span className="world-mention-name">{member.display_name}</span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <textarea
-            ref={inputRef}
-            className="world-composer-input"
-            value={text}
-            onChange={(event) => onComposerChange(event.target.value, event.target.selectionStart)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && mentionQuery !== null) {
-                setMentionQuery(null)
-                return
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault()
-                submit(event)
-              }
-            }}
-            placeholder="Type a message…  @ to mention"
-            rows={2}
-            aria-label="Message"
-          />
-          {pending.length > 0 && (
-            <ul className="world-composer-chips" aria-label="Pending attachments">
-              {pending.map((p) => (
-                <li key={p.id} className="world-composer-chip">
+                      submit(event)
+                    }
+                  }}
+                  placeholder="Type a message…  @ to mention"
+                  rows={2}
+                  aria-label="Message"
+                />
+                {pending.length > 0 && (
+                  <ul className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0" aria-label="Pending attachments">
+                    {pending.map((p) => (
+                      <li key={p.id} className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.06] py-0.5 pl-2 pr-1.5 text-xs text-foreground">
+                        <Paperclip aria-hidden="true" className="h-3 w-3" />
+                        <span className="max-w-[18ch] overflow-hidden text-ellipsis whitespace-nowrap">{p.name}</span>
+                        <button
+                          type="button"
+                          className="inline-flex rounded-full p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+                          aria-label={`Remove ${p.name}`}
+                          onClick={() => removePending(p.id)}
+                        >
+                          <X aria-hidden="true" className="h-3 w-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {uploadError && <p className="m-0 mt-1.5 text-xs text-destructive" role="alert">{uploadError}</p>}
+              </div>
+              <div className="flex items-end gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => uploadFiles(Array.from(event.target.files || []))}
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={uploading || pending.length >= MAX_FILES}
+                  onClick={() => fileRef.current?.click()}
+                  aria-label="Attach files"
+                >
                   <Paperclip aria-hidden="true" />
-                  <span className="world-composer-chip-name">{p.name}</span>
-                  <button
-                    type="button"
-                    className="world-composer-chip-remove"
-                    aria-label={`Remove ${p.name}`}
-                    onClick={() => removePending(p.id)}
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {uploadError && <p className="world-composer-error" role="alert">{uploadError}</p>}
-        </div>
-        <div className="world-composer-actions">
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            className="world-composer-file"
-            onChange={(event) => uploadFiles(Array.from(event.target.files || []))}
-            aria-hidden="true"
-            tabIndex={-1}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            disabled={uploading || pending.length >= MAX_FILES}
-            onClick={() => fileRef.current?.click()}
-            aria-label="Attach files"
-          >
-            <Paperclip aria-hidden="true" />
-          </Button>
-          <Button type="submit" size="sm" disabled={uploading || (!text.trim() && pending.length === 0)}>
-            <Send aria-hidden="true" />
-            Send
-          </Button>
-        </div>
-        </form>
-      </>
-      )}
+                </Button>
+                <Button type="submit" size="sm" disabled={uploading || (!text.trim() && pending.length === 0)}>
+                  <Send aria-hidden="true" />
+                  Send
+                </Button>
+              </div>
+            </form>
+          </>
+        )}
 
-      {debugOpen && (
-        <pre className="world-debug-panel">{JSON.stringify({sessionUri, activeView, members: members.length, messages: messages.length}, null, 2)}</pre>
-      )}
+        {debugOpen && (
+          <pre className="m-0 overflow-auto border-t border-border bg-[#111827] px-4 py-3 font-mono text-xs text-[#d1d5db]">
+            {JSON.stringify({sessionUri, activeView, members: members.length, messages: messages.length}, null, 2)}
+          </pre>
+        )}
       </section>
 
-      <aside className="world-section world-members" aria-label="Session members">
-        <div className="world-section-header world-section-header-compact">
+      <aside className="flex max-h-[min(72vh,760px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground" aria-label="Session members">
+        <div className="flex items-start justify-between gap-2.5 border-b border-border px-4 py-3">
           <div>
-            <p className="world-eyebrow">Members</p>
-            <h2>{members.length}</h2>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
+            <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>
           </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setInviteOpen(true)}
-            aria-label="Invite a member"
-          >
+          <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)} aria-label="Invite a member">
             <UserPlus aria-hidden="true" />
             Invite
           </Button>
         </div>
         {inviteOpen && (
           <form
-            className="world-invite"
+            className="flex flex-col gap-2 border-b border-border px-4 py-2.5"
             onSubmit={(event) => {
               event.preventDefault()
               const member = inviteValue.trim()
@@ -563,18 +563,18 @@ export function Conversation({
               setInviteOpen(false)
             }}
           >
-            <label className="world-invite-label" htmlFor="world-invite-input">
+            <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-input">
               Invite by entity URI
             </label>
             <input
               id="world-invite-input"
-              className="world-invite-input"
+              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-foreground"
               value={inviteValue}
               onChange={(event) => setInviteValue(event.target.value)}
               placeholder="entity://workspace/user/name"
               autoFocus
             />
-            <div className="world-invite-actions">
+            <div className="flex gap-2">
               <Button type="submit" size="sm" disabled={!inviteValue.trim()}>
                 Invite
               </Button>
@@ -592,24 +592,35 @@ export function Conversation({
             </div>
           </form>
         )}
-        <ul className="world-members-list">
+        <ul className="m-0 flex list-none flex-col gap-0.5 overflow-y-auto p-2">
           {members.length === 0 ? (
-            <li className="world-members-empty">No members yet.</li>
+            <li className="px-2 py-2.5 text-[13px] text-muted-foreground">No members yet.</li>
           ) : (
             members.map((member) => (
               <li
                 key={member.uri}
-                className="world-member"
+                className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted"
                 data-kind={member.kind || "other"}
                 data-online={member.online ? "true" : "false"}
               >
                 <span
-                  className="world-member-dot"
-                  data-online={member.online ? "true" : "false"}
+                  className={
+                    member.online
+                      ? "h-2 w-2 flex-none rounded-full bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
+                      : "h-2 w-2 flex-none rounded-full bg-border"
+                  }
                   aria-hidden="true"
                 />
-                <span className="world-member-name">{member.display_name || member.uri}</span>
-                <span className="world-member-kind">{member.kind || "other"}</span>
+                <span
+                  className={
+                    member.kind === "agent"
+                      ? "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-foreground"
+                      : "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground"
+                  }
+                >
+                  {member.display_name || member.uri}
+                </span>
+                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
                 {member.kind === "agent" && (
                   <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
                     <TerminalSquare aria-hidden="true" />
@@ -620,22 +631,23 @@ export function Conversation({
           )}
         </ul>
 
-        <div className="world-routing-panel">
-          <div className="world-section-header world-section-header-compact">
+        <div className="border-t border-border pt-3">
+          <div className="flex items-start justify-between gap-2.5 px-4 pb-1">
             <div>
-              <p className="world-eyebrow">Routing</p>
-              <h2>{routingRules.length}</h2>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routing</p>
+              <h2 className="text-[17px] font-semibold text-foreground">{routingRules.length}</h2>
             </div>
-            <Route aria-hidden="true" />
+            <Route aria-hidden="true" className="h-[15px] w-[15px] text-muted-foreground" />
           </div>
-          <form className="world-routing-form" id="world-session-routing-form" onSubmit={submitRule}>
-            <select value={ruleMatcherType} onChange={(event) => setRuleMatcherType(event.target.value)} aria-label="Matcher type">
+          <form className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] gap-2 p-2" id="world-session-routing-form" onSubmit={submitRule}>
+            <select className={routingFieldClass} value={ruleMatcherType} onChange={(event) => setRuleMatcherType(event.target.value)} aria-label="Matcher type">
               <option value="always">Always</option>
               <option value="mention">Mention</option>
               <option value="from">From</option>
               <option value="text_contains">Text contains</option>
             </select>
             <input
+              className={routingFieldClass}
               value={ruleMatcherArg}
               onChange={(event) => setRuleMatcherArg(event.target.value)}
               placeholder={ruleMatcherType === "always" ? "No matcher argument" : "matcher argument"}
@@ -643,25 +655,36 @@ export function Conversation({
               aria-label="Matcher argument"
             />
             <input
+              className={`${routingFieldClass} col-span-2`}
               value={ruleReceivers}
               onChange={(event) => setRuleReceivers(event.target.value)}
               placeholder="entity://system/user/admin"
               aria-label="Receivers"
             />
-            <Button type="submit" size="sm" disabled={!ruleReceivers.trim()}>
-              <Plus aria-hidden="true" />
-              Add
-            </Button>
+            <div className="col-span-2">
+              <Button type="submit" size="sm" disabled={!ruleReceivers.trim()}>
+                <Plus aria-hidden="true" />
+                Add
+              </Button>
+            </div>
           </form>
-          <ul className="world-routing-list">
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-2">
             {routingRules.length === 0 ? (
-              <li className="world-routing-empty">No session routing rules.</li>
+              <li className="px-0 py-2 text-[13px] text-muted-foreground">No session routing rules.</li>
             ) : (
               routingRules.map((rule) => (
-                <li key={`${rule.table}-${rule.id}`} className="world-routing-rule" data-enabled={rule.enabled ? "true" : "false"}>
-                  <div>
-                    <strong>{rule.matcher || `Rule ${rule.id}`}</strong>
-                    <span>{rule.receivers_text || (rule.receivers || []).join(", ")}</span>
+                <li
+                  key={`${rule.table}-${rule.id}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border p-2 data-[enabled=false]:opacity-60"
+                  data-enabled={rule.enabled ? "true" : "false"}
+                >
+                  <div className="min-w-0">
+                    <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] font-semibold text-foreground">
+                      {rule.matcher || `Rule ${rule.id}`}
+                    </strong>
+                    <span className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground">
+                      {rule.receivers_text || (rule.receivers || []).join(", ")}
+                    </span>
                   </div>
                   <Button
                     type="button"
@@ -686,6 +709,39 @@ export function Conversation({
       </aside>
     </div>
   )
+}
+
+// Shared shadcn token class strings for the conversation surface.
+const routingFieldClass = "h-[34px] min-w-0 rounded-md border border-border bg-card px-2.5 text-[13px] text-foreground"
+
+function segmentClass(active: boolean) {
+  const base = "inline-flex min-h-[30px] items-center gap-1.5 rounded-md px-2.5 text-[13px] font-semibold"
+  return active ? `${base} bg-card text-foreground shadow-sm` : `${base} text-muted-foreground`
+}
+
+// Message bubble styling — the viewer's own turns are the one bold element
+// (filled accent, right-aligned); agent turns get a tinted, accent-edged,
+// mono-body card; other humans get a quiet neutral card.
+function bubbleClass(mine: boolean, kind: string) {
+  const base = "flex max-w-[78%] flex-col gap-1.5 rounded-[10px] border px-3 py-2.5 shadow-sm"
+  if (mine) return `${base} self-end border-primary bg-primary text-primary-foreground`
+  if (kind === "agent")
+    return `${base} self-start border-emerald-300 border-l-[3px] border-l-emerald-600 bg-emerald-50 dark:border-emerald-900 dark:border-l-emerald-500 dark:bg-emerald-950/40`
+  return `${base} self-start border-border bg-card`
+}
+
+function bubbleKindClass(mine: boolean, kind: string) {
+  const base = "font-mono text-[10px] font-semibold uppercase tracking-wider"
+  if (mine) return `${base} text-primary-foreground`
+  if (kind === "agent") return `${base} text-emerald-700 dark:text-emerald-300`
+  return `${base} text-muted-foreground`
+}
+
+function bubbleTextClass(mine: boolean, kind: string) {
+  const base = "m-0 whitespace-pre-wrap break-words leading-relaxed"
+  if (mine) return `${base} text-sm text-primary-foreground`
+  if (kind === "agent") return `${base} font-mono text-[13px] text-foreground`
+  return `${base} text-sm text-foreground`
 }
 
 function formatAt(at: string) {
