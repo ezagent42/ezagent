@@ -520,32 +520,34 @@ Flavor names are operator-convention. `cc_*` for Claude Code agents, `curl_*` fo
 
 **Promoted from "SPEC v4 / Phase 10 future work" to in-scope by Allen 2026-05-21** (SPEC amendment 2 in `docs/superpowers/specs/2026-05-21-phase-9-tenant-isolation-design.md`).
 
-Phase 9 extends the 2-segment authority rule (§5.1) to 3-segment for **per-tenant schemes**:
+> **⚠ Correction (2026-06-22, out-of-scope of task #84):** this section was transcribed **type-first** (`<scheme>://<type>/<workspace>/<name>`), which contradicts the code. The implementation is **workspace-FIRST** — `apps/ezagent_core/lib/ezagent/uri.ex` `per_tenant(scheme, workspace, type, name)` builds `"#{scheme}://#{workspace}/#{type}/#{name}"`, and `workspace_name!/1` reads segment 1 (this section's own rationale below — "extracts workspace at O(1)" — only holds workspace-first). The shape line, table, and per-scheme bullets below are corrected. **uri.ex is authoritative; flagged for Allen to confirm this normative note.**
 
-    <scheme>://<type>/<workspace>/<name>
+Phase 9 extends the 2-segment authority rule (§5.1) to 3-segment for **per-tenant schemes** (workspace FIRST):
 
-| Scheme | SPEC v2 (Phase 7) | SPEC v3 (Phase 9) |
+    <scheme>://<workspace>/<type>/<name>
+
+| Scheme | SPEC v2 (Phase 7) | SPEC v3 (Phase 9, workspace-first) |
 |--------|--------------------|--------------------|
-| `entity://` | `entity://user/admin` | `entity://user/default/admin` |
-| `session://` | `session://default/main` | `session://default/default/main` |
-| `template://` | `template://agent/cc-orch` | `template://agent/default/cc-orch` |
-| `resource://` | `resource://uploads/x` | `resource://uploads/default/x` |
+| `entity://` | `entity://user/admin` | `entity://default/user/admin` |
+| `session://` | `session://main/x` | `session://default/main/x` |
+| `template://` | `template://agent/cc-orch` | `template://default/agent/cc-orch` |
+| `resource://` | `resource://uploads/x` | `resource://default/uploads/x` |
 | `workspace://` | `workspace://default` | **unchanged** (workspace IS tenant root) |
 | `system://` | `system://routing/default` | **unchanged** (cross-cutting) |
 
-For `session://`:
-- First path segment is template name (unchanged from SPEC v2's `session://<template>/<name>` shape — that "template" was always the host-axis value)
-- Second segment is workspace name (new)
+For `session://` (`session(workspace, template, name)`):
+- First segment is workspace name
+- Second segment is the template name the session was instantiated from (the host-axis value)
 - Third segment is session instance name
 
-For `template://`:
-- First: template type (`agent`, `session`)
-- Second: workspace where the template lives
+For `template://` (`template(workspace, type, name)`):
+- First: workspace where the template lives
+- Second: template type (`agent`, `session`)
 - Third: template name
 
 For `resource://`:
-- First: resource kind (`uploads`, etc.)
-- Second: owning workspace
+- First: owning workspace
+- Second: resource kind (`uploads`, etc.)
 - Third: resource instance
 
 **Why URI-carries-workspace (Option A) not envelope-context (Option B)**:
