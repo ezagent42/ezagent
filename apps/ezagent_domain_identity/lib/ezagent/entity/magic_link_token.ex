@@ -18,6 +18,11 @@ defmodule Ezagent.Entity.MagicLinkToken do
     field(:token_hash, :binary)
     field(:expires_at, :utc_datetime_usec)
     field(:consumed_at, :utc_datetime_usec)
+    # task #87 — one-time tokens are purpose-tagged ("login" | "confirm" |
+    # "reset"). Each consumer enforces its own purpose so a confirm/reset token
+    # cannot be replayed at the magic-link login endpoint (which accepts only
+    # "login"). Default "login" keeps existing callers working.
+    field(:purpose, :string, default: "login")
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
 
@@ -26,8 +31,10 @@ defmodule Ezagent.Entity.MagicLinkToken do
   @doc """
   Mint a token for `email`. Returns `{:ok, raw_token}`.
 
-  Opts: `:ttl_seconds` (default 900; negative values produce an
-  already-expired token, for tests).
+  Opts:
+  - `:ttl_seconds` (default 900; negative values produce an already-expired
+    token, for tests).
+  - `:purpose` (default "login"; one of "login" | "confirm" | "reset").
   """
   @spec mint(String.t(), keyword()) :: {:ok, String.t()}
   def mint(email, opts \\ []) when is_binary(email) do
@@ -38,7 +45,8 @@ defmodule Ezagent.Entity.MagicLinkToken do
     |> Ecto.Changeset.change(%{
       email: String.downcase(String.trim(email)),
       token_hash: hash(raw),
-      expires_at: DateTime.add(DateTime.utc_now(), ttl, :second)
+      expires_at: DateTime.add(DateTime.utc_now(), ttl, :second),
+      purpose: Keyword.get(opts, :purpose, "login")
     })
     |> Repo.insert!()
 
@@ -51,11 +59,21 @@ defmodule Ezagent.Entity.MagicLinkToken do
 
   Errors: `:invalid` (unknown), `:expired`, `:consumed`.
   """
-  @spec consume(String.t()) :: {:ok, String.t()} | {:error, :invalid | :expired | :consumed}
-  def consume(raw_token) when is_binary(raw_token) do
+  @spec consume(String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :invalid | :expired | :consumed | :wrong_purpose}
+  def consume(raw_token, expected_purpose \\ "login")
+
+  def consume(raw_token, expected_purpose)
+      when is_binary(raw_token) and is_binary(expected_purpose) do
     case Repo.get_by(__MODULE__, token_hash: hash(raw_token)) do
       nil ->
         {:error, :invalid}
+
+      # task #87 — reject a token whose purpose differs from what this consumer
+      # expects (e.g. a :reset token replayed at the magic-link login endpoint).
+      # Checked BEFORE consuming so a mismatched token is not burned.
+      %__MODULE__{purpose: p} when p != expected_purpose ->
+        {:error, :wrong_purpose}
 
       %__MODULE__{consumed_at: %DateTime{}} ->
         {:error, :consumed}
@@ -73,7 +91,7 @@ defmodule Ezagent.Entity.MagicLinkToken do
     end
   end
 
-  def consume(_), do: {:error, :invalid}
+  def consume(_, _), do: {:error, :invalid}
 
   @doc """
   PEEK at a token without consuming it. Returns the email + a status:
