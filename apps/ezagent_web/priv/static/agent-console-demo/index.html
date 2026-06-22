@@ -206,61 +206,61 @@
 const WS = "workspace://acme";
 
 const AGENT_TEMPLATES = [
-  {uri:"template://agent/acme/doorman", flavor:"cc", cwd:"/srv/acme/storefront",
+  {uri:"template://acme/agent/doorman", flavor:"cc", cwd:"/srv/acme/storefront",
    config_dir:".claude/doorman", settings_path:".claude/doorman/settings.json",
    mcp_config_path:".claude/doorman/mcp.json",
    default_caps:[{kind:"session",behavior:"Session",action:"send",instance:":any",ws:"acme"}],
    desired_skills:["greet","triage-intake"]},
-  {uri:"template://agent/acme/triage", flavor:"cc", cwd:"/srv/acme/storefront",
+  {uri:"template://acme/agent/triage", flavor:"cc", cwd:"/srv/acme/storefront",
    config_dir:".claude/triage", settings_path:".claude/triage/settings.json", mcp_config_path:null,
    default_caps:[], desired_skills:["classify","route"]},
-  {uri:"template://agent/acme/probe", flavor:"curl", cwd:"-", config_dir:null,
+  {uri:"template://acme/agent/probe", flavor:"curl", cwd:"-", config_dir:null,
    settings_path:null, mcp_config_path:null, default_caps:[], desired_skills:[]},
-  {uri:"template://agent/acme/notetaker", flavor:"codex", cwd:"/srv/acme", config_dir:null,
+  {uri:"template://acme/agent/notetaker", flavor:"codex", cwd:"/srv/acme", config_dir:null,
    settings_path:null, mcp_config_path:null, default_caps:[], desired_skills:["summarize"]},
 ];
 
 const SESSION_TEMPLATES = [
-  {uri:"template://session/acme/storefront@a1b2c3d4", name:"storefront", tag:"current",
+  {uri:"template://acme/session/storefront@a1b2c3d4", name:"storefront", tag:"current",
    description:"导购前台 + 三角分诊 team", public_view:true,
-   orchestrator_template_uri:"template://agent/acme/cc_orchestrator",
+   orchestrator_template_uri:"template://acme/agent/cc_orchestrator",
    members:[
-     {role_name:"greeter", source:"template://agent/acme/doorman"},
-     {role_name:"triage", source:"template://agent/acme/triage"},
-     {role_name:"escalation", source:"template://agent/acme/notetaker"},
+     {role_name:"greeter", source:"template://acme/agent/doorman"},
+     {role_name:"triage", source:"template://acme/agent/triage"},
+     {role_name:"escalation", source:"template://acme/agent/notetaker"},
    ],
    legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:"collapse"}],
    routing_rules:3},
-  {uri:"template://session/acme/storefront@7e6d5c4b", name:"storefront", tag:"v3-draft",
+  {uri:"template://acme/session/storefront@7e6d5c4b", name:"storefront", tag:"v3-draft",
    description:"storefront 草稿（加了 escalation 自动转人工）", public_view:false,
-   orchestrator_template_uri:"template://agent/acme/cc_orchestrator",
+   orchestrator_template_uri:"template://acme/agent/cc_orchestrator",
    members:[
-     {role_name:"greeter", source:"template://agent/acme/doorman"},
-     {role_name:"triage", source:"template://agent/acme/triage"},
-     {role_name:"escalation", source:"template://agent/acme/notetaker"},
-     {role_name:"human_desk", source:"template://agent/acme/human_proxy"},
+     {role_name:"greeter", source:"template://acme/agent/doorman"},
+     {role_name:"triage", source:"template://acme/agent/triage"},
+     {role_name:"escalation", source:"template://acme/agent/notetaker"},
+     {role_name:"human_desk", source:"template://acme/agent/human_proxy"},
    ],
    legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:"collapse"}],
    routing_rules:5},
 ];
 
 const LIVE_SESSIONS = [
-  {uri:"session://acme/storefront-7f3a", name:"storefront-7f3a", alive:true,
-   from_template:"template://session/acme/storefront@a1b2c3d4",
-   orchestrator:"entity://agent/acme/cc_orchestrator-7f3a", members:3},
-  {uri:"session://acme/storefront-91c0", name:"storefront-91c0", alive:true,
-   from_template:"template://session/acme/storefront@a1b2c3d4",
-   orchestrator:"entity://agent/acme/cc_orchestrator-91c0", members:3},
+  {uri:"session://acme/storefront/7f3a", name:"storefront-7f3a", alive:true,
+   from_template:"template://acme/session/storefront@a1b2c3d4",
+   orchestrator:"entity://acme/agent/cc_orchestrator-7f3a", members:3},
+  {uri:"session://acme/storefront/91c0", name:"storefront-91c0", alive:true,
+   from_template:"template://acme/session/storefront@a1b2c3d4",
+   orchestrator:"entity://acme/agent/cc_orchestrator-91c0", members:3},
 ];
 
 const SELECTED_SESSION = LIVE_SESSIONS[0].uri;
 
 const TEAM_MEMBERS = [
-  {role_name:"greeter", uri:"entity://agent/acme/doorman-7f3a", source:"template://agent/acme/doorman",
+  {role_name:"greeter", uri:"entity://acme/agent/doorman-7f3a", source:"template://acme/agent/doorman",
    in_session_template:true, provenance:"managed(orchestrator)", alive:true},
-  {role_name:"triage", uri:"entity://agent/acme/triage-7f3a", source:"template://agent/acme/triage",
+  {role_name:"triage", uri:"entity://acme/agent/triage-7f3a", source:"template://acme/agent/triage",
    in_session_template:true, provenance:"managed(orchestrator)", alive:true},
-  {role_name:"escalation", uri:"entity://agent/acme/notetaker-7f3a", source:"template://agent/acme/notetaker",
+  {role_name:"escalation", uri:"entity://acme/agent/notetaker-7f3a", source:"template://acme/agent/notetaker",
    in_session_template:true, provenance:"managed(orchestrator)", alive:true},
 ];
 
@@ -280,9 +280,9 @@ const PROMPT_TEMPLATES = [
 ];
 
 const MIGRATE_DIFF = {
-  target:"template://session/acme/storefront@7e6d5c4b",
-  added:[{role:"human_desk", source:"template://agent/acme/human_proxy"}],
-  updated:[{role:"escalation", from:"template://agent/acme/notetaker", to:"template://agent/acme/notetaker@v2"}],
+  target:"template://acme/session/storefront@7e6d5c4b",
+  added:[{role:"human_desk", source:"template://acme/agent/human_proxy"}],
+  updated:[{role:"escalation", from:"template://acme/agent/notetaker", to:"template://acme/agent/notetaker@v2"}],
   removed:[],
   ledger:[
     {role:"greeter", status:"unchanged"},
@@ -293,14 +293,14 @@ const MIGRATE_DIFF = {
 };
 
 const AUDIT = [
-  {ts:"14:02:11", op:"add_managed_member", operator:"entity://user/acme/alice",
-   exec:"entity://agent/acme/cc_orchestrator-7f3a", live:"hot", result:"ok", note:"role=human_desk"},
-  {ts:"13:58:40", op:"SessionTemplate.fork", operator:"entity://user/acme/alice",
-   exec:"entity://user/acme/alice", live:"cold", result:"ok", note:"@a1b2c3d4 → @7e6d5c4b"},
-  {ts:"13:55:02", op:"define_prompt_template", operator:"entity://user/acme/alice",
-   exec:"entity://agent/acme/cc_orchestrator-7f3a", live:"hot", result:"reject",
+  {ts:"14:02:11", op:"add_managed_member", operator:"entity://acme/user/alice",
+   exec:"entity://acme/agent/cc_orchestrator-7f3a", live:"hot", result:"ok", note:"role=human_desk"},
+  {ts:"13:58:40", op:"SessionTemplate.fork", operator:"entity://acme/user/alice",
+   exec:"entity://acme/user/alice", live:"cold", result:"ok", note:"@a1b2c3d4 → @7e6d5c4b"},
+  {ts:"13:55:02", op:"define_prompt_template", operator:"entity://acme/user/alice",
+   exec:"entity://acme/agent/cc_orchestrator-7f3a", live:"hot", result:"reject",
    note:"body_placeholder_required"},
-  {ts:"13:40:18", op:"add_managed_member", operator:"entity://user/acme/bob",
+  {ts:"13:40:18", op:"add_managed_member", operator:"entity://acme/user/bob",
    exec:"—", live:"hot", result:"fail-closed", note:"Manage cap absent — 操作拒绝，operator 身份保留"},
 ];
 
@@ -310,19 +310,19 @@ const AUDIT = [
    (= granted_by, with evidence), code-VERIFIED failure states, audit, optional gap.
    COLD: caller=execCaller=operator, no gate. HOT: authCaller=operator (Manage gate),
    execCaller=orchestrator (under reconstructed {:within_session,S}).  */
-const SESS = "session://acme/storefront-7f3a";
+const SESS = "session://acme/storefront/7f3a";
 const MATRIX = [
   // ---------- COLD — operator's own Template authority ----------
-  {op:"List templates", fn:"Orchestrator.Tools.list_templates/2", file:"tools/templates.ex", temp:"cold",
-   gate:null, held:{kind:":session_template/:agent",behavior:"Template",action:":read",instance:":any",ws:"acme"},
-   needed:{kind:":session_template/:agent",behavior:"Template",action:":read",instance:"具体模板 uri",ws:"acme"},
-   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by（owner/admin/self）",
-   fail:["CapBAC 过滤：只返回 caller 有读 cap 的模板"], audit:"operator", gap:null},
-  {op:"Create SessionTemplate (root)", fn:"SessionTemplate.create/3", file:"entity/session_template.ex", temp:"cold",
-   gate:null, held:{kind:":session_template",behavior:"Template",action:":write",instance:":any",ws:"acme"},
-   needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new uri",ws:"acme(必填)"},
-   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
-   fail:["workspace 必填","cap preflight 不过 → :unauthorized","创建后给 owner 授 Template cap"], audit:"operator", gap:null},
+  {op:"List templates", fn:"Orchestrator.Tools.list_templates/2", file:"tools/templates.ex:209", temp:"cold",
+   gate:null, held:{kind:":agent_template/:session_template",behavior:"Template",action:":any",instance:":any",ws:"acme"},
+   needed:{kind:":agent_template/:session_template",behavior:"Template",action:":any",instance:"代表性模板 uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的真实 entity granted_by",
+   fail:["has_template_cap? 用代表性 URI + matches?；action 预 action-axis ≈ :any（templates.ex:209）","CapBAC 过滤：只返回 caller 有 cap 的模板"], audit:"operator", gap:null},
+  {op:"Create SessionTemplate (root)", fn:"SessionTemplate.create/3", file:"entity/session_template.ex:633", temp:"cold",
+   gate:null, held:{kind:":session_template",behavior:"Template",action:":any",instance:":any",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":any（preflight 预 action-axis）",instance:"代表性 uri",ws:"acme(必填)"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的真实 entity granted_by",
+   fail:["workspace 必填","require_session_template_cap 不过 → :unauthorized（action 检查是 :any，session_template.ex:633）","创建后给 owner 授 Template cap"], audit:"operator", gap:null},
   {op:"Fork SessionTemplate", fn:"SessionTemplate.fork/3", file:"entity/session_template.ex", temp:"cold",
    gate:null, held:{kind:":session_template",behavior:"Template",action:":fork",instance:":any",ws:"acme"},
    needed:{kind:":session_template",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
@@ -334,87 +334,87 @@ const MATRIX = [
    authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
    fail:["HIGH-9：线程 caller caps，无 admin fallback","内容寻址：同内容同 hash，不可变"], audit:"operator", gap:null},
   {op:"Fork AgentTemplate", fn:"AgentTemplate.fork/3", file:"entity/agent_template.ex", temp:"cold",
-   gate:null, held:{kind:":agent",behavior:"Template",action:":fork",instance:":any",ws:"acme"},
-   needed:{kind:":agent",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
-   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   gate:null, held:{kind:":agent_template",behavior:"Template",action:":fork",instance:":any",ws:"acme"},
+   needed:{kind:":agent_template",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的真实 entity granted_by",
    fail:["config-only"], audit:"operator",
    gap:"AgentTemplate 无 caller-threaded create/3（仅 system path）— Console 新建 AgentTemplate 需先补后端"},
-  {op:"Tag \"current\"", fn:"TemplateTags.put/5 · move/6", file:"template_tags.ex:112,212", temp:"ungated",
+  {op:"Tag \"current\"", fn:"TemplateTags.put/5 · move/5", file:"template_tags.ex:112,212", temp:"ungated",
    gate:null, held:null, needed:null,
    authCaller:"—（直写 DB，无 caller）", execCaller:"—", granter:"created_by（仅 provenance，非授权）",
    fail:["⚠ 今天无 cap gate：put/move 无条件直写 DB，没有 caller/caps 参数","tag 可变指针、hash 不可变"],
    audit:"created_by（无授权链）",
    gap:"无授权：任何能调到这段代码的路径都能改 tag。Console 接入前需补 cap gate"},
   // ---------- BOUNDARY — cold↔hot transitions ----------
-  {op:"Instantiate (create-session)", fn:"SessionCreator.create_session/3", file:"…/session_creator", temp:"boundary",
-   gate:null, held:{kind:":session_template",behavior:"Template",action:":instantiate",instance:":any",ws:"acme"},
-   needed:{kind:":session_template",behavior:"Template",action:":instantiate",instance:"tmpl uri",ws:"acme"},
-   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
-   fail:["冷→热：把模板变成一个活 session（独立于 create_session 的实例化路径）"],
-   audit:"operator", gap:"精确 cap 形状待 Manage-gate 实现时核实"},
+  {op:"Create session from template", fn:"Behavior.Workspace :create_session → SessionCreator.create_session/3", file:"workspace.ex", temp:"boundary",
+   gate:null, held:{kind:":workspace",behavior:"Workspace",action:":create_session",instance:":any",ws:"acme"},
+   needed:{kind:":workspace",behavior:"Workspace",action:":create_session",instance:"workspace uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Workspace cap 的真实 entity granted_by",
+   fail:["冷→热：模板 → 活 session。授权是 Workspace :create_session（不是模板 :instantiate）","建后给 owner 授 session 级 Manage:any（behavior/workspace.ex:577）"],
+   audit:"operator", gap:null},
   {op:"update_template / save_template_as", fn:"Orchestrator.Tools.update_template · save_template_as", file:"tools/templates.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_template（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_template（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new tmpl uri",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by（owner/system）",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["热→冷：把活 session 的配置快照回写成模板"], audit:"operator + execution", gap:null},
   // ---------- HOT — live session management (via the Manage-gate) ----------
-  {op:"Add member", fn:"Orchestrator.Tools.add_managed_member/2", file:"tools.ex:134", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+  {op:"Add member", fn:"Orchestrator.Tools.add_managed_member/4", file:"tools.ex:134", temp:"hot",
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by（owner/system）",
-   fail:["缺 Manage cap → fail-closed（Phase-1 gate）","role_name 是新别名：没有「未知 role」失败","非活 session：spawn/join 失败，失败即补偿不留 orphan"],
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
+   fail:["缺 Manage cap → fail-closed（Phase-1 gate）","role_name 是新别名：没有「未知 role」失败","非活 session：spawn/join 失败；失败会尝试补偿，但清理失败可能残留 worker（member_template.ex:312「may leak」）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Update member template", fn:"Orchestrator.Tools.update_member_template/3", file:"tools.ex:375", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
-   fail:["同 URI 重生 → :same_member_uri_use_reconfigure（member_template.ex:429）","regenerate = 销毁重建：先 leave 后 join"],
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
+   fail:["同 URI 重生 → :same_member_uri_use_reconfigure（member_template.ex:429）","regenerate 顺序：spawn-new-first → repoint → leave → join → best-effort terminate；清理失败可能残留 worker"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Remove member", fn:"Orchestrator.Tools.remove_member/2", file:"tools.ex:407", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":leave",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 role → {:ok, :already_removed}（幂等，不是拒绝）","terminate 未授权 → 立即 :unauthorized"],
    audit:"operator + execution（双主体）", gap:null},
-  {op:"Add participant", fn:"Orchestrator.Tools.add_participant/2", file:"tools/participants.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+  {op:"Add participant", fn:"Orchestrator.Tools.add_participant/3", file:"tools/participants.ex", temp:"hot",
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["add_managed_member 的超集：接受 entity/template/manifest","type-transparent 邀请 + 授 join 权"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define rule-set rule", fn:"Orchestrator.Tools.define_rule_set_rule/3", file:"tools.ex:554", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Routing",action:":add_rule",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 receiver role → {:unknown_member_role, r}（tools.ex:619）","named rule-set 强制单 receiver"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define prompt template", fn:"Orchestrator.Tools.define_prompt_template/3", file:"tools.ex:660", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_prompt_templates",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["缺 {body} → {:error, :body_placeholder_required}（tools.ex:669）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define legend", fn:"Orchestrator.Tools.define_legend/5", file:"tools.ex:705", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_legends",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["写无效 legend 不会被拒（见 gap）"],
    audit:"operator + execution（双主体）",
    gap:"今天 define_legend 不校验 member_set / bound_rule_set（直写 map，tools.ex:705）— Console 应在前端/gate 加校验"},
   // ---------- HOT WORKFLOW ----------
   {op:"Migrate session", fn:"Orchestrator.Tools.migrate_session/2", file:"tools/migration.ex", temp:"hotwf",
-   gate:{kind:":session",behavior:"Manage",action:":manage_migrate（提案§7，待定）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_migrate（提案§7，session Manage）",instance:"session S",ws:"acme"},
    held:{kind:":session + :session_template",behavior:":any + Template",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:"多",behavior:"Session + Template",action:"多步",instance:"session S",ws:"acme"},
-   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["多步有状态：读 target → diff members → 写 ledger → 重生 → 换 rule-set/prompt/legend","需 dry-run/plan/progress UI","⚠ MVP 后置"],
    audit:"operator + execution（双主体）", gap:null},
 ];
@@ -576,7 +576,7 @@ overview(){ return `
           <dt>auth caller</dt><dd>Alice（operator，Phase-1 Manage gate）</dd>
           <dt>exec caller</dt><dd>orchestrator（Phase-2，重建 <code>{:within_session,S}</code>）</dd>
           <dt>authorizer</dt><dd>Alice 的 Manage cap（gate）→ orchestrator 的会话授权（exec）。Alice 本人<b>并没有</b> join 权</dd>
-          <dt>granter</dt><dd>授权那把 Manage cap 的 <code>granted_by</code>（owner / 系统根）</dd>
+          <dt>granter</dt><dd>该 session Manage cap 的<b>真实 entity</b> <code>granted_by</code>（另记 authorization basis，不混进 granter）</dd>
         </dl>
         <div class="muted" style="font-size:12px;margin-top:8px">→ 授权≠执行、caller 分两个，所以审计必须记 <b>operator + execution 双主体</b>。</div>
       </div>
@@ -666,7 +666,7 @@ overview(){ return `
   <div class="row">
     <div class="card"><h3>详情 · storefront@a1b2c3d4 <span class="badge live">current</span></h3>
       <dl class="kv">
-        <dt>orchestrator</dt><dd><span class="uri">template://agent/acme/cc_orchestrator</span></dd>
+        <dt>orchestrator</dt><dd><span class="uri">template://acme/agent/cc_orchestrator</span></dd>
         <dt>members</dt><dd>${SESSION_TEMPLATES[0].members.map(m=>`<span class="badge tag">${m.role_name}</span>`).join(" ")}</dd>
         <dt>legends</dt><dd>导购 → {greeter, triage} · rule-set frontline · fold=collapse</dd>
         <dt>routing_rules</dt><dd>3 条</dd>
