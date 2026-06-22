@@ -20,7 +20,7 @@ An independent review (verified against code) found the first demo's **authority
 - **Agent contract: three layers.** Show stored fields / resolved effective contract / source file — do not invent a `soul` data column; surface role/tools/soul as they actually live (flavor extras + referenced config).
 - **Security panel.** cap grant/revoke + API-key status belong in an Agent-detail Security summary, not in team routing; never show secrets; the orchestrator has no `grant_cap` tool.
 - **Read-side authority** matters even for MVP's read-only topology (reads need an authorized path, not raw `Kind.get_slice`/`RuleStore.list`).
-- **capbac.md clarification** queued (pending explicit go): the dispatch path is `ctx.caps` OR `holds_cap(caller)`; "empty caps fails closed" is chokepoint-specific.
+- **capbac.md clarification** ✅ done (+ full sync: §1/§3 dispatch authz `ctx.caps` OR `holds_cap(caller)`; §4/§9 grant tag `{:genesis, entity}` replacing the deleted `{:system, …}`; §6 `default_caps` now `[]`).
 
 **The demo HTML now matches §0a** (3rd-review fidelity pass landed). §0a + the demo + the **Manage-gate proposal v2** are the living truth. The original §1–§8 below are kept for history but are **SUPERSEDED wherever they conflict with §0a** (notably: §1's URI examples were type-first; §3/§4 used the single-cap model, the `manage→orchestrator` agent-Manage framing, and `reject_same_uri_swap`/old failure atoms). Read §0a + the proposal, not the stale specifics below.
 
@@ -44,12 +44,12 @@ Non-goals (deferred to post-demo MVP / follow-ups, per handoff §6): wiring any 
 Cold/live split mirrors the handoff's Template Studio ↔ Session Console.
 
 1. **Template Studio (COLD / templates)**
-   - *Agent Templates* — list → detail (flavor, project_cwd/cwd, config_dir, settings_path, mcp_config_path, default_caps, desired_skills). Actions (mock): Fork, Tag. **Gap callout:** AgentTemplate has no caller-threaded `create/3` (system path only — research note §1).
+   - *Agent Templates* — list → detail (flavor, project_cwd/cwd, config_dir, settings_path, mcp_config_path, default_caps, desired_skills). Actions (mock): **Fork only** (no Tag — `TemplateTags` is SessionTemplate-only). **Gap callout:** AgentTemplate has no caller-threaded `create/3` (system path only — research note §1).
    - *Session Templates* — list → detail (name, description, members[], legends, routing_rules, orchestrator_template_uri, version_hash/tag, public_view). Actions (mock): Create(root), Fork, Persist version, Tag "current".
 2. **Session Console (LIVE / running session)** — a workspace overview lists live sessions → drill into one:
    - *Team panel* — members table keyed by `role_name` (role_name, source_template_uri, uri, provenance, alive?). Actions (mock): Add member, Update member template, Remove member, Add participant.
    - *Routing panel* — rule-sets list; `{from:X}→[Y]` relay-chain visualization; legends (name → member_set / bound_rule_set / fold); prompt-templates (name → body, `{var}` substitution). Actions (mock): define_rule_set_rule, define_legend, define_prompt_template.
-3. **Migrate (LIVE / workflow)** — select target SessionTemplate → dry-run plan/diff (members new/updated/removed) → ledger progress (pending/done/failed). Tagged **"deferred past MVP"** (shown for design, not built in MVP).
+3. **Migrate (LIVE / workflow)** — select target SessionTemplate → plan/diff → ledger progress (pending/done/failed). Tagged **"deferred past MVP"**. ⚠ The **dry-run** and **removed**-member diff are **PROPOSED workflow UX, not current `migrate_session` semantics**: the real backend reads target then executes immediately (no dry-run, `migration.ex:11`) and only iterates target members (does NOT remove members missing from target).
 4. **Observability** — operator-action audit feed; every row foregrounds the **dual principal**: `authorized_operator_uri` + `execution_principal_uri`, cold/live, result/failure, timestamp.
 
 ## 3. Authority matrix (the core deliverable)

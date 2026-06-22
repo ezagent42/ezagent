@@ -5,8 +5,8 @@ the authoritative reference: read it **before** touching anything that grants, r
 checks, or declares a capability. Every claim here is grounded in the code on `main`;
 verify against the cited modules before relying on a detail (the code wins).
 
-> **The one-sentence model:** a dispatch is authorized by the **caps the dispatch ctx
-> carries** (`ctx.caps`), a capability records **who is accountable for it**
+> **The one-sentence model:** a dispatch is authorized by a matching cap from EITHER the **caps the
+> dispatch ctx carries** (`ctx.caps`) OR the **caller's held caps** (`holds_cap(ctx.caller)`, §3), a capability records **who is accountable for it**
 > (`granted_by`, which MUST be a real entity — Decision #154), and these are produced at
 > exactly one chokepoint (`Ezagent.Identity.Grant`). Confusing any two of these is how
 > every bug in this area happens.
@@ -118,7 +118,7 @@ rule flag. The closed tag set:
 | `{:held_by, actor}` | `actor`'s real caps (`read_held_caps`) | `actor` | the actor genuinely HOLDS the authority: self-grant, admin grant, or #811 manager-delegation (actor holds a Manage cap over the target) |
 | `{:admin, admin}` | `admin`'s caps | `admin` | convenience alias when the actor is a known admin |
 | `{:rule, name, configurer}` | `[]` + `ctx.authorization_rule = name` | `configurer` | a rule authorizes the grant (e.g. `public_view == true`); `granted_by` = whoever configured the rule. Cap MUST be concrete-scoped (§5). |
-| `{:system, principal, entity}` | the Catalog `principal`'s caps | `entity` | **transitional**: preserves a system-principal authorizer while forcing an entity `granted_by`. Convert to one of the above and drop the principal. |
+| `{:genesis, granted_by}` | `[admin_genesis_cap()]` (the admin-granted genesis wildcard) | `granted_by` (MUST be entity) | **extreme-fallback** genesis grant (#154): minting the first authority over a brand-new entity where neither `{:held_by}` nor `{:rule}` can authorize (e.g. the creator's `Manage :any` over what they just created). (The old `{:system, principal, entity}` tag is **deleted** — `grant.ex:56`; this is its replacement.) |
 
 Wrappers (all delegate to `prepare/4`): imperative `grant_cap/3` (Invocation),
 `grant_cap_via_router/4` (Cmd; `:sync`→`:call` propagates errors, `:async`→`:cast`
@@ -137,9 +137,9 @@ return `{:error}` as an effect). `Ezagent.Identity.grant_cap/3` is a back-compat
    → `{:rule, rule_name, configurer}`. `granted_by` = configurer.
 3. Is it a **creation/genesis** grant — minting the first authority over a brand-new entity
    (e.g. the creator's `Manage :any` over what they just created), where nobody pre-holds it
-   and it's `behavior:any`/`action:any` so rule-ineligible? → `{:system, bootstrap, owner}`.
-   `bootstrap` is the accepted genesis root (governed by `no_wildcard_system_principals_test`,
-   NOT a Decision-#154 violation); `granted_by` = the owner entity.
+   and it's `behavior:any`/`action:any` so rule-ineligible? → `{:genesis, owner}`
+   (`grant.ex:38,84`). `granted_by` = the owner entity (MUST be `%URI{scheme: "entity"}`).
+   (The old `{:genesis, owner}` form is **deleted** — there is no longer a `{:system, …}` tag.)
 4. None fit cleanly? **Do not invent a workaround** — surface it. A new system-principal
    authorizer is a Decision-#154 review surface.
 
@@ -175,7 +175,7 @@ SOLELY by the step-5.5 bypass** (`rule_cap_bounded?` is grant-only) — acceptab
 revoke only de-escalates.
 
 `cap#2` (the orchestrator worker-spawn `agent/_/{:spawned_by}`) is `behavior: :any`, so it is
-**rule-INELIGIBLE** — it uses `{:system, bootstrap, owner}`, not `{:rule}`. Same for any
+**rule-INELIGIBLE** — it uses `{:genesis, owner}`, not `{:rule}`. Same for any
 Manage-shaped (`behavior: Manage, action: :any, concrete instance`) cap.
 
 ---
@@ -193,13 +193,12 @@ is granted **per-session at join, by the session owner**.
 > workspace, and `Session.handle_join` granted no per-session caps. That broad baseline is gone
 > (corrected here 2026-06-22); do not assume a user has session caps by default.
 
-**Target model (the per-session refactor, in progress):** "a member not pulled into a
-session should not have that session's permissions." The baseline is narrowed and
-participation is granted **per-session at join, by the session owner** (reusing
-`grant_first_join_owner_cap` in `membership.ex`; the anon `public_view` flow is the existing
-template). When this lands, the `system://bootstrap`-granted baseline goes away and #154 is
-fully realized down to the default grant. Until then, treat the broad `default_caps` as
-known debt, not a pattern to copy.
+**The per-session model (LANDED — `default_caps` now `[]`):** "a member not pulled into a
+session should not have that session's permissions." The broad baseline is **gone**;
+participation is granted **per-session at join, by the session owner** (`grant_first_join_owner_cap`
+in `membership.ex`; the anon `public_view` flow is the same template). The `system://bootstrap`-granted
+broad baseline is removed and #154 is realized down to the default grant. **Do not assume a user
+has session caps by default** — they have `[]` until granted at join.
 
 ---
 
@@ -254,7 +253,7 @@ an **authorizer**, never a `granted_by`.
 3. **Relying on `normalize!/2` to stamp `granted_by`.** It ignores the granter for an
    already-built struct. The chokepoint does an explicit struct update + entity validation.
 4. **Forcing a `behavior:any`/`action:any`+concrete-instance cap through `{:rule}`.**
-   `rule_cap_bounded?` rejects it. Use `{:system, bootstrap, owner}` (genesis) instead.
+   `rule_cap_bounded?` rejects it. Use `{:genesis, owner}` (genesis) instead.
 5. **`grant_cap_via_router` defaulting to `:async`/`:cast` when the caller gates on the
    result.** `:cast` returns `:ok` immediately and swallows the grant failure. Pass `:sync`.
 6. **Treating `template-materialize`/`feishu-binding-policy` as a `granted_by`.** A system
