@@ -157,7 +157,7 @@ Per-tenant URIs (entity / session / template / resource) carry their workspace a
 ### **P20. URI shape — 6-scheme allowlist + 3-segment authority for per-tenant schemes + query-string action.**
 
 Exactly six schemes ever: `entity, workspace, session, template, resource, system`. `Ezagent.URI.SchemeRegistry` is the runtime ETS source of truth (P3) — `parse!/1` rejects anything else at parse time.
-- **Per-tenant** (3-segment): `<scheme>://<type>/<workspace>/<name>` for `entity://`, `session://`, `template://`, `resource://`
+- **Per-tenant** (3-segment, **workspace-FIRST** — SPEC v3 Amendment 2): `<scheme>://<workspace>/<type>/<name>` for `entity://`, `session://`, `template://`, `resource://` (authoritative: `uri.ex` `per_tenant(scheme, workspace, type, name)`; corrected 2026-06-22, was documented type-first)
 - **Workspace / system** (2-segment, unchanged): `workspace://<name>` + `system://<type>/<name>`
 - **Actions** are query-string: `?action=behavior.action` (never path)
 - **No deleted schemes** ever come back: `user://`, `agent://`, `message://`, `feishu://`, `routing-admin://`, `pty-input://`

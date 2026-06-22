@@ -60,9 +60,9 @@ CI gate: `apps/ezagent_core/test/esr/capability_test.exs` "scope-bounded instanc
 
 ## 6. **User Kind structural baseline cap** (Decision #133)
 
-Every user created via `Ezagent.Domain.Identity.Users.create/3` inherits `Ezagent.Entity.User.default_caps()` (currently `kind=:session, behavior=:any, instance=:any`). This is a STRUCTURAL invariant — without it, users can't send chat messages even from LV. The `:any` here is a circular-dep workaround (see invariant 2), NOT an idiom to copy into new plugin defaults.
+**Superseded by PR-甲-2 / #154 (verified 2026-06-22):** `Ezagent.Entity.User.default_caps/1` now returns **`[]`** (`user.ex:175`). The broad `kind=:session, behavior=:any` baseline (Decision #133) is **removed** — a fresh user holds NO standing caps; session participation (`:send`/`:join`) is granted **per-session at join, by the session owner**. Do NOT assume users have session caps by default.
 
-CI gate: `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` `describe "default_caps/0 (PR 27)"`.
+CI gate: `apps/ezagent_domain_identity/test/ezagent/entity/user_test.exs` `describe "default_caps/1 (PR-甲-2, #154 — narrowed to [])"` (asserts `default_caps == []`).
 
 ## 7. **Dispatch mode is a transport choice, NOT a hard contract** (Decision #134)
 
@@ -94,16 +94,16 @@ SessionTemplate stores agent_slots + routing_rules + orchestrator_template_uri +
 
 **Updated by Phase 9 (SPEC v3).** Per-tenant URIs (entity/session/template/resource) are 3-segment authority. `workspace://` and `system://` stay 2-segment.
 
-**Per-tenant schemes** (3-segment):
+**Per-tenant schemes** (3-segment, **workspace-FIRST** — SPEC v3 Amendment 2; authoritative `uri.ex` `per_tenant(scheme, workspace, type, name)`; corrected 2026-06-22, was documented type-first):
 
-    <scheme>://<type>/<workspace>/<name>[?action=<behavior>.<action>]
+    <scheme>://<workspace>/<type>/<name>[?action=<behavior>.<action>]
 
 | Scheme | Shape | Example |
 |--------|-------|---------|
-| `entity://` | `entity://<user|agent>/<workspace>/<name>` | `entity://user/default/admin`, `entity://agent/team-alpha/cc_demo` |
-| `session://` | `session://<template>/<workspace>/<name>` | `session://default/default/main` |
-| `template://` | `template://<type>/<workspace>/<name>` | `template://agent/default/cc-orch` |
-| `resource://` | `resource://<type>/<workspace>/<name>` | `resource://uploads/default/file-abc` |
+| `entity://` | `entity://<workspace>/<user|agent>/<name>` | `entity://default/user/admin`, `entity://team-alpha/agent/cc_demo` |
+| `session://` | `session://<workspace>/<template>/<name>` | `session://default/default/main` |
+| `template://` | `template://<workspace>/<type>/<name>` | `template://default/agent/cc-orch` |
+| `resource://` | `resource://<workspace>/<type>/<name>` | `resource://default/uploads/file-abc` |
 
 **Workspace + system schemes** (2-segment, unchanged):
 

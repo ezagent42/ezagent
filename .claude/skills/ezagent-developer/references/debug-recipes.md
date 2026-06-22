@@ -6,7 +6,7 @@ When you encounter a problem in ezagent, start here. Symptoms are listed in roug
 
 In order of likelihood:
 
-1. **URI shape mismatch — non-canonical input.** Per SPEC v3 §5.15, per-tenant schemes use 3-segment authority `<scheme>://<type>/<workspace>/<name>`. 2-segment forms (`entity://user/admin`, `session://default/main`) RAISE at parse time. Check the URI string at the call site — it must be `entity://user/default/admin`, not `entity://user/admin`.
+1. **URI shape mismatch — non-canonical input.** Per SPEC v3 §5.15 (Amendment 2, **workspace-first**), per-tenant schemes use 3-segment authority `<scheme>://<workspace>/<type>/<name>` (authoritative `uri.ex` `per_tenant(scheme, workspace, type, name)`). 2-segment forms (`entity://user/admin`, `session://default/main`) RAISE at parse time. Check the URI string at the call site — it must be `entity://default/user/admin` (workspace first), not `entity://user/admin` or the old type-first `entity://user/default/admin`.
 2. **Channel notification meta has non-string value** (Decision #132). Grep `meta = ...` in your push path; ensure every value is `String.t()`. Run `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
 3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.Behavior.Chat` (module).
 4. **Workspace scope not plumbed** (invariant 4). Check `WorkspaceRegistry.lookup(session_uri)` returns `{:ok, _}` for the session involved. If `:error`, the session was spawned without `bind` (custom Template Class missed step 3 of how-to add a Template Class).

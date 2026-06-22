@@ -17,7 +17,9 @@ defmodule EzagentWeb do
   those modules here.
   """
 
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  # `agent-console-demo`: Phase-0 design-confirmation demo (task #84), served as a
+  # static page on Tailnet. Remove when the real `agent_console` world surface lands.
+  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt agent-console-demo)
 
   def router do
     quote do
