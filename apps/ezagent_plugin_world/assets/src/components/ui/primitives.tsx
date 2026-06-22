@@ -16,6 +16,10 @@ import {Button} from "./button"
 
 export {Button}
 
+// The atom names the ezagent_domain_ui layer expects to find here
+// (primitive_coverage_test asserts each appears as a string). Keep in lockstep
+// with the Elixir atom layer — preserve the list until the test swaps to a
+// registry comparison (PR-3 keeps the string list; the swap is a later step).
 export const domainUiPrimitiveCoverage = [
   "button",
   "input",
@@ -55,39 +59,21 @@ export const domainUiPrimitiveCoverage = [
 
 type Tone = "default" | "primary" | "success" | "warning" | "danger" | "info"
 
+// Shared field styling — shadcn token-based, dark-aware (PR-3).
+const fieldClass =
+  "w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+
 export function Input({className, ...props}: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
-  )
+  return <input className={cn(fieldClass, "h-9", className)} {...props} />
 }
 
 export function Textarea({className, ...props}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      className={cn(
-        "min-h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    />
-  )
+  return <textarea className={cn(fieldClass, "min-h-24 py-2", className)} {...props} />
 }
 
 export function Select({className, children, ...props}: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select
-      className={cn(
-        "h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
-    >
+    <select className={cn(fieldClass, "h-9", className)} {...props}>
       {children}
     </select>
   )
@@ -103,9 +89,9 @@ export function Card({
   children: React.ReactNode
 }) {
   return (
-    <section className={cn("rounded-md border border-slate-200 bg-white shadow-sm", className)}>
-      {header && <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-950">{header}</div>}
-      <div className="p-4 text-sm text-slate-700">{children}</div>
+    <section className={cn("rounded-md border border-border bg-card shadow-sm", className)}>
+      {header && <div className="border-b border-border px-4 py-3 text-sm font-semibold text-card-foreground">{header}</div>}
+      <div className="p-4 text-sm text-card-foreground">{children}</div>
     </section>
   )
 }
@@ -132,10 +118,10 @@ export function PageHeader({
   actions?: React.ReactNode
 }) {
   return (
-    <header className="flex items-end justify-between gap-4 border-b border-slate-200 pb-4">
+    <header className="flex items-end justify-between gap-4 border-b border-border pb-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-950">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>
@@ -144,11 +130,11 @@ export function PageHeader({
 
 export function Breadcrumb({items}: {items: Array<{label: string; href?: string | null}>}) {
   return (
-    <nav className="flex items-center gap-1 text-xs text-slate-500" aria-label="Breadcrumb">
+    <nav className="flex items-center gap-1 text-xs text-muted-foreground" aria-label="Breadcrumb">
       {items.map((item, index) => (
         <span className="inline-flex items-center gap-1" key={`${item.label}-${index}`}>
           {index > 0 && <ChevronRight aria-hidden="true" className="h-3 w-3" />}
-          {item.href ? <a href={item.href}>{item.label}</a> : <span className="text-slate-900">{item.label}</span>}
+          {item.href ? <a href={item.href}>{item.label}</a> : <span className="text-foreground">{item.label}</span>}
         </span>
       ))}
     </nav>
@@ -157,12 +143,12 @@ export function Breadcrumb({items}: {items: Array<{label: string; href?: string 
 
 export function Stat({label, value, icon}: {label: string; value: React.ReactNode; icon?: React.ReactNode}) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3">
-      <div className="flex items-center gap-2 text-xs text-slate-500">
+    <div className="rounded-md border border-border bg-card p-3">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
         <span>{label}</span>
       </div>
-      <strong className="mt-1 block text-lg text-slate-950">{value}</strong>
+      <strong className="mt-1 block text-lg text-foreground">{value}</strong>
     </div>
   )
 }
@@ -178,9 +164,9 @@ export function PluginCard({
 }) {
   return (
     <Card>
-      <strong className="text-slate-950">{name}</strong>
-      {description && <p className="mt-2 text-slate-600">{description}</p>}
-      {meta && <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">{meta}</div>}
+      <strong className="text-foreground">{name}</strong>
+      {description && <p className="mt-2 text-muted-foreground">{description}</p>}
+      {meta && <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">{meta}</div>}
     </Card>
   )
 }
@@ -213,14 +199,16 @@ export function Tabs({
   selected: string
 }) {
   return (
-    <div className="flex items-center gap-px border-b border-slate-200 bg-slate-50">
+    <div className="flex items-center gap-px border-b border-border bg-muted/40">
       {items.map((item) => {
         const active = item.key === selected
         return (
           <a
             className={cn(
               "border-b-2 px-3 py-1.5 text-xs font-medium transition",
-              active ? "border-slate-950 bg-white text-slate-950" : "border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700",
+              active
+                ? "border-foreground bg-background text-foreground"
+                : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
             )}
             href={item.href || "#"}
             key={item.key}
@@ -237,11 +225,11 @@ export function Modal({open, title, children, footer}: {open: boolean; title?: s
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40">
-      <section className="w-full max-w-md overflow-hidden rounded-md bg-white shadow-2xl">
-        {title && <header className="border-b border-slate-200 px-4 py-3 text-sm font-semibold">{title}</header>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <section className="w-full max-w-md overflow-hidden rounded-md bg-card text-card-foreground shadow-2xl">
+        {title && <header className="border-b border-border px-4 py-3 text-sm font-semibold">{title}</header>}
         <div className="px-4 py-3 text-sm">{children}</div>
-        {footer && <footer className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">{footer}</footer>}
+        {footer && <footer className="flex justify-end gap-2 border-t border-border bg-muted/40 px-4 py-3">{footer}</footer>}
       </section>
     </div>
   )
@@ -253,10 +241,10 @@ export function Toast({tone = "info", children}: {tone?: Tone; children: React.R
 
 export function TreeList({items}: {items: Array<{id: string; label: React.ReactNode; depth?: number}>}) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white py-1 text-sm">
+    <div className="rounded-md border border-border bg-card py-1 text-sm text-card-foreground">
       {items.map((item) => (
         <div className="flex items-center gap-2 px-2 py-1.5" key={item.id} style={{paddingLeft: `${8 + (item.depth || 0) * 16}px`}}>
-          <Circle aria-hidden="true" className="h-2 w-2 fill-slate-300 text-slate-300" />
+          <Circle aria-hidden="true" className="h-2 w-2 fill-muted-foreground/40 text-muted-foreground/40" />
           {item.label}
         </div>
       ))}
@@ -266,7 +254,7 @@ export function TreeList({items}: {items: Array<{id: string; label: React.ReactN
 
 export function EmptyState({label, action}: {label: string; action?: React.ReactNode}) {
   return (
-    <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+    <div className="rounded-md border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
       <p>{label}</p>
       {action && <div className="mt-3">{action}</div>}
     </div>
@@ -275,7 +263,7 @@ export function EmptyState({label, action}: {label: string; action?: React.React
 
 export function FormField({label, children}: {label: string; children: React.ReactNode}) {
   return (
-    <label className="grid gap-1 text-xs text-slate-500">
+    <label className="grid gap-1 text-xs text-muted-foreground">
       <span>{label}</span>
       {children}
     </label>
@@ -283,11 +271,11 @@ export function FormField({label, children}: {label: string; children: React.Rea
 }
 
 export function UriChip({uri}: {uri?: string | null}) {
-  return <code className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">{uri || "none"}</code>
+  return <code className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">{uri || "none"}</code>
 }
 
 export function Toolbar({children}: {children: React.ReactNode}) {
-  return <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">{children}</div>
+  return <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2">{children}</div>
 }
 
 export function Tooltip({label, children}: {label: string; children: React.ReactNode}) {
@@ -333,12 +321,12 @@ export function UriPicker({options = [], value}: {options?: string[]; value?: st
 }
 
 function toneClass(tone: Tone) {
-  if (tone === "primary") return "border-slate-950 bg-slate-950 text-white"
-  if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700"
-  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700"
-  if (tone === "danger") return "border-red-200 bg-red-50 text-red-700"
-  if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-700"
-  return "border-slate-200 bg-slate-100 text-slate-700"
+  if (tone === "primary") return "border-primary bg-primary text-primary-foreground"
+  if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
+  if (tone === "danger") return "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+  if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
+  return "border-border bg-muted text-muted-foreground"
 }
 
 function dotClass(tone: Tone) {
@@ -346,8 +334,8 @@ function dotClass(tone: Tone) {
   if (tone === "warning") return "bg-amber-500"
   if (tone === "danger") return "bg-red-500"
   if (tone === "info") return "bg-sky-500"
-  if (tone === "primary") return "bg-slate-950"
-  return "bg-slate-400"
+  if (tone === "primary") return "bg-primary"
+  return "bg-muted-foreground/50"
 }
 
 function hashHue(seed: string) {

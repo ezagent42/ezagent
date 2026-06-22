@@ -246,6 +246,33 @@
   color: var(--world-foreground);
 }
 
+/* PR-3: the prominent action button. `default` already renders the accent, so
+   `primary` (emitted by Admin/WorkspacePlugin forms) shares its styling — this
+   adds the rule those buttons referenced but never had. */
+.world-button-primary {
+  background: var(--world-accent);
+  color: var(--world-accent-foreground);
+}
+
+/* PR-3: size variants (callers pass size="sm" but Button ignored it). */
+.world-button-sm {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.world-button-lg {
+  min-height: 42px;
+  padding: 0 18px;
+  font-size: 15px;
+}
+
+.world-button-icon {
+  min-height: 36px;
+  width: 36px;
+  padding: 0;
+}
+
 @media (max-width: 760px) {
   .world-page {
     grid-template-columns: 1fr;
