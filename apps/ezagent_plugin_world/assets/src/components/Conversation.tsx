@@ -116,7 +116,12 @@ export function Conversation({
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
-  const activeView = state.active_view === "pty" ? "pty" : "chat"
+  const activeView =
+    state.active_view === "pty" ? "pty" : state.active_view === "page" ? "page" : "chat"
+  // TEMPORARY (hello operator view): only hello sessions get a Page tab. The
+  // proper home for this is world surfacing registered SessionViews (Phase 3);
+  // for now it embeds the customer surface. See HelloPagePreview below.
+  const isHelloSession = sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
@@ -347,6 +352,17 @@ export function Conversation({
                 <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
                 PTY
               </button>
+              {isHelloSession && (
+                <button
+                  type="button"
+                  className={segmentClass(activeView === "page")}
+                  onClick={() => sessionUri && onSwitchView(sessionUri, "page")}
+                  aria-label="Show rendered page (temporary)"
+                  title="Rendered page — TEMPORARY (embeds the customer view)"
+                >
+                  Page
+                </button>
+              )}
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
               <RotateCcw aria-hidden="true" />
@@ -376,6 +392,8 @@ export function Conversation({
               onServerEvent={onServerEvent}
             />
           </div>
+        ) : activeView === "page" ? (
+          <HelloPagePreview sessionUri={sessionUri} />
         ) : (
           <>
             <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-card px-[18px] py-5" ref={scrollRef} data-message-count={messages.length}>
@@ -766,4 +784,24 @@ function kindLabel(kind: string, mine: boolean) {
   if (kind === "agent") return "Agent"
   if (kind === "user") return "User"
   return "Participant"
+}
+
+// TEMPORARY operator preview of a hello session's rendered page. Embeds the
+// public `/socialware/customer` surface (the working renderer) in an iframe,
+// rather than the native @json-render island. The proper home for this is world
+// surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
+// until then this is a clearly-labelled stopgap so an operator can see the page
+// without leaving the console. Hello sessions are `public_view`, so the customer
+// URL renders with no token/login.
+function HelloPagePreview({sessionUri}: {sessionUri: string}) {
+  const src = `/socialware/customer?session_uri=${encodeURIComponent(sessionUri)}`
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-amber-200 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-900">
+        ⚠ 临时视图 / TEMPORARY — embeds the customer surface. The native @json-render
+        operator view lands in Phase 3.
+      </div>
+      <iframe title="Rendered page (temporary)" src={src} className="min-h-0 flex-1 border-0 bg-white" />
+    </div>
+  )
 }
