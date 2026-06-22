@@ -2,7 +2,9 @@
 
 > **Date:** 2026-06-22 · **From:** Claude (with Allen) · **To:** a new independent developer (human + cc/codex)
 > **Tracking:** task #81 · **Base:** `origin/main` @ `b6818123`
-> **Status:** DESIGN-APPROVED (brainstormed with Allen 2026-06-22). This is a build handoff, not a spec to re-litigate. Phase 0 is fully scoped; Phases 1–3 are the roadmap.
+> **Status:** DESIGN-APPROVED (brainstormed with Allen 2026-06-22). A build handoff, not a spec to re-litigate.
+> **Scope = ALL phases:** build Phase 0, then brainstorm + refine Phases 1–3, then implement them (target: complete all phases today). This is NOT a Phase-0-only handoff.
+> **Merge target = the `hello` branch** for every phase. When all phases are done, hand off to **Allen** to merge `hello` → `main`. **Do NOT merge to `main` directly.**
 
 ---
 
@@ -15,6 +17,7 @@ You are building a **new plugin `ezagent_plugin_hello`**: an app where an **AI a
 2. Skill `ezagent-socialware` (`.claude/skills/ezagent-socialware/SKILL.md`) — the socialware substrate you build ON. Updated 2026-06-22; read it cover to cover. Its local-E2E recipe is your sign-off harness.
 3. `ARCHITECTURE.md` and `GLOSSARY.md` — do **not** edit these.
 4. The agent-definition-contract specs under `docs/superpowers/specs/2026-06-21-agent-contract-*` — versioned templates, the orchestrator tool catalog, `migrate_session`. Phase 1 depends on these.
+5. `docs/guide/world-coordination.md` — the shared rules for any work touching `world`. Phase 0 is isolated (doesn't touch world), but Phases 2–3 do; follow this guide there (declare owned surfaces, additive new surfaces, no long-lived branches, shadcn/`@json-render` shape).
 
 **The recursion vision (why this matters).** The end state (Phase 3) is that **`world` — the operator console — itself becomes a `hello` app**, rendered by the same `@json-render` engine, and able to **spawn new `hello` apps**. So `hello` is not a throwaway demo; it is the seed of ezagent's unified front-end. Build Phase 0 so it grows toward that, never blocks it.
 
@@ -24,7 +27,7 @@ You are building a **new plugin `ezagent_plugin_hello`**: an app where an **AI a
 
 | # | Decision | Value |
 |---|----------|-------|
-| 1 | **Render model** | **`@json-render`** (Vercel `vercel-labs/json-render`, Apache-2.0). LLM emits a JSON spec constrained to a Zod-defined component+action **catalog**; the library renders it (streaming-capable). Packages: `@json-render/core`, `@json-render/react`, `@json-render/shadcn`. Phase 0 adds this as hello's **own** renderer **alongside** the existing 5-type `json_render.mjs` — that file powers the **shipped** socialware customer SPA, so **do not remove or mutate it**. Converging `json_render.mjs` onto `@json-render` belongs to Phase 3 (unification), not Phase 0. |
+| 1 | **Render model** | **`@json-render`** (Vercel `vercel-labs/json-render`, Apache-2.0) is **THE single renderer — no coexistence with the old `json_render.mjs`** (Allen's decision). LLM emits a JSON spec constrained to a Zod-defined component+action **catalog**; the library renders it (streaming-capable). Packages: `@json-render/core`, `@json-render/react`, `@json-render/shadcn`. **Retire the existing 5-type `json_render.mjs` and migrate the shipped socialware customer surface onto `@json-render`** (same Surface `tree`, a superset Zod catalog) as part of this work — do it carefully (it's shipped), but do not leave two renderers. |
 | 2 | **Where `@json-render` lives** | **Hello-local, but extraction-ready.** The renderer + catalog physically live in `ezagent_plugin_hello`, with a clean module boundary and **zero hello-specific coupling**, so Phase 3 can *move* it to a shared layer, not rewrite it. |
 | 3 | **Orchestration** | **Start with ONE builder agent.** Uses **main's current** agent/orchestrator contract — **do NOT port loom's bespoke DeepSeek multi-agent brain.** Team-growth (Phase 1) is additive via `Behavior.Turn` + `add_managed_member`. |
 | 4 | **Storage / delivery** | **Ride the socialware substrate.** Page = a `Behavior.Surface` version produced by a `Behavior.Turn`; visitor delivery = existing `CustomerFeed` + `public_view`. **Invariant: the page is only ever born via `Surface.put_version(tree)`** — no private side-path. That single chokepoint is what lets the team grow in for free. |
@@ -97,6 +100,8 @@ Three incompatible render contracts exist: loom's **files-map + Sandpack** (runs
 Goal: **an author chats with a hello builder agent; the agent emits an `@json-render` page; an anonymous visitor sees it rendered live at `/socialware/chat`.** Single builder agent. No team yet.
 
 > Use TDD and the `ezagent-developer` invariants throughout. Each step below is a PR-sized unit; run the full gate suite (§8) before each merge.
+>
+> **Merge model (Allen's standing rule for all handoffs):** split each phase into as many PRs as needed; **all PRs merge into the `hello` branch, never `main`.** Keep `hello` rebased on `main`. After all phases are implemented and the Phase-0 E2E sign-off passes, hand off to **Allen** (the lead) to merge `hello` → `main`.
 
 **0.1 — Scaffold `apps/ezagent_plugin_hello`** (model: `ezagent_plugin_echo`).
 - `mix.exs`: `compilers: Mix.compilers() ++ [:ezagent_plugin_check]`; `application: [..., env: [ezagent_plugin: EzagentPluginHello.Application]]`; deps `{:ezagent_core, in_umbrella: true}`, `{:ezagent_domain_session, in_umbrella: true}` (Behavior.Surface/Turn), `{:ezagent_domain_socialware, in_umbrella: true}` (CustomerFeed/public_view), `{:ezagent_domain_ui, in_umbrella: true}` (SessionViewRegistry).
@@ -113,7 +118,7 @@ Goal: **an author chats with a hello builder agent; the agent emits an `@json-re
 
 **0.4 — The `@json-render` renderer + catalog** (decisions #1, #2).
 - New `apps/ezagent_plugin_hello/assets/` Vite project: `@json-render/core` + `@json-render/react` (+ `@json-render/shadcn`). Define the **hello component catalog** (Zod) + a small action set mapped onto the `{action, args}` dispatch.
-- The **customer renderer**: hello ships its **own** `@json-render` bundle and renders the approved spec for the visitor, **alongside** the existing `json_render.mjs` (leave that one in place — it serves the current socialware SPA). Keep hello's renderer a clean, hello-agnostic module (decision #2 — extraction-ready).
+- The **customer renderer**: introduce the `@json-render` bundle as the renderer for the approved spec, and **migrate the existing socialware customer surface off `json_render.mjs` onto `@json-render`** (same `snapshot.page` Surface tree, a superset Zod catalog) — there is ONE renderer, not two (decision #1). Retire `json_render.mjs` carefully (it's shipped). Keep the renderer a clean, hello-agnostic module (decision #2 — extraction-ready) so it serves both hello and the migrated socialware surface.
 - The **operator renderer (resolved — not a free choice):** `EzagentPluginHello.PageView`'s `render/1` emits `<div phx-hook="HelloRenderer" data-hello-module-url={…} data-spec={…}>` that hydrates **hello's own** `@json-render` island **inside world's LiveView shell**. World renders any registered `SessionView` generically, so this needs **no edit to world** (decision #6 isolation holds) and reuses the **same** `@json-render` bundle as the customer side. **Server-side HEEx is NOT an option for hello's page** — it cannot execute the `@json-render` JS library; the existing socialware `PageView` renders HEEx only because its tree is the tiny 5-type set, which is exactly what hello supersedes. Verify only that world's SessionView host passes registered views' `phx-hook`/`data-*` attributes through untouched.
 
 **0.5 — Customer delivery** (reuse, don't rebuild).
@@ -139,8 +144,8 @@ World is under active development (UI polish, logic completion) by another devel
 - **Reuse world's transport by *copying the pattern*, not its files.** hello ships its own `HelloRenderer` hook, its own `mountHello` bundle, its own `hello_module_url`. World's `world_renderer.js` / `main.tsx` / vite churn cannot break hello, because hello shares none of it. (This is also decision #2 — the renderer is hello-local.)
 - **The operator page view plugs in via the registry, not via world.** `SessionViewRegistry.register/1` in hello's own `Application.start/2` is the sanctioned path (confirmed: `register` is not in the plugin-check forbidden-registry grep, and the host LV iterates registered views generically). **No edit to world is required to add hello's page view.**
 - **Enumerated shared files hello WILL touch (all additive, low collision):** `config/config.exs`, `config/dev.exs`, root `mix.exs` (releases list), `apps/ezagent_web/mix.exs` (deps), `apps/ezagent_core/test/architecture/arch_baseline_manifest.exs` (cap bumps for the new app). Each is an *append* of a new entry/key — coordinate by keeping these edits minimal and rebasing often.
-- **Possible shared-surface edit:** if 0.4 swaps the socialware customer renderer registry, that touches `apps/ezagent_domain_socialware/assets/js/`. The world dev does **not** own socialware, so collision risk with *world* is low — but coordinate with whoever owns socialware. Prefer adding a hello-specific registry over mutating the shared one.
-- **Rebase discipline:** world PRs land fast. Branch hello off the latest `main` and rebase frequently; never let hello drift far (loom's 113-commit drift is the cautionary tale).
+- **Shared-surface edit (in scope):** migrating the socialware customer renderer off `json_render.mjs` onto `@json-render` touches `apps/ezagent_domain_socialware/assets/js/`. The world dev does **not** own socialware, so collision risk with *world* is low — but coordinate with whoever owns socialware, and land a single shared `@json-render` module (one renderer, decision #1).
+- **Rebase discipline:** work on the `hello` branch (PRs merge into it, not `main`); keep `hello` rebased on `main` frequently so it never drifts (loom's 113-commit drift is the cautionary tale). The final `hello` → `main` merge is Allen's.
 - **Phase 3 is the only place hello and world converge** (world adopts hello's renderer). That is an explicit, *coordinated, separate* effort — **do not attempt it while world's UI work is in flight.**
 
 ---
@@ -202,7 +207,7 @@ Also satisfied automatically if you stay clean: `layer_purity_test.exs`, `im_ses
 
 ## 10. Open questions to resolve at implementation time
 
-1. **Bundle selection at `/socialware/chat`:** select the hello renderer by session plugin/flavor vs. forking the controller — prefer the former; confirm the cleanest hook so the customer shell loads hello's bundle without disturbing the existing socialware SPA.
+1. **Single customer bundle at `/socialware/chat`:** with the socialware surface migrated onto `@json-render`, confirm hello and socialware share ONE `@json-render` customer bundle (preferred — one renderer per decision #1); pick the cleanest single-renderer wiring.
 2. **Catalog v0 contents:** which `@json-render/shadcn` components + ezagent-specific nodes ship in the global base catalog. Start minimal (text/container/layout/form/table); expand by demand.
 3. **Streaming:** `@json-render`'s SpecStream over the `CustomerFeed`/`world:state` channel — Phase 0 can land non-streaming (whole-spec per turn) and add streaming later; confirm with Allen.
 4. **`@json-render` version pin + license/vendoring** for the self-host story (mind the CF/storage constraints if hello must run on the future CF deploy).
