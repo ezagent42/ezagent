@@ -1,6 +1,8 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
+import {Moon, Sun} from "lucide-react"
 
+import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
 import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
@@ -116,62 +118,46 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
 
   if (components.length > 0 || state.component === "sessions_table") {
     return (
-      <div className="world-screen">
-        <aside className="world-sidebar" aria-label="World navigation">
-          <div className="world-mark">W</div>
-          <nav className="world-nav">
-            <a className={navClass(state.path, "/")} href="/">
-              Overview
-            </a>
-            <a className={navClass(state.path, "/sessions")} href="/sessions">
-              Sessions
-            </a>
-            <a className={navClass(state.path, "/identities")} href="/identities">
-              Identities
-            </a>
-            <a className={navClass(state.path, "/identities/users")} href="/identities/users">
-              Users
-            </a>
-            <a className={navClass(state.path, "/identities/agents")} href="/identities/agents">
-              Agents
-            </a>
-            <a className={navClass(state.path, "/admin")} href="/admin">
-              Admin
-            </a>
-            <a className={navClass(state.path, "/workspaces")} href="/workspaces">
-              Workspaces
-            </a>
-            <a className={navClass(state.path, "/plugins")} href="/plugins">
-              Plugins
-            </a>
-            <a className={navClass(state.path, "/profile")} href="/profile">
-              Profile
-            </a>
+      <div className="flex min-h-screen bg-background text-foreground">
+        <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4" aria-label="World navigation">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
+          <nav className="flex flex-col gap-0.5">
+            {NAV_ITEMS.map(([label, href]) => (
+              <a className={navClass(state.path, href)} href={href} key={href}>
+                {label}
+              </a>
+            ))}
           </nav>
         </aside>
 
-        <main className="world-main">
-          <header className="world-header">
+        <main className="min-w-0 flex-1 p-6">
+          <header className="mb-5 flex items-center justify-between gap-4">
             <div>
-              <p className="world-eyebrow">React/shadcn shell</p>
-              <h1>{state.title || pageTitle(state.component)}</h1>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">World</p>
+              <h1 className="text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
             </div>
-            <div className="world-scope">{state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}</div>
-            <button
-              id="world-cmdk-open"
-              className="world-button world-button-default"
-              type="button"
-              onClick={() => pushEvent?.("world:dispatch", {action: "cmdk.open", args: {}})}
-            >
-              Command
-            </button>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-xs text-muted-foreground">
+                {state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}
+              </span>
+              <ThemeToggle />
+              <Button
+                id="world-cmdk-open"
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => pushEvent?.("world:dispatch", {action: "cmdk.open", args: {}})}
+              >
+                Command
+              </Button>
+            </div>
           </header>
           <CommandPalette
             cmdk={state.cmdk}
             onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
           />
 
-          <div className="world-layout-grid" data-component-count={components.length}>
+          <div className="grid gap-4" data-component-count={components.length}>
             {(components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]).map((component) =>
               renderLayoutComponent(component, {
                 layout: currentLayout,
@@ -302,11 +288,12 @@ function CommandPalette({
   if (!open) return null
 
   return (
-    <div id="world-cmdk" className="world-cmdk" role="dialog" aria-modal="true">
-      <button className="world-cmdk-backdrop" type="button" aria-label="Close" onClick={() => onAction("cmdk.close", {})} />
-      <div className="world-cmdk-panel">
+    <div id="world-cmdk" className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-[12vh]" role="dialog" aria-modal="true">
+      <button className="fixed inset-0 bg-black/50" type="button" aria-label="Close" onClick={() => onAction("cmdk.close", {})} />
+      <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl">
         <input
           autoFocus
+          className="w-full border-b border-border bg-transparent px-4 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground"
           value={query}
           placeholder="Search"
           onChange={(event) => onAction("cmdk.query", {query: event.target.value})}
@@ -314,21 +301,61 @@ function CommandPalette({
             if (event.key === "Escape") onAction("cmdk.close", {})
           }}
         />
-        <div className="world-cmdk-results">
+        <div className="max-h-80 overflow-y-auto py-1">
           {results.map((result) => (
             <button
               key={String(result.key)}
               type="button"
+              className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted"
               onClick={() => onAction("cmdk.select", {key: String(result.key)})}
             >
-              <span>{String(result.group || "Command")}</span>
-              <strong>{String(result.label || result.target || result.key)}</strong>
+              <span className="text-xs text-muted-foreground">{String(result.group || "Command")}</span>
+              <strong className="text-foreground">{String(result.label || result.target || result.key)}</strong>
             </button>
           ))}
-          {results.length === 0 && <div className="world-cmdk-empty">No results</div>}
+          {results.length === 0 && <div className="px-4 py-6 text-center text-sm text-muted-foreground">No results</div>}
         </div>
       </div>
     </div>
+  )
+}
+
+// Shell navigation items (label, href). Rationalizing the Identities/Users/
+// Agents triple entry is PR-7 (nav IA); this PR only restyles the chrome.
+const NAV_ITEMS: Array<[string, string]> = [
+  ["Overview", "/"],
+  ["Sessions", "/sessions"],
+  ["Identities", "/identities"],
+  ["Users", "/identities/users"],
+  ["Agents", "/identities/agents"],
+  ["Admin", "/admin"],
+  ["Workspaces", "/workspaces"],
+  ["Plugins", "/plugins"],
+  ["Profile", "/profile"],
+]
+
+function ThemeToggle() {
+  const [dark, setDark] = React.useState(false)
+
+  React.useEffect(() => {
+    const stored = localStorage.getItem("world-theme")
+    const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
+    const isDark = stored ? stored === "dark" : prefersDark
+    document.documentElement.classList.toggle("dark", isDark)
+    setDark(isDark)
+  }, [])
+
+  const toggle = () => {
+    const next = !dark
+    document.documentElement.classList.toggle("dark", next)
+    localStorage.setItem("world-theme", next ? "dark" : "light")
+    setDark(next)
+  }
+
+  return (
+    <Button type="button" variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
+      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </Button>
   )
 }
 
@@ -441,7 +468,9 @@ function navClass(path: string | undefined, href: string) {
         (href === "/workspaces" && path?.startsWith("/workspaces")) ||
         (href === "/plugins" && path?.startsWith("/plugins"))
 
-  return active ? "world-nav-item world-nav-item-active" : "world-nav-item"
+  return active
+    ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
+    : "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
 }
 
 function pageTitle(component: string | undefined) {
