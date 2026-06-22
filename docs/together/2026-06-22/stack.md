@@ -50,7 +50,7 @@ Both modify, vs main:
 | 1 | PostgreSQL-only migration | `pg-compat-audit` | ✅ **MERGED** `db1fb574` (on main `3768b8e3`) | done — see outcomes |
 | 2 | #83 world beautify + restructure | `world-beautify` | ✅ **MERGED** `28a90831` (squash) | done — precommit 4584/0 PG + vite build + check:mounts + agent-browser E2E (shadcn world renders); debt: world_live.ex 1036>1000 (cap-bumped 3→4, re-trim follow-up for zyli) |
 | 3 | hello @json-render plugin | `hello` (#891) | ✅ **MERGED** `d8c4a7f9` (squash) | done — precommit 4611/0 PG + vite/check:mounts + anon @json-render page E2E (/socialware/customer); fixed hello's stale WorkspaceRegistry.bind/2 warning; note: customer_app esbuild needs zod (web/assets/package.json, installed by `mix assets.setup`) |
-| 4 | Agent Console demo (#84) | `agent-console` (#892) | 🔄 doing | independent (base main, 14 files = docs+demo+route, no world/DB); rebase onto pg-main, verify, merge, demo-page E2E |
+| 4 | Agent Console demo (#84) | `agent-console` (#892) | ✅ **MERGED** `798f46bd` (squash) | done — precommit 4611/0 PG; /agent-console-demo loads + renders (Phase-0 mockup); conflict: world-coordination.md table merged. Phase-0 = design demo only (no real authz) |
 
 ## Close prerequisites
 - **PostgreSQL must be running** for all gate re-runs (the suite is PG-only after step 1). Bring up `docker-compose.pg.yml` before close step 1's verification.
