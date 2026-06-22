@@ -129,64 +129,10 @@ defmodule EzagentWeb.SessionController do
 
   def magic_create(conn, _params), do: new(conn, %{})
 
-  # GET /login/credentials — back-compat alias for /login. Renders the
-  # same unified page; kept so any cached bookmark / external link still
-  # works rather than 404-ing.
-  def credentials_new(conn, params) do
-    render_login_page(conn, workspace: Map.get(params, "workspace"))
-  end
-
-  # POST /login/credentials — password submit. On success: canonical
-  # entity:// URI stored in session, redirect to /sessions. On failure:
-  # render unified page with inline error above the credentials form
-  # (no separate page-bounce — that was the bug Allen reported
-  # 2026-05-20).
-  #
-  # Phase 9 PR-5 (SPEC v3 §6.4 amended): `workspace` form param (or
-  # query param) overrides the default workspace for bare-handle
-  # canonicalization. Full `entity://` URIs ignore it (the URI already
-  # carries its workspace segment).
-  def credentials_create(conn, %{"entity_uri" => uri_str, "secret" => secret} = params) do
-    # SPEC #324 rev 3 (Allen 2026-05-25): full entity:// URIs carry
-    # workspace structurally; bare handles REQUIRE explicit workspace
-    # param. workspace_param/2 returns `nil` (not "system") on missing —
-    # canonicalize/2 raises ArgumentError on a bare handle without
-    # :workspace, which we catch below to render the page with a
-    # "select workspace" error.
-    workspace = workspace_param(conn, params)
-
-    case SessionPrincipal.canonicalize(uri_str, workspace: workspace) do
-      canonical ->
-        case authenticate(canonical, secret) do
-          :ok ->
-            conn
-            |> SessionPrincipal.put(canonical, workspace: workspace)
-            |> redirect(to: "/sessions")
-
-          :error ->
-            render_login_page(conn,
-              cred_error: gettext("Invalid URI or credentials."),
-              workspace: workspace
-            )
-        end
-    end
-  rescue
-    # ArgumentError covers (a) bare handle without :workspace (SPEC #324
-    # rev 3), and (b) malformed URI/handle. Either way, same UX —
-    # render the page with an inline error, no enumeration leak.
-    ArgumentError ->
-      render_login_page(conn,
-        cred_error: gettext("Invalid URI or credentials."),
-        workspace: workspace_param(conn, params)
-      )
-  end
-
-  def credentials_create(conn, params) do
-    render_login_page(conn,
-      cred_error: gettext("Username/URI and password/token are required."),
-      workspace: workspace_param(conn, params)
-    )
-  end
+  # task #87 — the legacy handle/URI credentials path (`/login/credentials`,
+  # `credentials_new`/`credentials_create`, workspace canonicalization, the
+  # local `authenticate/2`) was REMOVED. Login is email+password only; see
+  # `create/2` above.
 
   def delete(conn, params) do
     # Phase 9 PR-8 (SPEC v3 §6.4 amendment 3) — `return_to` lets the
@@ -282,24 +228,6 @@ defmodule EzagentWeb.SessionController do
       bin when is_binary(bin) -> bin
       iodata -> IO.iodata_to_binary(iodata)
     end
-  end
-
-  # Reads the workspace context from form params (POST) or query string
-  # (GET). Returns the requested workspace name as a string, or `nil`
-  # if no workspace was requested.
-  #
-  # SPEC #324 rev 3 (Allen 2026-05-25): there is NO silent fallback to
-  # `"system"` (or any workspace). Callers MUST handle nil:
-  # - full `entity://` URIs ignore the workspace param (URI carries it)
-  # - bare handles with nil workspace → `canonicalize/2` raises
-  #   ArgumentError → caught by the credentials_create rescue clause,
-  #   which renders the page with an inline error.
-  #
-  # Removing the silent `|| "system"` fallback fixes the bug where a
-  # tenant user posting bare `/login/credentials` would silently land
-  # in the admin workspace.
-  defp workspace_param(conn, params) do
-    Map.get(params, "workspace") || Map.get(conn.query_params, "workspace")
   end
 
   # task #87 — resolve the typed email to its canonical entity URI, then
@@ -415,16 +343,6 @@ defmodule EzagentWeb.SessionController do
     case Ezagent.Registration.principal_for_email(email) do
       {:ok, _uri} -> true
       :none -> Ezagent.Registration.email_allowed?(email)
-    end
-  end
-
-  # Caller guarantees `uri_str` is already canonical
-  # (`entity://user/...` or `entity://agent/...`) — `SessionPrincipal`
-  # validated it before we got here.
-  defp authenticate(uri_str, secret) when is_binary(uri_str) and is_binary(secret) do
-    case Entity.authenticate(Ezagent.URI.new!(uri_str), secret) do
-      {:ok, _} -> :ok
-      {:error, _} -> :error
     end
   end
 end

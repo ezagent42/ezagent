@@ -257,7 +257,7 @@ defmodule EzagentDomainIdentity.Application do
 
             case Ezagent.Users.create(admin_uri, nil, admin_cap_list) do
               {:ok, _decoded} ->
-                :ok
+                repair_admin_user()
 
               {:error, reason} ->
                 require Logger
@@ -272,7 +272,9 @@ defmodule EzagentDomainIdentity.Application do
             end
 
           _existing ->
-            :ok
+            # task #87 — idempotent repair so admin can email+password login
+            # regardless of how its row was originally created.
+            repair_admin_user()
         end
       rescue
         e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
@@ -287,6 +289,67 @@ defmodule EzagentDomainIdentity.Application do
       end
     else
       :ok
+    end
+  end
+
+  @doc """
+  task #87 — idempotent admin repair so `entity://system/user/admin` can log in
+  with email+password regardless of how its row was first created (Codex #5/#7).
+  Sets a password when absent (from `EZAGENT_ADMIN_PASSWORD`, else generated +
+  logged once), upserts the admin profile email (`EZAGENT_ADMIN_EMAIL` or
+  `admin@ezagent.chat`), marks `email_verified`, and PRESERVES existing caps.
+  Public so it is testable directly (boot path skips it in :test).
+  """
+  @spec repair_admin_user() :: :ok
+  def repair_admin_user do
+    require Logger
+    admin_uri = User.admin_uri()
+
+    case Ezagent.Users.get_by_uri(admin_uri) do
+      %{password_hash: hash} ->
+        if is_nil(hash) or hash == "" do
+          _ = Ezagent.Users.set_password(admin_uri, admin_password())
+        end
+
+        _ =
+          Ezagent.Entity.Profile.upsert(%{
+            entity_uri: URI.to_string(admin_uri),
+            display_name: "Admin",
+            email: admin_email(),
+            workspace_uri: URI.to_string(Ezagent.URI.entity_workspace_uri(admin_uri))
+          })
+
+        _ = Ezagent.Users.mark_email_verified(admin_uri)
+        :ok
+
+      _ ->
+        Logger.warning("repair_admin_user: admin row missing; skipped")
+        :ok
+    end
+  end
+
+  defp admin_email do
+    case System.get_env("EZAGENT_ADMIN_EMAIL") do
+      e when is_binary(e) and e != "" -> e
+      _ -> "admin@ezagent.chat"
+    end
+  end
+
+  defp admin_password do
+    case System.get_env("EZAGENT_ADMIN_PASSWORD") do
+      pw when is_binary(pw) and pw != "" ->
+        pw
+
+      _ ->
+        require Logger
+        pw = :crypto.strong_rand_bytes(12) |> Base.url_encode64(padding: false)
+
+        Logger.warning(
+          "repair_admin_user: EZAGENT_ADMIN_PASSWORD unset — generated a random " <>
+            "admin password (set the env var in prod). One-time value: #{pw}"
+        )
+
+        pw
     end
   end
 

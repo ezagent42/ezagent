@@ -81,8 +81,6 @@ defmodule EzagentWeb.Router do
     get "/login", SessionController, :new
     post "/login", SessionController, :create
     post "/login/magic", SessionController, :magic_create
-    get "/login/credentials", SessionController, :credentials_new
-    post "/login/credentials", SessionController, :credentials_create
     delete "/logout", SessionController, :delete
     post "/logout", SessionController, :delete
     get "/auth/magic/:token", MagicLinkController, :consume
