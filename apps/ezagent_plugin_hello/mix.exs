@@ -48,7 +48,10 @@ defmodule EzagentPluginHello.MixProject do
       # `Ezagent.Entity.User` (`User.admin_uri/0` — the admin-genesis dispatch
       # authority used by `App`/`TurnDriver` to drive a session's Turn) is
       # defined in ezagent_domain_identity.
-      {:ezagent_domain_identity, in_umbrella: true}
+      {:ezagent_domain_identity, in_umbrella: true},
+      # `Ezagent.Workspace` (`create/2`) — the hello app's workspace home; used by
+      # the demo seed task + the opt-in boot seed.
+      {:ezagent_domain_workspace, in_umbrella: true}
     ]
   end
 end

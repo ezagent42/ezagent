@@ -33,6 +33,8 @@ defmodule EzagentPluginHello.Application do
   use Application
   use Ezagent.Plugin
 
+  require Logger
+
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
 
@@ -55,9 +57,79 @@ defmodule EzagentPluginHello.Application do
     [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder}]
   end
 
-  # The supervisor for off-process page-generation Tasks (the LLM round-trip).
+  # The supervisor for off-process page-generation Tasks (the LLM round-trip),
+  # plus an OPT-IN boot seed (off by default).
   @impl Ezagent.Plugin
   def children do
-    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}]
+    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++ demo_seed_children()
+  end
+
+  # `HELLO_DEMO_SEED=1` → at boot, instantiate a `public_view` hello app and land
+  # a seed page IN THIS NODE, so an anonymous visitor can immediately see a
+  # rendered page at `/socialware/chat` (the cross-BEAM `mix ezagent.demo.seed_hello`
+  # cannot, since the running server does not auto-revive another node's session).
+  # OFF by default — never seeds in production. One-shot transient Task so it
+  # never blocks the supervisor; a failure is logged, not fatal.
+  defp demo_seed_children do
+    if System.get_env("HELLO_DEMO_SEED") in ["1", "true"] do
+      [Supervisor.child_spec({Task, &demo_seed/0}, id: :hello_demo_seed, restart: :transient)]
+    else
+      []
+    end
+  end
+
+  defp demo_seed do
+    # Let the substrate (session/socialware/identity supervisors) settle before
+    # driving a Turn.
+    Process.sleep(3_000)
+    ws = System.get_env("HELLO_DEMO_WS") || "demo"
+    name = System.get_env("HELLO_DEMO_NAME") || "main"
+
+    _ =
+      case Ezagent.Workspace.create(ws, %{}) do
+        {:ok, _} -> :ok
+        {:error, _} -> :ok
+      end
+
+    case EzagentPluginHello.App.ensure_app(ws, name) do
+      {:ok, session_uri, _builder} ->
+        _ = seed_or_generate(session_uri)
+
+        Logger.info(
+          "hello demo seed ready: /socialware/chat?session_uri=#{URI.to_string(session_uri)}"
+        )
+
+      other ->
+        Logger.warning("hello demo seed failed: #{inspect(other)}")
+    end
+  end
+
+  # With `HELLO_DEMO_PROMPT` set, do a REAL builder generation (LLM →
+  # catalog-validated spec → Surface) so the page is genuinely AI-built; on any
+  # failure (no key / network / out-of-catalog output) fall back to the static
+  # seed so the surface is never empty. Without the prompt, just the static seed.
+  defp seed_or_generate(session_uri) do
+    case System.get_env("HELLO_DEMO_PROMPT") do
+      prompt when is_binary(prompt) and prompt != "" ->
+        case EzagentPluginHello.App.generate_now(session_uri, prompt) do
+          {:ok, _turn} ->
+            Logger.info("hello demo: generated a page for prompt #{inspect(prompt)}")
+
+          other ->
+            Logger.warning("hello demo: LLM generate failed (#{inspect(other)}); using seed")
+            seed_page(session_uri)
+        end
+
+      _ ->
+        seed_page(session_uri)
+    end
+  end
+
+  defp seed_page(session_uri) do
+    EzagentPluginHello.TurnDriver.drive(
+      session_uri,
+      EzagentPluginHello.Spec.seed(),
+      "Seed page — the hello builder is live."
+    )
   end
 end
