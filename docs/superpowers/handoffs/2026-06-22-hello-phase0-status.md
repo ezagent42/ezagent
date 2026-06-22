@@ -192,3 +192,49 @@ spec) is `apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs`.
   `hello_module_url` config) — the operator sees the page inside world's LV shell.
 - Phase 1 team growth · Phase 2 world "new hello app" UX · Phase 3 unification
   (world becomes a hello app; literal `@json-render` adoption).
+
+---
+
+# Phase 1 — multi-agent fan-out (2026-06-22)
+
+**Status: COMPLETE, verified live.** The single builder is now an ORCHESTRATOR that
+decomposes a request, fans out section generation, and composes one page.
+
+Live proof: prompt "Build a full landing page for Nimbus: hero / 3 features /
+3-tier pricing / footer" → the planner decomposed into **4 sections** → **4
+concurrent worker Tasks** built them → `Spec.compose_page/2` assembled one valid
+catalog `page` with **4 `section` children** (verified over the customer WS) →
+driven onto the Surface → an anonymous visitor sees the multi-section AI page at
+`/socialware/customer`.
+
+## PRs
+- **PR-2** `Spec.compose_page/2` — assemble worker sub-trees into one page + validate (fail-closed).
+- **PR-3** `Generator.decompose` + `parse_plan` + planner/worker prompts — `{:simple}|{:complex,sections}`, hard floor, LLM-id-safe.
+- **PR-6** orchestrator within-session authority — `App.ensure_app` grants the builder the `{:within_session,S}` + spawned-by + template caps via `Orchestrator.Caps`; the builder Kind composes `Identity`+`IdentityAdmin` (to receive grants) and persists (`:snapshot, :on_change`).
+- **PR-4/5** section fan-out orchestration — `Generator.generate` plans, fans out one Task per section, composes, drives; routing lives in `generate` (HelloBuilder unchanged).
+
+29 hello tests pass; doc.scan / arch.scan / uri_query.scan / check_invariants / format all green; hello compiles warning-clean.
+
+## DEVIATION (documented, flagged for Allen)
+Workers are in-process **Tasks**, NOT curl-flavor `Entity.Agent` members spawned via
+`add_managed_member` + `turn.dispatch`/`turn.deliver`. Deep research found that
+agent-contract path has two genuinely unwired pieces:
+1. **Worker credential cascade** — a curl agent's DeepSeek key is materialized from a
+   `cascade_resolution.credential_source_uri`, NOT the template; hello has no such
+   cascade, so curl workers would spawn keyless and reply "no API key".
+2. **Worker-reply correlation does not survive** — the curl reply is built fresh
+   (no `metadata`/`ref_id`), so `{turn_id, subtask_id}` is lost; the orchestrator
+   would have to poll the chat and correlate by sender URI.
+Both are surmountable; folding onto real member workers is a clean follow-up. PR-6
+already grants the orchestrator the caps that path needs. The Task-based fan-out
+delivers Phase 1's value (decompose → fan-out → compose) reliably today, consistent
+with the Phase-0 Task-based deviation.
+
+## Not yet (Phase 2/3 — coordination-gated)
+- **Phase 2 — world produces hello apps.** Register hello as a creatable session type
+  for world's existing create flow + the operator-side `@json-render` island (the
+  deferred 0.6: `HelloRenderer` hook + `PageView` + `hello_module_url`). Additive;
+  must NOT change `world` internals (handoff §6 / the hard boundary).
+- **Phase 3 — world BECOMES a hello app.** Explicitly a separate large spec requiring
+  coordination with the world dev; "do not attempt while world's UI work is in flight"
+  (handoff §144/§152). NOT an autonomous task.
