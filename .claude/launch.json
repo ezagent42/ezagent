@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agent-console-demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "-m", "http.server", "8917", "--directory", "apps/ezagent_web/priv/static/agent-console-demo"],
+      "port": 8917,
+      "autoPort": false
+    }
+  ]
+}
