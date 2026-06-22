@@ -1,91 +1,119 @@
 defmodule EzagentWeb.RegistrationControllerTest do
   use EzagentWeb.ConnCase
 
-  # String session key — get_session/2 looks keys up as strings; an
-  # atom key here would simply not be found.
-  # PR-B 2026-05-24: `pending_workspace` is now also required — the
-  # onboarding step sets it before /register/complete is reached.
-  # Codex round-1 HIGH-2: /register/complete revalidates that the
-  # workspace still accepts the email; helper ensures a matching rule
-  # exists so the test's irreversible write isn't blocked.
-  defp pending_conn(conn, email, workspace \\ "team-alpha") do
-    # SPEC #335 (PR #335) renamed the seed workspace `default → system`
-    # AND deleted all silent "default" fallbacks. Tests now use
-    # `team-alpha` as the generic non-system test workspace — matches
-    # the assertion shape `entity://team-alpha/user/<handle>`.
-    ensure_rule(workspace, email)
+  alias Ezagent.AppSettings
+  alias Ezagent.Entity.{InviteCode, MagicLinkToken, Profile}
+  alias Ezagent.Users
 
-    Plug.Test.init_test_session(conn, %{
-      "pending_registration_email" => email,
-      "pending_workspace" => workspace
-    })
+  describe "GET /register gate (task #87)" do
+    test "closed by default → shows the closed notice", %{conn: conn} do
+      body = conn |> get("/register") |> html_response(200)
+      assert body =~ "Registration is currently closed"
+    end
+
+    test "open → shows the email+password form", %{conn: conn} do
+      AppSettings.put("registration_open", true)
+      body = conn |> get("/register") |> html_response(200)
+      assert body =~ ~s(name="email")
+      assert body =~ ~s(name="password")
+      assert body =~ ~s(name="display_name")
+    end
+
+    test "open + require_invite → form shows the invite-code field", %{conn: conn} do
+      AppSettings.put("registration_open", true)
+      AppSettings.put("registration_require_invite", true)
+      body = conn |> get("/register") |> html_response(200)
+      assert body =~ ~s(name="invite_code")
+    end
   end
 
-  defp ensure_rule(workspace_name, email) do
-    # Create the workspace if missing, add a user_list rule for the
-    # email so workspace_still_valid?/2 returns true.
-    _ = Ezagent.Workspace.create(workspace_name, %{})
+  describe "POST /register (task #87)" do
+    test "closed → refused with the closed notice (no user created)", %{conn: conn} do
+      body =
+        conn
+        |> post("/register", %{
+          "email" => "x@ex.com",
+          "password" => "secret123",
+          "display_name" => "X"
+        })
+        |> html_response(200)
 
-    _ =
-      Ezagent.Workspace.add_magic_link_rule("workspace://" <> workspace_name, "user_list", email)
+      assert body =~ "Registration is currently closed"
+      assert Profile.by_email("x@ex.com") == nil
+    end
 
-    :ok
+    test "open + invite: valid code → check-your-email + unverified user created", %{conn: conn} do
+      AppSettings.put("registration_open", true)
+      AppSettings.put("registration_require_invite", true)
+
+      {:ok, {code, _}} =
+        InviteCode.mint(%{
+          workspace_uri: "workspace://team-alpha",
+          created_by: "entity://system/user/admin"
+        })
+
+      email = "reg#{System.unique_integer([:positive])}@ex.com"
+
+      body =
+        conn
+        |> post("/register", %{
+          "email" => email,
+          "password" => "secret123",
+          "display_name" => "Reg",
+          "invite_code" => code
+        })
+        |> html_response(200)
+
+      assert body =~ "Check your email"
+      uri = Profile.by_email(email).entity_uri
+      assert Users.get_by_uri(uri).email_verified == false
+    end
+
+    test "open + invite: missing code → 'invite code is required'", %{conn: conn} do
+      AppSettings.put("registration_open", true)
+      AppSettings.put("registration_require_invite", true)
+
+      body =
+        conn
+        |> post("/register", %{
+          "email" => "y@ex.com",
+          "password" => "secret123",
+          "display_name" => "Y"
+        })
+        |> html_response(200)
+
+      assert body =~ "invite code is required"
+      assert Profile.by_email("y@ex.com") == nil
+    end
   end
 
-  test "GET /register/complete shows the form prefilled with a derived slug", %{conn: conn} do
-    conn = conn |> pending_conn("allen.woods@good.com") |> get("/register/complete")
-    assert html_response(conn, 200) =~ "allen-woods"
-  end
+  describe "GET /auth/confirm/:token (task #87)" do
+    test "valid confirm token flips email_verified and redirects to /login", %{conn: conn} do
+      AppSettings.put("registration_open", true)
+      AppSettings.put("registration_require_invite", true)
 
-  test "GET /register/complete without a pending email redirects to /login", %{conn: conn} do
-    conn = get(conn, "/register/complete")
-    assert redirected_to(conn) == "/login"
-  end
+      {:ok, {code, _}} =
+        InviteCode.mint(%{
+          workspace_uri: "workspace://team-alpha",
+          created_by: "entity://system/user/admin"
+        })
 
-  test "GET /register/complete without a workspace bounces to onboarding (PR-B)", %{conn: conn} do
-    conn =
-      conn
-      |> Plug.Test.init_test_session(%{"pending_registration_email" => "noworkspace@good.com"})
-      |> get("/register/complete")
+      email = "conf#{System.unique_integer([:positive])}@ex.com"
 
-    assert redirected_to(conn) == "/onboarding/workspace"
-  end
+      {:ok, uri} =
+        Ezagent.Registration.register_with_password(email, "secret123", "Conf", invite_code: code)
 
-  test "POST /register/complete creates the principal and logs in", %{conn: conn} do
-    conn =
-      conn
-      |> pending_conn("newbie@good.com")
-      |> post("/register/complete", %{"handle" => "newbie", "display_name" => "New Bie"})
+      refute Users.get_by_uri(uri).email_verified
+      {:ok, token} = MagicLinkToken.mint(email, purpose: "confirm")
 
-    assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://team-alpha/user/newbie"
-    assert get_session(conn, :pending_registration_email) == nil
+      conn = get(conn, "/auth/confirm/#{token}")
+      assert redirected_to(conn) == "/login"
+      assert Users.get_by_uri(uri).email_verified == true
+    end
 
-    assert Ezagent.Entity.Profile.by_email("newbie@good.com").entity_uri ==
-             "entity://team-alpha/user/newbie"
-  end
-
-  test "POST /register/complete in a CUSTOM workspace creates entity://user/<ws>/<slug>", %{
-    conn: conn
-  } do
-    # PR-B 2026-05-24 — the workspace from onboarding is honored.
-    conn =
-      conn
-      |> pending_conn("alice@acme.test", "acme")
-      |> post("/register/complete", %{"handle" => "alice", "display_name" => "Alice"})
-
-    assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://acme/user/alice"
-  end
-
-  test "POST with a taken handle re-renders the form with a suggestion", %{conn: conn} do
-    {:ok, _} = Ezagent.Users.create("entity://team-alpha/user/taken", nil, [])
-
-    conn =
-      conn
-      |> pending_conn("taken@good.com")
-      |> post("/register/complete", %{"handle" => "taken", "display_name" => "T"})
-
-    assert html_response(conn, 200) =~ "taken-2"
+    test "invalid confirm token → /login with error", %{conn: conn} do
+      conn = get(conn, "/auth/confirm/bogus")
+      assert redirected_to(conn) == "/login"
+    end
   end
 end

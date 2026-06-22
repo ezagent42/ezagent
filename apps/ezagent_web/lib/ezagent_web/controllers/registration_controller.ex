@@ -1,197 +1,231 @@
 defmodule EzagentWeb.RegistrationController do
   @moduledoc """
-  Username & Auth M3 — registration completion (`/register/complete`).
+  task #87 Decision 10 — email+password self-registration (`/register`) +
+  email confirmation (`/auth/confirm/:token`).
 
-  Reached only after `MagicLinkController` verified the email and put
-  `:pending_registration_email` in the session. The user picks a handle
-  (the URI slug — editable HERE and only here; frozen once the principal
-  exists) and a display name.
+  Registration is **closed by default** (`AppSettings.registration_open?`). When
+  open, it optionally requires an invite code (`registration_require_invite?`).
+  An invite code carries the authoritative target workspace; without one (open
+  mode) the registrant gets a fresh random-suffixed workspace. The user is
+  created `email_verified: false`; clicking the confirmation link (a `:confirm`
+  purpose one-time token) flips `email_verified` and routes to `/login`.
 
-  Uses the light `Phoenix.Controller` header (matching `SessionController`).
+  Plain controller (auth boundary, no websocket dep) — heredoc + placeholder
+  substitution, matching `SessionController`.
   """
   use Phoenix.Controller, formats: [:html], layouts: []
   use Gettext, backend: EzagentWeb.Gettext
 
   import Plug.Conn
+  require Logger
 
+  alias Ezagent.Entity.MagicLinkToken
   alias Ezagent.Registration
   alias EzagentWeb.AuthBoundaryLayout
 
-  # PR-E (SPEC v2 §G7): registration page reuses the
-  # `AuthBoundaryLayout` chrome — same Geist font, same design tokens,
-  # same card, same dark-mode rules, same mobile-visible flash — so
-  # `/register/complete` looks like a sister page to `/login`. Only
-  # the card body (the handle + display_name form) lives here.
-  #
-  # Built at RUNTIME via `card_body/0` so user-facing strings pass
-  # through `gettext/1` (a compile-time `@card_body` module attribute
-  # cannot interpolate macros). `{{...}}` placeholders are substituted
-  # in `render_form/5`.
-  defp card_body do
-    """
-        <p class="brand">ezagent</p>
-        <h1>#{gettext("Complete your registration")}</h1>
-        {{FLASH}}
-        {{ERROR}}
-        <form method="post" action="/register/complete">
-          <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-          <label for="handle">#{gettext("Username (your permanent handle)")}</label>
-          <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
-          <label for="display_name">#{gettext("Display name (you can change this later)")}</label>
-          <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
-          <button type="submit">#{gettext("Create my account")}</button>
-        </form>
-        <p class="hint">#{gettext("Signing up as")} <code>{{EMAIL}}</code></p>
-    """
-  end
-
-  def complete_new(conn, _params) do
-    case {get_session(conn, :pending_registration_email), get_session(conn, :pending_workspace)} do
-      {email, workspace} when is_binary(email) and is_binary(workspace) ->
-        # PR-B 2026-05-24: workspace MUST be set by the onboarding
-        # controller. If it isn't, redirect back to onboarding.
-        slug = Registration.suggest_slug(Registration.derive_slug(email), workspace)
-        render_form(conn, email, slug, default_display(email), nil)
-
-      {email, _} when is_binary(email) ->
-        # Email but no workspace — back to onboarding.
-        redirect(conn, to: "/onboarding/workspace")
-
-      _ ->
-        redirect(conn, to: "/login")
+  @doc "GET /register — closed notice, or the email+password form."
+  def new(conn, _params) do
+    if Ezagent.AppSettings.registration_open?() do
+      render_form(conn, %{}, nil)
+    else
+      render_closed(conn)
     end
   end
 
-  def complete_create(conn, %{"handle" => handle, "display_name" => display_name}) do
-    case {get_session(conn, :pending_registration_email), get_session(conn, :pending_workspace)} do
-      {email, workspace} when is_binary(email) and is_binary(workspace) ->
-        # Codex PR-B round-1 HIGH-2: REVALIDATE at registration time
-        # that the workspace still exists AND accepts this email.
-        # Pre-fix: stale :pending_workspace from a since-deleted
-        # workspace or a rule that was removed becomes permanent
-        # tenant membership — irreversibly. Re-check immediately
-        # before the user/member write.
-        cond do
-          not workspace_still_valid?(workspace, email) ->
-            conn
-            |> put_flash(
-              :error,
-              gettext("That workspace no longer accepts your email. Please pick again.")
-            )
-            |> delete_session(:pending_workspace)
-            |> redirect(to: "/onboarding/workspace")
+  @doc "POST /register — gated; create unconfirmed user + send confirmation."
+  def create(conn, params) do
+    cond do
+      not Ezagent.AppSettings.registration_open?() ->
+        render_closed(conn)
 
-          true ->
-            do_complete_create(conn, handle, display_name, email, workspace)
+      rate_limited?(conn, params) ->
+        # Generic — do not reveal which limiter tripped.
+        render_form(conn, params, gettext("Too many attempts. Please try again later."))
+
+      true ->
+        do_create(conn, params)
+    end
+  end
+
+  @doc "GET /auth/confirm/:token — verify email ownership, set email_verified."
+  def confirm(conn, %{"token" => token}) do
+    case MagicLinkToken.consume(token, "confirm") do
+      {:ok, email} ->
+        case Registration.principal_for_email(email) do
+          {:ok, uri} ->
+            _ = Ezagent.Users.mark_email_verified(uri)
+
+            conn
+            |> put_flash(:info, gettext("Email confirmed — please sign in."))
+            |> redirect(to: "/login")
+
+          :none ->
+            bounce_login(conn, gettext("Could not confirm — please register again."))
         end
 
-      {email, _} when is_binary(email) ->
-        redirect(conn, to: "/onboarding/workspace")
-
-      _ ->
-        redirect(conn, to: "/login")
+      {:error, _reason} ->
+        bounce_login(conn, gettext("That confirmation link is invalid or has expired."))
     end
   end
 
-  def complete_create(conn, _params) do
-    redirect(conn, to: "/register/complete")
-  end
+  # --- internals ----------------------------------------------------------
 
-  defp workspace_still_valid?(workspace_name, email) do
-    workspace_name
-    |> Ezagent.URI.workspace()
-    |> Ezagent.URI.stable_key()
-    |> Ezagent.Workspace.accepts_email?(email)
-  end
+  defp do_create(conn, params) do
+    email = params |> Map.get("email", "") |> String.trim() |> String.downcase()
+    password = Map.get(params, "password", "")
+    display_name = params |> Map.get("display_name", "") |> String.trim()
+    require_invite = Ezagent.AppSettings.registration_require_invite?()
+    code = params |> Map.get("invite_code", "") |> String.trim()
 
-  defp do_complete_create(conn, handle, display_name, email, workspace) do
-    case Registration.principal_for_email(email) do
-      {:ok, uri} ->
-        # Concurrent-registration / re-entry guard (spec §7): the
-        # email became a principal since the magic link was issued.
-        # Email ownership was already proven by the link -> log in,
-        # do NOT double-create.
-        login_and_redirect(conn, uri)
+    cond do
+      email == "" or password == "" or display_name == "" ->
+        render_form(conn, params, gettext("Email, password, and display name are required."))
 
-      :none ->
-        slug = handle |> String.trim() |> String.downcase()
+      require_invite and code == "" ->
+        render_form(conn, params, gettext("An invite code is required."))
 
-        case Registration.create_principal(slug, display_name, email, workspace) do
+      true ->
+        opts = if require_invite, do: [invite_code: code], else: [mode: :open_self_serve]
+
+        case Registration.register_with_password(email, password, display_name, opts) do
           {:ok, uri} ->
-            login_and_redirect(conn, uri)
+            send_confirmation(email, uri)
+            # Identical response whether or not the email was new
+            # (anti-enumeration, Codex #6): always "check your email".
+            render_check_email(conn, email)
 
-          {:error, :slug_taken} ->
-            suggestion = Registration.suggest_slug(slug, workspace)
+          {:error, :email_taken} ->
+            # Same response as success → does not reveal the email exists.
+            render_check_email(conn, email)
 
-            render_form(
-              conn,
-              email,
-              suggestion,
-              display_name,
-              gettext("“%{slug}” is taken. Try “%{suggestion}”.",
-                slug: slug,
-                suggestion: suggestion
-              )
-            )
+          {:error, {:invite, _reason}} ->
+            render_form(conn, params, gettext("That invite code is not valid."))
 
           {:error, reason} ->
-            render_form(
-              conn,
-              email,
-              slug,
-              display_name,
-              gettext("Could not register: %{reason}", reason: inspect(reason))
-            )
+            Logger.warning("registration failed email=#{email} reason=#{inspect(reason)}")
+            render_form(conn, params, gettext("Could not complete registration."))
         end
     end
   end
 
-  defp login_and_redirect(conn, uri) do
-    :ok = Ezagent.Entity.spawn_principal(uri)
+  defp send_confirmation(email, _uri) do
+    {:ok, raw} = MagicLinkToken.mint(email, purpose: "confirm")
+    link = EzagentWeb.Endpoint.url() <> "/auth/confirm/" <> raw
 
-    conn
-    |> delete_session(:pending_registration_email)
-    |> EzagentWeb.SessionPrincipal.put(URI.to_string(uri))
-    |> redirect(to: "/sessions")
+    case EzagentWeb.Mailer.deliver_confirmation(email, link) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("confirmation email failed email=#{email} reason=#{inspect(reason)}")
+    end
   end
 
-  defp render_form(conn, email, handle, display, error) do
+  # Per-IP + per-email registration rate limits (anti-abuse, Codex #6).
+  defp rate_limited?(conn, params) do
+    ip = conn.remote_ip |> :inet.ntoa() |> to_string()
+    email = params |> Map.get("email", "") |> String.trim() |> String.downcase()
+
+    {:error, :rate_limited} ==
+      EzagentWeb.RateLimiter.check("register_ip:" <> ip, limit: 10, window_ms: 60 * 60_000) or
+      (email != "" and
+         {:error, :rate_limited} ==
+           EzagentWeb.RateLimiter.check("register_email:" <> email,
+             limit: 5,
+             window_ms: 15 * 60_000
+           ))
+  end
+
+  defp bounce_login(conn, msg) do
+    conn |> put_flash(:error, msg) |> redirect(to: "/login")
+  end
+
+  # --- rendering ----------------------------------------------------------
+
+  defp render_closed(conn) do
+    body = """
+        <p class="brand">ezagent</p>
+        <h1>#{esc(gettext("Sign up"))}</h1>
+        <div class="info">#{esc(gettext("Registration is currently closed."))}</div>
+        <p class="hint" style="text-align:center;margin-top:8px;">
+          <a href="/login">#{esc(gettext("Back to sign in"))}</a>
+        </p>
+    """
+
+    send_card(conn, gettext("Sign up"), body)
+  end
+
+  defp render_check_email(conn, email) do
+    body = """
+        <p class="brand">ezagent</p>
+        <h1>#{esc(gettext("Check your email"))}</h1>
+        <div class="info">#{esc(gettext("If your details are valid, we've sent a confirmation link to"))} <code>#{esc(email)}</code>.</div>
+        <p class="hint" style="text-align:center;margin-top:8px;">
+          <a href="/login">#{esc(gettext("Back to sign in"))}</a>
+        </p>
+    """
+
+    send_card(conn, gettext("Check your email"), body)
+  end
+
+  defp render_form(conn, params, error) do
+    require_invite = Ezagent.AppSettings.registration_require_invite?()
+    email = params |> Map.get("email", "") |> to_string()
+    display_name = params |> Map.get("display_name", "") |> to_string()
+
     error_block =
-      if error,
-        do: ~s(<div class="error">#{Plug.HTML.html_escape(error) |> safe_to_string()}</div>),
-        else: ""
+      if error, do: ~s(<div class="error">) <> esc(error) <> "</div>", else: ""
 
-    card_body_html =
-      card_body()
-      |> String.replace("{{FLASH}}", AuthBoundaryLayout.flash_html(conn))
-      |> String.replace("{{ERROR}}", error_block)
-      |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
-      |> String.replace("{{HANDLE}}", Plug.HTML.html_escape(handle) |> safe_to_string())
-      |> String.replace("{{DISPLAY}}", Plug.HTML.html_escape(display) |> safe_to_string())
-      |> String.replace("{{EMAIL}}", Plug.HTML.html_escape(email) |> safe_to_string())
+    invite_field =
+      if require_invite do
+        """
+        <label for="invite_code">#{esc(gettext("Invite code"))}</label>
+        <input type="text" id="invite_code" name="invite_code" required>
+        """
+      else
+        ""
+      end
 
+    body = """
+        <p class="brand">ezagent</p>
+        <h1>#{esc(gettext("Create your account"))}</h1>
+        #{AuthBoundaryLayout.flash_html(conn)}
+        #{error_block}
+        <form method="post" action="/register">
+          <input type="hidden" name="_csrf_token" value="#{Plug.CSRFProtection.get_csrf_token()}">
+          <label for="email">#{esc(gettext("Email address"))}</label>
+          <input type="email" id="email" name="email" value="#{esc(email)}" placeholder="you@example.com" required autofocus>
+          <label for="display_name">#{esc(gettext("Display name"))}</label>
+          <input type="text" id="display_name" name="display_name" value="#{esc(display_name)}" required>
+          <label for="password">#{esc(gettext("Password"))}</label>
+          <input type="password" id="password" name="password" required>
+          #{invite_field}
+          <button type="submit">#{esc(gettext("Create account"))}</button>
+        </form>
+        <p class="hint" style="text-align:center;margin-top:8px;">
+          <a href="/login">#{esc(gettext("Already have an account? Sign in"))}</a>
+        </p>
+    """
+
+    send_card(conn, gettext("Create your account"), body)
+  end
+
+  defp send_card(conn, title, body) do
     html =
-      AuthBoundaryLayout.head_html(gettext("Complete registration")) <>
+      AuthBoundaryLayout.head_html(gettext("ezagent · %{title}", title: title)) <>
         AuthBoundaryLayout.body_open() <>
         AuthBoundaryLayout.card_open() <>
-        card_body_html <>
+        body <>
         AuthBoundaryLayout.card_close() <>
         AuthBoundaryLayout.body_close()
 
-    conn
-    |> put_resp_content_type("text/html")
-    |> send_resp(200, html)
+    conn |> put_resp_content_type("text/html") |> send_resp(200, html)
   end
 
-  defp safe_to_string({:safe, iodata}), do: IO.iodata_to_binary(iodata)
-  defp safe_to_string(s) when is_binary(s), do: s
-
-  # Humanize the email local part as the default display name.
-  defp default_display(email) do
-    email
-    |> String.split("@", parts: 2)
-    |> List.first()
-    |> String.split(~r/[._+-]+/, trim: true)
-    |> Enum.map_join(" ", &String.capitalize/1)
+  defp esc(text) do
+    case Plug.HTML.html_escape(text) do
+      bin when is_binary(bin) -> bin
+      iodata -> IO.iodata_to_binary(iodata)
+    end
   end
 end

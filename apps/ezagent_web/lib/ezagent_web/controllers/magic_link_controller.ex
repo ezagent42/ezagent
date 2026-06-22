@@ -19,63 +19,16 @@ defmodule EzagentWeb.MagicLinkController do
   alias EzagentWeb.SessionPrincipal
 
   def consume(conn, %{"token" => token}) do
-    case MagicLinkToken.consume(token) do
+    # task #87 — magic-link is now a LOGIN method for EXISTING accounts only
+    # (purpose "login"). New-account creation goes through email+password
+    # `/register`. The legacy onboarding/register-complete chain is retired.
+    case MagicLinkToken.consume(token, "login") do
       {:ok, email} ->
         route_by_email(conn, email)
-
-      {:error, :consumed} ->
-        # Allen 2026-05-24 UX fix: a token marked `consumed_at` but
-        # whose email never finished registration should LET THE USER
-        # RE-ENTER `/register/complete`. The original consume already
-        # delivered the email to /register/complete; if user closed
-        # the tab / didn't fill the form, click-again should resume
-        # the same registration session rather than the confusing
-        # "already used" error → login bounce.
-        consumed_fallback(conn, token)
 
       {:error, reason} ->
         conn
         |> put_flash(:error, error_message(reason))
-        |> redirect(to: "/login")
-    end
-  end
-
-  # Token is consumed but still within expires_at — recover email via
-  # peek/1 + route based on registration state:
-  # - Email has no principal → re-enter /onboarding/workspace (PR-B
-  #   2026-05-24 — the user picks/creates a workspace first, then
-  #   /register/complete collects the handle)
-  # - Email HAS a principal → user already registered + logged in
-  #   elsewhere; tell them so and bounce to /login for re-auth
-  # - Token gone / truly expired → fall through to default error
-  defp consumed_fallback(conn, token) do
-    case MagicLinkToken.peek(token) do
-      {:ok, email, :consumed} ->
-        case Registration.principal_for_email(email) do
-          :none ->
-            # User clicked but never completed registration. Re-route
-            # to /onboarding/workspace with a fresh pending-registration
-            # session so they can resume from the workspace pick step.
-            conn
-            |> configure_session(renew: true)
-            |> put_session(:pending_registration_email, email)
-            |> redirect(to: "/onboarding/workspace")
-
-          {:ok, _uri} ->
-            # User IS registered — they probably clicked an older
-            # email after already signing in elsewhere. Bounce to
-            # /login with a clearer message.
-            conn
-            |> put_flash(
-              :info,
-              gettext("Your account is registered. Please sign in with your email or password.")
-            )
-            |> redirect(to: "/login")
-        end
-
-      _ ->
-        conn
-        |> put_flash(:error, error_message(:consumed))
         |> redirect(to: "/login")
     end
   end
@@ -93,21 +46,11 @@ defmodule EzagentWeb.MagicLinkController do
         |> redirect(to: "/sessions")
 
       :none ->
-        # PR-B 2026-05-24 (Allen, SPEC v2): new email → workspace
-        # onboarding. The user picks an existing workspace to join
-        # (matched by email rule) OR creates a new one. Then
-        # /register/complete collects the handle.
-        #
-        # Codex round-1 HIGH-2 — `configure_session(renew: true)` plus
-        # explicit `delete_session(:pending_workspace)` clears any
-        # stale onboarding state from a prior magic-link click. A
-        # subsequent /register/complete revalidates :pending_workspace
-        # before any irreversible write (registration_controller.ex).
+        # task #87 — no account for this email. Magic-link no longer creates
+        # accounts; send the visitor to email+password registration.
         conn
-        |> configure_session(renew: true)
-        |> put_session(:pending_registration_email, email)
-        |> delete_session(:pending_workspace)
-        |> redirect(to: "/onboarding/workspace")
+        |> put_flash(:info, gettext("No account found for that email. Please create one."))
+        |> redirect(to: "/register")
     end
   end
 
