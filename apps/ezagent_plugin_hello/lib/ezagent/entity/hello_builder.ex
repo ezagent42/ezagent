@@ -22,6 +22,9 @@ defmodule Ezagent.Entity.HelloBuilder do
   # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors, do: [Ezagent.Behavior.HelloBuilder]
 
-  # Persist across restart (a session member should survive a cold load).
-  def persistence, do: :snapshot
+  # Phase 0 holds no durable builder state (`create/1` is empty, the prompt is
+  # static, API config comes from env), so the builder is ephemeral — like echo.
+  # When the builder grows durable state (per-session catalog refs, conversation),
+  # switch to `{:snapshot, :on_change}`.
+  def persistence, do: :ephemeral
 end
