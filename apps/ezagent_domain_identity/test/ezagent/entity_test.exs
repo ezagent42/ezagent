@@ -99,4 +99,30 @@ defmodule Ezagent.EntityTest do
       assert {:error, {:unsupported_entity_uri, ^uri}} = Entity.authenticate(uri, "x")
     end
   end
+
+  describe "authenticate/3 — password-only mode (task #87 login form)" do
+    test "allow_user_tokens:false rejects a bearer token but accepts the password" do
+      uri_str = "entity://team-alpha/user/pwonly-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri_str, "correct-password", [])
+      uri = Ezagent.URI.new!(uri_str)
+      {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "cli")
+
+      # token must NOT authenticate on the form path
+      assert {:error, :invalid_credentials} =
+               Entity.authenticate(uri, plain_token, allow_user_tokens: false)
+
+      # password still works on the form path
+      assert {:ok, %{caps: _}} =
+               Entity.authenticate(uri, "correct-password", allow_user_tokens: false)
+    end
+
+    test "authenticate/2 still accepts a user bearer token (back-compat for CLI/API)" do
+      uri_str = "entity://team-alpha/user/tokcompat-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri_str, "pw", [])
+      uri = Ezagent.URI.new!(uri_str)
+      {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "cli")
+
+      assert {:ok, %{caps: _}} = Entity.authenticate(uri, plain_token)
+    end
+  end
 end
