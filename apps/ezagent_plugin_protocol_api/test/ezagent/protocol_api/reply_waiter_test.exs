@@ -13,9 +13,10 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
       reply_msg = Message.new(agent_uri, %{text: "hello back"}, ref_id: request_id)
       event = build_publisher_event(reply_msg)
 
-      task = Task.async(fn ->
-        ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
-      end)
+      task =
+        Task.async(fn ->
+          ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
+        end)
 
       Process.sleep(50)
       send(task.pid, {:publisher_event, event})
@@ -40,9 +41,10 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
       other_msg = Message.new(agent_uri, %{text: "wrong"}, ref_id: other_id)
       other_event = build_publisher_event(other_msg)
 
-      task = Task.async(fn ->
-        ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
-      end)
+      task =
+        Task.async(fn ->
+          ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
+        end)
 
       Process.sleep(50)
       send(task.pid, {:publisher_event, other_event})
@@ -59,9 +61,10 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
       wrong_msg = Message.new(wrong_agent, %{text: "hi"}, ref_id: request_id)
       wrong_event = build_publisher_event(wrong_msg)
 
-      task = Task.async(fn ->
-        ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
-      end)
+      task =
+        Task.async(fn ->
+          ReplyWaiter.wait_for_reply(request_id, agent_uri, deadline_ms)
+        end)
 
       Process.sleep(50)
       send(task.pid, {:publisher_event, wrong_event})

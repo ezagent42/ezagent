@@ -42,7 +42,7 @@
   #   recognizer never drift. 22→28.
   # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
   def_count_capability: 28,
-  spawn_registry_call_sites: 37,
+  spawn_registry_call_sites: 38,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -50,7 +50,7 @@
   # SessionManager) after a BEAM restart. +1 module (sanctioned, so
   # off_chokepoint is unchanged).
   # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
-  spawn_registry_modules: 33,
+  spawn_registry_modules: 34, # +1 protocol_api P0 (conversation_registry spawn)
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,

@@ -26,7 +26,8 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          {:ok, token} <- extract_bearer(conn),
          {:ok, entity_uri, workspace_uri, _caps} <- ApiKeyStore.verify(token),
          {:ok, conversation_id} <- extract_conversation_id(body, conn),
-         {:ok, session_uri} <- ConversationRegistry.resolve(conversation_id, workspace_uri, entity_uri),
+         {:ok, session_uri} <-
+           ConversationRegistry.resolve(conversation_id, workspace_uri, entity_uri),
          :ok <- ensure_session_live(session_uri),
          {:ok, request_id, msg} <- build_message(body, entity_uri),
          {:ok, _cursor} <- subscribe_publisher(session_uri),
@@ -48,7 +49,9 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
           {:ok, json} -> {:ok, json}
           {:error, _} -> {:error, 400, "bad_json", "invalid JSON body"}
         end
-      {:error, reason} -> {:error, 400, "bad_body", inspect(reason)}
+
+      {:error, reason} ->
+        {:error, 400, "bad_body", inspect(reason)}
     end
   end
 
@@ -61,11 +64,17 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
   defp extract_conversation_id(body, conn) do
     case Map.get(body, "conversation_id") do
-      id when is_binary(id) and id != "" -> {:ok, id}
+      id when is_binary(id) and id != "" ->
+        {:ok, id}
+
       _ ->
         case Plug.Conn.get_req_header(conn, "x-conversation-id") do
-          [id | _] when id != "" -> {:ok, id}
-          _ -> {:error, 400, "missing_conversation_id", "conversation_id field or X-Conversation-Id header required"}
+          [id | _] when id != "" ->
+            {:ok, id}
+
+          _ ->
+            {:error, 400, "missing_conversation_id",
+             "conversation_id field or X-Conversation-Id header required"}
         end
     end
   end
@@ -81,21 +90,29 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp build_message(body, entity_uri) do
     request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     messages = Map.get(body, "messages", [])
-    text = messages |> List.last() |> case do
-      %{"content" => content} when is_binary(content) -> content
-      _ -> ""
-    end
+
+    text =
+      messages
+      |> List.last()
+      |> case do
+        %{"content" => content} when is_binary(content) -> content
+        _ -> ""
+      end
+
     msg = Message.new(entity_uri, %{text: text, attachments: []}, id: request_id)
     {:ok, request_id, msg}
   end
 
   defp subscribe_publisher(session_uri) do
     target = URI.with_action(session_uri, :publisher, :subscribe_from)
+
     cmd = %Ezagent.Cmd{
-      target: target, action: :subscribe_from,
+      target: target,
+      action: :subscribe_from,
       args: %{subscriber_pid: self(), cursor: :latest},
       ctx: %{caller: Ezagent.URI.system_principal("plugins")}
     }
+
     case Router.dispatch(cmd) do
       {:ok, %{cursor: cursor}} -> {:ok, cursor}
       {:error, reason} -> {:error, 500, "subscribe", inspect(reason)}
@@ -104,10 +121,14 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
   defp dispatch_send(session_uri, entity_uri, msg) do
     target = URI.with_action(session_uri, :session, :send)
+
     inv = %Invocation{
-      target: target, mode: :call, args: %{message: msg},
+      target: target,
+      mode: :call,
+      args: %{message: msg},
       ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :sync}
     }
+
     case Invocation.dispatch(inv) do
       {:ok, _} -> :ok
       :ok -> :ok
@@ -118,9 +139,19 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp build_openai_response(request_id, %Message{} = reply_msg) do
     %{
       "id" => "chatcmpl-#{request_id}",
-      "object" => "chat.completion", "created" => DateTime.utc_now() |> DateTime.to_unix(),
+      "object" => "chat.completion",
+      "created" => DateTime.utc_now() |> DateTime.to_unix(),
       "model" => "ezagent",
-      "choices" => [%{"index" => 0, "message" => %{"role" => "assistant", "content" => Map.get(reply_msg.body, :text, "") || ""}, "finish_reason" => "stop"}],
+      "choices" => [
+        %{
+          "index" => 0,
+          "message" => %{
+            "role" => "assistant",
+            "content" => Map.get(reply_msg.body, :text, "") || ""
+          },
+          "finish_reason" => "stop"
+        }
+      ],
       "usage" => %{"prompt_tokens" => 0, "completion_tokens" => 0, "total_tokens" => 0}
     }
   end
@@ -130,6 +161,11 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp json_error(conn, status, message) do
-    conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(%{"error" => %{"message" => message, "type" => "api_error"}}))
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(
+      status,
+      Jason.encode!(%{"error" => %{"message" => message, "type" => "api_error"}})
+    )
   end
 end
