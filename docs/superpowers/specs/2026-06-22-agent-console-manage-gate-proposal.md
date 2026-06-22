@@ -41,7 +41,7 @@ Alice 是 operator（登录 world Console 的人，也是某个 session 的 owne
 Console 对热操作就只剩三条路，**全是坏的**：
 
 1. **操作直接失败 → 会话控制台这半边废掉。** Alice 永远 `:unauthorized`，Console 只能**只读**——而「管理活会话」正是这个产品的招牌。
-2. **有人为了让它跑、偷偷绕过授权 →（危险，而且 world 里已经在这么干了）** 后端调查发现 world 现在两处就是：`save_session_template` **自己伪造一把 write 钥匙**、routing **传空钥匙**。这些「能跑」，但**绕过了 operator 真实权限**——审计记的主体是错的，谁改的查不出来。
+2. **有人为了让它跑、偷偷绕过 / 漂移授权 →（危险，而且 world 里已经在这么干了）** 后端调查发现 world 两处：① `save_session_template` **自己伪造一把 write 钥匙**（真·绕过 operator 权限）；② routing dispatch **传空 `ctx.caps`**——这条**不是当前 live 漏洞**（运行时有 `holds_cap(caller)` 兜底，§5#3），而是 **contract drift / 未来债**：它"碰巧"靠 caller 持有的 cap 通过，审计/意图不清晰，该退休、不该复制。两者都让"谁改的"难追责。
 3. **或者干脆把编排器万能钥匙发给 operator（过度授权）。** 「能管理 team」悄悄变成「能在这个会话里干编排器能干的一切」，永久、无关卡、难收回。
 
 > 还有一条更隐蔽的：今天「让 operator 在聊天里指挥编排器去改」**也不安全**——编排器不是授权关卡，它对**任何能在会话里发消息的成员**都听话，只靠它的 system prompt（软护栏）挡，且审计只记成编排器。对 socialware/公开会话尤其危险。（证据见 §5 第 4 条。）
@@ -64,7 +64,7 @@ Console 在 **manage 授权**下运行，**授权与执行分离**：
 
 | # | 论断 | 核验命令 | 预期 |
 |---|---|---|---|
-| 1 | owner 持有**两把 `Manage :any`**：① `:agent` 级（over orchestrator，materializer.ex:117）② **`:session` 级（over the session 本体）**——后者是 gate target，且已是 `action:any`（"扩 action"会被它自动覆盖，见 §7） | `grep -n "Behavior.Manage :any\|cap(:agent, Manage" apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex` ; `grep -n "grant_creator_manage_cap" apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` | materializer.ex:117「Manage :any OVER the orchestrator」；`behavior/workspace.ex:577` `grant_creator_manage_cap(:session, session_uri, …)` = session 级 Manage:any |
+| 1 | owner 持有**两把 `Manage :any`**：① `:agent` 级（over orchestrator，materializer.ex:117）② **`:session` 级（over the session 本体）**——后者是 gate target，且已是 `action:any`（"扩 action"会被它自动覆盖，见 §7） | `grep -n "Behavior.Manage :any\|cap(:agent, Manage" apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex` ; `sed -n '575,585p' apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`（看到 `grant_creator_manage_cap(:session, session_uri, workspace_uri, caller)` 的 `:session` 实参）; `sed -n '15,32p' apps/ezagent_core/lib/ezagent/creator_grant.ex`（看 `manage_cap/4` 铸 `action: :any`，`granted_by` = caller 真实 entity） | materializer.ex:117「Manage :any OVER the orchestrator」；workspace.ex:577 调用第 1 实参是 `:session`；creator_grant.ex `manage_cap/4` 铸 `Manage`、`action: :any`、`granted_by: caller`（真实 entity）= session 级 Manage:any |
 | 2 | 活会话工具授权在**编排器的 `{:within_session,S}`** 钥匙上，operator 不持有 | `grep -n "within_session, S\|preflight_within_session_cap" apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex` | 命中 cap #1 注释（~`:37`）+ `preflight_within_session_cap`（~`:878`） |
 | 3 | 运行时授权是 **`ctx.caps` OR `holds_cap(caller)`**（所以空 caps 不必然 fail-closed；硬 fail-closed 要靠显式 gate） | `sed -n '395,415p' apps/ezagent_core/lib/ezagent/kind/runtime.ex` | 见 `granted_via_ctx_caps?` 与 `granted_via_holds_cap?` 两个分支，OR 关系 |
 | 4 | 编排器**不是授权关卡**：`handle_send` 只验发送方 `:send`，从不验发送方的 Manage/owner 权；编排器随后用**自己**的 caps 干活；且新用户 `default_caps=[]`（门槛=会话成员，不是 owner） | `sed -n '432,460p' apps/ezagent_domain_session/lib/ezagent/behavior/session.ex` ; `grep -n "def default_caps" apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` ; `grep -n "list_caps_for" apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex` | `handle_send` 无 sender-authority 检查；`user.ex:175` `default_caps(workspace) → []`；`session_manager.ex:352` 重建的是 orchestrator 的 caps |
@@ -107,14 +107,44 @@ operator action (world Console) — 只交 {session_uri, op, structured args}，
 ```
 Non-negotiables：两个 `ctx.caller`（gate=operator / exec=orchestrator）；Phase-1 是**真 dispatch**、不是旁路；world 只交 `{session_uri, op, args}`，绝不交 caps/principal（confused-deputy）；Phase-2 投影**最小** cap、校验参数；fail-closed 保留 operator 身份。
 
+### 6a. "最小 cap 投影" 的精确定义 + 每个 op 的执行权限集（review C2）
+**"投影最小 cap" = 从 orchestrator 实际持有的 caps（`Identity.list_caps_for(orchestrator)`）里 SELECT 出本 op 子 dispatch 需要的子集；绝不 *构造* 一个新的窄 `Capability` struct**（构造 = 在 Grant chokepoint 之外铸权限，违反 #154）。所以投影只会"少给"，不会"造新权"。
+
+一个 op 往往触发**多个**子 dispatch、需要**多把** held cap（矩阵每行只画了主 Held/Needed，下面是完整集）：
+
+| op | required_execution_caps（从 orchestrator held 里选） | 参数约束 |
+|---|---|---|
+| add_managed_member | within-session（join）+ spawned-by（spawn worker，§5#13） | source template **属本 workspace**；失败补偿用同一 spawned-by |
+| update_member_template | within-session + spawned-by（regenerate=spawn+leave+join+terminate） | new source 属本 workspace；same-URI 拒 |
+| remove_member | within-session（leave）+ spawned-by（terminate） | — |
+| add_participant | within-session + spawned-by | **MVP 不开 manifest/path 输入**（路径输入是额外攻击面，review B5） |
+| define_rule_set_rule / prompt / legend | within-session（仅一把） | receiver role 必须是 live member |
+| update_template / save_template_as | within-session + **Template（within_workspace）** | 写入的目标模板属本 workspace |
+| migrate_session | within-session + Template + 多步 | dry-run/plan；MVP 后置 |
+
+**MVP 首条命令 routing-rule-add 只需 within-session 一把**——这是它作为第一刀攻击面最小的原因。
+
 ## 7. Manage scope & granularity (v2 — rewritten per review C)
-Key fact (v2): the session **owner already holds a session-level `Manage :any` cap over the session itself** (`grant_creator_manage_cap(:session, session_uri, …)`, `behavior/workspace.ex:575`) — in addition to the `:agent` Manage over the orchestrator. So the gate target is the **session Manage cap**, and the owner can *already* satisfy any enumerated `manage.<op>` we add (the `action:any` cap auto-covers it).
+Key fact (v2): the session **owner already holds a session-level `Manage :any` cap over the session itself** (`grant_creator_manage_cap(:session, session_uri, …)`, `behavior/workspace.ex:577`) — in addition to the `:agent` Manage over the orchestrator. So the gate target is the **session Manage cap**, and the owner can *already* satisfy any enumerated `manage.<op>` we add (the `action:any` cap auto-covers it).
 
 That reframes the granularity question — it is a **decision about owner authority, not a silent-widening bug**:
 - **Decide first: is the session owner meant to be the session's full manager?**
   - **If yes (likely for MVP):** keep the owner's session `Manage:any`. The enumerated `manage.<op>` actions then exist to **scope the server-side allowlist** (which ops the Console exposes / which a *non-owner, narrowly-granted* operator may invoke) — they do **not** narrow the owner. State this explicitly so "enumerated action" isn't mistaken for owner-restriction.
   - **If no:** the migration off `action:any` must happen **before the FIRST enumerated action ships** (not the second — the first is already auto-covered), and it must be a **session-scoped** re-grant, because `CreatorGrant.manage_cap/4` is **shared** by session/agent/orchestrator grant sites and cannot be bluntly switched to enumerated globally.
-- Either way: **no new cap axis** (the `action` axis already expresses concern); **no `execute_tool(tool_name)`**; the per-op gate authorizes a specific enumerated `manage.<op>` against a server allowlist. One Manage behavior is enough.
+- Either way: **no new cap axis** (the `action` axis already expresses concern); **no `execute_tool(tool_name)`**; the per-op gate authorizes a specific enumerated `manage.<concern>` against a server allowlist. One Manage behavior is enough.
+
+### 7a. PROPOSED Manage action registry (review B1 — single source of truth)
+These actions **do NOT exist yet** — today `Behavior.Manage` has only `:delete` / `:reconfigure` (`manage.ex:44`). The demo + matrix + traces all use **this** list, marked **PROPOSED**:
+
+| PROPOSED action | covers | gate cap shape |
+|---|---|---|
+| `manage.member` | add / update / remove member, add participant | `cap(:session, Manage, :manage_member, session_uri, ws)` |
+| `manage.routing` | define rule / prompt / legend | `cap(:session, Manage, :manage_routing, session_uri, ws)` |
+| `manage.template` | update_template / save_template_as | `cap(:session, Manage, :manage_template, session_uri, ws)` |
+| `manage.migrate` | migrate_session | `cap(:session, Manage, :manage_migrate, session_uri, ws)` |
+| `manage.read_topology` | read-only topology (review E) | `cap(:session, Manage, :read_topology, session_uri, ws)` |
+
+`{:error, :manage_unauthorized}` is likewise a **PROPOSED** wrapper error (the Phase-1 gate's fail-closed return), not an existing runtime atom. Allen decides the final action set + whether `manage.*` are per-concern (this table) or finer per-op.
 
 ## 8. Audit schema change (required; cannot be mocked)
 Add `authorized_operator_uri`, `execution_principal_uri`, `front_door` (cc-bridge | world-console), `request_id`/`trace_id` (gate → every child dispatch), and the authorizing Manage-cap identity/provenance. Arguments = summaries only; never API keys / prompt secrets / path credentials. (Today: single `caller`, `trace_id: nil` — evidence §5#11.)
@@ -124,13 +154,14 @@ The **only** world-facing entry is `invoke_console(operator_uri, session_uri, op
 
 Two front doors, shared execution kernel, **NOT** shared auth: cc = bridge-token + binding (`run_tool/4`); world = `invoke_console` (Phase-1 Manage gate + operator provenance). World must NOT call `SessionManager.run_tool/4` and must NOT be able to construct execution caps.
 
-## 10. Open decisions for Allen (v2 — the LIVE half cannot ship until these 4 close)
+## 10. Open decisions for Allen (v2 — the LIVE half cannot ship until these 5 close)
 1. **Gate target (§6/§7):** confirm Phase-1 gates on the **session-level** `Behavior.Manage` cap (owner already holds it) — and whether old sessions need a backfill so every live session has a session Manage cap.
 2. **Owner authority & `action:any` (§7):** is the owner the session's full manager (keep `Manage:any`; enumerated actions only scope the server allowlist + non-owner operators) — OR migrate off `action:any` (session-scoped, before the first enumerated action ships, not touching the shared `CreatorGrant.manage_cap/4` globally)?
 3. **Non-forgeable runner (§9):** approve `invoke_console(operator, session, op, args)` as the sole world entry; raw caps-accepting runner stays private.
-4. **Read-side authority (§5#? / review E — now BLOCKING):** MVP read-only topology needs an authorized read path (membership-gated snapshot, or a session Manage `:read_topology` action) — world must stop raw `RuleStore.list` / `Kind.get_slice` (cross-workspace topology leak risk, `conversation_data.ex:57,290`).
+4. **Read-side authority (review E — BLOCKING):** MVP read-only topology needs an authorized read path (membership-gated snapshot, or a session Manage `:read_topology` action) — world must stop raw `RuleStore.list` / `Kind.get_slice` (cross-workspace topology leak risk, `conversation_data.ex:57,290`).
+5. **Audit schema (§8) — BLOCKING for LIVE MVP** (reconciled: §8 says "required", so it is a blocking decision, not optional): approve the dual-principal (`authorized_operator_uri` + `execution_principal_uri`) + matched-cap identity + `request_id`/`trace_id` correlation fields + the migration. Without it the dual-principal audit (the whole point of the gate) can't be recorded.
 
-Plus (approve, not blocking): the two-phase protocol (§6); the audit schema (§8, dual-principal + `request_id` correlation); whether to retire the world forged-authority shortcuts (§5#12) now or separately.
+Plus (approve the design, mechanics not gating): the two-phase protocol shape (§6); whether to retire the world forged-authority shortcuts (§5#12) now or in a follow-up.
 
 **Reassurance (review B6):** the gate mints no cap and reconstructs already-held caps without going through `Ezagent.Identity.Grant`, so it does NOT violate the grant chokepoint or Decision #154 — provided it adds no new `system://` principal and records the real cap's entity `granted_by`. The real risks are the gate being bypassed (§6 Phase-1 = real dispatch) or the raw runner being exposed (§9).
 
