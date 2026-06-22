@@ -83,12 +83,20 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  # P0: ensure the echo agent is live, then join it to the session.
-  # Best-effort — agent may already be live/a member.
+  # P0: ensure the echo agent exists (spawn if needed), then join it to
+  # the session so it can receive and reply to messages.
   defp join_agent(session_uri, entity_uri) do
     echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
-    # Ensure agent actor is alive (idempotent)
-    _ = SpawnRegistry.ensure_live(echo_agent)
+    # Spawn the echo agent if it doesn't exist yet (idempotent).
+    # The disposable stack may not have seeded it via after_boot.
+    case SpawnRegistry.ensure_live(echo_agent) do
+      {:ok, _} -> :ok
+      {:error, :not_found} ->
+        # Agent never created — create it now
+        _ = SpawnRegistry.spawn(echo_agent)
+      {:error, _} -> :ok
+    end
+
     target = URI.with_action(session_uri, :session, :join)
     cmd = %Ezagent.Cmd{
       target: target, action: :join,
