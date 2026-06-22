@@ -190,23 +190,42 @@ function Dashboard({state}: {state: AdminState}) {
   )
 }
 
+function orchestratorTone(state: string): "default" | "success" | "warning" | "danger" {
+  if (state === "ok") return "success"
+  if (state === "partial") return "warning"
+  if (state === "missing" || state === "unavailable") return "danger"
+  return "default"
+}
+
 function OrchestratorStatus({status}: {status: unknown}) {
   if (status == null || typeof status === "string") {
     const value = String(status ?? "unavailable")
-    return <Badge tone={value === "unavailable" ? "warning" : "default"}>{value}</Badge>
+    return <Badge tone={orchestratorTone(value)}>{value}</Badge>
   }
 
-  const entries = Object.entries(status as Record<string, unknown>)
-  if (entries.length === 0) return <Badge tone="default">empty</Badge>
+  // Anything non-object (or an array, e.g. a serialized tuple) — show the
+  // raw value as a degraded badge rather than an index-keyed dump.
+  if (typeof status !== "object" || Array.isArray(status)) {
+    return <Badge tone="warning">{s(status)}</Badge>
+  }
+
+  const {state, ...rest} = status as Record<string, unknown>
+  const entries = Object.entries(rest)
 
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-      {entries.map(([key, value]) => (
-        <div className="rounded-md border border-border bg-background p-2 text-xs" key={key}>
-          <span className="block text-muted-foreground">{key}</span>
-          <code className="font-mono text-foreground">{typeof value === "object" ? JSON.stringify(value) : s(value)}</code>
+    <div className="space-y-2">
+      {state != null && <Badge tone={orchestratorTone(String(state))}>{String(state)}</Badge>}
+      {entries.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {entries.map(([key, value]) => (
+            <div className="rounded-md border border-border bg-background p-2 text-xs" key={key}>
+              <span className="block text-muted-foreground">{key}</span>
+              <code className="font-mono text-foreground break-all">{typeof value === "object" ? JSON.stringify(value) : s(value)}</code>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+      {state == null && entries.length === 0 && <Badge tone="default">empty</Badge>}
     </div>
   )
 }

@@ -320,13 +320,39 @@ defmodule Ezagent.World.AdminData do
     seed_module = Ezagent.Orchestrator.CcOrchestratorSeed
 
     if Code.ensure_loaded?(seed_module) and function_exported?(seed_module, :seed_status, 0) do
-      seed_module |> apply(:seed_status, []) |> jsonable()
+      seed_module |> apply(:seed_status, []) |> shape_orchestrator_status()
     else
       "unavailable"
     end
   rescue
     _ -> "unavailable"
   end
+
+  # `seed_status/0` returns a `{state, detail}` tuple (state = :ok/:partial/
+  # :missing, detail carries the seeded template). Flatten it into a
+  # display-ready map: a `state` field (the UI renders it as a status badge)
+  # plus a few meaningful, scalar template fields — never the raw nested
+  # `{:ok, %{template_content: %{...}}}` dump (world §3.3). nil/empty fields
+  # are dropped so the card only shows what's actually set.
+  defp shape_orchestrator_status({state, detail})
+       when is_atom(state) and is_map(detail) do
+    content = Map.get(detail, :template_content, %{})
+
+    %{
+      "state" => Atom.to_string(state),
+      "template" => detail |> Map.get(:template_uri) |> jsonable(),
+      "name" => content[:name],
+      "role" => content[:role],
+      "flavor" => content[:flavor],
+      "project_cwd" => content[:project_cwd],
+      "config_dir" => content[:config_dir],
+      "created_at" => content[:created_at] && to_string(content[:created_at])
+    }
+    |> Enum.reject(fn {_k, v} -> v in [nil, ""] end)
+    |> Map.new()
+  end
+
+  defp shape_orchestrator_status(other), do: jsonable(other)
 
   defp workspace_filter_sql(%URI{} = workspace_uri) do
     {"WHERE workspace_uri = ?1", [URI.to_string(workspace_uri)]}
