@@ -83,4 +83,71 @@ defmodule Ezagent.RegistrationTest do
     assert {:error, :slug_taken} =
              Registration.create_principal("dup", "Dup2", "dup2@good.com", @test_workspace)
   end
+
+  describe "register_with_password/4 (task #87)" do
+    alias Ezagent.Entity.InviteCode
+    alias Ezagent.Users
+
+    defp mint_code(attrs \\ %{}) do
+      base = %{workspace_uri: "workspace://team-alpha", created_by: "entity://system/user/admin"}
+      {:ok, {raw, _row}} = InviteCode.mint(Map.merge(base, attrs))
+      raw
+    end
+
+    test "invite path: creates an unverified, password-set user in the code's workspace + consumes the code" do
+      n = System.unique_integer([:positive])
+      code = mint_code(%{workspace_uri: "workspace://team-alpha"})
+      email = "reg#{n}@good.com"
+
+      assert {:ok, uri} =
+               Registration.register_with_password(email, "secret123", "Reg #{n}",
+                 invite_code: code
+               )
+
+      assert uri.host == "team-alpha"
+      decoded = Users.get_by_uri(uri)
+      assert decoded.email_verified == false
+      assert Users.verify_password(uri, "secret123")
+      assert Profile.by_email(email).entity_uri == URI.to_string(uri)
+      assert {:error, :exhausted} = InviteCode.validate(code)
+    end
+
+    test "invite path: an exhausted code rolls back — no user, surfaces {:invite, :exhausted}" do
+      n = System.unique_integer([:positive])
+      code = mint_code(%{max_uses: 1})
+
+      {:ok, _} =
+        Registration.register_with_password("a#{n}@good.com", "pw1234", "A", invite_code: code)
+
+      assert {:error, {:invite, :exhausted}} =
+               Registration.register_with_password("b#{n}@good.com", "pw1234", "B",
+                 invite_code: code
+               )
+
+      # the second email never became a principal
+      assert Profile.by_email("b#{n}@good.com") == nil
+    end
+
+    test "rejects a duplicate email before touching invite" do
+      n = System.unique_integer([:positive])
+      email = "taken#{n}@good.com"
+
+      {:ok, _} =
+        Profile.upsert(%{
+          entity_uri: "entity://team-alpha/user/pre#{n}",
+          display_name: "Pre",
+          email: email
+        })
+
+      assert {:error, :email_taken} =
+               Registration.register_with_password(email, "pw1234", "X", invite_code: mint_code())
+    end
+
+    test "no target → :no_registration_target" do
+      n = System.unique_integer([:positive])
+
+      assert {:error, :no_registration_target} =
+               Registration.register_with_password("nt#{n}@good.com", "pw1234", "NT", [])
+    end
+  end
 end

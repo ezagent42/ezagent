@@ -61,6 +61,21 @@ defmodule Ezagent.AppSettings do
     end
   end
 
+  @doc """
+  task #87 Decision 10 — is self-registration open? Default **false** (closed):
+  only admin provisioning creates users until an operator flips this on.
+  """
+  @spec registration_open?() :: boolean()
+  def registration_open?, do: get("registration_open") == true
+
+  @doc """
+  task #87 Decision 10 — when registration is open, does it require a valid
+  invite code? Default **false**. Only meaningful when `registration_open?` is
+  true.
+  """
+  @spec registration_require_invite?() :: boolean()
+  def registration_require_invite?, do: get("registration_require_invite") == true
+
   defp present?(v) when is_binary(v), do: String.trim(v) != ""
   defp present?(v) when is_integer(v), do: true
   defp present?(_), do: false
