@@ -113,10 +113,13 @@ existing HTTP client — feishu/curl_agent use it; no new dep) against the Worke
 pull API: `GET /inbox[?to=]`, `GET /inbox/<key>`, `DELETE /inbox/<key>`, sending
 `Authorization: Bearer <pull_token>`. A single internal request helper handles
 timeouts, status → tagged tuple (`{:error, {:http, status}}` on non-2xx), and
-JSON. **TLS is explicit**: `verify: :verify_peer`, `cacerts:
-:public_key.cacerts_get()` (same posture as the mailer), not implicit. Backend
-selected by `config["backend"]` (`"cf_worker"` now; `"imap"` reserved → returns
-`{:error, :backend_not_implemented}` with a clear message).
+JSON. **TLS is explicit**: pass `{:ssl, [verify: :verify_peer, cacerts:
+:public_key.cacerts_get()]}` in the `:httpc` http-options (same posture as the
+mailer). Note: the existing `:httpc` callers (`plugin_feishu/client.ex:118`,
+`plugin_curl_agent/api_client.ex:66`) pass NO ssl options and rely on `:httpc`'s
+defaults — so this is a deliberate improvement, not a copy of the house pattern.
+Backend selected by `config["backend"]` (`"cf_worker"` now; `"imap"` reserved →
+returns `{:error, :backend_not_implemented}` with a clear message).
 
 ### 4.4 `Ezagent.Email.Config` — credentials file + env
 
@@ -150,8 +153,11 @@ path); this round does not move SMTP config to the file.
 - `mix ezagent.email delete <key>`
 
 Thin wrappers over `Ezagent.Email`. Human-readable output; non-zero exit on
-error with the tagged reason printed. `Mix.Task.run("app.start", [])` first so
-the mailer/AppSettings are available.
+error with the tagged reason printed. `use Mix.Task` and start the needed apps
+with `Application.ensure_all_started(:ezagent_plugin_email)` (which transitively
+starts `:swoosh`, `:inets`, `:ssl`, and the AppSettings-bearing apps) — the same
+shape `Mix.Tasks.Ezagent.Invite` uses (`ensure_all_started` + `OptionParser`),
+not `Mix.Task.run("app.start", …)`.
 
 ### 4.6 Worker change — method-aware `DELETE /inbox/<key>`
 
