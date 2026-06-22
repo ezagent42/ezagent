@@ -1,21 +1,23 @@
 import React from "react"
 import {Activity, Database, Route, Send, Settings, ShieldCheck, TableProperties} from "lucide-react"
 
-import {Badge, Button, Card, EmptyState, Input, Stat} from "./ui/primitives"
+import {Badge, Button, EmptyState, Input, Stat} from "./ui/primitives"
+
+type DataRow = Record<string, unknown>
 
 type AdminState = {
-  audit_rows?: Record<string, unknown>[]
-  bindings?: Record<string, unknown>[]
-  bridges?: Record<string, unknown>[]
+  audit_rows?: DataRow[]
+  bindings?: DataRow[]
+  bridges?: DataRow[]
   cc_orchestrator_status?: unknown
   component?: string
-  default_grants?: Record<string, unknown>[]
-  entities?: Record<string, unknown>[]
-  external_mirror_bindings?: Record<string, unknown>[]
+  default_grants?: DataRow[]
+  entities?: DataRow[]
+  external_mirror_bindings?: DataRow[]
   grantable?: unknown[]
   kpis?: Record<string, number>
   path?: string
-  rules?: Record<string, unknown>[]
+  rules?: DataRow[]
   session_uri?: string | null
   settings?: {
     error?: string
@@ -25,8 +27,8 @@ type AdminState = {
     smtp_test_recipient?: string
     smtp_test_result?: string | null
   }
-  snapshots?: Record<string, unknown>[]
-  templates?: Record<string, unknown>[]
+  snapshots?: DataRow[]
+  templates?: DataRow[]
   title?: string
   workspace_uri?: string | null
 }
@@ -42,15 +44,15 @@ export function AdminSurface({
     case "observability":
       return <Observability state={state} />
     case "entity_registry":
-      return <DataTable component="entity_registry" title="Entity registry" rows={state.entities || []} />
+      return <EntityRegistry state={state} />
     case "snapshots":
-      return <DataTable component="snapshots" title="Snapshots" rows={state.snapshots || []} />
+      return <Snapshots state={state} />
     case "templates":
-      return <DataTable component="templates" title="Templates" rows={state.templates || []} />
+      return <Templates state={state} />
     case "caps_admin":
       return <CapsAdmin state={state} />
     case "authz_audit":
-      return <DataTable component="authz_audit" title="Authz audit" rows={state.audit_rows || []} />
+      return <AuthzAudit state={state} />
     case "settings":
       return <SettingsPanel state={state} onAction={onAction} />
     case "routing":
@@ -62,15 +64,22 @@ export function AdminSurface({
   }
 }
 
-// Surface section container + header (shadcn token-based; replaces world-section
-// / world-section-header BEM). PR-4 restyle only — structure unchanged.
-function Surface({
-  component,
-  children,
-}: {
-  component: string
-  children: React.ReactNode
-}) {
+// ---------------------------------------------------------------------------
+// Shared shadcn chrome + a typed table (PR-6: purpose-built columns replace the
+// old generic key-auto-derive DataTable + JSON dumps).
+// ---------------------------------------------------------------------------
+
+const tableWrapClass = "overflow-x-auto rounded-md border border-border"
+const tableClass = "w-full border-collapse text-sm"
+const theadClass = "bg-muted/50 text-muted-foreground"
+const tbodyClass = "divide-y divide-border"
+const thClass = "px-3 py-2 text-left font-medium"
+const tdClass = "px-3 py-2 align-top"
+const rowClass = "hover:bg-muted/30"
+const monoCell = "font-mono text-xs text-foreground"
+const mutedMono = "font-mono text-xs text-muted-foreground"
+
+function Surface({component, children}: {component: string; children: React.ReactNode}) {
   return (
     <section className="space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground" data-world-component={component}>
       {children}
@@ -78,17 +87,7 @@ function Surface({
   )
 }
 
-function SectionHeader({
-  eyebrow,
-  title,
-  icon,
-  compact = false,
-}: {
-  eyebrow: string
-  title: string
-  icon?: React.ReactNode
-  compact?: boolean
-}) {
+function SectionHeader({eyebrow, title, icon, compact = false}: {eyebrow: string; title: string; icon?: React.ReactNode; compact?: boolean}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <div>
@@ -101,11 +100,76 @@ function SectionHeader({
 }
 
 function KpiGrid({children}: {children: React.ReactNode}) {
-  return <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{children}</div>
+  return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">{children}</div>
 }
+
+type Column<T> = {header: string; cell: (row: T) => React.ReactNode; className?: string}
+
+// A purpose-built table: explicit, typed columns — not auto-derived from the
+// first six object keys. Surfaces the data builders' rescue rows ([{error}]) as
+// an inline message instead of a misleading empty/garbled table.
+function Table<T extends DataRow>({columns, rows, empty}: {columns: Column<T>[]; rows: T[]; empty?: string}) {
+  const error = errorOf(rows)
+  if (error) return <p className="text-sm text-destructive">{error}</p>
+
+  return (
+    <div className={tableWrapClass}>
+      <table className={tableClass}>
+        <thead className={theadClass}>
+          <tr>
+            {columns.map((column) => (
+              <th key={column.header} className={`${thClass} ${column.className || ""}`}>
+                {column.header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className={tbodyClass}>
+          {rows.map((row, index) => (
+            <tr key={index} className={rowClass}>
+              {columns.map((column) => (
+                <td key={column.header} className={`${tdClass} ${column.className || ""}`}>
+                  {column.cell(row)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length === 0 && <EmptyState label={empty || "No rows."} />}
+    </div>
+  )
+}
+
+// Data builders return `[{error: "..."}]` on a rescue; detect it so the table
+// shows the failure rather than a one-column "error" mystery table.
+function errorOf(rows: DataRow[] | undefined): string | null {
+  if (rows && rows.length === 1 && typeof rows[0].error === "string") return rows[0].error as string
+  return null
+}
+
+function AliveBadge({alive}: {alive: unknown}) {
+  return alive ? <Badge tone="success">live</Badge> : <Badge tone="default">down</Badge>
+}
+
+function AuthzBadge({authz}: {authz: unknown}) {
+  const value = String(authz ?? "")
+  if (value === "granted" || value === "grant" || value === "allow") return <Badge tone="success">{value}</Badge>
+  if (value === "denied" || value === "deny" || value === "reject") return <Badge tone="danger">{value}</Badge>
+  return <Badge tone="default">{value || "—"}</Badge>
+}
+
+function s(value: unknown): string {
+  return value == null ? "—" : String(value)
+}
+
+// ---------------------------------------------------------------------------
+// Surfaces
+// ---------------------------------------------------------------------------
 
 function Dashboard({state}: {state: AdminState}) {
   const kpis = state.kpis || {}
+  const status = state.cc_orchestrator_status
 
   return (
     <Surface component="dashboard">
@@ -113,11 +177,37 @@ function Dashboard({state}: {state: AdminState}) {
       <KpiGrid>
         <Stat icon={<Database className="h-4 w-4" />} label="Kinds" value={kpis.kinds ?? 0} />
         <Stat icon={<Activity className="h-4 w-4" />} label="Sessions" value={kpis.sessions ?? 0} />
+        <Stat icon={<Database className="h-4 w-4" />} label="Workspaces" value={kpis.workspaces ?? 0} />
         <Stat icon={<ShieldCheck className="h-4 w-4" />} label="Entities" value={kpis.entities ?? 0} />
         <Stat icon={<Route className="h-4 w-4" />} label="Agents" value={kpis.agents ?? 0} />
       </KpiGrid>
-      <Json value={{cc_orchestrator_status: state.cc_orchestrator_status}} />
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-foreground">CC orchestrator</h3>
+        <OrchestratorStatus status={status} />
+      </div>
     </Surface>
+  )
+}
+
+function OrchestratorStatus({status}: {status: unknown}) {
+  if (status == null || typeof status === "string") {
+    const value = String(status ?? "unavailable")
+    return <Badge tone={value === "unavailable" ? "warning" : "default"}>{value}</Badge>
+  }
+
+  const entries = Object.entries(status as Record<string, unknown>)
+  if (entries.length === 0) return <Badge tone="default">empty</Badge>
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {entries.map(([key, value]) => (
+        <div className="rounded-md border border-border bg-background p-2 text-xs" key={key}>
+          <span className="block text-muted-foreground">{key}</span>
+          <code className="font-mono text-foreground">{typeof value === "object" ? JSON.stringify(value) : s(value)}</code>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -130,18 +220,152 @@ function Observability({state}: {state: AdminState}) {
         <Stat icon={<Database className="h-4 w-4" />} label="Snapshots" value={(state.snapshots || []).length} />
         <Stat icon={<ShieldCheck className="h-4 w-4" />} label="Bridges" value={(state.bridges || []).length} />
       </KpiGrid>
-      <DataTable component="observability-audit" title="Recent audit" rows={state.audit_rows || []} nested />
+      <div className="space-y-3">
+        <SectionHeader eyebrow="Recent" title="Invocations" icon={<TableProperties className="h-4 w-4" />} compact />
+        <AuditTable rows={state.audit_rows || []} />
+      </div>
     </Surface>
   )
 }
 
-function CapsAdmin({state}: {state: AdminState}) {
-  const rows = [
-    ...((state.grantable || []) as unknown[]).map((entry) => ({type: "grantable", value: entry})),
-    ...((state.default_grants || []) as unknown[]).map((entry) => ({type: "default", value: entry})),
-  ]
+function EntityRegistry({state}: {state: AdminState}) {
+  return (
+    <Surface component="entity_registry">
+      <SectionHeader eyebrow="Runtime" title="Entity registry" icon={<TableProperties className="h-4 w-4" />} />
+      <Table
+        rows={state.entities || []}
+        empty="No registered kinds."
+        columns={[
+          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "Scheme", cell: (row) => <Badge tone="info">{s(row.scheme)}</Badge>},
+          {header: "Status", cell: (row) => <AliveBadge alive={row.alive} />},
+          {header: "PID", cell: (row) => <code className={mutedMono}>{s(row.pid)}</code>},
+        ]}
+      />
+    </Surface>
+  )
+}
 
-  return <DataTable component="caps_admin" title="Capabilities" rows={rows} />
+function Snapshots({state}: {state: AdminState}) {
+  return (
+    <Surface component="snapshots">
+      <SectionHeader eyebrow="Persistence" title="Snapshots" icon={<TableProperties className="h-4 w-4" />} />
+      <Table
+        rows={state.snapshots || []}
+        empty="No snapshots."
+        columns={[
+          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "Kind", cell: (row) => s(row.kind_type)},
+          {header: "Version", cell: (row) => <Badge tone="default">{s(row.version)}</Badge>},
+          {header: "Workspace", cell: (row) => <code className={mutedMono}>{s(row.workspace_uri)}</code>},
+          {header: "Updated", cell: (row) => <span className={mutedMono}>{s(row.updated_at)}</span>},
+        ]}
+      />
+    </Surface>
+  )
+}
+
+function Templates({state}: {state: AdminState}) {
+  return (
+    <Surface component="templates">
+      <SectionHeader eyebrow="Catalog" title="Templates" icon={<TableProperties className="h-4 w-4" />} />
+      <Table
+        rows={state.templates || []}
+        empty="No templates registered."
+        columns={[
+          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "Status", cell: (row) => <AliveBadge alive={row.alive} />},
+        ]}
+      />
+    </Surface>
+  )
+}
+
+function AuthzAudit({state}: {state: AdminState}) {
+  return (
+    <Surface component="authz_audit">
+      <SectionHeader eyebrow="Security" title="Authz audit" icon={<ShieldCheck className="h-4 w-4" />} />
+      <AuditTable rows={state.audit_rows || []} />
+    </Surface>
+  )
+}
+
+function AuditTable({rows}: {rows: DataRow[]}) {
+  return (
+    <Table
+      rows={rows}
+      empty="No invocations recorded."
+      columns={[
+        {header: "Target", cell: (row) => <code className={monoCell}>{s(row.target)}</code>},
+        {header: "Action", cell: (row) => s(row.action)},
+        {header: "Authz", cell: (row) => <AuthzBadge authz={row.authz} />},
+        {header: "Duration", cell: (row) => <span className="tabular-nums">{row.duration_us != null ? `${row.duration_us} µs` : "—"}</span>},
+        {header: "At", cell: (row) => <span className={mutedMono}>{s(row.inserted_at)}</span>},
+      ]}
+    />
+  )
+}
+
+function CapsAdmin({state}: {state: AdminState}) {
+  const grantable = (state.grantable || []) as unknown[]
+  const defaults = (state.default_grants || []) as DataRow[]
+  const defaultsError = errorOf(defaults)
+
+  return (
+    <Surface component="caps_admin">
+      <SectionHeader eyebrow="Security" title="Capabilities" icon={<ShieldCheck className="h-4 w-4" />} />
+
+      <div className="space-y-2">
+        <SectionHeader eyebrow="Catalog" title="Grantable" compact />
+        {grantable.length === 0 ? (
+          <EmptyState label="No grantable capabilities." />
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {grantable.map((cap, index) => (
+              <code key={index} className="rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-xs text-muted-foreground">
+                {capLabel(cap)}
+              </code>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <SectionHeader eyebrow="Defaults" title="Default grants by kind" compact />
+        {defaultsError ? (
+          <p className="text-sm text-destructive">{defaultsError}</p>
+        ) : defaults.length === 0 ? (
+          <EmptyState label="No default grants." />
+        ) : (
+          <div className="space-y-2">
+            {defaults.map((entry, index) => (
+              <div key={index} className="rounded-md border border-border bg-background p-3">
+                <code className="text-xs font-semibold text-foreground">{s(entry.kind)}</code>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {((entry.caps as unknown[]) || []).map((cap, capIndex) => (
+                    <code key={capIndex} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                      {capLabel(cap)}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Surface>
+  )
+}
+
+function capLabel(cap: unknown): string {
+  if (typeof cap === "string") return cap
+  if (cap && typeof cap === "object") {
+    const c = cap as Record<string, unknown>
+    const parts = [c.kind, c.behavior, c.action].filter(Boolean).map(String)
+    if (parts.length > 0) return parts.join(".")
+    return JSON.stringify(cap)
+  }
+  return String(cap)
 }
 
 function SettingsPanel({
@@ -217,11 +441,7 @@ function SettingsPanel({
           <Input value={form.from_address} onChange={(event) => setForm({...form, from_address: event.target.value})} />
         </label>
         <label className="flex items-center gap-2 text-sm text-foreground">
-          <input
-            type="checkbox"
-            checked={form.tls}
-            onChange={(event) => setForm({...form, tls: event.target.checked})}
-          />
+          <input type="checkbox" checked={form.tls} onChange={(event) => setForm({...form, tls: event.target.checked})} />
           TLS
         </label>
         <div className="flex items-center gap-3 sm:col-span-2">
@@ -266,11 +486,40 @@ function SettingsPanel({
 }
 
 function RoutingPanel({state}: {state: AdminState}) {
+  const rules = (state.rules || []) as DataRow[]
+  const rulesError = errorOf(rules)
+
   return (
     <Surface component="routing">
       <SectionHeader eyebrow="Routing" title="Routing" icon={<Route className="h-4 w-4" />} />
-      <DataTable component="routing-rules" title="Mention routing rules" rows={state.rules || []} nested />
-      <DataTable component="routing-external-mirror" title="External mirror bindings" rows={state.external_mirror_bindings || []} nested />
+
+      <div className="space-y-2">
+        <SectionHeader eyebrow="Mention routing" title="Rules" compact />
+        {rulesError ? (
+          <p className="text-sm text-destructive">{rulesError}</p>
+        ) : rules.length === 0 ? (
+          <EmptyState label="No mention routing rules." />
+        ) : (
+          <ul className="space-y-1.5">
+            {rules.map((rule, index) => (
+              <li key={index} className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
+                <div className="min-w-0">
+                  <code className="block truncate font-mono text-xs text-foreground">{s(rule.matcher ?? rule.source)}</code>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {Array.isArray(rule.receivers) ? (rule.receivers as string[]).join(", ") : s(rule.receivers_text)}
+                  </span>
+                </div>
+                {rule.enabled === false ? <Badge tone="default">disabled</Badge> : <Badge tone="success">enabled</Badge>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <SectionHeader eyebrow="External mirror" title="Bindings" compact />
+        <ExternalMirrorTable rows={state.external_mirror_bindings || []} />
+      </div>
     </Surface>
   )
 }
@@ -279,78 +528,28 @@ function ExternalMirror({state}: {state: AdminState}) {
   return (
     <Surface component="external_mirror">
       <SectionHeader eyebrow="Session" title="External mirror" />
-      <code className="block rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">{state.session_uri}</code>
-      <DataTable component="external-mirror-bindings" title="Bindings" rows={state.bindings || []} nested />
+      <code className="block w-fit rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-xs text-muted-foreground">
+        {s(state.session_uri)}
+      </code>
+      <ExternalMirrorTable rows={state.bindings || []} />
     </Surface>
   )
 }
 
-function DataTable({
-  component,
-  title,
-  rows,
-  nested = false,
-}: {
-  component: string
-  title: string
-  rows: Record<string, unknown>[]
-  nested?: boolean
-}) {
-  const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 6)
-  const cols = columns.length > 0 ? columns : ["value"]
-
-  // A nested table sits inside a parent Surface (just spacing); a top-level one
-  // owns the card chrome. Either way it carries a single data-world-component.
-  const containerClass = nested
-    ? "space-y-3"
-    : "space-y-3 rounded-lg border border-border bg-card p-5 text-card-foreground"
-
+function ExternalMirrorTable({rows}: {rows: DataRow[]}) {
   return (
-    <div className={containerClass} data-world-component={component}>
-      <SectionHeader eyebrow="Table" title={title} icon={<TableProperties className="h-4 w-4" />} compact />
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full border-collapse text-sm">
-          <thead className="bg-muted/50 text-muted-foreground">
-            <tr>
-              {cols.map((column) => (
-                <th key={column} className="px-3 py-2 text-left font-medium">
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {rows.map((row, index) => (
-              <tr key={index} className="hover:bg-muted/30">
-                {cols.map((column) => (
-                  <td key={column} className="px-3 py-2 align-top">
-                    <Cell value={columns.length > 0 ? row[column] : row} />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && <EmptyState label="No rows." />}
-      </div>
-    </div>
+    <Table
+      rows={rows}
+      empty="No external mirror bindings."
+      columns={[
+        {header: "Adapter", cell: (row) => <Badge tone="info">{s(row.adapter_id)}</Badge>},
+        {header: "Target", cell: (row) => <code className={monoCell}>{s(row.target_id)}</code>},
+        {header: "Workspace", cell: (row) => <code className={mutedMono}>{s(row.workspace_uri)}</code>},
+        ...(rows.some((row) => "session_uri" in row)
+          ? [{header: "Session", cell: (row: DataRow) => <code className={mutedMono}>{s(row.session_uri)}</code>}]
+          : []),
+        {header: "Bound", cell: (row) => <span className={mutedMono}>{s(row.bound_at)}</span>},
+      ]}
+    />
   )
-}
-
-function Json({value}: {value: unknown}) {
-  return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-      {JSON.stringify(value, null, 2)}
-    </pre>
-  )
-}
-
-function Cell({value}: {value: unknown}) {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">{String(value)}</code>
-  }
-
-  if (value == null) return <Badge tone="default">null</Badge>
-
-  return <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">{JSON.stringify(value)}</code>
 }
