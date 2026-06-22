@@ -238,3 +238,49 @@ with the Phase-0 Task-based deviation.
 - **Phase 3 — world BECOMES a hello app.** Explicitly a separate large spec requiring
   coordination with the world dev; "do not attempt while world's UI work is in flight"
   (handoff §144/§152). NOT an autonomous task.
+
+---
+
+# Phase 2 — world as the factory (2026-06-22)
+
+**Status: backend factory DONE; operator island DEFERRED (decision-gated).**
+
+## Done — `session.hello` is creatable through the substrate (no world edit)
+`EzagentPluginHello.Template.HelloSession` (`@behaviour Ezagent.Kind.Template`,
+class `session.hello`) is registered via the plugin's `template_classes/0`. A hello
+app is now creatable through the **generic Tier-3 create path** — the SAME path
+world's operator console drives (`session.create` → the registered class's
+`instantiate/3`). World needs NO edit: it instantiates any registered session type
+generically (the "don't change world internals" boundary holds). `instantiate/3`
+delegates to `App.ensure_app/2` (now truly idempotent — re-create is a `fresh?:
+false` no-op). 27 hello tests pass; gates green.
+
+This is "world becomes the factory" at the substrate level: the operator can spin
+up a hello app via the existing create flow, and it comes up with a live
+cap-bearing orchestrator.
+
+## Deferred — the operator-side `@json-render` island (the old 0.6)
+A `HelloPageView` (`SessionView`) emitting `<div phx-hook="HelloRenderer"
+data-hello-module-url … data-spec=…>` + a Vite island + the `HelloRenderer` hook +
+`hello_module_url` config, so an OPERATOR sees the generated page inside world's LV
+shell (handoff §117 — additive, world renders registered SessionViews generically).
+
+Deferred deliberately because it **intersects the still-open Phase-0 renderer
+decision**: building a second React **island** now (a Vite bundle) before deciding
+React-18-faithful-renderer vs React-19 + upstream `@json-render` risks building the
+wrong thing, and the operator view is NOT a DoD (the customer surface already
+renders). Recommend: settle the renderer/React-19 question first, then the operator
+island + the customer SPA share one bundle. Today the operator can still inspect a
+hello session via socialware's existing `PageView` (HEEx), degraded for the new
+catalog node types.
+
+# Phase 3 — world BECOMES a hello app: HARD BOUNDARY (not done, not autonomous)
+Handoff §144/§152: a separate large spec, requires coordination with the world dev,
+"do not attempt while world's UI work is in flight." Out of scope for an autonomous
+run — it needs Allen + the world dev + its own spec. Flagged, not attempted.
+
+# Summary of this autonomous run
+- **Phase 0** ✅ closed + live-verified (anon visitor sees a DeepSeek page).
+- **Phase 1** ✅ complete + live-verified (multi-agent section fan-out; 4-section page).
+- **Phase 2** ✅ factory backend (creatable `session.hello`) / ⏸ operator island (decision-gated).
+- **Phase 3** ⛔ hard coordination boundary — not autonomous.
