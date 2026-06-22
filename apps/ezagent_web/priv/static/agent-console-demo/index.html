@@ -478,6 +478,32 @@ overview(){ return `
     <div class="role-card authorizer"><b>authorizer</b> · <code>ctx.caps</code><br><span class="muted">真正让操作被允许的钥匙集。运行时检查<b>这个</b>，不是 caller。</span></div>
     <div class="role-card granter"><b>granter</b> · <code>granted_by</code><br><span class="muted">钥匙上刻的、可追责的真实 entity。</span></div>
   </div>
+
+  <div class="card" style="margin-top:16px;background:#fbfdff">
+    <h3 style="font-size:14px;margin:0 0 2px">举个例子：为什么要分三个名字</h3>
+    <p class="sub" style="margin:0 0 12px">同一组角色——<b>冷操作时三者重合</b>（看不出差别，这正是陷阱），<b>热操作时三者分离</b>。</p>
+    <div class="row">
+      <div class="card" style="margin:0;border-left:3px solid var(--cold)">
+        <div style="margin-bottom:6px"><span class="badge cold">冷</span> <b>Alice fork 一个 SessionTemplate</b></div>
+        <dl class="kv" style="grid-template-columns:92px minmax(0,1fr);gap:5px 12px">
+          <dt>caller</dt><dd>Alice</dd>
+          <dt>authorizer</dt><dd>Alice 自己的 Template cap</dd>
+          <dt>granter</dt><dd>Alice</dd>
+        </dl>
+        <div class="muted" style="font-size:12px;margin-top:8px">→ 三者都是 Alice，平时看不出区别——<b>这正是陷阱</b>。</div>
+      </div>
+      <div class="card" style="margin:0;border-left:3px solid var(--hot)">
+        <div style="margin-bottom:6px"><span class="badge hot">热</span> <b>Alice 给活会话 S 加一个成员</b></div>
+        <dl class="kv" style="grid-template-columns:92px minmax(0,1fr);gap:5px 12px">
+          <dt>caller</dt><dd>Alice（operator 身份进 <code>ctx.caller</code>）</dd>
+          <dt>authorizer</dt><dd>Alice 的 <b>Manage cap</b> → 重建出会话的 <code>{:within_session,S}</code> 授权（Alice 本人<b>并没有</b> join 权）</dd>
+          <dt>granter</dt><dd>给新成员铸钥匙时刻的是会话 owner / 系统根——<b>不是</b>「谁点的按钮」</dd>
+        </dl>
+        <div class="muted" style="font-size:12px;margin-top:8px">→ 三者分离，所以审计必须记 <b>operator + execution 双主体</b>。</div>
+      </div>
+    </div>
+  </div>
+
   <p class="sub" style="margin-top:14px">→ 去 <a onclick="go('matrix')">授权矩阵（全量）</a> 看每个操作的整行；或在任意面板点 <span class="auth-btn">ⓘ Authority</span> 看单条。</p>
 `; },
 
