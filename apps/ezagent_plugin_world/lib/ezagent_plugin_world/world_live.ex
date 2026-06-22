@@ -435,15 +435,22 @@ defmodule EzagentPluginWorld.WorldLive do
   defp layout_for(_),
     do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
+  # The /sessions landing reads its (multi-slot, user-arrangeable) persisted
+  # layout; every other route derives a synthetic single-slot layout. BOTH go
+  # through `LayoutManager.validate_layout/2` so EVERY route's layout is a
+  # registry-validated layout — a route that produces an unregistered slot
+  # fails loudly here (and is caught pre-merge by the layout gate) instead of
+  # silently falling through to a renderer default.
   defp layout_for_route(%{component: "sessions_table"}, workspace_uri),
     do: layout_for(workspace_uri)
 
   defp layout_for_route(%{component: component, title: title}, workspace_uri) do
-    scope = encode_uri(workspace_uri) || URI.to_string(Ezagent.URI.workspace(:system))
+    scope_uri =
+      if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
 
-    %{
+    synthetic = %{
       "version" => 1,
-      "scope" => scope,
+      "scope" => URI.to_string(scope_uri),
       "components" => [
         %{
           "id" => component,
@@ -453,6 +460,16 @@ defmodule EzagentPluginWorld.WorldLive do
         }
       ]
     }
+
+    case Ezagent.World.LayoutManager.validate_layout(scope_uri, synthetic) do
+      {:ok, validated} ->
+        validated
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "world route produced an invalid layout for slot #{inspect(component)}: " <>
+                "#{inspect(reason)} — register the slot in Ezagent.World.SlotRegistry"
+    end
   end
 
   defp state_for_route(
@@ -490,7 +507,7 @@ defmodule EzagentPluginWorld.WorldLive do
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
     })
     |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
+    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -502,7 +519,7 @@ defmodule EzagentPluginWorld.WorldLive do
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
     })
     |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
+    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -514,7 +531,7 @@ defmodule EzagentPluginWorld.WorldLive do
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
     })
     |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
+    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -527,7 +544,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "current_session_uri" => current_session,
       "workspace_uri" => workspace,
       "layout" => layout,
-      "can_manage_layout" => layout_manage_affordance?(workspace_uri, caps),
+      "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "sessions" => Enum.map(sessions, &session_row/1)
     }
   end
@@ -600,7 +617,7 @@ defmodule EzagentPluginWorld.WorldLive do
       sessions: sessions
     })
     |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
+    |> put_can_manage_layout("conversation", socket)
   end
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
@@ -875,6 +892,26 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_existing_kind(_), do: nil
+
+  # Single per-route layout-management policy (the one place that decides).
+  # Today only the /sessions landing carries a multi-slot, user-arrangeable
+  # layout, so it is the only route where managing the layout is meaningful —
+  # and only for a caller holding the workspace-scoped layout `:manage` cap.
+  # Every other route is a single synthetic slot; rearranging it is a no-op.
+  defp can_manage_layout?("sessions_table", workspace_uri, caps),
+    do: layout_manage_affordance?(workspace_uri, caps)
+
+  defp can_manage_layout?(_component, _workspace_uri, _caps), do: false
+
+  defp put_can_manage_layout(state, component, socket) do
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    Map.put(
+      state,
+      "can_manage_layout",
+      can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
+    )
+  end
 
   defp layout_manage_affordance?(%URI{} = workspace_uri, caps) do
     Enum.any?(caps, &layout_manage_cap?(&1, workspace_uri))

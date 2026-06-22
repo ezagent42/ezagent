@@ -31,6 +31,34 @@ world is collision-prone because it is bespoke TSX + one giant CSS file. The lon
 
 Practical implication for any world work now: **build new surfaces and restyles in the shadcn shape `@json-render/shadcn` uses**, even before the formal convergence, so the later migration is "swap the renderer," not "rewrite the components." (Bespoke-interactive surfaces — PTY terminal, layout editor, conversation composer — stay hand-written.)
 
+## 3a. The typed-slot layout gate (adding a world surface)
+
+Every route-level world surface is a **typed slot** with one source of truth:
+`Ezagent.World.SlotRegistry` (renderer-agnostic `{type, renderer_family,
+data_source, category, title}`). The React renderer (`main.tsx`) dispatches on
+`renderer_family` from a generated, checked-in `assets/src/slots.manifest.json`
+— there is **no unknown-type fallback** (an unregistered type throws).
+
+To add a route surface: add the slot to `SlotRegistry`, run
+`mix world.slots.manifest`, add a route clause in `world_live.ex`, and (if it is
+a new renderer family) a `case` in `main.tsx`'s renderer.
+
+Two hard-fail gates enforce this (don't route around them):
+
+- **Layer-1** (`slot_registry_test.exs`) — every `world_live.ex` route component
+  ⊆ the registry; the checked-in manifest is in sync with the registry.
+- **Layer-2** (`slot_mount_gate_test.exs`, mirror `pnpm check:mounts`) — surfaces
+  mount ONLY through the renderer; renderer families == manifest families.
+
+Three slot **categories** (the only ways to render):
+
+1. `:layout_slot` — route-level, in the registry.
+2. `:subcomponent` — parent-owned nested slot (e.g. the PTY inside Conversation).
+   Mark it `data-world-subcomponent` and allowlist it in the Layer-2 gate.
+3. `:shell` — universal chrome. The **seed allowlist** is `SlotRegistry.shell_chrome/0`
+   (`world-sidebar`, `world-header`, `world-cmdk`) — the only sanctioned mounts
+   outside the renderer.
+
 ## 4. Sequencing the current efforts
 
 - **Active world-dev (beautification/logic completion):** do not interrupt; it lands continuously.
@@ -45,7 +73,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 | Effort | Owner | Surfaces / files owned | Status |
 |--------|-------|------------------------|--------|
 | _active world-dev_ | (world dev) | UI polish + logic completion (assume `styles.css` + existing surfaces) | ongoing |
-| world beautification + restructure (#83) | TBD | `styles.css`, existing surfaces, design system | brainstorm pending |
+| world beautification + restructure (#83) | claude (`world-beautify`) | layout/slot system (`layout_manager.ex`, `behavior/layout.ex`, `world_live.ex` route+layout fns, `main.tsx` renderer), then `styles.css`, existing surfaces, design system, `primitives.tsx` + atom layer | PR-1 (typed-slot registry + hard-fail gate) in progress |
 | Agent Console (#84) | TBD | new `agent_console` surface + its `*_data/*_actions` + `world_live.ex` route clause | brainstorm pending |
 | hello (Phase 0, #81) | TBD | none in world (isolated plugin) | handoff merged |
 

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "check:mounts": "node scripts/check-mounts.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -17,5 +18,8 @@
     "typescript": "latest",
     "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.1",
+    "tailwindcss": "^4.3.1"
+  }
 }

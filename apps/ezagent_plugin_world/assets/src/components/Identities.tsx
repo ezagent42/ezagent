@@ -1,7 +1,7 @@
 import React from "react"
 import {BadgeCheck, Layers, Plus, Shield, UserRound, UsersRound} from "lucide-react"
 
-import {Button} from "./ui/primitives"
+import {Button, EmptyState, Input, Select, Stat} from "./ui/primitives"
 
 type IdentityRow = {
   uri: string
@@ -81,6 +81,20 @@ type Props = {
   onCreateAgent?: (payload: Record<string, unknown>) => void
 }
 
+// Shared shadcn token classes (consistent with the admin/sessions clusters).
+const surfaceClass = "space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground"
+const tableWrapClass = "overflow-x-auto rounded-md border border-border"
+const tableClass = "w-full border-collapse text-sm"
+const theadClass = "bg-muted/50 text-muted-foreground"
+const tbodyClass = "divide-y divide-border"
+const thClass = "px-3 py-2 text-left font-medium"
+const tdClass = "px-3 py-2 align-top"
+const rowClass = "hover:bg-muted/30"
+const uriClass = "block w-fit rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-xs text-muted-foreground"
+const codeClass = "font-mono text-xs text-muted-foreground"
+const actionLinkClass =
+  "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+
 export function IdentitiesSurface({state, onCreateAgent}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "agents_table") return <AgentsTable state={state} />
@@ -96,13 +110,13 @@ function IdentityDirectory({state}: {state: IdentitiesState}) {
   const rows = state.entities || []
 
   return (
-    <section className="world-section world-identities" data-world-component="identities" aria-labelledby="identities-title">
+    <section className={surfaceClass} data-world-component="identities" aria-labelledby="identities-title">
       <SectionHeader
         eyebrow="Directory"
         title="Identities"
         actions={
-          <a className="world-button world-button-default world-button-link" href="/identities/agents/new">
-            <Plus aria-hidden="true" />
+          <a className={actionLinkClass} href="/identities/agents/new">
+            <Plus aria-hidden="true" className="h-4 w-4" />
             New agent
           </a>
         }
@@ -110,11 +124,11 @@ function IdentityDirectory({state}: {state: IdentitiesState}) {
 
       <FilterBar active={state.filter || "all"} flavors={state.agent_flavors || []} />
 
-      <div className="world-card-grid">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((row) => (
           <IdentityCard key={row.uri} row={row} />
         ))}
-        {rows.length === 0 && <Empty label="No identities match this filter." />}
+        {rows.length === 0 && <EmptyState label="No identities match this filter." />}
       </div>
     </section>
   )
@@ -124,37 +138,39 @@ function UsersTable({state}: {state: IdentitiesState}) {
   const users = state.users || []
 
   return (
-    <section className="world-section" data-world-component="users_table" aria-labelledby="users-title">
+    <section className={surfaceClass} data-world-component="users_table" aria-labelledby="users-title">
       <SectionHeader eyebrow="Principals" title="Users" />
-      <div className="world-table-wrap">
-        <table className="world-table" id="world-users-table">
-          <thead>
+      <div className={tableWrapClass}>
+        <table className={tableClass} id="world-users-table">
+          <thead className={theadClass}>
             <tr>
-              <th>Name / URI</th>
-              <th>Password</th>
-              <th>Caps</th>
-              <th>System</th>
-              <th>Presence</th>
+              <th className={thClass}>Name / URI</th>
+              <th className={thClass}>Password</th>
+              <th className={thClass}>Caps</th>
+              <th className={thClass}>System</th>
+              <th className={thClass}>Presence</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={tbodyClass}>
             {users.map((user) => (
-              <tr key={user.uri}>
-                <td>
-                  <strong>{user.display_name || user.uri}</strong>
-                  <code>{user.uri}</code>
+              <tr key={user.uri} className={rowClass}>
+                <td className={tdClass}>
+                  <strong className="block text-foreground">{user.display_name || user.uri}</strong>
+                  <code className={codeClass}>{user.uri}</code>
                 </td>
-                <td>{user.has_password ? "set" : "unset"}</td>
-                <td>
-                  <a href={user.caps_path || "#"}>{user.cap_count || 0}</a>
+                <td className={tdClass}>{user.has_password ? "set" : "unset"}</td>
+                <td className={tdClass}>
+                  <a className="text-primary hover:underline" href={user.caps_path || "#"}>
+                    {user.cap_count || 0}
+                  </a>
                 </td>
-                <td>{user.system_member ? "system" : "workspace"}</td>
-                <td>{user.online ? `online ${formatList(user.transports)}` : "offline"}</td>
+                <td className={tdClass}>{user.system_member ? "system" : "workspace"}</td>
+                <td className={tdClass}>{user.online ? `online ${formatList(user.transports)}` : "offline"}</td>
               </tr>
             ))}
           </tbody>
         </table>
-        {users.length === 0 && <Empty label="No users." />}
+        {users.length === 0 && <EmptyState label="No users." />}
       </div>
     </section>
   )
@@ -164,37 +180,37 @@ function AgentsTable({state}: {state: IdentitiesState}) {
   const agents = state.agents || []
 
   return (
-    <section className="world-section" data-world-component="agents_table" aria-labelledby="agents-title">
+    <section className={surfaceClass} data-world-component="agents_table" aria-labelledby="agents-title">
       <SectionHeader
         eyebrow="Agents"
         title="Agents"
         actions={
-          <a className="world-button world-button-default world-button-link" href="/identities/agents/new">
-            <Plus aria-hidden="true" />
+          <a className={actionLinkClass} href="/identities/agents/new">
+            <Plus aria-hidden="true" className="h-4 w-4" />
             New agent
           </a>
         }
       />
-      <div className="world-table-wrap">
-        <table className="world-table" id="world-agents-table">
-          <thead>
+      <div className={tableWrapClass}>
+        <table className={tableClass} id="world-agents-table">
+          <thead className={theadClass}>
             <tr>
-              <th>Name / URI</th>
-              <th>Flavor</th>
-              <th>Status</th>
-              <th>Actions</th>
+              <th className={thClass}>Name / URI</th>
+              <th className={thClass}>Flavor</th>
+              <th className={thClass}>Status</th>
+              <th className={thClass}>Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={tbodyClass}>
             {agents.map((agent) => (
-              <tr key={agent.uri}>
-                <td>
-                  <strong>{agent.display_name || agent.name || agent.uri}</strong>
-                  <code>{agent.uri}</code>
+              <tr key={agent.uri} className={rowClass}>
+                <td className={tdClass}>
+                  <strong className="block text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                  <code className={codeClass}>{agent.uri}</code>
                 </td>
-                <td>{agent.flavor || "unknown"}</td>
-                <td>{agent.alive ? "live" : "registered"}</td>
-                <td>
+                <td className={tdClass}>{agent.flavor || "unknown"}</td>
+                <td className={tdClass}>{agent.alive ? "live" : "registered"}</td>
+                <td className={tdClass}>
                   <InlineLinks
                     links={[
                       ["Status", agent.detail_path],
@@ -208,7 +224,7 @@ function AgentsTable({state}: {state: IdentitiesState}) {
             ))}
           </tbody>
         </table>
-        {agents.length === 0 && <Empty label="No agents in this workspace." />}
+        {agents.length === 0 && <EmptyState label="No agents in this workspace." />}
       </div>
     </section>
   )
@@ -219,38 +235,38 @@ function EntityCaps({state}: {state: IdentitiesState}) {
   const error = !Array.isArray(state.caps) ? state.caps?.error : undefined
 
   return (
-    <section className="world-section" data-world-component="entity_caps" aria-labelledby="caps-title">
+    <section className={surfaceClass} data-world-component="entity_caps" aria-labelledby="caps-title">
       <SectionHeader eyebrow={state.entity_kind || "entity"} title="Entity caps" />
-      <p className="world-uri">{state.entity_uri}</p>
-      {error && <p className="world-alert">{error}</p>}
-      <div className="world-table-wrap">
-        <table className="world-table" id="world-caps-table">
-          <thead>
+      <code className={uriClass}>{state.entity_uri}</code>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <div className={tableWrapClass}>
+        <table className={tableClass} id="world-caps-table">
+          <thead className={theadClass}>
             <tr>
-              <th>kind</th>
-              <th>behavior</th>
-              <th>action</th>
-              <th>instance</th>
-              <th>granted by</th>
+              <th className={thClass}>kind</th>
+              <th className={thClass}>behavior</th>
+              <th className={thClass}>action</th>
+              <th className={thClass}>instance</th>
+              <th className={thClass}>granted by</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={tbodyClass}>
             {caps.map((cap, index) => (
-              <tr key={`${cap.kind}-${cap.behavior}-${index}`}>
-                <td>{cap.kind}</td>
-                <td>{cap.behavior}</td>
-                <td>{cap.action}</td>
-                <td>
-                  <code>{cap.instance}</code>
+              <tr key={`${cap.kind}-${cap.behavior}-${index}`} className={rowClass}>
+                <td className={tdClass}>{cap.kind}</td>
+                <td className={tdClass}>{cap.behavior}</td>
+                <td className={tdClass}>{cap.action}</td>
+                <td className={tdClass}>
+                  <code className={codeClass}>{cap.instance}</code>
                 </td>
-                <td>
-                  <code>{cap.granted_by}</code>
+                <td className={tdClass}>
+                  <code className={codeClass}>{cap.granted_by}</code>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {caps.length === 0 && !error && <Empty label="No caps." />}
+        {caps.length === 0 && !error && <EmptyState label="No caps." />}
       </div>
     </section>
   )
@@ -260,15 +276,17 @@ function AgentDetail({state}: {state: IdentitiesState}) {
   const status = state.agent_status || {}
 
   return (
-    <section className="world-section" data-world-component="agent_detail" aria-labelledby="agent-detail-title">
+    <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
-      <p className="world-uri">{state.agent_uri}</p>
-      <div className="world-kpi-grid">
-        <Kpi icon={<BadgeCheck />} label="Phase" value={String(status.phase || "unknown")} />
-        <Kpi icon={<Layers />} label="Flavor" value={String(status.flavor || "unknown")} />
-        <Kpi icon={<Shield />} label="Bridge" value={state.bridge ? "connected" : "not connected"} />
+      <code className={uriClass}>{state.agent_uri}</code>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat icon={<BadgeCheck className="h-4 w-4" />} label="Phase" value={String(status.phase || "unknown")} />
+        <Stat icon={<Layers className="h-4 w-4" />} label="Flavor" value={String(status.flavor || "unknown")} />
+        <Stat icon={<Shield className="h-4 w-4" />} label="Bridge" value={state.bridge ? "connected" : "not connected"} />
       </div>
-      <pre className="world-json">{JSON.stringify(status.detail || status, null, 2)}</pre>
+      <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        {JSON.stringify(status.detail || status, null, 2)}
+      </pre>
     </section>
   )
 }
@@ -282,41 +300,42 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     with_pty: false,
   })
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
+  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 
   return (
-    <section className="world-section" data-world-component="agent_new_form" aria-labelledby="agent-new-title">
+    <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
       <SectionHeader eyebrow="Provision" title="New agent" />
       <form
         id="world-agent-new-form"
-        className="world-form"
+        className="grid gap-3 sm:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault()
           onCreateAgent?.(form)
         }}
       >
-        <label>
+        <label className={fieldLabel}>
           <span>Flavor</span>
-          <select value={form.flavor} onChange={(event) => setForm({...form, flavor: event.target.value})}>
+          <Select value={form.flavor} onChange={(event) => setForm({...form, flavor: event.target.value})}>
             {(state.flavors || [form.flavor]).map((flavor) => (
               <option key={flavor} value={flavor}>
                 {flavor}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
-        <label>
+        <label className={fieldLabel}>
           <span>Name</span>
-          <input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="demo-agent" />
+          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="demo-agent" />
         </label>
-        <label>
+        <label className={fieldLabel}>
           <span>CWD</span>
-          <input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/tmp" />
+          <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/tmp" />
         </label>
-        <label>
+        <label className={fieldLabel}>
           <span>Initial caps</span>
-          <input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />
+          <Input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />
         </label>
-        <label className="world-checkbox">
+        <label className="flex items-center gap-2 text-sm text-foreground">
           <input
             type="checkbox"
             checked={form.with_pty}
@@ -324,8 +343,8 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           />
           <span>With PTY</span>
         </label>
-        <div className="world-form-footer">
-          <code>{preview}</code>
+        <div className="flex items-center justify-between gap-3 sm:col-span-2">
+          <code className={codeClass}>{preview}</code>
           <Button type="submit">
             <Plus aria-hidden="true" />
             Create
@@ -343,39 +362,39 @@ function AgentApiKeys({state}: {state: IdentitiesState}) {
 
   if (unsupported) {
     return (
-      <section className="world-section" data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
+      <section className={surfaceClass} data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
         <SectionHeader eyebrow="Secrets" title="Agent API keys" />
-        <p className="world-uri">{state.agent_uri}</p>
-        <Empty label="This agent flavor does not support API keys." />
+        <code className={uriClass}>{state.agent_uri}</code>
+        <EmptyState label="This agent flavor does not support API keys." />
       </section>
     )
   }
 
   return (
-    <section className="world-section" data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
+    <section className={surfaceClass} data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
       <SectionHeader eyebrow="Secrets" title="Agent API keys" />
-      <p className="world-uri">{state.agent_uri}</p>
-      {error && <p className="world-alert">{error}</p>}
-      <div className="world-table-wrap">
-        <table className="world-table" id="world-api-keys-table">
-          <thead>
+      <code className={uriClass}>{state.agent_uri}</code>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <div className={tableWrapClass}>
+        <table className={tableClass} id="world-api-keys-table">
+          <thead className={theadClass}>
             <tr>
-              <th>Provider</th>
-              <th>Masked</th>
+              <th className={thClass}>Provider</th>
+              <th className={thClass}>Masked</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className={tbodyClass}>
             {keys.map((key) => (
-              <tr key={key.provider}>
-                <td>{key.provider}</td>
-                <td>
-                  <code>{key.masked}</code>
+              <tr key={key.provider} className={rowClass}>
+                <td className={tdClass}>{key.provider}</td>
+                <td className={tdClass}>
+                  <code className={codeClass}>{key.masked}</code>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {keys.length === 0 && !error && <Empty label="No stored keys." />}
+        {keys.length === 0 && !error && <EmptyState label="No stored keys." />}
       </div>
     </section>
   )
@@ -385,20 +404,20 @@ function AgentExtensions({state}: {state: IdentitiesState}) {
   const extensions = state.extensions || []
 
   return (
-    <section className="world-section" data-world-component="agent_extensions" aria-labelledby="agent-extensions-title">
+    <section className={surfaceClass} data-world-component="agent_extensions" aria-labelledby="agent-extensions-title">
       <SectionHeader eyebrow="Extensions" title="Agent extensions" />
-      <p className="world-uri">{state.agent_uri}</p>
-      {state.error && <p className="world-alert">{state.error}</p>}
-      {state.notice && <p className="world-note">{state.notice}</p>}
-      <div className="world-card-grid">
+      <code className={uriClass}>{state.agent_uri}</code>
+      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+      {state.notice && <p className="text-sm text-muted-foreground">{state.notice}</p>}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {extensions.map((extension) => (
-          <article className="world-mini-card" key={extension.id || extension.name}>
-            <strong>{extension.name || extension.id}</strong>
-            <p>{extension.description || "No description."}</p>
-            <span>{extension.enabled ? "enabled" : "disabled"}</span>
+          <article className="space-y-1 rounded-md border border-border bg-background p-3" key={extension.id || extension.name}>
+            <strong className="text-foreground">{extension.name || extension.id}</strong>
+            <p className="text-sm text-muted-foreground">{extension.description || "No description."}</p>
+            <span className="text-xs text-muted-foreground">{extension.enabled ? "enabled" : "disabled"}</span>
           </article>
         ))}
-        {extensions.length === 0 && <Empty label="No extensions available." />}
+        {extensions.length === 0 && <EmptyState label="No extensions available." />}
       </div>
     </section>
   )
@@ -406,10 +425,10 @@ function AgentExtensions({state}: {state: IdentitiesState}) {
 
 function SectionHeader({eyebrow, title, actions}: {eyebrow: string; title: string; actions?: React.ReactNode}) {
   return (
-    <div className="world-section-header">
+    <div className="flex items-center justify-between gap-3">
       <div>
-        <p className="world-eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{eyebrow}</p>
+        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
       </div>
       {actions}
     </div>
@@ -418,15 +437,15 @@ function SectionHeader({eyebrow, title, actions}: {eyebrow: string; title: strin
 
 function IdentityCard({row}: {row: IdentityRow}) {
   return (
-    <article className="world-mini-card">
-      <div className="world-card-heading">
-        {row.kind === "agent" ? <UsersRound aria-hidden="true" /> : <UserRound aria-hidden="true" />}
+    <article className="space-y-2 rounded-md border border-border bg-background p-3">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        {row.kind === "agent" ? <UsersRound aria-hidden="true" className="h-4 w-4" /> : <UserRound aria-hidden="true" className="h-4 w-4" />}
         <div>
-          <strong>{row.display_name || row.name || row.uri}</strong>
-          <code>{row.uri}</code>
+          <strong className="block text-foreground">{row.display_name || row.name || row.uri}</strong>
+          <code className={codeClass}>{row.uri}</code>
         </div>
       </div>
-      <p>{row.kind === "agent" ? `Agent ${row.flavor || "unknown"}` : "User"}</p>
+      <p className="text-sm text-muted-foreground">{row.kind === "agent" ? `Agent ${row.flavor || "unknown"}` : "User"}</p>
       <InlineLinks
         links={[
           ["Status", row.detail_path],
@@ -439,17 +458,25 @@ function IdentityCard({row}: {row: IdentityRow}) {
 }
 
 function FilterBar({active, flavors}: {active: string; flavors: string[]}) {
-  const filters = [
+  const filters: Array<[string, string]> = [
     ["All", "/identities"],
     ["Users", "/identities/users"],
     ["Agents", "/identities/agents"],
-    ...flavors.map((flavor) => [`agent:${flavor}`, `/identities?filter=${encodeURIComponent(`agent:${flavor}`)}`]),
+    ...flavors.map((flavor): [string, string] => [`agent:${flavor}`, `/identities?filter=${encodeURIComponent(`agent:${flavor}`)}`]),
   ]
 
   return (
-    <div className="world-filter-bar">
+    <div className="flex flex-wrap items-center gap-2">
       {filters.map(([label, href]) => (
-        <a className={activeMatches(active, label) ? "world-filter-active" : ""} href={href} key={href}>
+        <a
+          className={
+            activeMatches(active, label)
+              ? "rounded-md bg-accent px-3 py-1 text-xs font-medium text-accent-foreground"
+              : "rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+          }
+          href={href}
+          key={href}
+        >
           {label}
         </a>
       ))}
@@ -459,30 +486,16 @@ function FilterBar({active, flavors}: {active: string; flavors: string[]}) {
 
 function InlineLinks({links}: {links: Array<[string, string | null | undefined]>}) {
   return (
-    <div className="world-inline-links">
+    <div className="flex flex-wrap gap-3 text-xs">
       {links
         .filter(([, href]) => Boolean(href))
         .map(([label, href]) => (
-          <a href={href || "#"} key={label}>
+          <a className="text-primary hover:underline" href={href || "#"} key={label}>
             {label}
           </a>
         ))}
     </div>
   )
-}
-
-function Kpi({icon, label, value}: {icon: React.ReactNode; label: string; value: string}) {
-  return (
-    <div className="world-kpi">
-      {icon}
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  )
-}
-
-function Empty({label}: {label: string}) {
-  return <div className="world-empty">{label}</div>
 }
 
 function activeMatches(active: string, label: string) {

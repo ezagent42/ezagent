@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Dev server launcher.
+#
+# Phoenix watchers run the world Vite dev server via `System.cmd` → an Erlang
+# port. On shutdown the port only CLOSES the child's stdin; npm/vite ignore
+# stdin EOF, so the vite process orphans and keeps holding :5173 — breaking the
+# next start with "Port 5173 is already in use" (even after Ctrl+C twice).
+#
+# This launcher clears any such stale/orphaned vite BEFORE booting, so the
+# watcher always gets a free port. Use `bin/dev` instead of bare
+# `iex -S mix phx.server`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+port="${WORLD_VITE_PORT:-5173}"
+if pkill -f "vite --host 0.0.0.0 --port ${port}" 2>/dev/null; then
+  echo "bin/dev: cleared a stale Vite dev server on :${port}"
+  sleep 1
+fi
+
+exec iex -S mix phx.server

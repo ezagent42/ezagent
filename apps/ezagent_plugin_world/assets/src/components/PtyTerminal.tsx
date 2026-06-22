@@ -96,30 +96,36 @@ export function PtyTerminalSurface({state, onInput, onResize, onServerEvent}: Pr
   const ptyPhase = state.pty_phase || "unknown"
 
   return (
-    <section className="world-section world-pty-terminal" data-world-component="pty_terminal">
-      <div className="world-section-header">
+    <section className="space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground" data-world-component="pty_terminal">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="world-eyebrow">Terminal</p>
-          <h2>PTY terminal</h2>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Terminal</p>
+          <h2 className="text-lg font-semibold text-foreground">PTY terminal</h2>
         </div>
-        <TerminalSquare aria-hidden="true" />
+        <TerminalSquare aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
       </div>
 
-      <div className="world-terminal-toolbar">
-        {state.agent_detail_path ? <a href={state.agent_detail_path}>Agent</a> : <span>Agent</span>}
-        <code>{state.agent_uri || "invalid agent"}</code>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        {state.agent_detail_path ? (
+          <a className="text-primary hover:underline" href={state.agent_detail_path}>
+            Agent
+          </a>
+        ) : (
+          <span>Agent</span>
+        )}
+        <code className="font-mono text-foreground">{state.agent_uri || "invalid agent"}</code>
         <span data-phase={phase}>Kind {phase}</span>
         <span data-pty-phase={ptyPhase}>PTY {ptyPhase}</span>
       </div>
 
-      {clientError && <p className="world-error">{clientError}</p>}
+      {clientError && <p className="text-sm text-destructive">{clientError}</p>}
 
       {state.agent_uri && state.pty_alive ? (
-        <div ref={containerRef} className="world-terminal-mount" />
+        <div ref={containerRef} className="h-[420px] w-full overflow-hidden rounded-md border border-border bg-[#111827] p-2" />
       ) : (
-        <div className="world-terminal-empty">
-          <strong>Terminal not available</strong>
-          <p>{terminalHelp(state.agent_status?.flavor)}</p>
+        <div className="space-y-1 rounded-md border border-dashed border-border bg-muted/40 p-6 text-center">
+          <strong className="text-foreground">Terminal not available</strong>
+          <p className="text-sm text-muted-foreground">{terminalHelp(state.agent_status?.flavor)}</p>
         </div>
       )}
     </section>
