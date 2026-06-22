@@ -57,12 +57,15 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
   end
 
   defp parse_token("pk_" <> rest) do
-    case String.split(rest, "_", parts: 2) do
-      [key_id, secret] when key_id != "" and secret != "" ->
-        {:ok, key_id, secret}
-
-      _ ->
-        {:error, :invalid_token}
+    # Split on LAST underscore: everything before is key_id, after is secret.
+    # This allows key_ids to contain underscores (e.g. "ik_12345").
+    case :binary.matches(rest, "_") do
+      [] -> {:error, :invalid_token}
+      matches ->
+        {pos, 1} = List.last(matches)
+        key_id = binary_part(rest, 0, pos)
+        secret = binary_part(rest, pos + 1, byte_size(rest) - pos - 1)
+        if key_id != "" and secret != "", do: {:ok, key_id, secret}, else: {:error, :invalid_token}
     end
   end
 
