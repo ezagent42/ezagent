@@ -283,7 +283,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
       Cmd.new(
         target,
         :sync_result,
-        %{result: sync_result, source_session: source_session, user_text: user_text},
+        %{result: sync_result, source_session: source_session, user_text: user_text, in_msg_id: msg.id},
         %{
           caller: source_session,
           caps:

@@ -228,6 +228,7 @@ defmodule Ezagent.Behavior.CurlAgent do
     current_conv = ctx.read.(:conversation, [])
 
     user_text = Map.get(args, :user_text, "")
+    in_msg_id = Map.get(args, :in_msg_id)
 
     case result do
       {:ok, %{content: reply, usage: usage}} ->
@@ -242,7 +243,7 @@ defmodule Ezagent.Behavior.CurlAgent do
             {:set, :conversation, final_conv},
             {:set, :last_error, nil},
             {:set, :last_tokens, usage}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply, in_msg_id)
 
         {:ok, %{ok: true, tokens: usage.total}, effects}
 
@@ -256,7 +257,7 @@ defmodule Ezagent.Behavior.CurlAgent do
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
 
         {:ok, %{ok: false, error: :no_api_key}, effects}
 
@@ -274,7 +275,7 @@ defmodule Ezagent.Behavior.CurlAgent do
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -289,17 +290,17 @@ defmodule Ezagent.Behavior.CurlAgent do
 
   # Build a single `{:dispatch, %Cmd{}}` effect when source session +
   # self URI are both well-formed; otherwise emit nothing.
-  defp maybe_reply_effect(nil, _self_uri, _text), do: []
-  defp maybe_reply_effect("", _self_uri, _text), do: []
-  defp maybe_reply_effect(_, nil, _text), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
-        reply_msg = Message.new(self_uri, %{text: text, attachments: []})
+        reply_msg = Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
