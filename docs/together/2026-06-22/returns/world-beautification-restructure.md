@@ -1,9 +1,9 @@
 # Return — world UI beautification + product-structure adjustment
 
 > **Date:** 2026-06-22 · **From (dev):** Claude · **To (lead):** Allen
-> **Task:** #83 · **Branch:** `world-beautify` (14 ahead / 0 behind `origin/main` @ `a6fa6db3` — cleanly rebased, fast-forward-able)
+> **Task:** #83 · **Branch:** `world-beautify` (16 ahead / 0 behind `origin/main` @ `a6fa6db3` — cleanly rebased, fast-forward-able; HEAD `6db6d876`)
 > **Handoff:** `docs/superpowers/handoffs/2026-06-22-world-beautification-restructure-handoff.md`
-> **Status:** code-complete, all gates green — **demonstrable (visual) DoD artifact OWED** (needs human/agent-browser on Tailnet; flagged below, not silently scoped past)
+> **Status:** **CLOSE-READY** — code-complete, all gates green, demonstrable (visual) DoD met by human eyeball (incl. 1 bug found+fixed during verification, `6db6d876`).
 
 ## What's done — handoff workstreams ↔ commits
 
@@ -30,15 +30,15 @@ handoff §4 边界遵守：本轮**不**做 `@json-render` 转换；Conversation
   - Layer-2 mount gate `npm run check:mounts` → **OK（8 components / 7 families）**
   - Layer-1 manifest `mix world.slots.manifest --check` → **in sync**
   - 构建产物无漂移；分支 0/0 vs origin，0 behind main
-- **Demonstrable (visual) artifact — OWED, NOT met here.** handoff 标准对 UI 类要求 *agent-browser 截图*。dev WSL **无 agent-browser**，所以每个迁移面（尤其 **Conversation + 暗色模式 + PR-6 admin 新表/dashboard**）只做了 build/static 验证，**从未人眼核对**。这是一个**需要人的步骤**，按规则显式上交而非静默放过。
+- **Demonstrable (visual) artifact — MET (2026-06-22, human eyeball on live world @ :10042).** dev WSL 无 agent-browser，改由人（Allen 侧浏览器）逐页核对。已验：Sessions/Overview、🌙 暗色模式、导航（单 Identities + 面包屑）、Conversation、**Admin dashboard**。
+  - **验收中发现并修复 1 个真 bug（commit `6db6d876`）：** Admin 的 CC-orchestrator 卡仍渲染原始 `{:ok, %{...}}` dump（被 `jsonable/1` 拍成 `["ok", %{...}]` → 前端 `Object.entries` 出 `0`/`1` 列）——正是 §3.3 要消灭的反模式。修为：Elixir 端 `shape_orchestrator_status/1` 拍平成 `state + 标量字段`，前端 `OrchestratorStatus` 渲成状态徽章 + key/value。复验通过（绿 `ok` 徽章 + 干净字段）。这是静态构建绿但真界面坏的典型，靠 build/test 发现不了。
 
 ## Deferred / needs-human follow-ups (flagged with target)
 
-1. **可视化验收（load-bearing，阻塞合并语义上的 DoD）** — 在 Tailnet `100.64.0.27` 起 world 服务，人眼或 agent-browser 核对全部迁移面 + 暗色 + admin 新视图，出截图回贴本 return。**Owner: Allen / 有 agent-browser 的环境。** 这是本 handoff 唯一未达成项。
-2. **`@json-render` 收敛** — 显式排除在本轮之外（world→hello Phase 3 的独立工作），非本 handoff 欠债，仅记录前向形状。
+1. **`@json-render` 收敛** — 显式排除在本轮之外（world→hello Phase 3 的独立工作），非本 handoff 欠债，仅记录前向形状。
 
 ## Merge request
 
 - **合并：** `world-beautify` → `main`（lead 经 `close`）。14 ahead / 0 behind `origin/main`，**fast-forward-able**，无需 rebase。
 - **顺序：** 单分支、无跨任务依赖；今天 stack 里若有其他 world 返回需与本支按 `world-coordination.md` 串行（本支已删 `styles.css`，后续 world 改动需基于本支重做样式）。
-- **合并前置条件：** 建议先完成 follow-up #1 的可视化验收再合 main（否则等于合入未眼验的 UI 大改）。代码与闸门层面已就绪。
+- **合并前置条件：** 已满足。可视化验收完成（含 1 个 bug 修复 `6db6d876`），代码 + 闸门 + 人眼三层都绿。**close-ready。**
