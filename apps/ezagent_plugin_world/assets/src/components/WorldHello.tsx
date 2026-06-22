@@ -12,54 +12,59 @@ type WorldHelloProps = {
 
 export function WorldHello({title = "World", caller}: WorldHelloProps) {
   return (
-    <div className="world-page">
-      <aside className="world-sidebar" aria-label="World navigation">
-        <div className="world-brand">
-          <div className="world-brand-mark">W</div>
+    <div className="flex min-h-screen bg-background text-foreground">
+      <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4" aria-label="World navigation">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
           <div>
-            <div className="world-brand-title">{title}</div>
-            <div className="world-brand-subtitle">ezagent</div>
+            <div className="text-sm font-semibold text-foreground">{title}</div>
+            <div className="text-xs text-muted-foreground">ezagent</div>
           </div>
         </div>
-        <nav className="world-nav">
-          <a className="world-nav-item world-nav-item-active" href="/">
+        <nav className="flex flex-col gap-0.5">
+          <a className="flex items-center gap-2 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground" href="/">
             <PanelsTopLeft size={16} />
             Overview
           </a>
-          <a className="world-nav-item" href="/sessions">
+          <a
+            className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            href="/sessions"
+          >
             <PlugZap size={16} />
             Sessions
           </a>
         </nav>
       </aside>
 
-      <main className="world-main">
-        <section className="world-hero" aria-labelledby="world-title">
+      <main className="min-w-0 flex-1 p-6">
+        <section className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-6" aria-labelledby="world-title">
           <div>
-            <p className="world-kicker">React/shadcn shell</p>
-            <h1 id="world-title">Hello from World</h1>
-            <p className="world-copy">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">React/shadcn shell</p>
+            <h1 id="world-title" className="mt-1 text-2xl font-semibold text-foreground">
+              Hello from World
+            </h1>
+            <p className="mt-2 max-w-prose text-sm text-muted-foreground">
               A LiveView process owns auth and dispatch. React owns this visible app surface.
             </p>
           </div>
           <Button type="button">Mounted</Button>
         </section>
 
-        <section className="world-grid" aria-label="World runtime context">
-          <div className="world-panel">
-            <span className="world-panel-label">Caller</span>
-            <code>{caller?.entity_uri || "anonymous"}</code>
-          </div>
-          <div className="world-panel">
-            <span className="world-panel-label">Workspace</span>
-            <code>{caller?.workspace_uri || "unknown"}</code>
-          </div>
-          <div className="world-panel">
-            <span className="world-panel-label">Renderer</span>
-            <code>WorldRenderer phx-hook</code>
-          </div>
+        <section className="mt-4 grid gap-3 sm:grid-cols-3" aria-label="World runtime context">
+          <HelloPanel label="Caller" value={caller?.entity_uri || "anonymous"} />
+          <HelloPanel label="Workspace" value={caller?.workspace_uri || "unknown"} />
+          <HelloPanel label="Renderer" value="WorldRenderer phx-hook" />
         </section>
       </main>
+    </div>
+  )
+}
+
+function HelloPanel({label, value}: {label: string; value: string}) {
+  return (
+    <div className="space-y-1 rounded-md border border-border bg-card p-3">
+      <span className="block text-xs text-muted-foreground">{label}</span>
+      <code className="font-mono text-xs text-foreground">{value}</code>
     </div>
   )
 }
