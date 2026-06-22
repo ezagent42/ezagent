@@ -1,10 +1,11 @@
 # Login: Email + Password Only — Design
 
 **Date:** 2026-06-22
-**Status:** Draft v3 — codex-adversarial-reviewed (8 findings folded in) + all
-Allen decisions folded in (incl. magic-link KEPT but SMTP-gated; self-build with
-OIDC seam, no Logto now; CF email via SMTP regardless of host). O1/O2 resolved.
-Awaiting Allen's final review → writing-plans.
+**Status:** Draft v4 — codex-adversarial-reviewed + all Allen decisions folded in
+(magic-link KEPT but SMTP-gated; self-build + OIDC seam; CF email via SMTP;
+**Decision 10: registration closed-by-default toggle + invite codes with quota,
+code carries target workspace**). PR-1 + PR-2 implemented on `login-with-email`.
+Invite-code addition (Decision 10) pending its own codex adversarial review.
 **Owner:** Claude (brainstorm with Allen)
 **Task:** #87 (login). Related: #88 (inbound email — separate), #82 (external-adapter), #83 (world beautification — separate), #65 (CF Workers).
 
@@ -118,8 +119,45 @@ canonical identifier*.)
    mailbox, so inbound = CF Email Routing → Email Worker → webhook → ingest as a
    session message (symmetric to Feishu). The session message store is the
    "inbox"; no standalone inbox is built.
+10. **Registration control + invite codes** (Allen 2026-06-22). Self-registration
+    is **closed by default** behind a toggle. Two AppSettings:
+    `registration_open` (boolean, default **false** — when false, NO self-signup;
+    only admin provisioning) and, when open, `registration_require_invite`
+    (boolean) deciding whether a valid **invite code** is required. Invite codes
+    support a **quota** (`max_uses`) and an expiry, and — crucially — **carry the
+    target workspace (and optional role)**, which cleanly replaces the fragile
+    email-domain→workspace derivation (Codex #9): a registrant joins the
+    workspace named on the code. See "Registration control & invite codes" below.
 
 ## Design
+
+### 0. Registration control & invite codes
+
+Self-registration gates, evaluated in order at `GET/POST /register`:
+
+1. `registration_open == false` (default) → registration is **closed**: `/register`
+   shows "registration is closed" and POST is refused. Only admin provisioning
+   creates users. This is the safe default for early launch.
+2. `registration_open == true` and `registration_require_invite == true` → the
+   registration form requires a valid invite **code**; POST validates and
+   consumes one use of it.
+3. `registration_open == true` and `registration_require_invite == false` → open
+   registration (still honors `registration_domains` for email-domain
+   allowlisting, if set).
+
+**`invite_codes` table** (one row per code):
+`code` (unique, random), `workspace_uri` (the workspace the registrant joins —
+**authoritative**, removes domain→workspace guessing), `role` (optional, default
+member), `max_uses` (integer ≥ 1, default 1), `used_count` (default 0),
+`expires_at` (nullable), `created_by` (admin URI), `revoked_at` (nullable).
+A code is **valid** when not revoked, not expired, and `used_count < max_uses`.
+Consuming a code atomically increments `used_count` (guard against over-issue
+under concurrency via a conditional `UPDATE ... WHERE used_count < max_uses`).
+
+Admin mints/lists/revokes codes via a CLI task (`mix ezagent.invite.*`) and/or
+the admin UI. When an invite code is used, the registrant's workspace + role come
+from the code; the email-domain derivation (O1) is the fallback for the
+no-invite-required open mode only.
 
 ### 1. Auth model — email as the login key (resolution step)
 
@@ -304,6 +342,10 @@ is **unchanged**.
   table (`login`|`confirm`|`reset`); existing rows default to `:login`
   (magic-link login is kept, so the `:login` purpose stays live and is enforced
   at `/auth/magic/:token`). (Codex #3.)
+- **Migration D — `invite_codes`** (Decision 10): new table — `code` (unique),
+  `workspace_uri`, `role`, `max_uses` (default 1), `used_count` (default 0),
+  `expires_at` (nullable), `created_by`, `revoked_at` (nullable), timestamps.
+  Unique index on `code`.
 - No data backfill (no existing users).
 
 ## Out of scope
@@ -385,11 +427,15 @@ suite → (admin-)merge into the task branch.
   (no provider enum — CF *is* SMTP) + an optional "fill Cloudflare defaults"
   helper; dev/test compile-time Local adapter; `deliver_confirmation` +
   `deliver_password_reset`; keep `smtp_configured?/0` as the prod readiness check.
-- **PR-3 — self-registration.** Migration C (token `purpose`); registration form
-  + flow (email/password/display name → user `confirmed:true,
-  email_verified:false` in the **email-domain-derived workspace** (must pre-exist
-  — provisioned with the domain allow) → confirm email → `/auth/confirm` sets
-  `email_verified`). Honors `registration_domains`.
+- **PR-3 — self-registration + registration control.** Migration C (token
+  `purpose`) + Migration D (`invite_codes`); registration gates
+  (`registration_open` default false; `registration_require_invite`); invite-code
+  validate+consume (atomic `used_count < max_uses`); `mix ezagent.invite.*`
+  CLI; registration form + flow (email/password/display name → user
+  `confirmed:true, email_verified:false` in the **invite-code's workspace** when
+  a code is used, else the email-domain-derived/default workspace → confirm email
+  → `/auth/confirm` sets `email_verified`). Honors `registration_domains` in the
+  open-no-invite mode.
 - **PR-4 — password reset.** Request + reset endpoints and forms; purpose-tagged
   one-time tokens; tests.
 - **PR-5 — login page + world identity.** Login UI = email+password primary +
