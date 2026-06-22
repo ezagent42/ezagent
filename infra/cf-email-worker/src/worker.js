@@ -1,0 +1,72 @@
+import PostalMime from "postal-mime";
+
+// task #88 — inbound email for ezagent.chat. Email Routing catch-all → this
+// Worker's email() handler parses each message and caches it in KV. The fetch()
+// handler exposes a token-authed pull API so ezagent (or an operator) can list
+// and fetch received mail.
+const TTL = 60 * 60 * 24 * 30; // 30 days
+
+export default {
+  async email(message, env, ctx) {
+    try {
+      const parsed = await new PostalMime().parse(message.raw);
+      const ts = Date.now();
+      const to = (message.to || "unknown").toLowerCase();
+      const mid = (parsed.messageId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 60);
+      const key = `inbox:${to}:${ts}:${mid}`;
+
+      const record = {
+        key,
+        from: message.from,
+        to,
+        subject: parsed.subject || "",
+        date: parsed.date || null,
+        text: parsed.text || "",
+        html: parsed.html || "",
+        messageId: parsed.messageId || "",
+        receivedAt: new Date(ts).toISOString(),
+        size: message.rawSize || 0,
+      };
+
+      await env.EMAIL_INBOX.put(key, JSON.stringify(record), { expirationTtl: TTL });
+    } catch (err) {
+      console.error("email cache failed:", err && err.stack ? err.stack : err);
+      // Don't reject — we don't want the sender to retry forever on a parse bug.
+    }
+  },
+
+  async fetch(request, env) {
+    const expected = env.PULL_TOKEN;
+    const auth = request.headers.get("authorization") || "";
+    if (!expected || auth !== `Bearer ${expected}`) {
+      return new Response("unauthorized\n", { status: 401 });
+    }
+
+    const url = new URL(request.url);
+
+    if (url.pathname === "/inbox") {
+      const toParam = url.searchParams.get("to");
+      const prefix = toParam ? `inbox:${toParam.toLowerCase()}:` : "inbox:";
+      const list = await env.EMAIL_INBOX.list({ prefix, limit: 100 });
+      const emails = [];
+      for (const k of list.keys) {
+        const v = await env.EMAIL_INBOX.get(k.name);
+        if (v) emails.push(JSON.parse(v));
+      }
+      emails.sort((a, b) => (b.receivedAt > a.receivedAt ? 1 : -1));
+      return Response.json({ count: emails.length, emails });
+    }
+
+    if (url.pathname.startsWith("/inbox/")) {
+      const key = decodeURIComponent(url.pathname.slice("/inbox/".length));
+      const v = await env.EMAIL_INBOX.get(key);
+      if (!v) return new Response("not found\n", { status: 404 });
+      return new Response(v, { headers: { "content-type": "application/json" } });
+    }
+
+    return new Response(
+      "ezagent inbound email cache.\n  GET /inbox[?to=<addr>] — list\n  GET /inbox/<key> — one message\n(Authorization: Bearer <token>)\n",
+      { headers: { "content-type": "text/plain" } }
+    );
+  },
+};
