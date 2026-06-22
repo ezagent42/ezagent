@@ -43,7 +43,11 @@ defmodule Ezagent.EntityTest do
     end
 
     test "unknown user → {:error, :no_such_user}" do
-      uri = Ezagent.URI.new!("entity://team-alpha/user/never-existed-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/never-existed-#{System.unique_integer([:positive])}"
+        )
+
       assert {:error, :no_such_user} = Entity.authenticate(uri, "anything")
     end
 
@@ -57,13 +61,18 @@ defmodule Ezagent.EntityTest do
         _ -> Users.set_password(admin_uri_str, "test-admin-pw")
       end
 
-      assert {:ok, %{caps: _caps}} = Entity.authenticate(Ezagent.URI.new!(admin_uri_str), "test-admin-pw")
+      assert {:ok, %{caps: _caps}} =
+               Entity.authenticate(Ezagent.URI.new!(admin_uri_str), "test-admin-pw")
     end
   end
 
   describe "authenticate/2 — agent URI + token (entity_tokens path)" do
     test "happy: agent + valid token → {:ok, %{caps: caps}}" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_auth-test-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_auth-test-#{System.unique_integer([:positive])}"
+        )
+
       {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "test-token")
 
       assert {:ok, %{caps: caps}} = Entity.authenticate(uri, plain_token)
@@ -71,14 +80,22 @@ defmodule Ezagent.EntityTest do
     end
 
     test "wrong token → {:error, :invalid_credentials}" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_wrong-token-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_wrong-token-#{System.unique_integer([:positive])}"
+        )
+
       {_plain, _row} = Ezagent.Entity.Token.mint(uri, label: "real")
 
       assert {:error, :invalid_credentials} = Entity.authenticate(uri, "fake-token-string")
     end
 
     test "unknown agent (no tokens) → {:error, :no_such_entity}" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_never-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_never-#{System.unique_integer([:positive])}"
+        )
+
       assert {:error, :no_such_entity} = Entity.authenticate(uri, "any-token")
     end
   end

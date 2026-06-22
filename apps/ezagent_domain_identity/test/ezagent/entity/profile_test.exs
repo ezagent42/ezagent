@@ -7,7 +7,9 @@ defmodule Ezagent.Entity.ProfileTest do
     {:ok, p1} = Profile.upsert(%{entity_uri: "entity://team-alpha/user/x", display_name: "X"})
     assert p1.display_name == "X"
 
-    {:ok, p2} = Profile.upsert(%{entity_uri: "entity://team-alpha/user/x", display_name: "X Renamed"})
+    {:ok, p2} =
+      Profile.upsert(%{entity_uri: "entity://team-alpha/user/x", display_name: "X Renamed"})
+
     assert p2.display_name == "X Renamed"
 
     assert Profile.get("entity://team-alpha/user/x").display_name == "X Renamed"
@@ -27,7 +29,11 @@ defmodule Ezagent.Entity.ProfileTest do
 
   test "email uniqueness is enforced" do
     {:ok, _} =
-      Profile.upsert(%{entity_uri: "entity://team-alpha/user/a", display_name: "A", email: "dup@example.com"})
+      Profile.upsert(%{
+        entity_uri: "entity://team-alpha/user/a",
+        display_name: "A",
+        email: "dup@example.com"
+      })
 
     assert {:error, changeset} =
              Profile.upsert(%{
@@ -40,8 +46,11 @@ defmodule Ezagent.Entity.ProfileTest do
   end
 
   test "get/1 and by_email/1 accept a %URI{} or string" do
-    {:ok, _} = Profile.upsert(%{entity_uri: "entity://team-alpha/agent/echo", display_name: "Echo Bot"})
-    assert Profile.get(Ezagent.URI.new!("entity://team-alpha/agent/echo")).display_name == "Echo Bot"
+    {:ok, _} =
+      Profile.upsert(%{entity_uri: "entity://team-alpha/agent/echo", display_name: "Echo Bot"})
+
+    assert Profile.get(Ezagent.URI.new!("entity://team-alpha/agent/echo")).display_name ==
+             "Echo Bot"
   end
 
   # task #87 — email is the login account, so uniqueness must be
@@ -50,7 +59,11 @@ defmodule Ezagent.Entity.ProfileTest do
   # lower(email) unique index (Codex plan-review #1).
   test "lower(email) unique index rejects a case-variant raw insert" do
     {:ok, _} =
-      Profile.upsert(%{entity_uri: "entity://team-alpha/user/ci1", display_name: "CI1", email: "dup@ci.com"})
+      Profile.upsert(%{
+        entity_uri: "entity://team-alpha/user/ci1",
+        display_name: "CI1",
+        email: "dup@ci.com"
+      })
 
     raw = %Profile{
       entity_uri: "entity://team-alpha/user/ci2",

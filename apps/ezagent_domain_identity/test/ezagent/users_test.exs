@@ -121,7 +121,10 @@ defmodule Ezagent.UsersTest do
 
     test "returns :not_found for unknown uri" do
       assert {:error, :not_found} =
-               Users.set_password("entity://team-alpha/user/never-existed-#{System.unique_integer()}", "x")
+               Users.set_password(
+                 "entity://team-alpha/user/never-existed-#{System.unique_integer()}",
+                 "x"
+               )
     end
   end
 
@@ -138,7 +141,9 @@ defmodule Ezagent.UsersTest do
 
     test "get_by_uri returns nil for unknown" do
       assert nil ==
-               Users.get_by_uri("entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}")
+               Users.get_by_uri(
+                 "entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}"
+               )
     end
   end
 
@@ -169,7 +174,9 @@ defmodule Ezagent.UsersTest do
       assert Users.get_by_uri(uri).email_verified == true
 
       assert {:error, :not_found} =
-               Users.mark_email_verified(Ezagent.URI.user("team-alpha", "ghost#{System.unique_integer([:positive])}"))
+               Users.mark_email_verified(
+                 Ezagent.URI.user("team-alpha", "ghost#{System.unique_integer([:positive])}")
+               )
     end
   end
 end
