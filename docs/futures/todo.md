@@ -1236,3 +1236,14 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 - **ExternalMirrorWorker dedupe composite key (#516)** — RESOLVED.
   Evidence: `last_published_send_key: {term(), non_neg_integer()}` composite in
   `external_mirror_worker.ex` (was already ✅; re-confirmed).
+
+### external_mirror `facade_test` PG-sandbox flake — OPEN (LOW, pre-existing)
+
+> Surfaced 2026-06-22 (dev-together close, lead Claude). `Ezagent.ExternalMirrorTest`
+> `test/ezagent/external_mirror/facade_test.exs:91` (`sessions_for_adapter/2 returns
+> {:ok, []}`) intermittently exits with `DBConnection.Holder.checkout … owner … exited`
+> under the PG sandbox — passes in isolation + in most full runs (4611/0 ×3), failed
+> 1 full run. Sibling spawn-storm tests churn the shared sandbox connection pool and
+> kill the facade test's owner connection. NOT a close regression (no merge touched
+> `apps/ezagent_domain_external_mirror`). Fix: same `EzagentCore.DataCase` / `async:
+> false` hardening pg applied to `repair_orchestrator_test`. Owner: external_mirror/pg.
