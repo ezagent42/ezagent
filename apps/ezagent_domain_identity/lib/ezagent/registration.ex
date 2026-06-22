@@ -162,4 +162,186 @@ defmodule Ezagent.Registration do
 
     :ok
   end
+
+  # ── task #87 self-registration (email + password) ───────────────────────
+
+  @doc """
+  Self-registration with a password (task #87 Decision 10). Creates an
+  **unverified** principal (`email_verified: false`) with a password hash, in a
+  workspace decided by `opts`:
+
+  - `invite_code: code` — consume one use of the code (atomic, inside the
+    transaction) and join the code's **authoritative** workspace under the code
+    issuer's authority (`add_member/3`, NOT the trusted `/2`).
+  - `mode: :open_self_serve` — create a fresh `<slug>-<random>` workspace for the
+    registrant (founder self-membership via `/2`).
+
+  Consume + user/profile creation run in ONE `Repo.transaction` so a use is never
+  burned without a user and a user is never created without consuming a use
+  (Codex plan-review #2). Returns `{:ok, uri}` or `{:error, reason}`. Does NOT
+  reuse `create_principal/4` (that makes a passwordless, already-verified row —
+  Codex #5).
+  """
+  @spec register_with_password(String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def register_with_password(email, password, display_name, opts)
+      when is_binary(email) and is_binary(password) and is_binary(display_name) do
+    email = email |> String.trim() |> String.downcase()
+
+    with :ok <- ensure_email_free(email),
+         {:ok, plan} <- registration_plan(email, opts) do
+      slug = suggest_slug(derive_slug(email), plan.workspace_name)
+      uri = Ezagent.URI.user(plan.workspace_name, slug)
+
+      txn =
+        EzagentCore.Repo.transaction(fn ->
+          with :ok <- plan.consume.(),
+               {:ok, _user} <- Users.create(uri, password, [], email_verified: false),
+               {:ok, _profile} <-
+                 Profile.upsert(%{
+                   entity_uri: Ezagent.URI.stable_key(uri),
+                   display_name: String.trim(display_name),
+                   email: email
+                 }) do
+            :created
+          else
+            {:error, reason} -> EzagentCore.Repo.rollback(reason)
+          end
+        end)
+
+      case txn do
+        {:ok, :created} ->
+          :ok = Ezagent.Entity.spawn_principal(uri)
+          plan.join.(uri)
+          {:ok, uri}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  defp ensure_email_free(email) do
+    case Profile.by_email(email) do
+      nil -> :ok
+      %Profile{} -> {:error, :email_taken}
+    end
+  end
+
+  # Build the per-mode plan: which workspace, how to consume (invite), how to join.
+  defp registration_plan(email, opts) do
+    cond do
+      code = opts[:invite_code] ->
+        case Ezagent.Entity.InviteCode.validate(code) do
+          {:ok, row} ->
+            ws_name = row.workspace_uri |> Ezagent.URI.new!() |> Ezagent.URI.workspace_name!()
+
+            {:ok,
+             %{
+               workspace_name: ws_name,
+               consume: fn ->
+                 case Ezagent.Entity.InviteCode.consume(code) do
+                   {:ok, _} -> :ok
+                   {:error, r} -> {:error, {:invite, r}}
+                 end
+               end,
+               # Membership granted under the CODE ISSUER's authority (Codex #3,
+               # Decision #154 no-unowned-permissions) — not workspace self-auth.
+               join: fn uri -> join_under_issuer(ws_name, uri, row.created_by) end
+             }}
+
+          {:error, r} ->
+            {:error, {:invite, r}}
+        end
+
+      opts[:mode] == :open_self_serve ->
+        ws_name = "#{String.slice(derive_slug(email), 0, 20)}-#{random_suffix()}"
+
+        case create_self_serve_workspace(ws_name, email) do
+          :ok ->
+            {:ok,
+             %{
+               workspace_name: ws_name,
+               consume: fn -> :ok end,
+               # Founder of a brand-new workspace joins it under workspace
+               # self-authority (/2) — no privilege bypass since they own it.
+               join: fn uri -> founder_join(ws_name, uri) end
+             }}
+
+          {:error, r} ->
+            {:error, {:workspace, r}}
+        end
+
+      true ->
+        {:error, :no_registration_target}
+    end
+  end
+
+  defp join_under_issuer(ws_name, %URI{} = user_uri, issuer_str) when is_binary(issuer_str) do
+    # codex final-review MED — do NOT silently swallow a membership failure.
+    # The user + profile are already committed and the invite use consumed; a
+    # failed join leaves the account with no workspace access, so it MUST be
+    # observable for an operator to repair (re-add the member). Returns the
+    # add_member result (or :skipped when the workspace app isn't loaded).
+    if workspace_loaded?(:add_member, 3) do
+      issuer = Ezagent.URI.new!(issuer_str)
+      ctx = %{caller: issuer, caps: Ezagent.Identity.list_caps_for(issuer)}
+
+      case apply(Ezagent.Workspace, :add_member, [ws_name, user_uri, ctx]) do
+        :ok ->
+          :ok
+
+        other ->
+          require Logger
+
+          Logger.error(
+            "register_with_password: invite member-join FAILED — user=#{URI.to_string(user_uri)} " <>
+              "workspace=#{ws_name} issuer=#{issuer_str} result=#{inspect(other)}; " <>
+              "the account exists but has no workspace access — admin must re-add the member"
+          )
+
+          other
+      end
+    else
+      :skipped
+    end
+  end
+
+  defp founder_join(ws_name, %URI{} = user_uri) do
+    if workspace_loaded?(:add_member, 2) do
+      _ = apply(Ezagent.Workspace, :add_member, [ws_name, user_uri])
+    end
+
+    :ok
+  end
+
+  defp create_self_serve_workspace(ws_name, email) do
+    cond do
+      not workspace_loaded?(:create, 2) ->
+        {:error, :workspace_unavailable}
+
+      true ->
+        case apply(Ezagent.Workspace, :create, [ws_name, %{}]) do
+          {:ok, _} ->
+            # A user_list rule with just this email so the founder is accepted.
+            if workspace_loaded?(:add_magic_link_rule, 3) do
+              key = ws_name |> Ezagent.URI.workspace() |> Ezagent.URI.stable_key()
+              _ = apply(Ezagent.Workspace, :add_magic_link_rule, [key, "user_list", email])
+            end
+
+            :ok
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
+
+  defp workspace_loaded?(fun, arity) do
+    Code.ensure_loaded?(Ezagent.Workspace) and function_exported?(Ezagent.Workspace, fun, arity)
+  end
+
+  defp random_suffix do
+    :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+  end
 end

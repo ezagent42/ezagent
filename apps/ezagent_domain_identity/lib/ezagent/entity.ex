@@ -43,20 +43,32 @@ defmodule Ezagent.Entity do
   - `{:error, {:unsupported_entity_uri, uri}}` — non-entity URI
   """
   @spec authenticate(URI.t(), String.t()) :: result()
-  def authenticate(uri, secret)
+  def authenticate(uri, secret), do: authenticate(uri, secret, [])
 
-  def authenticate(%URI{scheme: "entity"} = uri, secret) when is_binary(secret) do
+  @doc """
+  Authenticate `uri` with `secret`, with options. Same dispatch as `/2`, plus:
+
+  - `:allow_user_tokens` (default `true`) — when `false`, a user URI accepts
+    ONLY its bcrypt password, never a bearer token. task #87: the human login
+    FORM passes `false` so a typed API token cannot be used as a password. The
+    CLI/API bearer path keeps `/2` (tokens allowed).
+  """
+  @spec authenticate(URI.t(), String.t(), keyword()) :: result()
+  def authenticate(uri, secret, opts)
+
+  def authenticate(%URI{scheme: "entity"} = uri, secret, opts) when is_binary(secret) do
     cond do
-      entity_type?(uri, :user) -> authenticate_user(uri, secret)
+      entity_type?(uri, :user) -> authenticate_user(uri, secret, opts)
       entity_type?(uri, :agent) -> Token.verify(uri, secret)
       true -> {:error, {:unsupported_entity_uri, uri}}
     end
   end
 
-  def authenticate(%URI{} = uri, _secret), do: {:error, {:unsupported_entity_uri, uri}}
+  def authenticate(%URI{} = uri, _secret, _opts), do: {:error, {:unsupported_entity_uri, uri}}
 
-  defp authenticate_user(%URI{} = uri, secret) when is_binary(secret) do
+  defp authenticate_user(%URI{} = uri, secret, opts) when is_binary(secret) do
     uri_str = URI.to_string(uri)
+    allow_tokens = Keyword.get(opts, :allow_user_tokens, true)
 
     cond do
       is_nil(Users.get_by_uri(uri_str)) ->
@@ -69,7 +81,11 @@ defmodule Ezagent.Entity do
       # access). Token.mint/2 already accepts user URIs; this
       # completes the auth side. Try token first (cheaper; only checks
       # entity_tokens table); fall through to password.
-      match?({:ok, _}, Token.verify(uri, secret)) ->
+      #
+      # task #87 (Codex plan-review #3): the human login FORM passes
+      # `allow_user_tokens: false` so a typed API token can't be used as a
+      # password. The CLI/API bearer path leaves it true.
+      allow_tokens and match?({:ok, _}, Token.verify(uri, secret)) ->
         ensure_spawned(uri)
         caps = Ezagent.Identity.list_caps_for(uri)
         {:ok, %{caps: caps}}

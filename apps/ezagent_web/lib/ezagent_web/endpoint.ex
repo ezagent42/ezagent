@@ -8,13 +8,23 @@ defmodule EzagentWeb.Endpoint do
   # The session will be stored in the cookie and signed,
   # this means its contents can be read but not tampered with.
   # Set :encryption_salt if you would also like to encrypt it.
+  # Session cookie domain is env-conditional (task #87): production shares the
+  # cookie across *.ezagent.chat subdomains (default below), but on localhost a
+  # `.ezagent.chat`-scoped cookie is never stored/sent — which silently breaks
+  # all local dev (no session → CSRF 403). dev/test set this to `nil` so the
+  # cookie binds to the request host and localhost works like a normal Phoenix
+  # app. Default preserves the prod behavior in any env that doesn't override.
+  @session_cookie_domain Application.compile_env(
+                           :ezagent_web,
+                           :session_cookie_domain,
+                           ".ezagent.chat"
+                         )
   @session_options [
-    store: :cookie,
-    key: "_ezagent_web_key",
-    signing_salt: "TCQlAZge",
-    domain: ".ezagent.chat",
-    same_site: "Lax"
-  ]
+                     store: :cookie,
+                     key: "_ezagent_web_key",
+                     signing_salt: "TCQlAZge",
+                     same_site: "Lax"
+                   ] ++ if(@session_cookie_domain, do: [domain: @session_cookie_domain], else: [])
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],

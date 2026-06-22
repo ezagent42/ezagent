@@ -60,6 +60,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # workspace of the agent being provisioned; a grant for ws A must
     # never be queried or reused from ws B.
     {Ezagent.Credential.GrantRow, "credential_grants"},
+    # task #87 — invite codes carry their authoritative target workspace.
+    # Per-tenant: a code for ws A admits a registrant to ws A only; admin
+    # cross-workspace listing is the documented exception (like Users.list_all).
+    {Ezagent.Entity.InviteCode, "invite_codes"},
     # #17 credential/config cascade — a user's default source is keyed
     # by (owner, workspace, flavor), so the pointer is per-tenant.
     {Ezagent.Credential.UserDefaultSource, "user_default_credential_sources"},

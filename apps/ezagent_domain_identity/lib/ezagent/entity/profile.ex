@@ -40,7 +40,7 @@ defmodule Ezagent.Entity.Profile do
     existing
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
-    |> unique_constraint(:email, name: :entity_profiles_email_index)
+    |> unique_constraint(:email, name: :entity_profiles_email_lower_index)
     |> Repo.insert_or_update()
   end
 

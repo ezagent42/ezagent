@@ -75,23 +75,26 @@ defmodule EzagentWeb.Router do
     end
 
     # Phase 4-completion Spec 05 §A.2.3 — controller-rendered login.
+    # task #87: POST /login is now email+password; magic-link send moved to
+    # POST /login/magic (kept, SMTP-gated). /login/credentials (handle/URI) is
+    # orphaned from the page and retired in PR-6.
     get "/login", SessionController, :new
     post "/login", SessionController, :create
-    get "/login/credentials", SessionController, :credentials_new
-    post "/login/credentials", SessionController, :credentials_create
+    post "/login/magic", SessionController, :magic_create
     delete "/logout", SessionController, :delete
     post "/logout", SessionController, :delete
     get "/auth/magic/:token", MagicLinkController, :consume
-    # PR-B 2026-05-24 (Allen, SPEC v2): workspace onboarding for new
-    # users. MagicLinkController redirects here after email verify when
-    # there's no existing principal. The user picks an existing
-    # workspace to join (matched by magic_link_rule) OR creates a new
-    # one (OQ-V2-1 Option A — non-admin self-serve). Sets
-    # :pending_workspace in session, then bounces to /register/complete.
-    get "/onboarding/workspace", OnboardingController, :show
-    post "/onboarding/workspace", OnboardingController, :submit
-    get "/register/complete", RegistrationController, :complete_new
-    post "/register/complete", RegistrationController, :complete_create
+    # task #87 Decision 10 — email+password self-registration (gated; closed by
+    # default). Replaces the legacy magic-link onboarding/register-complete chain
+    # (retired). `/auth/confirm/:token` verifies email ownership.
+    get "/register", RegistrationController, :new
+    post "/register", RegistrationController, :create
+    get "/auth/confirm/:token", RegistrationController, :confirm
+    # task #87 — password reset via emailed :reset one-time link.
+    get "/auth/reset", PasswordResetController, :new
+    post "/auth/reset", PasswordResetController, :create
+    get "/auth/reset/:token", PasswordResetController, :edit
+    post "/auth/reset/:token", PasswordResetController, :update
 
     get "/socialware/customer", Socialware.CustomerController, :show
 

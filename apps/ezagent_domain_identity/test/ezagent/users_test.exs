@@ -121,7 +121,10 @@ defmodule Ezagent.UsersTest do
 
     test "returns :not_found for unknown uri" do
       assert {:error, :not_found} =
-               Users.set_password("entity://team-alpha/user/never-existed-#{System.unique_integer()}", "x")
+               Users.set_password(
+                 "entity://team-alpha/user/never-existed-#{System.unique_integer()}",
+                 "x"
+               )
     end
   end
 
@@ -138,7 +141,42 @@ defmodule Ezagent.UsersTest do
 
     test "get_by_uri returns nil for unknown" do
       assert nil ==
-               Users.get_by_uri("entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}")
+               Users.get_by_uri(
+                 "entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}"
+               )
+    end
+  end
+
+  describe "email_verified (task #87 login)" do
+    test "create/4 defaults email_verified to true; opt false overrides" do
+      n = System.unique_integer([:positive])
+      {:ok, u1} = Users.create(Ezagent.URI.user("team-alpha", "ev_a#{n}"), "pw", [])
+      assert u1.email_verified == true
+
+      {:ok, u2} =
+        Users.create(Ezagent.URI.user("team-alpha", "ev_b#{n}"), "pw", [], email_verified: false)
+
+      assert u2.email_verified == false
+      assert Users.get_by_uri(u2.uri).email_verified == false
+    end
+
+    test "create_read_only stays email_verified false (anon never logs in)" do
+      uri = Ezagent.URI.user("team-alpha", "ev_anon#{System.unique_integer([:positive])}")
+      {:ok, u} = Users.create_read_only(uri, [])
+      assert u.email_verified == false
+    end
+
+    test "mark_email_verified/1 flips an unverified user; not_found otherwise" do
+      uri = Ezagent.URI.user("team-alpha", "ev_c#{System.unique_integer([:positive])}")
+      {:ok, _} = Users.create(uri, "pw", [], email_verified: false)
+      assert {:ok, u} = Users.mark_email_verified(uri)
+      assert u.email_verified == true
+      assert Users.get_by_uri(uri).email_verified == true
+
+      assert {:error, :not_found} =
+               Users.mark_email_verified(
+                 Ezagent.URI.user("team-alpha", "ghost#{System.unique_integer([:positive])}")
+               )
     end
   end
 end

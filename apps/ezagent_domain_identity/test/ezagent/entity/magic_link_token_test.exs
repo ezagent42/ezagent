@@ -24,4 +24,24 @@ defmodule Ezagent.Entity.MagicLinkTokenTest do
   test "consume/1 rejects an unknown / malformed token" do
     assert {:error, :invalid} = MagicLinkToken.consume("not-a-real-token")
   end
+
+  describe "purpose (task #87)" do
+    test "default purpose is login; consume/1 (default) accepts it" do
+      {:ok, raw} = MagicLinkToken.mint("p@ex.com")
+      assert {:ok, "p@ex.com"} = MagicLinkToken.consume(raw)
+    end
+
+    test "a reset token cannot be consumed as login (wrong_purpose), and is not burned" do
+      {:ok, raw} = MagicLinkToken.mint("r@ex.com", purpose: "reset")
+      assert {:error, :wrong_purpose} = MagicLinkToken.consume(raw, "login")
+      # not burned → still consumable with the correct purpose
+      assert {:ok, "r@ex.com"} = MagicLinkToken.consume(raw, "reset")
+    end
+
+    test "a confirm token consumes only with the confirm purpose" do
+      {:ok, raw} = MagicLinkToken.mint("c@ex.com", purpose: "confirm")
+      assert {:error, :wrong_purpose} = MagicLinkToken.consume(raw, "login")
+      assert {:ok, "c@ex.com"} = MagicLinkToken.consume(raw, "confirm")
+    end
+  end
 end

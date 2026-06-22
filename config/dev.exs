@@ -4,6 +4,11 @@ import Config
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
 
+# task #87 — in dev, email goes to the in-memory Local adapter (preview at
+# /dev/mailbox if mounted) so confirmation/reset links work with no SMTP.
+# Prod uses the compile-pinned SMTP adapter (config.exs) + runtime smtp_config.
+config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
+
 # Configure your database
 #
 # Path follows the same env-var logic as `Ezagent.Home` (which lives in
@@ -125,3 +130,7 @@ config :phoenix_live_view,
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
 config :phoenix, :stacktrace_depth, 20
+
+# task #87 — localhost dev: no cookie domain so the session cookie binds to
+# the request host (prod sets it to ".ezagent.chat" via the endpoint default).
+config :ezagent_web, :session_cookie_domain, nil

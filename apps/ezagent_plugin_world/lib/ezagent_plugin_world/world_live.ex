@@ -26,7 +26,11 @@ defmodule EzagentPluginWorld.WorldLive do
 
     caller_payload = %{
       "entity_uri" => encode_uri(caller),
-      "workspace_uri" => encode_uri(workspace)
+      "workspace_uri" => encode_uri(workspace),
+      # task #87 — friendly identity for the UI (display name / email), falling
+      # back to the raw URI. The canonical entity_uri above is still the
+      # internal identity; this is display-only.
+      "display_name" => caller_display_name(caller)
     }
 
     layout = layout_for(workspace)
@@ -100,13 +104,15 @@ defmodule EzagentPluginWorld.WorldLive do
     {:noreply, push_event(socket, "world:state", socket.assigns.world_state)}
   end
 
-  def handle_info({:audit_event, event}, socket), do: {:noreply, push_inbound_event(socket, "audit_event", event)}
+  def handle_info({:audit_event, event}, socket),
+    do: {:noreply, push_inbound_event(socket, "audit_event", event)}
 
   def handle_info({:authz_event, result, meta, ts}, socket) do
     {:noreply, push_inbound_event(socket, "authz_event", %{result: result, meta: meta, at: ts})}
   end
 
-  def handle_info({:cc_event, event}, socket), do: {:noreply, push_inbound_event(socket, "cc_event", event)}
+  def handle_info({:cc_event, event}, socket),
+    do: {:noreply, push_inbound_event(socket, "cc_event", event)}
 
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
     socket = ConversationActions.push_members(socket)
@@ -148,9 +154,11 @@ defmodule EzagentPluginWorld.WorldLive do
     {:noreply, ConversationActions.push_members(socket)}
   end
 
-  def handle_info({:member_offline, %URI{}, _at}, socket), do: {:noreply, ConversationActions.push_members(socket)}
+  def handle_info({:member_offline, %URI{}, _at}, socket),
+    do: {:noreply, ConversationActions.push_members(socket)}
 
-  def handle_info({:member_presence, _session_uri, _member_uri, _meta}, socket), do: {:noreply, ConversationActions.push_members(socket)}
+  def handle_info({:member_presence, _session_uri, _member_uri, _meta}, socket),
+    do: {:noreply, ConversationActions.push_members(socket)}
 
   def handle_info({:read_marker_updated, session_uri, user_uri, meta}, socket) do
     {:noreply,
@@ -162,10 +170,12 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   def handle_info({:notification, user_uri, payload}, socket) do
-    {:noreply, push_inbound_event(socket, "notification", %{user_uri: user_uri, payload: payload})}
+    {:noreply,
+     push_inbound_event(socket, "notification", %{user_uri: user_uri, payload: payload})}
   end
 
-  def handle_info({:slice_changed, %{} = event}, socket), do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
+  def handle_info({:slice_changed, %{} = event}, socket),
+    do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -987,4 +997,21 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
   defp encode_uri(_), do: nil
+
+  # task #87 — friendly display identity for the UI: profile display_name, else
+  # email, else the raw URI. Runtime dispatch (apply/3) keeps the world plugin
+  # free of a compile-time dep on ezagent_domain_identity.
+  defp caller_display_name(nil), do: nil
+
+  defp caller_display_name(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.Entity.Profile) do
+      case apply(Ezagent.Entity.Profile, :get, [uri]) do
+        %{display_name: dn} when is_binary(dn) and dn != "" -> dn
+        %{email: e} when is_binary(e) and e != "" -> e
+        _ -> encode_uri(uri)
+      end
+    else
+      encode_uri(uri)
+    end
+  end
 end

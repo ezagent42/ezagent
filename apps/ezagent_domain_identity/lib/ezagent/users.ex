@@ -40,6 +40,12 @@ defmodule Ezagent.Users do
     # join); `true` = a confirmed user. `create/3` → true, `create_read_only/2`
     # → false.
     field(:confirmed, :boolean, default: false)
+    # task #87 (login email+password) — `email_verified` is the source of truth
+    # for "this user proved email ownership". INDEPENDENT of `confirmed`
+    # (anon-ness): a self-registered human is `confirmed: true` (a real,
+    # non-anon user) but `email_verified: false` until they click the
+    # confirmation link. Form login is gated on `email_verified == true`.
+    field(:email_verified, :boolean, default: false)
     # PR #142: per-user `cli_token` field removed — bearer tokens now
     # live in `entity_tokens` (entity-agnostic, supports agents too).
     # See `Ezagent.Entity.Token`.
@@ -51,7 +57,8 @@ defmodule Ezagent.Users do
           uri: URI.t(),
           password_hash: String.t() | nil,
           caps: [Ezagent.Capability.t()],
-          confirmed: boolean()
+          confirmed: boolean(),
+          email_verified: boolean()
         }
 
   # --- write paths ---------------------------------------------------
@@ -60,9 +67,9 @@ defmodule Ezagent.Users do
   Create a new User row. `password` is bcrypt-hashed before insert.
   Caps are `[Ezagent.Capability.t()]` — serialized via Jason.
   """
-  @spec create(URI.t() | String.t(), String.t() | nil, [Ezagent.Capability.t()]) ::
+  @spec create(URI.t() | String.t(), String.t() | nil, [Ezagent.Capability.t()], keyword()) ::
           {:ok, decoded()} | {:error, term()}
-  def create(uri, password, caps) when is_list(caps) do
+  def create(uri, password, caps, opts \\ []) when is_list(caps) do
     uri_str = uri_to_str(uri)
 
     if reserved_anon_name?(uri_str) do
@@ -73,11 +80,11 @@ defmodule Ezagent.Users do
       # behavior. Reject it here so the prefix reliably identifies anon users.
       {:error, :reserved_anon_prefix}
     else
-      do_create(uri_str, password, caps)
+      do_create(uri_str, password, caps, opts)
     end
   end
 
-  defp do_create(uri_str, password, caps) do
+  defp do_create(uri_str, password, caps, opts) do
     hash =
       if is_binary(password) and password != "" do
         Bcrypt.hash_pwd_salt(password)
@@ -106,7 +113,11 @@ defmodule Ezagent.Users do
         # from the entity URI so SELECTs can scope by workspace.
         workspace_uri: URI.to_string(user_workspace),
         # #154 spec 甲 — a normal `create/3` user is CONFIRMED.
-        confirmed: true
+        confirmed: true,
+        # task #87 — operator/programmatic creation is trusted (email_verified
+        # defaults true); self-registration passes `email_verified: false` so
+        # the form-login gate holds until the email is confirmed.
+        email_verified: Keyword.get(opts, :email_verified, true)
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
@@ -228,6 +239,28 @@ defmodule Ezagent.Users do
     end
   end
 
+  @doc """
+  Mark a user's email as verified (task #87). Returns `{:ok, decoded}` or
+  `{:error, :not_found}`. Idempotent — re-marking a verified user is a no-op
+  update. Independent of `confirmed` (anon-ness).
+  """
+  @spec mark_email_verified(URI.t() | String.t()) :: {:ok, decoded()} | {:error, :not_found}
+  def mark_email_verified(uri) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        {:error, :not_found}
+
+      row ->
+        row
+        |> Ecto.Changeset.change(%{email_verified: true})
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> {:ok, decode(updated)}
+          err -> err
+        end
+    end
+  end
+
   @doc "Verify a password against the stored hash. Returns true/false."
   @spec verify_password(URI.t() | String.t(), String.t()) :: boolean()
   def verify_password(uri, password) when is_binary(password) do
@@ -327,7 +360,9 @@ defmodule Ezagent.Users do
       caps: decode_caps(row.caps_json),
       # `confirmed` may be absent on a row read before the column existed
       # (defensive): treat nil as false (unconfirmed).
-      confirmed: row.confirmed == true
+      confirmed: row.confirmed == true,
+      # task #87 — defensive nil → false (unverified).
+      email_verified: row.email_verified == true
     }
   end
 
