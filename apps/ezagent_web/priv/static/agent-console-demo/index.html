@@ -151,6 +151,32 @@
   table.matrix td{vertical-align:top}
   table.matrix .opname{font-weight:600}
   .hidden{display:none}
+
+  /* modal + forms + two-phase execution trace */
+  .modal-scrim{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;z-index:50;
+    align-items:flex-start;justify-content:center;padding:44px 16px;overflow:auto}
+  .modal-scrim.open{display:flex}
+  .modal{background:#fff;border-radius:12px;max-width:580px;width:100%;box-shadow:0 24px 64px rgba(0,0,0,.32)}
+  .modal>header{padding:15px 20px;border-bottom:1px solid var(--world-border);display:flex;justify-content:space-between;align-items:center}
+  .modal>header h3{margin:0;font-size:16px}
+  .modal .mbody{padding:18px 20px}
+  .modal .mfoot{padding:13px 20px;border-top:1px solid var(--world-border);display:flex;gap:8px;justify-content:flex-end}
+  .field{margin-bottom:13px}
+  .field>label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:#334155}
+  .field input,.field select,.field textarea{width:100%;font:inherit;font-size:13px;padding:7px 10px;
+    border:1px solid var(--world-border);border-radius:8px;background:#fff;color:#0f172a}
+  .field textarea{min-height:64px;font-family:var(--mono);font-size:12px;resize:vertical}
+  .field .hint{font-size:11px;color:var(--world-muted);margin-top:3px}
+  .check{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px}
+  .check input{width:auto}
+  .form-row{display:flex;gap:12px}.form-row>.field{flex:1}
+  .chk-list{display:flex;flex-wrap:wrap;gap:6px 14px}
+  .trace .step{display:flex;gap:10px;padding:10px 0;border-bottom:1px dashed var(--world-border)}
+  .trace .step:last-child{border-bottom:none}
+  .trace .ic{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-top:1px}
+  .trace .ic.ok{background:#dcfce7;color:#15803d}.trace .ic.fail{background:#fee2e2;color:#b91c1c}.trace .ic.skip{background:#f1f5f9;color:#94a3b8}
+  .trace .tb{font-size:12.5px;min-width:0}.trace .tb .t{font-weight:700}.trace .tb .d{color:var(--world-muted);font-size:11.5px;margin-top:2px;overflow-wrap:anywhere}
+  .preview-chain{background:#f8fafc;border:1px dashed var(--world-border);border-radius:8px;padding:8px 10px;margin-top:6px}
 </style>
 </head>
 <body>
@@ -196,6 +222,15 @@
 </aside>
 
 <div class="toasts" id="toasts"></div>
+
+<!-- action modal (forms + two-phase execution trace) -->
+<div class="modal-scrim" id="modal-scrim">
+  <div class="modal">
+    <header><h3 id="modal-title"></h3><button class="x" onclick="closeModal()">×</button></header>
+    <div class="mbody" id="modal-body"></div>
+    <div class="mfoot" id="modal-foot"></div>
+  </div>
+</div>
 
 <script>
 /* =========================================================================
@@ -499,6 +534,208 @@ function closeDrawer(){
   document.getElementById("scrim").classList.remove("open");
 }
 
+/* =========================================================================
+   ACTION MODAL + two-phase execution simulation (mock, no backend)
+   ========================================================================= */
+function openModal(title, bodyHtml, footHtml){
+  document.getElementById("modal-title").innerHTML = title;
+  document.getElementById("modal-body").innerHTML = bodyHtml;
+  document.getElementById("modal-foot").innerHTML = footHtml;
+  document.getElementById("modal-scrim").classList.add("open");
+}
+function closeModal(){ document.getElementById("modal-scrim").classList.remove("open"); window._execDone = null; }
+let _req = 4815;
+function nextReq(){ return "req-" + (++_req); }
+function nowts(){ const d = new Date(); return d.toTimeString().slice(0,8); }
+function shortUri(u){ const p = String(u).split("/"); return p[p.length-1]; }
+function roleOptions(){ return TEAM_MEMBERS.map(m=>`<option value="${m.role_name}">${m.role_name}</option>`).join(""); }
+function val(id){ const e=document.getElementById(id); return e?(e.type==="checkbox"?e.checked:e.value):null; }
+
+/* render a step trace; steps = [{s:'ok'|'fail'|'skip', t, d}] */
+function execTrace(steps){
+  return `<div class="trace">${steps.map(s=>`
+    <div class="step"><div class="ic ${s.s}">${s.s==="ok"?"✓":s.s==="fail"?"✕":"·"}</div>
+      <div class="tb"><div class="t">${s.t}</div><div class="d">${s.d}</div></div></div>`).join("")}</div>`;
+}
+/* show the two-phase trace inside the modal; onDone applies the mutation + re-renders */
+function showExec(title, steps, onDone){
+  window._execDone = onDone || null;
+  openModal(title, execTrace(steps),
+    `<button class="btn" onclick="closeModal()">关闭</button>${onDone?`<button class="btn primary" onclick="finishExec()">完成（应用到界面）</button>`:""}`);
+}
+function finishExec(){ const f=window._execDone; closeModal(); if(f){ f(); toast("ok","已应用（mock）","结果已写回界面 + Observability",2800); } }
+
+/* ---- LIVE: Add member (two-phase) ---- */
+function flowAddMember(){
+  openModal('Add member <span class="badge hot">热 · 两阶段</span>', `
+    <div class="field"><label>source agent template</label>
+      <select id="f-src">${AGENT_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri} · ${t.flavor}</option>`).join("")}</select></div>
+    <div class="form-row">
+      <div class="field"><label>role_name（新成员别名）</label><input id="f-role" value="human_desk">
+        <div class="hint">是新别名、不做查找——所以没有「未知 role」失败</div></div>
+      <div class="field" style="flex:0 0 150px"><label>in_session_template</label>
+        <select id="f-ist"><option value="true">true</option><option value="false">false</option></select></div>
+    </div>
+    <div class="check"><input type="checkbox" id="f-nogate"><label for="f-nogate" style="margin:0">模拟 operator 缺 session Manage 权（看 fail-closed）</label></div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitAddMember()">提交</button>`);
+}
+function submitAddMember(){
+  const src=val("f-src"), role=String(val("f-role")||"").trim(), ist=val("f-ist")==="true", req=nextReq();
+  if(!role){ toast("reject","role_name 必填",""); return; }
+  if(val("f-nogate")){
+    showExec("Add member — 被拒（fail-closed）", [
+      {s:"fail",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.add_member</code> → session S · operator 无 session Manage cap → <code>{:error, :manage_unauthorized}</code>`},
+      {s:"skip",t:"Phase 2 · 执行",d:"未执行"},
+      {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=— · result=<b>fail-closed</b> · request_id=${req} —— operator 身份保留`},
+    ], ()=>{ AUDIT.unshift({ts:nowts(),op:"add_managed_member",operator:"entity://acme/user/alice",exec:"—",live:"hot",result:"fail-closed",note:`缺 Manage cap · ${req}`}); go("observability"); });
+    return;
+  }
+  showExec("Add member — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.add_member</code> → session S · operator <b>session Manage cap ✓</b> · session↔orchestrator binding ✓`},
+    {s:"ok",t:"Phase 2 · 执行（orchestrator 授权）",d:`投影最小 cap · <code>add_managed_member(${shortUri(src)}, "${role}", ${ist})</code> · spawn + join ✓`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    TEAM_MEMBERS.push({role_name:role, uri:`entity://acme/agent/${role}-7f3a`, source:src, in_session_template:ist, provenance:"managed(orchestrator)", alive:true});
+    AUDIT.unshift({ts:nowts(),op:"add_managed_member",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`role=${role} · ${req}`});
+    go("team");
+  });
+}
+
+/* ---- LIVE: Define rule-set rule (two-phase + chain preview) ---- */
+function flowDefineRule(){
+  openModal('Define rule-set rule <span class="badge hot">热</span>', `
+    <div class="form-row">
+      <div class="field"><label>matcher 类型</label><select id="f-mtype" onchange="rulePreview()">
+        <option value="from">from（谁发的）</option><option value="mention">mention（@谁）</option><option value="text_contains">text_contains</option></select></div>
+      <div class="field"><label>matcher 值</label><input id="f-mval" value="greeter" oninput="rulePreview()"></div>
+    </div>
+    <div class="form-row">
+      <div class="field"><label>receiver（必须是 member role）</label><select id="f-recv" onchange="rulePreview()">${roleOptions()}</select></div>
+      <div class="field"><label>rule-set</label><input id="f-rset" value="frontline"></div>
+    </div>
+    <div class="field"><label>prompt_template_ref（可选）</label><select id="f-pref"><option value="">（无）</option>${PROMPT_TEMPLATES.map(p=>`<option>${p.name}</option>`).join("")}</select></div>
+    <div class="check"><input type="checkbox" id="f-badrecv"><label for="f-badrecv" style="margin:0">用一个不存在的 receiver（看 {:unknown_member_role}）</label></div>
+    <div id="rule-preview" class="preview-chain"></div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitDefineRule()">提交</button>`);
+  rulePreview();
+}
+function rulePreview(){
+  const mt=val("f-mtype"), mv=val("f-mval"), rv=val("f-badrecv")?"nobody":val("f-recv");
+  const el=document.getElementById("rule-preview"); if(el) el.innerHTML=`<div class="chain"><span class="node">{${mt}: ${mv}}</span><span class="arrow">→</span><span class="node">${rv}</span></div>`;
+}
+function submitDefineRule(){
+  const mt=val("f-mtype"), mv=val("f-mval"), rset=val("f-rset"), pref=val("f-pref"), req=nextReq();
+  const bad=val("f-badrecv"), recv=bad?"nobody":val("f-recv");
+  if(bad){
+    showExec("Define rule — 被拒", [
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.add_routing_rule</code> → session S · session Manage cap ✓`},
+      {s:"fail",t:"Phase 2 · 执行",d:`receiver role <code>${recv}</code> 不是 member → <code>{:error, {:unknown_member_role, "${recv}"}}</code>（tools.ex:619）`},
+      {s:"ok",t:"审计",d:`operator=alice · execution=orchestrator · result=reject · request_id=${req}`},
+    ], ()=>{ AUDIT.unshift({ts:nowts(),op:"define_rule_set_rule",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`unknown_member_role:${recv} · ${req}`}); go("observability"); });
+    return;
+  }
+  showExec("Define rule — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.add_routing_rule</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 2 · 执行",d:`resolve receiver role「${recv}」→ live member ✓ · 写入 rule-set「${rset}」`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    let rs=RULE_SETS.find(r=>r.name===rset); if(!rs){ rs={name:rset,rules:[]}; RULE_SETS.push(rs); }
+    rs.rules.push({matcher:`{${mt}: ${mv}}`, receiver:recv, prompt_ref:pref||null, pos:(rs.rules.length+1)*10});
+    AUDIT.unshift({ts:nowts(),op:"define_rule_set_rule",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`{${mt}:${mv}}→${recv} · ${req}`});
+    go("routing");
+  });
+}
+
+/* ---- LIVE: Define prompt template (client-side {body} validation) ---- */
+function flowDefinePrompt(){
+  openModal('Define prompt template <span class="badge hot">热</span>', `
+    <div class="field"><label>name</label><input id="f-pname" value="handoff2"></div>
+    <div class="field"><label>body（必须含 {body} 占位）</label><textarea id="f-pbody">背景：{summary}。请继续：{body}</textarea>
+      <div class="hint">缺 {body} → 后端 :body_placeholder_required（tools.ex:669）</div></div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitDefinePrompt()">提交</button>`);
+}
+function submitDefinePrompt(){
+  const name=String(val("f-pname")||"").trim(), body=String(val("f-pbody")||""), req=nextReq();
+  if(!body.includes("{body}")){
+    showExec("Define prompt — 被拒", [
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_prompt_template</code> → session S · session Manage cap ✓`},
+      {s:"fail",t:"Phase 2 · 执行",d:`模板缺 {body} 占位 → <code>{:error, :body_placeholder_required}</code>（tools.ex:669）`},
+      {s:"ok",t:"审计",d:`operator=alice · result=reject · request_id=${req}`},
+    ], ()=>{ AUDIT.unshift({ts:nowts(),op:"define_prompt_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`body_placeholder_required · ${req}`}); go("observability"); });
+    return;
+  }
+  showExec("Define prompt — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_prompt_template</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 2 · 执行",d:`{body} 校验通过 · 写入 prompt_templates「${name}」`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    PROMPT_TEMPLATES.push({name:name, body:body});
+    AUDIT.unshift({ts:nowts(),op:"define_prompt_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`${name} · ${req}`});
+    go("routing");
+  });
+}
+
+/* ---- LIVE: Define legend (gap: backend does NOT validate) ---- */
+function flowDefineLegend(){
+  openModal('Define legend <span class="badge hot">热</span>', `
+    <div class="field"><label>legend name</label><input id="f-lname" value="客服"></div>
+    <div class="field"><label>member_set（勾选；⚠ 后端不校验存在性）</label>
+      <div class="chk-list">${TEAM_MEMBERS.map(m=>`<label class="check"><input type="checkbox" class="f-lm" value="${m.role_name}">${m.role_name}</label>`).join("")}</div></div>
+    <div class="form-row">
+      <div class="field"><label>bound_rule_set</label><input id="f-lrs" value="frontline"></div>
+      <div class="field" style="flex:0 0 120px"><label>fold</label><select id="f-lfold"><option value="collapse">collapse</option><option value="none">none</option></select></div>
+    </div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitDefineLegend()">提交</button>`);
+}
+function submitDefineLegend(){
+  const name=String(val("f-lname")||"").trim(), set=[...document.querySelectorAll(".f-lm:checked")].map(e=>e.value), rs=val("f-lrs"), fold=val("f-lfold"), req=nextReq();
+  showExec("Define legend — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_legend</code> → session S · session Manage cap ✓`},
+    {s:set.length?"ok":"fail",t:"Phase 2 · 执行（⚠ 后端不校验）",d:`后端直写 map、<b>不校验</b> member_set/bound_rule_set（tools.ex:705）——即使 member_set 为空也会写入。Console 应在 gate 加校验。`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    LEGENDS.push({name:name, member_set:set, bound_rule_set:rs, fold:fold});
+    AUDIT.unshift({ts:nowts(),op:"define_legend",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`@${name}(${set.length} members) · ${req}`});
+    go("routing");
+  });
+}
+
+/* ---- COLD: Create SessionTemplate (single-phase, operator's own Template cap) ---- */
+function flowCreateST(){
+  openModal('Create SessionTemplate <span class="badge cold">冷</span>', `
+    <div class="field"><label>name</label><input id="f-stname" value="storefront-v4"></div>
+    <div class="field"><label>workspace（必填）</label><input id="f-stws" value="acme" disabled></div>
+    <div class="field"><label>description</label><input id="f-stdesc" value="storefront 第四版"></div>
+    <div class="hint">冷路径：caller=operator，授权用 operator 自己的 Template :any cap（无 Manage gate、无 execution principal）。</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitCreateST()">创建</button>`);
+}
+function submitCreateST(){
+  const name=String(val("f-stname")||"").trim(), req=nextReq();
+  showExec("Create SessionTemplate — 执行（冷）", [
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`caller=operator · authorizer=operator 的 Template cap · <code>SessionTemplate.create/3</code> · workspace=acme ✓`},
+    {s:"ok",t:"创建后",d:`给 owner 授该模板的 Template cap · request_id=${req}`},
+    {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷，单主体）· request_id=${req}`},
+  ], ()=>{
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@new0000`, name:name, tag:"draft", description:String(val("f-stdesc")||""), public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
+    AUDIT.unshift({ts:nowts(),op:"SessionTemplate.create",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
+    go("session-templates");
+  });
+}
+
+/* ---- LIVE WORKFLOW: Migrate run (ledger stepper) ---- */
+function flowMigrateRun(){
+  const req=nextReq();
+  const steps=[{s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.migrate</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 2 · dry-run plan",d:`读 target → diff members（+1 / ~1）→ 写 ledger`}];
+  MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") steps.push({s:"ok",t:`迁移 role「${l.role}」`,d:"regenerate（spawn-new-first → leave → join）✓ → done"}); });
+  steps.push({s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`});
+  showExec('Migrate session <span class="badge defer">MVP 后置</span> — 模拟运行', steps, ()=>{
+    MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") l.status="done"; });
+    AUDIT.unshift({ts:nowts(),op:"migrate_session",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`ledger done · ${req}`});
+    go("migrate");
+  });
+}
+
 /* toast (used to surface REAL failure states on action click) */
 function toast(kind, title, html, ms){
   const t = document.createElement("div");
@@ -675,7 +912,7 @@ overview(){ return `
     </div>
     <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
       <div class="action-list">
-        ${actionRow(`<button class="btn primary" onclick="toast('ok','Create（mock）','SessionTemplate.create/3 · workspace 必填 · 给 owner 授 Template cap',3200)">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
+        ${actionRow(`<button class="btn primary" onclick="flowCreateST()">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
         ${actionRow(`<button class="btn" onclick="toast('warn','Fork（mock）','config-only，不带消息历史（不变式 #10）',3200)">Fork</button>`, "Fork SessionTemplate", "config-only")}
         ${actionRow(`<button class="btn" onclick="toast('ok','Persist version（mock）','内容寻址；同内容 → 同 hash',3200)">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
         ${actionRow(`<button class="btn" onclick="toast('warn','Tag current（mock）','⚠ TemplateTags.put/move 无条件直写 DB、无 cap gate',4200)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
@@ -701,7 +938,7 @@ team(){ return `
   </div>
   <div class="card"><h3>动作（热 · operator 授权 → 在会话授权下执行 · 双主体审计）</h3>
     <div class="action-list">
-      ${actionRow(`<button class="btn primary" onclick="toast('ok','Add member（mock）','role=human_desk · 实际跑在重建的 session 授权下，审计记 operator+execution',4200)">Add member</button>`, "Add member", "Session :join · {:within_session,S}")}
+      ${actionRow(`<button class="btn primary" onclick="flowAddMember()">Add member</button>`, "Add member", "Session :join · {:within_session,S}")}
       ${actionRow(`<button class="btn" onclick="toast('ok','Update member（mock）','regenerate：先 leave 后 join',3600)">Update member</button>`, "Update member template", "regenerate · 销毁重建")}
       ${actionRow(`<button class="btn danger" onclick="toast('warn','Remove member（mock）','Session :leave · {:within_session,S}',3200)">Remove member</button>`, "Remove member", "Session :leave")}
     </div>
@@ -726,7 +963,7 @@ routing(){ return `
           ${r.prompt_ref?`<span class="arrow">·</span><span class="badge tag">prompt: ${r.prompt_ref}</span>`:""}<span class="muted" style="margin-left:auto">pos ${r.pos}</span></div>`).join("")}
       </div>`).join("")}
       <div class="action-list">
-        ${actionRow(`<button class="btn primary" onclick="toast('ok','Define rule（mock）','单 receiver（named rule-set 强制）',3200)">+ rule</button>`, "Define rule-set rule", "Routing :add_rule")}
+        ${actionRow(`<button class="btn primary" onclick="flowDefineRule()">+ rule</button>`, "Define rule-set rule", "Routing :add_rule")}
       </div>
       <div class="action-sub">演示真实失败态</div>
       <div class="action-list">
@@ -737,11 +974,11 @@ routing(){ return `
       <h3>Legends</h3>
       ${LEGENDS.map(l=>`<div class="ruleset"><h4>@${l.name}</h4>
         <div class="muted" style="font-size:12.5px">member_set: ${l.member_set.join(", ")}<br>bound_rule_set: <b>${l.bound_rule_set}</b><br>fold: ${l.fold}</div></div>`).join("")}
-      <div class="action-list">${actionRow(`<button class="btn" onclick="toast('warn','Define legend（mock）','⚠ 后端今天不校验 member_set/bound_rule_set（直写 map，tools.ex:705）',4200)">+ legend</button>`, "Define legend", "Session :set_legends · ⚠ 无校验")}</div>
+      <div class="action-list">${actionRow(`<button class="btn" onclick="flowDefineLegend()">+ legend</button>`, "Define legend", "Session :set_legends · ⚠ 无校验")}</div>
       <h3 style="margin-top:16px">Prompt templates</h3>
       ${PROMPT_TEMPLATES.map(p=>`<div class="ruleset"><h4>${p.name}</h4><div class="mono" style="font-size:12px">${p.body}</div></div>`).join("")}
       <div class="action-list">
-        ${actionRow(`<button class="btn" onclick="toast('ok','Define prompt（mock）','{var} 替换 · {body} 必填',3200)">+ prompt</button>`, "Define prompt template", "{var} 替换 · {body} 必填")}
+        ${actionRow(`<button class="btn" onclick="flowDefinePrompt()">+ prompt</button>`, "Define prompt template", "{var} 替换 · {body} 必填")}
         ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：缺 {body}','模板没有 {body} 占位 → {:error,:body_placeholder_required}（tools.ex:669）',5200)">+ prompt · 缺 body</button>`, "缺 {body} → :body_placeholder_required · tools.ex:669")}
       </div>
     </div>
@@ -768,7 +1005,7 @@ migrate(){ return `
         l.status==="failed"?'<span class="badge hot">failed</span>':
         '<span class="badge tag">unchanged</span>'}</td></tr>`).join("")}
     </tbody></table>
-    <div class="action-list">${actionRow(`<button class="btn" disabled style="opacity:.5;cursor:not-allowed">Run migrate</button>`, "Migrate session", "多步 workflow · MVP 后置")}</div>
+    <div class="action-list">${actionRow(`<button class="btn" onclick="flowMigrateRun()">Run migrate（模拟）</button>`, "Migrate session", "多步 workflow · MVP 后置")}</div>
   </div>
 `; },
 
