@@ -367,15 +367,21 @@ export function Conversation({
       </div>
 
       {activeView === "pty" ? (
-        <PtyTerminalSurface
-          state={{
-            ...state,
-            agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
-          }}
-          onInput={onPtyInput}
-          onResize={onPtyResize}
-          onServerEvent={onServerEvent}
-        />
+        // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
+        // Conversation, NOT route-mounted and NOT in the layout registry. The
+        // `data-world-subcomponent` marker tells the mount gate this is a
+        // sanctioned parent-owned mount, not a registry bypass.
+        <div data-world-subcomponent="pty_terminal">
+          <PtyTerminalSurface
+            state={{
+              ...state,
+              agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
+            }}
+            onInput={onPtyInput}
+            onResize={onPtyResize}
+            onServerEvent={onServerEvent}
+          />
+        </div>
       ) : (
       <>
         <div className="world-conversation-stream" ref={scrollRef} data-message-count={messages.length}>
