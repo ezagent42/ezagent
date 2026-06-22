@@ -56,8 +56,6 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
     )
   end
 
-  # --- internals ---
-
   defp parse_token("pk_" <> rest) do
     case String.split(rest, "_", parts: 2) do
       [key_id, secret] when key_id != "" and secret != "" ->

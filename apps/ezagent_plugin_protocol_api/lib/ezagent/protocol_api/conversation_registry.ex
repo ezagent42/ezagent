@@ -40,8 +40,6 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
     end
   end
 
-  # --- internals ---
-
   defp lookup(conversation_id) do
     rows =
       Repo.all(

@@ -7,19 +7,13 @@ defmodule EzagentPluginProtocolApi.Application do
   `use`s both `Application` (OTP plumbing) and `Ezagent.Plugin` (declarative
   contract). Registration is declarative — `Ezagent.Plugin.boot/1` reads the
   callbacks below and performs every `*Registry` call.
-
-  ## What this plugin declares (P0)
-
-  - `adapters/0` — `Ezagent.ProtocolApi.Adapter` as bare `:push` adapter
-    (no-op binding; real transport is the HTTP response in `OpenaiChatPlug`).
-    P1 will introduce the request-scoped binding variant.
-  - `config_surface/0` — nil (API-key management UI deferred to P1).
   """
 
   use Application
   use Ezagent.Plugin
 
   alias Ezagent.ProtocolApi.Adapter
+  alias Ezagent.ProtocolApi.Binding
 
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
@@ -35,7 +29,7 @@ defmodule EzagentPluginProtocolApi.Application do
   end
 
   @impl Ezagent.Plugin
-  def adapters, do: [Adapter]
+  def adapters, do: [{Adapter, Binding}]
 
   @impl Ezagent.Plugin
   def config_surface, do: nil
