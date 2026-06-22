@@ -1,0 +1,116 @@
+defmodule EzagentPluginHello.Spec do
+  @moduledoc """
+  The hello `@json-render` page-spec contract: a **catalog-constrained**
+  `{"type", "props", "children"}` node tree.
+
+  This is the single source of truth shared by three parties:
+
+    * the **builder prompt** (`EzagentPluginHello.Prompts`) tells the LLM it may
+      only emit nodes from `catalog/0`;
+    * this module **validates** an emitted spec against the catalog (the safety
+      property — the AI can't escape the catalog; an out-of-catalog node is
+      rejected, never rendered);
+    * the **renderer** (`apps/ezagent_plugin_hello/assets`, the `@json-render`
+      island) renders exactly these types.
+
+  A "tree" is the `%{type, props, children}` map stored as a `Behavior.Surface`
+  version (`Surface` calls it `tree`). It is born ONLY via
+  `Surface.put_version/2`, driven by `EzagentPluginHello.TurnDriver`.
+
+  Phase 0 catalog v0 is intentionally minimal (page/section/heading/text/
+  button/image/card); it grows by demand (handoff §10.2). Node props are kept
+  string-keyed (JSON round-trips through `MessageStore`/snapshots as strings).
+  """
+
+  # Catalog v0 — allowed node types → the prop keys the renderer honors.
+  # `children` is allowed on the container-ish types (page/section/card).
+  @catalog %{
+    "page" => %{props: ["title"], container?: true},
+    "section" => %{props: ["layout"], container?: true},
+    "card" => %{props: ["title"], container?: true},
+    "heading" => %{props: ["text", "level"], container?: false},
+    "text" => %{props: ["text"], container?: false},
+    "button" => %{props: ["label", "href"], container?: false},
+    "image" => %{props: ["src", "alt"], container?: false}
+  }
+
+  @doc "The allowed component catalog (type → %{props, container?})."
+  @spec catalog() :: map()
+  def catalog, do: @catalog
+
+  @doc "The allowed type names, for the prompt + validation."
+  @spec types() :: [String.t()]
+  def types, do: Map.keys(@catalog)
+
+  @doc """
+  Extract a spec map from a raw LLM `content` string. Accepts a bare JSON
+  object or one wrapped in a ```json … ``` (or ``` … ```) fence. Returns
+  `{:ok, spec}` | `{:error, reason}`. Does NOT validate the catalog — call
+  `validate/1` on the result.
+  """
+  @spec extract(String.t()) :: {:ok, map()} | {:error, term()}
+  def extract(content) when is_binary(content) do
+    json =
+      case Regex.run(~r/```(?:json)?\s*(\{.*\})\s*```/s, content) do
+        [_, captured] -> captured
+        _ -> String.trim(content)
+      end
+
+    case Jason.decode(json) do
+      {:ok, %{} = spec} -> {:ok, spec}
+      {:ok, other} -> {:error, {:not_an_object, other}}
+      {:error, reason} -> {:error, {:json, reason}}
+    end
+  end
+
+  def extract(_), do: {:error, :not_a_string}
+
+  @doc """
+  Validate that `spec` is a tree using ONLY catalog node types. Returns
+  `{:ok, spec}` | `{:error, {:unknown_type, t}}` | `{:error, reason}`. This is
+  the catalog-constraint chokepoint — an out-of-catalog node fails closed.
+  """
+  @spec validate(term()) :: {:ok, map()} | {:error, term()}
+  def validate(%{"type" => type} = node) when is_binary(type) do
+    cond do
+      not Map.has_key?(@catalog, type) ->
+        {:error, {:unknown_type, type}}
+
+      true ->
+        children = Map.get(node, "children", [])
+
+        cond do
+          not is_list(children) ->
+            {:error, {:children_not_a_list, type}}
+
+          true ->
+            Enum.reduce_while(children, {:ok, node}, fn child, acc ->
+              case validate(child) do
+                {:ok, _} -> {:cont, acc}
+                {:error, _} = err -> {:halt, err}
+              end
+            end)
+        end
+    end
+  end
+
+  def validate(%{} = node), do: {:error, {:missing_type, node}}
+  def validate(other), do: {:error, {:not_a_node, other}}
+
+  @doc "A minimal default page used when a hello session has no generated page yet."
+  @spec seed() :: map()
+  def seed do
+    %{
+      "type" => "page",
+      "props" => %{"title" => "Hello"},
+      "children" => [
+        %{"type" => "heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
+        %{
+          "type" => "text",
+          "props" => %{"text" => "Tell the builder what page you want."},
+          "children" => []
+        }
+      ]
+    }
+  end
+end

@@ -45,4 +45,19 @@ defmodule EzagentPluginHello.Application do
       version: "0.1.0"
     }
   end
+
+  # Bind the builder's `:receive` page-gen hook on the `Ezagent.Entity.HelloBuilder`
+  # Kind so the session's chat fan-out (`chat.send` → `chat.receive` per member)
+  # reaches it. (Phase 0: the builder is spawned directly as a session member by
+  # `EzagentPluginHello.App`; the agent-flavor/Template create path is a follow-up.)
+  @impl Ezagent.Plugin
+  def behaviors do
+    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder}]
+  end
+
+  # The supervisor for off-process page-generation Tasks (the LLM round-trip).
+  @impl Ezagent.Plugin
+  def children do
+    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}]
+  end
 end
