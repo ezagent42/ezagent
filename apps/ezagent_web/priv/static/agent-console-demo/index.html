@@ -757,6 +757,140 @@ function demoRow(btnHtml, desc){
   return `<div class="action-row demo"><div class="a-main">${btnHtml}</div><span class="a-desc">${desc}</span></div>`;
 }
 
+/* ---- LIVE: Update member template (two-phase; same-URI failure toggle) ---- */
+function flowUpdateMember(){
+  openModal('Update member template <span class="badge hot">热</span>', `
+    <div class="field"><label>member（role_name）</label><select id="f-urole">${roleOptions()}</select></div>
+    <div class="field"><label>new source agent template</label>
+      <select id="f-usrc">${AGENT_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="check"><input type="checkbox" id="f-sameuri"><label for="f-sameuri" style="margin:0">改成同一个 URI（看 :same_member_uri_use_reconfigure）</label></div>
+    <div class="hint">regenerate 顺序：spawn-new-first → repoint → leave → join → best-effort terminate</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitUpdateMember()">提交</button>`);
+}
+function submitUpdateMember(){
+  const role=val("f-urole"), src=val("f-usrc"), req=nextReq();
+  if(val("f-sameuri")){
+    showExec("Update member — 被拒", [
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.update_member</code> → session S · session Manage cap ✓`},
+      {s:"fail",t:"Phase 2 · 执行",d:`new URI == old URI → <code>{:error, :same_member_uri_use_reconfigure}</code>（member_template.ex:429）`},
+      {s:"ok",t:"审计",d:`operator=alice · result=reject · request_id=${req}`},
+    ], ()=>{ AUDIT.unshift({ts:nowts(),op:"update_member_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`same_member_uri · ${req}`}); go("observability"); });
+    return;
+  }
+  showExec("Update member — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.update_member</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 2 · 执行",d:`regenerate：spawn-new(${shortUri(src)}) → repoint routing → leave old → join new ✓`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    const m=TEAM_MEMBERS.find(x=>x.role_name===role); if(m){ m.source=src; m.uri=`entity://acme/agent/${shortUri(src)}-7f3a`; }
+    AUDIT.unshift({ts:nowts(),op:"update_member_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`${role} → ${shortUri(src)} · ${req}`});
+    go("team");
+  });
+}
+
+/* ---- LIVE: Remove member (two-phase; unknown-role = idempotent, not reject) ---- */
+function flowRemoveMember(){
+  openModal('Remove member <span class="badge hot">热</span>', `
+    <div class="field"><label>member（role_name）</label><select id="f-rrole">${roleOptions()}</select></div>
+    <div class="check"><input type="checkbox" id="f-unknown"><label for="f-unknown" style="margin:0">移除一个不存在的 role（看幂等 :already_removed）</label></div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn danger" onclick="submitRemoveMember()">移除</button>`);
+}
+function submitRemoveMember(){
+  const role=val("f-rrole"), req=nextReq();
+  if(val("f-unknown")){
+    showExec("Remove member — 幂等（不是拒绝）", [
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.remove_member</code> → session S · session Manage cap ✓`},
+      {s:"ok",t:"Phase 2 · 执行",d:`role 不存在 → <code>{:ok, :already_removed}</code>（tools.ex:413）—— 幂等，<b>不报错</b>`},
+      {s:"ok",t:"审计",d:`operator=alice · result=ok(already_removed) · request_id=${req}`},
+    ], ()=>{ AUDIT.unshift({ts:nowts(),op:"remove_member",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`already_removed · ${req}`}); go("observability"); });
+    return;
+  }
+  showExec("Remove member — 执行", [
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.remove_member</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 2 · 执行",d:`terminate worker（cap#2 gate）→ prune 本 session 的路由行 → leave ✓`},
+    {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
+  ], ()=>{
+    const i=TEAM_MEMBERS.findIndex(x=>x.role_name===role); if(i>=0) TEAM_MEMBERS.splice(i,1);
+    AUDIT.unshift({ts:nowts(),op:"remove_member",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`role=${role} · ${req}`});
+    go("team");
+  });
+}
+
+/* ---- COLD: Fork SessionTemplate / Persist version (single-phase) ---- */
+function flowForkST(){
+  openModal('Fork SessionTemplate <span class="badge cold">冷</span>', `
+    <div class="field"><label>source</label><select id="f-fsrc">${SESSION_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="field"><label>new name</label><input id="f-fname" value="storefront-fork"></div>
+    <div class="hint">config-only：不带消息历史（不变式 #10）。冷路径 · operator Template :fork cap。</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitForkST()">Fork</button>`);
+}
+function submitForkST(){
+  const name=String(val("f-fname")||"").trim(), req=nextReq();
+  showExec("Fork SessionTemplate — 执行（冷）", [
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`caller=operator · Template :fork cap · <code>SessionTemplate.fork/3</code> · config-only ✓`},
+    {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
+  ], ()=>{
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@fork0000`, name:name, tag:"fork", description:"forked", public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
+    AUDIT.unshift({ts:nowts(),op:"SessionTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
+    go("session-templates");
+  });
+}
+function flowPersistVersion(){
+  openModal('Persist version <span class="badge cold">冷</span>', `
+    <div class="field"><label>template</label><select id="f-pvsrc">${SESSION_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="hint">内容寻址：SHA-256 over content；同内容 → 同 hash（HIGH-9：线程 caller caps，无 admin fallback）。</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitPersistVersion()">Persist</button>`);
+}
+function submitPersistVersion(){
+  const req=nextReq();
+  showExec("Persist version — 执行（冷）", [
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`Template :write cap · <code>SessionTemplate.persist_version/3</code> · 内容寻址 → 新 @hash ✓`},
+    {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
+  ], ()=>{ AUDIT.unshift({ts:nowts(),op:"SessionTemplate.persist_version",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`@hash · ${req}`}); go("observability"); });
+}
+
+/* ---- COLD: Fork AgentTemplate ---- */
+function flowForkAgent(){
+  openModal('Fork AgentTemplate <span class="badge cold">冷</span>', `
+    <div class="field"><label>source</label><select id="f-fasrc">${AGENT_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="field"><label>new name</label><input id="f-faname" value="doorman-v2"></div>
+    <div class="hint">kind=:agent_template · Template :fork · config-only。⚠ AgentTemplate 无 caller-threaded create/3（仅 system path）。</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitForkAgent()">Fork</button>`);
+}
+function submitForkAgent(){
+  const name=String(val("f-faname")||"").trim(), src=val("f-fasrc"), req=nextReq();
+  showExec("Fork AgentTemplate — 执行（冷）", [
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`kind=:agent_template · Template :fork · <code>AgentTemplate.fork/3</code> ✓`},
+    {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
+  ], ()=>{
+    AGENT_TEMPLATES.push({uri:`template://acme/agent/${name}`, flavor:"cc", cwd:"/srv/acme/storefront", config_dir:`.claude/${name}`, settings_path:null, mcp_config_path:null, default_caps:[], desired_skills:[]});
+    AUDIT.unshift({ts:nowts(),op:"AgentTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
+    go("agent-templates");
+  });
+}
+
+/* ---- UNGATED: Tag (no cap gate today) ---- */
+function flowTag(kind){
+  const list = kind==="agent" ? AGENT_TEMPLATES : SESSION_TEMPLATES;
+  openModal('Tag <span class="badge defer">⚠ 无 cap gate</span>', `
+    <div class="field"><label>template</label><select id="f-tgt">${list.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="field"><label>tag</label><input id="f-tag" value="current"></div>
+    <div class="callout" style="margin:0">⚠ 今天 <code>TemplateTags.put/move</code> <b>无条件直写 DB、无 caller/caps 参数</b>——没有 Phase-1 gate。Console 接入前需补 cap gate。</div>
+  `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitTag()">Tag</button>`);
+}
+function submitTag(){
+  const tag=String(val("f-tag")||"").trim(), tgt=val("f-tgt"), req=nextReq();
+  showExec("Tag — 执行（⚠ 无 cap gate）", [
+    {s:"fail",t:"授权",d:`<b>无 cap gate</b>：<code>TemplateTags.put/5</code> 直写 DB，不校验 caller/caps（template_tags.ex）`},
+    {s:"ok",t:"执行",d:`(name, tag=「${tag}」) → version_hash（可变指针，git-branch 语义）`},
+    {s:"ok",t:"审计",d:`created_by（仅 provenance，<b>无授权链</b>）· request_id=${req}`},
+  ], ()=>{
+    const t=SESSION_TEMPLATES.find(x=>x.uri===tgt); if(t) t.tag=tag;
+    AUDIT.unshift({ts:nowts(),op:"TemplateTags.put",operator:"entity://acme/user/alice",exec:"—",live:"cold",result:"fail-closed",note:`⚠ 无 gate · tag=${tag} · ${req}`});
+    go("session-templates");
+  });
+}
+
 /* =========================================================================
    SECTION RENDERERS
    ========================================================================= */
@@ -879,8 +1013,8 @@ overview(){ return `
     <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
       <p class="sub">demo：点了显示真实授权 + 失败态，不写后端</p>
       <div class="action-list">
-        ${actionRow(`<button class="btn primary" onclick="toast('warn','Fork（mock）','克隆为新 AgentTemplate（config-only）。',3000)">Fork</button>`, "Fork AgentTemplate", "克隆 · config-only")}
-        ${actionRow(`<button class="btn" onclick="toast('warn','Tag（mock）','⚠ TemplateTags.put/move 无条件直写 DB、无 cap gate（template_tags.ex）',4200)">Tag</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
+        ${actionRow(`<button class="btn primary" onclick="flowForkAgent()">Fork</button>`, "Fork AgentTemplate", "克隆 · config-only")}
+        ${actionRow(`<button class="btn" onclick="flowTag(&apos;agent&apos;)">Tag</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
       <div class="callout">⚠ <b>已知 gap：</b>AgentTemplate <b>没有 caller-threaded <code>create/3</code></b>（只有 system path）。Console 要新建 AgentTemplate 需先补这个后端缝（研究 note §1）。</div>
     </div>
@@ -913,9 +1047,9 @@ overview(){ return `
     <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
       <div class="action-list">
         ${actionRow(`<button class="btn primary" onclick="flowCreateST()">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
-        ${actionRow(`<button class="btn" onclick="toast('warn','Fork（mock）','config-only，不带消息历史（不变式 #10）',3200)">Fork</button>`, "Fork SessionTemplate", "config-only")}
-        ${actionRow(`<button class="btn" onclick="toast('ok','Persist version（mock）','内容寻址；同内容 → 同 hash',3200)">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
-        ${actionRow(`<button class="btn" onclick="toast('warn','Tag current（mock）','⚠ TemplateTags.put/move 无条件直写 DB、无 cap gate',4200)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
+        ${actionRow(`<button class="btn" onclick="flowForkST()">Fork</button>`, "Fork SessionTemplate", "config-only")}
+        ${actionRow(`<button class="btn" onclick="flowPersistVersion()">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
+        ${actionRow(`<button class="btn" onclick="flowTag(&apos;session&apos;)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
     </div>
   </div>
@@ -939,16 +1073,10 @@ team(){ return `
   <div class="card"><h3>动作（热 · operator 授权 → 在会话授权下执行 · 双主体审计）</h3>
     <div class="action-list">
       ${actionRow(`<button class="btn primary" onclick="flowAddMember()">Add member</button>`, "Add member", "Session :join · {:within_session,S}")}
-      ${actionRow(`<button class="btn" onclick="toast('ok','Update member（mock）','regenerate：先 leave 后 join',3600)">Update member</button>`, "Update member template", "regenerate · 销毁重建")}
-      ${actionRow(`<button class="btn danger" onclick="toast('warn','Remove member（mock）','Session :leave · {:within_session,S}',3200)">Remove member</button>`, "Remove member", "Session :leave")}
+      ${actionRow(`<button class="btn" onclick="flowUpdateMember()">Update member</button>`, "Update member template", "regenerate · 销毁重建")}
+      ${actionRow(`<button class="btn danger" onclick="flowRemoveMember()">Remove member</button>`, "Remove member", "Session :leave")}
     </div>
-    <div class="action-sub">演示真实失败态（点击看后端拒绝）</div>
-    <div class="action-list">
-      ${demoRow(`<button class="btn" onclick="toast('warn','fail-closed（Phase-1 gate）','缺 Manage cap → 操作拒绝；审计仍保留 operator 身份，不退化成「只看见 orchestrator」(session_manager.ex:372)',5200)">Add member · 缺 Manage 权</button>`, "缺 Manage cap → fail-closed（Phase-1 gate）")}
-      ${demoRow(`<button class="btn" onclick="toast('warn','误区更正','add member 的 role_name 是<b>新成员别名</b>，不做查找——<b>没有「未知 role」失败</b>。（unknown_member_role 属于 routing 的 receiver 解析）',5600)">Add member · 「未知 role」?</button>`, "role_name 是新别名：没有「未知 role」失败（常见误解）")}
-      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：same-URI','update 到同一 URI 不支持 → <code>:same_member_uri_use_reconfigure</code>（member_template.ex:429）',5200)">Update member · 同 URI</button>`, "同 URI → :same_member_uri_use_reconfigure · member_template.ex:429")}
-      ${demoRow(`<button class="btn" onclick="toast('ok','幂等，不是拒绝','remove 一个不存在的 role → <code>{:ok, :already_removed}</code>（tools.ex:413）——幂等，不报错',5200)">Remove member · 未知 role</button>`, "未知 role → {:ok, :already_removed}（幂等）· tools.ex:413")}
-    </div>
+    <div class="hint" style="margin-top:10px">失败态已并进各表单：Add member 勾「缺 Manage 权」看 fail-closed；Update member 勾「同 URI」看 :same_member_uri_use_reconfigure；Remove member 勾「未知 role」看幂等 :already_removed。</div>
   </div>
 `; },
 
@@ -965,10 +1093,7 @@ routing(){ return `
       <div class="action-list">
         ${actionRow(`<button class="btn primary" onclick="flowDefineRule()">+ rule</button>`, "Define rule-set rule", "Routing :add_rule")}
       </div>
-      <div class="action-sub">演示真实失败态</div>
-      <div class="action-list">
-        ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：unknown role','receiver_role_name <code>nobody</code> 不是 member → {:unknown_member_role}（tools.ex:619）',5000)">+ rule · 坏 receiver</button>`, "未知 receiver → {:unknown_member_role} · tools.ex:619")}
-      </div>
+      <div class="hint" style="margin-top:8px">表单里勾「坏 receiver」即看真实 {:unknown_member_role}（tools.ex:619）。</div>
     </div>
     <div class="card" style="flex:1">
       <h3>Legends</h3>
@@ -979,8 +1104,8 @@ routing(){ return `
       ${PROMPT_TEMPLATES.map(p=>`<div class="ruleset"><h4>${p.name}</h4><div class="mono" style="font-size:12px">${p.body}</div></div>`).join("")}
       <div class="action-list">
         ${actionRow(`<button class="btn" onclick="flowDefinePrompt()">+ prompt</button>`, "Define prompt template", "{var} 替换 · {body} 必填")}
-        ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：缺 {body}','模板没有 {body} 占位 → {:error,:body_placeholder_required}（tools.ex:669）',5200)">+ prompt · 缺 body</button>`, "缺 {body} → :body_placeholder_required · tools.ex:669")}
       </div>
+      <div class="hint" style="margin-top:8px">表单里删掉 {body} 即看真实 :body_placeholder_required（tools.ex:669）。</div>
     </div>
   </div>
 `; },
