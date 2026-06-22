@@ -4,8 +4,8 @@
     {
       "name": "agent-console-demo",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "python", "-m", "http.server", "8917", "--directory", "apps/ezagent_web/priv/static/agent-console-demo"],
-      "port": 8917,
+      "runtimeArgs": ["run", "python", "-m", "http.server", "8921", "--directory", "apps/ezagent_web/priv/static/agent-console-demo"],
+      "port": 8921,
       "autoPort": false
     }
   ]

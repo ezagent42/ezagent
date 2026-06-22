@@ -264,7 +264,7 @@ const SESSION_TEMPLATES = [
      {role_name:"triage", source:"template://acme/agent/triage"},
      {role_name:"escalation", source:"template://acme/agent/notetaker"},
    ],
-   legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:"collapse"}],
+   legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:true}],
    routing_rules:3},
   {uri:"template://acme/session/storefront@7e6d5c4b", name:"storefront", tag:"v3-draft",
    description:"storefront 草稿（加了 escalation 自动转人工）", public_view:false,
@@ -275,7 +275,7 @@ const SESSION_TEMPLATES = [
      {role_name:"escalation", source:"template://acme/agent/notetaker"},
      {role_name:"human_desk", source:"template://acme/agent/human_proxy"},
    ],
-   legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:"collapse"}],
+   legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:true}],
    routing_rules:5},
 ];
 
@@ -308,7 +308,7 @@ const RULE_SETS = [
      {matcher:"{text_contains: 退款}", receiver:"escalation", prompt_ref:null, pos:30},
    ]},
 ];
-const LEGENDS = [{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:"collapse"}];
+const LEGENDS = [{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:true}];
 const PROMPT_TEMPLATES = [
   {name:"handoff", body:"客户从前台转入，背景：{summary}。请继续：{body}"},
   {name:"greeting", body:"你好 {name}！{body}"},
@@ -388,56 +388,56 @@ const MATRIX = [
    fail:["冷→热：模板 → 活 session。授权是 Workspace :create_session（不是模板 :instantiate）","建后给 owner 授 session 级 Manage:any（behavior/workspace.ex:577）"],
    audit:"operator", gap:null},
   {op:"update_template / save_template_as", fn:"Orchestrator.Tools.update_template · save_template_as", file:"tools/templates.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_template（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.template（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new tmpl uri",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["热→冷：把活 session 的配置快照回写成模板"], audit:"operator + execution", gap:null},
   // ---------- HOT — live session management (via the Manage-gate) ----------
   {op:"Add member", fn:"Orchestrator.Tools.add_managed_member/4", file:"tools.ex:134", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["缺 Manage cap → fail-closed（Phase-1 gate）","role_name 是新别名：没有「未知 role」失败","非活 session：spawn/join 失败；失败会尝试补偿，但清理失败可能残留 worker（member_template.ex:312「may leak」）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Update member template", fn:"Orchestrator.Tools.update_member_template/3", file:"tools.ex:375", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["同 URI 重生 → :same_member_uri_use_reconfigure（member_template.ex:429）","regenerate 顺序：spawn-new-first → repoint → leave → join → best-effort terminate；清理失败可能残留 worker"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Remove member", fn:"Orchestrator.Tools.remove_member/2", file:"tools.ex:407", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":leave",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 role → {:ok, :already_removed}（幂等，不是拒绝）","terminate 未授权 → 立即 :unauthorized"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Add participant", fn:"Orchestrator.Tools.add_participant/3", file:"tools/participants.ex", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.member（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["add_managed_member 的超集：接受 entity/template/manifest","type-transparent 邀请 + 授 join 权"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define rule-set rule", fn:"Orchestrator.Tools.define_rule_set_rule/3", file:"tools.ex:554", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Routing",action:":add_rule",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["未知 receiver role → {:unknown_member_role, r}（tools.ex:619）","named rule-set 强制单 receiver"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define prompt template", fn:"Orchestrator.Tools.define_prompt_template/3", file:"tools.ex:660", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_prompt_templates",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
    fail:["缺 {body} → {:error, :body_placeholder_required}（tools.ex:669）"],
    audit:"operator + execution（双主体）", gap:null},
   {op:"Define legend", fn:"Orchestrator.Tools.define_legend/5", file:"tools.ex:705", temp:"hot",
-   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.routing（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:":session",behavior:"Session",action:":set_legends",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
@@ -446,7 +446,7 @@ const MATRIX = [
    gap:"今天 define_legend 不校验 member_set / bound_rule_set（直写 map，tools.ex:705）— Console 应在前端/gate 加校验"},
   // ---------- HOT WORKFLOW ----------
   {op:"Migrate session", fn:"Orchestrator.Tools.migrate_session/2", file:"tools/migration.ex", temp:"hotwf",
-   gate:{kind:":session",behavior:"Manage",action:":manage_migrate（提案§7，session Manage）",instance:"session S",ws:"acme"},
+   gate:{kind:":session",behavior:"Manage",action:"manage.migrate（PROPOSED §7）",instance:"session S",ws:"acme"},
    held:{kind:":session + :session_template",behavior:":any + Template",action:":any",instance:"{:within_session, S}",ws:"acme"},
    needed:{kind:"多",behavior:"Session + Template",action:"多步",instance:"session S",ws:"acme"},
    authCaller:"operator", execCaller:"orchestrator", granter:"该 session Manage cap 的真实 entity granted_by",
@@ -548,6 +548,15 @@ let _req = 4815;
 function nextReq(){ return "req-" + (++_req); }
 function nowts(){ const d = new Date(); return d.toTimeString().slice(0,8); }
 function shortUri(u){ const p = String(u).split("/"); return p[p.length-1]; }
+let _hc = 0x1f2e3d;
+function mockHash(n){ /* plausible content-addressed hex (SHA-256 over content); shown truncated */
+  let s=""; for(let i=0;i<8;i++){ _hc=(_hc*1103515245+12345)>>>0; s+=(_hc>>>8).toString(16).padStart(6,"0"); }
+  return s.slice(0, n||64);
+}
+function deepCopy(x){ return JSON.parse(JSON.stringify(x)); }
+/* member instance URI is SERVER-derived (role + source-template hash + session discriminator),
+   not operator-chosen. demo shows a plausible composite, NOT a hand-picked name. */
+function memberUri(src){ return `entity://acme/agent/${shortUri(src)}-${mockHash(6)}-7f3a`; }
 function roleOptions(){ return TEAM_MEMBERS.map(m=>`<option value="${m.role_name}">${m.role_name}</option>`).join(""); }
 function val(id){ const e=document.getElementById(id); return e?(e.type==="checkbox"?e.checked:e.value):null; }
 
@@ -584,18 +593,18 @@ function submitAddMember(){
   if(!role){ toast("reject","role_name 必填",""); return; }
   if(val("f-nogate")){
     showExec("Add member — 被拒（fail-closed）", [
-      {s:"fail",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.add_member</code> → session S · operator 无 session Manage cap → <code>{:error, :manage_unauthorized}</code>`},
+      {s:"fail",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.member</code>（PROPOSED） → session S · operator 无 session Manage cap → <code>{:error, :manage_unauthorized}</code>（PROPOSED wrapper 错误）`},
       {s:"skip",t:"Phase 2 · 执行",d:"未执行"},
       {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=— · result=<b>fail-closed</b> · request_id=${req} —— operator 身份保留`},
     ], ()=>{ AUDIT.unshift({ts:nowts(),op:"add_managed_member",operator:"entity://acme/user/alice",exec:"—",live:"hot",result:"fail-closed",note:`缺 Manage cap · ${req}`}); go("observability"); });
     return;
   }
   showExec("Add member — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.add_member</code> → session S · operator <b>session Manage cap ✓</b> · session↔orchestrator binding ✓`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`dispatch <code>manage.member</code>（PROPOSED） → session S · operator <b>session Manage cap ✓</b> · session↔orchestrator binding ✓`},
     {s:"ok",t:"Phase 2 · 执行（orchestrator 授权）",d:`投影最小 cap · <code>add_managed_member(${shortUri(src)}, "${role}", ${ist})</code> · spawn + join ✓`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
-    TEAM_MEMBERS.push({role_name:role, uri:`entity://acme/agent/${role}-7f3a`, source:src, in_session_template:ist, provenance:"managed(orchestrator)", alive:true});
+    TEAM_MEMBERS.push({role_name:role, uri:memberUri(src), source:src, in_session_template:ist, provenance:"managed(orchestrator)", alive:true});
     AUDIT.unshift({ts:nowts(),op:"add_managed_member",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`role=${role} · ${req}`});
     go("team");
   });
@@ -615,6 +624,7 @@ function flowDefineRule(){
     </div>
     <div class="field"><label>prompt_template_ref（可选）</label><select id="f-pref"><option value="">（无）</option>${PROMPT_TEMPLATES.map(p=>`<option>${p.name}</option>`).join("")}</select></div>
     <div class="check"><input type="checkbox" id="f-badrecv"><label for="f-badrecv" style="margin:0">用一个不存在的 receiver（看 {:unknown_member_role}）</label></div>
+    <div class="hint">注：matcher 的 <code>from/mention</code> 值是<b>字符串</b>（demo 用 role 名示意）——工具只把 <b>receiver</b> role 解析成 live member URI，matcher 值不解析。所以路由是否真命中取决于 sender 是否匹配该字符串。</div>
     <div id="rule-preview" class="preview-chain"></div>
   `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitDefineRule()">提交</button>`);
   rulePreview();
@@ -628,14 +638,14 @@ function submitDefineRule(){
   const bad=val("f-badrecv"), recv=bad?"nobody":val("f-recv");
   if(bad){
     showExec("Define rule — 被拒", [
-      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.add_routing_rule</code> → session S · session Manage cap ✓`},
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.routing</code>（PROPOSED） → session S · session Manage cap ✓`},
       {s:"fail",t:"Phase 2 · 执行",d:`receiver role <code>${recv}</code> 不是 member → <code>{:error, {:unknown_member_role, "${recv}"}}</code>（tools.ex:619）`},
       {s:"ok",t:"审计",d:`operator=alice · execution=orchestrator · result=reject · request_id=${req}`},
     ], ()=>{ AUDIT.unshift({ts:nowts(),op:"define_rule_set_rule",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`unknown_member_role:${recv} · ${req}`}); go("observability"); });
     return;
   }
   showExec("Define rule — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.add_routing_rule</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.routing</code>（PROPOSED） → session S · session Manage cap ✓`},
     {s:"ok",t:"Phase 2 · 执行",d:`resolve receiver role「${recv}」→ live member ✓ · 写入 rule-set「${rset}」`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
@@ -658,14 +668,14 @@ function submitDefinePrompt(){
   const name=String(val("f-pname")||"").trim(), body=String(val("f-pbody")||""), req=nextReq();
   if(!body.includes("{body}")){
     showExec("Define prompt — 被拒", [
-      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_prompt_template</code> → session S · session Manage cap ✓`},
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.routing</code>（PROPOSED） → session S · session Manage cap ✓`},
       {s:"fail",t:"Phase 2 · 执行",d:`模板缺 {body} 占位 → <code>{:error, :body_placeholder_required}</code>（tools.ex:669）`},
       {s:"ok",t:"审计",d:`operator=alice · result=reject · request_id=${req}`},
     ], ()=>{ AUDIT.unshift({ts:nowts(),op:"define_prompt_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`body_placeholder_required · ${req}`}); go("observability"); });
     return;
   }
   showExec("Define prompt — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_prompt_template</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.routing</code>（PROPOSED） → session S · session Manage cap ✓`},
     {s:"ok",t:"Phase 2 · 执行",d:`{body} 校验通过 · 写入 prompt_templates「${name}」`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
@@ -683,15 +693,16 @@ function flowDefineLegend(){
       <div class="chk-list">${TEAM_MEMBERS.map(m=>`<label class="check"><input type="checkbox" class="f-lm" value="${m.role_name}">${m.role_name}</label>`).join("")}</div></div>
     <div class="form-row">
       <div class="field"><label>bound_rule_set</label><input id="f-lrs" value="frontline"></div>
-      <div class="field" style="flex:0 0 120px"><label>fold</label><select id="f-lfold"><option value="collapse">collapse</option><option value="none">none</option></select></div>
+      <div class="field" style="flex:0 0 130px"><label>fold (boolean)</label><select id="f-lfold"><option value="true">true</option><option value="false">false</option></select>
+        <div class="hint">后端要 boolean（tools.ex:703），非 "collapse"/"none"</div></div>
     </div>
   `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitDefineLegend()">提交</button>`);
 }
 function submitDefineLegend(){
-  const name=String(val("f-lname")||"").trim(), set=[...document.querySelectorAll(".f-lm:checked")].map(e=>e.value), rs=val("f-lrs"), fold=val("f-lfold"), req=nextReq();
+  const name=String(val("f-lname")||"").trim(), set=[...document.querySelectorAll(".f-lm:checked")].map(e=>e.value), rs=val("f-lrs"), fold=val("f-lfold")==="true", req=nextReq();
   showExec("Define legend — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.set_legend</code> → session S · session Manage cap ✓`},
-    {s:set.length?"ok":"fail",t:"Phase 2 · 执行（⚠ 后端不校验）",d:`后端直写 map、<b>不校验</b> member_set/bound_rule_set（tools.ex:705）——即使 member_set 为空也会写入。Console 应在 gate 加校验。`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.routing</code>（PROPOSED） → session S · session Manage cap ✓`},
+    {s:"skip",t:"Phase 2 · 执行（⚠ 后端不校验，仍写入）",d:`后端直写 map、<b>不校验</b> member_set/bound_rule_set（tools.ex:705）——${set.length?"":"<b>member_set 为空也照样写入成功</b>，"}所以这步是 warning、不是失败。Console 应在 gate 补校验。`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
     LEGENDS.push({name:name, member_set:set, bound_rule_set:rs, fold:fold});
@@ -716,7 +727,7 @@ function submitCreateST(){
     {s:"ok",t:"创建后",d:`给 owner 授该模板的 Template cap · request_id=${req}`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷，单主体）· request_id=${req}`},
   ], ()=>{
-    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@new0000`, name:name, tag:"draft", description:String(val("f-stdesc")||""), public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"draft", description:String(val("f-stdesc")||""), public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
     AUDIT.unshift({ts:nowts(),op:"SessionTemplate.create",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
     go("session-templates");
   });
@@ -725,7 +736,7 @@ function submitCreateST(){
 /* ---- LIVE WORKFLOW: Migrate run (ledger stepper) ---- */
 function flowMigrateRun(){
   const req=nextReq();
-  const steps=[{s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.migrate</code> → session S · session Manage cap ✓`},
+  const steps=[{s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.migrate</code>（PROPOSED） → session S · session Manage cap ✓`},
     {s:"ok",t:"Phase 2 · dry-run plan",d:`读 target → diff members（+1 / ~1）→ 写 ledger`}];
   MIGRATE_DIFF.ledger.forEach(l=>{ if(l.status==="pending") steps.push({s:"ok",t:`迁移 role「${l.role}」`,d:"regenerate（spawn-new-first → leave → join）✓ → done"}); });
   steps.push({s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`});
@@ -771,18 +782,18 @@ function submitUpdateMember(){
   const role=val("f-urole"), src=val("f-usrc"), req=nextReq();
   if(val("f-sameuri")){
     showExec("Update member — 被拒", [
-      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.update_member</code> → session S · session Manage cap ✓`},
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.member</code>（PROPOSED） → session S · session Manage cap ✓`},
       {s:"fail",t:"Phase 2 · 执行",d:`new URI == old URI → <code>{:error, :same_member_uri_use_reconfigure}</code>（member_template.ex:429）`},
       {s:"ok",t:"审计",d:`operator=alice · result=reject · request_id=${req}`},
     ], ()=>{ AUDIT.unshift({ts:nowts(),op:"update_member_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"reject",note:`same_member_uri · ${req}`}); go("observability"); });
     return;
   }
   showExec("Update member — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.update_member</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.member</code>（PROPOSED） → session S · session Manage cap ✓`},
     {s:"ok",t:"Phase 2 · 执行",d:`regenerate：spawn-new(${shortUri(src)}) → repoint routing → leave old → join new ✓`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
-    const m=TEAM_MEMBERS.find(x=>x.role_name===role); if(m){ m.source=src; m.uri=`entity://acme/agent/${shortUri(src)}-7f3a`; }
+    const m=TEAM_MEMBERS.find(x=>x.role_name===role); if(m){ m.source=src; m.uri=memberUri(src); }
     AUDIT.unshift({ts:nowts(),op:"update_member_template",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`${role} → ${shortUri(src)} · ${req}`});
     go("team");
   });
@@ -799,14 +810,14 @@ function submitRemoveMember(){
   const role=val("f-rrole"), req=nextReq();
   if(val("f-unknown")){
     showExec("Remove member — 幂等（不是拒绝）", [
-      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.remove_member</code> → session S · session Manage cap ✓`},
+      {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.member</code>（PROPOSED） → session S · session Manage cap ✓`},
       {s:"ok",t:"Phase 2 · 执行",d:`role 不存在 → <code>{:ok, :already_removed}</code>（tools.ex:413）—— 幂等，<b>不报错</b>`},
       {s:"ok",t:"审计",d:`operator=alice · result=ok(already_removed) · request_id=${req}`},
     ], ()=>{ AUDIT.unshift({ts:nowts(),op:"remove_member",operator:"entity://acme/user/alice",exec:"entity://acme/agent/cc_orchestrator-7f3a",live:"hot",result:"ok",note:`already_removed · ${req}`}); go("observability"); });
     return;
   }
   showExec("Remove member — 执行", [
-    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.remove_member</code> → session S · session Manage cap ✓`},
+    {s:"ok",t:"Phase 1 · 授权 gate",d:`<code>manage.member</code>（PROPOSED） → session S · session Manage cap ✓`},
     {s:"ok",t:"Phase 2 · 执行",d:`terminate worker（cap#2 gate）→ prune 本 session 的路由行 → leave ✓`},
     {s:"ok",t:"审计（双主体）",d:`operator=alice · execution=cc_orchestrator-7f3a · request_id=${req}`},
   ], ()=>{
@@ -825,13 +836,14 @@ function flowForkST(){
   `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitForkST()">Fork</button>`);
 }
 function submitForkST(){
-  const name=String(val("f-fname")||"").trim(), req=nextReq();
+  const name=String(val("f-fname")||"").trim(), srcUri=val("f-fsrc"), req=nextReq();
+  const src=SESSION_TEMPLATES.find(t=>t.uri===srcUri) || {members:[],legends:[],routing_rules:0,orchestrator_template_uri:"template://acme/agent/cc_orchestrator"};
   showExec("Fork SessionTemplate — 执行（冷）", [
-    {s:"ok",t:"单阶段 · operator 自有授权",d:`caller=operator · Template :fork cap · <code>SessionTemplate.fork/3</code> · config-only ✓`},
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`caller=operator · Template :fork cap · <code>SessionTemplate.fork/3</code> · config-only（深拷贝 source 的 members/legends/rules）✓`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
   ], ()=>{
-    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@fork0000`, name:name, tag:"fork", description:"forked", public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
-    AUDIT.unshift({ts:nowts(),op:"SessionTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"fork", description:`forked from ${shortUri(srcUri)}`, public_view:false, orchestrator_template_uri:src.orchestrator_template_uri, members:deepCopy(src.members||[]), legends:deepCopy(src.legends||[]), routing_rules:src.routing_rules||0});
+    AUDIT.unshift({ts:nowts(),op:"SessionTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} ← ${shortUri(srcUri)} · ${req}`});
     go("session-templates");
   });
 }
@@ -842,11 +854,17 @@ function flowPersistVersion(){
   `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitPersistVersion()">Persist</button>`);
 }
 function submitPersistVersion(){
-  const req=nextReq();
+  const srcUri=val("f-pvsrc"), req=nextReq(), hash=mockHash(12);
+  const src=SESSION_TEMPLATES.find(t=>t.uri===srcUri);
+  const base=(srcUri.split("@")[0]);
   showExec("Persist version — 执行（冷）", [
-    {s:"ok",t:"单阶段 · operator 自有授权",d:`Template :write cap · <code>SessionTemplate.persist_version/3</code> · 内容寻址 → 新 @hash ✓`},
+    {s:"ok",t:"单阶段 · operator 自有授权",d:`Template :write cap · <code>SessionTemplate.persist_version/3</code> · 内容寻址 SHA-256 → 新版本 <code>@${hash}</code> ✓`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
-  ], ()=>{ AUDIT.unshift({ts:nowts(),op:"SessionTemplate.persist_version",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`@hash · ${req}`}); go("observability"); });
+  ], ()=>{
+    if(src){ SESSION_TEMPLATES.push({...deepCopy(src), uri:`${base}@${hash}`, tag:"draft"}); }
+    AUDIT.unshift({ts:nowts(),op:"SessionTemplate.persist_version",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${shortUri(base)}@${hash} · ${req}`});
+    go("session-templates");
+  });
 }
 
 /* ---- COLD: Fork AgentTemplate ---- */
@@ -863,30 +881,30 @@ function submitForkAgent(){
     {s:"ok",t:"单阶段 · operator 自有授权",d:`kind=:agent_template · Template :fork · <code>AgentTemplate.fork/3</code> ✓`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
   ], ()=>{
-    AGENT_TEMPLATES.push({uri:`template://acme/agent/${name}`, flavor:"cc", cwd:"/srv/acme/storefront", config_dir:`.claude/${name}`, settings_path:null, mcp_config_path:null, default_caps:[], desired_skills:[]});
-    AUDIT.unshift({ts:nowts(),op:"AgentTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
+    const s=AGENT_TEMPLATES.find(t=>t.uri===src) || {flavor:"cc",cwd:"/srv/acme/storefront",desired_skills:[]};
+    AGENT_TEMPLATES.push({uri:`template://acme/agent/${name}`, flavor:s.flavor, cwd:s.cwd, config_dir:`.claude/${name}`, settings_path:s.settings_path||null, mcp_config_path:s.mcp_config_path||null, default_caps:deepCopy(s.default_caps||[]), desired_skills:deepCopy(s.desired_skills||[])});
+    AUDIT.unshift({ts:nowts(),op:"AgentTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} ← ${shortUri(src)}(${s.flavor}) · ${req}`});
     go("agent-templates");
   });
 }
 
-/* ---- UNGATED: Tag (no cap gate today) ---- */
-function flowTag(kind){
-  const list = kind==="agent" ? AGENT_TEMPLATES : SESSION_TEMPLATES;
+/* ---- UNGATED: Tag — SessionTemplate ONLY (TemplateTags is the SessionTemplate tag registry) ---- */
+function flowTag(){
   openModal('Tag <span class="badge defer">⚠ 无 cap gate</span>', `
-    <div class="field"><label>template</label><select id="f-tgt">${list.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
+    <div class="field"><label>SessionTemplate</label><select id="f-tgt">${SESSION_TEMPLATES.map(t=>`<option value="${t.uri}">${t.uri}</option>`).join("")}</select></div>
     <div class="field"><label>tag</label><input id="f-tag" value="current"></div>
-    <div class="callout" style="margin:0">⚠ 今天 <code>TemplateTags.put/move</code> <b>无条件直写 DB、无 caller/caps 参数</b>——没有 Phase-1 gate。Console 接入前需补 cap gate。</div>
+    <div class="callout" style="margin:0">⚠ 今天 <code>TemplateTags.put/5</code>/<code>move/5</code> <b>无条件直写 DB、无 caller/caps 参数</b>——没有 Phase-1 gate，授权状态 = <code>not_checked</code>。操作本身会成功，但<b>无授权链</b>。Console 接入前需补 cap gate。</div>
   `, `<button class="btn" onclick="closeModal()">取消</button><button class="btn primary" onclick="submitTag()">Tag</button>`);
 }
 function submitTag(){
   const tag=String(val("f-tag")||"").trim(), tgt=val("f-tgt"), req=nextReq();
   showExec("Tag — 执行（⚠ 无 cap gate）", [
-    {s:"fail",t:"授权",d:`<b>无 cap gate</b>：<code>TemplateTags.put/5</code> 直写 DB，不校验 caller/caps（template_tags.ex）`},
-    {s:"ok",t:"执行",d:`(name, tag=「${tag}」) → version_hash（可变指针，git-branch 语义）`},
-    {s:"ok",t:"审计",d:`created_by（仅 provenance，<b>无授权链</b>）· request_id=${req}`},
+    {s:"skip",t:"授权 = not_checked",d:`<b>无 cap gate</b>：<code>TemplateTags.put/5</code> 不接 caller/caps，<b>不做授权检查</b>（template_tags.ex）`},
+    {s:"ok",t:"执行（成功）",d:`(name, tag=「${tag}」) → version_hash（可变指针，git-branch 语义）—— 直写成功`},
+    {s:"ok",t:"审计",d:`result=<b>ok</b>（authz=not_checked）· 只有 <code>created_by</code> provenance、<b>无授权链</b> · request_id=${req}`},
   ], ()=>{
     const t=SESSION_TEMPLATES.find(x=>x.uri===tgt); if(t) t.tag=tag;
-    AUDIT.unshift({ts:nowts(),op:"TemplateTags.put",operator:"entity://acme/user/alice",exec:"—",live:"cold",result:"fail-closed",note:`⚠ 无 gate · tag=${tag} · ${req}`});
+    AUDIT.unshift({ts:nowts(),op:"TemplateTags.put",operator:"entity://acme/user/alice",exec:"—",live:"cold",result:"ok",note:`⚠ authz=not_checked · tag=${tag} · ${req}`});
     go("session-templates");
   });
 }
@@ -924,7 +942,7 @@ overview(){ return `
   <h3 style="font-size:14px;margin:0 0 8px">三角色（每格都要分清，最容易错）</h3>
   <div class="legend-grid">
     <div class="role-card caller"><b>caller</b> · <code>ctx.caller</code><br><span class="muted">机械上发起 dispatch 的代码路径——常常不是人。</span></div>
-    <div class="role-card authorizer"><b>authorizer</b> · <code>ctx.caps</code><br><span class="muted">真正让操作被允许的钥匙集。运行时检查<b>这个</b>，不是 caller。</span></div>
+    <div class="role-card authorizer"><b>authorizer</b> · <code>ctx.caps</code> OR <code>holds_cap(caller)</code><br><span class="muted">让操作放行的钥匙——运行时先查 dispatch 携带的 <code>ctx.caps</code>，不命中再查 caller 自己 slice 里的 caps（runtime.ex:405）。<b>两个来源都算</b>，不是只看 ctx.caps。</span></div>
     <div class="role-card granter"><b>granter</b> · <code>granted_by</code><br><span class="muted">钥匙上刻的、可追责的真实 entity。</span></div>
   </div>
 
@@ -1014,8 +1032,8 @@ overview(){ return `
       <p class="sub">demo：点了显示真实授权 + 失败态，不写后端</p>
       <div class="action-list">
         ${actionRow(`<button class="btn primary" onclick="flowForkAgent()">Fork</button>`, "Fork AgentTemplate", "克隆 · config-only")}
-        ${actionRow(`<button class="btn" onclick="flowTag(&apos;agent&apos;)">Tag</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
+      <div class="hint" style="margin-top:8px">注：Tag 是 <b>SessionTemplate</b> 专属（<code>TemplateTags</code> 是 SessionTemplate tag registry）——AgentTemplate 没有 Tag 动作。</div>
       <div class="callout">⚠ <b>已知 gap：</b>AgentTemplate <b>没有 caller-threaded <code>create/3</code></b>（只有 system path）。Console 要新建 AgentTemplate 需先补这个后端缝（研究 note §1）。</div>
     </div>
   </div>
@@ -1023,7 +1041,7 @@ overview(){ return `
 
 "session-templates"(){ return `
   <div class="world-header"><h1>Session Templates <span class="badge cold">冷</span></h1>
-  <p><code>Ezagent.Entity.SessionTemplate</code> · 生产级多 agent team 配置。URI <code>template://session/&lt;ws&gt;/&lt;name&gt;@&lt;hash&gt;</code>（SHA-256 内容寻址）。</p></div>
+  <p><code>Ezagent.Entity.SessionTemplate</code> · 生产级多 agent team 配置。URI <code>template://&lt;ws&gt;/session/&lt;name&gt;@&lt;hash&gt;</code>（workspace-first，SHA-256 内容寻址）。</p></div>
   <div class="card">
     <table><thead><tr><th>URI</th><th>tag</th><th>members</th><th>legends</th><th>public_view</th><th></th></tr></thead>
     <tbody>${SESSION_TEMPLATES.map(t=>`<tr>
@@ -1039,7 +1057,7 @@ overview(){ return `
       <dl class="kv">
         <dt>orchestrator</dt><dd><span class="uri">template://acme/agent/cc_orchestrator</span></dd>
         <dt>members</dt><dd>${SESSION_TEMPLATES[0].members.map(m=>`<span class="badge tag">${m.role_name}</span>`).join(" ")}</dd>
-        <dt>legends</dt><dd>导购 → {greeter, triage} · rule-set frontline · fold=collapse</dd>
+        <dt>legends</dt><dd>导购 → {greeter, triage} · rule-set frontline · fold=true</dd>
         <dt>routing_rules</dt><dd>3 条</dd>
         <dt>version_hash</dt><dd class="mono">a1b2c3d4 （不可变）</dd>
       </dl>
@@ -1049,7 +1067,7 @@ overview(){ return `
         ${actionRow(`<button class="btn primary" onclick="flowCreateST()">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
         ${actionRow(`<button class="btn" onclick="flowForkST()">Fork</button>`, "Fork SessionTemplate", "config-only")}
         ${actionRow(`<button class="btn" onclick="flowPersistVersion()">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
-        ${actionRow(`<button class="btn" onclick="flowTag(&apos;session&apos;)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
+        ${actionRow(`<button class="btn" onclick="flowTag()">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
     </div>
   </div>
@@ -1057,7 +1075,7 @@ overview(){ return `
 
 team(){ return `
   <div class="world-header"><h1>Team <span class="badge hot">热</span></h1>
-  <p>活会话的成员，按 <code>role_name</code> 索引（稳定别名，regenerate 后路由仍有效）。当前会话：<span class="uri">${SELECTED_SESSION}</span></p></div>
+  <p>活会话的成员，按 <code>role_name</code> 索引（稳定别名，regenerate 后路由仍有效）。当前会话：<span class="uri">${SELECTED_SESSION}</span><br><span class="muted" style="font-size:12px">「实例 URI」由 <b>server 派生</b>（role + source-template hash + session discriminator），非 operator 自选；demo 显示的是占位复刻。</span></p></div>
   <div class="card">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
       <span class="muted">活会话：</span>
@@ -1154,7 +1172,7 @@ observability(){ return `
 matrix(){ return `
   <div class="world-header"><h1>授权矩阵（全量）</h1>
   <p>每行 = 一个操作的：后端函数 · 冷/热 · <b>Held 授权 → Needed 锁孔</b>（拆开，因为持有的 scope ≠ 实际命中的具体锁）· 热操作的 <b>Phase-1 Manage gate</b> · 两个 caller · 失败态（code-verified）· 审计。点 <span class="auth-btn">ⓘ</span> 看单条详情。</p></div>
-  <div class="callout crux" style="margin-bottom:14px">读法：<b>Held</b>=你手里钥匙的 scope（如 <code>{:within_session,S}</code> 万能）；<b>Needed</b>=这次 dispatch 实际要开的具体锁（如 <code>Session :join</code> on 具体 session）。运行时把 Needed 的 instance 替换成具体 URI 再匹配——两者不是一回事。热操作还多一道 Phase-1 gate（operator 的 Manage cap）。</div>
+  <div class="callout crux" style="margin-bottom:14px">读法：<b>Held</b>=你手里钥匙的 scope（如 <code>{:within_session,S}</code> 万能）；<b>Needed</b>=这次 dispatch 实际要开的具体锁（如 <code>Session :join</code> on 具体 session）。运行时把 Needed 的 instance 替换成具体 URI 再匹配——两者不是一回事。热操作还多一道 Phase-1 gate（operator 的 session Manage cap）。<br><b>⚠ <code>manage.*</code> 动作是提案中的（§7）</b>——现有 <code>Behavior.Manage</code> 只有 <code>:delete</code>/<code>:reconfigure</code>；demo 里所有 <code>manage.*</code> 与 <code>:manage_unauthorized</code> 都标了 PROPOSED，是待 Allen 拍的动作面、不是已有代码。</div>
   <div class="matrix-wrap"><table class="matrix">
     <thead><tr>
       <th>操作</th><th>后端函数 (file:line)</th><th>冷/热</th>
