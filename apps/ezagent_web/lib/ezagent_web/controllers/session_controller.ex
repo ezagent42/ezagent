@@ -339,10 +339,18 @@ defmodule EzagentWeb.SessionController do
   # consults the new per-workspace rule path AND the legacy
   # `registration_domains` AppSetting (back-compat during PR-B
   # transition; PR-B removes the AppSetting consultation entirely).
+  # task #87 (codex final-review HIGH) — magic-link is now LOGIN-only and must
+  # only ever reach an EXISTING, email-VERIFIED account. New emails register via
+  # /register (not magic-link), and an unverified account must confirm first —
+  # so we never send a login link that could bypass the email_verified gate.
+  # Same generic response regardless (anti-enumeration).
   defp send_allowed?(email) do
     case Ezagent.Registration.principal_for_email(email) do
-      {:ok, _uri} -> true
-      :none -> Ezagent.Registration.email_allowed?(email)
+      {:ok, uri} ->
+        match?(%{email_verified: true}, Ezagent.Users.get_by_uri(uri))
+
+      :none ->
+        false
     end
   end
 end

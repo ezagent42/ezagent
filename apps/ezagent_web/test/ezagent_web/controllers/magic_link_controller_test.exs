@@ -28,6 +28,20 @@ defmodule EzagentWeb.MagicLinkControllerTest do
     assert redirected_to(conn) == "/register"
   end
 
+  # task #87 (codex final-review HIGH) — an UNCONFIRMED account must not be able
+  # to log in via a magic link (would bypass the email_verified gate).
+  test "an unconfirmed account cannot log in via magic-link", %{conn: conn} do
+    uri = "entity://team-alpha/user/unconf#{System.unique_integer([:positive])}"
+    {:ok, _} = Ezagent.Users.create(uri, nil, [], email_verified: false)
+    email = "unconf#{System.unique_integer([:positive])}@good.com"
+    {:ok, _} = Profile.upsert(%{entity_uri: uri, display_name: "U", email: email})
+    {:ok, raw} = MagicLinkToken.mint(email)
+
+    conn = get(conn, "/auth/magic/#{raw}")
+    assert redirected_to(conn) == "/login"
+    refute get_session(conn, :current_entity_uri)
+  end
+
   # task #87 — a non-login-purpose token (e.g. a password-reset token) cannot be
   # replayed at the magic-link login endpoint.
   test "a reset-purpose token is rejected at the login endpoint", %{conn: conn} do

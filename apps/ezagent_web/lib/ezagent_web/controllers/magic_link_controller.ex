@@ -36,14 +36,24 @@ defmodule EzagentWeb.MagicLinkController do
   defp route_by_email(conn, email) do
     case Registration.principal_for_email(email) do
       {:ok, uri} ->
-        # Existing principal -> log in. Ensure the Kind is alive with
-        # hydrated caps, then store via the validating principal funnel
-        # (also rotates the session — fixation defence).
-        :ok = Ezagent.Entity.spawn_principal(uri)
+        # task #87 (codex final-review HIGH) — magic-link login MUST also honor
+        # the email_verified gate, otherwise an unconfirmed registrant could
+        # log in via a magic link without ever confirming. (Belt-and-braces:
+        # `send_allowed?/1` already refuses to send links to unverified
+        # principals, but the consume path must not trust that alone.)
+        if email_verified?(uri) do
+          # Ensure the Kind is alive with hydrated caps, then store via the
+          # validating principal funnel (also rotates the session).
+          :ok = Ezagent.Entity.spawn_principal(uri)
 
-        conn
-        |> SessionPrincipal.put(URI.to_string(uri))
-        |> redirect(to: "/sessions")
+          conn
+          |> SessionPrincipal.put(URI.to_string(uri))
+          |> redirect(to: "/sessions")
+        else
+          conn
+          |> put_flash(:error, gettext("Please confirm your email before signing in."))
+          |> redirect(to: "/login")
+        end
 
       :none ->
         # task #87 — no account for this email. Magic-link no longer creates
@@ -51,6 +61,13 @@ defmodule EzagentWeb.MagicLinkController do
         conn
         |> put_flash(:info, gettext("No account found for that email. Please create one."))
         |> redirect(to: "/register")
+    end
+  end
+
+  defp email_verified?(uri) do
+    case Ezagent.Users.get_by_uri(uri) do
+      %{email_verified: true} -> true
+      _ -> false
     end
   end
 

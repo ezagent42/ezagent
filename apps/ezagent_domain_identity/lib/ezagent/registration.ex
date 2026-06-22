@@ -278,13 +278,33 @@ defmodule Ezagent.Registration do
   end
 
   defp join_under_issuer(ws_name, %URI{} = user_uri, issuer_str) when is_binary(issuer_str) do
+    # codex final-review MED — do NOT silently swallow a membership failure.
+    # The user + profile are already committed and the invite use consumed; a
+    # failed join leaves the account with no workspace access, so it MUST be
+    # observable for an operator to repair (re-add the member). Returns the
+    # add_member result (or :skipped when the workspace app isn't loaded).
     if workspace_loaded?(:add_member, 3) do
       issuer = Ezagent.URI.new!(issuer_str)
       ctx = %{caller: issuer, caps: Ezagent.Identity.list_caps_for(issuer)}
-      _ = apply(Ezagent.Workspace, :add_member, [ws_name, user_uri, ctx])
-    end
 
-    :ok
+      case apply(Ezagent.Workspace, :add_member, [ws_name, user_uri, ctx]) do
+        :ok ->
+          :ok
+
+        other ->
+          require Logger
+
+          Logger.error(
+            "register_with_password: invite member-join FAILED — user=#{URI.to_string(user_uri)} " <>
+              "workspace=#{ws_name} issuer=#{issuer_str} result=#{inspect(other)}; " <>
+              "the account exists but has no workspace access — admin must re-add the member"
+          )
+
+          other
+      end
+    else
+      :skipped
+    end
   end
 
   defp founder_join(ws_name, %URI{} = user_uri) do

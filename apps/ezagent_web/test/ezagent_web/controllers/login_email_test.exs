@@ -33,14 +33,30 @@ defmodule EzagentWeb.LoginEmailTest do
     assert html_response(conn, 200) =~ "check"
   end
 
-  test "POST /login mints a token for an allowlisted new email", %{conn: conn} do
+  # task #87 — magic-link is LOGIN-ONLY now. A NEW email (no account) gets NO
+  # token regardless of any domain allowlist; new users register via /register.
+  test "POST /login/magic mints no token for a new email (no account)", %{conn: conn} do
+    before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
     post(conn, "/login/magic", %{"email" => "fresh@good.com"})
-    assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) >= 1
+    assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before
   end
 
   test "POST /login mints no token for a non-allowlisted new email", %{conn: conn} do
     before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
     post(conn, "/login/magic", %{"email" => "fresh@bad.com"})
+    assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before
+  end
+
+  # task #87 (codex final-review HIGH) — an UNVERIFIED existing account gets no
+  # login link (would otherwise bypass the email_verified gate).
+  test "POST /login/magic mints no token for an unverified existing account", %{conn: conn} do
+    uri = "entity://system/user/unvsend#{System.unique_integer([:positive])}"
+    {:ok, _} = Ezagent.Users.create(uri, nil, [], email_verified: false)
+    email = "unvsend#{System.unique_integer([:positive])}@bad.com"
+    {:ok, _} = Ezagent.Entity.Profile.upsert(%{entity_uri: uri, display_name: "U", email: email})
+
+    before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
+    post(conn, "/login/magic", %{"email" => email})
     assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before
   end
 
