@@ -26,7 +26,7 @@
   .demo-banner b{color:#fff}
 
   /* shell — mirrors world-screen */
-  .world-screen{display:grid;grid-template-columns:236px 1fr;min-height:calc(100vh - 34px)}
+  .world-screen{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:calc(100vh - 34px)}
   .world-sidebar{background:#fff;border-right:1px solid var(--world-border);padding:16px 12px;
     display:flex;flex-direction:column;gap:4px;position:sticky;top:0;align-self:start;height:calc(100vh - 34px);overflow:auto}
   .brand{font-weight:700;font-size:15px;padding:4px 8px 12px;display:flex;flex-direction:column;gap:2px}
@@ -38,7 +38,9 @@
   .world-nav-item:hover{background:var(--world-secondary)}
   .world-nav-item-active{background:var(--world-agent-tint);color:var(--world-accent);font-weight:600;
     box-shadow:inset 2px 0 0 var(--world-accent)}
-  .world-main{padding:24px 28px;max-width:1180px}
+  .world-main{padding:24px 28px;max-width:1180px;min-width:0}
+  /* wide tables scroll inside their card instead of pushing the page wide */
+  .card{overflow-x:auto}
   .world-header h1{font-size:20px;margin:0 0 2px}
   .world-header p{margin:0 0 18px;color:var(--world-muted)}
 
@@ -48,7 +50,7 @@
   .card h3{margin:0 0 2px;font-size:15px}
   .card .sub{color:var(--world-muted);font-size:12.5px;margin:0 0 12px}
   .row{display:flex;gap:16px;flex-wrap:wrap}
-  .row>.card{flex:1;min-width:280px}
+  .row>.card{flex:1 1 340px;min-width:min(340px,100%)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--world-border);vertical-align:top}
   th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--world-muted);font-weight:600}
@@ -69,6 +71,19 @@
   .btn.primary:hover{filter:brightness(1.06)}
   .btn.danger{color:var(--hot);border-color:#fecaca}
   .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  /* tidy action rows: action on the left, its Authority pinned right */
+  .action-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .action-row{display:flex;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--world-border);
+    border-radius:9px;background:#fff;min-height:42px}
+  .action-row .a-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto;overflow:hidden}
+  .action-row .a-desc{color:var(--world-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .action-row .auth-btn{margin-left:auto;flex:none}
+  .action-row .btn{flex:none}
+  .action-sub{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--world-muted);
+    font-weight:600;margin:16px 0 2px}
+  .action-row.demo{background:#fff7f7;border-color:#fecaca}
+  .action-row.demo .a-desc{color:#9f1d1d}
+  .action-row.demo .btn{border-color:#fecaca;color:#9f1d1d}
   .auth-btn{font-size:11px;font-weight:600;color:var(--world-accent);background:none;border:1px dashed #99f6e4;
     border-radius:7px;padding:3px 8px;cursor:pointer}
   .auth-btn:hover{background:var(--world-agent-tint)}
@@ -416,6 +431,14 @@ function toast(kind, title, html, ms){
 /* small helpers */
 function authBtn(opName){ return `<button class="auth-btn" onclick="openAuth('${opName}')">ⓘ Authority</button>`; }
 function flavorBadge(f){ return `<span class="badge flavor">${f}</span>`; }
+/* one tidy action row: [button] [desc] ........ [ⓘ Authority] */
+function actionRow(btnHtml, opName, desc){
+  return `<div class="action-row"><div class="a-main">${btnHtml}${desc?`<span class="a-desc">${desc}</span>`:""}</div>${opName?authBtn(opName):""}</div>`;
+}
+/* a failure-state demo row (no Authority; the desc explains the rejection) */
+function demoRow(btnHtml, desc){
+  return `<div class="action-row demo"><div class="a-main">${btnHtml}</div><span class="a-desc">${desc}</span></div>`;
+}
 
 /* =========================================================================
    SECTION RENDERERS
@@ -477,11 +500,11 @@ overview(){ return `
         <dt>desired_skills</dt><dd>greet · triage-intake</dd>
       </dl>
     </div>
-    <div class="card"><h3>动作</h3>
+    <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
       <p class="sub">demo：点了显示真实授权 + 失败态，不写后端</p>
-      <div class="btn-row">
-        <button class="btn primary" onclick="toast('warn','Fork（mock）','克隆为新 AgentTemplate（config-only）。',3000)">Fork</button> ${authBtn("Fork AgentTemplate")}
-        <button class="btn" onclick="toast('ok','Tag（mock）','给某 version 打 tag。',3000)">Tag</button> ${authBtn("Tag \\&quot;current\\&quot;")}
+      <div class="action-list">
+        ${actionRow(`<button class="btn primary" onclick="toast('warn','Fork（mock）','克隆为新 AgentTemplate（config-only）。',3000)">Fork</button>`, "Fork AgentTemplate", "克隆 · config-only")}
+        ${actionRow(`<button class="btn" onclick="toast('ok','Tag（mock）','给某 version 打 tag。',3000)">Tag</button>`, "Tag \\&quot;current\\&quot;", "可变指针")}
       </div>
       <div class="callout">⚠ <b>已知 gap：</b>AgentTemplate <b>没有 caller-threaded <code>create/3</code></b>（只有 system path）。Console 要新建 AgentTemplate 需先补这个后端缝（研究 note §1）。</div>
     </div>
@@ -512,11 +535,11 @@ overview(){ return `
       </dl>
     </div>
     <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
-      <div class="btn-row">
-        <button class="btn primary" onclick="toast('ok','Create（mock）','SessionTemplate.create/3 · workspace 必填 · 给 owner 授 Template cap',3200)">Create (root)</button> ${authBtn("Create SessionTemplate (root)")}
-        <button class="btn" onclick="toast('warn','Fork（mock）','config-only，不带消息历史（不变式 #10）',3200)">Fork</button> ${authBtn("Fork SessionTemplate")}
-        <button class="btn" onclick="toast('ok','Persist version（mock）','内容寻址；同内容 → 同 hash',3200)">Persist version</button> ${authBtn("Persist version")}
-        <button class="btn" onclick="toast('ok','Tag current（mock）','可变指针指向某 hash',3000)">Tag &quot;current&quot;</button> ${authBtn("Tag \\&quot;current\\&quot;")}
+      <div class="action-list">
+        ${actionRow(`<button class="btn primary" onclick="toast('ok','Create（mock）','SessionTemplate.create/3 · workspace 必填 · 给 owner 授 Template cap',3200)">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
+        ${actionRow(`<button class="btn" onclick="toast('warn','Fork（mock）','config-only，不带消息历史（不变式 #10）',3200)">Fork</button>`, "Fork SessionTemplate", "config-only")}
+        ${actionRow(`<button class="btn" onclick="toast('ok','Persist version（mock）','内容寻址；同内容 → 同 hash',3200)">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
+        ${actionRow(`<button class="btn" onclick="toast('ok','Tag current（mock）','可变指针指向某 hash',3000)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "可变指针")}
       </div>
     </div>
   </div>
@@ -538,12 +561,16 @@ team(){ return `
     </tr>`).join("")}</tbody></table>
   </div>
   <div class="card"><h3>动作（热 · operator 授权 → 在会话授权下执行 · 双主体审计）</h3>
-    <div class="btn-row">
-      <button class="btn primary" onclick="toast('ok','Add member（mock）','role=human_desk · 实际跑在重建的 session 授权下，审计记 operator+execution',4200)">Add member</button> ${authBtn("Add member")}
-      <button class="btn" onclick="toast('reject','拒绝：unknown role','演示真实失败态：未知 role_name <code>ghost</code> → <code>{:unknown_member_role, &quot;ghost&quot;}</code>（tools.ex:619）',5000)">Add member（坏 role 示例）</button>
-      <button class="btn" onclick="toast('reject','拒绝：same-URI regenerate','update 到同一 URI 不支持 → <code>reject_same_uri_swap</code>（member_template.ex:182,429）',5000)">Update member（同 URI 示例）</button>
-      <button class="btn danger" onclick="toast('warn','Remove member（mock）','Session :leave · {:within_session,S}',3200)">Remove member</button> ${authBtn("Remove member")}
-      <button class="btn" onclick="toast('warn','fail-closed 示例','bob 无 Manage cap → 操作拒绝；审计仍保留 operator 身份（session_manager.ex:372）',5200)">无 cap（fail-closed 示例）</button>
+    <div class="action-list">
+      ${actionRow(`<button class="btn primary" onclick="toast('ok','Add member（mock）','role=human_desk · 实际跑在重建的 session 授权下，审计记 operator+execution',4200)">Add member</button>`, "Add member", "Session :join · {:within_session,S}")}
+      ${actionRow(`<button class="btn" onclick="toast('ok','Update member（mock）','regenerate：先 leave 后 join',3600)">Update member</button>`, "Update member template", "regenerate · 销毁重建")}
+      ${actionRow(`<button class="btn danger" onclick="toast('warn','Remove member（mock）','Session :leave · {:within_session,S}',3200)">Remove member</button>`, "Remove member", "Session :leave")}
+    </div>
+    <div class="action-sub">演示真实失败态（点击看后端拒绝）</div>
+    <div class="action-list">
+      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：unknown role','未知 role_name <code>ghost</code> → <code>{:unknown_member_role, &quot;ghost&quot;}</code>（tools.ex:619）',5000)">Add member · 坏 role</button>`, "未知 role_name → {:unknown_member_role} · tools.ex:619")}
+      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：same-URI regenerate','update 到同一 URI 不支持 → <code>reject_same_uri_swap</code>（member_template.ex:182,429）',5000)">Update member · 同 URI</button>`, "同 URI 重生不支持 · member_template.ex:182,429")}
+      ${demoRow(`<button class="btn" onclick="toast('warn','fail-closed','bob 无 Manage cap → 操作拒绝；审计仍保留 operator 身份（session_manager.ex:372）',5200)">无 Manage cap</button>`, "缺 cap → fail-closed · session_manager.ex:372")}
     </div>
   </div>
 `; },
@@ -558,21 +585,24 @@ routing(){ return `
         ${rs.rules.map(r=>`<div class="chain"><span class="node">${r.matcher}</span><span class="arrow">→</span><span class="node">${r.receiver}</span>
           ${r.prompt_ref?`<span class="arrow">·</span><span class="badge tag">prompt: ${r.prompt_ref}</span>`:""}<span class="muted" style="margin-left:auto">pos ${r.pos}</span></div>`).join("")}
       </div>`).join("")}
-      <div class="btn-row">
-        <button class="btn primary" onclick="toast('ok','Define rule（mock）','单 receiver（named rule-set 强制）',3200)">+ rule</button> ${authBtn("Define rule-set rule")}
-        <button class="btn" onclick="toast('reject','拒绝：unknown role','receiver_role_name <code>nobody</code> 不是 member → {:unknown_member_role}（tools.ex:619）',5000)">+ rule（坏 receiver 示例）</button>
+      <div class="action-list">
+        ${actionRow(`<button class="btn primary" onclick="toast('ok','Define rule（mock）','单 receiver（named rule-set 强制）',3200)">+ rule</button>`, "Define rule-set rule", "Routing :add_rule")}
+      </div>
+      <div class="action-sub">演示真实失败态</div>
+      <div class="action-list">
+        ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：unknown role','receiver_role_name <code>nobody</code> 不是 member → {:unknown_member_role}（tools.ex:619）',5000)">+ rule · 坏 receiver</button>`, "未知 receiver → {:unknown_member_role} · tools.ex:619")}
       </div>
     </div>
     <div class="card" style="flex:1">
       <h3>Legends</h3>
       ${LEGENDS.map(l=>`<div class="ruleset"><h4>@${l.name}</h4>
         <div class="muted" style="font-size:12.5px">member_set: ${l.member_set.join(", ")}<br>bound_rule_set: <b>${l.bound_rule_set}</b><br>fold: ${l.fold}</div></div>`).join("")}
-      <div class="btn-row"><button class="btn" onclick="toast('ok','Define legend（mock）','member_set 必须真实存在',3000)">+ legend</button> ${authBtn("Define legend")}</div>
-      <h3 style="margin-top:14px">Prompt templates</h3>
+      <div class="action-list">${actionRow(`<button class="btn" onclick="toast('ok','Define legend（mock）','member_set 必须真实存在',3000)">+ legend</button>`, "Define legend", "Session :set_legends")}</div>
+      <h3 style="margin-top:16px">Prompt templates</h3>
       ${PROMPT_TEMPLATES.map(p=>`<div class="ruleset"><h4>${p.name}</h4><div class="mono" style="font-size:12px">${p.body}</div></div>`).join("")}
-      <div class="btn-row">
-        <button class="btn" onclick="toast('ok','Define prompt（mock）','{var} 替换 · {body} 必填',3200)">+ prompt</button> ${authBtn("Define prompt template")}
-        <button class="btn" onclick="toast('reject','拒绝：缺 {body}','模板没有 {body} 占位 → {:error,:body_placeholder_required}（tools.ex:669）',5200)">+ prompt（缺 body 示例）</button>
+      <div class="action-list">
+        ${actionRow(`<button class="btn" onclick="toast('ok','Define prompt（mock）','{var} 替换 · {body} 必填',3200)">+ prompt</button>`, "Define prompt template", "{var} 替换 · {body} 必填")}
+        ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：缺 {body}','模板没有 {body} 占位 → {:error,:body_placeholder_required}（tools.ex:669）',5200)">+ prompt · 缺 body</button>`, "缺 {body} → :body_placeholder_required · tools.ex:669")}
       </div>
     </div>
   </div>
@@ -598,7 +628,7 @@ migrate(){ return `
         l.status==="failed"?'<span class="badge hot">failed</span>':
         '<span class="badge tag">unchanged</span>'}</td></tr>`).join("")}
     </tbody></table>
-    <div class="btn-row"><button class="btn" disabled style="opacity:.5;cursor:not-allowed">Run migrate（MVP 后置）</button> ${authBtn("Migrate session")}</div>
+    <div class="action-list">${actionRow(`<button class="btn" disabled style="opacity:.5;cursor:not-allowed">Run migrate</button>`, "Migrate session", "多步 workflow · MVP 后置")}</div>
   </div>
 `; },
 
