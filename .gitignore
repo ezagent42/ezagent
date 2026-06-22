@@ -51,3 +51,6 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 __pycache__/
 *.pyc
 .worktrees/
+
+# Local Tailwind standalone binary (build artifact, do not commit)
+tailwind-macos-arm64
