@@ -18,18 +18,17 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
     field :label, :string
     field :allowed_models, {:array, :string}, default: []
     field :cap_policy, :map, default: %{}
+    field :target_agent, :string, default: nil
     field :revoked_at, :utc_datetime
     timestamps(type: :utc_datetime_usec)
   end
 
   @doc """
-  Verify a Bearer token against the API key store.
-
-  Returns `{:ok, entity_uri, workspace_uri, caps}` on success,
-  `{:error, reason}` on failure.
+  Verify a Bearer token. Returns entity (caller with caps), workspace, and
+  optional target_agent URI (the agent that handles requests).
   """
   @spec verify(String.t()) ::
-          {:ok, URI.t(), URI.t(), MapSet.t()}
+          {:ok, URI.t(), URI.t(), URI.t() | nil, MapSet.t()}
           | {:error, :invalid_token | :revoked}
   def verify(token) when is_binary(token) do
     with {:ok, key_id, secret} <- parse_token(token),
@@ -38,8 +37,8 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
          :ok <- check_not_revoked(row) do
       entity_uri = Ezagent.URI.new!(row.entity_uri)
       workspace_uri = Ezagent.URI.new!(row.workspace_uri)
-      caps = MapSet.new()
-      {:ok, entity_uri, workspace_uri, caps}
+      target_agent = if row.target_agent, do: Ezagent.URI.new!(row.target_agent)
+      {:ok, entity_uri, workspace_uri, target_agent, MapSet.new()}
     end
   end
 

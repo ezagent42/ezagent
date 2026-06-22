@@ -24,21 +24,18 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp handle_post(conn) do
     with {:ok, body} <- parse_body(conn),
          {:ok, token} <- extract_bearer(conn),
-         {:ok, entity_uri, workspace_uri, _caps} <- ApiKeyStore.verify(token),
+         {:ok, entity_uri, workspace_uri, target_agent, _caps} <- ApiKeyStore.verify(token),
          {:ok, conversation_id} <- extract_conversation_id(body, conn),
          {:ok, session_uri} <-
            ConversationRegistry.resolve(conversation_id, workspace_uri, entity_uri),
          :ok <- ensure_session_live(session_uri),
-         :ok <- join_agent(session_uri, entity_uri),
-         {:ok, request_id, msg} <- build_message(body, entity_uri),
+         :ok <- join_agent(session_uri, entity_uri, target_agent),
+         {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
          {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      # P0: the echo agent replies, not the API key entity. In production,
-      # the API key entity IS the agent (e.g., curl_agent), but for E2E
-      # with echo, we match on the echo agent's sender URI.
-      echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
-
-      case ReplyWaiter.wait_for_reply(request_id, echo_agent, @deadline_ms) do
+      # target_agent: the agent that handles the request (from API key config, default echo)
+      agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+      case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
         {:ok, reply_msg} -> json_response(conn, 200, build_openai_response(request_id, reply_msg))
         {:error, :timeout} -> json_error(conn, 504, "timed out waiting for agent reply")
       end
@@ -85,47 +82,30 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  # P0: ensure the echo agent exists (spawn if needed), then join it to
-  # the session so it can receive and reply to messages.
-  defp join_agent(session_uri, entity_uri) do
+  # Spawn the target agent (if any) and join it to the session.
+  # Defaults to echo agent when target_agent is nil.
+  defp join_agent(session_uri, entity_uri, target_agent) do
     require Logger
-    echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
-    Logger.info("ProtocolApi: spawning echo agent...")
+    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
-    case SpawnRegistry.spawn(echo_agent) do
-      {:ok, _pid} ->
-        Logger.info("ProtocolApi: echo agent spawned OK")
-        :ok
-
-      {:error, :already_started} ->
-        Logger.info("ProtocolApi: echo agent already started")
-        :ok
-
+    case SpawnRegistry.spawn(agent) do
+      {:ok, _pid} -> Logger.info("ProtocolApi: agent spawned OK")
+      {:error, :already_started} -> Logger.info("ProtocolApi: agent already started")
       {:error, reason} ->
-        Logger.error("ProtocolApi: echo spawn failed: #{inspect(reason)}")
-        {:error, 500, "echo_spawn", inspect(reason)}
+        Logger.error("ProtocolApi: agent spawn failed: #{inspect(reason)}")
+        {:error, 500, "spawn_failed", inspect(reason)}
     end
 
     target = URI.with_action(session_uri, :session, :join)
-
     cmd = %Ezagent.Cmd{
-      target: target,
-      action: :join,
-      args: %{member: echo_agent},
+      target: target, action: :join, args: %{member: agent},
       ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
     }
-
-    Logger.info("ProtocolApi: joining echo to session...")
-
+    Logger.info("ProtocolApi: joining agent to session...")
     case Router.dispatch(cmd) do
-      {:ok, _} ->
-        Logger.info("ProtocolApi: join OK")
-        :ok
-
-      :ok ->
-        Logger.info("ProtocolApi: join OK")
-        :ok
-
+      {:ok, _} -> Logger.info("ProtocolApi: join OK"); :ok
+      :ok -> Logger.info("ProtocolApi: join OK"); :ok
       {:error, reason} ->
         Logger.error("ProtocolApi: join failed: #{inspect(reason)}")
         {:error, 500, "join_failed", inspect(reason)}
@@ -140,7 +120,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  defp build_message(body, entity_uri) do
+  defp build_message(body, entity_uri, target_agent) do
     request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     messages = Map.get(body, "messages", [])
 
@@ -152,14 +132,15 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
         _ -> ""
       end
 
-    # $session_users only delivers to Users, not agents. Pass the echo agent
-    # as a mention so the $mentions routing rule delivers agent.receive to it.
-    echo_agent = Ezagent.URI.new!("entity://system/agent/echo_default")
+    # $session_users only delivers to Users. Add target agent to mentions
+    # so the $mentions routing rule delivers agent.receive to it.
+    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    mentions = if agent, do: [agent], else: []
 
     msg =
       Message.new(entity_uri, %{text: text, attachments: []},
         id: request_id,
-        mentions: [echo_agent]
+        mentions: mentions
       )
 
     {:ok, request_id, msg}
