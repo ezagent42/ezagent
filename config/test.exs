@@ -76,3 +76,6 @@ config :ezagent_core, :spawn_await_ready_ms, 5_000
 # confirmation/reset emails work without any SMTP config. The Mailer treats
 # the Local adapter as unconditionally "ready" (see EzagentWeb.Mailer).
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
+
+# task #87 — tests use no cookie domain (host-bound session cookie).
+config :ezagent_web, :session_cookie_domain, nil

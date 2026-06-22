@@ -130,3 +130,7 @@ config :phoenix_live_view,
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
 config :phoenix, :stacktrace_depth, 20
+
+# task #87 — localhost dev: no cookie domain so the session cookie binds to
+# the request host (prod sets it to ".ezagent.chat" via the endpoint default).
+config :ezagent_web, :session_cookie_domain, nil
