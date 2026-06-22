@@ -94,14 +94,30 @@ defmodule EzagentPluginHello.Application do
     case EzagentPluginHello.App.ensure_app(ws, name) do
       {:ok, session_uri, _builder} ->
         _ = seed_or_generate(session_uri)
-
-        Logger.info(
-          "hello demo seed ready: /socialware/chat?session_uri=#{URI.to_string(session_uri)}"
-        )
+        log_ready(session_uri)
 
       other ->
         Logger.warning("hello demo seed failed: #{inspect(other)}")
     end
+  end
+
+  # Log both anon view URLs:
+  #   * /socialware/customer — the token-based CustomerFeed (what the handoff
+  #     names + the integration test proves); a token is embedded so it opens
+  #     with no login/membership.
+  #   * /socialware/chat — the chat-feed surface (anon self-serve via membership).
+  defp log_ready(session_uri) do
+    s = URI.to_string(session_uri)
+    workspace = Ezagent.Capability.workspace_of(session_uri)
+    token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace)
+
+    Logger.info("""
+    hello demo seed ready — open as an anonymous visitor:
+      customer (token, renders immediately):
+        /socialware/customer?session_uri=#{s}&token=#{token}
+      chat (anon self-serve):
+        /socialware/chat?session_uri=#{s}
+    """)
   end
 
   # With `HELLO_DEMO_PROMPT` set, do a REAL builder generation (LLM →
