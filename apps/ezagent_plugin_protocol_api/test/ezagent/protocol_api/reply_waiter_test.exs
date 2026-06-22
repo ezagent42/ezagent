@@ -79,7 +79,7 @@ defmodule Ezagent.ProtocolApi.ReplyWaiterTest do
       publisher_uri: Ezagent.URI.new!("session://system/generic/test"),
       slice_key: :session,
       event_at: DateTime.utc_now(),
-      payload: %{new_slice: %{last_message: msg, last_message_id: msg.id}}
+      payload: %{new_slice: %{state: %{last_message: msg, last_message_id: msg.id}}}
     }
   end
 end
