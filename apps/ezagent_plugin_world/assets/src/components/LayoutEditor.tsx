@@ -25,11 +25,19 @@ export function LayoutEditor({canManage = false, layout, onManageLayout}: Layout
   const components = [...(layout.components || [])].sort((a, b) => (a.placement?.y || 0) - (b.placement?.y || 0))
 
   return (
-    <section className="world-section world-layout-editor" aria-labelledby="layout-editor-title" data-world-component="layout_editor">
-      <div className="world-section-header">
+    <section
+      className="space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground"
+      aria-labelledby="layout-editor-title"
+      data-world-component="layout_editor"
+    >
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 id="layout-editor-title">Layout</h2>
-          <p>{canManage ? "Arrange the world screen." : "Layout changes require manage access."}</p>
+          <h2 id="layout-editor-title" className="text-lg font-semibold text-foreground">
+            Layout
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {canManage ? "Arrange the world screen." : "Layout changes require manage access."}
+          </p>
         </div>
         <Button size="sm" variant="secondary" disabled={!canManage} onClick={() => onManageLayout?.(reflow(layout, components))}>
           <RotateCcw aria-hidden="true" />
@@ -37,14 +45,14 @@ export function LayoutEditor({canManage = false, layout, onManageLayout}: Layout
         </Button>
       </div>
 
-      <div className="world-layout-list">
+      <div className="space-y-2">
         {components.map((component, index) => (
-          <div className="world-layout-row" key={component.id}>
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" key={component.id}>
             <div>
-              <span className="world-layout-type">{component.type}</span>
-              <span className="world-layout-id">{component.id}</span>
+              <span className="block font-medium text-foreground">{component.type}</span>
+              <span className="block font-mono text-xs text-muted-foreground">{component.id}</span>
             </div>
-            <div className="world-layout-actions">
+            <div className="flex gap-2">
               <Button
                 size="icon"
                 variant="secondary"
