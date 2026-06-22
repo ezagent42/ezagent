@@ -107,22 +107,38 @@ operator action (world Console) — 只交 {session_uri, op, structured args}，
 ```
 Non-negotiables：两个 `ctx.caller`（gate=operator / exec=orchestrator）；Phase-1 是**真 dispatch**、不是旁路；world 只交 `{session_uri, op, args}`，绝不交 caps/principal（confused-deputy）；Phase-2 投影**最小** cap、校验参数；fail-closed 保留 operator 身份。
 
-### 6a. "最小 cap 投影" 的精确定义 + 每个 op 的执行权限集（review C2）
-**"投影最小 cap" = 从 orchestrator 实际持有的 caps（`Identity.list_caps_for(orchestrator)`）里 SELECT 出本 op 子 dispatch 需要的子集；绝不 *构造* 一个新的窄 `Capability` struct**（构造 = 在 Grant chokepoint 之外铸权限，违反 #154）。所以投影只会"少给"，不会"造新权"。
+### 6a. "最小 cap 投影" 的精确定义（可实现/可测）+ 每个 op 的执行权限集（review C2/B2）
+**精确定义（review B4 纠偏）：** "构造一个 needed cap struct" 本身很常见、不违规；真正的红线是**把手造的 cap 塞进 `ctx.caps` 当 authority**。所以"最小投影"定义成一条**可测不变式**：
 
-一个 op 往往触发**多个**子 dispatch、需要**多把** held cap（矩阵每行只画了主 Held/Needed，下面是完整集）：
+> 给每个 op 一张固定的 `op → required_cap_descriptors`（见下表）。投影 = 对每个 descriptor，**从 orchestrator 实际持有的 caps（`Identity.list_caps_for`）里匹配并返回那把原始 held struct**（保留其 `granted_by/granted_at`）；**任一 descriptor 匹配不到 → 立即拒绝**（不降级、不 synthetic fallback）；执行时 `ctx.caps` = 这组**被选中的原始 held struct**；审计记下**每把所选 cap 的 identity + provenance**。
 
-| op | required_execution_caps（从 orchestrator held 里选） | 参数约束 |
+每个 op 触发**多个**子 dispatch、需要**多把** held cap（下表对照真实工具代码核过）：
+
+| op | required_execution_caps（从 orchestrator held 里选） | 说明（已核代码）|
 |---|---|---|
-| add_managed_member | within-session（join）+ spawned-by（spawn worker，§5#13） | source template **属本 workspace**；失败补偿用同一 spawned-by |
-| update_member_template | within-session + spawned-by（regenerate=spawn+leave+join+terminate） | new source 属本 workspace；same-URI 拒 |
-| remove_member | within-session（leave）+ spawned-by（terminate） | — |
-| add_participant | within-session + spawned-by | **MVP 不开 manifest/path 输入**（路径输入是额外攻击面，review B5） |
-| define_rule_set_rule / prompt / legend | within-session（仅一把） | receiver role 必须是 live member |
-| update_template / save_template_as | within-session + **Template（within_workspace）** | 写入的目标模板属本 workspace |
-| migrate_session | within-session + Template + 多步 | dry-run/plan；MVP 后置 |
+| add_managed_member | `within_session`（preflight + join）+ `spawned_by`（cap#2） | spawned_by 用于 **join 失败后 `terminate_worker` 补偿**（不是"授权 spawn"，tools.ex:145-151）|
+| update_member_template | `within_session` + `spawned_by` | regenerate = spawn-new + leave + join + best-effort terminate；same-URI 拒 |
+| remove_member | `within_session`（leave）+ `spawned_by`（terminate worker，cap#2） | — |
+| add_participant | **ref=已有 entity：仅 `within_session`**；**ref=template/manifest：+ `spawned_by`**（participants.ex 按 ref 分支）| **MVP 不开 manifest/path 输入**（额外攻击面，review B5）|
+| define_rule_set_rule / prompt / legend | `within_session`（仅一把）| receiver role 必须是 live member |
+| update_template / save_template_as | **`Template`（`{:within_workspace}`）only —— 不要 `within_session`** | 实现只 `check_template_write_cap`（templates.ex），目标模板属本 workspace（review B2.1）|
+| migrate_session | `within_session` + `spawned_by` + `Template` | 它内部调 `update_member_template`（→ spawned_by）+ 读写模板（→ Template）（migration.ex:129，review B2.3）|
 
-**MVP 首条命令 routing-rule-add 只需 within-session 一把**——这是它作为第一刀攻击面最小的原因。
+**MVP 首条命令 routing-rule-add 只需 `within_session` 一把**——这是它作为第一刀攻击面最小的原因。
+
+### 6b. Binding re-verification — the concrete checklist (review B3/B5)
+Today the cc path only structurally compares the live working-copy's `orchestrator_uri` (`session_manager.ex:320`), then threads a **cached** workspace/owner into opts. That is **not enough** for a world entry. The gate MUST re-derive everything **server-side from authoritative sources** and check each, **before** execution (TOCTOU-safe — re-check after the gate, not just at it):
+
+| # | check | authoritative source |
+|---|---|---|
+| 1 | the `session_uri` resolves to a live Session Kind | session→Kind lookup (alive?) |
+| 2 | that session's **live** orchestrator == the one we'll reconstruct caps for | live session slice (not a cached value) |
+| 3 | orchestrator is **alive** | Kind liveness |
+| 4 | workspace == the session's bound workspace | `WorkspaceRegistry` (not opts-cached) |
+| 5 | owner == the session's live owner | live session slice |
+| 6 | each selected exec cap's `instance`/`workspace` scope actually covers THIS session/workspace | the held cap struct (§6a) |
+
+Any check fails → fail-closed. **(Implementation note: items 2/4/5 are exactly where the current `session_manager.ex` uses cached values — the gate must replace those with live lookups. This algorithm is PROPOSED — to be specified concretely in the implementation spec + covered by a TOCTOU regression test.)**
 
 ## 7. Manage scope & granularity (v2 — rewritten per review C)
 Key fact (v2): the session **owner already holds a session-level `Manage :any` cap over the session itself** (`grant_creator_manage_cap(:session, session_uri, …)`, `behavior/workspace.ex:577`) — in addition to the `:agent` Manage over the orchestrator. So the gate target is the **session Manage cap**, and the owner can *already* satisfy any enumerated `manage.<op>` we add (the `action:any` cap auto-covers it).
@@ -134,17 +150,19 @@ That reframes the granularity question — it is a **decision about owner author
 - Either way: **no new cap axis** (the `action` axis already expresses concern); **no `execute_tool(tool_name)`**; the per-op gate authorizes a specific enumerated `manage.<concern>` against a server allowlist. One Manage behavior is enough.
 
 ### 7a. PROPOSED Manage action registry (review B1 — single source of truth)
-These actions **do NOT exist yet** — today `Behavior.Manage` has only `:delete` / `:reconfigure` (`manage.ex:44`). The demo + matrix + traces all use **this** list, marked **PROPOSED**:
+These actions **do NOT exist yet** — today `Behavior.Manage` has only `:delete` / `:reconfigure` (`manage.ex:44`). **Naming rule (review B1, code-verified):** the dispatch target `?action=manage.<x>` parses (`uri.ex:927`, `split(".", parts: 2)`) into `behavior=:manage, action=:<x>` — so the **cap `action` axis must be `:<x>`, NOT `:manage_<x>`** (a `:manage_member` cap would never match the dispatched `:member`). The demo + matrix + traces use **this** list, all marked **PROPOSED**:
 
-| PROPOSED action | covers | gate cap shape |
-|---|---|---|
-| `manage.member` | add / update / remove member, add participant | `cap(:session, Manage, :manage_member, session_uri, ws)` |
-| `manage.routing` | define rule / prompt / legend | `cap(:session, Manage, :manage_routing, session_uri, ws)` |
-| `manage.template` | update_template / save_template_as | `cap(:session, Manage, :manage_template, session_uri, ws)` |
-| `manage.migrate` | migrate_session | `cap(:session, Manage, :manage_migrate, session_uri, ws)` |
-| `manage.read_topology` | read-only topology (review E) | `cap(:session, Manage, :read_topology, session_uri, ws)` |
+| PROPOSED dispatch `?action=` | parsed action atom | covers | gate cap shape | gate handler |
+|---|---|---|---|---|
+| `manage.member` | `:member` | add / update / remove member, add participant | `cap(:session, Manage, :member, session_uri, ws)` | no-op handler whose `required_caps[:member]` = this cap; returns `:ok` (the gate's job is only the cap check) |
+| `manage.routing` | `:routing` | define rule / prompt / legend | `cap(:session, Manage, :routing, session_uri, ws)` | same |
+| `manage.template` | `:template` | update_template / save_template_as | `cap(:session, Manage, :template, session_uri, ws)` | same — ⚠ see delegation note below |
+| `manage.migrate` | `:migrate` | migrate_session | `cap(:session, Manage, :migrate, session_uri, ws)` | same |
+| `manage.read_topology` | `:read_topology` | read-only topology (review E) | `cap(:session, Manage, :read_topology, session_uri, ws)` | same |
 
-`{:error, :manage_unauthorized}` is likewise a **PROPOSED** wrapper error (the Phase-1 gate's fail-closed return), not an existing runtime atom. Allen decides the final action set + whether `manage.*` are per-concern (this table) or finer per-op.
+`{:error, :manage_unauthorized}` is likewise a **PROPOSED** wrapper error (the Phase-1 gate's fail-closed return), not an existing runtime atom. Allen decides the final action set + per-concern (this table) vs finer per-op.
+
+> **⚠ `manage.template` 是跨主体 Template 委托 — Allen 决策项（review B6）：** 一个**非 owner**、只拿到 session `manage.template` 的 operator，会在 Phase-2 借**编排器委托持有的** Template (`{:within_workspace}`) cap 去写 workspace 模板。这是**刻意的 delegation** 吗（Console 操作者可借编排器的模板权），还是 Phase-1 **必须额外要求 operator 自己持有 Template write cap**？默认倾向后者（更保守），但需 Allen 拍。
 
 ## 8. Audit schema change (required; cannot be mocked)
 Add `authorized_operator_uri`, `execution_principal_uri`, `front_door` (cc-bridge | world-console), `request_id`/`trace_id` (gate → every child dispatch), and the authorizing Manage-cap identity/provenance. Arguments = summaries only; never API keys / prompt secrets / path credentials. (Today: single `caller`, `trace_id: nil` — evidence §5#11.)
