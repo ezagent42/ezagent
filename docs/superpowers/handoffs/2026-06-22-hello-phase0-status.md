@@ -33,7 +33,7 @@ user chat ──▶ HelloBuilder (Lifecycle behavior, session member)
 | 0.4 renderer + catalog | ✅ | `catalog.mjs` (Zod) + `catalog_render.mjs` (superset, fail-closed) |
 | 0.5 retire json_render.mjs, migrate customer surface | ✅ | json_render.mjs deleted; one renderer; advisor still renders (superset) |
 | 0.6 build wiring | ✅ customer / ⏸ operator | customer SPA needs NO fork (renderer in socialware domain). Operator phx-hook island deferred (not the DoD) |
-| 0.7 DoD | ✅ substrate + renderer / ⏳ live screenshot | integration test + node renderer test green; `mix ezagent.demo.seed_hello` for the live browser shot |
+| 0.7 DoD | ✅ substrate + renderer + live assets / ⛔ pixel screenshot (env) | see "DoD evidence" below |
 
 ## Gates (all green)
 
@@ -81,6 +81,47 @@ user chat ──▶ HelloBuilder (Lifecycle behavior, session member)
    `admin_genesis_cap`), the same system authority the substrate's
    settlement-recovery + the socialware Turn integration test use. **Follow-up:**
    a within-session orchestrator delegation cap.
+
+## DoD evidence (what was actually verified this run)
+
+The DoD is "an anonymous visitor sees an AI-generated page." It is proven at
+every layer **except the final browser pixel**, which this environment cannot
+produce (no headless browser / chromium / `agent-browser` installed):
+
+1. **Data path (deterministic, in-node):** `hello_page_e2e_test.exs` — `ensure_app`
+   → `TurnDriver.drive` → Surface `put_version`/approve → `CustomerFeed.snapshot`
+   on the **anonymous customer token** returns exactly the approved spec + the
+   customer-visible summary. ✅
+2. **Renderer (deterministic):** `customer_renderer_test.mjs` — the catalog
+   renderer produces the right elements (legacy contract intact + new types). ✅
+3. **Live server serves the migrated renderer:** booted `mix phx.server` on
+   :10042; `GET /assets/js/customer_app.js` → **200**, bundle contains the new
+   `catalog_render` / `isValidTree` / `data-catalog-valid` symbols;
+   `GET /assets/css/customer.css` → **200** (rebuilt with the new utilities). ✅
+4. **Live anon route + fail-closed gate:** `GET /socialware/chat?session_uri=…`
+   for a non-live session → **302 → /login** (correct: a non-existent/non-public
+   session is never anon-served). ✅
+5. **Seed task works:** `mix ezagent.demo.seed_hello` → exit 0, "hello app
+   seeded … session://demo/hello/main … turn-1" (App.ensure_app + TurnDriver land
+   the page). ✅
+
+**The one missing pixel** needs two things this run lacked: (a) a headless
+browser to screenshot, and (b) **in-node** seeding. A cross-BEAM seed (the task
+in its own BEAM persisting to DB, then the running server) does **not** flip the
+302 → 200 — the anon controller path does not auto-revive another BEAM's session.
+So Allen (with a browser) must seed **in the server's own node**:
+
+```bash
+PORT=10042 iex -S mix phx.server
+# in the iex console (same node that serves :10042):
+iex> EzagentPluginHello.App.ensure_app("demo", "main")
+iex> {:ok, s, _} = EzagentPluginHello.App.ensure_app("demo", "main")
+iex> EzagentPluginHello.App.generate_now(s, "a hero page for a coffee shop")   # real LLM (DEEPSEEK_KEY)
+# or, no LLM:
+iex> EzagentPluginHello.TurnDriver.drive(s, EzagentPluginHello.Spec.seed(), "seed")
+# then open in a browser (anon, public_view → auto-minted identity):
+#   http://localhost:10042/socialware/chat?session_uri=session://demo/hello/main
+```
 
 ## How to see it live (DoD screenshot)
 
