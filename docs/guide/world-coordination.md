@@ -45,7 +45,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 | Effort | Owner | Surfaces / files owned | Status |
 |--------|-------|------------------------|--------|
 | _active world-dev_ | (world dev) | UI polish + logic completion (assume `styles.css` + existing surfaces) | ongoing |
-| world beautification + restructure (#83) | TBD | `styles.css`, existing surfaces, design system | brainstorm pending |
+| world beautification + restructure (#83) | claude (`world-beautify`) | layout/slot system (`layout_manager.ex`, `behavior/layout.ex`, `world_live.ex` route+layout fns, `main.tsx` renderer), then `styles.css`, existing surfaces, design system, `primitives.tsx` + atom layer | PR-1 (typed-slot registry + hard-fail gate) in progress |
 | Agent Console (#84) | TBD | new `agent_console` surface + its `*_data/*_actions` + `world_live.ex` route clause | brainstorm pending |
 | hello (Phase 0, #81) | TBD | none in world (isolated plugin) | handoff merged |
 

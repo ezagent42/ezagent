@@ -1,0 +1,227 @@
+{
+  "categories": [
+    "layout_slot",
+    "subcomponent",
+    "shell"
+  ],
+  "renderer_families": {
+    "admin": [
+      "authz_audit",
+      "caps_admin",
+      "dashboard",
+      "entity_registry",
+      "external_mirror",
+      "observability",
+      "routing",
+      "settings",
+      "snapshots",
+      "templates"
+    ],
+    "conversation": [
+      "conversation"
+    ],
+    "identities": [
+      "agent_api_keys",
+      "agent_detail",
+      "agent_extensions",
+      "agent_new_form",
+      "agents_table",
+      "entity_caps",
+      "identities",
+      "users_table"
+    ],
+    "layout_editor": [
+      "layout_editor"
+    ],
+    "pty": [
+      "pty_terminal"
+    ],
+    "sessions": [
+      "sessions_table"
+    ],
+    "workspace_plugins": [
+      "auto_derive",
+      "feishu_bindings",
+      "plugins",
+      "profile",
+      "workspace_detail",
+      "workspaces_list"
+    ]
+  },
+  "shell_chrome": [
+    "world-sidebar",
+    "world-header",
+    "world-cmdk"
+  ],
+  "slots": {
+    "agent_api_keys": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent API Keys"
+    },
+    "agent_detail": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent Detail"
+    },
+    "agent_extensions": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent Extensions"
+    },
+    "agent_new_form": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "New Agent"
+    },
+    "agents_table": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agents"
+    },
+    "authz_audit": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Authz Audit"
+    },
+    "auto_derive": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Auto Derive"
+    },
+    "caps_admin": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Capabilities"
+    },
+    "conversation": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.ConversationData",
+      "renderer_family": "conversation",
+      "title": "Conversation"
+    },
+    "dashboard": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Admin Dashboard"
+    },
+    "entity_caps": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Entity Caps"
+    },
+    "entity_registry": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Entity Registry"
+    },
+    "external_mirror": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "External Mirror"
+    },
+    "feishu_bindings": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Feishu Bindings"
+    },
+    "identities": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Identities"
+    },
+    "layout_editor": {
+      "category": "layout_slot",
+      "data_source": "layout",
+      "renderer_family": "layout_editor",
+      "title": "Layout"
+    },
+    "observability": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Observability"
+    },
+    "plugins": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Plugins"
+    },
+    "profile": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Profile"
+    },
+    "pty_terminal": {
+      "category": "layout_slot",
+      "data_source": "world_live",
+      "renderer_family": "pty",
+      "title": "Terminal"
+    },
+    "routing": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Routing"
+    },
+    "sessions_table": {
+      "category": "layout_slot",
+      "data_source": "world_live",
+      "renderer_family": "sessions",
+      "title": "Sessions"
+    },
+    "settings": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Settings"
+    },
+    "snapshots": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Snapshots"
+    },
+    "templates": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Templates"
+    },
+    "users_table": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Users"
+    },
+    "workspace_detail": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Workspace Detail"
+    },
+    "workspaces_list": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Workspaces"
+    }
+  },
+  "version": 1
+}

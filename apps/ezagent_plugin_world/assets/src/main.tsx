@@ -9,7 +9,33 @@ import {PtyTerminalSurface} from "./components/PtyTerminal"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
+import slotManifest from "./slots.manifest.json"
 import "./styles.css"
+
+// Typed-slot manifest — a generated, checked-in projection of
+// `Ezagent.World.SlotRegistry` (the SoT). Regenerate with
+// `mix world.slots.manifest`. The renderer dispatches purely on the slot's
+// `renderer_family`; there is NO unknown-type fallback.
+type SlotManifest = {
+  version: number
+  categories: string[]
+  renderer_families: Record<string, string[]>
+  slots: Record<string, {renderer_family: string; category: string; title: string; data_source: string}>
+  shell_chrome: string[]
+}
+
+const SLOTS = (slotManifest as SlotManifest).slots
+
+function rendererFamily(type: string): string {
+  const spec = SLOTS[type]
+  if (!spec) {
+    throw new Error(
+      `world: unregistered layout slot type ${JSON.stringify(type)} — ` +
+        "register it in Ezagent.World.SlotRegistry and run `mix world.slots.manifest`",
+    )
+  }
+  return spec.renderer_family
+}
 
 type WorldLayout = {
   version?: number
@@ -331,72 +357,79 @@ type RenderContext = {
 }
 
 function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
-  if (component.type === "layout_editor") {
-    return (
-      <LayoutEditor
-        key={component.id}
-        layout={context.layout}
-        canManage={context.state.can_manage_layout === true}
-        onManageLayout={context.onManageLayout}
-      />
-    )
-  }
+  // Registry-backed dispatch: the slot's type resolves to a renderer family via
+  // the checked-in manifest, and the family selects the React renderer. An
+  // unregistered type throws in `rendererFamily` (no IdentitiesSurface
+  // fallback); an unhandled family throws below.
+  switch (rendererFamily(component.type)) {
+    case "layout_editor":
+      return (
+        <LayoutEditor
+          key={component.id}
+          layout={context.layout}
+          canManage={context.state.can_manage_layout === true}
+          onManageLayout={context.onManageLayout}
+        />
+      )
 
-  if (component.type === "sessions_table") {
-    return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} onCreate={context.onCreateSession} />
-  }
+    case "sessions":
+      return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} onCreate={context.onCreateSession} />
 
-  if (component.type === "conversation") {
-    // Key by session so a switch (push_patch → new state) remounts the
-    // island fresh from the server-pushed message stream.
-    return (
-      <Conversation
-        key={`conversation-${context.state.session_uri || "none"}`}
-        state={context.state}
-        onAddRoutingRule={context.onAddRoutingRule}
-        onOpenPty={context.onOpenSessionPty}
-        onRestartOrchestrator={context.onRestartOrchestrator}
-        onSend={context.onChatSend}
-        onSwitch={context.onSessionSwitch}
-        onSwitchView={context.onSessionViewSwitch}
-        onToggleRoutingRule={context.onToggleRoutingRule}
-        onLoadOlder={context.onLoadOlder}
-        onMarkDisplayed={context.onMarkDisplayed}
-        onInvite={context.onInvite}
-        onPtyInput={context.onPtyInput}
-        onPtyResize={context.onPtyResize}
-        onServerEvent={context.onServerEvent}
-      />
-    )
-  }
+    case "conversation":
+      // Key by session so a switch (push_patch → new state) remounts the
+      // island fresh from the server-pushed message stream.
+      return (
+        <Conversation
+          key={`conversation-${context.state.session_uri || "none"}`}
+          state={context.state}
+          onAddRoutingRule={context.onAddRoutingRule}
+          onOpenPty={context.onOpenSessionPty}
+          onRestartOrchestrator={context.onRestartOrchestrator}
+          onSend={context.onChatSend}
+          onSwitch={context.onSessionSwitch}
+          onSwitchView={context.onSessionViewSwitch}
+          onToggleRoutingRule={context.onToggleRoutingRule}
+          onLoadOlder={context.onLoadOlder}
+          onMarkDisplayed={context.onMarkDisplayed}
+          onInvite={context.onInvite}
+          onPtyInput={context.onPtyInput}
+          onPtyResize={context.onPtyResize}
+          onServerEvent={context.onServerEvent}
+        />
+      )
 
-  if (component.type === "pty_terminal") {
-    return (
-      <PtyTerminalSurface
-        key={component.id}
-        state={context.state}
-        onInput={context.onPtyInput}
-        onResize={context.onPtyResize}
-        onServerEvent={context.onServerEvent}
-      />
-    )
-  }
+    case "pty":
+      return (
+        <PtyTerminalSurface
+          key={component.id}
+          state={context.state}
+          onInput={context.onPtyInput}
+          onResize={context.onPtyResize}
+          onServerEvent={context.onServerEvent}
+        />
+      )
 
-  if (isAdminComponent(component.type)) {
-    return <AdminSurface key={component.id} state={{...context.state, component: component.type}} onAction={context.onAdminAction} />
-  }
+    case "admin":
+      return <AdminSurface key={component.id} state={{...context.state, component: component.type}} onAction={context.onAdminAction} />
 
-  if (isWorkspacePluginComponent(component.type)) {
-    return (
-      <WorkspacePluginSurface
-        key={component.id}
-        state={{...context.state, component: component.type}}
-        onAction={context.onWorkspacePluginAction}
-      />
-    )
-  }
+    case "workspace_plugins":
+      return (
+        <WorkspacePluginSurface
+          key={component.id}
+          state={{...context.state, component: component.type}}
+          onAction={context.onWorkspacePluginAction}
+        />
+      )
 
-  return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+    case "identities":
+      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+
+    default:
+      throw new Error(
+        `world: no renderer for family ${JSON.stringify(SLOTS[component.type]?.renderer_family)} ` +
+          `(slot ${JSON.stringify(component.type)})`,
+      )
+  }
 }
 
 function navClass(path: string | undefined, href: string) {
@@ -470,21 +503,3 @@ function pageTitle(component: string | undefined) {
   }
 }
 
-function isAdminComponent(type: string) {
-  return [
-    "authz_audit",
-    "caps_admin",
-    "dashboard",
-    "entity_registry",
-    "external_mirror",
-    "observability",
-    "routing",
-    "settings",
-    "snapshots",
-    "templates",
-  ].includes(type)
-}
-
-function isWorkspacePluginComponent(type: string) {
-  return ["auto_derive", "feishu_bindings", "plugins", "profile", "workspace_detail", "workspaces_list"].includes(type)
-}

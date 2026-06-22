@@ -3,46 +3,20 @@ defmodule Ezagent.World.LayoutManager do
   File-backed layout store for the `world` plugin.
 
   Layout is runtime data, not runtime code. The server validates component
-  type references against this plugin-owned registry before anything is
-  persisted or pushed back to React.
+  type references against the typed-slot registry (`Ezagent.World.SlotRegistry`)
+  before anything is persisted or pushed back to React. The registry is the
+  唯一真源 — this module no longer keeps its own allowlist.
   """
 
-  @registered_component_types MapSet.new([
-                                "agent_api_keys",
-                                "agent_detail",
-                                "agent_extensions",
-                                "agent_new_form",
-                                "agents_table",
-                                "authz_audit",
-                                "caps_admin",
-                                "dashboard",
-                                "entity_caps",
-                                "entity_registry",
-                                "external_mirror",
-                                "identities",
-                                "layout_editor",
-                                "observability",
-                                "auto_derive",
-                                "feishu_bindings",
-                                "plugins",
-                                "profile",
-                                "pty_terminal",
-                                "routing",
-                                "sessions_table",
-                                "settings",
-                                "snapshots",
-                                "templates",
-                                "users_table",
-                                "workspace_detail",
-                                "workspaces_list"
-                              ])
+  alias Ezagent.World.SlotRegistry
+
   @layout_version 1
 
   @type layout :: map()
 
   @doc "Registered build-time component types accepted by world layouts."
   @spec registered_component_types() :: MapSet.t(String.t())
-  def registered_component_types, do: @registered_component_types
+  def registered_component_types, do: SlotRegistry.layout_slot_types()
 
   @doc "Read the persisted layout for `scope_uri`, falling back to the default layout."
   @spec read_layout(URI.t()) :: layout()
@@ -153,7 +127,7 @@ defmodule Ezagent.World.LayoutManager do
   defp validate_component(_), do: {:error, :invalid_component}
 
   defp validate_component_type(type) do
-    if MapSet.member?(@registered_component_types, type) do
+    if SlotRegistry.layout_slot?(type) do
       :ok
     else
       {:error, {:unknown_component_type, type}}
