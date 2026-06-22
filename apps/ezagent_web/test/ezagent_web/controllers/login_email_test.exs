@@ -29,18 +29,18 @@ defmodule EzagentWeb.LoginEmailTest do
   end
 
   test "POST /login with any email shows the generic check-inbox response", %{conn: conn} do
-    conn = post(conn, "/login", %{"email" => "someone@bad.com"})
+    conn = post(conn, "/login/magic", %{"email" => "someone@bad.com"})
     assert html_response(conn, 200) =~ "check"
   end
 
   test "POST /login mints a token for an allowlisted new email", %{conn: conn} do
-    post(conn, "/login", %{"email" => "fresh@good.com"})
+    post(conn, "/login/magic", %{"email" => "fresh@good.com"})
     assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) >= 1
   end
 
   test "POST /login mints no token for a non-allowlisted new email", %{conn: conn} do
     before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
-    post(conn, "/login", %{"email" => "fresh@bad.com"})
+    post(conn, "/login/magic", %{"email" => "fresh@bad.com"})
     assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before
   end
 
@@ -69,7 +69,7 @@ defmodule EzagentWeb.LoginEmailTest do
       })
 
     before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
-    post(conn, "/login", %{"email" => "bound@bad.com"})
+    post(conn, "/login/magic", %{"email" => "bound@bad.com"})
 
     assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before + 1
   end
