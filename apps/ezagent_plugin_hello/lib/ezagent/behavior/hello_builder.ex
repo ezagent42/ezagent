@@ -67,8 +67,11 @@ defmodule Ezagent.Behavior.HelloBuilder do
 
   # --- internals --------------------------------------------------------
 
-  defp from_user?(%Message{sender: %URI{path: "/user/" <> _}}), do: true
-  defp from_user?(%Message{sender: s}) when is_binary(s), do: String.contains?(s, "/user/")
+  # `Message.sender` is canonically a `%URI{}`; classify via the canonical type
+  # accessor (`entity://user/…` → type `:user`) rather than a positional path
+  # read (uri_query.scan invariant #11). A non-user / non-entity sender (another
+  # agent, the builder's own output) → false, so generation never loops.
+  defp from_user?(%Message{sender: %URI{} = uri}), do: Ezagent.URI.type?(uri, :user)
   defp from_user?(_), do: false
 
   defp extract_text(%{text: t}) when is_binary(t), do: t
