@@ -79,7 +79,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp build_message(body, entity_uri) do
-    request_id = Message.generate_id()
+    request_id = Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
     messages = Map.get(body, "messages", [])
     text = messages |> List.last() |> case do
       %{"content" => content} when is_binary(content) -> content
