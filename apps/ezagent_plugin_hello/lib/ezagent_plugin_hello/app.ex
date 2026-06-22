@@ -37,7 +37,8 @@ defmodule EzagentPluginHello.App do
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
          :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}),
-         {:ok, _} <- join(session_uri, builder_uri) do
+         {:ok, _} <- join(session_uri, builder_uri),
+         :ok <- grant_orchestrator_caps(builder_uri, session_uri) do
       {:ok, session_uri, builder_uri}
     end
   end
@@ -49,6 +50,22 @@ defmodule EzagentPluginHello.App do
   end
 
   # --- internals --------------------------------------------------------
+
+  # Equip the builder as the session ORCHESTRATOR (Phase 1): grant the
+  # scope-bounded delegation caps a real orchestrator holds — `{:within_session,
+  # S}` (cap #1) + `{:spawned_by, orchestrator}` (cap #2) + delegable Template
+  # caps — via the same `Orchestrator.Caps` mechanism cc orchestrators use. The
+  # `{:within_session, S}` cap is what `Orchestrator.Tools.add_managed_member`
+  # preflights before spawning workers, so without this the builder cannot fan
+  # out. Owner/granter = the admin entity (the in-code creator of this app); a
+  # per-creator owner is a follow-up.
+  defp grant_orchestrator_caps(builder_uri, session_uri) do
+    Ezagent.Entity.Session.grant_orchestrator_scoped_caps(
+      builder_uri,
+      session_uri,
+      User.admin_uri()
+    )
+  end
 
   defp spawn_kind(kind_module, args) do
     case Ezagent.Kind.spawn(kind_module, args) do
