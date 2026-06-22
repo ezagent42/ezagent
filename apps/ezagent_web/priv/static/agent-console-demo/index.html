@@ -92,8 +92,9 @@
   .kv dt{color:var(--world-muted)}
   .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
   .uri{font-family:var(--mono);font-size:12px;color:#0f172a;background:#f8fafc;border:1px solid var(--world-border);
-    border-radius:5px;padding:1px 5px;overflow-wrap:anywhere}
-  .kv dd .mono,.kv dd{overflow-wrap:anywhere}
+    border-radius:5px;padding:1px 5px;white-space:nowrap}
+  /* only break long URIs/values inside detail (.kv) cards; tables scroll instead */
+  .kv dd, .kv dd .mono, .kv dd .uri{overflow-wrap:anywhere;white-space:normal}
   .muted{color:var(--world-muted)}
   .cite{font-family:var(--mono);font-size:11px;color:var(--world-muted)}
   .callout{border-left:3px solid var(--warn);background:var(--warn-tint);padding:9px 12px;border-radius:0 8px 8px 0;
@@ -303,76 +304,119 @@ const AUDIT = [
    exec:"—", live:"hot", result:"fail-closed", note:"Manage cap absent — 操作拒绝，operator 身份保留"},
 ];
 
-/* ---- AUTHORITY MATRIX (the core deliverable) ----
-   Each op: cap 5-axis, principal, cold/hot, backend fn(file:line), failures, audit. */
+/* ---- AUTHORITY MATRIX (the core deliverable) — corrected per 2026-06-22 review ----
+   Per op: temp (cold|hot|hotwf|ungated|boundary), the Phase-1 gate cap (hot only),
+   the EXECUTION held authority, the NEEDED lock (concrete), two callers, granter
+   (= granted_by, with evidence), code-VERIFIED failure states, audit, optional gap.
+   COLD: caller=execCaller=operator, no gate. HOT: authCaller=operator (Manage gate),
+   execCaller=orchestrator (under reconstructed {:within_session,S}).  */
+const SESS = "session://acme/storefront-7f3a";
 const MATRIX = [
-  // COLD
-  {op:"List templates", fn:"Orchestrator.Tools.list_templates/2", file:"tools.ex (Templates)", temp:"cold",
-   cap:{kind:":session_template / :agent",behavior:"Template",action:":read",instance:":any",ws:"acme"},
-   caller:"operator", exec:null, granter:"operator",
-   fail:["CapBAC-filtered: 只返回 caller 有读 cap 的模板"], audit:"operator"},
+  // ---------- COLD — operator's own Template authority ----------
+  {op:"List templates", fn:"Orchestrator.Tools.list_templates/2", file:"tools/templates.ex", temp:"cold",
+   gate:null, held:{kind:":session_template/:agent",behavior:"Template",action:":read",instance:":any",ws:"acme"},
+   needed:{kind:":session_template/:agent",behavior:"Template",action:":read",instance:"具体模板 uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by（owner/admin/self）",
+   fail:["CapBAC 过滤：只返回 caller 有读 cap 的模板"], audit:"operator", gap:null},
   {op:"Create SessionTemplate (root)", fn:"SessionTemplate.create/3", file:"entity/session_template.ex", temp:"cold",
-   cap:{kind:":session_template",behavior:"Template",action:":write",instance:"new uri",ws:"acme(必填)"},
-   caller:"operator", exec:null, granter:"operator(自己持 Template cap)",
-   fail:["workspace 必填","cap preflight 不过 → :unauthorized","创建后给 owner 授 Template cap"], audit:"operator"},
+   gate:null, held:{kind:":session_template",behavior:"Template",action:":write",instance:":any",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new uri",ws:"acme(必填)"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   fail:["workspace 必填","cap preflight 不过 → :unauthorized","创建后给 owner 授 Template cap"], audit:"operator", gap:null},
   {op:"Fork SessionTemplate", fn:"SessionTemplate.fork/3", file:"entity/session_template.ex", temp:"cold",
-   cap:{kind:":session_template",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
-   caller:"operator", exec:null, granter:"operator",
-   fail:["config-only：不带消息历史（不变式 #10）"], audit:"operator"},
+   gate:null, held:{kind:":session_template",behavior:"Template",action:":fork",instance:":any",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   fail:["config-only：不带消息历史（不变式 #10）"], audit:"operator", gap:null},
   {op:"Persist version", fn:"SessionTemplate.persist_version/3", file:"entity/session_template.ex", temp:"cold",
-   cap:{kind:":session_template",behavior:"Template",action:":write",instance:"uri@hash",ws:"acme"},
-   caller:"operator", exec:null, granter:"operator",
-   fail:["HIGH-9：线程化 caller caps，无 admin fallback","内容寻址：同内容同 hash，不可变"], audit:"operator"},
+   gate:null, held:{kind:":session_template",behavior:"Template",action:":write",instance:":any",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":write",instance:"uri@hash",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   fail:["HIGH-9：线程 caller caps，无 admin fallback","内容寻址：同内容同 hash，不可变"], audit:"operator", gap:null},
   {op:"Fork AgentTemplate", fn:"AgentTemplate.fork/3", file:"entity/agent_template.ex", temp:"cold",
-   cap:{kind:":agent",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
-   caller:"operator", exec:null, granter:"operator",
-   fail:["⚠ gap：AgentTemplate 无 caller-threaded create/3（仅 system path）"], audit:"operator"},
-  {op:"Tag \"current\"", fn:"TemplateTags.tag/3", file:"template_tags.ex", temp:"cold",
-   cap:{kind:":session_template",behavior:"Template",action:":write",instance:"name",ws:"acme"},
-   caller:"operator", exec:null, granter:"operator",
-   fail:["tag 是可变指针（git branch 语义），hash 不可变"], audit:"operator"},
-  // LIVE — CapBAC
+   gate:null, held:{kind:":agent",behavior:"Template",action:":fork",instance:":any",ws:"acme"},
+   needed:{kind:":agent",behavior:"Template",action:":fork",instance:"src uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   fail:["config-only"], audit:"operator",
+   gap:"AgentTemplate 无 caller-threaded create/3（仅 system path）— Console 新建 AgentTemplate 需先补后端"},
+  {op:"Tag \"current\"", fn:"TemplateTags.put/5 · move/6", file:"template_tags.ex:112,212", temp:"ungated",
+   gate:null, held:null, needed:null,
+   authCaller:"—（直写 DB，无 caller）", execCaller:"—", granter:"created_by（仅 provenance，非授权）",
+   fail:["⚠ 今天无 cap gate：put/move 无条件直写 DB，没有 caller/caps 参数","tag 可变指针、hash 不可变"],
+   audit:"created_by（无授权链）",
+   gap:"无授权：任何能调到这段代码的路径都能改 tag。Console 接入前需补 cap gate"},
+  // ---------- BOUNDARY — cold↔hot transitions ----------
+  {op:"Instantiate (create-session)", fn:"SessionCreator.create_session/3", file:"…/session_creator", temp:"boundary",
+   gate:null, held:{kind:":session_template",behavior:"Template",action:":instantiate",instance:":any",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":instantiate",instance:"tmpl uri",ws:"acme"},
+   authCaller:"operator", execCaller:"operator", granter:"该 Template cap 的 granted_by",
+   fail:["冷→热：把模板变成一个活 session（独立于 create_session 的实例化路径）"],
+   audit:"operator", gap:"精确 cap 形状待 Manage-gate 实现时核实"},
+  {op:"update_template / save_template_as", fn:"Orchestrator.Tools.update_template · save_template_as", file:"tools/templates.ex", temp:"hot",
+   gate:{kind:":session",behavior:"Manage",action:":manage_template（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session_template",behavior:"Template",action:":write",instance:"new tmpl uri",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by（owner/system）",
+   fail:["热→冷：把活 session 的配置快照回写成模板"], audit:"operator + execution", gap:null},
+  // ---------- HOT — live session management (via the Manage-gate) ----------
   {op:"Add member", fn:"Orchestrator.Tools.add_managed_member/2", file:"tools.ex:134", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":join",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—（不铸新 cap）",
-   fail:["未知 role_name → {:unknown_member_role,r}（tools.ex:619）","非活 session → session-not-live","Manage cap 缺失 → fail-closed"],
-   audit:"operator + execution（双主体）"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by（owner/system）",
+   fail:["缺 Manage cap → fail-closed（Phase-1 gate）","role_name 是新别名：没有「未知 role」失败","非活 session：spawn/join 失败，失败即补偿不留 orphan"],
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Update member template", fn:"Orchestrator.Tools.update_member_template/3", file:"tools.ex:375", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":join",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
-   fail:["同 URI 重生 → reject_same_uri_swap（member_template.ex:182,429）","regenerate 是销毁重建：先 leave 后 join"],
-   audit:"operator + execution（双主体）"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   fail:["同 URI 重生 → :same_member_uri_use_reconfigure（member_template.ex:429）","regenerate = 销毁重建：先 leave 后 join"],
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Remove member", fn:"Orchestrator.Tools.remove_member/2", file:"tools.ex:407", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":leave",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
-   fail:["未知 role_name 拒","非活 session → session-not-live"],
-   audit:"operator + execution（双主体）"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":leave",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   fail:["未知 role → {:ok, :already_removed}（幂等，不是拒绝）","terminate 未授权 → 立即 :unauthorized"],
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Add participant", fn:"Orchestrator.Tools.add_participant/2", file:"tools/participants.ex", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":join",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
+   gate:{kind:":session",behavior:"Manage",action:":manage_member（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":join",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
    fail:["add_managed_member 的超集：接受 entity/template/manifest","type-transparent 邀请 + 授 join 权"],
-   audit:"operator + execution（双主体）"},
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Define rule-set rule", fn:"Orchestrator.Tools.define_rule_set_rule/3", file:"tools.ex:554", temp:"hot",
-   cap:{kind:":session",behavior:"Routing",action:":add_rule",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
-   fail:["receiver_role_name 解析失败 → {:unknown_member_role,r}（tools.ex:619）","named rule-set 强制单 receiver"],
-   audit:"operator + execution（双主体）"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Routing",action:":add_rule",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   fail:["未知 receiver role → {:unknown_member_role, r}（tools.ex:619）","named rule-set 强制单 receiver"],
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Define prompt template", fn:"Orchestrator.Tools.define_prompt_template/3", file:"tools.ex:660", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":set_prompt_templates",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
-   fail:["缺 {body} → {:error,:body_placeholder_required}（tools.ex:669）"],
-   audit:"operator + execution（双主体）"},
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":set_prompt_templates",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   fail:["缺 {body} → {:error, :body_placeholder_required}（tools.ex:669）"],
+   audit:"operator + execution（双主体）", gap:null},
   {op:"Define legend", fn:"Orchestrator.Tools.define_legend/5", file:"tools.ex:705", temp:"hot",
-   cap:{kind:":session",behavior:"Session",action:":set_legends",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
-   fail:["member_set 必须是真实 member role_name","bound_rule_set 必须存在"],
-   audit:"operator + execution（双主体）"},
-  // LIVE — WORKFLOW
-  {op:"Migrate session", fn:"Orchestrator.Tools.migrate_session/2", file:"tools/migration.ex", temp:"hot",
-   cap:{kind:":session + :session_template",behavior:"Template + Session",action:"多",instance:"{:within_session, S}",ws:"acme"},
-   caller:"operator", exec:"session/orchestrator（重建授权）", granter:"—",
+   gate:{kind:":session",behavior:"Manage",action:":manage_routing（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session",behavior:":any",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:":session",behavior:"Session",action:":set_legends",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
+   fail:["写无效 legend 不会被拒（见 gap）"],
+   audit:"operator + execution（双主体）",
+   gap:"今天 define_legend 不校验 member_set / bound_rule_set（直写 map，tools.ex:705）— Console 应在前端/gate 加校验"},
+  // ---------- HOT WORKFLOW ----------
+  {op:"Migrate session", fn:"Orchestrator.Tools.migrate_session/2", file:"tools/migration.ex", temp:"hotwf",
+   gate:{kind:":session",behavior:"Manage",action:":manage_migrate（提案§7，待定）",instance:"session S",ws:"acme"},
+   held:{kind:":session + :session_template",behavior:":any + Template",action:":any",instance:"{:within_session, S}",ws:"acme"},
+   needed:{kind:"多",behavior:"Session + Template",action:"多步",instance:"session S",ws:"acme"},
+   authCaller:"operator", execCaller:"orchestrator", granter:"授权 Manage cap 的 granted_by",
    fail:["多步有状态：读 target → diff members → 写 ledger → 重生 → 换 rule-set/prompt/legend","需 dry-run/plan/progress UI","⚠ MVP 后置"],
-   audit:"operator + execution（双主体）"},
+   audit:"operator + execution（双主体）", gap:null},
 ];
 
 /* =========================================================================
@@ -380,38 +424,72 @@ const MATRIX = [
    ========================================================================= */
 function findOp(name){ return MATRIX.find(m=>m.op===name); }
 function capLine(c){
-  return `kind=${c.kind} · behavior=${c.behavior} · action=${c.action} · instance=${c.instance} · ws=${c.ws}`;
+  if(!c){ return "—"; }
+  return `kind=${c.kind||"—"} · behavior=${c.behavior} · action=${c.action} · instance=${c.instance} · ws=${c.ws}`;
 }
+function capAxes(c){
+  if(!c){ return `<div class="muted" style="font-size:12px">—（此操作无 cap gate）</div>`; }
+  return `<dl class="auth-axis">
+    ${c.kind!==undefined?`<dt>kind</dt><dd>${c.kind}</dd>`:""}
+    <dt>behavior</dt><dd>${c.behavior}</dd>
+    <dt>action</dt><dd>${c.action}</dd>
+    <dt>instance</dt><dd>${c.instance}</dd>
+    <dt>workspace_uri</dt><dd>${c.ws}</dd>
+  </dl>`;
+}
+function tempBadgeOf(t){
+  return t==="cold" ? '<span class="badge cold">冷 · 模板</span>'
+    : t==="ungated" ? '<span class="badge defer">⚠ 无 cap gate</span>'
+    : t==="boundary" ? '<span class="badge tag">边界 · 冷↔热</span>'
+    : t==="hotwf" ? '<span class="badge hot">热 · workflow</span>'
+    : '<span class="badge hot">热 · 活会话</span>';
+}
+function H(t){ return `<div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:14px">${t}</div>`; }
 function openAuth(opName){
   const m = findOp(opName);
   if(!m){ return; }
   document.getElementById("drawer-title").textContent = m.op;
-  const tempBadge = m.temp==="cold"
-    ? '<span class="badge cold">冷 · 模板</span>' : '<span class="badge hot">热 · 活会话</span>';
-  const exec = m.exec
-    ? `<div class="exec-note"><b>在别人授权下执行：</b><br>authorized by <code>${m.caller}</code>（operator manage-cap），<b>executed under</b> ${m.exec}。<br>这是「manage→orchestrator」授权链——所以审计必须记双主体。</div>`
-    : `<div class="exec-note" style="background:var(--cold-tint);border-color:#bfdbfe"><b>operator 自有授权：</b> caller = authorizer = granter = <code>${m.caller}</code>。冷路径，无「executed under」一层。</div>`;
+  const hot = m.execCaller==="orchestrator";
+  const gapBlock = m.gap ? `<div class="callout" style="margin-top:12px">⚠ <b>gap：</b>${m.gap}</div>` : "";
+
+  // authority body differs cold vs hot (two-phase)
+  let authBody;
+  if(hot){
+    authBody = `
+      <div class="exec-note"><b>两阶段（Manage-gate）：</b>operator 授权、orchestrator 执行 —— 所以审计记双主体。</div>
+      ${H("Phase 1 · 授权 gate")}
+      <div style="font-size:12px;margin:2px 0 4px"><code>ctx.caller</code> = <b>operator</b> · 验 operator 持有的 Manage cap（提案 §7：枚举具名 action，非 action:any）· 缺 → <b>fail-closed</b></div>
+      ${capAxes(m.gate)}
+      ${H("Phase 2 · 执行（held 授权）")}
+      <div style="font-size:12px;margin:2px 0 4px"><code>ctx.caller</code> = <b>orchestrator</b> · 服务端重建编排器的 <code>{:within_session,S}</code> 授权</div>
+      ${capAxes(m.held)}
+      ${H("Needed lock（这次 dispatch 实际命中的锁）")}
+      ${capAxes(m.needed)}`;
+  } else if(m.temp==="ungated"){
+    authBody = `<div class="callout" style="margin-top:6px">此操作<b>今天没有 cap gate</b>——直写 DB。下面无锁孔可列。</div>`;
+  } else {
+    authBody = `
+      <div class="exec-note" style="background:var(--cold-tint);border-color:#bfdbfe"><b>冷路径 · operator 自有授权：</b><code>ctx.caller</code> = operator，authorizer = operator 持有的 Template cap（下方 Held），无「executed under」一层。</div>
+      ${H("Held authority（operator 持有的 cap）")}
+      ${capAxes(m.held)}
+      ${H("Needed lock（这次 dispatch 实际命中的锁）")}
+      ${capAxes(m.needed)}`;
+  }
+
   document.getElementById("drawer-body").innerHTML = `
-    <div style="margin-bottom:10px">${tempBadge} &nbsp; <span class="cite">${m.fn} · ${m.file}</span></div>
-    <div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:14px">所需 cap（锁孔）· 5 轴</div>
+    <div style="margin-bottom:10px">${tempBadgeOf(m.temp)} &nbsp; <span class="cite">${m.fn} · ${m.file}</span></div>
+    ${authBody}
+    ${H("三角色")}
     <dl class="auth-axis">
-      <dt>kind</dt><dd>${m.cap.kind}</dd>
-      <dt>behavior</dt><dd>${m.cap.behavior}</dd>
-      <dt>action</dt><dd>${m.cap.action}</dd>
-      <dt>instance</dt><dd>${m.cap.instance}</dd>
-      <dt>workspace_uri</dt><dd>${m.cap.ws}</dd>
-    </dl>
-    <div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:6px">三角色</div>
-    <dl class="auth-axis">
-      <dt>caller (ctx.caller)</dt><dd>${m.caller}</dd>
-      <dt>authorizer (ctx.caps)</dt><dd>${m.exec? "operator Manage cap → 重建 session 授权" : "operator 自有 cap"}</dd>
+      <dt>authorization caller</dt><dd>${m.authCaller}</dd>
+      <dt>execution caller</dt><dd>${m.execCaller}</dd>
       <dt>granter (granted_by)</dt><dd>${m.granter}</dd>
     </dl>
-    ${exec}
-    <div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:6px">失败态</div>
+    ${H("失败态（code-verified）")}
     <ul class="fail-list">${m.fail.map(f=>`<li>${f}</li>`).join("")}</ul>
-    <div class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-top:10px">审计字段</div>
+    ${H("审计字段")}
     <div style="font-size:12.5px;margin-top:4px">${m.audit}</div>
+    ${gapBlock}
   `;
   document.getElementById("drawer").classList.add("open");
   document.getElementById("scrim").classList.add("open");
@@ -455,10 +533,10 @@ overview(){ return `
     <b>这个面分冷 / 热两半，授权模型不同（全 demo 的主线）：</b>
     <div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:240px"><span class="badge cold">冷 · Template Studio</span><br>
-      改的是<b>持久模板快照</b>（create/fork/version/tag）。operator 用<b>自己的 Template cap</b>授权——caller=授权者=granter 都是 operator。今天就 UI-ready。</div>
+      改的是<b>持久模板快照</b>（create/fork/version/tag）。operator 用<b>自己持有的 Template cap</b>授权直接执行（caller=operator）。今天就 UI-ready。</div>
       <div style="flex:1;min-width:240px"><span class="badge hot">热 · Session Console</span><br>
       管的是<b>正在跑的 session</b>（加成员/路由/migrate）。底层锁孔要<b>编排器的 <code>{:within_session,S}</code> cap</b>，operator 没有——
-      Allen 拍板：扩 <code>Behavior.Manage</code> 覆盖工具面，<b>operator 授权 + 在重建的会话授权下执行</b> + <b>双主体审计</b>，缺 cap fail-closed。</div>
+      方案（待 Allen，见 <a onclick="go('matrix')">提案</a>）：<b>Manage-gate</b> 两阶段——operator 的 Manage cap 授权（Phase-1）+ 在重建的编排器授权下执行（Phase-2）+ <b>双主体审计</b>，缺 cap fail-closed。</div>
     </div>
   </div>
 
@@ -481,25 +559,26 @@ overview(){ return `
 
   <div class="card" style="margin-top:16px;background:#fbfdff">
     <h3 style="font-size:14px;margin:0 0 2px">举个例子：为什么要分三个名字</h3>
-    <p class="sub" style="margin:0 0 12px">同一组角色——<b>冷操作时三者重合</b>（看不出差别，这正是陷阱），<b>热操作时三者分离</b>。</p>
+    <p class="sub" style="margin:0 0 12px">三个是<b>不同的问题</b>，别默认它们是同一个值——看具体证据。冷操作里 granter 也常不是「谁点的」；热操作里 caller 本身就分两个。</p>
     <div class="row">
       <div class="card" style="margin:0;border-left:3px solid var(--cold)">
         <div style="margin-bottom:6px"><span class="badge cold">冷</span> <b>Alice fork 一个 SessionTemplate</b></div>
-        <dl class="kv" style="grid-template-columns:92px minmax(0,1fr);gap:5px 12px">
+        <dl class="kv" style="grid-template-columns:108px minmax(0,1fr);gap:5px 12px">
           <dt>caller</dt><dd>Alice</dd>
-          <dt>authorizer</dt><dd>Alice 自己的 Template cap</dd>
-          <dt>granter</dt><dd>Alice</dd>
+          <dt>authorizer</dt><dd>Alice 持有的 Template cap</dd>
+          <dt>granter</dt><dd>那把 Template cap 的 <code>granted_by</code>——可能是 owner/admin 授给 Alice 的，<b>不一定是 Alice</b></dd>
         </dl>
-        <div class="muted" style="font-size:12px;margin-top:8px">→ 三者都是 Alice，平时看不出区别——<b>这正是陷阱</b>。</div>
+        <div class="muted" style="font-size:12px;margin-top:8px">→ 即使最简单的冷操作，granter 也是钥匙上记的「谁授予」，不是「谁点按钮」。</div>
       </div>
       <div class="card" style="margin:0;border-left:3px solid var(--hot)">
         <div style="margin-bottom:6px"><span class="badge hot">热</span> <b>Alice 给活会话 S 加一个成员</b></div>
-        <dl class="kv" style="grid-template-columns:92px minmax(0,1fr);gap:5px 12px">
-          <dt>caller</dt><dd>Alice（operator 身份进 <code>ctx.caller</code>）</dd>
-          <dt>authorizer</dt><dd>Alice 的 <b>Manage cap</b> → 重建出会话的 <code>{:within_session,S}</code> 授权（Alice 本人<b>并没有</b> join 权）</dd>
-          <dt>granter</dt><dd>给新成员铸钥匙时刻的是会话 owner / 系统根——<b>不是</b>「谁点的按钮」</dd>
+        <dl class="kv" style="grid-template-columns:108px minmax(0,1fr);gap:5px 12px">
+          <dt>auth caller</dt><dd>Alice（operator，Phase-1 Manage gate）</dd>
+          <dt>exec caller</dt><dd>orchestrator（Phase-2，重建 <code>{:within_session,S}</code>）</dd>
+          <dt>authorizer</dt><dd>Alice 的 Manage cap（gate）→ orchestrator 的会话授权（exec）。Alice 本人<b>并没有</b> join 权</dd>
+          <dt>granter</dt><dd>授权那把 Manage cap 的 <code>granted_by</code>（owner / 系统根）</dd>
         </dl>
-        <div class="muted" style="font-size:12px;margin-top:8px">→ 三者分离，所以审计必须记 <b>operator + execution 双主体</b>。</div>
+        <div class="muted" style="font-size:12px;margin-top:8px">→ 授权≠执行、caller 分两个，所以审计必须记 <b>operator + execution 双主体</b>。</div>
       </div>
     </div>
   </div>
@@ -518,21 +597,53 @@ overview(){ return `
       <td>${t.desired_skills.length? t.desired_skills.map(s=>`<span class="badge tag">${s}</span>`).join(" ") : '<span class="muted">—</span>'}</td>
     </tr>`).join("")}</tbody></table>
   </div>
+  <div class="card"><h3>详情 · doorman <span class="muted" style="font-size:12px;font-weight:400">— agent 契约分三层看</span></h3>
+    <p class="sub">role / tools / soul 不是模板的独立字段——它们来自被引用的 config。所以分「存了什么 / 实际生效什么 / 去哪看」三层，避免发明数据列。</p>
+    <div class="row">
+      <div class="card" style="margin:0;border-left:3px solid var(--cold)">
+        <h4 style="margin:0 0 6px;font-size:13px">① Stored fields（模板 slice 直接存的）</h4>
+        <dl class="kv" style="grid-template-columns:120px minmax(0,1fr);gap:4px 10px;font-size:12.5px">
+          <dt>flavor</dt><dd>${flavorBadge("cc")}</dd>
+          <dt>project_cwd</dt><dd class="mono">/srv/acme/storefront</dd>
+          <dt>config_dir</dt><dd class="mono">.claude/doorman</dd>
+          <dt>settings_path</dt><dd class="mono">.claude/doorman/settings.json</dd>
+          <dt>mcp_config_path</dt><dd class="mono">.claude/doorman/mcp.json</dd>
+          <dt>default_caps</dt><dd class="mono">[session/Session/:send/:any/acme]</dd>
+          <dt>desired_skills</dt><dd>greet · triage-intake</dd>
+          <dt>desired_caps</dt><dd class="muted">[]</dd>
+        </dl>
+      </div>
+      <div class="card" style="margin:0;border-left:3px solid var(--world-accent)">
+        <h4 style="margin:0 0 6px;font-size:13px">② Resolved effective contract（compile 后实际生效）</h4>
+        <dl class="kv" style="grid-template-columns:80px minmax(0,1fr);gap:4px 10px;font-size:12.5px">
+          <dt>role/soul</dt><dd>persona（来自 CLAUDE.md，flavor extra；<b>非独立列</b>）</dd>
+          <dt>tools</dt><dd>来自 settings/MCP config（<b>非模板字段</b>）</dd>
+          <dt>skills</dt><dd>greet · triage-intake（指令注入，不可调用）</dd>
+          <dt>subagents</dt><dd>由 SessionTemplate 的 members 表达，非 agent 模板内</dd>
+        </dl>
+        <div class="muted" style="font-size:11.5px;margin-top:6px">这一层是 demo 标注、不是真数据——提醒别把 soul/tools 当 stored 列。</div>
+      </div>
+      <div class="card" style="margin:0;border-left:3px solid var(--world-muted)">
+        <h4 style="margin:0 0 6px;font-size:13px">③ Source files（去哪看）</h4>
+        <div class="mono" style="font-size:12px;line-height:1.9">.claude/doorman/<br>├ settings.json — tools/hooks<br>├ mcp.json — MCP servers<br>├ CLAUDE.md — soul/persona<br>└ skills/ — 指令</div>
+      </div>
+    </div>
+  </div>
   <div class="row">
-    <div class="card"><h3>详情 · doorman</h3><p class="sub">点 URI 展开（demo 固定展示一个）</p>
-      <dl class="kv">
-        <dt>flavor</dt><dd>${flavorBadge("cc")}</dd>
-        <dt>settings_path</dt><dd class="mono">.claude/doorman/settings.json</dd>
-        <dt>mcp_config_path</dt><dd class="mono">.claude/doorman/mcp.json</dd>
-        <dt>default_caps</dt><dd class="mono">[session/Session/:send/:any/acme]</dd>
-        <dt>desired_skills</dt><dd>greet · triage-intake</dd>
+    <div class="card"><h3>Security <span class="badge tag">独立面，不混进 team routing</span></h3>
+      <dl class="kv" style="grid-template-columns:120px minmax(0,1fr);gap:4px 10px">
+        <dt>effective caps</dt><dd class="mono">[session/Session/:send/:any/acme]</dd>
+        <dt>desired caps</dt><dd class="muted">[]（请求，非授予）</dd>
+        <dt>credential source</dt><dd>agent 自持（不是 operator 的）</dd>
+        <dt>API-key 状态</dt><dd><span class="badge live">已配置</span> <span class="muted">（不显示 secret）</span></dd>
       </dl>
+      <div class="callout">cap grant/revoke + API-key 属于<b>安全面</b>，不在 team routing。编排器<b>没有</b> <code>grant_cap</code> 工具——授权改动走独立 gate。</div>
     </div>
     <div class="card"><h3>动作（冷 · operator 自有授权）</h3>
       <p class="sub">demo：点了显示真实授权 + 失败态，不写后端</p>
       <div class="action-list">
         ${actionRow(`<button class="btn primary" onclick="toast('warn','Fork（mock）','克隆为新 AgentTemplate（config-only）。',3000)">Fork</button>`, "Fork AgentTemplate", "克隆 · config-only")}
-        ${actionRow(`<button class="btn" onclick="toast('ok','Tag（mock）','给某 version 打 tag。',3000)">Tag</button>`, "Tag \\&quot;current\\&quot;", "可变指针")}
+        ${actionRow(`<button class="btn" onclick="toast('warn','Tag（mock）','⚠ TemplateTags.put/move 无条件直写 DB、无 cap gate（template_tags.ex）',4200)">Tag</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
       <div class="callout">⚠ <b>已知 gap：</b>AgentTemplate <b>没有 caller-threaded <code>create/3</code></b>（只有 system path）。Console 要新建 AgentTemplate 需先补这个后端缝（研究 note §1）。</div>
     </div>
@@ -567,7 +678,7 @@ overview(){ return `
         ${actionRow(`<button class="btn primary" onclick="toast('ok','Create（mock）','SessionTemplate.create/3 · workspace 必填 · 给 owner 授 Template cap',3200)">Create (root)</button>`, "Create SessionTemplate (root)", "workspace 必填")}
         ${actionRow(`<button class="btn" onclick="toast('warn','Fork（mock）','config-only，不带消息历史（不变式 #10）',3200)">Fork</button>`, "Fork SessionTemplate", "config-only")}
         ${actionRow(`<button class="btn" onclick="toast('ok','Persist version（mock）','内容寻址；同内容 → 同 hash',3200)">Persist version</button>`, "Persist version", "内容寻址 · 不可变")}
-        ${actionRow(`<button class="btn" onclick="toast('ok','Tag current（mock）','可变指针指向某 hash',3000)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "可变指针")}
+        ${actionRow(`<button class="btn" onclick="toast('warn','Tag current（mock）','⚠ TemplateTags.put/move 无条件直写 DB、无 cap gate',4200)">Tag &quot;current&quot;</button>`, "Tag \\&quot;current\\&quot;", "⚠ 无 cap gate")}
       </div>
     </div>
   </div>
@@ -596,9 +707,10 @@ team(){ return `
     </div>
     <div class="action-sub">演示真实失败态（点击看后端拒绝）</div>
     <div class="action-list">
-      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：unknown role','未知 role_name <code>ghost</code> → <code>{:unknown_member_role, &quot;ghost&quot;}</code>（tools.ex:619）',5000)">Add member · 坏 role</button>`, "未知 role_name → {:unknown_member_role} · tools.ex:619")}
-      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：same-URI regenerate','update 到同一 URI 不支持 → <code>reject_same_uri_swap</code>（member_template.ex:182,429）',5000)">Update member · 同 URI</button>`, "同 URI 重生不支持 · member_template.ex:182,429")}
-      ${demoRow(`<button class="btn" onclick="toast('warn','fail-closed','bob 无 Manage cap → 操作拒绝；审计仍保留 operator 身份（session_manager.ex:372）',5200)">无 Manage cap</button>`, "缺 cap → fail-closed · session_manager.ex:372")}
+      ${demoRow(`<button class="btn" onclick="toast('warn','fail-closed（Phase-1 gate）','缺 Manage cap → 操作拒绝；审计仍保留 operator 身份，不退化成「只看见 orchestrator」(session_manager.ex:372)',5200)">Add member · 缺 Manage 权</button>`, "缺 Manage cap → fail-closed（Phase-1 gate）")}
+      ${demoRow(`<button class="btn" onclick="toast('warn','误区更正','add member 的 role_name 是<b>新成员别名</b>，不做查找——<b>没有「未知 role」失败</b>。（unknown_member_role 属于 routing 的 receiver 解析）',5600)">Add member · 「未知 role」?</button>`, "role_name 是新别名：没有「未知 role」失败（常见误解）")}
+      ${demoRow(`<button class="btn" onclick="toast('reject','拒绝：same-URI','update 到同一 URI 不支持 → <code>:same_member_uri_use_reconfigure</code>（member_template.ex:429）',5200)">Update member · 同 URI</button>`, "同 URI → :same_member_uri_use_reconfigure · member_template.ex:429")}
+      ${demoRow(`<button class="btn" onclick="toast('ok','幂等，不是拒绝','remove 一个不存在的 role → <code>{:ok, :already_removed}</code>（tools.ex:413）——幂等，不报错',5200)">Remove member · 未知 role</button>`, "未知 role → {:ok, :already_removed}（幂等）· tools.ex:413")}
     </div>
   </div>
 `; },
@@ -625,7 +737,7 @@ routing(){ return `
       <h3>Legends</h3>
       ${LEGENDS.map(l=>`<div class="ruleset"><h4>@${l.name}</h4>
         <div class="muted" style="font-size:12.5px">member_set: ${l.member_set.join(", ")}<br>bound_rule_set: <b>${l.bound_rule_set}</b><br>fold: ${l.fold}</div></div>`).join("")}
-      <div class="action-list">${actionRow(`<button class="btn" onclick="toast('ok','Define legend（mock）','member_set 必须真实存在',3000)">+ legend</button>`, "Define legend", "Session :set_legends")}</div>
+      <div class="action-list">${actionRow(`<button class="btn" onclick="toast('warn','Define legend（mock）','⚠ 后端今天不校验 member_set/bound_rule_set（直写 map，tools.ex:705）',4200)">+ legend</button>`, "Define legend", "Session :set_legends · ⚠ 无校验")}</div>
       <h3 style="margin-top:16px">Prompt templates</h3>
       ${PROMPT_TEMPLATES.map(p=>`<div class="ruleset"><h4>${p.name}</h4><div class="mono" style="font-size:12px">${p.body}</div></div>`).join("")}
       <div class="action-list">
@@ -679,23 +791,27 @@ observability(){ return `
 
 matrix(){ return `
   <div class="world-header"><h1>授权矩阵（全量）</h1>
-  <p>Allen 要的「一页授权矩阵」的 UI 形态。每行 = 一个操作的：后端函数 · 冷/热 · 所需 cap（5 轴）· principal + 执行说明 · 失败态 · 审计。</p></div>
+  <p>每行 = 一个操作的：后端函数 · 冷/热 · <b>Held 授权 → Needed 锁孔</b>（拆开，因为持有的 scope ≠ 实际命中的具体锁）· 热操作的 <b>Phase-1 Manage gate</b> · 两个 caller · 失败态（code-verified）· 审计。点 <span class="auth-btn">ⓘ</span> 看单条详情。</p></div>
+  <div class="callout crux" style="margin-bottom:14px">读法：<b>Held</b>=你手里钥匙的 scope（如 <code>{:within_session,S}</code> 万能）；<b>Needed</b>=这次 dispatch 实际要开的具体锁（如 <code>Session :join</code> on 具体 session）。运行时把 Needed 的 instance 替换成具体 URI 再匹配——两者不是一回事。热操作还多一道 Phase-1 gate（operator 的 Manage cap）。</div>
   <div class="matrix-wrap"><table class="matrix">
     <thead><tr>
-      <th>操作</th><th>后端函数 (file:line)</th><th>冷/热</th><th>所需 cap（5 轴）</th>
-      <th>principal + 执行</th><th>失败态</th><th>审计</th>
+      <th>操作</th><th>后端函数 (file:line)</th><th>冷/热</th>
+      <th>Phase-1 gate<br>(operator Manage)</th><th>Held 授权（执行）</th><th>Needed 锁孔</th>
+      <th>caller（auth / exec）<br>granter</th><th>失败态 (verified)</th><th>审计</th>
     </tr></thead>
     <tbody>${MATRIX.map(m=>`<tr>
-      <td class="opname">${m.op}</td>
+      <td class="opname">${m.op}${m.gap?' <span class="badge defer" style="font-size:9px">gap</span>':''}</td>
       <td class="cite">${m.fn}<br>${m.file}</td>
-      <td>${m.temp==="cold"?'<span class="badge cold">冷</span>':'<span class="badge hot">热</span>'}</td>
-      <td class="mono" style="font-size:11px">${capLine(m.cap)}</td>
-      <td style="font-size:11.5px">caller=<code>${m.caller}</code>${m.exec?`<br><b>exec under</b> ${m.exec}`:'<br><span class="muted">（自有授权）</span>'}<br>granter=${m.granter}</td>
-      <td style="font-size:11.5px"><ul style="margin:0;padding-left:15px">${m.fail.map(f=>`<li>${f}</li>`).join("")}</ul></td>
-      <td style="font-size:11.5px">${m.audit}</td>
+      <td>${tempBadgeOf(m.temp)}</td>
+      <td class="mono" style="font-size:10.5px">${m.gate?capLine(m.gate):'<span class="muted">—（无 gate）</span>'}</td>
+      <td class="mono" style="font-size:10.5px">${capLine(m.held)}</td>
+      <td class="mono" style="font-size:10.5px">${capLine(m.needed)}</td>
+      <td style="font-size:11px">auth=<code>${m.authCaller}</code><br>exec=<code>${m.execCaller}</code><br><span class="muted">granter=${m.granter}</span></td>
+      <td style="font-size:11px"><ul style="margin:0;padding-left:15px">${m.fail.map(f=>`<li>${f}</li>`).join("")}${m.gap?`<li class="muted">⚠ ${m.gap}</li>`:""}</ul></td>
+      <td style="font-size:11px">${m.audit}</td>
     </tr>`).join("")}</tbody>
   </table></div>
-  <p class="sub" style="margin-top:12px">冷行：caller=授权者=granter=operator，无「exec under」。热行：operator 授权但在重建的会话/编排器授权下执行 → 双主体审计 + 缺 cap fail-closed。</p>
+  <p class="sub" style="margin-top:12px">冷行：auth=exec=operator，Held=operator 的 Template cap、无 gate。热行：auth=operator（Phase-1 Manage gate）、exec=orchestrator（Phase-2 重建 <code>{:within_session,S}</code>）→ 双主体审计、缺 Manage cap fail-closed。<b>⚠ Tag 今天无 cap gate</b>；<b>granter = 授权那把 cap 的 <code>granted_by</code></b>，不一定是 operator。</p>
 `; },
 
 };

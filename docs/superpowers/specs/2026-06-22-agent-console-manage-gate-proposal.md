@@ -126,4 +126,4 @@ Add `authorized_operator_uri`, `execution_principal_uri`, `front_door` (cc-bridg
 - `world-coordination.md`: the Console surface stays additive.
 
 ## 12. Also (reference hygiene)
-`references/capbac.md` §3 reads as if empty `ctx.caps` always fails closed; the dispatch path is `ctx.caps` **OR** `holds_cap(caller)` (evidence §5#3) — the "fails closed" statement is specific to the **grant chokepoint**. A clarifying edit is queued (pending the dev's go) so the protocol's fail-closed claim (enforced at the Phase-1 gate, not assumed from empty caps) is precise.
+`references/capbac.md` §3 reads as if empty `ctx.caps` always fails closed; the dispatch path is `ctx.caps` **OR** `holds_cap(caller)` (evidence §5#3) — the "fails closed" statement is specific to the **grant chokepoint**. ✅ Clarified (commit `56902617`) so the protocol's fail-closed claim (enforced at the Phase-1 gate, not assumed from empty caps) is precise.
