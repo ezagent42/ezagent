@@ -31,6 +31,10 @@ defmodule EzagentPluginHello.LLM.ApiClient do
 
   @default_timeout_ms 60_000
 
+  # A DEDICATED httpc profile so a configured proxy (below) routes ONLY hello's
+  # LLM calls, never other plugins' httpc traffic on the default profile.
+  @profile :ezagent_hello_httpc
+
   @doc """
   Call an OpenAI-shape chat-completions endpoint and return the assistant
   message content + token usage. Transport-only; no streaming, no retry, no
@@ -54,7 +58,9 @@ defmodule EzagentPluginHello.LLM.ApiClient do
     request = {String.to_charlist(api_url), headers, ~c"application/json", body}
     http_opts = [{:timeout, timeout}, {:connect_timeout, 10_000}]
 
-    case :httpc.request(:post, request, http_opts, body_format: :binary) do
+    ensure_profile()
+
+    case :httpc.request(:post, request, http_opts, [body_format: :binary], @profile) do
       {:ok, {{_, status, _}, _headers, resp_body}} when status >= 200 and status < 300 ->
         decode_success(resp_body)
 
@@ -71,6 +77,45 @@ defmodule EzagentPluginHello.LLM.ApiClient do
         )
 
         {:error, {:transport, reason}}
+    end
+  end
+
+  # Start the dedicated httpc profile (idempotent) and, if a proxy is configured
+  # (`HELLO_LLM_PROXY` | `HTTPS_PROXY` | `https_proxy`, "host:port"), point this
+  # profile's https_proxy at it — `localhost`/`127.0.0.1` stay direct. In some
+  # environments the LLM endpoint (e.g. api.deepseek.com) is only reachable via a
+  # local proxy; without one, direct egress times out.
+  defp ensure_profile do
+    case :inets.start(:httpc, profile: @profile) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      _ -> :ok
+    end
+
+    case proxy_config() do
+      {host, port} ->
+        :httpc.set_options(
+          [{:https_proxy, {{host, port}, [~c"localhost", ~c"127.0.0.1"]}}],
+          @profile
+        )
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp proxy_config do
+    raw =
+      System.get_env("HELLO_LLM_PROXY") || System.get_env("HTTPS_PROXY") ||
+        System.get_env("https_proxy")
+
+    with value when is_binary(value) and value != "" <- raw,
+         stripped <- value |> String.trim() |> String.replace_prefix("http://", ""),
+         [host, port] <- String.split(stripped, ":", parts: 2),
+         {port_int, ""} <- Integer.parse(port) do
+      {String.to_charlist(host), port_int}
+    else
+      _ -> nil
     end
   end
 

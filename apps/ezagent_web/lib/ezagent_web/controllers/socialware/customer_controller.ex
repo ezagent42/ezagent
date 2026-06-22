@@ -8,7 +8,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
   """
   use EzagentWeb, :controller
 
-  alias Ezagent.Socialware.CustomerFeed
+  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, PublicView}
   alias Ezagent.Uploads.DownloadToken
 
   @doc """
@@ -70,6 +70,29 @@ defmodule EzagentWeb.Socialware.CustomerController do
         conn
         |> put_resp_content_type("text/plain")
         |> send_resp(403, "unauthorized")
+    end
+  end
+
+  # Tokenless anonymous self-serve for a `public_view` session: the CustomerFeed
+  # shows the APPROVED SURFACE PAGE (the generated UI), so a public session is
+  # meant to be viewable by anyone with no login/token. The server mints a
+  # short-lived CustomerAuth token for the public session (the same trust the
+  # chat-feed anon flow already grants for `public_view`) and renders. A NON-public
+  # session falls through to the 400 below — no token, no view (fail-closed).
+  def show(conn, %{"session_uri" => session_str}) do
+    with {:ok, session_uri} <- parse_session(session_str),
+         true <- PublicView.public_view?(session_uri),
+         workspace_uri <- Ezagent.Capability.workspace_of(session_uri),
+         token <- CustomerAuth.issue_token(session_uri, workspace_uri),
+         {:ok, _snapshot} <- CustomerFeed.snapshot(session_uri, token) do
+      conn
+      |> put_resp_content_type("text/html")
+      |> send_resp(200, page(session_uri, token))
+    else
+      _ ->
+        conn
+        |> put_resp_content_type("text/plain")
+        |> send_resp(400, "missing session_uri or token")
     end
   end
 

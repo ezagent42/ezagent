@@ -108,15 +108,11 @@ defmodule EzagentPluginHello.Application do
   #   * /socialware/chat — the chat-feed surface (anon self-serve via membership).
   defp log_ready(session_uri) do
     s = URI.to_string(session_uri)
-    workspace = Ezagent.Capability.workspace_of(session_uri)
-    token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace)
 
     Logger.info("""
-    hello demo seed ready — open as an anonymous visitor:
-      customer (token, renders immediately):
-        /socialware/customer?session_uri=#{s}&token=#{token}
-      chat (anon self-serve):
-        /socialware/chat?session_uri=#{s}
+    hello demo seed ready — open as an anonymous visitor (public_view, no login,
+    no token — the CustomerFeed renders the approved generated page):
+      /socialware/customer?session_uri=#{s}
     """)
   end
 
