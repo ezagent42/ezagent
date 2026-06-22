@@ -12,7 +12,6 @@ defmodule EzagentWeb.Endpoint do
     store: :cookie,
     key: "_ezagent_web_key",
     signing_salt: "TCQlAZge",
-    domain: ".ezagent.chat",
     same_site: "Lax"
   ]
 
