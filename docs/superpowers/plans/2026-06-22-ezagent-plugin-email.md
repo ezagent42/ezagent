@@ -124,7 +124,10 @@ defmodule EzagentPluginEmail.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
-      {:swoosh, "~> 1.17"}
+      {:swoosh, "~> 1.17"},
+      # Swoosh's SMTP adapter calls :gen_smtp_client — required for the prod
+      # SMTP path (the web mailer declares both; codex plan review MED).
+      {:gen_smtp, "~> 1.2"}
     ]
   end
 end
@@ -184,9 +187,12 @@ In `config/dev.exs` (after line 10) add:
 config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Local
 ```
 
-In `config/test.exs` (after line 78) add:
+In `config/test.exs` (after line 78) add (codex plan review HIGH — use the
+**Test** adapter, not Local, so `Swoosh.TestAssertions.assert_email_sent` fires;
+`assert_email_sent` only works with `Swoosh.Adapters.Test`, which delivers an
+`{:email, _}` message to the test process):
 ```elixir
-config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Local
+config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Test
 ```
 
 - [ ] **Step 6: Run tests + wired-to-web invariant + plugin-check**
@@ -448,24 +454,33 @@ defmodule Ezagent.Email do
 
   defp configured_adapter, do: Application.get_env(:ezagent_plugin_email, Mailer, [])[:adapter]
 
+  # Local (dev) and Test (test) adapters are "non-SMTP": always ready and they
+  # do NOT touch the DB. Only the SMTP adapter reads smtp_config from AppSettings.
+  # (codex plan review HIGH — keep test/CLI-Local paths off the Repo sandbox.)
+  defp non_smtp_adapter? do
+    configured_adapter() in [Swoosh.Adapters.Local, Swoosh.Adapters.Test]
+  end
+
   defp mail_ready? do
-    case configured_adapter() do
-      Swoosh.Adapters.Local -> true
-      _ -> Ezagent.AppSettings.smtp_configured?()
-    end
+    if non_smtp_adapter?(), do: true, else: Ezagent.AppSettings.smtp_configured?()
   end
 
   defp configured_from do
-    case Ezagent.AppSettings.get("smtp_config") do
-      %{"from_address" => addr} when is_binary(addr) and addr != "" -> addr
-      _ -> @default_from
+    if non_smtp_adapter?() do
+      @default_from
+    else
+      case Ezagent.AppSettings.get("smtp_config") do
+        %{"from_address" => addr} when is_binary(addr) and addr != "" -> addr
+        _ -> @default_from
+      end
     end
   end
 
   defp deliver_built(email) do
-    case configured_adapter() do
-      Swoosh.Adapters.Local -> Mailer.deliver(email)
-      _ -> Mailer.deliver(email, Ezagent.Mail.SmtpOpts.from_config(Ezagent.AppSettings.get("smtp_config")))
+    if non_smtp_adapter?() do
+      Mailer.deliver(email)
+    else
+      Mailer.deliver(email, Ezagent.Mail.SmtpOpts.from_config(Ezagent.AppSettings.get("smtp_config")))
     end
   end
 end
