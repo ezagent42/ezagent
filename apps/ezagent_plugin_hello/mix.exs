@@ -44,7 +44,11 @@ defmodule EzagentPluginHello.MixProject do
       # approved Surface tree) live in ezagent_domain_socialware.
       {:ezagent_domain_socialware, in_umbrella: true},
       # `Ezagent.UI.SessionViewRegistry` — register the hello operator PageView.
-      {:ezagent_domain_ui, in_umbrella: true}
+      {:ezagent_domain_ui, in_umbrella: true},
+      # `Ezagent.Entity.User` (`User.admin_uri/0` — the admin-genesis dispatch
+      # authority used by `App`/`TurnDriver` to drive a session's Turn) is
+      # defined in ezagent_domain_identity.
+      {:ezagent_domain_identity, in_umbrella: true}
     ]
   end
 end
