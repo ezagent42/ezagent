@@ -15,14 +15,14 @@ An independent review (verified against code) found the first demo's **authority
 - **Matrix: two callers.** `authorization ctx.caller` = operator (Phase-1 gate); `execution ctx.caller` = orchestrator (Phase-2 dispatch). A single "caller" column is wrong (review A3).
 - **granter = `granted_by`, with evidence.** Not "always the operator" — a cold op's Template cap may have been granted by owner/admin/rule-configurer. Worked example should use an owner-granted-cap case so cold≠"three coincide" is honest.
 - **Failure states: replace fabricated/misattributed ones** with code-verified reality: `add_managed_member` has no "unknown role" failure (role_name is a NEW alias); `unknown_member_role` belongs to `define_rule_set_rule` receiver resolution (`tools.ex:619`); `remove_member` unknown role → `{:ok, :already_removed}` (idempotent, not a reject); same-URI → `:same_member_uri_use_reconfigure` (`member_template.ex:429`); `define_legend` does NOT validate member_set/bound_rule_set (a gap to label, not a failure to demo); there is no unified `session-not-live` error.
-- **Tag is ungated.** `TemplateTags` has `put/5`/`move/6` (not `tag/3`) and is an **unconditional DB write with no cap gate** — show it as a gap, not a fabricated `Template :write`.
+- **Tag is ungated.** `TemplateTags` has `put/5`/`move/5` (not `tag/3`) and is an **unconditional DB write with no cap gate** — show it as a gap (result `ok` / authz `not_checked`), not a fabricated `Template :write`. Tag is **SessionTemplate-only** (no AgentTemplate Tag).
 - **Add the missing cross-boundary ops** to the matrix: instantiate / create-session (cold→hot) and `update_template` / `save_template_as` (hot→cold).
 - **Agent contract: three layers.** Show stored fields / resolved effective contract / source file — do not invent a `soul` data column; surface role/tools/soul as they actually live (flavor extras + referenced config).
 - **Security panel.** cap grant/revoke + API-key status belong in an Agent-detail Security summary, not in team routing; never show secrets; the orchestrator has no `grant_cap` tool.
 - **Read-side authority** matters even for MVP's read-only topology (reads need an authorized path, not raw `Kind.get_slice`/`RuleStore.list`).
 - **capbac.md clarification** queued (pending explicit go): the dispatch path is `ctx.caps` OR `holds_cap(caller)`; "empty caps fails closed" is chokepoint-specific.
 
-The sections below are the ORIGINAL Phase-0 spec; where they conflict with §0a, §0a wins until the demo HTML is reworked to match.
+**The demo HTML now matches §0a** (3rd-review fidelity pass landed). §0a + the demo + the **Manage-gate proposal v2** are the living truth. The original §1–§8 below are kept for history but are **SUPERSEDED wherever they conflict with §0a** (notably: §1's URI examples were type-first; §3/§4 used the single-cap model, the `manage→orchestrator` agent-Manage framing, and `reject_same_uri_swap`/old failure atoms). Read §0a + the proposal, not the stale specifics below.
 
 ## 0. Scope of THIS spec
 
@@ -37,7 +37,7 @@ Non-goals (deferred to post-demo MVP / follow-ups, per handoff §6): wiring any 
 - **A single self-contained static page** (hand-written HTML + CSS + vanilla JS). No build step. Mirrors world's `world-screen` shell + a shadcn-shaped card/table/badge look so the confirmed layout ports directly to the real `agent_console` `.tsx` surface later.
 - **Zero collision:** does NOT touch `world_live.ex`, `styles.css`, or the world React bundle. This honors `world-coordination.md` (those are the highest-collision artifacts).
 - **Served on Tailnet** at a stable URL via a minimal static mount (exact mount resolved against the live endpoint config at build time; candidates: a `Plug.Static` path under the world plugin's `priv/`, or a 3-line demo route). Demo-only; removed/replaced when the real surface lands.
-- **All data is code-grounded mock:** real URI shapes (`entity://agent/<ws>/<name>`, `template://session/<ws>/<name>@<hash>`), real flavors (cc/codex/curl/echo), real cap 5-axis shapes, real tool names + `file:line` citations. No invented data model or permissions.
+- **All data is code-grounded mock:** real **workspace-first** URI shapes (`entity://<ws>/<type>/<name>`, `template://<ws>/session/<name>@<hash>`, `session://<ws>/<template>/<name>` — per `uri.ex`), real flavors (cc/codex/curl/echo), real cap 5-axis shapes, real tool names + `file:line` citations. No invented data model or permissions.
 
 ## 2. Information architecture (left sidebar sections)
 
@@ -53,6 +53,8 @@ Cold/live split mirrors the handoff's Template Studio ↔ Session Console.
 4. **Observability** — operator-action audit feed; every row foregrounds the **dual principal**: `authorized_operator_uri` + `execution_principal_uri`, cold/live, result/failure, timestamp.
 
 ## 3. Authority matrix (the core deliverable)
+
+> **SUPERSEDED in part — read §0a + Manage-gate proposal v2 for the corrected model.** The shipped matrix splits **Held authority vs Needed lock** and shows **two callers** (operator at the Phase-1 gate, orchestrator at execution); the `manage.*` gate actions are **PROPOSED** (§7 of the proposal). The "authorized by Alice … executed under session manage authority" phrasing below predates the two-phase split.
 
 Two complementary presentations:
 
@@ -88,13 +90,14 @@ Three roles the matrix keeps separate (capbac.md §1):
 
 Clicking an action surfaces the **real** rejection, not a placeholder:
 
-| trigger | rejection | citation |
+| trigger | result | citation |
 |---|---|---|
-| Add member with a dangling role_name | `{:unknown_member_role, r}` | `tools.ex:619` (`resolve_role_receiver`) |
+| **define_rule_set_rule** with a dangling receiver role | `{:unknown_member_role, r}` (NOT add_managed_member — role_name there is a new alias) | `tools.ex:619` (`resolve_role_receiver`) |
 | define_prompt_template missing `{body}` | `{:error, :body_placeholder_required}` | `tools.ex:669` |
-| Update member to the same URI | rejected (`reject_same_uri_swap`) | `member_template.ex:182,429` |
-| Any LIVE op on a non-live session | session-not-live (liveness gate, distinct from cap check) | capbac.md §3 |
-| Manage cap absent | **fail-closed**, operator identity preserved in audit | `session_manager.ex:372` |
+| Update member to the same URI | `{:error, :same_member_uri_use_reconfigure}` | `member_template.ex:429` |
+| Remove member with an unknown role | `{:ok, :already_removed}` — **idempotent, not a reject** | `tools.ex:413` |
+| define_legend with empty/invalid member_set | **written anyway** (backend does NOT validate) — a gap, not a reject | `tools.ex:705` |
+| Manage cap absent (Phase-1 gate) | **fail-closed** (`{:error, :manage_unauthorized}` PROPOSED), operator identity preserved in audit | `session_manager.ex:372` |
 
 ## 5. "Read this matrix" legend (in-demo)
 
