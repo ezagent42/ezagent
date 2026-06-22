@@ -48,7 +48,7 @@ Both modify, vs main:
 | # | Task | Branch | Status | Close action |
 |---|---|---|---|---|
 | 1 | PostgreSQL-only migration | `pg-compat-audit` | ✅ **MERGED** `db1fb574` (on main `3768b8e3`) | done — see outcomes |
-| 2 | #83 world beautify + restructure | `world-beautify` | ⚠️ needs-rebase | rebase onto post-pg main, resolve 5-file conflict set, re-run gates **under PG** + vite build + visual check, merge |
+| 2 | #83 world beautify + restructure | `world-beautify` | ✅ **MERGED** `28a90831` (squash) | done — precommit 4584/0 PG + vite build + check:mounts + agent-browser E2E (shadcn world renders); debt: world_live.ex 1036>1000 (cap-bumped 3→4, re-trim follow-up for zyli) |
 | 3 | hello @json-render plugin | `hello` (#891) | ⛓️ blocked-by-2 | rebase onto post-wb main, wire new plugin, re-run gates **under PG**, merge |
 
 ## Close prerequisites
