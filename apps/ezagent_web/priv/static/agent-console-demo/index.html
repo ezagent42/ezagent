@@ -49,7 +49,7 @@
     padding:16px 18px;margin-bottom:16px}
   .card h3{margin:0 0 2px;font-size:15px}
   .card .sub{color:var(--world-muted);font-size:12.5px;margin:0 0 12px}
-  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
   .row>.card{flex:1 1 340px;min-width:min(340px,100%)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--world-border);vertical-align:top}
@@ -81,17 +81,19 @@
   .action-row .btn{flex:none}
   .action-sub{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--world-muted);
     font-weight:600;margin:16px 0 2px}
-  .action-row.demo{background:#fff7f7;border-color:#fecaca}
-  .action-row.demo .a-desc{color:#9f1d1d}
+  .action-row.demo{background:#fff7f7;border-color:#fecaca;flex-direction:column;align-items:flex-start;gap:6px}
+  .action-row.demo .a-main{flex:none}
+  .action-row.demo .a-desc{color:#9f1d1d;white-space:normal;overflow:visible;text-overflow:clip}
   .action-row.demo .btn{border-color:#fecaca;color:#9f1d1d}
   .auth-btn{font-size:11px;font-weight:600;color:var(--world-accent);background:none;border:1px dashed #99f6e4;
     border-radius:7px;padding:3px 8px;cursor:pointer}
   .auth-btn:hover{background:var(--world-agent-tint)}
-  .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 12px;font-size:13px}
+  .kv{display:grid;grid-template-columns:140px minmax(0,1fr);gap:6px 12px;font-size:13px}
   .kv dt{color:var(--world-muted)}
-  .kv dd{margin:0}
+  .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
   .uri{font-family:var(--mono);font-size:12px;color:#0f172a;background:#f8fafc;border:1px solid var(--world-border);
-    border-radius:5px;padding:1px 5px}
+    border-radius:5px;padding:1px 5px;overflow-wrap:anywhere}
+  .kv dd .mono,.kv dd{overflow-wrap:anywhere}
   .muted{color:var(--world-muted)}
   .cite{font-family:var(--mono);font-size:11px;color:var(--world-muted)}
   .callout{border-left:3px solid var(--warn);background:var(--warn-tint);padding:9px 12px;border-radius:0 8px 8px 0;
