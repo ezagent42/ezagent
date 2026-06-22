@@ -470,8 +470,8 @@ overview(){ return `
     <div class="axis-card"><div class="ax">action</div>具体动作：<code>:join</code> / <code>:add_rule</code> / <code>:write</code> 或 <code>:any</code></div>
     <div class="axis-card"><div class="ax">instance</div>哪个具体实例：一个 <code>%URI{}</code>、<code>:any</code>、或作用域元组 <code>{:within_session, S}</code></div>
     <div class="axis-card"><div class="ax">workspace_uri</div>哪个 workspace 内：一个 <code>%URI{}</code> 或 <code>:any</code></div>
-    <div class="axis-card" style="background:#f8fafc"><div class="ax">+ provenance</div><code>granted_by</code>（必须真实 entity，Decision #154）+ <code>granted_at</code>（不参与匹配）</div>
   </div>
+  <div class="callout" style="margin:0 0 16px">＋ 另有 <b>2 个出处字段（不是轴、不参与匹配）</b>：<code>granted_by</code>（必须是真实 entity，Decision #154）+ <code>granted_at</code>。其中 <code>granted_by</code> 就是下面三角色里的 <b>granter</b>——记的是「谁对这把钥匙负责」，不影响开不开锁。</div>
   <h3 style="font-size:14px;margin:0 0 8px">三角色（每格都要分清，最容易错）</h3>
   <div class="legend-grid">
     <div class="role-card caller"><b>caller</b> · <code>ctx.caller</code><br><span class="muted">机械上发起 dispatch 的代码路径——常常不是人。</span></div>
