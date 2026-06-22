@@ -92,6 +92,11 @@ defmodule EzagentWeb.Router do
     get "/register", RegistrationController, :new
     post "/register", RegistrationController, :create
     get "/auth/confirm/:token", RegistrationController, :confirm
+    # task #87 — password reset via emailed :reset one-time link.
+    get "/auth/reset", PasswordResetController, :new
+    post "/auth/reset", PasswordResetController, :create
+    get "/auth/reset/:token", PasswordResetController, :edit
+    post "/auth/reset/:token", PasswordResetController, :update
 
     get "/socialware/customer", Socialware.CustomerController, :show
 
