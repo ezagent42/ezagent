@@ -1,4 +1,31 @@
-# De-orchestrator-ize the Session: Orchestrator as a `role` Member + Provision-on-Route — Design (rev4)
+# De-orchestrator-ize the Session: Orchestrator as a `role` Member + Provision-on-Route — Design (rev5)
+
+## 0c. What changed in rev5 (resolves the rev4 adversarial-review: 1 BLOCKER + 3 HIGH)
+
+- **BLOCKER — delivery-time transport-readiness (not a create-time wait):**
+  deleting the gate must NOT lose the bridge-readiness guarantee. `PendingDelivery`
+  buffers on **Kind** readiness, but a cc agent can be Kind-ready while its
+  claude/MCP bridge never joins → a routed message would vanish silently. rev5
+  adds a **delivery-time transport-readiness buffer** for bridge-backed members
+  (§4.5): a message routed to such a member buffers until its bridge has joined
+  (`LiveJoinRegistry`), or fails **visibly** — never silently. This is a delivery
+  contract, NOT a create-time wait (create stays pure; Allen's no-wait-at-create
+  holds).
+- **HIGH — tagged routing receiver schema:** rule receivers are stored today as
+  plain URI strings (`rule_store.ex receivers: {:array,:string}`). Role-targeting
+  needs a **tagged receiver form** (`role | uri | magic`) + DB migration +
+  RuleStore/Resolver/UI/CLI changes + dual-read of legacy URI/magic receivers
+  (§4.3).
+- **HIGH — caps via the existing fail-closed Role policy (not a genesis carve-out):**
+  role-member caps go through `Ezagent.Role`'s existing fail-closed
+  `requested ∩ flavor/tenant policy` materialization (`role.ex`). The system
+  orchestrator role's caps are whitelisted in that policy; **tenant-authored
+  roles cannot mint genesis-backed `behavior:any`/`{:spawned_by}` authority**
+  (negative tests required). Owner-delegation (#153/#154) stays out of scope (§4.6).
+- **HIGH — PR sequencing:** the create-flip + gate-delete PR MUST also retarget
+  the create-return contract, `Workspace.create_session` meta, HomeLive, and
+  Scenario-32 G1 in the SAME PR — otherwise CI is red or implementers keep an
+  eager path (§12).
 
 > Status: design (brainstorm-approved 2026-06-23). **rev4 is a major redesign**
 > of rev1–rev3 (which kept the orchestrator special and added an eager
@@ -159,6 +186,18 @@ rev4 changes rules to **carry the role** and resolve to a member **at route-time
 This is what lets routing both (a) deliver to an existing role-member and (b)
 trigger provisioning when the declared role has no live member (§4.4).
 
+**Tagged receiver schema (rev5 HIGH fix).** Today rule receivers are stored as
+plain strings interpreted as URIs (`rule_store.ex receivers: {:array, :string}`,
+parsed via `Ezagent.URI.new!`; magic tokens are the only non-URI form). A bare
+role string like `"orchestrator"` would crash URI parsing or collide with
+URI/magic receivers. rev5 introduces a **tagged receiver form** — `{:role, name}`
+| `{:uri, uri}` | `{:magic, token}` — with: a `RuleStore` schema/migration to
+persist the tag, `Resolver` changes to dispatch on tag (role → resolve-or-provision
+at route-time; uri/magic unchanged), and UI/CLI validation. **Dual-read** during
+transition: legacy untagged strings are read as `{:uri, _}`/`{:magic, _}` (their
+current meaning) so existing rules keep working; only role-targeting requires the
+new tag. No rule silently changes meaning.
+
 ### 4.4 Provision-on-route (the single bring-up primitive)
 
 When the router resolves a rule whose target **role** is **declared** by the
@@ -196,7 +235,37 @@ Delete the entire wait→kill→rollback gate from the bring-up path:
 `kill_orchestrator`, the lifecycle subscribe/unsubscribe. **Keep** the durable
 `LiveJoinRegistry` join-marking (`McpChannel.join/3`) and `Orchestrator.Health`
 read as the pure status surface. The provisioning step does **not** wait for the
-join; the member becomes ready on its own and delivery buffers until then.
+join.
+
+**Delivery-time transport-readiness buffer (rev5 BLOCKER fix).** The deleted gate
+also guaranteed that a message only reached a *bridge-joined* orchestrator.
+`PendingDelivery` does NOT preserve this — it buffers only while the **Kind**'s
+`ReadyGate` is `:not_ready`, but a bridge-backed agent (cc) can be Kind-ready
+while its claude/MCP bridge has not joined (`LiveJoinRegistry.joined?` false). A
+message dispatched in that window would reach a Kind-ready-but-bridge-dead agent
+and silently vanish. rev5 therefore requires a **per-member transport-readiness
+buffer for bridge-backed members**: a dispatch routed to such a member is held
+until its bridge join is durably marked, then delivered; if the member is
+declared dead / never joins, the send **fails visibly** (surfaced, not swallowed)
+— never silently dropped. There is **no fixed timeout at create**; this is a
+delivery contract, not a create gate. Two acceptable mechanisms (codex picks one,
+prove with the test below):
+  1. extend the bridge-backed agent's readiness so its `ReadyGate` does not flip
+     to `:ready` until bridge-join — then existing `PendingDelivery` covers it
+     uniformly (preferred if it doesn't widen the not-ready window for non-message
+     dispatches); or
+  2. a dedicated transport-readiness queue keyed on `LiveJoinRegistry`, drained on
+     the bridge-join broadcast, with a visible-failure path for declared-dead
+     members.
+Required test: Agent Kind is `ReadyGate`-ready but `LiveJoinRegistry` never joins
+→ assert the routed message is durably queued and eventually delivered on join,
+or fails visibly — and is NEVER silently lost.
+
+> Production-semantics to preserve (audit surprises #2/#3): the planned member URI
+> must be written to the durable working copy BEFORE the live MCP join so the join
+> can self-register. Under rev4 the member URI is written at provision time
+> (spawn+join), before the agent's bridge connects — preserving the self-register
+> ordering without any wait.
 
 > Production-semantics to preserve (audit surprises #2/#3): the planned member URI
 > must be written to the durable working copy BEFORE the live MCP join so the
@@ -208,14 +277,24 @@ join; the member becomes ready on its own and delivery buffers until then.
 ### 4.6 Caps for the role-member (carve-out)
 
 Today the orchestrator's scoped caps are granted with `granted_by: owner_uri` but
-**authorized via a genesis/system-backed tag** (`caps.ex tag_for/2` → genesis
-authorizer for the `behavior: :any` caps), NOT by the owner delegating from
-caps they hold. rev4 **keeps this exact authority model**, generalized: a
-provisioned role-member receives its role's required caps (the Role recipe's
-`requested_caps`, today empty for orchestrator — to be populated from the current
-orchestrator scoped-cap set) granted under the same system/genesis-backed
-authority. The "owner truly delegates the `{:spawned_by}` cap" problem
-(#153/#154) is **explicitly out of scope** and remains separately deferred.
+**authorized via a genesis/system-backed tag** (`caps.ex tag_for/2`), NOT by the
+owner delegating from caps they hold.
+
+**rev5 routes role-member caps through the EXISTING fail-closed Role policy, not a
+genesis carve-out (HIGH fix).** `Ezagent.Role` already materializes a role's
+`requested_caps` through an explicit fail-closed `requested ∩ flavor/tenant
+policy` step (`role.ex`: "a requested cap not permitted by policy is dropped, not
+granted"). A provisioned role-member's caps therefore come from its
+`Role.requested_caps` materialized through that fail-closed policy. The system
+**orchestrator** role's caps (today's orchestrator scoped-cap set, currently
+`OrchestratorRole.requested_caps == []` pending PR-2) are populated and
+**whitelisted in the policy as a built-in system role**. Crucially:
+**tenant-authored roles cannot obtain genesis-backed `behavior: :any` /
+`{:spawned_by}` authority** — the fail-closed policy drops anything not
+whitelisted. Negative tests must prove a tenant role declaring such caps gets them
+dropped. The "owner truly delegates the `{:spawned_by}` cap" problem (#153/#154)
+stays **out of scope** and separately deferred — this work neither solves nor
+regresses it.
 
 ### 4.7 Status display + error surfacing
 
@@ -337,6 +416,17 @@ status → Orchestrator.Health + LiveJoinRegistry (pure read, never blocks)
     `data-last-dispatch`.
 11. **Cross-workspace spawn preserved:** a system-template role-member provisions
     into the tenant workspace (the sanctioned bypass still works).
+12. **Transport-readiness (rev5 BLOCKER):** Agent Kind is `ReadyGate`-ready but
+    `LiveJoinRegistry` never marks join → a routed message is durably held and
+    delivered on join, OR fails visibly — and is NEVER silently lost. Positive:
+    held message delivers once join is marked.
+13. **Tagged receiver dual-read (rev5 HIGH):** a legacy untagged URI/magic
+    receiver still routes unchanged; a `{:role, "orchestrator"}` receiver resolves
+    (or provisions) at route-time; a bare role string never reaches `URI.new!`.
+14. **Cap fail-closed (rev5 HIGH):** a tenant-authored role requesting
+    `behavior: :any` / `{:spawned_by}` caps gets them **dropped** by the
+    fail-closed `Role` policy (no genesis-backed grant); the system orchestrator
+    role still receives its whitelisted caps.
 
 All gates on PostgreSQL; `mix precommit` EXIT=0 authoritative. Because the
 readiness path is compile-bypassed in `:test`, add an explicit
@@ -370,13 +460,24 @@ These WILL go red on the move and are part of the work:
    data migration; tests that both forms resolve.
 2. **PR-B** — role-targeted routing rules: rules carry roles, resolve at route-
    time (dual-read old URI-resolved rules for back-compat during transition).
-3. **PR-C** — provision-on-route primitive + lazy bring-up; route-time resolution
-   uses it; create still also ensures (parallel) — verify provisioning works.
-4. **PR-D** — flip create to the pure path (drop the synchronous ensure arm);
-   **delete** the readiness gate; create no longer waits/rolls-back on orchestrator.
-   Tests 1–7, 11.
+3. **PR-C** — provision-on-route primitive + lazy bring-up + the **delivery-time
+   transport-readiness buffer** (§4.5 BLOCKER fix); route-time resolution uses it;
+   create still also ensures (parallel) so this PR is independently verifiable.
+   Tests 4, 5, 6, 7 + the bridge-ready-but-not-joined buffering test.
+4. **PR-D (atomic flip — must retarget contracts in the SAME PR, HIGH fix)** —
+   flip create to the pure path (drop the synchronous ensure arm) AND **delete**
+   the readiness gate AND, in the same PR, retarget every consumer that asserts an
+   eager orchestrator: the `create_session` return meta (drop required
+   `orchestrator_status`), `Workspace.create_session` meta + CLI + `HomeLive` flash
+   (drop the `:ready`/`:pending`/`:failed` orchestrator arms), and **Scenario-32
+   G1** (from "owner AND orchestrator are members immediately after create" → "after
+   the first route to `role: orchestrator`, the provisioned member is joined").
+   Doing these together keeps CI green and prevents implementers from keeping an
+   eager path to satisfy stale tests. Tests 1, 2, 3, 11.
 5. **PR-E** — remove the special `orchestrator_template_uri` field + the
-   `[owner,orchestrator]` arm + OTU readers; generalize caps/Health to role-member.
+   `[owner,orchestrator]` arm + OTU readers; route role-member caps through the
+   fail-closed `Role` policy (§4.6) + cap-escalation negative tests; generalize
+   Health to role-member.
 6. **PR-F** — de-orchestrator-ize naming + arch-invariant/baseline retargeting +
    the §13 completion-gate test (test 8); transport/`OrchestratorReadinessPort`
    cleanup.
