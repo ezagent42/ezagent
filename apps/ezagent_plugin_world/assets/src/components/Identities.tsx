@@ -507,7 +507,7 @@ function activeMatches(active: string, label: string) {
 
 function previewAgentUri(workspaceUri: string | null | undefined, name: string) {
   const workspace = workspaceUri?.replace("workspace://", "") || "system"
-  return `entity://agent/${workspace}/${name}`
+  return `entity://${workspace}/agent/${name}`
 }
 
 function formatList(values: string[] | undefined) {
