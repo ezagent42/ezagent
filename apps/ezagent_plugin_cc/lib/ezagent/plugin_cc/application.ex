@@ -82,7 +82,11 @@ defmodule EzagentPluginCc.Application do
   end
 
   @impl Ezagent.Plugin
-  def template_classes, do: [Ezagent.PluginCc.Template.CcAgent]
+  def template_classes,
+    do: [
+      Ezagent.PluginCc.Template.CcAgent,
+      Ezagent.PluginCc.Template.CcHeadlessAgent
+    ]
 
   @impl Ezagent.Plugin
   def agent_flavors do
@@ -95,6 +99,12 @@ defmodule EzagentPluginCc.Application do
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcAgent,
         bridge_adapter: EzagentPluginCc.BridgeAdapter
+      },
+      %{
+        flavor: "cc-headless",
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
+        bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter
       }
     ]
   end
