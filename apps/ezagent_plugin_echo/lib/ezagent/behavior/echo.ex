@@ -79,12 +79,14 @@ defmodule Ezagent.Behavior.Echo do
   )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # Echo is registered on Entity.Echo Kind (type_name :echo) — kind axis
-  # is `:echo`. Manually exported to override the macro's `:any` default.
+  # Echo agents now ride Ezagent.Entity.Agent Kind (type_name :agent) —
+  # kind axis is `:agent` so CapBAC exact-match passes.
+  # (Previously :echo when Echo had its own Kind; no grant migration needed —
+  # there are no live :echo grants.)
   def required_caps do
     %{
-      say: Ezagent.Capability.cap(:echo, __MODULE__, :say),
-      receive: Ezagent.Capability.cap(:echo, __MODULE__, :receive)
+      say: Ezagent.Capability.cap(:agent, __MODULE__, :say),
+      receive: Ezagent.Capability.cap(:agent, __MODULE__, :receive)
     }
   end
 

@@ -49,12 +49,12 @@ defmodule Ezagent.Behavior.EchoTest do
       assert {:ok, %{count: 0, last_msg: nil}} = Echo.create(%{})
     end
 
-    test "required_caps/0 uses :echo kind axis (not auto-derived :any)" do
+    test "required_caps/0 uses :agent kind axis (echo is now Entity.Agent)" do
       caps = Echo.required_caps()
       assert %Ezagent.Capability{} = caps.say
-      # Kind axis MUST stay :echo per SPEC caps-cleanup-v1 §2.
-      assert caps.say.kind == :echo
-      assert caps.receive.kind == :echo
+      # Kind axis is :agent because echo agents ride Ezagent.Entity.Agent (type_name :agent).
+      assert caps.say.kind == :agent
+      assert caps.receive.kind == :agent
     end
 
     test "cap_subjects/0 returns descriptions for every action" do
@@ -80,7 +80,12 @@ defmodule Ezagent.Behavior.EchoTest do
     end
 
     test "increments count using ctx.read" do
-      ctx = %{read: fn :count, _ -> 5; _, d -> d end}
+      ctx = %{
+        read: fn
+          :count, _ -> 5
+          _, d -> d
+        end
+      }
 
       assert {:ok, _result, effects} = Echo.handle_say(%{msg: "x"}, ctx)
       assert {:set, :count, 6} in effects
@@ -103,10 +108,11 @@ defmodule Ezagent.Behavior.EchoTest do
 
   describe "handle_receive/2 — chat fan-out reply" do
     test "ignores message when caller is absent (no dispatch effect emitted)" do
-      msg = Ezagent.Message.new(
-        Ezagent.URI.new!("entity://team-alpha/agent/echo_default"),
-        %{text: "hi"}
-      )
+      msg =
+        Ezagent.Message.new(
+          Ezagent.URI.new!("entity://team-alpha/agent/echo_default"),
+          %{text: "hi"}
+        )
 
       ctx = %{
         read: fn _k, d -> d end,
@@ -122,10 +128,11 @@ defmodule Ezagent.Behavior.EchoTest do
     end
 
     test "emits :dispatch effect targeting the session's chat.send when caller is a session URI" do
-      msg = Ezagent.Message.new(
-        Ezagent.URI.new!("entity://team-alpha/user/alice"),
-        %{text: "ping"}
-      )
+      msg =
+        Ezagent.Message.new(
+          Ezagent.URI.new!("entity://team-alpha/user/alice"),
+          %{text: "ping"}
+        )
 
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default")
@@ -149,10 +156,11 @@ defmodule Ezagent.Behavior.EchoTest do
     end
 
     test "suppresses reply when stress turn_cap == 0 (sink mode)" do
-      msg = Ezagent.Message.new(
-        Ezagent.URI.new!("entity://team-alpha/user/alice"),
-        %{text: "ping", meta: %{"hop" => 0, "turn_cap" => 0}}
-      )
+      msg =
+        Ezagent.Message.new(
+          Ezagent.URI.new!("entity://team-alpha/user/alice"),
+          %{text: "ping", meta: %{"hop" => 0, "turn_cap" => 0}}
+        )
 
       ctx = %{
         read: fn _k, d -> d end,
@@ -167,13 +175,17 @@ defmodule Ezagent.Behavior.EchoTest do
     end
 
     test "still increments count via :set effects on receive" do
-      msg = Ezagent.Message.new(
-        Ezagent.URI.new!("entity://team-alpha/user/alice"),
-        %{text: "hi"}
-      )
+      msg =
+        Ezagent.Message.new(
+          Ezagent.URI.new!("entity://team-alpha/user/alice"),
+          %{text: "hi"}
+        )
 
       ctx = %{
-        read: fn :count, _ -> 7; _, d -> d end,
+        read: fn
+          :count, _ -> 7
+          _, d -> d
+        end,
         self_uri: Ezagent.URI.new!("entity://team-alpha/agent/echo_default"),
         caller: Ezagent.URI.new!("session://team-alpha/default/main")
       }
