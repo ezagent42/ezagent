@@ -96,6 +96,13 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   end
 
   defp resolve_anonymous(conn, session_uri) do
+    # Cold-link revival (mirrors customer_controller): rehydrate a cold public
+    # session from its snapshot so the `public_view?/1` gate sees a live slice
+    # instead of bouncing a still-public-but-cold link to /login. ensure_live only
+    # wakes a session that HAS a snapshot; access stays gated by public_view?
+    # below (a revived non-public session still bounces).
+    _ = Ezagent.SpawnRegistry.ensure_live(session_uri)
+
     # Public-view gate FIRST — a non-public session never mints an anon and never
     # becomes anon-accessible. Bounce exactly as the pre-#51 RequireEntity did.
     if PublicView.public_view?(session_uri) do
