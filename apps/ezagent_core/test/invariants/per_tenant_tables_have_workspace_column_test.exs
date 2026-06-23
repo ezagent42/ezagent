@@ -103,7 +103,13 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # the thread (root/last Message-ID + References chain) is scoped to
     # the bound session's workspace; a thread for ws A must never be read
     # from ws B. Derived structurally from the session at write time.
-    {Ezagent.Email.ThreadState, "email_thread_state"}
+    {Ezagent.Email.ThreadState, "email_thread_state"},
+    # #88 PR-2 — email-owned per-binding inbound metadata (local alias +
+    # verification status + binding-scoped token), keyed by the binding row
+    # id. Per-tenant: the alias→session reverse lookup and the verification
+    # gate are scoped to the bound session's workspace; a row for ws A must
+    # never be read from ws B. Derived structurally from the session.
+    {Ezagent.Email.InboundBinding, "email_inbound_binding"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
