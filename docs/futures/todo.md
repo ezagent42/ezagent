@@ -14,6 +14,31 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### i18n hardcoded user-facing strings + anti-CJK-literal gate — OPEN (Allen 2026-06-23)
+
+> **Trigger.** Allen found user-facing strings hardcoded in Chinese, e.g.
+> `TurnDriver.say(session_uri, builder, "📦 已生成结构:#{describe_page(spec)}")`
+> in the hello builder narration (lands via PR #910 `world-hello-convergence`).
+>
+> **Two parts — do AT `dev-together close` (when #910 merges) + as a sweep:**
+> 1. **i18n the offenders** — route user-facing strings through Phoenix Gettext.
+>    Gettext is **already set up**: backends in `apps/ezagent_domain_ui`
+>    (`…/gettext.ex`) + `apps/ezagent_web` (`EzagentWeb.Gettext`), each with
+>    `priv/gettext/{en,zh_CN}/LC_MESSAGES`. Immediate scope at close = the hello
+>    `turn_driver.ex` / `generator.ex` narration strings; broader scope = the ~23
+>    `apps/**/lib/**.ex` files that currently hold CJK string literals.
+> 2. **Add an arch gate** (extend `ezagent.arch.scan.ex` / `check_invariants`) that
+>    **fails when a raw CJK string literal appears in user-facing source** and
+>    requires Gettext (`gettext`/`dgettext` or the `~t` sigil). **Scoping is the hard
+>    part — must NOT false-positive on:** comments + `@moduledoc`/`@doc`; intentional
+>    non-UI Chinese (`plugin_feishu` mention/keyword matchers that parse Chinese
+>    *input*; demo-seed mix tasks; test fixtures). Use a curated allowlist, modeled
+>    the same narrow grep/AST way as the readiness anti-recurrence gate (test 15 in
+>    the session-decouple rev6 spec).
+>
+> **Status:** recorded 2026-06-23; not started (waiting on close / #910 merge). The
+> ~23-file sweep is what makes the gate green — size accordingly.
+
 ### #154 genesis-collapse hardening — RESOLVED 2026-06-20 (Allen: VM-internal-trust, formalized)
 
 > **RESOLVED.** Allen's decision (2026-06-20): adopt VM-internal trust as the
