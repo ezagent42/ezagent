@@ -1,6 +1,9 @@
 # Plugin-owned `resource://` type registration — design
 
-> Status: design (approved approach A, 2026-06-23). Lead: Allen.
+> Status: design (approach A approved 2026-06-23; rev2 incorporates codex
+> adversarial-review — HIGH-1 backend-aliasing, HIGH-2 restart, HIGH-3
+> component-name, HIGH-4 R-3 scope, HIGH-5 batch atomicity, HIGH-6 naming,
+> HIGH-8 migration). Lead: Allen.
 > Supersedes the `HomePathExceptions` anchor for world `layout_dir/0`.
 
 ## 1. Problem
@@ -68,27 +71,45 @@ flipped to re-open the table.
 
 **Approach A keeps every structural defense and removes only "no post-init write
 message":** add a `register/2` GenServer call that performs the **same**
-`validate_spec/2` + `:ets.insert_new/2` the boot loop already uses.
+`validate_spec/2` + `:ets.insert_new/2` the boot loop already uses, **plus a new
+`backend_component`-uniqueness check** (see below — closes the aliasing hole
+codex HIGH-1 found).
 
 - **Owner-only** — still the sole writer (it is a call handled in the Registry
   process; non-owner `:ets.insert` on a `:protected` table still raises).
-- **Write-once** — `:ets.insert_new/2` makes a second registration of an
-  existing `<type>` fail; `register/2` returns `{:error, {:duplicate_type, t}}`.
-  `Plugin.boot/1` turns that into a loud boot failure (it already raises on bad
-  declarations).
+- **Write-once on `<type>`** — `:ets.insert_new/2` makes a second registration of
+  an existing `<type>` fail; `register/2` returns `{:error, {:duplicate_type, t}}`.
+- **Write-once on `backend_component` (NEW, HIGH-1 fix)** — `register/2` ALSO
+  rejects a spec whose `backend_component` is already claimed by any registered
+  type: `{:error, {:duplicate_backend, b}}`. Without this, write-once on the key
+  alone is insufficient: a plugin could register a *fresh* `<type>` whose
+  `backend_component` is `"uploads"` with a *weaker* `authority/2`, then reach the
+  same bytes through the new type — a cross-type authority bypass that never
+  touches the protected `"uploads"` key. Backend-uniqueness makes the
+  (type ↔ backend) mapping a bijection; the authority fn guarding a backend's
+  bytes is therefore fixed by whoever registered that backend FIRST.
 - **No overwrite, no delete** — there is no update or delete path, in any env
   except the existing `:test`-only `unregister_for_test`.
 - **No reopen flag** — nothing mutable gates the decision; the table simply never
   accepts a second write to a key. The round-4 anti-seal concern does not apply.
 
 **Threat analysis of the new capability (adding a *new* type at plugin boot):**
-- A plugin can only register types it declares; it **cannot** replace core's or
-  another plugin's type (write-once + core-registers-first, see §5 ordering).
+- A plugin **cannot** replace core's or another plugin's type (`<type>`
+  write-once + core-registers-first, §5) **nor alias another type's bytes**
+  (`backend_component` write-once + core-registers-first). Core's backends
+  (`cc-agents`/`codex-agents`/`uploads`) are claimed at `init/1` before any plugin
+  boots, so a plugin can never bind a weaker authority to a core backend.
 - A plugin supplies its own `authority/2` — acceptable: plugins are first-party,
   in-process, fully-trusted umbrella code (same trust as a plugin defining a
-  Behaviour or a spawn fn). Once registered, that authority fn is immutable.
-- Net: the only new power is "a trusted plugin can append a type it owns." No
-  cross-type escalation, no authority swap. The property that mattered is intact.
+  Behaviour or a spawn fn). Once registered, that authority fn is immutable AND
+  the bytes it guards are reachable only through its own type (bijection).
+- **Naming convention (HIGH-1/§6 collision hygiene):** plugin-contributed
+  `<type>` AND `backend_component` SHOULD be plugin-slug-prefixed
+  (`world-layouts`, not bare `layouts`) so two plugins never accidentally collide
+  and brick startup. Enforced softly (a lint/test warns on a non-prefixed plugin
+  type); core types keep their existing bare names.
+- Net: the only new power is "a trusted plugin can append a type+backend pair it
+  owns." No cross-type escalation, no authority swap, no backend aliasing.
 
 ## 4. Components
 
@@ -112,66 +133,111 @@ The `type_spec` is the EXISTING resolver type
 alongside the existing Behavior/Template/Flavor/Routing publishing:
 
 ```elixir
-Enum.each(plugin_module.resource_types(), fn {type, spec} ->
-  case Ezagent.Resource.FsResolver.Registry.register(type, spec) do
-    :ok -> :ok
-    {:error, reason} ->
-      raise ArgumentError,
-        "#{inspect(plugin_module)} resource_types: #{inspect(type)} → #{inspect(reason)}"
-  end
-end)
+case Ezagent.Resource.FsResolver.Registry.register_all(plugin_module.resource_types()) do
+  :ok -> :ok
+  {:error, reason} ->
+    raise ArgumentError,
+      "#{inspect(plugin_module)} resource_types → #{inspect(reason)}"
+end
 ```
 
-Loud failure on a duplicate/invalid type is correct — a type collision is an
-operator/author error, not something to swallow (consistent with how `publish/1`
-already rejects a plugin `spawns/0`).
+Whole-batch (`register_all`) so the plugin contributes all its types or none
+(HIGH-5: no dangling type if a later decl in the list is bad). Loud failure on a
+duplicate/invalid type is correct — a collision is an operator/author error, not
+something to swallow (consistent with how `publish/1` already rejects a plugin
+`spawns/0`). Because `register_all` validates the whole batch before inserting,
+the type only becomes visible once the plugin's entire resource declaration is
+accepted.
 
 ### 4.3 `Resource.FsResolver.Registry` — owner-only write-once `register/2`
 
 ```elixir
-@spec register(String.t(), FsResolver.type_spec()) :: :ok | {:error, term()}
-def register(type, spec), do: GenServer.call(__MODULE__, {:register, type, spec})
+# Batch register: ALL specs validated + collision-checked BEFORE any insert
+# (HIGH-5: a partial insert can leave a dangling type if a later one fails).
+@spec register_all([{String.t(), FsResolver.type_spec()}]) :: :ok | {:error, term()}
+def register_all(decls), do: GenServer.call(__MODULE__, {:register_all, decls})
 
 @impl true
-def handle_call({:register, type, spec}, _from, state) do
+def handle_call({:register_all, decls}, _from, state) do
   reply =
-    case validate_spec(type, spec) do
-      :ok ->
-        if :ets.insert_new(@table, {type, spec}), do: :ok,
-          else: {:error, {:duplicate_type, type}}
-      {:error, _} = err -> err
+    with :ok <- Enum.reduce_while(decls, :ok, fn {type, spec}, _ ->
+                  case precheck(type, spec) do
+                    :ok -> {:cont, :ok}
+                    err -> {:halt, err}
+                  end
+                end) do
+      Enum.each(decls, fn {type, spec} -> true = :ets.insert_new(@table, {type, spec}) end)
+      :ok
     end
   {:reply, reply, state}
 end
+
+# precheck = validate_spec + type-uniqueness + backend-uniqueness, NO write.
+defp precheck(type, spec) do
+  with :ok <- validate_spec(type, spec),
+       :ok <- (if type_taken?(type), do: {:error, {:duplicate_type, type}}, else: :ok),
+       :ok <- (if backend_taken?(spec.backend_component),
+                 do: {:error, {:duplicate_backend, spec.backend_component}}, else: :ok) do
+    :ok
+  end
+end
 ```
 
-`validate_spec/2` and the ETS table are unchanged — `register/2` is a thin,
-serialized, write-once front door reusing both. `boot_registrations/0` (core
-types) still applies first at `init/1`; the moduledoc's "no post-init write"
-wording is updated to "post-init writes are **append-only, write-once,
-owner-serialized** via `register/2`; no overwrite, no delete, no reopen flag."
+`validate_spec/2` and the ETS table layout are unchanged. `register_all/1` is a
+serialized front door that **validates + checks BOTH uniqueness axes for the whole
+batch, then inserts all (or none)** — so a plugin's partially-bad declaration
+list registers nothing (HIGH-5 fix; combined with §4.2's whole-batch publish, a
+plugin either contributes all its types or fails boot with nothing registered).
+`backend_taken?/1` scans the table for any existing entry with that
+`backend_component` (HIGH-1). `boot_registrations/0` (core types) still applies
+first at `init/1` via the same prechecks; the moduledoc's "no post-init write"
+wording becomes "post-init writes are **append-only, write-once on both `<type>`
+and `backend_component`, owner-serialized, all-or-nothing per batch**; no
+overwrite, no delete, no reopen flag."
 
 ### 4.4 World migration (first adopter)
 
 - `EzagentPluginWorld.Application.resource_types/0` →
-  `[{"world-layouts", %{backend_component: "world/layouts", authority: &world_layout_authority/2}}]`
-  where `world_layout_authority/2` asserts `URI workspace == scope.workspace`
-  (world layouts are workspace-scoped; same shape as `uploads_authority/2`).
-- `LayoutManager.layout_path/1` resolves
-  `resource://<ws>/world-layouts/<scope_key>` via `FsResolver.resolve/2` with the
-  caller's scope, instead of `Path.join(Home.path("world/layouts"), …)`.
-  `<ws>` = the scope_uri's workspace; `<scope_key>` = the existing
-  `stable_key |> Base.url_encode64` name.
+  `[{"world-layouts", %{backend_component: "world-layouts", authority: &world_layout_authority/2}}]`.
+  **Single-segment `backend_component`** — `"world-layouts"`, NOT `"world/layouts"`
+  (the existing `safe_component?/1` rejects `/`; HIGH-3). The resolver joins
+  `Home.path("world-layouts")/<ws>/<name>`.
+- `world_layout_authority(uri, scope)` asserts `EzURI.workspace_name(uri) ==
+  scope.workspace` — same shape as `uploads_authority/2`. Per R-3, `scope` is the
+  caller's AUTHENTICATED context, **never derived from `uri`**.
+- **R-3 fix (HIGH-4): split the caller scope from the target URI.**
+  `LayoutManager.read_layout/2` + `write_layout/3` take the layout's
+  `scope_uri` (the target) AND the caller's authenticated `scope` as SEPARATE
+  args, then build `resource://<ws>/world-layouts/<name>` and call
+  `FsResolver.resolve(uri, scope)`. The current single-URI signatures
+  (`read_layout/1`, `layout_path/1`, `Behavior.Layout`) thread the caller scope
+  down from the cap-checked Behavior dispatch (the Behavior already has the
+  authenticated caller). A test proves a `uri` naming a foreign `<ws>` under a
+  different caller `scope` is rejected (not silently resolved).
+  `<name>` = the existing `stable_key |> Base.url_encode64`.
 - Delete the `layout_dir/0` anchor from `HomePathExceptions`; ratchet
   `raw_home_path_outside_core` **2 → 1** in `arch_baseline_manifest.exs`
   (the codex SUN_LEN socket is the sole remaining, genuinely un-migratable entry).
 
-**On-disk compatibility:** the resolved path changes from
-`world/layouts/<scope_key>.json` to `world/layouts/<ws>/<scope_key>.json` (the
-resolver ws-partitions). This is **non-destructive**: `read_layout/1` already
-falls back to `default_layout/1` on any miss, so a pre-migration custom layout
-resets to default once (regenerable). No data-loss path; called out so it is not
-a surprise. (World layouts are a recent, low-volume store.)
+**On-disk migration (HIGH-8 — non-destructive AND clean 2→1):** the resolved path
+moves from `world/layouts/<name>.json` to `world-layouts/<ws>/<name>.json`. To
+preserve existing custom layouts WITHOUT leaving a runtime `Home.path` in the read
+path, use a **one-shot eager migration** (a `mix ezagent.world.migrate_layouts`
+operator task, run once at deploy): it lists `Home.path("world/layouts")/*.json`,
+re-keys each under the new `world-layouts/<ws>/<name>` path via the resolver, and
+deletes the old tree. After it runs, `LayoutManager`'s runtime read/write go
+**purely through `FsResolver.resolve/2`** — no `Home.path` — so
+`raw_home_path_outside_core` genuinely ratchets **2 → 1**. The migration task's
+own `Home.path("world/layouts")` read is the already-sanctioned *operator
+mix-task* class (same as `Ezagent.Home.Migration` / `ezagent.home.*` tasks already
+in `HomePathExceptions`), anchored with an "operator migration, app-not-started"
+reason — it is NOT runtime code and does not re-grow the runtime gate.
+
+> If Allen prefers minimal effort over preserving existing layouts: skip the
+> migration task entirely and accept that pre-migration custom layouts reset to
+> `default_layout` once (regenerable; world layouts are recent + low-volume). That
+> also lands 2→1 with zero migration code. **Recommended: the one-shot task**
+> (preserves operator-authored layouts; tiny, runs once). Open question for Allen.
 
 ## 5. Ordering & conflict semantics
 
@@ -182,27 +248,63 @@ a surprise. (World layouts are a recent, low-volume store.)
 - **Plugin types register at that plugin's Phase-2 boot** — no dependence on
   inter-plugin ordering for *correctness*; two distinct plugins owning distinct
   types never interact.
-- **Same-type collision across two plugins** → the second `register/2` returns
-  `{:duplicate_type, …}` → that plugin's `boot/1` raises → loud startup failure
-  naming the offending plugin + type. Deliberate; never silent.
+- **Same-type (or same-backend) collision across two plugins** → the second
+  plugin's `register_all/1` returns `{:duplicate_type|:duplicate_backend, …}` →
+  its `boot/1` raises → loud startup failure naming the offending plugin. To keep
+  this from being a footgun (HIGH-6: one plugin bricking startup by claiming a
+  name another needs), plugin types/backends are **slug-prefixed by convention**
+  (`world-layouts`), and a test/lint flags a plugin declaring a bare
+  (non-prefixed) type. Curated first-party plugin set → collisions are
+  author-time errors caught loudly, which is the intended behavior.
+
+- **Registry isolated restart (HIGH-2).** Plugin types live in the Registry's ETS,
+  appended at plugin boot. If the Registry GenServer alone crashes and restarts
+  under `:one_for_one`, `init/1` re-applies only core `boot_registrations/0` —
+  plugin types vanish while the plugins stay up (silent partial availability).
+  This is a **pre-existing class shared by every plugin-fed registry**
+  (`BehaviorRegistry`, `TemplateRegistry`, `AgentFlavorRegistry` are populated the
+  same way at Phase-2 boot). **Resolution: PR-1 audits how those siblings handle
+  it and matches their treatment.** The intended treatment: these
+  plugin-contribution registries are start-critical singletons — a crash escalates
+  so the plugin layer re-publishes (e.g. supervise the resolver Registry such that
+  its restart triggers plugin re-`boot` of Phase-2, or, if the siblings simply
+  rely on the registry being `:permanent` + the node failing fast on repeated
+  crashes, adopt the identical posture). A regression test asserts the chosen
+  behavior (after a Registry restart, a plugin type either is present again or the
+  failure is loud, never silently missing). This is the one item PR-1 must nail
+  against the real sibling-registry code, not in the abstract.
 
 ## 6. Testing
 
-- **Registry write-once unit:** `register/2` succeeds for a fresh type; a second
-  `register/2` of the same type → `{:error, {:duplicate_type, _}}`; a malformed
-  spec → `{:error, _}`; the table entry is unchanged after a rejected dup
-  (no overwrite).
+- **Registry write-once unit:** `register_all` succeeds for fresh types; a second
+  registration of the same `<type>` → `{:error, {:duplicate_type, _}}`; a spec
+  whose `backend_component` is already claimed → `{:error, {:duplicate_backend, _}}`
+  (HIGH-1); a malformed spec → `{:error, _}`; the table is unchanged after any
+  rejected registration (no overwrite, no partial insert).
+- **Batch all-or-nothing (HIGH-5):** a `register_all` batch whose 2nd decl is a
+  dup inserts NEITHER decl (the 1st must not be left dangling).
+- **Backend-aliasing attack (HIGH-1):** registering a fresh type with
+  `backend_component: "uploads"` is rejected — proving a plugin cannot reach a
+  core backend's bytes through a weaker-authority alias.
 - **Owner-only:** a direct non-owner `:ets.insert(@table, …)` raises (protected).
-- **Plugin contract:** a fixture plugin module declaring `resource_types/0` →
-  `Plugin.boot/1` publishes it and `FsResolver.resolve/2` then resolves its URIs;
-  a fixture declaring a duplicate of a core type → `boot/1` raises.
-- **World migration:** `LayoutManager.write_layout/2` then `read_layout/1`
-  round-trips through the resolver under the scope's workspace; an authority
-  mismatch (foreign ws) is rejected; a missing file falls back to
-  `default_layout/1`.
-- **Arch gates:** `raw_home_path_outside_core` scan = 1 after the anchor removal;
-  `mix ezagent.check_invariants` green; full `mix precommit` EXIT=0 with every
-  suite 0 failures (gate on BOTH per `feedback_precommit_exit_can_mask_failures`).
+- **Registry restart (HIGH-2):** the chosen restart treatment (§5) is asserted —
+  after the Registry process restarts, a plugin-contributed type is either present
+  again or the failure is loud; it is NEVER silently missing.
+- **Plugin contract:** a fixture plugin declaring `resource_types/0` →
+  `Plugin.boot/1` publishes it and `FsResolver.resolve/2` resolves its URIs; a
+  fixture declaring a duplicate of a core type/backend → `boot/1` raises.
+- **World R-3 (HIGH-4):** `read_layout`/`write_layout` round-trip under the
+  caller's scope; a target `uri` naming a FOREIGN `<ws>` resolved under a
+  different caller `scope` is REJECTED (the authority check is independent of the
+  URI, not tautological); both-miss falls back to `default_layout`.
+- **World migration (HIGH-8):** the one-shot task moves a legacy
+  `world/layouts/<name>.json` to `world-layouts/<ws>/<name>.json` and the runtime
+  read returns the preserved custom layout (no abandonment).
+- **Arch gates:** `raw_home_path_outside_core` scan = 1 after the runtime
+  `Home.path` is gone (the one-shot migration task's Home.path is the sanctioned
+  operator-mix-task anchor, not runtime); `mix ezagent.check_invariants` green;
+  full `mix precommit` EXIT=0 with every suite 0 failures (gate on BOTH
+  EXIT=0 AND grep-confirmed per `feedback_precommit_exit_can_mask_failures`).
 
 ## 7. Decisions log
 
@@ -216,18 +318,36 @@ a surprise. (World layouts are a recent, low-volume store.)
 - **D3 — cc/codex config-dir types stay in core for now.** The mechanism enables
   moving them to the plugins, but config-dir is spawn-load-bearing; deferred to a
   separate tested PR (follow-up).
-- **D4 — World migration is non-destructive** via the existing default-layout
-  fallback; no migration script.
+- **D4 — World migration preserves custom layouts** via a one-shot operator
+  migration task (default: recommended). Fallback if Allen prefers minimal:
+  accept reset-to-default (still lands 2→1). (Revised after codex HIGH-8.)
+- **D5 — `backend_component` uniqueness (codex HIGH-1).** `register_all` rejects a
+  spec aliasing an already-claimed backend; type↔backend is a bijection so an
+  authority fn cannot be bypassed via an alias type. Core backends claimed first.
+- **D6 — Registry restart matches the sibling plugin-fed registries (codex
+  HIGH-2).** PR-1 audits `BehaviorRegistry`/`TemplateRegistry`/`AgentFlavorRegistry`
+  restart handling and adopts the identical posture (no silent partial
+  availability); a regression test pins it. Not invented in the abstract.
+- **D7 — Plugin types/backends are slug-prefixed by convention (codex HIGH-6)** to
+  avoid cross-plugin name collisions bricking startup; a lint/test flags bare
+  plugin type names.
 
 ## 8. PR breakdown (for the plan)
 
 1. **PR-1 (core infra):** `resource_types/0` callback + `Plugin.boot/1` Phase-2
-   publish + `Registry.register/2` write-once + tests + moduledoc update.
+   `register_all` publish + `Registry.register_all/1` (write-once on type AND
+   backend, all-or-nothing) + the Registry-restart treatment matched to the
+   sibling registries (D6) + the slug-prefix lint (D7) + tests (write-once,
+   backend-alias attack, batch atomicity, restart) + moduledoc update.
    No behavior change to existing types (cc-agents/codex-agents/uploads still via
-   `boot_registrations/0`).
-2. **PR-2 (world adopter):** world `resource_types/0` + `LayoutManager` routes
-   through `resolve/2` + remove `HomePathExceptions` anchor + ratchet manifest
-   2→1 + world layout round-trip tests.
+   `boot_registrations/0`, now flowing through the same prechecks).
+2. **PR-2 (world adopter):** world `resource_types/0` (`world-layouts`,
+   single-segment backend) + `LayoutManager` read/write take caller scope SEPARATE
+   from target URI (R-3, D-HIGH-4) + route through `resolve/2` + one-shot
+   `ezagent.world.migrate_layouts` task (D4) + remove the runtime `HomePathExceptions`
+   anchor + ratchet manifest 2→1 + tests (R-3 foreign-ws rejection, migration
+   round-trip, default fallback).
 
-Each PR: `mix precommit` EXIT=0 (all suites 0 failures) + `check_invariants` green
-+ codex adversarial-review before merge (`feedback_codex_review_every_pr`).
+Each PR: `mix precommit` EXIT=0 (all suites 0 failures, grep-confirmed) +
+`check_invariants` green + codex adversarial-review before merge
+(`feedback_codex_review_every_pr`).
