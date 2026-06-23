@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           --cwd <dir> \\
           [--with-pty] \\
           [--from <source-agent-uri>] \\
+          [--soul "system prompt text"] \\
           [--caps 'kind.behavior,...'] \\
           [--allow-allcaps]
 
@@ -54,6 +55,12 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           --from entity://agent/system/cc_linyilun-default \\
           --cwd /tmp/alice-cwd
 
+      # cc agent with a custom soul (system prompt written into CLAUDE.md)
+      mix ezagent.agent.create entity://agent/system/shop-bot \\
+          --flavor cc \\
+          --cwd /tmp/shop-bot \\
+          --soul "你是导购助手，只回答商品相关问题"
+
   ## Flags
 
   - `--flavor <flavor>` — required stored agent flavor (cc, echo, curl, np, or any registered flavor).
@@ -66,6 +73,12 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     agent the caller has `sandbox.read` cap on (else
     `{:error, :source_not_readable}`). Deep filesystem copy; chat
     history is NOT carried (the new agent's chat slice starts fresh).
+  - `--soul <text>` — optional system-prompt / persona text for `cc`-flavor
+    agents. When present, the text is written into the agent's
+    `CLAUDE.md` (the per-agent `CLAUDE_CONFIG_DIR`) so every session
+    that opens that config dir inherits the soul. Parity with the
+    operator UI "Soul" field. Ignored for non-cc flavors (pass-through;
+    the Workspace action validates flavor support).
   - `--caps <str>` — comma-separated cap specs (see
     `Ezagent.Capability.Parser` for grammar). Default empty.
   - `--allow-allcaps` — required if `--caps '*'` (anti-foot-gun).
@@ -120,7 +133,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           flavor: :string,
           cwd: :string,
           with_pty: :boolean,
-          from: :string
+          from: :string,
+          soul: :string
         ]
       )
 
@@ -150,6 +164,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     cwd = Keyword.get(opts, :cwd, "")
     with_pty? = Keyword.get(opts, :with_pty, false)
     from_str = Keyword.get(opts, :from)
+    soul = Keyword.get(opts, :soul)
     flavor = opts |> Keyword.get(:flavor, "") |> to_string() |> String.trim()
 
     # System-principal elimination (#154, 2026-06-19) — the operator mix task
@@ -190,7 +205,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
              name: name,
              cwd: cwd,
              with_pty: with_pty?,
-             from: from_uri
+             from: from_uri,
+             soul: soul
            }),
          {:ok, %{agent_uri: created_uri, template_name: tmpl_name}} <-
            Ezagent.Workspace.create_agent(workspace_uri, create_args, admin_ctx),
@@ -243,7 +259,11 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     end
   end
 
+  defp build_create_args(%{from: nil, soul: nil} = base),
+    do: base |> Map.delete(:from) |> Map.delete(:soul)
+
   defp build_create_args(%{from: nil} = base), do: Map.delete(base, :from)
+  defp build_create_args(%{soul: nil} = base), do: Map.delete(base, :soul)
   defp build_create_args(base), do: base
 
   defp parse_uri(s) when is_binary(s) do
