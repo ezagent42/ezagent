@@ -75,6 +75,7 @@ lead close path as squash/subsumed commits, then comment+closed so GitHub matche
 | #890 `world-beautify` | `zyli-developer` | CLOSED | `28a90831` |
 | #891 `hello` | `zhaomaota97` | CLOSED | `d8c4a7f9` |
 | #892 `agent-console` | `FatNine` | CLOSED | `798f46bd` |
+| #896 `external-adapter` (protocol-api Phase-0) | dev | CLOSED | `eba1b333` (via `protocol-api-integrate`, 2026-06-23 Addendum 2) |
 
 ## Close prerequisites
 - **PostgreSQL must be running** for all gate re-runs (the suite is PG-only after step 1). Bring up `docker-compose.pg.yml` before close step 1's verification.

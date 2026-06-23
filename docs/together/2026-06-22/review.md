@@ -190,7 +190,56 @@ the new PG main before implementing** (pg rewrote `config/*.exs`).
 
 ---
 
+## Addendum 2 (2026-06-23): #896 protocol-api — RESOLVED + MERGED
+
+Allen redirected ("#896 的问题你直接改掉然后推送这个PR就好" + "merge 时先 rebase
+到最新 main，然后更新 dev-together 文档"). Lead fixed all blockers directly on
+`protocol-api-integrate` (rebased onto current main), merged to main via the lead
+fast-forward path, and closed PR #896.
+
+**Merged commits (main):**
+- `bee9f60f` port `protocol_api_keys` migration to `priv/repo_pg`
+- `8d53b943` clear uri_query scan (5→0) + manifest cap-bump annotations
+- `002880a6` arch-conformance for the `:request_scoped` adapter + per-tenant table
+- `eba1b333` port the E2E init script to PostgreSQL
+
+**How each blocker was resolved (principled, not name-allowlists):**
+1. **uri_query scan ×5 → 0**: 3× raw `entity://` → `Ezagent.URI.agent/2` (one
+   `default_agent/0`); deleted `flavor_from_uri/1` + `maybe_register_flavor/1`
+   (derived flavor from the URI name prefix) — `AgentModuleResolver` reads the
+   STORED flavor via `Ezagent.UriQuery` from the agent snapshot, and the cold
+   default-echo path stores a constant `"echo"`; the `api_key_store` token split
+   (`pk_<id>_<secret>`) → `:binary.split/2` (a false positive — token parse, not
+   a URI flavor).
+2. **external_mirror invariants ×2**: `AdapterCapSubjectRegisteredTest` now skips
+   adapters with `cap_subject.behavior_module == nil` (explicit opt-out of the
+   Session cap model — externally authenticated, e.g. protocol_api's API-key
+   bearer auth). `BindingAdapterGrill5Test`'s pairing walk now covers the
+   binding-bearing kinds `[:push, :request_scoped]` (a `:request_scoped` adapter
+   declares a paired binding "as `:push`" per the Adapter moduledoc).
+3. **manifest ratchet**: added `# arch-cap-bump:` annotations for
+   `spawn_registry_call_sites` 37→40 and `spawn_registry_off_chokepoint_modules`
+   25→26 (real growth — the inbound API spawns its target agent through the
+   sanctioned SpawnRegistry chokepoint; rehydrate, not create).
+4. **per-tenant table**: `protocol_api_keys` declared per-tenant (`workspace_uri`
+   NOT NULL; a key minted for ws A must never grant ws B).
+
+**Gates (all green):** full PG `mix precommit` (4600+ tests, 0 failures; every
+arch gate / invariant / uri_query scan passing) + **live PostgreSQL E2E** via
+`scripts/e2e_init_protocol_api.sh` (disposable home + throwaway PG DB):
+- echo round-trip → `echo: Hello from PG e2e`
+- curl/DeepSeek round-trip → `1+1 equals 2.` (real DeepSeek API call; key set via
+  `Behavior.ApiKeys.put_api_key` self-authority dispatch)
+
+Both prove the flavor-resolution change end-to-end: each agent spawns by resolving
+its flavor from the snapshot via `Ezagent.UriQuery`, with NO URI name-prefix
+parsing.
+
+---
+
 ## Addendum (2026-06-23): #896 protocol-api (5th return) — NOT merged, handed back
+
+> Superseded by Addendum 2 above (the blockers below were all resolved + merged).
 
 `external-adapter` / PR #896 (task #82, protocol-api Phase-0, OpenAI/Anthropic
 inbound API) was pushed after the 4-return close and asked to close. It is based
