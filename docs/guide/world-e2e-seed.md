@@ -98,18 +98,18 @@ mix run scripts/world_e2e_seed.exs
 > populated, create that session first (via the world UI or `workspace/create_session`)
 > then re-run the seed.
 >
-> **⛔ Known blocker (operator conversation E2E — steps 3/4/8).** Two bugs, NOT a
-> cap/auth issue (admin holds a wildcard cap): **(X)** `create_session` times out at
-> the 5 s framework dispatch limit (orchestrator/template instantiation is slow), so
-> the world "New session" is racy/timeout-prone; **(Y)** a session that ends up
-> without a respawnable `kind_snapshots` row (e.g. `e2e-chat`, `main`) is
-> un-dispatchable once its live process is gone — `:session :send` / `:join` /
-> `:routing :add_rule` return `:no_such_actor`. `send_message` dispatches
-> `:cast` + `reply: :ignore`, so that error is swallowed and shown ONLY as the
-> hidden `data-last-dispatch="error:no_such_actor"` attribute (composer clears,
-> transcript stays "No turns"). **Send itself is fine** — to a session that HAS a
-> snapshot it returns `{:ok, stored: true}` and persists the message. Root cause +
-> in-node `:erpc` positive control + fix owner:
+> **⛔ Known blocker (operator conversation E2E — steps 3/4/8).** ONE root cause,
+> two surfaces, NOT a cap/auth issue (admin holds a wildcard cap): `create_session`
+> times out at the 5 s framework dispatch limit (orchestrator/template instantiation
+> is slow), AND snapshot-on-create **races** that budget — so a session can be handed
+> to the operator without a respawnable `kind_snapshots` row (e.g. `e2e-chat`,
+> `main`). Such a session is un-dispatchable once its live process is gone —
+> `:session :send` / `:join` / `:routing :add_rule` return `:no_such_actor`.
+> `send_message` dispatches `:cast` + `reply: :ignore`, so that error is swallowed
+> and shown ONLY as the hidden `data-last-dispatch="error:no_such_actor"` attribute
+> (composer clears, transcript stays "No turns"). **Send itself is fine** — to a
+> session that HAS a snapshot it returns `{:ok, stored: true}` and persists the
+> message. Root cause + in-node `:erpc` positive control + fix owner:
 > `docs/together/2026-06-23/returns/world-deploy-e2e-pg.md` §7.
 
 ## 4. Start the dev server
