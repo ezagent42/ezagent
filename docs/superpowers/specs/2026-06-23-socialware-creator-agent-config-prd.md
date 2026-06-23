@@ -14,7 +14,7 @@ The agent contract sorts into **three buckets**; the UI must respect them.
 | Bucket | Fields | UI treatment |
 |---|---|---|
 | **AUTHOR** | `name`, `soul` (persona), `skills`, `tools`, `caps` (**desired**), `lifecycle` | author-editable inputs |
-| **EXECUTOR** | `flavor` (candidate list), `executor.params` (`project_cwd`, `config_dir`, `settings_path`, `mcp_config_path`, `model`, `provider`, …), `fallback`, `on_exhausted` | author-editable; **`flavor.compile/2` output is NOT** |
+| **EXECUTOR** | `flavor` (candidate list), `executor.params` (`project_cwd`, `settings_path`, `mcp_config_path`, `model`, `provider`, …), `fallback`, `on_exhausted` | author-editable; **`flavor.compile/2` output is NOT**. ⚠ `config_dir` is **auto-derived** by the create path (`agent_create.ex:449`), **not** author input — it is NOT in this author list (it's a template input the backend allocates; its *files* are DERIVED below) |
 | **DERIVED** (read-only, never author input) | `version_hash`/`tag`, `created_by`/`at`, `parent_template_uri`, **compiled config** (`CLAUDE.md`, `settings.json`, `system_prompt`), `config_dir` files, **actual granted caps** | read-only status / not shown as editable |
 
 Source: `agent_manifest.ex:17-33`, `agent_template.ex:33-127`, spec1 §3 (`flavor.compile` purity G-INV-5; no `derived_config` write-back G-INV-2), spec3 (version hash/tag). **CapBAC:** `caps` is *desired* — the system grants via the `Ezagent.Identity.Grant` chokepoint; the UI must **not** mint caps.
@@ -80,14 +80,14 @@ Both screens live **inside the existing world shell** — far-left global nav ra
 ## 5. Backend extension proposal — handed to Allen (NOT presumed by the UI)
 This is a **proposal for Allen to accept/sequence** — the UI ships without these until he approves (§3). It records the precise blocker per contract field so the decision is concrete. No parallel storage: a coverage-list field **graduates** into the submittable form only when its extension lands.
 
-| # | Field(s) | Proposed backend change | Where it threads | Risk |
+| # | Field(s) | Proposed backend change (architect-reviewed) | Where it threads | Risk |
 |---|---|---|---|---|
-| E1 | `soul`, `skills`, `tools`, `lifecycle` | Extend `create_agent/3` args to accept a manifest-shaped payload; build an inline `%AgentManifest{}` and route through the **existing** file-flavor template-registration path (`agent_create.ex` cc/codex branch → persisted template's `desired_skills` etc.) or `AgentManifest.load/1`. | `world_live.ex dispatch_agent_create/2` → `Workspace.create_agent/3` → `agent_create.ex` | med — touches create contract (additive args), no schema change if mapped to existing template fields |
-| E2 | executor extras (`settings_path`/`mcp_config_path` cc; `model`/`provider`/`api_url` curl) | Accept per-flavor `executor.params` in the create args; pass to the flavor's template-data extras (already exist on `AgentTemplate`). | same as E1 | low — `AgentTemplate` already has these extra fields; just not collected at create |
-| E3 | `desired_caps` (granted at spawn vs post-create `grant_initial_caps`) | Optionally thread desired caps into the template so they grant atomically at spawn instead of a second call. | `agent_create.ex` + Grant chokepoint | low/med — CapBAC-adjacent → **discuss-first with extra care** |
-| E4 | `parent_template_uri` (fork from existing template) | Surface the CLI `--from` clone in the create payload. | `coerce_create_args/1` already reads `from` | low — deferred (not in this task's screens) |
+| E1 | `soul`, `skills`, `tools`, `lifecycle` | **Extend the create handler itself.** `coerce_create_args/1` today reads ONLY `:flavor/:name/:cwd/:with_pty/:from` and **silently drops** anything else (`agent_create.ex:64`). The bridge `AgentManifest.to_template_content/4` exists (`agent_manifest.ex:132`) but is **not** wired into this handler. So this needs coerce + handler + template-write changes — **not** "route through the existing path." | `world_live.ex` → `Workspace.create_agent/3` → `agent_create.ex coerce_create_args/1` + cc/codex template write | **HIGH · discuss-first** (handoff:72); must explicitly **reject** unknown fields, never silently drop |
+| E2 | executor extras (cc `settings_path`/`mcp_config_path`; curl `model`/`provider`/`api_url`) | `AgentTemplate` has flavor-extra slots + fail-fast validate (`agent_template.ex:99,286`), **but** the current cc/codex template write only sets `class/flavor/agent_uri/project_cwd/config_dir` (`agent_create.ex:451`), and **curl/np are direct-spawn with NO template registered** (`agent_create.ex:354`). Not a passthrough — per-flavor work differs. | `agent_create.ex` per-flavor branches | **MED** (was low) — curl/np need a template path or a different carrier |
+| E3 | `desired_caps` at spawn-time (vs today's post-create `grant_initial_caps`) | **CapBAC blocker — design grant authority first.** Must still pass through `Ezagent.Identity.Grant` with `granted_by` = a **real entity** (`grant.ex:59,175`; Decision #154), as `grant_initial_caps/3` does today via `{:held_by, caller}` (`workspace.ex:910`). **No** system principal, **no** inline `ctx.caps`. | `agent_create.ex` + Grant chokepoint | **BLOCKER · discuss-first (CapBAC)** |
+| E4 | `parent_template_uri` (fork) | `coerce_create_args/1` reads `:from`, but `validate_from_for_flavor/2` allows **cc only** — other flavors are explicitly rejected (`agent_create.ex:169`). Don't generalize. | `coerce_create_args/1` | low — deferred, **cc-only** |
 
-**Hard line:** none of E1–E4 ships without Allen's sign-off; the UI wires each field only after its extension lands (`feedback_let_it_crash_no_workarounds` — no shim, no side channel).
+**Hard line:** none of E1–E4 ships without Allen's sign-off; the UI wires each field only after its extension lands (`feedback_let_it_crash_no_workarounds` — no shim, no side channel). **Crucially, an extension must make the backend explicitly _reject_ a field it cannot honor — not silently ignore it** (today's `coerce_create_args/1` ignores unknown keys, which is the silent-drop trap).
 
 ## 6. Scope
 **MVP (today — a real create loop, deadline-safe, no backend change):**
@@ -96,6 +96,8 @@ This is a **proposal for Allen to accept/sequence** — the UI ships without the
 - **Failure feedback, no silent drop** (handoff §4 + invariant #9 "no silent drops at user-facing surfaces"): surface `cwd_required_for_cc`, bad-caps parse error, `grant_initial_caps` failure, and workspace-authz failure as explicit operator-facing messages.
 - On success → land on the **detail page** with **labeled readable status** (agent URI / status / flavor / project_cwd / config_dir / granted caps), reusing `AgentApiKeys`/`AgentExtensions`; **replace the current JSON dump** (`Identities.tsx:275`) with labeled fields; **no editable derived config**.
 - A read-only **Contract coverage** list naming the not-yet-wired contract fields with a `Pending backend approval` badge.
+- **Anti-silent-drop:** the not-yet-wired fields are **not placed in the create payload at all** (coverage-list only) — because `coerce_create_args/1` ignores unknown keys (`agent_create.ex:64`), an enabled-but-unwired input would silently no-op. This is *why* they're coverage-only, not disabled inputs.
+- **Fix the React preview-URI bug (in our file):** `previewAgentUri` returns type-first `entity://agent/<ws>/<name>` (`Identities.tsx:508`) — wrong per `uri.ex` (workspace-first `entity://<ws>/agent/<name>`) and inconsistent with the backend `preview_agent_uri` (`identity_data.ex`). Correct it (or drop the duplicate and use the backend-provided `preview_uri`).
 - Additive state in `identity_data.ex` (`agent_new_form` / `agent_detail`); no broad rewrite of the identities surface.
 
 **Handed to Allen (separate, §5):** the `create_agent/3` extension for `soul/skills/tools/lifecycle` + executor extras + spawn-time `desired_caps`. Each, once approved, **graduates** from the coverage list into the form.
@@ -115,3 +117,13 @@ This is a **proposal for Allen to accept/sequence** — the UI ships without the
 
 ## 8. world-coordination
 **Wired-now part** touches only the world **identity/agent config** surface (`Identities.tsx` + `identity_data.ex` + the `dispatch_agent_create` clause); additive, no new route, no nav change, no `styles.css` restyle. Owns identity/agent-config UI; does not touch hello rendering or session routing UI (handoff §7). **The §5 extension proposal** does reach `domain_workspace` (`agent_create.ex` / `create_agent/3`) — that part is **discuss-first and lands only on Allen's approval**, separately from the UI slice, so the world UI change stays mergeable on its own.
+
+## 9. Architect-review blockers (code-verified 2026-06-23)
+A second review (architect lens) checked every claim against code. Four blockers, all now reflected above:
+
+1. **No "all fields enabled."** `coerce_create_args/1` reads only `:flavor/:name/:cwd/:with_pty/:from` and **silently drops** the rest (`agent_create.ex:64`) — enabling `soul/skills/tools/lifecycle` without backend = silent no-op. **Resolved:** §3 already ships supported-only + read-only coverage list (the prior "all enabled" draft is withdrawn); §5 hard-line requires explicit reject, not ignore.
+2. **React preview-URI bug.** `previewAgentUri` is type-first `entity://agent/<ws>/<name>` (`Identities.tsx:508`), wrong vs `uri.ex` workspace-first + the correct backend `preview_agent_uri`. **Resolved:** added to §6 MVP scope as an in-file fix.
+3. **E2 is not low-risk.** cc/codex template write omits the flavor extras; curl/np register no template at all (`agent_create.ex:354,451`). **Resolved:** §5 E2 re-rated MED with the per-flavor caveat.
+4. **E3 is a CapBAC blocker.** Spawn-time `desired_caps` must keep the `Ezagent.Identity.Grant` chokepoint + real-entity `granted_by` (`grant.ex:59,175`; Decision #154). **Resolved:** §5 E3 re-rated BLOCKER/discuss-first with the constraint.
+
+Also corrected: §1 `config_dir` was listed both author-editable and DERIVED — fixed to **auto-derived, not author input** (`agent_create.ex:449`).
