@@ -572,9 +572,29 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
+      "templates" => session_template_names(workspace_uri),
       "sessions" => Enum.map(sessions, &session_row/1)
     }
   end
+
+  # Resolvable SessionTemplate names for the "New session" picker — the live
+  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
+  # resolve, including any the operator just authored via the template form)
+  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
+  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.URI.name!()
+    |> Ezagent.World.WorkspacePluginData.session_template_rows()
+    |> Enum.map(&Map.get(&1, "name"))
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> then(&["default" | &1])
+    |> Enum.uniq()
+    |> Enum.sort()
+  rescue
+    _ -> ["default"]
+  end
+
+  defp session_template_names(_), do: ["default"]
 
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
