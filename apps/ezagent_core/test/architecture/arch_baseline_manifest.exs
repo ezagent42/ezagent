@@ -53,7 +53,9 @@
   #   chokepoint: conversation_registry.ex `resolve` (2 sites: ensure session live
   #   on durable + ephemeral paths) + openai_chat_plug.ex `join_agent` (1 site).
   #   All on-chokepoint, so off_chokepoint is unchanged. 37→40.
-  spawn_registry_call_sites: 40,
+  # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor spawn paths route
+  #   through the SANCTIONED SpawnRegistry chokepoint (one site each). 40→42.
+  spawn_registry_call_sites: 42,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -62,13 +64,18 @@
   # off_chokepoint is unchanged).
   # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
   # +2 protocol_api P0 (conversation_registry + openai_chat_plug spawn)
-  spawn_registry_modules: 35,
+  # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor modules spawn through
+  #   the SpawnRegistry chokepoint. 35→37.
+  spawn_registry_modules: 37,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
   #   cold-restart self-heal. The inbound HTTP adapter owns its own activation
   #   point; creation still flows through the template chokepoint. 25→26.
-  spawn_registry_off_chokepoint_modules: 26,
+  # arch-cap-bump: +1 #907 — a cc-headless/codex-remote flavor module activates its
+  #   pre-provisioned agent off-chokepoint (rehydrate, not create); creation still
+  #   flows through the template chokepoint. 26→27.
+  spawn_registry_off_chokepoint_modules: 27,
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
@@ -116,7 +123,11 @@
   # (which also retires a pre-existing Mix-task `run/1` fork the gap had been
   # counting, −1 more). The chat→session `SliceMigration` mirror remains.
   # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
-  cross_file_duplicate_fn_groups: 29,
+  # arch-cap-bump: +3 #907 — cc-headless + codex-remote template classes add thin
+  #   CredentialAdapter delegations (auth_failure_signals/secret_relpaths/credential_*
+  #   → base cc/codex agent), intentionally duplicating the delegating bodies across
+  #   flavor files. 29→32.
+  cross_file_duplicate_fn_groups: 32,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -132,7 +143,9 @@
   # Genuine product logic, codex-reviewed (HIGH+MEDIUM addressed); not extractable
   # shared duplication. 1669 → 1682.
   # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
-  cc_codex_template_class_combined_loc: 1682,
+  # arch-cap-bump: +2 #907 — cc_headless_agent + codex_remote_agent flavor template
+  #   classes (thin CredentialAdapter delegations). 1682→1684.
+  cc_codex_template_class_combined_loc: 1684,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

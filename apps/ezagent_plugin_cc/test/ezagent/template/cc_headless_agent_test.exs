@@ -80,7 +80,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
     end
 
     test "auth_failure_signals delegates to CcAgent" do
-      assert CcHeadlessAgent.auth_failure_signals() == CcAgent.auth_failure_signals()
+      # Regex structs are never `==` across separate compilations
+      # (`~r/a/ == ~r/a/` is false), so compare by inspected form.
+      assert Enum.map(CcHeadlessAgent.auth_failure_signals(), &inspect/1) ==
+               Enum.map(CcAgent.auth_failure_signals(), &inspect/1)
     end
   end
 

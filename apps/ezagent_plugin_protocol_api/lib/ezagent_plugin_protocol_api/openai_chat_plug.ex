@@ -38,7 +38,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          :ok <- join_agent(session_uri, entity_uri, target_agent),
          {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+      agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
 
       # Register pending request, spawn background waiter (subscribes + waits in Task)
       PendingReplyStore.put_pending(request_id)
@@ -123,9 +123,11 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   end
 
   defp flavor_from_uri(agent_uri) do
-    path = agent_uri.path || ""
-    rest = String.replace_leading(path, "/", "")
-    name = List.last(String.split(rest, "/")) || ""
+    name =
+      case Ezagent.URI.name(agent_uri) do
+        n when is_binary(n) -> n
+        _ -> ""
+      end
 
     cond do
       String.starts_with?(name, "curl_") -> "curl"
@@ -184,7 +186,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   # Defaults to echo agent when target_agent is nil.
   defp join_agent(session_uri, entity_uri, target_agent) do
     require Logger
-    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
     # Register flavor attribute so AgentModuleResolver can find the Kind module.
@@ -257,7 +259,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
     # $session_users only delivers to Users. Add target agent to mentions
     # so the $mentions routing rule delivers agent.receive to it.
-    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
     mentions = if agent, do: [agent], else: []
 
     msg =

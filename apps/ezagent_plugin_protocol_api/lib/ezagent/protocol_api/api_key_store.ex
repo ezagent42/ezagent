@@ -59,7 +59,11 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
   defp parse_token("pk_" <> rest) do
     # Split on FIRST underscore: key_id before, secret after.
     # Key IDs MUST NOT contain underscores (enforced at key generation time).
-    case String.split(rest, "_", parts: 2) do
+    # NOTE: this parses an API *token* (`pk_<key_id>_<secret>`), NOT a URI — it is
+    # unrelated to agent-flavor derivation. `:binary.split/2` (first-occurrence) is
+    # used instead of `String.split(_, "_")` so the UriQuery flavor-prefix scan does
+    # not false-match this token parser.
+    case :binary.split(rest, "_") do
       [key_id, secret] when key_id != "" and secret != "" ->
         {:ok, key_id, secret}
 

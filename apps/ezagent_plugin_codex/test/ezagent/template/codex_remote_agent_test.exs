@@ -89,7 +89,10 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
     end
 
     test "auth_failure_signals delegates to CodexAgent" do
-      assert CodexRemoteAgent.auth_failure_signals() == CodexAgent.auth_failure_signals()
+      # Regex structs are never `==` across separate compilations
+      # (`~r/a/ == ~r/a/` is false), so compare by inspected form.
+      assert Enum.map(CodexRemoteAgent.auth_failure_signals(), &inspect/1) ==
+               Enum.map(CodexAgent.auth_failure_signals(), &inspect/1)
     end
   end
 
