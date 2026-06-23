@@ -22,7 +22,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     raw_workspace_uri = Map.get(ctx, :self_uri)
     session_templates = ctx[:read].(:session_templates, %{})
 
-    with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
+    with {:ok, flavor, name, cwd, with_pty?, from_uri, soul} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
@@ -49,7 +49,12 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         # (`caps`) and to preserve single-reference clone semantics under the
         # cascade (`from_uri` → `explicit_source`).
         caps: Map.get(ctx, :caps),
-        from_uri: from_uri
+        from_uri: from_uri,
+        # B1 (2026-06-23): soul is an optional per-agent system-prompt
+        # override (string | nil). B2 wires it into cc/codex CLAUDE.md
+        # rendering; threaded here so do_create_agent receives it without
+        # further parsing.
+        soul: soul
       })
     end
   end
@@ -61,12 +66,17 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
   # CLI builds atom-keyed maps. The current dispatch path (local-
   # in-process for the mix task + UI) preserves atom keys end-to-end.
+  # The LV passes string-keyed maps — accept both; atom key wins when both
+  # are present (same pattern as `:from` / `:flavor` / `:name` etc.).
   defp coerce_create_args(args) do
-    flavor = Map.get(args, :flavor)
-    name = Map.get(args, :name)
-    cwd = Map.get(args, :cwd, "")
-    with_pty = Map.get(args, :with_pty, false)
-    from = Map.get(args, :from)
+    flavor = Map.get(args, :flavor) || Map.get(args, "flavor")
+    name = Map.get(args, :name) || Map.get(args, "name")
+    cwd = Map.get(args, :cwd, Map.get(args, "cwd", ""))
+    with_pty = Map.get(args, :with_pty, Map.get(args, "with_pty", false))
+    from = Map.get(args, :from) || Map.get(args, "from")
+    # B1 (2026-06-23): optional soul — string or nil. CLI passes atom key;
+    # LV passes string key. Atom key wins (||) when both present.
+    soul = Map.get(args, :soul) || Map.get(args, "soul")
 
     cond do
       not is_binary(flavor) ->
@@ -84,8 +94,11 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       not valid_from?(from) ->
         {:error, {:bad_from, from}}
 
+      not (is_nil(soul) or is_binary(soul)) ->
+        {:error, {:bad_soul, soul}}
+
       true ->
-        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from}
+        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from, soul}
     end
   end
 
