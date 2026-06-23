@@ -288,7 +288,7 @@ function AgentDetail({state}: {state: IdentitiesState}) {
     ["Flavor", String(state.flavor || status.flavor || "unknown")],
     ["project_cwd", String(state.project_cwd || "—")],
     ["config_dir", String(state.config_dir || "—")],
-    ["Version / template", String(state.source_template || "direct-spawn (no template)")],
+    ["Template", state.source_template ? `per-agent (${state.source_template})` : "direct-spawn (no template)"],
     ["Bridge", state.bridge ? "connected" : "not connected"],
   ]
 

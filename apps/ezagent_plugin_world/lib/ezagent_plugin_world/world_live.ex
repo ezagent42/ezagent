@@ -409,7 +409,9 @@ defmodule EzagentPluginWorld.WorldLive do
   # socket so a subsequent `handle_params` re-render (e.g. PTY refresh) keeps the
   # message until the operator navigates away (push_navigate on success clears it).
   defp push_agent_create_error(socket, reason) do
-    route = %{component: "agent_new_form", title: "New Agent", path: "/identities/agents/new"}
+    # Resolve the route from the single source (Routes.route_for) so the title/
+    # path can't silently drift from routes.ex if it ever changes there.
+    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents/new")
     layout = socket.assigns.world_state["layout"]
     socket = assign(socket, :agent_create_error, reason)
     state = state_for_route(route, socket, layout)
