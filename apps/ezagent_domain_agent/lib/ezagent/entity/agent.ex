@@ -83,7 +83,7 @@ defmodule Ezagent.Entity.Agent do
   # forward-only curl-snapshot migration onto this Kind is `mix
   # ezagent.curl.migrate` (rewrites pre-fold rows; no rollback window).
   @impl Ezagent.Kind
-  def behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+  def behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.Echo]
 
   @doc """
   The BASE (non-flavor) Agent behavior set — the pre-PR-6 declared list.
@@ -118,6 +118,16 @@ defmodule Ezagent.Entity.Agent do
   """
   @spec curl_behaviors() :: [module()]
   def curl_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+
+  @doc """
+  The echo-flavor per-instance behavior subset. The BASE Agent behaviors
+  PLUS `Ezagent.Behavior.Echo` (which owns the `:echo` slice + `say` /
+  `receive` actions). Echo is ACTIVE only on an `echo`-flavor instance
+  threaded at spawn; cc/codex agents resolve to `nil_capture_behavior_set/0`
+  and are unaffected.
+  """
+  @spec echo_behaviors() :: [module()]
+  def echo_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.Echo]
 
   @doc """
   Behavior set for a `nil`/absent `:kind_base` instance (PR-6). Returns the
