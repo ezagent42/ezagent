@@ -46,7 +46,8 @@ session robust regardless of bring-up.
    cc-specific MCP socket/channel stays in `plugin_cc`; acyclic stays clean
    (`plugin_cc → domain_agent` is the existing direction). **Add the anti-recurrence
    arch gate (test 15):** fail if any join-state/readiness primitive is defined under
-   `apps/ezagent_plugin_*/`. Verify the widened not-ready window strands no
+   `apps/ezagent_plugin_*/` (**readiness/transport-join-state ONLY for now** —
+   Allen-confirmed; do not broaden to other capabilities). Verify the widened not-ready window strands no
    non-message dispatch. Prove with **test 12** (held → delivered on join, or visible
    `:failed`; never silently lost) **+ test 15**. (The #902 fix itself is independent
    of and not blocked by this migration.)

@@ -112,8 +112,10 @@ cycle; re-verify, don't re-litigate.
 grep/AST-checkable arch invariant (extend `ezagent.arch.scan.ex` / `check_invariants`)
 that **fails if a join-state registry / readiness-gate / bounded-wait-to-`:failed`
 primitive is defined under any `apps/ezagent_plugin_*/`.** This keeps generic
-readiness capability from re-accreting in a plugin. *(Exact formulation is being
-confirmed with Allen — see the confirm line in the dispatch note.)*
+readiness capability from re-accreting in a plugin. **Scope (Allen-confirmed
+2026-06-23):** readiness / transport-join-state ONLY for now — do NOT broaden the
+gate to other generic capabilities (that's deferred to future work; a too-broad gate
+fires on everything).
 
 **Verification point (re-added rev5 caveat):** making the bridge-backed `ReadyGate`
 stay `:not_ready` until join widens the not-ready window for EVERY dispatch to that

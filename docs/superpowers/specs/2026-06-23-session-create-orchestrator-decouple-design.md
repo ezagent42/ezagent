@@ -382,8 +382,9 @@ must live in `ezagent_domain_agent`, NOT in any `ezagent_plugin_*`.** Concretely
 grep/AST gate (extend `ezagent.arch.scan.ex` / `check_invariants`) that fails if a
 join-state registry / readiness-gate / bounded-wait-to-`:failed` construct is
 defined under any `apps/ezagent_plugin_*/`. This is the fitness function that keeps
-the migration from silently regressing. *(Exact formulation surfaced to Allen for
-confirm/adjust.)*
+the migration from silently regressing. **Allen-confirmed 2026-06-23: readiness /
+transport-join-state ONLY for now; broadening to other generic capabilities is
+deferred to future work.**
 
 **Decouple correctness is independent of the readiness migration.** The #902 fix —
 create never rolls back / the snapshot is never deleted for a hung member, and the
@@ -616,6 +617,10 @@ status → Orchestrator.Health + LiveJoinRegistry (pure read, never blocks)
     generic readiness contract lives in `ezagent_domain_agent`; this gate keeps it
     from re-accreting in a plugin. The migrated `LiveJoinRegistry` is **agent-keyed
     (`agent_uri`)**, not orchestrator-keyed — assert the generalization too.
+    **Scope (Allen 2026-06-23, confirmed):** this invariant is intentionally narrow
+    — **readiness / transport-join-state only** for now. Broadening it to other
+    generic agent capabilities is deliberately deferred to future work; do not
+    over-generalize the gate now (a too-broad fitness function fires on everything).
 
 All gates on PostgreSQL; `mix precommit` EXIT=0 authoritative. Because the
 readiness path is compile-bypassed in `:test`, add an explicit
@@ -648,8 +653,8 @@ These WILL go red on the move and are part of the work:
   plugin (Allen 2026-06-23):** add a grep/AST gate that fails if a join-state
   registry / readiness-gate / bounded-wait-to-`:failed` primitive is defined under
   any `apps/ezagent_plugin_*/`. This is the anti-recurrence fitness function for the
-  readiness migration (test 15). Exact match formulation surfaced to Allen for
-  confirm/adjust.
+  readiness migration (test 15). Allen-confirmed 2026-06-23: readiness-only for now;
+  broadening deferred.
 
 ## 12. PR sequencing (green at each step — NOT one PR)
 
