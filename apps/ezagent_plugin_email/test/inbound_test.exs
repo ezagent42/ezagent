@@ -5,8 +5,10 @@ defmodule Ezagent.Email.InboundTest do
   inject-under-restricted-participant, DELETE-after-inject, loop guard.
 
   The dispatch + delete seams are injected so the test need not boot a live
-  Session Kind; the deterministic-id dedup is proven against the REAL
-  `MessageStore` write path (PG sandbox).
+  Session Kind. The dedup test asserts the deterministic id is STABLE across
+  re-deliveries (same id → `MessageStore`'s `on_conflict: :nothing` no-ops the
+  second write); the no-op insert itself is a property of the already-verified
+  `MessageStore.write` path, not re-exercised here through the mocked dispatch.
   """
   use EzagentCore.DataCase, async: false
 

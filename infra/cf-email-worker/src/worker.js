@@ -28,9 +28,18 @@ export default {
         return h ? h.value : "";
       };
 
+      // #88 PR-2 BLOCKER 2 — the auth-relevant sender is the HEADER From
+      // (`parsed.from`, what DMARC aligns + what the human "sends from"), NOT
+      // the envelope sender (`message.from` = RFC 5321 MAIL FROM, used only for
+      // the bounce check). Capture the header From's address for ezagent's
+      // From-match gate.
+      const headerFromAddr =
+        (parsed.from && (parsed.from.address || parsed.from.name)) || header("from") || "";
+
       const record = {
         key,
-        from: message.from,
+        // `from` = HEADER From address (auth/From-match identity).
+        from: headerFromAddr,
         to,
         subject: parsed.subject || "",
         date: parsed.date || null,
