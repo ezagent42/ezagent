@@ -62,7 +62,17 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterCapSubjectRegisteredTest do
     # (see `apps/ezagent_core/lib/ezagent/capability_registry.ex`).
     registry_entries = CapabilityRegistry.list_grantable()
 
-    for %{id: adapter_id, module: adapter_module} <- adapters do
+    for %{id: adapter_id, module: adapter_module} <- adapters,
+        # An adapter MAY opt out of the Session capability model by declaring
+        # `cap_subject.behavior_module = nil`. It then authenticates its callers
+        # OUTSIDE ezagent's cap system, so there is no `(Session, :allow_<id>,
+        # behavior)` triple to register and nothing for this invariant to assert.
+        # The `:request_scoped` protocol_api adapter is the first such case: its
+        # inbound HTTP requests carry their own API-key bearer auth (verified in
+        # ApiKeyStore), and it owns authorization in `target_ownership_check/2`
+        # rather than via a grantable Session cap. Cap-gated adapters
+        # (behavior_module != nil) are still fully checked below.
+        not is_nil(adapter_module.cap_subject().behavior_module) do
       %{behavior_module: behavior_module} = adapter_module.cap_subject()
       expected_action = String.to_existing_atom("allow_" <> adapter_id)
 

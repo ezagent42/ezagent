@@ -48,15 +48,19 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
   alias Ezagent.ExternalMirror.{Adapter, AdapterRegistry, BindingRegistry}
   alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
 
-  # P3-1/P3-2: the Grill-5 adapter↔binding pairing applies ONLY to `:push`
-  # adapters. A `:pull` adapter (e.g. the socialware `customer_feed`, P3-2) has
-  # NO per-binding transport by design — no `binding_module/0`, no
-  # BindingRegistry row — so it is excluded from the binding-pairing walks
-  # below. (e) — no module implements BOTH behaviours — still applies to every
-  # adapter regardless of kind.
-  defp push_adapters do
+  # P3-1/P3-2: the Grill-5 adapter↔binding pairing applies to the BINDING-BEARING
+  # adapter kinds — `:push` and `:request_scoped`. Both declare a paired Binding
+  # module (a `:request_scoped` adapter declares one "as `:push`" per the Adapter
+  # moduledoc; protocol_api's is the P0 stub binding). A `:pull` adapter (e.g. the
+  # socialware `customer_feed`, P3-2) has NO per-binding transport by design — no
+  # `binding_module/0`, no BindingRegistry row — so it is excluded from the
+  # pairing walks below. (e) — no module implements BOTH behaviours — still
+  # applies to every adapter regardless of kind.
+  @bound_kinds [:push, :request_scoped]
+
+  defp bound_adapters do
     AdapterRegistry.list()
-    |> Enum.filter(&(Adapter.kind_of(&1.module) == :push))
+    |> Enum.filter(&(Adapter.kind_of(&1.module) in @bound_kinds))
   end
 
   setup_all do
@@ -68,10 +72,11 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
     :ok
   end
 
-  test "every :push adapter_id present in AdapterRegistry has a paired entry in BindingRegistry" do
-    # Only :push adapters carry a binding; :pull adapters (P3-1) are binding-less.
+  test "every binding-bearing adapter_id present in AdapterRegistry has a paired entry in BindingRegistry" do
+    # Only :push / :request_scoped adapters carry a binding; :pull adapters (P3-1)
+    # are binding-less.
     adapter_ids =
-      push_adapters()
+      bound_adapters()
       |> Enum.map(& &1.id)
       |> MapSet.new()
 
@@ -96,8 +101,8 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
            """
   end
 
-  test "Grill-5 (a/b): every registered :push adapter/binding pair declares the right @behaviour" do
-    for %{id: adapter_id, module: adapter_module} <- push_adapters() do
+  test "Grill-5 (a/b): every registered binding-bearing adapter/binding pair declares the right @behaviour" do
+    for %{id: adapter_id, module: adapter_module} <- bound_adapters() do
       assert behaviour?(adapter_module, Ezagent.ExternalMirror.Adapter),
              """
              Adapter #{inspect(adapter_module)} (id=#{inspect(adapter_id)})
@@ -118,8 +123,8 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
     end
   end
 
-  test "Grill-5 (c/d): bidirectional :push adapter <-> binding declarations agree" do
-    for %{id: adapter_id, module: adapter_module} <- push_adapters() do
+  test "Grill-5 (c/d): bidirectional binding-bearing adapter <-> binding declarations agree" do
+    for %{id: adapter_id, module: adapter_module} <- bound_adapters() do
       {:ok, binding_module} = BindingRegistry.lookup(adapter_id)
 
       assert adapter_module.binding_module() == binding_module,
@@ -149,8 +154,8 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
     assert Adapter.kind_of(Ezagent.ExternalMirror.TestSupport.PullAdapter) == :pull
     assert :error = BindingRegistry.lookup("pull_em")
 
-    # The pull adapter is excluded from the push-only pairing walk.
-    refute Enum.any?(push_adapters(), &(&1.id == "pull_em"))
+    # The pull adapter is excluded from the binding-bearing pairing walk.
+    refute Enum.any?(bound_adapters(), &(&1.id == "pull_em"))
   end
 
   test "Grill-5 (e): no module implements BOTH Adapter and Binding behaviours" do

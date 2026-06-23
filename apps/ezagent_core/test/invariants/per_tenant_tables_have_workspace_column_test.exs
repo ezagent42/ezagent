@@ -88,6 +88,12 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # be resolved from ws B.
     {Ezagent.Socialware.ConfigObject, "socialware_config_objects"},
     {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"},
+    # #82/#896 protocol_api — an inbound API key authorizes an external caller to
+    # reach a specific agent in a specific workspace (`workspace_uri` NOT NULL).
+    # Per-tenant by definition: a key minted for ws A must never grant access to
+    # ws B. Same bearer-credential shape as `entity_tokens` (looked up globally by
+    # the opaque key, but carries + enforces its own workspace scope).
+    {Ezagent.ProtocolApi.ApiKeyStore, "protocol_api_keys"},
     # Issue #51 — the anon external-user binding maps an anon-User to the public
     # session it views; the workspace is DERIVED from that session (never supplied),
     # so a binding can never span tenants.
