@@ -20,21 +20,20 @@ defmodule EzagentPluginEcho.Application do
 
   ## What this plugin declares
 
-  - `behaviors/0` — `{Ezagent.Entity.Echo, :say|:receive}` →
-    `Ezagent.Behavior.Echo`. `:say` is the historical
-    programmatic-invoke action (Phase 1 contract); `:receive` is the
-    chat fan-out hook (Session's `chat.send` dispatches `chat.receive`
-    to every Echo agent in members — without it the echo agent
-    silently drops chat messages, the regression Allen flagged
-    2026-05-20).
+  - `behaviors/0` — `{Ezagent.Entity.Agent, :say|:receive|:write}` →
+    `Ezagent.Behavior.Echo` / `Ezagent.Behavior.Pty`. A3 reparents all
+    echo action bindings onto the unified `Ezagent.Entity.Agent` Kind
+    (mirroring curl PR-6+7). `:say` is the historical programmatic-invoke
+    action; `:receive` is the chat fan-out hook; `:write` is the PTY sidecar.
   - `template_classes/0` — the `echo.agent` Template Class, so
     operators can create echo agents (optionally with a `/bin/bash -i`
     PTY sidecar) via the standard add-template chain.
-  - `agent_flavors/0` — flavor `"echo"` → `{Ezagent.Entity.Echo,
-    Ezagent.PluginEcho.Template.EchoAgent}`. Consumed by
-    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_instance_message agent
-    resolver onto it, replacing the hardcoded `kind_module_from_flavor`
-    map.
+  - `agent_flavors/0` — flavor `"echo"` → `{Ezagent.Entity.Agent,
+    Ezagent.PluginEcho.Template.EchoAgent, instance_behaviors:
+    &Ezagent.Entity.Agent.echo_behaviors/0}`. A3 migrates the kind to
+    the shared `Entity.Agent` and threads the per-instance behavior thunk
+    (same pattern as the curl plugin). `Entity.Echo` is kept alive until
+    A5 (deletion gate). Consumed by `Ezagent.AgentFlavorRegistry`.
   - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
     routes to this flavor's agent surface (SPEC §6.1).
   - `children/0` — a per-Kind `DynamicSupervisor`. Kept for future
@@ -87,9 +86,9 @@ defmodule EzagentPluginEcho.Application do
   @impl Ezagent.Plugin
   def behaviors do
     [
-      {Ezagent.Entity.Echo, :say, Ezagent.Behavior.Echo},
-      {Ezagent.Entity.Echo, :receive, Ezagent.Behavior.Echo},
-      {Ezagent.Entity.Echo, :write, Ezagent.Behavior.Pty}
+      {Ezagent.Entity.Agent, :say, Ezagent.Behavior.Echo},
+      {Ezagent.Entity.Agent, :receive, Ezagent.Behavior.Echo},
+      {Ezagent.Entity.Agent, :write, Ezagent.Behavior.Pty}
     ]
   end
 
@@ -101,8 +100,15 @@ defmodule EzagentPluginEcho.Application do
     [
       %{
         flavor: "echo",
-        kind: Ezagent.Entity.Echo,
-        template_class: Ezagent.PluginEcho.Template.EchoAgent
+        # A3 — echo moves onto the unified `Ezagent.Entity.Agent` Kind
+        # (mirroring curl PR-6+7). `Entity.Echo` is kept alive until A5
+        # (deletion gate). The per-instance behavior SET threads
+        # `echo_behaviors/0` so direct-create and template-create paths
+        # both get the echo-specific behavior set (same pattern as curl's
+        # `instance_behaviors: &AgentKind.curl_behaviors/0`).
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginEcho.Template.EchoAgent,
+        instance_behaviors: &Ezagent.Entity.Agent.echo_behaviors/0
       }
     ]
   end
