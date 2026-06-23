@@ -116,8 +116,7 @@ export function Conversation({
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
-  const activeView =
-    state.active_view === "pty" ? "pty" : state.active_view === "page" ? "page" : "chat"
+  const activeView = state.active_view === "pty" ? "pty" : "chat"
   // TEMPORARY (hello operator view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the customer surface. See HelloPagePreview below.
@@ -322,7 +321,7 @@ export function Conversation({
       data-world-component="conversation"
       data-expanded={expanded ? "true" : "false"}
     >
-      <section className="flex max-h-[min(72vh,760px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground">
+      <section className="flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground">
         <div className="flex items-center justify-between gap-4 border-b border-border p-4">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session</p>
@@ -352,17 +351,6 @@ export function Conversation({
                 <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
                 PTY
               </button>
-              {isHelloSession && (
-                <button
-                  type="button"
-                  className={segmentClass(activeView === "page")}
-                  onClick={() => sessionUri && onSwitchView(sessionUri, "page")}
-                  aria-label="Show rendered page (temporary)"
-                  title="Rendered page — TEMPORARY (embeds the customer view)"
-                >
-                  Page
-                </button>
-              )}
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
               <RotateCcw aria-hidden="true" />
@@ -392,10 +380,9 @@ export function Conversation({
               onServerEvent={onServerEvent}
             />
           </div>
-        ) : activeView === "page" ? (
-          <HelloPagePreview sessionUri={sessionUri} />
         ) : (
-          <>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-card px-[18px] py-5" ref={scrollRef} data-message-count={messages.length}>
               {oldestCursor && (
                 <div className="flex justify-center pb-0.5">
@@ -548,7 +535,13 @@ export function Conversation({
                 </Button>
               </div>
             </form>
-          </>
+            </div>
+            {isHelloSession && (
+              <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
+                <HelloPagePreview sessionUri={sessionUri} />
+              </div>
+            )}
+          </div>
         )}
 
         {debugOpen && (
@@ -558,7 +551,7 @@ export function Conversation({
         )}
       </section>
 
-      <aside className="flex max-h-[min(72vh,760px)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground" aria-label="Session members">
+      <aside className="flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground" aria-label="Session members">
         <div className="flex items-start justify-between gap-2.5 border-b border-border px-4 py-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
@@ -797,11 +790,7 @@ function HelloPagePreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/customer?session_uri=${encodeURIComponent(sessionUri)}`
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-amber-200 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-900">
-        ⚠ 临时视图 / TEMPORARY — embeds the customer surface. The native @json-render
-        operator view lands in Phase 3.
-      </div>
-      <iframe title="Rendered page (temporary)" src={src} className="min-h-0 flex-1 border-0 bg-white" />
+      <iframe title="Rendered page" src={src} className="min-h-0 flex-1 border-0 bg-white" />
     </div>
   )
 }

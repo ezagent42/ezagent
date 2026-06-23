@@ -5,6 +5,31 @@ import {Sandpack} from "@codesandbox/sandpack-react"
 import {createBaseRegistry, renderJsonNode} from "./catalog_render.mjs"
 import {isValidTree} from "./catalog.mjs"
 
+// Print the @json-render page data that actually drives the rendered page to the
+// browser DevTools (F12) console — the "useful generated data" an operator wants
+// to inspect. Logs the title, a per-type component count, and the full tree.
+function logHelloPage(snapshot, source) {
+  const page = snapshot && snapshot.page
+  if (!page) return
+  const counts = {}
+  const walk = (n) => {
+    if (Array.isArray(n)) return n.forEach(walk)
+    if (n && typeof n === "object") {
+      if (typeof n.type === "string") counts[n.type] = (counts[n.type] || 0) + 1
+      walk(n.children || [])
+    }
+  }
+  walk(page)
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
+  console.log(
+    `%c[hello] page ${source} %c${page?.props?.title ?? ""}%c — ${total} nodes`,
+    "color:#16a34a;font-weight:bold",
+    "color:#2563eb;font-weight:bold",
+    "color:inherit",
+    {title: page?.props?.title, total, byType: counts, page, messages: snapshot.messages},
+  )
+}
+
 function boot(root) {
   const sessionUri = root.dataset.sessionUri
   const token = root.dataset.token
@@ -39,10 +64,16 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
     const channel = socket.channel(`${topicPrefix}:${sessionUri}`, {})
     channel
       .join()
-      .receive("ok", ({snapshot}) => setSnapshot(snapshot))
+      .receive("ok", ({snapshot}) => {
+        logHelloPage(snapshot, "initial")
+        setSnapshot(snapshot)
+      })
       .receive("error", () => setUnauthorized(true))
 
-    channel.on("snapshot", (snapshot) => setSnapshot(snapshot))
+    channel.on("snapshot", (snapshot) => {
+      logHelloPage(snapshot, "update")
+      setSnapshot(snapshot)
+    })
 
     // Live revocation (e.g. an ex-member who LEFT a chat): the server pushes
     // `unauthorized` then closes the channel. Fail closed on the CLIENT too —
