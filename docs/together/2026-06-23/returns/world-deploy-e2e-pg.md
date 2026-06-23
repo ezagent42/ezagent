@@ -230,6 +230,45 @@ onboarding auto-prompts fire (dismiss MCP-trust/login → agent joins the bridge
 orchestrator async + ack, or surface a "session pending" state) so a slow/stuck
 orchestrator doesn't roll back the session.
 
+### Step-2 confirmed from a live crash log (16:50) — `create_agent` ALSO 5 s-times-out, and the world handler CRASHES the LiveView on it
+
+An operator agent-create from the world UI (`agents.create` → cc `tesy-pty`, cwd `/tmp`,
+`with_pty:false`, workspace `li-zhenyu-709522`) produced a **LiveView crash** in the
+server log:
+
+```
+** (stop) exited in: GenServer.call(#PID, {:ezagent_dispatch, %Invocation{
+     target: workspace://…?action=workspace.create_agent, mode: :call, …}}, 5000)
+   ** (EXIT) time out
+   world_live.ex:380: EzagentPluginWorld.WorldLive.dispatch_agent_create/2
+```
+
+Mechanism (same 5 s budget as `create_session`, plus a missing guard):
+1. cc `create_agent` **synchronously spawns the claude process** via the
+   credential-cascade chokepoint (`agent_create.ex:274` `do_create_agent("cc", …)`
+   → `Agent.spawn_from_template_content/5`) → takes **>5 s**.
+2. `Ezagent.Workspace.create_agent/3` dispatches `mode: :call`, so it hits the **5 s
+   framework dispatch timeout** → raises `{:exit, {:timeout, …}}`.
+3. `dispatch_agent_create/2` (`world_live.ex:366-398`) calls it inside a `with`
+   chain whose `else` only matches `{:error, _}` / `_` — it **does NOT catch the
+   `:exit`** → the whole `WorldLive` LiveView process **crashes and remounts**.
+
+This is **strictly worse than `create_session`**, which is guarded
+(`conversation_actions.ex:248-263` `create_session_result` has `rescue` + `catch :exit`
+→ degrades to an error status). The agent-create path has no such guard, so the
+operator's entire world UI dies. **This — not a credential gap — is the first thing an
+operator hits at step 2** (the credential/login layer is only reachable *after* a
+successful create). It resolves this return's earlier open question (step-2 symptom =
+create-timeout crash, NOT primarily credential).
+
+**Routing:**
+- **FatNine** (`world_live.ex` agent-create handler is task-1's owned surface): wrap
+  the `create_agent` call in `try/rescue` + `catch :exit` (mirror `create_session_result`)
+  so a slow create degrades to an `error:*` status instead of crashing the LiveView.
+- **lead / core**: the underlying *synchronous cc spawn exceeds the 5 s dispatch
+  budget* — the SAME root as the `create_session` orchestrator gate. Fix once (spawn
+  async + ack, or raise the budget for these spawn actions).
+
 ### Corrected matrix impact (supersedes §2b bug 3 + §3 rows 3/4)
 - **Steps 3 / 4 / 8 ⛔ for the operator** today: create is racy/timeout-prone
   (surface X) and the resulting snapshot-less session is un-dispatchable
