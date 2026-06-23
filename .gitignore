@@ -55,5 +55,9 @@ __pycache__/
 *.pyc
 .worktrees/
 
+# Superpowers v6.0.3+: per-worktree SDD scratch / progress ledger.
+# Ignored so subagent-driven development can write here without touching .git.
+.superpowers/
+
 # Local Tailwind standalone binary (build artifact, do not commit)
 tailwind-macos-arm64

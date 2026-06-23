@@ -53,12 +53,33 @@ standard + conflict/merge management:
 docs/together/YYYY-MM-DD/
 ├── plan.md             # lead (plan):    tasks, scope, per-task branches, conflict map
 ├── handoffs/<task>.md  # lead (handoff): one reviewed handoff per task
-├── returns/<task>.md   # dev  (return):  done + DoD artifact + merge request
+├── returns/<task>.md   # dev  (return):  timestamped done + DoD artifact + merge request
 ├── stack.md            # lead (push):    returns in analyzed merge order
 └── review.md           # lead (review):  end-of-day retrospective + next-day suggestions
 ```
 Durable design specs/notes still live in `docs/superpowers/`; `docs/together/` is
 the **daily operational record**.
+
+## Ledger rules — do not skip these
+
+- **No empty plan.** `plan.md` is invalid until it lists every planned task with
+  owner/dev, scope, owned surfaces/files, branch, required reading, conflict
+  notes, and handoff order. A placeholder-only plan means the day has not
+  started.
+- **Timestamp every return.** Each `returns/<task>.md` records `returned_at`,
+  `deadline`, and `deadline_status` (`on_time`, `late`, `deferred`, or
+  `out_of_scope`). Late returns stay in `returns/` but must be called out by
+  `push` and `review` instead of silently counted as planned work.
+- **Reconcile the whole ledger.** `push` must account for every file in
+  `returns/`: stacked, superseded duplicate, late, out-of-scope, or blocked.
+  Nothing may be ignored because it is inconvenient or arrived after deadline.
+- **Close PR state.** After `close`, every related GitHub PR is either merged
+  through GitHub or explicitly closed/commented as subsumed by the `main` merge
+  SHA. Never leave an open PR whose code already landed through the lead path.
+- **Superpowers SDD scratch.** When delegating to
+  `superpowers:subagent-driven-development`, use the current Superpowers
+  workspace convention: task briefs, reports, review diffs, and progress ledger
+  live under the git-ignored `.superpowers/sdd/`, not under `.git/`.
 
 ## The daily cycle (8 commands)
 Invoke as `dev-together <command> [args]`. **Read the matching step file before
