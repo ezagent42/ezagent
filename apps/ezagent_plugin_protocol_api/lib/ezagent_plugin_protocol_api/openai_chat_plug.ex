@@ -38,7 +38,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          :ok <- join_agent(session_uri, entity_uri, target_agent),
          {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+      agent = target_agent || default_agent()
 
       # Register pending request, spawn background waiter (subscribes + waits in Task)
       PendingReplyStore.put_pending(request_id)
@@ -110,25 +110,10 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  # Register flavor attribute so AgentModuleResolver can find the Kind module.
-  defp maybe_register_flavor(agent_uri) do
-    flavor = flavor_from_uri(agent_uri)
-    if flavor, do: Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
-  end
-
-  defp flavor_from_uri(agent_uri) do
-    path = agent_uri.path || ""
-    rest = String.replace_leading(path, "/", "")
-    name = List.last(String.split(rest, "/")) || ""
-
-    cond do
-      String.starts_with?(name, "curl_") -> "curl"
-      String.starts_with?(name, "cc_") -> "cc"
-      String.starts_with?(name, "codex_") -> "codex"
-      String.starts_with?(name, "echo_") -> "echo"
-      true -> nil
-    end
-  end
+  # The agent that handles a request when the API key carries no explicit
+  # `target_agent`. Built via the typed `Ezagent.URI.agent/2` helper so the
+  # `entity://` form lives behind Ezagent.URI, not a raw string in this plug.
+  defp default_agent, do: Ezagent.URI.agent("system", "echo_default")
 
   defp extract_id_from_path(conn) do
     path = conn.request_path
@@ -175,12 +160,16 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   # Defaults to echo agent when target_agent is nil.
   defp join_agent(session_uri, entity_uri, target_agent) do
     require Logger
-    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    agent = target_agent || default_agent()
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
-    # Register flavor attribute so AgentModuleResolver can find the Kind module.
-    # The URI name prefix determines the flavor (e.g. "curl_e2e" → "curl").
-    maybe_register_flavor(agent)
+    # Flavor → Kind-module resolution (AgentModuleResolver) reads the agent's
+    # STORED flavor via Ezagent.UriQuery — never the URI name prefix. Custom
+    # target agents are operator-provisioned (template-instantiated), so their
+    # flavor is already in the durable snapshot and resolves automatically.
+    # The default echo agent may be spawned cold (no prior snapshot), so store
+    # its flavor as a constant — it is echo by definition, nothing to derive.
+    if is_nil(target_agent), do: Ezagent.AgentFlavorAttributes.put(agent, "echo")
 
     case SpawnRegistry.spawn(agent) do
       {:ok, _pid} -> Logger.info("ProtocolApi: agent spawned OK")
@@ -233,7 +222,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
     # $session_users only delivers to Users. Add target agent to mentions
     # so the $mentions routing rule delivers agent.receive to it.
-    agent = target_agent || Ezagent.URI.new!("entity://system/agent/echo_default")
+    agent = target_agent || default_agent()
     mentions = if agent, do: [agent], else: []
 
     msg =
