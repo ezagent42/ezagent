@@ -303,6 +303,51 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     end
   end
 
+  # A4 — echo template path must thread `behaviors: echo_behaviors()` at spawn.
+  # Without the fix, `ensure_agent_kind/1` used `SpawnRegistry.spawn_detailed/1`
+  # (no args), causing `Entity.Agent` to boot with `nil_capture_behavior_set/0`
+  # (base behaviors only, NO Echo). A `:say` dispatch would then fail with
+  # `:unknown_action` — the agent has Identity but no Echo behavior.
+  describe "instantiate/3 — echo behavior presence (A4)" do
+    test ":say dispatch succeeds on template-spawned echo agent (proves Echo behavior is in instance set)" do
+      agent_uri_str =
+        "entity://team-alpha/agent/echo_a4-#{System.unique_integer([:positive])}"
+
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
+
+      tmpl = %{
+        "class" => "echo.agent",
+        "agent_uri" => agent_uri_str
+      }
+
+      workspace_uri = Ezagent.URI.new!("workspace://test")
+
+      assert {:ok, [^agent_uri], %{fresh?: true}} =
+               EchoAgent.instantiate("t", tmpl, workspace_uri)
+
+      # Wait for the Kind to become ready (snapshot load / create completes).
+      wait_until_ready(agent_uri)
+
+      target = Ezagent.URI.new!("#{agent_uri_str}?action=echo.say")
+
+      # A `:say` dispatch PROVES Echo behavior is in the instance set.
+      # Without `behaviors: echo_behaviors()` threaded at spawn, the agent
+      # boots with base behaviors only → `:say` would return `{:error,
+      # {:unknown_action, _}}`. The fix makes it return `{:ok, %{echo: ...}}`.
+      assert {:ok, %{echo: "hello"}} =
+               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                 target: target,
+                 mode: :call,
+                 args: %{msg: "hello"},
+                 ctx: %{
+                   caller: Ezagent.Entity.User.admin_uri(),
+                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                   reply: {:caller_inbox, self()}
+                 }
+               })
+    end
+  end
+
   describe "registry integration" do
     test "Template Class is registered at boot" do
       assert {:ok, Ezagent.PluginEcho.Template.EchoAgent} =
@@ -447,5 +492,19 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     Ezagent.Domain.Pty.Server.list_agents()
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
     |> Enum.map(& &1.pid)
+  end
+
+  # A4 helper — poll ReadyGate until the Kind signals :ready (snapshot
+  # load / create completes). Mirrors `echo_cold_load_test.exs`.
+  defp wait_until_ready(uri, attempts \\ 100)
+  defp wait_until_ready(_uri, 0), do: flunk("wait_until_ready: Kind never reached :ready")
+
+  defp wait_until_ready(uri, attempts) do
+    if Ezagent.ReadyGate.status(uri) == :ready do
+      :ok
+    else
+      Process.sleep(10)
+      wait_until_ready(uri, attempts - 1)
+    end
   end
 end

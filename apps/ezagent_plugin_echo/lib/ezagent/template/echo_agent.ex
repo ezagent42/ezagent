@@ -186,24 +186,49 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri),
     do: {:error, {:invalid_template, tmpl}}
 
-  # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
-  # the atomic `DynamicSupervisor` outcome (`:started` vs
-  # `:already_started`) — the ground-truth freshness signal, not a
-  # TOCTOU-prone pre-probe. Returns `{:ok, :started | :already_started}`.
+  # A4 — thread `behaviors: echo_behaviors()` at spawn so the Agent Kind
+  # boots with Echo behavior in its per-instance set. Without this,
+  # `Entity.Agent`'s `nil_capture_behavior_set/0` falls back to base
+  # behaviors only (no Echo) → `:say` dispatches fail with `:unknown_action`.
+  # Mirrors curl's `curl_agent.ex` pattern (`behaviors: curl_behaviors()`).
+  #
+  # `SpawnRegistry.spawn_detailed/1` has NO args-accepting arity, so we
+  # call `Ezagent.Kind.spawn/2` directly (same as curl template). The
+  # `{:ok, pid}` / `{:error, {:already_started, pid}}` return from
+  # `DynamicSupervisor.start_child` maps to `:started` / `:already_started`
+  # — the ground-truth freshness signal, not a TOCTOU-prone pre-probe.
+  #
+  # `{:error, {:already_registered, _uri_str}}` is also treated as
+  # `:already_started`: `Kind.Server.init/1` emits this when a DIFFERENT
+  # Kind module (e.g. `Entity.Echo` in tests, or a foreign concurrent spawn)
+  # already holds the URI in `KindRegistry`. The URI owner is alive, so
+  # this instantiate call did not create it — same semantics as
+  # `{:already_started, pid}`.
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-      {:ok, :started, _pid} ->
+    init_args = %{
+      uri: agent_uri,
+      behaviors: Ezagent.Entity.Agent.echo_behaviors()
+    }
+
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+      {:ok, _pid} ->
         {:ok, :started}
 
-      {:ok, :already_started, _pid} ->
+      {:error, {:already_started, _pid}} ->
         # Atomic dedup at KindRegistry level — same pattern as
         # `cc.agent.instantiate/3`. Still a success, but THIS call did
         # not create the worker.
         {:ok, :already_started}
 
+      {:error, {:already_registered, _uri_str}} ->
+        # URI already in KindRegistry under a different Kind module — e.g.
+        # a concurrent spawn or a test pre-spawn via `Entity.Echo`. The
+        # worker is alive; THIS call did not create it.
+        {:ok, :already_started}
+
       {:error, reason} ->
         Logger.warning(
-          "echo.agent: SpawnRegistry.spawn_detailed failed for #{URI.to_string(agent_uri)}: " <>
+          "echo.agent: Kind.spawn failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 

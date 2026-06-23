@@ -20,11 +20,16 @@ defmodule EzagentPluginEcho.Application do
 
   ## What this plugin declares
 
-  - `behaviors/0` — `{Ezagent.Entity.Agent, :say|:receive|:write}` →
-    `Ezagent.Behavior.Echo` / `Ezagent.Behavior.Pty`. A3 reparents all
-    echo action bindings onto the unified `Ezagent.Entity.Agent` Kind
-    (mirroring curl PR-6+7). `:say` is the historical programmatic-invoke
-    action; `:receive` is the chat fan-out hook; `:write` is the PTY sidecar.
+  - `behaviors/0` — `{Ezagent.Entity.Agent, :say|:write}` →
+    `Ezagent.Behavior.Echo` / `Ezagent.Behavior.Pty`. A3 reparents echo
+    action bindings onto the unified `Ezagent.Entity.Agent` Kind (mirroring
+    curl PR-6+7). `:say` is the historical programmatic-invoke action;
+    `:write` is the PTY sidecar. `:receive` is intentionally ABSENT here
+    because `{Entity.Agent, :receive}` is globally owned by
+    `Ezagent.Behavior.Agent.Receive` (registered by `EzagentDomainAgent`),
+    the flavor-blind delivery seam → `AgentBridge`. Registering it again
+    would cause a capability-conflict boot crash (mirror of curl PR-6+7
+    which also omits `:receive` from its `behaviors/0`).
   - `template_classes/0` — the `echo.agent` Template Class, so
     operators can create echo agents (optionally with a `/bin/bash -i`
     PTY sidecar) via the standard add-template chain.
@@ -85,9 +90,13 @@ defmodule EzagentPluginEcho.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
+    # A3 fix — `:receive` is intentionally absent. `{Entity.Agent, :receive}` is
+    # globally owned by `Ezagent.Behavior.Agent.Receive` (registered by
+    # `EzagentDomainAgent.Application`); re-registering it here causes a
+    # capability-conflict boot crash. The echo flavor's inbound delivery flows
+    # through `Agent.Receive` → `AgentBridge` → the echo adapter (same as curl).
     [
       {Ezagent.Entity.Agent, :say, Ezagent.Behavior.Echo},
-      {Ezagent.Entity.Agent, :receive, Ezagent.Behavior.Echo},
       {Ezagent.Entity.Agent, :write, Ezagent.Behavior.Pty}
     ]
   end
