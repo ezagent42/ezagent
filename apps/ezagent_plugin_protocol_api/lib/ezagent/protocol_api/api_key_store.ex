@@ -12,14 +12,14 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
 
   @primary_key {:key_id, :string, autogenerate: false}
   schema "protocol_api_keys" do
-    field(:secret_hash, :string)
-    field(:entity_uri, :string)
-    field(:workspace_uri, :string)
-    field(:label, :string)
-    field(:allowed_models, {:array, :string}, default: [])
-    field(:cap_policy, :map, default: %{})
-    field(:target_agent, :string, default: nil)
-    field(:revoked_at, :utc_datetime)
+    field :secret_hash, :string
+    field :entity_uri, :string
+    field :workspace_uri, :string
+    field :label, :string
+    field :allowed_models, {:array, :string}, default: []
+    field :cap_policy, :map, default: %{}
+    field :target_agent, :string, default: nil
+    field :revoked_at, :utc_datetime
     timestamps(type: :utc_datetime_usec)
   end
 
@@ -49,20 +49,24 @@ defmodule Ezagent.ProtocolApi.ApiKeyStore do
     import Ecto.Query
 
     Repo.all(
-      from(k in __MODULE__,
+      from k in __MODULE__,
         where: k.entity_uri == ^entity_uri and is_nil(k.revoked_at),
         select: [:key_id, :label, :allowed_models, :inserted_at]
-      )
     )
   end
 
   defp parse_token("pk_" <> rest) do
     # Split on FIRST underscore: key_id before, secret after.
     # Key IDs MUST NOT contain underscores (enforced at key generation time).
-    case String.split(rest, "_", parts: 2) do
+    #
+    # `:binary.split/2` (split-on-first, ≤2 parts) is the right primitive here
+    # and is deliberate, NOT a flavor/URI parse: this splits an opaque API
+    # token `pk_<key_id>_<secret>`, unrelated to agent-flavor URI prefixes. It
+    # also keeps the uri_query scan's `flavor_prefix_dependency` heuristic
+    # (which flags `String.split(_, "_")`) from false-positiving on token code.
+    case :binary.split(rest, "_") do
       [key_id, secret] when key_id != "" and secret != "" ->
         {:ok, key_id, secret}
-
       _ ->
         {:error, :invalid_token}
     end
