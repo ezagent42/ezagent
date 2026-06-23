@@ -10,9 +10,8 @@ defmodule EzagentPluginHello.Template.HelloSession do
 
   `instantiate/3` delegates to `EzagentPluginHello.App.ensure_app/2` — the same
   in-code flow Phase 0/1 already use (a `public_view` SessionTemplate + a live
-  socialware Session + a joined `HelloBuilder` orchestrator with its
-  within-session caps) — so there is exactly ONE place that knows how to stand up
-  a hello app.
+  socialware Session + a joined `HelloBuilder` member) — so there is exactly ONE
+  place that knows how to stand up a hello app.
   """
 
   @behaviour Ezagent.Kind.Template

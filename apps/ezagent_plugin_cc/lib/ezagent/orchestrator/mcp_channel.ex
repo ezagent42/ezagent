@@ -115,7 +115,7 @@ defmodule Ezagent.Orchestrator.McpChannel do
         # below was lost whenever the gate's `receive` was not yet
         # parked, killing a working orchestrator + rolling back create
         # with empty members.
-        :ok = Ezagent.Orchestrator.LiveJoinRegistry.mark_joined(socket.assigns.agent_uri)
+        :ok = Ezagent.Agent.LiveJoinRegistry.mark_joined(socket.assigns.agent_uri)
 
         # KEEP the broadcast as an INSTANT-WAKE optimization for the
         # poll. The URI is the token-authenticated `agent_uri` (== the
@@ -188,7 +188,7 @@ defmodule Ezagent.Orchestrator.McpChannel do
   def terminate(_reason, socket) do
     case socket.assigns do
       %{agent_uri: %URI{} = agent_uri} ->
-        Ezagent.Orchestrator.LiveJoinRegistry.clear(agent_uri)
+        Ezagent.Agent.LiveJoinRegistry.clear(agent_uri)
 
       _ ->
         :ok

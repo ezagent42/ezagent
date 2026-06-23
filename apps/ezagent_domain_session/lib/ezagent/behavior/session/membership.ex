@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.Session.Membership do
   # the membership-broadcast `{:notify, ...}` effects) are emitted by the
   # `handle_join/2` callback in `Behavior.Session`, and the same-process
   # side-effects (`Process.monitor` / `Process.demonitor` / the owner-cap
-  # grant dispatch / `Ezagent.Notifications.notify`) are identical to
+  # `Ezagent.Notifications.notify`) are identical to
   # running in `Behavior.Session`.
 
   require Logger
@@ -88,21 +88,13 @@ defmodule Ezagent.Behavior.Session.Membership do
     # (`entity://<ws>/user/anon-<rand>`) MUST NEVER claim ownership. If an
     # ownerless session (spawned without `owner_uri`, or a legacy nil) is
     # opened via the public-view flow, the joining anon user would otherwise
-    # become owner AND be granted the `OrchestratorAdmin :restart` cap —
-    # a privilege escalation that flatly contradicts the membership-only,
-    # read-only anon model. Anon users are excluded from BOTH the owner
-    # transition and the cap grant; an ownerless session simply stays
+    # become owner — a privilege escalation that flatly contradicts the
+    # membership-only, read-only anon model. Anon users are excluded from the
+    # owner transition; an ownerless session simply stays
     # ownerless (read-only viewing needs no owner).
     claims_owner? = is_nil(prior_owner) and user_uri?(member_uri) and not anon_member?(member_uri)
 
     new_owner_uri = if claims_owner?, do: member_uri, else: prior_owner
-
-    # RFC #402 (codex r1 HIGH 2026-05-26) — when this join transitions
-    # `owner_uri` from `nil` to a real (non-anon) user, ALSO grant that user
-    # the `OrchestratorAdmin :restart` cap on this session.
-    if claims_owner? do
-      grant_first_join_owner_cap(session_uri, member_uri)
-    end
 
     # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
     # coverage" — surface the join to the joinee's notification stream
@@ -316,88 +308,6 @@ defmodule Ezagent.Behavior.Session.Membership do
   end
 
   def anon_member?(_), do: false
-
-  # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
-  # first-USER-join owner claim. Dispatches `identity.grant_cap` on
-  # the new owner so they hold the specific
-  # `cap(:session, OrchestratorAdmin, :restart, session_uri, ws)`
-  # cap the LV's restart gate consults.
-  #
-  # `mode: :cast` is REQUIRED here (NOT :call). We're currently
-  # executing inside the Session Kind's `GenServer.call` (the
-  # `chat.join` invocation), and `identity.grant_cap` dispatches
-  # to the IdentityAdmin Behavior which runs
-  # `check_grant_authorized` → `data_owner_of(OrchestratorAdmin,
-  # session_uri)` → `OrchestratorAdmin.data_owner` →
-  # `Chat.data_owner` → `Session.owner(session_uri)` →
-  # `Ezagent.Kind.get_slice(session_uri, :session)` which is itself
-  # a `GenServer.call` to this very Session. A `:call`-mode
-  # grant_cap dispatch therefore deadlocks (5-sec timeout, then
-  # `:join` crashes with `:exit`).
-  #
-  # `:cast` enqueues the grant_cap dispatch to the User Kind's
-  # mailbox and returns immediately; by the time IdentityAdmin
-  # gets around to calling `Session.owner`, this Session has
-  # already returned from `chat.join` and is ready for the next
-  # message. Eventually-consistent: a tight LV remount + restart
-  # within the cast latency window MIGHT see the cap not yet
-  # granted; the gap is bounded by the User Kind mailbox queue
-  # depth + one `get_slice` round-trip (sub-ms in practice).
-  # Acceptable per RFC #402 — the legacy fallback path is rare.
-  defp grant_first_join_owner_cap(%URI{} = session_uri, %URI{} = owner_uri) do
-    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-      {:ok, %URI{} = workspace_uri} ->
-        want = %Ezagent.Capability{
-          kind: :session,
-          behavior: Ezagent.Behavior.OrchestratorAdmin,
-          # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
-          # actions/0 == [:restart].
-          action: :restart,
-          instance: session_uri,
-          workspace_uri: workspace_uri,
-          granted_by: owner_uri,
-          granted_at: DateTime.utc_now()
-        }
-
-        # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #10). The `:async`
-        # reply preserves the deliberate `:cast` mode (see the comment
-        # above — a synchronous grant would deadlock the Session calling
-        # back into `Session.owner`). Cap is
-        # `session/OrchestratorAdmin/:restart/<session_uri>` (concrete
-        # instance + concrete action) → `rule_cap_bounded?` true → the
-        # `{:rule, …}` branch authorizes it; configurer + `granted_by` =
-        # owner. `template-materialize` is no longer the authorizer.
-        case Ezagent.Identity.Grant.grant_cap_via_router(
-               owner_uri,
-               want,
-               {:rule, :template_materialize, owner_uri},
-               :async
-             ) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "Chat.grant_first_join_owner_cap: cast dispatch failed for " <>
-                "owner=#{URI.to_string(owner_uri)} on session=" <>
-                "#{URI.to_string(session_uri)}: #{inspect(reason)}. " <>
-                "Restart UX will be re-attempted on the next navigation."
-            )
-
-            :telemetry.execute(
-              [:ezagent, :session, :first_join_owner_cap, :failed],
-              %{count: 1},
-              %{session_uri: session_uri, owner_uri: owner_uri, reason: reason}
-            )
-
-            :ok
-        end
-
-      :error ->
-        # Session not workspace-bound.
-        :ok
-    end
-  end
 
   # `:attach` (LV→world parity PR-2b) is co-granted with `:send`: a confirmed
   # member who may post a message may also upload a file attachment to it. The

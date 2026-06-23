@@ -326,9 +326,6 @@ defmodule Ezagent.Entity.Session do
   defdelegate ensure_orchestrator(session_uri, owner_uri, workspace_uri),
     to: Ezagent.Entity.Session.Orchestrator
 
-  defdelegate __await_orchestrator_ready_for_test__(result, candidate_uri, timeout_ms),
-    to: Ezagent.Entity.Session.Orchestrator
-
   defdelegate orchestrator_uri(session_uri), to: Ezagent.Entity.Session.Orchestrator
   defdelegate orchestrator_instance_name(session_uri), to: Ezagent.Entity.Session.Orchestrator
 

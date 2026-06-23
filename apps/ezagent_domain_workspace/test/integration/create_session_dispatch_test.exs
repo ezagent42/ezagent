@@ -1,8 +1,6 @@
 defmodule Ezagent.Integration.CreateSessionDispatchTest do
   @moduledoc """
-  Acceptance tests for SPEC
-  `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
-  Gap C — `Behavior.Workspace.:create_session` action, dispatched via
+  Acceptance tests for `Behavior.Workspace.:create_session`, dispatched via
   `Ezagent.Workspace.create_session/3`.
 
   Maps to the SPEC's Acceptance Criteria table:
@@ -43,15 +41,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       session_uri =
         Ezagent.URI.session(ws_uri.host, template, short_name)
 
-      orch_uri =
-        Ezagent.URI.agent(ws_uri.host, "cc_orchestrator-#{short_name}")
-
-      {:ok, session_uri,
-       %{
-         orchestrator_uri: orch_uri,
-         orchestrator_status: :ready,
-         orchestrator_error: nil
-       }}
+      {:ok, session_uri, %{}}
     end
   end
 
@@ -76,7 +66,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
   end
 
   describe "C1 — dispatched :create_session reaches the facade" do
-    test "happy path returns session_uri + orchestrator_uri in result map", %{
+    test "happy path returns session_uri only in result map", %{
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx,
       ws_name: ws_name
@@ -91,12 +81,9 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
                )
 
       assert URI.to_string(result.session_uri) == "session://#{ws_name}/default/#{short}"
-
-      assert URI.to_string(result.orchestrator_uri) ==
-               "entity://#{ws_name}/agent/cc_orchestrator-#{short}"
-
-      assert result.orchestrator_status == :ready
-      assert is_nil(result.orchestrator_error)
+      refute Map.has_key?(result, :orchestrator_uri)
+      refute Map.has_key?(result, :orchestrator_status)
+      refute Map.has_key?(result, :orchestrator_error)
     end
 
     test "creator receives a session-scoped Manage cap after create", %{
@@ -183,7 +170,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
   end
 
   describe "C2 — CLI/LV parity (return shape invariant)" do
-    test "result map has the 4 documented keys", %{
+    test "result map has the documented session-only key", %{
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
     } do
@@ -196,13 +183,9 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
           admin_ctx
         )
 
-      expected_keys =
-        MapSet.new([:session_uri, :orchestrator_uri, :orchestrator_status, :orchestrator_error])
-
       actual_keys = MapSet.new(Map.keys(result))
 
-      assert MapSet.subset?(expected_keys, actual_keys),
-             "expected result keys to include #{inspect(expected_keys)}, got #{inspect(actual_keys)}"
+      assert actual_keys == MapSet.new([:session_uri])
     end
 
     test "interface/0 returns spec for :create_session" do

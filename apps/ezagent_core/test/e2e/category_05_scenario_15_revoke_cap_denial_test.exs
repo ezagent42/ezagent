@@ -87,12 +87,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
              %{short_name: short_name, template_name: template_name},
              %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
            ) do
-      {:ok, result.session_uri,
-       %{
-         orchestrator_uri: result.orchestrator_uri,
-         orchestrator_status: result.orchestrator_status,
-         orchestrator_error: result.orchestrator_error
-       }}
+      {:ok, result.session_uri, %{}}
     end
   end
 

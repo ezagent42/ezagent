@@ -19,16 +19,9 @@ defmodule Ezagent.Entity.HelloBuilder do
 
   attach(Ezagent.Behavior.HelloBuilder)
 
-  # Phase 1 — the builder is the session ORCHESTRATOR, so it must RECEIVE granted
-  # caps (`{:within_session, S}` etc., via `App.grant_orchestrator_caps`) to fan
-  # out to workers. The identity-cap machinery is split across two behaviors that
-  # share the `:identity` slice: `Identity` holds the safe READ actions
-  # (`:list_caps`/`:has_cap?`) and `IdentityAdmin` holds the privileged WRITE
-  # actions (`:grant_cap`/`:revoke_cap`) — the latter is what actually receives a
-  # grant. Both are registered on the `Agent` Kind too; here we compose them on the
-  # hello-owned orchestrator Kind. The remaining `Entity.Agent` base behaviors
-  # (Sandbox/ApiKeys/CredentialGrant/ConfigEvolve) are deliberately NOT composed —
-  # the orchestrator needs none of them.
+  # The builder is a narrow hello-owned member, not a cc-style orchestrator.
+  # Keep identity behaviors so tests/tools can inspect any explicit caps granted
+  # to the builder without composing the broader Entity.Agent behavior set.
   attach(Ezagent.Behavior.Identity)
   attach(Ezagent.Behavior.IdentityAdmin)
 
@@ -40,7 +33,7 @@ defmodule Ezagent.Entity.HelloBuilder do
       Ezagent.Behavior.IdentityAdmin
     ]
 
-  # The builder now holds DURABLE state — its granted orchestrator caps (the
-  # `:caps` slice). Snapshot on change so the authority survives a cold restart.
+  # The builder can hold durable identity state; snapshot on change so any
+  # explicit caps survive a cold restart.
   def persistence, do: {:snapshot, :on_change}
 end

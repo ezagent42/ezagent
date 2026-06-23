@@ -44,6 +44,8 @@ defmodule EzagentDomainAgent.Application do
     # delivery seam, owned by the agent domain. Registered here (declare-don't-call,
     # Invariant #8) now that the Agent Kind lives in this app.
     :ok = CapabilityRegistry.register(Agent, :receive, AgentReceive)
+    :ok = Ezagent.Agent.TransportReadiness.init()
+    :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.Agent.TransportReadiness)
 
     result
   end

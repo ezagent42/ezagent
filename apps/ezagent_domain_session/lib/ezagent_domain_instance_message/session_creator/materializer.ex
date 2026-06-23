@@ -25,6 +25,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     end
   end
 
+  def materialize_template_declaration(
+        %URI{} = session_uri,
+        %URI{} = session_template_uri,
+        template_content
+      )
+      when is_map(template_content) do
+    prior = Session.read_template_working_copy(session_uri)
+
+    working_copy =
+      prior
+      |> Map.drop([:orchestrator_template_uri, :orchestrator_uri])
+      |> Map.put(:session_template_uri, session_template_uri)
+      |> Map.put(:member_declarations, template_members_of(template_content))
+
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
   def store_session_orchestrator_uri(%URI{} = session_uri, %URI{} = orchestrator_uri) do
     working_copy =
       session_uri
@@ -197,5 +218,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         other -> {:halt, {:error, {:member_join_unexpected, member_uri, other}}}
       end
     end)
+  end
+
+  defp template_members_of(content) when is_map(content) do
+    case Map.get(content, :members) || Map.get(content, "members") do
+      list when is_list(list) -> list
+      _ -> []
+    end
   end
 end

@@ -16,13 +16,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   test environment seeds it via this same facade in
   `EzagentDomainInstanceMessage.Application` (test-only branch).
 
-  ## 2026-05-31 — atomic, single-entry session creation
+  ## 2026-06-23 — pure session creation
 
   `create_session/3` is the internal atomic session materializer and the
   **single lower-level writer** (the dead Generator path
   `Session.spawn_from_template/2` was deleted — SPEC
   `docs/superpowers/specs/2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md`
-  §1/§7). It runs a single fail-loud sequence (§4):
+  §1/§7). Rev6 decouples session creation from orchestrator startup:
 
     1. resolve + validate + build the `session://<template>/<ws>/<name>`
        URI; resolve `template_name` → a real SessionTemplate (fail-loud
@@ -30,25 +30,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     2. spawn the Session Kind (`{:already_started}`/`{:already_registered}`
        → return existing, idempotent, NO adoption re-finalize);
     3. bind the workspace (one idempotent `WorkspaceRegistry.bind`);
-    4. materialize the orchestrator working-copy fields EARLY — write
-       `orchestrator_template_uri` + `session_template_uri` to the
-       session working copy BEFORE the orchestrator can JOIN. A template
-       with no orchestrator → plain session, skip 5-7;
-    5. ensure the orchestrator (`Session.ensure_orchestrator/3`); ensure
-       FAILURE → rollback → `{:error, _}` (no `:pending`, no
-       `:failed`-alive);
-    6. grant the orchestrator its scoped caps + ONE owner
-       `OrchestratorAdmin :restart` cap;
-    7. register the orchestrator MCP context;
-    8. join `[owner, orchestrator]` as session members;
-    9. on any 4-8 failure: minimal rollback (terminate orchestrator +
-       Session Kind, unbind workspace, delete snapshot row).
+    4. record the template declaration (`session_template_uri` +
+       `member_declarations`) and install template prompts/legends/rules;
+    5. join only the owner and return `%{}`.
+
+  Declared role members are provisioned on first route. Session creation
+  never waits for a transport bridge and never rolls the session back because
+  a role member failed to start.
   """
 
   alias Ezagent.KindRegistry
   alias Ezagent.Entity.{Session, User}
-
-  alias Ezagent.Orchestrator.OwnerNotifier
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
     Listing,
@@ -87,30 +79,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   Missing key raises `ArgumentError`.
 
-  Returns `{:ok, session_uri, meta}` on success where `meta` is
-  `%{orchestrator_uri: URI.t() | nil, orchestrator_status: :ready |
-  :failed, orchestrator_error: term() | nil}`.
+  Returns `{:ok, session_uri, %{}}` on success. Role members, including the
+  `orchestrator` role, are durable declarations at create time and are
+  provisioned lazily by routing.
 
-  2026-05-31 orchestrator-startup-atomicity §4 — `orchestrator_status`
-  is now a **2-state** shape:
-
-    * `:ready` — orchestrator agent is alive (was `:created` or
-      `:already_present` per `Session.ensure_orchestrator/3`). May carry
-      a non-nil `orchestrator_error` of the form `{:role_degraded,
-      reason}` when the agent is up but its orchestrator skill failed to
-      load (`:ready+degraded`); the agent is still usable.
-    * `:failed` — this arm only appears for a *plain session* (a
-      SessionTemplate with no `orchestrator_template_uri`): there is no
-      orchestrator to bring up, so the meta carries `:failed` with a nil
-      URI to signal "this session has no orchestrator role". An
-      orchestrator *ensure failure* does NOT surface as `:failed` here —
-      it rolls the whole create back and returns `{:error, _}`
-      (fail-loud, no half-started zombie).
-
-  Returns `{:error, reason}` when session creation, the workspace bind,
-  OTU materialization, orchestrator ensure, cap grant, or MCP
-  registration fails. Any 4-8 failure rolls back (terminate
-  orchestrator + Session, unbind workspace, delete the snapshot row).
+  Returns `{:error, reason}` when session creation, the workspace bind, or
+  template declaration/rule materialization fails.
 
   Raises `ArgumentError` if neither `creator_uri` nor
   `opts[:workspace_uri]` is supplied (a `nil` creator with no explicit
@@ -120,9 +94,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   (via `{:already_started, pid}` → reuse pid, NO adoption re-finalize).
   """
   @type create_session_meta :: %{
-          orchestrator_uri: URI.t() | nil,
-          orchestrator_status: :ready | :failed,
-          orchestrator_error: term() | nil
+          optional(atom()) => term()
         }
 
   defdelegate rollback_session(session_uri, orchestrator_uri, opts \\ []), to: Rollback
@@ -279,38 +251,20 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         err
 
       {:ok, session_template_uri, template_content} ->
-        orchestrator_template_uri =
-          TemplateResolver.orchestrator_template_uri_of(template_content)
-
         with :ok <-
-               Materializer.materialize_orchestrator_working_copy(
+               Materializer.materialize_template_declaration(
                  session_uri,
                  session_template_uri,
-                 orchestrator_template_uri
+                 template_content
+               ),
+             :ok <-
+               materialize_template_team(
+                 session_uri,
+                 workspace_uri,
+                 effective_owner,
+                 template_content
                ) do
-          case orchestrator_template_uri do
-            nil ->
-              # Plain template — nothing to repair (no orchestrator role).
-              {:ok, session_uri, plain_session_meta()}
-
-            %URI{} ->
-              # REPAIR of an EXISTING live session — `new_session?: false`. A
-              # materialization failure here must compensate ONLY the
-              # materialization residue (newly-spawned members + newly-inserted
-              # rule rows, already self-swept by `materialize_template_team/4`)
-              # and LEAVE the pre-existing session Kind + its members alive
-              # (codex cycle-2 MAJOR #3). Full `rollback_session/3` (which
-              # terminates the Session Kind + deletes its snapshot) is RESERVED
-              # for the create-NEW path.
-              ensure_orchestrated_session(
-                session_uri,
-                workspace_uri,
-                effective_owner,
-                session_template_uri,
-                template_content,
-                new_session?: false
-              )
-          end
+          {:ok, session_uri, %{}}
         end
     end
   end
@@ -415,10 +369,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    orchestrator_template_uri = TemplateResolver.orchestrator_template_uri_of(template_content)
-
-    if session_complete?(session_uri, workspace_uri, effective_owner, orchestrator_template_uri) do
-      {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
+    if session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
+      {:ok, session_uri, %{}}
     else
       Logger.warning(
         "EzagentDomainInstanceMessage.SessionCreator.create_session: existing session=" <>
@@ -427,14 +379,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
           "step 2, codex-review Q2)."
       )
 
-      orch_uri =
-        if match?(%URI{}, orchestrator_template_uri) do
-          Session.planned_orchestrator_uri(session_uri, workspace_uri)
-        else
-          nil
-        end
-
-      rollback_session(session_uri, orch_uri,
+      rollback_session(session_uri, nil,
         owner_uri: effective_owner,
         workspace_uri: workspace_uri
       )
@@ -487,52 +432,36 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
-  # Completeness predicate (codex-review Q2). For an orchestrator-bearing
-  # template ALL must hold; for a plain template only bound + owner-member.
-  #
-  #   * workspace bound — `WorkspaceRegistry.lookup(session_uri)` hits;
-  #   * owner is a chat member — `Session.session_member_uris/1` includes
-  #     the owner (the step-8 join ran);
-  #   * (orchestrator only) working-copy OTU set — the step-4
-  #     materialization ran;
-  #   * (orchestrator only) orchestrator registered-or-rebuildable —
-  #     `OrchestratorReadinessPort.ready?/1` → true (the registry row OR
-  #     a durable rebuild succeeds — the step-5/7 outcome).
+  # Completeness predicate for an already-existing Session. A complete
+  # rev6 session is bound to a workspace, has the owner joined, and carries
+  # the durable template declaration record. Live role members are
+  # provisioned lazily by routing and are NOT part of create completeness.
   defp session_complete?(
          %URI{} = session_uri,
          %URI{} = _workspace_uri,
          %URI{} = owner_uri,
-         orchestrator_template_uri
+         template_content
        ) do
     bound? = match?({:ok, _}, Ezagent.WorkspaceRegistry.lookup(session_uri))
     owner_member? = owner_uri in Session.session_member_uris(session_uri)
+    wc = Session.read_template_working_copy(session_uri)
 
-    case orchestrator_template_uri do
-      nil ->
-        # Plain session — bound + owner-member is the whole contract.
-        bound? and owner_member?
+    declarations =
+      case Map.get(template_content, :members) || Map.get(template_content, "members") do
+        list when is_list(list) -> Enum.filter(list, &template_member_declaration?/1)
+        _ -> []
+      end
 
-      %URI{} ->
-        wc = Session.read_template_working_copy(session_uri)
-        otu_set? = match?(%URI{}, Map.get(wc, :orchestrator_template_uri))
-
-        orchestrator_ok? =
-          if bound? do
-            orch_uri = Map.get(wc, :orchestrator_uri)
-
-            # PR-8 (transport #53) — route the orchestrator-MCP readiness check
-            # through the session-owned port (returns a boolean) instead of
-            # naming the now-cc-resident `McpServer`. The port's `ready?/1`
-            # wraps the same `match?({:ok, _}, McpServer.from_orchestrator_uri/1)`.
-            match?(%URI{}, orch_uri) and
-              Ezagent.Session.OrchestratorReadinessPort.ready?(orch_uri)
-          else
-            false
-          end
-
-        bound? and owner_member? and otu_set? and orchestrator_ok?
-    end
+    bound? and owner_member? and
+      match?(%URI{}, Map.get(wc, :session_template_uri)) and
+      Map.get(wc, :member_declarations, []) == declarations
   end
+
+  defp template_member_declaration?(member) when is_map(member) do
+    (Map.get(member, :in_session_template) || Map.get(member, "in_session_template")) == true
+  end
+
+  defp template_member_declaration?(_), do: false
 
   # Best-effort wait for the Session Kind to leave the KindRegistry after
   # a rollback terminate (so the recreate re-spawn is clean). Bounded
@@ -565,44 +494,23 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          session_template_uri,
          template_content
        ) do
-    orchestrator_template_uri = TemplateResolver.orchestrator_template_uri_of(template_content)
-
     result =
       with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
            :ok <-
-             Materializer.materialize_orchestrator_working_copy(
+             Materializer.materialize_template_declaration(
                session_uri,
                session_template_uri,
-               orchestrator_template_uri
+               template_content
+             ),
+           :ok <- Materializer.join_session_members(session_uri, [effective_owner]),
+           :ok <-
+             materialize_template_team(
+               session_uri,
+               workspace_uri,
+               effective_owner,
+               template_content
              ) do
-        case orchestrator_template_uri do
-          nil ->
-            # Step 4 — plain session (no orchestrator). Join the creator
-            # only; skip 5-7. Then materialize the template team (PR-7).
-            with :ok <- Materializer.join_session_members(session_uri, [effective_owner]),
-                 :ok <-
-                   materialize_template_team(
-                     session_uri,
-                     workspace_uri,
-                     effective_owner,
-                     template_content
-                   ) do
-              {:ok, session_uri, plain_session_meta()}
-            end
-
-          %URI{} ->
-            # CREATE of a brand-NEW session — `new_session?: true`. A failure
-            # in steps 5-8 rolls the whole freshly-created session back
-            # (`rollback_session/3` terminates the Session Kind + snapshot).
-            ensure_orchestrated_session(
-              session_uri,
-              workspace_uri,
-              effective_owner,
-              session_template_uri,
-              template_content,
-              new_session?: true
-            )
-        end
+        {:ok, session_uri, %{}}
       end
 
     case result do
@@ -621,290 +529,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         )
 
         {:error, reason}
-    end
-  end
-
-  # Steps 5-8 for an orchestrator-bearing session.
-  #
-  # `new_session?` decides the failure-compensation policy (codex cycle-2
-  # MAJOR #3):
-  #   * `true`  (create a brand-NEW session) — a steps 5-8 failure rolls the
-  #     whole freshly-created session back via `rollback_session/3` (terminate
-  #     the Session Kind + snapshot + orchestrator + caps).
-  #   * `false` (repair / re-materialize an EXISTING live session) — a failure
-  #     must NEVER tear down the pre-existing session. `materialize_template_team/4`
-  #     already self-compensates the residue it created (newly-spawned members
-  #     + newly-inserted rule rows); we leave the live session + its members
-  #     intact and just surface the error.
-  defp ensure_orchestrated_session(
-         session_uri,
-         workspace_uri,
-         effective_owner,
-         session_template_uri,
-         template_content,
-         opts
-       )
-       when is_list(opts) do
-    new_session? = Keyword.fetch!(opts, :new_session?)
-
-    # Step 4.5 — pre-persist the deterministic planned orchestrator URI to the
-    # durable session working-copy BEFORE the step-5 readiness gate, so the
-    # live orchestrator's MCP bridge join can self-register (McpServer lazy
-    # rebuild from the durable snapshot) DURING the gate's poll. Without this
-    # the join is rejected `:orchestrator_not_registered` until step 6 — which
-    # runs AFTER the gate — so the gate times out (90s) and the create rolls
-    # back. See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
-    #
-    # ONLY on the fresh-create path (`new_session?: true`): a fresh session has
-    # no `:orchestrator_uri` yet, and EVERY downstream failure rolls the whole
-    # session back (`rollback_session/3` deletes the snapshot — atomicity Q1),
-    # so a failed gate cannot leave a stale binding. The repair/restart path is
-    # NOT pre-stored: its existing binding (== planned, preserved through
-    # `materialize_orchestrator_working_copy/3`) already resolves the live join.
-    # The narrower nil-orchestrator repair case needs a readiness-vs-binding
-    # separation (the `:orchestrator_uri` field doubles as the
-    # `session_complete?/4` readiness proof, so pre-storing it on the
-    # keep-the-live-session repair path could read as PREMATURE readiness —
-    # codex review) and is tracked as follow-up in docs/futures/todo.md.
-    #
-    # A pre-store WRITE FAILURE dooms the gate (the join can't resolve), so
-    # fail fast + roll the fresh session back instead of waiting out the 90s.
-    prestore_result =
-      if new_session? do
-        Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
-      else
-        :ok
-      end
-
-    with :ok <- prestore_result do
-      # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
-      # rollback → {:error,_}).
-      ensure_orchestrator_and_finalize(
-        session_uri,
-        workspace_uri,
-        effective_owner,
-        session_template_uri,
-        template_content,
-        new_session?
-      )
-    else
-      {:error, reason} ->
-        if new_session? do
-          rollback_session(session_uri, nil,
-            owner_uri: effective_owner,
-            workspace_uri: workspace_uri
-          )
-        end
-
-        {:error, {:orchestrator_prestore_failed, reason}}
-    end
-  end
-
-  # Steps 5-8: ensure the orchestrator, then (on success) wire its context.
-  # Split out of `ensure_orchestrated_session/6` so the step-4.5 pre-store can
-  # fail-fast ahead of it.
-  defp ensure_orchestrator_and_finalize(
-         session_uri,
-         workspace_uri,
-         effective_owner,
-         session_template_uri,
-         template_content,
-         new_session?
-       ) do
-    case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
-      {:error, reason} ->
-        # `ensure_orchestrator/3` self-cleans the orchestrator it spawned
-        # on its own failure paths (Fix Q4 + `spawn_from_template_content`
-        # round-10), so the orchestrator URI is nil here. On the create path
-        # roll the freshly-created session back (revoking any owner cap); on
-        # the repair path the pre-existing session stays alive — there is no
-        # residue to sweep (the orchestrator self-cleaned, no caps granted).
-        if new_session? do
-          rollback_session(session_uri, nil,
-            owner_uri: effective_owner,
-            workspace_uri: workspace_uri
-          )
-        end
-
-        {:error, {:orchestrator_ensure_failed, reason}}
-
-      ensure_ok ->
-        {orchestrator_uri, degraded_meta} = decompose_ensure(ensure_ok)
-
-        # Steps 6-8.
-        with :ok <- Materializer.store_session_orchestrator_uri(session_uri, orchestrator_uri),
-             # SPEC 2026-06-16 §5 (codex P2 prerequisite, Decision #88) — make
-             # the owner the orchestrator's MANAGER by granting it the
-             # `Manage :any` cap over the orchestrator. The orchestrator spawn
-             # path bypasses `CreatorGrant`, so without this the owner is not a
-             # manager and the manager-delegated `grant_cap` path (§1) could not
-             # equip the orchestrator. Idempotent (skips an equal re-grant).
-             :ok <-
-               Materializer.grant_owner_orchestrator_manage_cap(
-                 orchestrator_uri,
-                 effective_owner
-               ),
-             :ok <-
-               Session.grant_orchestrator_scoped_caps(
-                 orchestrator_uri,
-                 session_uri,
-                 effective_owner
-               ),
-             :ok <-
-               Materializer.grant_owner_orchestrator_admin_cap(
-                 session_uri,
-                 effective_owner,
-                 workspace_uri
-               ),
-             :ok <-
-               Session.register_orchestrator_mcp_context(
-                 orchestrator_uri,
-                 session_uri,
-                 workspace_uri,
-                 effective_owner,
-                 session_template_uri
-               ),
-             # Transport #53 Decision C — spawn the per-orchestrator MCP
-             # executor (`Ezagent.Session.SessionManager` GenServer) alongside
-             # the transport-context registration. The cc MCP transport reaches
-             # it by orchestrator URI; it verifies the bridge token, reconstructs
-             # the orchestrator's caps session-side, and runs each tool with the
-             # Session cap-checked at the dispatch chokepoint. Terminated with
-             # the session.
-             {:ok, _sm_pid} <-
-               Ezagent.Session.SessionManager.ensure_started(
-                 orchestrator_uri: orchestrator_uri,
-                 session_uri: session_uri,
-                 workspace_uri: workspace_uri,
-                 owner_uri: effective_owner,
-                 parent_template_uri: session_template_uri
-               ),
-             :ok <-
-               Materializer.join_session_members(session_uri, [
-                 effective_owner,
-                 orchestrator_uri
-               ]),
-             :ok <-
-               materialize_template_team(
-                 session_uri,
-                 workspace_uri,
-                 orchestrator_uri,
-                 template_content
-               ) do
-          {:ok, session_uri,
-           ready_meta(orchestrator_uri, effective_owner, session_uri, degraded_meta)}
-        else
-          {:error, reason} ->
-            if new_session? do
-              # Step 9 (create-NEW only) — rollback including the spawned
-              # orchestrator Kind + its registry/lineage/bind/snapshot + the
-              # granted caps (owner restart cap + orchestrator scoped caps),
-              # reversed.
-              rollback_session(session_uri, orchestrator_uri,
-                owner_uri: effective_owner,
-                workspace_uri: workspace_uri
-              )
-            else
-              # REPAIR of an EXISTING live session (codex cycle-2 MAJOR #3) —
-              # do NOT tear the session/orchestrator down. The only residue a
-              # materialization failure creates (freshly-spawned members +
-              # newly-inserted rule rows) is ALREADY self-compensated inside
-              # `materialize_template_team/4` before it returns `{:error,_}`.
-              # The pre-existing session Kind + its members + snapshot stay
-              # alive; the caller (`repair_orchestrator/2`) surfaces the error.
-              Logger.warning(
-                "EzagentDomainInstanceMessage.repair_orchestrator: re-materialization FAILED for " <>
-                  "EXISTING session=#{URI.to_string(session_uri)} reason=#{inspect(reason)} " <>
-                  "— the live session is LEFT INTACT (materialization residue self-swept); " <>
-                  "no Session-Kind teardown (codex cycle-2 MAJOR #3)."
-              )
-            end
-
-            {:error, reason}
-        end
-    end
-  end
-
-  # ── Meta-map builders + ensure-result decomposition ──────────────────
-
-  # `Session.ensure_orchestrator/3` returns `{:ok, uri, outcome}` or
-  # `{:ok, uri, outcome, %{role_degraded: ...}}`. Decompose into the
-  # URI + (possibly empty) degraded meta.
-  defp decompose_ensure({:ok, %URI{} = uri, _outcome, degraded_meta}) when is_map(degraded_meta),
-    do: {uri, degraded_meta}
-
-  defp decompose_ensure({:ok, %URI{} = uri, _outcome}), do: {uri, %{}}
-
-  # `:ready` (+ optional `:role_degraded` / `:credential_stale` owner surfacing per
-  # Invariant #9). Credential staleness is ORTHOGONAL to role degradation — both
-  # are surfaced; the orchestrator Agent is alive in every case.
-  defp ready_meta(%URI{} = orch_uri, owner_uri, session_uri, degraded_meta)
-       when is_map(degraded_meta) do
-    OwnerNotifier.maybe_notify_credential_stale(
-      owner_uri,
-      session_uri,
-      orch_uri,
-      degraded_meta
-    )
-
-    ready_meta_for_role(orch_uri, owner_uri, session_uri, degraded_meta)
-  end
-
-  defp ready_meta_for_role(
-         %URI{} = orch_uri,
-         owner_uri,
-         session_uri,
-         %{role_degraded: true} = degraded_meta
-       ) do
-    OwnerNotifier.notify_role_degraded(owner_uri, session_uri, orch_uri, degraded_meta)
-
-    %{
-      orchestrator_uri: orch_uri,
-      orchestrator_status: :ready,
-      orchestrator_error: {:role_degraded, Map.get(degraded_meta, :role_degraded_reason)}
-    }
-  end
-
-  defp ready_meta_for_role(%URI{} = orch_uri, _owner_uri, _session_uri, _degraded_meta) do
-    %{orchestrator_uri: orch_uri, orchestrator_status: :ready, orchestrator_error: nil}
-  end
-
-  # Plain session — no orchestrator role. `:failed` with a nil URI is the
-  # 2-state contract's "no orchestrator" signal (NOT an error; the
-  # session is valid + usable).
-  defp plain_session_meta do
-    %{orchestrator_uri: nil, orchestrator_status: :failed, orchestrator_error: :no_orchestrator}
-  end
-
-  # Best-effort orchestrator status for an idempotent re-create of an
-  # already-existing session. We do not re-run setup; we read whether the
-  # orchestrator Agent Kind is live.
-  defp existing_orchestrator_meta(%URI{} = session_uri, %URI{} = workspace_uri) do
-    orch_uri = stored_or_planned_orchestrator_uri(session_uri, workspace_uri)
-
-    case KindRegistry.lookup(orch_uri) do
-      {:ok, _pid} ->
-        %{orchestrator_uri: orch_uri, orchestrator_status: :ready, orchestrator_error: nil}
-
-      :error ->
-        %{
-          orchestrator_uri: nil,
-          orchestrator_status: :failed,
-          orchestrator_error: :no_orchestrator
-        }
-    end
-  end
-
-  defp stored_or_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
-    case Session.orchestrator_uri(session_uri) do
-      {:ok, %URI{} = uri} ->
-        uri
-
-      :none ->
-        Session.planned_orchestrator_uri(session_uri, workspace_uri)
-
-      {:error, reason} ->
-        raise ArgumentError, "orchestrator URI lookup failed: #{inspect(reason)}"
     end
   end
 

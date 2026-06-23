@@ -62,15 +62,15 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Enum.any?(snapshot.messages, &(text_of(&1) == "Generated your page."))
   end
 
-  test "ensure_app equips the builder with the within-session orchestrator cap", ctx do
-    # The orchestrator's granted caps live in its `:identity` slice (the Identity/
-    # IdentityAdmin behaviors own `:caps` there). This is the set PR-4's TurnDriver
-    # reads + presents when it calls `add_managed_member`.
+  test "ensure_app joins the builder without minting an orchestrator cap", ctx do
+    builder = ctx.builder
+
+    assert %{^builder => %{role_name: "builder"}} =
+             Ezagent.Orchestrator.Tools.read_members(ctx.session)
+
     {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(ctx.builder, :identity)
 
-    # Cap #1 — the scope-bounded `{:within_session, S}` delegation a real
-    # orchestrator holds, the cap `add_managed_member` preflights before spawning.
-    assert Enum.any?(caps, fn
+    refute Enum.any?(caps, fn
              %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
                URI.to_string(s) == URI.to_string(ctx.session)
 
@@ -78,8 +78,8 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
                false
            end)
 
-    # The actual spawn-path gate accepts the builder's caps.
-    assert :ok = Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, ctx.session)
+    assert {:error, :unauthorized} =
+             Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, ctx.session)
   end
 
   # --- helpers ---------------------------------------------------------------

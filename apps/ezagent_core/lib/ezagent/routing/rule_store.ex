@@ -93,7 +93,7 @@ defmodule Ezagent.Routing.RuleStore do
         ) :: {:ok, t()} | {:error, term()}
   def add(table_name_atom, matcher_tuple, receivers, created_by, opts \\ [])
       when is_atom(table_name_atom) do
-    receivers_str = Enum.map(receivers, &uri_to_string/1)
+    receivers_str = Enum.map(receivers, &receiver_to_store/1)
     source = Keyword.get(opts, :source, @admin)
     applies_to_users = Keyword.get(opts, :applies_to_users, []) |> Enum.map(&uri_to_string/1)
     workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string_or_nil()
@@ -183,7 +183,8 @@ defmodule Ezagent.Routing.RuleStore do
             # call sites) stay as plain lists — Resolver falls back to "no
             # user filter" for those.
             value = %{
-              receivers: row.receivers,
+              receivers:
+                Enum.map(row.receivers || [], &Ezagent.Routing.Receiver.decode_from_store/1),
               applies_to_users: applies_to_users(row),
               workspace_uri: row.workspace_uri,
               # team-routing-unification §3.3/§3.5: carry rule identity +
@@ -296,7 +297,7 @@ defmodule Ezagent.Routing.RuleStore do
           :ok | {:error, term()}
   def update_receivers(id, receivers, enabled)
       when is_integer(id) and is_list(receivers) and is_boolean(enabled) do
-    receivers_str = Enum.map(receivers, &uri_to_string/1)
+    receivers_str = Enum.map(receivers, &receiver_to_store/1)
 
     case Repo.get(__MODULE__, id) do
       nil ->
@@ -378,6 +379,8 @@ defmodule Ezagent.Routing.RuleStore do
 
   defp uri_to_string(%URI{} = u), do: URI.to_string(u)
   defp uri_to_string(s) when is_binary(s), do: s
+
+  defp receiver_to_store(receiver), do: Ezagent.Routing.Receiver.encode_for_store(receiver)
 
   defp uri_to_string_or_nil(nil), do: nil
   defp uri_to_string_or_nil(u), do: uri_to_string(u)
