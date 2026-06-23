@@ -81,6 +81,16 @@ defmodule EzagentWeb.Socialware.CustomerController do
   # session falls through to the 400 below — no token, no view (fail-closed).
   def show(conn, %{"session_uri" => session_str}) do
     with {:ok, session_uri} <- parse_session(session_str),
+         # Cold-link revival: a `public_view` session that has gone cold (no live
+         # Kind since the last boot) would otherwise fail `public_view?/1` — it
+         # reads the LIVE slice — and 400 even though it IS public. `ensure_live/1`
+         # rehydrates it from its snapshot, but ONLY when a snapshot exists
+         # (`{:error, :not_created}` otherwise), so an anon can wake an EXISTING
+         # session, never conjure one. Access stays gated by `public_view?/1`
+         # below: a revived NON-public session still falls through to the 400.
+         # (Hardening follow-up: pre-gate the revive on the snapshot's persisted
+         # public_view flag so non-public sessions are never even woken.)
+         _ <- Ezagent.SpawnRegistry.ensure_live(session_uri),
          true <- PublicView.public_view?(session_uri),
          workspace_uri <- Ezagent.Capability.workspace_of(session_uri),
          token <- CustomerAuth.issue_token(session_uri, workspace_uri),
