@@ -97,6 +97,18 @@ mix run scripts/world_e2e_seed.exs
 > (step 3), so this pre-seeded conversation session is optional. If you need it
 > populated, create that session first (via the world UI or `workspace/create_session`)
 > then re-run the seed.
+>
+> **⛔ Known blocker (operator conversation E2E — steps 3/4/8).** A session created
+> through the world UI is served by a live Session Kind *process* but is **never
+> snapshot-persisted** (`kind_snapshots` holds 0 `session://` rows). Once that
+> process is reaped (idle or a server restart), every dispatch to the session —
+> `:session :send`, `:session :join`, `:routing :add_rule` — fails with
+> `:no_such_actor` (no snapshot to lazy-respawn from). `send_message` dispatches
+> `:cast` + `reply: :ignore`, so the error is swallowed and shown to the user ONLY
+> as the hidden `data-last-dispatch="error:no_such_actor"` attribute — the composer
+> just clears and the transcript stays "No turns". This is NOT a cap/auth issue
+> (admin holds a wildcard cap). Root cause + evidence + fix owner:
+> `docs/together/2026-06-23/returns/world-deploy-e2e-pg.md` §7.
 
 ## 4. Start the dev server
 
