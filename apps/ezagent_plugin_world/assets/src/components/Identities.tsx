@@ -74,6 +74,9 @@ export type IdentitiesState = {
   title?: string
   users?: UserRow[]
   workspace_uri?: string | null
+  cwd_required_flavors?: string[]
+  cwd_required_with_pty_flavors?: string[]
+  create_error?: string
 }
 
 type Props = {
@@ -302,9 +305,22 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
   const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 
+  const cwdRequired =
+    (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
+    (form.with_pty && (state.cwd_required_with_pty_flavors || ["echo"]).includes(form.flavor))
+
+  // Light client validation; the authoritative parse runs server-side on submit.
+  const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
+  const capsInvalid = capTokens.some((t) => !/^[a-z_]+\.[a-z_]+$/.test(t))
+
   return (
     <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
       <SectionHeader eyebrow="Provision" title="New agent" />
+      {state.create_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.create_error}
+        </p>
+      )}
       <form
         id="world-agent-new-form"
         className="grid gap-3 sm:grid-cols-2"
@@ -317,41 +333,60 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <span>Flavor</span>
           <Select value={form.flavor} onChange={(event) => setForm({...form, flavor: event.target.value})}>
             {(state.flavors || [form.flavor]).map((flavor) => (
-              <option key={flavor} value={flavor}>
-                {flavor}
-              </option>
+              <option key={flavor} value={flavor}>{flavor}</option>
             ))}
           </Select>
         </label>
         <label className={fieldLabel}>
-          <span>Name</span>
-          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="demo-agent" />
+          <span>Name *</span>
+          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="storefront-greeter" />
         </label>
         <label className={fieldLabel}>
-          <span>CWD</span>
-          <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/tmp" />
+          <span>project_cwd {cwdRequired ? "*" : "(optional for this flavor)"}</span>
+          <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/srv/acme/storefront" />
         </label>
         <label className={fieldLabel}>
-          <span>Initial caps</span>
+          <span>Requested caps</span>
           <Input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />
+          <span className={capsInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+            {capsInvalid ? "格式应为 behavior.action（逗号分隔）" : "请求 → 系统按 CapBAC 授予（详情页显示 granted）"}
+          </span>
         </label>
         <label className="flex items-center gap-2 text-sm text-foreground">
-          <input
-            type="checkbox"
-            checked={form.with_pty}
-            onChange={(event) => setForm({...form, with_pty: event.target.checked})}
-          />
+          <input type="checkbox" checked={form.with_pty} onChange={(event) => setForm({...form, with_pty: event.target.checked})} />
           <span>With PTY</span>
         </label>
         <div className="flex items-center justify-between gap-3 sm:col-span-2">
           <code className={codeClass}>{preview}</code>
-          <Button type="submit">
+          <Button type="submit" disabled={!form.name || (cwdRequired && !form.cwd) || capsInvalid}>
             <Plus aria-hidden="true" />
             Create
           </Button>
         </div>
       </form>
+      <ContractCoverage />
     </section>
+  )
+}
+
+function ContractCoverage() {
+  const pending: Array<[string, string]> = [
+    ["soul · skills · tools · lifecycle", "Pending backend approval"],
+    ["executor extras (settings/mcp/model/provider)", "Pending backend approval"],
+    ["fork (parent template)", "Deferred"],
+  ]
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Contract coverage (read-only)</p>
+      <ul className="space-y-1">
+        {pending.map(([field, badge]) => (
+          <li className="flex items-center justify-between gap-3 text-sm text-muted-foreground" key={field}>
+            <span>{field}</span>
+            <span className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs">{badge}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
