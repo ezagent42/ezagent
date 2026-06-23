@@ -25,7 +25,11 @@ defmodule EzagentPluginCodex.Application do
   end
 
   @impl Ezagent.Plugin
-  def template_classes, do: [Ezagent.PluginCodex.Template.CodexAgent]
+  def template_classes,
+    do: [
+      Ezagent.PluginCodex.Template.CodexAgent,
+      Ezagent.PluginCodex.Template.CodexRemoteAgent
+    ]
 
   @impl Ezagent.Plugin
   def agent_flavors do
@@ -35,6 +39,12 @@ defmodule EzagentPluginCodex.Application do
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCodex.Template.CodexAgent,
         bridge_adapter: EzagentPluginCodex.BridgeAdapter
+      },
+      %{
+        flavor: "codex-remote",
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCodex.Template.CodexRemoteAgent,
+        bridge_adapter: EzagentPluginCodex.CodexRemoteBridgeAdapter
       }
     ]
   end
@@ -50,7 +60,8 @@ defmodule EzagentPluginCodex.Application do
       {Registry, keys: :unique, name: EzagentPluginCodex.AppServerRegistry},
       {DynamicSupervisor, name: EzagentPluginCodex.AppServerSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: EzagentPluginCodex.BridgeSidecarRegistry},
-      {DynamicSupervisor, name: EzagentPluginCodex.BridgeSidecarSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor,
+       name: EzagentPluginCodex.BridgeSidecarSupervisor, strategy: :one_for_one}
     ]
   end
 
