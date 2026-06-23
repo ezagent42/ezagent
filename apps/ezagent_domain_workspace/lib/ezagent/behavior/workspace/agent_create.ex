@@ -303,7 +303,20 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
-    tmpl = file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+    # B2 (2026-06-23): when a soul is present, build the template via an inline
+    # AgentManifest so the soul is rendered into `agent_manifest_resolved.instructions`
+    # and subsequently written into CLAUDE.md by the cc compile path
+    # (`Ezagent.Kind.Template.compile_cc_agent_data`).  When soul is nil the
+    # existing bare `file_flavor_template/4` path is unchanged (no behavior
+    # change for the soul-absent case).
+    tmpl =
+      case Map.get(params, :soul) do
+        soul when is_binary(soul) and soul != "" ->
+          manifest_cc_tmpl(agent_uri, cwd, soul)
+
+        _ ->
+          file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+      end
 
     register_and_invoke_template(
       session_templates,
@@ -517,6 +530,11 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # guard (a file-flavor content missing config_dir is rejected, never spawned).
   def __cascade_content_for_test__(tmpl), do: to_cascade_content(tmpl)
 
+  @doc false
+  # Test-only accessor — the soul-enriched cc tmpl (B2: soul → agent_manifest_resolved).
+  def __manifest_tmpl_for_test__(agent_uri, cwd, soul),
+    do: manifest_cc_tmpl(agent_uri, cwd, soul)
+
   defp file_flavor_template(flavor, class_name, agent_uri, cwd)
        when is_binary(flavor) and is_binary(class_name) do
     %{
@@ -533,6 +551,65 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp per_agent_config_dir(class_name, %URI{} = agent_uri) do
     {:ok, class_module} = Ezagent.TemplateRegistry.lookup(class_name)
     Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(class_module))
+  end
+
+  # B2 (2026-06-23) — build a soul-enriched cc tmpl by constructing an inline
+  # `%AgentManifest{}` and rendering it into AgentTemplate content via
+  # `AgentManifest.to_template_content/4`.  The result is merged onto the bare
+  # `file_flavor_template/4` base so the cc create path gets ALL required keys:
+  #
+  #   "class", "flavor", "agent_uri", "project_cwd", "config_dir"   ← cascade + validate
+  #   :agent_manifest_resolved                                        ← cc compile → CLAUDE.md
+  #
+  # `agent_manifest_resolved.instructions` is the rendered soul string (no slots
+  # are needed for a plain-text soul; `slots: %{}`).  The config_dir is derived
+  # from the same `per_agent_config_dir/2` call as the bare path so the
+  # allocation semantics are identical.
+  #
+  # NOTE: the soul is stored verbatim in `agent_manifest_resolved` (a TRANSIENT
+  # derived field — not persisted as the manifest body).  The persisted tmpl
+  # carries `"class"`/`"flavor"`/`"project_cwd"`/`"config_dir"` only (same
+  # shape as the bare path) so cold-boot replay is unchanged.
+  defp manifest_cc_tmpl(%URI{} = agent_uri, cwd, soul) when is_binary(soul) and soul != "" do
+    config_dir = per_agent_config_dir("cc.agent", agent_uri)
+
+    manifest = %Ezagent.AgentManifest{
+      name: agent_name(agent_uri),
+      soul: soul,
+      skills: [],
+      tools: [],
+      caps: [],
+      lifecycle: :persistent,
+      executor: %{
+        flavor: ["cc"],
+        params: %{project_cwd: Path.expand(cwd), config_dir: config_dir},
+        fallback: nil,
+        on_exhausted: :notify_orchestrator
+      }
+    }
+
+    case Ezagent.AgentManifest.to_template_content(manifest, "cc", %{}) do
+      {:ok, content} ->
+        # Merge manifest-resolved overlay onto the base file-flavor tmpl.
+        # The base tmpl carries the string-keyed keys that validate_template_class,
+        # Store persistence, and to_cascade_content need.  We add the atom-keyed
+        # :agent_manifest_resolved so the cascade content (also atom-keyed) can
+        # pass it through to spawn_from_template_content → AgentTemplate.to_template_data.
+        base = file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+        Map.put(base, :agent_manifest_resolved, content[:agent_manifest_resolved])
+
+      {:error, reason} ->
+        # Defensive: fall back to bare template and log; the soul is lost but
+        # the agent is still created (degraded rather than failed).
+        require Logger
+
+        Logger.warning(
+          "Behavior.Workspace.:create_agent cc: manifest render failed " <>
+            "(soul dropped, using bare template): #{inspect(reason)}"
+        )
+
+        file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+    end
   end
 
   # Register the template in the Workspace's session_templates slice +
@@ -789,7 +866,19 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         {:error, :missing_config_dir}
 
       true ->
-        {:ok, %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}}
+        base = %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}
+
+        # B2 (2026-06-23): pass :agent_manifest_resolved through when present so
+        # `AgentTemplate.to_template_data` → `manifest_compile_payload` can see
+        # the soul and route through the cc compile path (`compile_cc_agent_data`)
+        # instead of the bare `template_data_extra` path.
+        content =
+          case Map.get(tmpl, :agent_manifest_resolved) do
+            resolved when is_map(resolved) -> Map.put(base, :agent_manifest_resolved, resolved)
+            _ -> base
+          end
+
+        {:ok, content}
     end
   end
 
