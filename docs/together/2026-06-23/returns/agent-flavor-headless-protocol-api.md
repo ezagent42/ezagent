@@ -8,7 +8,7 @@
 
 | # | 条目 | 状态 |
 |---|---|---|
-| 1 | `cc-headless` 可选择/可 spawn 或精确 unsupported matrix | ✅ 已注册 + 可验证 + spawn stub |
+| 1 | `cc-headless` 可选择/可 spawn 或精确 unsupported matrix | ✅ 已注册 + 可验证 + spawn stub → **3A 方案已调研,待实施** (见 §3A vs 3B) |
 | 2 | `codex-remote` 可选择/可 spawn 或精确 unsupported matrix | ✅ 完整实现（AppServer+BridgeSidecar，无 PTY） |
 | 3 | 聚焦测试 | ✅ 25 新增 tests, 0 failures |
 | 4 | Protocol-api E2E 测试报告 | ✅ Echo+Curl 全链路，CC/Codex 路径验证 |
@@ -57,10 +57,55 @@ CC/Codex reply timeout is the same `ref_id` echo contract concern documented in 
 
 | Path | Status |
 |---|---|
-| `cc-headless` spawn (claude subprocess) | Stub — requires `claude -p` feasibility or erlexec-without-PTY integration |
+| `cc-headless` spawn (claude subprocess) | **Stub → 3A planned** — `claude -p` 方案已验证可行,待实施 (详见 `handoffs/cc-headless-real-implementation.md`) |
+| 3B: `server:esr-bridge` without PTY | **❌ Rejected** — Claude Code 2.1.186 非 `-p` 模式下必须 TTY |
 | `cc-headless` `--from` | Not supported |
 | `codex-remote` `--from` | Not supported |
 | CC/Codex protocol-api reply correlation | Known `ref_id` bridge concern |
+
+## 3A vs 3B: Headless Subprocess Feasibility (2026-06-23)
+
+Two approaches were evaluated for replacing the `cc-headless` spawn stub with a real Claude backend. Both were verified against Claude Code **2.1.186** on the actual host.
+
+### 3B: `server:esr-bridge` without PTY — ❌ NOT VIABLE
+
+| Test | Command | Result |
+|------|---------|--------|
+| `/dev/null` stdin | `claude ... server:esr-bridge < /dev/null` | ❌ `Input must be provided either through stdin or as a prompt argument when using --print` |
+| pipe stdin | `echo "" \| claude ... server:esr-bridge` | ❌ `No messages returned from query` — exits immediately |
+| `-p` + `server:esr-bridge` | `echo "" \| claude -p ... server:esr-bridge` | ❌ Exits immediately; `-p` cannot keep server-mode process alive |
+
+**Root cause**: Claude Code 2.1 requires a TTY for non-`-p` mode. `Port.open/2` / erlexec without `:pty` creates pipes, not PTYs. `-p` mode is designed for one-shot queries and exits after response — it cannot host a persistent daemon.
+
+### 3A: `claude -p` stdio pipe — ✅ VIABLE
+
+| Test | Command | Result |
+|------|---------|--------|
+| Text multi-turn | Round 1: `--session-id X` "My name is Alice" → Round 2: `--resume X` "What is my name?" | ✅ "你的名字是 **Alice**" |
+| stream-json mode | `--input-format stream-json --output-format stream-json --verbose` | ✅ JSON lines 正常流式 I/O |
+| stream-json multi-turn | Round 1: remember "XKCD-42" → Round 2: `--resume` recall "XKCD-42" | ✅ Cross-invocation session 持久化 |
+| `--session-id` UUID | 必须是 valid UUID | ✅ `uuidgen` 生成即可 |
+
+**Trade-off**: `-p` is one-invocation-per-message (not persistent daemon):
+- Higher per-message latency (~1-3s startup) but simpler process management
+- Session persistence via on-disk `--session-id` / `--resume`
+- Transport class: `:in_process_sync` (like curl), not `:subprocess_ws` (like cc)
+- No esr-bridge, no WebSocket AgentBridge needed
+
+### Decision
+
+**3A is the chosen path.** 3B was the original handoff plan but failed feasibility verification against Claude Code 2.1.186. The follow-up implementation handoff is at `docs/together/2026-06-23/handoffs/cc-headless-real-implementation.md`.
+
+### Implementation impact summary
+
+| Aspect | Current stub | 3A target |
+|--------|-------------|-----------|
+| Transport class | `:subprocess_ws` (delegates to cc) | `:in_process_sync` |
+| BridgeAdapter.deliver/2 | delegates to CcBridgeAdapter | Custom: runs `claude -p` via `HeadlessRunner` |
+| Subprocess | None (stub) | One-shot `claude -p` per message |
+| `ensure_subprocess_alive/2` | Stub `:ok` | Validates `claude_session_id` presence |
+| New modules needed | — | `HeadlessRunner` + `:sync_result` Behavior |
+| Session persistence | — | `--session-id <uuid>` + `--resume` |
 
 ## E2E Evidence (2026-06-23 15:36 CST)
 
