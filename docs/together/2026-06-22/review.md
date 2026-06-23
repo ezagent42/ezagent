@@ -165,3 +165,45 @@ socialware-creator View, not a separate console app.
 
 `#88 email` (`plugin-email` branch): plan codex-reviewed + fixed; **rebase onto
 the new PG main before implementing** (pg rewrote `config/*.exs`).
+
+---
+
+## Addendum (2026-06-23): #896 protocol-api (5th return) — NOT merged, handed back
+
+`external-adapter` / PR #896 (task #82, protocol-api Phase-0, OpenAI/Anthropic
+inbound API) was pushed after the 4-return close and asked to close. It is based
+on the **old `a6fa6db3`** (behind pg/wb/hello/ac + the PostgreSQL migration), so
+it trips current-main gates. **Lead did the mechanical integration** on branch
+`protocol-api-integrate` (pushed): squash-merge onto current main, resolved all
+merge conflicts (endpoint→ours #87; mix.exs release+web-deps keep both
+hello+protocol_api; docs→ours), fixed stale-base compile warnings, ported the
+`protocol_api_keys` migration to `priv/repo_pg` (it was orphaned in the SQLite-era
+`priv/repo`), and wired the plugin into web deps.
+
+**NOT merged — blocked on author-domain arch-conformance** (the dev built on a
+base whose gates have since tightened; these are design calls in protocol-api /
+external_mirror, not merge mechanics):
+
+1. **external_mirror Grill-5 invariants ×2 (the crux).** `Ezagent.ProtocolApi.Adapter`
+   declares `adapter_kind: :request_scoped` (a NEW kind) with
+   `cap_subject.behavior_module: nil` (its auth is API-key, not the bind-cap).
+   `AdapterCapSubjectRegisteredTest` + `BindingAdapterGrill5Test` (post PR-EM-3
+   authz hardening) don't recognize `:request_scoped` and require a cap_subject +
+   :push binding pairing. **Decision needed** (external_mirror + protocol-api
+   owners): either formally exempt `:request_scoped` in those invariants (if it
+   legitimately bypasses the bind-cap), or give the adapter a real cap_subject.
+   Lead did NOT blind-edit the invariant — it guards the HIGH-3 authz-bypass class.
+2. **uri_query scan ×5** (drives 3 more mix-scan test failures): protocol-api code
+   has `:raw_uri_construction` (`Ezagent.URI.new!("entity://system/agent/echo_default")`
+   in openai_chat_plug.ex:41,178 → use `Ezagent.URI.agent/2` typed builder),
+   `:flavor_prefix_dependency` (api_key_store.ex:61 split flavor from URI prefix →
+   read via `Ezagent.UriQuery`), `:tenant_derivation` (openai_chat_plug.ex name
+   split). Use typed builders / UriQuery, or baseline with rationale.
+3. **manifest ratchet ×1**: `spawn_registry_call_sites` 37→40 (protocol-api's
+   ConversationRegistry adds 3 `SpawnRegistry.spawn` sites) needs a
+   `# arch-cap-bump:` annotation in `arch_baseline_manifest.exs`.
+
+Lead-verified before handback: protocol_api's **own** app tests pass (52/0 etc.);
+the failures are all the current-main gates above. Once 1–3 land, re-run PG
+precommit + the echo + curl/DeepSeek E2E (DeepSeek key available to lead) →
+merge. Branch `protocol-api-integrate` is the rebased starting point.
