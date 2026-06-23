@@ -38,10 +38,14 @@ defmodule Ezagent.Behavior.Echo do
 
   - `:say` — programmatic invoke. Caller passes `%{msg: "..."}`; returns
     `%{echo: msg}`. Slice tracks `count` + `last_msg`.
-  - `:receive` — chat fan-out hook. Echo Kind is registered on
-    `BehaviorRegistry` for `:receive` so the Session's `chat.send`
-    fan-out reaches it. On receive, build an "echo: <text>" reply
-    Message and dispatch `chat.send` back to the originating session.
+  - `:receive` — chat fan-out hook. `{Entity.Agent, :receive}` is globally
+    owned by `Ezagent.Behavior.Agent.Receive` (registered by
+    `EzagentDomainAgent.Application`). `Agent.Receive` acts as a router:
+    for echo-flavor instances it delegates to `Behavior.Echo.handle_receive/2`.
+    The echo plugin's `behaviors/0` intentionally omits `:receive` to avoid a
+    capability-conflict boot crash (A3/A5 migration). On receive, `handle_receive/2`
+    builds an "echo: <text>" reply Message and dispatches `chat.send` back to
+    the originating session.
 
   ## Slice shape
 
@@ -56,6 +60,14 @@ defmodule Ezagent.Behavior.Echo do
   `Resolver.resolve/4` excludes the message sender from fan-out. Since
   echo's reply sender is the echo agent's URI, the reply does not loop
   back to the echo agent.
+
+  ## Kind axis (A3/A5)
+
+  This Behavior rides `Ezagent.Entity.Agent` (type_name `:agent`). The
+  standalone `Ezagent.Entity.Echo` Kind was deleted in A5; echo agents
+  are now spawned under the unified Agent Kind with
+  `Ezagent.Entity.Agent.echo_behaviors/0` as the per-instance behavior set.
+  `required_caps/0` uses kind axis `:agent` (not `:echo`) to match.
   """
 
   use Ezagent.Lifecycle

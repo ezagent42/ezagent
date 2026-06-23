@@ -274,7 +274,12 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       # Bring up ONLY the Echo Kind — directly, NOT via the template or
       # URI-derived flavor dispatch. Kind alive, no PtyServer: the
       # "worker this call did not create" state.
-      assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Echo, %{uri: agent_uri})
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+                 uri: agent_uri,
+                 behaviors: Ezagent.Entity.Agent.echo_behaviors()
+               })
+
       assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
 
       refute Ezagent.Domain.Pty.alive?(agent_uri),

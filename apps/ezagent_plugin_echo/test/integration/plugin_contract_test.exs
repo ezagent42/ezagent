@@ -42,7 +42,7 @@ defmodule EzagentPluginEcho.Integration.PluginContractTest do
     assert {:ok, %{kind: kind, template_class: template_class}} =
              Ezagent.AgentFlavorRegistry.lookup("echo")
 
-    assert kind == Ezagent.Entity.Echo
+    assert kind == Ezagent.Entity.Agent
     assert template_class == Ezagent.PluginEcho.Template.EchoAgent
   end
 
@@ -54,14 +54,19 @@ defmodule EzagentPluginEcho.Integration.PluginContractTest do
   end
 
   test "echo's behaviors/0 were published to BehaviorRegistry by boot/1" do
+    # A3/A5: echo now rides Ezagent.Entity.Agent (Entity.Echo deleted).
+    # The plugin registers {Agent, :say} → Behavior.Echo and {Agent, :write} →
+    # Behavior.Pty. {Agent, :receive} is owned by Behavior.Agent.Receive
+    # (registered by EzagentDomainAgent.Application — intentionally absent from
+    # the echo plugin's behaviors/0 to avoid a capability-conflict boot crash).
     assert {:ok, Ezagent.Behavior.Echo} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :say)
+             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :say)
 
-    assert {:ok, Ezagent.Behavior.Echo} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :receive)
+    assert {:ok, Ezagent.Behavior.Agent.Receive} =
+             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
 
     assert {:ok, Ezagent.Behavior.Pty} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :write)
+             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :write)
   end
 
   test "echo's echo.agent Template Class was published to TemplateRegistry" do

@@ -221,12 +221,13 @@ defmodule Ezagent.CapabilityTest do
 
   describe "cap_for_action/3 (Phase 3d + Phase 9 PR-3 workspace)" do
     test "entity URI → workspace from entity_workspace_uri/1" do
-      # Echo plugin pre-registers BehaviorRegistry at boot
+      # A3/A5: echo now rides Ezagent.Entity.Agent (Entity.Echo deleted).
+      # type_name/0 returns :agent, so n.kind == :agent.
       target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
 
-      n = Capability.cap_for_action(Ezagent.Entity.Echo, :say, target)
+      n = Capability.cap_for_action(Ezagent.Entity.Agent, :say, target)
 
-      assert n.kind == :echo
+      assert n.kind == :agent
       assert n.behavior == Ezagent.Behavior.Echo
       assert n.instance == URI.new!("entity://team-alpha/agent/echo_default")
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
@@ -234,7 +235,7 @@ defmodule Ezagent.CapabilityTest do
 
     test "unknown action returns :unknown behavior" do
       target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
-      n = Capability.cap_for_action(Ezagent.Entity.Echo, :nonexistent_action, target)
+      n = Capability.cap_for_action(Ezagent.Entity.Agent, :nonexistent_action, target)
       assert n.behavior == :unknown
     end
 

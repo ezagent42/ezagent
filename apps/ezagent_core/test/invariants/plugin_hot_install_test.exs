@@ -64,19 +64,20 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   end
 
   describe "declared Behaviors are reachable in BehaviorRegistry (no restart)" do
-    test "the echo plugin's :say + :receive Behaviors resolve through BehaviorRegistry" do
-      # `EzagentPluginEcho.Application.behaviors/0` declares
-      # `{Ezagent.Entity.Echo, :say|:receive} → Ezagent.Behavior.Echo`.
-      # After `Ezagent.Plugin.boot/1` these MUST be resolvable via
-      # `BehaviorRegistry.lookup/2` — that IS "reachable without
-      # restart".
+    test "the echo plugin's :say Behavior resolves through BehaviorRegistry" do
+      # A3/A5: `EzagentPluginEcho.Application.behaviors/0` now declares
+      # `{Ezagent.Entity.Agent, :say} → Ezagent.Behavior.Echo` (echo moved
+      # onto the shared Agent Kind). `:receive` is intentionally absent from
+      # the plugin's `behaviors/0` — `{Entity.Agent, :receive}` is globally
+      # owned by `Ezagent.Behavior.Agent.Receive` (registered by
+      # `EzagentDomainAgent.Application`).
       assert {:ok, Ezagent.Behavior.Echo} =
-               BehaviorRegistry.lookup(Ezagent.Entity.Echo, :say),
+               BehaviorRegistry.lookup(Ezagent.Entity.Agent, :say),
              "the plugin's declared :say Behavior must be in BehaviorRegistry"
 
-      assert {:ok, Ezagent.Behavior.Echo} =
-               BehaviorRegistry.lookup(Ezagent.Entity.Echo, :receive),
-             "the plugin's declared :receive Behavior must be in BehaviorRegistry"
+      assert {:ok, Ezagent.Behavior.Agent.Receive} =
+               BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive),
+             ":receive on Entity.Agent is owned by Ezagent.Behavior.Agent.Receive (domain, not echo plugin)"
     end
   end
 
@@ -95,8 +96,9 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   describe "declared agent flavors are reachable in AgentFlavorRegistry (no restart)" do
     test "the echo plugin's `echo` flavor resolves through AgentFlavorRegistry" do
       # `agent_flavors/0` declares flavor `"echo"` →
-      # `{Ezagent.Entity.Echo, Ezagent.PluginEcho.Template.EchoAgent}`.
-      assert {:ok, %{kind: Ezagent.Entity.Echo, template_class: tc}} =
+      # `{Ezagent.Entity.Agent, Ezagent.PluginEcho.Template.EchoAgent}` (A3/A5:
+      # echo moved onto the unified Agent Kind; Entity.Echo deleted).
+      assert {:ok, %{kind: Ezagent.Entity.Agent, template_class: tc}} =
                AgentFlavorRegistry.lookup("echo"),
              "the plugin's declared `echo` flavor must be in AgentFlavorRegistry"
 
