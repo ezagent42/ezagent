@@ -139,6 +139,36 @@ All 6 agents seeded, protocol-api ACK verified for each:
 
 E2E output saved: `scripts/e2e_recordings/E2E-FINAL-6-AGENTS-153623.txt`
 
+## E2E Screenshot Evidence (2026-06-23)
+
+### Sessions + Agents Overview
+
+| Screenshot | Content |
+|---|---|
+| `scripts/e2e_recordings/FINAL-01-sessions-list.png` | 6 sessions 总览 |
+| `scripts/e2e_recordings/FINAL-08-agents-list.png` | 6 agents 注册列表 |
+
+### Per-Agent Conversation Screenshots
+
+| # | Agent | Screenshot | Reply | 说明 |
+|---|-------|-----------|-------|------|
+| 02 | Echo | `FINAL-02-echo-conversation.png` | ✅ | 全链路往返 `"echo: Hello"` |
+| 03 | Curl+DeepSeek | `FINAL-03-curl-conversation.png` | ✅ | `"你好！"` 全链路往返 |
+| 04 | CC | `FINAL-04-cc-conversation.png` | ⚠️ 无回复 | CC agent 无凭证 provision — credential cascade 需要交互式 `/login`，headless protocol-api 路径无法完成 |
+| | CC+DeepSeek | `CC-DeepSeek-RICH-conversation.png` | ✅ 有回复 | 同一 CC transport，使用 DeepSeek model 时凭证 provision 后正常回复 — 证明 CC 通道本身通畅 |
+| 05 | Codex | `FINAL-05-codex-conversation.png` | ✅ | bridge 已确认绑定，agent.receive 送达 |
+| | Codex RICH | `Codex-RICH-conversation.png` | ✅ | 丰富内容往返 |
+| 06 | cc-headless | `FINAL-06-cc-headless-conversation.png` | ⚠️ 无回复 | spawn stub — 无 claude 后端运行 (3A `claude -p` 方案待实施) |
+| 07 | codex-remote | `FINAL-07-codex-remote-conversation.png` | ⚠️ 无回复 | AppServer+BridgeSidecar 已启动，但 bridge auth 卡在验证 gate 未通过 |
+
+### 未回复 Agent 根因分类
+
+| Agent | 根因 | 是否本分支引入 | 解决路径 |
+|-------|------|:---:|------|
+| CC (04) | 凭证缺失 — CC credential cascade 需交互式 `/login` | ❌ 存量问题 | 操作员在终端 `/login` 后重新 provision |
+| cc-headless (06) | spawn stub — 功能未完成 | ✅ 本分支明确标记为 unsupported matrix | 3A `claude -p` 方案实施 (`handoffs/cc-headless-real-implementation.md`) |
+| codex-remote (07) | bridge auth gate 未通过 | ❌ 存量 codex bridge 问题 | 需排查 codex 侧验证链路 |
+
 ## Bonus Fixes
 
 1. `CodexAgent.instantiate/3` was missing `AgentFlavorAttributes.put_from_template_class` (parity with `CcAgent`). Caused `no_kind_module_for_agent` on cold-spawn via `mix run`. Fixed in `codex_agent.ex`.
