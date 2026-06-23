@@ -696,9 +696,10 @@
     <div class="rail-label">运营</div>
     <button class="nav-button active" data-page="overview">概览 <span>1</span></button>
     <button class="nav-button" data-page="sessions">会话 <span>3</span></button>
+    <button class="nav-button" data-page="agents">智能体 <span>只读</span></button>
     <button class="nav-button" data-page="templates">模板 <span>只读</span></button>
     <div class="rail-label">评审</div>
-    <button class="nav-button" data-page="matrix">授权矩阵 <span>4</span></button>
+    <button class="nav-button" data-page="matrix">授权矩阵 <span>5</span></button>
   </aside>
 
   <main class="main">
@@ -1011,6 +1012,66 @@
       </div>
     </section>
 
+    <section class="page" id="page-agents">
+      <div class="header">
+        <div>
+          <div class="eyebrow">智能体</div>
+          <h1>我持 Manage 的 agent，MVP 只读。</h1>
+          <p class="subtle">列表 = 我对其持有 <code>Behavior.Manage</code> cap 的 agent 实体（<strong>不是</strong>某个会话的成员，<strong>不是</strong> Agent 模板）。本目录只读，写动作 post-MVP。</p>
+        </div>
+        <div class="toolbar">
+          <button class="btn disabled" disabled>新建 agent 禁用</button>
+          <button class="btn disabled" disabled>改配置 禁用</button>
+          <button class="btn disabled" disabled>caps grant·revoke 禁用</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-head">
+          <div>
+            <h2>我管理的 agent</h2>
+            <p class="subtle">来源 = <code>Identity.list_caps_for(operator)</code> 过滤出对 <code>:agent</code> 的 Manage；同一 agent 若在会话内，附带显示其所在会话。</p>
+          </div>
+          <span class="badge read">授权只读</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>agent</th>
+                <th>flavor</th>
+                <th>来源模板</th>
+                <th>所在会话 / Manage 来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>cc_orchestrator-7f3a</strong><br /><code>entity://acme/agent/cc_orchestrator-7f3a</code></td>
+                <td><span class="badge cap">cc</span></td>
+                <td><code>template://acme/agent/cc-orchestrator@4d31</code></td>
+                <td><code>session://acme/storefront/storefront-7f3a</code><br /><span class="subtle">Manage 来源：session owner</span></td>
+              </tr>
+              <tr>
+                <td><strong>doorman-7f3a</strong><br /><code>entity://acme/agent/doorman-7f3a</code></td>
+                <td><span class="badge cap">cc</span></td>
+                <td><code>template://acme/agent/doorman@9c12</code></td>
+                <td><code>session://acme/storefront/storefront-7f3a</code><br /><span class="subtle">Manage 来源：我创建</span></td>
+              </tr>
+              <tr>
+                <td><strong>probe-1</strong><br /><code>entity://acme/agent/probe-1</code></td>
+                <td><span class="badge off">curl</span></td>
+                <td><code>template://acme/agent/probe@5a4b</code></td>
+                <td><span class="badge off">独立</span> <span class="subtle">未入任何会话；Manage 来源：我创建</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="note warn">写动作（新建 <code>create_agent</code>、改配置 <code>Behavior.Manage :reconfigure</code>、grant·revoke caps、api-keys）均禁用，post-MVP 走 Manage-gate —— 这才是闭合“修改自己 own 的 agent”的那一刀，view-only 只是 demo 阶段。</div>
+      <div class="note">列表 source-of-truth = Manage cap（<code>create_agent</code> 给 creator 铸 <code>cap(:agent, Manage, :any)</code>）。<code>data_owner</code>/creator 是 ApiKeys-only 概念（出站凭据归属），<strong>不</strong>定义 Agents 成员；现有 world <code>agents_table</code>/<code>agent_detail</code> 只作数据形态参考，真实列表需新建授权 Manage-filtered snapshot。</div>
+    </section>
+
     <section class="page" id="page-templates">
       <div class="header">
         <div>
@@ -1092,6 +1153,16 @@
               <td><code>Ezagent.Orchestrator.Tools.define_rule_set_rule/3</code></td>
               <td><code>:manage_unauthorized</code>, <code>{:unknown_member_role, role_name}</code>, matcher normalization error, session/orchestrator liveness failure</td>
               <td><code>authorized_operator_uri</code>, <code>execution_principal_uri</code>, matched cap provenance, <code>request_id</code></td>
+            </tr>
+            <tr>
+              <td class="op">agents-read</td>
+              <td>智能体列表 + 详情，只读</td>
+              <td><span class="badge read">entity read (authorized)</span></td>
+              <td>operator · 持 <code>Behavior.Manage</code> over the agent（列表 = 按此过滤）</td>
+              <td>demo 中不适用；没有写委托</td>
+              <td>目标形态：授权 Manage-filtered snapshot（不是 raw <code>agents_table</code>）；world <code>agent_detail</code> slot 仅作数据形态参考</td>
+              <td>agent read unauthorized / not found</td>
+              <td>target/demo read event</td>
             </tr>
             <tr>
               <td class="op">templates-read</td>
