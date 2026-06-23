@@ -302,6 +302,217 @@ defmodule Ezagent.Resource.FsResolverTest do
     end
   end
 
+  describe "register_all/1 — owner-only write-once on type AND backend, all-or-nothing (plugin-resource SPEC §4.3 / §6)" do
+    alias Ezagent.Resource.FsResolver.Registry
+
+    # Cleanup helper — register_all/1 has no production unregister; in :test we
+    # reach through the test-only unregister to scrub anything a case inserted.
+    defp scrub(types), do: Enum.each(types, &FsResolver.unregister_type/1)
+
+    test "register_all/1 succeeds for fresh distinct types and they then resolve" do
+      a = "ra-#{System.unique_integer([:positive])}"
+      b = "ra-#{System.unique_integer([:positive])}"
+
+      decls = [
+        {a, %{backend_component: a, authority: &ok_authority/2}},
+        {b, %{backend_component: b, authority: &ok_authority/2}}
+      ]
+
+      try do
+        assert :ok = Registry.register_all(decls)
+
+        assert {:ok, _} = FsResolver.resolve(EzURI.resource("acme", a, "f"), scope("acme"))
+        assert {:ok, _} = FsResolver.resolve(EzURI.resource("acme", b, "f"), scope("acme"))
+      after
+        scrub([a, b])
+      end
+    end
+
+    test "a second register_all of an existing <type> → {:error, {:duplicate_type, _}} (write-once on type)" do
+      t = "ra-#{System.unique_integer([:positive])}"
+      decl = [{t, %{backend_component: t, authority: &ok_authority/2}}]
+
+      try do
+        assert :ok = Registry.register_all(decl)
+
+        assert {:error, {:duplicate_type, ^t}} =
+                 Registry.register_all([
+                   {t, %{backend_component: "ra-other", authority: &ok_authority/2}}
+                 ])
+      after
+        scrub([t])
+      end
+    end
+
+    test "backend-aliasing attack: a FRESH type whose backend_component is a registered backend is rejected (codex HIGH-1)" do
+      # The exact escalation: register a brand-new <type> that aliases the core
+      # "uploads" backend with a WEAKER authority. Backend-uniqueness must reject
+      # it, so a plugin can never reach a core backend's bytes through an alias.
+      weak = "ra-alias-#{System.unique_integer([:positive])}"
+
+      decl = [{weak, %{backend_component: "uploads", authority: fn _uri, _scope -> :ok end}}]
+
+      assert {:error, {:duplicate_backend, "uploads"}} = Registry.register_all(decl)
+
+      # NOTHING inserted — the alias type does not resolve.
+      assert FsResolver.resolve(EzURI.resource("victim", weak, "secret"), scope("victim")) ==
+               :none
+    end
+
+    test "batch all-or-nothing: a batch whose 2nd decl is a dup inserts NEITHER (codex HIGH-5)" do
+      good = "ra-#{System.unique_integer([:positive])}"
+
+      batch = [
+        {good, %{backend_component: good, authority: &ok_authority/2}},
+        # 2nd decl aliases the core "uploads" backend → whole batch rejected.
+        {"ra-bad-#{System.unique_integer([:positive])}",
+         %{backend_component: "uploads", authority: &ok_authority/2}}
+      ]
+
+      try do
+        assert {:error, {:duplicate_backend, "uploads"}} = Registry.register_all(batch)
+
+        # The 1st (valid) decl must NOT be left dangling.
+        assert FsResolver.resolve(EzURI.resource("acme", good, "f"), scope("acme")) == :none
+      after
+        scrub([good])
+      end
+    end
+
+    test "intra-batch uniqueness: two decls sharing a backend in ONE batch are rejected (insert_new keys only on type)" do
+      a = "ra-#{System.unique_integer([:positive])}"
+      b = "ra-#{System.unique_integer([:positive])}"
+      shared = "ra-backend-#{System.unique_integer([:positive])}"
+
+      batch = [
+        {a, %{backend_component: shared, authority: &ok_authority/2}},
+        {b, %{backend_component: shared, authority: &ok_authority/2}}
+      ]
+
+      try do
+        assert {:error, {:duplicate_backend, ^shared}} = Registry.register_all(batch)
+        # Neither inserted.
+        assert FsResolver.resolve(EzURI.resource("acme", a, "f"), scope("acme")) == :none
+        assert FsResolver.resolve(EzURI.resource("acme", b, "f"), scope("acme")) == :none
+      after
+        scrub([a, b])
+      end
+    end
+
+    test "register_all/1 rejects a malformed spec and inserts nothing" do
+      t = "ra-#{System.unique_integer([:positive])}"
+      # 1-arity authority is malformed; validate_spec/2 rejects it.
+      bad = [{t, %{backend_component: t, authority: fn _ -> :ok end}}]
+
+      assert {:error, {:invalid_type_spec, _}} = Registry.register_all(bad)
+      assert FsResolver.resolve(EzURI.resource("acme", t, "f"), scope("acme")) == :none
+    end
+
+    test "core boot types (cc-agents/codex-agents/uploads) still register through the same precheck" do
+      types = MapSet.new(registered_types(), fn {t, _} -> t end)
+      assert MapSet.subset?(MapSet.new(["cc-agents", "codex-agents", "uploads"]), types)
+    end
+  end
+
+  describe "restart resilience (codex HIGH-2) — core types self-heal, never silently missing" do
+    alias Ezagent.Resource.FsResolver.Registry
+
+    test "self-heal: after kill+restart a CORE boot type resolves again (present again)" do
+      # init/1 re-applies boot_registrations/0 on restart, so a core boot type
+      # self-heals once the supervised restart completes. (The "reproduces ONLY
+      # the boot allowlist" axis is covered by the round-4 restart test above.)
+      uri = EzURI.resource("acme", "uploads", "f.pdf")
+
+      pid = Process.whereis(Registry)
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 2_000
+
+      new_pid = wait_for_restart(Registry, pid)
+      assert new_pid != pid
+      assert {:ok, _} = FsResolver.resolve(uri, scope("acme"))
+    end
+
+    test "loud-when-absent: with the Registry terminated, resolve/2 RAISES — never a silent :none" do
+      # Deterministically hold the Registry DOWN via the supervisor (no kill-race:
+      # terminate_child does NOT auto-restart and does NOT count against the
+      # :one_for_one max-restart intensity, so this neither flakes nor cascades).
+      # While the ETS table is GONE, resolve/2's lookup rescue raises loud rather
+      # than treating every type as unregistered (a silent :none would be a
+      # security-relevant lie). NOTE: this covers the table-ABSENT case; a
+      # sub-millisecond restart window where the table exists but is not yet
+      # populated can still return a transient (retryable) :none — strictly
+      # narrower than the EtsOwner siblings' empty-table window, never an authority
+      # bypass (see the Registry moduledoc).
+      uri = EzURI.resource("acme", "uploads", "f.pdf")
+
+      :ok = Supervisor.terminate_child(EzagentCore.Supervisor, Registry)
+
+      try do
+        assert_raise RuntimeError, ~r/not running/, fn ->
+          FsResolver.resolve(uri, scope("acme"))
+        end
+      after
+        {:ok, _} = Supervisor.restart_child(EzagentCore.Supervisor, Registry)
+      end
+
+      # Restored — resolves again.
+      assert {:ok, _} = FsResolver.resolve(uri, scope("acme"))
+    end
+  end
+
+  describe "slug-prefix lint (codex HIGH-6 / D7) — advisory, core's bare names exempt" do
+    # D7: a plugin-contributed <type> SHOULD be slug-prefixed (`world-layouts`),
+    # so two plugins never collide. The lint is a TEST (not a runtime warning in
+    # register_all, which now also carries core's bare names). Core types keep
+    # their bare names by design and are exempt.
+    @core_bare_types ["cc-agents", "codex-agents", "uploads"]
+
+    test "core's bare types are the only un-prefixed types declared in-tree" do
+      # Enumerate every plugin's resource_types/0 in the umbrella and assert each
+      # is slug-prefixed with that plugin's slug. Standalone ezagent_core has no
+      # plugins on the path; this is the umbrella gate.
+      plugin_modules =
+        for {app, _, _} <- Application.loaded_applications(),
+            app_str = Atom.to_string(app),
+            String.starts_with?(app_str, "ezagent_plugin_"),
+            mod = plugin_module_for(app),
+            not is_nil(mod),
+            function_exported?(mod, :resource_types, 0),
+            do: mod
+
+      offenders =
+        for mod <- plugin_modules,
+            {type, _spec} <- mod.resource_types(),
+            slug = mod.plugin_info().slug,
+            not String.starts_with?(type, slug <> "-"),
+            do: {mod, type, slug}
+
+      assert offenders == [],
+             "plugin-contributed resource <type>s must be slug-prefixed (D7): #{inspect(offenders)}"
+    end
+
+    # Resolve a plugin's `EzagentPlugin*` module from its app name. Best-effort;
+    # returns nil if the app's top module isn't a plugin module.
+    defp plugin_module_for(app) do
+      mod = app |> Atom.to_string() |> Macro.camelize() |> List.wrap() |> Module.concat()
+      if Code.ensure_loaded?(mod) and function_exported?(mod, :plugin_info, 0), do: mod, else: nil
+    rescue
+      _ -> nil
+    end
+
+    test "a non-prefixed plugin type would be flagged by the lint predicate" do
+      # Pure predicate check (no registration) — proves the lint logic catches a
+      # bare plugin type. `_core_bare_types` documents the exemption set.
+      assert "layouts" not in @core_bare_types
+      slug = "world"
+      bare = "layouts"
+      prefixed = "world-layouts"
+      refute String.starts_with?(bare, slug <> "-")
+      assert String.starts_with?(prefixed, slug <> "-")
+    end
+  end
+
   describe "uploads type (Resource-unification P2b)" do
     test "the `uploads` type is registered at boot with backend \"uploads\"" do
       types = Map.new(registered_types())

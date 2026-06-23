@@ -173,6 +173,19 @@ defmodule Ezagent.Plugin do
           | (pull_adapter_module :: module())
 
   @typedoc """
+  A plugin-contributed `resource://<ws>/<type>/<name>` type declaration
+  (plugin-resource SPEC §4.1). `{type, spec}` where `spec` is the EXISTING
+  resolver `type_spec` (`%{backend_component, authority}`) — plugins reuse the
+  resolver's own shape, no new type. `boot/1` Phase 2 passes the whole list to
+  `Ezagent.Resource.FsResolver.Registry.register_all/1` (write-once on both
+  `<type>` and `backend_component`, all-or-nothing). Both `<type>` and
+  `backend_component` SHOULD be plugin-slug-prefixed (`world-layouts`, not bare
+  `layouts`) so two plugins never collide and brick startup (D7).
+  """
+  @type resource_type_decl ::
+          {type :: String.t(), Ezagent.Resource.FsResolver.type_spec()}
+
+  @typedoc """
   What the `/plugins` config icon opens. V1 is `:route | :flavor | nil`
   — `:form` is rejected until the plugin-settings store ships (V2,
   codex MEDIUM-6).
@@ -218,6 +231,14 @@ defmodule Ezagent.Plugin do
   """
   @callback adapters() :: [adapter_decl()]
   @callback routing_tables() :: [routing_decl()]
+
+  @doc """
+  Plugin-contributed `resource://<ws>/<type>/<name>` type declarations
+  (plugin-resource SPEC §4.1). `boot/1` Phase 2 passes the list to
+  `Ezagent.Resource.FsResolver.Registry.register_all/1`. Default `[]` via
+  `use Ezagent.Plugin`.
+  """
+  @callback resource_types() :: [resource_type_decl()]
   @callback config_surface() :: config_surface()
   @callback children() :: [Supervisor.child_spec() | {module(), term()}]
   @callback after_boot() :: :ok
@@ -229,6 +250,7 @@ defmodule Ezagent.Plugin do
                       agent_flavors: 0,
                       adapters: 0,
                       routing_tables: 0,
+                      resource_types: 0,
                       config_surface: 0,
                       children: 0,
                       after_boot: 0
@@ -263,6 +285,7 @@ defmodule Ezagent.Plugin do
       def agent_flavors, do: []
       def adapters, do: []
       def routing_tables, do: []
+      def resource_types, do: []
       def config_surface, do: nil
       def children, do: []
       def after_boot, do: :ok
@@ -274,6 +297,7 @@ defmodule Ezagent.Plugin do
                      agent_flavors: 0,
                      adapters: 0,
                      routing_tables: 0,
+                     resource_types: 0,
                      config_surface: 0,
                      children: 0,
                      after_boot: 0
@@ -368,7 +392,11 @@ defmodule Ezagent.Plugin do
   Only now register: `BehaviorRegistry` per `behaviors/0`;
   `TemplateRegistry` per `template_classes/0`; `AgentFlavorRegistry`
   per `agent_flavors/0`; `RoutingRegistry.declare_table/2` per
-  `routing_tables/0`; `PluginRegistry` self-registration.
+  `routing_tables/0`; `Resource.FsResolver.Registry.register_all/1`
+  per `resource_types/0` (write-once on both `<type>` and
+  `backend_component`, all-or-nothing; raises `ArgumentError` naming
+  the plugin on a duplicate/invalid decl); `PluginRegistry`
+  self-registration.
 
   A non-empty `spawns/0` is REJECTED with an `ArgumentError` — every
   URI scheme is core/domain-owned, so a plugin scheme spawn would
@@ -445,6 +473,23 @@ defmodule Ezagent.Plugin do
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
     end)
+
+    # Plugin-owned resource://<ws>/<type>/<name> types (plugin-resource SPEC
+    # §4.2). Whole-batch register_all/1 so the plugin contributes ALL its types
+    # or none (HIGH-5: no dangling type if a later decl is bad). A duplicate
+    # `<type>` OR `backend_component` (codex HIGH-1) is an author/operator error
+    # — fail boot loud naming the plugin, consistent with how spawns/0 etc. are
+    # rejected above. Core types are already claimed at Registry.init/1 (before
+    # any plugin boots), so a plugin can neither shadow a core type nor alias a
+    # core backend.
+    case Ezagent.Resource.FsResolver.Registry.register_all(plugin_module.resource_types()) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} resource_types → #{inspect(reason)}"
+    end
 
     # ExternalMirror PR-EM-1 (SPEC §5.1) — codex r1 HIGH-1 fix:
     # publish ALL adapter pairs atomically. Prevalidate every entry
