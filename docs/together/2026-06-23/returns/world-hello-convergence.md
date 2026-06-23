@@ -36,16 +36,12 @@ to hello; should land as its own dev-infra change).
   `session://system/hello/{777,888,333,122222,...}`.
 - [x] **Generated `@json-render` page in operator context** — right-half iframe
   pane in `Conversation.tsx`. **[screenshot: operator world page — to attach]**
-- [~] **Public `/socialware/customer` link, no login** — works for a **live**
-  session: `GET /socialware/customer?session_uri=session://system/hello/777` →
-  **HTTP 200** anonymously. **KNOWN GAP (verified):** a **cold** (not-revived-
-  since-restart) public session returns **400** — `session://system/hello/333`,
-  identical template/snapshot to 777, → 400 because `PublicView.public_view?/1`
-  reads the LIVE session slice and the cold session was never revived (last
-  active 11:08, before the 11:21 restart; 777 active 11:22, after → live → 200).
-  E2E create→open passes (the session is live when opened); a shared link to a
-  cold session does not. Revive-on-public-access is a deeper socialware/auth
-  change (discuss-first) — **deferred with this exact blocker** (§5a).
+- [x] **Public `/socialware/customer` link, no login** — works for both live AND
+  **cold** sessions now (the cold-link gap was found AND fixed, `99b3542e`).
+  Verified after a restart (everything cold): `hello/333` 400→**200**,
+  `hello/777`/`888` → 200, `/socialware/chat?...hello/333` → 200; a nonexistent
+  `hello/doesnotexist999` stays **400** (the revive only wakes snapshotted
+  sessions and `public_view?/1` still gates). See §5a.
   **[screenshot: public customer page — to attach]**
 - [x] **Conversation state coherent** — verified at the DATA + MECHANISM level:
   builder replies are `customer_visible` (§4) and the customer feed snapshot
@@ -62,7 +58,7 @@ to hello; should land as its own dev-infra change).
 | Step | Behavior | Status | Evidence |
 |---|---|---|---|
 | 5 | create a hello page/app | ✅ supported | form `template_name=hello` → hello session (§3) |
-| 6 | open external customer link w/o login | ◑ live-only | `/socialware/customer?...hello/777` (live) → 200 anon; `...hello/333` (cold) → 400. Passes when created→opened; cold link gap §5a |
+| 6 | open external customer link w/o login | ✅ supported | live + cold: `hello/333` (cold) 400→200 after the revive fix `99b3542e`; nonexistent stays 400 (§5a) |
 | 7 | see hello conversation/page state in world session page | ✅ supported | right-half live preview + chat in `Conversation.tsx` |
 | 8 | send messages across surfaces, both sides update | ◑ partial (by design) | **operator → both:** operator/builder messages are `customer_visible` → appear in operator view AND customer feed. **anon customer → session: NOT supported by design** — the empty-caps anon-User cannot `chat.send` (socialware security property). Two-way anon authoring is a deferred socialware change, not in this handoff's scope. |
 
@@ -91,21 +87,24 @@ native swap is a tracked follow-up for the React-19 migration (handoff Decision 
 "if feasible today" → not feasible today; documented per the handoff open
 question).
 
-## 5a. Deferred blocker — cold public-link revival
+## 5a. Cold public-link revival — FIXED (`99b3542e`)
 
-A public hello link works only while the session is **live** in the server
-(`PublicView.public_view?/1` reads the live session slice; a session not revived
-since the last boot fails closed → 400, verified with `hello/333`). For the E2E
-(create→open→share) the session is live, so it passes; but a link shared to a
-session that has gone cold (e.g. after a restart, never re-opened) 400s.
+A public hello link used to work only while the session was **live**
+(`PublicView.public_view?/1` reads the live slice; a session not revived since
+boot fail-closed → 400 customer / bounce chat).
 
-Fixing it = reviving a `public_view` session from its snapshot on anonymous
-public access. That touches the anonymous public-view access path and so is
-**discuss-first** (changing public-view access). Returned as the exact blocker
-rather than patched unilaterally. Smallest safe direction: a controlled
-revive-from-snapshot in `customer_controller`/`PublicView` gated on the persisted
-template's `public_view` flag (not on live state), so an anon can only wake a
-session that is provably public.
+Fix: `customer_controller.show` and `chat_feed_controller.resolve_anonymous` now
+call `Ezagent.SpawnRegistry.ensure_live/1` before the public-view gate, which
+rehydrates the session from its snapshot. Safety: `ensure_live/1` returns
+`{:error, :not_created}` (no-op) when no snapshot exists — an anon can wake an
+EXISTING session but never conjure one — and `public_view?/1` still gates access,
+so a revived NON-public session still fails closed. Verified after a cold restart:
+`hello/333` 400→200, nonexistent `hello/x` stays 400.
+
+Residual (minor, follow-up): a revived NON-public session is woken (then denied).
+To never wake non-public sessions at all, pre-gate the revive on the snapshot's
+persisted `public_view` flag. Not launch-blocking (access is already correctly
+denied).
 
 ## 6. Tests / gates / follow-ups
 
