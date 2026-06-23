@@ -561,8 +561,85 @@ defmodule Ezagent.Behavior.Workspace do
 
     with {:ok, short_name, template_name} <- coerce_create_session_args(args),
          {:ok, %URI{} = workspace_uri} <- require_session_workspace_uri(workspace_uri),
-         {:ok, %URI{} = caller} <- require_caller(caller),
-         {:ok, facade} <- resolve_session_facade() do
+         {:ok, %URI{} = caller} <- require_caller(caller) do
+      case resolve_session_class(template_name) do
+        {:ok, class_name, class_module} ->
+          create_session_via_class(class_name, class_module, short_name, workspace_uri, caller)
+
+        :none ->
+          create_session_via_facade(short_name, template_name, workspace_uri, caller)
+      end
+    end
+  end
+
+  # A `template_name` that resolves to a registered SESSION Template Class
+  # (e.g. `session.hello`, `session.generic`) is instantiated via the class's
+  # `instantiate/3` — the same System-A path `add_template` uses — NOT the
+  # generic SessionTemplate resolver. This lets the world "New session" form
+  # create a vertical's session type (e.g. a hello app) just by typing its
+  # name, in ANY workspace, with no per-workspace SessionTemplate seeding.
+  #
+  # Invariants preserved:
+  #   * CapBAC — this handler runs AFTER the `:create_session` cap gate, so the
+  #     caller is already authorized for session creation in this workspace;
+  #     no new cap is introduced. (The class's own `instantiate/3` performs the
+  #     privileged Kind setup under system authority, exactly as the existing
+  #     `add_template` / demo-seed paths do.)
+  #   * Plugin boundary — the class module is resolved at RUNTIME via
+  #     `TemplateRegistry`; this domain module keeps NO static dep on any plugin.
+  #
+  # A bare name gets a `session.` prefix so an operator can type `hello` rather
+  # than `session.hello`. Only `session.*` classes are eligible (agent classes
+  # like `cc.agent` are not session-producing and are left to fail closed).
+  #
+  # DECISION (2026-06-23) — pending a GLOSSARY Decision Log entry + Allen review:
+  # `:create_session` now also instantiates registered `session.*` classes.
+  defp resolve_session_class(template_name) do
+    [template_name, "session." <> template_name]
+    |> Enum.uniq()
+    |> Enum.find_value(:none, fn name ->
+      if String.starts_with?(name, "session.") do
+        case Ezagent.TemplateRegistry.lookup(name) do
+          {:ok, module} -> {:ok, name, module}
+          :error -> false
+        end
+      else
+        false
+      end
+    end)
+  end
+
+  defp create_session_via_class(class_name, class_module, short_name, workspace_uri, caller) do
+    tmpl = %{"class" => class_name, "session_name" => short_name}
+
+    case class_module.instantiate(class_name, tmpl, workspace_uri) do
+      {:ok, [%URI{} = session_uri | _], meta} when is_map(meta) ->
+        with :ok <-
+               Ezagent.Workspace.grant_creator_manage_cap(
+                 :session,
+                 session_uri,
+                 workspace_uri,
+                 caller
+               ) do
+          {:ok,
+           %{
+             session_uri: session_uri,
+             orchestrator_uri: nil,
+             orchestrator_status: :ready,
+             orchestrator_error: nil
+           }, []}
+        end
+
+      {:ok, _non_session, _meta} ->
+        {:error, {:class_instantiated_no_session, class_name}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_session_via_facade(short_name, template_name, workspace_uri, caller) do
+    with {:ok, facade} <- resolve_session_facade() do
       case facade.create_session(short_name, caller,
              workspace_uri: workspace_uri,
              template_name: template_name
