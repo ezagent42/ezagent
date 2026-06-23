@@ -198,10 +198,10 @@ Allen redirected ("#896 的问题你直接改掉然后推送这个PR就好" + "m
 fast-forward path, and closed PR #896.
 
 **Merged commits (main):**
-- `bee9f60f` port `protocol_api_keys` migration to `priv/repo_pg`
-- `8d53b943` clear uri_query scan (5→0) + manifest cap-bump annotations
-- `002880a6` arch-conformance for the `:request_scoped` adapter + per-tenant table
-- `eba1b333` port the E2E init script to PostgreSQL
+- `fc341c9d` port `protocol_api_keys` migration to `priv/repo_pg`
+- `d8b913d7` clear uri_query scan (5→0) + manifest cap-bump annotations
+- `593aeeca` arch-conformance for the `:request_scoped` adapter + per-tenant table
+- `58c9ed12` port the E2E init script to PostgreSQL
 
 **How each blocker was resolved (principled, not name-allowlists):**
 1. **uri_query scan ×5 → 0**: 3× raw `entity://` → `Ezagent.URI.agent/2` (one
