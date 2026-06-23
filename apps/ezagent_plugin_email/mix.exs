@@ -32,6 +32,11 @@ defmodule EzagentPluginEmail.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
+      # #88 PR-1 — the email external-mirror Adapter/Binding implement the
+      # generic ExternalMirror domain contract (Adapter/Binding behaviours,
+      # Publisher.Event, BindingRow); behaviors/0 registers on the Session Kind.
+      {:ezagent_domain_external_mirror, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       {:swoosh, "~> 1.17"},
       # Swoosh's SMTP adapter calls :gen_smtp_client — required for the prod
       # SMTP send path (the web mailer declares both; codex plan review MED).
