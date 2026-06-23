@@ -15,4 +15,21 @@ defmodule Ezagent.World.IdentityDataTest do
     assert "echo" in state["cwd_required_with_pty_flavors"]
     refute "curl" in state["cwd_required_flavors"]
   end
+
+  test "create_error_message maps backend reasons to operator-facing text" do
+    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_cc) =~ "project_cwd"
+
+    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_codex) =~
+             "project_cwd"
+
+    assert Ezagent.World.IdentityData.create_error_message({:bad_name, "x y"}) =~ "name"
+    assert Ezagent.World.IdentityData.create_error_message({:bad_flavor, "zz"}) =~ "zz"
+
+    assert Ezagent.World.IdentityData.create_error_message(
+             {:already_exists, "entity://acme/agent/g"}
+           ) =~
+             "已存在"
+
+    assert is_binary(Ezagent.World.IdentityData.create_error_message({:weird, :tuple}))
+  end
 end

@@ -33,8 +33,20 @@ defmodule Ezagent.World.IdentityData do
       "workspace_uri" => encode_uri(workspace_uri)
     }
 
-    component_state(route, base, workspace_uri, caller_uri, caller_caps)
+    route
+    |> component_state(base, workspace_uri, caller_uri, caller_caps)
+    |> put_create_error(component, Map.get(opts, :create_error))
   end
+
+  # Surface a create failure on the new-agent form. Always written for the
+  # agent_new_form component (nil clears any stale message via the React
+  # state merge); never written for other components.
+  defp put_create_error(state, "agent_new_form", nil), do: Map.put(state, "create_error", nil)
+
+  defp put_create_error(state, "agent_new_form", reason),
+    do: Map.put(state, "create_error", create_error_message(reason))
+
+  defp put_create_error(state, _component, _reason), do: state
 
   defp component_state(
          %{component: "identities", filter: filter},
@@ -232,6 +244,23 @@ defmodule Ezagent.World.IdentityData do
   rescue
     _ -> @fallback_flavors
   end
+
+  @doc "Map a create_agent/grant failure reason to an operator-facing message."
+  @spec create_error_message(term()) :: String.t()
+  def create_error_message(:cwd_required_for_cc), do: "cc 需要 project_cwd（工作目录）"
+  def create_error_message(:cwd_required_for_codex), do: "codex 需要 project_cwd（工作目录）"
+  def create_error_message(:cwd_required_for_echo_with_pty), do: "echo + PTY 需要 project_cwd"
+  def create_error_message({:cwd_not_a_dir, cwd}), do: "project_cwd 不是有效目录：#{cwd}"
+  def create_error_message(:flavor_required), do: "请选择 flavor"
+  def create_error_message(:name_required), do: "请填写 name"
+
+  def create_error_message({:bad_name, name}),
+    do: "name 不合法（字母数字开头，仅 字母/数字/-/_）：#{name}"
+
+  def create_error_message({:bad_flavor, flavor}), do: "不支持的 flavor：#{flavor}"
+  def create_error_message({:already_exists, uri}), do: "同名 agent 已存在：#{uri}"
+  def create_error_message({:bad_workspace_uri, _}), do: "无效的 workspace"
+  def create_error_message(other), do: "创建失败：#{inspect(other)}"
 
   @doc "Preview an agent URI under the current workspace."
   @spec preview_agent_uri(URI.t() | nil, String.t()) :: String.t()

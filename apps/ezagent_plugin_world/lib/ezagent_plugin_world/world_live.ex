@@ -387,19 +387,38 @@ defmodule EzagentPluginWorld.WorldLive do
 
       {:noreply,
        socket
+       |> assign(:agent_create_error, nil)
        |> assign(:last_dispatch_status, "ok")
        |> push_navigate(to: "/identities/agents/#{encoded}")}
     else
       {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+        {:noreply, push_agent_create_error(socket, reason)}
 
       _ ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace_scope")}
+        {:noreply, push_agent_create_error(socket, :invalid_workspace_scope)}
     end
   end
 
   defp dispatch_agent_create(socket, _params) do
     {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent")}
+  end
+
+  # No silent drop: rebuild the agent_new_form state with the operator-facing
+  # message and re-push it through the SAME `world:state` channel the route uses
+  # so the React island re-renders the error. The reason is also stashed on the
+  # socket so a subsequent `handle_params` re-render (e.g. PTY refresh) keeps the
+  # message until the operator navigates away (push_navigate on success clears it).
+  defp push_agent_create_error(socket, reason) do
+    route = %{component: "agent_new_form", title: "New Agent", path: "/identities/agents/new"}
+    layout = socket.assigns.world_state["layout"]
+    socket = assign(socket, :agent_create_error, reason)
+    state = state_for_route(route, socket, layout)
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
+    |> push_event("world:state", state)
   end
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
@@ -533,7 +552,8 @@ defmodule EzagentPluginWorld.WorldLive do
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      create_error: Map.get(socket.assigns, :agent_create_error)
     })
     |> Map.put("layout", layout)
     |> put_can_manage_layout(route.component, socket)
