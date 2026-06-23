@@ -52,6 +52,21 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
     assert Ezagent.Capability.matches?(cap, needed_send(su))
   end
 
+  # Pin the behavior axis to the module the Session Kind actually registers
+  # for :send, so a future divergence between the minted cap and the runtime's
+  # resolved `needed` shape is caught here. (Full runtime authorization — a
+  # real dispatch under this principal — is left to the lead's integration
+  # check / live E2E; the email plugin test harness does not boot a live
+  # Session Kind tree.)
+  test "the minted cap's behavior is the registered Session :send behavior" do
+    {_uri, caps} = Principal.mint(session_uri())
+    [cap] = MapSet.to_list(caps)
+
+    assert cap.kind == :session
+    assert cap.behavior == Ezagent.Behavior.Session
+    assert cap.action == :send
+  end
+
   test "the minted cap is DENIED for a different session (least-privilege)" do
     su = session_uri()
     other = session_uri()
