@@ -61,6 +61,7 @@ export type IdentitiesState = {
   project_cwd?: string | null
   config_dir?: string | null
   source_template?: string | null
+  flavor?: string
   component?: string
   config_dir_path?: string | null
   creator_uri?: string | null
@@ -284,7 +285,7 @@ function AgentDetail({state}: {state: IdentitiesState}) {
   const grantedCaps = Array.isArray(state.granted_caps) ? state.granted_caps : []
   const rows: Array<[string, string]> = [
     ["Phase", String(status.phase || "unknown")],
-    ["Flavor", String(status.flavor || "unknown")],
+    ["Flavor", String(state.flavor || status.flavor || "unknown")],
     ["project_cwd", String(state.project_cwd || "—")],
     ["config_dir", String(state.config_dir || "—")],
     ["Version / template", String(state.source_template || "direct-spawn (no template)")],
@@ -338,7 +339,10 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
 
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
-  const capsInvalid = capTokens.some((t) => !/^[a-z_]+\.[a-z_]+$/.test(t))
+  // Grammar is `kind.behavior` (Capability.Parser splits on the first dot;
+  // the action axis is not in the grammar yet and defaults to :any). Allow
+  // digits in either segment.
+  const capsInvalid = capTokens.some((t) => !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t))
 
   return (
     <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
@@ -376,7 +380,9 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <span>Requested caps</span>
           <Input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />
           <span className={capsInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-            {capsInvalid ? "格式应为 behavior.action（逗号分隔）" : "请求 → 系统按 CapBAC 授予（详情页显示 granted）"}
+            {capsInvalid
+              ? "格式：kind.behavior（逗号分隔，如 chat.send）"
+              : "请求 kind.behavior（action 默认 any）→ 系统按 CapBAC 授予（详情页显示 granted）"}
           </span>
         </label>
         <label className="flex items-center gap-2 text-sm text-foreground">

@@ -102,6 +102,10 @@ defmodule Ezagent.World.IdentityData do
     base
     |> Map.put("agent_uri", encode_uri(agent_uri))
     |> Map.put("agent_status", agent_status(agent_uri))
+    # Flavor from the same reliable source the agents table uses
+    # (`UriQuery.resolve(:flavor, uri)`), NOT `agent_status.flavor` which is
+    # `unknown` for a freshly-spawned / direct-spawn agent.
+    |> Map.put("flavor", flavor_for("agent", agent_uri))
     |> Map.put("bridge", bridge_entry(agent_uri))
     |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
