@@ -159,9 +159,27 @@ defmodule EzagentPluginEcho.Application do
     default_uri = default_uri()
     :ok = Ezagent.AgentFlavorAttributes.put(default_uri, "echo")
 
-    with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri) do
-      :ok
-    else
+    # A7 fix — use Kind.spawn/2 with explicit echo_behaviors() so the
+    # default echo agent's instance set includes Behavior.Echo (:say +
+    # :receive handler). SpawnRegistry.spawn/1 (the prior call) routes
+    # through spawn_agent/1 which passes only %{uri: uri} — omitting
+    # :behaviors — so the Agent resolves nil_capture_behavior_set/0
+    # (base behaviors only, no Echo), and any :say dispatch returns
+    # {:error, :behavior_not_in_instance_set}. This is the same fix
+    # already applied to EchoAgent.Template.ensure_agent_kind/1 (A4).
+    init_args = %{
+      uri: default_uri,
+      behaviors: Ezagent.Entity.Agent.echo_behaviors()
+    }
+
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        # Idempotent — a previous boot left the default agent alive.
+        :ok
+
       {:error, reason} ->
         require Logger
 

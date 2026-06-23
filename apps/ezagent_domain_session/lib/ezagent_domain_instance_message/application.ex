@@ -851,13 +851,75 @@ defmodule EzagentDomainInstanceMessage.Application do
         # supervisor/0 callback; chat plugin no longer hardcodes
         # `EzagentDomainInstanceMessage.AgentSupervisor` (CurlAgent in particular
         # has its own InstanceSupervisor under the curl_agent plugin).
-        Ezagent.Kind.spawn(kind_module, %{uri: uri})
+        #
+        # A7 — thread instance_behaviors when the agent flavor has one.
+        # `SpawnRegistry.spawn/1` (URI-only) goes through this path for
+        # ALL demand-spawns: cold-loads, test-setup re-seeds, operator-driven
+        # re-spawns. Without threading `:behaviors`, `init_set/2` receives no
+        # `:behaviors` key → `nil_capture_behavior_set/0` (BASE subset for
+        # Entity.Agent) → Echo (and other flavor-only Behaviors) are silently
+        # excluded from the instance set → `:say` / `:receive` dispatches fail
+        # with `:behavior_not_in_instance_set`.
+        #
+        # The fix reads the flavor from `AgentFlavorAttributes` (ETS, set by
+        # `after_boot/0` / `create_agent/3`), then consults `AgentFlavorRegistry`
+        # for its `instance_behaviors` thunk. The behaviors arg is threaded
+        # only when a flavor declares one; flavors without an `instance_behaviors`
+        # thunk (e.g. cc — which has its own per-instance behavior management)
+        # fall through to the nil → base-set sentinel unchanged.
+        init_args =
+          case resolve_flavor_instance_behaviors(uri) do
+            {:ok, behaviors} -> %{uri: uri, behaviors: behaviors}
+            :none -> %{uri: uri}
+          end
+
+        Ezagent.Kind.spawn(kind_module, init_args)
 
       {:error, reason} ->
         {:error, reason}
 
       :error ->
         {:error, {:no_kind_module_for_agent, URI.to_string(uri)}}
+    end
+  end
+
+  # Resolve the `instance_behaviors` list for `uri` from its stored flavor.
+  # Returns `{:ok, [module()]}` when a flavor is found AND declares an
+  # `instance_behaviors` thunk; `:none` otherwise.
+  #
+  # Uses `AgentFlavorAttributes` (ETS fast-path) — set by each plugin's
+  # `after_boot/0` — and falls back to `UriQuery.resolve(:flavor, uri)` for
+  # agents whose ETS row expired or was never written. `AgentFlavorRegistry`
+  # stores the thunk; calling it yields the module list.
+  defp resolve_flavor_instance_behaviors(%URI{} = uri) do
+    flavor =
+      case Ezagent.AgentFlavorAttributes.get(uri) do
+        {:ok, f} when is_binary(f) and f != "" -> f
+        _ -> nil
+      end
+
+    flavor =
+      if is_nil(flavor) do
+        case Ezagent.UriQuery.resolve(:flavor, uri) do
+          {:ok, f} when is_binary(f) and f != "" -> f
+          _ -> nil
+        end
+      else
+        flavor
+      end
+
+    case flavor do
+      nil ->
+        :none
+
+      f ->
+        case Ezagent.AgentFlavorRegistry.lookup(f) do
+          {:ok, %{instance_behaviors: thunk}} when is_function(thunk, 0) ->
+            {:ok, thunk.()}
+
+          _ ->
+            :none
+        end
     end
   end
 
