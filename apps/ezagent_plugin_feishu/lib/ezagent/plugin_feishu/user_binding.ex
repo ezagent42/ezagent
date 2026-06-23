@@ -18,7 +18,7 @@ defmodule EzagentPluginFeishu.UserBinding do
   ## Schema
 
       open_id        string  primary key  — Feishu user open_id
-      user_uri       string  not null     — bound ESR User URI
+      user_uri       string  not null     — bound Ezagent User URI
       bound_by       string  not null     — admin URI that authorized
       bound_at       utc_datetime_usec    — when bound
   """

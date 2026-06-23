@@ -135,7 +135,7 @@ Feishu 群、provider 凭据、agent-browser）：
 1. **启动服务** —— `make run-server`，编排器 + 接力 worker 服务在线，可经
    `http://100.64.0.27:10042` 访问（Tailscale IP —— Allen 远程，
    `feedback_remote_browser_ip`）。
-2. **在 ESR Feishu 群里 seed + 绑定接力队伍**（每个群恰好一个绑定）：通过上面 8 个
+2. **在 Ezagent Feishu 群里 seed + 绑定接力队伍**（每个群恰好一个绑定）：通过上面 8 个
    编排器工具调用搭建队伍（或物化一个已保存的 SessionTemplate），然后导出绑定：
    ```bash
    export SCENARIO_34_FEISHU_CHAT_ID=oc_xxxxxxxxxxxxxxxx   # 绑定的群 chat_id

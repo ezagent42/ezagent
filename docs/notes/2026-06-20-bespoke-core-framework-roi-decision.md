@@ -55,7 +55,7 @@ line count, broad coupling.
 ### 2. Size benchmark vs comparable OSS (self-measured, same `wc -l` metric)
 | Project | Lang | lib LOC | test:lib |
 |---|---|---:|---:|
-| **ESR-ng** | Elixir | **~125K** | 1.0 |
+| **Ezagent-ng** | Elixir | **~125K** | 1.0 |
 | Plausible | Elixir | 79K | 1.67 |
 | Livebook | Elixir | 68K | 0.57 |
 | elixir-ls | Elixir | 66K | 0.77 |
@@ -120,7 +120,7 @@ app-to-app comparison is **88K, not 125K**. Test ratio 1:1 is healthy.
   requirement (it would be a new system, not a migration of this one).
 
 ## Why this matters
-The 30% bespoke framework is what makes ESR-ng "look big" against stock-Phoenix
+The 30% bespoke framework is what makes Ezagent-ng "look big" against stock-Phoenix
 apps — but it is the **intrinsic cost of a live multi-agent actor system with
 fine-grained CapBAC**, not accidental bloat. The framework market addresses
 *primitives* (we already use them) and *orthogonal paradigms* (data layer /

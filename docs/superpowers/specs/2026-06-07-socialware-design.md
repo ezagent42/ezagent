@@ -385,7 +385,7 @@ Optimizer + operator. Traces → config-delta → operator approves → new immu
 **E2E standards (all three):** non-admin customer is the primary caller; granting the operator
 its cap is itself a step; **fresh docker seed each run**; **production topology** (real
 routing/spawn/MessageStore, no test-harness shortcuts); **agent-browser screenshots on the real
-ESR UI at `http://100.64.0.27:10042`** (operator LiveView) and the customer SPA route (Tailscale
+Ezagent UI at `http://100.64.0.27:10042`** (operator LiveView) and the customer SPA route (Tailscale
 IP, not localhost); every distinct bug earns a fast regression test before the fix.
 
 ## 10. Open decisions (reduced)

@@ -9,7 +9,7 @@
 
 ## 1. Problem & Goal
 
-ESR E2E has been validated by hand on a long-lived shared dev node (`/private/tmp/esr-impl`) whose `$EZAGENT_HOME` has accumulated years of state — stale snapshots, pre-rename keys, expired creds, dead relay builds. That accumulation both *causes* spurious failures and *tempts* one-off hacks (manual cred provisioning, token minting, ad-hoc restarts).
+Ezagent E2E has been validated by hand on a long-lived shared dev node (`/private/tmp/esr-impl`) whose `$EZAGENT_HOME` has accumulated years of state — stale snapshots, pre-rename keys, expired creds, dead relay builds. That accumulation both *causes* spurious failures and *tempts* one-off hacks (manual cred provisioning, token minting, ad-hoc restarts).
 
 **Goal:** a clean, **isolated docker dev/test environment** that starts **blank**, in which **E2E scenarios themselves seed the data** step-by-step through the **real ingress / production paths**, with **checkpointed snapshot "layers"** and a **programmatic resume-resolver** so a partial scenario resumes from the right checkpoint instead of re-running everything. Determinism + isolation remove both the false failures and the hack incentive.
 
@@ -75,11 +75,11 @@ Artifacts:
 
 **(iv) curl's static deepseek API key — NOT an OAuth credential:** curl implements NONE of the `CredentialAdapter` callbacks; its key lives in the agent's `:api_keys` DB slice (set via the `put_api_key` action, read via `reads_siblings([:api_keys])`). It does not expire and is captured in the layer's DB tar. So curl needs **no provisioner and no exclusion**: a domain-setup step seeds the key via `put_api_key` from the read-only mounted test key, and it simply rides in the layer (a static test key — see residual on optional scrubbing). curl is layerable trivially.
 
-**Deliverable (PR-1):** `docker compose -f docker/docker-compose.dev.yml up` → blank, bootstrapped ESR at `http://100.64.0.27:10042` (Tailscale, `feedback_remote_browser_ip`), Feishu WS connected.
+**Deliverable (PR-1):** `docker compose -f docker/docker-compose.dev.yml up` → blank, bootstrapped Ezagent at `http://100.64.0.27:10042` (Tailscale, `feedback_remote_browser_ip`), Feishu WS connected.
 
 ### 4.B — scenario-as-steps framework
 
-A **scenario** is an ordered list of named **steps**; each performs actions against the running ESR and may assert.
+A **scenario** is an ordered list of named **steps**; each performs actions against the running Ezagent and may assert.
 
 **Two step kinds (codex r1 finding 1):**
 - **Domain-setup step** — `Ezagent.Invocation.dispatch` (inner domain chokepoint) for low-level seeding with no user-facing ingress: create users/agents, write templates, grant caps, define routing rules.
@@ -89,7 +89,7 @@ A **scenario** is an ordered list of named **steps**; each performs actions agai
 - **`Ezagent.E2E.Step`** — `%Step{name, kind, inputs_hash, run, await, assert, cacheable?}`.
 - **`defstep` macro** — captures the ASTs of **all three callbacks** (`run`, `await`, `assert`) + a declared dependency closure `@layer_inputs` (helper modules, prompt files, fixture paths). `inputs_hash = sha256(run_ast <> await_ast <> assert_ast <> hash_each(@layer_inputs))`. Hashing only `run` would let a tightened `await`/`assert` reuse a layer made under the weaker contract; an undeclared external dep is a lint error (CI greps callback bodies for known helper calls absent from `@layer_inputs`).
 
-**Quiescence barrier (codex r2 finding 2):** ESR relay/model flows are **asynchronous** (multi-hop provider work completes after the call returns — why the live harness *polls*). A step declares **`await(ctx) -> :ok | {:error, pending}`** that must positively observe all expected durable outcomes (messages via `MessageStore`, bridge registrations, PTY/app-server health, no pending async) BEFORE any snapshot. Per-step order: **`run` → `await` → `assert` → (only if assert passes) atomically publish the layer.** `await` proves terminal *durable* state, not correctness; snapshotting before `assert` would cache a wrong-but-settled state a later resume could select and run past (false green). Failed `assert` discards the staged tar and flunks. The published manifest records `assert_passed: true` bound to the current `fp` + `schema_version`.
+**Quiescence barrier (codex r2 finding 2):** Ezagent relay/model flows are **asynchronous** (multi-hop provider work completes after the call returns — why the live harness *polls*). A step declares **`await(ctx) -> :ok | {:error, pending}`** that must positively observe all expected durable outcomes (messages via `MessageStore`, bridge registrations, PTY/app-server health, no pending async) BEFORE any snapshot. Per-step order: **`run` → `await` → `assert` → (only if assert passes) atomically publish the layer.** `await` proves terminal *durable* state, not correctness; snapshotting before `assert` would cache a wrong-but-settled state a later resume could select and run past (false green). Failed `assert` discards the staged tar and flunks. The published manifest records `assert_passed: true` bound to the current `fp` + `schema_version`.
 
 **Credentials are NOT step-cached output (codex r3–r7):** credential files (the union of `Ezagent.Agent.CredentialAdapter.credential_relpaths/0` across flavors — `#17 PR-A`) are **excluded from every layer tar**. On **every restore**, a mandatory **provision hook** runs BEFORE the node serves: for each agent the restored DB references, the flavor's `refresh_test_credentials/3` provisioner (cc → `CredentialRefresh.provision/3`, refresh-if-expired from the **per-flavor** durable source, §4.A) writes fresh creds into the per-agent config dir. So creds are never frozen into a checkpoint, never expire-in-a-layer, and the resolver never reasons about credential time-sensitivity. (`valid_on_restore?` is NOT needed for creds; YAGNI for other time-sensitive state until a need arises.)
 

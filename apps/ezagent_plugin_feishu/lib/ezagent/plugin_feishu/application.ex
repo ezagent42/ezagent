@@ -22,7 +22,7 @@ defmodule EzagentPluginFeishu.Application do
   - **No more `:notify_external`** registration — outbound chat fan-out
     now flows generically: Session Publisher → per-binding Worker Kind
     → Adapter.event_to_payload/1 → Binding.publish/2 (per SPEC §2.4).
-  - **Inbound side-channel** (Feishu webhook → ESR session) still uses
+  - **Inbound side-channel** (Feishu webhook → Ezagent session) still uses
     `EzagentPluginFeishu.InboundDispatcher` but reads from the generic
     `external_mirror_bindings` table via
     `EzagentPluginFeishu.InboundChatLookup.resolve/1` instead of the

@@ -1,6 +1,6 @@
 defmodule Ezagent.Runtime do
   @moduledoc """
-  ESR runtime node-name + cookie management (Allen 2026-05-17 directive:
+  Ezagent runtime node-name + cookie management (Allen 2026-05-17 directive:
   CLI should reach the runtime via distributed Erlang RPC, not HTTP).
 
   ## Node name convention

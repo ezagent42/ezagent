@@ -14,7 +14,7 @@ defmodule Ezagent.Domain.Pty.Server do
 
   ## Background — same as the pre-move docstring
 
-  Phase 4-completion PR 8: ESR's first plugin-managed child process.
+  Phase 4-completion PR 8: Ezagent's first plugin-managed child process.
   Uses `:exec.run/2` (erlexec) for PTY allocation (claude TUI needs
   a real tty). Post-Phase-5 (Allen 2026-05-17): inlined the previous
   `bash cc-bridge-attach.sh` wrapper into `spawn_claude_directly/1`,

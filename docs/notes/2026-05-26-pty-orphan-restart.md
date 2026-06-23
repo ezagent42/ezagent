@@ -17,9 +17,9 @@ attached to its dead PTY.
 
 After phx restart, two failure modes:
 
-### Mode A — orphan reconnects, demand-spawns Kind, ESR can't manage it
+### Mode A — orphan reconnects, demand-spawns Kind, Ezagent can't manage it
 
-1. Orphan claude reconnects to ESR via the cc bridge Phoenix.Channel.
+1. Orphan claude reconnects to Ezagent via the cc bridge Phoenix.Channel.
 2. The Channel join calls `Ezagent.SpawnRegistry.spawn(agent_uri)` —
    demand-spawning the Agent Kind via the chat plugin's entity://
    spawn fn → `Ezagent.Kind.spawn(Agent, %{uri: uri})`.

@@ -148,7 +148,7 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
     assert is_map(result)
     assert is_binary(result.output)
     assert result.exit_code == 0
-    assert result.output =~ "ESR Invocation CLI"
+    assert result.output =~ "Ezagent Invocation CLI"
   end
 
   test "CLI exec for unknown subcommand returns non-zero exit" do

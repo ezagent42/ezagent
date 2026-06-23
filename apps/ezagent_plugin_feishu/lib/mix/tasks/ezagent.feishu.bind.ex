@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Bind do
-  @shortdoc "Bind a Feishu open_id to a local ESR user URI"
+  @shortdoc "Bind a Feishu open_id to a local Ezagent user URI"
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
   > Bypasses dispatch: calls `UserBinding.bind/3 + BindingPolicy.apply/2`

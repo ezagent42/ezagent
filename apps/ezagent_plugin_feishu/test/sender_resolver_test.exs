@@ -1,6 +1,6 @@
 defmodule EzagentPluginFeishu.SenderResolverTest do
   @moduledoc """
-  Phase 6 PR 15 — SenderResolver maps Feishu sender → ESR caller+caps.
+  Phase 6 PR 15 — SenderResolver maps Feishu sender → Ezagent caller+caps.
   """
   use EzagentCore.DataCase, async: false
 

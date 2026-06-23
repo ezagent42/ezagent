@@ -500,7 +500,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # (`orchestrator_bridge.py`) that serves `tools/list` from the
   # exported schema file and forwards `tools/call` to
   # `Ezagent.Orchestrator.McpServer` over the WS Phoenix Channel — the
-  # caller/cap/session context is bound ESR-side.
+  # caller/cap/session context is bound Ezagent-side.
   #
   # `base` is the sandbox dir; `install_orchestrator_bridge/1` has
   # already copied the script + schema file there, so both
@@ -564,11 +564,11 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # canonical orchestrator default.
   defp swap_ws_path(ws_url, path) when is_binary(ws_url) do
     # NOTE: this manipulates a `ws(s)://` NETWORK URL (the orchestrator MCP
-    # mount), NOT an ESR opaque entity URI — so the uri_query.scan opacity rules
+    # mount), NOT an Ezagent opaque entity URI — so the uri_query.scan opacity rules
     # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
     # + the rebuild split off the `URI.to_string` line so the source-scan
     # (positional_uri_read / uri_string_key) doesn't false-positive on it.
-    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-ESR schemes
+    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
 
     if is_binary(uri.scheme) and is_binary(uri.host) do
       rebased = %{uri | path: path, query: nil, fragment: nil}

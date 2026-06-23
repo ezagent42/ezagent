@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Agent.Create do
-  @shortdoc "Create a new ESR Agent (cc / echo / curl / future flavor) via unified dispatch"
+  @shortdoc "Create a new Ezagent Agent (cc / echo / curl / future flavor) via unified dispatch"
   @moduledoc """
   Create a new agent via the unified `Behavior.Workspace.:create_agent`
   dispatch path (SPEC `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`).

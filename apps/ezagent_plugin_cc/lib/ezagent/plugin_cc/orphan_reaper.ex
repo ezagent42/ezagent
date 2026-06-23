@@ -16,7 +16,7 @@ defmodule EzagentPluginCc.OrphanReaper do
        BEAM kill (`SIGKILL`, panic, SEGV) skips that cleanup and the
        OS `claude` lives on as an orphan attached to the old PTY.
 
-  Without reaping, the orphan reconnects to ESR via the cc bridge
+  Without reaping, the orphan reconnects to Ezagent via the cc bridge
   Channel as soon as the new BEAM is up — and demand-spawns the Agent
   Kind via the chat router. By the time `Workspace.Loader` later runs
   `cc.agent.instantiate/3`, the Agent Kind is already alive (codex

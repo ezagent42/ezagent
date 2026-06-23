@@ -36,7 +36,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   ## The bound context — orchestrator URI + its bridge token
 
   `%McpServer{}` binds the orchestrator's URI (the Registry key) and its bridge
-  token (the connection credential to forward). Both are resolved ESR-side from
+  token (the connection credential to forward). Both are resolved Ezagent-side from
   the token-authenticated agent URI + the cc socket's verified connection,
   never trusted from a `tools/call` payload.
 
@@ -44,7 +44,7 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   A `claude` agent talks to MCP servers in its `--mcp-config`. The
   cc-orchestrator AgentTemplate's MCP config runs `priv/orchestrator_bridge.py`,
-  which on `tools/call` forwards `{tool, arguments}` over the WS to the ESR-side
+  which on `tools/call` forwards `{tool, arguments}` over the WS to the Ezagent-side
   `McpChannel`; the Channel runs `handle_tool_call/3` against THIS server's
   bound context (orchestrator URI + bridge token, both set at join from the
   token-authenticated socket).

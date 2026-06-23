@@ -16,9 +16,9 @@ claude / Python 进程会留在原死掉的 PTY 上继续活着。
 
 phx 重启后，有两种失败模式：
 
-### 模式 A — 孤儿重连，按需 spawn Kind，ESR 无法管理
+### 模式 A — 孤儿重连，按需 spawn Kind，Ezagent 无法管理
 
-1. 孤儿 claude 通过 cc bridge Phoenix.Channel 重连 ESR。
+1. 孤儿 claude 通过 cc bridge Phoenix.Channel 重连 Ezagent。
 2. Channel join 调用 `Ezagent.SpawnRegistry.spawn(agent_uri)` —
    按需 spawn Agent Kind。
 3. 之后 `Workspace.Loader.load_all/0` 遍历 workspace 的

@@ -1180,7 +1180,7 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   `session_creator.ex` `ensure_orchestrated_session/6` + the cc `McpServer` /
   `OrchestratorReadinessPort` readiness check.
 
-- **Install + run `improve-codebase-architecture` skill to clarify the ESR
+- **Install + run `improve-codebase-architecture` skill to clarify the Ezagent
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`
   (cc-openclaw). Use it (informed by `UBIQUITOUS_LANGUAGE.md` + the `GLOSSARY.md`
   decisions log) to surface "deepening opportunities" — shallow modules, leaky

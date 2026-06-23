@@ -43,7 +43,7 @@ OTP 原语(本来就在用)+ 一层没有任何现成库能提供的、必要的
 门散布在业务 Behavior 里(#154 设计:每动作受 cap 约束、每 cap 溯源到真实实体)。
 
 ### 2. 体量对比(自测,同一 `wc -l` 指标)
-ESR-ng ~125K;Plausible 79K / Livebook 68K / elixir-ls 66K / Ash(框架)140K /
+Ezagent-ng ~125K;Plausible 79K / Livebook 68K / elixir-ls 66K / Ash(框架)140K /
 Oban(库)14K / CrewAI 110K、LangGraph 82K(Python)。
 
 **结论:健康,甚至偏精简。** 减掉 ~37K 自研框架 → **~88K 应用代码**,正落在 Elixir
@@ -75,7 +75,7 @@ Oban(库)14K / CrewAI 110K、LangGraph 82K(Python)。
 - **Commanded/事件溯源:** 仅当事件溯源本身成为*产品*需求(那是新系统,不是迁移)。
 
 ## 为什么重要
-那 30% 自研框架让 ESR-ng 对比 stock-Phoenix 应用"看起来大",但它是**"活的多智能体 actor
+那 30% 自研框架让 Ezagent-ng 对比 stock-Phoenix 应用"看起来大",但它是**"活的多智能体 actor
 系统 + 细粒度 CapBAC"的本质成本**,不是意外臃肿。框架市场解决的是*原语*(已在用)和*正交范式*
 (数据层/事件溯源),而非我们构建的"可组合 Behavior + 内联授权"的实体运行时。保留它在经济上和
 架构上都是正确决策。

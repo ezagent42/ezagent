@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19 · **Requested by:** Allen (research-only, before deciding) · **Status:** research; no implementation.
 
-**Question (Allen's framing):** ESR has three layers — backend (`ezagent`) / business-logic
+**Question (Allen's framing):** Ezagent has three layers — backend (`ezagent`) / business-logic
 (`json-render`) / rendering (today LiveView for admin + React for the socialware customer
 surface). If the rendering layer unifies on one mature JS framework (Next.js / React / Astro)
 consuming `json-render`, then `ezagent`'s own admin UI could be developed **as a socialware**
@@ -10,7 +10,7 @@ consuming `json-render`, then `ezagent`'s own admin UI could be developed **as a
 
 ## Recommendation
 
-**The thesis does not hold — and ESR's socialware design already decided against it.** Keep
+**The thesis does not hold — and Ezagent's socialware design already decided against it.** Keep
 **LiveView for admin/internal**; keep **React + json-render for the agent-generated customer
 surface**. This is the deliberate **dual-surface** decision locked in
 `docs/superpowers/specs/2026-06-07-socialware-design.md` rev8 (§4.4): "operator/admin =

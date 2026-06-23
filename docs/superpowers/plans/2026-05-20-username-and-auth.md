@@ -415,7 +415,7 @@ defmodule EzagentCore.Repo.Migrations.AppSettings do
 
   Holds UI-managed runtime config: `smtp_config` and
   `registration_domains`. Values are JSON text. The SMTP password is
-  stored as-is — ESR has no at-rest encryption today (ApiKeys stores
+  stored as-is — Ezagent has no at-rest encryption today (ApiKeys stores
   plaintext too); encryption is a separate project-wide decision.
   """
   use Ecto.Migration

@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel → multi-agent 编排。
+Ezagent(Session Router)— Elixir/OTP message router runtime,multi-channel → multi-agent 编排。
 
 本文件 supplements `phx.new` 生成的 `@AGENTS.md`(Phoenix/Elixir LLM 常见错误修正,由 Phoenix.new agent 提炼)。**先读 AGENTS.md 拿 Phoenix idioms,再读本文件拿 Ezagent 特有约定**。
 

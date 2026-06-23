@@ -1,7 +1,7 @@
 defmodule Ezagent.Behavior.Session do
   @moduledoc """
   Chat Behavior — Decision P2-D2 K-path: 4 actions, registered per-Kind
-  subset to realize Decision #61 "ESR is router not req/resp app".
+  subset to realize Decision #61 "Ezagent is router not req/resp app".
 
   ## Action / Kind matrix
 

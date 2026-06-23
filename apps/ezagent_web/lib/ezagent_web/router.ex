@@ -161,7 +161,7 @@ defmodule EzagentWeb.Router do
     post "/workspaces/switch", WorkspaceSwitchController, :switch
   end
 
-  # Liveness probe — plain JSON, no ESR dispatch path involved.
+  # Liveness probe — plain JSON, no Ezagent dispatch path involved.
   scope "/", EzagentWeb do
     pipe_through :api
 

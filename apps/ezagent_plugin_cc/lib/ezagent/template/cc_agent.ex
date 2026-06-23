@@ -129,7 +129,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   ## codex round-8 HIGH-1 — a `fresh?: false` result starts NO sidecar
 
   Round 6/7 made `fresh?` an atomic, side-effect-aware signal at the
-  ESR domain layer. But the Template Class itself was still not
+  Ezagent domain layer. But the Template Class itself was still not
   side-effect-free for a rejected adoption: `spawn_for_local_pty/2`
   called `ensure_agent_kind/1` and then UNCONDITIONALLY continued to
   `ensure_pty_server/3`. When `ensure_agent_kind/1` finds the Agent
@@ -166,7 +166,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   returning the error. The function now either fully succeeds or leaves
   ZERO residue. An `:already_started` Kind is never terminated — this
   call did not create it. Only the Kind PROCESS is terminated; lineage
-  and workspace binding are ESR-domain registries the plugin must not
+  and workspace binding are Ezagent-domain registries the plugin must not
   touch (3-tier) — and `spawn_from_template_content/4` had not recorded
   either (it gates them on a `fresh?: true` success this path never
   returns).

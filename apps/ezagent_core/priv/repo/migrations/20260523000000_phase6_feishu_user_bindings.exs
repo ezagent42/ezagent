@@ -5,7 +5,7 @@ defmodule EzagentCore.Repo.Migrations.Phase6FeishuUserBindings do
     # Phase 6 PR 15: feishu open_id ↔ local user URI binding.
     #
     # `open_id` is the Feishu-side identity (e.g. "ou_6b11faf8e9..."),
-    # `user_uri` is the bound ESR User Kind URI (e.g. "entity://user/default/linyilun").
+    # `user_uri` is the bound Ezagent User Kind URI (e.g. "entity://user/default/linyilun").
     #
     # Same open_id can bind to exactly one user (PK on open_id).
     # Reverse direction is many-to-one (one user may have multiple

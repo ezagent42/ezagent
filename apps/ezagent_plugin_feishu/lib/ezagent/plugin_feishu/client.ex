@@ -77,7 +77,7 @@ defmodule EzagentPluginFeishu.Client do
 
   @doc """
   Phase 6 PR 15: react an emoji to a Feishu message. Used as
-  acknowledgement so the human sender sees ESR received the message.
+  acknowledgement so the human sender sees Ezagent received the message.
 
   `emoji_type` is a Feishu reaction name like "OK", "DONE",
   "HEART", etc. See https://open.feishu.cn/document/.../emojis

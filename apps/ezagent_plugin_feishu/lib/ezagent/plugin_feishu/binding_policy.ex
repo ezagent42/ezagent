@@ -1,6 +1,6 @@
 defmodule EzagentPluginFeishu.BindingPolicy do
   @moduledoc """
-  Side-effects of binding a Feishu open_id to a local ESR user.
+  Side-effects of binding a Feishu open_id to a local Ezagent user.
 
   ## no-unowned-caps north star — eliminate `feishu-binding-policy` (capbac.md §7)
 
