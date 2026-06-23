@@ -7,7 +7,7 @@
 | Branch | `world-deploy-e2e-pg` (off `main` @ `9835cfe3`) |
 | Handoff | `docs/together/2026-06-23/handoffs/world-deploy-e2e-pg.md` |
 | Deadline | 2026-06-23 20:00 +08:00 (18:00 checkpoint) |
-| Status | **runbook refreshed + support matrix + live agent-browser walkthrough done**. Steps 1-2 ✅ (with 2 UX bugs), step 3/4 🟡 blocked by one crux bug (operator-created session lacks `:send`/routing cap), steps 5-8 hello → task 3. Evidence screenshots in `docs/together/2026-06-23/evidence/`. |
+| Status | **runbook refreshed + support matrix + live agent-browser walkthrough done**. Steps 1-2 ✅ (with 2 UX bugs), step 3/4 ⛔ blocked by one crux bug — **root-caused live at 14:40 (§7): NOT a cap issue. The session has no respawnable snapshot → `:session :send` returns `:no_such_actor`, swallowed by the `:cast` path**. Steps 5-8 hello → task 3. Evidence screenshots in `docs/together/2026-06-23/evidence/`. |
 
 ## 1. Phase 0 — runbook refreshed for PostgreSQL ✅ (DONE)
 
@@ -124,6 +124,72 @@ refreshed runbook §5):
   handoff §7). `world` mount/slot gates unaffected (no route/renderer change).
 - One non-blocking seed follow-up identified (§1, owned here).
 
-## 6. Merge request
+## 7. Addendum — crux ROOT-CAUSED live (14:40): NOT a cap issue
+
+The earlier hypothesis (§2b bug 3: "operator-created session lacks a `:send`/routing
+cap → cap-denied at the chokepoint") is **WRONG**. Drove the live server again with
+agent-browser + queried the live PostgreSQL audit/snapshot tables. The real chain:
+
+### Evidence (all reproduced live on the running server + DB)
+| # | Probe | Result |
+|---|---|---|
+| 1 | `data-last-dispatch` after a real operator Send on `session://system/default/e2e-chat` | **`error:no_such_actor`** (captured twice + screenshot `03d-send-no-such-actor.png`). NOT `error:unauthorized`/a cap error. |
+| 2 | `Ezagent.Users.confirmed?(admin)` + `users` row | `confirmed: true`, `email_verified: true`. |
+| 3 | `Ezagent.Identity.list_caps_for(admin)` | admin holds a **wildcard cap** `{kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any}` — god-mode. So `:session :send` is authorized at the chokepoint; cap is NOT the blocker. |
+| 4 | `kind_snapshots` scheme counts | `5 entity · 2 template · 0 session` — **zero `session://` snapshots ever written**. `snapshot.written` audit events exist for entity/template/agent but NEVER for a session. |
+| 5 | `Ezagent.Kind.StateRebuilder.snapshot_exists?("session://system/default/e2e-chat")` (and `…/main`) | **`false`**. |
+| 6 | `messages` table total | **0** — no send ever persisted, for any session. |
+| 7 | `invocations` audit | `join` (call, granted) recorded; **no `send` action ever recorded** (cast send fails before/at lazy-spawn). |
+
+### Root cause (precise, code-level)
+1. `Ezagent.Workspace.create_session/3` spawns the live Session Kind **process**
+   directly (with init args), so dispatches **right after create** hit a `:ready`
+   actor and work — this is why the original walkthrough saw `:session :join`
+   (invite) succeed on the freshly-created session.
+2. The Session Kind **never writes a respawnable snapshot** (P22 snapshot-on-change
+   is not firing for the Session Kind — `kind_snapshots` has 0 `session://` rows).
+3. Once that live process is gone (idle-reaped, or just not in this dispatch's
+   `KindRegistry`/ReadyGate view), every dispatch to the session —
+   `:session :send` (cast), `:session :join`, `:routing :add_rule` — enters
+   `Invocation.dispatch_with_lazy_spawn` → `{:unknown, _}` →
+   `attempt_lazy_spawn_and_redispatch` → `StateRebuilder.snapshot_exists?` =
+   **false** → `{:error, :no_such_actor}` (`invocation.ex:190-194`).
+4. `ConversationActions.send_message` dispatches with `mode: :cast` +
+   `reply: :ignore` (`conversation_actions.ex:144-149`), so the `:no_such_actor`
+   surfaces **only** in the hidden `data-last-dispatch` DOM attribute — the user
+   sees an empty composer and "No turns", zero error. (`session.routing.add` is
+   `:call` so it surfaces the same error to `last_dispatch_status`, same root cause.)
+
+### Corrected matrix impact (supersedes §2b bug 3 + §3 rows 3/4)
+- **Step 3 (converse) ⛔** and **Step 4 (routing rule create) ⛔** and **Step 8 ⛔**
+  for the operator are blocked by this **one** bug — a session that is not
+  snapshot-persisted becomes un-dispatchable (`:no_such_actor`) as soon as its live
+  process is reaped. (Step 4's in-session routing-rule *builder* DOES exist in the
+  UI — the §3-row-4 "no create handler" note was wrong; the handler is
+  `session.routing.add` → `add_routing_rule`, it just fails with the same
+  `:no_such_actor`.)
+- This is **not** a cap/authz gap, **not** a hello (task 3) gap, **not** a FatNine
+  agent-config gap.
+
+### Owner + fix direction (for the lead)
+**Owner: core/domain Session-Kind lifecycle (lead or a dedicated session-snapshot
+branch).** The Session Kind must persist a snapshot on create/change (P22) so
+`lazy_spawn_from_snapshot` can rehydrate it across process reaps — exactly as
+entity/template/agent Kinds already do. Candidate sites: the Session Kind's
+`use Ezagent.Kind` snapshot-on-change wiring, and/or an initial snapshot at
+`Workspace.create_session/3`. Until then, every operator session is a single
+volatile process and the whole operator conversation E2E (steps 3,4,8) cannot pass.
+
+### Reproduction (for whoever picks this up)
+```bash
+# 1. server up on PG (runbook §1-4). Log in as admin, open ANY session, wait for
+#    the live process to be reaped (or restart the server), then Send a message.
+# 2. read the swallowed error:
+agent-browser --session s eval "document.querySelector('[data-last-dispatch]').getAttribute('data-last-dispatch')"  # => error:no_such_actor
+# 3. prove no session snapshot exists (mix run, POSTGRES_* env exported):
+#    Ezagent.Kind.StateRebuilder.snapshot_exists?(Ezagent.URI.new!("session://system/default/e2e-chat")) => false
+```
+
+## 8. Merge request
 PR into `world-deploy-e2e-pg`; lead merges to `main` after review. The matrix above
-is the 18:00 coordination artifact for tasks 1/3/4.
++ §7 root-cause are the 18:00 coordination artifact for tasks 1/3/4 and the lead.
