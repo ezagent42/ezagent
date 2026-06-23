@@ -1,7 +1,7 @@
 defmodule EzagentWeb.CcEventsControllerTest do
   @moduledoc """
   Phase 4-plus follow-up — Allen 2026-05-17 directive: CC hooks must
-  surface errors to ESR via a path that does NOT depend on the agent
+  surface errors to Ezagent via a path that does NOT depend on the agent
   (which may itself be down). This test pins:
 
   1. valid POST → 200 + PubSub broadcast lands on Ezagent.CCEvents.topic()

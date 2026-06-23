@@ -68,7 +68,7 @@ and the result is visible back in the Feishu group.
   and G6 by asserting an ExternalMirror outbound publish. (Does NOT require a live
   claude — exercises the mechanism deterministically.)
 - **Live runbook — Feishu-group sync is MANDATORY (Standard 3, Allen 2026-06-01)**:
-  a real `@orch` message sent FROM the bound ESR Feishu group → the orchestrator's
+  a real `@orch` message sent FROM the bound Ezagent Feishu group → the orchestrator's
   live claude performs the action → the reply MIRRORS BACK and is visible IN THE
   GROUP. The gate, concretely:
   1. the session is bound (`ExternalMirror.bind(session, "feishu", chat_id, ctx)` →
@@ -80,7 +80,7 @@ and the result is visible back in the Feishu group.
      chat_id=<group>` in the phx log AND the user sees it.
   Reading `send_cursor`/sender from the session store is NOT sufficient (lesson
   2026-05-31: "在飞书 dev chat 啥都没看到" — the test sessions weren't Feishu-bound).
-  ESR Feishu app `cli_a96e7103…`, scenario group `oc_83a4f1ff…` — DISTINCT from the
+  Ezagent Feishu app `cli_a96e7103…`, scenario group `oc_83a4f1ff…` — DISTINCT from the
   cc-openclaw dev chat. The automated test alone is NOT sufficient to claim "solved".
 
 ## Known blockers this scenario gates the fix for

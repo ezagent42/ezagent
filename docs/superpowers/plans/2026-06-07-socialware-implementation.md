@@ -539,7 +539,7 @@ green.
   without a failing test first.
 - **Test DB only** (`MIX_ENV=test`). NEVER `mix ecto.migrate` against dev/prod. NEVER touch
   running dev/prod docker.
-- **ESR E2E standards** (P5): **all E2E runs on an isolated, fresh-seeded, disposable stack —
+- **Ezagent E2E standards** (P5): **all E2E runs on an isolated, fresh-seeded, disposable stack —
   never the shared dev/prod node** (dev/prod state is polluted/non-reproducible and unsafe to
   mutate). Non-admin customer primary caller; operator-cap-grant is itself a step; fresh seed
   brought up + torn down each run; agent-browser screenshots on the disposable stack's own ports

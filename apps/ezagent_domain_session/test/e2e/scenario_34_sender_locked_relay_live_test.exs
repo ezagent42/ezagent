@@ -4,7 +4,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario34_SenderLockedRelayLiveTest 
 
   This is the **live runbook harness** for Scenario 34
   (`docs/scenarios/34-sender-locked-relay/scenario.md`). It is NOT a CI test:
-  the true gate is real cc/codex/curl PTYs replying through the bound ESR
+  the true gate is real cc/codex/curl PTYs replying through the bound Ezagent
   Feishu group, with an agent-browser screenshot per `feedback_esr_e2e_standards`
   Standard 3. That requires Allen's environment — running agent services, live
   provider creds (Anthropic via proxy / `codex login` / DeepSeek key), the real
@@ -60,7 +60,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario34_SenderLockedRelayLiveTest 
     1. Start the phx server with the orchestrator + relay worker services up
        (`make run-server` per the project runbook), reachable at the Tailscale
        IP `http://100.64.0.27:10042` (Allen is remote — `feedback_remote_browser_ip`).
-    2. Seed + bind the relay team in the ESR Feishu group:
+    2. Seed + bind the relay team in the Ezagent Feishu group:
          - SCENARIO_34_FEISHU_CHAT_ID  — the bound Feishu group's chat_id (oc_…)
          - SCENARIO_34_SESSION_URI     — the relay session URI bound to that group
        The relay team (legend `传话游戏` + rule-set `telephone` + the three

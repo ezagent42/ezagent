@@ -1,4 +1,4 @@
-# Ezagent — Ezagent Session Router
+# Ezagent — Session Router
 
 Elixir/OTP-native **message router runtime**: multi-channel → multi-agent 编排。
 不是 typical Phoenix CRUD app —— 见 `ARCHITECTURE.md` §1.2 的两条核心差异。

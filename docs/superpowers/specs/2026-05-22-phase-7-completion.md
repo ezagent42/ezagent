@@ -569,7 +569,7 @@ behavior, no regression). `build_claude_cmd/2` is extended to:
 3. `operator_mcp_config_path` is emitted as an *additional*
    `--mcp-config` but **never replaces** the trusted
    `McpConfigWriter` output (the esr-bridge MCP server is required
-   for the agent to talk back to ESR). Both are passed; claude merges
+   for the agent to talk back to Ezagent). Both are passed; claude merges
    MCP configs additively, so an operator config adds servers but
    cannot delete the bridge.
 4. `claude_config_dir`, if present, is set as `CLAUDE_CONFIG_DIR` in
@@ -687,7 +687,7 @@ can never manage. Fail-broken.
 
 **The fix — an in-process, content-taking spawn helper.** The plugin
 Template Class is correctly plugin-isolated (`feedback_north_star_plugin_isolation`)
-— it must NOT know about ESR's lineage/workspace registries. So the
+— it must NOT know about Ezagent's lineage/workspace registries. So the
 *caller* owns the post-spawn obligations. rev 5 (codex rev-5 HIGH-2)
 makes that caller a **content-taking helper** that takes the template
 content as an ARGUMENT — it does NOT dispatch `:read` (the

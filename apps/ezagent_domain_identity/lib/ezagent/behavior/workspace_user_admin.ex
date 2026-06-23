@@ -1,6 +1,6 @@
 defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   @moduledoc """
-  Workspace-scoped user-admin Behavior — provisions new ESR users
+  Workspace-scoped user-admin Behavior — provisions new Ezagent users
   in a workspace via dispatch.
 
   ## Why a separate Behavior (not on `Behavior.Workspace`)
@@ -109,7 +109,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
     },
     caps: [{:create_user, kind: :workspace}],
     description:
-      "Provision a new ESR user in this workspace. Inserts a row in " <>
+      "Provision a new Ezagent user in this workspace. Inserts a row in " <>
         "the `users` table (password bcrypt-hashed) and " <>
         "opportunistically spawns the User Kind. Distinct cap " <>
         "subject from `Behavior.Workspace`'s member-management " <>

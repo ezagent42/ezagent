@@ -25,7 +25,7 @@
 
 ## 1. Motivation & goal
 
-ESR has two presentation layers that have drifted into dual maintenance:
+Ezagent has two presentation layers that have drifted into dual maintenance:
 
 1. **Admin / operator UI** — ~25 `*_live.ex` LiveViews (~13.5K LOC across
    the top-level dir plus `admin/`), built on the 3-layer atom architecture

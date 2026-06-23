@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (inline) — infra + a live BEAM are hard to parallelize safely; execute sequentially with codex review per PR. Steps use `- [ ]`.
 
-**Goal:** A dockerized dev/test ESR that starts blank, where E2E scenarios seed via the production paths, with cred-free snapshot layers + a resume-resolver — supporting cc/codex/curl. Reach a **tier2-testable** state (env up + relay seeded, awaiting a Feishu `@mention`).
+**Goal:** A dockerized dev/test Ezagent that starts blank, where E2E scenarios seed via the production paths, with cred-free snapshot layers + a resume-resolver — supporting cc/codex/curl. Reach a **tier2-testable** state (env up + relay seeded, awaiting a Feishu `@mention`).
 
 **Architecture:** see SPEC `docs/superpowers/specs/2026-06-04-dockerized-e2e-harness-design.md` (codex-approved). A=docker env, B=scenario-step framework + scenario 0, PR-2b=codex provisioner, C=LayerStore/Resolver/EnvControl, PR-4=scenario 34.
 
@@ -60,7 +60,7 @@ Validation is integration-style (no unit tests for Dockerfiles); the "test" is `
 - [ ] **Step 6: Build + bring up** — `docker compose -f docker/docker-compose.dev.yml build` then `up -d`; poll healthcheck; confirm `/` responds + Feishu WSS connects in logs. Iterate on build failures (missing CLI, asset step, deps).
 - [ ] **Step 7: codex review** (`adversarial-review --base main`) → fix → admin-merge.
 
-**Acceptance:** `docker compose up` → blank bootstrapped ESR at `:10042`, Feishu WSS connected, `claude`/`codex`/`uv` resolvable inside the container (`docker compose exec esr which claude codex uv`).
+**Acceptance:** `docker compose up` → blank bootstrapped Ezagent at `:10042`, Feishu WSS connected, `claude`/`codex`/`uv` resolvable inside the container (`docker compose exec esr which claude codex uv`).
 
 ---
 

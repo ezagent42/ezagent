@@ -127,7 +127,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     returns: %{open_id: :string, user_uri: :string},
     caps: [:bind],
     description:
-      "Bind a Feishu open_id to a local ESR user URI. Also " <>
+      "Bind a Feishu open_id to a local Ezagent user URI. Also " <>
         "applies the default session-participation cap (idempotent) so " <>
         "the bound user can dispatch chat messages.",
     modes: [:call]
@@ -172,7 +172,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   def cap_subjects do
     [
       {:bind,
-       "bind a Feishu open_id to a local ESR user URI (the bound user " <>
+       "bind a Feishu open_id to a local Ezagent user URI (the bound user " <>
          "participates per-session via join, like every member)"},
       {:unbind, "remove a Feishu open_id binding"},
       {:list_feishu_bindings, "list all open_id → user URI bindings (read-only)"}

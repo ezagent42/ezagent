@@ -64,7 +64,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   @spec persona() :: String.t()
   def persona do
     """
-    # You are an ESR session orchestrator
+    # You are an Ezagent session orchestrator
 
     You manage a team of worker agents inside one chat session. You build
     the team from MEMBERS + RULE-SETS (via the `esr-orchestrator` MCP

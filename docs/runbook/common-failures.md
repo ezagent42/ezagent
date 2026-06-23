@@ -215,7 +215,7 @@ Phase 6 PR 27 fixed `InboundDispatcher` to use `mode: :call` + error feedback. I
 
 ### Cause 3: Wrong Feishu chat (chat_id mismatch)
 
-ESR's Feishu plugin binds specific chat IDs via routing rules. If the user is in a chat not bound to any session, the message goes nowhere.
+Ezagent's Feishu plugin binds specific chat IDs via routing rules. If the user is in a chat not bound to any session, the message goes nowhere.
 
 **Diagnose:** check `routing_rules` table for the chat_id:
 ```sql

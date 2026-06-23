@@ -30,7 +30,7 @@ Ezagent 的多数特殊设计(投递保证、`put_new`、零匹配出口、幂�
 
 普通 Phoenix app:请求进来 → handler 跑 → 响应出去。**调用方在等结果**——错误有天然的家(`{:error, _}` 一路冒泡回去),没人能忽略失败。
 
-ESR:消息进来 → 路由给 N 个 receiver → 各自反应 → 可能晚点从另一条路回复。**没有"在等结果的调用方"**。所以"消息到达零个 / 错误的 / 没 ready 的 receiver"是一条**合法代码路径,长得跟成功一模一样**——失败默认静默。
+Ezagent:消息进来 → 路由给 N 个 receiver → 各自反应 → 可能晚点从另一条路回复。**没有"在等结果的调用方"**。所以"消息到达零个 / 错误的 / 没 ready 的 receiver"是一条**合法代码路径,长得跟成功一模一样**——失败默认静默。
 
 **推论:Ezagent 必须人工制造可观测性**——普通 Phoenix app 免费得到的"错误冒泡",router 拿不到。每一处"消息没去到预期的地方"都必须显式变成 telemetry / DLQ / 大声 reject。**默认静默 = 默认有 bug**。
 
@@ -50,7 +50,7 @@ ESR:消息进来 → 路由给 N 个 receiver → 各自反应 → 可能晚点�
 
 ### 1.3 名字债
 
-项目名 Ezagent = **Ezagent Session Router**(不是 Event-Sourcing Router)。"Event-Sourcing" 是历史误会,**v0 不做 ES**,改用 snapshot 持久化(详见 §10)。完整 ES 不在 v0.x roadmap 上——append-only Message stream 已经具备所有"ES 听起来很美"的优势,不需要承担 ES 复杂度(详见 Decision Log)。
+项目名 Ezagent = **Session Router**(不是 Event-Sourcing Router)。"Event-Sourcing" 是历史误会,**v0 不做 ES**,改用 snapshot 持久化(详见 §10)。完整 ES 不在 v0.x roadmap 上——append-only Message stream 已经具备所有"ES 听起来很美"的优势,不需要承担 ES 复杂度(详见 Decision Log)。
 
 ---
 

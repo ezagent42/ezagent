@@ -20,7 +20,7 @@ defmodule EzagentPluginFeishu.WebhookPlug do
   ## Auth
 
   Webhook is unauthenticated at the network level (Feishu can't carry
-  ESR session cookies). Future hardening: validate `Encrypt-Key` header
+  Ezagent session cookies). Future hardening: validate `Encrypt-Key` header
   signature when `verification_token` is configured.
   """
   import Plug.Conn

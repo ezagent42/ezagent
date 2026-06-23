@@ -470,9 +470,9 @@ defmodule Ezagent.Kind do
   and a teardown step must not mask the original error).
 
   This terminates ONLY the Kind process. Lineage (`AgentLineage`) and
-  workspace binding (`WorkspaceRegistry`) are ESR-domain registries —
+  workspace binding (`WorkspaceRegistry`) are Ezagent-domain registries —
   a plugin Template Class must NOT touch them (3-tier rule); the
-  ESR-layer caller (`Ezagent.Entity.Agent.spawn_from_template_content/4`)
+  Ezagent-layer caller (`Ezagent.Entity.Agent.spawn_from_template_content/4`)
   owns undoing those.
   """
   @spec terminate(URI.t()) :: :ok

@@ -76,7 +76,7 @@ defmodule Ezagent.Entity.AgentTemplate do
         # fork.
         parent_template_uri: URI.t() | nil,
 
-        # ESR side
+        # Ezagent side
         default_caps:       [Ezagent.Capability.t()],
 
         # DOMAIN-owned desired skills/caps (PR-6, domain.agent). The DOMAIN
@@ -121,7 +121,7 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   **What is NOT in a cc AgentTemplate slice** (deliberately): prompt, model,
   effort, tools whitelist, MCP servers — for cc, those live in the pointed-at
-  `config_dir` (or the explicit `settings_path` override); ESR doesn't
+  `config_dir` (or the explicit `settings_path` override); Ezagent doesn't
   re-model what CC already encodes. Other flavors (curl/codex) DO carry their
   provider/model in the slice (they have no external config dir to point at) —
   hence the flavor-owned extras above.

@@ -135,7 +135,7 @@ defmodule Ezagent.Entity.User do
 
   ## no-unowned-caps north star PR-甲-2 (Decision #154 / capbac.md §6)
 
-  HISTORY: PR 27 (Allen 2026-05-18) gave every ESR User a single broad
+  HISTORY: PR 27 (Allen 2026-05-18) gave every Ezagent User a single broad
   baseline cap at creation —
   `cap(:session, behavior: :any, action: :any, instance: :any, ws)`,
   granted by `system://bootstrap`. The intent was "every user can attempt

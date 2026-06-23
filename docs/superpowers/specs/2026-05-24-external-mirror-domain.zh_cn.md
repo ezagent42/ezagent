@@ -1032,7 +1032,7 @@ Domain 显式不做:
 3. **抵御 in-VM plugin 代码.** 同 VM plugin 受信 (PR #303 round-5 威胁模型, Allen 2026-05-24 批). per-adapter cap + per-target ownership 检查是用户级 authorization, NOT BEAM sandboxing. 一个发恶意 exfiltration binding 的 plugin 作者可以发到任何持有凭证的地方 — 控制是关于阻止 INNOCENT 用户 bind 到自己不拥有的 target, 不是关于容纳恶意代码.
 4. **替代 Chat Domain.** Chat 是 entity-to-entity 消息带意图寻址. ExternalMirror 是单向 session-state 复制. 它们共享 slice (Chat slice 变化是 mirror frame) 但不共享代码路径.
 5. **替代 `Ezagent.Notifications` / `SliceChange`.** 这个 Domain 消费 SliceChange 原语 (通过它坐之上的 Publisher 层). 不与 notification 层 cap 形状竞争或覆盖.
-6. **提供通用 inbound 路径.** 外部系统 inbound (Feishu webhook → ESR Chat) 留在 plugin 自己 `InboundDispatcher` (按 P11). 这个 Domain 只 OUTBOUND.
+6. **提供通用 inbound 路径.** 外部系统 inbound (Feishu webhook → Ezagent Chat) 留在 plugin 自己 `InboundDispatcher` (按 P11). 这个 Domain 只 OUTBOUND.
 7. **缓冲或持久 mirror frame 超过 Publisher retention.** V1 retention 100 events / 1 hour (OQ-EM-A). 需要 at-least-once 投递 + 长期重放的 adapter 自己实现外部侧 dedup / log.
 8. **自动禁用 / 熔断 / 健康检查 binding.** 按 **P2** (let-it-crash, 无 workaround): 坏 binding 留活, 通过 telemetry 暴露失败, 需要 operator unbind 移除. 无静默退化路径.
 

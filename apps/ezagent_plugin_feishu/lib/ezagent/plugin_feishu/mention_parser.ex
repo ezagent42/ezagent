@@ -7,12 +7,12 @@ defmodule EzagentPluginFeishu.MentionParser do
 
   lark's `mentioned_users` field carries Feishu open_ids — the user
   would need to type a real Feishu user's name (and that user would
-  need to exist in the chat). To target an ESR agent (which has no
+  need to exist in the chat). To target an Ezagent agent (which has no
   Feishu identity), we use the simpler convention:
 
       @<agent-name>  →  entity://agent/<flavor>_<agent-name>
 
-  ESR is the source of truth for agent URIs, and the chat is just a
+  Ezagent is the source of truth for agent URIs, and the chat is just a
   human-readable surface. If you have an `entity://agent/team-alpha/cc_architect`
   live and someone types `@architect 看看`, the message routes only
   to that agent via MentionRouting (the existing matcher).

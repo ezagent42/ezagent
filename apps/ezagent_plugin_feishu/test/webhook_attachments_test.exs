@@ -1,7 +1,7 @@
 defmodule EzagentPluginFeishu.WebhookAttachmentsTest do
   @moduledoc """
   Phase 6 PR 14 — Feishu webhook builds attachments for every
-  message_type, even when ESR can't natively render the type.
+  message_type, even when Ezagent can't natively render the type.
   """
   use ExUnit.Case, async: true
 

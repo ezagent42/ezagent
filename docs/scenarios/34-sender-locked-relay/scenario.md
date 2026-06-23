@@ -151,7 +151,7 @@ running services, real Feishu group, provider creds, agent-browser):
 1. **Start services** — `make run-server` with the orchestrator + relay worker
    services up, reachable at `http://100.64.0.27:10042` (Tailscale IP — Allen is
    remote, `feedback_remote_browser_ip`).
-2. **Seed + bind the relay team** in the ESR Feishu group (exactly ONE binding
+2. **Seed + bind the relay team** in the Ezagent Feishu group (exactly ONE binding
    per chat): build the team via the 8 orchestrator-tool calls above (or
    materialize a saved SessionTemplate), then export the bindings:
    ```bash

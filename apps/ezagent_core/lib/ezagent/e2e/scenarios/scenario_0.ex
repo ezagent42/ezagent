@@ -1,7 +1,7 @@
 defmodule Ezagent.E2E.Scenarios.Scenario0 do
   @moduledoc """
   #21 PR-2 — E2E "scenario 0": the foundational scenario proving a BLANK, bootstrapped
-  ESR is up + the harness can run steps in-node. Its end state is the base layer every
+  Ezagent is up + the harness can run steps in-node. Its end state is the base layer every
   other scenario builds on (the docker-base-layer analogy). Deliberately minimal + free
   of external refs so it's a robust smoke test.
   """

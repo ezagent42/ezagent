@@ -62,7 +62,7 @@ defmodule EzagentCli.TreeBuilder do
 
     Optimus.new!(
       name: "esr",
-      description: "ESR Invocation CLI — auto-derived from BehaviorRegistry + FacadeRegistry",
+      description: "Ezagent Invocation CLI — auto-derived from BehaviorRegistry + FacadeRegistry",
       version: "0.1.0",
       allow_unknown_args: false,
       parse_double_dash: true,

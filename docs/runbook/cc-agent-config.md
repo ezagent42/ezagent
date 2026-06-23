@@ -36,7 +36,7 @@ SPEC §1.0):
 
 What is **not** in the slice (by design): prompt, model, effort, tools
 whitelist, MCP servers. Those live inside the pointed-at
-`claude_config_dir` (or the explicit `settings_path` overlay). ESR
+`claude_config_dir` (or the explicit `settings_path` overlay). Ezagent
 does not re-model what CC already encodes — the AgentTemplate is a
 *sandbox pointer + cap policy*, not a full agent spec.
 

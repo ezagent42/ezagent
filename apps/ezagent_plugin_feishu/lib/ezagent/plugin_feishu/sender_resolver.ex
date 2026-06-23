@@ -1,6 +1,6 @@
 defmodule EzagentPluginFeishu.SenderResolver do
   @moduledoc """
-  Phase 6 PR 15 — translate Feishu transport identity into ESR
+  Phase 6 PR 15 — translate Feishu transport identity into Ezagent
   dispatch identity.
 
   ## Three flows
@@ -34,7 +34,7 @@ defmodule EzagentPluginFeishu.SenderResolver do
 
   @doc """
   Resolve a Feishu sender map (the `"sender"` field of an event) to
-  ESR caller + caps.
+  Ezagent caller + caps.
   """
   @spec resolve(map()) :: result()
   def resolve(%{"sender_id" => %{"open_id" => open_id}}) when is_binary(open_id),

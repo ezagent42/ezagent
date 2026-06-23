@@ -34,7 +34,7 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
 
   ## Mention-based disambiguation (2026-06-01 — feature)
 
-  Fail-closed-on-ambiguity is correct when ESR has no signal about
+  Fail-closed-on-ambiguity is correct when Ezagent has no signal about
   WHICH session the inbound message targets. But when the message
   `@`-mentions a specific agent, that mention IS the signal: route
   to the session the mentioned agent is a member of. This lets one

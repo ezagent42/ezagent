@@ -47,7 +47,7 @@ full agent-flavor matrix works end-to-end under live orchestrator dispatch.
   tool-dispatch creates an agent of each flavor + asserts each round-trips (flavor
   fixtures may stub the provider call where a live provider isn't available in CI).
 - **Live runbook — Feishu-group sync MANDATORY (Standard 3, Allen 2026-06-01)**: real
-  `@orch` messages sent FROM the bound ESR Feishu group create + round-trip all three
+  `@orch` messages sent FROM the bound Ezagent Feishu group create + round-trip all three
   flavors live; each worker's reply MIRRORS BACK to the group (`FeishuClient.send_text
   OK (code=0)` in the phx log + the user sees `cc OK` / `codex OK` / `ds OK`). Same
   gate as Scenario 32's live runbook: exactly one binding per chat, inbound is a REAL

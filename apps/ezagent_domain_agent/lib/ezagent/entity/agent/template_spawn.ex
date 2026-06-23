@@ -757,8 +757,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # unbind the workspace. Best-effort + idempotent — a worker for which
   # the obligation never ran (binding/lineage absent) just no-ops.
   # `Ezagent.Kind.terminate/1` is the tier-clean Kind-process teardown;
-  # `AgentLineage`/`WorkspaceRegistry` are ESR-domain registries this
-  # ESR-layer helper legitimately owns (it is the layer that recorded
+  # `AgentLineage`/`WorkspaceRegistry` are Ezagent-domain registries this
+  # Ezagent-layer helper legitimately owns (it is the layer that recorded
   # them — unlike the plugin Template Class, which must not touch them).
   defp undo_fresh_workers(workers) do
     Enum.each(workers, fn worker_uri ->

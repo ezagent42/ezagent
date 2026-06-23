@@ -1,7 +1,7 @@
 defmodule EzagentPluginFeishu.EventDecoder do
   @moduledoc """
   Phase 6 PR 15 — translate a raw Feishu `message` event object into
-  ESR's `body` shape (`%{text:, attachments:}`).
+  Ezagent's `body` shape (`%{text:, attachments:}`).
 
   Same algorithm used by `WebhookPlug` (HTTP transport) and `WsClient`
   (WSS long-connect transport). Pulled out so both share the dispatch
@@ -26,7 +26,7 @@ defmodule EzagentPluginFeishu.EventDecoder do
   """
 
   @doc """
-  Convert a Feishu `"message"` payload to an ESR body map.
+  Convert a Feishu `"message"` payload to an Ezagent body map.
 
       iex> EzagentPluginFeishu.EventDecoder.build_body(
       ...>   %{"message_type" => "text", "content" => ~s({"text":"hi"}), "message_id" => "om_x"}

@@ -1,4 +1,4 @@
-// World agent-config MVP demo recorder (world plugin React island, ESR LiveView).
+// World agent-config MVP demo recorder (world plugin React island, Ezagent LiveView).
 //
 // POST-REVIEW re-record (task-7): records off the STATIC bundle
 // (`/assets/world/main.js`) to prove the React island mounts there after the

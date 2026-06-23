@@ -1,7 +1,7 @@
 defmodule Ezagent.Entity.Agent do
   @moduledoc """
   Agent Kind — represents an external participant (e.g. a Claude CLI
-  session via the CC bridge) inside ESR's chat router.
+  session via the CC bridge) inside Ezagent's chat router.
 
   Per Decision #61: an Agent is a peer of admin User in the Session —
   it can send messages (when its bridge surfaces a reply) and receive
@@ -200,7 +200,7 @@ defmodule Ezagent.Entity.Agent do
     spawns that on bridge announce). AgentTemplate's
     `project_cwd` / `config_dir` / `settings_path`
     are consumed by the PR 32 v2 bridge / PtyServer integration —
-    Agent.spawn/4 is the ESR-side Kind registration, not the
+    Agent.spawn/4 is the Ezagent-side Kind registration, not the
     PTY-side process spawn.
   - Does NOT populate AgentTemplate slice content from the
     template Kind (the template's slice is empty per PR 37 — admin
