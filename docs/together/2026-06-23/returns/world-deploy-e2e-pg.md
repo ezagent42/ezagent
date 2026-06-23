@@ -76,7 +76,12 @@ wrong). Drove the real browser flow against `world.localhost:10042`. Screenshots
    `:send` caps and are the intended senders; an operator-created session has no such grant.
    This blocks E2E steps 3,4,8 for an operator. → **owner: lead / world-session owner**
    (decide: auto-grant the creator session caps, or document the intended sender path) —
-   NOT a hello (task 3) issue. Needs confirmation of the exact denied cap from the server log.
+   NOT a hello (task 3) issue.
+   **Code pointer:** all four route through `conversation_actions.ex` `@conversation_actions`
+   (`chat.send` / `session.create` / `session.invite` / `session.routing.add`,
+   `world_live.ex:228`). `session.invite` succeeds; `chat.send` + `session.routing.add`
+   no-op → inspect the authz/cap path for `chat.send` + whether `session.create` grants
+   the creator a session `:send`/routing cap. Confirm the exact denied cap in the server log.
 
 ## 3. Support matrix — full E2E on current `main`
 
