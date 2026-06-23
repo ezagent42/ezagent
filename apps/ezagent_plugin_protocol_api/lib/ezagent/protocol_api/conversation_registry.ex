@@ -46,8 +46,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
   end
 
   # Stateless session: spawn without external_mirror_bindings entry.
-  defp create_stateless(workspace_uri, bound_by) do
-    workspace_name = Ezagent.URI.stable_key(workspace_uri) |> String.replace("://", "_")
+  defp create_stateless(workspace_uri, _bound_by) do
     name = "stateless_#{stateless_suffix()}"
     session_uri = Ezagent.URI.session(:system, "generic", name)
 

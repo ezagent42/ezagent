@@ -120,7 +120,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     path = agent_uri.path || ""
     rest = String.replace_leading(path, "/", "")
     name = List.last(String.split(rest, "/")) || ""
-    name = List.last(String.split(rest, "/"))
+
     cond do
       String.starts_with?(name, "curl_") -> "curl"
       String.starts_with?(name, "cc_") -> "cc"
@@ -129,7 +129,6 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
       true -> nil
     end
   end
-  defp flavor_from_uri(_), do: nil
 
   defp extract_id_from_path(conn) do
     path = conn.request_path
