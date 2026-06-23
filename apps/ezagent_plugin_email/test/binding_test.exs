@@ -96,11 +96,16 @@ defmodule Ezagent.Email.BindingTest do
         assert {_, @target} = hd(email.to)
         assert email.text_body == "hello"
         assert is_binary(email.headers["Message-ID"])
+        # RFC 5322: the ROOT message has no prior messages → no References,
+        # no In-Reply-To.
+        not Map.has_key?(email.headers, "References") and
+          not Map.has_key?(email.headers, "In-Reply-To")
       end)
 
       row_id = BindingRow.row_id(session_uri, "email", @target)
       ts = ThreadState.load(row_id)
       assert ts.root_message_id == ts.last_message_id
+      # Persisted chain = this message's id (grows on the NEXT send).
       assert ts.references_chain == ts.last_message_id
       assert ts.workspace_uri == @ws
     end
@@ -115,11 +120,13 @@ defmodule Ezagent.Email.BindingTest do
       {:ok, _} = Binding.publish(payload(session_uri, text: "second"), state)
 
       assert_email_sent(fn email ->
-        # Most recent email: In-Reply-To = first message id; References grew.
+        # Most recent email: In-Reply-To = first message id; References lists
+        # the PRIOR message (the first), RFC 5322 — and must NOT contain this
+        # message's own Message-ID.
         if email.text_body == "second" do
           assert email.headers["In-Reply-To"] == first.last_message_id
           assert email.headers["References"] =~ first.last_message_id
-          assert email.headers["References"] =~ email.headers["Message-ID"]
+          refute email.headers["References"] =~ email.headers["Message-ID"]
         end
 
         true
@@ -128,6 +135,7 @@ defmodule Ezagent.Email.BindingTest do
       second = ThreadState.load(row_id)
       assert second.root_message_id == first.root_message_id
       assert second.last_message_id != first.last_message_id
+      # Persisted chain now lists BOTH ids (ready for the 3rd send's References).
       assert second.references_chain =~ first.last_message_id
       assert second.references_chain =~ second.last_message_id
     end

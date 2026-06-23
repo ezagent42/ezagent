@@ -94,7 +94,12 @@ defmodule Ezagent.Email.Binding do
 
     new_mid = mint_message_id()
     in_reply_to = ts && ts.last_message_id
-    references = grow_references(ts, new_mid)
+    # RFC 5322 §3.6.4: `References` lists ONLY the PRIOR messages in the
+    # thread — NOT the current message's own `Message-ID`. So we SEND the
+    # prior chain (nil on the root → no header), and PERSIST the prior chain
+    # grown by `new_mid` for the next outbound.
+    prior_chain = prior_references(ts)
+    next_chain = grow_chain(prior_chain, new_mid)
 
     send_opts =
       [
@@ -102,13 +107,13 @@ defmodule Ezagent.Email.Binding do
         message_id: Adapter.sanitize_header_value!(new_mid)
       ]
       |> maybe_put(:in_reply_to, in_reply_to && Adapter.sanitize_header_value!(in_reply_to))
-      |> maybe_put(:references, references && Adapter.sanitize_header_value!(references))
+      |> maybe_put(:references, prior_chain && Adapter.sanitize_header_value!(prior_chain))
 
     subject = Adapter.sanitize_header_value!(payload.subject)
 
     case Ezagent.Email.send(state.target_id, subject, payload.text, send_opts) do
       {:ok, _} ->
-        persist_thread!(binding_row_id, ts, new_mid, references, session_uri)
+        persist_thread!(binding_row_id, ts, new_mid, next_chain, session_uri)
         {:ok, %{state | publish_count: state.publish_count + 1}}
 
       {:error, reason} ->
@@ -150,19 +155,28 @@ defmodule Ezagent.Email.Binding do
     end
   end
 
-  # Grow the RFC 5322 References chain (full chain, not root+last). First send
-  # → just this Message-ID; subsequent → prior chain <> " " <> new id.
-  defp grow_references(nil, new_mid), do: new_mid
+  # The PRIOR References chain to SEND in this message's `References` header
+  # (RFC 5322 §3.6.4 — prior messages only). `nil` on the thread root (no
+  # prior messages → no header). For an existing thread it is the persisted
+  # `references_chain` (which already includes every prior Message-ID,
+  # including the root); fall back to `root_message_id` for a thread whose
+  # chain column predates this field.
+  defp prior_references(nil), do: nil
 
-  defp grow_references(%ThreadState{references_chain: chain}, new_mid)
+  defp prior_references(%ThreadState{references_chain: chain})
        when is_binary(chain) and chain != "",
-       do: chain <> " " <> new_mid
+       do: chain
 
-  defp grow_references(%ThreadState{root_message_id: root}, new_mid)
+  defp prior_references(%ThreadState{root_message_id: root})
        when is_binary(root) and root != "",
-       do: root <> " " <> new_mid
+       do: root
 
-  defp grow_references(_ts, new_mid), do: new_mid
+  defp prior_references(_ts), do: nil
+
+  # The chain to PERSIST for the NEXT outbound: prior chain grown by this
+  # message's id (so the next message's `References` lists this one too).
+  defp grow_chain(nil, new_mid), do: new_mid
+  defp grow_chain(prior, new_mid) when is_binary(prior), do: prior <> " " <> new_mid
 
   defp mint_message_id do
     "<" <> (:crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)) <> "@ezagent.chat>"

@@ -72,8 +72,19 @@ defmodule Ezagent.Email do
 
   defp maybe_header(email, _name, nil), do: email
   defp maybe_header(email, _name, ""), do: email
-  defp maybe_header(email, name, value) when is_binary(value), do: header(email, name, value)
+
+  defp maybe_header(email, name, value) when is_binary(value),
+    do: header(email, name, sanitize_header_value(value))
+
   defp maybe_header(email, _name, _value), do: email
+
+  # Defence-in-depth header hygiene at the public facade: strip CR/LF +
+  # control chars from any header value so NO caller of `send/4` can inject
+  # extra headers via the threading opts (the email Binding already sanitizes
+  # its own calls; this enforces the invariant for every caller). Mirrors
+  # `Ezagent.Email.Adapter.sanitize_header_value!/1`.
+  defp sanitize_header_value(value) when is_binary(value),
+    do: String.replace(value, ~r/[\x00-\x1f\x7f]/, " ")
 
   defp configured_adapter, do: Application.get_env(:ezagent_plugin_email, Mailer, [])[:adapter]
 
