@@ -84,11 +84,29 @@ Why this is right: the session domain needs **zero** transport-special code, and
 nothing is silently lost (delivered after join, or visible `:failed`; the message
 is already in the transcript).
 
-**This is the ONE cross-layer touch — an agent-layer change (`plugin_cc` readiness),
-NOT session-domain.** It belongs to the domain.agent readiness roadmap; this work
-carries it (PR-C) so the decouple has no silent-loss hole. If the domain.agent
-effort lands an equivalent contract first, reuse it and PR-C's agent sub-task
-collapses to "verify."
+**This is the ONE cross-layer touch — an agent-layer change, NOT session-domain.**
+It belongs to the domain.agent readiness roadmap; this work carries it (PR-C) so the
+decouple has no silent-loss hole. If the domain.agent effort lands an equivalent
+contract first, reuse it and PR-C's agent sub-task collapses to "verify."
+
+**Migrate the primitives to the right layer, test-first (Allen 2026-06-23).** The
+readiness primitives sit in the WRONG layer today: `LiveJoinRegistry` and
+`OrchestratorRole` both live in `ezagent_plugin_cc`
+(`.../orchestrator/live_join_registry.ex`, `.../orchestrator/orchestrator_role.ex`
+— verified 2026-06-23). The readiness *contract* is generic (any bridge-backed
+agent), so it belongs in `ezagent_domain_agent`. **Codex must:** (1) audit what
+readiness functionality `plugin_cc` still holds; (2) for each generic piece, write
+the test in `ezagent_domain_agent` FIRST, watch it fail, then migrate the code up to
+make it pass; (3) author the bounded-wait→`:failed` transition + the new
+failed/never-joined signal in the domain-agent layer. The cc-specific transport
+adapter (the MCP socket/channel) STAYS in `plugin_cc`; only the readiness contract
+moves.
+
+**Verification point (re-added rev5 caveat):** making the bridge-backed `ReadyGate`
+stay `:not_ready` until join widens the not-ready window for EVERY dispatch to that
+agent, not just routed messages. Confirm (with a test) this doesn't strand any
+non-message dispatch (control/lifecycle calls) that must reach the agent before its
+bridge joins — exempt it from the transport-gate or buffer it safely if so.
 
 **Landmines (must honor):**
 - `PendingDelivery` (`pending_delivery.ex:35-45`) + `invocation.ex:155-158` buffer

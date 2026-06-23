@@ -36,9 +36,13 @@ session robust regardless of bring-up.
    bridge-backed agent's `ReadyGate` does not flip `:ready` until its bridge
    durably joins (`LiveJoinRegistry`); bounded wait → `:failed` on timeout; the
    generic `PendingDelivery` then covers it — **no session-special buffer, no second
-   buffer**. Make `LiveJoinRegistry` emit a failed signal; hook the gate flip in
-   `kind/server.ex`, NOT `on_ready`. Prove with **test 12** (held → delivered on
-   join, or visible `:failed`; never silently lost).
+   buffer**. Make the readiness lifecycle emit a failed signal; hook the gate flip
+   in `kind/server.ex`, NOT `on_ready`. **Migrate the generic readiness primitives
+   (`LiveJoinRegistry`/`OrchestratorRole` are in `plugin_cc` today) up to
+   `ezagent_domain_agent`, test-first** — write the domain-agent test, watch it
+   fail, then move; the cc-specific MCP transport adapter stays in `plugin_cc`.
+   Verify the widened not-ready window strands no non-message dispatch. Prove with
+   **test 12** (held → delivered on join, or visible `:failed`; never silently lost).
 2. **Tagged routing receivers (two layers, neither changes meaning):** template
    `routing_rules` bare role-names already resolve as roles (`template_team.ex`
    ~:360-383) — keep that, only move resolution to route-time. Add the tagged form
