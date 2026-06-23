@@ -36,12 +36,23 @@ to hello; should land as its own dev-infra change).
   `session://system/hello/{777,888,333,122222,...}`.
 - [x] **Generated `@json-render` page in operator context** — right-half iframe
   pane in `Conversation.tsx`. **[screenshot: operator world page — to attach]**
-- [x] **Public `/socialware/customer` link, no login** —
-  `GET /socialware/customer?session_uri=session://system/hello/777` → **HTTP 200**
-  anonymously. **[screenshot: public customer page — to attach]**
-- [x] **Conversation state coherent** — builder replies are `customer_visible`,
-  so they render on BOTH the operator session view and the external customer
-  feed (evidence §4).
+- [~] **Public `/socialware/customer` link, no login** — works for a **live**
+  session: `GET /socialware/customer?session_uri=session://system/hello/777` →
+  **HTTP 200** anonymously. **KNOWN GAP (verified):** a **cold** (not-revived-
+  since-restart) public session returns **400** — `session://system/hello/333`,
+  identical template/snapshot to 777, → 400 because `PublicView.public_view?/1`
+  reads the LIVE session slice and the cold session was never revived (last
+  active 11:08, before the 11:21 restart; 777 active 11:22, after → live → 200).
+  E2E create→open passes (the session is live when opened); a shared link to a
+  cold session does not. Revive-on-public-access is a deeper socialware/auth
+  change (discuss-first) — **deferred with this exact blocker** (§5a).
+  **[screenshot: public customer page — to attach]**
+- [x] **Conversation state coherent** — verified at the DATA + MECHANISM level:
+  builder replies are `customer_visible` (§4) and the customer feed snapshot
+  serves `customer_visible` messages, so operator/builder turns reach BOTH the
+  operator session view and the external customer feed. NOT yet confirmed by a
+  literal side-by-side screenshot of the external feed updating — best closed by
+  the operator/customer screenshots.
 - [~] **Focused tests/gates** — see §6 (gap: a focused test for the class-routing
   branch is proposed, not yet written; no world route/slot added so the
   mount/slot gates are unaffected).
@@ -51,7 +62,7 @@ to hello; should land as its own dev-infra change).
 | Step | Behavior | Status | Evidence |
 |---|---|---|---|
 | 5 | create a hello page/app | ✅ supported | form `template_name=hello` → hello session (§3) |
-| 6 | open external customer link w/o login | ✅ supported | `/socialware/customer?...hello/777` → 200 anon |
+| 6 | open external customer link w/o login | ◑ live-only | `/socialware/customer?...hello/777` (live) → 200 anon; `...hello/333` (cold) → 400. Passes when created→opened; cold link gap §5a |
 | 7 | see hello conversation/page state in world session page | ✅ supported | right-half live preview + chat in `Conversation.tsx` |
 | 8 | send messages across surfaces, both sides update | ◑ partial (by design) | **operator → both:** operator/builder messages are `customer_visible` → appear in operator view AND customer feed. **anon customer → session: NOT supported by design** — the empty-caps anon-User cannot `chat.send` (socialware security property). Two-way anon authoring is a deferred socialware change, not in this handoff's scope. |
 
@@ -80,6 +91,22 @@ native swap is a tracked follow-up for the React-19 migration (handoff Decision 
 "if feasible today" → not feasible today; documented per the handoff open
 question).
 
+## 5a. Deferred blocker — cold public-link revival
+
+A public hello link works only while the session is **live** in the server
+(`PublicView.public_view?/1` reads the live session slice; a session not revived
+since the last boot fails closed → 400, verified with `hello/333`). For the E2E
+(create→open→share) the session is live, so it passes; but a link shared to a
+session that has gone cold (e.g. after a restart, never re-opened) 400s.
+
+Fixing it = reviving a `public_view` session from its snapshot on anonymous
+public access. That touches the anonymous public-view access path and so is
+**discuss-first** (changing public-view access). Returned as the exact blocker
+rather than patched unilaterally. Smallest safe direction: a controlled
+revive-from-snapshot in `customer_controller`/`PublicView` gated on the persisted
+template's `public_view` flag (not on live state), so an anon can only wake a
+session that is provably public.
+
 ## 6. Tests / gates / follow-ups
 
 - **Gates unaffected:** no world route or renderer family added → `SlotRegistry` /
@@ -88,10 +115,9 @@ question).
 - **Proposed focused test (not yet written):** `behavior/workspace.ex`
   `handle_create_session` — assert a registered `session.*` class routes to
   `instantiate/3` and an unknown name falls through to the generic facade.
-- **Phase-1 nicety not done (minor):** a copy-link affordance in the operator
-  toolbar. The link is derivable (`/socialware/customer?session_uri=<uri>`) and
-  the page is already visible inline; deferred to avoid further UI churn right
-  after layout tuning. ~10 LOC in `Conversation.tsx` if wanted.
+- **Phase-1 external-link affordance: DONE** (`8e5532ef`) — a top-right
+  open-in-new-tab icon button on the operator hello preview opens the public
+  `/socialware/customer` link.
 
 ## 7. Merge request
 
