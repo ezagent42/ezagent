@@ -8,19 +8,22 @@ defmodule Ezagent.Email.Binding do
   `Ezagent.Entity.ExternalMirrorWorker` Kind is the GenServer skeleton;
   this module implements the transport callbacks.
 
-  ## Verification gate (PR-1 = production-inert until PR-2)
+  ## Verification gate (PR-2 — DURABLE, server-owned)
 
-  `init/1` HARD-CODES `verification_status: :pending_verification` — it
-  NEVER reads the field from `opts`, because the per-binding Worker forwards
-  caller-controlled `opts` into `init/1` unfiltered, so trusting an
-  `opts`-supplied status would let a bind-capable caller forge `:verified`
-  and email an unconsented address. `publish/2` refuses to send unless the
-  status is `:verified`. NOTHING in PR-1 mints `:verified` — that is the
-  async bind-time verification handshake landing in PR-2 (a server-owned
-  status column updated only by the token-confirm flow). So PR-1 outbound
-  only fires in tests (which construct the state map directly); in
-  production no email goes out until PR-2 lands. This closes the consent
-  hole WITHOUT a permissive default.
+  `init/1` HARD-CODES `verification_status: :pending_verification` as a
+  forgery-safe in-memory DEFAULT — it NEVER reads the field from `opts`,
+  because the per-binding Worker forwards caller-controlled `opts` into
+  `init/1` unfiltered. But the in-memory value is NO LONGER the gate.
+  `publish/2` reads the DURABLE, server-owned status from
+  `Ezagent.Email.InboundBinding.verified?/1` (keyed by `binding_row_id`)
+  at publish time. This is what lets the web confirm path — which can't
+  reliably reach a possibly-cold Worker — be authoritative (SPEC §4.4
+  "status readable without a live Worker"), and the inbound poller reads
+  the same durable status. A binding with no recorded inbound-meta row, or
+  one still `pending_verification`, reads as NOT verified → refuse
+  (`{:error, :not_verified, state}`, recoverable). Status is flipped to
+  `verified` ONLY by `InboundBinding`'s token-confirm path, NEVER from
+  caller opts — the consent hole stays closed with no permissive default.
 
   ## Durable threading (HIGH 5)
 
@@ -49,7 +52,7 @@ defmodule Ezagent.Email.Binding do
 
   require Logger
 
-  alias Ezagent.Email.{Adapter, ThreadState}
+  alias Ezagent.Email.{Adapter, InboundBinding, ThreadState}
   alias Ezagent.ExternalMirror.BindingRow
 
   @impl Ezagent.ExternalMirror.Binding
@@ -75,21 +78,27 @@ defmodule Ezagent.Email.Binding do
   def init({other, _adapter, _opts}), do: {:error, {:invalid_target_id, other}}
 
   @impl Ezagent.ExternalMirror.Binding
-  def publish(%{} = _payload, %{verification_status: status} = state) when status != :verified do
-    # Refuse to send to an unverified address. Recoverable: the Worker logs +
-    # carries state. In PR-1 this is the steady state for all production
-    # bindings (nothing mints :verified yet).
-    Logger.info(
-      "Email.Binding: refusing publish — binding not verified " <>
-        "(status=#{inspect(status)}, target=#{state.target_id})"
-    )
-
-    {:error, :not_verified, state}
-  end
-
-  def publish(%{} = payload, %{verification_status: :verified} = state) do
+  def publish(%{} = payload, %{} = state) do
     session_uri = normalize_session_uri!(Map.get(payload, :session_uri))
     binding_row_id = BindingRow.row_id(session_uri, "email", state.target_id)
+
+    if InboundBinding.verified?(binding_row_id) do
+      do_publish(payload, state, session_uri, binding_row_id)
+    else
+      # Refuse to send to an unverified address. DURABLE gate (PR-2): the
+      # server-owned status read by `binding_row_id` is authoritative — the
+      # in-memory `state.verification_status` is only a safe default.
+      # Recoverable: the Worker logs + carries state.
+      Logger.info(
+        "Email.Binding: refusing publish — binding not verified " <>
+          "(binding_row_id=#{binding_row_id}, target=#{state.target_id})"
+      )
+
+      {:error, :not_verified, state}
+    end
+  end
+
+  defp do_publish(%{} = payload, %{} = state, session_uri, binding_row_id) do
     ts = ThreadState.load(binding_row_id)
 
     new_mid = mint_message_id()

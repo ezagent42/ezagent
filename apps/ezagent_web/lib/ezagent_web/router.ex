@@ -90,6 +90,10 @@ defmodule EzagentWeb.Router do
     get "/register", RegistrationController, :new
     post "/register", RegistrationController, :create
     get "/auth/confirm/:token", RegistrationController, :confirm
+    # #88 PR-2 — email external-mirror binding verification. The human clicks
+    # the link in the verification email (a LINK, not a reply token) to flip
+    # the binding to :verified. Public (token IS the secret).
+    get "/auth/email/confirm/:token", EmailBindingController, :confirm
     # task #87 — password reset via emailed :reset one-time link.
     get "/auth/reset", PasswordResetController, :new
     post "/auth/reset", PasswordResetController, :create

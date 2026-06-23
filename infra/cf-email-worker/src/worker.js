@@ -15,9 +15,31 @@ export default {
       const mid = (parsed.messageId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 60);
       const key = `inbox:${to}:${ts}:${mid}`;
 
+      // task #88 PR-2 §4.5a — capture the headers ezagent needs to enforce
+      // inbound auth (SPF/DKIM/DMARC) AND the loop/bounce guard, in ONE
+      // revision. Cloudflare Email Routing computes the auth verdict on the
+      // `Authentication-Results` header; `Auto-Submitted` / `Precedence`
+      // mark auto-replies + bulk mail; an empty envelope-from (`<>`) is the
+      // RFC 5321 bounce marker.
+      const header = (name) => {
+        const h = parsed.headers && parsed.headers.find
+          ? parsed.headers.find((x) => (x.key || "").toLowerCase() === name)
+          : null;
+        return h ? h.value : "";
+      };
+
+      // #88 PR-2 BLOCKER 2 — the auth-relevant sender is the HEADER From
+      // (`parsed.from`, what DMARC aligns + what the human "sends from"), NOT
+      // the envelope sender (`message.from` = RFC 5321 MAIL FROM, used only for
+      // the bounce check). Capture the header From's address for ezagent's
+      // From-match gate.
+      const headerFromAddr =
+        (parsed.from && (parsed.from.address || parsed.from.name)) || header("from") || "";
+
       const record = {
         key,
-        from: message.from,
+        // `from` = HEADER From address (auth/From-match identity).
+        from: headerFromAddr,
         to,
         subject: parsed.subject || "",
         date: parsed.date || null,
@@ -26,6 +48,12 @@ export default {
         messageId: parsed.messageId || "",
         receivedAt: new Date(ts).toISOString(),
         size: message.rawSize || 0,
+        // #88 PR-2 §4.5a auth + loop-guard fields:
+        authResults: header("authentication-results"),
+        autoSubmitted: header("auto-submitted"),
+        precedence: header("precedence"),
+        // envelope-from (RFC 5321 MAIL FROM); empty `<>` = bounce/NDR.
+        returnPath: message.from || "",
       };
 
       await env.EMAIL_INBOX.put(key, JSON.stringify(record), { expirationTtl: TTL });
@@ -59,6 +87,18 @@ export default {
 
     if (url.pathname.startsWith("/inbox/")) {
       const key = decodeURIComponent(url.pathname.slice("/inbox/".length));
+
+      // #88 PR-2 — DELETE must actually remove the KV item, else ezagent's
+      // poller (which DELETEs only AFTER a successful inject) sees a 200 but
+      // the item stays → infinite reprocessing. Branch on method BEFORE the
+      // GET fetch path.
+      if (request.method === "DELETE") {
+        const existing = await env.EMAIL_INBOX.get(key);
+        if (!existing) return new Response("not found\n", { status: 404 });
+        await env.EMAIL_INBOX.delete(key);
+        return new Response(null, { status: 204 });
+      }
+
       const v = await env.EMAIL_INBOX.get(key);
       if (!v) return new Response("not found\n", { status: 404 });
       return new Response(v, { headers: { "content-type": "application/json" } });

@@ -31,4 +31,12 @@ defmodule EzagentPluginEmail.PluginWiringTest do
     assert Ezagent.Email.Binding.adapter_module() == Ezagent.Email.Adapter
     refute Ezagent.Email.Adapter == Ezagent.Email.Binding
   end
+
+  # #88 PR-2 — the inbound poller is skipped at test boot so the suite never
+  # runs a live poller. (Production children/0 includes it; this asserts the
+  # test-env guard.)
+  test "children/0 excludes the inbound poller under :test" do
+    refute Ezagent.Email.Inbound in App.children()
+    assert App.children() == []
+  end
 end

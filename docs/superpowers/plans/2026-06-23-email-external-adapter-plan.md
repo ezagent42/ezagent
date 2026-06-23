@@ -269,6 +269,49 @@ The spec's §11 test partition splits the gate across the two PRs, and the secon
 
 ---
 
+## PR-2 — EXPANDED (implementation, 2026-06-23)
+
+> Branch (actual): `email-inbound-pr2`, off `origin/main` (PR-1 = b2fd803b merged). Migrations live in **`priv/repo_pg/migrations/`** (the PG-only suite; `priv/repo/migrations` is dead). PR-1's `email_thread_state` set this precedent.
+
+### KEY DESIGN DECISION D4 — email metadata lives in an email-OWNED side-table, NOT generic columns (spec §6 deviation, spirit-preserved, lower-risk)
+
+Spec §6 says `local_address` + `verification_status` go as columns on the **generic** `external_mirror_bindings` projection row. Investigation of the actual code (now on main) shows that row is written by the **generic** `Ezagent.Behavior.ExternalMirror.do_bind/3` → `insert_binding_row/1`, a fixed-column path shared by Feishu + protocol_api + email, with **no adapter-callback seam**. Adding email-specific columns + alias-generation logic there is a generic-domain contract change touching the other two adapters — against the North Star (keep plugin concerns out of core).
+
+**Resolution (zero core change):** a new email-owned table `email_inbound_binding` keyed by `binding_row_id` (the `BindingRow.row_id/3` value), FK CASCADE to `external_mirror_bindings(id)` — the SAME proven pattern PR-1's `email_thread_state` uses. It holds, per binding:
+- `local_address` (string, **UNIQUE** — the inbound reverse-lookup authority, spec §3/§6)
+- `session_uri` (string) + `target_id` (string) — so inbound is a single-table lookup `local_address → (session_uri, target_id, status)`
+- `verification_status` (`"pending_verification" | "verified"`, default pending — server-owned, flipped ONLY by the web confirm path; never from caller opts)
+- `verification_token_hash` (binary) + `verification_expires_at` (utc_datetime_usec) — binding-scoped one-time token (MagicLinkToken keys by email, not binding → reused its hash/TTL/single-use *shape* but not the table, since a human may bind the same address to multiple sessions and the confirm must be binding-scoped)
+- `workspace_uri` (string, NOT NULL — invariant #14)
+- UNIQUE index on `session_uri` (§6.1 — one email binding per session, v1)
+
+**Gate moves to a durable read.** PR-1's `Binding.init/1` keeps `verification_status: :pending_verification` as the forgery-safe in-memory default (unchanged), but `Binding.publish/2`'s gate now reads the **durable** status by `binding_row_id` at publish time (so the web confirm — which can't reach a possibly-cold Worker — is authoritative, spec §4.4 "readable without a live Worker"). The inbound poller reads the same durable status. Init's in-memory value is no longer the gate; it's a safe default for a not-yet-recorded binding (→ not verified → refuse, fail-closed).
+
+**Alias generation = email-specific bind WRAPPER, not the generic body.** `Ezagent.Email.bind_session/N` calls the generic `Ezagent.ExternalMirror.bind/4`, then on `{:ok, _}` mints the alias + writes the `email_inbound_binding` row + sends the verification mail. Regenerate-and-retry on the `local_address` unique collision. Fail-closed: a binding with no email-meta row reads as not-verified.
+
+### KEY DESIGN DECISION D5 — inbound injection cap is an EPHEMERAL ctx-authorizer (not a grant, not a Catalog principal)
+
+Per `capbac.md` §3: a dispatch authorizes when `ctx.caps` contains a cap matching the needed shape (path 1, `granted_via_ctx_caps?`) — `granted_by` is NOT consulted on this path; the cap is never persisted. So inbound injection mirrors `Agent.Receive.sync_result_effect/3` (capbac §7 "self-authority carried inline at the dispatch"):
+- Synthetic principal URI: `entity://<ws>/user/email-<short-id>` (a real `%URI{scheme: "entity"}`, #154-compliant), constructed via `Ezagent.URI`.
+- Mint EXACTLY one cap: `Capability.cap(:session, <BehaviorRegistry.lookup(Session, :send)>, :send, session_instance, workspace)` with `granted_by: <synthetic principal URI>` (genuine self-authority) + fresh `granted_at`. Pin `kind/behavior` (least-privilege; behavior fixed for Session :send, unlike the agent-flavor `:any` case).
+- Put it in `ctx.caps`, dispatch `mode: :call`. **NOT** routed through `Ezagent.Identity.Grant` (that chokepoint is for persisted grant/revoke; grep-gated to `:grant_cap`/`:revoke_cap`), **NOT** a new `system://` Catalog principal (those are persisted standing authority; this is per-dispatch). So no `no_unowned` / `no_admin_caps_fallback` gate is touched.
+- TDD asserts a REAL `Invocation.dispatch` under this principal authorizes the send AND is denied for a different session — an honest auth test, not struct-equality.
+
+### Tasks (TDD, red→green per task; format only touched files; commit per task)
+
+- **T1 — CF Worker §4.5a** (`infra/cf-email-worker/src/worker.js`): capture `authResults` (`Authentication-Results`), `autoSubmitted` (`Auto-Submitted`), `precedence` (`Precedence`), `returnPath`/envelope-from (`message.from`; empty `<>` = bounce). Pull API shape unchanged. Test: a small JS assertion or a doc note (no JS test harness in-repo → assert via the Elixir-side parser in T6 consuming these fields).
+- **T2 — migration** `priv/repo_pg/migrations/<ts>_email_inbound_binding.exs`: `email_inbound_binding` table per D4. + register `{Ezagent.Email.InboundBinding, "email_inbound_binding"}` in `per_tenant_tables_have_workspace_column_test.exs` `@per_tenant_schemas`.
+- **T3 — `Ezagent.Email.InboundBinding` schema + funcs**: `record/1` (insert w/ alias+status+token), `by_local_address/1` (reverse lookup), `by_binding_row_id/1`, `verified?/1`, `mark_verified/1`, `mint_token/1` / `consume_token/2`. PG sandbox tests incl. CASCADE-on-unbind + `local_address` unique + `session_uri` unique.
+- **T4 — `Ezagent.Email.Binding.publish/2` durable gate**: read status by `binding_row_id` (D4); verified→send, else `{:error, :not_verified, state}`. Test: pre-insert verified row → sends; pending/absent row → refuses. (Modifies PR-1 binding; keep init's in-memory default.)
+- **T5 — `Ezagent.Email.Verification`** + bind wrapper `Ezagent.Email.bind_session/N`: alias mint (`<ws-hint>-<short-id>@ezagent.chat`) + regenerate-retry; verification email send (token link); web confirm endpoint flips status. Plus the `EzagentWeb` route + controller for the link. Tests: pending→token→verified; expired/invalid/consumed refused; no flow while pending.
+- **T6 — inbound auth + loop-guard pure functions** (`Ezagent.Email.Inbound.Guard` / parsing): DMARC/SPF/DKIM PASS parse from `authResults`; From==target_id; loop guard (Auto-Submitted≠no / Precedence bulk|auto_reply|list / empty envelope-from / no Message-ID). Pure, table-tested.
+- **T7 — restricted participant cap mint** (`Ezagent.Email.Inbound.Principal`): D5. Real-dispatch auth test (authorizes own session, denied other).
+- **T8 — `Ezagent.Email.Inbound` poller GenServer**: poll → guard → `by_local_address(To:)` → auth → deterministic-id dedup → inject (`with_action(:session,:send)`, `mode: :call`, `_email_origin: true`, minted principal) → update threading (`last_message_id` from human's Message-ID) → DELETE-after-inject. Tests w/ injected `inbox`/`delete` funs + dispatch seam: dedup (2 polls→1), delete-only-after-inject, auth-fail rejected+deleted, loop-guard rejected.
+- **T9 — `children/0` wiring** (`application.ex`): `[Ezagent.Email.Inbound]` via `maybe_inbound_spec()` (`Mix.env() == :test → nil`, mirror Feishu `maybe_ws_client_spec/0`). Test: `children/0` excludes the poller under test, includes it otherwise (via the spec helper).
+- **T10 — gate + codex + PR**: `mix precommit` EXIT=0; codex:codex-rescue static review; `gh pr create` (#88, PR-2 inbound, depends-on-PR-1, note the D4 spec-§6 deviation). NO MERGE.
+
+---
+
 ## Verification checklist (both PRs)
 
 - [ ] `mix precommit` `EXIT=0` (PG up).
