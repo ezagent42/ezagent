@@ -1,4 +1,54 @@
-# De-orchestrator-ize the Session: Orchestrator as a `role` Member + Provision-on-Route — Design (rev5)
+# De-orchestrator-ize the Session: Orchestrator as a `role` Member + Provision-on-Route — Design (rev6)
+
+## 0d. What changed in rev6 (closes the rev5 adversarial-review: 1 BLOCKER + 2 HIGH — this is the handoff revision)
+
+rev6 is the **final spec revision before codex implements**. It does NOT re-open
+the approach (3 prior adversarial rounds converged; the rev5 findings were all
+wiring-level, which is the convergence signal). It does three things:
+
+1. **§4.5 transport-readiness — locked to candidate ① as a domain-agent readiness
+   contract (closes the rev5 BLOCKER + answers Allen 2026-06-23).** The rev5
+   BLOCKER was "the transport-readiness buffer has no concrete durability/failure
+   contract." Allen's call: a **bounded readiness wait → `:failed`** is not a
+   session-special buffer — it is *what the domain agent layer should already
+   guarantee*. So rev6 fixes the mechanism (was "codex picks one of two"): a
+   **bridge-backed agent's `ReadyGate` does not flip to `:ready` until its
+   bridge/transport has durably joined** (`LiveJoinRegistry`), with a **bounded
+   wait that, on timeout, transitions the agent to `:failed`**. The generic
+   `PendingDelivery` (already keyed on Kind `ReadyGate`) then covers transport-
+   readiness **uniformly** — the session domain gets **zero** transport-special
+   code. Delivery either lands after join or **fails visibly** (`:failed`); the
+   message is already persisted in the transcript, so nothing is silently lost.
+   This is the **one cross-layer touch** in this work (agent layer / `plugin_cc`
+   readiness); it belongs to the domain.agent readiness roadmap but this spec
+   carries it so the decouple has no silent-loss hole (§4.5, PR-C).
+
+2. **§4.3 tagged-receiver migration — corrected to match how receivers actually
+   resolve today (closes a rev5 HIGH).** rev5 wrongly claimed a bare role string
+   "would crash `URI.new!`." That is true for **persisted `RuleStore` receivers**
+   (stored URI/magic strings) but FALSE for **template-authored `routing_rules`**:
+   `template_team.ex` (`receiver_to_uri/2`, ~:360-383) ALREADY resolves a bare
+   receiver string as **magic → role (`role_to_uri`) → URI**, so legacy
+   SessionTemplate `routing_rules` bare role-names resolve as roles *today*. rev6
+   separates the two layers explicitly: (a) template `routing_rules` bare role-
+   names keep their current role meaning — the migration must NOT change them; (b)
+   the new tagged form `{:role|:uri|:magic, _}` is for the **persisted RuleStore
+   receivers** that are URI/magic today, with dual-read of legacy untagged strings
+   as `{:uri,_}`/`{:magic,_}`. No receiver — template or persisted — silently
+   changes meaning (§4.3).
+
+3. **§4.6 cap policy — reframed as an explicit implementation decision for codex
+   with a crisp invariant + mandatory test + code landmines (closes a rev5 HIGH).**
+   The rev5 HIGH was "the fail-closed Role policy isn't actually wired." rev6 does
+   not pretend it is. It states the **invariant** (tenant roles cannot mint
+   genesis-backed authority; the system orchestrator role gets its whitelisted
+   caps), names the three code landmines codex must resolve (`Role.CapMint` needs
+   an INJECTED policy predicate; `OrchestratorRole.requested_caps == []` must be
+   populated; the `caps.ex` genesis carve-out must be replaced by the policy path),
+   lists candidate wirings, and makes the negative test the gate (§4.6, test 14).
+
+The §13 audit checklist + the file:line landmines are folded into the **handoff
+doc** as hard constraints for codex.
 
 ## 0c. What changed in rev5 (resolves the rev4 adversarial-review: 1 BLOCKER + 3 HIGH)
 
@@ -186,17 +236,35 @@ rev4 changes rules to **carry the role** and resolve to a member **at route-time
 This is what lets routing both (a) deliver to an existing role-member and (b)
 trigger provisioning when the declared role has no live member (§4.4).
 
-**Tagged receiver schema (rev5 HIGH fix).** Today rule receivers are stored as
-plain strings interpreted as URIs (`rule_store.ex receivers: {:array, :string}`,
-parsed via `Ezagent.URI.new!`; magic tokens are the only non-URI form). A bare
-role string like `"orchestrator"` would crash URI parsing or collide with
-URI/magic receivers. rev5 introduces a **tagged receiver form** — `{:role, name}`
-| `{:uri, uri}` | `{:magic, token}` — with: a `RuleStore` schema/migration to
-persist the tag, `Resolver` changes to dispatch on tag (role → resolve-or-provision
-at route-time; uri/magic unchanged), and UI/CLI validation. **Dual-read** during
-transition: legacy untagged strings are read as `{:uri, _}`/`{:magic, _}` (their
-current meaning) so existing rules keep working; only role-targeting requires the
-new tag. No rule silently changes meaning.
+**Tagged receiver schema (rev6 — corrected from rev5).** There are TWO distinct
+receiver layers, and they resolve differently today; the migration must respect
+both:
+
+- **Template-authored `routing_rules`** (the `routing_rules` in a SessionTemplate's
+  working copy): `template_team.ex receiver_to_uri/2` (~:360-383) ALREADY resolves
+  a bare receiver string as **magic → role (`role_to_uri`) → URI** at materialize-
+  time. So legacy SessionTemplate bare role-names (e.g. `"orchestrator"`) **already
+  mean "the member with this role" today.** The migration MUST preserve this — a
+  bare role-name in a template stays a role-target. What changes is *when* it
+  resolves: route-time instead of materialize-time (so a not-yet-provisioned role
+  resolves-or-provisions rather than requiring the member to exist at materialize).
+
+- **Persisted `RuleStore` receivers** (`rule_store.ex receivers: {:array, :string}`,
+  parsed via `Ezagent.URI.new!`; magic tokens the only non-URI form today): here a
+  bare role string like `"orchestrator"` WOULD crash `URI.new!`. For this layer
+  rev6 introduces a **tagged receiver form** — `{:role, name}` | `{:uri, uri}` |
+  `{:magic, token}` — with a `RuleStore` schema/migration to persist the tag, a
+  `Resolver` that dispatches on tag (role → resolve-or-provision at route-time;
+  uri/magic unchanged), and UI/CLI validation. **Dual-read** during transition:
+  legacy untagged persisted strings are read as `{:uri,_}`/`{:magic,_}` (their
+  current meaning) so existing persisted rules keep working; only role-targeting
+  requires the new tag.
+
+**Invariant: no receiver — template-authored or persisted — silently changes
+meaning.** A template bare role-name keeps resolving as a role (just later); a
+persisted untagged string keeps resolving as URI/magic; only the new persisted
+`{:role,_}` tag adds role-targeting to the RuleStore layer. (Test 13 covers both
+layers.)
 
 ### 4.4 Provision-on-route (the single bring-up primitive)
 
@@ -237,35 +305,61 @@ Delete the entire wait→kill→rollback gate from the bring-up path:
 read as the pure status surface. The provisioning step does **not** wait for the
 join.
 
-**Delivery-time transport-readiness buffer (rev5 BLOCKER fix).** The deleted gate
-also guaranteed that a message only reached a *bridge-joined* orchestrator.
-`PendingDelivery` does NOT preserve this — it buffers only while the **Kind**'s
-`ReadyGate` is `:not_ready`, but a bridge-backed agent (cc) can be Kind-ready
-while its claude/MCP bridge has not joined (`LiveJoinRegistry.joined?` false). A
-message dispatched in that window would reach a Kind-ready-but-bridge-dead agent
-and silently vanish. rev5 therefore requires a **per-member transport-readiness
-buffer for bridge-backed members**: a dispatch routed to such a member is held
-until its bridge join is durably marked, then delivered; if the member is
-declared dead / never joins, the send **fails visibly** (surfaced, not swallowed)
-— never silently dropped. There is **no fixed timeout at create**; this is a
-delivery contract, not a create gate. Two acceptable mechanisms (codex picks one,
-prove with the test below):
-  1. extend the bridge-backed agent's readiness so its `ReadyGate` does not flip
-     to `:ready` until bridge-join — then existing `PendingDelivery` covers it
-     uniformly (preferred if it doesn't widen the not-ready window for non-message
-     dispatches); or
-  2. a dedicated transport-readiness queue keyed on `LiveJoinRegistry`, drained on
-     the bridge-join broadcast, with a visible-failure path for declared-dead
-     members.
-Required test: Agent Kind is `ReadyGate`-ready but `LiveJoinRegistry` never joins
-→ assert the routed message is durably queued and eventually delivered on join,
-or fails visibly — and is NEVER silently lost.
+**Transport-readiness = a domain-agent readiness contract (rev6 — locked; closes
+the rev5 BLOCKER, per Allen 2026-06-23).** The deleted gate also guaranteed that a
+message only reached a *bridge-joined* orchestrator. The generic `PendingDelivery`
+does NOT preserve this **as written today** — it buffers only while the **Kind**'s
+`ReadyGate` is `:not_ready`, but a bridge-backed agent (cc) can currently be
+Kind-ready while its claude/MCP bridge has not joined (`LiveJoinRegistry.joined?`
+false). A message dispatched in that window would reach a Kind-ready-but-bridge-
+dead agent and silently vanish.
 
-> Production-semantics to preserve (audit surprises #2/#3): the planned member URI
-> must be written to the durable working copy BEFORE the live MCP join so the join
-> can self-register. Under rev4 the member URI is written at provision time
-> (spawn+join), before the agent's bridge connects — preserving the self-register
-> ordering without any wait.
+rev6 closes this by **making bridge-join part of the agent's own readiness** rather
+than building a session-special buffer. This is candidate ① (rev5 offered two;
+rev6 picks ① and discards ②), and it is framed as what the **domain agent layer
+should guarantee**:
+
+> A **bridge-backed agent's `ReadyGate` does not flip to `:ready` until its
+> bridge/transport has durably joined** (`LiveJoinRegistry`). The wait is
+> **bounded**; on timeout the agent transitions to **`:failed`** (not silently
+> stuck-not-ready). Until `:ready`, the generic `PendingDelivery` (already keyed on
+> Kind `ReadyGate`) buffers any routed message; on `:ready` it drains; on `:failed`
+> the buffered send **fails visibly** (surfaced, not swallowed).
+
+Consequences:
+- The session domain needs **zero** transport-special code — `PendingDelivery`
+  covers transport-readiness uniformly because readiness now *includes* the bridge.
+- Delivery is never silently lost: it lands after join, or fails visibly on
+  `:failed`. The message is already persisted in the transcript, so a visible
+  `:failed` loses nothing recoverable.
+- There is **no fixed timeout at create** (create never waits); the bounded wait
+  lives in the agent's own readiness lifecycle, off the create path.
+
+**Scope flag (the one cross-layer touch).** This is an **agent-layer change**
+(`plugin_cc` readiness / the bridge-backed agent's `ReadyGate` wiring +
+`LiveJoinRegistry` integration + the bounded-wait→`:failed` transition), NOT a
+session-domain change. It logically belongs to the domain.agent readiness roadmap;
+this spec carries it (PR-C) so the decouple has no silent-loss hole. If the
+domain.agent effort lands an equivalent readiness contract first, codex reuses it
+and PR-C's agent-layer sub-task collapses to "verify the contract holds."
+
+> **Implementation landmines for codex (must honor):**
+> - `PendingDelivery` (`pending_delivery.ex` ~:35-45) + `invocation.ex` (~:155-158)
+>   buffer **only** on Kind `ReadyGate` `:not_ready` and return `:ok`. Do NOT add a
+>   second buffer; instead make the bridge-backed `ReadyGate` stay `:not_ready`
+>   until join so this existing path covers it.
+> - `LiveJoinRegistry` (`live_join_registry.ex` ~:81-117) today exposes ONLY
+>   `mark_joined`/`joined?`/`clear` — **no failed / never-joined signal**. The
+>   bounded-wait→`:failed` transition is NEW; it must emit a signal the readiness
+>   lifecycle consumes to flip the agent to `:failed`.
+> - Kind readiness flips in `kind/server.ex` (`on_ready`/`activated` after the
+>   `ReadyGate` flip, ~:296-328); the bridge-backed extension must hook the gate
+>   flip itself (gate stays not-ready), NOT `on_ready` (which runs AFTER ready).
+
+Required test (test 12): Agent Kind would be `ReadyGate`-ready but
+`LiveJoinRegistry` never marks join → assert the routed message is durably held and
+(a) delivered once join is marked, or (b) fails visibly when the bounded wait
+elapses and the agent goes `:failed` — and is **NEVER** silently lost.
 
 > Production-semantics to preserve (audit surprises #2/#3): the planned member URI
 > must be written to the durable working copy BEFORE the live MCP join so the
@@ -280,21 +374,46 @@ Today the orchestrator's scoped caps are granted with `granted_by: owner_uri` bu
 **authorized via a genesis/system-backed tag** (`caps.ex tag_for/2`), NOT by the
 owner delegating from caps they hold.
 
-**rev5 routes role-member caps through the EXISTING fail-closed Role policy, not a
-genesis carve-out (HIGH fix).** `Ezagent.Role` already materializes a role's
-`requested_caps` through an explicit fail-closed `requested ∩ flavor/tenant
-policy` step (`role.ex`: "a requested cap not permitted by policy is dropped, not
-granted"). A provisioned role-member's caps therefore come from its
-`Role.requested_caps` materialized through that fail-closed policy. The system
-**orchestrator** role's caps (today's orchestrator scoped-cap set, currently
-`OrchestratorRole.requested_caps == []` pending PR-2) are populated and
-**whitelisted in the policy as a built-in system role**. Crucially:
-**tenant-authored roles cannot obtain genesis-backed `behavior: :any` /
-`{:spawned_by}` authority** — the fail-closed policy drops anything not
-whitelisted. Negative tests must prove a tenant role declaring such caps gets them
-dropped. The "owner truly delegates the `{:spawned_by}` cap" problem (#153/#154)
-stays **out of scope** and separately deferred — this work neither solves nor
-regresses it.
+**rev6 — this is an implementation decision for codex, not a claim that the wiring
+exists.** rev5 asserted the caps "route through the existing fail-closed Role
+policy"; the rev5 review correctly found that policy is **not actually wired** for
+this. rev6 states the invariant + the candidate wiring + the landmines, and makes
+the negative test the gate. Codex chooses and proves the wiring during
+implementation.
+
+**Invariant (the gate, test 14):**
+- The system **orchestrator** role receives its scoped caps (today's orchestrator
+  cap set) when provisioned as a role-member.
+- A **tenant-authored** role declaring `behavior: :any` / `{:spawned_by}` /
+  genesis-backed authority gets those caps **dropped** — it cannot mint genesis
+  authority by naming it in `requested_caps`.
+
+**Candidate wiring (codex picks, must satisfy the invariant):** `Ezagent.Role`
+already has a fail-closed `requested ∩ policy` materialization shape (`role.ex`
+~:22-28: "a requested cap not permitted by policy is dropped, not granted"). The
+intended path is: a provisioned role-member's caps = its `Role.requested_caps`
+materialized through a fail-closed policy that **whitelists the system orchestrator
+role** and drops un-whitelisted genesis-backed requests.
+
+**Code landmines codex MUST resolve (this is why it's "not wired" today):**
+- `Role.CapMint` (`role/cap_mint.ex` ~:42-48) needs an **INJECTED policy
+  predicate** — it does not have a built-in policy. Codex must supply/inject the
+  fail-closed policy; do not assume `CapMint` enforces one on its own.
+- `OrchestratorRole.requested_caps == []` today — it must be **populated** with the
+  orchestrator scoped-cap set for the role-member path to grant anything.
+- `caps.ex` currently grants the orchestrator caps via a **genesis/system-backed
+  tag carve-out** (`tag_for/2`, direct genesis grants ~:63-73,140-148,163-181).
+  That carve-out must be **replaced** by the policy path (or the role must be
+  whitelisted in the policy and the carve-out removed) — otherwise the "tenant
+  can't mint genesis" invariant is bypassable and the de-orchestrator-ization is
+  incomplete.
+- `Role` (`role/compose.ex`) does NOT currently handle caps — confirm where cap
+  materialization actually runs before wiring the policy.
+
+**Out of scope (unchanged):** the "owner truly delegates the `{:spawned_by}` cap"
+problem (#153/#154) stays deferred — this work neither solves nor regresses it.
+The orchestrator role-member keeps today's system/genesis-backed *authority basis*;
+rev6 only requires that tenant roles cannot reach it through `requested_caps`.
 
 ### 4.7 Status display + error surfacing
 
@@ -532,5 +651,15 @@ cap #2 (#10) → out of scope (§4.6).
 
 None blocking. Resolved 2026-06-23 with Allen: pure create; orchestrator =
 role-member; provision-on-route lazy (no reconciler); gate deleted; session-domain
-placement; caps carve-out; on_ready prepare deferred. A `/codex:adversarial-review`
-of rev4 runs before the handoff is finalized.
+placement; transport-readiness = a **domain-agent readiness contract** (bridge-
+backed `ReadyGate` waits for bridge-join, bounded → `:failed`, candidate ①);
+on_ready prepare deferred.
+
+**Review status:** four spec revisions went through three `/codex:adversarial-review`
+rounds (rev1→rev2→rev4→rev5); findings converged from approach-level to wiring-level
+(the convergence signal). Per the advisor, the spec↔review loop stops at rev6 — the
+remaining wiring decisions (§4.5 readiness contract, §4.6 cap policy) are
+**implementation decisions for codex**, gated by the mandatory tests (12, 14), and
+are the right thing for codex to self-review during implementation. **No 4th
+adversarial review of the spec.** The handoff doc carries the file:line landmines as
+hard constraints.
