@@ -6,29 +6,23 @@ rev6 is the **final spec revision before codex implements**. It does NOT re-open
 the approach (3 prior adversarial rounds converged; the rev5 findings were all
 wiring-level, which is the convergence signal). It does three things:
 
-1. **§4.5 transport-readiness — locked to candidate ① as a domain-agent readiness
-   contract (closes the rev5 BLOCKER + answers Allen 2026-06-23).** The rev5
-   BLOCKER was "the transport-readiness buffer has no concrete durability/failure
-   contract." Allen's call: a **bounded readiness wait → `:failed`** is not a
-   session-special buffer — it is *what the domain agent layer should already
-   guarantee*. So rev6 fixes the mechanism (was "codex picks one of two"): a
-   **bridge-backed agent's `ReadyGate` does not flip to `:ready` until its
-   bridge/transport has durably joined** (`LiveJoinRegistry`), with a **bounded
-   wait that, on timeout, transitions the agent to `:failed`**. The generic
-   `PendingDelivery` (already keyed on Kind `ReadyGate`) then covers transport-
-   readiness **uniformly** — the session domain gets **zero** transport-special
-   code. Delivery either lands after join or **fails visibly** (`:failed`); the
-   message is already persisted in the transcript, so nothing is silently lost.
-   This is the **one cross-layer touch** in this work (agent layer / `plugin_cc`
-   readiness); it belongs to the domain.agent readiness roadmap but this spec
-   carries it so the decouple has no silent-loss hole (§4.5, PR-C). **Allen
-   refinement (same day):** the readiness primitives live in `plugin_cc` today
-   (`LiveJoinRegistry`/`OrchestratorRole`, verified); rev6 requires codex to
-   **audit and migrate the generic readiness contract `plugin_cc` →
-   `ezagent_domain_agent`, test-first** (write the domain-agent test, watch it
-   fail, then move). A codex verification point also re-adds rev5's candidate-①
-   caveat: confirm the widened not-ready window doesn't strand non-message
-   dispatches (§4.5).
+1. **§4.5 transport-readiness — FULLY DEFERRED to the domain.agent effort (Allen
+   2026-06-23, final).** The rev5 BLOCKER was "the transport-readiness buffer has
+   no concrete durability/failure contract." Allen's decision: this is a
+   **generic domain-agent concern, not a session-decouple side-quest** — so this
+   spec **declares the dependency and does NOT carry the fix.** The bridge-ready-
+   but-not-joined silent-loss window is a *pre-existing* property of any bridge-
+   backed agent that the old gate merely masked for the orchestrator; closing it
+   (bridge-join becomes part of the agent's `ReadyGate` readiness, bounded wait →
+   `:failed`, generic `PendingDelivery` then covers it) belongs to the
+   **`ezagent_domain_agent` readiness roadmap**. The session-decouple PRs do **not**
+   block on it. This work's narrower, actual #902 fix stands on its own: **the
+   session is never rolled back / snapshot never deleted** for a hung member, and the
+   message persists in the transcript. §4.5 names the required contract + the interim
+   behavior so the gap is tracked; test 12 moves to the domain.agent effort as a
+   dependency gate (not this work's codex). (Note: the readiness primitives
+   `LiveJoinRegistry`/`OrchestratorRole` sit in `plugin_cc` today and logically
+   belong up in `ezagent_domain_agent` — informational for that effort's owner.)
 
 2. **§4.3 tagged-receiver migration — corrected to match how receivers actually
    resolve today (closes a rev5 HIGH).** rev5 wrongly claimed a bare role string
@@ -312,85 +306,60 @@ Delete the entire wait→kill→rollback gate from the bring-up path:
 read as the pure status surface. The provisioning step does **not** wait for the
 join.
 
-**Transport-readiness = a domain-agent readiness contract (rev6 — locked; closes
-the rev5 BLOCKER, per Allen 2026-06-23).** The deleted gate also guaranteed that a
-message only reached a *bridge-joined* orchestrator. The generic `PendingDelivery`
-does NOT preserve this **as written today** — it buffers only while the **Kind**'s
-`ReadyGate` is `:not_ready`, but a bridge-backed agent (cc) can currently be
-Kind-ready while its claude/MCP bridge has not joined (`LiveJoinRegistry.joined?`
-false). A message dispatched in that window would reach a Kind-ready-but-bridge-
-dead agent and silently vanish.
+**Transport-readiness = a domain-agent concern, FULLY DEFERRED out of this work
+(Allen 2026-06-23, final).** The deleted gate also guaranteed that a message only
+reached a *bridge-joined* orchestrator. That guarantee is **not reimplemented in
+this work.** The underlying gap — a bridge-backed agent (cc) can be Kind-ready
+(`ReadyGate` `:ready`) while its claude/MCP bridge has not joined
+(`LiveJoinRegistry.joined?` false), so a message dispatched in that window reaches a
+Kind-ready-but-bridge-dead agent and silently vanishes — is a **pre-existing,
+general property of bridge-backed agents**, NOT something this de-orchestrator-ization
+introduces. The old gate merely *masked* it for the orchestrator specifically by
+blocking create until join.
 
-rev6 closes this by **making bridge-join part of the agent's own readiness** rather
-than building a session-special buffer. This is candidate ① (rev5 offered two;
-rev6 picks ① and discards ②), and it is framed as what the **domain agent layer
-should guarantee**:
+Allen's call: this belongs to the **domain.agent readiness roadmap**, not a
+session-decouple side-quest. So this spec **declares the dependency and does NOT
+carry the fix.** The session-decouple PRs do **not** block on it.
 
-> A **bridge-backed agent's `ReadyGate` does not flip to `:ready` until its
-> bridge/transport has durably joined** (`LiveJoinRegistry`). The wait is
-> **bounded**; on timeout the agent transitions to **`:failed`** (not silently
-> stuck-not-ready). Until `:ready`, the generic `PendingDelivery` (already keyed on
-> Kind `ReadyGate`) buffers any routed message; on `:ready` it drains; on `:failed`
-> the buffered send **fails visibly** (surfaced, not swallowed).
+**The dependency this work declares (for the domain.agent effort to satisfy):**
 
-Consequences:
-- The session domain needs **zero** transport-special code — `PendingDelivery`
-  covers transport-readiness uniformly because readiness now *includes* the bridge.
-- Delivery is never silently lost: it lands after join, or fails visibly on
-  `:failed`. The message is already persisted in the transcript, so a visible
-  `:failed` loses nothing recoverable.
-- There is **no fixed timeout at create** (create never waits); the bounded wait
-  lives in the agent's own readiness lifecycle, off the create path.
+> A **bridge-backed agent's readiness contract** must make bridge-join part of
+> readiness: the agent's `ReadyGate` does not flip to `:ready` until its
+> bridge/transport has durably joined; the wait is **bounded** and on timeout the
+> agent goes **`:failed`** (not silently stuck-not-ready). Then the generic
+> `PendingDelivery` (already keyed on Kind `ReadyGate`) buffers any routed message
+> and drains on `:ready`; on `:failed` the buffered send **fails visibly**. This is
+> a generic property (any bridge-backed agent), authored in `ezagent_domain_agent`
+> — note the primitives sit in the wrong layer today (`LiveJoinRegistry`/
+> `OrchestratorRole` are in `ezagent_plugin_cc`; the readiness contract should move
+> up, the cc-specific MCP transport adapter stays in the plugin).
 
-**Scope flag (the one cross-layer touch) + migrate-to-domain-agent (Allen
-2026-06-23).** This is an **agent-layer change**, NOT a session-domain change. But
-the readiness primitives live in the **wrong layer today**: `LiveJoinRegistry` and
-`OrchestratorRole` both sit in `ezagent_plugin_cc` (verified 2026-06-23:
-`apps/ezagent_plugin_cc/lib/ezagent/orchestrator/live_join_registry.ex`,
-`.../orchestrator/orchestrator_role.ex`). The readiness contract is a **generic
-domain-agent property** (any bridge-backed agent, not just cc), so it belongs in
-`ezagent_domain_agent`, not the cc plugin. **Codex must therefore, test-first:**
-  1. **Audit** what readiness functionality `plugin_cc` still holds (the join
-     registry, the join-marking on `McpChannel.join/3`, any gate/poll residue).
-  2. For each generic piece, **write the test in `ezagent_domain_agent` first**,
-     watch it FAIL (the function isn't there yet), then **migrate** the
-     functionality up from `plugin_cc` to make it pass. The flavor-specific
-     transport adapter (the actual cc MCP socket/channel) STAYS in `plugin_cc`;
-     only the *readiness contract* (bridge-backed `ReadyGate` waits for join,
-     bounded wait → `:failed`, the join-state signal) moves to the domain-agent
-     layer.
-  3. The bounded-wait→`:failed` transition + the new failed/never-joined signal
-     (which `LiveJoinRegistry` lacks today) are authored **in the domain-agent
-     layer** as part of this migration.
-This spec carries the work (PR-C) so the decouple has no silent-loss hole; if the
-domain.agent effort lands an equivalent contract first, codex reuses it.
+**Interim behavior until that contract lands (honest, and strictly better than
+#902):** after this work, a message routed to a freshly-provisioned member whose
+bridge has not yet joined buffers via `PendingDelivery` on Kind readiness as today;
+if that member is Kind-ready-but-bridge-dead, the message can still be lost in that
+window — **exactly the pre-existing behavior for any bridge-backed agent.** What
+this work guarantees is narrower and is the actual #902 fix: **the session is never
+rolled back / its snapshot never deleted** because of a hung member, and the message
+**persists in the transcript** regardless. The silent-loss window is the domain.agent
+effort's to close; this spec names it so it is tracked, not forgotten.
 
-**Codex verification point (re-added from rev5's candidate-① caveat):** making a
-bridge-backed agent's `ReadyGate` stay `:not_ready` until bridge-join widens the
-not-ready window for **every** dispatch to that agent, not just routed messages.
-Confirm this does not strand any non-message dispatch (e.g. control/lifecycle
-calls) that must reach the agent before its bridge joins. If any such dispatch
-exists, it must either be exempt from the transport-gate or also buffer safely —
-prove it with a test. (This is why ① was "preferred *if it doesn't widen the
-window for non-message dispatches*"; verify, don't assume.)
+> **Informational handoff to the domain.agent owner (NOT tasks for this work's
+> codex):** the contract above will touch — `PendingDelivery`
+> (`pending_delivery.ex` ~:35-45) + `invocation.ex` (~:155-158), which buffer only
+> on Kind `ReadyGate` `:not_ready`; `LiveJoinRegistry` (`live_join_registry.ex`
+> ~:81-117), which exposes only `mark_joined`/`joined?`/`clear` with **no failed
+> signal** (the bounded-wait→`:failed` transition is new); the Kind readiness flip
+> in `kind/server.ex` (~:296-328, hook the gate flip itself, not `on_ready`); and
+> the caveat that gating readiness on bridge-join widens the not-ready window for
+> **every** dispatch (verify non-message/control dispatches aren't stranded).
 
-> **Implementation landmines for codex (must honor):**
-> - `PendingDelivery` (`pending_delivery.ex` ~:35-45) + `invocation.ex` (~:155-158)
->   buffer **only** on Kind `ReadyGate` `:not_ready` and return `:ok`. Do NOT add a
->   second buffer; instead make the bridge-backed `ReadyGate` stay `:not_ready`
->   until join so this existing path covers it.
-> - `LiveJoinRegistry` (`live_join_registry.ex` ~:81-117) today exposes ONLY
->   `mark_joined`/`joined?`/`clear` — **no failed / never-joined signal**. The
->   bounded-wait→`:failed` transition is NEW; it must emit a signal the readiness
->   lifecycle consumes to flip the agent to `:failed`.
-> - Kind readiness flips in `kind/server.ex` (`on_ready`/`activated` after the
->   `ReadyGate` flip, ~:296-328); the bridge-backed extension must hook the gate
->   flip itself (gate stays not-ready), NOT `on_ready` (which runs AFTER ready).
-
-Required test (test 12): Agent Kind would be `ReadyGate`-ready but
-`LiveJoinRegistry` never marks join → assert the routed message is durably held and
-(a) delivered once join is marked, or (b) fails visibly when the bounded wait
-elapses and the agent goes `:failed` — and is **NEVER** silently lost.
+Dependency gate (test 12, owned by the domain.agent effort — NOT this work): Agent
+Kind would be `ReadyGate`-ready but `LiveJoinRegistry` never marks join → the routed
+message is durably held and (a) delivered once join is marked, or (b) fails visibly
+when the bounded wait elapses and the agent goes `:failed` — and is **NEVER**
+silently lost. Listed so the gap is tracked; this de-orchestrator-ization work is not
+gated on it.
 
 > Production-semantics to preserve (audit surprises #2/#3): the planned member URI
 > must be written to the durable working copy BEFORE the live MCP join so the
@@ -566,10 +535,12 @@ status → Orchestrator.Health + LiveJoinRegistry (pure read, never blocks)
     `data-last-dispatch`.
 11. **Cross-workspace spawn preserved:** a system-template role-member provisions
     into the tenant workspace (the sanctioned bypass still works).
-12. **Transport-readiness (rev5 BLOCKER):** Agent Kind is `ReadyGate`-ready but
-    `LiveJoinRegistry` never marks join → a routed message is durably held and
-    delivered on join, OR fails visibly — and is NEVER silently lost. Positive:
-    held message delivers once join is marked.
+12. **Transport-readiness (DEFERRED — owned by the domain.agent effort, NOT this
+    work's codex).** Agent Kind is `ReadyGate`-ready but `LiveJoinRegistry` never
+    marks join → a routed message is durably held and delivered on join, OR fails
+    visibly — and is NEVER silently lost. This is the dependency gate for the
+    domain-agent readiness contract (§4.5); it is listed here so the gap is tracked,
+    but it is **not** a gate for this de-orchestrator-ization work.
 13. **Tagged receiver dual-read (rev5 HIGH):** a legacy untagged URI/magic
     receiver still routes unchanged; a `{:role, "orchestrator"}` receiver resolves
     (or provisions) at route-time; a bare role string never reaches `URI.new!`.
@@ -610,10 +581,12 @@ These WILL go red on the move and are part of the work:
    data migration; tests that both forms resolve.
 2. **PR-B** — role-targeted routing rules: rules carry roles, resolve at route-
    time (dual-read old URI-resolved rules for back-compat during transition).
-3. **PR-C** — provision-on-route primitive + lazy bring-up + the **delivery-time
-   transport-readiness buffer** (§4.5 BLOCKER fix); route-time resolution uses it;
-   create still also ensures (parallel) so this PR is independently verifiable.
-   Tests 4, 5, 6, 7 + the bridge-ready-but-not-joined buffering test.
+3. **PR-C** — provision-on-route primitive + lazy bring-up; route-time resolution
+   uses it; create still also ensures (parallel) so this PR is independently
+   verifiable. Tests 4, 5, 6, 7. **Transport-readiness is OUT of this PR** —
+   deferred to the domain.agent effort (§4.5); delivery buffers via the existing
+   `PendingDelivery` (Kind readiness) as today, and the pre-existing bridge-ready-
+   but-not-joined window is closed separately by that effort (test 12 is its gate).
 4. **PR-D (atomic flip — must retarget contracts in the SAME PR, HIGH fix)** —
    flip create to the pure path (drop the synchronous ensure arm) AND **delete**
    the readiness gate AND, in the same PR, retarget every consumer that asserts an
@@ -682,15 +655,15 @@ cap #2 (#10) → out of scope (§4.6).
 
 None blocking. Resolved 2026-06-23 with Allen: pure create; orchestrator =
 role-member; provision-on-route lazy (no reconciler); gate deleted; session-domain
-placement; transport-readiness = a **domain-agent readiness contract** (bridge-
-backed `ReadyGate` waits for bridge-join, bounded → `:failed`, candidate ①);
-on_ready prepare deferred.
+placement; transport-readiness **fully deferred to the domain.agent effort** (this
+spec declares the dependency only — §4.5); on_ready prepare deferred.
 
 **Review status:** four spec revisions went through three `/codex:adversarial-review`
 rounds (rev1→rev2→rev4→rev5); findings converged from approach-level to wiring-level
 (the convergence signal). Per the advisor, the spec↔review loop stops at rev6 — the
-remaining wiring decisions (§4.5 readiness contract, §4.6 cap policy) are
-**implementation decisions for codex**, gated by the mandatory tests (12, 14), and
-are the right thing for codex to self-review during implementation. **No 4th
-adversarial review of the spec.** The handoff doc carries the file:line landmines as
-hard constraints.
+remaining wiring decision (§4.6 cap policy) is an **implementation decision for
+codex**, gated by its mandatory test (14), and is the right thing for codex to
+self-review during implementation. (Transport-readiness, §4.5, is no longer a codex
+decision here — fully deferred to the domain.agent effort.) **No 4th adversarial
+review of the spec.** The handoff doc carries the file:line landmines as hard
+constraints.
