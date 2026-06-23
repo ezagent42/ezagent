@@ -37,20 +37,24 @@ defmodule EzagentPluginHello.TurnDriver do
   Surface version on `session_uri`, with an optional customer-visible `summary`
   chat line. Returns `{:ok, turn_id}` | `{:error, reason}`.
   """
-  @spec drive(URI.t(), map(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  def drive(%URI{} = session_uri, spec, summary \\ "") when is_map(spec) do
+  @spec drive(URI.t(), map(), String.t(), URI.t() | nil) :: {:ok, String.t()} | {:error, term()}
+  def drive(session_uri, spec, summary \\ "", actor \\ nil)
+
+  def drive(%URI{} = session_uri, spec, summary, actor) when is_map(spec) do
+    caller = actor || User.admin_uri()
+
     with {:ok, %{turn_id: turn_id}} <-
            dispatch(session_uri, :turn, :open, %{
              trigger: %{source: "hello-builder"},
              opened_at: System.system_time(:millisecond)
-           }),
+           }, caller),
          {:ok, _composed} <-
            dispatch(session_uri, :turn, :compose, %{
              turn_id: turn_id,
              result_refs: result_refs(spec, summary)
-           }),
+           }, caller),
          {:ok, %{status: :settled}} <-
-           dispatch(session_uri, :turn, :settle, %{turn_id: turn_id}) do
+           dispatch(session_uri, :turn, :settle, %{turn_id: turn_id}, caller) do
       {:ok, turn_id}
     else
       {:error, reason} = err ->
@@ -74,16 +78,41 @@ defmodule EzagentPluginHello.TurnDriver do
     chat ++ [%{kind: :page, tree: spec}]
   end
 
-  defp dispatch(session_uri, behavior, action, args) do
+  defp dispatch(session_uri, behavior, action, args, caller) do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}"),
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
+        caller: caller,
         caps: MapSet.new([Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     })
   end
+
+  @doc """
+  Post a builder-authored chat line into the session (ack / progress / result
+  narration). `:cast` fire-and-forget; `sender = actor` so it renders as the
+  builder's reply, NOT the operator's own message. Authority is the same
+  admin-genesis the turn dispatches use — only the message `sender` carries the
+  builder identity. No-ops on blank text.
+  """
+  @spec say(URI.t(), URI.t(), String.t()) :: :ok | {:ok, term()} | {:error, term()}
+  def say(%URI{} = session_uri, %URI{} = actor, text) when is_binary(text) and text != "" do
+    msg = Ezagent.Message.new(actor, %{text: text, attachments: []})
+
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :send),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: actor,
+        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  def say(_session_uri, _actor, _text), do: :ok
 end
