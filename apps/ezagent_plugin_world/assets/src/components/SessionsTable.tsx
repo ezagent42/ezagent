@@ -1,7 +1,7 @@
 import React from "react"
 import {ArrowRight, Circle, Plus, X} from "lucide-react"
 
-import {Button, Input} from "./ui/primitives"
+import {Button, Input, Select} from "./ui/primitives"
 
 type SessionRow = {
   uri: string
@@ -12,6 +12,7 @@ type SessionRow = {
 type SessionsState = {
   current_session_uri?: string | null
   sessions?: SessionRow[]
+  templates?: string[]
   workspace_uri?: string | null
 }
 
@@ -24,9 +25,10 @@ type SessionsTableProps = {
 export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const sessions = state?.sessions || []
   const currentSessionUri = state?.current_session_uri
+  const templates = state?.templates && state.templates.length > 0 ? state.templates : ["default"]
   const [creating, setCreating] = React.useState(false)
   const [shortName, setShortName] = React.useState("")
-  const [templateName, setTemplateName] = React.useState("default")
+  const [templateName, setTemplateName] = React.useState(templates[0])
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -35,7 +37,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
     if (!trimmed) return
     onCreate?.(trimmed, template)
     setShortName("")
-    setTemplateName("default")
+    setTemplateName(templates[0])
     setCreating(false)
   }
 
@@ -82,12 +84,17 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
           </label>
           <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-template">
             Template
-            <Input
+            <Select
               id="world-session-template"
               value={templateName}
               onChange={(event) => setTemplateName(event.target.value)}
-              placeholder="default"
-            />
+            >
+              {templates.map((template) => (
+                <option key={template} value={template}>
+                  {template}
+                </option>
+              ))}
+            </Select>
           </label>
           <Button type="submit" size="sm" disabled={!shortName.trim()}>
             <Plus aria-hidden="true" />
