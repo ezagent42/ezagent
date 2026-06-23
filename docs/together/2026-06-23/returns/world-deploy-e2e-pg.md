@@ -1,12 +1,12 @@
 # Return — world-deploy-e2e-pg (PostgreSQL deploy + E2E support matrix)
 
 > **Task:** `world-deploy-e2e-pg` (dev-together 2026-06-23 #2)
-> **Branch:** `world-deploy-e2e-pg` (pushed; `d7d4543a..e3d6254d`)
-> **PR:** [#902](https://github.com/ezagent42/ezagent/pull/902) — OPEN → `main`
+> **Branch:** `world-deploy-e2e-pg` (pushed; rebased on latest `origin/main` @ `b2fd803b`)
+> **PR:** [#902](https://github.com/ezagent42/ezagent/pull/902) — OPEN → `main` (12 commits, 7 review comments)
 > **Dev:** zylideveloper (Claude)
-> **returned_at:** 2026-06-23 16:05 +0800
+> **returned_at:** 2026-06-23 17:05 +0800
 > **deadline:** 2026-06-23 20:00 +0800 (18:00 checkpoint)
-> **deadline_status:** `on_time` — early-return path (refreshed runbook + support matrix + root-caused crux + full step-by-step blocker routing), delivered before the 18:00 checkpoint.
+> **deadline_status:** `on_time` — early-return path (refreshed runbook + support matrix + fully root-caused crux + per-step owner routing), delivered before the 18:00 checkpoint. Deeper diagnosis (orchestrator-readiness gate, cc onboarding/login, create_agent crash) added through the afternoon; all on PR #902.
 
 | Field | Value |
 |---|---|
@@ -325,27 +325,41 @@ elixir --name "probe@127.0.0.1" --cookie "$COOKIE" -e '
 
 **Deliverables (all on the branch / PR #902):**
 - Refreshed PG runbook `docs/guide/world-e2e-seed.md` (+ ⛔ known-blocker note, §3).
-- Support matrix (§3) + root-caused crux (§7, **independently reviewed** by a subagent).
+- Support matrix (§3) + **fully root-caused crux** (§7, **independently reviewed** by a subagent),
+  including: the orchestrator-readiness gate mechanism (MCP-bridge join, 90 s deadline →
+  rollback), the cc onboarding/login diagnosis (interactive `claude` TUI, not `claude -p`;
+  OAuth/`api_key_helper`), and the **`create_agent` LiveView-crash** finding (5 s timeout +
+  uncaught `:exit`).
 - **Full step-by-step blocker analysis + owner routing** for steps 2–8:
-  `docs/together/2026-06-23/e2e-blocker-analysis.md`, **posted as a PR comment**:
+  `docs/together/2026-06-23/e2e-blocker-analysis.md`, **posted as PR comments** (analysis +
+  @-mention routing + mechanism + crash): start at
   [#902 comment](https://github.com/ezagent42/ezagent/pull/902#issuecomment-4776984856).
 - Evidence: `docs/together/2026-06-23/evidence/*.png` (incl. `03d-send-no-such-actor.png`).
 
-**Gate status:** docs + evidence only — **no product code touched** (scope held per
-handoff §7). No `mix` gates apply; world mount/slot gates unaffected (no route/renderer
-change). One non-blocking seed follow-up noted (§1).
+**Gate status:** docs + evidence, **plus ONE operator-found product commit** (`b3b23b74`
+"session-template picker on the New session form" — a `<Select>` over the workspace's
+SessionTemplate names; `world_live.ex` + `SessionsTable.tsx`). `mix format --check` clean;
+no route/renderer/mount/slot change. **Lead: this product change rode on the evidence
+branch — split/cherry-pick at `close` if you'd rather keep PR #902 docs-only.**
 
 **Routing to other branches (the coordination output):**
-- **lead / core+domain session lifecycle** → steps 3/4 (+ 8 world side): `create_session`
-  5 s dispatch timeout + snapshot-on-create race → `:no_such_actor` swallowed by `:cast`.
-- **gagameow `agent-flavor-headless-protocol-api`** → step 2/3 cc credential/login completion.
-- **FatNine `socialware-creator-agent-config`** → step 2 UX (empty-CWD silent fail; detail status).
+- **lead / core+domain session lifecycle** → steps 3/4 (+8 world side): `create_session`
+  spawns the orchestrator (a cc agent) and **synchronously gates 90 s on its MCP-bridge
+  join**; the cc agent hangs at onboarding/login → gate times out → rollback → snapshot-less
+  session → `:send` `:no_such_actor` swallowed by `:cast`. **Same 5 s-budget root also crashes
+  `create_agent`** (`dispatch_agent_create/2` doesn't catch the `:exit`).
+- **gagameow `agent-flavor-headless-protocol-api`** → step 2/3 cc credential/login completion
+  (**this is coupled to the lead crux** — the orchestrator IS a cc agent; `claude -p` headless
+  avoids the interactive-OAuth path entirely).
+- **FatNine `socialware-creator-agent-config`** → step 2: catch the `:exit` in
+  `dispatch_agent_create/2` (don't crash the LiveView) + empty-CWD silent fail + detail-status parse.
 - **zhaomaota97 `world-hello-convergence`** → steps 5/6/7/8 (hello-app create flow, native page render, cross-surface sync).
 
 **Merge request:** lead merges `world-deploy-e2e-pg` → `main` after review (PR #902).
-Docs/evidence only; rebased on `main`; no ordering constraints with other returns.
+Rebased on latest `origin/main`; no ordering constraints with other returns. One product
+commit to split-or-keep (above); everything else is docs/evidence.
 
-**Open item for the lead:** step 2's exact operator symptom is unconfirmed (agent-browser
-can't drive the React form reliably — my `error:name_required` was a tooling artifact). If
-the operator's create fails *after* a valid name+CWD, its `data-last-dispatch` may show a
-create-timeout (→ lead) rather than a credential gap (→ gagameow); flagged in the PR comment.
+**Resolved open item:** step 2's operator symptom is now **confirmed from a live crash log**
+(§7) — `create_agent` 5 s-times-out and crashes the LiveView; the earlier `error:name_required`
+was a tooling artifact. So step-2-create is a create-timeout crash (FatNine catch + lead budget),
+NOT primarily a credential gap (credential is the next layer, after a successful create).
