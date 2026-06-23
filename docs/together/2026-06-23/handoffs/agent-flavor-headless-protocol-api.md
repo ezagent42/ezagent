@@ -1,8 +1,9 @@
 # Handoff: Agent Flavor Headless + Protocol-API Follow-up
 
 > **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** gagameow
-> **Tracking:** `agent-flavor-headless-protocol-api` · **Base:** `origin/main` @ `56148805`
+> **Tracking:** `agent-flavor-headless-protocol-api` · **Base:** `origin/main` @ `3cd5a5a4` (re-dispatched on latest main)
 > **Status:** confirmed — rebase latest main; protocol-api #896 is merged, so testing is no longer waiting on that dependency.
+> **Re-dispatch (2026-06-23 16:20):** baseline rebased to latest `origin/main`. E2E support matrix + root-cause now available — PR [#902](https://github.com/ezagent42/ezagent/pull/902) comment + `docs/together/2026-06-23/e2e-blocker-analysis.md`. **Verified gap for you (steps 2/3):** a `cc` agent created from world DOES spawn a real `claude` OS process, but there is **no credential/login-completion path** — the spawned agent can't authenticate Claude creds and therefore can't reply, so an operator who creates a `cc` agent still cannot converse. This headless/credential completion is the crux that makes step-2/3 actually usable. (Distinct from the session-snapshot crux that blocks the world send surface — that one is lead-owned, return §7.)
 
 ## 0. Mission
 

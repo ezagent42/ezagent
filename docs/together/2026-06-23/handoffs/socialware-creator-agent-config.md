@@ -1,8 +1,9 @@
 # Handoff: Socialware Creator - World Agent Config Contract UI
 
 > **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** FatNine
-> **Tracking:** `socialware-creator-agent-config` · **Base:** `origin/main` @ `deebe994`
+> **Tracking:** `socialware-creator-agent-config` · **Base:** `origin/main` @ `3cd5a5a4` (re-dispatched on latest main)
 > **Status:** confirmed — narrowed scope. This is not the broad socialware creator MVP.
+> **Re-dispatch (2026-06-23 16:20):** baseline rebased to latest `origin/main`. The E2E support matrix + root-cause this handoff said it would consume is now available — PR [#902](https://github.com/ezagent42/ezagent/pull/902) comment + `docs/together/2026-06-23/e2e-blocker-analysis.md`. **Verified step-2 gaps for you:** ① empty-CWD silent fail (`agent_create.ex:144` `:cwd_required_for_cc` not surfaced → mark CWD required for `cc`); ② agent detail page shows `Phase/Flavor/Bridge: unknown` — it doesn't parse live status (`Identities.tsx:283` `|| "unknown"`).
 
 ## 0. Mission
 
