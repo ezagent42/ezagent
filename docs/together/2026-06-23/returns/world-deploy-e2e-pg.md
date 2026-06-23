@@ -9,7 +9,7 @@
 | Deadline | 2026-06-23 20:00 +08:00 (18:00 checkpoint) |
 | returned_at | 2026-06-23 14:45 +08:00 |
 | deadline_status | `on_time` — refreshed runbook + support matrix + **root-caused crux** delivered well before the 18:00 checkpoint (the early-return path the handoff prescribes when the full operator E2E is blocked). |
-| Status | **runbook refreshed + support matrix + live walkthrough + crux root-caused (§7)**. Steps 1-2 ✅ (2 UX bugs), steps 3/4/8 ⛔ — **NOT a cap issue** (admin holds a wildcard cap). Two real bugs, proven by an in-node `:erpc` positive control: **(X)** `create_session` times out at the 5 s framework dispatch limit; **(Y)** a session left without a respawnable snapshot is un-dispatchable → `:session :send` returns `:no_such_actor`, swallowed by the `:cast` path. **Send itself works on a snapshotted session (`{:ok, stored: true}`)** — fix is bounded. Steps 5-8 hello → task 3. Evidence in `docs/together/2026-06-23/evidence/`. |
+| Status | **runbook refreshed + support matrix + live walkthrough + crux root-caused (§7), independently reviewed**. Steps 1-2 ✅ (2 UX bugs), steps 3/4/8 ⛔ — **NOT a cap issue** (admin holds a wildcard cap). ONE root cause, two surfaces, proven by an in-node `:erpc` positive control: `create_session` times out at the 5 s framework dispatch limit AND snapshot-on-create **races** that budget (reviewer: 2 identical timed-out creates → 1 snapshotted, 1 didn't), so a session can reach the UI without a respawnable snapshot → `:session :send` returns `:no_such_actor`, swallowed by the `:cast` path. **Send itself works on a snapshotted session (`{:ok, stored: true}`)** — fix is bounded. Steps 5-8 hello → task 3. Evidence in `docs/together/2026-06-23/evidence/`. |
 
 ## 1. Phase 0 — runbook refreshed for PostgreSQL ✅ (DONE)
 
@@ -126,7 +126,7 @@ refreshed runbook §5):
   handoff §7). `world` mount/slot gates unaffected (no route/renderer change).
 - One non-blocking seed follow-up identified (§1, owned here).
 
-## 7. Addendum — crux ROOT-CAUSED live: NOT a cap issue (two real bugs)
+## 7. Addendum — crux ROOT-CAUSED live: NOT a cap issue (one root cause, two surfaces) — independently reviewed
 
 The original §2b bug 3 hypothesis ("operator-created session lacks a `:send`/routing
 cap → cap-denied at the chokepoint") is **WRONG**. Established by driving the live
@@ -149,33 +149,36 @@ server with agent-browser, querying the live PostgreSQL audit/snapshot tables, A
 | 3 | `Identity.list_caps_for(admin)` | admin holds a **wildcard cap** `{:any,:any,:any,:any,:any}`. So `:session :send` IS authorized; cap is NOT the blocker. |
 | 4 ✅ **positive control** | In-node `:session :send` to **`livesend…` (which HAS a snapshot but was `:unknown`/not alive)** | **`{:ok, %{stored: true}}`** — lazy-spawn rehydrated it (`ReadyGate :unknown→:ready`) and the **message persisted (`messages` 0→1)**. The send/cap/lazy-spawn machinery is CORRECT. |
 | 5 ⛔ | In-node `:session :send` / earlier UI send to **`e2e-chat` / `main` (NO snapshot)** | `:no_such_actor` — `snapshot_exists?=false` ⇒ `attempt_lazy_spawn_and_redispatch` returns `:no_such_actor` (`invocation.ex:190-194`). |
-| 6 ⛔ | In-node `Workspace.create_session/3` (`:call`) ×3 | **times out at the framework 5 s dispatch `:call` limit** every time (`{:timeout, {GenServer,:call,[…workspace.create_session…],5000}}`). The create work nonetheless completes server-side: both `livesend…` and `fresh…` ended up with a **session snapshot** despite the caller-side timeout. |
-| 7 | `kind_snapshots` `session://` rows | `0` at 14:30 → `2` after the two `create_session` runs (`livesend…`, `fresh…`). So sessions DO snapshot; `e2e-chat`/`main` simply don't have one. |
+| 6 ⛔ | In-node `Workspace.create_session/3` (`:call`) ×5 across two sessions (dev + reviewer) | **times out at the framework 5 s dispatch `:call` limit** every time (`{:timeout, {GenServer,:call,[…workspace.create_session…],5000}}`; the 5000 ms is `invocation.ex:259-260` `ctx[:deadline_ms] \|\| 5_000`). Whether a respawnable snapshot lands afterward is **RACY**: of the reviewer's two identical timed-out creates, **one snapshotted, one did not**. |
+| 7 | `kind_snapshots` `session://` rows (point-in-time, race-dependent) | started at `0`; some timed-out `create_session` runs left a snapshot (`livesend…`), others left none (`revprobe2`), and one earlier survivor (`fresh…`) was later gone. **So sessions CAN snapshot, but snapshot-on-create is not guaranteed** — `e2e-chat`/`main` simply lost that race. |
 
-### The two real bugs (precise, code-level)
-- **Bug X — `create_session` exceeds the 5 s framework dispatch timeout.** Every
-  `:call` to `workspace://system?action=workspace.create_session` times out at
-  5000 ms (orchestrator/template instantiation is slow). The operator's "New
-  session" → `create_session` therefore returns a timeout/exit to the caller (and
-  in the world modal it silently fails to advance). The session is still created
-  + snapshotted **asynchronously** server-side, but the UX is broken and racy.
-- **Bug Y — the send error is swallowed.** `ConversationActions.send_message`
+### The failure (ONE root cause, two surfaces)
+
+Bug X and Bug Y are **the same underlying failure**, not two independent bugs:
+`create_session` is too slow for the dispatch budget, and snapshot-on-create
+races that budget — so a session can be handed to the operator without a
+respawnable snapshot, after which every send to it silently fails.
+
+- **Surface X — `create_session` exceeds the 5 s framework dispatch timeout.**
+  Every `:call` to `workspace://system?action=workspace.create_session` times out
+  at 5000 ms (orchestrator/template instantiation is slow). The operator's "New
+  session" → `create_session` returns a timeout/exit to the caller (and in the
+  world modal it silently fails to advance). Whether the session ends up with a
+  respawnable snapshot is **RACY** — the reviewer's two identical timed-out
+  creates diverged (one snapshotted, one didn't), so snapshot-on-create is **not
+  guaranteed**. This is why `e2e-chat` (created in the walkthrough, accepted joins)
+  carries no `kind_snapshots` row: nothing special about it — it lost the race.
+- **Surface Y — the send error is swallowed.** `ConversationActions.send_message`
   dispatches `mode: :cast` + `reply: :ignore` (`conversation_actions.ex:144-149`),
-  so when a session HAS no live process AND no snapshot (e.g. `e2e-chat`), the
-  resulting `:no_such_actor` surfaces ONLY in the hidden
-  `data-last-dispatch` DOM attribute — empty composer, "No turns", zero error.
-  (`session.routing.add` is `:call`, surfaces the same error to
-  `last_dispatch_status`.)
-- **Why `e2e-chat` has no snapshot (open):** it was created in the original
-  walkthrough and accepted joins, yet carries no `kind_snapshots` row — most
-  likely its create raced the 5 s timeout (Bug X) and never reached the
-  snapshot-on-change. Fresh `create_session` runs DO snapshot, so this is not a
-  blanket "sessions never persist" gap.
+  so when a session has no live process AND no snapshot, the resulting
+  `:no_such_actor` surfaces ONLY in the hidden `data-last-dispatch` DOM attribute
+  — empty composer, "No turns", zero error. (`session.routing.add` is `:call`,
+  surfaces the same error to `last_dispatch_status` — `conversation_actions.ex:354`.)
 
 ### Corrected matrix impact (supersedes §2b bug 3 + §3 rows 3/4)
 - **Steps 3 / 4 / 8 ⛔ for the operator** today: create is racy/timeout-prone
-  (Bug X), and a session that ends up without a snapshot is un-dispatchable
-  (`:no_such_actor`, Bug Y hides it). When a session DOES have a snapshot, send
+  (surface X) and the resulting snapshot-less session is un-dispatchable
+  (`:no_such_actor`, surface Y hides it). When a session DOES have a snapshot, send
   works (probe 4) — so the fix is bounded.
 - Step 4's in-session routing-rule **builder DOES exist** in the UI — the §3-row-4
   "no create handler" note was wrong; handler is `session.routing.add` →
@@ -185,13 +188,21 @@ server with agent-browser, querying the live PostgreSQL audit/snapshot tables, A
 
 ### Owner + fix direction (for the lead)
 **Owner: core/domain workspace + Session-Kind lifecycle (lead / a dedicated
-session branch).** Two fixes: **(X)** make `create_session` fit the dispatch
-budget (async/await the orchestrator spawn, or raise the timeout for this action,
-or return a fast ack + settle) so the operator gets a clean create; **(Y)** ensure
-a respawnable snapshot exists before a session is handed to the UI (snapshot
-synchronously on create, or surface a "session not ready" state) so send/join/
-routing never silently hit `:no_such_actor` — and stop swallowing the `:cast`
-send error (surface it). The send + lazy-spawn machinery itself is sound (probe 4).
+session branch).** One root cause, so the fixes interlock: **(1)** make
+`create_session` fit the dispatch budget (async/await the orchestrator spawn, or
+raise the timeout for this action, or return a fast ack + settle); **(2)**
+guarantee a respawnable snapshot before a session is handed to the UI — snapshot
+synchronously on create (closing the race), or surface an explicit "session not
+ready" state — so send/join/routing never silently hit `:no_such_actor`; **(3)**
+stop swallowing the `:cast` send error — surface it instead of hiding it in
+`data-last-dispatch`. The send + lazy-spawn machinery itself is sound (probe 4).
+
+**The defining open question for the lead** (sharpened by the review): NOT "what
+was special about `e2e-chat`" (answer: nothing — it lost the snapshot race). It is
+**"is snapshot-on-create supposed to be guaranteed, and why does it race the 5 s
+`create_session` budget?"** — i.e. is there an unbounded/slow step in orchestrator/
+template instantiation that must be made async-with-ack, and should the session be
+withheld from the UI until its snapshot is durably persisted?
 
 ### Reproduction (for whoever picks this up)
 ```bash
