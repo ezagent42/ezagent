@@ -97,7 +97,19 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Issue #51 — the anon external-user binding maps an anon-User to the public
     # session it views; the workspace is DERIVED from that session (never supplied),
     # so a binding can never span tenants.
-    {Ezagent.Socialware.AnonBinding, "socialware_anon_bindings"}
+    {Ezagent.Socialware.AnonBinding, "socialware_anon_bindings"},
+    # #88 PR-1 — durable RFC 5322 threading state for the email
+    # ExternalMirror Binding, keyed by the binding row id. Per-tenant:
+    # the thread (root/last Message-ID + References chain) is scoped to
+    # the bound session's workspace; a thread for ws A must never be read
+    # from ws B. Derived structurally from the session at write time.
+    {Ezagent.Email.ThreadState, "email_thread_state"},
+    # #88 PR-2 — email-owned per-binding inbound metadata (local alias +
+    # verification status + binding-scoped token), keyed by the binding row
+    # id. Per-tenant: the alias→session reverse lookup and the verification
+    # gate are scoped to the bound session's workspace; a row for ws A must
+    # never be read from ws B. Derived structurally from the session.
+    {Ezagent.Email.InboundBinding, "email_inbound_binding"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
