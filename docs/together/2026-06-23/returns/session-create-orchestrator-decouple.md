@@ -1,6 +1,6 @@
 > **Task:** session-create-orchestrator-decouple
 > **Branch:** `fix/session-create-orchestrator-decouple`
-> **PR:** none
+> **PR:** https://github.com/ezagent42/ezagent/pull/912
 > **Dev:** Codex
 > **returned_at:** 2026-06-23 21:28 +0800
 > **deadline:** 2026-06-23 20:00 +0800
@@ -27,8 +27,8 @@
 
 - A stale local test database had phantom applied migrations for missing email tables; `MIX_ENV=test mix ecto.reset` was used to reset local test DB state before invariant verification.
 - The worktree uses a local `apps/ezagent_web/assets/node_modules` symlink to the main checkout so web tests can run in this linked worktree. The symlink is ignored and not part of the branch.
-- No PR has been opened and no commit has been created in this handoff.
+- Draft PR opened: https://github.com/ezagent42/ezagent/pull/912
 
 ## Merge request
 
-Please review and open/merge PR from `fix/session-create-orchestrator-decouple` into the task branch path only; do not merge directly to `main`.
+Please review draft PR https://github.com/ezagent42/ezagent/pull/912 from `fix/session-create-orchestrator-decouple`. Allen/lead retains the merge decision.
