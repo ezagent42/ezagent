@@ -1,108 +1,90 @@
-# dev-together merge stack — 2026-06-23 (lead) · refreshed
+# dev-together merge stack — 2026-06-23 (lead) · refreshed (all returns in)
 
 _returned handoffs in analyzed merge order · dependencies · conflict check · reconciliation_
 
 > `push` orders + analyzes only; merging happens in `close` (lead → `main`).
-> Base `origin/main` at this push = `2d642254` (after the first push #909, email
-> #88 PR-1 #906 + PR-2 #908, and team-directory docs merges earlier today).
-> **All four planned tasks have now returned** — this refresh supersedes the first
-> push (which stacked only #907 + #902 with the other two "in progress").
+> Base `origin/main` at this push = `2d642254`. **All returns are now in** —
+> including the late-but-critical #902-crux fix (#912). Timestamps below are each
+> PR's **last-commit time** (the authoritative basis, not relay time).
 
-## Returns analyzed (4 stacked — full plan returned)
+## Returns analyzed (merge stack)
 
-| # | Task | Dev | PR | Branch | mergeable | DoD / evidence | returned | status |
-|---|---|---|---|---|---|---|---|---|
-| 4 | `agent-flavor-headless-protocol-api` | gagameow | [#907](https://github.com/ezagent42/ezagent/pull/907) | `agent-flavor-headless-protocol-api` | MERGEABLE | cc-headless + codex-remote flavors + protocol-api flavor resolution; **342 tests / 0 failures**; 6-agent E2E + 10 screenshots; return + handoff docs | on_time | ✅ stacked |
-| 3 | `world-hello-convergence` | zhaomaota97 (Claude) | [#910](https://github.com/ezagent42/ezagent/pull/910) | `world-hello-convergence` | MERGEABLE | world→hello create / operator live preview / public no-login link (+ **cold-link 400→200 fix** `99b3542e`) / builder narrates+replies as itself; E2E 5–8; return at `returns/world-hello-convergence.md` + PR screenshots | on_time | ✅ stacked |
-| 1 | `socialware-creator-agent-config` | FatNine | [#905](https://github.com/ezagent42/ezagent/pull/905) | `socialware-creator-agent-config` | MERGEABLE | world agent create/config/detail adapted to AgentManifest/agent-contract (MVP, **0 core/domain change**); spec PRD + plan + evidence (s01–s04 + demo.mp4/gif) | on_time | ⚠️ stacked — **return file missing** |
-| 2 | `world-deploy-e2e-pg` | zylideveloper | [#902](https://github.com/ezagent42/ezagent/pull/902) | `world-deploy-e2e-pg` | UNKNOWN (recompute) | PG runbook rewrite + full E2E support matrix + evidence + **fully root-caused crux** (return §7); return at `returns/world-deploy-e2e-pg.md` | on_time | ✅ stacked |
+| Order | Task | Dev | PR | last-commit (+08) | deadline | mergeable | status |
+|---|---|---|---|---|---|---|---|
+| 1 | `session-create-orchestrator-decouple` (#902-crux fix) | Codex (rev6 by Claude+Allen) | [#912](https://github.com/ezagent42/ezagent/pull/912) | 21:37 (late) | — | MERGEABLE (draft) | ✅ stacked — **lead reviewing** |
+| 2 | `agent-flavor-headless-protocol-api` | gagameow | [#907](https://github.com/ezagent42/ezagent/pull/907) | 18:14 on_time | 20:00 | MERGEABLE | ✅ stacked |
+| 3 | `world-hello-convergence` | zhaomaota97 | [#910](https://github.com/ezagent42/ezagent/pull/910) | 20:04 (marginally late) | 20:00 | MERGEABLE | ✅ stacked |
+| 4 | `socialware-creator-agent-config` (+ #904 demo supplement) | FatNine | [#905](https://github.com/ezagent42/ezagent/pull/905) | 17:39 on_time | 20:00 | MERGEABLE | ✅ stacked — return lead-recorded |
+| 5 | `world-deploy-e2e-pg` | zylideveloper | [#902](https://github.com/ezagent42/ezagent/pull/902) | 18:09 on_time | 20:00 | UNKNOWN (recompute) | ✅ stacked |
 
-## Merge order (suggested)
+> **on_time/late by PR commit time** (deadline 20:00 +08): #905/#902/#907 on_time;
+> #910 marginally late (20:04); #912 late (21:37) but it is the emergent #902-crux
+> fix, not a planned-task slip. #904 (20:54) is a demo supplement (see below).
 
-**1. `#907` → 2. `#910` → 3. `#905` → 4. `#902`.**
+## Merge order (by dependency/conflict/risk — NOT pure time)
 
-- **`#907` first** — pure agent/plugin + protocol-api code, disjoint from all world
-  surfaces, fully gated (precommit 342/0). Lowest risk.
-- **`#910` second** — world hello product code; does **not** touch `world_live.ex`
-  (it routes hello creation through `behavior/workspace.ex`), so it's disjoint from
-  `#905`/`#902`.
-- **`#905` third** — owns the `world_live.ex` agent create/config region (plan's
-  serialization owner for world agent config UI).
-- **`#902` last** — docs/evidence + the one product commit `b3b23b74` (session-
-  template picker, `world_live.ex` + `SessionsTable.tsx`); rebase on `#905` because
-  both edit `world_live.ex` (see conflict analysis).
+**1. `#912` → 2. `#907` → 3. `#910` → 4. `#905` → 5. `#902`.**
 
-## Conflict analysis
+- **`#912` first** — it is the structural fix for `#902`'s root-cause crux
+  (create→orchestrator coupling + snapshot-deleting rollback). Landing it first
+  makes the world E2E flow actually correct and gives the other branches a fixed
+  base to rebase onto. Lead is reviewing it now (gates below).
+- **`#907`** — pure agent/plugin + protocol-api; disjoint; fully gated (342/0).
+- **`#910`** — shares `behavior/workspace.ex` + hello files with `#912` → rebase on
+  `#912`.
+- **`#905`** (+ `#904` demo) — owns `world_live.ex` agent create/config region.
+- **`#902`** — docs/evidence + `b3b23b74` picker; shares `world_live.ex` with
+  `#905` → rebase; decide the `b3b23b74` split (splitting clears the conflict).
 
-Pairwise file-overlap across the four branches — **one** real cross-branch code
-conflict, the rest disjoint:
+## Conflict analysis (cross-branch)
 
-- **`#905` ∩ `#902` = `apps/.../world_live.ex` (the only code overlap).** `#905`
-  edits the agent create/config handlers; `#902`'s `b3b23b74` edits the session-
-  template picker render. Same file → whoever lands second rebases. **If the prior
-  recommendation to split `b3b23b74` out of `#902` is taken at close, this conflict
-  disappears** and `#902` becomes pure docs/evidence.
-- **`#910` ∩ {`#905`,`#907`} = ∅ (code).** `#910` touches `Conversation.tsx`,
-  `customer_app.js`, `behavior/workspace.ex`, hello `generator.ex`/`turn_driver.ex`,
-  `chat_feed_controller.ex`, `customer_controller.ex` — none shared with `#905`
-  (`Identities.tsx`/`identity_data.ex`/`world_live.ex`/`vite.config.ts`) or `#907`
-  (cc/codex/protocol-api + `workspace/agent_create.ex`).
-- **`#907` is disjoint from all world branches** (`agent_create.ex` ≠
-  `world_live.ex`; plugin_cc/codex/protocol-api are its own surfaces).
-- **Doc-only low-risk overlap:** `#902` re-touches `docs/together/2026-06-23/`
-  `plan.md` + the three `handoffs/*` already on `main`; resolve as doc merges at
-  close if they diverge. Each PR owns its own `returns/*` file (no overlap there).
+- **`world_live.ex`** — touched by `#905` **and** `#902`. The one world-side code
+  conflict; sequence (land `#905`, rebase `#902`), or split `#902`'s `b3b23b74` out.
+- **`behavior/workspace.ex`** — touched by `#910` **and** `#912`; plus both touch
+  the `hello` plugin (different files). → rebase `#910` on `#912`.
+- **`#907`** — disjoint from all world/session branches.
+- **`#912`** does **not** touch `world_live.ex` (it touches `home_live.ex`); no
+  conflict with `#905`/`#902` on the world UI.
+- Doc-only low-risk: `#902` re-touches `docs/together/2026-06-23/` `plan.md` +
+  `handoffs/*`; resolve as doc merges. Each PR owns its own `returns/*`.
 
-All branches are off recent `main` and `#910`/`#905` report `MERGEABLE`
-(`#907`/`#902` show `UNKNOWN` = GitHub still recomputing against `2d642254`; re-check
-at close). No `world-coordination` cross-branch ownership violation observed.
+## #912 lead review (in progress — this is the de-facto CI; see CI note)
 
-## Close-time decisions (flag, do not merge here)
+- `mix ezagent.check_invariants` → **EXIT=0**, all in-scope invariants clean.
+- Focused architectural-gate tests **pass, 0 failures**: gate-15 anti-recurrence
+  (`no_plugin_transport_readiness_primitives_test`), `transport_readiness_test`
+  (domain_agent), `session_create_orchestrator_decouple_test`, `cap_mint_test`
+  (fail-closed), routing `resolver`/`rule_store`, `scenario_32` (G1 retarget).
+- Migration verified: `plugin_cc/live_join_registry.ex` (118L) +
+  `readiness_adapter.ex` (45L) **deleted**; primitives recreated in `domain_agent`
+  (`live_join_registry.ex` + `transport_readiness.ex`, agent-URI keyed). cc MCP
+  socket/channel/server stay in `plugin_cc` (correct).
+- **Full `mix precommit` running** as the final gate before approve+merge.
 
-- **`#902` product commit `b3b23b74`** (session-template picker) — carried from the
-  first push: the return asks the lead to **split/cherry-pick vs keep inline** at
-  close. Recommendation unchanged: cherry-pick it onto its own branch/PR so the
-  docs/evidence land cleanly, the UI change gets its own review, **and the `#905`∩
-  `#902` `world_live.ex` conflict is eliminated**. Note: `#910` already lands the
-  *backend* `create session.hello from the New-session form` — the picker (`#902`)
-  and the backend (`#910`) are complementary; land them coherently.
-- **`#902` root-cause crux is owned by the lead — now in flight.** `create_session`
-  synchronously gates 90s on the orchestrator MCP bridge-join → timeout → rollback →
-  no-snapshot → `:no_such_actor`. This is being fixed structurally by
-  **`fix/session-create-orchestrator-decouple`** (spec rev6, **handed to codex
-  2026-06-23**): de-orchestrator-ize (orchestrator → `role` member + provision-on-
-  route; readiness gate deleted; readiness contract migrated to `domain_agent`).
-  Plus the return's secondary finding: `dispatch_agent_create/2` must `catch :exit`
-  so a create timeout doesn't crash the LiveView.
-- **`#905` is missing its dev-together return file** —
-  `docs/together/2026-06-23/returns/socialware-creator-agent-config.md` is absent
-  from the PR (CI advisory `#897` will flag it). The PR itself is complete with spec
-  PRD + plan + screenshot/video evidence. **Action: FatNine adds the return file**
-  (with `returned_at`/`deadline_status`) before close; stacked on the strength of the
-  PR + evidence in the meantime, not blocked.
-- **`#907` partial slices (by design, not blockers):** cc-headless is a real
-  implementation this round (`cc_headless_bridge_adapter.ex` + handoff
-  `cc-headless-real-implementation.md`); codex-remote bridge-auth gate is a pre-
-  existing codex issue, not introduced here. DoD met.
+## CI note (why nothing "blocks")
+
+The only GitHub Actions workflow is `dev-together-return-advisory.yml` — a
+**non-blocking** advisory (it shows `pass` even on `#905`, which lacks a return
+file). **There is no test/precommit CI in Actions.** Therefore the merge gate is
+**local `mix precommit` + `check_invariants`**, run per-PR by the lead. PR
+`BLOCKED` state = branch-protection `REVIEW_REQUIRED`, cleared by lead approve
+(+ `--admin` if needed), not a CI failure.
 
 ## Returned-vs-stacked reconciliation (every return accounted for)
 
 | Task / PR | Owner | Return file | Ledger status |
 |---|---|---|---|
+| `session-create-orchestrator-decouple` #912 | Codex | `returns/session-create-orchestrator-decouple.md` ✅ | **stacked** (the #902-crux fix; emergent, not a planned task) |
 | `agent-flavor-headless-protocol-api` #907 | gagameow | `returns/agent-flavor-headless-protocol-api.md` ✅ | **stacked** |
-| `world-hello-convergence` #910 | zhaomaota97 (Claude) | `returns/world-hello-convergence.md` ✅ | **stacked** |
-| `socialware-creator-agent-config` #905 | FatNine | ❌ **missing** | **stacked (return-file gap — FatNine to add)** |
+| `world-hello-convergence` #910 | zhaomaota97 | `returns/world-hello-convergence.md` ✅ | **stacked** |
+| `socialware-creator-agent-config` #905 | FatNine | **lead-recorded** `returns/socialware-creator-agent-config.md` (this push) | **stacked** (FatNine omitted the file; lead reconstructed) |
+| `agent-console-operate-first-demo` #904 | Claude/dev | `returns/agent-console-operate-first-demo.md` ✅ | **demo supplement to #905** (Allen 2026-06-23: a view-only demo, not a finished agent console; folded under #905, not a standalone track) |
 | `world-deploy-e2e-pg` #902 | zylideveloper | `returns/world-deploy-e2e-pg.md` ✅ | **stacked** |
-| `agent-console-operate-first-demo` #904 | — | — | **out-of-scope** — not one of today's four planned tasks (separate Agent Console track); not stacked today |
-
-No return is ignored: all four planned tasks are stacked (one with a flagged
-return-file gap); `#904` is explicitly out-of-today's-plan.
 
 ## Next step
 
-`dev-together close` — review/test in order `#907 → #910 → #905 → #902`, decide the
-`b3b23b74` split (which also clears the `world_live.ex` conflict), confirm `#905`'s
-return file landed, and merge the ready stack to `main`. The `#902` create-rollback
-crux is being fixed out-of-band by the codex-dispatched
-`fix/session-create-orchestrator-decouple` work — independent of merging `#902`'s
-docs/evidence.
+`dev-together close` — review/test in order `#912 → #907 → #910 → #905 → #902`,
+approve→merge each (lead, `--admin` if `REVIEW_REQUIRED`), decide the `#902`
+`b3b23b74` split, and merge to `main`. Decide separately whether `#904`'s demo
+merges or stays as evidence under `#905`. **After close: ESR → ezagent rename
+cleanup (task #89).**
