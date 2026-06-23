@@ -1,7 +1,7 @@
 # Handoff: World Hello Convergence
 
-> **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** an independent developer (human + cc/codex)
-> **Tracking:** `world-hello-convergence` · **Base:** `origin/main` @ `99f9eddb`
+> **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** zhaomaota97
+> **Tracking:** `world-hello-convergence` · **Base:** `origin/main` @ `deebe994`
 > **Status:** confirmed — complete the world hello化 path needed by today's E2E.
 
 ## 0. Mission
@@ -18,7 +18,8 @@ pass the shared E2E.
 3. The `dev-together` skill and handoff standard.
 4. `docs/superpowers/handoffs/2026-06-22-hello-phase0-status.md`.
 5. `docs/together/2026-06-22/returns/hello.md`.
-6. `docs/together/2026-06-23/handoffs/world-deploy-e2e-pg.md`.
+6. `docs/together/2026-06-23/plan.md`.
+7. `docs/together/2026-06-23/handoffs/world-deploy-e2e-pg.md`.
 
 ## 2. Locked decisions (settled — do not re-litigate)
 
@@ -79,7 +80,7 @@ Phase 2: Verify the E2E hello slice.
 
 **Discuss-first:** replacing major world navigation; changing public-view auth; adding new CapBAC authority; making a broad renderer rewrite.
 
-**Deferred:** a full socialware creator UX, advanced page editing, real member-worker orchestration, and any Manage-gate live mutation.
+**Deferred:** a broad socialware creator UX, advanced page editing, real member-worker orchestration, and any Manage-gate live mutation.
 
 **Never deferred here:** a working launch path for hello pages and clear evidence for what part of E2E passes.
 
@@ -87,8 +88,8 @@ Phase 2: Verify the E2E hello slice.
 
 This task owns hello/world page rendering and hello entrypoints. Follow
 `docs/guide/world-coordination.md`; if adding a route-level world surface, update
-`SlotRegistry` and the manifest. Avoid editing creator-specific surfaces; the
-creator branch should consume this task's links/seams.
+`SlotRegistry` and the manifest. Avoid editing agent config surfaces; FatNine's
+branch owns those.
 
 ## 8. Merge model
 

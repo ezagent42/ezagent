@@ -1,7 +1,7 @@
 # Handoff: World PostgreSQL Deploy + Full E2E Evidence
 
-> **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** an independent developer (human + cc/codex)
-> **Tracking:** `world-deploy-e2e-pg` · **Base:** `origin/main` @ `99f9eddb`
+> **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** zylideveloper
+> **Tracking:** `world-deploy-e2e-pg` · **Base:** `origin/main` @ `deebe994`
 > **Status:** confirmed — world must be testable/deployable first, with full manual E2E evidence or a precise unsupported-step matrix by 18:00.
 
 ## 0. Mission
@@ -9,7 +9,7 @@
 Make world reliably testable/deployable on the PostgreSQL substrate and produce
 the shared E2E evidence flow for today's work. First determine whether current
 `main` already supports the full flow. If not, return the support matrix early and
-hand the missing product behavior to the world/hello or creator branch.
+hand the missing product behavior to the world/hello or agent-config branch.
 
 ## 1. Required reading (before writing code)
 
@@ -18,6 +18,9 @@ hand the missing product behavior to the world/hello or creator branch.
 3. The `dev-together` skill and handoff standard.
 4. `docs/guide/world-e2e-seed.md`.
 5. `docs/together/2026-06-22/review.md` for PostgreSQL, agent-browser, and HSTS lessons.
+6. `docs/together/2026-06-23/plan.md`.
+7. `docs/together/2026-06-23/handoffs/socialware-creator-agent-config.md`.
+8. `docs/together/2026-06-23/handoffs/world-hello-convergence.md`.
 
 ## 2. Locked decisions (settled — do not re-litigate)
 
@@ -25,7 +28,7 @@ hand the missing product behavior to the world/hello or creator branch.
 |---|---|---|
 | 1 | Deadline | 2026-06-23 20:00 +08:00. Start close-down at 18:00; if incomplete, return the smallest demonstrable artifact plus an unsupported-step matrix. |
 | 2 | Scope | Deployment/runbook/evidence first. Do not make product UI changes unless the runbook itself is wrong. |
-| 3 | Full E2E owner | This branch owns the checklist and environment. Product gaps discovered here are handed to `world-hello-convergence` or `socialware-creator-mvp`. |
+| 3 | Full E2E owner | This branch owns the checklist and environment. Product gaps discovered here are handed to `world-hello-convergence` or `socialware-creator-agent-config`. |
 | 4 | Merge model | PR into task branch; lead/admin merge only. No direct push to `main`. |
 
 ## 3. Architecture primer
@@ -79,7 +82,7 @@ Phase 2: Produce evidence.
 
 **Discuss-first:** any Cloudflare/production credential requirement; any product UI change; any auth/capability change.
 
-**Deferred:** product fixes for unsupported hello/creator behavior, targeted to `world-hello-convergence` or `socialware-creator-mvp`.
+**Deferred:** product fixes for unsupported hello/agent-config behavior, targeted to `world-hello-convergence` or `socialware-creator-agent-config`.
 
 **Never deferred here:** the support matrix, runbook accuracy, and human-visible evidence for supported steps.
 
