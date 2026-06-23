@@ -112,8 +112,13 @@ defmodule Ezagent.Behavior.Echo do
   # PERSISTENT `state` once, on first-ever existence. No transients
   # here (count + last_msg both survive restart), so `activate/2` is the
   # macro-injected no-op default.
+  # A8 — persist `:flavor` in the durable echo slice so cold-loaded echo
+  # agents (BEAM restart / lazy demand-spawn with no ETS `AgentFlavorAttributes`
+  # row) still resolve their `:in_process_sync` transport via
+  # `AgentFlavorResolver.flavor_from_durable_snapshot/1`. Mirrors
+  # `Behavior.CurlAgent.create/1` (PR-6 codex P1).
   @impl Ezagent.Lifecycle
-  def create(_args), do: {:ok, %{count: 0, last_msg: nil}}
+  def create(_args), do: {:ok, %{flavor: "echo", count: 0, last_msg: nil}}
 
   # ---------------------------------------------------------------
   # handle_<action>/2 (new contract — unchanged by Lifecycle migration)

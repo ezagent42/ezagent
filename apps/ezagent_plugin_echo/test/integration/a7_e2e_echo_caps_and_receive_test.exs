@@ -17,14 +17,11 @@ defmodule EzagentPluginEcho.Integration.A7EchoCapAndReceiveTest do
 
   Echo's purpose: when it RECEIVES a chat message, it replies back with
   "echo: <text>". After the refactor, `:receive` on `Entity.Agent` is
-  handled by `Behavior.Agent.Receive` → `AgentBridge`. There is no echo
-  AgentBridge adapter registered, so deliver goes to `:subprocess_ws` →
-  `:no_bridge`. `Behavior.Echo.handle_receive/2` is NEVER called.
-
-  **Verify 2 FAILS** — the refactor broke echo's core reply function.
-  This test is tagged `:known_regression` to document the finding for
-  Allen to action (a follow-up task: register an echo AgentBridge adapter
-  OR implement per-flavor receive routing in `Behavior.Agent.Receive`).
+  handled by `Behavior.Agent.Receive` → `AgentBridge`. A8 registers
+  `EzagentPluginEcho.BridgeAdapter` (`:in_process_sync` transport) so
+  `deliver/2` calls `Behavior.Echo.handle_receive/2` in-process and fires
+  the echo reply immediately. Was tagged `:known_regression` in A7; fixed
+  in A8.
 
   ## Files changed by A7 (production fixes, not test-only):
 
@@ -37,6 +34,24 @@ defmodule EzagentPluginEcho.Integration.A7EchoCapAndReceiveTest do
     (cold-loads, test re-seeds, CLI respawns) also get the flavor's
     behavior set. Without this, any demand-spawn of a stale-snapshot
     echo agent produced a behaviors-less instance.
+
+  ## Files changed by A8 (echo-on-receive fix):
+
+  - `EzagentPluginEcho.BridgeAdapter` — new `:in_process_sync` adapter that
+    calls `Behavior.Echo.handle_receive/2` in-process and dispatches its
+    `session.send` reply effects immediately.
+  - `EzagentPluginEcho.Application.agent_flavors/0` — `bridge_adapter:` key
+    (registers the adapter for flavor `"echo"`).
+  - `Ezagent.Behavior.Echo.create/1` — adds `flavor: "echo"` to the slice so a
+    cold-loaded echo agent resolves its flavor from the durable snapshot.
+
+  NOTE: `:sync_result` is deliberately NOT registered for echo — it is globally
+  bound to `Behavior.CurlAgent`, so registering it would crash boot. The
+  platform-enqueued `:sync_result` `:cast` is therefore dropped: echo's
+  `:count`/`:last_msg` are not updated on a bridge-receive, and the drop emits a
+  `:authz, :denied` (`behavior_not_in_instance_set`) telemetry event per receive.
+  The echo reply itself is unaffected. Proper `:sync_result` handling for echo is
+  a follow-up (A7 "option C").
   """
 
   use ExUnit.Case, async: false
@@ -200,7 +215,6 @@ defmodule EzagentPluginEcho.Integration.A7EchoCapAndReceiveTest do
 
   describe "Verify 2 — echo-on-receive (chat.send fan-out triggers echo reply)" do
     @tag :integration
-    @tag :known_regression
     test "echo agent replies 'echo: <text>' when session dispatches chat.send to it", %{
       ws_name: _ws_name,
       workspace_uri: workspace_uri,
@@ -225,11 +239,15 @@ defmodule EzagentPluginEcho.Integration.A7EchoCapAndReceiveTest do
         # Create a session + join the echo agent.
         session_name = "a7v2-sess-#{System.unique_integer([:positive])}"
 
+        # Create the session in the SAME workspace as the echo agent so
+        # workspace isolation check passes when the session dispatches
+        # agent.receive to the echo agent.
         assert {:ok, session_uri, _meta} =
                  EzagentDomainInstanceMessage.SessionCreator.create_session(
                    session_name,
                    User.admin_uri(),
-                   template_name: "default"
+                   template_name: "default",
+                   workspace_uri: workspace_uri
                  )
 
         join_target = Ezagent.URI.with_action(session_uri, :session, :join)
@@ -276,27 +294,16 @@ defmodule EzagentPluginEcho.Integration.A7EchoCapAndReceiveTest do
 
         # Second broadcast: echo's reply "echo: <text>" from the echo agent's URI.
         #
-        # KNOWN REGRESSION — this assertion FAILS post-A1-A5.
-        #
-        # Root cause: {Entity.Agent, :receive} → Behavior.Agent.Receive →
-        # Delivery.deliver_agent_receive → AgentBridge.deliver_ensuring →
-        # :no_bridge (no echo AgentBridge adapter). Behavior.Echo.handle_receive/2
-        # is NEVER invoked; the "echo: <text>" reply Message is NEVER dispatched.
-        #
-        # Required follow-up (separate task for Allen):
-        # Option A: Register an echo AgentBridge adapter with transport_class
-        #   :in_process_sync that calls Behavior.Echo.handle_receive/2.
-        # Option B: Implement per-flavor receive routing in Behavior.Agent.Receive
-        #   so echo-flavor instances dispatch to Behavior.Echo directly.
-        # Option C: Per-instance behavior selection for {Entity.Agent, :receive}
-        #   (requires BehaviorRegistry/dispatch redesign — noted in Behavior.Agent.Receive
-        #   moduledoc "KNOWN LIMITATION").
+        # A8 FIX — this assertion now passes. The echo :in_process_sync bridge
+        # adapter (EzagentPluginEcho.BridgeAdapter) calls
+        # Behavior.Echo.handle_receive/2 in-process and fires the session.send
+        # reply synchronously, so the reply arrives before this assert_receive
+        # window expires.
         assert_receive {:chat_message, ^session_uri, %Message{} = reply},
                        2000,
-                       "KNOWN REGRESSION: echo-on-receive does NOT produce a reply after A1-A5. " <>
-                         "Behavior.Agent.Receive routes to AgentBridge (no echo adapter). " <>
-                         "Behavior.Echo.handle_receive/2 is never called. " <>
-                         "Follow-up task required (see test moduledoc for options)."
+                       "echo-on-receive must produce a reply. " <>
+                         "If this fails, check that EzagentPluginEcho.BridgeAdapter " <>
+                         "is registered for flavor 'echo' (A8 fix)."
 
         reply_text =
           case reply.body do

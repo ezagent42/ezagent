@@ -117,7 +117,9 @@ defmodule Ezagent.Behavior.EchoColdLoadTest do
     {:ok, %{state: state_before, transients: transients_before}} =
       Kind.get_raw_slice(uri, @slice_key)
 
-    assert state_before == %{count: 1, last_msg: "remember-me"}
+    # A8 — flavor: "echo" is now persisted in the durable state for cold-load
+    # flavor resolution (AgentFlavorResolver.flavor_from_durable_snapshot/1).
+    assert state_before == %{flavor: "echo", count: 1, last_msg: "remember-me"}
     # No transients — the no-transients property of this representative
     # example (so the cold-restart bug class does not apply here).
     assert transients_before == %{}

@@ -96,6 +96,17 @@ defmodule EzagentPluginEcho.Application do
     # `EzagentDomainAgent.Application`); re-registering it here causes a
     # capability-conflict boot crash. The echo flavor's inbound delivery flows
     # through `Agent.Receive` → `AgentBridge` → the echo adapter (same as curl).
+    #
+    # A8 note — `:sync_result` is NOT registered here. `{Entity.Agent,
+    # :sync_result}` is already globally bound to `Behavior.CurlAgent` by
+    # `EzagentPluginCurlAgent.Application`; re-registering it here would cause
+    # a capability-conflict boot crash (same invariant as `:receive`). The
+    # deferred `:sync_result` `:cast` that `Behavior.Agent.Receive` enqueues
+    # for all `:in_process_sync` adapters will fail with
+    # `{:behavior_not_in_instance_set}` for echo agents (curl behavior is not
+    # in echo's instance set) — a best-effort silent drop. Echo's echo reply
+    # is already fired synchronously inside `BridgeAdapter.deliver/2` before
+    # the `:sync_result` re-dispatch is even enqueued, so the drop is harmless.
     [
       {Ezagent.Entity.Agent, :say, Ezagent.Behavior.Echo},
       {Ezagent.Entity.Agent, :write, Ezagent.Behavior.Pty}
@@ -118,6 +129,13 @@ defmodule EzagentPluginEcho.Application do
         # `instance_behaviors: &AgentKind.curl_behaviors/0`).
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginEcho.Template.EchoAgent,
+        # A8 — register the `:in_process_sync` bridge adapter so that
+        # `{Entity.Agent, :receive}` fan-out is routed to
+        # `EzagentPluginEcho.BridgeAdapter.deliver/2` (which calls
+        # `Behavior.Echo.handle_receive/2` in-process and fires the
+        # "echo: <text>" `session.send` reply). Without this, the delivery
+        # falls to the `:subprocess_ws` default → `:no_bridge` → silent drop.
+        bridge_adapter: EzagentPluginEcho.BridgeAdapter,
         instance_behaviors: &Ezagent.Entity.Agent.echo_behaviors/0
       }
     ]

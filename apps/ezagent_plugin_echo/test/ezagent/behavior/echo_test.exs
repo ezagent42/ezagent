@@ -45,8 +45,12 @@ defmodule Ezagent.Behavior.EchoTest do
       # Lifecycle (SPEC 2026-05-29 §2.3): `init_slice/1` is macro-emitted
       # and returns `%{state:, transients:}`; `create/1` builds the
       # persistent `.state` (Echo has no transients).
-      assert Echo.init_slice(%{}) == %{state: %{count: 0, last_msg: nil}, transients: %{}}
-      assert {:ok, %{count: 0, last_msg: nil}} = Echo.create(%{})
+      # A8 — added `flavor: "echo"` to persistent state for cold-load
+      # flavor resolution via `AgentFlavorResolver.flavor_from_durable_snapshot/1`.
+      assert Echo.init_slice(%{}) ==
+               %{state: %{flavor: "echo", count: 0, last_msg: nil}, transients: %{}}
+
+      assert {:ok, %{flavor: "echo", count: 0, last_msg: nil}} = Echo.create(%{})
     end
 
     test "required_caps/0 uses :agent kind axis (echo is now Entity.Agent)" do
