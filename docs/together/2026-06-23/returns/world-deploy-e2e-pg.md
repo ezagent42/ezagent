@@ -7,6 +7,8 @@
 | Branch | `world-deploy-e2e-pg` (off `main` @ `9835cfe3`) |
 | Handoff | `docs/together/2026-06-23/handoffs/world-deploy-e2e-pg.md` |
 | Deadline | 2026-06-23 20:00 +08:00 (18:00 checkpoint) |
+| returned_at | 2026-06-23 14:45 +08:00 |
+| deadline_status | `on_time` — refreshed runbook + support matrix + **root-caused crux** delivered well before the 18:00 checkpoint (the early-return path the handoff prescribes when the full operator E2E is blocked). |
 | Status | **runbook refreshed + support matrix + live agent-browser walkthrough done**. Steps 1-2 ✅ (with 2 UX bugs), step 3/4 ⛔ blocked by one crux bug — **root-caused live at 14:40 (§7): NOT a cap issue. The session has no respawnable snapshot → `:session :send` returns `:no_such_actor`, swallowed by the `:cast` path**. Steps 5-8 hello → task 3. Evidence screenshots in `docs/together/2026-06-23/evidence/`. |
 
 ## 1. Phase 0 — runbook refreshed for PostgreSQL ✅ (DONE)
