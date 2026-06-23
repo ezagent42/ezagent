@@ -15,6 +15,19 @@ export default {
       const mid = (parsed.messageId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 60);
       const key = `inbox:${to}:${ts}:${mid}`;
 
+      // task #88 PR-2 §4.5a — capture the headers ezagent needs to enforce
+      // inbound auth (SPF/DKIM/DMARC) AND the loop/bounce guard, in ONE
+      // revision. Cloudflare Email Routing computes the auth verdict on the
+      // `Authentication-Results` header; `Auto-Submitted` / `Precedence`
+      // mark auto-replies + bulk mail; an empty envelope-from (`<>`) is the
+      // RFC 5321 bounce marker.
+      const header = (name) => {
+        const h = parsed.headers && parsed.headers.find
+          ? parsed.headers.find((x) => (x.key || "").toLowerCase() === name)
+          : null;
+        return h ? h.value : "";
+      };
+
       const record = {
         key,
         from: message.from,
@@ -26,6 +39,12 @@ export default {
         messageId: parsed.messageId || "",
         receivedAt: new Date(ts).toISOString(),
         size: message.rawSize || 0,
+        // #88 PR-2 §4.5a auth + loop-guard fields:
+        authResults: header("authentication-results"),
+        autoSubmitted: header("auto-submitted"),
+        precedence: header("precedence"),
+        // envelope-from (RFC 5321 MAIL FROM); empty `<>` = bounce/NDR.
+        returnPath: message.from || "",
       };
 
       await env.EMAIL_INBOX.put(key, JSON.stringify(record), { expirationTtl: TTL });

@@ -18,12 +18,12 @@ defmodule EzagentPluginEmail.Application do
     Kind for `:allow_email`, satisfying `AdapterCapSubjectRegisteredTest`
     (a real registered `behavior_module`, not the `nil` opt-out).
 
-  ## NOT in PR-1
+  ## PR-2 declarations (inbound)
 
-  No `children/0` — the inbound poll loop (`Ezagent.Email.Inbound`) lands in
-  PR-2, gated on the addressing/verification/auth/dedup work. PR-1 makes no
-  bidirectional-complete claim and is production-inert until PR-2 mints
-  `:verified` bindings.
+  - `children/0` → `[Ezagent.Email.Inbound]` — the inbound poll loop.
+    Skipped at test boot (`Mix.env() == :test`), mirroring Feishu's
+    `maybe_ws_client_spec/0`, so the suite doesn't run a live poller / leak
+    network calls to the CF Worker.
   """
   use Application
   use Ezagent.Plugin
@@ -63,4 +63,18 @@ defmodule EzagentPluginEmail.Application do
   # via `AdapterInstall.install/1` once the adapter lands in AdapterRegistry.
   @impl Ezagent.Plugin
   def adapters, do: [{Adapter, Binding}]
+
+  # #88 PR-2 (§4.7) — the inbound poll loop. Skipped at test boot so the
+  # suite doesn't run a live poller or hit the CF Worker (mirrors Feishu's
+  # `maybe_ws_client_spec/0`).
+  @impl Ezagent.Plugin
+  def children, do: Enum.reject([maybe_inbound_spec()], &is_nil/1)
+
+  defp maybe_inbound_spec do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+      nil
+    else
+      Ezagent.Email.Inbound
+    end
+  end
 end
