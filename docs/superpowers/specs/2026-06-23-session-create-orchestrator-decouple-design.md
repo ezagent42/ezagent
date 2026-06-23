@@ -1,427 +1,435 @@
-# Decouple Session Creation from Orchestrator Spawn — Design (rev3)
+# De-orchestrator-ize the Session: Orchestrator as a `role` Member + Provision-on-Route — Design (rev4)
 
-> Status: design (brainstorm-approved 2026-06-23; **rev3** addresses the proper
-> `/codex:adversarial-review` of rev2 — 1 BLOCKER + 2 HIGH, all verified against
-> code; rev2 had addressed the first review's 2 BLOCKER + 4 HIGH + 3 MED).
-> Supersedes the orchestrator-coupling decision in
-> `docs/superpowers/specs/2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md`
-> (§9). Fixes the PR #902 session-creation bug.
+> Status: design (brainstorm-approved 2026-06-23). **rev4 is a major redesign**
+> of rev1–rev3 (which kept the orchestrator special and added an eager
+> reconciler + bounded await). Per Allen's 2026-06-23 direction, rev4 removes the
+> orchestrator concept from the session entirely: it becomes an ordinary
+> `role: orchestrator` member, brought up **lazily by routing** (no separate
+> reconciler, no readiness wait). Supersedes the create→orchestrator coupling in
+> `2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md` and
+> `2026-05-26-session-create-orchestrator-unified.md`. Fixes PR #902.
+>
+> **Deliverable: this spec + a handoff doc + a codex prompt.** Implementation is
+> by codex, sequenced as green-at-each-step PRs. The §13 de-orchestrator-ization
+> checklist (derived from the full audit) is the completeness gate.
 
-## 0a. What changed in rev3 (read first)
+## 0. What changed across revisions
 
-The adversarial-review confirmed the decouple direction but flagged three
-load-bearing gaps; rev3 closes them:
-
-- **Status write ordering (BLOCKER):** `:pending` is now written in the Session
-  Kind's **birth slice** (`init_slice`, persisted in the initial snapshot) —
-  NOT late, after bind. And every terminal status write (`:ready`/`:failed`) is
-  **monotonic via a per-attempt id (CAS)**: a stale/late write can never
-  overwrite a newer terminal status. Together this removes the hazard where a
-  fast worker's `:ready` could be clobbered by a late `:pending` (e.g. test-mode
-  / already-present orchestrator).
-- **Residue ledger completeness (HIGH):** the ledger now enumerates **every**
-  side effect the ensure performs after spawn (see §4.3), each compensated
-  idempotently, each with a failure-injection test.
-- **Mandatory global concurrency cap (HIGH):** the bring-up supervisor MUST be a
-  single global-capped queue/pool (fixed max in-flight across ALL sessions) plus
-  atomic per-session dedup. Per-session dedup alone does not bound the
-  cold-restart boot storm; the global cap is no longer an optional alternative.
-
-## 0. What changed in rev2 (read first)
-
-The brainstorm direction (decouple; orchestrator bring-up is best-effort,
-re-attempted on activation) is unchanged. rev2 fixes correctness gaps the review
-found:
-
-- **Fresh-create no longer relies on `on_ready` firing during spawn** (it would
-  race the post-spawn workspace bind → the guard would see an unbound session).
-  Instead `create_session` **explicitly kicks** the bring-up task *after* the
-  synchronous session is fully built (spawned + bound + OTU + owner-joined).
-  `on_ready`/`activated/2` is used **only for respawn / cold-restart**
-  re-attempts, where the workspace bind is already durable. Both paths converge
-  on one bounded bring-up worker. *(This is a refinement of "pure on_ready",
-  flagged for Allen — it still gives "re-attempt on each activation".)*
-- **`orchestrator_status` is made durable** (new working-copy fields) — today it
-  exists only in the create return value.
-- **Bring-up is genuinely residue-only** via a compensation ledger (today the
-  `new_session?: false` failure branch leaves the session alive but does NOT
-  revoke partial orchestrator/cap/MCP/member residue).
-- **Deadline is threaded at the real 90s gate** (`await_orchestrator_ready/3`,
-  `@orchestrator_readiness_timeout_ms`), not at a SessionCreator wrapper.
-- **Boot-storm bounded**: a dedicated bring-up supervisor with in-flight dedup,
-  so N orchestrator-bearing sessions respawning on cold start don't fan out N
-  concurrent 90s ensures.
-- **Member/team boundary made explicit**: synchronous create joins the **owner
-  only** (owner authority); template-team + orchestrator join stay in the async
-  bring-up (preserving existing member lineage / grantor semantics).
-- **Supersession migrates executable tests**, not just prose (§10).
+- rev1–3: kept orchestrator special; create either waited (atomic, rollback) or
+  spun an **eager reconciler** + bounded-await worker + CAS status. The proper
+  adversarial-review + Allen's review showed the wait itself is agent-layer and
+  the eager reconciler is unnecessary.
+- **rev4 (this)**: orchestrator is just a `role: orchestrator` member; the
+  "bring the declared member into existence" function folds into **role-based
+  routing as provision-on-route** (lazy); the readiness gate is **deleted**;
+  the Session Kind / session domain is **fully de-orchestrator-ized**.
 
 ## 1. Summary
 
-Creating a session and bringing up its cc orchestrator agent are welded into one
-all-or-nothing operation. When the orchestrator cannot become ready, session
-creation is dragged down — it exceeds the dispatch budget, gets rolled back, and
-the rollback **deletes the session's respawnable snapshot**, leaving no usable
-session.
+Today the session and its orchestrator agent are welded together: `create_session`
+synchronously spawns the orchestrator, **waits up to 90s** for the orchestrator's
+live MCP bridge-join, and on timeout **kills the orchestrator and rolls the whole
+session back — deleting the session's respawnable snapshot**. A hung orchestrator
+(e.g. its claude process stalls at an onboarding dialog) therefore destroys an
+otherwise-fine session (PR #902).
 
-This design splits the concerns:
+rev4 removes the coupling at the root by removing the *specialness*:
 
-- **Creating the session** (a chat space with its owner + a respawnable
-  snapshot) always succeeds quickly and durably.
-- **Bringing up the orchestrator** is a best-effort, bounded, async step that can
-  fail / time out / be retried, and **never harms the session**.
+1. **`create_session` is pure** — it creates the session, joins the owner, and
+   records the SessionTemplate's declaration (members + routing rules + legends +
+   prompts). It never spawns, waits for, or rolls back on the orchestrator.
+2. **Orchestrator = a `role: orchestrator` member** — one entry in
+   `SessionTemplate.members`; the dedicated `orchestrator_template_uri` field and
+   the special `[owner, orchestrator]` create arm are removed.
+3. **Provision-on-route (lazy)** — routing rules target **roles**. When routing
+   resolves a rule to a declared role that has **no live member**, the router
+   provisions it (spawn the declared agent + join + materialize its rules) and
+   then delivers (buffered until the agent is ready — no wait). This is the single
+   primitive that replaces both the old synchronous ensure and the (rejected)
+   eager reconciler.
+4. **Readiness gate deleted** — no 90s wait, no kill, no rollback. Orchestrator
+   readiness is the agent's own concern; the session only *reads/displays* it via
+   `Orchestrator.Health` + `LiveJoinRegistry`.
+5. **Session Kind de-orchestrator-ized** — no orchestrator-specific fields,
+   caps-special-casing, tools-naming, or transport references remain in the
+   session domain (§13 checklist).
 
 ## 2. The bug (root cause, verified on `main` 2026-06-23)
 
-Causal chain (each link code-verified; reproduced ×5 via in-node erpc by the
-`world-deploy-e2e-pg` E2E pass — PR #902
-`docs/together/2026-06-23/e2e-blocker-analysis.md`):
+Chain (each link code-verified; reproduced ×5 via in-node erpc by the
+`world-deploy-e2e-pg` pass — PR #902 `docs/together/2026-06-23/e2e-blocker-analysis.md`):
 
-1. The orchestrator is a cc agent. On the current E2E host it hangs at claude's
-   project-scoped MCP-trust onboarding dialog (`esr-bridge`) → never reaches
-   `:ready`. *(Agent-side onboarding fix is OUT OF SCOPE — owned by other devs.
-   This design makes create robust regardless of why bring-up fails.)*
-2. `SessionCreator.create_session/3` runs orchestrator ensure+join
-   **synchronously** in `finalize_fresh_session` →
-   `ensure_orchestrated_session(.., new_session?: true)`.
-3. That ensure waits for orchestrator readiness with a **90s** budget
-   (`Ezagent.Entity.Session.Orchestrator` `@orchestrator_readiness_timeout_ms
-   90_000`, `await_orchestrator_ready/3`). The **outer** `workspace.create_session`
-   `:call` only has the framework dispatch budget (`Ezagent.Invocation`,
-   `inv.ctx[:deadline_ms] || 5_000`), so the caller times out at 5s while the
-   server keeps grinding toward 90s.
-4. On step-4..8 failure the create-NEW path calls `rollback_session/3`, which
+1. The orchestrator is a cc agent; its claude process can hang at the project MCP-
+   trust onboarding dialog (`esr-bridge`) → it never live-joins. *(Agent-side
+   onboarding fix is OUT OF SCOPE — other devs. rev4 makes the session robust
+   regardless of why bring-up is slow/fails.)*
+2. `SessionCreator.create_session/3` ensures the orchestrator **synchronously**
+   (`finalize_fresh_session` → `ensure_orchestrated_session(new_session?: true)`).
+3. The ensure **waits up to 90s** for the live bridge-join
+   (`Ezagent.Entity.Session.Orchestrator.await_orchestrator_ready/3`, polling
+   `LiveJoinRegistry.joined?`, `@orchestrator_readiness_timeout_ms 90_000`). The
+   outer `workspace.create_session` `:call` only has the 5s framework dispatch
+   budget (`Ezagent.Invocation`, `inv.ctx[:deadline_ms] || 5_000`), so the caller
+   times out at 5s while the server grinds toward 90s.
+4. On step-4..8 failure the create-NEW arm calls `rollback_session/3`, which
    **terminates the Session Kind AND deletes its `kind_snapshots` row**.
-5. A later `:session :send` lazy-spawns from snapshot; with the snapshot gone,
+5. A later `:session :send` lazy-spawns from snapshot; with the snapshot deleted,
    `Ezagent.Invocation` returns `{:error, :no_such_actor}`.
-6. The error is invisible: the world composer dispatches `send` with
-   `mode: :cast` + `reply: :ignore` (`conversation_actions.ex` `send_message`) —
-   it lands only in a hidden `data-last-dispatch` attribute.
+6. The error is invisible: the world composer sends `mode: :cast` + `reply:
+   :ignore` (`conversation_actions.ex` `send_message`).
 
 Not a capability problem (admin holds the wildcard cap; a snapshot-bearing
-session accepts the same send). The defect is the create→orchestrator coupling +
-the snapshot-deleting rollback.
+session accepts the identical send). The defect is the create→orchestrator
+coupling + the snapshot-deleting rollback.
 
 ## 3. Goals / non-goals
 
 **Goals**
-- `create_session` returns a usable session quickly, independent of orchestrator
-  outcome.
-- Orchestrator failure NEVER rolls back / deletes / terminates the session.
-- "Session exists, orchestrator not ready" is a first-class, durable, observable
-  state.
-- Bring-up is retried on each activation (fresh + cold-restart) and on demand
-  via the existing "Restart orchestrator" action — **bounded** to avoid a boot
-  storm.
-- Bring-up failure is genuinely residue-only (no leaked orchestrator/cap/MCP).
-- Swallowed dispatch errors are surfaced.
+- `create_session` returns a usable session immediately, independent of any
+  agent member's bring-up.
+- No code path waits for, kills, or rolls back a session because of an
+  orchestrator (or any agent member).
+- Orchestrator is an ordinary `role: orchestrator` member; the Session Kind /
+  session domain contains zero orchestrator-specific logic (§13).
+- A declared agent member is brought up **lazily, on first route to its role**,
+  spawned + joined + its rules installed; delivery buffers until it is ready.
+- Orchestrator status is a pure read (`Health`/`LiveJoinRegistry`); swallowed
+  dispatch errors are surfaced.
 
-**Non-goals (YAGNI v1)**
-- No automatic failure-retry loop within a single activation (manual + next
-  activation only).
-- No replay of messages sent while the orchestrator was down.
+**Non-goals (YAGNI for this work)**
+- No eager reconciler / activation sweep (rejected — provision-on-route covers
+  it). A future pre-warm option may add an `on_ready` "prepare member" trigger;
+  NOT in this work.
+- Owner-delegated cap authority for the orchestrator's `{:spawned_by}` cap
+  (#153/#154) stays deferred — the role-member keeps today's system/genesis-backed
+  grant (§4.6).
 - The cc onboarding / MCP-trust auto-dismiss (agent-side, other devs).
+- Rate-cap / loop detection beyond what exists.
 
 ## 4. Design
 
-### 4.1 Synchronous create stays small (owner-only)
+### 4.1 `create_session` is pure
 
-`create_session/3` → `finalize_fresh_session`, for an orchestrator-bearing
-template, synchronously does only cheap local work:
+`create_session/3` for any template synchronously does only:
 
-1. spawn the Session Kind (`Ezagent.Kind.spawn(Session, %{.., orchestrator_template_uri:, session_template_uri:})`)
-   — the Kind's init writes its respawnable snapshot atomically with the
-   `ever_created` marker (`Kind.Server` initial-snapshot path); the OTU **and**
-   `orchestrator_status: :pending` are in the **birth slice** (§4.4, §4.5), so
-   `:pending` is durable from t=0 (before `activated/2` or any worker can run) —
-   create does NOT write `:pending` late,
+1. spawn the Session Kind (`Ezagent.Kind.spawn(Session, …)`) — init writes the
+   respawnable snapshot atomically with `ever_created`,
 2. bind the session to its workspace (`WorkspaceRegistry.bind/2`),
-3. join the **owner only** (owner authority) so the session is immediately
-   usable,
+3. join the **owner** (a user — no spawn),
+4. install the SessionTemplate's **declaration** that does not require agent
+   members to exist yet: the **role-targeted** routing rules, legends, prompt
+   templates (§4.3), and record the member **declarations** (role → agent
+   template) on the working copy,
 
-then returns `{:ok, session_uri, %{orchestrator_status: :pending, ...}}`. It does
-**not** run `ensure_orchestrated_session` and does **not** join the orchestrator
-or the template team synchronously.
+then returns `{:ok, session_uri, %{}}`. It does **not** spawn agent members, does
+**not** call `ensure_orchestrated_session`, does **not** wait, and has **no
+orchestrator arm**. The old plain-vs-orchestrated branch collapses into this one
+path. Agent members are provisioned later, lazily, by routing (§4.4).
 
-After the synchronous session is complete (still under the per-URI
-`:create_session` `:global` lock create already holds), it **kicks the bounded
-bring-up worker** (§4.3) for this session and returns. Kicking here — *after*
-bind — is deterministic and avoids the race where an `on_ready`-launched task
-could start before the workspace bind committed.
+The synchronous-create rollback (`rollback_session/3`) is retained ONLY for
+failures of these cheap synchronous steps (snapshot/bind/owner-join). It never
+fires for an agent member.
 
-> Member boundary (codex HIGH): template-team materialization currently runs
-> only after orchestrator success, granting via `orchestrator_uri`
-> (`template_team.ex`). To preserve member lineage / grantor semantics, the
-> template team (non-owner members) is materialized inside the async bring-up,
-> NOT in synchronous create. Immediate usability needs only the owner, who is
-> joined synchronously with owner authority.
+### 4.2 Orchestrator becomes a `role: orchestrator` member
 
-### 4.2 `on_ready` / `activated/2` drives re-attempt on respawn
+- `SessionTemplate`: **delete** the dedicated `orchestrator_template_uri` field
+  (+ its `@config_atom_keys` entry, working-copy default, the plain-vs-orchestrated
+  comments). The orchestrator becomes one entry in the existing
+  `members: [map()]` list: `%{role_name: "orchestrator", source_template_uri:
+  "template://…/cc-orchestrator", in_session_template: true}`.
+- The default SessionTemplate seed (`application.ex do_seed_default_session_template`
+  + `config :default_orchestrator_template_uri`) seeds the orchestrator **as a
+  member**, not a separate field.
+- The destination is half-built already: the cc-orchestrator AgentTemplate already
+  carries `role: "orchestrator"` (`cc_orchestrator_seed.ex`), `OrchestratorRole`
+  is a flavor-agnostic Role recipe, and scenario_32 already asserts "orchestrator
+  is a member of its session." rev4 finishes this migration.
 
-The Session-lifecycle Behavior implements the Lifecycle `activated/2` callback
-(the `use Ezagent.Lifecycle` name for `on_ready/2`; `Kind.Server` runs it AFTER
-the `ReadyGate` flip, `run_on_ready_hooks/3`, and isolates raises — the Kind
-stays `:ready`). On **every** activation it:
+### 4.3 Role-targeted routing rules (resolve at route-time)
 
-- reads its own slice: if the session has an OTU **and** the planned orchestrator
-  is not live (`KindRegistry` lookup on the planned orchestrator URI — a
-  slice/registry check that does NOT depend on `WorkspaceRegistry`, so it is safe
-  even in the brief pre-bind window) **and** no bring-up is already in flight
-  (§4.3 dedup) → **kick the bounded bring-up worker** and return immediately;
-- else no-op.
+Today `materialize_template_team` resolves rules `role → uri` at materialize-time
+(`install_template_rule_sets(role_to_uri)`), which requires members to exist.
+rev4 changes rules to **carry the role** and resolve to a member **at route-time**:
 
-On a fresh create, `activated/2` may fire during spawn before bind — this is now
-safe because (a) `:pending` is already in the birth slice (no late create write
-to clobber a fast worker's terminal status — the rev3 BLOCKER fix), (b) the
-guard does not need the bind, and (c) the worker it would kick is de-duplicated
-against the explicit kick from `create_session` (§4.3), so at most one bring-up
-runs. On cold-restart respawn, the bind is already durable, so `activated/2` is
-the sole driver. `activated/2` must NOT await readiness (it runs in the Kind's
-process; blocking it stalls the mailbox even though `ReadyGate` says ready).
+- `create_session` installs the SessionTemplate's rule-sets as **role-targeted**
+  rules (no member URIs needed yet).
+- At route-time the router resolves a rule's role-target to the session's live
+  member for that role (via membership + role lookup, all runtime).
 
-### 4.3 One bounded, deduplicated bring-up worker (reuses `repair_orchestrator`)
+This is what lets routing both (a) deliver to an existing role-member and (b)
+trigger provisioning when the declared role has no live member (§4.4).
 
-Both entry points (the explicit create kick + the `activated/2` respawn kick)
-converge on a single bring-up path under a dedicated bring-up manager added to
-`EzagentDomainInstanceMessage.Application`. It MUST enforce a **global
-concurrency cap** (a single GenServer queue or a fixed-size worker pool — a
-mandatory ceiling on total in-flight bring-ups across ALL sessions) **plus**
-atomic per-session in-flight dedup. Per-session dedup alone only prevents
-duplicate work for one session; on cold restart N distinct orchestrator-bearing
-sessions would still launch N concurrent 90s readiness waits — exactly the
-2026-05-31 SPEC boot-storm warning. The global cap is therefore not optional. A
-second kick for a session already in flight is a no-op.
+### 4.4 Provision-on-route (the single bring-up primitive)
 
-The worker runs the existing
-`EzagentDomainInstanceMessage.repair_orchestrator/1,2`
-(`SessionCreator.do_repair_orchestrator`) — the SAME path the operator "Restart
-orchestrator" button calls. It re-materializes the OTU (idempotent) and runs the
-ensure gate (spawn orchestrator + caps + MCP + join orchestrator + materialize
-team) with **`new_session?: false`** semantics, which already **leaves the
-Session Kind + snapshot + members alive** on failure — NOT the snapshot-deleting
-`rollback_session/3`.
+When the router resolves a rule whose target **role** is **declared** by the
+SessionTemplate but has **no live member** in the session:
 
-**Deadline (codex MED):** the real wait is `await_orchestrator_ready/3`
-(`@orchestrator_readiness_timeout_ms 90_000` in
-`entity/session/orchestrator.ex`). Thread an explicit deadline/opts through
-`Session.ensure_orchestrator/3` → `await_orchestrator_ready/3` (new arity) so the
-worker bounds it (default ~30s, configurable) and gets a clean
-`{:error, :timeout}` to compensate — rather than an external `Task.shutdown` that
-kills the ensure mid-flight.
+1. **Provision** the member: read the declaration (role → agent template), spawn
+   the agent (the generic member-spawn path — `Tools.spawn_member` /
+   `spawn_from_template_content`), join it to the session, and install any rules
+   that target it (resolve its role → its new URI). All fast; no wait for the
+   agent's claude/bridge to become ready.
+2. **Deliver** the routed message to the now-joined member. If the member is not
+   yet ready, delivery buffers via `PendingDelivery` and runs when it announces
+   ready (existing lazy-dispatch behavior). The router is never blocked.
 
-**Residue-only via ledger (codex HIGH):** the `new_session?: false` failure
-branch leaves the session alive but does NOT currently revoke the partial
-residue of the failed attempt. Today the ensure writes the working-copy
-`orchestrator_uri` BEFORE granting caps/MCP and starts a SessionManager BEFORE
-member/team materialization (`session_creator.ex` ensure region), so a naive
-"compensate spawn/caps/MCP/members" misses real residue. The ledger MUST cover
-**every** side effect the ensure performs, in order, each recorded when done and
-compensated idempotently on failure/timeout:
+Properties:
+- **Idempotent / race-safe**: provisioning holds the per-session create lock (the
+  existing `:create_session` `:global` lock id, reused) so concurrent routes /
+  a manual restart cannot double-spawn; a member already live short-circuits.
+- **Self-healing on death**: a member that crashes is re-provisioned on the next
+  route to its role (no separate reconciler needed).
+- **No boot storm**: members are provisioned only when actually routed to, so
+  there is no cold-restart fan-out of N concurrent bring-ups (the 2026-05-31
+  boot-storm warning is satisfied by laziness).
+- **Cross-workspace** (audit surprise #6): provisioning must preserve the
+  sanctioned system-template → tenant-workspace spawn that `ensure_orchestrator`
+  does today (it bypasses `Behavior.Template.resolve_workspace_uri/3`'s
+  anti-cross-workspace guard); the generic member-spawn path used here must keep
+  that sanctioned bypass for system-scoped role templates.
 
-1. working-copy `orchestrator_uri` write (clear it),
-2. spawned orchestrator process + its ownership/bindings (terminate + unbind),
-3. owner manage/restart caps (revoke),
-4. orchestrator scoped caps (revoke),
-5. MCP context registration (deregister),
-6. SessionManager process, if started (stop),
-7. member joins + template-team rows/rules (remove the attempt's rows/rules),
-8. live-join / readiness rows (remove).
+### 4.5 Readiness gate: DELETE (not move)
 
-Compensation touches ONLY this attempt's residue — never the Session Kind, its
-snapshot, or the owner. Each step gets a failure-injection test (§10.5) so the
-"residue-only" claim is proven per step, not asserted.
+Delete the entire wait→kill→rollback gate from the bring-up path:
+`gate_orchestrator_readiness`, `await_orchestrator_ready`,
+`@orchestrator_readiness_timeout_ms`, `poll_orchestrator_ready`,
+`kill_orchestrator`, the lifecycle subscribe/unsubscribe. **Keep** the durable
+`LiveJoinRegistry` join-marking (`McpChannel.join/3`) and `Orchestrator.Health`
+read as the pure status surface. The provisioning step does **not** wait for the
+join; the member becomes ready on its own and delivery buffers until then.
 
-On settle, the worker writes the terminal `orchestrator_status` (`:ready` /
-`:failed` + `orchestrator_error`) durably (§4.5) under the **monotonic/CAS rule**
-(§4.5) and in a rescue-safe `after` so a crashed worker never leaves a stale
-`:pending`.
+> Production-semantics to preserve (audit surprises #2/#3): the planned member URI
+> must be written to the durable working copy BEFORE the live MCP join so the
+> join can self-register (the `prestore_planned_orchestrator_uri` /
+> `2026-06-15-live-orchestrator-mcp-registration-bug.md` concern). Under rev4 the
+> member URI is written at provision time (when we spawn+join), before the agent's
+> bridge connects — preserving the self-register ordering without any wait.
 
-### 4.4 OTU-at-spawn (nested working-copy shape) (codex HIGH)
+### 4.6 Caps for the role-member (carve-out)
 
-`activated/2` reads the OTU from the slice, so the OTU must be present from birth.
-Readers consume the **nested** `template_working_copy` shape
-(`entity/session/orchestrator.ex`), and `Session.create/1` builds that copy from
-defaults (`behavior/session.ex`). Therefore the birth OTU fields
-(`orchestrator_template_uri`, `session_template_uri`) must be merged into the
-**nested `template_working_copy`** of the initial slice — not stored as top-level
-slice keys (which readers would miss). A test asserts the initial snapshot's
-nested shape carries the OTU.
+Today the orchestrator's scoped caps are granted with `granted_by: owner_uri` but
+**authorized via a genesis/system-backed tag** (`caps.ex tag_for/2` → genesis
+authorizer for the `behavior: :any` caps), NOT by the owner delegating from
+caps they hold. rev4 **keeps this exact authority model**, generalized: a
+provisioned role-member receives its role's required caps (the Role recipe's
+`requested_caps`, today empty for orchestrator — to be populated from the current
+orchestrator scoped-cap set) granted under the same system/genesis-backed
+authority. The "owner truly delegates the `{:spawned_by}` cap" problem
+(#153/#154) is **explicitly out of scope** and remains separately deferred.
 
-### 4.5 `orchestrator_status` — durable (codex BLOCKER 2)
+### 4.7 Status display + error surfacing
 
-Add durable working-copy fields `orchestrator_status`, `orchestrator_error`, and
-`orchestrator_attempt_id` (in the nested `template_working_copy`, alongside the
-OTU fields), so a respawn and the UI both read a persisted value. Today
-`orchestrator_status` exists only in the `create_session` return map
-(`session_creator.ex` return-meta) and is lost on restart.
+- World session view shows a non-blocking member/orchestrator-status badge from
+  `Orchestrator.Health` (generalized to per-member) + `LiveJoinRegistry`. Send is
+  never disabled by member status.
+- `conversation_actions.ex send_message` surfaces dispatch errors instead of
+  swallowing them into `data-last-dispatch` only.
+- The "Restart orchestrator" action becomes "restart this member" → re-provision
+  (spawn+join) the role-member; reuses the same provisioning primitive.
 
-**Write rules (rev3 BLOCKER fix):**
-- `:pending` is set in the **birth slice** (`init_slice`) at spawn — durable in
-  the initial snapshot, before `activated/2` or any worker runs. Create never
-  writes `:pending` after the fact.
-- Each bring-up attempt carries a fresh monotonically-increasing
-  `orchestrator_attempt_id`. A terminal write (`:ready`/`:failed`) succeeds only
-  if its attempt id is ≥ the stored one (CAS); a stale/late write is dropped.
-  `:pending` is only ever the birth value (or a value an explicit re-attempt sets
-  with a NEW attempt id before kicking) — it can never overwrite a terminal
-  status from a newer attempt. This makes the status write order-independent.
+### 4.8 Future option (not v1)
 
-States:
-- `:pending` — bring-up not complete (written by synchronous create; cleared by
-  the worker). **New durable value.**
-- `:ready` — orchestrator alive + joined.
-- `:failed` — bring-up failed/timed out; session alive + usable; retry via next
-  activation or "Restart". (A plain no-orchestrator template keeps its existing
-  `:failed` + nil-URI "no orchestrator role" meaning; the UI distinguishes the
-  two via OTU/`orchestrator_uri` presence.)
+If pre-warm is later wanted (orchestrator ready before the first routed message),
+add an `on_ready`/`activated/2` "prepare declared members" trigger that calls the
+SAME provision primitive eagerly. Designed-for, not built here.
 
-## 5. Components
+## 5. The four concentrations (where the specialness lives)
 
-| Module (file) | Change |
-|---|---|
-| `SessionCreator` (`session_creator.ex`) | `finalize_fresh_session`: drop the synchronous `ensure_orchestrated_session` for new sessions; sync owner-join only; write durable `:pending`; kick the bounded bring-up worker after bind. Keep `repair_orchestrator` as the single bring-up path; thread a deadline into its ensure. |
-| Session-lifecycle Behavior (`apps/ezagent_domain_session/lib/ezagent/behavior/session*.ex` / `Ezagent.Entity.Session`) | Add `activated/2` (= `on_ready`) re-attempt guard (slice OTU + non-live orchestrator + not-in-flight → kick worker). Merge birth OTU into the nested `template_working_copy` in `create/1` / `init_slice`. Add durable `orchestrator_status`/`orchestrator_error` fields + a status-write action. |
-| `Ezagent.Entity.Session.Orchestrator` (`orchestrator.ex`) | `ensure_orchestrator/3` + `await_orchestrator_ready/3`: accept an explicit deadline (opts/new arity); record a compensation ledger; on failure/timeout compensate only this attempt's residue. |
-| `EzagentDomainInstanceMessage.Application` (`application.ex`) | Add the bring-up manager: a **global-concurrency-capped** queue/pool (mandatory ceiling on total in-flight bring-ups) + atomic per-session in-flight dedup. |
-| `Ezagent.Orchestrator.Health` | Reused unchanged for the UI badge; the `activated/2` guard uses a `WorkspaceRegistry`-independent liveness check (see §4.2). |
-| `conversation_actions.ex` (`ezagent_plugin_world`) | `send_message`: surface dispatch errors (stop swallowing into `data-last-dispatch` only). Non-blocking orchestrator-status badge from `Health` + durable `orchestrator_status`; "Restart" already calls `repair_orchestrator` — reused. |
+The audit's 11 axes concentrate in four areas; structure the work around these:
+
+1. **Create flow** (`SessionCreator`, `materializer`, `rollback`,
+   `template_resolver`) — collapse the orchestrator arm into the pure path
+   (§4.1); generalize team materialization to role-members; drop OTU readers.
+2. **Readiness gate + MCP transport** (`Entity.Session.Orchestrator`,
+   `OrchestratorReadinessPort`, `SessionManager`, cc `McpServer/McpChannel/
+   McpSocket/McpRegistry/LiveJoinRegistry`) — DELETE the gate (§4.5); the MCP
+   transport stays agent/plugin-layer (it already is); keep `LiveJoinRegistry` +
+   `Health` as the status read.
+3. **SessionTemplate field** (`session_template.ex`, `config_actions.ex`,
+   `application.ex` seed, `config.exs`, `uri_query_resolvers`, `template_resolver`)
+   — replace `orchestrator_template_uri` with a `role: orchestrator` member (§4.2);
+   migrate data.
+4. **Routing** (`template_team.ex`, `routing/rule_store`, `router`,
+   `default_rules`) — role-targeted rules resolved at route-time + provision-on-
+   route (§4.3/§4.4).
 
 ## 6. Data flow
 
 ```
-create_session (orchestrator template)            [holds :create_session global lock]
-  ├─[sync] Kind.spawn(Session, OTU in birth slice)   # snapshot written in init
-  │         └─ Kind init → :ready → activated/2 guard:
-  │              orchestrator not live + OTU present → (dedup) kick worker
+create_session (any template)
+  ├─[sync] Kind.spawn(Session)               # snapshot written in init
   ├─[sync] WorkspaceRegistry.bind
-  ├─[sync] write orchestrator_status = :pending  (durable)
   ├─[sync] join OWNER (owner authority)
-  ├─[sync] kick bounded bring-up worker (dedup vs the activated/2 kick)
-  └─[sync] return {:ok, uri, %{orchestrator_status: :pending}}     # fast
+  ├─[sync] install role-targeted rules + legends + prompts + record member decls
+  └─[sync] return {:ok, uri}                 # fast; no agent spawn / wait / rollback-on-orch
 
-bring-up worker (bounded, deadline ~30s):
-  repair_orchestrator(uri)  →  ensure (spawn + caps + MCP + join orch + team)
-    ├─ ok               → status=:ready
-    └─ err/timeout      → compensate THIS attempt's residue (ledger);
-                          session + snapshot untouched; status=:failed
+first message routed to role:orchestrator (e.g. a mention / default rule)
+  └─ router resolves rule.target_role → live member?
+       ├─ yes → deliver
+       └─ no (declared but absent) → PROVISION (under create lock):
+              spawn declared agent + join + install its role-targeted rules
+              → deliver (buffers via PendingDelivery until agent ready; no wait)
 
-cold-restart respawn:
-  Kind init → :ready → activated/2 guard → (dedup) kick worker  → same as above
+member crashes → next route to its role re-provisions (self-heal)
+cold restart → first route after restart re-provisions; nothing eager
+status → Orchestrator.Health + LiveJoinRegistry (pure read, never blocks)
 ```
-
-User can send from the moment create returns; messages persist regardless of
-orchestrator status; the orchestrator handles turns from when it becomes ready.
 
 ## 7. Error handling
 
-- Bring-up failure/timeout: ledger-based residue-only compensation; **never**
-  `rollback_session/3`; never delete the snapshot; never touch the Session Kind.
-  Durable `orchestrator_status: :failed` + `orchestrator_error`.
-- `activated/2` raise/exit: isolated by `Kind.Server` (Kind stays `:ready`).
-- Worker crash: the rescue-safe status write prevents a stuck `:pending`; the
-  next activation's `activated/2` re-attempts.
-- Plain (no-orchestrator) template: synchronous create joins owner + team,
-  returns `:ready` with nil orchestrator URI — unchanged.
-- Synchronous-create residue (bind/owner-join/snapshot failure) still rolls back
-  the half-built session via `rollback_session/3` — this arm is unchanged; only
-  the orchestrator arm is decoupled.
+- A provisioned member failing to spawn: the route's provision step returns an
+  error for THAT delivery (logged/surfaced); the session + snapshot + other
+  members are untouched; the next route retries. **Never** `rollback_session/3`.
+- Partial provision (spawn ok, a later step fails): compensate ONLY that
+  attempt's residue (the generic `compensate_spawned_members` + rule rows),
+  leaving the session intact. (This is far smaller than the old ensure's residue
+  surface because there is no readiness gate / SessionManager-before-members
+  ordering to unwind.)
+- Synchronous-create residue (snapshot/bind/owner-join): unchanged
+  `rollback_session/3` — only this arm rolls back.
 
-## 8. UI
+## 8. Migration
 
-Non-blocking orchestrator badge in the world session view from
-`Ezagent.Orchestrator.Health` (`:alive/:crashed/:not_spawned`) + durable
-`orchestrator_status`:
-- `:pending` → "orchestrator starting…"
-- `:failed`/`:crashed`/`:not_spawned` (with OTU) → "orchestrator unavailable —
-  Restart" (calls existing `repair_orchestrator`)
-- `:ready`/`:alive` → hidden
+- Existing sessions whose working copy has `orchestrator_template_uri` set: a data
+  migration converts it into a `role: orchestrator` member declaration; existing
+  live orchestrators (already joined) are unaffected (they remain members).
+- The default SessionTemplate seed is updated to the member form; re-seed is
+  idempotent.
 
-Composer send is never disabled by orchestrator status. `send_message` surfaces
-dispatch errors to the user.
+## 9. Supersedes prior specs
 
-## 9. Supersedes the 2026-05-31 orchestrator-startup-atomicity SPEC
-
-That SPEC made orchestrator ensure **atomic** with create (any step-4..8 failure
-rolled the whole session back) to guarantee "no half-created session is ever
-observed", and explicitly warned of an N×30s boot storm if bring-up were made
-per-activation. Its cost is this bug — a hung/failed orchestrator destroys an
-otherwise-fine session.
-
-This design **keeps session-level atomicity** (Session Kind + snapshot +
-workspace bind + owner join are still all-or-nothing) but changes the
-orchestrator from *atomic, rollback-on-failure* to *best-effort,
-eventually-consistent, manually-retryable + re-attempted-on-activation*. The
-"half-created with no recovery" hazard is handled by recovery (`activated/2`
-re-attempt + operator "Restart") instead of rollback; "session exists,
-orchestrator not ready" becomes a designed, durable state. The boot-storm warning
-is honored by the bounded bring-up supervisor (§4.3). The SPEC's slice-unwrap /
-Lifecycle work is unaffected; only its create→orchestrator atomicity decision is
-reversed.
+- `2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md`: its
+  create→orchestrator **atomicity + fail-loud readiness gate + rollback** are
+  removed. Session-level atomicity (session + snapshot + bind + owner) is kept;
+  the orchestrator is no longer part of the create transaction at all. The
+  slice-unwrap / Lifecycle work in that spec is untouched.
+- `2026-05-26-session-create-orchestrator-unified.md`: the "unified synchronous
+  ensure" is replaced by provision-on-route.
 
 ## 10. Testing (each gate fails when the architectural goal is unmet)
 
-New / changed tests:
-1. **No-rollback invariant (would have caught this bug):** create from a template
-   whose orchestrator ensure FAILS → session alive, `kind_snapshots` row exists,
-   durable `orchestrator_status == :failed`, `rollback_session` NOT invoked.
-2. **Create within budget under a hung orchestrator:** stub the readiness await to
-   hang → `create_session` returns `:pending` within the dispatch budget.
-3. **Session usable while not ready:** send to `:pending`/`:failed` session →
-   `{:ok, stored}`, message persists (no `:no_such_actor`).
-4. **Durable status:** `:pending`/`:failed` survives a respawn (read from the
-   working copy, not the return value).
-5. **Residue-only on failure (per-step failure injection):** inject a failure
-   after EACH ledger step (§4.3: working-copy `orchestrator_uri`, orchestrator
-   process, owner caps, scoped caps, MCP, SessionManager, member/team rows, live-
-   join rows) → assert no leak of that step's residue and that the session +
-   snapshot + owner are intact.
-6. **Re-attempt on activation:** respawn a `:failed`/`:not_spawned`
-   orchestrator-bearing session → `activated/2` re-kicks; with a healthy
-   orchestrator it reaches `:ready`.
-7. **Dedup + global cap:** the explicit create kick + `activated/2` kick for the
-   same session run at most one bring-up (per-session dedup); and respawning M ≫
-   cap orchestrator-bearing sessions never exceeds the configured global
-   concurrent-bring-up ceiling at any instant.
-7b. **Status monotonicity (the rev3 BLOCKER):** with a fast/already-present
-   orchestrator, a worker writing terminal `:ready` followed by any later
-   `:pending`/stale write leaves the durable status `:ready` (CAS by
-   `orchestrator_attempt_id`) — never reverts to "permanently starting".
-8. **OTU nested shape:** the initial snapshot's nested `template_working_copy`
-   carries the OTU.
-9. **Positive path:** orchestrator succeeds → `:ready` + joined + caps + MCP +
-   team.
-10. **Error surfacing:** a `send_message` dispatch error is surfaced (not only in
-   `data-last-dispatch`).
+1. **No-rollback invariant (would have caught PR #902):** a route/provision that
+   FAILS to bring up the orchestrator leaves the session alive, snapshot present,
+   `rollback_session` NOT invoked.
+2. **Create within budget regardless of orchestrator:** `create_session` returns
+   promptly even if the orchestrator template would hang on spawn (create no
+   longer spawns it).
+3. **Session usable immediately:** owner can send into a fresh session before any
+   orchestrator exists; messages persist.
+4. **Provision-on-route:** first message routed to `role: orchestrator` on a
+   session with no live orchestrator spawns + joins it and delivers (buffered);
+   asserts the member is now present.
+5. **Idempotent / race-safe provision:** concurrent routes + manual restart for
+   the same session yield at most one orchestrator; a live member short-circuits.
+6. **Self-heal:** kill a joined orchestrator → next route to its role
+   re-provisions.
+7. **No boot storm:** provisioning is lazy — respawning M sessions spawns zero
+   orchestrators until each is routed to.
+8. **De-orchestrator-ization invariant (the completion gate):** an arch test
+   asserting the **session domain has no `orchestrator`-named field/function/branch
+   and no orchestrator-specific cap special-casing** (the §13 checklist
+   mechanized — e.g. grep/AST gate over `ezagent_domain_session` excluding the
+   role-member generic path). This is the test that fails if any specialness is
+   left behind.
+9. **Role-member health/status:** `Health` reports the orchestrator role-member's
+   `:not_spawned/:alive/:crashed`; UI badge reflects it; send never blocked.
+10. **Error surfacing:** a `send_message` dispatch error is surfaced, not only in
+    `data-last-dispatch`.
+11. **Cross-workspace spawn preserved:** a system-template role-member provisions
+    into the tenant workspace (the sanctioned bypass still works).
 
-**Supersession migration (codex MED) — executable tests that assert immediate
-orchestrator readiness must be migrated, not just the prose:**
-- `apps/ezagent_domain_session/test/integration/session_create_orchestrator_unified_test.exs`
-- `apps/ezagent_plugin_cc/test/integration/session_create_atomicity_test.exs`
-- `scenario_32_mention_orchestrator_dispatch_test.exs` (and an audit grep for any
-  other test asserting a live orchestrator / MCP immediately after create)
+All gates on PostgreSQL; `mix precommit` EXIT=0 authoritative. Because the
+readiness path is compile-bypassed in `:test`, add an explicit
+integration/e2e gate for provision-on-route + no-rollback so a regression of the
+deleted-gate semantics is caught (deterministic unit tests alone will not).
 
-Migrate each to the new contract: create returns `:pending`; the orchestrator
-becomes `:ready` after the (test-driven, not 90s-real) bring-up completes. Where a
-test needs a ready orchestrator synchronously, it awaits the bring-up explicitly
-(test helper) rather than assuming create blocks on it.
+## 11. Arch-invariant & baseline retargeting (in-scope deliverable — name for codex)
 
-All gates run on PostgreSQL (PG-only suite); `mix precommit` must be green (the
-`EXIT=` line is authoritative).
+These WILL go red on the move and are part of the work:
+- `im_session_agent_acyclic_test.exs` — allowlists must stay empty. The
+  provision-on-route logic lives in routing (core) + the session domain
+  (member/rule/legend materialization) and calls DOWN to the agent layer to spawn
+  (session→agent, allowed); no agent→session dependency is introduced. Re-verify
+  `@allowlist_session_to_mcp []` holds (the MCP transport stays agent/plugin-
+  layer; the deleted readiness gate removes the session-side reference that
+  `OrchestratorReadinessPort` was shielding — the port may now be removable; if
+  so, delete it and its allowlist note).
+- `oversized_modules_test.exs` + `arch_baseline_manifest.exs` —
+  `def_count_orchestrator_tools`, `def_count_session_creator`, and any LOC caps
+  shift; rebaseline with `# arch-cap-bump:` annotations.
+- `uri_query/scan.ex` `:orchestrator_derivation` rule — retarget or delete (role-
+  based member resolution replaces the `:orchestrator` UriQuery resolver).
+- `ezagent.arch.scan.ex` / `check_invariants*.ex` — update orchestrator path
+  registrations + the `@layer_vocab_words` "Orchestrator" entry if the namespace
+  changes.
 
-## 11. Scope / PR split
+## 12. PR sequencing (green at each step — NOT one PR)
 
-- **PR-1 (core decouple):** SessionCreator sync-create + durable status fields +
-  bounded bring-up supervisor + `activated/2` re-attempt + OTU-at-spawn (nested) +
-  deadline threading + ledger residue compensation. Tests 1–9 + supersession test
-  migration.
-- **PR-2 (UI surfacing):** world `conversation_actions` error surfacing + the
-  non-blocking orchestrator badge. Test 10 + agent-browser visual E2E.
+1. **PR-A** — role-member representation: add the `role: orchestrator` member to
+   the default SessionTemplate ALONGSIDE the existing field (no behavior change);
+   data migration; tests that both forms resolve.
+2. **PR-B** — role-targeted routing rules: rules carry roles, resolve at route-
+   time (dual-read old URI-resolved rules for back-compat during transition).
+3. **PR-C** — provision-on-route primitive + lazy bring-up; route-time resolution
+   uses it; create still also ensures (parallel) — verify provisioning works.
+4. **PR-D** — flip create to the pure path (drop the synchronous ensure arm);
+   **delete** the readiness gate; create no longer waits/rolls-back on orchestrator.
+   Tests 1–7, 11.
+5. **PR-E** — remove the special `orchestrator_template_uri` field + the
+   `[owner,orchestrator]` arm + OTU readers; generalize caps/Health to role-member.
+6. **PR-F** — de-orchestrator-ize naming + arch-invariant/baseline retargeting +
+   the §13 completion-gate test (test 8); transport/`OrchestratorReadinessPort`
+   cleanup.
+7. **PR-G** — UI: status badge generalized + send-error surfacing + "restart
+   member" (test 9, 10) + agent-browser E2E.
 
-PR-1 is the load-bearing fix (removes the bug before the UI badge); PR-2 adds
-observability.
+Each PR `mix precommit` EXIT=0 + check_invariants green.
 
-## 12. Open questions
+## 13. De-orchestrator-ization checklist (completeness gate — from the full audit)
 
-None outstanding. Brainstorm Q1–Q4 resolved 2026-06-23; rev2 resolves the first
-codex review's findings. A second `/codex:adversarial-review` of rev2 runs before
-implementation.
+"Done" = every item below is resolved (no orchestrator-specialness left in the
+session domain). Tags: MOVE→agent / GENERALIZE→member / DELETE / KEEP-rename /
+MIGRATE-data.
+
+**SessionTemplate field**: `orchestrator_template_uri` (type/`@config_atom_keys`/
+working-copy default/plain-vs-orch comments) [DELETE→member]; `template_resolver
+.orchestrator_template_uri_of` [GENERALIZE]; `uri_query_resolvers.resolve_orchestrator`
++ `:orchestrator` registration [GENERALIZE]; `config.exs default_orchestrator_template_uri`
++ `application.ex` seed + `agent_contract_g4.ex` fixture [MIGRATE-data];
+`tools/templates.ex` snapshot of OTU [GENERALIZE].
+
+**Create flow**: `finalize_fresh_session` orch arm + `ensure_orchestrated_session`
++ `ensure_orchestrator_and_finalize` + `[owner,orchestrator]` join +
+`session_complete?` orch-readiness axis [DELETE/GENERALIZE]; `materializer`
+`materialize_orchestrator_working_copy`/`store_session_orchestrator_uri`/
+`prestore_planned_orchestrator_uri`/`grant_owner_orchestrator_*` [GENERALIZE/MOVE];
+`rollback` orch teardown [GENERALIZE]; create-meta `orchestrator_status/_uri/_error`
++ workspace 3-state consumer + `home_live` `:pending` arm [GENERALIZE/DELETE-dead].
+
+**Readiness gate + transport**: `Entity.Session.Orchestrator` gate/await/poll/kill
++ `@orchestrator_readiness_timeout_ms` [DELETE]; `OrchestratorReadinessPort`
+[DELETE if now unreferenced, else KEEP]; `SessionManager` [MOVE→agent]; cc MCP
+transport + `LiveJoinRegistry` + `cc_orchestrator_seed` [KEEP agent-layer];
+`Health`/`owner_notifier` [GENERALIZE→member].
+
+**Caps / tools / Session Kind**: `orchestrator/caps.ex` [GENERALIZE under §4.6];
+`behavior/orchestrator_admin.ex` [GENERALIZE→member-admin]; `orchestrator/tools.*`
+[KEEP-rename → session member tools]; `entity/session.ex` orch defdelegates +
+`behavior/session.ex` orch-only gates + `config_actions.orchestrator_cap_present?`
++ `membership.grant_first_join_owner_cap` orch cap [GENERALIZE]; UI
+`session.orchestrator.restart` [KEEP-rename].
+
+**Hidden couplings to honor** (audit surprises): positional `[owner,orchestrator]`
+(#1) → role lookup; `orchestrator_uri`-as-readiness-proof (#2/#3) → provision-time
+write before join; deterministic `cc_orchestrator-<disc>` name (#5) → generic
+member URI + role resolution; acyclic `OrchestratorReadinessPort` crutch (#7) →
+re-derive after gate deletion; `:orchestrator_derivation` scan (#8) → retarget;
+create-lock serialization (#9) → reused by provision-on-route; owner-delegation
+cap #2 (#10) → out of scope (§4.6).
+
+## 14. Open questions
+
+None blocking. Resolved 2026-06-23 with Allen: pure create; orchestrator =
+role-member; provision-on-route lazy (no reconciler); gate deleted; session-domain
+placement; caps carve-out; on_ready prepare deferred. A `/codex:adversarial-review`
+of rev4 runs before the handoff is finalized.
