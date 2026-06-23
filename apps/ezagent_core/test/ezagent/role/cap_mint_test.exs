@@ -87,5 +87,11 @@ defmodule Ezagent.Role.CapMintTest do
       assert [] =
                CapMint.mint([%{behavior: :not_a_behavior, action: :read}], ctx(), fn _ -> true end)
     end
+
+    test "FAIL-CLOSED: requested_caps cannot mint behavior wildcard genesis-style authority" do
+      requested = [%{behavior: :any, action: :any}]
+
+      assert [] = CapMint.mint(requested, ctx(), fn _ -> true end)
+    end
   end
 end

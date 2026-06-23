@@ -15,9 +15,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
      and name segment is `default` is present in
      `Ezagent.Ecto.KindSnapshot.list_in_workspace("workspace://system")`.
   2. Its `:template` slice content carries the documented
-     minimal-viable shape (empty `agent_slots`, empty `routing_rules`,
-     `orchestrator_template_uri` pointing at the cc-orchestrator
-     AgentTemplate seed URI).
+     minimal-viable shape: no `agent_slots`, empty `routing_rules`, and
+     an ordinary declared `role_name: "orchestrator"` member pointing at
+     the cc-orchestrator AgentTemplate seed URI.
 
   Boot runs in `test_helper.exs` (via `Application.ensure_all_started`)
   and writes the seeded row outside any per-test sandbox. To keep the
@@ -152,33 +152,27 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     prompt_templates = Map.get(content, :prompt_templates) || Map.get(content, "prompt_templates")
     legends = Map.get(content, :legends) || Map.get(content, "legends")
 
-    orchestrator_uri =
-      Map.get(content, :orchestrator_template_uri) ||
-        Map.get(content, "orchestrator_template_uri")
-
     assert name == "default"
 
     refute Map.has_key?(content, :agent_slots) or Map.has_key?(content, "agent_slots"),
            "PR-7: `agent_slots` must NOT be a SessionTemplate content field; got #{inspect(content)}"
 
-    assert members == []
+    assert [
+             %{
+               role_name: "orchestrator",
+               source_template_uri: %URI{} = source_template_uri,
+               in_session_template: true
+             }
+           ] = members
+
     assert prompt_templates == %{}
     assert legends == %{}
     assert routing_rules == []
 
-    # orchestrator_template_uri may serialize as either a `%URI{}` or a
-    # string depending on the snapshot codec — accept both shapes.
-    orchestrator_uri_str =
-      case orchestrator_uri do
-        %URI{} = uri -> URI.to_string(uri)
-        s when is_binary(s) -> s
-        _ -> nil
-      end
+    refute Map.has_key?(content, :orchestrator_template_uri)
+    refute Map.has_key?(content, "orchestrator_template_uri")
 
-    assert orchestrator_uri_str == cc_orchestrator_template_uri_str(),
-           "expected orchestrator_template_uri to point at the cc-orchestrator " <>
-             "AgentTemplate seed URI (`#{cc_orchestrator_template_uri_str()}`); " <>
-             "got #{inspect(orchestrator_uri)}"
+    assert URI.to_string(source_template_uri) == cc_orchestrator_template_uri_str()
   end
 
   # 2026-05-31 orchestrator-startup-atomicity §3 — the seed is a HARD boot
@@ -239,7 +233,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
       :ok
     end
 
-    test "the default template seeds PLAIN (nil orchestrator) when the seam is unset" do
+    test "the default template seeds with no role members when the seam is unset" do
       workspace_name = "ccless-ws-#{System.unique_integer([:positive])}"
       workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
@@ -266,13 +260,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
       content =
         Map.get(template_persistent, :content) || Map.get(template_persistent, "content") || %{}
 
-      orchestrator_uri =
-        Map.get(content, :orchestrator_template_uri) ||
-          Map.get(content, "orchestrator_template_uri")
+      members = Map.get(content, :members) || Map.get(content, "members")
 
-      assert orchestrator_uri in [nil, ""],
-             "expected the cc-less default template to carry a nil " <>
-               "orchestrator_template_uri; got #{inspect(orchestrator_uri)}"
+      assert members == [],
+             "expected the cc-less default template to carry no declared role members; " <>
+               "got #{inspect(members)}"
+
+      refute Map.has_key?(content, :orchestrator_template_uri)
+      refute Map.has_key?(content, "orchestrator_template_uri")
     end
 
     test "create_session(default) succeeds as a PLAIN session without cc" do
@@ -290,13 +285,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
       assert URI.to_string(session_uri) == "session://#{workspace_name}/default/#{short}"
 
-      # The 2-state contract's "no orchestrator role" signal — NOT an
-      # error; the session is valid + usable (SessionCreator.plain_session_meta).
-      assert %{
-               orchestrator_uri: nil,
-               orchestrator_status: :failed,
-               orchestrator_error: :no_orchestrator
-             } = meta
+      # No role member is declared, but create still succeeds and returns
+      # the same session-only meta shape.
+      assert meta == %{}
     end
   end
 

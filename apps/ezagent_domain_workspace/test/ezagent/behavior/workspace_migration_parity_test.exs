@@ -85,16 +85,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       session_uri =
         Ezagent.URI.new!("session://#{workspace_uri.host}/default/#{short_name}")
 
-      orchestrator_uri =
-        Ezagent.URI.new!("entity://#{workspace_uri.host}/agent/cc_orchestrator_#{short_name}")
-
-      meta = %{
-        orchestrator_uri: orchestrator_uri,
-        orchestrator_status: :spawned,
-        orchestrator_error: nil
-      }
-
-      {:ok, session_uri, meta}
+      {:ok, session_uri, %{}}
     end
   end
 
@@ -433,13 +424,13 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       assert Keyword.fetch!(opts, :workspace_uri) == workspace_uri
       assert Keyword.fetch!(opts, :template_name) == "cc.orchestrator"
 
-      # The returned shape matches the legacy contract: session_uri +
-      # orchestrator_uri + orchestrator_status + orchestrator_error.
+      # The returned shape matches the decoupled contract: create returns
+      # only the usable session URI; role members are provisioned on route.
       assert %URI{} = result.session_uri
       assert URI.to_string(result.session_uri) == "session://team-alpha/default/main"
-      assert %URI{} = result.orchestrator_uri
-      assert result.orchestrator_status == :spawned
-      assert result.orchestrator_error == nil
+      refute Map.has_key?(result, :orchestrator_uri)
+      refute Map.has_key?(result, :orchestrator_status)
+      refute Map.has_key?(result, :orchestrator_error)
     end
 
     test "propagates a facade error as {:error, reason}" do

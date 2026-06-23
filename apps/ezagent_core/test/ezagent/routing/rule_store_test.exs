@@ -1,6 +1,6 @@
 defmodule Ezagent.Routing.RuleStoreTest do
   use ExUnit.Case
-  alias Ezagent.Routing.{Matcher, RuleStore}
+  alias Ezagent.Routing.{Matcher, Receiver, RuleStore}
   alias EzagentCore.Repo
 
   setup do
@@ -187,5 +187,27 @@ defmodule Ezagent.Routing.RuleStoreTest do
       )
 
     assert row.receivers == ["session://team-alpha/default/x", "session://team-alpha/default/y"]
+  end
+
+  test "tagged role receiver persists as string and hydrates back into registry" do
+    table = :"rule_store_role_receiver_#{System.unique_integer([:positive])}"
+    :ok = Ezagent.RoutingRegistry.declare_table(table, key_uniqueness: :duplicate)
+
+    {:ok, row} =
+      RuleStore.add(
+        table,
+        Matcher.always(),
+        [Receiver.role("orchestrator"), "entity://system/agent/legacy"],
+        URI.new!("entity://system/user/admin")
+      )
+
+    assert [encoded_role, "entity://system/agent/legacy"] = row.receivers
+    assert is_binary(encoded_role)
+    refute encoded_role == "orchestrator"
+
+    :ok = RuleStore.load_into_registry(table)
+
+    assert [{_matcher, value}] = Ezagent.RoutingRegistry.list_all(table)
+    assert value.receivers == [{:role, "orchestrator"}, "entity://system/agent/legacy"]
   end
 end

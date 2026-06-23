@@ -85,14 +85,6 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
         session_uri = Map.fetch!(result, :session_uri)
         Mix.shell().info("✓ created #{URI.to_string(session_uri)}")
 
-        if orchestrator_uri = Map.get(result, :orchestrator_uri) do
-          Mix.shell().info("  orchestrator: #{URI.to_string(orchestrator_uri)}")
-        end
-
-        Mix.shell().info(
-          "  orchestrator_status: #{inspect(Map.get(result, :orchestrator_status))}"
-        )
-
       {:error, reason} ->
         Mix.raise("create_session failed: #{inspect(reason)}")
     end

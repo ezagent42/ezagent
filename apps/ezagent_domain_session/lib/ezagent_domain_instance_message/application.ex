@@ -546,12 +546,27 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    # Task #58 — orchestrator URI is a config SEAM, decoupled from cc (see config.exs).
-    orchestrator_uri =
+    # Task #90 / rev6 — the orchestrator is a normal declared role member.
+    orchestrator_template_uri =
       case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
         %URI{} = uri -> uri
         s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
         _ -> nil
+      end
+
+    members =
+      case orchestrator_template_uri do
+        %URI{} = uri ->
+          [
+            %{
+              role_name: "orchestrator",
+              source_template_uri: uri,
+              in_session_template: true
+            }
+          ]
+
+        _ ->
+          []
       end
 
     content = %{
@@ -565,11 +580,11 @@ defmodule EzagentDomainInstanceMessage.Application do
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
       # `members` (in_session_template members) / `prompt_templates` / `legends`;
       # `agent_slots` is NO LONGER a content field (PR-8 removes the slot tools).
-      # The default template is orchestrator-only → all three are empty.
-      members: [],
+      # The default template is orchestrator-only. The orchestrator is declared
+      # as a role member and provisioned lazily by routing.
+      members: members,
       prompt_templates: %{},
       legends: %{},
-      orchestrator_template_uri: orchestrator_uri,
       routing_rules: [],
       default_workspace_uri: workspace_uri,
       parent_template_uri: nil,
