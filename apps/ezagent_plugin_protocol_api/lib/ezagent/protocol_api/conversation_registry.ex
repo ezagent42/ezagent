@@ -68,10 +68,11 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
   defp lookup(conversation_id) do
     rows =
       Repo.all(
-        from r in BindingRow,
+        from(r in BindingRow,
           where: r.adapter_id == ^@adapter_id and r.target_id == ^conversation_id,
           order_by: r.bound_at,
           select: r.session_uri
+        )
       )
 
     case rows do

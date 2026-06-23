@@ -107,12 +107,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # `EzagentPluginCc.Template.CcAgent`.
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    cond do
-      fully_alive?(agent_uri) ->
-        {:ok, [agent_uri], %{fresh?: false}}
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+      cond do
+        fully_alive?(agent_uri) ->
+          {:ok, [agent_uri], %{fresh?: false}}
 
-      true ->
-        spawn_for_codex(agent_uri, tmpl, workspace_uri)
+        true ->
+          spawn_for_codex(agent_uri, tmpl, workspace_uri)
+      end
     end
   end
 
