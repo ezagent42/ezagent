@@ -24,69 +24,79 @@ Source: `agent_manifest.ex:17-33`, `agent_template.ex:33-127`, spec1 §3 (`flavo
 
 | contract field | form | `create_agent/3` | status |
 |---|---|---|---|
-| `name` · `flavor` · `cwd`(=project_cwd) · `with_pty` | ✓ | ✓ | **supported** |
-| `caps` | ✓ | ✓ (post-create grant) | **supported** (relabel "desired caps") |
-| `soul` · `skills` · `tools` · `lifecycle` · `desired_skills` · `desired_caps` | ✗ | ✗ **not accepted** | **BLOCKER** (§5) |
+| `name` · `flavor` · `cwd`(=project_cwd) · `with_pty` | ✓ | ✓ | **supported now** |
+| `caps` | ✓ | ✓ (post-create grant) | **supported now** (relabel "desired caps") |
+| `soul` · `skills` · `tools` · `lifecycle` · `desired_skills` · `desired_caps` | ✗ | ✗ not accepted | **needs `create_agent/3` extension** (proposed §5) |
 | `config_dir` | ✗ | auto-derived | non-blocker (intentional per-agent isolation) |
-| executor extras (cc `settings_path`/`mcp_config_path`; curl `model`/`provider`/`api_url`) | ✗ | ✗ | **BLOCKER** |
-| `parent_template_uri` (fork) | ✗ | `--from` CLI only | gap (defer) |
+| executor extras (cc `settings_path`/`mcp_config_path`; curl `model`/`provider`/`api_url`) | ✗ | ✗ | **needs extension** (proposed §5) |
+| `parent_template_uri` (fork) | ✗ | `--from` CLI only | deferred |
 
 ## 3. Design decision (PM, 2026-06-23)
-**Show-but-disable + precise blocker.** The create page presents the **whole contract shape** grouped by bucket; the fields the backend can't accept today (`soul/skills/tools/lifecycle`, executor extras) are **visible but disabled** with an inline blocker (`需后端扩 create_agent/3 · discuss-first`). It **collects only backend-supported fields** and **invents no parallel storage**. Rationale: the handoff asks the page to *explain* the contract + *surface precise blockers*, not silently drop fields or fake inputs.
+**Design for the extended `create_agent/3`; propose the extension in the PR; Allen decides which parts to land.** The trend is clear — we *will* extend the create path to accept the full contract, so the design should not be artificially capped by today's backend. Therefore:
+- The create page is designed at the **full contract shape, all fields enabled** (Author + Executor + Desired caps). It is the target the backend grows toward — not a lowest-common-denominator of what `create_agent/3` happens to accept right now.
+- The PR carries a concrete **backend extension proposal** (§5): exactly what `create_agent/3` / the file-flavor template-registration path must accept to satisfy each field, each tagged **discuss-first** so Allen reviews and chooses what to push in which order.
+- We still honor the hard rules: **no unilateral backend/schema/CapBAC change** lands without Allen's sign-off; the UI **never mints caps** and **never invents a parallel storage path** — fields whose backend extension Allen hasn't approved yet are wired to the extension once it lands, not to a side channel.
+- **Deadline pragmatics:** what ships first is the contract-shaped UI with the **already-supported** fields fully wired (real create works today), plus the proposal. Each approved extension then flips its field from "proposed" to "wired" without redesign.
 
 ## 4. Screens
+Both screens live **inside the existing world shell** — far-left global nav rail (**总览 / 会话 / 身份(active) / 工作区**, `main.tsx:336-340`) + the Identities surface. No new route, no nav change. Create = `/identities/agents/new`; detail = `/identities/agents/:uri` with its existing sub-tabs (详情 / caps / api-keys / extensions / terminal). `★` = field that needs the §5 backend extension (designed enabled; wired when Allen lands the extension).
 
-### 4.1 Agent create (contract-shaped form)
+### 4.1 Agent create — `身份 › Agents › 新建`
 ```
-屏 1 · Agent 创建（contract-shaped）
-┌──────────────────────────────────────────────────────────────────┐
-│ ① 身份 / Author                                                    │
-│   name           [ storefront-greeter            ]   启用           │
-│   ⌐ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ⌐  │
-│   | soul（persona）· skills · tools · lifecycle  —— 可见但禁用     |  │
-│   | ⊘ blocker：需后端扩 create_agent/3 收这些字段（discuss-first）  |  │
-│   ⌐ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ⌐  │
-│ ② Executor（后端支持）                                             │
-│   flavor [ cc ▾ ]   project_cwd [ /srv/acme/storefront        ]    │
-│   ☐ with_pty        config_dir = 自动派生（只读）                  │
-│   ⊘ Executor 扩展禁用：cc settings/mcp · curl model/provider       │
-│ ③ Desired caps（后端支持）                                         │
-│   caps  [ chat.send, workspace.read ]  请求→系统按 CapBAC 授予      │
-│   ⌐ Blocker: create_agent/3 仅接受 flavor/name/cwd/with_pty(+caps) ⌐│
-│   ⌐ soul/skills/tools/lifecycle 需 discuss-first 扩后端，不造平存 ⌐│
-│                                                       [ 创建 ]      │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 4.2 Agent detail / config (read-only contract/executor status)
-```
-屏 2 · Agent 详情（只读 contract/executor 状态）
-┌──────────────────────────────────────────────────────────────────┐
-│ entity://acme/agent/cc_greeter-7f3a · running                     │
-│ flavor cc · bridge connected                                       │
-│ ──────────────────────────────────────────────────────────────    │
-│ # Executor（只读）  flavor cc · project_cwd … · with_pty · params  │
-│ # 授予的 caps（只读·CapBAC）  chat.send · workspace.read（系统授予）│
-│ # Config & 扩展（只读）  config_dir … · API keys · extensions      │
-│ # 版本 / 模板  per-agent template …@<hash>（或 direct-spawn 无模板）│
-│ ⌐ ⊘ 派生/编译配置（CLAUDE.md·settings.json·system_prompt）不在此编辑 ⌐│
-│ ⌐    由 flavor.compile 生成（契约不变式 G-INV-2 / G-INV-5）        ⌐│
-└──────────────────────────────────────────────────────────────────┘
+┌──────┬───────────────────────────────────────────────────────────┐
+│ 总览 │ 身份 › Agents › 新建                                        │
+│ 会话 │ ① Author                                                   │
+│[身份]│   name        [ storefront-greeter            ]            │
+│ 工作 │   soul ★      [ 你是前台导购… {{customer_name}}        ]   │
+│  区  │   skills ★    [ greet, triage ]                            │
+│      │   tools ★     [ dispatch tool 声明（action/participant）]  │
+│      │   lifecycle ★ [ persistent ▾ ]                             │
+│      │ ② Executor                                                 │
+│      │   flavor [ cc ▾ ]   project_cwd [ /srv/acme/storefront ]   │
+│      │   ☐ with_pty        config_dir 自动派生（只读）            │
+│      │   params ★：cc settings_path/mcp · curl model/provider     │
+│      │ ③ Desired caps                                             │
+│      │   caps  [ chat.send, workspace.read ]  请求→系统授予        │
+│      │   ★ = 需扩 create_agent/3（PR 附扩展提案）       [ 创建 ]   │
+└──────┴───────────────────────────────────────────────────────────┘
 ```
 
-## 5. Precise blockers (return these; do NOT invent parallel storage)
-1. **`create_agent/3` only accepts `{flavor, name, cwd, with_pty}`** (+ separate caps grant). To collect `soul/skills/tools/lifecycle/desired_skills/desired_caps`, the backend create path must thread them into the manifest/template (`agent_create.ex` file-flavor template registration or an `AgentManifest.load`-based path). **Extending or rerouting create is discuss-first** (handoff §6).
-2. **Executor extras** (`settings_path`/`mcp_config_path` for cc; `model`/`provider`/`api_url` for curl) aren't accepted by `create_agent/3` either → same blocker, same discuss-first.
-3. **`parent_template_uri` (fork from an existing template)** is CLI-only (`--from`); not in the create payload → deferred.
+### 4.2 Agent detail / config — `身份 › Agents › cc_greeter-7f3a` (read-only)
+```
+┌──────┬───────────────────────────────────────────────────────────┐
+│ 总览 │ 身份 › Agents › cc_greeter-7f3a                            │
+│ 会话 │ [详情] caps · api-keys · extensions · terminal            │
+│[身份]│ cc_greeter-7f3a · running · flavor cc · bridge connected   │
+│ 工作 │ ────────────────────────────────────────────────────────  │
+│  区  │ # Executor（只读）   flavor cc · project_cwd … · params    │
+│      │ # 授予的 caps（只读·CapBAC）  chat.send · workspace.read   │
+│      │ # Config & 扩展（只读）  config_dir … · API keys · ext     │
+│      │ # 版本 / 模板  per-agent template …@<hash>（或 direct-spawn）│
+│      │ ⊘ 派生/编译（CLAUDE.md·settings.json·system_prompt）只读，  │
+│      │   flavor.compile 生成（G-INV-2 / G-INV-5）                 │
+└──────┴───────────────────────────────────────────────────────────┘
+```
+
+## 5. Backend extension proposal (PR carries this; Allen picks what lands)
+Each item is what `create_agent/3` (and the path behind it) must accept to wire the matching `★` form field. All **discuss-first** — proposed, not unilaterally implemented. No parallel storage: a field stays "proposed" in the UI until its extension lands.
+
+| # | Field(s) | Proposed backend change | Where it threads | Risk |
+|---|---|---|---|---|
+| E1 | `soul`, `skills`, `tools`, `lifecycle` | Extend `create_agent/3` args to accept a manifest-shaped payload; build an inline `%AgentManifest{}` and route through the **existing** file-flavor template-registration path (`agent_create.ex` cc/codex branch → persisted template's `desired_skills` etc.) or `AgentManifest.load/1`. | `world_live.ex dispatch_agent_create/2` → `Workspace.create_agent/3` → `agent_create.ex` | med — touches create contract (additive args), no schema change if mapped to existing template fields |
+| E2 | executor extras (`settings_path`/`mcp_config_path` cc; `model`/`provider`/`api_url` curl) | Accept per-flavor `executor.params` in the create args; pass to the flavor's template-data extras (already exist on `AgentTemplate`). | same as E1 | low — `AgentTemplate` already has these extra fields; just not collected at create |
+| E3 | `desired_caps` (granted at spawn vs post-create `grant_initial_caps`) | Optionally thread desired caps into the template so they grant atomically at spawn instead of a second call. | `agent_create.ex` + Grant chokepoint | low/med — CapBAC-adjacent → **discuss-first with extra care** |
+| E4 | `parent_template_uri` (fork from existing template) | Surface the CLI `--from` clone in the create payload. | `coerce_create_args/1` already reads `from` | low — deferred (not in this task's screens) |
+
+**Hard line:** none of E1–E4 ships without Allen's sign-off; the UI wires each field only after its extension lands (`feedback_let_it_crash_no_workarounds` — no shim, no side channel).
 
 ## 6. Scope
-**In (this task, deadline-safe):**
-- Re-shape `AgentNewForm` per the contract buckets (① Author / ② Executor / ③ Desired caps), **enabled** only for `name` / `flavor` / `project_cwd` (rename from `cwd`) / `with_pty` / `caps` (relabel "desired caps"); **disabled + blocker** for `soul/skills/tools/lifecycle` + executor extras.
-- Additive state in `identity_data.ex` (`agent_new_form`): contract-section metadata + the blocker copy. No broad rewrite of the identities surface.
-- `AgentDetail` shows **read-only** executor/flavor + granted caps + config_dir + version/template status, reusing `AgentApiKeys`/`AgentExtensions`; **no editable derived config**.
-- Verify a **real create** with the supported fields (cc or echo) → capture screenshot + resulting agent URI/status; capture the precise blocker for the unsupported fields.
+**Designed (this PRD + PR):** the full contract-shaped create form (all fields) + read-only detail, inside the existing world shell, with the §5 extension proposal.
 
-**Out / deferred:** any backend `create_agent/3` change, AgentManifest schema change, CapBAC change (all discuss-first); a new creator route; template/team editors; routing/team management; manifest versioning UI; fork-from-template.
+**Wired now (deadline-safe, no backend change):** `name` / `flavor` / `project_cwd` (rename from `cwd`) / `with_pty` / `caps` (relabel "desired caps"). Re-shape `AgentNewForm` into the ① Author / ② Executor / ③ Desired caps groups; additive state in `identity_data.ex` (`agent_new_form`) for the section metadata + the `★` proposed markers. `AgentDetail` shows **read-only** executor/flavor + granted caps + config_dir + version/template status, reusing `AgentApiKeys`/`AgentExtensions`; **no editable derived config**. Verify a **real create** (cc or echo) → screenshot + agent URI/status.
+
+**Wired after Allen approves (per §5):** the `★` fields (`soul/skills/tools/lifecycle`, executor extras), each flipped from proposed → live as its extension lands.
+
+**Out / deferred:** AgentManifest **runtime schema** change; any **CapBAC semantics** change; a new creator route; template/team editors; routing/team management; manifest versioning UI; fork-from-template (E4).
 
 ## 7. Definition of Done (from handoff §5)
 - [ ] Screenshot of the updated world agent create page (contract-shaped).
@@ -97,4 +107,4 @@ Source: `agent_manifest.ex:17-33`, `agent_template.ex:33-127`, spec1 §3 (`flavo
 - [ ] Focused tests/gates for touched files (or a note if only UI copy changed).
 
 ## 8. world-coordination
-Touches only the world **identity/agent config** surface (`Identities.tsx` + `identity_data.ex` + the `dispatch_agent_create` clause); additive, no new route, no nav change, no `styles.css` restyle. Owns identity/agent-config UI; does not touch hello rendering or session routing UI (handoff §7).
+**Wired-now part** touches only the world **identity/agent config** surface (`Identities.tsx` + `identity_data.ex` + the `dispatch_agent_create` clause); additive, no new route, no nav change, no `styles.css` restyle. Owns identity/agent-config UI; does not touch hello rendering or session routing UI (handoff §7). **The §5 extension proposal** does reach `domain_workspace` (`agent_create.ex` / `create_agent/3`) — that part is **discuss-first and lands only on Allen's approval**, separately from the UI slice, so the world UI change stays mergeable on its own.
