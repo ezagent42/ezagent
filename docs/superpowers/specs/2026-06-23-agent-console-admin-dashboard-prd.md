@@ -24,14 +24,14 @@ The demo's tabs are **tools** (Team / Routing / Template Studio / Migrate / Obse
 |---|---|---|
 | **Overview** | landing / health summary | first screen on open |
 | **Sessions** | the operate workspace (primary) | list → session detail |
-| **Templates** | the blueprint library (secondary) | read-only catalog for MVP |
+| **Templates** | the blueprint library (secondary) | **view-only** catalog (decided — name = "Templates") |
 
 - **No top-level "Observability"** (would imply a metrics/traces suite we don't have a backend for). Instead **Overview is the lightweight landing** = cross-session health + recent-activity audit feed. Per-session audit lives inside the session detail.
 - **Migrate, prompt/legend/rule editors are NOT top-level** — they live inside a session's detail (they belong to that session).
 
 **Session detail = a "Chrome Settings"-style page:** one session, a **left anchor nav** that jump-scrolls, and a **right long page** with every config section. Sections: Overview / Team (members = the session's agents) / Routing / Prompts / Template & version / Migrate (advanced).
 
-> Naming: the secondary library is **"Templates"** (recommended; matches the backend term) or **"蓝图 / Blueprints"** — **not** "Library". (Open decision §8.)
+> Naming: the secondary library is **"Templates"** (decided 2026-06-23).
 
 ## 4. The simplest complete user journey (MVP)
 ```
@@ -78,30 +78,27 @@ This journey is also the **MVP slice**: read-only topology + **one** manage-auth
 ```
 
 ### 5.3 Session settings page (会话设置页 · 仿 Chrome Settings)
+**Two-level nav:** the **global left rail** (总览/会话/模板, with 会话 active) shows you're inside Sessions; the **session anchor nav** (Overview/Team/Routing/…) jump-scrolls the right long page.
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ storefront-7f3a · running                                         │
-│ 来源模板 storefront@a1b2c3d4 · orchestrator cc_orchestrator-7f3a    │
-├──────────┬─────────────────────────────────────────────────────────┤
-│ Overview │  # Overview                                             │
-│[Team]←active 状态 running · 创建 … · 来源模板 …(current) · orch …    │
-│ Routing  │  ─────────────────────────────────────────────────      │
-│ Prompts  │  # Team（成员 = 该会话的 agents）                        │
-│ Template │   role        agent 实例       source 模板     alive     │
-│ Migrate  │   greeter     doorman-7f3a     doorman        online     │
-│ （高级）  │   triage      triage-7f3a      triage         online     │
-│          │   escalation  notetaker-7f3a   notetaker      online     │
-│   ↑左锚点 │   [+ 成员] [更新模板] [移除] [+ participant]              │
-│   点击跳转 │  ─────────────────────────────────────────────────      │
-│   到对应段 │  # Routing（属于本会话）                                 │
-│          │   frontline: {from:greeter}→triage · {mention:@esc}→…    │
-│          │   legends: @导购→{greeter,triage} · prompts: handoff,…   │
-│          │   [+ 规则] [+ legend] [+ prompt]                          │
-│          │  ─────────────────────────────────────────────────      │
-│          │  # Template & 版本 · # Migrate（高级，MVP 后置）          │
-│          │   当前 @a1b2c3d4(current) · snapshot 回模板 · 版本历史    │
-└──────────┴─────────────────────────────────────────────────────────┘
-   左锚点点击 = 跳到对应段；右侧整页可滚动。
+┌总导航┬─────────────────────────────────────────────────────────────┐
+│ 总览 │ 会话 › storefront-7f3a                  ← 面包屑              │
+│[会话]│ ┌ storefront-7f3a · running ──────────────────────────────┐ │
+│ 模板 │ │ 来源模板 storefront@a1b2c3d4 · orch cc_orchestrator-7f3a  │ │
+│  ↑   │ └─────────────────────────────────────────────────────────┘ │
+│ 总导航│ ┌会话锚点─┬───────────────────────────────────────────────┐ │
+│ 会话  │ │ Overview │ # Overview  状态 / 来源模板 / orchestrator     │ │
+│ 高亮  │ │ [Team]   │ # Team（成员 = 该会话的 agents）                │ │
+│      │ │ Routing  │   role      agent 实例     source    alive      │ │
+│      │ │ Prompts  │   greeter   doorman-7f3a   doorman   online     │ │
+│      │ │ Template │   triage    triage-7f3a    triage    online     │ │
+│      │ │ Migrate  │   [+ 成员][更新模板][移除][+ participant]        │ │
+│      │ │ (高级)   │ # Routing（属于本会话）                          │ │
+│      │ │          │   {from:greeter}→triage · legends @导购 …       │ │
+│      │ │          │   [+ 规则][+ legend][+ prompt]                   │ │
+│      │ │          │ # Template & 版本 · # Migrate（高级，MVP 后置）  │ │
+│      │ └──────────┴──────────────────────────────────────────────┘ │
+└──────┴─────────────────────────────────────────────────────────────┘
+  左：总导航（会话高亮）· 中：会话锚点（Team高亮，点击跳段）· 右：整页可滚
 ```
 
 ### 5.4 Templates (次要 · 蓝图库)
@@ -116,7 +113,7 @@ This journey is also the **MVP slice**: read-only topology + **one** manage-auth
 ```
 
 ## 6. MVP scope (from the handoff §6)
-**In:** Overview (health + audit feed) · Sessions list · Session detail **read-only topology** (Overview/Team/Routing/Prompts sections render the live config) · **one** manage-authorized live command = **routing-rule-add** (proves the Manage-gate end-to-end + dual-principal audit) · Templates **read-only** catalog.
+**In:** **Overview** (health + audit feed) · **Sessions** list (browse/filter all) · Session detail **read-only topology** (Overview/Team/Routing/Prompts sections render the live config) · **one** manage-authorized live command = **routing-rule-add** (proves the Manage-gate end-to-end + dual-principal audit) · **Templates view-only** catalog (read list + detail, no writes).
 **Out (follow-ups):** the other live write commands (add/remove member, define prompt/legend), `migrate_session`, full routing/legend/prompt **editors**, template **authoring** (Create/Fork/Tag write paths), the AgentTemplate `create/3` backend gap.
 
 ## 7. Backend grounding (verified against `origin/main`)
@@ -126,11 +123,12 @@ This journey is also the **MVP slice**: read-only topology + **one** manage-auth
 - **Session list + health:** `world/admin_data.ex` already computes `alive` (`is_pid && Process.alive?`) per session.
 - **Template authoring:** SessionTemplate `create/fork/persist_version` are caller-threaded (native). **AgentTemplate has only `persist_version_as_system` + `fork` — no caller-threaded `create` (gap).** → Templates read-only is the safe MVP.
 
-## 8. Open decisions
-1. **Library name:** **Templates** (recommended) vs **蓝图/Blueprints**.
-2. **Templates in MVP:** read-only catalog (recommended) vs defer entirely.
-3. **Sessions vs Overview entry:** is a separate "Sessions" full-list needed, or does Overview's quick-list suffice for MVP? (Recommend: keep both — Overview = health landing, Sessions = browse/filter all.)
-4. The Manage-gate §10 decisions still gate any *write* command (see the proposal).
+## 8. Decisions (resolved 2026-06-23)
+1. **Library name → "Templates".** ✅
+2. **Templates in MVP → yes, view-only** (read catalog + detail; no authoring writes). ✅
+3. **Both Sessions + Overview** in MVP. ✅ Overview = health landing; Sessions = browse/filter all.
+4. **Global left rail shown on every screen** (总览/会话/模板) — incl. the session detail (which nests its own anchor nav). ✅
+5. *Still gating any write command:* the Manage-gate §10 decisions (gate target / owner authority / runner / read-side / audit schema) — see the proposal. These don't block the read-only MVP surfaces, only the one live write command.
 
 ## 9. Relationship to existing artifacts
 - The **Manage-gate proposal** (authority model) is unchanged and still the backend design for the one live command.
