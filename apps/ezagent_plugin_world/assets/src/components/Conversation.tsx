@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, ChevronUp, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
+import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
@@ -789,7 +789,17 @@ function kindLabel(kind: string, mine: boolean) {
 function HelloPagePreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/customer?session_uri=${encodeURIComponent(sessionUri)}`
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="absolute right-2.5 top-2.5 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
+        title="在新标签页打开公开页面 / Open public page in a new tab"
+        aria-label="Open public page in a new tab"
+      >
+        <ExternalLink aria-hidden="true" className="h-4 w-4" />
+      </a>
       <iframe title="Rendered page" src={src} className="min-h-0 flex-1 border-0 bg-white" />
     </div>
   )
