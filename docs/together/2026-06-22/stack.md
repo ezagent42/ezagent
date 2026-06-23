@@ -5,7 +5,9 @@ _returned handoffs in analyzed merge order · dependencies · conflict check · 
 > Supersedes the earlier single-entry `stack.md` that shipped on the `world-beautify`
 > branch (it analyzed only #83 vs `main@a6fa6db3` and is now stale — main advanced).
 > `push` orders + analyzes only; merging happens in `close` (lead → `main`).
-> **Returns analyzed:** 3 · current `origin/main` = `3790d112`.
+> **Returns analyzed:** 4 active returns + 1 superseded duplicate · current
+> `origin/main` at original stack time = `3790d112`. Backfilled on 2026-06-23
+> to include the missing Agent Console return and PR closure state.
 
 ## Branch facts (measured)
 
@@ -51,6 +53,28 @@ Both modify, vs main:
 | 2 | #83 world beautify + restructure | `world-beautify` | ✅ **MERGED** `28a90831` (squash) | done — precommit 4584/0 PG + vite build + check:mounts + agent-browser E2E (shadcn world renders); debt: world_live.ex 1036>1000 (cap-bumped 3→4, re-trim follow-up for zyli) |
 | 3 | hello @json-render plugin | `hello` (#891) | ✅ **MERGED** `d8c4a7f9` (squash) | done — precommit 4611/0 PG + vite/check:mounts + anon @json-render page E2E (/socialware/customer); fixed hello's stale WorkspaceRegistry.bind/2 warning; note: customer_app esbuild needs zod (web/assets/package.json, installed by `mix assets.setup`) |
 | 4 | Agent Console demo (#84) | `agent-console` (#892) | ✅ **MERGED** `798f46bd` (squash) | done — precommit 4611/0 PG; /agent-console-demo loads + renders (Phase-0 mockup); conflict: world-coordination.md table merged. Phase-0 = design demo only (no real authz) |
+
+## Returned-vs-stacked reconciliation (2026-06-23 backfill)
+
+| Return file | Ledger status | Evidence / close state |
+|---|---|---|
+| `returns/pg-compat-audit.md` | stacked + merged | Landed `db1fb574`; no GitHub PR recorded in this ledger. |
+| `returns/world-beautify.md` | stacked + merged | Landed `28a90831`; PR #890 comment+closed on 2026-06-23 as subsumed by main. |
+| `returns/hello.md` | stacked + merged | Landed `d8c4a7f9`; PR #891 comment+closed on 2026-06-23 as subsumed by main. |
+| `returns/agent-console.md` | stacked + merged | Missing in original ledger; backfilled. Landed `798f46bd`; PR #892 comment+closed on 2026-06-23 as subsumed by main. |
+| `returns/world-beautification-restructure.md` | superseded duplicate | Older world-beautify snapshot. Its "fast-forward-able" claim was stale after main advanced; canonical active return is `returns/world-beautify.md`. |
+
+## PR closure loop (2026-06-23 backfill)
+
+These PRs were **not** merged through GitHub. They were integrated through the
+lead close path as squash/subsumed commits, then comment+closed so GitHub matches
+`main`:
+
+| PR | Author | State after backfill | Main SHA |
+|---|---|---|---|
+| #890 `world-beautify` | `zyli-developer` | CLOSED | `28a90831` |
+| #891 `hello` | `zhaomaota97` | CLOSED | `d8c4a7f9` |
+| #892 `agent-console` | `FatNine` | CLOSED | `798f46bd` |
 
 ## Close prerequisites
 - **PostgreSQL must be running** for all gate re-runs (the suite is PG-only after step 1). Bring up `docker-compose.pg.yml` before close step 1's verification.

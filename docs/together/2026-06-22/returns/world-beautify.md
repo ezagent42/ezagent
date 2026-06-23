@@ -1,5 +1,16 @@
 # Return — world UI beautification + product restructure (world-beautify)
 
+| Field | Value |
+|---|---|
+| Task | #83 world UI beautification + product restructure |
+| Branch | `world-beautify` |
+| PR | #890 |
+| Dev / PR author | `zyli-developer` |
+| returned_at | 2026-06-22 17:53:04 +08:00 (backfilled from branch commit `90b3e60e` marking the return close-ready; original return file later re-recorded in `3768b8e3`) |
+| deadline | 2026-06-22 20:00 +08:00 |
+| deadline_status | `on_time` for return; integration completed after deadline |
+| close_status | Landed via lead squash/subsumed commit `28a90831`; PR #890 comment+closed on 2026-06-23 |
+
 - **Branch:** `world-beautify` (HEAD `67db6e79`)
 - **Base:** `a6fa6db3` — **older than current `origin/main` `3790d112`**. `origin/main` is **NOT** an ancestor of HEAD → wb is **behind** main by #893 (login-with-email) + #894 (CF worker). The branch's own `stack.md` says "ff-able, zero conflict" but that was computed vs `main@a6fa6db3` and is now **STALE**: a rebase onto current main is required.
 - **Author/dev:** zyli-devel

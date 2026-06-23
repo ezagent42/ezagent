@@ -3,6 +3,23 @@
 End-of-day retrospective for the close of 4 returns, + tomorrow's plan (Allen's
 request before AFK). Full per-entry detail + merged SHAs in `stack.md`.
 
+> 2026-06-23 backfill: the original day had a placeholder-only `plan.md`, one
+> missing return (`agent-console`), one superseded duplicate world return, and
+> three GitHub PRs left open after their code landed through the lead close path.
+> This review now records those gaps explicitly. PR #890/#891/#892 were
+> comment+closed on 2026-06-23 as subsumed by `main`.
+
+## Ledger accounting (2026-06-23 backfill)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Original plan | Invalid / placeholder-only | `plan.md` had only the scaffold line and no task ledger. |
+| Active returns counted | 4 | `pg-compat-audit`, `world-beautify`, `hello`, `agent-console` (backfilled). |
+| Superseded return | 1 | `world-beautification-restructure.md` was an older world-beautify snapshot. |
+| Late returns | 3 | `pg-compat-audit` ledger record, `hello`, and `agent-console` all arrived after the nominal 20:00 +08:00 deadline. |
+| On-time return but late integration | 1 | `world-beautify` was close-ready before 20:00, but integration completed at 23:52. |
+| GitHub PR closure | Fixed on 2026-06-23 | #890/#891/#892 comment+closed as subsumed by lead squash/subsumed main SHAs. |
+
 ## What landed on `main` (all 4 returns)
 
 | Return | SHA | gates (all under PostgreSQL) |
@@ -55,6 +72,8 @@ is a benign PG-version-skew GUC, data intact.
    **Burn-down: re-extract from world_live.ex (mirror pg's CallerDisplay split)**
    — natural owner: zyli/world. (Joins the standing oversized burn-down in
    `docs/futures/todo.md`: session_creator 1071, server 1027, kind 1025.)
+   **2026-06-23 status:** resolved on `main` by `ebccf695`; precommit 4611/0;
+   oversized cap returned to 3. Do not carry this item into the 2026-06-23 plan.
 2. **layout_manager.ex raw `Home.path("world/layouts")`** — wb added a new raw
    Home caller after the resource-unification lockdown. Currently kept as an
    `HomePathExceptions` anchor (line 164). **Proper fix: migrate to `resource://`**
@@ -155,11 +174,14 @@ socialware-creator View, not a separate console app.
 ### Other `todo.md` consolidation candidates
 
 - **Oversized-module burn-down** is already multiple todo entries
-  (session_creator, server, kind) — merge with world_live + layout_manager into
-  the single arch-debt task (#4 above).
+  (session_creator, server, kind). Do **not** include `world_live` in this bucket
+  for 2026-06-23; it was resolved on `main` by `ebccf695`.
 - **#88 inbound email** (my parked task) stays separate — it now needs a rebase
   onto the PG main before the `ezagent_plugin_email` implementation (the plan +
   spec are codex-reviewed and ready on branch `plugin-email`).
+  **2026-06-23 status:** Allen marked `plugin-email` #88 as an active small task
+  already under development, so it must not be included in the 2026-06-23
+  dev-together plan.
 
 ### Resume note (my parked work)
 

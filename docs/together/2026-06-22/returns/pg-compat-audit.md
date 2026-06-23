@@ -1,5 +1,16 @@
 # Return — PostgreSQL-only migration (pg-compat-audit)
 
+| Field | Value |
+|---|---|
+| Task | PostgreSQL-only runtime migration |
+| Branch | `pg-compat-audit` |
+| PR | none recorded in this day ledger |
+| Dev / author | Lead / Allen handoff |
+| returned_at | 2026-06-22 23:17:44 +08:00 (backfilled from first return-ledger commit `3768b8e3`; original return timestamp was missing) |
+| deadline | 2026-06-22 20:00 +08:00 |
+| deadline_status | `late` |
+| close_status | Landed on `main` as `db1fb574` at 2026-06-22 22:30:31 +08:00 |
+
 - **Branch:** `pg-compat-audit` (HEAD `db1fb574` — `feat(db): migrate runtime storage to postgres`)
 - **Base:** rebased onto current `origin/main` `3790d112` (includes login-with-email #893 + CF Email Worker #894). `origin/main` IS an ancestor of HEAD → **FF-able, no rebase needed**.
 - **Author/dev:** (handoff to lead via Allen)

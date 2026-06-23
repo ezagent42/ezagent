@@ -1,5 +1,16 @@
 # Return — hello: AI-generated @json-render UI pages plugin (hello)
 
+| Field | Value |
+|---|---|
+| Task | hello: AI-generated @json-render UI pages plugin |
+| Branch | `hello` |
+| PR | #891 |
+| Dev / PR author | `zhaomaota97` |
+| returned_at | 2026-06-22 20:32:25 +08:00 (backfilled from PR `updatedAt`; first return-ledger file commit was `3768b8e3` at 23:17) |
+| deadline | 2026-06-22 20:00 +08:00 |
+| deadline_status | `late` |
+| close_status | Landed via lead squash/subsumed commit `d8c4a7f9`; PR #891 comment+closed on 2026-06-23 |
+
 - **Branch:** `hello` (HEAD `808553f3`), **PR #891**
 - **Base:** `world-beautify` (PR base = `world-beautify`; `world-beautify` IS an ancestor of `hello`). hello = world-beautify + ~47 files. → **must merge AFTER world-beautify**; inherits wb's rebase.
 - **Author/dev:** zhaomaota97

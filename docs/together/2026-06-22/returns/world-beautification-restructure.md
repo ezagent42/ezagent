@@ -1,5 +1,16 @@
 # Return — world UI beautification + product-structure adjustment
 
+| Field | Value |
+|---|---|
+| Task | #83 world UI beautification + product restructure |
+| Branch | `world-beautify` |
+| PR | #890 |
+| Dev / PR author | `zyli-developer` |
+| returned_at | 2026-06-22 17:53:04 +08:00 (backfilled from branch commit `90b3e60e`; this older return snapshot was imported later at `6f33d29d`) |
+| deadline | 2026-06-22 20:00 +08:00 |
+| deadline_status | `on_time` for original return snapshot |
+| close_status | **superseded** by `returns/world-beautify.md`; do not count as a second return |
+
 > **Date:** 2026-06-22 · **From (dev):** Claude · **To (lead):** Allen
 > **Task:** #83 · **Branch:** `world-beautify` (16 ahead / 0 behind `origin/main` @ `a6fa6db3` — cleanly rebased, fast-forward-able; HEAD `6db6d876`)
 > **Handoff:** `docs/superpowers/handoffs/2026-06-22-world-beautification-restructure-handoff.md`
