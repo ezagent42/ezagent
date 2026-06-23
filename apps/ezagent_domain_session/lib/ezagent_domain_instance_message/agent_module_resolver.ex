@@ -116,7 +116,10 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   # 2026-06-13), so `"curl_agent"` is simply a dead kind_type that falls through
   # to the unknown-kind `nil` like any other.
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
-  defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
+  # A5: echo now rides Entity.Agent; keep the mapping correct for any
+  # existing snapshot rows (echo was ephemeral so in practice none exist,
+  # but a stale row must resolve cleanly rather than falling through to nil).
+  defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Agent
   defp kind_module_from_kind_type(_), do: nil
 
   # Template Class names (e.g. "cc.agent" registered by the cc plugin;

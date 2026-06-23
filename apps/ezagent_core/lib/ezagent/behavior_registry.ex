@@ -8,8 +8,8 @@ defmodule Ezagent.BehaviorRegistry do
   process monitoring.
 
   Owned by `EzagentCore.EtsOwner`. Phase 1 step 4 (Echo plugin
-  Application.start/2) calls `register/3` to wire `{Ezagent.Entity.Echo,
-  :say} → Ezagent.Behavior.Echo`.
+  Application.start/2) calls `register/3` to wire `{Ezagent.Entity.Agent,
+  :say} → Ezagent.Behavior.Echo` (A5: echo now rides `Entity.Agent`).
 
   ## Phase 1 scope
 

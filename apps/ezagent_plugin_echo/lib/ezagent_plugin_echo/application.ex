@@ -44,7 +44,8 @@ defmodule EzagentPluginEcho.Application do
   - `children/0` — a per-Kind `DynamicSupervisor`. Kept for future
     per-plugin-supervisor migrations; echo Kinds currently land under
     `EzagentDomainInstanceMessage.AgentSupervisor` (chat's flavor-prefix resolver
-    routes them there — see `Ezagent.Entity.Echo.supervisor/0`).
+    routes them there — A5: `Entity.Echo` deleted; echo Kinds land under
+    the standard `Entity.Agent` supervisor path).
 
   ## Default echo agent seeding — `after_boot/0` (PR-5 codex HIGH-2)
 
@@ -140,7 +141,8 @@ defmodule EzagentPluginEcho.Application do
 
   `Ezagent.Plugin.boot/1` calls this AFTER Phase-2 `publish/1` has
   registered `agent_flavors/0`, so `Ezagent.AgentFlavorRegistry`
-  already maps the `"echo"` flavor → `Ezagent.Entity.Echo`. The seed
+  already maps the `"echo"` flavor → `Ezagent.Entity.Agent` (A5: `Entity.Echo`
+  deleted). The seed
   spawns through `Ezagent.SpawnRegistry.spawn/1` — the standard
   `entity://` resolver path — and this plugin's dep on
   `ezagent_domain_session` guarantees the `entity://` dispatcher is
