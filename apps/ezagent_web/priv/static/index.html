@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN" data-share-page="agent-console-demo-share-v1">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Console 分享入口</title>
+<style>
+  :root {
+    --bg: #f6f8fb;
+    --surface: #ffffff;
+    --text: #182230;
+    --muted: #667085;
+    --border: #d8dee8;
+    --teal: #0f766e;
+    --teal-50: #eefdfa;
+    --amber: #b45309;
+    --amber-50: #fffbeb;
+    --blue: #2563eb;
+    --blue-50: #eff6ff;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  code { font-family: var(--mono); font-size: 13px; }
+
+  .bar {
+    padding: 11px 18px;
+    background: #172033;
+    color: #ffdf8a;
+    text-align: center;
+    font-weight: 700;
+  }
+
+  main {
+    width: min(980px, calc(100vw - 32px));
+    margin: 0 auto;
+    padding: 42px 0 56px;
+  }
+
+  .hero {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .eyebrow {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 6vw, 48px);
+    line-height: 1.08;
+    letter-spacing: 0;
+  }
+
+  p { margin: 0; color: var(--muted); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  .card {
+    display: grid;
+    gap: 14px;
+    min-height: 260px;
+    padding: 22px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+
+  .card h2 {
+    margin: 0;
+    font-size: 22px;
+  }
+
+  .tag {
+    width: fit-content;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid #a7f3d0;
+    background: var(--teal-50);
+    color: var(--teal);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .tag.secondary {
+    border-color: #bfdbfe;
+    background: var(--blue-50);
+    color: var(--blue);
+  }
+
+  .button {
+    align-self: end;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 42px;
+    padding: 10px 14px;
+    border-radius: 7px;
+    background: var(--teal);
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 800;
+  }
+
+  .button.secondary { background: var(--blue); }
+
+  .note {
+    margin-top: 18px;
+    padding: 13px 15px;
+    border-left: 3px solid var(--amber);
+    border-radius: 0 8px 8px 0;
+    background: var(--amber-50);
+    color: #7a3b04;
+  }
+
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+    main { padding-top: 30px; }
+  }
+</style>
+</head>
+<body>
+<div class="bar">Agent Console · 纠正 #892 的 operate-first 设计确认版本</div>
+<main>
+  <section class="hero">
+    <div class="eyebrow">分享入口</div>
+    <h1>Agent Console 分享入口</h1>
+    <p>这里只保留两个给同事看的入口：可交互的设计确认 Demo，以及完整用户旅程说明页。</p>
+  </section>
+
+  <section class="grid" aria-label="Agent Console links">
+    <article class="card">
+      <span class="tag">推荐先看</span>
+      <h2>设计确认 Demo</h2>
+      <p>中文主界面，展示 object-first / operate-first IA：概览、会话详情、模板只读、授权矩阵，以及 <code>routing-rule-add</code> 的 Manage-gate trace。</p>
+      <a class="button" href="agent-console-demo/">打开设计确认 Demo</a>
+    </article>
+
+    <article class="card">
+      <span class="tag secondary">完整链路</span>
+      <h2>完整用户旅程</h2>
+      <p>按运营者视角串起完整流程：从概览进入活会话，到路由策略加规则，再到 Manage-gate 两阶段和双主体审计闭环。</p>
+      <a class="button secondary" href="agent-console-journey/">查看完整用户旅程</a>
+    </article>
+  </section>
+
+  <div class="note">
+    这一版用于纠正昨天 #892 的 flat / tool-first demo：不接后端、不改 world surface，只做静态设计确认。
+  </div>
+</main>
+</body>
+</html>
