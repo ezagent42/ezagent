@@ -28,6 +28,10 @@ config :ezagent_core, EzagentCore.Repo,
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
 config :ezagent_web, EzagentWeb.Endpoint,
+  # protocol_api P0 E2E: remove cookie domain restriction so Playwright can
+  # log in via localhost/world.localhost. Production uses ".ezagent.chat".
+  session_options: [domain: nil],
+
   # Bound to 0.0.0.0 so the dev server is reachable over the tailnet — Allen
   # accesses esr-ng from a tailnet IP (100.x.x.x), not localhost (P0-D8).
   # `check_origin: false` below is required for the same reason: a LiveView WS

@@ -48,7 +48,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # restart, so the session-domain `session` spawn fn restarts the
     # per-orchestrator `SessionManager` executor. cc spawns nothing itself; it
     # references the session it already routes to via the chokepoint.
-    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex"
+    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
+    # protocol_api P0 — spawn session for durable conversation binding
+    "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
+    # protocol_api P0 — spawn echo agent when not yet seeded (ephemeral Kind)
+    "apps/ezagent_plugin_protocol_api/lib/ezagent_plugin_protocol_api/openai_chat_plug.ex"
   ]
 
   @spawn_fresh_sanctioned [
