@@ -93,6 +93,10 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("flavors", flavors)
     |> Map.put("default_flavor", default_flavor)
     |> Map.put("preview_uri", preview_agent_uri(workspace_uri, ""))
+    # Mirrors validate_cwd_for_flavor/3 in agent_create.ex:144-157 (UI hint only;
+    # the authoritative check is server-side on submit / fail-closed).
+    |> Map.put("cwd_required_flavors", ["cc", "codex"])
+    |> Map.put("cwd_required_with_pty_flavors", ["echo"])
   end
 
   defp component_state(
