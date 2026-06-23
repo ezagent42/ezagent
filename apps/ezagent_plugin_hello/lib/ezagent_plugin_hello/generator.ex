@@ -293,7 +293,8 @@ defmodule EzagentPluginHello.Generator do
   # The session's builder agent URI, derived from the session URI:
   # session://<ws>/hello/<name> → entity://<ws>/agent/hello_<name>
   # (matches `App.ensure_app/2`'s builder_uri).
-  defp builder_uri(%URI{host: ws} = session_uri) do
+  defp builder_uri(%URI{} = session_uri) do
+    ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
   end
