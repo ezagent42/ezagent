@@ -7,7 +7,7 @@
 | Branch | `world-deploy-e2e-pg` (off `main` @ `9835cfe3`) |
 | Handoff | `docs/together/2026-06-23/handoffs/world-deploy-e2e-pg.md` |
 | Deadline | 2026-06-23 20:00 +08:00 (18:00 checkpoint) |
-| Status | **support matrix returned at checkpoint** — runbook refreshed + per-step matrix below; operator screenshots in progress (no agent-browser in this WSL env, so supported-step evidence is human-driven) |
+| Status | **runbook refreshed + support matrix + live agent-browser walkthrough done**. Steps 1-2 ✅ (with 2 UX bugs), step 3/4 🟡 blocked by one crux bug (operator-created session lacks `:send`/routing cap), steps 5-8 hello → task 3. Evidence screenshots in `docs/together/2026-06-23/evidence/`. |
 
 ## 1. Phase 0 — runbook refreshed for PostgreSQL ✅ (DONE)
 
@@ -43,6 +43,40 @@ A proper fix (seed creates the session first) is a small follow-up owned by this
   route + RequireEntity OK) · `/register`→200 · `/socialware/customer`(no param)→400 ·
   `/api/v1`→**106 backend actions**.
 - Admin login: `admin@ezagent.chat` / `worlddev`.
+
+## 2b. Live E2E walkthrough (agent-browser, on the running server)
+
+agent-browser 0.27.0 **is** available in this env (earlier session assumption was
+wrong). Drove the real browser flow against `world.localhost:10042`. Screenshots in
+`/tmp/world-e2e/` (to be attached to the PR / copied into `docs/together/2026-06-23/evidence/`).
+
+| Step | Live result | Screenshot |
+|---|---|---|
+| 1 login | ✅ logged in as admin → world dashboard renders | `01a-login.png`, `01b-sessions-loggedin.png` |
+| 2 create cc agent | ✅ created `entity://system/agent/claude-bot` (flavor cc). It **spawned a real `claude` OS process** (`os_pid` live, `running: true`, credential-cascade `auto_prompts` wired). **2 bugs found** (below). | `02a-agent-new-form.png`, `02b-agent-created.png`, `02c-agent-apikeys.png` |
+| 3 session + converse | 🟡 session create ✅ + **invite agent member ✅** (members 1→2, claude-bot AGENT live). **Send is BLOCKED**: typing + Send registers NO message/turn (debug panel `messages: 0`; transcript "No turns"), via both plain send and `@mention`. | `03a-session-open.png`, `03b-member-added.png`, `03c-debug.png` |
+| 4 routing | 🟡 **correction to static matrix: an in-session routing-rule builder DOES exist** in the conversation panel (Matcher `Always`/`Mention`/`From`/`Text contains` + Receivers + Add). But **Add silently no-ops** (no rule persisted) — same failure class as send. | `03b-member-added.png` (routing builder visible) |
+| 5-8 hello | not reached (blocked upstream by step-3 send + hello product gaps owned by task 3) | — |
+
+### Bugs found live (precise, for the owning branches)
+1. **cc agent create — empty-CWD silent failure (UX).** cc/codex flavors require an
+   existing CWD dir (`validate_cwd_for_flavor` → `{:error, :cwd_required_for_cc}`,
+   `agent_create.ex:144`). With CWD blank the world form sets
+   `last_dispatch_status: "error:cwd_required_for_cc"` but **shows nothing to the user**
+   — the form just sits there. → **FatNine `socialware-creator-agent-config`** (surface the error / mark CWD required for cc).
+2. **agent detail shows `Phase: unknown / Flavor: unknown / Bridge: not connected`**
+   while the raw status is `%{phase: :alive, flavor: "cc", detail: %{running: true, …}}`
+   — the detail page doesn't parse the live status. → **FatNine** (agent detail surface).
+3. **🚩 the crux — `session/send` and session `add_rule` silently no-op for the
+   operator who CREATED the session.** Inviting a member works (workspace/identity cap),
+   but sending a message or adding a routing rule registers nothing (no turn, no rule, no
+   visible error). **Hypothesis (precise):** creating a session through the world UI does
+   **not** grant the creator a per-session `:send` / routing cap, so those dispatches are
+   cap-denied at the chokepoint and swallowed by the UI. The seed's alice/bob get explicit
+   `:send` caps and are the intended senders; an operator-created session has no such grant.
+   This blocks E2E steps 3,4,8 for an operator. → **owner: lead / world-session owner**
+   (decide: auto-grant the creator session caps, or document the intended sender path) —
+   NOT a hello (task 3) issue. Needs confirmation of the exact denied cap from the server log.
 
 ## 3. Support matrix — full E2E on current `main`
 
