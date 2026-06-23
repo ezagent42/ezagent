@@ -6,21 +6,24 @@ defmodule Ezagent.Email.BindingTest do
   use EzagentCore.DataCase, async: false
   import Swoosh.TestAssertions
 
-  alias Ezagent.Email.{Binding, ThreadState}
+  alias Ezagent.Email.{Binding, InboundBinding, ThreadState}
   alias Ezagent.ExternalMirror.BindingRow
 
   @target "human@example.com"
   @ws "workspace://system"
 
-  # Build a verified binding state + the parent binding row so the thread
-  # FK + workspace derivation hold. Returns {state, session_uri}.
+  # Build a verified binding state + the parent binding row + a DURABLE
+  # verified inbound-meta row (PR-2 gate is durable). Returns
+  # {state, session_uri}.
   defp verified_binding! do
     session_uri =
       Ezagent.URI.new!("session://system/default/bind-#{System.unique_integer([:positive])}")
 
+    row_id = BindingRow.row_id(session_uri, "email", @target)
+
     {:ok, _} =
       BindingRow.insert(%{
-        id: BindingRow.row_id(session_uri, "email", @target),
+        id: row_id,
         session_uri: URI.to_string(session_uri),
         adapter_id: "email",
         target_id: @target,
@@ -29,6 +32,19 @@ defmodule Ezagent.Email.BindingTest do
         bound_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
         workspace_uri: @ws
       })
+
+    # Durable verified status — the PR-2 gate reads this, not the in-memory
+    # state. Use a unique alias per session (the local_address is UNIQUE).
+    {:ok, {_, _}} =
+      InboundBinding.record(%{
+        binding_row_id: row_id,
+        local_address: "bind-#{System.unique_integer([:positive])}@ezagent.chat",
+        session_uri: URI.to_string(session_uri),
+        target_id: @target,
+        workspace_uri: @ws
+      })
+
+    {:ok, _} = InboundBinding.mark_verified(row_id)
 
     state = %{
       target_id: @target,
@@ -69,14 +85,29 @@ defmodule Ezagent.Email.BindingTest do
     end
   end
 
-  describe "publish/2 verification gate" do
-    test "refuses to send when not verified (recoverable)" do
+  describe "publish/2 verification gate (DURABLE — PR-2)" do
+    test "refuses to send when no durable verified row exists (recoverable)" do
       session_uri = Ezagent.URI.new!("session://system/default/unverified")
 
       state = %{
         target_id: @target,
         opts: %{},
         verification_status: :pending_verification,
+        publish_count: 0,
+        error_count: 0
+      }
+
+      assert {:error, :not_verified, ^state} = Binding.publish(payload(session_uri), state)
+    end
+
+    test "in-memory :verified is NOT the gate — durable status is authoritative" do
+      # State claims verified, but no durable inbound-meta row → refuse.
+      session_uri = Ezagent.URI.new!("session://system/default/durable-gate")
+
+      state = %{
+        target_id: @target,
+        opts: %{},
+        verification_status: :verified,
         publish_count: 0,
         error_count: 0
       }
