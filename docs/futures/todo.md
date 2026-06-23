@@ -14,6 +14,27 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Arch-debt deferred tracks (2026-06-23 close, Allen "clean all cleanable")
+
+> Cleaned at close: `oversized_modules_gt_1000` 3→0 (#919). The items below are
+> the remaining caps, with the honest reason each is NOT a quick sweep (full
+> accounting: `docs/together/2026-06-23/review.md` §5).
+
+- **#55 `undocumented_public_defs` 392 burn-down** — reducible but a mass @doc
+  sweep ships unverified claims (violates `feedback_doc_why_must_be_code_verified`).
+  Needs a deliberate, codex-reviewed, batched campaign.
+- **Plugin-owned resource-type registration** on `Resource.FsResolver` (currently
+  core-compile-time-only `boot_registrations/0`, no plugin self-registration) →
+  then migrate world `LayoutManager.layout_dir/0` off raw `Home.path` behind a
+  `resource://`-style seam, ratcheting `raw_home_path_outside_core` 2→1. The codex
+  SUN_LEN socket (the other entry) is genuinely un-migratable (D2). Spec-worthy.
+- **`cross_file_duplicate_fn_groups` 32 audit** — enumerate annotated-sanctioned
+  mirrors vs. genuinely-dedupable BEFORE any dedup (not yet audited; do not assume).
+- **`cc_codex_template_class_combined_loc` 1684** — a GROWTH CEILING, not a too-big
+  file (cc_agent 930 + codex_agent 754, both <1000 individually). Reducing the
+  combined cap = fragmenting cohesive flavor logic to chase a number; leave as the
+  ceiling. Revisit only if either file individually nears 1000.
+
 ### i18n: widen the anti-CJK gate scope + translate the rest of the umbrella — OPEN (#91 follow-up, 2026-06-23)
 
 > Landed at the dev-together close (#91): `EzagentPluginHello.Generator`
