@@ -1,5 +1,13 @@
 # Return — world-deploy-e2e-pg (PostgreSQL deploy + E2E support matrix)
 
+> **Task:** `world-deploy-e2e-pg` (dev-together 2026-06-23 #2)
+> **Branch:** `world-deploy-e2e-pg` (pushed; `d7d4543a..e3d6254d`)
+> **PR:** [#902](https://github.com/ezagent42/ezagent/pull/902) — OPEN → `main`
+> **Dev:** zylideveloper (Claude)
+> **returned_at:** 2026-06-23 16:05 +0800
+> **deadline:** 2026-06-23 20:00 +0800 (18:00 checkpoint)
+> **deadline_status:** `on_time` — early-return path (refreshed runbook + support matrix + root-caused crux + full step-by-step blocker routing), delivered before the 18:00 checkpoint.
+
 | Field | Value |
 |---|---|
 | Task | `world-deploy-e2e-pg` (dev-together 2026-06-23 #2) |
@@ -227,6 +235,31 @@ elixir --name "probe@127.0.0.1" --cookie "$COOKIE" -e '
 #    :erpc … Repo.query!("SELECT uri FROM kind_snapshots WHERE uri LIKE 'session://%'")
 ```
 
-## 8. Merge request
-PR into `world-deploy-e2e-pg`; lead merges to `main` after review. The matrix above
-+ §7 root-cause are the 18:00 coordination artifact for tasks 1/3/4 and the lead.
+## 8. Deliverables + merge request
+
+**Deliverables (all on the branch / PR #902):**
+- Refreshed PG runbook `docs/guide/world-e2e-seed.md` (+ ⛔ known-blocker note, §3).
+- Support matrix (§3) + root-caused crux (§7, **independently reviewed** by a subagent).
+- **Full step-by-step blocker analysis + owner routing** for steps 2–8:
+  `docs/together/2026-06-23/e2e-blocker-analysis.md`, **posted as a PR comment**:
+  [#902 comment](https://github.com/ezagent42/ezagent/pull/902#issuecomment-4776984856).
+- Evidence: `docs/together/2026-06-23/evidence/*.png` (incl. `03d-send-no-such-actor.png`).
+
+**Gate status:** docs + evidence only — **no product code touched** (scope held per
+handoff §7). No `mix` gates apply; world mount/slot gates unaffected (no route/renderer
+change). One non-blocking seed follow-up noted (§1).
+
+**Routing to other branches (the coordination output):**
+- **lead / core+domain session lifecycle** → steps 3/4 (+ 8 world side): `create_session`
+  5 s dispatch timeout + snapshot-on-create race → `:no_such_actor` swallowed by `:cast`.
+- **gagameow `agent-flavor-headless-protocol-api`** → step 2/3 cc credential/login completion.
+- **FatNine `socialware-creator-agent-config`** → step 2 UX (empty-CWD silent fail; detail status).
+- **zhaomaota97 `world-hello-convergence`** → steps 5/6/7/8 (hello-app create flow, native page render, cross-surface sync).
+
+**Merge request:** lead merges `world-deploy-e2e-pg` → `main` after review (PR #902).
+Docs/evidence only; rebased on `main`; no ordering constraints with other returns.
+
+**Open item for the lead:** step 2's exact operator symptom is unconfirmed (agent-browser
+can't drive the React form reliably — my `error:name_required` was a tooling artifact). If
+the operator's create fails *after* a valid name+CWD, its `data-last-dispatch` may show a
+create-timeout (→ lead) rather than a credential gap (→ gagameow); flagged in the PR comment.
