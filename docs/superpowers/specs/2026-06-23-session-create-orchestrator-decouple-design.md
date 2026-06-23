@@ -1,10 +1,31 @@
-# Decouple Session Creation from Orchestrator Spawn — Design (rev2)
+# Decouple Session Creation from Orchestrator Spawn — Design (rev3)
 
-> Status: design (brainstorm-approved 2026-06-23; **rev2** addresses the first
-> codex adversarial review — 2 BLOCKER + 4 HIGH + 3 MED, all verified against
-> code). Supersedes the orchestrator-coupling decision in
+> Status: design (brainstorm-approved 2026-06-23; **rev3** addresses the proper
+> `/codex:adversarial-review` of rev2 — 1 BLOCKER + 2 HIGH, all verified against
+> code; rev2 had addressed the first review's 2 BLOCKER + 4 HIGH + 3 MED).
+> Supersedes the orchestrator-coupling decision in
 > `docs/superpowers/specs/2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md`
 > (§9). Fixes the PR #902 session-creation bug.
+
+## 0a. What changed in rev3 (read first)
+
+The adversarial-review confirmed the decouple direction but flagged three
+load-bearing gaps; rev3 closes them:
+
+- **Status write ordering (BLOCKER):** `:pending` is now written in the Session
+  Kind's **birth slice** (`init_slice`, persisted in the initial snapshot) —
+  NOT late, after bind. And every terminal status write (`:ready`/`:failed`) is
+  **monotonic via a per-attempt id (CAS)**: a stale/late write can never
+  overwrite a newer terminal status. Together this removes the hazard where a
+  fast worker's `:ready` could be clobbered by a late `:pending` (e.g. test-mode
+  / already-present orchestrator).
+- **Residue ledger completeness (HIGH):** the ledger now enumerates **every**
+  side effect the ensure performs after spawn (see §4.3), each compensated
+  idempotently, each with a failure-injection test.
+- **Mandatory global concurrency cap (HIGH):** the bring-up supervisor MUST be a
+  single global-capped queue/pool (fixed max in-flight across ALL sessions) plus
+  atomic per-session dedup. Per-session dedup alone does not bound the
+  cold-restart boot storm; the global cap is no longer an optional alternative.
 
 ## 0. What changed in rev2 (read first)
 
@@ -110,11 +131,12 @@ template, synchronously does only cheap local work:
 
 1. spawn the Session Kind (`Ezagent.Kind.spawn(Session, %{.., orchestrator_template_uri:, session_template_uri:})`)
    — the Kind's init writes its respawnable snapshot atomically with the
-   `ever_created` marker (`Kind.Server` initial-snapshot path); the OTU is in the
-   **birth slice** (§4.4),
+   `ever_created` marker (`Kind.Server` initial-snapshot path); the OTU **and**
+   `orchestrator_status: :pending` are in the **birth slice** (§4.4, §4.5), so
+   `:pending` is durable from t=0 (before `activated/2` or any worker can run) —
+   create does NOT write `:pending` late,
 2. bind the session to its workspace (`WorkspaceRegistry.bind/2`),
-3. write `orchestrator_status: :pending` durably (§4.5),
-4. join the **owner only** (owner authority) so the session is immediately
+3. join the **owner only** (owner authority) so the session is immediately
    usable,
 
 then returns `{:ok, session_uri, %{orchestrator_status: :pending, ...}}`. It does
@@ -148,8 +170,10 @@ stays `:ready`). On **every** activation it:
   (§4.3 dedup) → **kick the bounded bring-up worker** and return immediately;
 - else no-op.
 
-On a fresh create, `activated/2` may fire during spawn before bind — but its
-guard does not need the bind, and the worker it would kick is de-duplicated
+On a fresh create, `activated/2` may fire during spawn before bind — this is now
+safe because (a) `:pending` is already in the birth slice (no late create write
+to clobber a fast worker's terminal status — the rev3 BLOCKER fix), (b) the
+guard does not need the bind, and (c) the worker it would kick is de-duplicated
 against the explicit kick from `create_session` (§4.3), so at most one bring-up
 runs. On cold-restart respawn, the bind is already durable, so `activated/2` is
 the sole driver. `activated/2` must NOT await readiness (it runs in the Kind's
@@ -158,12 +182,15 @@ process; blocking it stalls the mailbox even though `ReadyGate` says ready).
 ### 4.3 One bounded, deduplicated bring-up worker (reuses `repair_orchestrator`)
 
 Both entry points (the explicit create kick + the `activated/2` respawn kick)
-converge on a single bring-up path under a dedicated, **bounded** supervisor
-added to `EzagentDomainInstanceMessage.Application` (a `Task.Supervisor` plus a
-small in-flight registry keyed by `session_uri`, or a concurrency-capped worker
-pool). In-flight dedup: a second kick for a session already being brought up is a
-no-op. This bounds the cold-start boot storm the 2026-05-31 SPEC warned about
-(N sessions × 90s).
+converge on a single bring-up path under a dedicated bring-up manager added to
+`EzagentDomainInstanceMessage.Application`. It MUST enforce a **global
+concurrency cap** (a single GenServer queue or a fixed-size worker pool — a
+mandatory ceiling on total in-flight bring-ups across ALL sessions) **plus**
+atomic per-session in-flight dedup. Per-session dedup alone only prevents
+duplicate work for one session; on cold restart N distinct orchestrator-bearing
+sessions would still launch N concurrent 90s readiness waits — exactly the
+2026-05-31 SPEC boot-storm warning. The global cap is therefore not optional. A
+second kick for a session already in flight is a no-op.
 
 The worker runs the existing
 `EzagentDomainInstanceMessage.repair_orchestrator/1,2`
@@ -184,15 +211,30 @@ kills the ensure mid-flight.
 
 **Residue-only via ledger (codex HIGH):** the `new_session?: false` failure
 branch leaves the session alive but does NOT currently revoke the partial
-orchestrator/cap/MCP/member residue of the failed attempt. Add a compensation
-ledger: the ensure records each idempotent step it completes (orchestrator
-spawned, caps granted, MCP registered, members joined) and, on failure/timeout,
-compensates exactly those — leaving the session + snapshot untouched. This makes
-"residue-only" true in all failure modes.
+residue of the failed attempt. Today the ensure writes the working-copy
+`orchestrator_uri` BEFORE granting caps/MCP and starts a SessionManager BEFORE
+member/team materialization (`session_creator.ex` ensure region), so a naive
+"compensate spawn/caps/MCP/members" misses real residue. The ledger MUST cover
+**every** side effect the ensure performs, in order, each recorded when done and
+compensated idempotently on failure/timeout:
+
+1. working-copy `orchestrator_uri` write (clear it),
+2. spawned orchestrator process + its ownership/bindings (terminate + unbind),
+3. owner manage/restart caps (revoke),
+4. orchestrator scoped caps (revoke),
+5. MCP context registration (deregister),
+6. SessionManager process, if started (stop),
+7. member joins + template-team rows/rules (remove the attempt's rows/rules),
+8. live-join / readiness rows (remove).
+
+Compensation touches ONLY this attempt's residue — never the Session Kind, its
+snapshot, or the owner. Each step gets a failure-injection test (§10.5) so the
+"residue-only" claim is proven per step, not asserted.
 
 On settle, the worker writes the terminal `orchestrator_status` (`:ready` /
-`:failed` + `orchestrator_error`) durably (§4.5), in a rescue-safe `after` so a
-crashed worker never leaves a stale `:pending`.
+`:failed` + `orchestrator_error`) durably (§4.5) under the **monotonic/CAS rule**
+(§4.5) and in a rescue-safe `after` so a crashed worker never leaves a stale
+`:pending`.
 
 ### 4.4 OTU-at-spawn (nested working-copy shape) (codex HIGH)
 
@@ -207,11 +249,22 @@ nested shape carries the OTU.
 
 ### 4.5 `orchestrator_status` — durable (codex BLOCKER 2)
 
-Add durable working-copy fields `orchestrator_status` + `orchestrator_error`
-(written via a Session config/status action, alongside the OTU fields in the
-working copy), so a respawn and the UI both read a persisted value. Today these
-exist only in the `create_session` return map (`session_creator.ex` return-meta)
-and are lost on restart.
+Add durable working-copy fields `orchestrator_status`, `orchestrator_error`, and
+`orchestrator_attempt_id` (in the nested `template_working_copy`, alongside the
+OTU fields), so a respawn and the UI both read a persisted value. Today
+`orchestrator_status` exists only in the `create_session` return map
+(`session_creator.ex` return-meta) and is lost on restart.
+
+**Write rules (rev3 BLOCKER fix):**
+- `:pending` is set in the **birth slice** (`init_slice`) at spawn — durable in
+  the initial snapshot, before `activated/2` or any worker runs. Create never
+  writes `:pending` after the fact.
+- Each bring-up attempt carries a fresh monotonically-increasing
+  `orchestrator_attempt_id`. A terminal write (`:ready`/`:failed`) succeeds only
+  if its attempt id is ≥ the stored one (CAS); a stale/late write is dropped.
+  `:pending` is only ever the birth value (or a value an explicit re-attempt sets
+  with a NEW attempt id before kicking) — it can never overwrite a terminal
+  status from a newer attempt. This makes the status write order-independent.
 
 States:
 - `:pending` — bring-up not complete (written by synchronous create; cleared by
@@ -229,7 +282,7 @@ States:
 | `SessionCreator` (`session_creator.ex`) | `finalize_fresh_session`: drop the synchronous `ensure_orchestrated_session` for new sessions; sync owner-join only; write durable `:pending`; kick the bounded bring-up worker after bind. Keep `repair_orchestrator` as the single bring-up path; thread a deadline into its ensure. |
 | Session-lifecycle Behavior (`apps/ezagent_domain_session/lib/ezagent/behavior/session*.ex` / `Ezagent.Entity.Session`) | Add `activated/2` (= `on_ready`) re-attempt guard (slice OTU + non-live orchestrator + not-in-flight → kick worker). Merge birth OTU into the nested `template_working_copy` in `create/1` / `init_slice`. Add durable `orchestrator_status`/`orchestrator_error` fields + a status-write action. |
 | `Ezagent.Entity.Session.Orchestrator` (`orchestrator.ex`) | `ensure_orchestrator/3` + `await_orchestrator_ready/3`: accept an explicit deadline (opts/new arity); record a compensation ledger; on failure/timeout compensate only this attempt's residue. |
-| `EzagentDomainInstanceMessage.Application` (`application.ex`) | Add the bounded bring-up supervisor (Task.Supervisor + in-flight dedup registry). |
+| `EzagentDomainInstanceMessage.Application` (`application.ex`) | Add the bring-up manager: a **global-concurrency-capped** queue/pool (mandatory ceiling on total in-flight bring-ups) + atomic per-session in-flight dedup. |
 | `Ezagent.Orchestrator.Health` | Reused unchanged for the UI badge; the `activated/2` guard uses a `WorkspaceRegistry`-independent liveness check (see §4.2). |
 | `conversation_actions.ex` (`ezagent_plugin_world`) | `send_message`: surface dispatch errors (stop swallowing into `data-last-dispatch` only). Non-blocking orchestrator-status badge from `Health` + durable `orchestrator_status`; "Restart" already calls `repair_orchestrator` — reused. |
 
@@ -317,15 +370,22 @@ New / changed tests:
    `{:ok, stored}`, message persists (no `:no_such_actor`).
 4. **Durable status:** `:pending`/`:failed` survives a respawn (read from the
    working copy, not the return value).
-5. **Residue-only on failure:** after a failed bring-up, no leaked orchestrator
-   process / caps / MCP registration / extra members remain (ledger compensated);
-   session intact.
+5. **Residue-only on failure (per-step failure injection):** inject a failure
+   after EACH ledger step (§4.3: working-copy `orchestrator_uri`, orchestrator
+   process, owner caps, scoped caps, MCP, SessionManager, member/team rows, live-
+   join rows) → assert no leak of that step's residue and that the session +
+   snapshot + owner are intact.
 6. **Re-attempt on activation:** respawn a `:failed`/`:not_spawned`
    orchestrator-bearing session → `activated/2` re-kicks; with a healthy
    orchestrator it reaches `:ready`.
-7. **Dedup / no boot storm:** the explicit create kick + `activated/2` kick for
-   the same session run at most one bring-up; many sessions respawning are
-   concurrency-bounded.
+7. **Dedup + global cap:** the explicit create kick + `activated/2` kick for the
+   same session run at most one bring-up (per-session dedup); and respawning M ≫
+   cap orchestrator-bearing sessions never exceeds the configured global
+   concurrent-bring-up ceiling at any instant.
+7b. **Status monotonicity (the rev3 BLOCKER):** with a fast/already-present
+   orchestrator, a worker writing terminal `:ready` followed by any later
+   `:pending`/stale write leaves the durable status `:ready` (CAS by
+   `orchestrator_attempt_id`) — never reverts to "permanently starting".
 8. **OTU nested shape:** the initial snapshot's nested `template_working_copy`
    carries the OTU.
 9. **Positive path:** orchestrator succeeds → `:ready` + joined + caps + MCP +
