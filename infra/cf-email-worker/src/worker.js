@@ -87,6 +87,18 @@ export default {
 
     if (url.pathname.startsWith("/inbox/")) {
       const key = decodeURIComponent(url.pathname.slice("/inbox/".length));
+
+      // #88 PR-2 — DELETE must actually remove the KV item, else ezagent's
+      // poller (which DELETEs only AFTER a successful inject) sees a 200 but
+      // the item stays → infinite reprocessing. Branch on method BEFORE the
+      // GET fetch path.
+      if (request.method === "DELETE") {
+        const existing = await env.EMAIL_INBOX.get(key);
+        if (!existing) return new Response("not found\n", { status: 404 });
+        await env.EMAIL_INBOX.delete(key);
+        return new Response(null, { status: 204 });
+      }
+
       const v = await env.EMAIL_INBOX.get(key);
       if (!v) return new Response("not found\n", { status: 404 });
       return new Response(v, { headers: { "content-type": "application/json" } });

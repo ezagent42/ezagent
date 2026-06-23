@@ -152,29 +152,47 @@ defmodule Ezagent.Email.InboundBinding do
   `"verified"` and clear the token (single-use). Returns
   `{:ok, row}` | `{:error, :invalid | :expired}`.
 
-  Token is matched by SHA-256(raw) so the raw never has to be stored. An
-  already-consumed token (hash cleared) → `:invalid`.
+  Token is matched by SHA-256(raw) so the raw never has to be stored.
+
+  ## Atomic single-use (codex PR-2 r1 LOW)
+
+  The flip is a CONDITIONAL `update_all` guarded by
+  `verification_token_hash = ^hash AND verification_expires_at > now()` with
+  `RETURNING`, so two concurrent confirms can't both succeed (the DB applies
+  one; the loser updates 0 rows). On 0 rows updated, a follow-up read
+  CLASSIFIES the failure (invalid hash vs expired) — that read is only for
+  the error message, not the single-use guarantee.
   """
   @spec confirm(String.t()) :: {:ok, t()} | {:error, :invalid | :expired}
   def confirm(raw_token) when is_binary(raw_token) do
     hash = hash_token(raw_token)
+    now = DateTime.utc_now()
 
-    case Repo.one(from(r in __MODULE__, where: r.verification_token_hash == ^hash)) do
-      nil ->
-        {:error, :invalid}
+    query =
+      from(r in __MODULE__,
+        where: r.verification_token_hash == ^hash and r.verification_expires_at > ^now,
+        select: r
+      )
 
-      %__MODULE__{verification_expires_at: exp} = row ->
-        if expired?(exp) do
-          {:error, :expired}
-        else
-          row
-          |> Ecto.Changeset.change(%{
-            verification_status: "verified",
-            verification_token_hash: nil,
-            verification_expires_at: nil
-          })
-          |> Repo.update()
-        end
+    case Repo.update_all(query,
+           set: [
+             verification_status: "verified",
+             verification_token_hash: nil,
+             verification_expires_at: nil,
+             updated_at: now
+           ]
+         ) do
+      {1, [row]} -> {:ok, row}
+      {0, _} -> classify_confirm_failure(hash)
+    end
+  end
+
+  # The atomic update matched 0 rows. Classify WHY (for the error only — the
+  # single-use guarantee already held in the atomic update above).
+  defp classify_confirm_failure(hash) do
+    case Repo.one(from(r in __MODULE__, where: r.verification_token_hash == ^hash, select: r)) do
+      %__MODULE__{} -> {:error, :expired}
+      nil -> {:error, :invalid}
     end
   end
 
@@ -207,7 +225,4 @@ defmodule Ezagent.Email.InboundBinding do
   end
 
   defp hash_token(raw) when is_binary(raw), do: :crypto.hash(:sha256, raw)
-
-  defp expired?(nil), do: true
-  defp expired?(%DateTime{} = exp), do: DateTime.compare(DateTime.utc_now(), exp) == :gt
 end
