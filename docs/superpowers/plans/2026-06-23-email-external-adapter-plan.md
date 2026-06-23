@@ -27,21 +27,32 @@
 - **PR-1 = OUTBOUND-ONLY.** `:push` Adapter + Binding + cap marker + `behaviors/0`/`adapters/0` wiring + extended `Ezagent.Email.send/4` (threading headers) + durable `email_thread_state` + Swoosh-test unit coverage. **Makes NO bidirectional-complete claim.**
 - **PR-2 = INBOUND.** Poll loop + alias addressing (`local_address` column + unique index) + bind-time verification handshake (mints `:verified`) + SPF/DKIM/DMARC + From-match auth + deterministic dedup + restricted-participant injection + the CF Worker §4.5a revision. **PR-2's branch depends on PR-1 having landed.**
 
-### DECISION D1 — the verification gate (resolved from spec §11, NOT escalated)
+### DECISION D1 — the verification gate (resolved; forgery-safe, NOT escalated)
 
-The spec's §11 test partition splits the gate across the two PRs:
+The spec's §11 test partition splits the gate across the two PRs, and the second codex review surfaced a real trust bug we resolve here:
 
-- **PR-1 ships the verification-status *concept* and the `publish/2` `:verified` refusal.** A binding whose status is not `:verified` returns `{:error, :not_verified, state}` (recoverable). PR-1 unit tests set the status field **directly** to exercise both branches (`:pending_verification` → refuse; `:verified` → send via `Swoosh.Adapters.Test`).
-- **PR-2 ships the handshake that *mints* `:verified`** (token email + web endpoint + TTL + binding-status transitions).
+- **PR-1 ships the verification-status *concept* and the `publish/2` `:verified` refusal.** A binding whose status is not `:verified` returns `{:error, :not_verified, state}` (recoverable).
+- **PR-2 ships the handshake that *mints* `:verified`** (token email + web endpoint + TTL + a **server-owned status column**).
 
-**Consequence (state this in the PR-1 description):** PR-1 is **production-inert until PR-2** — no binding can reach `:verified` without the PR-2 handshake, so PR-1 outbound only fires in tests. This is the "no bidirectional claim" posture AND it closes the consent hole (we never email an unverified address in prod) **without a permissive default**. **DO NOT default status to `:verified`** — that is the rejected shim class (`feedback_let_it_crash_no_workarounds`).
+**FORGERY FIX (codex BLOCKER 1 — resolved in-plugin, no escalation):** the per-binding Worker forwards **caller-controlled** `opts` straight into `Binding.init/1` (`external_mirror_worker.ex` `create/1` stores `opts: Map.get(args, :opts, %{})`; `activate/2` calls `binding_module.init({state.target_id, adapter_module, state.opts})`). Therefore PR-1 **MUST NOT read `verification_status` from `opts`** — a bind-capable caller could set `verification_status: :verified` and bypass the gate. Instead:
 
-### DECISION D2 — PR-1 data model is `email_thread_state` ONLY
+- **`Binding.init/1` HARD-CODES `verification_status: :pending_verification`** in PR-1. It never reads the field from `opts`. PR-1 stores **no** verification state anywhere (no opts_json field, no column).
+- Unit tests exercise the `:verified` branch of `publish/2` by **constructing the binding state map directly** (not via `init/1`/`opts`).
 
-`local_address` (alias) exists solely for **inbound** reverse lookup (spec §3/§6). PR-1's outbound path never reads it — the Binding owns `target_id` (= the bound human address) and the `From:` comes from `Ezagent.Email.send/4`'s existing `configured_from`/`@default_from`. Therefore:
+**Consequence (state in the PR-1 description):** PR-1 is **production-inert until PR-2** — nothing in PR-1 can mint `:verified`, so PR-1 outbound only fires in tests. This is the "no bidirectional claim" posture, closes the consent hole (we never email an unverified address in prod), and is forgery-safe (caller opts cannot flip the gate). **DO NOT default status to `:verified`** (rejected shim class, `feedback_let_it_crash_no_workarounds`). PR-2 adds a **server-owned** status column updated ONLY by the token-confirm flow, never from caller opts.
 
-- **PR-1's only migration = `email_thread_state`.** No `local_address` column in PR-1.
-- **Verification status rides in the binding `opts_json` / slice for PR-1** (spec §6 sanctions "a status column and/or `opts_json`") — avoids a second migration in PR-1. PR-2 may add a dedicated status column + the `local_address` column + its unique index in one PR-2 migration.
+### DECISION D2 — PR-1 data model is `email_thread_state` ONLY; thread key from server-truth
+
+`local_address` (alias) exists solely for **inbound** reverse lookup (spec §3/§6). PR-1's outbound path never reads it — the Binding owns `target_id` (= the bound human address) and the `From:` comes from `Ezagent.Email.send/4`'s existing `configured_from`/`@default_from`. Confirmed by codex review: no current outbound path reads the alias. Therefore PR-1's only migration = `email_thread_state` (no `local_address` in PR-1; PR-2 adds it).
+
+**THREAD-KEY FIX (codex BLOCKER 2 — resolved in-plugin via server-stamped `msg.session_uri`):** the Binding keys durable threading by `BindingRow.row_id(session_uri, "email", target_id)`, but `Binding.init/1` only receives `{target_id, adapter, opts}` — `session_uri` is NOT in that tuple, and reading it from caller `opts` would reintroduce the forgery class. The clean path:
+
+- `event_to_payload/1` already holds the `%Ezagent.Message{}` (we port `extract_last_message/1`). `msg.session_uri` is **server-stamped** in `MessageStore.write/2` (`apps/ezagent_core/lib/ezagent/message_store.ex:77` `Map.put(:session_uri, session_uri)`) — **not caller-controllable**. Feishu already reads exactly this field (`feishu_adapter.ex:520` `source_session_label`).
+- The Adapter includes it in the payload: `{:publish, %{subject, text, html, session_uri: msg.session_uri}}`. This is **context, not the recipient** — it does NOT violate the spec's "`To:` not in payload" rule (the Binding still owns `target_id` = the recipient).
+- The Binding computes `binding_row_id = BindingRow.row_id(session_uri, "email", state.target_id)` **at publish time**, then loads/upserts `email_thread_state` by it.
+- **Stringification parity:** `do_bind` keys the row via `URI.to_string(session_uri)` (`external_mirror.ex:892` → `BindingRow.row_id/3`). The Binding MUST normalize the payload's `session_uri` identically (parse to `%URI{}` if it arrives as a string, then `BindingRow.row_id/3`) so the computed key EQUALS the actual binding-row id and the `email_thread_state` FK (Task 2) matches.
+
+> **Future platform note (NOT a blocker, for the lead):** a cleaner long-term design would have the Domain pass server-owned binding context (session_uri, adapter_id, row_id) to `Binding.init/1` rather than each plugin re-deriving it from the message. That is a shared `ExternalMirror.Binding` contract change touching Feishu + protocol_api, out of scope for #88. Email resolves it in-plugin above. Mention to the lead as a future enhancement, not a question.
 
 ---
 
@@ -93,18 +104,25 @@ The spec's §11 test partition splits the gate across the two PRs:
 **Interfaces:**
 - Produces:
   - `Ezagent.Email.ThreadState.load(binding_row_id :: String.t()) :: %ThreadState{} | nil`
-  - `Ezagent.Email.ThreadState.upsert(binding_row_id, %{root_message_id:, last_message_id:}) :: {:ok, %ThreadState{}} | {:error, term()}`
-  - Schema fields: `binding_row_id` (PK, string — the `BindingRow.row_id/3` value), `root_message_id` (string, nullable), `last_message_id` (string, nullable), timestamps.
+  - `Ezagent.Email.ThreadState.upsert(binding_row_id, %{root_message_id:, last_message_id:, references_chain:, workspace_uri:}) :: {:ok, %ThreadState{}} | {:error, term()}`
+  - Schema fields: `binding_row_id` (PK, string — the `BindingRow.row_id/3` value), `root_message_id` (string, nullable), `last_message_id` (string, nullable), `references_chain` (string, nullable — the full space-joined `References` header value, RFC-5322), `workspace_uri` (string, NOT NULL), timestamps.
 - Consumes: `BindingRow.row_id/3` shape (24-hex) from the external_mirror domain (no dependency edge — the value is passed in by the Binding).
 
-> Migration MUST be PG-compatible (suite is PG-only). Follow the existing `20260607000000_pr_em_3_external_mirror_bindings.exs` migration style. `binding_row_id` is the natural PK (one thread per binding). Workspace scoping: per invariant #14, per-tenant tables carry `workspace_uri NOT NULL`. **Decision:** include a `workspace_uri` (string, NOT NULL) column derived by the Binding from the session at write time, to satisfy invariant #14 and the per-tenant gate. Confirm against `mix ezagent.check_invariants` whether a per-binding thread-state table is in-scope for the per-tenant gate; if the gate flags it, add the column (default plan: include it).
+> Migration MUST be PG-compatible (suite is PG-only). Follow the existing `20260607000000_pr_em_3_external_mirror_bindings.exs` migration style. `binding_row_id` is the natural PK (one thread per binding).
 
-- [ ] **Step 1: Write failing test** — `thread_state_test.exs`: `load(unknown_id)` → `nil`; `upsert(id, %{root_message_id: "<r>", last_message_id: "<r>"})` then `load(id)` returns those values; a second `upsert` with a new `last_message_id` advances it (root unchanged). Use the PG sandbox (`Ecto.Adapters.SQL.Sandbox`) like other email tests.
+> **codex finding 7 (full References chain):** the spec (§8 / §4.8 + test §496-498) requires the `References` chain to GROW across messages (full RFC-5322 chain), NOT a two-element root+last shortcut. Store `references_chain` (the full header value) and append each new `Message-ID` to it on every outbound send. (`In-Reply-To` = the immediate parent = `last_message_id`; `References` = the full chain.)
+
+> **codex finding 6 (per-tenant invariant #14):** per-tenant tables carry `workspace_uri NOT NULL`. Include the column AND **register the schema** in `apps/ezagent_core/test/invariants/per_tenant_tables_have_workspace_column_test.exs` `@per_tenant_schemas` (currently lists `external_mirror_bindings` at line 58 but NOT this new table) by adding `{Ezagent.Email.ThreadState, "email_thread_state"}`. Without this the invariant test fails once the migration lands. Add a module-load guard if the email plugin app isn't loaded in the core-only test context.
+
+> **codex finding 3 (orphan/rebind — DECISION D3, rebind = NEW thread):** an `unbind` deletes only the `external_mirror_bindings` row; the email `terminate/2` is `:ok` (no cleanup). To avoid (a) a rebind silently continuing the OLD thread and (b) orphan thread rows: add a foreign key `email_thread_state.binding_row_id REFERENCES external_mirror_bindings(id) ON DELETE CASCADE`. Same repo, both tables in `ezagent_core`'s Repo, so the FK is feasible. **Semantics: rebind = new thread** (the row id is a function of `(session, adapter, target)`, so a same-target rebind reuses the id; the CASCADE on unbind clears the prior thread so the rebind starts fresh). Test BOTH: same-target unbind→rebind starts a fresh chain, and unbind removes the thread row (no orphan).
+
+- [ ] **Step 1: Write failing test** — `thread_state_test.exs`: `load(unknown_id)` → `nil`; `upsert(id, %{root_message_id: "<r>", last_message_id: "<r>", references_chain: "<r>", workspace_uri: ws})` then `load(id)` returns those values; a second `upsert` advancing `last_message_id` + appending to `references_chain` keeps root unchanged and grows the chain; deleting the parent `external_mirror_bindings` row CASCADE-deletes the thread row. Use the PG sandbox (`Ecto.Adapters.SQL.Sandbox`).
 - [ ] **Step 2: Run to verify it fails** (module/table absent).
-- [ ] **Step 3a: Write the migration** — `create table(:email_thread_state, primary_key: false)` with `binding_row_id :string, primary_key: true`, `root_message_id :string`, `last_message_id :string`, `workspace_uri :string, null: false`, `timestamps()`. Run `mix ecto.migrate` against the test DB (NOT a live dev DB — `feedback_destructive_migration_anti_pattern`).
-- [ ] **Step 3b: Write the schema + functions** — `use Ecto.Schema`; `load/1` via `EzagentCore.Repo.get`; `upsert/2` via `Repo.insert` with `on_conflict: {:replace, [...]}, conflict_target: :binding_row_id` (or a get-then-update). Keep it a pure data module (no GenServer).
-- [ ] **Step 4: Run to verify it passes.**
-- [ ] **Step 5: format touched files + commit** (`feat(email): durable email_thread_state store (#88 PR-1)`).
+- [ ] **Step 3a: Write the migration** — `create table(:email_thread_state, primary_key: false)` with `binding_row_id :string, primary_key: true`, `root_message_id :string`, `last_message_id :string`, `references_chain :text`, `workspace_uri :string, null: false`, `timestamps()`; add the FK to `external_mirror_bindings(id)` with `on_delete: :delete_all` (Ecto `references/2`). Run `mix ecto.migrate` against the TEST DB (NOT a live dev DB — `feedback_destructive_migration_anti_pattern`).
+- [ ] **Step 3b: Write the schema + functions** — `use Ecto.Schema`; `load/1` via `EzagentCore.Repo.get`; `upsert/2` via `Repo.insert` with `on_conflict: {:replace, [:root_message_id, :last_message_id, :references_chain, :updated_at]}, conflict_target: :binding_row_id`. Pure data module (no GenServer).
+- [ ] **Step 3c: Register the invariant** — add `{Ezagent.Email.ThreadState, "email_thread_state"}` to `@per_tenant_schemas`.
+- [ ] **Step 4: Run to verify it passes** (incl. `mix test apps/ezagent_core/test/invariants/per_tenant_tables_have_workspace_column_test.exs`).
+- [ ] **Step 5: format touched files + commit** (`feat(email): durable email_thread_state store w/ full References chain (#88 PR-1)`).
 
 ---
 
@@ -137,19 +155,21 @@ The spec's §11 test partition splits the gate across the two PRs:
   - `binding_module/0 → Ezagent.Email.Binding`.
   - `cap_subject/0 → %{behavior_module: EzagentPluginEmail.Behavior.ExternalAdapter.Email.Allow, description: ...}`.
   - `target_ownership_check/2 → :ok` (optionally a cheap RFC-5322 format sanity check on the address; on malformed → `{:error, :invalid_address}`). **Does NOT do human verification** (that is the PR-2 async handshake; this callback runs in a bounded ~5s Task and cannot block on a human).
-  - `event_to_payload/1 → {:publish, %{subject, text, html, headers}}` | `:skip`. The `To:` is NOT in the payload (Binding owns `target_id`).
-- Consumes: `Ezagent.Publisher.Event`, the two-container slice unwrap, `Ezagent.Message` shape (`:last_message`, `:last_message_id`, `:send_cursor`).
+  - `event_to_payload/1 → {:publish, %{subject, text, html, session_uri}}` | `:skip`. The `To:` is NOT in the payload (Binding owns `target_id`). `session_uri` IS in the payload — it is **context** (read server-stamped off `msg.session_uri`), used by the Binding to compute the durable thread key (D2); it is NOT the recipient.
+- Consumes: `Ezagent.Publisher.Event`, the two-container slice unwrap, `Ezagent.Message` shape (`:last_message`, `:last_message_id`, `:send_cursor`, `:session_uri`).
 
-> Mirror `FeishuAdapter.event_to_payload/1`'s structure: `slice_state/1` unwrap (delegate to `Ezagent.Kind.normalize_slice_view/1` + string-`"state"` shim), `chat_send_occurred?/2`, `extract_last_message/1`, self-echo skip on `_email_origin` (atom + string key), and the diagnostic `Logger.warning` skip-reasons (no silent drops). Payload `subject` = pinned `[<session_name>]` form **with mandatory CR/LF + control-char sanitization** (Q4 — strip `\r`, `\n`, and other control chars from any session-derived text before it reaches a mail header). `text` = the `[<session> | <sender>] <body text>` prefix shape (parity with Feishu's prefix). `html` = nil for v1 (text-only). `headers` = `%{}` placeholder here — threading headers are owned + injected by the Binding from durable state, NOT computed in this pure function.
+> Mirror `FeishuAdapter.event_to_payload/1`'s structure: `slice_state/1` unwrap (delegate to `Ezagent.Kind.normalize_slice_view/1` + string-`"state"` shim), `chat_send_occurred?/2`, `extract_last_message/1`, self-echo skip on `_email_origin` (atom + string key), and the diagnostic `Logger.warning` skip-reasons (no silent drops). Read `session_uri` off the message the same way Feishu's `source_session_label/1` does (`%Ezagent.Message{session_uri: %URI{} = u}` → keep the `%URI{}`; binary → keep the binary; the Binding normalizes). Payload `subject` = pinned `[<session_name>]` form. `text` = the `[<session> | <sender>] <body text>` prefix shape (parity with Feishu). `html` = nil for v1 (text-only).
+
+> **codex finding 5 (sanitize ALL header-valued fields, not just subject):** Swoosh's SMTP adapter maps `subject`, custom headers (`Message-ID`/`In-Reply-To`/`References`), `to`, and `from` directly into MIME headers; `Swoosh.Email.header/3` stores raw binaries. Body text/html are MIME body parts (not a header-injection path) but every header field must be sanitized. Add a central `sanitize_header_value!/1` (strip/replace `\r`, `\n`, and other control chars `[\x00-\x1f\x7f]`). Apply it to the payload `subject` here (the only session-derived header field at the Adapter), and the Binding applies it to `message_id`/`in_reply_to`/`references`/`from`/`to`-derived-from-`target_id` (most are server-minted, but apply uniformly — defence in depth). Tests assert CR/LF + control chars are stripped from EVERY header field.
 
 - [ ] **Step 1: Write failing tests** — `adapter_test.exs`:
-  - `event_to_payload` on a `:session` event whose new_slice carries a fresh `:last_message` (non-`_email_origin`) → `{:publish, %{subject: s, text: t, ...}}` with `s` and `t` containing NO `\r`/`\n` even when the session name / body contain them (header-injection test — feed a body with `"x\r\nBcc: evil@x"` and assert the payload subject/text are sanitized).
+  - `event_to_payload` on a `:session` event whose new_slice carries a fresh `:last_message` (non-`_email_origin`, with `msg.session_uri` set) → `{:publish, %{subject: s, text: t, session_uri: su}}` where `su` matches `msg.session_uri` and `s` (subject) contains NO `\r`/`\n` even when the session name contains them (header-injection test — feed a session name / subject-source with `"x\r\nBcc: evil@x"` and assert the payload subject is sanitized).
   - `:skip` when `chat_send_occurred?` is false (same `last_message_id` + `send_cursor`).
   - `:skip` on `_email_origin: true` (atom AND string key).
   - `:skip` on `slice_key != :session`.
   - `cap_subject/0.behavior_module == EzagentPluginEmail.Behavior.ExternalAdapter.Email.Allow`; `binding_module/0 == Ezagent.Email.Binding`; `adapter_kind/0 == :push`.
 - [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** the adapter, porting the Feishu structure. Add a `sanitize_header/1` helper (`String.replace(text, ~r/[\x00-\x1f\x7f]/, " ")` or equivalent — confirm it strips CR/LF + control chars). Apply it to subject AND to any session-derived text that could reach a header. Body text in `text_body` is NOT a header so does not strictly need it, but sanitize the SUBJECT unconditionally.
+- [ ] **Step 3: Implement** the adapter, porting the Feishu structure. Add a `sanitize_header_value!/1` helper (`String.replace(text, ~r/[\x00-\x1f\x7f]/, " ")` — confirm it strips CR/LF + control chars). Apply it to the SUBJECT unconditionally. Include `session_uri: msg.session_uri` in the payload (read off the message, server-stamped). Body text in `text_body` is NOT a header so isn't a header-injection vector, but the subject MUST be sanitized.
 - [ ] **Step 4: Run to verify it passes.**
 - [ ] **Step 5: format + commit** (`feat(email): ExternalMirror Adapter event_to_payload (#88 PR-1)`).
 
@@ -164,31 +184,32 @@ The spec's §11 test partition splits the gate across the two PRs:
 **Interfaces:**
 - Produces:
   - `adapter_module/0 → Ezagent.Email.Adapter` (Grill-5).
-  - `init({target_id, adapter, opts})` → builds state: `%{target_id: <bound human address>, opts: opts, verification_status: <from opts_json, default :pending_verification>, binding_row_id: <derived/passed>, root_message_id: nil, last_message_id: nil, publish_count: 0, error_count: 0}` after loading durable thread state via `Ezagent.Email.ThreadState.load/1`. `target_id` must be a binary that passes a cheap RFC-5322 sanity check, else `{:error, {:invalid_target_id, other}}`.
+  - `init({target_id, adapter, opts})` → builds state: `%{target_id: <bound human address>, opts: opts, verification_status: :pending_verification, publish_count: 0, error_count: 0}`. **`verification_status` is HARD-CODED `:pending_verification`** (D1 — NEVER read from `opts`; caller opts are untrusted). `target_id` must be a binary that passes a cheap RFC-5322 sanity check, else `{:error, {:invalid_target_id, other}}`. `init/1` does NOT load thread state (it doesn't know `session_uri`); thread state is loaded per-publish (below).
   - `publish(payload, state)` → `{:ok, new_state}` | `{:error, reason, new_state}` (3-tuple recoverable shape, HIGH 3).
-  - `terminate/2 → :ok`.
-- Consumes: `Ezagent.Email.send/4` (Task 1), `Ezagent.Email.ThreadState` (Task 2), the adapter payload `%{subject, text, html, headers}` (Task 4).
+  - `terminate/2 → :ok` (the FK CASCADE in Task 2 cleans the thread row on unbind — D3).
+- Consumes: `Ezagent.Email.send/4` (Task 1), `Ezagent.Email.ThreadState` (Task 2), the adapter payload `%{subject, text, html, session_uri}` (Task 4), `Ezagent.ExternalMirror.BindingRow.row_id/3`.
 
-> **How does the Binding learn `binding_row_id` and `verification_status`?** `init/1`'s `opts` carries binding-time metadata (`bound_by`, `bound_at`, plus caller-supplied opts). The Worker passes the Domain's binding options. For `binding_row_id`, derive it the same way the Domain does — but the Binding does NOT know `session_uri` from `target_id` alone. **Decision:** the Worker's `options` map includes the session URI (confirm by reading how `Ezagent.Entity.ExternalMirrorWorker` calls `Binding.init/1` and what it passes — see `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` and `worker_spawn.ex`). If `session_uri` is present in options, compute `binding_row_id = BindingRow.row_id(session_uri, "email", target_id)`. If it is NOT plumbed, the cleanest fix is to read the `binding_row_id` from a field the Worker already holds (the worker slice carries the binding identity). RESOLVE THIS BY READING THE WORKER before writing `init/1` — do not guess. Whichever source, the row id MUST equal the one `email_thread_state` is keyed by.
-
-> `verification_status` for PR-1 rides in `opts` (decoded from `opts_json` per D2). Default to `:pending_verification` when absent (the consent-safe default — NOT `:verified`).
+> **`binding_row_id` (D2 — server-truth, computed at publish):** the Worker's `init/1` does NOT carry `session_uri` (confirmed: `external_mirror_worker.ex` `activate/2` calls `binding_module.init({state.target_id, adapter_module, state.opts})` — no session). Reading it from caller `opts` would be forgeable. Instead the Adapter put server-stamped `msg.session_uri` in the payload (D2). `publish/2` reads `payload.session_uri`, normalizes to `%URI{}` (parse if binary — identical to `do_bind`'s `URI.to_string` keying so the id matches), and computes `binding_row_id = BindingRow.row_id(session_uri, "email", state.target_id)`. This is the SAME id `email_thread_state` is keyed by AND the FK parent (`external_mirror_bindings.id`) — so the row exists by the time publish runs (bind persisted it).
 
 > `publish/2` algorithm:
 > 1. If `state.verification_status != :verified` → `{:error, :not_verified, state}` (recoverable; Worker logs + carries state).
-> 2. Mint this message's `Message-ID` (e.g. `"<" <> rand_hex <> "@ezagent.chat>"`). Set `in_reply_to`/`references` from `state.last_message_id`/the chain. (For v1, `references` = the chain built from root + last; a simple `root_message_id` + `last_message_id` two-element chain is acceptable for v1 — note this in the moduledoc.)
-> 3. Call `Ezagent.Email.send(state.target_id, payload.subject, payload.text, html: payload.html, message_id: <new_mid>, in_reply_to: state.last_message_id, references: <chain>)`.
-> 4. On `{:ok, _}` → persist via `Ezagent.Email.ThreadState.upsert(state.binding_row_id, %{root_message_id: state.root_message_id || new_mid, last_message_id: new_mid})`; return `{:ok, %{state | root_message_id: ..., last_message_id: new_mid, publish_count: +1}}`.
-> 5. On transient send failure (`{:error, :mail_not_configured}`, connection refused, timeout, relay reject) → `{:error, reason, %{state | error_count: +1}}` (recoverable).
-> 6. **RAISE** only on invariant violation: the `ThreadState.upsert` itself failing (durable write must succeed once the mail was sent), or `target_id` structurally invalid at publish time. (Per spec §4.2: one chat send = one email, so there is NO partial-publish RAISE branch — unlike Feishu.)
+> 2. Normalize `payload.session_uri` → `%URI{}`; compute `binding_row_id = BindingRow.row_id(session_uri, "email", state.target_id)`. Load durable thread state: `ts = ThreadState.load(binding_row_id) || %{root_message_id: nil, last_message_id: nil, references_chain: nil}`.
+> 3. Mint this message's `Message-ID` (`"<" <> rand_hex <> "@ezagent.chat>"`). `in_reply_to = ts.last_message_id` (immediate parent); `references = <ts.references_chain or ts.root_message_id> <> " " <> new_mid` (full chain, growing — codex finding 7). Sanitize all header values (`sanitize_header_value!/1`).
+> 4. Call `Ezagent.Email.send(state.target_id, payload.subject, payload.text, html: payload.html, message_id: new_mid, in_reply_to: ts.last_message_id, references: <chain>)`.
+> 5. On `{:ok, _}` → `ThreadState.upsert(binding_row_id, %{root_message_id: ts.root_message_id || new_mid, last_message_id: new_mid, references_chain: <grown chain>, workspace_uri: <derive from session_uri via Ezagent.Capability.workspace_of/1 or Ezagent.Persistence.workspace_uri_for!/1>})`; return `{:ok, %{state | publish_count: +1}}` (thread state is durable, not in worker state).
+> 6. On transient send failure (`{:error, :mail_not_configured}`, connection refused, timeout, relay reject) → `{:error, reason, %{state | error_count: +1}}` (recoverable).
+> 7. **RAISE** only on invariant violation: the `ThreadState.upsert` itself failing (durable write must succeed once the mail was sent), `payload.session_uri` missing/unparseable, or `target_id` structurally invalid at publish time. (Per spec §4.2: one chat send = one email, so there is NO partial-publish RAISE branch — unlike Feishu.)
 
-- [ ] **Step 1: Write failing tests** — `binding_test.exs` (use `Swoosh.Adapters.Test`):
-  - `publish` with `verification_status: :verified` sends one email (`assert_email_sent`) carrying subject/text + a `Message-ID` header + (on a 2nd publish) `In-Reply-To`/`References` from the prior message; returns `{:ok, new_state}` with advanced `last_message_id`.
+- [ ] **Step 1: Write failing tests** — `binding_test.exs` (use `Swoosh.Adapters.Test`, PG sandbox for ThreadState; pre-insert the parent `external_mirror_bindings` row so the FK holds, or insert via the bind path):
+  - `publish` with state `verification_status: :verified` + a payload carrying `session_uri` sends one email (`assert_email_sent`) carrying subject/text + a `Message-ID` header; a 2nd publish carries `In-Reply-To` = the prior `Message-ID` and a `References` chain that GREW (contains both ids); returns `{:ok, new_state}`.
   - `publish` with `verification_status: :pending_verification` → `{:error, :not_verified, state}`, NO email sent.
-  - `publish` on a transient send failure (force `{:error, :mail_not_configured}` by configuring the SMTP adapter without config, or inject a failing send) → `{:error, reason, new_state}` (3-tuple), state carried.
+  - `init/1` does NOT set `:verified` even if `opts` contains `verification_status: :verified` (forgery test — assert the state's status is `:pending_verification`).
+  - `publish` on a transient send failure (configure SMTP adapter without config → `{:error, :mail_not_configured}`) → `{:error, reason, new_state}` (3-tuple), state carried, NO crash.
   - `init` with a malformed `target_id` → `{:error, {:invalid_target_id, _}}`.
-  - threading durability: after a `publish` advances `last_message_id`, a fresh `init/1` (simulated Worker restart) reloads it from `ThreadState` and the next `publish` sets `In-Reply-To` to the persisted value.
+  - threading durability: after a `publish` persists `last_message_id`, a fresh `publish` (no in-worker carry — simulates restart) reloads it from `ThreadState` by the same `binding_row_id` and sets `In-Reply-To` to the persisted value; `References` keeps growing.
+  - header-injection: subject/message_id/in_reply_to/references contain no `\r`/`\n` even with hostile input.
 - [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement** the binding per the algorithm above (after reading the Worker to resolve `binding_row_id` plumbing).
+- [ ] **Step 3: Implement** the binding per the algorithm above.
 - [ ] **Step 4: Run to verify it passes.**
 - [ ] **Step 5: format + commit** (`feat(email): ExternalMirror Binding publish + verified gate + durable threading (#88 PR-1)`).
 
