@@ -122,6 +122,7 @@ config :mime, :types, %{
 # only the adapter is fixed here. api_client: false — SMTP only, no HTTP
 # API adapters, so no hackney/finch dependency is pulled in.
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.SMTP
+config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.SMTP
 config :swoosh, :api_client, false
 
 # Import environment specific config. This must remain at the bottom

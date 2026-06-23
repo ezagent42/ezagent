@@ -8,6 +8,7 @@ config :ezagent_web, :show_error_debug, true
 # /dev/mailbox if mounted) so confirmation/reset links work with no SMTP.
 # Prod uses the compile-pinned SMTP adapter (config.exs) + runtime smtp_config.
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
+config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Local
 
 config :ezagent_core, EzagentCore.Repo,
   username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),

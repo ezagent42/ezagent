@@ -187,47 +187,8 @@ defmodule EzagentWeb.Mailer do
   #   - 465 → implicit SSL (set `ssl: true`, `tls: :never`)
   #   - 587 → STARTTLS (set `ssl: false`, `tls: :always`) — most common
   #   - 25  → plaintext (set `ssl: false`, `tls: :never`)
-  defp smtp_runtime_config(cfg) do
-    port = to_int(Map.fetch!(cfg, "port"))
-    host = Map.fetch!(cfg, "host")
-    use_implicit_ssl = port == 465
-
-    base = [
-      relay: host,
-      port: port,
-      username: Map.fetch!(cfg, "username"),
-      password: Map.fetch!(cfg, "password"),
-      auth: :always,
-      tls_options: tls_options(host)
-    ]
-
-    if use_implicit_ssl do
-      base ++ [ssl: true, tls: :never]
-    else
-      # STARTTLS (587 or other non-465 ports with tls=true)
-      tls_mode = if Map.get(cfg, "tls", true), do: :always, else: :never
-      base ++ [ssl: false, tls: tls_mode]
-    end
-  end
-
-  # OTP 27/28-compatible TLS options for SMTP. Loads the system CA bundle,
-  # enforces SNI (Server Name Indication — required by many providers
-  # including Feishu Lark), and restricts to modern TLS versions.
-  defp tls_options(host) do
-    [
-      verify: :verify_peer,
-      cacerts: :public_key.cacerts_get(),
-      server_name_indication: String.to_charlist(host),
-      depth: 3,
-      versions: [:"tlsv1.2", :"tlsv1.3"],
-      # Customize_hostname_check is needed when the SMTP server's cert
-      # CN doesn't exactly match the hostname (e.g., wildcards).
-      customize_hostname_check: [
-        match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-      ]
-    ]
-  end
-
-  defp to_int(n) when is_integer(n), do: n
-  defp to_int(s) when is_binary(s), do: String.to_integer(String.trim(s))
+  # SMTP option mapping (465 implicit-SSL vs 587 STARTTLS + OTP 27/28 TLS) lives
+  # in the shared pure helper so it isn't duplicated with Ezagent.Email.Mailer
+  # (task #88).
+  defp smtp_runtime_config(cfg), do: Ezagent.Mail.SmtpOpts.from_config(cfg)
 end

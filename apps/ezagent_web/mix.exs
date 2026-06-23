@@ -109,6 +109,9 @@ defmodule EzagentWeb.MixProject do
       # SW5: advisor socialware vertical. Web boot must start the plugin
       # so `session.advisor` is registered in TemplateRegistry.
       {:ezagent_plugin_advisor, in_umbrella: true},
+      # task #88 — ezagent.chat email capability (CLI-only). World/web reach
+      # Ezagent.Email via runtime-apply; declared here so its OTP app boots.
+      {:ezagent_plugin_email, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
