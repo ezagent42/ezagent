@@ -13,7 +13,7 @@
 - **No backend create path change.** `coerce_create_args/1` reads only `:flavor/:name/:cwd/:with_pty/:from` (`agent_create.ex:64`) — do NOT add fields to the create payload; unwired contract fields are read-only coverage, never inputs (silent-drop trap).
 - **No new route, no nav change, no `styles.css` restyle.** Reuse `/identities/agents/new` + `/identities/agents/:uri`.
 - **No CapBAC / AgentManifest schema change** (discuss-first per handoff §6).
-- **No JS test runner exists** (only `vite build` + `tsc`). Verify React via `pnpm exec tsc --noEmit` + `pnpm build` + headless screenshot through **agent-browser** (repo convention `feedback_agent_browser_debug`; remote URL host `100.64.0.27`). Verify Elixir via `mix test`.
+- **No JS test runner exists** (only `vite build` + `tsc`). **React gate = `pnpm build`** (must pass). `pnpm exec tsc --noEmit` has a **pre-existing, unrelated baseline error `TS5107` (tsconfig `moduleResolution=node10` deprecation)** — when running tsc, confirm `TS5107` is the ONLY error; any NEW error is yours to fix. Final visual check via headless screenshot through **agent-browser** (repo convention `feedback_agent_browser_debug`; remote URL host `100.64.0.27`). Verify Elixir via `mix test`.
 - **`pnpm` not `npm`; `uv run` not `python`.** Format only touched files (`mix format <file>`).
 - **URI shape is workspace-first** `entity://<workspace>/agent/<name>` (`uri.ex` `agent/2`).
 - Branch: `socialware-creator-agent-config`. Spec: `docs/superpowers/specs/2026-06-23-socialware-creator-agent-config-prd.md`.
