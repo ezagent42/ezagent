@@ -144,11 +144,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
   defp validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
-  defp validate_cwd_for_flavor("cc-headless", _with_pty?, ""),
-    do: {:error, :cwd_required_for_cc_headless}
-
-  defp validate_cwd_for_flavor("cc-headless", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
   defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
   defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
   defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
@@ -157,11 +152,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     do: {:error, :cwd_required_for_codex}
 
   defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("codex-remote", _with_pty?, ""),
-    do: {:error, :cwd_required_for_codex_remote}
-
-  defp validate_cwd_for_flavor("codex-remote", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
   defp validate_cwd_for_flavor("curl", _with_pty?, _cwd), do: :ok
   defp validate_cwd_for_flavor(_, _, _), do: :ok
@@ -305,30 +295,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     )
   end
 
-  defp do_create_agent("cc-headless", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "cc_headless.agent." <> agent_name(agent_uri)
-
-    tmpl = file_flavor_template("cc-headless", "cc_headless.agent", agent_uri, cwd)
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
-      nil
-    )
-  end
-
   defp do_create_agent("echo", agent_uri, session_templates, params) do
     %{
       cwd: cwd,
@@ -382,30 +348,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       Map.get(params, :caller),
       Map.get(params, :caps),
       Map.get(params, :from_uri)
-    )
-  end
-
-  defp do_create_agent("codex-remote", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "codex_remote.agent." <> agent_name(agent_uri)
-
-    tmpl = file_flavor_template("codex-remote", "codex_remote.agent", agent_uri, cwd)
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
-      nil
     )
   end
 
