@@ -183,6 +183,53 @@ respawnable snapshot, after which every send to it silently fails.
   — empty composer, "No turns", zero error. (`session.routing.add` is `:call`,
   surfaces the same error to `last_dispatch_status` — `conversation_actions.ex:354`.)
 
+### Mechanism CONFIRMED live (16:30) — the "race" is an orchestrator-readiness gate; the cc AGENT works, the orchestrator LINKAGE is what hangs
+
+The earlier "snapshot-on-create races the 5 s budget" framing was the *symptom*. The
+actual mechanism, nailed by in-node `:erpc` (direct `SessionCreator.create_session/3`,
+bypassing the 5 s dispatch timeout) + per-agent lifecycle inspection:
+
+1. **`create_session` synchronously spawns a `cc_orchestrator` AGENT** (a real cc
+   flavor — saw `entity://system/agent/cc_orchestrator-<short>` spawn live, with
+   `WorkspaceSharedSource.resolve` credential + `agent_lineage` writes). Direct call
+   **did not return in 60 s**.
+2. **`Session.Orchestrator.ensure_orchestrator/3` then GATES on the orchestrator
+   joining the live MCP bridge** — it polls `LiveJoinRegistry.joined?/1` (marked by
+   `McpChannel.join/3`) on a **90 s deadline** (`orchestrator.ex:242-331`,
+   `@orchestrator_readiness_poll_ms 2_000`), with `{:orchestrator_ready, uri}` as an
+   instant-wake. On the 90 s deadline → kill the orchestrator PTY + Kind →
+   `{:error, {:orchestrator_not_ready_within, 90_000}}` → caller **fail-loud ROLLS
+   BACK the whole session (deletes the snapshot row)**.
+3. **The cc agent is alive but never joins the bridge** because it is **stuck at the
+   interactive onboarding dialog**. Verified on the two live standalone cc agents
+   (`claude-bot` `os_pid 81785`, `e2e-test` `os_pid 82138`): both `phase: :alive,
+   pty_alive: true`, real `claude` running — but their `recent_output` is parked at
+   *"New MCP server found: esr-bridge … 1. Use this MCP server … Enter to confirm"*
+   and `auto_prompts.mcp_trust_dialog: fired?: false`. The onboarding auto-prompts
+   are NOT dismissing the MCP-trust / login dialogs, so the agent never finishes
+   startup → never `McpChannel.join`s → `joined?` stays false.
+4. **So:** the 5 s dispatch `:call` times out first (caller gives up); server-side
+   the readiness gate waits up to 90 s; the orchestrator never joins → rollback →
+   the session has **no snapshot** → later `:send` → `:no_such_actor`.
+
+**This discriminates the two suspects cleanly (the question that triggered this):**
+- **cc AGENT functionality = OK.** Standalone cc agents spawn a live `claude` process
+  + PTY (`claude-bot`, `e2e-test` both `:alive` / `pty_alive: true`). EVERY
+  `cc_orchestrator-*` from a session create, by contrast, is `phase: :not_found`.
+- **The broken link = the agent↔session bridge join**, gated by the cc **onboarding
+  automation** (`auto_prompts` not firing `mcp_trust_dialog`/login). Fix that and the
+  orchestrator can `McpChannel.join` → `ensure_orchestrator` returns → `create_session`
+  completes → the session is snapshotted → send/join/routing work.
+
+**Coupling (important for routing):** the lead's "session-create crux" and gagameow's
+"cc credential/login completion" are **the same root** — the session orchestrator IS a
+cc agent, so the onboarding/credential gap that blocks step 2 is exactly what hangs the
+90 s readiness gate that blocks steps 3/4. Fix paths: (a) **gagameow** — make the cc
+onboarding auto-prompts fire (dismiss MCP-trust/login → agent joins the bridge); and/or
+(b) **lead** — don't block `create_session` on a synchronous 90 s live-join (spawn the
+orchestrator async + ack, or surface a "session pending" state) so a slow/stuck
+orchestrator doesn't roll back the session.
+
 ### Corrected matrix impact (supersedes §2b bug 3 + §3 rows 3/4)
 - **Steps 3 / 4 / 8 ⛔ for the operator** today: create is racy/timeout-prone
   (surface X) and the resulting snapshot-less session is un-dispatchable
