@@ -32,7 +32,14 @@
   #   lines now; mirror of pg's CallerDisplay split). Cap restored to 3 — the
   #   remaining >1000 are pty/server.ex (1027) + kind.ex (1025) + im
   #   application.ex (1010), all standing burn-down targets in docs/futures/todo.md.
-  oversized_modules_gt_1000: 3,
+  #   2026-06-23 (arch-debt burn-down, Allen) RATCHET-DOWN 3 → 0: all three
+  #   trimmed under 1000 by cohesive extractions — pty/server.ex (1027→892,
+  #   `Ezagent.Domain.Pty.AutoPrompts` data catalog), im application.ex
+  #   (1025→867, `SessionBehaviorRegistration.register/0`), kind.ex (1025→882,
+  #   behavior-set accessors → `Ezagent.Kind.BehaviorSet`, slice accessors →
+  #   `Ezagent.Kind.SliceAccess`). All pure refactors w/ thin delegates; public
+  #   API + call sites unchanged. Cap is now a hard zero — no module may regrow >1000.
+  oversized_modules_gt_1000: 0,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
