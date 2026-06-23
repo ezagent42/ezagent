@@ -4,6 +4,19 @@ defmodule Ezagent.Email do
   (Swoosh, `smtp_config` from `Ezagent.AppSettings`); `inbox/1`/`fetch/2`/
   `delete/2` read the configured inbox backend (CF Email Worker pull; IMAP
   reserved). Returns tagged tuples; the CLI maps them to status output.
+
+  ## RFC 5322 threading headers (#88 PR-1 / HIGH 5)
+
+  `send/4` accepts three optional threading headers so the ExternalMirror
+  email Binding (`Ezagent.Email.Binding`) can thread a session ↔ email
+  conversation in the human's mail client:
+
+  - `:message_id`  — the `Message-ID` stamped on THIS outbound mail.
+  - `:in_reply_to` — the `In-Reply-To` header (the immediate parent).
+  - `:references`  — the `References` header (the full chain, growing).
+
+  These map onto `Swoosh.Email.header/3`. They are backward-compatible:
+  absent opts emit no header (identical to the pre-threading behavior).
   """
   import Swoosh.Email
   alias Ezagent.Email.Mailer
@@ -23,6 +36,7 @@ defmodule Ezagent.Email do
         |> subject(subject)
         |> text_body(body)
         |> maybe_html(opts[:html])
+        |> maybe_threading_headers(opts)
 
       deliver_built(email)
     else
@@ -43,6 +57,23 @@ defmodule Ezagent.Email do
 
   defp maybe_html(email, nil), do: email
   defp maybe_html(email, html) when is_binary(html), do: html_body(email, html)
+
+  # #88 PR-1 (HIGH 5): stamp RFC 5322 threading headers when present.
+  # Each is independently optional → absent opt emits no header (backward
+  # compatible with pre-threading callers). `Swoosh.Email.header/3` raises
+  # ArgumentError on a non-binary value, so we only pipe when the opt is a
+  # binary.
+  defp maybe_threading_headers(email, opts) do
+    email
+    |> maybe_header("Message-ID", opts[:message_id])
+    |> maybe_header("In-Reply-To", opts[:in_reply_to])
+    |> maybe_header("References", opts[:references])
+  end
+
+  defp maybe_header(email, _name, nil), do: email
+  defp maybe_header(email, _name, ""), do: email
+  defp maybe_header(email, name, value) when is_binary(value), do: header(email, name, value)
+  defp maybe_header(email, _name, _value), do: email
 
   defp configured_adapter, do: Application.get_env(:ezagent_plugin_email, Mailer, [])[:adapter]
 
@@ -71,7 +102,10 @@ defmodule Ezagent.Email do
     if non_smtp_adapter?() do
       Mailer.deliver(email)
     else
-      Mailer.deliver(email, Ezagent.Mail.SmtpOpts.from_config(Ezagent.AppSettings.get("smtp_config")))
+      Mailer.deliver(
+        email,
+        Ezagent.Mail.SmtpOpts.from_config(Ezagent.AppSettings.get("smtp_config"))
+      )
     end
   end
 
