@@ -113,6 +113,30 @@ defmodule Ezagent.Behavior.Workspace.AgentCreateSoulCcTest do
     end
   end
 
+  describe "soul render failure: no silent personaless agent (invariant #9)" do
+    test "__manifest_tmpl_for_test__/3 returns {:error, {:soul_render_failed, _}} when render fails" do
+      # A soul template with a slot reference that is NOT provided in slots ({})
+      # forces AgentManifest.render/2 to return {:error, {:missing_slot, _}}.
+      # manifest_cc_tmpl/3 must propagate that as {:error, {:soul_render_failed, _}}
+      # rather than silently falling back to the bare template.
+      soul_with_missing_slot = "You are {{missing_slot}} the assistant."
+
+      assert {:error, {:soul_render_failed, _reason}} =
+               AgentCreate.__manifest_tmpl_for_test__(@agent_uri, @cwd, soul_with_missing_slot)
+    end
+
+    test "__manifest_tmpl_for_test__/3 does NOT return a bare tmpl map on render failure" do
+      # Verify the old fallback path is gone: the result must NOT be a map
+      # (which would mean a personaless agent was silently created).
+      soul_with_missing_slot = "You are {{undefined_slot}} assistant."
+
+      result = AgentCreate.__manifest_tmpl_for_test__(@agent_uri, @cwd, soul_with_missing_slot)
+
+      refute is_map(result),
+             "render failure must NOT fall back to a bare tmpl map; got: #{inspect(result)}"
+    end
+  end
+
   describe "to_cascade_content pass-through: agent_manifest_resolved survives" do
     test "to_cascade_content keeps agent_manifest_resolved when present" do
       # Build a soul-enriched tmpl (same as B2 implementation does)

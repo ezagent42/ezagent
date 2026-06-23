@@ -309,26 +309,23 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     # (`Ezagent.Kind.Template.compile_cc_agent_data`).  When soul is nil the
     # existing bare `file_flavor_template/4` path is unchanged (no behavior
     # change for the soul-absent case).
-    tmpl =
-      case Map.get(params, :soul) do
-        soul when is_binary(soul) and soul != "" ->
-          manifest_cc_tmpl(agent_uri, cwd, soul)
-
-        _ ->
-          file_flavor_template("cc", "cc.agent", agent_uri, cwd)
-      end
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
-      Map.get(params, :from_uri)
-    )
+    #
+    # Soul-present: manifest_cc_tmpl/3 may return {:error, {:soul_render_failed, _}}
+    # when to_template_content fails.  Guard here so we propagate the failure to
+    # the caller rather than silently creating a personaless agent (invariant #9).
+    with {:ok, tmpl} <- resolve_cc_tmpl(agent_uri, cwd, Map.get(params, :soul)) do
+      register_and_invoke_template(
+        session_templates,
+        workspace_name,
+        workspace_uri,
+        tmpl_name,
+        tmpl,
+        agent_uri,
+        Map.get(params, :caller),
+        Map.get(params, :caps),
+        Map.get(params, :from_uri)
+      )
+    end
   end
 
   defp do_create_agent("cc-headless", agent_uri, session_templates, params) do
@@ -553,6 +550,22 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(class_module))
   end
 
+  # B2 (2026-06-23) — resolve the cc tmpl, returning {:ok, tmpl} or {:error, reason}.
+  # Soul-present: delegates to manifest_cc_tmpl/3 which may return
+  # {:error, {:soul_render_failed, _}}; propagated to the caller (invariant #9 —
+  # no silent personaless agent).  Soul-absent: wraps the bare file_flavor_template
+  # in {:ok, _} so do_create_agent/4 can use a uniform `with {:ok, tmpl} <-` guard.
+  defp resolve_cc_tmpl(agent_uri, cwd, soul) when is_binary(soul) and soul != "" do
+    case manifest_cc_tmpl(agent_uri, cwd, soul) do
+      {:error, _} = err -> err
+      tmpl_map -> {:ok, tmpl_map}
+    end
+  end
+
+  defp resolve_cc_tmpl(agent_uri, cwd, _soul) do
+    {:ok, file_flavor_template("cc", "cc.agent", agent_uri, cwd)}
+  end
+
   # B2 (2026-06-23) — build a soul-enriched cc tmpl by constructing an inline
   # `%AgentManifest{}` and rendering it into AgentTemplate content via
   # `AgentManifest.to_template_content/4`.  The result is merged onto the bare
@@ -599,16 +612,10 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         Map.put(base, :agent_manifest_resolved, content[:agent_manifest_resolved])
 
       {:error, reason} ->
-        # Defensive: fall back to bare template and log; the soul is lost but
-        # the agent is still created (degraded rather than failed).
-        require Logger
-
-        Logger.warning(
-          "Behavior.Workspace.:create_agent cc: manifest render failed " <>
-            "(soul dropped, using bare template): #{inspect(reason)}"
-        )
-
-        file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+        # Invariant #9 (no silent drop at user-facing surfaces): an operator who
+        # requested a soul MUST NOT silently get a personaless agent.  Surface the
+        # render failure to the caller instead of falling back to the bare template.
+        {:error, {:soul_render_failed, reason}}
     end
   end
 
@@ -868,15 +875,26 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       true ->
         base = %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}
 
-        # B2 (2026-06-23): pass :agent_manifest_resolved through when present so
-        # `AgentTemplate.to_template_data` → `manifest_compile_payload` can see
-        # the soul and route through the cc compile path (`compile_cc_agent_data`)
-        # instead of the bare `template_data_extra` path.
+        # B2 (2026-06-23): pass :agent_manifest_resolved AND :agent_manifest_params
+        # through when present so `AgentTemplate.to_template_data` →
+        # `manifest_compile_payload` can see the soul and route through the cc
+        # compile path (`compile_cc_agent_data`).  Both fields are read by
+        # `manifest_compile_payload`; without :agent_manifest_params a future
+        # `claude_md_preamble` would be silently lost.
         content =
-          case Map.get(tmpl, :agent_manifest_resolved) do
-            resolved when is_map(resolved) -> Map.put(base, :agent_manifest_resolved, resolved)
-            _ -> base
-          end
+          base
+          |> then(fn c ->
+            case Map.get(tmpl, :agent_manifest_resolved) do
+              resolved when is_map(resolved) -> Map.put(c, :agent_manifest_resolved, resolved)
+              _ -> c
+            end
+          end)
+          |> then(fn c ->
+            case Map.get(tmpl, :agent_manifest_params) do
+              params when is_map(params) -> Map.put(c, :agent_manifest_params, params)
+              _ -> c
+            end
+          end)
 
         {:ok, content}
     end
