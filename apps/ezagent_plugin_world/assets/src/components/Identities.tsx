@@ -1,7 +1,7 @@
 import React from "react"
-import {BadgeCheck, Layers, Plus, Shield, UserRound, UsersRound} from "lucide-react"
+import {Plus, UserRound, UsersRound} from "lucide-react"
 
-import {Button, EmptyState, Input, Select, Stat} from "./ui/primitives"
+import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
 type IdentityRow = {
   uri: string
@@ -57,6 +57,10 @@ export type IdentitiesState = {
   bridge?: Record<string, unknown> | null
   can_edit?: boolean
   caps?: CapRow[] | {error?: string}
+  granted_caps?: CapRow[] | {error?: string}
+  project_cwd?: string | null
+  config_dir?: string | null
+  source_template?: string | null
   component?: string
   config_dir_path?: string | null
   creator_uri?: string | null
@@ -276,20 +280,43 @@ function EntityCaps({state}: {state: IdentitiesState}) {
 }
 
 function AgentDetail({state}: {state: IdentitiesState}) {
-  const status = state.agent_status || {}
+  const status = (state.agent_status || {}) as Record<string, unknown>
+  const grantedCaps = Array.isArray(state.granted_caps) ? state.granted_caps : []
+  const rows: Array<[string, string]> = [
+    ["Phase", String(status.phase || "unknown")],
+    ["Flavor", String(status.flavor || "unknown")],
+    ["project_cwd", String(state.project_cwd || "—")],
+    ["config_dir", String(state.config_dir || "—")],
+    ["Version / template", String(state.source_template || "direct-spawn (no template)")],
+    ["Bridge", state.bridge ? "connected" : "not connected"],
+  ]
 
   return (
     <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
       <code className={uriClass}>{state.agent_uri}</code>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Stat icon={<BadgeCheck className="h-4 w-4" />} label="Phase" value={String(status.phase || "unknown")} />
-        <Stat icon={<Layers className="h-4 w-4" />} label="Flavor" value={String(status.flavor || "unknown")} />
-        <Stat icon={<Shield className="h-4 w-4" />} label="Bridge" value={state.bridge ? "connected" : "not connected"} />
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map(([label, value]) => (
+          <div className="flex justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" key={label}>
+            <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+            <dd className="text-sm text-foreground">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Granted caps (CapBAC)</p>
+        <div className="flex flex-wrap gap-2 pt-1">
+          {grantedCaps.map((c, i) => (
+            <span className="rounded-md border border-border bg-muted/50 px-2 py-0.5 font-mono text-xs" key={i}>
+              {[c.behavior, c.action].filter(Boolean).join(".")}
+            </span>
+          ))}
+          {grantedCaps.length === 0 && <span className="text-sm text-muted-foreground">none</span>}
+        </div>
       </div>
-      <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-        {JSON.stringify(status.detail || status, null, 2)}
-      </pre>
+      <p className="text-xs text-muted-foreground">
+        派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
+      </p>
     </section>
   )
 }

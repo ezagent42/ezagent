@@ -88,13 +88,25 @@ defmodule Ezagent.World.IdentityData do
          %{component: "agent_detail", entity_uri: agent_uri},
          base,
          _workspace,
-         _caller,
-         _caps
+         caller,
+         caps
        ) do
+    # One sandbox read serves both config_dir + project_cwd so the detail page
+    # reads the executor config the agent was actually spawned with (not a
+    # re-derivation that could drift). `respawn_template_data` carries the
+    # template content the cascade built the agent from — `project_cwd` /
+    # source-template live there when the agent came from a registered template;
+    # a direct-spawn (curl/np) agent has neither, so both render nil ("—").
+    sandbox = agent_sandbox_state(agent_uri, caller, caps)
+
     base
     |> Map.put("agent_uri", encode_uri(agent_uri))
     |> Map.put("agent_status", agent_status(agent_uri))
     |> Map.put("bridge", bridge_entry(agent_uri))
+    |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
+    |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
+    |> Map.put("config_dir", sandbox_config_dir(sandbox))
+    |> Map.put("source_template", sandbox_source_template(sandbox))
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -439,6 +451,74 @@ defmodule Ezagent.World.IdentityData do
       other -> {:error, {:unexpected_sandbox_read, other}}
     end
   end
+
+  # Read the agent's sandbox state through the SAME dispatch path
+  # `list_extensions/3` uses (`:sandbox/:read`). Returns the raw result map
+  # (`config_dir_path` / `respawn_template_data` / …) or `nil` when the agent
+  # has no live sandbox Kind (direct-spawn / not running). Never raises — the
+  # detail page degrades to "—" on any failure.
+  defp agent_sandbox_state(%URI{} = agent_uri, caller_uri, caller_caps) do
+    case sandbox_read(agent_uri, caller_uri, caller_caps) do
+      {:ok, %{} = result} -> result
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp agent_sandbox_state(_agent_uri, _caller_uri, _caller_caps), do: nil
+
+  defp sandbox_config_dir(%{} = sandbox) do
+    case Map.get(sandbox, :config_dir_path) || Map.get(sandbox, "config_dir_path") do
+      path when is_binary(path) and path != "" -> path
+      _ -> nil
+    end
+  end
+
+  defp sandbox_config_dir(_sandbox), do: nil
+
+  # `project_cwd` is the universal "where the agent works" field carried in the
+  # template content the cascade snapshotted into `respawn_template_data`. nil
+  # for a direct-spawn agent (no template) — the UI renders that as "—".
+  defp sandbox_project_cwd(%{} = sandbox) do
+    respawn =
+      Map.get(sandbox, :respawn_template_data) || Map.get(sandbox, "respawn_template_data")
+
+    case respawn do
+      %{} = data ->
+        case Map.get(data, :project_cwd) || Map.get(data, "project_cwd") do
+          cwd when is_binary(cwd) and cwd != "" -> cwd
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp sandbox_project_cwd(_sandbox), do: nil
+
+  # Source template / version label. The cascade records the template flavor
+  # (and, when present, source/credential URIs) in `respawn_template_data`; we
+  # surface the flavor as the human-readable "version / template" hint. nil ⇒
+  # the UI shows "direct-spawn (no template)".
+  defp sandbox_source_template(%{} = sandbox) do
+    respawn =
+      Map.get(sandbox, :respawn_template_data) || Map.get(sandbox, "respawn_template_data")
+
+    case respawn do
+      %{} = data ->
+        case Map.get(data, :flavor) || Map.get(data, "flavor") do
+          flavor when is_binary(flavor) and flavor != "" -> flavor
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp sandbox_source_template(_sandbox), do: nil
 
   defp agent_flavors(rows) do
     rows
