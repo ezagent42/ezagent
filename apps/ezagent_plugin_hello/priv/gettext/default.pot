@@ -1,0 +1,97 @@
+## This file is a PO Template file.
+##
+## "msgid"s here are often extracted from source code.
+## Add new messages manually only if they're dynamic
+## messages that can't be statically extracted.
+##
+## Run "mix gettext.extract" to bring this file up to
+## date. Leave "msgstr"s empty as changing them here has no
+## effect: edit them in PO (.po) files instead.
+#
+msgid ""
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:67
+#, elixir-autogen, elixir-format
+msgid "Got it ✅ understanding your request…"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:341
+#, elixir-autogen, elixir-format
+msgid "Page \"%{title}\" · %{n} components total (%{parts})"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:327
+#, elixir-autogen, elixir-format
+msgid "Untitled"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:128
+#, elixir-autogen, elixir-format
+msgid "⏳ Generating %{count} blocks in parallel:\n%{briefs}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:176
+#, elixir-autogen, elixir-format
+msgid "⚠ All blocks failed; regenerating with the single-page fallback…"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:111
+#, elixir-autogen, elixir-format
+msgid "⚠ Generation failed: %{reason}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:199
+#, elixir-autogen, elixir-format
+msgid "⚠ Page assembly failed: %{reason}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:319
+#, elixir-autogen, elixir-format
+msgid "⚠ Render failed: %{reason}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:308
+#, elixir-autogen, elixir-format
+msgid "✅ Done! Page \"%{title}\" rendered to the right-side preview."
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:188
+#, elixir-autogen, elixir-format
+msgid "📦 Assembled: %{desc}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:153
+#, elixir-autogen, elixir-format
+msgid "📦 Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped)."
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:159
+#, elixir-autogen, elixir-format
+msgid "📦 Blocks done: %{kept}/%{total} succeeded."
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:100
+#, elixir-autogen, elixir-format
+msgid "📦 Structure generated: %{desc}"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:301
+#, elixir-autogen, elixir-format
+msgid "🛠 Rendering to the right-side preview…"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:90
+#, elixir-autogen, elixir-format
+msgid "🧠 Calling model to generate the page…"
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:74
+#, elixir-autogen, elixir-format
+msgid "🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel."
+msgstr ""
+
+#: lib/ezagent_plugin_hello/generator.ex:83
+#, elixir-autogen, elixir-format
+msgid "🧭 Plan: single page, direct generation."
+msgstr ""

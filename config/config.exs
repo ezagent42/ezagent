@@ -101,6 +101,12 @@ config :ezagent_plugin_world,
 config :ezagent_plugin_hello,
   hello_module_url: "/assets/hello/main.js"
 
+# i18n (#91) — the hello builder narration is authored with English msgids and
+# translated in priv/gettext/zh_CN. The narration runs in a Generator Task with
+# no per-request Locale plug, so default the plugin's backend to zh_CN to
+# preserve the pre-i18n Chinese copy. (Generator also pins the locale per turn.)
+config :ezagent_plugin_hello, EzagentPluginHello.Gettext, default_locale: "zh_CN"
+
 # Configures Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

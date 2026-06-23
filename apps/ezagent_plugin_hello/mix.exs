@@ -51,7 +51,14 @@ defmodule EzagentPluginHello.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       # `Ezagent.Workspace` (`create/2`) — the hello app's workspace home; used by
       # the demo seed task + the opt-in boot seed.
-      {:ezagent_domain_workspace, in_umbrella: true}
+      {:ezagent_domain_workspace, in_umbrella: true},
+      # i18n (#91, Allen 2026-06-23) — the builder narration (`Generator` turn
+      # progress strings) is user-facing copy; it goes through the plugin-owned
+      # `EzagentPluginHello.Gettext` backend (per-OTP-app translation namespace,
+      # the standard Phoenix pattern — keeps the plugin self-sufficient and out
+      # of `ezagent_domain_ui`'s namespace). `:gettext` is the standalone Hex lib,
+      # NOT a tier dependency.
+      {:gettext, "~> 0.26"}
     ]
   end
 end
