@@ -14,6 +14,23 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### i18n: widen the anti-CJK gate scope + translate the rest of the umbrella — OPEN (#91 follow-up, 2026-06-23)
+
+> Landed at the dev-together close (#91): `EzagentPluginHello.Generator`
+> builder narration now goes through the plugin-owned `EzagentPluginHello.Gettext`
+> backend (English msgids + `priv/gettext/zh_CN`), and a target-zero arch gate
+> (`apps/ezagent_core/test/architecture/cjk_literal_gate_test.exs`,
+> `Ezagent.Architecture.CjkLiteralGateTest`) fails the build on any hardcoded Han
+> string literal — **scoped to `apps/ezagent_plugin_hello/lib` for now** (Allen's
+> ask was "至少覆盖 hello 叙述串").
+>
+> **Follow-up:** widen `@scanned_globs` in that gate to the rest of the umbrella
+> (the broader ~20-file sweep of hardcoded-CJK user-facing copy outside hello —
+> world/socialware LV chrome, agent-console labels, etc.), wrapping each in the
+> owning app's gettext backend as the gate is widened. The scanner is already
+> scope-agnostic; widening = code fixes + one `@scanned_globs` line per app.
+> Owner: i18n. Tracking: extends #91.
+
 ### #154 genesis-collapse hardening — RESOLVED 2026-06-20 (Allen: VM-internal-trust, formalized)
 
 > **RESOLVED.** Allen's decision (2026-06-20): adopt VM-internal trust as the
