@@ -65,6 +65,17 @@ defmodule Ezagent.World.IdentityDataTest do
            ) =~
              "已存在"
 
+    # grant_failed: clean hint instead of a raw tuple; echo's unknown_action gets a flavor-specific
+    # message. The cap element is ignored by the message clause, so a placeholder stands in for it.
+    cap = :placeholder_cap
+
+    assert Ezagent.World.IdentityData.create_error_message(
+             {:grant_failed, cap, {:unknown_action, :grant_cap}}
+           ) =~ "不支持授予 caps"
+
+    assert Ezagent.World.IdentityData.create_error_message({:grant_failed, cap, :boom}) =~
+             "授予 caps 失败"
+
     assert is_binary(Ezagent.World.IdentityData.create_error_message({:weird, :tuple}))
   end
 end

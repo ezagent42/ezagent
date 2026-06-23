@@ -276,6 +276,15 @@ defmodule Ezagent.World.IdentityData do
   def create_error_message({:bad_flavor, flavor}), do: "不支持的 flavor：#{flavor}"
   def create_error_message({:already_exists, uri}), do: "同名 agent 已存在：#{uri}"
   def create_error_message({:bad_workspace_uri, _}), do: "无效的 workspace"
+  # The agent was created but a requested cap could not be granted. The common
+  # case: the flavor's Kind doesn't mount the Identity behavior that exposes
+  # `grant_cap` (e.g. echo) — surface a clean hint instead of a raw tuple.
+  def create_error_message({:grant_failed, _cap, {:unknown_action, :grant_cap}}),
+    do: "该 flavor 不支持授予 caps（其 Kind 未实现 Identity 授予）——请将 caps 留空，或改用 cc / curl"
+
+  def create_error_message({:grant_failed, _cap, reason}),
+    do: "授予 caps 失败：#{inspect(reason)}"
+
   def create_error_message(other), do: "创建失败：#{inspect(other)}"
 
   @doc "Preview an agent URI under the current workspace."
