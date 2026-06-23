@@ -21,14 +21,14 @@ defmodule Ezagent.Behavior.EchoColdLoadTest do
   ## Why a test-only `{:snapshot, :on_change}` Kind
 
   Echo agents ride `Ezagent.Entity.Agent` (A3/A5 migration; the standalone
-  `Ezagent.Entity.Echo` Kind was deleted). `Entity.Agent` declares `persistence:
-  :ephemeral` for echo-flavor instances (echo agents are throwaway), so it
-  never writes a snapshot — a cold-load on the production Kind would have
-  nothing to rehydrate.
-  To exercise the persistent-state half of the Lifecycle contract we host
-  the unchanged `Echo` Behavior on a test-only Kind with `{:snapshot,
-  :on_change}` (the same technique the reference
-  `Ezagent.Behavior.SandboxColdRestartTest` uses for its transients gate).
+  `Ezagent.Entity.Echo` Kind was deleted). `Entity.Agent` declares
+  `persistence: {:snapshot, :on_change}`, so echo agents now DO write
+  snapshots — a deliberate semantic change from the old ephemeral
+  `Entity.Echo`. To exercise the persistent-state half of the Lifecycle
+  contract in isolation, we host the unchanged `Echo` Behavior on a test-only
+  Kind with the same `{:snapshot, :on_change}` persistence (the same technique
+  the reference `Ezagent.Behavior.SandboxColdRestartTest` uses for its
+  transients gate).
   """
 
   use EzagentCore.DataCase, async: false
