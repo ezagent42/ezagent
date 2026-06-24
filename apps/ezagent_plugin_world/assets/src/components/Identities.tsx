@@ -330,11 +330,9 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
       <p className="text-xs text-muted-foreground">
         派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
       </p>
-      {state.config_path && (
-        <div className="flex flex-wrap gap-3">
-          <InlineLinks links={[["Config", state.config_path]]} />
-        </div>
-      )}
+      <div className="flex flex-wrap gap-3">
+        <InlineLinks links={[["Config", state.config_path]]} />
+      </div>
       <div className="border-t border-border pt-3">
         {!confirming && (
           <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirming(true)}>
