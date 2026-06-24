@@ -124,6 +124,7 @@ type Props = {
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
 const surfaceClass = "space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground"
+const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 const tableWrapClass = "overflow-x-auto rounded-md border border-border"
 const tableClass = "w-full border-collapse text-sm"
 const theadClass = "bg-muted/50 text-muted-foreground"
@@ -395,7 +396,6 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     with_pty: false,
   })
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
-  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 
   const cwdRequired =
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
@@ -524,7 +524,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
       <SectionHeader eyebrow="Agent" title="Agent config" />
       <code className={uriClass}>{agentUri}</code>
       <div className="space-y-6">
-        {cascade.keys.map((keyEntry) => (
+        {(cascade.keys ?? []).map((keyEntry) => (
           <AgentConfigKeySection
             key={keyEntry.key}
             agentUri={agentUri}
@@ -533,7 +533,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
             onConfigDeletePath={onConfigDeletePath}
           />
         ))}
-        {cascade.keys.length === 0 && (
+        {(cascade.keys ?? []).length === 0 && (
           <p className="text-sm text-muted-foreground">No config keys found.</p>
         )}
       </div>
@@ -555,6 +555,14 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
   const [newFieldValue, setNewFieldValue] = React.useState("")
   const [dirty, setDirty] = React.useState(false)
 
+  // Fix #1: re-sync to the durable server value whenever the server re-pushes a
+  // fresh cascade (e.g. after Save or delete).  useState only runs the initializer
+  // once — this effect keeps the editor honest across prop updates.
+  React.useEffect(() => {
+    setEditedFields({...keyEntry.effective_body})
+    setDirty(false)
+  }, [keyEntry.effective_body])
+
   const handleFieldChange = (field: string, value: string) => {
     setEditedFields((prev) => ({...prev, [field]: value}))
     setDirty(true)
@@ -566,6 +574,14 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
   }
 
   const handleDeleteField = (field: string) => {
+    // Fix #2: optimistically drop the field so it doesn't bounce back
+    // visually during the server round-trip.  The useEffect above will
+    // re-sync the authoritative value once the server re-pushes.
+    setEditedFields((prev) => {
+      const next = {...prev}
+      delete next[field]
+      return next
+    })
     onConfigDeletePath?.(agentUri, keyEntry.key, [field])
   }
 
@@ -576,8 +592,6 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
     setNewFieldValue("")
     setDirty(true)
   }
-
-  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 
   // Read-only context: workspace and session layer values
   const workspaceBody = keyEntry.layers.workspace?.body
