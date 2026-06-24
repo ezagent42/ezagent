@@ -15,7 +15,7 @@ it exists so the long GitHub key joins to the short name plans cite.
 | github_username | short_name | role | feishu_name | current_track | latest_return | timezone | github_lookup |
 |---|---|---|---|---|---|---|---|
 | `zyli-developer` | zyli | human-dev | 李震宇 | 人肉 full-flow validation (was world-deploy-e2e-pg) | `2026-06-23/returns/world-deploy-e2e-pg.md` | GMT+8 | verified org member |
-| `gagameow` | gaga | human-dev | 黄佳佳 | cc-headless real impl → then #84 agent-console QA | `2026-06-23/returns/agent-flavor-headless-protocol-api.md` | GMT+8 | verified |
+| `gagameow` | gaga | human-dev | 黄佳佳 | agent-config backend (`feat/agent-config-backend`, #84 后端契约) — cc-headless DONE (#931) | `2026-06-24/returns/cc-headless-real-implementation.md` | GMT+8 | verified |
 | `zhaomaota97` | zhaomato | human-dev | 张宁 | 官网 (official website, on the @json-render substrate) | `2026-06-23/returns/world-hello-convergence.md` | GMT+8 | verified org member |
 | `FatNine` | fatnine | human-dev | 戴明 | #84 Agent Console CRUD | `2026-06-22/returns/agent-console.md` | GMT+8 | verified |
 | `allenwoods` | allen | lead | 林懿伦 | dev-together lead (plan/handoff/close/review) + own tracks | n/a | GMT+9 | verified |
