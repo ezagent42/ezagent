@@ -208,6 +208,14 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_agent_create(socket, agent_params)
   end
 
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agents.delete", "args" => %{"agent_uri" => agent_uri_str}},
+        socket
+      ) do
+    dispatch_agent_delete(socket, agent_uri_str)
+  end
+
   @cmdk_actions ~w(cmdk.open cmdk.close cmdk.query cmdk.select)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
@@ -423,6 +431,62 @@ defmodule EzagentPluginWorld.WorldLive do
     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
     |> push_event("world:state", state)
   end
+
+  defp dispatch_agent_delete(socket, agent_uri_str) when is_binary(agent_uri_str) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         false <- Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri),
+         target = Ezagent.URI.with_action(agent_uri, :manage, :delete),
+         {:ok, {:ok, :deleted}} <-
+           Invocation.dispatch(%Invocation{
+             target: target,
+             mode: :call,
+             args: %{},
+             ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           }) do
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "ok")
+       |> push_navigate(to: "/identities/agents")}
+    else
+      true ->
+        {:noreply, push_agent_action_error(socket, :agent_bound_to_live_session)}
+
+      :error ->
+        {:noreply, push_agent_action_error(socket, :invalid_agent_uri)}
+
+      {:error, reason} ->
+        {:noreply, push_agent_action_error(socket, reason)}
+    end
+  end
+
+  defp dispatch_agent_delete(socket, _), do: {:noreply, push_agent_action_error(socket, :invalid_agent)}
+
+  # No silent drop: rebuild the agents-list state with an operator-facing error
+  # via the SAME `world:state` channel the route uses (mirrors push_agent_create_error).
+  defp push_agent_action_error(socket, reason) do
+    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents")
+    layout = socket.assigns.world_state["layout"]
+    state = state_for_route(route, socket, layout)
+    state = Map.put(state, "action_error", action_error_message(reason))
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
+    |> push_event("world:state", state)
+  end
+
+  defp action_error_message(:agent_bound_to_live_session),
+    do: "该 agent 正在某个对话中，先把它从对话移出再删除"
+
+  defp action_error_message(:invalid_agent_uri), do: "无效的 agent URI"
+  defp action_error_message(:invalid_agent), do: "无效的请求参数"
+  defp action_error_message(:unauthorized), do: "没有删除权限（需要 manage 权限）"
+  defp action_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
+  defp action_error_message(reason), do: "删除失败：#{reason_to_string(reason)}"
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
     target = Ezagent.URI.with_action(agent_uri, :pty, :write)
