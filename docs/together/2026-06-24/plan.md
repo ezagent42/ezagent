@@ -16,17 +16,17 @@ base_main: c2365462
    this; gaga (cc-headless), fatnine (agent-console), zhaomato (hello), and the
    session-create crux fix are the *gaps* that block it.
 2. **Build the official website (官网)** — a public marketing/landing site for
-   ezagent. **This is a NEW workstream with no owner among the four continuity
-   tracks** — see "官网 — owner TBD" below; needs a lead decision (5th track /
-   one dev pivots / stretch after in-team rollout lands).
+   ezagent. **Owner: zhaomato** (lead-assigned 2026-06-24) — built on the proven
+   `@json-render` render substrate hello already uses (vercel-labs `@json-render`
+   core+react 0.19.0 + `catalog.ts`/`registry.tsx`), reusing zhaomato's hello
+   expertise.
 
 | Track | Serves goal |
 |---|---|
 | zyli 人肉 full-flow | ① (the measurement) |
-| gaga cc-headless real | ① (agent coverage gap) |
+| gaga cc-headless real → then agent-console QA | ① (agent coverage + launch-readiness of operator config) |
 | fatnine #84 agent-console | ① (operator can manage agents) |
-| zhaomato hello | ① (app/page generation) — possibly ② if 官网 is built on the render substrate |
-| **官网 (NEW)** | **② — owner TBD** |
+| zhaomato 官网 | ② (built on the json-render substrate) |
 
 > Each track below CONTINUES yesterday's work; the concrete next increment is
 > derived from that dev's 2026-06-23 return. Conflict map at the bottom — the four
@@ -37,14 +37,15 @@ base_main: c2365462
 | Dev | Track (continuity) | Today's increment (from yesterday's return) | Branch | Owned surfaces | Required reading |
 |---|---|---|---|---|---|
 | **zyli** (zylideveloper) | 人肉 full-flow validation (was `world-deploy-e2e-pg`) | Re-run the end-to-end operator flow on a fresh disposable **PG** stack now that session-create↔orchestrator decouple (#912) landed. **Verify the root-caused crux is cleared** — `create_session` 5s-dispatch timeout + snapshot-on-create race → session w/o respawnable snapshot → `:no_such_actor` (return §7). Walk steps 1→8; capture evidence per step; file/route each remaining blocker (a found bug spawns a `fix/<symptom>` branch). | n/a (validation) + `fix/*` as found | disposable stack, `docs/together/2026-06-24/evidence/`, the world-e2e runbook | own 2026-06-23 return §7 + `docs/guide/world-e2e-seed.md` |
-| **gaga** (gagameow) | protocol-api / agent-flavor | **Implement the REAL `cc-headless` backend** — replace the spawn-STUB (`CcHeadlessAgent` returns success after cred-materialization without starting Claude). 3B (`server:esr-bridge` no-PTY) was verified **NOT viable** against Claude 2.1.186 → implement **3A** per the handoff. Make `cc-headless` a real session-capable no-PTY Claude agent. | `feat/cc-headless-real` | `apps/ezagent_plugin_cc` (headless template / bridge adapter / backend launch) | `docs/together/2026-06-23/handoffs/cc-headless-real-implementation.md` (§3A) + own 2026-06-23 return item 1 |
-| **zhaomato** | hello | Continue hello after the world→hello launch path closed (#910 + i18n #91). **[scope to confirm with Allen]** — candidate increments: (a) hello page-gen quality / more `@json-render` component types (loom-render parity), (b) the React-19 native-swap follow-up flagged in the world-hello return (Decision #2), (c) land the uncommitted `runtime.ex` `EZAGENT_NO_DISTRIBUTION` dev-infra fix as its own change. | `feat/hello-<scope>` | `apps/ezagent_plugin_hello` | world-hello-convergence return §6 follow-ups + #81 loom→hello |
+| **gaga** (gagameow) | protocol-api / agent-flavor → agent-console QA | **AM: implement the REAL `cc-headless` backend** — replace the spawn-STUB (`CcHeadlessAgent` returns success without starting Claude). 3B (`server:esr-bridge` no-PTY) verified **NOT viable** vs Claude 2.1.186 → implement **3A** per the handoff. **Then: guide + test fatnine's #84 agent console** — ensure ALL autoservice backend config functions are present + working **before launch** (the operator can configure every agent-config field via the console; gaga is the backend/agent-flavor expert pairing with fatnine's UI). | `feat/cc-headless-real` (+ review/pairing on `feat/agent-console-crud`) | `apps/ezagent_plugin_cc`; then QA across `plugin_world` agent-console + `ConfigEvolve`/agent-config backend | `docs/together/2026-06-23/handoffs/cc-headless-real-implementation.md` (§3A) + the #84 handoff |
+| **zhaomato** | 官网 (official website) — goal ② | **Build the ezagent official website** on the proven `@json-render` render substrate hello already uses (vercel-labs `@json-render` core+react 0.19.0 + `catalog.ts`/`registry.tsx`). Reuse the hello render expertise. **[scope to confirm with Allen: content/sections, hosting (CF Workers per #65?), public route].** | `feat/official-site` | new site assets (likely a world/hello-render-based public surface) | hello `@json-render` setup (`apps/ezagent_plugin_hello/assets`) + #65 CF Workers deploy |
 | **fatnine** | agent console | **#84 Agent Console CRUD** — the re-scoped, lead-decided handoff is READY (Modify = full config cascade via `apply_config_delta`; delete-gate = manage-cap+confirm+block-while-bound; create-fields read-only; live-status fix in-scope). Builds on #905. Demonstrable-DoD (post-mutation backend state, the anti-demo bar #904 lacked). | `feat/agent-console-crud` | `apps/ezagent_plugin_world` (agent detail/list/edit/delete) | `docs/together/2026-06-24/handoffs/agent-console-crud-handoff.draft.md` (READY) + #905 |
 
 ## Conflict map
 
-- **Largely disjoint plugins** → clean parallelism: gaga=`plugin_cc`, zhaomato=`plugin_hello`, fatnine=`plugin_world`. No shared-file contention between them.
-- **World UI**: fatnine owns the world **agent pages** today; no other dev is on world infra (zyli moved to 人肉), so fatnine has `plugin_world` to himself — still respect `docs/guide/world-coordination.md` (declare surfaces; serialize `styles.css`; layout gate) in case a 人肉-found fix touches world.
+- **Largely disjoint surfaces** → clean parallelism: gaga AM=`plugin_cc`, zhaomato=新官网 assets (reads hello's `@json-render` setup, doesn't mutate `plugin_hello` runtime), fatnine=`plugin_world` agent pages.
+- **gaga ↔ fatnine pairing (PM)**: after cc-headless, gaga QAs/guides fatnine's #84 on `feat/agent-console-crud` — same branch, so gaga reviews/tests rather than edits in parallel (no concurrent writes; fatnine owns the branch, gaga drives the autoservice-backend-config completeness checklist).
+- **World UI**: fatnine owns the world **agent pages**; no other dev mutates world infra (zyli→人肉). Respect `docs/guide/world-coordination.md` (declare surfaces; serialize `styles.css`; layout gate) if a 人肉-found fix touches world.
 - **zyli's 人肉 run** surfaces bugs that may spawn `fix/*` branches in shared areas (core/session). Route each per-bug at discovery; the create_session crux fix in particular touches `ezagent_domain_session` — coordinate if it lands same-day.
 - **Shared resource**: one disposable stack for zyli's run (serial, single runner).
 
