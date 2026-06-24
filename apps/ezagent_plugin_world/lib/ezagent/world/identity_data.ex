@@ -99,8 +99,10 @@ defmodule Ezagent.World.IdentityData do
     # a direct-spawn (curl/np) agent has neither, so both render nil ("—").
     sandbox = agent_sandbox_state(agent_uri, caller, caps)
 
+    agent_uri_str = encode_uri(agent_uri)
+
     base
-    |> Map.put("agent_uri", encode_uri(agent_uri))
+    |> Map.put("agent_uri", agent_uri_str)
     |> Map.put("agent_status", agent_status(agent_uri))
     # Flavor from the same reliable source the agents table uses
     # (`UriQuery.resolve(:flavor, uri)`), NOT `agent_status.flavor` which is
@@ -111,6 +113,7 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
     |> Map.put("config_dir", sandbox_config_dir(sandbox))
     |> Map.put("source_template", sandbox_source_template(sandbox))
+    |> Map.put("config_path", config_path("agent", agent_uri_str))
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -198,7 +201,8 @@ defmodule Ezagent.World.IdentityData do
               "caps_path" => caps_path(entity_type, uri_str),
               "detail_path" => detail_path(entity_type, uri_str),
               "api_keys_path" => api_keys_path(entity_type, uri_str),
-              "extensions_path" => extensions_path(entity_type, uri_str)
+              "extensions_path" => extensions_path(entity_type, uri_str),
+              "config_path" => config_path(entity_type, uri_str)
             }
           ]
         else
@@ -603,6 +607,11 @@ defmodule Ezagent.World.IdentityData do
     do: "/identities/agents/#{URI.encode_www_form(uri_str)}/extensions"
 
   defp extensions_path(_kind, _uri_str), do: nil
+
+  defp config_path("agent", uri_str),
+    do: "/identities/agents/#{URI.encode_www_form(uri_str)}/config"
+
+  defp config_path(_kind, _uri_str), do: nil
 
   defp transports_summary(presence_list) do
     for entries <- Map.values(presence_list),

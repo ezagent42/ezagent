@@ -22,6 +22,7 @@
     ],
     "identities": [
       "agent_api_keys",
+      "agent_config",
       "agent_detail",
       "agent_extensions",
       "agent_new_form",
@@ -59,6 +60,12 @@
       "data_source": "Ezagent.World.IdentityData",
       "renderer_family": "identities",
       "title": "Agent API Keys"
+    },
+    "agent_config": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent Config"
     },
     "agent_detail": {
       "category": "layout_slot",

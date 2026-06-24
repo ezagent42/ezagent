@@ -14,6 +14,7 @@ type IdentityRow = {
   detail_path?: string | null
   api_keys_path?: string | null
   extensions_path?: string | null
+  config_path?: string | null
 }
 
 type UserRow = {
@@ -60,6 +61,7 @@ export type IdentitiesState = {
   granted_caps?: CapRow[] | {error?: string}
   project_cwd?: string | null
   config_dir?: string | null
+  config_path?: string | null
   source_template?: string | null
   flavor?: string
   component?: string
@@ -113,6 +115,7 @@ export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent}: Props) 
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
   if (state.component === "agent_api_keys") return <AgentApiKeys state={state} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
+  if (state.component === "agent_config") return <AgentConfigPlaceholder state={state} />
   return <IdentityDirectory state={state} />
 }
 
@@ -232,6 +235,7 @@ function AgentsTable({state}: {state: IdentitiesState}) {
                       ["Caps", agent.caps_path],
                       ["API Keys", agent.api_keys_path],
                       ["Extensions", agent.extensions_path],
+                      ["Config", agent.config_path],
                     ]}
                   />
                 </td>
@@ -326,6 +330,11 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
       <p className="text-xs text-muted-foreground">
         派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
       </p>
+      {state.config_path && (
+        <div className="flex flex-wrap gap-3">
+          <InlineLinks links={[["Config", state.config_path]]} />
+        </div>
+      )}
       <div className="border-t border-border pt-3">
         {!confirming && (
           <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirming(true)}>
@@ -448,6 +457,16 @@ function ContractCoverage() {
         ))}
       </ul>
     </div>
+  )
+}
+
+function AgentConfigPlaceholder({state}: {state: IdentitiesState}) {
+  return (
+    <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+      <SectionHeader eyebrow="Agent" title="Agent config" />
+      <code className={uriClass}>{state.agent_uri}</code>
+      <p className="text-sm text-muted-foreground">配置编辑器（C2 实现中）。</p>
+    </section>
   )
 }
 
