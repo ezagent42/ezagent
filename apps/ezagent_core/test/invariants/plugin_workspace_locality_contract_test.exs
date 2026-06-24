@@ -332,6 +332,33 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     end
   end
 
+  test "allowlisted plugin locality debt is surfaced as warning text" do
+    warning = workspace_locality_debt_warning(@allowlist)
+
+    if @allowlist != [] do
+      IO.warn(warning)
+    end
+
+    assert warning =~ "workspace locality debt"
+    assert warning =~ "total=#{length(@allowlist)}"
+    assert warning =~ "kind_registry_lookup="
+    assert warning =~ "spawn_registry="
+    assert warning =~ "genserver_to_pid="
+    assert warning =~ "docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md"
+
+    assert workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "1"})
+    refute workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "0"})
+    refute workspace_locality_debt_enforced?(%{})
+
+    if @allowlist != [] and workspace_locality_debt_enforced?(System.get_env()) do
+      flunk("""
+      workspace locality debt enforcement is enabled, but allowlist entries remain.
+
+      #{warning}
+      """)
+    end
+  end
+
   defp production_plugin_files(root) do
     root
     |> Path.join("apps")
@@ -416,6 +443,38 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "  #{path}:#{line} #{key} - #{message}"
     end)
     |> Enum.join("\n")
+  end
+
+  defp workspace_locality_debt_warning(allowlist) do
+    counts = Enum.frequencies_by(allowlist, & &1.key)
+
+    pattern_summary =
+      @forbidden_patterns
+      |> Keyword.keys()
+      |> Enum.map(fn key -> "#{key}=#{Map.get(counts, key, 0)}" end)
+      |> Enum.join(", ")
+
+    entries =
+      allowlist
+      |> Enum.map(fn entry ->
+        "  #{entry.path}:#{entry.line} #{entry.key} - #{entry.reason}"
+      end)
+      |> Enum.join("\n")
+
+    """
+    workspace locality debt: total=#{length(allowlist)} existing plugin local runtime assumptions remain allowlisted.
+    This is not a clean pass; it is a visible migration backlog.
+    by_pattern: #{pattern_summary}
+    contract: docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md
+    registry: apps/ezagent_core/test/invariants/plugin_workspace_locality_contract_test.exs @allowlist
+    enforce: ENFORCE_WORKSPACE_LOCALITY_DEBT=1
+    entries:
+    #{entries}
+    """
+  end
+
+  defp workspace_locality_debt_enforced?(env) do
+    Map.get(env, "ENFORCE_WORKSPACE_LOCALITY_DEBT") in ["1", "true", "TRUE", "yes", "YES"]
   end
 
   defp list_ex_files(dir) do
