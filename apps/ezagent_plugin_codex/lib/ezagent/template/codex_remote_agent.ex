@@ -227,6 +227,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
           codex_path,
           test_mode
         )
+        |> Map.put(:bridge_topic, remote_bridge_topic(agent_uri))
 
       case EzagentPluginCodex.BridgeSidecar.start(agent_uri, params) do
         {:ok, _pid} -> :ok
@@ -251,6 +252,11 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     _ = EzagentPluginCodex.BridgeSidecar.stop(agent_uri)
     _ = EzagentPluginCodex.AppServer.stop(agent_uri)
     :ok
+  end
+
+  @doc false
+  def remote_bridge_topic(%URI{} = agent_uri) do
+    EzagentPluginCodex.CodexRemoteBridgeAdapter.channel_topic_prefix() <> URI.to_string(agent_uri)
   end
 
   # ---- ensure_subprocess_alive (respawn on cold restart) ------------------
@@ -311,10 +317,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   end
 
   defp agent_kind_alive?(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
 
   # ---- Failure handling ---------------------------------------------------
@@ -332,7 +335,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   # ---- Agent Kind + ownership ---------------------------------------------
 
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
       {:ok, :started, _pid} -> {:ok, :started}
       {:ok, :already_started, _pid} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}

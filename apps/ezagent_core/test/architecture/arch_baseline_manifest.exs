@@ -62,7 +62,25 @@
   #   All on-chokepoint, so off_chokepoint is unchanged. 37→40.
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor spawn paths route
   #   through the SANCTIONED SpawnRegistry chokepoint (one site each). 40→42.
-  spawn_registry_call_sites: 42,
+  # RATCHET-DOWN (cc-headless PR #931, codex review): the cc-headless template
+  #   REPLACED its prior `SpawnRegistry.spawn_detailed/1` call with
+  #   `Ezagent.Kind.spawn/2`, and the SDK sidecar owns its Python worker via
+  #   `DynamicSupervisor.start_child/2` (the sidecar allowlist, NOT this count).
+  #   Net call sites 42 → 41 — cap lowered to actual (the earlier +1 bump comment
+  #   was directionally wrong; corrected here so the gate stays tight).
+  # arch-cap-bump: +2 #95 — Ezagent.LocalRuntime (the new owner-gated plugin
+  #   chokepoint) calls SpawnRegistry.spawn + spawn_detailed (one site each). This
+  #   is a TEMPORARY rise: as plugins migrate off direct SpawnRegistry onto
+  #   LocalRuntime (PR-2+), those plugin sites disappear and this cap RATCHETS DOWN
+  #   well below 41. 41→43.
+  # RATCHET-DOWN #95 PR-2 (cc migration): the cc plugin's 6 direct SpawnRegistry
+  #   call sites moved onto LocalRuntime, so the scanned count dropped 43→36. Cap
+  #   lowered to actual to keep the gate tight (the LocalRuntime delegation sites
+  #   in core remain; only the cc plugin-side direct calls were removed). 43→36.
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): the 11 direct
+  #   SpawnRegistry call sites in these 4 plugins moved onto LocalRuntime, so the
+  #   scanned count dropped 36→30. Cap lowered to actual. 36→30.
+  spawn_registry_call_sites: 30,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -73,7 +91,23 @@
   # +2 protocol_api P0 (conversation_registry + openai_chat_plug spawn)
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor modules spawn through
   #   the SpawnRegistry chokepoint. 35→37.
-  spawn_registry_modules: 37,
+  # RATCHET-DOWN (cc-headless PR #931, codex review): modules 37 → 36 — the
+  #   cc-headless template module no longer calls SpawnRegistry (uses Kind.spawn);
+  #   the SDK sidecar uses DynamicSupervisor (sidecar allowlist), not this count.
+  #   Cap lowered to actual; the earlier +1 bump comment was directionally wrong.
+  # arch-cap-bump: +1 #95 — new module Ezagent.LocalRuntime (the owner-gated plugin
+  #   chokepoint) calls SpawnRegistry. SANCTIONED (added to the chokepoint allowlist),
+  #   so off_chokepoint is unchanged. Temporary: ratchets back down as plugins
+  #   migrate onto LocalRuntime (PR-2+). 36→37.
+  # RATCHET-DOWN #95 PR-2 (cc migration): 5 cc modules dropped their direct
+  #   SpawnRegistry references (cc_orchestrator_seed, mcp_server, cc_agent/spawn,
+  #   seed_cc_agent, seed_cc_sandbox), so the scanned module count fell 37→32. Cap
+  #   lowered to actual. 37→32.
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): 6 plugin modules
+  #   dropped their direct SpawnRegistry references (codex_agent, codex_remote_agent,
+  #   echo_agent, echo application, feishu binding_policy, feishu sender_resolver),
+  #   so the scanned module count fell 32→26. Cap lowered to actual. 32→26.
+  spawn_registry_modules: 26,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -82,7 +116,13 @@
   # arch-cap-bump: +1 #907 — a cc-headless/codex-remote flavor module activates its
   #   pre-provisioned agent off-chokepoint (rehydrate, not create); creation still
   #   flows through the template chokepoint. 26→27.
-  spawn_registry_off_chokepoint_modules: 27,
+  # RATCHET-DOWN #95 PR-2 (cc migration): cc's off-chokepoint SpawnRegistry modules
+  #   moved onto LocalRuntime, so the scanned off-chokepoint count fell 27→22. Cap
+  #   lowered to actual. 27→22.
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): these plugins'
+  #   off-chokepoint SpawnRegistry modules moved onto LocalRuntime, so the scanned
+  #   off-chokepoint count fell 22→16. Cap lowered to actual. 22→16.
+  spawn_registry_off_chokepoint_modules: 16,
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
@@ -134,7 +174,8 @@
   #   CredentialAdapter delegations (auth_failure_signals/secret_relpaths/credential_*
   #   → base cc/codex agent), intentionally duplicating the delegating bodies across
   #   flavor files. 29→32.
-  cross_file_duplicate_fn_groups: 32,
+  # arch-cap-bump: cc-headless SDK behavior mirrors curl sync-result helper shape pending shared helper extraction (+8)
+  cross_file_duplicate_fn_groups: 40,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -152,6 +193,7 @@
   # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
   # arch-cap-bump: +2 #907 — cc_headless_agent + codex_remote_agent flavor template
   #   classes (thin CredentialAdapter delegations). 1682→1684.
+  # arch-cap-bump: cc-headless SDK sidecar spawn/respawn replaces the stub runtime (+2 net)
   cc_codex_template_class_combined_loc: 1684,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
@@ -201,8 +243,8 @@
   # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.
-  # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
-  set_effect_sites: 121,
+  # arch-cap-bump: cc-headless SDK sync_result state slice persists conversation/error/token fields (+5)
+  set_effect_sites: 126,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

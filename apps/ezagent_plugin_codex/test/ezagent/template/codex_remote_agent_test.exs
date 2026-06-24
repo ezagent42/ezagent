@@ -104,4 +104,13 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
                Ezagent.PluginCodex.Template.CodexAgent.template_data_extra(content)
     end
   end
+
+  describe "bridge topic" do
+    test "uses codex-remote flavor in AgentBridge topic" do
+      agent_uri = URI.new!("entity://test-ws/agent/codex_remote_full")
+
+      assert CodexRemoteAgent.remote_bridge_topic(agent_uri) ==
+               "agent_bridge:codex-remote:entity://test-ws/agent/codex_remote_full"
+    end
+  end
 end

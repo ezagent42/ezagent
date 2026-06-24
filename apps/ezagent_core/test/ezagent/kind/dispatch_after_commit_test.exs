@@ -23,7 +23,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   (`String.to_existing_atom`) + cap-axis derivation have real modules.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   import ExUnit.CaptureLog
 
@@ -180,9 +180,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   end
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Sandbox provided by EzagentCore.DataCase (#92).
     :ok = BehaviorRegistry.register(DacKind, :trigger, DacBehavior)
     :ok = BehaviorRegistry.register(DacKind, :probe, DacBehavior)
     :ok = BehaviorRegistry.register(DacKind, :trigger_bad, DacBehavior)

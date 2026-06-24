@@ -208,6 +208,14 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_agent_create(socket, agent_params)
   end
 
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agent.api_key.put", "args" => %{"agent_uri" => agent_uri_str} = args},
+        socket
+      ) do
+    dispatch_api_key_put(socket, agent_uri_str, args)
+  end
+
   @cmdk_actions ~w(cmdk.open cmdk.close cmdk.query cmdk.select)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
@@ -422,6 +430,58 @@ defmodule EzagentPluginWorld.WorldLive do
     |> assign(:world_state_json, Jason.encode!(state))
     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
     |> push_event("world:state", state)
+  end
+
+  # Store/replace an agent's downstream-LLM API key from the world UI — the write
+  # half of the agent_api_keys page (the read half is IdentityData.list_api_keys).
+  # Dispatches `Behavior.ApiKeys :put_api_key` with the caller's scope; the
+  # behavior gate authorizes by data_owner (agent creator) or admin, matching the
+  # `can_edit` affordance the page already computes. On success the masked-keys
+  # table is refreshed by re-resolving the SAME route state (no key plaintext ever
+  # rides back — `list_api_keys` returns only masked values).
+  defp dispatch_api_key_put(socket, agent_uri_str, args) when is_map(args) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    provider = args |> Map.get("provider", "") |> to_string() |> String.trim()
+    key = args |> Map.get("key", "") |> to_string() |> String.trim()
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         true <- provider != "" and key != "",
+         {:ok, _result} <-
+           Invocation.dispatch(%Invocation{
+             target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
+             mode: :call,
+             args: %{provider: provider, key: key},
+             ctx: %{caller: caller, caps: caps, reply: :sync}
+           }) do
+      refresh_api_keys_state(socket, agent_uri)
+    else
+      false ->
+        {:noreply,
+         assign(socket, :last_dispatch_status, "error:api_key_provider_and_key_required")}
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent_uri")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+    end
+  end
+
+  defp refresh_api_keys_state(socket, %URI{} = agent_uri) do
+    # Re-resolve through Routes.route_for (the single route SoT) so the refreshed
+    # state can't drift from what the page renders on a normal navigation.
+    encoded = agent_uri |> URI.to_string() |> URI.encode_www_form()
+    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents/#{encoded}/api-keys")
+    layout = socket.assigns.world_state["layout"]
+    state = state_for_route(route, socket, layout)
+
+    {:noreply,
+     socket
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:last_dispatch_status, "ok")
+     |> push_event("world:state", state)}
   end
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do

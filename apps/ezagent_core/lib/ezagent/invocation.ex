@@ -28,6 +28,8 @@ defmodule Ezagent.Invocation do
   arrives in later phases.
   """
 
+  require Logger
+
   @type mode :: :call | :cast | :call_stream | :subscribe | :introspect
 
   @type reply_target ::
@@ -88,7 +90,12 @@ defmodule Ezagent.Invocation do
   def dispatch(%__MODULE__{target: target, mode: mode, ctx: ctx} = inv) do
     instance_uri = Ezagent.URI.instance(target)
 
-    with :ok <- maybe_idempotency_check(ctx) do
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
+             instance_uri,
+             {:dispatch, target}
+           ),
+         :ok <- maybe_idempotency_check(ctx) do
       dispatch_with_lazy_spawn(instance_uri, mode, inv)
     end
   end
@@ -194,7 +201,7 @@ defmodule Ezagent.Invocation do
       false ->
         # Genuine "never existed" — return the legacy shape so
         # existing telemetry / error handling is unchanged.
-        {:error, :no_such_actor}
+        pre_delivery_error(inv, :no_such_actor)
 
       true ->
         case lazy_spawn_from_snapshot(instance_uri) do
@@ -229,7 +236,7 @@ defmodule Ezagent.Invocation do
               %{instance_uri: instance_uri, reason: reason, mode: mode}
             )
 
-            {:error, :no_such_actor}
+            pre_delivery_error(inv, :no_such_actor)
         end
     end
   end
@@ -252,7 +259,7 @@ defmodule Ezagent.Invocation do
         :ok
 
       :error ->
-        {:error, :no_such_actor}
+        pre_delivery_error(inv, :no_such_actor)
     end
   end
 
@@ -266,6 +273,40 @@ defmodule Ezagent.Invocation do
         {:error, :no_such_actor}
     end
   end
+
+  defp pre_delivery_error(%__MODULE__{} = inv, reason) do
+    log_unobservable_pre_delivery_cast_error(inv, reason)
+    {:error, reason}
+  end
+
+  defp log_unobservable_pre_delivery_cast_error(
+         %__MODULE__{mode: :cast, ctx: %{reply: :ignore}} = inv,
+         reason
+       ) do
+    instance_uri = Ezagent.URI.instance(inv.target)
+
+    :telemetry.execute(
+      [:ezagent, :dispatch, :cast_failed],
+      %{},
+      %{
+        target: inv.target,
+        instance_uri: instance_uri,
+        mode: :cast,
+        reason: reason,
+        stage: :pre_delivery
+      }
+    )
+
+    Logger.error(
+      "Ezagent.Invocation: fire-and-forget cast dispatch FAILED before delivery " <>
+        "target=#{URI.to_string(inv.target)} instance=#{URI.to_string(instance_uri)} " <>
+        "reason=#{inspect(reason)}"
+    )
+
+    :ok
+  end
+
+  defp log_unobservable_pre_delivery_cast_error(%__MODULE__{}, _reason), do: :ok
 
   defp maybe_idempotency_check(%{idempotency_key: key}) when is_binary(key) do
     if Ezagent.Idempotency.seen?(key) do

@@ -28,7 +28,13 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   Scenario `scenario: "15-revoke-cap-non-admin-denial"` (moduletag).
   """
 
-  use ExUnit.Case, async: false
+  # #92: was `use ExUnit.Case` + a hand-rolled `checkout` + `{:shared, self()}`
+  # in `setup`. The dying test process became the global shared owner; on exit
+  # the pool reverted to `:manual` and its spawned Session Kinds' background
+  # `kind_snapshots` writes failed ("owner exited") — the deterministic clobber
+  # this task fixes. DataCase shares via a drainable Agent owner + drain
+  # teardown, so those writes complete before the connection is reclaimed.
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -39,12 +45,6 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   alias Ezagent.{Capability, Invocation, Message, Users}
 
   @moduletag scenario: "15-revoke-cap-non-admin-denial"
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
 
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 

@@ -42,6 +42,26 @@ defmodule Ezagent.Routing.ResolverTest do
       assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"), [])
     end
 
+    test "F14 (#98): an Always rule does NOT route a message back to its own sender (self-loop protection)",
+         %{table: t} do
+      echo = URI.new!("entity://system/agent/echo_self-loop")
+      session = URI.new!("session://system/default/main")
+      # `Always → echo`: matches EVERY message and targets echo.
+      :ok = RoutingRegistry.put(t, Matcher.always(), [URI.to_string(echo)])
+
+      # A message SENT BY echo (its own reply) must NOT be routed back to echo —
+      # otherwise the Always rule re-fires on echo's reply → self-loop flood.
+      echo_reply = Message.new(echo, %{text: "my own reply", attachments: []})
+      assert [] = Resolver.resolve(echo_reply, session, [])
+
+      # Control: the SAME Always rule still routes a DIFFERENT sender's message to
+      # echo (the rule isn't broken — only the self-route is excluded).
+      admin_msg =
+        Message.new(URI.new!("entity://system/user/admin"), %{text: "hi", attachments: []})
+
+      assert [echo] == Resolver.resolve(admin_msg, session, [])
+    end
+
     test "mention(X) rule fires when message mentions X — returns receivers", %{table: t} do
       target = URI.new!("entity://team-alpha/agent/test_cc-builder")
 

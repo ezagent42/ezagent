@@ -124,22 +124,7 @@ defmodule EzagentPluginCodex.BridgeSidecar do
     with {:ok, {runner, runner_args}} <- bridge_runner(args),
          {:ok, token} <- Ezagent.AgentBridge.TokenStore.mint(agent_uri),
          {:ok, script} <- bridge_script_path() do
-      env =
-        [
-          {~c"EZAGENT_AGENT_URI", agent_uri |> URI.to_string() |> String.to_charlist()},
-          {~c"EZAGENT_AGENT_TOKEN", String.to_charlist(token)},
-          {~c"EZAGENT_BRIDGE_WS_URL", String.to_charlist(Map.fetch!(args, :bridge_ws_url))},
-          {~c"EZAGENT_CODEX_APP_SERVER_SOCK",
-           String.to_charlist(Map.fetch!(args, :app_server_socket))},
-          {~c"EZAGENT_CODEX_THREAD_ID_FILE",
-           String.to_charlist(Map.fetch!(args, :thread_id_file))},
-          {~c"EZAGENT_CODEX_CWD", String.to_charlist(Map.fetch!(args, :cwd))}
-        ]
-        |> maybe_env(~c"EZAGENT_CODEX_BIN", Map.get(args, :codex_path))
-        |> maybe_env(~c"EZAGENT_CODEX_MODEL", Map.get(args, :model))
-        |> maybe_env(~c"EZAGENT_CODEX_APPROVAL_POLICY", Map.get(args, :approval_policy))
-        |> maybe_env(~c"EZAGENT_CODEX_SANDBOX", Map.get(args, :sandbox))
-        |> merge_cmd_env(Map.get(args, :cmd_env, %{}))
+      env = port_env(agent_uri, args, token)
 
       port =
         Port.open({:spawn_executable, runner}, [
@@ -153,6 +138,25 @@ defmodule EzagentPluginCodex.BridgeSidecar do
 
       {:ok, port}
     end
+  end
+
+  @doc false
+  def port_env(%URI{} = agent_uri, args, token) when is_map(args) and is_binary(token) do
+    [
+      {~c"EZAGENT_AGENT_URI", agent_uri |> URI.to_string() |> String.to_charlist()},
+      {~c"EZAGENT_AGENT_TOKEN", String.to_charlist(token)},
+      {~c"EZAGENT_BRIDGE_WS_URL", String.to_charlist(Map.fetch!(args, :bridge_ws_url))},
+      {~c"EZAGENT_CODEX_APP_SERVER_SOCK",
+       String.to_charlist(Map.fetch!(args, :app_server_socket))},
+      {~c"EZAGENT_CODEX_THREAD_ID_FILE", String.to_charlist(Map.fetch!(args, :thread_id_file))},
+      {~c"EZAGENT_CODEX_CWD", String.to_charlist(Map.fetch!(args, :cwd))}
+    ]
+    |> maybe_env(~c"EZAGENT_BRIDGE_TOPIC", Map.get(args, :bridge_topic))
+    |> maybe_env(~c"EZAGENT_CODEX_BIN", Map.get(args, :codex_path))
+    |> maybe_env(~c"EZAGENT_CODEX_MODEL", Map.get(args, :model))
+    |> maybe_env(~c"EZAGENT_CODEX_APPROVAL_POLICY", Map.get(args, :approval_policy))
+    |> maybe_env(~c"EZAGENT_CODEX_SANDBOX", Map.get(args, :sandbox))
+    |> merge_cmd_env(Map.get(args, :cmd_env, %{}))
   end
 
   @doc false

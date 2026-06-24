@@ -54,51 +54,66 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   precheck as plugin `register_all/1`, so the write-once-on-both property holds
   uniformly.
 
-  ## Restart resilience (codex HIGH-2 — matched to the sibling registries)
+  ## Restart resilience (lifecycle rebuild-from-source on every start)
 
-  Plugin types live in this Registry's ETS, appended at plugin boot. If this
-  GenServer alone crashes and restarts under `:one_for_one`, `init/1` re-applies
-  ONLY core `boot_registrations/0` — plugin types are NOT replayed (the plugins
-  stay up).
+  Plugin types live in this Registry's ETS, first published at plugin boot
+  (Phase-2 `register_all/1`). If this GenServer alone crashes and restarts under
+  `:one_for_one`, its table dies with it and `init/1` runs anew. `init/1` rebuilds
+  the **FULL** allowlist from source on EVERY start — core `boot_registrations/0`
+  FIRST, then a **discovery-replay** of every loaded plugin's `resource_types/0`
+  (`replay_plugin_resource_types/0`). So plugin types **self-heal** on restart;
+  they do NOT vanish until the owning plugin re-boots.
 
-  **Finding (audit of the sibling plugin-fed registries):** `BehaviorRegistry`,
-  `TemplateRegistry`, and `AgentFlavorRegistry` do NOT self-own their tables —
-  their `:set`/`:public` tables are created by `EzagentCore.EtsOwner`, a single
-  GenServer holding every reliability-primitive table. On an isolated `EtsOwner`
-  restart, ALL of those tables come back EMPTY (core + plugin alike) with no
-  replay; they purely rely on being a start-critical singleton (`:permanent`
-  child under `:one_for_one`), so a crash-loop escalates and fails the node loud
-  rather than serving a half-populated registry. A `:public` table is unusable
-  for THIS Registry, though: it would let any process `:ets.insert/2` a forged
-  type spec and defeat the owner-only authority contract. The in-repo precedent
-  for a security-gated registry that therefore canNOT live in `EtsOwner` is
-  `Ezagent.NotificationSubscriptions` — a self-owned `:protected` GenServer.
+  **Why this is the right shape (lifecycle principle).** The
+  `use Ezagent.Lifecycle` contract (ezagent-developer `references/lifecycle.md`)
+  mandates that a transient — a resource derivable from a source — is rebuilt in
+  `activate/2`, which runs on EVERY start (fresh / supervisor-restart /
+  cold-load), killing the "fresh-works-restart-doesn't" bug class (#110/#113/#114).
+  This Registry is a plain GenServer (infra plumbing, not a Kind), so it has no
+  `activate/2` — `init/1` IS its every-start hook. The allowlist is a transient
+  (derivable from core `boot_registrations/0` + each plugin's `resource_types/0`),
+  so `init/1` must rebuild ALL of it from source, not just core. Before this fix
+  it rebuilt only core — the exact "rebuilt in the incomplete place" instance the
+  lifecycle model exists to prevent.
 
-  **Posture chosen (matched, not invented):** this Registry keeps its self-owned
-  `:protected` table (the authority contract requires it) and adopts the siblings'
-  start-critical-singleton restart treatment: on restart `init/1` re-applies
-  `boot_registrations/0` so CORE types self-heal; plugin types are not replayed
-  (identical to the EtsOwner siblings, whose tables come back empty). The Registry
-  is a `:permanent` child (`use GenServer` default) under `:one_for_one`, so a
-  crash-loop escalates and fails the node loud rather than serving a half
-  allowlist. Plugin types require the owning plugin to re-`boot` (re-publish
-  Phase-2) to reappear — there is deliberately NO re-publish hook / escalation
-  machinery (that would be the novel scheme the design forbids).
+  **Boot-mode convergence (idempotent re-registration).** Two boot modes order
+  app *load* vs *start* differently, so the discovery-replay can run before OR
+  alongside a plugin's own Phase-2 `register_all/1`:
 
-  The "never silently missing" guarantee has two arms, both regression-tested:
-  (1) **self-heal** — after a supervised restart a core boot type resolves again;
-  (2) **loud-when-absent** — while the ETS table is GONE (table dies with its
-  owner), `FsResolver.resolve/2`'s `lookup/2` rescue RAISES rather than treating
-  every type as unregistered. One honest caveat: the rescue covers the
-  table-ABSENT case; in the sub-millisecond restart window where the named table
-  has been created by `init/1` but `boot_registrations/0` has not yet been applied,
-  `resolve/2` can return a transient (retryable) `:none`. That is an availability
-  blip during crash-recovery, NOT an authority bypass (a `:none` denies access,
-  never swaps authority or reaches another type's bytes) — and it is strictly
-  narrower than the EtsOwner siblings' window (their tables come back fully empty
-  and stay empty until the contributing plugins re-boot). Closing it would require
-  a pre-populated-table heir/give_away transfer or a readiness flag — the "novel
-  scheme" / reopen-flag the design forbids — so it is accepted by construction.
+    * **`Application.ensure_all_started` (dev `iex -S mix`)** — apps are loaded
+      just-in-time in dependency order, so this core Registry inits BEFORE any
+      plugin app is loaded → discovery finds nothing → plugins publish their types
+      via Phase-2 as usual. No double call.
+    * **OTP release** — the boot script LOADS every application before STARTING
+      any, so at core init the plugin apps are already loaded and their
+      `:ezagent_plugin` env is set → discovery replays their `resource_types/0`,
+      and THEN each plugin's Phase-2 `register_all/1` re-presents the SAME decls.
+
+  To stay correct in BOTH modes, `batch_register` is **idempotent on an identical
+  re-registration**: a decl whose `<type>` is already live with the SAME
+  `backend_component` is a no-op (first-writer-wins, existing spec kept), NOT an
+  error. A genuine conflict is still rejected loud: a live `<type>` re-presented
+  with a DIFFERENT backend (repoint), or a NEW `<type>` aliasing an
+  already-claimed backend (the HIGH-1 alias attack). Without this, the release
+  first-boot double call would turn into a `{:duplicate_type, …}` that
+  `Ezagent.Plugin.boot/2` Phase-2 raises on — converting a silent restart bug into
+  a first-boot crash. Core types are applied FIRST on every start, so a plugin can
+  never shadow/alias a core type on any path. Discovery is RUNTIME (Application env
+  + `apply/3`), not a compile dependency — core does not depend on any plugin; a
+  plugin that raises or conflicts during the init-replay is logged + skipped, never
+  crashing the Registry.
+
+  **Security unchanged.** Still `:protected` (owner-only writes), write-once on
+  both `<type>` and `backend_component`, no overwrite of a different spec, no
+  reopen flag. Idempotency is strictly first-writer-wins (an identical re-register
+  keeps the original spec, a conflicting one is rejected), so it cannot let a
+  forged type in: every replayed decl passes the same `validate_spec` + uniqueness
+  precheck, after core has claimed its backends.
+
+  The table-ABSENT window (the GenServer down between crash and restart) is still
+  covered by `FsResolver.resolve/2`'s `lookup/2` rescue, which RAISES (loud)
+  rather than returning a silent `:none`; once `init/1` returns, the full
+  allowlist (core + plugins) is present.
 
   ## Test-only registration
 
@@ -126,21 +141,92 @@ defmodule Ezagent.Resource.FsResolver.Registry do
     # :protected — readable by anyone (resolve/2 reads), writable ONLY here.
     :ets.new(@table, [:named_table, :protected, :set, read_concurrency: true])
 
-    # Apply the boot-defined core allowlist once, through the SAME precheck the
+    # Apply the boot-defined core allowlist FIRST, through the SAME precheck the
     # plugin `register_all/1` path uses (validate + type-uniqueness +
     # backend-uniqueness, all-or-nothing) — so the write-once-on-both property
     # holds uniformly for core and plugin types. Core types register FIRST (here,
-    # before any plugin boots), claiming their backends; a plugin can therefore
-    # never shadow a core type nor alias a core backend (codex HIGH-1). A restart
-    # re-applies exactly this same source (round-4: no externally-mutable reopen);
-    # plugin types are not replayed (restart-resilience finding in the moduledoc).
+    # before any plugin type), claiming their backends; a plugin can therefore
+    # never shadow a core type nor alias a core backend (codex HIGH-1).
     case batch_register(boot_registrations()) do
       :ok ->
+        # Lifecycle principle (ezagent-developer `references/lifecycle.md`):
+        # rebuild the FULL allowlist from source on EVERY start. This Registry is a
+        # plain GenServer (infra plumbing), NOT a `use Ezagent.Lifecycle` Kind, so
+        # it has no `activate/2` auto-rebuild — `init/1` IS its every-start hook and
+        # must rebuild the WHOLE transient (core + plugin types), not just core. A
+        # plugin's resource types are derivable from source (its `resource_types/0`
+        # declaration), so on an isolated restart (plugins already loaded) we
+        # re-discover + replay them here; this fixes the "fresh-works-restart-
+        # doesn't" cold-restart bug class for plugin types. Boot-mode convergence:
+        # under `ensure_all_started` (dev) core inits before any plugin loads →
+        # discovery finds nothing → plugins publish via Phase-2 as usual; in an OTP
+        # release (all apps loaded before any start) discovery runs first AND the
+        # plugin's Phase-2 `register_all/1` re-presents the same decls — handled by
+        # `batch_register` being IDEMPOTENT on an identical re-registration (see the
+        # moduledoc "Boot-mode convergence"), so the double call no-ops instead of
+        # raising a `{:duplicate_type, …}` first-boot crash.
+        replay_plugin_resource_types()
         {:ok, %{}}
 
       {:error, reason} ->
         raise ArgumentError, "invalid core boot registration: #{inspect(reason)}"
     end
+  end
+
+  # Discover every loaded plugin (the `:ezagent_plugin` app-env contract module —
+  # the SAME discovery `Mix.Tasks.Compile.EzagentPluginCheck` uses) and replay its
+  # `resource_types/0` through the write-once `batch_register`. RUNTIME discovery
+  # (Application env + `apply/3`), NOT a compile dependency — core does not depend
+  # on any plugin. Per-plugin isolation: a plugin that raises/throws/exits, or
+  # whose decls conflict with an already-claimed (core or earlier-plugin)
+  # type/backend, is logged + SKIPPED — never crashing the Registry. The `catch`
+  # arm (codex MED-1) is essential: `init/1` calls this BEFORE returning
+  # `{:ok, …}`, so an uncaught `throw`/`exit` from a buggy `resource_types/0` would
+  # abort the Registry's own (re)start — the exact crash-resilience this fix adds.
+  # A genuine conflict is also caught loudly at the plugin's own Phase-2 boot on
+  # first start; here, during a restart-replay, best-effort restoration is correct.
+  defp replay_plugin_resource_types do
+    for {app, _desc, _vsn} <- Application.loaded_applications(),
+        mod = Application.get_env(app, :ezagent_plugin),
+        is_atom(mod) and not is_nil(mod),
+        Code.ensure_loaded?(mod),
+        function_exported?(mod, :resource_types, 0) do
+      try do
+        case batch_register(mod.resource_types()) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            require Logger
+
+            Logger.warning(
+              "FsResolver.Registry: skipped #{inspect(mod)} resource_types on init-replay: " <>
+                inspect(reason)
+            )
+        end
+      rescue
+        e ->
+          require Logger
+
+          Logger.warning(
+            "FsResolver.Registry: #{inspect(mod)}.resource_types/0 raised on init-replay: " <>
+              Exception.message(e)
+          )
+      catch
+        # `rescue` covers only `:error`-class exceptions; a `throw/1` or `exit/1`
+        # from the plugin callback (or its `batch_register`) must ALSO be isolated,
+        # or it would escape this comprehension and crash the Registry start.
+        kind, reason ->
+          require Logger
+
+          Logger.warning(
+            "FsResolver.Registry: #{inspect(mod)}.resource_types/0 #{kind} on init-replay: " <>
+              inspect(reason)
+          )
+      end
+    end
+
+    :ok
   end
 
   @doc """
@@ -166,7 +252,16 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   @spec batch_register([{String.t(), map()}]) :: :ok | {:error, term()}
   defp batch_register(decls) do
     with :ok <- precheck_batch(decls) do
-      Enum.each(decls, fn {type, spec} -> true = :ets.insert_new(@table, {type, spec}) end)
+      # `precheck_batch` proved every decl is EITHER insertable-new OR an
+      # idempotent identical re-registration (same `<type>` AND same
+      # `backend_component` already live). `:ets.insert_new/2` does the right
+      # thing for both: it inserts a new key, and returns `false` (a no-op,
+      # KEEPING the existing spec) for an already-present key. We deliberately do
+      # NOT assert `true =` on the result — the idempotent no-op is expected on the
+      # release first-boot path (core init's discovery-replay registers a plugin's
+      # types, then that plugin's own Phase-2 `register_all/1` re-presents the SAME
+      # decls). First-writer-wins on the no-op preserves write-once authority.
+      Enum.each(decls, fn {type, spec} -> :ets.insert_new(@table, {type, spec}) end)
       :ok
     end
   end
@@ -179,8 +274,13 @@ defmodule Ezagent.Resource.FsResolver.Registry do
     |> Enum.reduce_while({:ok, MapSet.new(), MapSet.new()}, fn
       {type, spec}, {:ok, seen_types, seen_backends}
       when is_binary(type) and is_map(spec) ->
+        # `:ok` = insert a new type; `:idempotent` = the SAME type+backend is
+        # already live (a no-op re-registration — release first-boot replay+Phase-2
+        # double call). Both advance the seen-sets (so an intra-batch duplicate of
+        # the same type/backend is still caught); only `:idempotent` skips the
+        # insert (handled by `:ets.insert_new` returning false).
         case precheck(type, spec, seen_types, seen_backends) do
-          :ok ->
+          outcome when outcome in [:ok, :idempotent] ->
             backend = backend_component_of(spec)
             {:cont, {:ok, MapSet.put(seen_types, type), MapSet.put(seen_backends, backend)}}
 
@@ -204,22 +304,47 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   end
 
   # precheck = validate_spec + type-uniqueness + backend-uniqueness, NO write.
+  # Returns `:ok` (insert a new type), `:idempotent` (the SAME type+backend is
+  # already live — a no-op re-registration), or `{:error, _}` (a genuine conflict).
   # Uniqueness is checked against BOTH the live table and the within-batch seen
   # sets (so two new decls colliding on type or backend are rejected as a pair).
   defp precheck(type, spec, seen_types, seen_backends) do
     with :ok <- validate_spec(type, spec),
-         backend = backend_component_of(spec),
-         :ok <- check_type_unique(type, seen_types),
-         :ok <- check_backend_unique(backend, seen_backends) do
-      :ok
+         backend = backend_component_of(spec) do
+      case check_type_unique(type, backend, seen_types) do
+        :idempotent ->
+          # Same type + same backend already live → no-op. Its backend is
+          # legitimately "claimed by itself", so SKIP the backend-uniqueness check
+          # (which would otherwise flag the self-collision).
+          :idempotent
+
+        :ok ->
+          check_backend_unique(backend, seen_backends)
+
+        {:error, _} = err ->
+          err
+      end
     end
   end
 
-  defp check_type_unique(type, seen_types) do
-    if MapSet.member?(seen_types, type) or type_taken?(type) do
-      {:error, {:duplicate_type, type}}
-    else
-      :ok
+  # A type is unique unless it is already live or already seen in this batch.
+  # The one exception that is NOT an error: the SAME type re-registered with the
+  # SAME `backend_component` already live — an idempotent no-op (release first-boot
+  # discovery-replay + the plugin's own Phase-2 `register_all/1` both present the
+  # identical decl). A live type re-presented with a DIFFERENT backend is a repoint
+  # attempt → rejected (write-once authority). An intra-batch duplicate type is
+  # always an author error → rejected.
+  defp check_type_unique(type, backend, seen_types) do
+    cond do
+      MapSet.member?(seen_types, type) ->
+        {:error, {:duplicate_type, type}}
+
+      true ->
+        case :ets.lookup(@table, type) do
+          [] -> :ok
+          [{^type, %{backend_component: ^backend}}] -> :idempotent
+          [{^type, _other_spec}] -> {:error, {:duplicate_type, type}}
+        end
     end
   end
 
@@ -233,9 +358,6 @@ defmodule Ezagent.Resource.FsResolver.Registry do
 
   defp backend_component_of(%{backend_component: backend}), do: backend
   defp backend_component_of(_), do: nil
-
-  # `<type>` is the ETS key — an O(1) membership test.
-  defp type_taken?(type), do: :ets.member(@table, type)
 
   # `backend_component` is NOT the key — scan the table for any entry already
   # claiming this backend (codex HIGH-1). Returns false for a nil backend (a
@@ -257,9 +379,9 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # `Home.path("<ns>-agents")/<ws>/<name>` — BYTE-IDENTICAL to the pre-P1
   # `Ezagent.Sandbox.ConfigDir.path/2` layout (Locked-contract #7). The namespaces
   # are the catalog declared by Template classes' `config_dir_namespace/0` (cc,
-  # codex); listed here statically because the resolver allowlist is immutable at
+  # codex, codex-remote); listed here statically because the resolver allowlist is immutable at
   # boot and must not depend on plugin Application start ordering.
-  @config_dir_namespaces ["cc", "codex"]
+  @config_dir_namespaces ["cc", "codex", "codex-remote"]
 
   # Resource-unification P2b — uploads type. Chat attachments live at
   # `Home.path("uploads")/<ws>/<name>` (ws-partitioned). `uploads_authority/2`
@@ -317,6 +439,15 @@ defmodule Ezagent.Resource.FsResolver.Registry do
       :ets.delete(@table, type)
       {:reply, :ok, state}
     end
+
+    # Run the init-time plugin discovery+replay on demand (owner process), so a
+    # test can prove restart-replay without killing the live singleton: set a
+    # loaded app's `:ezagent_plugin` env to a module with `resource_types/0`, call
+    # this, and assert the plugin type resolves. This is the SAME function `init/1`
+    # runs on every start.
+    def handle_call(:__replay_plugins_for_test__, _from, state) do
+      {:reply, replay_plugin_resource_types(), state}
+    end
   end
 
   if Mix.env() != :prod do
@@ -335,6 +466,10 @@ defmodule Ezagent.Resource.FsResolver.Registry do
     def unregister_for_test(type) when is_binary(type) do
       GenServer.call(__MODULE__, {:unregister_for_test, type})
     end
+
+    @doc "Run the init-time plugin discovery+replay now. **Test-only.**"
+    @spec replay_plugins_for_test() :: :ok
+    def replay_plugins_for_test, do: GenServer.call(__MODULE__, :__replay_plugins_for_test__)
   end
 
   # Re-validate the full spec at the trust boundary. `backend_component` must be a

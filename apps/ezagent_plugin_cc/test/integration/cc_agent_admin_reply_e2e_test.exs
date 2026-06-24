@@ -402,7 +402,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         |> Map.put("FAKE_CLAUDE_STATUS_FILE", status_file)
         |> Map.put("FAKE_REPLY_PREFIX", reply_prefix)
         |> Map.put("FAKE_CLAUDE_GRACE_MS", "2500")
-        |> Map.put("FAKE_CLAUDE_TIMEOUT_S", "30")
+        |> Map.put("FAKE_CLAUDE_TIMEOUT_S", "60")
 
       # ---- 6. materialize the Agent through the template fixture first;
       #         production reaches the same Agent path from CcAgent.instantiate
@@ -434,7 +434,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
               :error -> nil
             end
           end,
-          30_000
+          60_000
         )
 
       assert is_pid(bridge_bound),

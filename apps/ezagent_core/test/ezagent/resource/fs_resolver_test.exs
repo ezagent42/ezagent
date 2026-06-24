@@ -1,3 +1,34 @@
+# Fixture plugin modules for the init-time discovery-replay tests (Bug B). Each
+# stands in for a real plugin's `:ezagent_plugin` contract module exposing
+# `resource_types/0`; the tests point a loaded app's `:ezagent_plugin` env at one.
+defmodule Ezagent.Resource.FsResolverTest.ReplayFixturePlugin do
+  @moduledoc false
+  def resource_types,
+    do: [
+      {"test-replay-type",
+       %{backend_component: "test-replay-backend", authority: fn _uri, _scope -> :ok end}}
+    ]
+end
+
+defmodule Ezagent.Resource.FsResolverTest.ReplayAliasAttackPlugin do
+  @moduledoc false
+  # A plugin trying to alias a CORE backend ("uploads") under a new type — must be
+  # rejected by write-once-on-backend even through the init-discovery path.
+  def resource_types,
+    do: [
+      {"test-replay-alias",
+       %{backend_component: "uploads", authority: fn _uri, _scope -> :ok end}}
+    ]
+end
+
+defmodule Ezagent.Resource.FsResolverTest.ReplayThrowingPlugin do
+  @moduledoc false
+  # A buggy plugin whose `resource_types/0` THROWS (not an :error-class raise) —
+  # `init/1`'s replay must isolate it via the `catch` arm (codex MED-1), never
+  # letting it abort the Registry start.
+  def resource_types, do: throw(:boom_from_plugin)
+end
+
 defmodule Ezagent.Resource.FsResolverTest do
   @moduledoc """
   R-1..R-4 invariant tests for the hardened, registration-only generic
@@ -186,6 +217,7 @@ defmodule Ezagent.Resource.FsResolverTest do
       # through to :none (codex P1 round-5 HIGH).
       assert FsResolver.config_dir_type?("cc-agents")
       assert FsResolver.config_dir_type?("codex-agents")
+      assert FsResolver.config_dir_type?("codex-remote-agents")
       refute FsResolver.config_dir_type?("uploads")
       refute FsResolver.config_dir_type?("never-registered")
 
@@ -226,12 +258,24 @@ defmodule Ezagent.Resource.FsResolverTest do
       refute function_exported?(Ezagent.Resource.FsResolver.Registry, :unseal, 0)
     end
 
-    test "a restarted Registry reproduces ONLY the boot allowlist (codex round-4)" do
+    test "a restarted Registry rebuilds PURELY from source — core self-heals, a forged type is gone (codex round-4)" do
       # The reopen class is killed by construction: a Registry crash + supervised
-      # restart re-runs init/1, which re-applies the SAME boot source — the
-      # config-dir <ns>-agents types and nothing else. No externally-mutable flag
-      # participates, and a forged type cannot survive a restart.
+      # restart re-runs init/1, which rebuilds the table PURELY from source —
+      # core `boot_registrations/0` PLUS the discovery-replay of each loaded
+      # plugin's `resource_types/0` (Bug B). Nothing externally-mutated survives:
+      # a type forged into the live table by a test (standing in for any non-source
+      # mutation) is GONE after the restart, while core boot types self-heal. (The
+      # plugin-types-self-heal arm is covered by the dedicated init-replay tests.)
       alias Ezagent.Resource.FsResolver.Registry
+
+      forged = "t-forged-#{System.unique_integer([:positive])}"
+
+      Registry.register_for_test(forged, %{
+        backend_component: forged,
+        authority: &ok_authority/2
+      })
+
+      assert MapSet.member?(MapSet.new(registered_types(), fn {t, _} -> t end), forged)
 
       pid = Process.whereis(Registry)
       ref = Process.monitor(pid)
@@ -241,11 +285,13 @@ defmodule Ezagent.Resource.FsResolverTest do
       new_pid = wait_for_restart(Registry, pid)
       assert new_pid != pid
 
-      assert MapSet.new(registered_types(), fn {t, _} -> t end) ==
-               MapSet.new(["cc-agents", "codex-agents", "uploads"]),
-             "a restarted Registry must reproduce exactly the boot allowlist"
+      types = MapSet.new(registered_types(), fn {t, _} -> t end)
+      # Core boot types self-heal (rebuilt from `boot_registrations/0`).
+      assert MapSet.subset?(MapSet.new(["cc-agents", "codex-agents", "uploads"]), types)
+      # The forged (non-source) type is GONE — the table is rebuilt only from source.
+      refute MapSet.member?(types, forged)
 
-      # …and a forged type still does not resolve.
+      # …and a never-registered forged type still does not resolve.
       uri = EzURI.resource("victim", "t-forged", "secret.pdf")
       assert FsResolver.resolve(uri, scope("attacker")) == :none
     end
@@ -364,6 +410,47 @@ defmodule Ezagent.Resource.FsResolverTest do
       end
     end
 
+    test "an IDENTICAL re-registration (same <type> + same backend) is idempotent → :ok (Bug B: release first-boot replay + Phase-2 double call)" do
+      # In an OTP release the boot script loads every app before starting any, so
+      # the Registry's init-time discovery-replay registers a plugin's types AND
+      # then that plugin's own Phase-2 `register_all/1` re-presents the SAME decls.
+      # That second call MUST be a no-op `:ok`, not `{:duplicate_type, _}` —
+      # `Ezagent.Plugin.boot/2` RAISES on a register_all error, so a non-idempotent
+      # path would turn a silent restart bug into a first-boot crash.
+      t = "ra-#{System.unique_integer([:positive])}"
+      decl = [{t, %{backend_component: t, authority: &ok_authority/2}}]
+
+      try do
+        assert :ok = Registry.register_all(decl)
+        # Identical decl again → idempotent no-op, NOT an error.
+        assert :ok = Registry.register_all(decl)
+        # Still resolves (kept, not dropped).
+        assert {:ok, _} = FsResolver.resolve(EzURI.resource("acme", t, "f"), scope("acme"))
+      after
+        scrub([t])
+      end
+    end
+
+    test "idempotency is first-writer-wins: a re-register with the SAME backend keeps the ORIGINAL spec (no overwrite)" do
+      # The idempotent no-op must NOT let a re-registration swap the authority fn
+      # (which would be an authority-downgrade vector). Register a strict authority,
+      # re-register the same type+backend with a permissive one, and prove the
+      # ORIGINAL strict authority still governs (foreign workspace still denied).
+      t = "ra-#{System.unique_integer([:positive])}"
+      strict = [{t, %{backend_component: t, authority: &FsResolver.uploads_authority/2}}]
+      permissive = [{t, %{backend_component: t, authority: fn _uri, _scope -> :ok end}}]
+
+      try do
+        assert :ok = Registry.register_all(strict)
+        assert :ok = Registry.register_all(permissive)
+        # Original (strict, workspace-scoped) authority kept: foreign ws denied.
+        assert {:error, {:foreign_workspace, _}} =
+                 FsResolver.resolve(EzURI.resource("victim", t, "f"), scope("acme"))
+      after
+        scrub([t])
+      end
+    end
+
     test "backend-aliasing attack: a FRESH type whose backend_component is a registered backend is rejected (codex HIGH-1)" do
       # The exact escalation: register a brand-new <type> that aliases the core
       # "uploads" backend with a WEAKER authority. Backend-uniqueness must reject
@@ -428,9 +515,95 @@ defmodule Ezagent.Resource.FsResolverTest do
       assert FsResolver.resolve(EzURI.resource("acme", t, "f"), scope("acme")) == :none
     end
 
-    test "core boot types (cc-agents/codex-agents/uploads) still register through the same precheck" do
+    test "core boot types (cc-agents/codex-agents/codex-remote-agents/uploads) still register through the same precheck" do
       types = MapSet.new(registered_types(), fn {t, _} -> t end)
-      assert MapSet.subset?(MapSet.new(["cc-agents", "codex-agents", "uploads"]), types)
+
+      assert MapSet.subset?(
+               MapSet.new(["cc-agents", "codex-agents", "codex-remote-agents", "uploads"]),
+               types
+             )
+    end
+
+    # ── Bug B: init-time discovery-replay of plugin resource_types/0 (restart self-heal) ──
+
+    # Point a loaded app's `:ezagent_plugin` env at `mod`, run the body, restore.
+    defp with_plugin_env(mod, fun) do
+      prior = Application.get_env(:ezagent_core, :ezagent_plugin)
+      Application.put_env(:ezagent_core, :ezagent_plugin, mod)
+
+      try do
+        fun.()
+      after
+        if prior,
+          do: Application.put_env(:ezagent_core, :ezagent_plugin, prior),
+          else: Application.delete_env(:ezagent_core, :ezagent_plugin)
+      end
+    end
+
+    test "init-replay discovers a loaded plugin's resource_types/0 and re-registers it (restart self-heal)" do
+      alias Ezagent.Resource.FsResolverTest.ReplayFixturePlugin
+      uri = EzURI.resource("acme", "test-replay-type", "f")
+
+      with_plugin_env(ReplayFixturePlugin, fn ->
+        try do
+          # Not present yet (simulates the post-restart fresh table before replay).
+          assert FsResolver.resolve(uri, scope("acme")) == :none
+
+          # This is the SAME discovery+replay `init/1` runs on EVERY start.
+          assert :ok = Registry.replay_plugins_for_test()
+
+          # The plugin type is restored — proving a restart re-registers it.
+          assert {:ok, _path} = FsResolver.resolve(uri, scope("acme"))
+
+          # Idempotent: a second replay (type already present) does NOT crash.
+          assert :ok = Registry.replay_plugins_for_test()
+          assert {:ok, _path} = FsResolver.resolve(uri, scope("acme"))
+        after
+          FsResolver.unregister_type("test-replay-type")
+        end
+      end)
+    end
+
+    test "init-replay still enforces write-once: a plugin aliasing a core backend is skipped, not registered" do
+      alias Ezagent.Resource.FsResolverTest.ReplayAliasAttackPlugin
+      uri = EzURI.resource("acme", "test-replay-alias", "f")
+
+      with_plugin_env(ReplayAliasAttackPlugin, fn ->
+        # Replay does not crash (per-plugin skip-on-error)...
+        assert :ok = Registry.replay_plugins_for_test()
+        # ...and the aliasing type was NOT registered (backend "uploads" already
+        # claimed by core → write-once-on-backend rejects it).
+        assert FsResolver.resolve(uri, scope("acme")) == :none
+        # The core "uploads" type is intact (still its own authority).
+        assert MapSet.member?(MapSet.new(registered_types(), fn {t, _} -> t end), "uploads")
+      end)
+    end
+
+    test "init-replay isolates a plugin whose resource_types/0 THROWS (codex MED-1: catch arm, not just rescue)" do
+      alias Ezagent.Resource.FsResolverTest.ReplayThrowingPlugin
+
+      with_plugin_env(ReplayThrowingPlugin, fn ->
+        # A `throw` from the plugin callback is NOT an :error-class exception, so a
+        # bare `rescue` would let it escape and abort the Registry start. The
+        # `catch` arm must isolate it: replay completes :ok, Registry stays alive.
+        assert :ok = Registry.replay_plugins_for_test()
+
+        # Registry is still alive + functional after the throwing plugin was skipped
+        # (core types still resolve, and a fresh register still works).
+        assert {:ok, _} =
+                 FsResolver.resolve(EzURI.resource("acme", "uploads", "f.pdf"), scope("acme"))
+
+        t = "ra-#{System.unique_integer([:positive])}"
+
+        try do
+          assert :ok =
+                   Registry.register_all([
+                     {t, %{backend_component: t, authority: &ok_authority/2}}
+                   ])
+        after
+          FsResolver.unregister_type(t)
+        end
+      end)
     end
   end
 
@@ -486,7 +659,7 @@ defmodule Ezagent.Resource.FsResolverTest do
     # so two plugins never collide. The lint is a TEST (not a runtime warning in
     # register_all, which now also carries core's bare names). Core types keep
     # their bare names by design and are exempt.
-    @core_bare_types ["cc-agents", "codex-agents", "uploads"]
+    @core_bare_types ["cc-agents", "codex-agents", "codex-remote-agents", "uploads"]
 
     test "core's bare types are the only un-prefixed types declared in-tree" do
       # Enumerate every plugin's resource_types/0 in the umbrella and assert each

@@ -24,21 +24,16 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
   # async: false because `target_ownership_check/2` reads the
   # `feishu_user_bindings` table via a sandboxed Repo connection;
   # shared-mode sandbox precludes async.
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias EzagentPluginFeishu.{FeishuAdapter, FeishuChatBinding}
   alias EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow, as: FeishuAllow
   alias Ezagent.Publisher.Event
 
-  setup do
-    # `target_ownership_check/2` reads `feishu_user_bindings` via
-    # `UserBinding.list_all/0`. Other tests are pure but the no-Feishu
-    # caller test triggers the DB read — pull a sandboxed connection
-    # so the read returns `[]` without crashing the test runner.
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
+  # `target_ownership_check/2` reads `feishu_user_bindings` via
+  # `UserBinding.list_all/0`; the no-Feishu caller test triggers that
+  # DB read, which DataCase's sandbox connection satisfies (returns []).
 
   describe "Grill-5 declaration" do
     test "adapter_id is the stable string `feishu`" do

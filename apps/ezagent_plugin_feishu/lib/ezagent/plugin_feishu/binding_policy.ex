@@ -64,20 +64,18 @@ defmodule EzagentPluginFeishu.BindingPolicy do
 
   # Bound user might not be live yet (admin types
   # `mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/newcomer` for a
-  # brand-new user). Auto-spawn via SpawnRegistry so the cap dispatch
-  # has a target.
+  # brand-new user). Auto-spawn via the owner-gated LocalRuntime facade so the
+  # cap dispatch has a target.
   defp ensure_user_kind(user_uri) do
     uri = to_uri(user_uri)
 
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} ->
-        :ok
-
-      :error ->
-        case Ezagent.SpawnRegistry.spawn(uri) do
-          {:ok, _pid} -> :ok
-          err -> err
-        end
+    if Ezagent.LocalRuntime.kind_alive?(uri) do
+      :ok
+    else
+      case Ezagent.LocalRuntime.ensure_started(uri) do
+        {:ok, _pid} -> :ok
+        err -> err
+      end
     end
   end
 

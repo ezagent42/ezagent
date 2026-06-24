@@ -28,19 +28,20 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   | 4 | admin | full | `chat.send` | `:ok` |
   """
 
-  use ExUnit.Case, async: false
+  # #92: was `use ExUnit.Case` + a hand-rolled `checkout` + `{:shared, self()}`
+  # in `setup`. That made the (short-lived) TEST PROCESS the global shared owner;
+  # when it exited, the pool reverted to `:manual` and concurrent suites' Kinds
+  # lost their connection ("owner exited" / "cannot find ownership"). DataCase
+  # establishes shared mode via a DRAINABLE Agent owner + a teardown that drains
+  # in-flight Kind DB work before reclaiming the connection, so this suite's
+  # spawned Kinds still share the sandbox without clobbering anyone.
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
 
   alias Ezagent.{Invocation, Message, Users}
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
 
   defp setup_non_admin_user(handle, caps \\ []) do
     uri_str = "entity://team-alpha/user/" <> handle <> "_#{System.unique_integer([:positive])}"

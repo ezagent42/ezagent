@@ -51,12 +51,22 @@ defmodule Ezagent.Test.AuditCase do
       use ExUnit.Case, async: false
 
       setup tags do
-        :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+        # #92: was a hand-rolled `Sandbox.checkout` + `{:shared, self()}` that
+        # made the SHORT-LIVED TEST PROCESS the global shared owner — when this
+        # test exited it reverted the pool to `:manual`, clobbering concurrent
+        # suites' globally-supervised Kinds mid-write (`owner exited` /
+        # `cannot find ownership process`, intermittent by seed). Route through
+        # `EzagentCore.DataCase.setup_sandbox/1` instead: it establishes shared
+        # mode via a STABLE, drainable Agent owner (not the dying test pid) and a
+        # teardown that drains in-flight Kind DB work before reclaiming the
+        # connection — the same safe owner every other shared-mode test now uses.
+        EzagentCore.DataCase.setup_sandbox(tags)
 
-        unless tags[:async] do
-          Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-        end
-
+        # Start the writers AFTER setup_sandbox so their `start_supervised`
+        # teardown runs BEFORE `setup_sandbox`'s `stop_owner` (ExUnit on_exit is
+        # LIFO) — no writer flush can outlive the owner connection. In shared
+        # mode (`not async`) the stable owner's connection covers these
+        # processes; the async path keeps an explicit `allow/3`.
         for writer <- unquote(writers) do
           {:ok, pid} =
             case writer do
@@ -64,10 +74,9 @@ defmodule Ezagent.Test.AuditCase do
               :snapshot -> start_supervised(Ezagent.Snapshot.Writer)
             end
 
-          # Belt-and-suspenders: even with `{:shared, self()}` mode set
-          # above, explicit allow makes the intent obvious and survives
-          # tests that re-set mode to `:manual`.
-          Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+          if tags[:async] do
+            Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+          end
         end
 
         :ok

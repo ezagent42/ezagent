@@ -23,13 +23,12 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
   cap assertion will FAIL because the grant happens in a separate
   process tree from the one this test inspects.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # Sandbox provided by EzagentCore.DataCase (#92).
 
     # The CLI tree is derived from BehaviorRegistry at invocation time.
     # Keep this invariant independent from umbrella test ordering: earlier

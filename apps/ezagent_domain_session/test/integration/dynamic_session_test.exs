@@ -3,13 +3,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
   Phase 3b-step 1: dynamic non-main Session create flow.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{KindRegistry, Entity.User}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
     _ =
       EzagentDomainInstanceMessage.SessionCreator.create_session(
         "main",

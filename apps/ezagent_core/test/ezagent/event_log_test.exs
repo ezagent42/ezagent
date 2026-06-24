@@ -15,10 +15,10 @@ defmodule Ezagent.EventLogTest do
   8. `:order` opt flips both axes of the composite ordering
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.EventLog
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   @aggregate_a "entity://team-alpha/agent/test_event-log-a"
   @aggregate_b "entity://team-alpha/agent/test_event-log-b"
@@ -27,12 +27,10 @@ defmodule Ezagent.EventLogTest do
   @caller "entity://system/user/admin"
 
   setup do
-    # SPEC §5.1 wraps the existing `invocations` table; sandbox checkout
-    # for the per-test transaction. `Ezagent.Audit.Writer` is skipped
-    # in :test env (see EzagentCore.Application.skip_in_test_env?/1),
-    # so its async flush won't pollute this test's view of the table.
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    # Sandbox provided by EzagentCore.DataCase (#92).
+    # `Ezagent.Audit.Writer` is skipped in :test env (see
+    # EzagentCore.Application.skip_in_test_env?/1), so its async flush
+    # won't pollute this test's view of the `invocations` table.
     :ok
   end
 

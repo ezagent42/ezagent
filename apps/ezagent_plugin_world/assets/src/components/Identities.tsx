@@ -87,6 +87,7 @@ export type IdentitiesState = {
 type Props = {
   state: IdentitiesState
   onCreateAgent?: (payload: Record<string, unknown>) => void
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
 }
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
@@ -103,13 +104,13 @@ const codeClass = "font-mono text-xs text-muted-foreground"
 const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 
-export function IdentitiesSurface({state, onCreateAgent}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onPutApiKey}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "agents_table") return <AgentsTable state={state} />
   if (state.component === "entity_caps") return <EntityCaps state={state} />
   if (state.component === "agent_detail") return <AgentDetail state={state} />
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
-  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} />
+  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} onPutApiKey={onPutApiKey} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
   return <IdentityDirectory state={state} />
 }
@@ -423,7 +424,13 @@ function ContractCoverage() {
   )
 }
 
-function AgentApiKeys({state}: {state: IdentitiesState}) {
+function AgentApiKeys({
+  state,
+  onPutApiKey,
+}: {
+  state: IdentitiesState
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+}) {
   const keys = Array.isArray(state.api_keys) ? state.api_keys : []
   const error = !Array.isArray(state.api_keys) ? state.api_keys?.error : undefined
   const unsupported = !Array.isArray(state.api_keys) ? state.api_keys?.unsupported : false
@@ -464,7 +471,68 @@ function AgentApiKeys({state}: {state: IdentitiesState}) {
         </table>
         {keys.length === 0 && !error && <EmptyState label="No stored keys." />}
       </div>
+      {state.can_edit && state.agent_uri && (
+        <AddApiKeyForm agentUri={state.agent_uri} onPutApiKey={onPutApiKey} />
+      )}
     </section>
+  )
+}
+
+// The write half of the API-keys page (F10). Only rendered when `can_edit` —
+// the same data-owner/admin affordance the server gate enforces — so a viewer
+// without edit rights never sees it. Dispatches `agent.api_key.put` over the LV
+// socket (NOT a native form POST: the world surface is a LiveView page whose
+// client JS swallows native submits from the React island); the masked table
+// refreshes from the server's re-pushed world:state. The key is a secret, so
+// the input is masked and cleared on submit.
+function AddApiKeyForm({
+  agentUri,
+  onPutApiKey,
+}: {
+  agentUri: string
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+}) {
+  const [form, setForm] = React.useState({provider: "", key: ""})
+  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
+  const canSubmit = form.provider.trim() !== "" && form.key.trim() !== ""
+
+  return (
+    <form
+      id="world-api-key-form"
+      className="grid gap-3 border-t border-border pt-4 sm:grid-cols-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!canSubmit) return
+        onPutApiKey?.({agent_uri: agentUri, provider: form.provider.trim(), key: form.key.trim()})
+        setForm({provider: "", key: ""})
+      }}
+    >
+      <label className={fieldLabel}>
+        <span>Provider *</span>
+        <Input
+          value={form.provider}
+          onChange={(event) => setForm({...form, provider: event.target.value})}
+          placeholder="deepseek"
+          autoComplete="off"
+        />
+      </label>
+      <label className={fieldLabel}>
+        <span>API key *</span>
+        <Input
+          type="password"
+          value={form.key}
+          onChange={(event) => setForm({...form, key: event.target.value})}
+          placeholder="sk-…"
+          autoComplete="off"
+        />
+      </label>
+      <div className="flex items-center justify-end sm:col-span-2">
+        <Button type="submit" disabled={!canSubmit}>
+          <Plus aria-hidden="true" />
+          Save key
+        </Button>
+      </div>
+    </form>
   )
 }
 

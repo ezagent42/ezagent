@@ -13,7 +13,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   somehow (stub revived, default cap silently injected, etc).
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -21,9 +21,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   alias Ezagent.{Invocation, KindRegistry}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Sandbox provided by EzagentCore.DataCase (#92).
     # Attach a telemetry handler for the duration of this test to capture
     # :authz events. Detach in on_exit.
     test_pid = self()

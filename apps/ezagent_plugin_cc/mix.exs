@@ -37,12 +37,14 @@ defmodule EzagentPluginCc.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      # cc-headless declares and spawns the shared Agent Kind with its
+      # flavor-specific behavior set.
+      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       # AgentBridge PR-B: BridgeRegistry + TokenStore moved from the
       # cc plugin into a domain app. The cc-named modules remain as
       # deprecated delegating shims for the deprecation window.
-      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
       # Domain.Pty PR-C (2026-05-21): the PTY SessionView moved out of
       # cc plugin to EzagentDomainUi.Pty.TerminalView. cc plugin no

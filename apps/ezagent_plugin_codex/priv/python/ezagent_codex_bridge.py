@@ -133,6 +133,9 @@ def raw_summary(raw: str | bytes) -> str:
         msg = json.loads(raw)
     except json.JSONDecodeError:
         return repr(raw[:200])
+    method = msg.get("method")
+    if method in {"error", "warning"}:
+        return repr(msg)[:1000]
     return frame_summary(msg)
 
 

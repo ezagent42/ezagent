@@ -201,13 +201,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
 
-  # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
+  # codex round-6 HIGH-1 — `LocalRuntime.ensure_started_detailed/1`
+  # (delegating to the owner-gated `SpawnRegistry.spawn_detailed/1`) preserves
   # the atomic `DynamicSupervisor` outcome: exactly one concurrent
   # caller gets `:started`, every other gets `:already_started`. This
   # is the ground-truth freshness signal — NOT a pre-probe (a pre-probe
   # is a TOCTOU window). Returns `{:ok, :started | :already_started}`.
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
       {:ok, :started, _pid} ->
         {:ok, :started}
 
@@ -220,7 +221,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
       {:error, reason} ->
         Logger.warning(
-          "cc.agent: SpawnRegistry.spawn_detailed failed for #{URI.to_string(agent_uri)}: " <>
+          "cc.agent: LocalRuntime.ensure_started_detailed failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 

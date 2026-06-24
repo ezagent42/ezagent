@@ -39,11 +39,11 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
   end
 
   describe "sweep/1 — table-backed reap" do
-    setup do
-      # Spawned Session Kind runs in its own process — share the sandbox.
-      Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-      :ok
-    end
+    # NOTE: a spawned Session Kind runs in its own process — `use
+    # EzagentCore.DataCase, async: false` already shares the sandbox via a
+    # drainable Agent owner, so a redundant `Sandbox.mode({:shared, self()})`
+    # only re-globalized the connection onto the dying test pid and clobbered
+    # concurrent suites with "owner exited" errors (#92).
 
     test "reaps an abandoned anon-User (leave + delete users/binding) and is a no-op for a fresh one" do
       now = DateTime.utc_now()

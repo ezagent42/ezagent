@@ -24,15 +24,11 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
   to non-admin caller. This file exemplifies the pattern.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, Invocation, Message, Users}
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp setup_non_admin(handle, caps \\ []) do
     uri_str = "entity://team-alpha/user/" <> handle <> "_#{System.unique_integer([:positive])}"

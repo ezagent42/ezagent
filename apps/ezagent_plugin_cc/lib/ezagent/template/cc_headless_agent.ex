@@ -1,12 +1,10 @@
 defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   @moduledoc """
-  CC Headless agent Template Class — headless claude (no PTY/TUI).
+  CC Headless agent Template Class — headless Claude Code SDK (no PTY/TUI).
 
   Registers the `"cc-headless"` flavor with the same CredentialAdapter as
-  `"cc"` (CLAUDE_CONFIG_DIR + .credentials.json). The spawn path currently
-  uses a stub marker — actual headless subprocess integration
-  (claude -p stdio or esr-bridge without PTY) requires further erlexec
-  integration to bypass `Ezagent.Domain.Pty.start/2`.
+  `"cc"` (CLAUDE_CONFIG_DIR + .credentials.json). Runtime is a plugin-local
+  Python `ClaudeSDKClient` sidecar supervised per agent.
   """
 
   @behaviour Ezagent.Kind.Template
@@ -84,66 +82,52 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   # ---- Spawn path ---------------------------------------------------------
-  #
-  # STUB — cc-headless subprocess integration (2026-06-23).
-  #
-  # The headless spawn path shares the same credential cascade
-  # (create_agent_config_dir_with_grant → revalidate_grant_before_launch)
-  # as cc, but skips the PTY/TUI launch. Two approaches remain:
-  #
-  #   3A: `claude -p` stdio pipe — requires verifying multi-turn support
-  #       in current claude CLI. If `claude -p --input-format stream-json
-  #       --output-format stream-json` works, use a plain Port with :stdin
-  #       /:stdout (no erlexec :pty flag).
-  #
-  #   3B: `server:esr-bridge` without PTY — reuse the same argv as cc
-  #       (from SpawnPlan.build_claude_cmd/3) but launch via erlexec
-  #       WITHOUT the :pty flag. The bridge channel still connects via
-  #       WebSocket. This requires bypassing Domain.Pty.start/2 and
-  #       calling erlexec directly — a medium integration effort.
-  #
-  #   Until one of these is implemented, cc-headless agents will NOT have
-  #   a running claude subprocess. The agent Kind spawns with a config_dir,
-  #   but no LLM backend is active. This is a precise unsupported matrix
-  #   entry.
 
   defp spawn_for_headless(agent_uri, tmpl, _workspace_uri) do
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+    claude_session_id = Map.get(tmpl, "claude_session_id") || new_session_id()
+
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, claude_session_id) do
       case started_or_adopted do
         :already_started ->
+          _ = ensure_subprocess_alive(agent_uri, tmpl)
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
           case create_agent_config_dir_with_grant(agent_uri, tmpl) do
             {:ok, config_dir, grant_ctx} ->
-              tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
+              tmpl_with_dir =
+                tmpl
+                |> put_agent_config_dir(config_dir)
+                |> Map.put("claude_session_id", claude_session_id)
 
               case revalidate_grant_before_launch(grant_ctx) do
                 :ok ->
-                  # STUB: headless subprocess launch goes here.
-                  # For now we return success with fresh?: true but no
-                  # active subprocess. The Agent Kind is alive with a
-                  # config_dir; the credential cascade is complete.
-                  _ =
-                    Logger.info(
-                      "cc-headless: agent #{URI.to_string(agent_uri)} " <>
-                        "spawned (subprocess STUB — no claude backend active)"
-                    )
+                  case ensure_sdk_sidecar(agent_uri, tmpl_with_dir) do
+                    :ok ->
+                      Logger.info(
+                        "cc-headless: agent #{URI.to_string(agent_uri)} " <>
+                          "spawned with SDK sidecar"
+                      )
 
-                  {:ok, [agent_uri],
-                   %{
-                     fresh?: true,
-                     config_dir_path: config_dir,
-                     respawn_template_data: tmpl_with_dir
-                   }}
+                      {:ok, [agent_uri],
+                       %{
+                         fresh?: true,
+                         config_dir_path: config_dir,
+                         respawn_template_data: tmpl_with_dir
+                       }}
+
+                    {:error, reason} ->
+                      rollback_runtime(agent_uri)
+                      handle_spawn_failure(agent_uri, reason)
+                  end
 
                 {:error, reason} ->
-                  _ = Ezagent.Kind.terminate(agent_uri)
+                  rollback_runtime(agent_uri)
                   handle_spawn_failure(agent_uri, reason)
               end
 
             {:error, reason} ->
-              _ = Ezagent.Kind.terminate(agent_uri)
+              rollback_runtime(agent_uri)
               handle_spawn_failure(agent_uri, reason)
           end
       end
@@ -168,34 +152,34 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   # ---- ensure_subprocess_alive --------------------------------------------
 
   @impl Ezagent.Kind.Template
-  def ensure_subprocess_alive(%URI{} = agent_uri, _respawn_data) do
-    # STUB — no subprocess to respawn. Returns :ok so cold-restart
-    # doesn't crash. The Agent Kind alone is sufficient for now.
-    Logger.info(
-      "cc-headless: ensure_subprocess_alive stub for " <>
-        URI.to_string(agent_uri)
-    )
-
-    :ok
+  def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    if EzagentPluginCc.SdkSidecar.alive?(agent_uri) do
+      :ok
+    else
+      ensure_sdk_sidecar(agent_uri, respawn_data)
+    end
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
 
   # ---- Agent Kind ---------------------------------------------------------
 
-  defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-      {:ok, :started, _pid} -> {:ok, :started}
-      {:ok, :already_started, _pid} -> {:ok, :already_started}
+  defp ensure_agent_kind(agent_uri, claude_session_id) do
+    init_args = %{
+      uri: agent_uri,
+      behaviors: Ezagent.Entity.Agent.cc_headless_behaviors(),
+      claude_session_id: claude_session_id
+    }
+
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+      {:ok, _pid} -> {:ok, :started}
+      {:error, {:already_started, _pid}} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
     end
   end
 
   defp agent_kind_alive?(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
 
   # ---- Failure handling ---------------------------------------------------
@@ -206,6 +190,52 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   defp config_home_opts,
     do: [stage_error_tag: :config_dir_materialize_failed, chmod_error: :tagged]
+
+  defp ensure_sdk_sidecar(agent_uri, tmpl) do
+    if EzagentPluginCc.SdkSidecar.alive?(agent_uri) do
+      :ok
+    else
+      case EzagentPluginCc.SdkSidecar.start(agent_uri, sdk_sidecar_params(agent_uri, tmpl)) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, {:cc_headless_sdk_sidecar_start_failed, reason}}
+      end
+    end
+  end
+
+  defp sdk_sidecar_params(agent_uri, tmpl) do
+    config_dir =
+      Ezagent.Credential.HomeRuntime.resolve_config_home(agent_uri, tmpl, __MODULE__) ||
+        Map.get(tmpl, "agent_config_dir") ||
+        Map.get(tmpl, "config_dir")
+
+    %{
+      cwd: Map.fetch!(tmpl, "cwd"),
+      config_dir: config_dir,
+      session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
+      permission_mode: Map.get(tmpl, "permission_mode", "default"),
+      model: Map.get(tmpl, "model"),
+      effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
+      cli_path: Map.get(tmpl, "claude_cli_path"),
+      system_prompt: Map.get(tmpl, "system_prompt"),
+      allowed_tools: Map.get(tmpl, "allowed_tools"),
+      disallowed_tools: Map.get(tmpl, "disallowed_tools"),
+      mcp_servers: Map.get(tmpl, "mcp_servers"),
+      uv_path: Map.get(tmpl, "uv_path"),
+      python_path: Map.get(tmpl, "python_path"),
+      sdk_worker_path: Map.get(tmpl, "sdk_worker_path")
+    }
+  end
+
+  defp rollback_runtime(agent_uri) do
+    _ = EzagentPluginCc.SdkSidecar.stop(agent_uri)
+    _ = Ezagent.Kind.terminate(agent_uri)
+    :ok
+  end
+
+  defp new_session_id do
+    "ezagent-cc-headless-" <> Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
+  end
 
   # ---- Validation helpers (delegates/duplicates CcAgent patterns) ----------
 
@@ -230,5 +260,4 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   defp reject_stale_config_dir_data_key!(tmpl) do
     Ezagent.PluginCc.Template.CcAgent.reject_stale_config_dir_data_key!(tmpl)
   end
-
 end

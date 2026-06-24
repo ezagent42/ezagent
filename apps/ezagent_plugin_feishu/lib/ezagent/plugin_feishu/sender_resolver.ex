@@ -58,17 +58,15 @@ defmodule EzagentPluginFeishu.SenderResolver do
         # PR 17 follow-up: ensure the User Kind is live before reading
         # its caps. After server restart, bound user URIs aren't
         # automatically re-spawned (they only get spawned at bind time
-        # or via explicit SpawnRegistry call). Without this auto-spawn,
+        # or via explicit ensure). Without this auto-spawn,
         # `list_caps_for` finds no Kind → returns empty MapSet →
         # dispatch denied as :unauthorized despite the binding +
         # cap-grant having persisted in the snapshot.
-        case Ezagent.KindRegistry.lookup(bound_uri) do
-          {:ok, _pid} ->
-            :ok
-
-          :error ->
-            _ = Ezagent.SpawnRegistry.spawn(bound_uri)
-            :ok
+        if Ezagent.LocalRuntime.kind_alive?(bound_uri) do
+          :ok
+        else
+          _ = Ezagent.LocalRuntime.ensure_started(bound_uri)
+          :ok
         end
 
         caps = Ezagent.Identity.list_caps_for(bound_uri)

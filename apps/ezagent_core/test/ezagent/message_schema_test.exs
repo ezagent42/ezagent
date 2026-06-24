@@ -10,15 +10,11 @@ defmodule Ezagent.MessageSchemaTest do
   """
 
   # Non-async because Repo state is shared via Sandbox.
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Message
   alias EzagentCore.Repo
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   test "insert + get round-trip preserves all 7 fields" do
     sender = URI.new!("entity://system/user/admin")

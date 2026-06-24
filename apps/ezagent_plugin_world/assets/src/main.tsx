@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, ChevronDown, ChevronRight, Moon, Sun} from "lucide-react"
+import {ArrowLeft, Boxes, ChevronDown, ChevronRight, LogOut, Moon, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -56,6 +56,7 @@ type WorldMountOptions = {
   caller?: {
     entity_uri?: string | null
     workspace_uri?: string | null
+    display_name?: string | null
   }
   pushEvent?: (event: string, payload: unknown, onReply?: (reply: unknown) => void) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -158,6 +159,10 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
               >
                 Command
               </Button>
+              <AccountMenu
+                displayName={caller?.display_name}
+                entityUri={caller?.entity_uri}
+              />
             </div>
           </header>
           <CommandPalette
@@ -193,6 +198,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                   pushEvent?.("world:dispatch", {
                     action: "agents.create",
                     args: {agent},
+                  })
+                },
+                onPutApiKey: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agent.api_key.put",
+                    args: payload,
                   })
                 },
                 onAdminAction: (action, args) => {
@@ -397,6 +408,97 @@ function ThemeToggle() {
   )
 }
 
+// Phoenix masked CSRF token, rendered into the root layout `<meta>` (root.html.heex).
+// The /logout POST is a regular controller form (NOT a world:dispatch over the LV
+// socket) because clearing the HTTP session cookie lives in the request layer, not
+// the LiveView channel — so it needs the same CSRF token Phoenix forms carry.
+function csrfToken(): string {
+  return document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || ""
+}
+
+// Header account menu — the world UI's logout / switch-account entry point (F3).
+// Mirrors the LiveView shell's avatar menu (ide_shell.ex): a display-name button
+// opening a dropdown whose only action is a CSRF-protected POST to /logout. Switch
+// account = logout + re-auth (no in-place context swap; SPEC v3 §6.4), so "Sign out"
+// is also how an operator changes who they are signed in as.
+function AccountMenu({displayName, entityUri}: {displayName?: string | null; entityUri?: string | null}) {
+  const [open, setOpen] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+  const formRef = React.useRef<HTMLFormElement>(null)
+  const label = displayName || entityUri || "Account"
+
+  React.useEffect(() => {
+    if (!open) return undefined
+
+    const onPointer = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+
+    document.addEventListener("mousedown", onPointer)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onPointer)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        title="Account"
+      >
+        <User aria-hidden="true" className="h-3.5 w-3.5" />
+        <span className="max-w-[160px] truncate">{label}</span>
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-50 mt-1.5 w-56 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
+        >
+          <div className="border-b border-border px-3 py-2">
+            <div className="truncate text-sm font-medium text-foreground">{label}</div>
+            {entityUri && (
+              <div className="truncate font-mono text-xs text-muted-foreground" title={entityUri}>
+                {entityUri}
+              </div>
+            )}
+          </div>
+          <form ref={formRef} action="/logout" method="post" className="block">
+            <input type="hidden" name="_csrf_token" value={csrfToken()} />
+            <button
+              type="submit"
+              role="menuitem"
+              onClick={(event) => {
+                // The world surface is a LiveView page whose client JS intercepts
+                // (and swallows) the native submit event of any form inside the
+                // phx-update="ignore" React island — a plain submit never reaches
+                // the server. Drive the POST programmatically: form.submit() bypasses
+                // the submit event entirely while the CSRF token still rides in the
+                // hidden field, so logout actually navigates to /logout.
+                event.preventDefault()
+                formRef.current?.submit()
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-muted dark:text-rose-400"
+            >
+              <LogOut aria-hidden="true" className="h-4 w-4" />
+              Sign out
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  )
+}
+
 type RenderContext = {
   layout: WorldLayout
   state: WorldState
@@ -404,6 +506,7 @@ type RenderContext = {
   onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onPutApiKey: (payload: {agent_uri: string; provider: string; key: string}) => void
   onAdminAction: (action: string, args: Record<string, unknown>) => void
   onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
   onChatSend: (sessionUri: string, text: string, grants: string[]) => void
@@ -487,7 +590,14 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       )
 
     case "identities":
-      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+      return (
+        <IdentitiesSurface
+          key={component.id}
+          state={{...context.state, component: component.type}}
+          onCreateAgent={context.onCreateAgent}
+          onPutApiKey={context.onPutApiKey}
+        />
+      )
 
     default:
       throw new Error(
