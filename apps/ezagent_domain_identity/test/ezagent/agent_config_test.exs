@@ -21,8 +21,8 @@ defmodule Ezagent.AgentConfigTest do
     %{agent: agent, workspace: workspace, manager: manager}
   end
 
-  test "read_cascade returns stable empty default key shape", %{agent: agent} do
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent)
+  test "read_cascade returns stable empty default key shape", %{agent: agent, manager: manager} do
+    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
 
     assert cascade.agent_uri == URI.to_string(agent)
     assert cascade.default_key == @default_key
@@ -49,7 +49,7 @@ defmodule Ezagent.AgentConfigTest do
                turn_id: turn_id("create")
              })
 
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent)
+    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
     [state] = cascade.keys
 
     assert state.effective_body == %{"tone" => "decisive"}
@@ -68,7 +68,7 @@ defmodule Ezagent.AgentConfigTest do
                turn_id: turn_id("dynamic")
              })
 
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent)
+    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
     assert Enum.map(cascade.keys, & &1.key) == [@default_key, "model.settings"]
   end
 
@@ -86,7 +86,7 @@ defmodule Ezagent.AgentConfigTest do
       })
 
     assert second != first
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key)
+    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"tone" => "decisive", "soul_md" => "# Soul"}
   end
 
@@ -112,7 +112,7 @@ defmodule Ezagent.AgentConfigTest do
     assert config_object_count() == count_before_delete + 1
     assert {:ok, _old_object} = ConfigStore.fetch_object(first)
 
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key)
+    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"soul_md" => "# Soul"}
   end
 
@@ -137,7 +137,7 @@ defmodule Ezagent.AgentConfigTest do
                config_id: first
              })
 
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key)
+    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"tone" => "A"}
   end
 
@@ -165,6 +165,63 @@ defmodule Ezagent.AgentConfigTest do
                patch: %{"tone" => "denied"},
                turn_id: turn_id("wrong-cap")
              })
+  end
+
+  test "read_cascade is denied without the agent manage-cap", %{agent: agent} do
+    stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
+
+    assert {:error, :unauthorized} =
+             AgentConfig.read_cascade(agent, stranger, MapSet.new())
+  end
+
+  test "read_key is denied without the agent manage-cap", %{agent: agent} do
+    stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
+
+    assert {:error, :unauthorized} =
+             AgentConfig.read_key(agent, @default_key, stranger, MapSet.new())
+  end
+
+  test "manage-cap for another agent does not authorize read_cascade", %{
+    agent: agent,
+    workspace: workspace
+  } do
+    other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: other, initial_caps: MapSet.new()})
+    :ok = Ezagent.WorkspaceRegistry.bind(other, workspace)
+    other_manager = grant_manage_cap(other, workspace)
+
+    assert {:error, :unauthorized} =
+             AgentConfig.read_cascade(agent, other_manager.uri, other_manager.caps)
+  end
+
+  test "manage-cap for another agent does not authorize read_key", %{
+    agent: agent,
+    workspace: workspace
+  } do
+    other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: other, initial_caps: MapSet.new()})
+    :ok = Ezagent.WorkspaceRegistry.bind(other, workspace)
+    other_manager = grant_manage_cap(other, workspace)
+
+    assert {:error, :unauthorized} =
+             AgentConfig.read_key(agent, @default_key, other_manager.uri, other_manager.caps)
+  end
+
+  test "manage-cap holder reads the cascade", %{agent: agent, manager: manager} do
+    {:ok, %{config_id: cid}} =
+      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+        patch: %{"tone" => "allowed"},
+        turn_id: turn_id("read-allow")
+      })
+
+    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
+    assert cascade.agent_uri == URI.to_string(agent)
+    [state] = cascade.keys
+    assert state.effective_body == %{"tone" => "allowed"}
+    assert state.layers["user"].config_id == cid
+
+    assert {:ok, key_state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
+    assert key_state.effective_body == %{"tone" => "allowed"}
   end
 
   test "soul_md writes materialize to CLAUDE.md through ConfigProjection", %{

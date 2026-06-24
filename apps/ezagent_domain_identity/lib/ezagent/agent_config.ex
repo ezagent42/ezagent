@@ -7,7 +7,7 @@ defmodule Ezagent.AgentConfig do
   and dispatching manage-cap-gated writes.
   """
 
-  alias Ezagent.{Invocation, Socialware.ConfigProjection, Socialware.ConfigStore}
+  alias Ezagent.{Invocation, Socialware.ConfigStore}
 
   @default_key "advisor.behavior"
   @layer_order ~w(workspace user session)
@@ -18,39 +18,60 @@ defmodule Ezagent.AgentConfig do
   @doc """
   Reads the editable config cascade for an agent.
 
+  The read is gated by the agent's manage-cap — SYMMETRIC with the writes — by
+  routing through the `config_evolve.read_cascade` action via `Invocation`.
+  Authorization is enforced on the AUTHENTICATED `caller`'s `caps` against the
+  target agent (dispatch step-5.5), NOT derived from the target uri: a caller
+  without the agent's manage-cap gets `{:error, :unauthorized}`.
+
   The returned shape is stable for empty agents: it always includes the default
   `advisor.behavior` key plus any dynamic keys currently present in
   `ConfigPointer` rows for the agent.
   """
-  @spec read_cascade(URI.t() | String.t(), keyword() | map()) :: {:ok, map()} | {:error, term()}
-  def read_cascade(agent_uri, opts \\ []) do
+  @spec read_cascade(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          principal_caps(),
+          keyword() | map()
+        ) ::
+          {:ok, map()} | {:error, term()}
+  def read_cascade(agent_uri, caller, caps, opts \\ []) do
     with {:ok, agent_uri} <- normalize_agent_uri(agent_uri),
-         %URI{} = workspace_uri <- Ezagent.URI.workspace_of(agent_uri) do
-      keys = keys_for(agent_uri, opts)
+         {:ok, caller} <- normalize_uri(caller),
+         %URI{} <- Ezagent.URI.workspace_of(agent_uri) do
+      args = read_args(opts)
 
-      {:ok,
-       %{
-         agent_uri: URI.to_string(agent_uri),
-         workspace_uri: URI.to_string(workspace_uri),
-         default_key: @default_key,
-         layer_order: @layer_order,
-         keys: Enum.map(keys, &key_state(agent_uri, workspace_uri, &1))
-       }}
+      agent_uri
+      |> action_uri(:read_cascade)
+      |> dispatch(:call, args, caller, caps)
+      |> case do
+        {:ok, %{cascade: cascade}} -> {:ok, cascade}
+        {:error, _reason} = error -> error
+      end
     else
       :any -> {:error, :invalid_agent_uri}
       {:error, _reason} = error -> error
     end
   end
 
-  @spec read_key(URI.t() | String.t(), String.t(), keyword() | map()) ::
+  @spec read_key(
+          URI.t() | String.t(),
+          String.t(),
+          URI.t() | String.t(),
+          principal_caps(),
+          keyword() | map()
+        ) ::
           {:ok, map()} | {:error, term()}
   @doc """
   Reads one config key from the agent cascade.
+
+  Delegates to the manage-cap-gated `read_cascade/4`, so the same authorization
+  applies: a caller without the agent's manage-cap gets `{:error, :unauthorized}`.
   """
-  def read_key(agent_uri, key, opts \\ []) when is_binary(key) do
+  def read_key(agent_uri, key, caller, caps, opts \\ []) when is_binary(key) do
     opts = put_opt(opts, :keys, [key])
 
-    with {:ok, %{keys: [state]}} <- read_cascade(agent_uri, opts) do
+    with {:ok, %{keys: [state]}} <- read_cascade(agent_uri, caller, caps, opts) do
       {:ok, state}
     end
   end
@@ -129,55 +150,13 @@ defmodule Ezagent.AgentConfig do
     end
   end
 
-  defp keys_for(agent_uri, opts) do
-    requested =
-      opts
-      |> opt(:keys, nil)
-      |> case do
-        keys when is_list(keys) -> Enum.map(keys, &to_string/1)
-        _ -> ConfigStore.list_keys_for_subject(agent_uri)
-      end
-
-    requested
-    |> Kernel.++([@default_key])
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  defp key_state(agent_uri, workspace_uri, key) do
-    layers = ConfigStore.layer_objects_for_key(agent_uri, key)
-    layer_states = Map.new(@layer_order, &{&1, layer_state(workspace_uri, &1, layers[&1])})
-
-    %{
-      key: key,
-      effective_body: effective_body(layer_states),
-      editable: true,
-      editable_layer: @editable_layer,
-      layers: layer_states
-    }
-  end
-
-  defp layer_state(_workspace_uri, _layer, nil), do: nil
-
-  defp layer_state(workspace_uri, layer, %{pointer: pointer, object: object}) do
-    %{
-      layer: layer,
-      config_id: object.id,
-      previous_config_id: pointer.previous_config_id,
-      object_uri: workspace_uri |> ConfigProjection.object_uri(object.id) |> URI.to_string(),
-      body: object.body || %{},
-      source_turn_id: object.source_turn_id,
-      updated_at: datetime(pointer.updated_at)
-    }
-  end
-
-  defp effective_body(layer_states) do
-    Enum.reduce(@layer_order, %{}, fn layer, acc ->
-      case layer_states[layer] do
-        %{body: %{} = body} -> Map.merge(acc, body)
-        _ -> acc
-      end
-    end)
+  # Build the `read_cascade` dispatch args from facade opts. Only forward an
+  # explicit `:keys` filter; an absent filter lets the action read all keys.
+  defp read_args(opts) do
+    case opt(opts, :keys, nil) do
+      keys when is_list(keys) -> %{keys: Enum.map(keys, &to_string/1)}
+      _ -> %{}
+    end
   end
 
   defp apply_args(agent_uri, attrs) do
@@ -354,8 +333,4 @@ defmodule Ezagent.AgentConfig do
   defp layer_atom("session"), do: :session
 
   defp console_turn_id, do: "console:" <> Ecto.UUID.generate()
-
-  defp datetime(nil), do: nil
-  defp datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp datetime(other), do: to_string(other)
 end
