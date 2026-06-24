@@ -26,7 +26,12 @@ defmodule Ezagent.Behavior.Kanban do
 
   use Ezagent.Lifecycle
 
+  alias EzagentPluginKanban.BoardConfig
+  alias EzagentPluginKanban.Ci
+  alias EzagentPluginKanban.Github
   alias EzagentPluginKanban.Markmap
+  alias EzagentPluginKanban.Miro
+  alias EzagentPluginKanban.MiroSync
 
   # 产品自举开发流程的 9 个固定阶段（真相源接力链；顺序即 list 顺序，索引用于插入校验）。
   @stages [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr]
@@ -153,6 +158,85 @@ defmodule Ezagent.Behavior.Kanban do
     description: "覆盖导入(admin)"
   )
 
+  # ---------------------------------------------------------------
+  # 出站连接器动作（df-tech 下沉：原在 world kanban_actions.ex，搬进 Behavior
+  # 收口——world 退成纯 dispatcher，不再直引 EzagentPluginKanban.*）。
+  # 出站 HTTP 副作用走 :effect_returning（绑结果回 dispatch 结果）；状态变更
+  # （挂 artifact / set done）继续经唯一 commit/1。
+  # ---------------------------------------------------------------
+
+  action(:sync_github,
+    args: %{id: :string},
+    returns: %{number: :integer, url: :string},
+    caps: [:sync_github],
+    modes: [:call],
+    description: "把节点出站成 GitHub issue + 回挂 issue 产物到节点"
+  )
+
+  action(:push_pr,
+    args: %{id: :string},
+    returns: %{url: :string},
+    caps: [:push_pr],
+    modes: [:call],
+    description: "把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）"
+  )
+
+  action(:register_pr,
+    args: %{id: :string, pr: :string},
+    returns: %{},
+    caps: [:register_pr],
+    modes: [:call],
+    description: "登记 PR 号→把 PR 链接挂到节点（不发评论）"
+  )
+
+  action(:attach_code_file,
+    args: %{id: :string, sha: :string, path: :string},
+    returns: %{url: :string},
+    caps: [:attach_code_file],
+    modes: [:call],
+    description: "钉 commit SHA + 路径 → 拼 github blob 链接挂到节点"
+  )
+
+  action(:sync_prs,
+    args: %{},
+    returns: %{advanced: :integer},
+    caps: [:sync_prs],
+    modes: [:call],
+    description: "轮询已登记 PR 的节点；merged/closed → set_status done"
+  )
+
+  action(:sync_miro,
+    args: %{},
+    returns: %{board_id: :string},
+    caps: [:sync_miro],
+    modes: [:call],
+    description: "一键推 Miro（首次建板+绑定，之后复用同板同步）"
+  )
+
+  action(:set_board_config,
+    args: %{github_repo: :string, miro_board: :string},
+    returns: %{github_repo: :string, miro_board: :string},
+    caps: [:set_board_config],
+    modes: [:call],
+    description: "写本图连接器配置（github_repo + miro 板名；token 在全局）"
+  )
+
+  action(:save_github_creds,
+    args: %{access_token: :string, repo: :string},
+    returns: %{},
+    caps: [:save_github_creds],
+    modes: [:call],
+    description: "保存全局 GitHub 凭证（admin-gated）"
+  )
+
+  action(:save_miro_creds,
+    args: %{access_token: :string, board_id: :string},
+    returns: %{},
+    caps: [:save_miro_creds],
+    modes: [:call],
+    description: "保存全局 Miro 凭证（admin-gated）"
+  )
+
   @doc false
   def required_caps do
     for a <- [
@@ -170,7 +254,16 @@ defmodule Ezagent.Behavior.Kanban do
           :drop_subtree,
           :get_tree,
           :export_markmap,
-          :import_markmap
+          :import_markmap,
+          :sync_github,
+          :push_pr,
+          :register_pr,
+          :attach_code_file,
+          :sync_prs,
+          :sync_miro,
+          :set_board_config,
+          :save_github_creds,
+          :save_miro_creds
         ],
         into: %{},
         do: {a, Ezagent.Capability.cap(:kanban, __MODULE__, a)}
@@ -449,8 +542,64 @@ defmodule Ezagent.Behavior.Kanban do
   @doc false
   def handle_get_tree(_args, ctx) do
     t = tree(ctx)
-    # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）
-    {:ok, %{tree: %{nodes: t.nodes, root_id: t.root_id}, drops: Map.get(t, :drops, [])}, []}
+    inner = %{nodes: t.nodes, root_id: t.root_id}
+
+    # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）。
+    # config/miro/github/ci = 出站连接器只读投影（df-tech 下沉：world 不再直读
+    # BoardConfig/Miro/Github，全经此 dispatch 返回拿到）。
+    {:ok,
+     %{
+       tree: inner,
+       drops: Map.get(t, :drops, []),
+       config: board_config(ctx),
+       miro: miro_status(),
+       github: github_status(),
+       # pr 节点的 CI 评价摘要（前端 ci 徽章）：%{node_id => verdict}，纯函数算。
+       ci: ci_summaries(inner)
+     }, []}
+  end
+
+  # 本图连接器配置（github_repo + miro 板名）；self_uri = 本 kanban 实例 URI。
+  defp board_config(ctx) do
+    case ctx[:self_uri] do
+      %URI{} = uri ->
+        c = BoardConfig.read(uri)
+        %{github_repo: c.github_repo, miro_board: c.miro_board}
+
+      _ ->
+        %{github_repo: nil, miro_board: nil}
+    end
+  end
+
+  defp miro_status do
+    case Miro.read_creds() do
+      {:ok, %{token: t, board_id: b}} when is_binary(t) and t != "" ->
+        %{configured: true, board_id: b}
+
+      _ ->
+        %{configured: false}
+    end
+  rescue
+    _ -> %{configured: false}
+  end
+
+  defp github_status do
+    case Github.read_creds() do
+      {:ok, %{token: t, repo: r}} when is_binary(t) and t != "" ->
+        %{configured: true, repo: r}
+
+      _ ->
+        %{configured: false}
+    end
+  rescue
+    _ -> %{configured: false}
+  end
+
+  # 给每个 stage==:pr 节点算 CI 评价（纯函数，无副作用）。前端 ci 徽章用。
+  defp ci_summaries(%{nodes: nodes} = tree) do
+    for {id, n} <- nodes, Map.get(n, :stage) == :pr, into: %{} do
+      {id, Ci.check_pr_gate(tree, id)}
+    end
   end
 
   @doc false
@@ -491,6 +640,320 @@ defmodule Ezagent.Behavior.Kanban do
         end
     end
   end
+
+  # ---------------------------------------------------------------
+  # 出站连接器 handlers（df-tech 下沉）
+  #
+  # 授权：节点级动作（sync_github/push_pr/register_pr/attach_code_file）沿用
+  # `owner_or_admin?` 闸——同 attach_artifact 一样要节点 owner 或 admin。图级动作
+  # （sync_prs/sync_miro/set_board_config）= 任意持 cap 的成员（cap gate 已收口）。
+  # 凭证保存（save_*_creds）= admin-gated（全局配置）。
+  # 出站 HTTP 副作用走 :effect_returning（绑结果，不算 set-effect 站点）；只有真改
+  # 树（挂 artifact / set done）才 commit/1。
+  # ---------------------------------------------------------------
+
+  @doc false
+  # 出站到 GitHub：建 issue + 回挂 issue 产物到节点（同节点 = 折进一次 commit，不自分发）。
+  # 出站 HTTP 在 Kind 进程内同步调（对齐 UserTokens handler 内联 Token.list 的先例）——
+  # 要拿结果决定是否 commit + 拼回返回值，纯 {:ref} 替换表达不了这层逻辑。
+  def handle_sync_github(%{id: id}, ctx) do
+    t = tree(ctx)
+
+    cond do
+      not Map.has_key?(t.nodes, id) ->
+        {:error, :node_not_found}
+
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      true ->
+        case board_creds(ctx) do
+          {:ok, %{token: token, repo: repo}} when is_binary(repo) ->
+            n = t.nodes[id]
+
+            case Github.create_issue(token, repo, n.title || "(untitled)", github_issue_body(n)) do
+              {:ok, %{number: num, url: url}} ->
+                art =
+                  normalize_artifact(%{tool: "github", kind: "issue", ref: "##{num}", url: url})
+
+                new_nodes = Map.put(t.nodes, id, %{n | artifacts: n.artifacts ++ [art]})
+                {:ok, %{number: num, url: url}, [commit(%{t | nodes: new_nodes})]}
+
+              {:error, reason} ->
+                {:error, gh_reason(reason)}
+            end
+
+          {:ok, %{repo: nil}} ->
+            {:error, :github_repo_missing}
+
+          {:error, _} ->
+            {:error, :github_token_missing}
+        end
+    end
+  end
+
+  @doc false
+  # 出站 PR 留言：把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）。
+  def handle_push_pr(%{id: id}, ctx) do
+    t = tree(ctx)
+
+    with node when is_map(node) <- Map.get(t.nodes, id),
+         true <- owner_or_admin?(ctx, node) or :forbidden,
+         {:ok, %{token: token, repo: repo}} when is_binary(repo) <- board_creds(ctx),
+         pr when is_integer(pr) <- node_pr(node),
+         digest <- Ci.requirement_digest(t, id),
+         {:ok, url} <- Github.post_comment(token, repo, pr, digest) do
+      {:ok, %{url: url}, []}
+    else
+      nil -> {:error, :node_not_found}
+      :forbidden -> {:error, :forbidden}
+      {:ok, %{repo: nil}} -> {:error, :github_repo_missing}
+      {:error, :github_token_missing} -> {:error, :github_token_missing}
+      {:error, reason} -> {:error, gh_reason(reason)}
+      false -> {:error, :no_pr_registered}
+      _ -> {:error, :no_pr_registered}
+    end
+  end
+
+  @doc false
+  # 登记 PR：把 PR 链接挂到节点（不发评论；出站留言在 push_pr）。
+  def handle_register_pr(%{id: id, pr: pr_in}, ctx) do
+    t = tree(ctx)
+
+    cond do
+      not Map.has_key?(t.nodes, id) ->
+        {:error, :node_not_found}
+
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      true ->
+        case {to_pr_number(pr_in), board_creds(ctx)} do
+          {pr, {:ok, %{repo: repo}}} when is_integer(pr) and is_binary(repo) ->
+            url = "https://github.com/#{repo}/pull/#{pr}"
+            art = normalize_artifact(%{tool: "github", kind: "pr", ref: "##{pr}", url: url})
+            n = t.nodes[id]
+            new_nodes = Map.put(t.nodes, id, %{n | artifacts: n.artifacts ++ [art]})
+            {:ok, %{}, [commit(%{t | nodes: new_nodes})]}
+
+          {:error, _} ->
+            {:error, :bad_pr_number}
+
+          {_, {:ok, %{repo: nil}}} ->
+            {:error, :github_repo_missing}
+
+          _ ->
+            {:error, :github_token_missing}
+        end
+    end
+  end
+
+  @doc false
+  # 挂代码文件：钉 commit SHA + 路径 → 拼 github blob 链接（永久可点）。repo 取本图配置。
+  def handle_attach_code_file(%{id: id, sha: sha, path: path}, ctx)
+      when is_binary(sha) and is_binary(path) do
+    t = tree(ctx)
+
+    cond do
+      not Map.has_key?(t.nodes, id) ->
+        {:error, :node_not_found}
+
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      true ->
+        case board_creds(ctx) do
+          {:ok, %{repo: repo}} when is_binary(repo) ->
+            clean = String.trim_leading(path, "/")
+            url = "https://github.com/#{repo}/blob/#{sha}/#{clean}"
+            name = clean |> String.split("/") |> List.last()
+            art = normalize_artifact(%{tool: "github", kind: "github_file", ref: name, url: url})
+            n = t.nodes[id]
+            new_nodes = Map.put(t.nodes, id, %{n | artifacts: n.artifacts ++ [art]})
+            {:ok, %{url: url}, [commit(%{t | nodes: new_nodes})]}
+
+          {:ok, %{repo: nil}} ->
+            {:error, :github_repo_missing}
+
+          _ ->
+            {:error, :github_token_missing}
+        end
+    end
+  end
+
+  @doc false
+  # 轮询已登记 PR 的节点；merged/closed → set_status done（折进一次 commit）。
+  def handle_sync_prs(_args, ctx) do
+    t = tree(ctx)
+
+    case board_creds(ctx) do
+      {:ok, %{token: token, repo: repo}} when is_binary(repo) ->
+        {new_nodes, advanced, unreachable?} = advance_merged_prs(t.nodes, token, repo)
+
+        cond do
+          unreachable? -> {:error, :github_unreachable}
+          advanced == 0 -> {:ok, %{advanced: 0}, []}
+          true -> {:ok, %{advanced: advanced}, [commit(%{t | nodes: new_nodes})]}
+        end
+
+      {:ok, %{repo: nil}} ->
+        {:error, :github_repo_missing}
+
+      _ ->
+        {:error, :github_token_missing}
+    end
+  end
+
+  # 遍历登记过 PR 的节点查状态；merged/closed 的 set status=done。返回 {新nodes,推进数,连不上?}。
+  defp advance_merged_prs(nodes, token, repo) do
+    Enum.reduce(nodes, {nodes, 0, false}, fn {id, node}, {acc_nodes, n, unreachable?} ->
+      case node_pr(node) do
+        nil ->
+          {acc_nodes, n, unreachable?}
+
+        pr ->
+          case Github.get_pull(token, repo, pr) do
+            {:ok, %{merged: true}} -> {done_node(acc_nodes, id), n + 1, unreachable?}
+            {:ok, %{state: "closed"}} -> {done_node(acc_nodes, id), n + 1, unreachable?}
+            {:error, {:http_error, _}} -> {acc_nodes, n, true}
+            _ -> {acc_nodes, n, unreachable?}
+          end
+      end
+    end)
+  end
+
+  defp done_node(nodes, id) do
+    case nodes[id] do
+      %{owner: o} = node when not is_nil(o) -> Map.put(nodes, id, %{node | status: :done})
+      _ -> nodes
+    end
+  end
+
+  @doc false
+  # 一键推 Miro：已绑定则 sync；未绑定则建板+绑定+sync。板名取本图配置或默认。
+  def handle_sync_miro(_args, ctx) do
+    uri = ctx[:self_uri]
+
+    miro_name =
+      case BoardConfig.read(uri).miro_board do
+        name when is_binary(name) and name != "" -> name
+        _ -> "ezagent: " <> uri_name(uri)
+      end
+
+    case MiroSync.sync_or_bind(uri, miro_name) do
+      {:ok, %{board_id: board}} -> {:ok, %{board_id: board}, []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc false
+  # 写本图连接器配置（github_repo + miro 板名）。任意持 cap 的成员（cap gate 收口）。
+  def handle_set_board_config(%{github_repo: github_repo, miro_board: miro_board}, ctx) do
+    uri = ctx[:self_uri]
+
+    case BoardConfig.write(uri, %{github_repo: github_repo, miro_board: miro_board}) do
+      :ok ->
+        c = BoardConfig.read(uri)
+        {:ok, %{github_repo: c.github_repo, miro_board: c.miro_board}, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc false
+  # 保存全局 GitHub 凭证（admin-gated）。
+  def handle_save_github_creds(%{access_token: token} = args, ctx) when is_binary(token) do
+    if admin?(ctx) do
+      case Github.write_creds(%{access_token: token, repo: Map.get(args, :repo, "")}) do
+        :ok -> {:ok, %{}, []}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  @doc false
+  # 保存全局 Miro 凭证（admin-gated）。
+  def handle_save_miro_creds(%{access_token: token} = args, ctx) when is_binary(token) do
+    if admin?(ctx) do
+      case Miro.write_creds(%{access_token: token, board_id: Map.get(args, :board_id, "")}) do
+        :ok -> {:ok, %{}, []}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  # --- 出站 helpers ---------------------------------------------------
+
+  # 每图独立配置：token 取全局（github.yaml），repo 取本图配置。返回 {:ok,%{token,repo}}|{:error,_}。
+  defp board_creds(ctx) do
+    case Github.read_creds() do
+      {:ok, %{token: token}} ->
+        repo =
+          case ctx[:self_uri] do
+            %URI{} = uri -> BoardConfig.read(uri).github_repo
+            _ -> nil
+          end
+
+        {:ok, %{token: token, repo: repo}}
+
+      err ->
+        err
+    end
+  end
+
+  # 拼 github issue body：节点 stage/status + inline content 产物。
+  defp github_issue_body(n) do
+    content =
+      (Map.get(n, :artifacts) || [])
+      |> Enum.map(&Map.get(&1, :content))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n\n")
+
+    "**stage**: #{n.stage} · **status**: #{n.status}\n\n" <>
+      content <> "\n\n_由 ezagent kanban 节点出站_"
+  end
+
+  # 从节点 pr 产物里抠出 PR 号（"#42"→42）。artifacts 用 atom 键（已 normalize）。
+  defp node_pr(node) do
+    node
+    |> Map.get(:artifacts, [])
+    |> Enum.find_value(fn a ->
+      if to_string(Map.get(a, :kind)) == "pr" do
+        case to_pr_number(to_string(Map.get(a, :ref))) do
+          n when is_integer(n) -> n
+          _ -> nil
+        end
+      end
+    end)
+  end
+
+  defp to_pr_number(pr) when is_integer(pr), do: pr
+
+  defp to_pr_number(pr) when is_binary(pr) do
+    case pr |> String.trim() |> String.trim_leading("#") |> Integer.parse() do
+      {n, _} -> n
+      :error -> :error
+    end
+  end
+
+  defp to_pr_number(_), do: :error
+
+  # kanban 实例 URI 的末段名（建 Miro 板默认名用）。
+  defp uri_name(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
+  defp uri_name(_), do: "kanban"
+
+  # GitHub 失败 → 干净错误 atom（前端 dispatchError 映射成中文提示）。
+  defp gh_reason({:http_status, code, _}) when code in [401, 403], do: :github_unauthorized
+  defp gh_reason({:http_status, 404, _}), do: :github_not_found
+  defp gh_reason({:http_status, code, _}), do: String.to_atom("github_http_#{code}")
+  defp gh_reason({:http_error, _}), do: :github_unreachable
+  defp gh_reason(other) when is_atom(other), do: other
+  defp gh_reason(other), do: {:github_error, other}
 
   # --- helpers --------------------------------------------------------
 
