@@ -1,8 +1,7 @@
 import {Socket} from "phoenix"
 import React, {useEffect, useMemo, useState} from "react"
 import {createRoot} from "react-dom/client"
-import {Sandpack} from "@codesandbox/sandpack-react"
-import {createBaseRegistry, renderJsonNode} from "./catalog_render.mjs"
+import {JsonRenderPage} from "./catalog_jsonrender.mjs"
 import {isValidTree} from "./catalog.mjs"
 
 // Print the @json-render page data that actually drives the rendered page to the
@@ -55,7 +54,6 @@ function boot(root) {
 function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
-  const registry = useMemo(() => createBaseRegistry(React, Sandpack), [])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -159,7 +157,7 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
       )
     ),
     React.createElement(ChatPane, {messages: snapshot.messages || []}),
-    renderJsonNode(React, page, registry)
+    React.createElement(JsonRenderPage, {page})
   )
 }
 
