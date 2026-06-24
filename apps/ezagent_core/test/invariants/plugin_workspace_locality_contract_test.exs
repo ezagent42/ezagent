@@ -38,35 +38,10 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       line: 155,
       key: :kind_registry_lookup,
       line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason: "existing orchestrator seed status probe; pending owner-gated read wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
-      line: 202,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason: "existing orchestrator seed ensure; pending owner-gated ensure wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
-      line: 207,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn(uri) do",
-      reason: "existing orchestrator seed materialization; pending owner-gated ensure wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
-      line: 190,
-      key: :spawn_registry,
-      line_substring: "_ = Ezagent.SpawnRegistry.spawn(session_uri)",
-      reason: "existing orchestrator MCP recovery ensure; pending owner-gated wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
-      line: 191,
-      key: :spawn_registry,
-      line_substring: "_ = Ezagent.SpawnRegistry.spawn(orchestrator_uri)",
-      reason: "existing orchestrator MCP recovery ensure; pending owner-gated wrapper"
+      reason:
+        "read-only seed_status probe needs the registered pid to read the template slice; " <>
+          "LocalRuntime has no owner-gated read-with-pid API yet (ensure_started would spawn, " <>
+          "kind_alive? drops the pid). Same class as world workspace_plugin_data status reads."
     },
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
@@ -89,69 +64,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, {:query, text, session_id}, timeout)",
       reason: "existing sidecar query call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex",
-      line: 605,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing agent liveness probe; pending owner-gated liveness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent/spawn.ex",
-      line: 210,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do",
-      reason: "existing agent instantiate ensure; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_headless_agent.ex",
-      line: 182,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing headless agent liveness probe; pending owner-gated liveness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      line: 91,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing demo seed local probe; pending owner-gated demo helper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      line: 97,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn(agent_uri) do",
-      reason: "existing demo seed local spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      line: 112,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(session_uri) do",
-      reason: "existing demo seed session probe; pending owner-gated demo helper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      line: 120,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn(session_uri) do",
-      reason: "existing demo seed session spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex",
-      line: 218,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason: "existing sandbox seed template probe; pending owner-gated demo helper"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex",
-      line: 223,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn(uri) do",
-      reason: "existing sandbox seed template spawn; SpawnRegistry is owner-gated in PR1"
     },
     %{
       path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",

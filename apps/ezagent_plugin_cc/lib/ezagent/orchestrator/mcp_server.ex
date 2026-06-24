@@ -187,8 +187,8 @@ defmodule Ezagent.Orchestrator.McpServer do
       # self-resolve on the next reference. (Gating registration on a live spawn
       # would conflate "is a registered orchestrator" with "is running right now"
       # — the durable snapshot answers the former.)
-      _ = Ezagent.SpawnRegistry.spawn(session_uri)
-      _ = Ezagent.SpawnRegistry.spawn(orchestrator_uri)
+      _ = Ezagent.LocalRuntime.ensure_started(session_uri)
+      _ = Ezagent.LocalRuntime.ensure_started(orchestrator_uri)
 
       :ok
     else

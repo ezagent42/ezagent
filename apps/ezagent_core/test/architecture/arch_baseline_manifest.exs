@@ -73,7 +73,11 @@
   #   is a TEMPORARY rise: as plugins migrate off direct SpawnRegistry onto
   #   LocalRuntime (PR-2+), those plugin sites disappear and this cap RATCHETS DOWN
   #   well below 41. 41→43.
-  spawn_registry_call_sites: 43,
+  # RATCHET-DOWN #95 PR-2 (cc migration): the cc plugin's 6 direct SpawnRegistry
+  #   call sites moved onto LocalRuntime, so the scanned count dropped 43→36. Cap
+  #   lowered to actual to keep the gate tight (the LocalRuntime delegation sites
+  #   in core remain; only the cc plugin-side direct calls were removed). 43→36.
+  spawn_registry_call_sites: 36,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -92,7 +96,11 @@
   #   chokepoint) calls SpawnRegistry. SANCTIONED (added to the chokepoint allowlist),
   #   so off_chokepoint is unchanged. Temporary: ratchets back down as plugins
   #   migrate onto LocalRuntime (PR-2+). 36→37.
-  spawn_registry_modules: 37,
+  # RATCHET-DOWN #95 PR-2 (cc migration): 5 cc modules dropped their direct
+  #   SpawnRegistry references (cc_orchestrator_seed, mcp_server, cc_agent/spawn,
+  #   seed_cc_agent, seed_cc_sandbox), so the scanned module count fell 37→32. Cap
+  #   lowered to actual. 37→32.
+  spawn_registry_modules: 32,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -101,7 +109,10 @@
   # arch-cap-bump: +1 #907 — a cc-headless/codex-remote flavor module activates its
   #   pre-provisioned agent off-chokepoint (rehydrate, not create); creation still
   #   flows through the template chokepoint. 26→27.
-  spawn_registry_off_chokepoint_modules: 27,
+  # RATCHET-DOWN #95 PR-2 (cc migration): cc's off-chokepoint SpawnRegistry modules
+  #   moved onto LocalRuntime, so the scanned off-chokepoint count fell 27→22. Cap
+  #   lowered to actual. 27→22.
+  spawn_registry_off_chokepoint_modules: 22,
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,

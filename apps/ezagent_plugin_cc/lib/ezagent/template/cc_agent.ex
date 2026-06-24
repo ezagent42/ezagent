@@ -602,10 +602,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     to: Ezagent.PluginCc.Template.CcAgent.Spawn
 
   defp agent_kind_alive?(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
 
   defp pty_server_alive?(agent_uri), do: Ezagent.Domain.Pty.alive?(agent_uri)

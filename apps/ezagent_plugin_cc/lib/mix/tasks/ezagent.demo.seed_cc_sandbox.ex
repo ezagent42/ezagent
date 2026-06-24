@@ -215,16 +215,10 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   end
 
   defp ensure_template_kind(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      :error ->
-        case Ezagent.SpawnRegistry.spawn(uri) do
-          {:ok, pid} -> {:ok, pid}
-          {:error, {:already_started, pid}} -> {:ok, pid}
-          {:error, _} = err -> err
-        end
+    case Ezagent.LocalRuntime.ensure_started_detailed(uri) do
+      {:ok, _started_or_already, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, _} = err -> err
     end
   end
 
