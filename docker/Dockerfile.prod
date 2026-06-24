@@ -17,8 +17,9 @@ ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 MIX_ENV=prod DEBIAN_FRONTEND=noninteractive
 
-# build deps: build-essential/pkg-config for native ports (erlexec C port,
-# exqlite NIF); node for the web asset pipeline (esbuild/tailwind) + sidecar.
+# build deps: build-essential/pkg-config for the erlexec C port; node for the
+# web asset pipeline (esbuild/tailwind) + sidecar. (DB is Postgres via postgrex,
+# a pure-Elixir driver — no DB NIF to compile.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git tar ca-certificates curl xz-utils build-essential pkg-config \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -51,8 +52,8 @@ RUN mix compile
 RUN mix release ezagent
 
 # ============================ runtime ============================
-# Same Debian base as the builder ERTS → NIF/port ABI compatibility (exqlite,
-# erlexec). include_erts (mix release default) bundles ERTS, so no elixir/erlang
+# Same Debian base as the builder ERTS → NIF/port ABI compatibility (erlexec
+# C port). include_erts (mix release default) bundles ERTS, so no elixir/erlang
 # install needed here — only the C libs they link + the agent CLIs.
 FROM debian:bookworm-slim AS runtime
 
