@@ -18,6 +18,20 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
   alias Ezagent.World.IdentityData
 
   setup do
+    # Start the session domain so the `entity` SpawnRegistry scheme is
+    # registered (same pattern as create_agent_dispatch_test.exs).
+    # Hard-assert: if these fail, the test environment is broken — surface loudly.
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+
+    case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+      :ok -> :ok
+      {:error, {:already_registered, _}} -> :ok
+    end
+
+    assert "entity" in Ezagent.SpawnRegistry.registered_schemes(),
+           "entity spawn scheme not registered after starting :ezagent_domain_session — " <>
+             "bootstrap is incomplete; fix the test environment rather than silently skipping"
+
     # Mirror create_agent_dispatch_test.exs setup exactly.
     ws_name = "world-create-list-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
@@ -36,80 +50,62 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
     @tag :integration
     test "created agent URI appears in list_entities(workspace_uri, 'agents')",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      # Start the session domain so the `entity` SpawnRegistry scheme is
-      # registered (same pattern as create_agent_dispatch_test.exs).
-      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+      agent_name = "list-probe-#{System.unique_integer([:positive])}"
 
-      case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
-        :ok -> :ok
-        {:error, {:already_registered, _}} -> :ok
-      end
+      # Create the agent through the SAME facade the world dispatch calls.
+      # Using `curl` flavor: direct-spawn, no template class required, no cwd.
+      assert {:ok, %{agent_uri: agent_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{flavor: "curl", name: agent_name, cwd: "", with_pty: false},
+                 admin_ctx
+               )
 
-      # Skip if the entity spawn fn is not registered — mirrors the existing
-      # integration tests' bootstrap guard to avoid accepting any failure shape.
-      if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
-           "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
-        IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
-        :ok
-      else
-        agent_name = "list-probe-#{System.unique_integer([:positive])}"
+      expected_uri_str = URI.to_string(agent_uri)
 
-        # Create the agent through the SAME facade the world dispatch calls.
-        # Using `curl` flavor: direct-spawn, no template class required, no cwd.
-        assert {:ok, %{agent_uri: agent_uri}} =
-                 Workspace.create_agent(
-                   workspace_uri,
-                   %{flavor: "curl", name: agent_name, cwd: "", with_pty: false},
-                   admin_ctx
-                 )
+      # The created agent must appear in the list — this is the structural gate.
+      # list_entities reads from KindRegistry (live processes), not the DB,
+      # so an actually-spawned agent is present; a stub that returns {:ok, _}
+      # without spawning would NOT appear here, failing this assertion.
+      agent_rows = IdentityData.list_entities(workspace_uri, "agents")
+      listed_uris = Enum.map(agent_rows, & &1["uri"])
 
-        expected_uri_str = URI.to_string(agent_uri)
+      assert expected_uri_str in listed_uris,
+             "created agent #{expected_uri_str} is absent from list_entities — " <>
+               "create path is stubbed or the agent was not registered in KindRegistry. " <>
+               "Listed URIs: #{inspect(listed_uris)}"
 
-        # The created agent must appear in the list — this is the structural gate.
-        # list_entities reads from KindRegistry (live processes), not the DB,
-        # so an actually-spawned agent is present; a stub that returns {:ok, _}
-        # without spawning would NOT appear here, failing this assertion.
-        listed_uris =
-          IdentityData.list_entities(workspace_uri, "agents")
-          |> Enum.map(& &1["uri"])
+      # Bonus: the returned row shape matches the documented contract.
+      row = Enum.find(agent_rows, &(&1["uri"] == expected_uri_str))
 
-        assert expected_uri_str in listed_uris,
-               "created agent #{expected_uri_str} is absent from list_entities — " <>
-                 "create path is stubbed or the agent was not registered in KindRegistry. " <>
-                 "Listed URIs: #{inspect(listed_uris)}"
+      assert row["kind"] == "agent"
+      assert row["name"] == agent_name
+      assert is_binary(row["flavor"])
+      assert is_boolean(row["alive"])
 
-        # Bonus: the returned row shape matches the documented contract.
-        row = Enum.find(IdentityData.list_entities(workspace_uri, "agents"), &(&1["uri"] == expected_uri_str))
+      # Sanity: the workspace filter works — the agent appears under
+      # "agents" but NOT under "users".
+      listed_user_uris =
+        IdentityData.list_entities(workspace_uri, "users")
+        |> Enum.map(& &1["uri"])
 
-        assert row["kind"] == "agent"
-        assert row["name"] == agent_name
-        assert is_binary(row["flavor"])
-        assert is_boolean(row["alive"])
+      refute expected_uri_str in listed_user_uris,
+             "agent URI should not appear in the 'users' filter"
 
-        # Sanity: the workspace filter works — the agent appears under
-        # "agents" but NOT under "users".
-        listed_user_uris =
-          IdentityData.list_entities(workspace_uri, "users")
-          |> Enum.map(& &1["uri"])
+      # Cross-workspace isolation: list against a different workspace URI
+      # must NOT include the agent created in `workspace_uri`.
+      other_ws_uri = URI.new!("workspace://other-ws-#{System.unique_integer([:positive])}")
 
-        refute expected_uri_str in listed_user_uris,
-               "agent URI should not appear in the 'users' filter"
+      other_listed =
+        IdentityData.list_entities(other_ws_uri, "agents")
+        |> Enum.map(& &1["uri"])
 
-        # Cross-workspace isolation: list against a different workspace URI
-        # must NOT include the agent created in `workspace_uri`.
-        other_ws_uri = URI.new!("workspace://other-ws-#{System.unique_integer([:positive])}")
+      refute expected_uri_str in other_listed,
+             "agent from #{ws_name} should not appear under a different workspace"
 
-        other_listed =
-          IdentityData.list_entities(other_ws_uri, "agents")
-          |> Enum.map(& &1["uri"])
-
-        refute expected_uri_str in other_listed,
-               "agent from #{ws_name} should not appear under a different workspace"
-
-        # Confirm workspace scoping — the agent URI contains our workspace name.
-        assert String.contains?(expected_uri_str, ws_name),
-               "agent URI should contain the workspace name '#{ws_name}'"
-      end
+      # Confirm workspace scoping — the agent URI contains our workspace name.
+      assert String.contains?(expected_uri_str, ws_name),
+             "agent URI should contain the workspace name '#{ws_name}'"
     end
   end
 
@@ -121,7 +117,7 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
       assert {:error, :cwd_required_for_cc} =
                Workspace.create_agent(
                  workspace_uri,
-                 %{flavor: "cc", name: "no-cwd-probe", cwd: "", with_pty: false},
+                 %{flavor: "cc", name: "no-cwd-probe-#{System.unique_integer([:positive])}", cwd: "", with_pty: false},
                  admin_ctx
                )
     end
