@@ -51,7 +51,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
   topologies these mocks approximate.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.BindingRow
   alias Ezagent.Publisher.Event
@@ -59,11 +59,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
 
   @feishu_chat_dev "oc_83a4f1ff0bf627ffe26aa60647e5b04a"
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   # ============================================================
   # Scenario 12 — bind + outbound (mock)

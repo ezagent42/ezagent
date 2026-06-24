@@ -9,15 +9,14 @@ defmodule Ezagent.Behavior.ChatTest do
   `EzagentDomainInstanceMessage.Integration.ChatRoutingTest`.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
     :ok = EzagentDomainInstanceMessage.AgentBridgeTestAdapter.ensure_registered()
     :ok
   end

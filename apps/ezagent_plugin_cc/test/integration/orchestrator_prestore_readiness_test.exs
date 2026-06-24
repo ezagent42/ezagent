@@ -21,7 +21,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
   state a live MCP join sees while the gate is still polling. Pre-fix the
   pre-store did not exist and the binding was absent, so this fails closed.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
   alias Ezagent.Entity.{Session, User}
@@ -29,8 +29,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # Sandbox provided by EzagentCore.DataCase (#92).
 
     # Admin User Kind alive — orchestrator-spawn / owner-lineage paths read it.
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())

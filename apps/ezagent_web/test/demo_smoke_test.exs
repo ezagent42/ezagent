@@ -37,13 +37,9 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
 
   Test: AutoDerive.list_instances(:user) must contain entity://user/admin.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp create_session_via_workspace(short_name, creator_uri, opts) do
     template_name = Keyword.fetch!(opts, :template_name)

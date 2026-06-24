@@ -42,11 +42,11 @@ defmodule Ezagent.Socialware.PublicViewTest do
   end
 
   describe "public_view?/1 — Template-flag resolution" do
-    setup do
-      # spawned Session Kinds run in their own processes — share the sandbox.
-      Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-      :ok
-    end
+    # NOTE: spawned Session Kinds run in their own processes — `use
+    # EzagentCore.DataCase, async: false` already shares the sandbox via a
+    # drainable Agent owner, so a redundant `Sandbox.mode({:shared, self()})`
+    # here only re-globalized the connection onto the dying test pid and
+    # clobbered concurrent suites with "owner exited" errors (#92).
 
     test "true iff the session's materializing Template declares public_view: true" do
       u = System.unique_integer([:positive])

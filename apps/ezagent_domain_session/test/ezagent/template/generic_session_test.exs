@@ -1,13 +1,9 @@
 defmodule Ezagent.Template.GenericSessionTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Template.GenericSession
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   describe "template_name/0" do
     test "returns the stable id" do

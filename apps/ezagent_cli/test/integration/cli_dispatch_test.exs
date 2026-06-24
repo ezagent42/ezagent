@@ -1,11 +1,10 @@
 defmodule EzagentCli.Integration.CLIDispatchTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias EzagentCli.{Dispatch, TreeBuilder}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # Sandbox provided by EzagentCore.DataCase (#92).
 
     # Codex CLI/GUI audit 2026-05-24 HIGH-1: Dispatch.derive_caller/1
     # no longer silently falls back to admin. Tests must set the same

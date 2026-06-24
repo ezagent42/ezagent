@@ -20,17 +20,15 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   Per `feedback_completion_requires_invariant_test`.
   """
 
-  use ExUnit.Case, async: false
+  # #92: was `use ExUnit.Case` + a hand-rolled `checkout` + `{:shared, self()}`
+  # in `setup`, which made the dying test process the global shared owner and
+  # clobbered concurrent suites on exit. DataCase shares via a drainable Agent
+  # owner + drain teardown, so spawned Kinds share the sandbox safely.
+  use EzagentCore.DataCase, async: false
 
   @moduletag :umbrella_only
 
   alias Ezagent.{Capability, Invocation, Message, Users}
-
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
 
   # A 5-axis wildcard cap (the genesis shape) with the given granter. matches?/2
   # accepts it for ANY needed cap — so authorization hinges purely on predicate A.

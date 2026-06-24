@@ -10,9 +10,9 @@ defmodule Ezagent.MessageStoreTest do
   PR #149 (SPEC v2 §5.13): by_uri renamed to by_id; ref opt renamed to ref_id.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{Message, MessageStore}
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   @session_a URI.new!("session://system/default/main")
   @session_b URI.new!("session://team-alpha/default/other")
@@ -20,9 +20,7 @@ defmodule Ezagent.MessageStoreTest do
   @bot URI.new!("entity://team-alpha/agent/test_cc-builder")
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-
+    # Sandbox provided by EzagentCore.DataCase (#92).
     # Phase 9 PR-6 (SPEC v3 §7) — MessageStore.write/2 derives
     # workspace_uri via WorkspaceRegistry.lookup/1 on session_uri.
     # Bind both test sessions to the default workspace so writes
