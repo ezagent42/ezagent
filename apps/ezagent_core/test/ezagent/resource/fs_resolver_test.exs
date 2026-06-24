@@ -217,6 +217,7 @@ defmodule Ezagent.Resource.FsResolverTest do
       # through to :none (codex P1 round-5 HIGH).
       assert FsResolver.config_dir_type?("cc-agents")
       assert FsResolver.config_dir_type?("codex-agents")
+      assert FsResolver.config_dir_type?("codex-remote-agents")
       refute FsResolver.config_dir_type?("uploads")
       refute FsResolver.config_dir_type?("never-registered")
 
@@ -514,9 +515,13 @@ defmodule Ezagent.Resource.FsResolverTest do
       assert FsResolver.resolve(EzURI.resource("acme", t, "f"), scope("acme")) == :none
     end
 
-    test "core boot types (cc-agents/codex-agents/uploads) still register through the same precheck" do
+    test "core boot types (cc-agents/codex-agents/codex-remote-agents/uploads) still register through the same precheck" do
       types = MapSet.new(registered_types(), fn {t, _} -> t end)
-      assert MapSet.subset?(MapSet.new(["cc-agents", "codex-agents", "uploads"]), types)
+
+      assert MapSet.subset?(
+               MapSet.new(["cc-agents", "codex-agents", "codex-remote-agents", "uploads"]),
+               types
+             )
     end
 
     # ── Bug B: init-time discovery-replay of plugin resource_types/0 (restart self-heal) ──
@@ -654,7 +659,7 @@ defmodule Ezagent.Resource.FsResolverTest do
     # so two plugins never collide. The lint is a TEST (not a runtime warning in
     # register_all, which now also carries core's bare names). Core types keep
     # their bare names by design and are exempt.
-    @core_bare_types ["cc-agents", "codex-agents", "uploads"]
+    @core_bare_types ["cc-agents", "codex-agents", "codex-remote-agents", "uploads"]
 
     test "core's bare types are the only un-prefixed types declared in-tree" do
       # Enumerate every plugin's resource_types/0 in the umbrella and assert each
