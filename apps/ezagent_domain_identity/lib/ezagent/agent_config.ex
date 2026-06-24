@@ -107,6 +107,7 @@ defmodule Ezagent.AgentConfig do
          {:ok, layer} <- layer(attrs),
          {:ok, key} <- key(attrs),
          {:ok, path} <- path(attrs),
+         :ok <- authorize_mutation(agent_uri, caller, caps, key),
          {:ok, body} <- layer_body(agent_uri, layer, key),
          {:ok, updated_body} <- delete_in_body(body, path),
          {:ok, args} <-
@@ -229,6 +230,29 @@ defmodule Ezagent.AgentConfig do
 
   defp action_uri(agent_uri, action) do
     Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=config_evolve.#{action}")
+  end
+
+  # Authorization preflight for `delete_path` BEFORE any existence-revealing read.
+  #
+  # `delete_path` is read-modify-write at the facade: it reads the current body
+  # (`layer_body`) and computes the deletion (`delete_in_body`) before the gated
+  # `apply_config_delta` dispatch. Without this preflight, a caller lacking the
+  # manage-cap would get `:config_not_found` / `:path_not_found` from those reads
+  # — an existence oracle (the #958 info-leak) — instead of `:unauthorized`.
+  #
+  # `read_cascade` is gated on the SAME cap the mutation needs — `cap(:agent,
+  # Manage, :any)` (see `Ezagent.Behavior.ConfigEvolve.required_caps/0`, where
+  # `apply_config_delta` and `read_cascade` are defined together) — and the
+  # dispatch gate rejects an unauthorized caller BEFORE its handler reads. So
+  # probing it here authorizes via the real gate (no divergent cap check) and an
+  # unauthorized caller fails closed with `:unauthorized`, learning nothing about
+  # what exists. An authorized caller passes regardless of existence, so the
+  # precise `:config_not_found` / `:path_not_found` error is preserved for them.
+  defp authorize_mutation(agent_uri, caller, caps, key) do
+    case read_cascade(agent_uri, caller, caps, keys: [key]) do
+      {:ok, _cascade} -> :ok
+      {:error, _reason} = error -> error
+    end
   end
 
   defp layer_body(agent_uri, layer, key) do

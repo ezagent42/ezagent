@@ -116,6 +116,36 @@ defmodule Ezagent.AgentConfigTest do
     assert state.effective_body == %{"soul_md" => "# Soul"}
   end
 
+  test "delete_path is denied without the manage-cap and does not leak path existence (#958)",
+       %{agent: agent} do
+    stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
+
+    # A non-existent layer/key/path MUST fail with :unauthorized (the auth gate),
+    # NOT :config_not_found / :path_not_found — otherwise an uncapped caller could
+    # probe which config fields exist (the #958 existence oracle).
+    assert {:error, :unauthorized} =
+             AgentConfig.delete_path(agent, stranger, MapSet.new(), %{
+               key: "nonexistent.key",
+               path: ["nope"],
+               turn_id: turn_id("leak-nonexistent")
+             })
+
+    # An existing path is likewise denied — same error, so the two are
+    # indistinguishable to an uncapped caller.
+    assert {:error, :unauthorized} =
+             AgentConfig.delete_path(agent, stranger, MapSet.new(), %{
+               path: ["tone"],
+               turn_id: turn_id("leak-existing")
+             })
+  end
+
+  test "repoint is denied without the agent manage-cap", %{agent: agent} do
+    stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
+
+    assert {:error, :unauthorized} =
+             AgentConfig.repoint(agent, stranger, MapSet.new(), %{config_id: "whatever"})
+  end
+
   test "repoint rolls a key back to an existing in-scope object", %{
     agent: agent,
     manager: manager
