@@ -326,7 +326,10 @@ them cost:
 
 If those three clear, CF Containers + a thin Worker front (per the #65 plan) is a
 reasonable target — execute the staged per-workspace **full-migration plan in
-§7**. Until then, the existing cloudflared-tunnel host path stays
+§7**. **For the current alpha, none of that is needed: stay on Mac + cloudflared
+tunnel (§8.5)** — it sidesteps every blocker above at $0 per-team compute. The one
+open item there is finishing containerization (Postgres is not yet in the prod
+compose — §8.5). Until then, the existing cloudflared-tunnel host path stays
 the production answer and CF stays a spike on throwaway subdomains (hard
 boundaries from #65 README still apply).
 
@@ -530,6 +533,65 @@ savings *if* every team fits within standard-4. Choose **AWS** when a team needs
 more than 4 vCPU/12 GiB, when you want native persistent volumes without FUSE
 compromises, or when sustained-CPU + Reserved pricing tips the math — at the cost
 of higher always-on baseline, pricier egress, and more ops.
+
+## 8.5 Alpha-phase recommendation: stay on Mac + cloudflared tunnel — and finish containerizing it
+
+**Recommendation (alpha): keep the current Mac + cloudflared-tunnel deployment.**
+This investigation *reinforces* it: the only CF blocker with no escape (the 4 vCPU
+per-team ceiling, §8.3) simply does not exist on a Mac Studio (M3 Ultra = 28-core
+/ 96 GB ≫ standard-4), and a Mac gives native persistent SSD (no R2-FUSE perf
+compromise), local-PG zero latency, and **$0 per-team cloud compute**. CF tunnel
+still provides the CF edge / DNS / TLS for free with no compute-egress metering.
+
+| Dimension | Mac + CF tunnel | CF Containers | AWS SG |
+|---|---|---|---|
+| per-team compute | **$0** (own hardware) | $2.7–5.5/day | $3.4–6.6/day |
+| 4 vCPU wall (§3.1) | **none** (28-core box) | **hard, no escape** | none |
+| agent working disk | **native SSD, no cap** | 20 GB ephem + R2-FUSE (slow) | EBS/EFS |
+| ops | **lowest** (one box) | medium | highest |
+
+**When to revisit** (signals, not a date): (1) need SLA/HA — one Mac + a home/office
+uplink is a single point of failure; (2) tenant count needs per-team elastic
+scale / isolation / billing; (3) the box is genuinely saturated (per §2 the
+orchestration core is tiny; the agent subprocesses saturate first); (4) the host
+must leave your control. Then choose per §8.4: fits standard-4 → CF Containers;
+needs a bigger box or native volumes → AWS.
+
+### Containerization completeness check (2026-06-24)
+
+Allen's goal: the stay-on-Mac path should be **fully containerized — BEAM,
+agents, and network (tunnel + proxy)**. Audit of `docker/docker-compose.prod.yml`
++ `Dockerfile.prod` + `config/runtime.exs`:
+
+| Component | Containerized? | Evidence / gap |
+|---|---|---|
+| **BEAM app** | ✅ | `mix release` multi-stage `Dockerfile.prod` → `ezagent-prod` service |
+| **Agents (claude/codex/uv/node/git)** | ✅ | baked into the runtime image (`@anthropic-ai/claude-code@2.1.162`, `@openai/codex@0.137.0`, `uv`, node 22, git); run as erlexec subprocesses inside the BEAM container |
+| **Tunnel (cloudflared)** | ✅ | `cloudflared` service in prod compose, `depends_on: ezagent healthy`, prod-config.yml + tunnel creds mounted |
+| **Postgres** | ❌ **BLOCKING** | prod compose has **no `postgres` service and sets no `DATABASE_URL`**, but `runtime.exs` (prod) now **`raise`s if `DATABASE_URL` is missing** (Repo = `Ecto.Adapters.Postgres`, dep `postgrex`). `docker-compose.prod.yml` (dated pre-migration) would **crash on boot** today. The only PG compose present (`docker-compose.pg.yml`) is a **throwaway pg-compat-audit** DB (port 55432, audit creds), not a prod service. |
+| **Proxy** | ⚠️ host-side | agents/cloudflared reach providers via `${ESR_PROXY:-http://host.docker.internal:7897}` — a **proxy on the Mac host**, not a compose service. Works, but not "fully containerized." |
+| Stale artifacts | ⚠️ | `prod_home` volume comment still says it holds "DB"; `Dockerfile.prod` comments still mention "exqlite" — both SQLite-era leftovers, now misleading. |
+
+**Verdict: ~80% containerized, but NOT complete for the post-PG world.** The one
+blocking gap is **Postgres is not in the prod stack** — the prod compose predates
+the SQLite→PG migration. To make stay-on-Mac fully containerized:
+
+1. **Add a `postgres:15` service to `docker-compose.prod.yml`** (named volume for
+   `/var/lib/postgresql/data`, healthcheck, `restart: unless-stopped`), and set
+   `DATABASE_URL=ecto://…@postgres/ezagent_prod` on the `ezagent` service with
+   `depends_on: postgres (service_healthy)` so `Release.migrate()` runs after PG
+   is up.
+2. **Fix the stale `prod_home` comment** (DB no longer lives there — only profile
+   / credentials / agent working dirs do) and the `Dockerfile.prod` exqlite note.
+3. **PG backup** for the Mac box: `pg_dump`/PITR on a schedule (this is the D1 leg
+   of the §5 backup design, now local instead of managed).
+4. *(Optional)* containerize the **proxy** as a compose service (e.g. a
+   clash/mihomo container) if "no host dependency" is a hard requirement;
+   otherwise the host proxy is fine for alpha.
+
+These are a small, well-scoped follow-up task (compose + entrypoint wiring +
+one E2E boot test), **not** done in this docs-only return — recommend a separate
+branch off the PG-migration branch.
 
 ## 9. Sources
 

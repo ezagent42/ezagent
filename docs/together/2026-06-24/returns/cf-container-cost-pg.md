@@ -34,6 +34,14 @@ deliverable.
   EBS/EFS) and bills CPU 24/7 (CF bills CPU only when active → CF wins on
   bursty/idle, AWS wins on sustained-CPU + Reserved). CF wins egress decisively
   ($0.025/GB+1TB free vs $0.12/GB+100GB free).
+- **8.5 Alpha recommendation + containerization check:** **stay on Mac + cloudflared
+  tunnel** — sidesteps every blocker at $0 per-team compute (M3 Ultra ≫ standard-4).
+  Audited the docker stack: **BEAM ✅, agents ✅ (claude/codex/uv/node/git baked into
+  `Dockerfile.prod`), tunnel ✅ (cloudflared service)** — but **Postgres ❌ BLOCKING**:
+  `docker-compose.prod.yml` predates the PG migration (no postgres service, no
+  `DATABASE_URL`) while `runtime.exs` now *raises* without it → prod stack would
+  crash on boot. Proxy is host-side (⚠️). Documented ~80%-done + exact gap-closing
+  steps. **Flagged as a separate follow-up task, not done in this docs-only return.**
 
 **Headline findings:**
 - The **PG migration removed the #1 blocker** (ephemeral container disk couldn't
