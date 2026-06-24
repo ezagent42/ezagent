@@ -12,7 +12,28 @@
 
 A grounded investigation, written as a durable note. Scope grew during the run
 per Allen: base question + agent-FS durable storage + full-backup design +
-full-migration plan. All four are in the deliverable.
+full-migration plan + **four follow-up questions** (§8: PG-on-CF/Hyperdrive,
+never-sleep baseline, 20 GB breakthrough, AWS Singapore comparison). All in the
+deliverable.
+
+**Follow-up answers (§8) — two of them updated my own earlier claims:**
+- **8.1 PG on CF?** Hyperdrive ≠ DB (it's a pooler/cache in front of external PG);
+  CF has no first-party Postgres. **But since 2026-06-18 you can provision managed
+  PlanetScale Postgres from CF and bill it on your CF account** (~$10–50/mo,
+  *shared* not per-team). Container→PG over Hyperdrive isn't a Container-egress line.
+- **8.2 Never-sleep baseline (per Allen):** memory+disk billed 24/7 (CPU still
+  active-only). Per-team: **~$2.7/day (standard-3) / ~$5.5/day (standard-4)**;
+  floor (mem+disk only) $1.83 / $2.71/day.
+- **8.3 20 GB cap — no longer a dead end:** CF now supports **R2-FUSE mount**
+  (unlimited + durable, but not SSD-speed) + **disk snapshots (soon)**. The hard
+  wall is now just blocker #1 (**4 vCPU ceiling, no CF escape**). *Corrects the
+  earlier "R2 can't be mounted" claim in §3.2/§5.*
+- **8.4 AWS Singapore (ap-southeast-1):** per-team/day **CF ~$2.7–5.5** vs **EC2
+  ~$3.4 (Reserved) – 5.6 (on-demand)** vs **Fargate ~$6.6**. Same ballpark — cost
+  isn't the decider. AWS **removes both CF ceilings** (bigger boxes + native
+  EBS/EFS) and bills CPU 24/7 (CF bills CPU only when active → CF wins on
+  bursty/idle, AWS wins on sustained-CPU + Reserved). CF wins egress decisively
+  ($0.025/GB+1TB free vs $0.12/GB+100GB free).
 
 **Headline findings:**
 - The **PG migration removed the #1 blocker** (ephemeral container disk couldn't

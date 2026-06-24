@@ -4,7 +4,7 @@
 **Branch:** `investigate/cf-container-cost-pg`
 **Author:** Claude (agent dev), for Allen
 **Supersedes the open storage question in:** `docs/experimental/cloudflare-deploy/README.md` (#65 spike)
-**Pricing source:** Cloudflare Containers docs, fetched 2026-06-24 (see §8).
+**Pricing source:** Cloudflare + AWS docs, fetched 2026-06-24 (see §9).
 
 ---
 
@@ -14,27 +14,32 @@
 SQLite 单文件放不住)——DB 现在是外部托管,容器变成**无状态**,这条路因此从"基本不可行"
 变成"技术上可行、但有两个硬天花板"。
 
-**成本不是瓶颈。** 单个团队(≈ 一个 workspace = deployment unit)每天的 CF 资源成本大约:
+**成本不是瓶颈。** 单个团队(≈ 一个 workspace = deployment unit)每天的 CF 资源成本
+(**按 Allen 指示:节点大概率永不休眠 → 内存 24/7 计费,见 §4/§8.2**):
 
-| 场景 | 实例 | 假设 | **$/天** | $/月 |
+| 场景 | 实例 | 假设(永不休眠 24/7) | **$/天** | $/月 |
 |---|---|---|---|---|
-| 乐观(下班后容器休眠) | standard-3 | 10h 唤醒, CPU ~30% | **~$1.2** | ~$26 (22 工作日) |
-| 现实(BEAM 不干净休眠) | standard-3 | 24h 唤醒, CPU 集中在工作时段 | **~$2.5** | ~$75 |
-| 重载(多 agent + 构建) | standard-4 | 24h 唤醒, CPU ~40% of 4 vCPU | **~$5.5** | ~$164 |
+| 典型团队 | standard-3 | CPU ~25% of 2 vCPU | **~$2.7** | ~$80 |
+| 重载(多 agent + 构建) | standard-4 | CPU ~40% of 4 vCPU | **~$5.5** | ~$165 |
+| 固定地板(纯挂着不算 CPU) | standard-3 / standard-4 | 只算 mem+disk 24/7 | **$1.83 / $2.71** | ~$55 / ~$81 |
 
-(以上**只算 CF 资源**;PG 是外部托管,不在 CF,不计入 — 见 §4 scope。)
+(只算 CF 资源。**DB 见 §8.1**:Hyperdrive 不是数据库;但 2026-06-18 起可在 CF 控制台开
+PlanetScale Postgres 并计入 CF 账单 —— 这是**全账户共享**成本,不是 per-team。)
 
-**真正的瓶颈是两个硬天花板,不是钱:**
-1. **标准实例上限 standard-4 = 4 vCPU / 12 GiB / 20 GB disk,不能再往上竖直扩。**
-   一个团队同时跑多个 CC/Codex agent + 构建/测试,峰值可能顶到 4 vCPU。ESR 是单节点
-   BEAM 持有 session 状态,**不能把一个团队横向拆到多个容器**。
-2. **20 GB ephemeral 容器磁盘 vs. agent 工作目录。** PG 解决了 DB 持久化,但 agent 的
-   `project_cwd`(代码 checkout / node_modules / 构建产物 / `config_home` 凭证)仍然落在
-   **容器本地磁盘**——既 ephemeral 又封顶 20 GB。这是 **PG 迁移没有解决的新阻塞点**。
+**两个硬天花板,但 #2 现在有 CF 生态内的破解办法(§8.3):**
+1. **standard-4 = 4 vCPU / 12 GiB / 20 GB disk 是 per-instance 上限,不能竖直扩。**
+   (2026-02-25 的 "15x" 是**账户聚合**并发上限,不是单实例。)一个团队峰值可能顶到 4 vCPU,
+   而 ESR 是单节点 BEAM 持有 session 状态,**不能把一个团队横向拆到多个容器**。**这是真正
+   的硬墙。**
+2. **20 GB ephemeral 磁盘 vs. agent 工作目录** —— **不再是死路**:CF 现已支持把 **R2 桶
+   以 FUSE 挂载**进容器(s3fs/tigrisfs/gcsfuse),容量实质无限 + 持久,代价是**没有原生
+   SSD 性能**;另有 **Snapshots(coming soon)**可持久化/恢复容器或目录磁盘。(这更正了本文
+   早先"R2 不能挂载"的说法。)
 
-**判断:CF Containers 现在"可做 spike",但还不是干净的生产落点。** 成本可接受;放行的前提
-是先验证「磁盘/工作区持久化 + 是否会因为持有 LiveView/WS 而永不休眠 + 单团队峰值 CPU 是否
-撞 4 vCPU」这三件事(§6),并配套 durable-storage + 全量备份(§5)、全量迁移(§7)方案。
+**判断:CF Containers 现在"值得做 spike",成本可接受;最大的剩余硬约束是单团队 4 vCPU 上限。**
+对比 AWS 新加坡(EC2/Fargate)见 **§8.4** —— AWS 同时去掉了这两个天花板,但代价是更高的常驻
+计费 + 更贵的 egress + 更重的运维。放行前验证三件事(§6),配套 durable-storage/备份(§5)、
+全量迁移(§7)方案。
 
 ---
 
@@ -93,7 +98,7 @@ memory, and disk during an active workday.
 
 ### 3.1 Compute ceiling — standard-4 is the top, no vertical scale beyond it
 
-Predefined instance types (CF docs, §8):
+Predefined instance types (CF docs, §9):
 
 | Type | vCPU | Memory | Disk |
 |------|------|--------|------|
@@ -132,9 +137,13 @@ These live on **container-local disk**, which on CF Containers is **ephemeral
   artifacts + caches for an active multi-agent team can plausibly exceed 20 GB.
   Needs measurement against a real team workload before relying on it.
 
-The clean fix is externalizing working state (R2-backed or a durable mounted
-volume) — which CF Containers do **not** natively provide as a persistent
-volume. This is net-new work the PG migration did not address.
+The clean fix is externalizing working state. **Correction (2026-06-24): CF now
+*does* offer this** — Containers support mounting an **R2 bucket as a FUSE
+filesystem** (capacity effectively unlimited + durable), and **disk Snapshots are
+"coming soon."** So the cap is no longer a dead end — see **§8.3** for the
+breakthrough and its performance caveat (FUSE is not native-SSD speed, which
+matters for IO-heavy git/build dirs). It remains net-new integration work the PG
+migration itself did not address.
 
 ## 4. Cost model — CF resources only
 
@@ -213,11 +222,15 @@ real backup story must cover *both consistently*, not just the DB.
 | **D1 — Postgres** | sessions, messages, routing, snapshots, audit, idempotency | durable (external PG) | PG automated backup + PITR |
 | **D2 — agent FS** | `project_cwd` (code, build artifacts, `node_modules`), `config_home` (credentials, `.mcp.json`, settings) | **ephemeral container disk** | none yet — this is the gap |
 
-CF has no persistent mounted volume for Containers, and **R2 is object storage,
-not a POSIX filesystem** — agents need a real FS for `git`/`node`/builds, so you
-**cannot mount R2 as the live working dir**. The durable layer therefore has to
-be a **sync/snapshot** relationship between local working disk and R2, not a
-direct mount.
+**Correction (2026-06-24):** CF now supports **mounting an R2 bucket as a FUSE
+filesystem** inside a Container (s3fs/tigrisfs/gcsfuse baked into the image,
+mounted at startup), plus **disk Snapshots "coming soon."** So there *is* a
+persistent-FS option now (§8.3). The remaining caveat is **performance**: FUSE
+over R2 is **not native-SSD speed**, so IO-heavy live working dirs (`git`,
+`node_modules`, builds) should stay on local SSD (within the 20 GB), while R2 FUSE
+serves **large/cold data + the durable slice**. So the design is a **hybrid**:
+hot working dir on local disk, durable + overflow on R2-FUSE — not "R2 can't be
+mounted" as originally written.
 
 ### 5.2 Minimize the durable footprint first (classify before you back up)
 
@@ -302,11 +315,14 @@ them cost:
    ever hit CF's inactivity timeout? Drives the memory bill (§4.1) *and* whether
    "scale-to-zero" economics apply at all to interactive sessions (they largely
    don't if it never sleeps).
-2. **Working-dir durability + 20 GB cap** (§3.2) — externalize `project_cwd` /
-   `config_home` (durable-storage + full-backup design in **§5**) and measure
-   real team disk usage against the 20 GB wall.
-3. **Single-team peak CPU vs. 4 vCPU** (§3.1) — can a real multi-agent team's
-   build/test bursts be served under standard-4 without a shardable escape hatch?
+2. **Working-dir durability + 20 GB cap** (§3.2) — *no longer a hard wall* (§8.3:
+   R2-FUSE mount + snapshots-soon). Now a **performance** question: validate that
+   a hybrid (hot dir on local SSD, durable/overflow on R2-FUSE) is fast enough for
+   `git`/build workloads; wire it to the §5 backup design.
+3. **Single-team peak CPU vs. 4 vCPU** (§3.1) — *the one ceiling with no CF escape*
+   — can a real multi-agent team's build/test bursts be served under standard-4?
+   If not, that single team needs **AWS (§8.4)** or another non-CF host; CF can't
+   give it a bigger box.
 
 If those three clear, CF Containers + a thin Worker front (per the #65 plan) is a
 reasonable target — execute the staged per-workspace **full-migration plan in
@@ -391,12 +407,145 @@ egress fee**) + normal container runtime during soak. The real cost is the
 just the §4 per-team daily rate for the teams already cut over. No separate
 migration line item of note.
 
-## 8. Sources
+## 8. Follow-up Q&A (Allen, 2026-06-24)
+
+Four questions after the first draft. Each is answered against **live CF/AWS docs
+fetched 2026-06-24** (§9). Two of these supersede claims in §3–§5 above.
+
+### 8.1 Can Postgres be hosted "on Cloudflare" (via Hyperdrive)?
+
+**Short answer: not on CF's *own* servers — but since 2026-06-18 you can provision
+managed Postgres *through* Cloudflare and put it on your CF bill.**
+
+- **Hyperdrive is not a database.** It is a global **connection pooler + query
+  cache** that sits in front of an *existing* external Postgres (any PG: RDS,
+  Neon, PlanetScale, self-host). It accelerates; it does not store.
+- **Cloudflare has no first-party managed Postgres.** It does not run PG on its
+  own infrastructure.
+- **New (changelog 2026-06-18):** you can **create a managed PlanetScale Postgres
+  from the Cloudflare dashboard and bill PlanetScale usage through your Cloudflare
+  account** (pay-as-you-go; contract customers from July 2026). The DB is **hosted
+  by PlanetScale**, not CF — but it appears on your **CF invoice** at PlanetScale's
+  standard pricing, and connects to Workers/Containers via Hyperdrive.
+
+**Implication for "CF resources only":** the DB can now legitimately be a **CF
+invoice line item**. Rough cost (PlanetScale standard pricing): **PS-10 single
+node ≈ $10/mo**, **PS-10 HA (3-node) ≈ $30/mo**, **PlanetScale Metal ≈ $50/mo**,
+storage 10 GB included then ~$0.125–0.50/GB. **This is a single shared cluster
+serving all workspaces — an account-level cost, not per-team** → amortized it is
+pennies/team/day. It does not move the per-team verdict.
+
+> Caveat answered: container→PG traffic over Hyperdrive stays inside CF's edge and
+> carries "no separate metering" — so it is *not* a Container egress line. (This
+> partially resolves the §4.3 open question.)
+
+### 8.2 Assume the node never sleeps (per Allen)
+
+Confirmed as the baseline: a BEAM node holding live LiveView/WS + running agents +
+periodic timers **will, in practice, not hit CF's inactivity timeout**. So **memory
+and disk are billed 24/7** (CPU is still active-usage-only). The §4 "best case
+(sleeps)" row is therefore **not operative** — use these:
+
+| Instance | Mem 24/7 | Disk 24/7 | **Floor (mem+disk)/day** | + CPU (typical) | **/day** | /mo |
+|---|---|---|---|---|---|---|
+| standard-3 (2 vCPU/8 GiB/16 GB) | $1.73 | $0.10 | **$1.83** | ~$0.86 @25% | **~$2.7** | ~$80 |
+| standard-4 (4 vCPU/12 GiB/20 GB) | $2.59 | $0.12 | **$2.71** | ~$2.77 @40% | **~$5.5** | ~$165 |
+
+The **memory floor is now unavoidable** (no scale-to-zero relief). CF's one
+remaining cost advantage vs. always-on VMs is that **CPU is still billed only when
+actually computing** — see §8.4 for why that matters against AWS.
+
+### 8.3 Is 20 GB a hard limit? Breaking it within the CF ecosystem
+
+- **It is a *per-instance* limit** (standard-4 max = 20 GB; custom max also 20 GB;
+  ratio ≤ 2 GB disk per 1 GiB mem). The 2026-02-25 "15×" increase was
+  **account-aggregate** (disk 2 TB → 30 TB, vCPU 100 → 1,500, mem 400 GiB → 6 TiB),
+  **not** per-instance. All container disk is **ephemeral** (fresh disk on wake).
+- **Breakthroughs inside CF:**
+  1. **R2 FUSE mount** — mount an R2 bucket as a filesystem (s3fs / tigrisfs /
+     gcsfuse in the image). **Capacity effectively unlimited + durable.** Caveat:
+     **not native-SSD performance** — fine for large/cold/static data, risky for
+     IO-heavy `git`/`node_modules`/build trees.
+  2. **Disk Snapshots (coming soon)** — quickly persist/restore a container's (or
+     a directory's) disk across sleeps.
+  3. **Workers KV / D1 / Durable Objects** — for structured spill, not a general FS.
+- **Recommended pattern:** **hybrid** — hot working dir on the 20 GB local SSD,
+  R2-FUSE for overflow + the durable slice (§5). This **dissolves blocker #2** as
+  a hard wall, leaving only a **performance** question to validate for build
+  workloads. Blocker #1 (4 vCPU ceiling) has **no** equivalent escape.
+
+### 8.4 Same setup on AWS Singapore (ECS/EC2) — how cost changes
+
+AWS **ap-southeast-1** (Singapore). Rates ≈ as of 2026-06-24 (Singapore ≈ +13%
+over us-east-1; flagged approximate — confirm in AWS Calculator before quoting).
+Modeled per team, **never-sleep / always-on**, 4-vCPU class to match standard-4,
+durable storage included.
+
+**Unit rates (ap-southeast-1, approx):**
+- EC2 m6i.xlarge (4 vCPU/16 GiB, Intel): ≈ **$0.224/hr**
+- EC2 m7g.xlarge (4 vCPU/16 GiB, Graviton): ≈ **$0.18/hr**
+- Fargate: ≈ **$0.0466/vCPU-hr** + **$0.00511/GiB-hr**
+- EBS gp3: ≈ **$0.10/GB-month** (durable block storage)
+- Data-transfer-out: **$0.12/GB** (first 100 GB/mo free account-wide)
+- (vs CF: CPU $0.072/active-vCPU-hr, mem $0.009/GiB-hr, egress $0.025/GB + 1 TB free)
+
+**Per-team/day (never-sleep, 4-vCPU class, ~50 GB durable disk):**
+
+| Platform | Compute/day | Durable disk/day | Egress | **/day** | /mo | 4-vCPU ceiling? | Native durable FS? |
+|---|---|---|---|---|---|---|---|
+| **CF standard-4** (active-CPU billing) | mem $2.59 + CPU ~$2.77 @40% | 20 GB ephem incl; R2-FUSE pennies | ~$0 (1 TB free) | **~$5.5** | ~$165 | **HARD** 4/12/20 | R2-FUSE (slow) / snapshots-soon |
+| **AWS EC2 m6i.xlarge** on-demand | $5.38 (full 4 vCPU 24/7) | EBS $0.16 | $0.12/GB | **~$5.6** | ~$168 | **none** (→2xl/4xl…) | EBS/EFS native |
+| **AWS EC2 m7g.xlarge** (Graviton) | $4.32 | $0.16 | $0.12/GB | **~$4.6** | ~$138 | none | native |
+| **AWS EC2 m6i.xlarge + 1-yr Savings** (~40% off) | ~$3.2 | $0.16 | $0.12/GB | **~$3.4** | ~$102 | none | native |
+| **AWS Fargate** 4 vCPU/16 GiB | $6.43 | EFS extra | $0.12/GB | **~$6.6** | ~$198 | task max 16 vCPU/120 GiB | EFS |
+
+**What changes on AWS — the real story is not the headline price (all within
+~1.5×), it's the trade structure:**
+
+1. **Both CF ceilings vanish.** No 4 vCPU/12 GiB wall — pick m6i.2xlarge (8/32),
+   4xlarge, etc., so a heavy team that would blow past standard-4 just gets a
+   bigger box. **Native persistent EBS/EFS** solves the agent-FS durability +
+   capacity problem cleanly (no FUSE perf compromise). *This — not cost — is the
+   reason to consider AWS.*
+2. **AWS bills provisioned CPU 24/7; CF bills CPU only when active.** CF's per-vCPU
+   rate ($0.072/vCPU-hr) is actually *higher* than AWS ($0.047–0.056/vCPU-hr) — CF
+   only wins because idle vCPUs cost nothing. So: **bursty / idle-heavy interactive
+   teams → CF is cheaper** (drops toward $2.7–3.5/day); **high sustained CPU →
+   AWS is cheaper per vCPU, and Reserved/Savings (~40%) makes AWS the cheapest
+   option (~$3.4/day).** Fargate is the most expensive always-on option.
+3. **Egress: CF wins decisively** — $0.025/GB + 1 TB free vs AWS $0.12/GB
+   (~5×) + only 100 GB free. For a streaming-heavy app (live terminals, agent
+   output over WS) AWS egress can become a real line item at scale; for one team
+   it's small either way.
+4. **Ops burden:** EC2 = you manage instances/OS/patching/autoscaling; Fargate =
+   serverless-ish but pricier; CF = most managed (thin Worker + container). AWS
+   buys headroom at the cost of more ops.
+5. **DB:** on AWS you'd pair with **RDS Postgres (Singapore)** (db.t4g/db.m6g ≈
+   $25–70/mo shared) instead of PlanetScale-via-CF — comparable shared cost.
+
+**Bottom line of the comparison:** per-team daily cost is in the same ballpark
+(**CF ~$2.7–5.5**, **AWS EC2 ~$3.4–5.6**, **Fargate ~$6.6**). **Cost is not the
+deciding factor.** Choose **CF** for managed simplicity, cheap egress, and bursty
+savings *if* every team fits within standard-4. Choose **AWS** when a team needs
+more than 4 vCPU/12 GiB, when you want native persistent volumes without FUSE
+compromises, or when sustained-CPU + Reserved pricing tips the math — at the cost
+of higher always-on baseline, pricier egress, and more ops.
+
+## 9. Sources
 
 - [Cloudflare Containers — Pricing](https://developers.cloudflare.com/containers/pricing/)
 - [Cloudflare Containers — Limits & Instance Types](https://developers.cloudflare.com/containers/platform-details/limits/)
 - [Cloudflare changelog — new CPU pricing (active-usage based), 2025-11-21](https://developers.cloudflare.com/changelog/2025-11-21-new-cpu-pricing/)
 - [Cloudflare blog — Containers public beta](https://blog.cloudflare.com/containers-are-available-in-public-beta-for-simple-global-and-programmable/)
+- [Cloudflare changelog — higher container resource limits (15× account aggregate), 2026-02-25](https://developers.cloudflare.com/changelog/post/2026-02-25-higher-container-resource-limits/)
+- [Cloudflare Containers — FAQ (R2 FUSE mount, ephemeral disk, snapshots coming soon)](https://developers.cloudflare.com/containers/faq/)
+- [Cloudflare Hyperdrive — Overview](https://developers.cloudflare.com/hyperdrive/)
+- [Cloudflare changelog — PlanetScale Postgres/MySQL billed via Cloudflare, 2026-06-18](https://developers.cloudflare.com/changelog/post/2026-06-18-planetscale-databases-cloudflare-billing/)
+- [PlanetScale Postgres — pricing](https://planetscale.com/docs/postgres/pricing)
+- [AWS Fargate — pricing](https://aws.amazon.com/fargate/pricing/) ·
+  [AWS EC2 — pricing](https://aws.amazon.com/ec2/pricing/) ·
+  [AWS EBS — pricing](https://aws.amazon.com/ebs/pricing/) ·
+  [ap-southeast-1 regional rates](https://aws-pricing.com/ap-southeast-1.html)
 - Internal: `docs/experimental/cloudflare-deploy/README.md` (#65 spike),
   `docs/notes/v1-stress-test-results-2026-05-22.md`,
   `docs/notes/workspace-as-deployment-unit.md`.
