@@ -130,13 +130,14 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
+  @type plan :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  @type scope :: :body | :shell | :both
+
   @doc """
   Plan a request into `{:simple}` or `{:complex, %{title, sections}}` — the
   Phase-1 orchestrator's pre-classification (decision D-1). Calls the planner LLM;
   a failed/ambiguous reply degrades to `{:simple}` so generation always proceeds.
   """
-  @type plan :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
-  @type scope :: :body | :shell | :both
   @spec decompose(String.t()) :: {plan(), scope()}
   def decompose(user_text) when is_binary(user_text) do
     case call_llm(Prompts.decompose_system(), user_text) do
