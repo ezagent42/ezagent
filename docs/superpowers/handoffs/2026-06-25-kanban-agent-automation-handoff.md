@@ -17,12 +17,25 @@
 3. main 在研 agent 配置：`docs/together/2026-06-24/agent-config-*.md`（backend-contract / delivery / frontend-contract）。
 4. kanban Behavior：`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex`（23 个 action + per-node CapBAC `owner_or_admin?`/`admin?`）。
 
-## 3. 三个缺口（agent 自动改图卡在这；要 Allen 拍）
-| # | 缺口 | 现状/依据 | 备注 |
+## 3. 要做的事（机制已核对清楚，不卡在"做不了"）
+让 agent 改 kanban = 把现成范式照搬，三件 + 一个授权事实。**（纠正早期版本里"独立 MCP server vs dispatch 注入"、"desired_caps #533 硬卡"、"照抄 cc_orchestrator_seed" 三处错判——见下。）**
+
+| # | 要做 | 范式/依据 | 谁拍 |
 |---|------|-----------|------|
-| **P0** | 看板没有 MCP 工具入口 | orchestrator 的 MCP 基建是它专用硬编码工具集；看板无 tool catalog + mcp.json + bridge | 决：独立 MCP server 进程（抄 orchestrator `uv run --script`）还是 dispatch 注入（抄 cc bridge inline-mint） |
-| **P1（最硬）** | `desired_caps` 没真正 grant 进 live agent 身份 | 字段进了 `AgentTemplate`,但"灌进 live identity 切片"调用点不存在（`member_template.ex` 明写是 PR-5 #533 flagged follow-up） | **不接上,agent dispatch 改图被 CapBAC 直接拒。** ⚠️ 别用 inline-mint 跳过——对含 admin 通配 + `save_*_creds` 凭证的敏感动作,inline-mint 是授权收口的倒退 |
-| **P2** | skill 按名解析无通用注册表 | 现在只有 orchestrator skill 硬编码 source | 新 skill（如 `kanban/board-editor`）从名字找文件的通用机制要补 |
+| **① MCP server + tool catalog** | kanban 自带一个 MCP server，暴露精选 kanban 动作 | 照抄 orchestrator 的 **`mcp_server.ex` + `mcp_server/tool_catalog.ex`**（`apps/ezagent_plugin_cc/lib/ezagent/orchestrator/`，固定具名工具 catalog，非任意 action）。**不要**通用 dispatch 工具/CLI（项目没有、违背"工具=能力清单"收口 P12/P14） | 建即可；**暴露哪几个动作**=Allen |
+| **② handle_tool_call dispatch** | 每个工具内部 dispatch `kanban.*` | 逻辑现成=搬 `world/kanban_actions.ex` 的 `act/4`（`URI.with_action`+`Invocation.dispatch`，ctx 带 agent caller/caps）；CapBAC（owner/admin/cap）已在 `behavior/kanban.ex` 现成 | 建即可 |
+| **③ 定义 kanban agent** | 普通 cc agent + 教用法 + caps（+ 挂 kanban MCP 桥） | **走 create 正路，不抄 seed**——见下 | 见下（Allen 决策点） |
+
+**③ 怎么定义（核对过当前 agent contract）**：
+- **别抄 `cc_orchestrator_seed.ex`**——它是 plugin 启动时硬塞的**内置单例编排器特例**（spawn 一个 system AgentTemplate，因编排器要被 `Session.Orchestrator` 确定性引用）。普通 agent（echo/cc/curl）**不写 `*_seed.ex`**，只注册 flavor（`AgentFlavorRegistry`），实例由用户 `mix ezagent.agent.create --flavor` 或 UI 现拉。
+- **创建**：`mix ezagent.agent.create <uri> --flavor cc --cwd <kanban项目> --caps "kanban.*"`（CLI 与 UI 共用 `Behavior.Workspace.:create_agent` → `agent_create.ex` 正路；file-flavor 走 credential-cascade 拿隔离 config_dir）。
+- **教用法（skill/CLAUDE.md）**：用 main 刚交付的 **agent-config**——`AgentConfig.apply_delta(agent_uri, …, %{key:"advisor.behavior", patch:%{"soul_md"=>"教 kanban 工具用法的 persona"}})`，投射成该 agent 的 CLAUDE.md。**这才是 agent-config 的用途**（只改已有 agent 的 soul/config，Non-Goals 明写"不扩 create_agent 入参、不改 AgentManifest schema"——它不创建/不挂 MCP）。
+- **唯一缺口（要 Allen 拍）= 挂 kanban MCP 桥**：额外 `--mcp-config` 的注入靠 AgentTemplate content 的 `mcp_config_path` 字段（→`operator_mcp_config_path`→`spawn_plan.ex:117` 拼一条 additive `--mcp-config`，orchestrator 就这么挂 esr-orchestrator）。但 **create 正路没暴露写 `mcp_config_path`**（`agent_create.ex` 的 file_flavor_template 只写 flavor/cwd/config_dir；CLI 无 `--mcp-config`）。二选一：
+  - **A（小扩正路）**：给 create 的 file-flavor template + CLI 加可选 `mcp_config_path`，透传到已有的 additive `--mcp-config` 通道（复用 `spawn_plan.ex`，不新发明）。
+  - **B（零改动最干净）**：让 kanban 工具经**默认 esr-bridge**暴露（方案①②已让工具内部 dispatch + CapBAC 闸控谁能用）→ kanban agent **不需要第二个桥**，第 3 步退化成"普通 cc agent + soul_md + caps"，全走正路、零架构改动。
+
+**授权（原以为硬卡的 #533，实为不卡）**：agent 拿 `kanban.*` cap 今天就能——create 时显式 `--caps`（`grant_initial_caps` 真授进 identity，CLI 可用），**不依赖** `desired_caps` 自动 grant（#533，那是模板驱动自动授权，kanban 用显式 caps 即可）。⚠️ admin 通配/`save_*_creds` 等敏感动作的默认 caps 边界=Allen。
+**skill 的角色**：说明书（教 agent 怎么用这几个 kanban 工具），**不是能力**——能力全在 MCP 工具里。
 
 ## 4. dev-together 融合（两层对接，不合并）
 看板=跨周调度（9 阶段链），dev-together=当日执行。接缝 = **4 个回写动作**（dispatch 层已落地、全带 CapBAC，在 kanban Behavior 内）：
@@ -42,7 +55,7 @@
 | 步 | agent 自动? | 卡在哪 |
 |---|---|---|
 | positioning/pain/anchor/ux | 半自动（写内容能,"明不明确"人工 gate,设计本意） | 不卡机制 |
-| metric/test/feature/issue/PR | 能 | feature/PR 卡 P1 |
+| metric/test/feature/issue/PR | 能 | 授权用显式 `--caps`(不卡#533);出站走 Behavior 已通 |
 | 评审 | 能（agent 当 lead/dev hat） | 不拦 |
 | 北极星回归/drop | 半自动 | **`check_drop`（自动判 current<target）代码没有,只有手动 `drop_subtree`**——要补 |
 
@@ -51,7 +64,7 @@
 - [ ] 全 gate 绿 + 本工作的回归测试（agent-identity dispatch 通过 CapBAC 的测试）。
 
 ## 7. Discuss-first / Deferred
-**Discuss-first（先 Allen-confirm 再建）**：P0/P1/P2 三缺口的具体机制（尤其 P1 grant 方式：正统 delegated vs inline-mint，敏感动作不能图省事）。
+**Discuss-first（先 Allen-confirm 再建）**：① kanban 暴露哪几个动作给 agent + 默认 caps 边界 ② 挂 MCP 桥方式 A（扩 create 加 `mcp_config_path`）vs B（默认 esr-bridge 不挂第二桥，零改动）。
 **Deferred**：`check_drop` 自动驱动、出站带前面产物的 AI 摘要。
 
 ## 8. 最小第一步（零代码、不碰 Allen，先验流程）
@@ -59,8 +72,10 @@
 
 ## 9. Dev prompt（给执行者）
 > 在最新 main + kanban PR 之上,实现"agent 在 chat 里自动改看板"。**前提**：kanban 已是自包含数据 Kind(出站/CI/配置在 Behavior),agent 改图走 `Ezagent.Invocation.dispatch` 到 `resource://…/kanban/…?action=…`、ctx 带 agent caller/caps、经 per-node CapBAC——跟人改图同一条路。
-> **必读**:`docs/together/2026-06-24/agent-config-*.md`(main 在研 agent 配置) + kanban Behavior 的 23 个 action + cap 目录。
-> **要先跟 Allen confirm 的三缺口**(别自己拍):① 给看板做 MCP 工具入口(独立 MCP server vs dispatch 注入) ② 把 `AgentTemplate.desired_caps` 真正 grant 进 live agent 身份(#533,`member_template.ex` 待办;敏感动作别用 inline-mint) ③ skill 按名解析通用注册表。
+> **必读**:本 handoff §3 全部 + orchestrator 三件套(`apps/ezagent_plugin_cc/lib/ezagent/orchestrator/{mcp_server.ex,mcp_server/tool_catalog.ex}`) + `world/kanban_actions.ex` 的 `act/4` + kanban Behavior 的 action + cap 目录。
+> **照抄范式建**(非新架构):① kanban plugin 自带 `McpServer`+`ToolCatalog`(照 orchestrator),暴露精选 kanban 动作 ② 每工具 `handle_tool_call` 内部搬 `kanban_actions.ex` 的 `act/4` dispatch,CapBAC 已在 Behavior。
+> **定义 agent 走正路**(别抄 `cc_orchestrator_seed`):`mix ezagent.agent.create --flavor cc --caps "kanban.*"` + agent-config `apply_delta` 写 `soul_md` 教用法。授权用显式 `--caps`(不依赖 #533)。
+> **要先跟 Allen confirm**(别自己拍):① kanban 暴露哪几个动作给 agent + 默认 caps 边界(admin/`save_*_creds` 等敏感动作) ② 挂 kanban MCP 桥方式——A 给 create 加可选 `mcp_config_path`(复用 `spawn_plan.ex` 已有 additive `--mcp-config`) vs B kanban 工具走默认 esr-bridge、不挂第二个桥(零改动)。
 > **dev-together 融合**:实现 §4 的 4 个回写动作触发(dive/return/close → kanban dispatch),补 `sync_prs` 的自动触发(close 后)。
 > **DoD**:真实渠道 transcript(agent 自动把一个产品从定位推到 PR)+ dispatch 日志 + 看板截图 + 全 gate 绿 + agent-identity CapBAC 回归测试。
 > 杜绝想象:每个声称的能力 grep/read 核对;碰 world 读 `docs/guide/world-coordination.md`;PR 进任务分支、只 lead 合 main。
