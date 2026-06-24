@@ -6,6 +6,16 @@ Generate the day's handoffs — **in parallel**, one per task in `plan.md`.
 (static-only adversarial review).
 
 **Do (per task, parallelized — a subagent per task):**
+0. **Build vs research (the clarify front-phase, tiering).** First decide: does the
+   task hit any **discuss-first trigger**
+   ([../references/handoff-standard.md](../references/handoff-standard.md))? If yes,
+   the task's scope/feasibility/DoD is **not yet knowable** → issue a **research
+   handoff** (`clarify_first`), NOT a build handoff. A research handoff's DoD is its
+   *deliverable*: **findings + the proposed build slices + the build DoD**, for the
+   lead to ratify. Only after that research `return` lands does the lead issue the
+   **build handoff** (now with a goal-derived, enumerable DoD). No trigger fires →
+   straight to a build handoff (fast path). This is how the lead avoids handing off
+   a build task whose DoD it cannot yet write.
 1. **Read the assignee's `team.md` row** (`role` / `current_track` /
    `latest_return`). Use it to **tailor handoff depth** — a dev continuing their
    own track needs less context re-derivation (cite their `latest_return`); a dev
