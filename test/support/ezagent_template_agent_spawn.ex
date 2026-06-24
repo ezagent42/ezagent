@@ -20,7 +20,11 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
       template_class: Ezagent.PluginCurlAgent.Template,
       instance_behaviors: &Agent.curl_behaviors/0
     },
-    "echo" => %{kind: Ezagent.Entity.Echo, template_class: Ezagent.PluginEcho.Template.EchoAgent},
+    "echo" => %{
+      kind: Agent,
+      template_class: Ezagent.PluginEcho.Template.EchoAgent,
+      instance_behaviors: &Agent.echo_behaviors/0
+    },
     "np" => %{kind: Ezagent.Entity.NpAgent, template_class: Ezagent.PluginNp.Template.NpAgent},
     "test" => %{kind: Ezagent.Entity.Agent, template_class: Ezagent.TestSupport.NoopAgentTemplate}
   }
