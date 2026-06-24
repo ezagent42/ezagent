@@ -115,8 +115,9 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # ROUND 1: design just the FRAME (styled by `user_text`), show it with a
-  # placeholder preview, and ask for approval before any real content is built.
+  # ROUND 1: design just the FRAME (styled by `user_text`), then land a PLACEHOLDER
+  # skeleton body so the design is visible (and the surface commit pushes it live),
+  # and ask for approval before any real content is built.
   defp design_round(session_uri, builder, user_text) do
     TurnDriver.say(session_uri, builder, gettext("🎨 Designing the page frame to match your request…"))
     shell_html = ensure_shell_html(session_uri, builder, "Website", user_text, true)
@@ -125,18 +126,78 @@ defmodule EzagentPluginHello.Generator do
       TurnDriver.say(session_uri, builder, gettext("⚠ Frame design failed."))
       {:error, :frame_failed}
     else
-      store_frame(session_uri, builder, shell_html, nil)
+      skeleton = skeleton_page()
+      store_frame(session_uri, builder, shell_html, skeleton)
 
-      TurnDriver.say(
-        session_uri,
-        builder,
-        gettext(
-          "✅ The frame is ready — a placeholder preview is on the right. Happy with the design? Tell me what content to fill in, or how to tweak the frame."
-        )
-      )
+      case TurnDriver.drive(session_uri, skeleton, "", builder) do
+        {:ok, _turn} ->
+          TurnDriver.say(
+            session_uri,
+            builder,
+            gettext(
+              "✅ The frame is ready — a placeholder preview is on the right. Happy with the design? Tell me what content to fill in, or how to tweak the frame."
+            )
+          )
 
-      {:ok, :design_round}
+          {:ok, :design_round}
+
+        {:error, _} = err ->
+          TurnDriver.say(session_uri, builder, gettext("⚠ Frame preview failed."))
+          err
+      end
     end
+  end
+
+  # A placeholder body for the round-1 design preview (ASCII only — CjkLiteralGate
+  # forbids Han literals in lib/; real content replaces it in round 2).
+  defp skeleton_page do
+    leaf = fn type, props -> %{"type" => type, "props" => props, "children" => []} end
+
+    %{
+      "type" => "page",
+      "props" => %{"title" => "Preview"},
+      "children" => [
+        leaf.("hero", %{
+          "title" => "Your Headline Here",
+          "subtitle" => "A one-line value proposition — real content comes next.",
+          "cta_label" => "Get Started",
+          "cta_href" => "#"
+        }),
+        %{
+          "type" => "features",
+          "props" => %{"title" => "Key Features (placeholder)"},
+          "children" => [
+            leaf.("feature", %{"title" => "Feature One", "text" => "Placeholder description.", "icon" => "zap"}),
+            leaf.("feature", %{"title" => "Feature Two", "text" => "Placeholder description.", "icon" => "shield"}),
+            leaf.("feature", %{"title" => "Feature Three", "text" => "Placeholder description.", "icon" => "rocket"})
+          ]
+        },
+        %{
+          "type" => "stats",
+          "props" => %{"title" => "Metrics (placeholder)"},
+          "children" => [
+            leaf.("stat", %{"value" => "99%", "label" => "Placeholder"}),
+            leaf.("stat", %{"value" => "1.2k", "label" => "Placeholder"}),
+            leaf.("stat", %{"value" => "4.9", "label" => "Placeholder"}),
+            leaf.("stat", %{"value" => "24/7", "label" => "Placeholder"})
+          ]
+        },
+        %{
+          "type" => "testimonials",
+          "props" => %{"title" => "Testimonials (placeholder)"},
+          "children" => [
+            leaf.("testimonial", %{"quote" => "A placeholder testimonial quote.", "author" => "Jane Doe", "role" => "Title / Company"}),
+            leaf.("testimonial", %{"quote" => "A placeholder testimonial quote.", "author" => "John Roe", "role" => "Title / Company"})
+          ]
+        },
+        leaf.("cta", %{
+          "title" => "Ready to start? (placeholder)",
+          "text" => "Placeholder call to action.",
+          "button_label" => "Get Started",
+          "button_href" => "#"
+        })
+      ]
+    }
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
