@@ -75,6 +75,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 | _active world-dev_ | (world dev) | UI polish + logic completion (assume `styles.css` + existing surfaces) | ongoing |
 | world beautification + restructure (#83) | claude (`world-beautify`) | layout/slot system (`layout_manager.ex`, `behavior/layout.ex`, `world_live.ex` route+layout fns, `main.tsx` renderer), then `styles.css`, existing surfaces, design system, `primitives.tsx` + atom layer | ✅ MERGED to main (shadcn/typed-slot) |
 | Agent Console (#84) | agent-console dev | Phase 0: standalone static demo (`apps/ezagent_web/priv/static/agent-console-demo/` + `static_paths` allowlist) — touches NO world files. Phase 1+: new `agent_console` surface + `*_data/*_actions` + `world_live.ex` route clause | Phase 0 demo merged (`#892`) |
+| Agent Console CRUD (#84) | claude (`feat/agent-console-crud`) | identities/agents Delete + Create-hardening: `Identities.tsx` (agent components), `main.tsx` (renderer wiring), `world_live.ex` (`agents.delete` clause + helpers), `identity_data.ex` (additive); + 1 session-domain read helper (`Orchestrator.agent_bound_to_live_session?`) | in-flight |
 | hello (Phase 0, #81) | TBD | none in world (isolated plugin) | handoff merged |
 
 ## 6. The checklist every world-touching handoff must include
