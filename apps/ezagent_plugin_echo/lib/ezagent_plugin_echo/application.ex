@@ -142,7 +142,7 @@ defmodule EzagentPluginEcho.Application do
     default_uri = default_uri()
     :ok = Ezagent.AgentFlavorAttributes.put(default_uri, "echo")
 
-    with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri) do
+    with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(default_uri) do
       :ok
     else
       {:error, reason} ->

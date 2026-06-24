@@ -27,13 +27,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   @allowlist [
     %{
-      path: "apps/ezagent_plugin_advisor/lib/ezagent_plugin_advisor/template/advisor_session.ex",
-      line: 132,
-      key: :kind_registry_lookup,
-      line_substring: "case KindRegistry.lookup(operator_uri) do",
-      reason: "existing advisor template operator ensure; pending owner-gated wrapper"
-    },
-    %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
       line: 155,
       key: :kind_registry_lookup,
@@ -71,83 +64,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-      line: 555,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do",
-      reason: "existing codex instantiate ensure; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-      line: 620,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing codex liveness probe; pending owner-gated liveness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_remote_agent.ex",
-      line: 320,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing codex remote liveness probe; pending owner-gated liveness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_remote_agent.ex",
-      line: 341,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do",
-      reason: "existing codex remote instantiate ensure; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_echo/lib/ezagent/template/echo_agent.ex",
-      line: 194,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do",
-      reason: "existing echo instantiate ensure; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_echo/lib/ezagent/template/echo_agent.ex",
-      line: 248,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing echo liveness probe; pending owner-gated liveness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_echo/lib/ezagent_plugin_echo/application.ex",
-      line: 145,
-      key: :spawn_registry,
-      line_substring: "with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri) do",
-      reason: "existing default echo boot spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/binding_policy.ex",
-      line: 72,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason: "existing inbound sender ensure; pending owner-gated user ensure wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/binding_policy.ex",
-      line: 77,
-      key: :spawn_registry,
-      line_substring: "case Ezagent.SpawnRegistry.spawn(uri) do",
-      reason: "existing inbound sender spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
-      line: 65,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(bound_uri) do",
-      reason: "existing inbound bound-user probe; pending owner-gated user ensure wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
-      line: 70,
-      key: :spawn_registry,
-      line_substring: "_ = Ezagent.SpawnRegistry.spawn(bound_uri)",
-      reason: "existing inbound bound-user spawn; SpawnRegistry is owner-gated in PR1"
     },
     %{
       path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/template/hello_session.ex",
