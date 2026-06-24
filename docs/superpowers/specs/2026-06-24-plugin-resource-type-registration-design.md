@@ -263,16 +263,33 @@ reason — it is NOT runtime code and does not re-grow the runtime gate.
   plugin types vanish while the plugins stay up (silent partial availability).
   This is a **pre-existing class shared by every plugin-fed registry**
   (`BehaviorRegistry`, `TemplateRegistry`, `AgentFlavorRegistry` are populated the
-  same way at Phase-2 boot). **Resolution: PR-1 audits how those siblings handle
-  it and matches their treatment.** The intended treatment: these
-  plugin-contribution registries are start-critical singletons — a crash escalates
-  so the plugin layer re-publishes (e.g. supervise the resolver Registry such that
-  its restart triggers plugin re-`boot` of Phase-2, or, if the siblings simply
-  rely on the registry being `:permanent` + the node failing fast on repeated
-  crashes, adopt the identical posture). A regression test asserts the chosen
-  behavior (after a Registry restart, a plugin type either is present again or the
-  failure is loud, never silently missing). This is the one item PR-1 must nail
-  against the real sibling-registry code, not in the abstract.
+  same way at Phase-2 boot). **Resolution (PR-1 audited the real siblings):**
+  `BehaviorRegistry`/`TemplateRegistry`/`AgentFlavorRegistry` do NOT self-own their
+  tables — `EzagentCore.EtsOwner` owns one `:public` table per registry; on an
+  isolated `EtsOwner` restart ALL of them come back EMPTY (core + plugin), with no
+  replay, relying purely on being a `:permanent` start-critical singleton that
+  fails the node loud on a crash-loop. A `:public` table is unusable here (any
+  process could `:ets.insert` a forged type spec, defeating the owner-only
+  authority contract), so the resolver Registry keeps its self-owned `:protected`
+  table (precedent: `Ezagent.NotificationSubscriptions`) and **adopts the identical
+  start-critical-singleton posture**: on restart `init/1` re-applies
+  `boot_registrations/0` (CORE types self-heal); plugin types are not replayed —
+  exactly the siblings' behavior.
+
+  **On the "never silently missing" requirement (codex HIGH):** in the rare window
+  after a restart, a vanished plugin type resolves to `:none`. That is **fail-CLOSED
+  — `:none` DENIES access, never grants** — so it is an *availability* blip during
+  crash-recovery, NOT an authority bypass, and it is narrower than the EtsOwner
+  siblings' window (their tables come back fully empty; the resolver's core types
+  are already back). For the first adopter (world layouts) a `:none` degrades
+  gracefully to `default_layout`. Two hardening fixes make this window vanishingly
+  rare: (a) a malformed plugin `resource_types/0` can no longer CRASH the Registry
+  (it is rejected as a normal error — codex MEDIUM), removing the main crash
+  trigger; (b) resource registration is the LAST `Plugin.boot/1` step, so an
+  upstream boot failure never half-registers. A regression test asserts core
+  self-heal + that an absent type denies (fail-closed) rather than grants. Full
+  cross-app re-publish (true "present again") is a deferred enhancement, not
+  required for this fail-closed property.
 
 ## 6. Testing
 
