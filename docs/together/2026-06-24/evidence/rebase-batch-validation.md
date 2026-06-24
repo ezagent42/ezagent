@@ -73,3 +73,15 @@ read cascade / 写 patch / 版本化删除 / 回滚 / 跨-agent cap 门 全部�
 | #931 cc-headless | ⛔ F15 创建阻塞(resource type 未注册)→ @黄佳佳 |
 | #938 agent-config 后端 | ✅ PASS(冒烟 4 API + 2 拒绝)|
 | bonus | world UI @提及→agent 回复 work(06-23 L4 核心已修)|
+
+## Round-3 — 剩余 UI 面验证 + 与早前截图对比(无回归)
+A 组(无旧截图,验渲染):
+- **Workspaces** ✅ 列表渲染(4 ws;`system` 9 templates=印证 F19/F22 累积无删)
+- **Plugins** ✅ 11 插件卡(含 Hello=印证 F24)
+- **Admin** ✅ Dashboard 统计 + **CC orchestrator: ok**(系统 orchestrator 健康 → F5 排查线索:绑用户 create 路径/sandbox,非 claude 本身)
+- **Command(cmdk)** ✅ 搜索面板 + Admin(Observability/Registry/Routing/Settings/Snapshots)/Navigate 命令
+- 后端日志:`GET /workspaces /plugins /admin` + `cmdk.open/close` 全成功,无报错/崩溃。
+
+B 组(对比早前 L1c/agent-list/agent-detail/customer 外壳):world UI 外壳(左导航 + 顶栏 + 卡片/表格/主题)与早前**完全一致 → rebase `c2971d9c` + 清理无渲染回归**;唯 agent 列表数据 churn(清理+boot 重建,预期内,非回归)。
+
+证据:`workspace.png` / `plugins-list.png` / `admin-list.png` / `command-list.png`。**A/B 均为验证 PASS,无新 finding。**
