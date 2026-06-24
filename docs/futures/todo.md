@@ -682,9 +682,29 @@ the same tables. If the answer is "yes, harden", the migration
 is SPEC + a sweep PR across every registry — out of scope for
 the ExternalMirror PR sequence.
 
-### Plugin-contributed resource types are DROPPED on a Registry restart — OPEN (MED, latent prod bug, surfaced PR-2 resource-types)
+### ✅ Plugin-contributed resource types are DROPPED on a Registry restart — RESOLVED 2026-06-24 (Bug B, `fix/resolver-restart-replay`)
 
-> **OPEN, surfaced 2026-06-24 (PR-2 plugin-resource-type-registration).**
+> **RESOLVED 2026-06-24 (Bug B).** Approach (a) init-time discovery-replay:
+> `Registry.init/1` now rebuilds the **FULL** allowlist from source on EVERY start
+> — core `boot_registrations/0` FIRST (claims its backends), then a runtime
+> discovery-replay of every loaded plugin's `resource_types/0` via the SAME
+> write-once `batch_register` (`replay_plugin_resource_types/0`). Plugin types now
+> self-heal on a Registry restart; they no longer vanish until the plugin re-boots.
+> This applies the `use Ezagent.Lifecycle` "rebuild-transient-from-source on every
+> start" principle (which fixes the #110/#113/#114 cold-restart class) to a plain
+> GenServer whose `init/1` IS its every-start hook. HIGH-1 preserved: core first +
+> write-once-on-both-`<type>`-and-`backend_component` means a plugin can never
+> shadow/alias a core type on either the first-boot or restart path; discovery is
+> runtime (Application env + `apply/3`), per-plugin skip-on-error, so a bad plugin
+> is logged + skipped, never crashing the Registry. Regression tests:
+> restart-self-heal + idempotency + alias-attack-still-rejected in
+> `fs_resolver_test.exs`. The sibling EtsOwner registries (Behavior/Template/
+> AgentFlavor) still come back empty on an isolated EtsOwner restart — that is a
+> separate, lower-severity item (they're start-critical singletons that fail loud),
+> tracked below.
+>
+> ---
+> **Original report (OPEN, surfaced 2026-06-24 (PR-2 plugin-resource-type-registration)).**
 > `Ezagent.Resource.FsResolver.Registry` is a `:protected`-table-owning GenServer.
 > Plugin-contributed resource types are written via `register_all/1` at each
 > plugin's `Ezagent.Plugin.boot/2` Phase 2. On a Registry GenServer **restart**,
