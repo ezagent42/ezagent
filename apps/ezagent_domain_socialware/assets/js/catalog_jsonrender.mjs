@@ -17,6 +17,27 @@ const opt = z.string().nullable().optional()
 const optNum = z.union([z.number(), z.string()]).nullable().optional()
 const str = (v) => (v == null ? "" : String(v))
 
+// AI-controlled appearance: any node may carry an optional `class` prop (Tailwind
+// utilities). `withClass` appends it to the component's ROOT element so the model
+// can restyle a node (colors, spacing, effects, even arbitrary values like
+// w-[40rem]) on top of the designed defaults. Safe (classes are pure CSS); the
+// custom classes are compiled into the per-session CSS server-side. `applyClass`
+// wraps every registry component automatically.
+function withClass(fn) {
+  return (args) => {
+    const el = fn(args)
+    const extra = args && args.props && args.props.class
+    if (extra && el && el.props) {
+      return React.cloneElement(el, {
+        className: ((el.props.className || "") + " " + String(extra)).trim(),
+      })
+    }
+    return el
+  }
+}
+const applyClass = (components) =>
+  Object.fromEntries(Object.entries(components).map(([k, fn]) => [k, withClass(fn)]))
+
 // ── Inline SVG icon set (stroke, currentColor) ───────────────────────────────
 const ICON_PATHS = {
   check: "M20 6 9 17l-5-5",
@@ -80,40 +101,40 @@ const HEADING_CLASS = {
 // ── Catalog (schema) — MUST stay in sync with EzagentPluginHello.Spec.catalog ─
 const catalog = defineCatalog(schema, {
   components: {
-    page: {props: z.object({title: opt}), description: "Page root: a full-width vertical stack of blocks. Title is metadata (not rendered as a banner)."},
-    nav: {props: z.object({brand: opt}), description: "Top navigation bar: a brand name + child `button` links."},
-    banner: {props: z.object({text: opt}), description: "A thin full-width announcement banner at the very top."},
-    hero: {props: z.object({title: opt, subtitle: opt, cta_label: opt, cta_href: opt, badge: opt}), description: "Big brand-gradient hero: optional badge + title + subtitle + CTA. Use ONE, first."},
-    section: {props: z.object({layout: opt, tone: opt, title: opt}), description: "Generic section; layout 'stack'|'grid'; tone 'default'|'muted'|'dark'|'brand'."},
-    card: {props: z.object({title: opt}), description: "A titled card wrapping its children."},
-    heading: {props: z.object({text: opt, level: optNum}), description: "A heading; level 1–6."},
-    text: {props: z.object({text: opt}), description: "A paragraph of text."},
-    button: {props: z.object({label: opt, href: opt}), description: "A link/button."},
-    image: {props: z.object({src: opt, alt: opt}), description: "An image (renders a tasteful placeholder when the src can't load)."},
-    features: {props: z.object({title: opt, subtitle: opt, tone: opt}), description: "A features section: title/subtitle + a grid of `feature` children."},
-    feature: {props: z.object({title: opt, text: opt, icon: opt}), description: "One feature card; icon is a name like shield/zap/rocket/lock/globe/chart/users/cloud/code/gauge/star/check."},
-    split: {props: z.object({title: opt, text: opt, cta_label: opt, cta_href: opt, reverse: opt, icon: opt, tone: opt}), description: "A text+visual row; set reverse 'true' to flip sides. Alternate reverse for rhythm."},
-    stats: {props: z.object({title: opt, tone: opt}), description: "A row of metrics; children are `stat`."},
-    stat: {props: z.object({value: opt, label: opt}), description: "One metric: a big value + a label."},
-    testimonials: {props: z.object({title: opt, tone: opt}), description: "A testimonials section; children are `testimonial`."},
-    testimonial: {props: z.object({quote: opt, author: opt, role: opt}), description: "One customer quote + author + role."},
-    logos: {props: z.object({title: opt, tone: opt}), description: "A trusted-by logo wall; children are `logo`."},
-    logo: {props: z.object({name: opt}), description: "One brand chip (renders the name)."},
-    pricing: {props: z.object({title: opt, subtitle: opt, tone: opt}), description: "A pricing section; children are `plan`."},
-    plan: {props: z.object({name: opt, price: opt, period: opt, cta_label: opt, featured: opt}), description: "One pricing tier; child `text`/`feature` nodes list what's included; featured 'true' highlights it."},
-    faq: {props: z.object({title: opt, tone: opt}), description: "An FAQ accordion; children are `qa`."},
-    qa: {props: z.object({question: opt, answer: opt}), description: "One expandable question + answer."},
-    steps: {props: z.object({title: opt, tone: opt}), description: "A numbered process/timeline; children are `step`."},
-    step: {props: z.object({title: opt, text: opt}), description: "One numbered step."},
-    cta: {props: z.object({title: opt, text: opt, button_label: opt, button_href: opt, tone: opt}), description: "A closing call-to-action band. Use near the bottom."},
-    footer: {props: z.object({text: opt}), description: "A dark page footer."},
+    page: {props: z.object({class: opt,title: opt}), description: "Page root: a full-width vertical stack of blocks. Title is metadata (not rendered as a banner)."},
+    nav: {props: z.object({class: opt,brand: opt}), description: "Top navigation bar: a brand name + child `button` links."},
+    banner: {props: z.object({class: opt,text: opt}), description: "A thin full-width announcement banner at the very top."},
+    hero: {props: z.object({class: opt,title: opt, subtitle: opt, cta_label: opt, cta_href: opt, badge: opt}), description: "Big brand-gradient hero: optional badge + title + subtitle + CTA. Use ONE, first."},
+    section: {props: z.object({class: opt,layout: opt, tone: opt, title: opt}), description: "Generic section; layout 'stack'|'grid'; tone 'default'|'muted'|'dark'|'brand'."},
+    card: {props: z.object({class: opt,title: opt}), description: "A titled card wrapping its children."},
+    heading: {props: z.object({class: opt,text: opt, level: optNum}), description: "A heading; level 1–6."},
+    text: {props: z.object({class: opt,text: opt}), description: "A paragraph of text."},
+    button: {props: z.object({class: opt,label: opt, href: opt}), description: "A link/button."},
+    image: {props: z.object({class: opt,src: opt, alt: opt}), description: "An image (renders a tasteful placeholder when the src can't load)."},
+    features: {props: z.object({class: opt,title: opt, subtitle: opt, tone: opt}), description: "A features section: title/subtitle + a grid of `feature` children."},
+    feature: {props: z.object({class: opt,title: opt, text: opt, icon: opt}), description: "One feature card; icon is a name like shield/zap/rocket/lock/globe/chart/users/cloud/code/gauge/star/check."},
+    split: {props: z.object({class: opt,title: opt, text: opt, cta_label: opt, cta_href: opt, reverse: opt, icon: opt, tone: opt}), description: "A text+visual row; set reverse 'true' to flip sides. Alternate reverse for rhythm."},
+    stats: {props: z.object({class: opt,title: opt, tone: opt}), description: "A row of metrics; children are `stat`."},
+    stat: {props: z.object({class: opt,value: opt, label: opt}), description: "One metric: a big value + a label."},
+    testimonials: {props: z.object({class: opt,title: opt, tone: opt}), description: "A testimonials section; children are `testimonial`."},
+    testimonial: {props: z.object({class: opt,quote: opt, author: opt, role: opt}), description: "One customer quote + author + role."},
+    logos: {props: z.object({class: opt,title: opt, tone: opt}), description: "A trusted-by logo wall; children are `logo`."},
+    logo: {props: z.object({class: opt,name: opt}), description: "One brand chip (renders the name)."},
+    pricing: {props: z.object({class: opt,title: opt, subtitle: opt, tone: opt}), description: "A pricing section; children are `plan`."},
+    plan: {props: z.object({class: opt,name: opt, price: opt, period: opt, cta_label: opt, featured: opt}), description: "One pricing tier; child `text`/`feature` nodes list what's included; featured 'true' highlights it."},
+    faq: {props: z.object({class: opt,title: opt, tone: opt}), description: "An FAQ accordion; children are `qa`."},
+    qa: {props: z.object({class: opt,question: opt, answer: opt}), description: "One expandable question + answer."},
+    steps: {props: z.object({class: opt,title: opt, tone: opt}), description: "A numbered process/timeline; children are `step`."},
+    step: {props: z.object({class: opt,title: opt, text: opt}), description: "One numbered step."},
+    cta: {props: z.object({class: opt,title: opt, text: opt, button_label: opt, button_href: opt, tone: opt}), description: "A closing call-to-action band. Use near the bottom."},
+    footer: {props: z.object({class: opt,text: opt}), description: "A dark page footer."},
   },
   actions: {},
 })
 
 // ── Registry (implementations) ───────────────────────────────────────────────
 const {registry} = defineRegistry(catalog, {
-  components: {
+  components: applyClass({
     page: ({children}) => h("div", {className: "w-full"}, children),
 
     nav: ({props, children}) =>
@@ -373,7 +394,7 @@ const {registry} = defineRegistry(catalog, {
         {className: "w-full bg-neutral px-6 py-12 text-center text-sm text-neutral-content/70"},
         str(props.text) || "© 2026",
       ),
-  },
+  }),
 })
 
 // LLM-authored pages carry made-up image `src`es (the model can't know real

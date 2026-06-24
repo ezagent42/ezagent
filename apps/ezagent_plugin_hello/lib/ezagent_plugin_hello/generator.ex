@@ -66,25 +66,39 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
-    {plan, reframe} = decompose(user_text)
-    if reframe, do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame…"))
+    {plan, scope} = decompose(user_text)
 
-    case plan do
-      {:complex, %{title: title, sections: sections}} ->
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
-            title: title,
-            count: length(sections)
-          )
-        )
+    case scope do
+      # Shell-only: keep the existing json-render BODY untouched, regenerate just
+      # the HTML frame. No page_gen call, so the content the user didn't ask to
+      # change stays exactly as-is.
+      :shell ->
+        TurnDriver.say(session_uri, builder, gettext("🎨 Plan: redesign the frame only (content unchanged)."))
+        regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri))
 
-        generate_complex(session_uri, builder, title, sections, user_text, reframe)
+      # Body (default) or both: run the normal content generation. `reframe?`
+      # forces a fresh frame too when the user asked for "both".
+      _ ->
+        reframe = scope == :both
+        if reframe, do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
 
-      {:simple} ->
-        TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
-        generate_simple(session_uri, builder, user_text, reframe)
+        case plan do
+          {:complex, %{title: title, sections: sections}} ->
+            TurnDriver.say(
+              session_uri,
+              builder,
+              gettext("🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
+                title: title,
+                count: length(sections)
+              )
+            )
+
+            generate_complex(session_uri, builder, title, sections, user_text, reframe)
+
+          {:simple} ->
+            TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
+            generate_simple(session_uri, builder, user_text, reframe)
+        end
     end
   end
 
@@ -226,11 +240,12 @@ defmodule EzagentPluginHello.Generator do
   a failed/ambiguous reply degrades to `{:simple}` so generation always proceeds.
   """
   @type plan :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
-  @spec decompose(String.t()) :: {plan(), boolean()}
+  @type scope :: :body | :shell | :both
+  @spec decompose(String.t()) :: {plan(), scope()}
   def decompose(user_text) when is_binary(user_text) do
     case call_llm(Prompts.decompose_system(), user_text) do
       {:ok, %{content: content}} -> parse_plan(content)
-      {:error, _} -> {{:simple}, false}
+      {:error, _} -> {{:simple}, :body}
     end
   end
 
@@ -241,15 +256,18 @@ defmodule EzagentPluginHello.Generator do
   are assigned deterministically (`"s0"`, `"s1"`, …), NEVER taken from the LLM, so
   no untrusted strings become turn subtask keys.
   """
-  @spec parse_plan(term()) :: {plan(), boolean()}
+  @spec parse_plan(term()) :: {plan(), scope()}
   def parse_plan(content) when is_binary(content) do
     case Spec.extract(content) do
-      {:ok, plan} when is_map(plan) -> {classify_plan(plan), plan["reframe"] == true}
-      _ -> {{:simple}, false}
+      {:ok, plan} when is_map(plan) -> {classify_plan(plan), scope_of(plan)}
+      _ -> {{:simple}, :body}
     end
   end
 
-  def parse_plan(_), do: {{:simple}, false}
+  def parse_plan(_), do: {{:simple}, :body}
+
+  defp scope_of(%{"scope" => s}) when s in ["shell", "both"], do: String.to_atom(s)
+  defp scope_of(_), do: :body
 
   defp classify_plan(%{"mode" => "complex"} = plan) do
     case briefs_of(plan) do
@@ -282,34 +300,109 @@ defmodule EzagentPluginHello.Generator do
 
   defp briefs_of(_), do: []
 
-  # Author the bespoke HTML frame once per session (lazy). Reads the Surface
-  # slice; only generates when no shell is stored yet, so the frame stays stable
-  # across content edits. The LLM output is sanitised before storage.
-  defp maybe_set_shell(session_uri, builder, title, force) do
-    if not force and shell_present?(session_uri) do
-      :ok
+  # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
+  # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
+  # otherwise reuse the stored frame so ordinary content edits leave it untouched.
+  defp ensure_shell_html(session_uri, builder, title, force) do
+    existing = current_shell_html(session_uri)
+
+    if not force and existing != "" do
+      existing
     else
       brand = if is_binary(title) and title != "", do: title, else: "Website"
 
       case call_llm(Prompts.shell_gen_system(), "Brand/title: #{brand}") do
         {:ok, %{content: content}} ->
-          html = content |> extract_html() |> Sanitize.html()
-          # Compile this shell's own minimal Tailwind CSS (its AI-authored classes
-          # are invisible to the build-time scan), stored + served with it.
-          css = ShellCss.compile(html)
-          TurnDriver.set_shell(session_uri, builder, html, css)
+          content |> extract_html() |> Sanitize.html()
 
         other ->
           Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
-          :ok
+          existing
       end
     end
   end
 
-  defp shell_present?(session_uri) do
+  # Compile the per-session CSS from BOTH the shell HTML and the body's
+  # AI-authored `class` props (both invisible to the build-time Tailwind scan),
+  # then store frame + css together. Recomputed each build so body styling stays
+  # covered as the content changes.
+  defp store_frame(session_uri, builder, shell_html, body_tree) do
+    css = ShellCss.compile(shell_html <> "\n" <> body_class_markup(body_tree))
+    TurnDriver.set_shell(session_uri, builder, shell_html, css)
+  end
+
+  # Throwaway markup carrying every `class` string found in the body tree, so
+  # ShellCss.compile emits CSS for the AI's custom content styling too.
+  defp body_class_markup(tree) do
+    tree
+    |> collect_classes()
+    |> Enum.uniq()
+    |> Enum.map(&~s(<div class="#{&1}"></div>))
+    |> Enum.join("\n")
+  end
+
+  defp collect_classes(%{} = node) do
+    cls =
+      case node["props"] || node[:props] do
+        %{} = p -> [p["class"] || p[:class]]
+        _ -> []
+      end
+
+    children = List.wrap(node["children"] || node[:children] || [])
+
+    (cls ++ Enum.flat_map(children, &collect_classes/1))
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+  end
+
+  defp collect_classes(list) when is_list(list), do: Enum.flat_map(list, &collect_classes/1)
+  defp collect_classes(_), do: []
+
+  defp current_shell_html(session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, %{shell: s}} when is_binary(s) and s != "" -> true
-      _ -> false
+      {:ok, %{shell: s}} when is_binary(s) -> s
+      _ -> ""
+    end
+  end
+
+  defp current_body_tree(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, %{versions: versions, approved: approved}} when is_map(versions) ->
+        case Map.get(versions, approved) do
+          %{tree: tree} -> tree
+          %{"tree" => tree} -> tree
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp get_title_for_shell(session_uri) do
+    case current_body_tree(session_uri) do
+      %{} = tree -> get_title(tree)
+      _ -> "Website"
+    end
+  end
+
+  # Shell-only path (scope == :shell): regenerate just the frame, keep the
+  # existing json-render body. No page_gen, so the content is untouched.
+  defp regenerate_shell_only(session_uri, builder, title) do
+    TurnDriver.say(
+      session_uri,
+      builder,
+      gettext("🎨 Generating a new frame (keeping your content)…")
+    )
+
+    shell_html = ensure_shell_html(session_uri, builder, title, true)
+
+    if shell_html == "" do
+      TurnDriver.say(session_uri, builder, gettext("⚠ Frame generation failed."))
+      {:error, :shell_failed}
+    else
+      store_frame(session_uri, builder, shell_html, current_body_tree(session_uri))
+      TurnDriver.say(session_uri, builder, gettext("✅ Frame redesigned — your content is unchanged."))
+      {:ok, :shell_only}
     end
   end
 
@@ -346,23 +439,25 @@ defmodule EzagentPluginHello.Generator do
   # the RESULT goes through say to guarantee the operator sees completion live.
   defp land_page(session_uri, builder, spec, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
-    # Hybrid architecture: lazily author the bespoke HTML site-frame (shell) once
-    # per session. It wraps the json-render body and is STABLE across page edits
-    # (only generated when absent), matching "AI edits the content, the frame
-    # stays put unless asked to redesign it". `reframe` (planner-detected) forces
-    # a fresh frame even when one exists.
-    maybe_set_shell(session_uri, builder, get_title(spec), reframe)
+    # The frame: reused when stable (body-only edit), regenerated when `reframe`
+    # (scope == :both). The body's AI `class` styling is compiled into the
+    # per-session CSS by `store_frame` after the body lands.
+    shell_html = ensure_shell_html(session_uri, builder, get_title(spec), reframe)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("✅ Done! Page \"%{title}\" rendered to the right-side preview.",
-            title: get_title(spec)
-          )
-        )
+        store_frame(session_uri, builder, shell_html, spec)
 
+        msg =
+          if reframe do
+            gettext("✅ Done! Content AND frame updated for \"%{title}\".", title: get_title(spec))
+          else
+            gettext("✅ Done! Content updated for \"%{title}\" (frame unchanged).",
+              title: get_title(spec)
+            )
+          end
+
+        TurnDriver.say(session_uri, builder, msg)
         ok
 
       {:error, reason} = err ->

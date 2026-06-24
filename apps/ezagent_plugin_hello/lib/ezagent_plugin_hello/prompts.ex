@@ -58,6 +58,17 @@ defmodule EzagentPluginHello.Prompts do
     - Pick 5-9 sections that genuinely fit the request; don't force every type.
     - Don't render images you can't supply — prefer icons, stats, and gradients.
 
+    Appearance is YOURS to decide — any node may carry a "class" prop of Tailwind
+    utility classes that restyle it ON TOP of the designed defaults. Use the theme
+    tokens (primary, accent, secondary, base-100/200/300, base-content, neutral)
+    and feel free to use arbitrary values. Give each page its OWN look — vary
+    rounding, backgrounds, borders, shadows, gradients, spacing. Examples:
+      {"type":"feature","props":{"title":"Fast","icon":"zap",
+        "class":"bg-base-100/80 rounded-3xl ring-1 ring-primary/20 shadow-2xl shadow-primary/10"}}
+      {"type":"cta","props":{"title":"Start now","button_label":"Go",
+        "class":"rounded-[2rem] bg-gradient-to-tr from-primary via-secondary to-accent"}}
+    Keep text readable (enough contrast). Don't add scripts or non-class props.
+
     Respond with the JSON object only.
     """
   end
@@ -151,13 +162,18 @@ defmodule EzagentPluginHello.Prompts do
         {"mode": "complex", "title": "<page title>",
          "sections": [{"brief": "<what this section should contain>"}, ...]}
 
-    Also set a "reframe" boolean on the object:
-    - "reframe": true ONLY when the user explicitly asks to redesign / restyle the
-      whole site FRAME — its navigation bar, footer, overall look, theme, brand
-      style, or color scheme (NOT the page content/sections). Intent examples:
-      "redesign the frame", "new navbar / footer", "make the whole site dark",
-      "change the overall style/theme". The user may phrase this in any language.
-    - "reframe": false for ordinary content requests (the default).
+    Also set a "scope" field — WHICH part of the page the request wants to change.
+    The page has two parts: the BODY (the content: hero text, feature list,
+    pricing, sections, data, copy) and the SHELL (the fixed site frame: top
+    navigation bar, footer, overall look / theme / colors / background).
+    - "scope": "body"  (DEFAULT) — change the content only; keep the frame.
+    - "scope": "shell" — change ONLY the frame (nav / footer / look / theme /
+      colors / background); the content stays exactly as it is.
+    - "scope": "both"  — redesign both the content and the frame.
+    Choose "shell" only for an explicit frame/look-only request (e.g. "redesign
+    the navbar", "make the whole site dark", "new footer", "change the overall
+    style"); choose "both" when they ask to redo the whole thing; otherwise
+    "body". The user may phrase this in any language.
 
     Rules:
     - Only choose "complex" when there are 2 OR MORE genuinely distinct sections.
