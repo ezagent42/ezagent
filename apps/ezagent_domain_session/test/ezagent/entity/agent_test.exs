@@ -24,12 +24,10 @@ defmodule Ezagent.Entity.AgentTest do
       # the agent mutates its OWN config under its own authority (the #607
       # confused-deputy dissolved; the old session-side ConfigUpdate is gone).
       #
-      # PR-6 (im/session/agent decomposition §3.5) — `behaviors/0` is now the
-      # declared SUPERSET: the BASE set PLUS `Ezagent.Behavior.CurlAgent`
-      # (the curl flavor's STATE behavior). CurlAgent is ACTIVE only on a
-      # curl-flavor instance (explicit `:behaviors` = `curl_behaviors/0`);
-      # legacy nil-`:kind_base` agents resolve to `nil_capture_behavior_set/0`
-      # = the BASE set, so they are byte-identical to pre-PR-6.
+      # PR-6 and cc-headless SDK sidecar — `behaviors/0` is the declared
+      # SUPERSET: the BASE set plus flavor-specific state behaviors. These are
+      # active only on instances that capture the matching explicit
+      # `:behaviors` set; legacy nil-`:kind_base` agents resolve to BASE.
       base = [
         Ezagent.Behavior.Identity,
         Ezagent.Behavior.Sandbox,
@@ -40,8 +38,12 @@ defmodule Ezagent.Entity.AgentTest do
 
       assert Agent.base_behaviors() == base
       assert Agent.nil_capture_behavior_set() == base
-      assert Agent.behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
+
+      assert Agent.behaviors() ==
+               base ++ [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.CcHeadlessAgent]
+
       assert Agent.curl_behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
+      assert Agent.cc_headless_behaviors() == base ++ [Ezagent.Behavior.CcHeadlessAgent]
     end
 
     test "persistence/0 is {:snapshot, :on_change} (CLI persistence fix 2026-05-25)" do

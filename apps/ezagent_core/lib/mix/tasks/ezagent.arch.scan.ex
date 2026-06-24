@@ -71,9 +71,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-9a (#53 physical split) — `entity/agent.ex` relocated VERBATIM to the
     # new `ezagent_domain_agent` app (module name FROZEN); content unchanged so
     # the line anchors hold, only the app-dir path prefix changed.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 229},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 268},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 270},
+    # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
+    # anchors lower; the spawn-fresh ownership boundary is unchanged.
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 240},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 279},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 281},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

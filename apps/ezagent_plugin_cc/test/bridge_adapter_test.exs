@@ -40,9 +40,7 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
       assigns: %{agent_uri: Ezagent.URI.new!("entity://team-alpha/agent/cc_test")}
     }
 
-    assert {:reply,
-            {:error, %{reason: "session_uris must be a non-empty list"}},
-            ^socket} =
+    assert {:reply, {:error, %{reason: "session_uris must be a non-empty list"}}, ^socket} =
              BridgeAdapter.handle_client_event(
                "reply",
                %{"text" => "hi", "session_uris" => []},
@@ -96,5 +94,96 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
 
     # Total accounting: every input lands in exactly one bucket.
     assert length(dispatched) + length(failed) + length(skipped) == length(sessions)
+  end
+end
+
+defmodule EzagentPluginCc.CcHeadlessBridgeAdapterTest do
+  use ExUnit.Case, async: false
+
+  alias Ezagent.AgentBridge.Payload
+  alias EzagentPluginCc.CcHeadlessBridgeAdapter
+  alias EzagentPluginCc.SdkSidecar
+
+  test "transport_class/0 is in_process_sync" do
+    assert CcHeadlessBridgeAdapter.transport_class() == :in_process_sync
+  end
+
+  test "deliver/2 calls the SDK sidecar and returns sync result shape" do
+    python = System.find_executable("python3") || System.find_executable("python")
+    assert is_binary(python)
+
+    agent_uri = URI.new!("entity://team-alpha/agent/cc_headless_bridge_test")
+    worker_path = Path.expand("fixtures/fake_cc_sdk_worker.py", __DIR__)
+    cwd = System.tmp_dir!()
+
+    assert {:ok, _pid} =
+             SdkSidecar.start(agent_uri, %{
+               cwd: cwd,
+               config_dir: cwd,
+               session_id: "test-session",
+               python_path: python,
+               sdk_worker_path: worker_path
+             })
+
+    on_exit(fn -> SdkSidecar.stop(agent_uri) end)
+
+    payload = %Payload{
+      message_id: "m1",
+      session_uri: URI.new!("session://team-alpha/default/s1"),
+      sender_uri: URI.new!("entity://system/user/admin"),
+      text: "hello headless",
+      event_type: :chat_send,
+      meta: %{"agent_uri" => URI.to_string(agent_uri)}
+    }
+
+    assert {:ok,
+            %{
+              content: "fake sdk reply: hello headless",
+              usage: %{input: 2, output: 3, total: 5},
+              session_id: "session://team-alpha/default/s1"
+            }} = CcHeadlessBridgeAdapter.deliver(payload, nil)
+  end
+end
+
+defmodule EzagentPluginCc.SdkSidecarTest do
+  use ExUnit.Case, async: false
+
+  alias EzagentPluginCc.SdkSidecar
+
+  test "sdk_runner/1 honors explicit python_path before ambient uv" do
+    assert {:ok, {"/custom/python3", []}} =
+             SdkSidecar.sdk_runner(%{python_path: "/custom/python3"})
+  end
+
+  test "sdk_runner/1 honors explicit uv_path with PEP 723 script args" do
+    assert {:ok, {"/custom/uv", ["run", "--script"]}} =
+             SdkSidecar.sdk_runner(%{uv_path: "/custom/uv", python_path: "/custom/python3"})
+  end
+
+  test "query/3 round-trips through a JSONL worker" do
+    python = System.find_executable("python3") || System.find_executable("python")
+    assert is_binary(python)
+
+    agent_uri = URI.new!("entity://team-alpha/agent/cc_headless_sidecar_test")
+    worker_path = Path.expand("fixtures/fake_cc_sdk_worker.py", __DIR__)
+    cwd = System.tmp_dir!()
+
+    assert {:ok, _pid} =
+             SdkSidecar.start(agent_uri, %{
+               cwd: cwd,
+               config_dir: cwd,
+               session_id: "sidecar-session",
+               python_path: python,
+               sdk_worker_path: worker_path
+             })
+
+    on_exit(fn -> SdkSidecar.stop(agent_uri) end)
+
+    assert {:ok,
+            %{
+              content: "fake sdk reply: ping",
+              usage: %{input: 2, output: 3, total: 5},
+              session_id: "sidecar-session"
+            }} = SdkSidecar.query(agent_uri, "ping", timeout: 5_000)
   end
 end

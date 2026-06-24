@@ -62,7 +62,10 @@
   #   All on-chokepoint, so off_chokepoint is unchanged. 37→40.
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor spawn paths route
   #   through the SANCTIONED SpawnRegistry chokepoint (one site each). 40→42.
-  spawn_registry_call_sites: 42,
+  # arch-cap-bump: cc-headless SDK sidecar adds one sanctioned plugin-side
+  #   ensure_live path through SpawnRegistry for the Python worker lifecycle.
+  #   Off-chokepoint remains unchanged.
+  spawn_registry_call_sites: 43,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -73,7 +76,9 @@
   # +2 protocol_api P0 (conversation_registry + openai_chat_plug spawn)
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor modules spawn through
   #   the SpawnRegistry chokepoint. 35→37.
-  spawn_registry_modules: 37,
+  # arch-cap-bump: +1 cc-headless SDK sidecar module owns its worker lifecycle
+  #   through the sanctioned SpawnRegistry surface.
+  spawn_registry_modules: 38,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -134,7 +139,8 @@
   #   CredentialAdapter delegations (auth_failure_signals/secret_relpaths/credential_*
   #   → base cc/codex agent), intentionally duplicating the delegating bodies across
   #   flavor files. 29→32.
-  cross_file_duplicate_fn_groups: 32,
+  # arch-cap-bump: cc-headless SDK behavior mirrors curl sync-result helper shape pending shared helper extraction (+8)
+  cross_file_duplicate_fn_groups: 40,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -152,6 +158,7 @@
   # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
   # arch-cap-bump: +2 #907 — cc_headless_agent + codex_remote_agent flavor template
   #   classes (thin CredentialAdapter delegations). 1682→1684.
+  # arch-cap-bump: cc-headless SDK sidecar spawn/respawn replaces the stub runtime (+2 net)
   cc_codex_template_class_combined_loc: 1684,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
@@ -201,8 +208,8 @@
   # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.
-  # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
-  set_effect_sites: 121,
+  # arch-cap-bump: cc-headless SDK sync_result state slice persists conversation/error/token fields (+5)
+  set_effect_sites: 126,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
