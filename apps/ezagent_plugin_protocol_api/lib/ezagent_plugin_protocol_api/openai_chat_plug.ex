@@ -185,7 +185,11 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
     # Register flavor attribute so AgentModuleResolver can find the Kind module.
-    # The URI name prefix determines the flavor (e.g. "curl_e2e" → "curl").
+    # Flavor comes from the STORED attribute (`Ezagent.UriQuery.resolve(:flavor, …)`),
+    # NOT parsed from the URI name prefix (the `cc_`/`codex_`/`curl_` prefix-magic was
+    # removed — flavor is a stored attribute, not derived from the name; #931 + lead
+    # 2026-06-24). A non-echo target with no stored flavor must be provisioned first;
+    # only the default echo agent is auto-registered (see `maybe_register_default_echo/1`).
     maybe_register_flavor(agent)
 
     case SpawnRegistry.spawn(agent) do
