@@ -69,6 +69,7 @@ defmodule Ezagent.WorkspaceOwnerGateTest do
 
   test "assert_local_owner/2 emits violation but continues in observe mode" do
     Application.put_env(:ezagent_core, RuntimeIdentity, runtime_id: "test-node-a")
+
     Application.put_env(:ezagent_core, WorkspacePlacement,
       resolver: RemoteResolver,
       mode: :observe
@@ -98,8 +99,7 @@ defmodule Ezagent.WorkspaceOwnerGateTest do
       :telemetry.detach(handler_id)
     end
 
-    assert_receive {:owner_gate_violation, [:ezagent, :workspace_owner_gate, :violation],
-                    %{},
+    assert_receive {:owner_gate_violation, [:ezagent, :workspace_owner_gate, :violation], %{},
                     %{
                       workspace_uri: ^workspace_uri,
                       expected_owner: "remote-node",

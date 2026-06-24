@@ -15,6 +15,7 @@ defmodule EzagentCore.Invariants.WorkspaceLocalityGateTest do
     previous_placement = Application.get_env(:ezagent_core, WorkspacePlacement)
 
     Application.put_env(:ezagent_core, RuntimeIdentity, runtime_id: "local-node")
+
     Application.put_env(:ezagent_core, WorkspacePlacement,
       resolver: RemoteResolver,
       mode: :enforce

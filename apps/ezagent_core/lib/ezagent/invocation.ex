@@ -90,7 +90,11 @@ defmodule Ezagent.Invocation do
   def dispatch(%__MODULE__{target: target, mode: mode, ctx: ctx} = inv) do
     instance_uri = Ezagent.URI.instance(target)
 
-    with :ok <- Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(instance_uri, {:dispatch, target}),
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
+             instance_uri,
+             {:dispatch, target}
+           ),
          :ok <- maybe_idempotency_check(ctx) do
       dispatch_with_lazy_spawn(instance_uri, mode, inv)
     end

@@ -12,9 +12,18 @@ defmodule Ezagent.WorkspacePlacement do
 
   @callback owner_of(URI.t()) :: {:ok, owner()} | {:error, term()}
 
+  @doc """
+  Resolves the runtime owner for a workspace URI.
+
+  The default resolver keeps today's single-runtime behavior by returning the
+  current runtime for every workspace.
+  """
   @spec owner_of(URI.t()) :: {:ok, owner()} | {:error, term()}
   def owner_of(%URI{} = workspace_uri), do: resolver().owner_of(workspace_uri)
 
+  @doc """
+  Returns true when the current runtime owns the workspace.
+  """
   @spec local_owner?(URI.t()) :: boolean()
   def local_owner?(%URI{} = workspace_uri) do
     case owner_of(workspace_uri) do
@@ -23,6 +32,9 @@ defmodule Ezagent.WorkspacePlacement do
     end
   end
 
+  @doc """
+  Returns the configured workspace placement resolver module.
+  """
   @spec resolver() :: module()
   def resolver do
     Application.get_env(:ezagent_core, __MODULE__, [])[:resolver] || LocalResolver

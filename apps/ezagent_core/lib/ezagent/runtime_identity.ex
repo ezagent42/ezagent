@@ -6,6 +6,12 @@ defmodule Ezagent.RuntimeIdentity do
   Tests may override it through application env.
   """
 
+  @doc """
+  Returns the identity of the current runtime for placement comparisons.
+
+  Production defaults to the BEAM node name. Tests may override the value
+  through application env to simulate multiple runtimes without clustering.
+  """
   @spec current() :: term()
   def current do
     case Application.get_env(:ezagent_core, __MODULE__, [])[:runtime_id] do

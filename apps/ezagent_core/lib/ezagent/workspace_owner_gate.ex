@@ -13,6 +13,12 @@ defmodule Ezagent.WorkspaceOwnerGate do
           | {:resource_access, URI.t()}
           | term()
 
+  @doc """
+  Asserts that the current runtime owns the given workspace.
+
+  In enforce mode a non-owner or unknown owner returns a structured error. In
+  observe mode the gate emits telemetry and lets the operation continue.
+  """
   @spec assert_local_owner(URI.t(), operation()) :: :ok | {:error, term()}
   def assert_local_owner(%URI{scheme: "workspace"} = workspace_uri, operation) do
     current = Ezagent.RuntimeIdentity.current()
@@ -35,6 +41,9 @@ defmodule Ezagent.WorkspaceOwnerGate do
     {:error, {:workspace_required, operation, other}}
   end
 
+  @doc """
+  Derives the workspace for a URI and asserts local ownership before work runs.
+  """
   @spec assert_local_owner_for_uri(URI.t(), operation()) :: :ok | {:error, term()}
   def assert_local_owner_for_uri(%URI{} = uri, operation) do
     case Ezagent.URI.workspace_of(uri) do
