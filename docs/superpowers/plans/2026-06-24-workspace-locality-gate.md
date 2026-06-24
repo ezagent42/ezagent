@@ -437,23 +437,19 @@ defmodule EzagentCore.Invariants.WorkspaceLocalityGateTest do
              {:dispatch, ^target}}} = Invocation.dispatch(inv)
   end
 
-  test "spawn fails before registered spawn function is invoked when workspace is owned remotely" do
-    test_pid = self()
-    scheme = "locality-spawn-#{System.unique_integer([:positive])}"
+  test "spawn fails before local materialization when workspace is owned remotely" do
+    uri =
+      Ezagent.URI.new!(
+        "session://team-alpha/default/locality-spawn-#{System.unique_integer([:positive])}"
+      )
 
-    SpawnRegistry.register(scheme, fn uri ->
-      send(test_pid, {:spawn_called, uri})
-      {:ok, self()}
-    end)
-
-    uri = Ezagent.URI.new!("#{scheme}://team-alpha/agent/example")
     workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
 
     assert {:error,
             {:not_workspace_owner, ^workspace_uri, "remote-node", "local-node",
              {:spawn, ^uri}}} = SpawnRegistry.spawn(uri)
 
-    refute_receive {:spawn_called, ^uri}, 100
+    assert :error = Ezagent.KindRegistry.lookup(uri)
   end
 
   defp restore_env(_module, nil), do: Application.delete_env(:ezagent_core, _module)
