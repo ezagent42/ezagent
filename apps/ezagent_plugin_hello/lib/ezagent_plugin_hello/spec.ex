@@ -161,12 +161,12 @@ defmodule EzagentPluginHello.Spec do
   @spec seed() :: map()
   def seed do
     %{
-      "type" => "page",
-      "props" => %{"title" => "Hello"},
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "gap" => "md", "className" => "p-8", "title" => "Hello"},
       "children" => [
-        %{"type" => "heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
+        %{"type" => "Heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
         %{
-          "type" => "text",
+          "type" => "Text",
           "props" => %{"text" => "Tell the builder what page you want."},
           "children" => []
         }

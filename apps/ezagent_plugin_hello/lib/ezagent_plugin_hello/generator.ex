@@ -152,50 +152,30 @@ defmodule EzagentPluginHello.Generator do
   # forbids Han literals in lib/; real content replaces it in round 2).
   defp skeleton_page do
     leaf = fn type, props -> %{"type" => type, "props" => props, "children" => []} end
+    card = fn title, desc -> leaf.("Card", %{"title" => title, "description" => desc}) end
 
     %{
-      "type" => "page",
-      "props" => %{"title" => "Preview"},
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "gap" => "xl", "className" => "p-8", "title" => "Preview"},
       "children" => [
-        leaf.("hero", %{
-          "title" => "Your Headline Here",
-          "subtitle" => "A one-line value proposition — real content comes next.",
-          "cta_label" => "Get Started",
-          "cta_href" => "#"
-        }),
         %{
-          "type" => "features",
-          "props" => %{"title" => "Key Features (placeholder)"},
+          "type" => "Stack",
+          "props" => %{"direction" => "vertical", "gap" => "md"},
           "children" => [
-            leaf.("feature", %{"title" => "Feature One", "text" => "Placeholder description.", "icon" => "zap"}),
-            leaf.("feature", %{"title" => "Feature Two", "text" => "Placeholder description.", "icon" => "shield"}),
-            leaf.("feature", %{"title" => "Feature Three", "text" => "Placeholder description.", "icon" => "rocket"})
+            leaf.("Heading", %{"text" => "Your Headline Here", "level" => 1}),
+            leaf.("Text", %{"text" => "A one-line value proposition — real content comes next."}),
+            leaf.("Button", %{"label" => "Get Started", "variant" => "default"})
           ]
         },
         %{
-          "type" => "stats",
-          "props" => %{"title" => "Metrics (placeholder)"},
+          "type" => "Grid",
+          "props" => %{"columns" => 3, "gap" => "md"},
           "children" => [
-            leaf.("stat", %{"value" => "99%", "label" => "Placeholder"}),
-            leaf.("stat", %{"value" => "1.2k", "label" => "Placeholder"}),
-            leaf.("stat", %{"value" => "4.9", "label" => "Placeholder"}),
-            leaf.("stat", %{"value" => "24/7", "label" => "Placeholder"})
+            card.("Feature One", "Placeholder description."),
+            card.("Feature Two", "Placeholder description."),
+            card.("Feature Three", "Placeholder description.")
           ]
-        },
-        %{
-          "type" => "testimonials",
-          "props" => %{"title" => "Testimonials (placeholder)"},
-          "children" => [
-            leaf.("testimonial", %{"quote" => "A placeholder testimonial quote.", "author" => "Jane Doe", "role" => "Title / Company"}),
-            leaf.("testimonial", %{"quote" => "A placeholder testimonial quote.", "author" => "John Roe", "role" => "Title / Company"})
-          ]
-        },
-        leaf.("cta", %{
-          "title" => "Ready to start? (placeholder)",
-          "text" => "Placeholder call to action.",
-          "button_label" => "Get Started",
-          "button_href" => "#"
-        })
+        }
       ]
     }
   end
