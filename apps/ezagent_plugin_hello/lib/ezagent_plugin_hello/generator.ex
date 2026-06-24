@@ -30,7 +30,7 @@ defmodule EzagentPluginHello.Generator do
   # `priv/gettext/zh_CN/LC_MESSAGES/default.po`.
   use Gettext, backend: EzagentPluginHello.Gettext
 
-  alias EzagentPluginHello.{Prompts, Spec, TurnDriver}
+  alias EzagentPluginHello.{Prompts, Sanitize, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
   # Per-section worker deadline — a margin over the LLM client's 60s call timeout.
@@ -275,6 +275,43 @@ defmodule EzagentPluginHello.Generator do
 
   defp briefs_of(_), do: []
 
+  # Author the bespoke HTML frame once per session (lazy). Reads the Surface
+  # slice; only generates when no shell is stored yet, so the frame stays stable
+  # across content edits. The LLM output is sanitised before storage.
+  defp maybe_set_shell(session_uri, builder, title) do
+    if shell_present?(session_uri) do
+      :ok
+    else
+      brand = if is_binary(title) and title != "", do: title, else: "Website"
+
+      case call_llm(Prompts.shell_gen_system(), "Brand/title: #{brand}") do
+        {:ok, %{content: content}} ->
+          html = content |> extract_html() |> Sanitize.html()
+          TurnDriver.set_shell(session_uri, builder, html)
+
+        other ->
+          Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
+          :ok
+      end
+    end
+  end
+
+  defp shell_present?(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, %{shell: s}} when is_binary(s) and s != "" -> true
+      _ -> false
+    end
+  end
+
+  # Strip markdown fences / stray prose around an HTML reply.
+  defp extract_html(content) when is_binary(content) do
+    content
+    |> String.replace(~r/```[a-z]*/i, "")
+    |> String.trim()
+  end
+
+  defp extract_html(_), do: ""
+
   defp call_llm(system, user_text) do
     case api_key() do
       key when is_binary(key) and key != "" ->
@@ -299,6 +336,11 @@ defmodule EzagentPluginHello.Generator do
   # the RESULT goes through say to guarantee the operator sees completion live.
   defp land_page(session_uri, builder, spec) do
     TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
+    # Hybrid architecture: lazily author the bespoke HTML site-frame (shell) once
+    # per session. It wraps the json-render body and is STABLE across page edits
+    # (only generated when absent), matching "AI edits the content, the frame
+    # stays put unless asked to redesign it".
+    maybe_set_shell(session_uri, builder, get_title(spec))
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->

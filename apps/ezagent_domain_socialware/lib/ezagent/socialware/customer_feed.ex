@@ -32,10 +32,21 @@ defmodule Ezagent.Socialware.CustomerFeed do
       {:ok,
        %{
          messages: MessageStore.committed_customer_visible(session_uri, @history_limit),
-         page: customer_page(session_uri)
+         page: customer_page(session_uri),
+         shell: customer_shell(session_uri)
        }}
     else
       _ -> {:error, :unauthorized}
+    end
+  end
+
+  # The AI-authored, server-sanitised HTML site-frame (hybrid architecture).
+  # nil when the session has no shell yet → the client falls back to its built-in
+  # theme frame.
+  defp customer_shell(session_uri) do
+    case surface_slice(session_uri) do
+      %{shell: s} when is_binary(s) and s != "" -> s
+      _ -> nil
     end
   end
 

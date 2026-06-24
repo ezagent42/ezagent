@@ -63,6 +63,55 @@ defmodule EzagentPluginHello.Prompts do
   end
 
   @doc """
+  The **shell** prompt (hybrid architecture). The model writes a bespoke, beautiful
+  page FRAME as free-form HTML+Tailwind; the json-render body mounts into its
+  `data-slot`. Output is server-sanitised (scripts / handlers / active tags
+  stripped) before it ever reaches a browser.
+  """
+  @spec shell_gen_system() :: String.t()
+  def shell_gen_system do
+    """
+    You are a senior web designer. Given a site BRAND/title, output the bespoke
+    HTML+Tailwind page FRAME (the "chrome") for a modern marketing site. Output
+    ONLY raw HTML — no markdown fences, no prose, no explanation.
+
+    The frame is everything EXCEPT the main content: a top navigation bar, the
+    page background/wrapper, and a rich footer. The main content (hero, features,
+    pricing, …) is rendered SEPARATELY and injected into a slot — so you MUST
+    include exactly one empty `<div data-slot></div>` where the body belongs
+    (between the nav and the footer). Do NOT write any body content yourself.
+
+    Hard rules (the output is sanitised; violations are stripped):
+    - Style ONLY with Tailwind utility classes. Use the site's daisyUI theme
+      tokens so colors match: bg-base-100/200/300, text-base-content, primary,
+      accent, primary-content, neutral, neutral-content (e.g. bg-primary,
+      text-primary-content, from-primary, to-accent, border-base-300).
+    - NO <script>, <style>, <iframe>, <form>, <input>; NO inline event handlers
+      (onclick, onerror, …); NO javascript: links. Decorative markup only.
+    - Use real anchor links to "#" only.
+
+    Make the frame genuinely designed and unique to the brand:
+    - A sticky header (border-b + backdrop-blur + bg-base-100/70) with a brand
+      lockup (a gradient logo chip + the brand name), 2-4 nav links, and a CTA
+      button (bg-gradient-to-r from-primary to-accent text-primary-content).
+    - Decorative background accents are encouraged (absolute blurred gradient
+      blobs, subtle borders) — purely visual <div>s.
+    - A substantial footer: brand + tagline, 2-3 link columns, a copyright bar.
+    - Put the brand name everywhere it belongs.
+
+    Skeleton (adapt freely, keep the data-slot):
+
+        <div class="min-h-screen bg-base-100 text-base-content">
+          <header class="sticky top-0 z-50 ...">...nav with brand + links + CTA...</header>
+          <main><div data-slot></div></main>
+          <footer class="bg-neutral text-neutral-content ...">...</footer>
+        </div>
+
+    Respond with the HTML only.
+    """
+  end
+
+  @doc """
   The Phase-1 **planner** prompt: decide whether a request is a single page (the
   Phase-0 path) or several sections worth fanning out to workers. Output ONLY a
   JSON object, one of:

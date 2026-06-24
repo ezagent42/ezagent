@@ -1,5 +1,5 @@
 import {Socket} from "phoenix"
-import React, {useEffect, useMemo, useState} from "react"
+import React, {useEffect, useMemo, useRef, useState} from "react"
 import {createRoot} from "react-dom/client"
 import {JsonRenderPage} from "./catalog_jsonrender.mjs"
 import {PageShell} from "./theme_shell.mjs"
@@ -143,6 +143,12 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // code and never AI-written → beauty + safety. Brand comes from the page title.
   // (`sw-customer-shell` + `data-catalog-valid` kept — E2E asserts on them.)
   const brand = (page && page.props && page.props.title) || "Hello"
+  // Hybrid: prefer the AI-authored, server-sanitised HTML shell (bespoke frame
+  // per site). Fall back to the built-in hand-crafted PageShell theme when the
+  // session has no shell yet (e.g. pages built before the shell existed).
+  if (snapshot.shell) {
+    return React.createElement(HybridPage, {shell: snapshot.shell, page})
+  }
   return React.createElement(
     "div",
     {
@@ -151,6 +157,46 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
     },
     React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
   )
+}
+
+// Inject the sanitized HTML shell as static markup, then mount the json-render
+// BODY into its [data-slot] via a SEPARATE React root. The shell is inert (no
+// scripts/handlers survive sanitization), so innerHTML is safe; the slot root
+// re-renders on page updates without rebuilding the frame.
+function HybridPage({shell, page}) {
+  const hostRef = useRef(null)
+  const rootRef = useRef(null)
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    host.innerHTML = shell
+    let slot = host.querySelector("[data-slot]")
+    if (!slot) {
+      slot = document.createElement("div")
+      host.appendChild(slot)
+    }
+    const root = createRoot(slot)
+    rootRef.current = root
+    root.render(React.createElement(JsonRenderPage, {page}))
+    return () => {
+      const r = rootRef.current
+      rootRef.current = null
+      // defer unmount out of the commit phase to avoid a React warning
+      if (r) setTimeout(() => { try { r.unmount() } catch (e) {} }, 0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shell])
+
+  useEffect(() => {
+    if (rootRef.current) rootRef.current.render(React.createElement(JsonRenderPage, {page}))
+  }, [page])
+
+  return React.createElement("div", {
+    ref: hostRef,
+    className: "sw-customer-shell w-full",
+    "data-catalog-valid": String(isValidTree(page)),
+  })
 }
 
 function ChatPane({messages}) {
