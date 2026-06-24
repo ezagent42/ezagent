@@ -31,7 +31,8 @@ function withClass(fn, key) {
     const merged = ((el.props.className || "") + " " + semantic + " " + extra)
       .replace(/\s+/g, " ")
       .trim()
-    return React.cloneElement(el, {className: merged})
+    // `data-jr-type` marks each node as json-render (for the highlight toggle).
+    return React.cloneElement(el, {className: merged, "data-jr-type": key || "node"})
   }
 }
 const applyClass = (components) =>

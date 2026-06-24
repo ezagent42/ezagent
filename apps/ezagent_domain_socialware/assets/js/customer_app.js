@@ -93,6 +93,12 @@ function boot(root) {
 function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
+  // Debug: highlight which parts of the page are json-render (vs the HTML frame).
+  const [jrHighlight, setJrHighlight] = useState(false)
+  useEffect(() => {
+    document.body.classList.toggle("jr-highlight", jrHighlight)
+    return () => document.body.classList.remove("jr-highlight")
+  }, [jrHighlight])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -177,20 +183,20 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   const page = snapshot.page
   const childCount = page && Array.isArray(page.children) ? page.children.length : 0
   const hasBody = childCount > 0
+  let content
 
   // Two-round flow: ROUND 1 lands only the FRAME (snapshot.shell) with no body
   // yet. Show the frame WITH a placeholder skeleton in the slot so its design is
   // visible for approval. ROUND 2 fills the real json-render body.
   if (snapshot.shell) {
-    return React.createElement(HybridPage, {
+    content = React.createElement(HybridPage, {
       shell: snapshot.shell,
       shellCss: snapshot.shell_css,
       page: hasBody ? page : SKELETON_PAGE,
     })
-  }
-  // No frame yet (and no body) → clean empty state.
-  if (!hasBody) {
-    return React.createElement(
+  } else if (!hasBody) {
+    // No frame yet (and no body) → clean empty state.
+    content = React.createElement(
       "div",
       {
         className: "sw-customer-shell flex min-h-[60vh] w-full flex-col items-center justify-center gap-3 px-6 text-center text-base-content/50",
@@ -201,18 +207,46 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
       React.createElement("p", {className: "text-base font-medium text-base-content/70"}, "还没有页面"),
       React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
     )
+  } else {
+    // Body but no AI frame yet → built-in PageShell theme.
+    const brand = (page && page.props && page.props.title) || "Hello"
+    content = React.createElement(
+      "div",
+      {
+        className: "sw-customer-shell w-full",
+        "data-catalog-valid": String(isValidTree(page)),
+      },
+      React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
+    )
   }
-  // Body but no AI frame yet → built-in PageShell theme.
-  const brand = (page && page.props && page.props.title) || "Hello"
+
   return React.createElement(
-    "div",
-    {
-      className: "sw-customer-shell w-full",
-      "data-catalog-valid": String(isValidTree(page)),
-    },
-    React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
+    React.Fragment,
+    null,
+    React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS}}),
+    content,
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setJrHighlight((v) => !v),
+        className:
+          "fixed bottom-4 right-4 z-[9999] rounded-full px-4 py-2 text-sm font-semibold shadow-lg transition " +
+          (jrHighlight ? "bg-fuchsia-600 text-white" : "bg-base-100 text-base-content/70 ring-1 ring-base-300 hover:ring-fuchsia-400"),
+        title: "高亮页面里属于 json-render 的部分(框架是 HTML,不高亮)",
+      },
+      jrHighlight ? "✕ 隐藏 json-render" : "◐ 高亮 json-render"
+    )
   )
 }
+
+// Highlight overlay: every json-render node carries `data-jr-type`; the HTML frame
+// (nav/footer/background) has none, so toggling this clearly separates the two.
+const JR_HIGHLIGHT_CSS = `
+body.jr-highlight [data-slot]{outline:2px solid #d946ef;outline-offset:-2px}
+body.jr-highlight [data-jr-type]{outline:1px dashed rgba(217,70,239,.55);outline-offset:-1px;position:relative}
+body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:2px 4px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
+`
 
 // Inject the sanitized HTML shell as static markup, then mount the json-render
 // BODY into its [data-slot] via a SEPARATE React root. The shell is inert (no
