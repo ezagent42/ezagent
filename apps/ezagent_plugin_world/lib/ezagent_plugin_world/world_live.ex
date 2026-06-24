@@ -595,12 +595,24 @@ defmodule EzagentPluginWorld.WorldLive do
   # resolve, including any the operator just authored via the template form)
   # plus the always-available `"default"` bootstrap class (auto-seeded on use).
   defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
-    workspace_uri
-    |> Ezagent.URI.name!()
-    |> Ezagent.World.WorkspacePluginData.session_template_rows()
-    |> Enum.map(&Map.get(&1, "name"))
+    # Registered session Template Classes (e.g. "session.hello") shown by their
+    # friendly name ("hello") — `create_session` resolves the bare name back to
+    # the `session.<name>` class (workspace `resolve_session_class/1`). Without
+    # this the dropdown only listed per-session template INSTANCES ("hello-77")
+    # and the `hello` class itself was missing.
+    classes =
+      Ezagent.TemplateRegistry.registered_template_names()
+      |> Enum.filter(&String.starts_with?(&1, "session."))
+      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
+
+    instances =
+      workspace_uri
+      |> Ezagent.URI.name!()
+      |> Ezagent.World.WorkspacePluginData.session_template_rows()
+      |> Enum.map(&Map.get(&1, "name"))
+
+    (["default" | classes] ++ instances)
     |> Enum.reject(&(&1 in [nil, ""]))
-    |> then(&["default" | &1])
     |> Enum.uniq()
     |> Enum.sort()
   rescue

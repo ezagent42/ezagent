@@ -52,6 +52,25 @@ defmodule EzagentPluginHello.Application do
   @impl Ezagent.Plugin
   def template_classes, do: [EzagentPluginHello.Template.HelloSession]
 
+  # Register the builder Kind under a flavor so a cold `entity://<ws>/agent/
+  # hello_<name>` (kind_type "hello_builder") can be REVIVED from its snapshot
+  # after a restart. Without this, the agent-module resolver returns
+  # `{:no_kind_module_for_agent, ...}` and the session's fan-out `agent.receive`
+  # to the builder lands in PendingDelivery forever — @hello silently stops
+  # replying. `template_class: nil` — the builder has no agent Template Class
+  # (it is spawned by the session.hello session template, not an agent flavor),
+  # so it must not collide with class-name resolution.
+  @impl Ezagent.Plugin
+  def agent_flavors do
+    [
+      %{
+        flavor: "hello_builder",
+        kind: Ezagent.Entity.HelloBuilder,
+        template_class: nil
+      }
+    ]
+  end
+
   @impl Ezagent.Plugin
   def plugin_info do
     %{

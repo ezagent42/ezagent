@@ -1,9 +1,36 @@
 import {Socket} from "phoenix"
-import React, {useEffect, useMemo, useState} from "react"
+import React, {useEffect, useMemo, useRef, useState} from "react"
 import {createRoot} from "react-dom/client"
-import {Sandpack} from "@codesandbox/sandpack-react"
-import {createBaseRegistry, renderJsonNode} from "./catalog_render.mjs"
+import {JsonRenderPage} from "./catalog_jsonrender.mjs"
+import {PageShell} from "./theme_shell.mjs"
 import {isValidTree} from "./catalog.mjs"
+
+// Round-1 preview: a placeholder body shown inside the AI frame so its design is
+// visible for approval before real content is generated (round 2).
+const SKELETON_PAGE = {
+  type: "Stack",
+  props: {direction: "vertical", gap: "xl", className: "p-8"},
+  children: [
+    {
+      type: "Stack",
+      props: {direction: "vertical", gap: "md"},
+      children: [
+        {type: "Heading", props: {text: "标题占位 · Your Headline", level: 1}},
+        {type: "Text", props: {text: "这里是副标题占位 —— 真实内容将在下一步填充。"}},
+        {type: "Button", props: {label: "开始", variant: "default"}},
+      ],
+    },
+    {
+      type: "Grid",
+      props: {columns: 3, gap: "md"},
+      children: [
+        {type: "Card", props: {title: "特性一", description: "占位说明文字。"}},
+        {type: "Card", props: {title: "特性二", description: "占位说明文字。"}},
+        {type: "Card", props: {title: "特性三", description: "占位说明文字。"}},
+      ],
+    },
+  ],
+}
 
 // Print the @json-render page data that actually drives the rendered page to the
 // browser DevTools (F12) console — the "useful generated data" an operator wants
@@ -55,7 +82,12 @@ function boot(root) {
 function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
-  const registry = useMemo(() => createBaseRegistry(React, Sandpack), [])
+  // Debug: highlight which parts of the page are json-render (vs the HTML frame).
+  const [jrHighlight, setJrHighlight] = useState(false)
+  useEffect(() => {
+    document.body.classList.toggle("jr-highlight", jrHighlight)
+    return () => document.body.classList.remove("jr-highlight")
+  }, [jrHighlight])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -137,29 +169,114 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // `data-catalog-valid` is a NON-destructive conformance signal: the approved
   // page is rendered regardless (the renderer fails closed per node), but a tree
   // that does not conform to the Zod catalog is flagged for observability/E2E.
-  const page = snapshot.page || emptyPage()
+  const page = snapshot.page
+  const childCount = page && Array.isArray(page.children) ? page.children.length : 0
+  const hasBody = childCount > 0
+  let content
+
+  // Two-round flow: ROUND 1 lands only the FRAME (snapshot.shell) with no body
+  // yet. Show the frame WITH a placeholder skeleton in the slot so its design is
+  // visible for approval. ROUND 2 fills the real json-render body.
+  if (snapshot.shell) {
+    content = React.createElement(HybridPage, {
+      shell: snapshot.shell,
+      shellCss: snapshot.shell_css,
+      page: hasBody ? page : SKELETON_PAGE,
+    })
+  } else if (!hasBody) {
+    // No frame yet (and no body) → clean empty state.
+    content = React.createElement(
+      "div",
+      {
+        className: "sw-customer-shell flex min-h-[60vh] w-full flex-col items-center justify-center gap-3 px-6 text-center text-base-content/50",
+        "data-catalog-valid": "true",
+        "data-empty": "true",
+      },
+      React.createElement("div", {className: "text-4xl"}, "🪄"),
+      React.createElement("p", {className: "text-base font-medium text-base-content/70"}, "还没有页面"),
+      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
+    )
+  } else {
+    // Body but no AI frame yet → built-in PageShell theme.
+    const brand = (page && page.props && page.props.title) || "Hello"
+    content = React.createElement(
+      "div",
+      {
+        className: "sw-customer-shell w-full",
+        "data-catalog-valid": String(isValidTree(page)),
+      },
+      React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
+    )
+  }
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS}}),
+    content,
+    React.createElement(
+      "button",
+      {
+        type: "button",
+        onClick: () => setJrHighlight((v) => !v),
+        className:
+          "fixed bottom-4 right-4 z-[9999] rounded-full px-4 py-2 text-sm font-semibold shadow-lg transition " +
+          (jrHighlight ? "bg-fuchsia-600 text-white" : "bg-base-100 text-base-content/70 ring-1 ring-base-300 hover:ring-fuchsia-400"),
+        title: "高亮页面里属于 json-render 的部分(框架是 HTML,不高亮)",
+      },
+      jrHighlight ? "✕ 隐藏 json-render" : "◐ 高亮 json-render"
+    )
+  )
+}
+
+// Highlight overlay: every json-render node carries `data-jr-type`; the HTML frame
+// (nav/footer/background) has none, so toggling this clearly separates the two.
+const JR_HIGHLIGHT_CSS = `
+body.jr-highlight [data-slot]{outline:2px solid #d946ef;outline-offset:-2px}
+body.jr-highlight [data-jr-type]{outline:1px dashed rgba(217,70,239,.55);outline-offset:-1px;position:relative}
+body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:2px 4px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
+`
+
+// Inject the sanitized HTML shell as static markup, then mount the json-render
+// BODY into its [data-slot] via a SEPARATE React root. The shell is inert (no
+// scripts/handlers survive sanitization), so innerHTML is safe; the slot root
+// re-renders on page updates without rebuilding the frame.
+function HybridPage({shell, shellCss, page}) {
+  const hostRef = useRef(null)
+  const rootRef = useRef(null)
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    host.innerHTML = shell
+    let slot = host.querySelector("[data-slot]")
+    if (!slot) {
+      slot = document.createElement("div")
+      host.appendChild(slot)
+    }
+    const root = createRoot(slot)
+    rootRef.current = root
+    root.render(React.createElement(JsonRenderPage, {page}))
+    return () => {
+      const r = rootRef.current
+      rootRef.current = null
+      // defer unmount out of the commit phase to avoid a React warning
+      if (r) setTimeout(() => { try { r.unmount() } catch (e) {} }, 0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shell])
+
+  useEffect(() => {
+    if (rootRef.current) rootRef.current.render(React.createElement(JsonRenderPage, {page}))
+  }, [page])
+
+  // The shell's own compiled Tailwind CSS (its AI classes are invisible to the
+  // build-time scan) is inlined here; the sanitized shell HTML mounts in hostRef.
   return React.createElement(
     "div",
-    {
-      className: "sw-customer-shell mx-auto flex w-full max-w-2xl flex-col gap-6",
-      "data-catalog-valid": String(isValidTree(page)),
-    },
-    React.createElement(
-      "header",
-      {className: "flex flex-col gap-1"},
-      React.createElement(
-        "h1",
-        {className: "text-xl font-semibold tracking-tight text-base-content"},
-        "Your conversation"
-      ),
-      React.createElement(
-        "p",
-        {className: "text-sm text-base-content/60"},
-        "Live updates appear here automatically."
-      )
-    ),
-    React.createElement(ChatPane, {messages: snapshot.messages || []}),
-    renderJsonNode(React, page, registry)
+    {className: "sw-customer-shell w-full", "data-catalog-valid": String(isValidTree(page))},
+    shellCss ? React.createElement("style", {dangerouslySetInnerHTML: {__html: shellCss}}) : null,
+    React.createElement("div", {ref: hostRef})
   )
 }
 

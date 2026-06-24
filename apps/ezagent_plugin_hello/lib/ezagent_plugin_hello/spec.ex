@@ -22,16 +22,52 @@ defmodule EzagentPluginHello.Spec do
   string-keyed (JSON round-trips through `MessageStore`/snapshots as strings).
   """
 
-  # Catalog v0 — allowed node types → the prop keys the renderer honors.
-  # `children` is allowed on the container-ish types (page/section/card).
+  # Catalog — the @json-render/shadcn component set (36). Container types (with a
+  # `default` slot) take `children`; leaves carry content in props. The renderer
+  # (zod) validates props; this list gates the allowed TYPES + documents props for
+  # the prompt. `className` (where present) lets the model add Tailwind utilities.
   @catalog %{
-    "page" => %{props: ["title"], container?: true},
-    "section" => %{props: ["layout"], container?: true},
-    "card" => %{props: ["title"], container?: true},
-    "heading" => %{props: ["text", "level"], container?: false},
-    "text" => %{props: ["text"], container?: false},
-    "button" => %{props: ["label", "href"], container?: false},
-    "image" => %{props: ["src", "alt"], container?: false}
+    # layout containers
+    "Stack" => %{props: ["direction", "gap", "align", "justify", "className"], container?: true},
+    "Grid" => %{props: ["columns", "gap", "className"], container?: true},
+    "Card" => %{props: ["title", "description", "maxWidth", "centered", "className"], container?: true},
+    # content leaves
+    "Heading" => %{props: ["text", "level"], container?: false},
+    "Text" => %{props: ["text", "variant"], container?: false},
+    "Button" => %{props: ["label", "variant", "disabled"], container?: false},
+    "Link" => %{props: ["label", "href"], container?: false},
+    "Image" => %{props: ["src", "alt", "width", "height"], container?: false},
+    "Badge" => %{props: ["text", "variant"], container?: false},
+    "Avatar" => %{props: ["src", "name", "size"], container?: false},
+    "Alert" => %{props: ["title", "message", "type"], container?: false},
+    "Separator" => %{props: ["orientation"], container?: false},
+    # disclosure / navigation
+    "Tabs" => %{props: ["tabs", "defaultValue", "value"], container?: true},
+    "Accordion" => %{props: ["items", "type"], container?: false},
+    "Collapsible" => %{props: ["title", "defaultOpen"], container?: true},
+    "Carousel" => %{props: ["items"], container?: false},
+    "Table" => %{props: ["columns", "rows", "caption"], container?: false},
+    "Dialog" => %{props: ["title", "description", "openPath"], container?: true},
+    "Drawer" => %{props: ["title", "description", "openPath"], container?: true},
+    "Popover" => %{props: ["trigger", "content"], container?: false},
+    "Tooltip" => %{props: ["content", "text"], container?: false},
+    "DropdownMenu" => %{props: ["label", "items", "value"], container?: false},
+    "Pagination" => %{props: ["totalPages", "page"], container?: false},
+    # feedback
+    "Progress" => %{props: ["value", "max", "label"], container?: false},
+    "Skeleton" => %{props: ["width", "height", "rounded"], container?: false},
+    "Spinner" => %{props: ["size", "label"], container?: false},
+    # form controls
+    "Input" => %{props: ["label", "name", "type", "placeholder", "value"], container?: false},
+    "Textarea" => %{props: ["label", "name", "placeholder", "rows", "value"], container?: false},
+    "Select" => %{props: ["label", "name", "options", "placeholder", "value"], container?: false},
+    "Checkbox" => %{props: ["label", "name", "checked"], container?: false},
+    "Radio" => %{props: ["label", "name", "options", "value"], container?: false},
+    "Switch" => %{props: ["label", "name", "checked"], container?: false},
+    "Slider" => %{props: ["label", "min", "max", "step", "value"], container?: false},
+    "Toggle" => %{props: ["label", "pressed", "variant"], container?: false},
+    "ToggleGroup" => %{props: ["items", "type", "value"], container?: false},
+    "ButtonGroup" => %{props: ["buttons", "selected"], container?: false}
   }
 
   @doc "The allowed component catalog (type → %{props, container?})."
@@ -111,8 +147,8 @@ defmodule EzagentPluginHello.Spec do
   @spec compose_page(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
   def compose_page(title, sections) when is_binary(title) and is_list(sections) do
     page = %{
-      "type" => "page",
-      "props" => %{"title" => title},
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "gap" => "lg", "title" => title},
       "children" => sections
     }
 
@@ -125,12 +161,12 @@ defmodule EzagentPluginHello.Spec do
   @spec seed() :: map()
   def seed do
     %{
-      "type" => "page",
-      "props" => %{"title" => "Hello"},
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "gap" => "md", "className" => "p-8", "title" => "Hello"},
       "children" => [
-        %{"type" => "heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
+        %{"type" => "Heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
         %{
-          "type" => "text",
+          "type" => "Text",
           "props" => %{"text" => "Tell the builder what page you want."},
           "children" => []
         }

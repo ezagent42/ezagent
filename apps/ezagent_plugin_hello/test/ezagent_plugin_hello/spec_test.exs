@@ -8,12 +8,12 @@ defmodule EzagentPluginHello.SpecTest do
       assert {:ok, _} = Spec.validate(Spec.seed())
 
       page = %{
-        "type" => "page",
-        "props" => %{"title" => "Hi"},
+        "type" => "Stack",
+        "props" => %{"direction" => "vertical", "title" => "Hi"},
         "children" => [
-          %{"type" => "heading", "props" => %{"text" => "H", "level" => 1}, "children" => []},
-          %{"type" => "text", "props" => %{"text" => "body"}, "children" => []},
-          %{"type" => "button", "props" => %{"label" => "Go", "href" => "/x"}, "children" => []}
+          %{"type" => "Heading", "props" => %{"text" => "H", "level" => 1}, "children" => []},
+          %{"type" => "Text", "props" => %{"text" => "body"}, "children" => []},
+          %{"type" => "Button", "props" => %{"label" => "Go", "variant" => "primary"}, "children" => []}
         ]
       }
 
@@ -22,7 +22,7 @@ defmodule EzagentPluginHello.SpecTest do
 
     test "fails closed on an out-of-catalog node type (nested)" do
       bad = %{
-        "type" => "page",
+        "type" => "Stack",
         "props" => %{},
         "children" => [%{"type" => "iframe", "props" => %{"src" => "evil"}, "children" => []}]
       }
@@ -39,18 +39,18 @@ defmodule EzagentPluginHello.SpecTest do
   describe "compose_page/2 — the fan-out merge" do
     setup do
       hero = %{
-        "type" => "section",
-        "props" => %{"layout" => "stack"},
+        "type" => "Stack",
+        "props" => %{"direction" => "vertical"},
         "children" => [
-          %{"type" => "heading", "props" => %{"text" => "Hero", "level" => 1}, "children" => []}
+          %{"type" => "Heading", "props" => %{"text" => "Hero", "level" => 1}, "children" => []}
         ]
       }
 
       menu = %{
-        "type" => "section",
+        "type" => "Stack",
         "props" => %{},
         "children" => [
-          %{"type" => "card", "props" => %{"title" => "Espresso"}, "children" => []}
+          %{"type" => "Card", "props" => %{"title" => "Espresso"}, "children" => []}
         ]
       }
 
@@ -59,7 +59,7 @@ defmodule EzagentPluginHello.SpecTest do
 
     test "assembles ordered section sub-trees into one valid page", %{hero: hero, menu: menu} do
       assert {:ok, page} = Spec.compose_page("Bean & Leaf", [hero, menu])
-      assert page["type"] == "page"
+      assert page["type"] == "Stack"
       assert page["props"]["title"] == "Bean & Leaf"
       # order preserved
       assert page["children"] == [hero, menu]
@@ -69,7 +69,7 @@ defmodule EzagentPluginHello.SpecTest do
 
     test "fails closed if ANY worker sub-tree has an out-of-catalog node", %{hero: hero} do
       poisoned = %{
-        "type" => "section",
+        "type" => "Stack",
         "props" => %{},
         "children" => [%{"type" => "iframe", "props" => %{}, "children" => []}]
       }

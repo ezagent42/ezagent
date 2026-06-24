@@ -125,15 +125,38 @@ directly inside `plan`/`handoff`.
 
 ## The handoff standard
 Every handoff is a self-contained spec an unfamiliar dev can run. The load-bearing
-rules — **definition of done = a demonstrable artifact**, **discuss-first
+rules — the **four-property Definition of Done**, **discuss-first
 triggers**, **defer rules**, **the per-task-branch merge model** — are in
 [references/handoff-standard.md](references/handoff-standard.md); the copy-paste
 skeleton is in [references/handoff-template.md](references/handoff-template.md).
 
+## The full loop (PDCA, completed) — don't let a task come back unfinished/divergent
+The 8 commands already form a PDCA loop (`plan`/`handoff` = Plan, `dive`/`return` =
+Do, `push`/`close` = Check, `review` = Act). Two phases make it complete so tasks
+stop returning **unfinished** or **finished-but-divergent**:
+- **Front — clarify/research (the missing "Study").** A build task is never handed
+  off while its scope/feasibility/DoD is still unknown. When a **discuss-first
+  trigger** fires (the **tiering criterion**), the lead issues a **research handoff**
+  (`clarify_first`) first — it produces the **DoD + the build slices**; only then
+  the build handoff. No trigger → fast path straight to build. The DoD is often
+  *unknowable before research* — research is what writes it.
+- **Back — method-writeback (a learning loop, not just a work loop).** The dev
+  **captures** at `return` (a per-line **DoD reconciliation** + method-friction);
+  the lead **promotes** in `review` (a mandatory **method-deltas** section → a
+  dev-together PR or tracked process-debt). The dev never edits the skill (single
+  writer); the lead does.
+- **Machine return gate.** "Done" is no longer self-asserted: a `return` requires
+  **CI (`precommit + check_invariants`) green on the PR head + rebased on `main`**
+  (branch-protected). The lead's `close` becomes a confirmation, not the first real
+  inspection.
+
 ## Why these rules (adapt, don't obey blindly)
 Per-task branches + lead-merges keep parallel devs from colliding and give one
 accountable integration point (`push`+`close`). Adversarial review before build
-catches *wrong-approach*, not just defects. A demonstrable DoD stops "green tests,
-broken product". The deadline + clean-split-on-defer keep the cadence
-unblockable. `review` closes the loop daily. If a case isn't covered, reason from
-these goals.
+catches *wrong-approach*, not just defects. The **clarify/research front-phase**
+keeps the lead from handing off a build whose DoD it can't yet write. A
+**goal-derived, user-layer, closed-set DoD** + the **machine return gate** stop
+"green tests, broken product" and "self-asserted done". **Deferrals are
+lead-adjudicated**, never a dev's "READY TO MERGE". `review`'s **method-deltas**
+make the loop *learn* (lessons stop recurring). The deadline + clean-split-on-defer
+keep the cadence unblockable. If a case isn't covered, reason from these goals.

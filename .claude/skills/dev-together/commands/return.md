@@ -3,16 +3,31 @@
 Return finished work to the lead before the deadline.
 
 **Do:**
-1. Confirm the **DoD artifact** exists (agent-browser screenshot / real-channel
-   chat transcript / E2E run output / merged-demo-on-Tailnet) and **all gates are
-   green** + the work's own invariant test passes.
-2. If a task must be **deferred**: cleanly split the **finished** portion onto its
-   own branch (gates green) and hand THAT off; carry the rest as a scoped
-   follow-up. Never return a tangled half-task.
-3. Write `docs/together/<date>/returns/<task>.md`: metadata · what's done · the
-   DoD artifact (path/link) · branch + gate status · cleanly-split deferred
-   follow-ups · the **merge request** (which branch/PR, any rebase/order notes).
-4. Emit the message the dev sends the lead.
+1. **Machine return gate (not prose).** A return is invalid unless the PR's **CI
+   (`precommit + check_invariants`) is green on the PR head** AND the branch is
+   **rebased onto current `main`**. Put the **CI run URL + status** and the
+   **rebase-base SHA** in the return — "gates green" as a claim is not accepted.
+   (CI + branch protection now enforce this structurally.)
+2. **DoD reconciliation — go through the handoff's DoD line by line.** For each
+   DoD line, state: met (with the proof link) / deferred (→ §3) / not-met. The DoD
+   is a **closed set** — you may defer a line, never delete one. This is also where
+   **divergence surfaces at `return`, not at `close`**: you are the first to know
+   if the DoD was wrong — say so.
+3. **Deferral is the lead's call.** If you defer any DoD line, set
+   `deadline_status: deferred` and list each deferred line as an **open decision
+   for the lead** — never self-declare "READY TO MERGE". Cleanly split the
+   **finished** portion onto its own branch (gates green) and hand THAT off; never
+   return a tangled half-task.
+4. **Method-writeback capture.** Record the **method friction** you hit: what in
+   the process (handoff/DoD/scope) was wrong or unknowable up front and should have
+   been clarified first. Cheap + fresh — the lead promotes it in `review`. (You do
+   NOT edit the skill yourself; the skill is a single-writer team contract.)
+5. Write `docs/together/<date>/returns/<task>.md`: metadata · what's done · the
+   **DoD reconciliation** (per-line) · the DoD proofs (path/link) · branch + gate
+   status (CI URL + rebase SHA) · cleanly-split deferred follow-ups + open
+   decisions · **method-friction notes** · the **merge request** (which branch/PR,
+   rebase/order notes).
+6. Emit the message the dev sends the lead.
 
 ## Required metadata block
 
@@ -36,5 +51,22 @@ Allowed `deadline_status` values:
 - `deferred` — intentionally split follow-up, with target issue/plan.
 - `out_of_scope` — not part of the day's plan; preserve it, but do not count it
   as planned work.
+
+## Required DoD-reconciliation block (every return, even if all met)
+
+Go through the handoff's DoD line by line. "All met" is itself a signal, so this
+block is **mandatory on every return**:
+
+```md
+## DoD reconciliation
+| # | DoD line | status | proof / open decision |
+|---|----------|--------|-----------------------|
+| 1 | <line from the handoff DoD> | met | <test path / E2E / screenshot link> |
+| 2 | <line> | deferred | <why + the open decision for the lead> |
+| 3 | <line> | not-met | <what's missing> |
+
+**Method friction:** <what in the handoff/DoD/scope was wrong or unknowable up
+front and should have been clarified first — or "none">.
+```
 
 **Output:** `docs/together/<date>/returns/<task>.md` + a return message to the lead.
