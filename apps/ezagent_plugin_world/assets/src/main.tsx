@@ -418,6 +418,7 @@ function csrfToken(): string {
 function AccountMenu({displayName, entityUri}: {displayName?: string | null; entityUri?: string | null}) {
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
+  const formRef = React.useRef<HTMLFormElement>(null)
   const label = displayName || entityUri || "Account"
 
   React.useEffect(() => {
@@ -465,11 +466,21 @@ function AccountMenu({displayName, entityUri}: {displayName?: string | null; ent
               </div>
             )}
           </div>
-          <form action="/logout" method="post" className="block">
+          <form ref={formRef} action="/logout" method="post" className="block">
             <input type="hidden" name="_csrf_token" value={csrfToken()} />
             <button
               type="submit"
               role="menuitem"
+              onClick={(event) => {
+                // The world surface is a LiveView page whose client JS intercepts
+                // (and swallows) the native submit event of any form inside the
+                // phx-update="ignore" React island — a plain submit never reaches
+                // the server. Drive the POST programmatically: form.submit() bypasses
+                // the submit event entirely while the CSRF token still rides in the
+                // hidden field, so logout actually navigates to /logout.
+                event.preventDefault()
+                formRef.current?.submit()
+              }}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-muted dark:text-rose-400"
             >
               <LogOut aria-hidden="true" className="h-4 w-4" />
