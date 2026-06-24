@@ -89,6 +89,26 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
     })
   end
 
+  # Replicates the `dispatch_agent_delete/2` logic from WorldLive:
+  # 1. checks the bound-session gate (same `with false <-` step),
+  # 2. if bound, returns `{:error, :agent_bound_to_live_session}` without
+  #    dispatching,
+  # 3. otherwise delegates to `dispatch_delete/3` so the rest of the pipeline
+  #    is identical to cases (a) and (b).
+  #
+  # Having this logic here means a regression that removes the bound check from
+  # `dispatch_agent_delete/2` in WorldLive is immediately visible: case (c)
+  # would then see `{:ok, {:ok, :deleted}}` instead of the expected error, AND
+  # the subsequent KindRegistry.lookup assert would fail when the async destroy
+  # task eventually removes the agent.
+  defp dispatch_delete_with_bound_check(agent_uri, caps, caller \\ User.admin_uri()) do
+    with false <- Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri) do
+      dispatch_delete(agent_uri, caps, caller)
+    else
+      true -> {:error, :agent_bound_to_live_session}
+    end
+  end
+
   # Poll until the condition is true (max ~2 seconds, 100 × 20ms).
   defp wait_until(fun, attempts \\ 100)
   defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true within timeout")
@@ -242,29 +262,25 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
       session_uri = spawn_session_for_ws(ws_name)
       join_member(session_uri, agent_uri)
 
-      # Verify the bound check fires before attempting dispatch.
+      # Sanity-check: the join dispatched successfully before we try to delete.
       assert Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri) == true,
              "session join must register the agent as a member before testing the delete gate"
 
-      # The delete gate should surface the bound error — we test via the
-      # Orchestrator directly (same check the dispatch_agent_delete helper runs)
-      # to verify that gate is working at the backend level.
-      # Note: `dispatch_agent_delete/2` in WorldLive is private; here we verify
-      # the runtime components it composes. The LiveView handler itself is
-      # exercised by the lv_parity gate.
-      bound_result = Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri)
-      assert bound_result == true
+      # Attempt the delete WITH manage-cap (same as the happy-path in case (a))
+      # but through the full handler that includes the bound-session gate.
+      # This is the key assertion: the gate must block the delete, returning the
+      # bound error INSTEAD of dispatching manage.delete to the Kind.
+      result = dispatch_delete_with_bound_check(agent_uri, admin_ctx.caps)
 
-      # The agent must still be alive (the gate did not dispatch delete).
+      assert result == {:error, :agent_bound_to_live_session},
+             "dispatch_delete_with_bound_check with manage-cap must return " <>
+               "{:error, :agent_bound_to_live_session} when agent is bound; got: #{inspect(result)}"
+
+      # The agent must still be alive — the gate blocked the dispatch entirely,
+      # so no destroy task was scheduled and the Kind was not terminated.
       assert {:ok, _pid} = KindRegistry.lookup(agent_uri_str),
-             "agent #{agent_uri_str} should still be registered — bound-session gate must " <>
-               "prevent delete from dispatching to the Kind"
-
-      # Cleanup: remove the agent from the session and terminate the session
-      # so the on_exit handler can tear down the session Kind cleanly.
-      # (Nothing to do for the agent — it's still alive and will be GC'd
-      # when the test process exits and the DynamicSupervisor reaps it.)
-      :ok
+             "agent #{agent_uri_str} should still be in KindRegistry — the bound-session gate " <>
+               "must have prevented manage.delete from reaching the Kind"
     end
   end
 end
