@@ -36,6 +36,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
 
   @spawn_registry_sanctioned_files [
     "apps/ezagent_core/lib/ezagent/spawn_registry.ex",
+    # #95 — the owner-gated plugin runtime facade. THE sanctioned chokepoint
+    # plugins call instead of touching SpawnRegistry directly; it delegates to the
+    # already-owner-gated SpawnRegistry.spawn[_detailed]. As plugins migrate onto
+    # it (PR-2+), the off-chokepoint count drops; this keeps the facade itself
+    # on-chokepoint.
+    "apps/ezagent_core/lib/ezagent/local_runtime.ex",
     "apps/ezagent_core/lib/ezagent/invocation.ex",
     "apps/ezagent_core/lib/ezagent_core/application.ex",
     "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",

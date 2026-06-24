@@ -68,7 +68,12 @@
   #   `DynamicSupervisor.start_child/2` (the sidecar allowlist, NOT this count).
   #   Net call sites 42 → 41 — cap lowered to actual (the earlier +1 bump comment
   #   was directionally wrong; corrected here so the gate stays tight).
-  spawn_registry_call_sites: 41,
+  # arch-cap-bump: +2 #95 — Ezagent.LocalRuntime (the new owner-gated plugin
+  #   chokepoint) calls SpawnRegistry.spawn + spawn_detailed (one site each). This
+  #   is a TEMPORARY rise: as plugins migrate off direct SpawnRegistry onto
+  #   LocalRuntime (PR-2+), those plugin sites disappear and this cap RATCHETS DOWN
+  #   well below 41. 41→43.
+  spawn_registry_call_sites: 43,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -83,7 +88,11 @@
   #   cc-headless template module no longer calls SpawnRegistry (uses Kind.spawn);
   #   the SDK sidecar uses DynamicSupervisor (sidecar allowlist), not this count.
   #   Cap lowered to actual; the earlier +1 bump comment was directionally wrong.
-  spawn_registry_modules: 36,
+  # arch-cap-bump: +1 #95 — new module Ezagent.LocalRuntime (the owner-gated plugin
+  #   chokepoint) calls SpawnRegistry. SANCTIONED (added to the chokepoint allowlist),
+  #   so off_chokepoint is unchanged. Temporary: ratchets back down as plugins
+  #   migrate onto LocalRuntime (PR-2+). 36→37.
+  spawn_registry_modules: 37,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's

@@ -1,0 +1,72 @@
+defmodule Ezagent.LocalRuntime do
+  @moduledoc """
+  Owner-gated facade for plugin access to local Kind runtime (liveness + spawn).
+
+  ## Why this module exists
+
+  Plugins must NOT reach into `Ezagent.KindRegistry` / `Ezagent.SpawnRegistry`
+  directly. Two reasons:
+
+  1. **Decentralization (the fundamental assumption change).** A raw
+     `KindRegistry.lookup/1` is a *local-only* read. Single-node it is correct,
+     but the workspace-locality direction (`Ezagent.RuntimeIdentity` /
+     `Ezagent.WorkspacePlacement` / `Ezagent.WorkspaceOwnerGate`) exists to allow
+     a future multi-node deployment where a Kind owned by ANOTHER node is alive
+     *there* and absent *here*. A plugin that reads the bare `:error` from a local
+     lookup would make a wrong decision (e.g. a spurious respawn). `kind_alive?/1`
+     routes the probe through the owner gate so the locality assumption is
+     EXPLICIT: single-node it is a no-op; on a non-owner runtime it returns
+     `false` (not alive HERE) WITHOUT implying "dead, respawn locally".
+  2. **Plugin isolation (north-star).** One owner-gated chokepoint; plugin authors
+     never depend on core registry internals. The
+     `plugin_workspace_locality_contract_test` enforces that no `apps/ezagent_plugin_*`
+     code calls `KindRegistry`/`SpawnRegistry` directly — this module is the single
+     sanctioned caller (it lives in `ezagent_core`, outside the lint's scope).
+
+  ## Gating split
+
+  - `kind_alive?/1` adds the gate that `KindRegistry.lookup/1` lacks.
+  - `ensure_started/1` + `ensure_started_detailed/1` DELEGATE to
+    `SpawnRegistry.spawn[_detailed]/1`, which is ALREADY owner-gated (it calls
+    `WorkspaceOwnerGate.assert_local_owner_for_uri/2` itself). No redundant gate —
+    the facade's value for spawn is purely the plugin-isolation boundary, and a
+    non-owner `ensure_*` returns SpawnRegistry's gate error rather than spawning a
+    foreign agent locally. So the probe-then-ensure pattern is safe even though
+    `kind_alive?/1` collapses "non-owner" and "locally dead" to the same `false`:
+    the real safety net is the gate on `ensure_*`.
+  """
+
+  alias Ezagent.{KindRegistry, SpawnRegistry, WorkspaceOwnerGate}
+
+  @doc """
+  Owner-gated liveness probe: is the Kind for `uri` alive on this (its owner)
+  runtime? Returns `false` both when the Kind is locally absent AND when this
+  runtime is not the workspace owner (see the module doc — callers must not treat
+  `false` as an unconditional "respawn locally"; use `ensure_started/1`, which is
+  itself gated, for that).
+  """
+  @spec kind_alive?(URI.t()) :: boolean()
+  def kind_alive?(%URI{} = uri) do
+    case WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:liveness, uri}) do
+      :ok -> match?({:ok, _pid}, KindRegistry.lookup(uri))
+      {:error, _violation} -> false
+    end
+  end
+
+  @doc """
+  Owner-gated ensure-started: spawn the Kind for `uri` if absent. Delegates to the
+  already-owner-gated `SpawnRegistry.spawn/1`; on a non-owner runtime returns the
+  gate's `{:error, _}` instead of materialising a foreign agent locally.
+  """
+  @spec ensure_started(URI.t()) :: {:ok, pid()} | {:error, term()}
+  def ensure_started(%URI{} = uri), do: SpawnRegistry.spawn(uri)
+
+  @doc """
+  Like `ensure_started/1` but returns whether the Kind was freshly started or was
+  already running. Delegates to the already-owner-gated
+  `SpawnRegistry.spawn_detailed/1`.
+  """
+  @spec ensure_started_detailed(URI.t()) ::
+          {:ok, :started | :already_started, pid()} | {:error, term()}
+  def ensure_started_detailed(%URI{} = uri), do: SpawnRegistry.spawn_detailed(uri)
+end
