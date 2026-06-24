@@ -54,3 +54,34 @@ Lead-track core bug (Allen owns the core-bugs track; codex=Bug A, Claude=Bug B).
 
 - [ ] **Bug A (#934)** — DO NOT MERGE yet. Await: live E2E run + updated `returns/session-snapshot-race.md` (with E2E evidence + `returned_at`/`deadline_status`). Then re-`push` to stack, run close gate, merge `target/session-snapshot-race`.
 - [x] **Bug B** — `mix precommit` EXIT=0 + every-suite-0-failures (final run in progress) · `check_invariants` EXIT=0 · codex adversarial-review (1 MED fixed) → admin-merge `fix/resolver-restart-replay`.
+
+---
+
+## Evening reconciliation — FINAL state (supersedes the above)
+
+The table above was the afternoon snapshot. Net state of `main` at end of day — all gate-verified by the lead (`mix precommit` EXIT=0 + every-suite-0-failures grep-confirmed + `check_invariants` EXIT=0; agent-authored PRs reviewed directly by the lead since codex-rescue orphaned on whole-PR jobs today):
+
+| Return / task | Dev | PR | merge SHA | status |
+|---|---|---|---|---|
+| cc-headless real implementation | @黄佳佳 | #931 | `2c5bb208` | ✅ MERGED |
+| Bug B — resolver restart replay | lead (Claude) | #937 | `a0543aee` | ✅ MERGED |
+| Bug A — session-snapshot / silent cast | codex (lead-dispatched) | #934→#939 | `62c3caf7` | ✅ MERGED (E2E done; promoted via #939, #934 closed as subsumed) |
+| agent-config backend | @黄佳佳 | #938 | `564775c9` | ✅ MERGED |
+| agent-config READ cap-gate (#93) | lead (Claude subagent) | #943 | `fc2cbbb4` | ✅ MERGED |
+| cf-container cost/suitability (research) | Claude (out_of_scope) | #941 | `1ebfaa69` | ✅ MERGED (docs) |
+| containerize-mac-stack (PG+mihomo+cloudflared) | Claude (out_of_scope) | #942 | `9db82041` | ✅ MERGED (docker/docs) |
+| LOGO.png | — | #940 | — | ✅ MERGED |
+| umbrella test-isolation race fix (#92) | lead (Claude subagent) | `fix/test-isolation-sandbox` | — | 🔄 IN CLOSE — DataCase drainable-owner conversion (41 files); precommit run1 green, run2 confirming (race fix → multi-run) |
+| **remove-localization-assumption** (workspace-locality gate, prep for distributed-BEAM scaling) | Claude | integ branch `remove-localization-assumption` @ `2a293c20` (PR1 `feat/workspace-locality-core-gate` + PR2 `feat/workspace-locality-plugin-invariants` pre-merged in) | — | ⏸️ **RECEIVED, HELD — NOT merged to main** (@林懿伦: defer; merge-timing under lead analysis) |
+
+### remove-localization-assumption — held, merge-timing under analysis
+Adds core `RuntimeIdentity` / `WorkspacePlacement` / `WorkspaceOwnerGate`; gates workspace-bound dispatch/spawn/session create+repair by workspace ownership; default resolver maps all workspaces to the local BEAM node (claims single-node no-op); adds a plugin workspace-locality contract + static invariant + a debt allowlist warning (`total=37`; `ENFORCE_WORKSPACE_LOCALITY_DEBT=1` flips warning→fail). Per @林懿伦, **not merged now** — the lead dispatched a read-only analysis to decide merge-now vs merge-at-close, checking: (1) does the locality-debt invariant fail `precommit` by default (would redden main) or is it warning-only; (2) are the new gates provably inert on a single node (no regression / no spurious denials); (3) rebase-conflict risk now vs deferring (deferring only helps if core stops churning before close). Disposition recorded on the next push once the analysis returns.
+
+### Reconciliation (every return file accounted for)
+- `returns/cc-headless-real-implementation.md` → merged `2c5bb208`
+- `returns/session-snapshot-race.md` → merged via #939 `62c3caf7` (E2E completed)
+- `returns/agent-config-backend.md` → merged #938 `564775c9`
+- `returns/cf-container-cost-pg.md` → merged #941 `1ebfaa69` (out_of_scope)
+- `returns/containerize-mac-stack.md` → merged #942 `9db82041` (out_of_scope)
+- `returns/remove-localization-assumption.md` → **received, held** (not merged; merge-timing under analysis)
+- (lead-track branches, not return files: Bug B #937 merged; #92 test-isolation in-close; #93 read-cap merged #943.)
