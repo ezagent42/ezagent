@@ -1,5 +1,14 @@
 # Return: full-flow human validation — @李震宇 (zyli)
 
+> **Task:** full-flow human validation（L1–L7 + rebase-batch #939/#937/#931/#938 + lifecycle 扫描）
+> **Branch:** `zyli-fullflow-validation-0624`（validation-only,纯 docs,无 `apps/**` 改动）
+> **PR:** [#944](https://github.com/ezagent42/ezagent/pull/944)（3 条评论:return 全文 + round-2 F15–F18 + round-3 F19–F24）
+> **Dev:** @李震宇（人肉 UI/UX 驱动)+ Claude（环境/日志/命令辅助)
+> **returned_at:** 2026-06-24 18:22 +0800
+> **deadline:** 2026-06-24 23:59 +0800
+> **deadline_status:** on_time
+> **DoD artifact:** `docs/together/2026-06-24/evidence/`（6 截图 + L5/L6/L7 + rebase-batch md + `blockers.md` F1–F24 汇总表）；活 server `:10042` 可经 tailnet 复看
+
 > **Date:** 2026-06-24 · **Track:** `zyli-fullflow-validation-0624`(validation-only)
 > **Base:** `origin/main` @ `cd0d4067` · **Driver:** @李震宇(人肉 UI/UX)· **Assist:** Claude(环境/日志/命令)
 > **Status:** 7 腿全部走完(能跑的跑通、跑不通的根因定位+路由)。**14 findings(F1–F14)+ 2 环境项**,13 个 `fix/*` 占位分支全部路由 owner。
