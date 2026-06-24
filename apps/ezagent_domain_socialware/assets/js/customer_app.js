@@ -136,7 +136,26 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // `data-catalog-valid` is a NON-destructive conformance signal: the approved
   // page is rendered regardless (the renderer fails closed per node), but a tree
   // that does not conform to the Zod catalog is flagged for observability/E2E.
-  const page = snapshot.page || emptyPage()
+  const page = snapshot.page
+  // A freshly created session has NO generated page yet. Show a clean empty
+  // state instead of rendering the theme frame around an empty/placeholder body
+  // (which previously surfaced as "Unsupported node: container" — emptyPage()'s
+  // node type isn't in the renderer catalog). The frame/page only appears once
+  // the builder has actually landed content.
+  const childCount = page && Array.isArray(page.children) ? page.children.length : 0
+  if (!page || childCount === 0) {
+    return React.createElement(
+      "div",
+      {
+        className: "sw-customer-shell flex min-h-[60vh] w-full flex-col items-center justify-center gap-3 px-6 text-center text-base-content/50",
+        "data-catalog-valid": "true",
+        "data-empty": "true",
+      },
+      React.createElement("div", {className: "text-4xl"}, "🪄"),
+      React.createElement("p", {className: "text-base font-medium text-base-content/70"}, "还没有页面"),
+      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
+    )
+  }
   // Hybrid architecture: a HAND-CRAFTED, fixed theme shell (PageShell — nav,
   // aurora background, footer, brand) wraps the AI-authored json-render BODY.
   // The AI only edits the body (json-render data); the beautiful frame is human
