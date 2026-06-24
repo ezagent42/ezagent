@@ -11,6 +11,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
 
   alias Ezagent.{Invocation, KindRegistry, Message}
   alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.Workspace
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Ecto.KindSnapshot
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateResolver
@@ -81,6 +82,42 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     assert [%{role_name: "orchestrator"}] = Map.get(wc, :member_declarations)
     refute Map.has_key?(wc, :orchestrator_uri)
     refute Map.has_key?(wc, :orchestrator_template_uri)
+  end
+
+  test "workspace create_session returns within dispatch budget only after durable finalized snapshot" do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    owner_uri = User.admin_uri()
+    admin_ctx = %{caller: owner_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+
+    results =
+      1..3
+      |> Task.async_stream(
+        fn idx ->
+          short = "snapshot-race-#{idx}-#{System.unique_integer([:positive])}"
+          started = System.monotonic_time(:millisecond)
+
+          result =
+            Workspace.create_session(
+              workspace_uri,
+              %{short_name: short, template_name: "default"},
+              admin_ctx
+            )
+
+          elapsed_ms = System.monotonic_time(:millisecond) - started
+          {short, elapsed_ms, result}
+        end,
+        max_concurrency: 3,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    for {short, elapsed_ms, {:ok, %{session_uri: session_uri}}} <- results do
+      assert elapsed_ms < 5_000,
+             "create_session #{short} exceeded dispatch budget: #{elapsed_ms}ms"
+
+      assert URI.to_string(session_uri) == "session://system/default/#{short}"
+      assert_finalized_session_snapshot!(session_uri, owner_uri)
+    end
   end
 
   test "route-time role delivery provisions declared orchestrator member lazily" do
@@ -179,6 +216,30 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     |> chat_slice()
     |> Map.get(:members, %{})
     |> SessionBehavior.role_name_to_uri(role_name)
+  end
+
+  defp assert_finalized_session_snapshot!(session_uri, owner_uri) do
+    uri_str = URI.to_string(session_uri)
+    owner_str = URI.to_string(owner_uri)
+
+    assert %KindSnapshot{} = row = KindSnapshot.get(uri_str)
+    assert {:ok, snapshot_state} = KindSnapshot.decode_state(row)
+
+    assert %{session: %{state: session_slice}} = snapshot_state
+    assert URI.to_string(session_slice.owner_uri) == owner_str
+
+    member_uris =
+      session_slice.members
+      |> Map.keys()
+      |> Enum.map(&URI.to_string/1)
+
+    assert owner_str in member_uris
+
+    working_copy = Map.fetch!(session_slice, :template_working_copy)
+    assert %URI{} = Map.get(working_copy, :session_template_uri)
+
+    assert [%{role_name: "orchestrator", in_session_template: true}] =
+             Map.get(working_copy, :member_declarations)
   end
 
   defp seed_echo_agent_template(n) do
