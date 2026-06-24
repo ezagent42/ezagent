@@ -66,6 +66,8 @@ defmodule Ezagent.World.SlotRegistry do
          {"auto_derive", "Auto Derive"},
          {"profile", "Profile"}
        ]},
+    # kanban 操作面（df-tech 新增 surface）—— 自有 renderer family + KanbanData。
+    kanban: {Ezagent.World.KanbanData, [{"kanban", "思维导图"}]},
     identities:
       {Ezagent.World.IdentityData,
        [

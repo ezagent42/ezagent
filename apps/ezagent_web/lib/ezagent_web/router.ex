@@ -51,6 +51,8 @@ defmodule EzagentWeb.Router do
       live "/plugins/feishu/bindings", WorldLive
       live "/plugins/auto/:kind", WorldLive
       live "/plugins/auto/:kind/:uri", WorldLive
+      live "/plugins/kanban", WorldLive
+      live "/plugins/kanban/:uri", WorldLive
       live "/profile", WorldLive
       live "/admin", WorldLive
       live "/admin/logs", WorldLive

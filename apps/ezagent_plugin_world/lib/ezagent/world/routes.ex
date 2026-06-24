@@ -84,6 +84,27 @@ defmodule Ezagent.World.Routes do
           path: path
         }
 
+      # kanban 操作面（df-tech 新增 surface）：列表页 + 单个 kanban 详情页。
+      match = Regex.run(~r{\A/plugins/kanban/([^/]+)\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          group: :workspace_plugins,
+          component: "kanban",
+          title: "看板",
+          path: path,
+          entity_uri: parse_any_uri(encoded)
+        }
+
+      path == "/plugins/kanban" ->
+        %{
+          group: :workspace_plugins,
+          component: "kanban",
+          title: "看板",
+          path: path,
+          entity_uri: nil
+        }
+
       match = Regex.run(~r{\A/plugins/auto/([^/]+)/([^/]+)\z}, path) ->
         [_full, kind, encoded] = match
 
