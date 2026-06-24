@@ -1,9 +1,8 @@
 defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTest do
   @moduledoc """
-  RFC #402 (Allen 2026-05-26) — verifies that creating a session
-  via `EzagentDomainInstanceMessage.SessionCreator.create_session/3` records the creator as the
-  session owner AND grants them the
-  `Behavior.OrchestratorAdmin :restart` cap on the new session.
+  Verifies that creating a session via
+  `EzagentDomainInstanceMessage.SessionCreator.create_session/3` records the creator as the
+  session owner without granting orchestrator-special management caps.
 
   Covers four invariants:
 
@@ -12,20 +11,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
        reads via `Ezagent.Kind.get_slice/2`).
     2. `Ezagent.Entity.Session.owner/1` returns `{:ok, creator_uri}`
        for the freshly-created session.
-    3. The creator's identity slice gains a
-       `cap(:session, OrchestratorAdmin, :restart, session_uri, ws)`
-       cap row.
-    4. Re-calling `create_session/3` with the same session is
-       idempotent — no duplicate cap rows on the owner.
-
-  The cap is the UX gate `OrchestratorHealthCard` consults to render
-  the Restart button only for the session owner — so this test pins
-  the contract the LV depends on.
+    3. Re-calling `create_session/3` with the same session is
+       idempotent and does not mint special orchestrator caps.
   """
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Capability
   alias Ezagent.Entity.{Session, User}
 
   setup do
@@ -49,10 +40,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       assert {:ok, ^creator} = Session.owner(session_uri)
     end
 
-    test "creator gains OrchestratorAdmin :restart cap on the new session" do
+    test "creator does not gain OrchestratorAdmin :restart cap on create" do
       short_name = "rfc402-cap-test-#{System.unique_integer([:positive])}"
       creator = User.admin_uri()
-      workspace_uri = Ezagent.URI.entity_workspace_uri(creator)
 
       {:ok, session_uri, _meta} =
         EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator,
@@ -61,19 +51,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       caps = Ezagent.Identity.list_caps_for(creator)
 
-      # The cap must EXACTLY scope to (session, OrchestratorAdmin,
-      # session_uri, workspace). Admin also holds an `:any/:any/:any/:any`
-      # bootstrap cap — that one matches too but isn't what RFC #402
-      # asks us to grant; we want a SPECIFIC instance-scoped row.
-      assert Enum.any?(caps, fn cap ->
-               match?(%Capability{}, cap) and
-                 cap.kind == :session and
-                 cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
-                 cap.instance == session_uri and
-                 cap.workspace_uri == workspace_uri
-             end),
-             "expected an OrchestratorAdmin :restart cap on #{URI.to_string(session_uri)} " <>
-               "scoped to #{URI.to_string(workspace_uri)} in admin's caps, got:\n#{inspect(caps, pretty: true)}"
+      refute Enum.any?(caps, &orchestrator_admin_cap?(&1, session_uri)),
+             "create_session must not mint an OrchestratorAdmin restart cap; got:\n" <>
+               inspect(caps, pretty: true)
     end
 
     test "re-call is idempotent — no duplicate cap rows on owner" do
@@ -96,20 +76,20 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       matching =
         Enum.filter(caps, fn cap ->
-          match?(%Capability{}, cap) and
+          match?(%Ezagent.Capability{}, cap) and
             cap.kind == :session and
             cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
             cap.instance == session_uri_1
         end)
 
-      assert length(matching) == 1,
-             "expected exactly 1 OrchestratorAdmin cap row for this session " <>
-               "after two create_session calls (idempotent grant), got #{length(matching)}"
+      assert matching == [],
+             "expected no OrchestratorAdmin cap rows for this session " <>
+               "after two create_session calls, got #{inspect(matching, pretty: true)}"
     end
   end
 
   describe "first-USER-join fallback (codex r1 HIGH 2026-05-26)" do
-    test "legacy session without owner_uri — first user join claims owner AND gains restart cap" do
+    test "legacy session without owner_uri — first user join claims owner without restart cap" do
       # Reproduce the legacy / system-internal create path: spawn a
       # Session WITHOUT owner_uri (the pre-RFC-#402 shape), then
       # join a real user. The do_join branch must (a) flip owner_uri
@@ -160,30 +140,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       # owner_uri now points at the user.
       assert {:ok, ^user_uri} = Session.owner(session_uri)
 
-      # AND that user holds the specific OrchestratorAdmin :restart
-      # cap (the LV's gate). The grant is dispatched via `:cast` from
-      # `Chat.do_join` to avoid GenServer-self deadlock (the grant
-      # path's `check_grant_authorized` would otherwise call
-      # `Session.owner` against the same Session pid we're inside);
-      # so the cap appears asynchronously. Poll for ≤500ms.
-      cap_predicate = fn cap ->
-        match?(%Capability{}, cap) and
-          cap.kind == :session and
-          cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
-          cap.instance == session_uri and
-          cap.workspace_uri == workspace_uri
-      end
-
-      assert wait_for_cap(user_uri, cap_predicate, 500),
-             "expected OrchestratorAdmin :restart cap on the first-joining user " <>
-               "after legacy session rehydration. Got caps:\n" <>
-               inspect(Ezagent.Identity.list_caps_for(user_uri), pretty: true)
+      refute Enum.any?(Ezagent.Identity.list_caps_for(user_uri), &orchestrator_admin_cap?(&1, session_uri))
     end
 
     test "second user joining does NOT get owner cap (owner already claimed)" do
-      # Once owner is set, subsequent joins must NOT cascade
-      # OrchestratorAdmin grants to every joiner. The cap is
-      # SINGLY-bound to the session owner.
+      # Once owner is set, subsequent joins must NOT claim ownership.
       short_name = "rfc402-second-join-#{System.unique_integer([:positive])}"
       workspace_uri = Ezagent.URI.new!("workspace://system")
       session_uri = URI.new!("session://system/default/#{short_name}")
@@ -233,22 +194,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       # Owner is still the first user, NOT the second.
       assert {:ok, ^first_user} = Session.owner(session_uri)
 
-      # Drain any pending cast for the FIRST user's grant_cap so the
-      # subsequent assertion against the second user is clean.
-      Process.sleep(200)
-
-      # Second user does NOT hold the OrchestratorAdmin cap for this
-      # session.
       second_caps = Ezagent.Identity.list_caps_for(second_user)
 
-      refute Enum.any?(second_caps, fn cap ->
-               match?(%Capability{}, cap) and
-                 cap.kind == :session and
-                 cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
-                 cap.instance == session_uri
-             end),
-             "RFC #402: only the session OWNER may hold OrchestratorAdmin " <>
-               "on this session. Second joiner must not get the cap."
+      refute Enum.any?(second_caps, &orchestrator_admin_cap?(&1, session_uri))
     end
 
     test "agent join does NOT claim owner (user_uri? gate)" do
@@ -309,26 +257,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
     end
   end
 
-  # Poll the entity's cap MapSet until `predicate.(cap)` matches one
-  # of the held caps OR the deadline expires. Returns true on hit,
-  # false on timeout. Used by the cast-driven first-USER-join
-  # assertion above (cap shows up asynchronously after the cast
-  # lands on the User Kind's mailbox).
-  defp wait_for_cap(%URI{} = entity_uri, predicate, timeout_ms) when is_function(predicate, 1) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_for_cap(entity_uri, predicate, deadline)
-  end
-
-  defp do_wait_for_cap(entity_uri, predicate, deadline) do
-    if Enum.any?(Ezagent.Identity.list_caps_for(entity_uri), predicate) do
-      true
-    else
-      if System.monotonic_time(:millisecond) >= deadline do
-        false
-      else
-        Process.sleep(20)
-        do_wait_for_cap(entity_uri, predicate, deadline)
-      end
-    end
+  defp orchestrator_admin_cap?(cap, session_uri) do
+    match?(%Ezagent.Capability{}, cap) and
+      cap.kind == :session and
+      cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
+      cap.instance == session_uri
   end
 end

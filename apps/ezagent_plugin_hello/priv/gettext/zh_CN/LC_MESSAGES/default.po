@@ -1,0 +1,97 @@
+## "msgid"s in this file come from POT (.pot) files.
+###
+### Do not add, change, or remove "msgid"s manually here as
+### they're tied to the ones in the corresponding POT file
+### (with the same domain).
+###
+### Use "mix gettext.extract --merge" or "mix gettext.merge"
+### to merge POT files into PO files.
+msgid ""
+msgstr ""
+"Language: zh_CN\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: lib/ezagent_plugin_hello/generator.ex:67
+#, elixir-autogen, elixir-format
+msgid "Got it ✅ understanding your request…"
+msgstr "收到 ✅ 正在理解你的需求…"
+
+#: lib/ezagent_plugin_hello/generator.ex:341
+#, elixir-autogen, elixir-format
+msgid "Page \"%{title}\" · %{n} components total (%{parts})"
+msgstr "页面「%{title}」· 共 %{n} 个组件（%{parts}）"
+
+#: lib/ezagent_plugin_hello/generator.ex:327
+#, elixir-autogen, elixir-format
+msgid "Untitled"
+msgstr "未命名"
+
+#: lib/ezagent_plugin_hello/generator.ex:128
+#, elixir-autogen, elixir-format
+msgid "⏳ Generating %{count} blocks in parallel:\n%{briefs}"
+msgstr "⏳ 并行生成 %{count} 个区块：\n%{briefs}"
+
+#: lib/ezagent_plugin_hello/generator.ex:176
+#, elixir-autogen, elixir-format
+msgid "⚠ All blocks failed; regenerating with the single-page fallback…"
+msgstr "⚠ 全部区块失败，改用单页兜底重新生成…"
+
+#: lib/ezagent_plugin_hello/generator.ex:111
+#, elixir-autogen, elixir-format
+msgid "⚠ Generation failed: %{reason}"
+msgstr "⚠ 生成失败：%{reason}"
+
+#: lib/ezagent_plugin_hello/generator.ex:199
+#, elixir-autogen, elixir-format
+msgid "⚠ Page assembly failed: %{reason}"
+msgstr "⚠ 组装页面失败：%{reason}"
+
+#: lib/ezagent_plugin_hello/generator.ex:319
+#, elixir-autogen, elixir-format
+msgid "⚠ Render failed: %{reason}"
+msgstr "⚠ 渲染失败：%{reason}"
+
+#: lib/ezagent_plugin_hello/generator.ex:308
+#, elixir-autogen, elixir-format
+msgid "✅ Done! Page \"%{title}\" rendered to the right-side preview."
+msgstr "✅ 完成！页面「%{title}」已渲染到右侧预览。"
+
+#: lib/ezagent_plugin_hello/generator.ex:188
+#, elixir-autogen, elixir-format
+msgid "📦 Assembled: %{desc}"
+msgstr "📦 已组装：%{desc}"
+
+#: lib/ezagent_plugin_hello/generator.ex:153
+#, elixir-autogen, elixir-format
+msgid "📦 Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped)."
+msgstr "📦 区块完成：%{kept}/%{total} 成功（%{failed} 个失败已跳过）。"
+
+#: lib/ezagent_plugin_hello/generator.ex:159
+#, elixir-autogen, elixir-format
+msgid "📦 Blocks done: %{kept}/%{total} succeeded."
+msgstr "📦 区块完成：%{kept}/%{total} 成功。"
+
+#: lib/ezagent_plugin_hello/generator.ex:100
+#, elixir-autogen, elixir-format
+msgid "📦 Structure generated: %{desc}"
+msgstr "📦 已生成结构：%{desc}"
+
+#: lib/ezagent_plugin_hello/generator.ex:301
+#, elixir-autogen, elixir-format
+msgid "🛠 Rendering to the right-side preview…"
+msgstr "🛠 正在渲染到右侧预览…"
+
+#: lib/ezagent_plugin_hello/generator.ex:90
+#, elixir-autogen, elixir-format
+msgid "🧠 Calling model to generate the page…"
+msgstr "🧠 正在调用模型生成页面…"
+
+#: lib/ezagent_plugin_hello/generator.ex:74
+#, elixir-autogen, elixir-format
+msgid "🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel."
+msgstr "🧭 规划：页面「%{title}」拆成 %{count} 个区块，并行生成。"
+
+#: lib/ezagent_plugin_hello/generator.ex:83
+#, elixir-autogen, elixir-format
+msgid "🧭 Plan: single page, direct generation."
+msgstr "🧭 规划：单页直接生成。"

@@ -412,6 +412,106 @@ defmodule Ezagent.Plugin.BootTest do
     end
   end
 
+  describe "boot/1 — resource_types/0 publish (plugin-resource SPEC §4.2 / §6)" do
+    alias Ezagent.Resource.FsResolver
+    alias Ezagent.URI, as: EzURI
+
+    defp res_scope(ws), do: %{workspace: ws}
+
+    test "a plugin declaring resource_types/0 publishes them and FsResolver resolves its URIs" do
+      type = "rtfix-#{System.unique_integer([:positive])}"
+      Process.put({:rtfix_type, __MODULE__}, type)
+
+      defmodule ResourcePlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-res", name: "Res", description: "d", version: "1.0.0"}
+
+        @impl true
+        def resource_types do
+          type = Process.get({:rtfix_type, Ezagent.Plugin.BootTest})
+
+          [
+            {type,
+             %{
+               backend_component: type,
+               authority: fn uri, scope ->
+                 {:ok, ws} = Ezagent.URI.workspace_name(uri)
+                 if ws == scope.workspace, do: :ok, else: {:error, {:foreign_workspace, ws}}
+               end
+             }}
+          ]
+        end
+      end
+
+      on_exit(fn -> FsResolver.unregister_type(type) end)
+
+      assert {:ok, sup_pid} = Ezagent.Plugin.boot(ResourcePlugin)
+
+      # The plugin's type now resolves under a matching caller scope…
+      assert {:ok, path} =
+               FsResolver.resolve(EzURI.resource("acme", type, "f"), res_scope("acme"))
+
+      assert path == Path.join([Ezagent.Home.path(type), "acme", "f"])
+
+      # …and its authority/2 rejects a foreign-workspace caller (non-tautological).
+      assert {:error, {:foreign_workspace, _}} =
+               FsResolver.resolve(EzURI.resource("victim", type, "f"), res_scope("acme"))
+
+      Supervisor.stop(sup_pid)
+    end
+
+    test "a plugin declaring a DUPLICATE core type → boot/1 raises naming the plugin" do
+      defmodule DupTypePlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-duptype", name: "DupType", description: "d", version: "1.0.0"}
+
+        @impl true
+        def resource_types do
+          # "uploads" is a core boot type — write-once on <type> must reject it.
+          [{"uploads", %{backend_component: "boot-dup-backend", authority: fn _u, _s -> :ok end}}]
+        end
+      end
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(DupTypePlugin) end
+      assert err.message =~ "resource_types"
+      assert err.message =~ "duplicate_type"
+      assert err.message =~ "DupTypePlugin"
+    end
+
+    test "a plugin declaring a DUPLICATE core backend (alias attack) → boot/1 raises (codex HIGH-1)" do
+      defmodule DupBackendPlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-dupbk", name: "DupBackend", description: "d", version: "1.0.0"}
+
+        @impl true
+        def resource_types do
+          # Fresh <type>, but aliases the core "uploads" BACKEND with a weaker
+          # authority — backend-uniqueness must reject the whole boot.
+          [
+            {"boot-dupbk-x", %{backend_component: "uploads", authority: fn _u, _s -> :ok end}}
+          ]
+        end
+      end
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(DupBackendPlugin) end
+      assert err.message =~ "resource_types"
+      assert err.message =~ "duplicate_backend"
+
+      # The alias type never registered.
+      assert FsResolver.resolve(
+               EzURI.resource("victim", "boot-dupbk-x", "s"),
+               res_scope("victim")
+             ) ==
+               :none
+    end
+  end
+
   describe "boot/1 — agent_flavors/0 behaviour validation (codex PR-5 MEDIUM-4)" do
     test "an agent flavor whose kind is not an Ezagent.Kind raises" do
       # NotAKind is a plain module — does not @behaviour Ezagent.Kind.

@@ -23,7 +23,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
-    test "stands up a creatable hello app: session + joined orchestrator + caps" do
+    test "stands up a creatable hello app: session + joined builder member" do
       ws = "hello-tmpl-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
       workspace_uri = Ezagent.URI.workspace(ws)
@@ -34,11 +34,17 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       assert session_uri == Ezagent.URI.session(ws, :hello, "main")
 
-      # The builder orchestrator is live and holds its within-session cap.
+      # The builder is live and joined as a normal session member.
       builder_uri = Ezagent.URI.entity(ws, :agent, "hello_main")
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(builder_uri)
+
+      assert %{^builder_uri => %{role_name: "builder"}} =
+               Ezagent.Orchestrator.Tools.read_members(session_uri)
+
       {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(builder_uri, :identity)
-      assert :ok = Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, session_uri)
+
+      assert {:error, :unauthorized} =
+               Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, session_uri)
 
       # Idempotent: re-instantiating the same app reports not-fresh.
       assert {:ok, [^session_uri], %{fresh?: false}} =

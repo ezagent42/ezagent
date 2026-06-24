@@ -165,7 +165,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
                 # did not create it (that branch returned early above).
                 # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
                 # Only the Kind PROCESS is terminated; lineage / workspace
-                # binding are ESR-domain registries the plugin must not
+                # binding are Ezagent-domain registries the plugin must not
                 # touch (3-tier) — `spawn_from_template_content/4` had not
                 # recorded either (it gates them on a `fresh?: true`
                 # success this path never returns).

@@ -61,3 +61,6 @@ __pycache__/
 
 # Local Tailwind standalone binary (build artifact, do not commit)
 tailwind-macos-arm64
+
+# Local PG dev launcher (carries a local DB password default) — never commit.
+bin/dev-pg

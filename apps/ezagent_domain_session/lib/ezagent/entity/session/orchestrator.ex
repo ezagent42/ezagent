@@ -3,14 +3,6 @@ defmodule Ezagent.Entity.Session.Orchestrator do
 
   require Logger
 
-  @compile_env Mix.env()
-  # 2026-05-31 orchestrator-startup-atomicity §5 — the LIVE-join readiness
-  # gate timeout. After spawning the orchestrator PTY, the create flow polls
-  # `Ezagent.Orchestrator.LiveJoinRegistry.joined?/1`, with an opportunistic
-  # `{:orchestrator_ready, uri}` broadcast `receive` for instant wake.
-  @orchestrator_readiness_timeout_ms 90_000
-  @orchestrator_readiness_poll_ms 2_000
-
   # ensure_orchestrator — spawn / adopt the session's orchestrator agent
   # (2026-05-31 orchestrator-startup-atomicity §4 step 5; 2-way ownership)
   # ─────────────────────────────────────────────────────────────────────
@@ -124,23 +116,6 @@ defmodule Ezagent.Entity.Session.Orchestrator do
         # still does not classify `:owned` is a real foreign claim →
         # `{:error, _}` (→ caller rollback, fail-loud). No silent success
         # on an unverified adoption.
-        #
-        # 2026-05-31 orchestrator-startup-atomicity §5 — the readiness
-        # gate (90s deadline) wraps the spawn. We SUBSCRIBE to the
-        # `"orch:lifecycle"` topic BEFORE the spawn (instant-wake
-        # optimization), spawn + finalize ownership, THEN POLL the durable
-        # `LiveJoinRegistry.joined?(candidate_uri)` state (marked by
-        # `McpChannel.join/3`) on a bounded deadline loop, with the
-        # broadcast `receive` as an early-wake. On the deadline the PTY is
-        # killed + `{:error, {:orchestrator_not_ready_within, ...}}` →
-        # caller rollback. The POLL (not a fire-once receive) is the fix:
-        # a live join that completed before the gate parked on the topic
-        # is still observed. In test_mode the synchronous
-        # `register_orchestrator_mcp_context` is the readiness signal
-        # (there is no live claude to join the bridge), so the live wait
-        # is skipped — see `await_orchestrator_ready/3`.
-        ready_ref = subscribe_orchestrator_lifecycle()
-
         spawn_result =
           case spawn_orchestrator_via_template_content(
                  candidate_uri,
@@ -163,7 +138,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
               )
           end
 
-        gate_orchestrator_readiness(spawn_result, candidate_uri, ready_ref)
+        spawn_result
 
       {:foreign, evidence} ->
         # POSITIVE foreign evidence (lineage / workspace POSITIVELY
@@ -242,179 +217,6 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   # error it short-circuits (no PTY to gate). On success it awaits the
   # live bridge join via a robust poll:
   #
-  #   * PRODUCTION (real PTY) — POLL `LiveJoinRegistry.joined?(candidate)`
-  #     on a 90s deadline loop (durable state marked by
-  #     `McpChannel.join/3`), with the `{:orchestrator_ready, candidate}`
-  #     broadcast as an instant-wake. On ready → return the spawn ok. On
-  #     the deadline → kill the orchestrator PTY + Kind and return
-  #     `{:error, {:orchestrator_not_ready_within, 90_000}}` so the caller
-  #     (`EzagentDomainInstanceMessage.ensure_orchestrated_session/4`) fail-loud rolls
-  #     back. NO `:pending`, NO `:failed`-alive zombie.
-  #   * TEST-MODE — there is no live claude to JOIN the MCP bridge, so the
-  #     live-join state is NEVER marked. The synchronous
-  #     `register_orchestrator_mcp_context` (caller step 7) is the test's
-  #     readiness; skip the live wait + return the spawn ok unchanged. The
-  #     true gate is validated by the live e2e, NOT the unit suite.
-  defp gate_orchestrator_readiness({:error, _} = err, _candidate_uri, ready_ref) do
-    # Don't leak the "orch:lifecycle" subscription on the spawn/finalize
-    # error path (success + timeout paths already unsubscribe). (codex Q2.)
-    if ready_ref == :subscribed, do: unsubscribe_orchestrator_lifecycle()
-    err
-  end
-
-  defp gate_orchestrator_readiness({:ok, %URI{} = candidate_uri, _, _} = ok, candidate_uri, ref) do
-    await_orchestrator_ready(ok, candidate_uri, ref)
-  end
-
-  defp gate_orchestrator_readiness({:ok, %URI{} = candidate_uri, _} = ok, candidate_uri, ref) do
-    await_orchestrator_ready(ok, candidate_uri, ref)
-  end
-
-  # Subscribe to the orchestrator lifecycle topic BEFORE the spawn. In
-  # test_mode we don't subscribe (no live join arrives) — `nil` ref signals
-  # the await to bypass. Returns `:subscribed | nil`.
-  defp subscribe_orchestrator_lifecycle do
-    if orchestrator_gate_test_mode?() do
-      nil
-    else
-      :ok =
-        Phoenix.PubSub.subscribe(
-          EzagentCore.PubSub,
-          Ezagent.Session.OrchestratorReadinessPort.lifecycle_topic()
-        )
-
-      :subscribed
-    end
-  end
-
-  # Await the orchestrator's LIVE bridge join. `nil` ref → test_mode
-  # bypass (return ok unchanged — no live claude joins in `:test`). On
-  # the overall deadline → kill the PTY + Kind, return the loud error.
-  #
-  # ROBUST POLL (not fire-once receive): the source of truth is the
-  # DURABLE `Ezagent.Orchestrator.LiveJoinRegistry.joined?/1` state marked
-  # by `McpChannel.join/3`. We poll it on a bounded deadline loop so a
-  # join that completed BEFORE we parked on the topic is still observed —
-  # the fire-once `{:orchestrator_ready, _}` broadcast was lost in exactly
-  # that race, false-killing a working orchestrator. The broadcast is kept
-  # as an opportunistic INSTANT-WAKE inside the `receive`'s timeout.
-  defp await_orchestrator_ready(ok, _candidate_uri, nil), do: ok
-
-  defp await_orchestrator_ready(ok, %URI{} = candidate_uri, :subscribed) do
-    deadline = System.monotonic_time(:millisecond) + @orchestrator_readiness_timeout_ms
-    poll_orchestrator_ready(ok, candidate_uri, deadline)
-  end
-
-  @doc false
-  # TEST-ONLY entrypoint for the readiness poll. The production gate is
-  # compile-time bypassed in `:test` (`@compile_env == :test`), so the
-  # poll loop has no other exercise in the unit suite. This drives the
-  # SAME `poll_orchestrator_ready/3` deadline loop with a caller-supplied
-  # timeout so the invariant — `:ready` when `LiveJoinRegistry` is marked
-  # within the window, fail-loud (`:orchestrator_not_ready_within`) when
-  # never marked — is covered without a 90s wait or a live claude.
-  # NOT a production path; the live gate calls `await_orchestrator_ready/3`.
-  @spec __await_orchestrator_ready_for_test__(term(), URI.t(), non_neg_integer()) :: term()
-  def __await_orchestrator_ready_for_test__(ok, %URI{} = candidate_uri, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    poll_orchestrator_ready(ok, candidate_uri, deadline)
-  end
-
-  # Deadline loop: check durable live-join state, then block on a short
-  # broadcast `receive` (instant wake) bounded by the remaining time. On
-  # a matching broadcast OR a `joined?/1` true → ready. On the overall
-  # deadline → fail-loud.
-  defp poll_orchestrator_ready(ok, %URI{} = candidate_uri, deadline) do
-    cond do
-      Ezagent.Session.OrchestratorReadinessPort.joined?(candidate_uri) ->
-        unsubscribe_orchestrator_lifecycle()
-        ok
-
-      true ->
-        remaining = deadline - System.monotonic_time(:millisecond)
-
-        if remaining <= 0 do
-          orchestrator_ready_timeout(candidate_uri)
-        else
-          wait_ms = min(@orchestrator_readiness_poll_ms, remaining)
-
-          receive do
-            {:orchestrator_ready, %URI{}} ->
-              # The broadcast is ONLY a wake signal (instant-wake so we
-              # don't sleep the full poll tick). It is NOT proof of
-              # readiness: loop back so the DURABLE
-              # `LiveJoinRegistry.joined?/1` check at the top of
-              # poll_orchestrator_ready/3 is the SOLE authority. A
-              # spurious/stale broadcast for `candidate_uri` (one not
-              # backed by a `mark_joined`) must NOT pass the gate.
-              # codex #505 review MED. (The unsubscribe happens at the
-              # top once `joined?` is true.)
-              poll_orchestrator_ready(ok, candidate_uri, deadline)
-          after
-            wait_ms ->
-              # Poll tick — re-check `joined?/1` (covers the lost-broadcast
-              # race) and continue until the deadline.
-              poll_orchestrator_ready(ok, candidate_uri, deadline)
-          end
-        end
-    end
-  end
-
-  defp orchestrator_ready_timeout(%URI{} = candidate_uri) do
-    unsubscribe_orchestrator_lifecycle()
-
-    Logger.error(
-      "Session.ensure_orchestrator: orchestrator #{URI.to_string(candidate_uri)} did " <>
-        "NOT join its live MCP bridge within #{@orchestrator_readiness_timeout_ms}ms — " <>
-        "killing the PTY + Kind and failing loud (caller rolls back the create)."
-    )
-
-    kill_orchestrator(candidate_uri)
-
-    {:error, {:orchestrator_not_ready_within, @orchestrator_readiness_timeout_ms}}
-  end
-
-  defp unsubscribe_orchestrator_lifecycle do
-    _ =
-      Phoenix.PubSub.unsubscribe(
-        EzagentCore.PubSub,
-        Ezagent.Session.OrchestratorReadinessPort.lifecycle_topic()
-      )
-
-    :ok
-  end
-
-  # Tear down a PTY + Agent Kind that never reported ready. Best-effort,
-  # each idempotent — the caller's rollback also runs, but the PTY/Kind
-  # teardown belongs HERE (the gate spawned them).
-  defp kill_orchestrator(%URI{} = candidate_uri) do
-    _ =
-      if Code.ensure_loaded?(Ezagent.Domain.Pty) and
-           function_exported?(Ezagent.Domain.Pty, :stop, 1) do
-        Ezagent.Domain.Pty.stop(candidate_uri)
-      end
-
-    _ = Ezagent.Kind.terminate(candidate_uri)
-
-    # Clear any durable live-join row so a stale signal from this killed
-    # incarnation can never satisfy a future startup gate. Idempotent.
-    _ = Ezagent.Session.OrchestratorReadinessPort.clear(candidate_uri)
-    :ok
-  end
-
-  # test_mode = `Mix.env() == :test`. The cc PtyServer short-circuits the
-  # real `:exec.run/2` in `:test` env (cc_agent.ex build_pty_params_for_env
-  # → `test_mode: true`), so no live claude exists to JOIN the MCP bridge
-  # and signal readiness — the gate would always time out. The synchronous
-  # `register_orchestrator_mcp_context` is the test's readiness instead.
-  # Only PRODUCTION (real PTY) awaits the live join. Keep the compile-time
-  # check for release-safety, and fall back to guarded runtime Mix detection
-  # for precommit/app-start paths that may recompile this module outside the
-  # test app context before running tests.
-  defp orchestrator_gate_test_mode? do
-    @compile_env == :test or (Code.ensure_loaded?(Mix) and Mix.env() == :test)
-  end
-
   # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
   # directly after reading the cc-orchestrator AgentTemplate's content
   # slice. This routes the spawn through the cc Template Class's

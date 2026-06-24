@@ -1,8 +1,9 @@
 # Handoff: World Hello Convergence
 
 > **Date:** 2026-06-23 · **From:** Allen/Codex lead · **To:** zhaomaota97
-> **Tracking:** `world-hello-convergence` · **Base:** `origin/main` @ `deebe994`
+> **Tracking:** `world-hello-convergence` · **Base:** `origin/main` @ `3cd5a5a4` (re-dispatched on latest main)
 > **Status:** confirmed — complete the world hello化 path needed by today's E2E.
+> **Re-dispatch (2026-06-23 16:20):** baseline rebased to latest `origin/main`. E2E support matrix + root-cause now available — PR [#902](https://github.com/ezagent42/ezagent/pull/902) comment + `docs/together/2026-06-23/e2e-blocker-analysis.md`. **Verified gaps owned by you (steps 5/6/7/8):** ① world UI has NO hello-app create path — `EzagentPluginHello.App.ensure_app/2` is only reachable from boot / the `ezagent.demo.seed_hello` mix task / HelloSession instantiate, none wired to a world button (`grep ensure_app|HelloSession apps/ezagent_plugin_world/lib` = empty); the `workspace.template.save` `public_view` form makes a GENERIC template, not a hello app. ② step 7 hello state shows only via the TEMPORARY `HelloPagePreview` iframe (`Conversation.tsx:121-124,396`), not native `HelloPageView`. ③ `/socialware/customer` infra works (returns 400 w/o param; tokenless anon path for `public_view`) but needs a live `public_view` session you must produce. **Note:** the world-side send for step 8 is blocked upstream by the session-snapshot crux (lead-owned, return §7) — not yours.
 
 ## 0. Mission
 

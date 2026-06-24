@@ -21,7 +21,7 @@
 
 ### 0.1 起因
 
-当前 ESR 的身份/认证体系有三个痛点:
+当前 Ezagent 的身份/认证体系有三个痛点:
 
 1. **显示难看**:LiveView 到处直接渲染裸 URI(`entity://user/admin`、`entity://agent/echo`),没有友好显示名。
 2. **输入困难**:登录、建用户、routing rule 表单都要求手敲完整 `entity://...` URI。
@@ -103,7 +103,7 @@ app_settings
 
 - `smtp_config` value:`{"host","port","username","password","from_address","tls"}` JSON。
 - `registration_domains` value:`["company.com", ...]` JSON list。
-- **SMTP 密码明文存** —— 与 ESR 现状一致(`ApiKeys` 明文存 API key)。at-rest 加密是单独的全项目决策(§11)。
+- **SMTP 密码明文存** —— 与 Ezagent 现状一致(`ApiKeys` 明文存 API key)。at-rest 加密是单独的全项目决策(§11)。
 - 一张表同时装 SMTP 配置 + 域名白名单,避免为单一 blob 建表。
 
 ### 2.4 新表 `magic_link_tokens`
@@ -258,7 +258,7 @@ DELETE /logout             不变
 ### 5.6 限流
 
 - `POST /login` 按 **email** + **IP** 限流(防邮件轰炸 / SMTP 配额烧毁)。
-- ESR 无限流设施 → 新增轻量 ETS 窗口计数器(不引入新依赖)。
+- Ezagent 无限流设施 → 新增轻量 ETS 窗口计数器(不引入新依赖)。
 - 阈值(实现期可调):每 email ≤ 3 次/15min;每 IP ≤ 10 次/小时。
 - 超限 → 仍返回 §5.5 的通用文案(不泄露限流状态),内部不发信。
 

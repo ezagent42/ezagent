@@ -1,6 +1,6 @@
 defmodule EzagentDomainUi.Components do
   @moduledoc """
-  shadcn-inspired HEEx primitives for ESR admin/plugin UIs.
+  shadcn-inspired HEEx primitives for Ezagent admin/plugin UIs.
 
   `use EzagentDomainUi.Components` imports every component below so
   templates can call `<.button>`, `<.card>`, `<.badge>` etc. directly.

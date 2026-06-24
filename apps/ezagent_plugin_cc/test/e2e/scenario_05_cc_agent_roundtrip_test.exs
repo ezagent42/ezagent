@@ -266,7 +266,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
       # 3. Allen joins the agent into a session
       # 4. Allen sends "say hello" mentioning the agent
       # 5. agent-browser screenshots `/admin/sessions/<uri>` showing
-      #    BOTH messages — this is the ESR e2e standard sign-off.
+      #    BOTH messages — this is the Ezagent e2e standard sign-off.
       #
       # No automation here — manual operator step.
       flunk("@tag :requires_allen — operator-driven; do not run in CI")

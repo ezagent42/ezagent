@@ -1230,7 +1230,7 @@ The Domain explicitly does NOT:
 3. **Defend against in-VM plugin code.** Same-VM plugins are trusted (PR #303 round-5 threat model, Allen approved 2026-05-24). The per-adapter cap + per-target ownership check are USER-level authorization, not BEAM sandboxing. A malicious plugin author who ships an exfiltration binding can publish anywhere it has credentials for — the controls are about preventing INNOCENT users from binding to a target they don't own, not about containing malicious code.
 4. **Replace the Chat Domain.** Chat is entity-to-entity messaging with intentional addressing. ExternalMirror is one-way session-state replication. They share the slice (Chat slice changes are mirror frames) but not a code path.
 5. **Replace `Ezagent.Notifications` / `SliceChange`.** This Domain CONSUMES the SliceChange primitive (via the Publisher layer it sits on top of). Does not compete with or override notification-layer cap shape.
-6. **Provide a generic inbound path.** Inbound from external systems (Feishu webhook → ESR Chat) stays in the plugin's own `InboundDispatcher` (per P11). This Domain is OUTBOUND-only.
+6. **Provide a generic inbound path.** Inbound from external systems (Feishu webhook → Ezagent Chat) stays in the plugin's own `InboundDispatcher` (per P11). This Domain is OUTBOUND-only.
 7. **Buffer or persist mirror frames longer than Publisher retention.** V1 retention is 100 events / 1 hour (OQ-EM-A). Adapters needing at-least-once delivery + long-term replay must implement their own external-side dedup / log.
 8. **Auto-disable / circuit-break / health-check bindings.** Per **P2** (let-it-crash, no workarounds): broken bindings stay live, surface failure via telemetry, and require operator unbind to remove. No silent degradation paths.
 

@@ -14,6 +14,44 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Arch-debt deferred tracks (2026-06-23 close, Allen "clean all cleanable")
+
+> Cleaned at close: `oversized_modules_gt_1000` 3→0 (#919). The items below are
+> the remaining caps, with the honest reason each is NOT a quick sweep (full
+> accounting: `docs/together/2026-06-23/review.md` §5).
+
+- **#55 `undocumented_public_defs` 392 burn-down** — reducible but a mass @doc
+  sweep ships unverified claims (violates `feedback_doc_why_must_be_code_verified`).
+  Needs a deliberate, codex-reviewed, batched campaign.
+- **Plugin-owned resource-type registration** on `Resource.FsResolver` (currently
+  core-compile-time-only `boot_registrations/0`, no plugin self-registration) →
+  then migrate world `LayoutManager.layout_dir/0` off raw `Home.path` behind a
+  `resource://`-style seam, ratcheting `raw_home_path_outside_core` 2→1. The codex
+  SUN_LEN socket (the other entry) is genuinely un-migratable (D2). Spec-worthy.
+- **`cross_file_duplicate_fn_groups` 32 audit** — enumerate annotated-sanctioned
+  mirrors vs. genuinely-dedupable BEFORE any dedup (not yet audited; do not assume).
+- **`cc_codex_template_class_combined_loc` 1684** — a GROWTH CEILING, not a too-big
+  file (cc_agent 930 + codex_agent 754, both <1000 individually). Reducing the
+  combined cap = fragmenting cohesive flavor logic to chase a number; leave as the
+  ceiling. Revisit only if either file individually nears 1000.
+
+### i18n: widen the anti-CJK gate scope + translate the rest of the umbrella — OPEN (#91 follow-up, 2026-06-23)
+
+> Landed at the dev-together close (#91): `EzagentPluginHello.Generator`
+> builder narration now goes through the plugin-owned `EzagentPluginHello.Gettext`
+> backend (English msgids + `priv/gettext/zh_CN`), and a target-zero arch gate
+> (`apps/ezagent_core/test/architecture/cjk_literal_gate_test.exs`,
+> `Ezagent.Architecture.CjkLiteralGateTest`) fails the build on any hardcoded Han
+> string literal — **scoped to `apps/ezagent_plugin_hello/lib` for now** (Allen's
+> ask was "至少覆盖 hello 叙述串").
+>
+> **Follow-up:** widen `@scanned_globs` in that gate to the rest of the umbrella
+> (the broader ~20-file sweep of hardcoded-CJK user-facing copy outside hello —
+> world/socialware LV chrome, agent-console labels, etc.), wrapping each in the
+> owning app's gettext backend as the gate is widened. The scanner is already
+> scope-agnostic; widening = code fixes + one `@scanned_globs` line per app.
+> Owner: i18n. Tracking: extends #91.
+
 ### #154 genesis-collapse hardening — RESOLVED 2026-06-20 (Allen: VM-internal-trust, formalized)
 
 > **RESOLVED.** Allen's decision (2026-06-20): adopt VM-internal trust as the
@@ -644,6 +682,36 @@ the same tables. If the answer is "yes, harden", the migration
 is SPEC + a sweep PR across every registry — out of scope for
 the ExternalMirror PR sequence.
 
+### Plugin-contributed resource types are DROPPED on a Registry restart — OPEN (MED, latent prod bug, surfaced PR-2 resource-types)
+
+> **OPEN, surfaced 2026-06-24 (PR-2 plugin-resource-type-registration).**
+> `Ezagent.Resource.FsResolver.Registry` is a `:protected`-table-owning GenServer.
+> Plugin-contributed resource types are written via `register_all/1` at each
+> plugin's `Ezagent.Plugin.boot/2` Phase 2. On a Registry GenServer **restart**,
+> `init/1` re-applies ONLY core `boot_registrations/0` (`cc-agents`,
+> `codex-agents`, `uploads`) — **plugin types are NOT replayed** (the Registry
+> moduledoc states this as an accepted trade-off). So after any Registry crash, a
+> live release loses EVERY plugin-contributed resource type until those plugins
+> re-boot (which they never do — they already booted). For the first adopter this
+> means `world-layouts` resolution silently fails post-restart.
+>
+> **Verbatim evidence** (instrumented full umbrella `mix test`, 2026-06-24):
+> `init/1` ran 4× (1 boot + 3 restarts triggered by `ezagent_core`'s
+> restart-resilience tests). World registered once at boot
+> (`register_all=[{"world-layouts", …}] -> :ok`), but by the world test phase the
+> table held only `[cc-agents, uploads, codex-agents]` — `world-layouts` gone,
+> while `world_started=true`. Same class for the sibling EtsOwner registries
+> (Behavior/Template/AgentFlavor), which the moduledoc admits come back empty too.
+>
+> **Scope decision**: NOT fixed in PR-2 (the production boot flow is correct;
+> only shared-BEAM test state is affected, and the affected suites were made
+> self-contained via `Ezagent.World.ResourceTypeCase.ensure_world_layouts!/0` +
+> the inline ensure in `EzagentWeb.WorldHostRoutingTest`). The wiring fix
+> (replay plugin types on restart, OR prevent the restart, OR core re-publishes)
+> must preserve HIGH-1 (a plugin can never shadow a core type / alias a core
+> backend) and is therefore its own brainstorm → spec → codex-review PR.
+> **Owner**: TBD (needs Allen 拍板 on the restart-replay mechanism).
+
 ### Architecture audit follow-ups
 From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 1. **DONE** — `Capability.cross_workspace?/2` `apply/3` →
@@ -1163,7 +1231,7 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   `session_creator.ex` `ensure_orchestrated_session/6` + the cc `McpServer` /
   `OrchestratorReadinessPort` readiness check.
 
-- **Install + run `improve-codebase-architecture` skill to clarify the ESR
+- **Install + run `improve-codebase-architecture` skill to clarify the Ezagent
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`
   (cc-openclaw). Use it (informed by `UBIQUITOUS_LANGUAGE.md` + the `GLOSSARY.md`
   decisions log) to surface "deepening opportunities" — shallow modules, leaky

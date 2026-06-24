@@ -92,13 +92,19 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
      154, "operator migration tooling, app-not-started (D2)"},
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 657,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 659,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
-    # world plugin layout data store — SPEC 2026-06-21 §4.2 explicitly
-    # stores runtime layout JSON under EZAGENT_HOME/world/layouts.
-    {"apps/ezagent_plugin_world/lib/ezagent/world/layout_manager.ex",
-     "Ezagent.World.LayoutManager.layout_dir/0", 164,
-     "world layout runtime data store under EZAGENT_HOME (SPEC 2026-06-21 §4.2)"}
+    # world layout one-shot migration (plugin-resource SPEC §4.4, HIGH-8) —
+    # operator mix-task run app-not-started; re-keys legacy world/layouts JSON
+    # onto the world-layouts/<ws>/<name> resolver path then deletes the old tree.
+    # Core-located (NOT the world plugin) so it is excluded from
+    # raw_home_path_outside_core, preserving the 2→1 ratchet; mirrors the
+    # Mix.Tasks.Ezagent.Home.* operator anchors.
+    {"apps/ezagent_core/lib/mix/tasks/ezagent.world.migrate_layouts.ex",
+     "Mix.Tasks.Ezagent.World.MigrateLayouts.run/1", 58, "operator migration, app-not-started"},
+    {"apps/ezagent_core/lib/mix/tasks/ezagent.world.migrate_layouts.ex",
+     "Mix.Tasks.Ezagent.World.MigrateLayouts.migrate_one/3", 89,
+     "operator migration, app-not-started"}
   ]
 
   @exceptions @config_exceptions ++ @app_exceptions

@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Plugin.Install do
-  @shortdoc "Hot-load + start an OTP plugin app into a running ESR (no phx restart)"
+  @shortdoc "Hot-load + start an OTP plugin app into a running Ezagent (no phx restart)"
 
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (operator install).**
@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 
-  Phase 7 PR 36 (D7-8) — install a plugin OTP app into a running ESR
+  Phase 7 PR 36 (D7-8) — install a plugin OTP app into a running Ezagent
   without restarting `phx.server`. Closes V1.4 (dev writes plugin →
   `mix ezagent.plugin.install` → Kinds + Behaviors reachable without
   restart).
@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
   ## Concurrency
 
   Two concurrent `mix ezagent.plugin.install` invocations on the same
-  ESR instance race against the Application controller, which
+  Ezagent instance race against the Application controller, which
   serializes load/start internally. The second invocation of the
   same app silently observes `{:error, {:already_loaded, _}}` and
   treats it as success. Two installs of DIFFERENT apps that happen
@@ -62,7 +62,7 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
   seed_initial_data/0`). At hot-install time, `Mix.env()` returns
   the value the plugin was **built** with, NOT the host's runtime
   env. If the plugin was compiled with `MIX_ENV=prod`, a hot-install
-  into a `:dev` ESR runs the prod-branch boot logic — usually
+  into a `:dev` Ezagent runs the prod-branch boot logic — usually
   surprising.
 
   **Recommendation**: plugin authors should prefer

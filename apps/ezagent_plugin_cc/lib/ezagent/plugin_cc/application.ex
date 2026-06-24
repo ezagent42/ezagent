@@ -82,7 +82,11 @@ defmodule EzagentPluginCc.Application do
   end
 
   @impl Ezagent.Plugin
-  def template_classes, do: [Ezagent.PluginCc.Template.CcAgent]
+  def template_classes,
+    do: [
+      Ezagent.PluginCc.Template.CcAgent,
+      Ezagent.PluginCc.Template.CcHeadlessAgent
+    ]
 
   @impl Ezagent.Plugin
   def agent_flavors do
@@ -95,6 +99,12 @@ defmodule EzagentPluginCc.Application do
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcAgent,
         bridge_adapter: EzagentPluginCc.BridgeAdapter
+      },
+      %{
+        flavor: "cc-headless",
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
+        bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter
       }
     ]
   end
@@ -123,19 +133,10 @@ defmodule EzagentPluginCc.Application do
     # ETS tables + the readiness-port impl registration move here with them.
     #
     # `McpRegistry` — the `orchestrator_uri → bound McpServer context` table.
-    # `LiveJoinRegistry` — the `orchestrator_uri → live-bridge-joined?` durable
-    #   state table the §5 readiness gate POLLS. Both are lazy-`init/0`.
-    # `ReadinessAdapter` — the cc-resident impl of the session-owned
-    #   `OrchestratorReadinessPort` (replaces the deleted im passthrough).
-    #   "The current owner registers": now that the transport lives in cc, cc
-    #   registers the impl. The session never names a transport module.
+    # Agent live-join readiness is now the generic domain-agent contract
+    # (`Ezagent.Agent.LiveJoinRegistry`) keyed by `agent_uri`.
     :ok = Ezagent.Orchestrator.McpRegistry.init()
-    :ok = Ezagent.Orchestrator.LiveJoinRegistry.init()
-
-    :ok =
-      Ezagent.Session.OrchestratorReadinessPort.put_impl(
-        EzagentPluginCc.Orchestrator.ReadinessAdapter
-      )
+    :ok = Ezagent.Agent.LiveJoinRegistry.init()
 
     _ = maybe_reap_orphans()
     _ = Ezagent.Workspace.Loader.load_all()

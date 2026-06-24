@@ -782,8 +782,7 @@ defmodule Ezagent.Workspace do
   Wraps `EzagentDomainInstanceMessage.SessionCreator.create_session/3` via the
   `Behavior.Workspace.:create_session` action so the CLI
   (`mix ezagent workspace create_session ...`) and the LV "New session"
-  form both reach the same code path. The auto-spawned orchestrator
-  agent is surfaced in the return map.
+  form both reach the same code path.
 
   Goes through `Ezagent.Invocation.dispatch/1` so step 5.5 CapBAC,
   audit telemetry, and the action body's workspace check all fire.
@@ -791,19 +790,11 @@ defmodule Ezagent.Workspace do
   `args` is `%{short_name: String.t(), template_name: String.t()}`.
   `ctx` carries `:caller` + `:caps`.
 
-  Returns `{:ok, %{session_uri: URI.t(), orchestrator_uri: URI.t() | nil,
-  orchestrator_status: :ready | :pending | :failed, orchestrator_error:
-  String.t() | nil}}` on success; `{:error, reason}` on validation /
-  cap denial / facade failure.
+  Returns `{:ok, %{session_uri: URI.t()}}` on success; `{:error, reason}`
+  on validation / cap denial / facade failure.
   """
   @spec create_session(URI.t(), map(), map()) ::
-          {:ok,
-           %{
-             session_uri: URI.t(),
-             orchestrator_uri: URI.t() | nil,
-             orchestrator_status: :ready | :pending | :failed,
-             orchestrator_error: String.t() | nil
-           }}
+          {:ok, %{session_uri: URI.t()}}
           | {:error, term()}
   def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do

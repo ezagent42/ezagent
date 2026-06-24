@@ -186,12 +186,20 @@ defmodule Ezagent.Routing.Resolver do
   def resolve_with_ctx(%Message{} = message, %URI{} = current_session_uri, members, opts)
       when is_list(members) and is_list(opts) do
     workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string()
+    role_resolver = Keyword.get(opts, :role_resolver)
     current_str = URI.to_string(current_session_uri)
 
     Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
     |> Enum.flat_map(&query_table_with_ctx(&1, message, workspace_uri))
     |> Enum.flat_map(fn {receiver, ctx} ->
-      expand_receiver(receiver, message, current_session_uri, members, workspace_uri)
+      expand_receiver(
+        receiver,
+        message,
+        current_session_uri,
+        members,
+        workspace_uri,
+        role_resolver
+      )
       |> Enum.map(&{&1, ctx})
     end)
     # Deterministic tie-break (codex 2026-06-01 MED): when two rules route to
@@ -298,7 +306,14 @@ defmodule Ezagent.Routing.Resolver do
   # member except the sender. No trust-boundary filter — this is the
   # explicit opt-in broadcast token; an operator who adds a rule
   # resolving to it is consciously asking for full fan-out.
-  defp expand_receiver(@session_members_token, message, _current_session_uri, members, _ws) do
+  defp expand_receiver(
+         @session_members_token,
+         message,
+         _current_session_uri,
+         members,
+         _ws,
+         _role_resolver
+       ) do
     sender_str = sender_string(message)
 
     members
@@ -308,7 +323,14 @@ defmodule Ezagent.Routing.Resolver do
   # "$session_users" — the User-Kind members (entity://user/...) of
   # the current session, each through the valid_member?/2 trust
   # boundary, excluding the sender. Drives the per-user notification.
-  defp expand_receiver(@session_users_token, message, current_session_uri, members, _ws) do
+  defp expand_receiver(
+         @session_users_token,
+         message,
+         current_session_uri,
+         members,
+         _ws,
+         _role_resolver
+       ) do
     sender_str = sender_string(message)
 
     members
@@ -325,7 +347,14 @@ defmodule Ezagent.Routing.Resolver do
   # `system://chat-router` admin wildcard is gone), so unvalidated
   # mentions would be a privilege hole — the membership filter is what
   # bounds the minted cap to real members.
-  defp expand_receiver(@mentions_token, message, current_session_uri, members, _ws) do
+  defp expand_receiver(
+         @mentions_token,
+         message,
+         current_session_uri,
+         members,
+         _ws,
+         _role_resolver
+       ) do
     sender_str = sender_string(message)
 
     (message.mentions || [])
@@ -335,11 +364,50 @@ defmodule Ezagent.Routing.Resolver do
     |> Enum.reject(fn m -> URI.to_string(m) == sender_str end)
   end
 
-  defp expand_receiver(receiver, _message, _current, _members, _ws)
+  defp expand_receiver({:magic, token}, message, current, members, ws, role_resolver)
+       when is_binary(token) do
+    expand_receiver(token, message, current, members, ws, role_resolver)
+  end
+
+  defp expand_receiver(
+         {:uri, %URI{} = receiver},
+         _message,
+         _current,
+         _members,
+         _ws,
+         _role_resolver
+       ),
+       do: [receiver]
+
+  defp expand_receiver({:uri, receiver}, _message, _current, _members, _ws, _role_resolver)
        when is_binary(receiver),
        do: [Ezagent.URI.new!(receiver)]
 
-  defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws),
+  defp expand_receiver({:role, role_name}, message, current, members, ws, role_resolver)
+       when is_binary(role_name) and is_function(role_resolver, 2) do
+    case role_resolver.(role_name, %{
+           message: message,
+           session_uri: current,
+           members: members,
+           workspace_uri: ws
+         }) do
+      %URI{} = uri -> [uri]
+      {:ok, %URI{} = uri} -> [uri]
+      nil -> []
+      :error -> []
+      {:error, _} -> []
+      _ -> []
+    end
+  end
+
+  defp expand_receiver({:role, _role_name}, _message, _current, _members, _ws, _role_resolver),
+    do: []
+
+  defp expand_receiver(receiver, _message, _current, _members, _ws, _role_resolver)
+       when is_binary(receiver),
+       do: [Ezagent.URI.new!(receiver)]
+
+  defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws, _role_resolver),
     do: [receiver]
 
   @doc """

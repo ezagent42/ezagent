@@ -106,7 +106,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       assert :ok = Bootstrap.install_role_sandbox(sandbox_content, config_dir)
       claude_md = File.read!(Path.join(config_dir, "CLAUDE.md"))
       assert claude_md =~ @hint
-      refute claude_md =~ "You are an ESR session orchestrator"
+      refute claude_md =~ "You are an Ezagent session orchestrator"
     end
   end
 

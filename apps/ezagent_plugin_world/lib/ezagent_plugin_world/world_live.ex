@@ -30,7 +30,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "display_name" => caller_display_name(caller)
     }
 
-    layout = layout_for(workspace)
+    layout = layout_for(workspace, caller)
     if connected?(socket), do: subscribe_global_inbound(caller)
 
     state =
@@ -63,7 +63,8 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_params(params, uri, socket) do
     route = Ezagent.World.Routes.route_for(params, uri)
     workspace = socket.assigns.current_workspace_uri
-    layout = layout_for_route(route, workspace)
+    caller = Map.get(socket.assigns, :current_entity_uri)
+    layout = layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
     state = state_for_route(route, socket, layout)
     socket = maybe_subscribe_pty(socket, route)
@@ -387,19 +388,40 @@ defmodule EzagentPluginWorld.WorldLive do
 
       {:noreply,
        socket
+       |> assign(:agent_create_error, nil)
        |> assign(:last_dispatch_status, "ok")
        |> push_navigate(to: "/identities/agents/#{encoded}")}
     else
       {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+        {:noreply, push_agent_create_error(socket, reason)}
 
       _ ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace_scope")}
+        {:noreply, push_agent_create_error(socket, :invalid_workspace_scope)}
     end
   end
 
   defp dispatch_agent_create(socket, _params) do
     {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent")}
+  end
+
+  # No silent drop: rebuild the agent_new_form state with the operator-facing
+  # message and re-push it through the SAME `world:state` channel the route uses
+  # so the React island re-renders the error. The reason is also stashed on the
+  # socket so a subsequent `handle_params` re-render (e.g. PTY refresh) keeps the
+  # message until the operator navigates away (push_navigate on success clears it).
+  defp push_agent_create_error(socket, reason) do
+    # Resolve the route from the single source (Routes.route_for) so the title/
+    # path can't silently drift from routes.ex if it ever changes there.
+    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents/new")
+    layout = socket.assigns.world_state["layout"]
+    socket = assign(socket, :agent_create_error, reason)
+    state = state_for_route(route, socket, layout)
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
+    |> push_event("world:state", state)
   end
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
@@ -429,10 +451,23 @@ defmodule EzagentPluginWorld.WorldLive do
     Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
   end
 
-  defp layout_for(%URI{} = workspace_uri),
-    do: Ezagent.World.LayoutManager.read_layout(workspace_uri)
+  # R-3 (codex HIGH-4): the persisted-layout read threads the CALLER's
+  # authenticated scope (`caller` = `current_entity_uri`) SEPARATELY from the
+  # target `workspace_uri`. The resolver's authority check then compares the two
+  # independently-sourced `<ws>` values, so a mount whose caller is not
+  # authoritative for the target workspace falls back to `default_layout`
+  # (fail-closed) rather than reading the foreign layout.
+  defp layout_for(%URI{} = workspace_uri, %URI{} = caller_uri) do
+    case Ezagent.URI.workspace_name(caller_uri) do
+      {:ok, ws} ->
+        Ezagent.World.LayoutManager.read_layout(workspace_uri, %{workspace: ws})
 
-  defp layout_for(_),
+      :error ->
+        Ezagent.World.LayoutManager.default_layout(workspace_uri)
+    end
+  end
+
+  defp layout_for(_, _),
     do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
   # The /sessions landing reads its (multi-slot, user-arrangeable) persisted
@@ -441,10 +476,10 @@ defmodule EzagentPluginWorld.WorldLive do
   # registry-validated layout — a route that produces an unregistered slot
   # fails loudly here (and is caught pre-merge by the layout gate) instead of
   # silently falling through to a renderer default.
-  defp layout_for_route(%{component: "sessions_table"}, workspace_uri),
-    do: layout_for(workspace_uri)
+  defp layout_for_route(%{component: "sessions_table"}, workspace_uri, caller_uri),
+    do: layout_for(workspace_uri, caller_uri)
 
-  defp layout_for_route(%{component: component, title: title}, workspace_uri) do
+  defp layout_for_route(%{component: component, title: title}, workspace_uri, _caller_uri) do
     scope_uri =
       if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
 
@@ -533,7 +568,8 @@ defmodule EzagentPluginWorld.WorldLive do
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      create_error: Map.get(socket.assigns, :agent_create_error)
     })
     |> Map.put("layout", layout)
     |> put_can_manage_layout(route.component, socket)
@@ -550,9 +586,29 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
+      "templates" => session_template_names(workspace_uri),
       "sessions" => Enum.map(sessions, &session_row/1)
     }
   end
+
+  # Resolvable SessionTemplate names for the "New session" picker — the live
+  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
+  # resolve, including any the operator just authored via the template form)
+  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
+  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.URI.name!()
+    |> Ezagent.World.WorkspacePluginData.session_template_rows()
+    |> Enum.map(&Map.get(&1, "name"))
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> then(&["default" | &1])
+    |> Enum.uniq()
+    |> Enum.sort()
+  rescue
+    _ -> ["default"]
+  end
+
+  defp session_template_names(_), do: ["default"]
 
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))

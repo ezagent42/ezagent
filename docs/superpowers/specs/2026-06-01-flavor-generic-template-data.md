@@ -151,7 +151,7 @@ loud behavior.
   path-fields are omitted unless non-empty binaries.
 - **Live (the gate, after merge)**: orchestrator `add_agent_slot` a curl worker
   + `put_api_key` + `write_matcher` → the worker calls DeepSeek and replies,
-  mirrored to the bound ESR Feishu group (`FeishuClient send_text code=0`). Same
+  mirrored to the bound Ezagent Feishu group (`FeishuClient send_text code=0`). Same
   for codex once its bridge bug is fixed.
 
 ## Risk / back-compat

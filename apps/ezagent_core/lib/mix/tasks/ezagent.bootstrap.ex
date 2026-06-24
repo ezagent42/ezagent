@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Bootstrap do
-  @shortdoc "One-command ESR install: home.init + ecto.migrate + health-check"
+  @shortdoc "One-command Ezagent install: home.init + ecto.migrate + health-check"
 
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (bootstrap).**
@@ -9,10 +9,10 @@ defmodule Mix.Tasks.Ezagent.Bootstrap do
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 
-  Phase 7 PR 33 (D7-5, D7-9) — the canonical "dev team installs ESR
+  Phase 7 PR 33 (D7-5, D7-9) — the canonical "dev team installs Ezagent
   on a prod-like host" entry point. Wraps the existing single-purpose
   tasks into a single command so a new contributor can go from
-  `git clone` to a running ESR in one step.
+  `git clone` to a running Ezagent in one step.
 
   ## Usage
 

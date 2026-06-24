@@ -33,12 +33,10 @@ defmodule Ezagent.Behavior.Session.ConfigActions do
       # rule-set routing rows (receivers are role_names / URIs, resolved on
       # instantiate). Kept for SessionTemplate snapshot compatibility.
       routing_rules: [],
-      # URI.t() | nil — the orchestrator agent's AgentTemplate
-      orchestrator_template_uri: nil,
-      # URI.t() | nil — the orchestrator Agent Kind chosen for this
-      # Session. Stored once at create and read through Ezagent.UriQuery;
-      # callers must not re-derive it from URI shape.
-      orchestrator_uri: nil,
+      # Declared members that may be provisioned lazily by route-time role
+      # resolution. Entries come from SessionTemplate.members and are not proof
+      # that the member Kind is live or joined.
+      member_declarations: [],
       # URI.t() | nil — the SessionTemplate this Session was
       # instantiated from (the Generator's `parent_template_uri`,
       # Task #110). Durable because Session is `{:snapshot, :on_change}`,

@@ -7,13 +7,26 @@ Plan and scope the day's tasks so parallel work won't collide.
 
 **Do:**
 1. Ensure today's folder exists (`scripts/new_day.sh`).
-2. List the day's tasks. For each: scope, the **surfaces/files it owns**, a
+2. **Load the roster — don't guess who the devs are.** Read
+   `docs/together/team.md` and **filter to `role: human-dev`**. The plan covers
+   human devs only; agents (`role: agent`) are off-plan support and go in an
+   "Off-plan (support)" section, never a track row.
+3. **Derive each dev's next increment from their state (continuity).** For each
+   human dev, read their `current_track` and open their `latest_return` (the path
+   in their `team.md` row, or the newest `docs/together/*/returns/*` they own).
+   The dev's "today's increment" must be **grounded in that last return** (e.g.
+   "re-run the E2E now that #912 landed, verify §7 crux cleared" — derived from
+   the return, not invented).
+4. **Ladder every track to the week's goal.** Read the current week's
+   `docs/together/<ISO-week>/weekly-goals.md` (e.g. `2026-W26/weekly-goals.md`;
+   ISO `YYYY-Www` of today) and tag each track with the weekly goal it serves.
+5. List the day's tasks. For each: scope, the **surfaces/files it owns**, a
    **per-task branch name**, owner/dev, planned start target, deadline, and
    required reading.
-3. Build the **cross-task conflict map** — which tasks touch the same files; for
+6. Build the **cross-task conflict map** — which tasks touch the same files; for
    anything touching `world`, apply `docs/guide/world-coordination.md` (declare
    surface owners; serialize `styles.css`; respect the layout gate).
-4. Write `docs/together/<date>/plan.md`: the task list + scope + branches +
+7. Write `docs/together/<date>/plan.md`: the task list + scope + branches +
    conflict map + the intended `handoff` order.
 
 ## Plan completeness gate
@@ -28,6 +41,9 @@ the scaffold. It must include:
   run in parallel.
 - The intended handoff order and which tasks require brainstorming/design
   confirmation before build.
+- **Every track maps to a weekly goal; the roster came from `team.md`, not
+  memory** (filtered to `role: human-dev`, no agent has a track row), and each
+  track cites the dev's `latest_return` as its continuity basis.
 
 If an unplanned return arrives, keep it in `returns/` with
 `deadline_status: late` or `out_of_scope`; do not rewrite history by pretending

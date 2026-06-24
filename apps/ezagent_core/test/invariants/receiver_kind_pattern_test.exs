@@ -4,7 +4,7 @@ defmodule EzagentCore.Invariants.ReceiverKindPatternTest do
 
   Per memory `feedback_plugin_external_integration_is_receiver_kind` and
   `docs/notes/plugin-receiver-kind-contract.md`: any plugin that sends
-  ESR messages OUT to an external system MUST model the external
+  Ezagent messages OUT to an external system MUST model the external
   destination as either (a) a Receiver Kind (URI scheme + Behavior
   with `:receive` action — pre-PR-144 shape) OR (b) a Behavior
   registered on an existing core Kind (Session for per-room mirrors,

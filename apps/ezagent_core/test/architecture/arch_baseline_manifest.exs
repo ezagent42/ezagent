@@ -32,7 +32,14 @@
   #   lines now; mirror of pg's CallerDisplay split). Cap restored to 3 — the
   #   remaining >1000 are pty/server.ex (1027) + kind.ex (1025) + im
   #   application.ex (1010), all standing burn-down targets in docs/futures/todo.md.
-  oversized_modules_gt_1000: 3,
+  #   2026-06-23 (arch-debt burn-down, Allen) RATCHET-DOWN 3 → 0: all three
+  #   trimmed under 1000 by cohesive extractions — pty/server.ex (1027→892,
+  #   `Ezagent.Domain.Pty.AutoPrompts` data catalog), im application.ex
+  #   (1025→867, `SessionBehaviorRegistration.register/0`), kind.ex (1025→882,
+  #   behavior-set accessors → `Ezagent.Kind.BehaviorSet`, slice accessors →
+  #   `Ezagent.Kind.SliceAccess`). All pure refactors w/ thin delegates; public
+  #   API + call sites unchanged. Cap is now a hard zero — no module may regrow >1000.
+  oversized_modules_gt_1000: 0,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
@@ -53,7 +60,9 @@
   #   chokepoint: conversation_registry.ex `resolve` (2 sites: ensure session live
   #   on durable + ephemeral paths) + openai_chat_plug.ex `join_agent` (1 site).
   #   All on-chokepoint, so off_chokepoint is unchanged. 37→40.
-  spawn_registry_call_sites: 40,
+  # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor spawn paths route
+  #   through the SANCTIONED SpawnRegistry chokepoint (one site each). 40→42.
+  spawn_registry_call_sites: 42,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -62,13 +71,18 @@
   # off_chokepoint is unchanged).
   # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
   # +2 protocol_api P0 (conversation_registry + openai_chat_plug spawn)
-  spawn_registry_modules: 35,
+  # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor modules spawn through
+  #   the SpawnRegistry chokepoint. 35→37.
+  spawn_registry_modules: 37,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
   #   cold-restart self-heal. The inbound HTTP adapter owns its own activation
   #   point; creation still flows through the template chokepoint. 25→26.
-  spawn_registry_off_chokepoint_modules: 26,
+  # arch-cap-bump: +1 #907 — a cc-headless/codex-remote flavor module activates its
+  #   pre-provisioned agent off-chokepoint (rehydrate, not create); creation still
+  #   flows through the template chokepoint. 26→27.
+  spawn_registry_off_chokepoint_modules: 27,
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
@@ -116,7 +130,11 @@
   # (which also retires a pre-existing Mix-task `run/1` fork the gap had been
   # counting, −1 more). The chat→session `SliceMigration` mirror remains.
   # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
-  cross_file_duplicate_fn_groups: 29,
+  # arch-cap-bump: +3 #907 — cc-headless + codex-remote template classes add thin
+  #   CredentialAdapter delegations (auth_failure_signals/secret_relpaths/credential_*
+  #   → base cc/codex agent), intentionally duplicating the delegating bodies across
+  #   flavor files. 29→32.
+  cross_file_duplicate_fn_groups: 32,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -132,7 +150,9 @@
   # Genuine product logic, codex-reviewed (HIGH+MEDIUM addressed); not extractable
   # shared duplication. 1669 → 1682.
   # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
-  cc_codex_template_class_combined_loc: 1682,
+  # arch-cap-bump: +2 #907 — cc_headless_agent + codex_remote_agent flavor template
+  #   classes (thin CredentialAdapter delegations). 1682→1684.
+  cc_codex_template_class_combined_loc: 1684,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
@@ -144,12 +164,17 @@
   # `HomePathExceptions`. Reconciles with the uri_query.scan
   # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
   #
-  # World PR-2 (SPEC 2026-06-21 §4.2) adds one more sanctioned outside-core
-  # caller: `Ezagent.World.LayoutManager.layout_dir/0`, the required
-  # EZAGENT_HOME-backed runtime layout JSON store. It is also exact-anchored in
-  # `HomePathExceptions`, so the hard-fail-new URI scanner still constrains it.
-  # arch-cap-bump: raw_home_path_outside_core: World PR-2 layout_dir/0 runtime layout store
-  raw_home_path_outside_core: 2,
+  # World PR-2 (plugin-resource SPEC §4.4) migrated `Ezagent.World.LayoutManager`
+  # OFF raw `Home.path("world/layouts")` ONTO the `resource://<ws>/world-layouts`
+  # seam (`Ezagent.Resource.FsResolver.resolve/2`). The runtime LayoutManager now
+  # has NO `Home.path` call; the one-shot `mix ezagent.world.migrate_layouts`
+  # operator task's `Home.path` reads live in `ezagent_core` (excluded from this
+  # outside-core metric by construction, like the `Mix.Tasks.Ezagent.Home.*`
+  # tasks) and are exact-anchored in `HomePathExceptions`. RATCHET-DOWN 2 → 1:
+  # the codex app-server SUN_LEN socket (`codex_agent.ex`) is the sole remaining
+  # genuinely un-migratable outside-core caller. (Lowering a cap needs no
+  # arch-cap-bump annotation; only raising does.)
+  raw_home_path_outside_core: 1,
   # Cleanup-1 FF-5 fix: `mcp_config_writer.ex` no longer hardcodes
   # `Path.expand("~/.ezagent")` — its default dir now resolves through the
   # post-Resource-unification `system://` seam (Ezagent.System.FsResolver). The

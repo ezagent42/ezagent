@@ -38,7 +38,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          :ok <- join_agent(session_uri, entity_uri, target_agent),
          {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      agent = target_agent || default_agent()
+      agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
 
       # Register pending request, spawn background waiter (subscribes + waits in Task)
       PendingReplyStore.put_pending(request_id)
@@ -65,6 +65,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
         case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
           {:ok, reply_msg} ->
             PendingReplyStore.put_reply(request_id, build_openai_response(request_id, reply_msg))
+
           {:error, :timeout} ->
             PendingReplyStore.put_error(request_id, "timed out waiting for agent reply")
         end
@@ -80,12 +81,15 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     case PendingReplyStore.get(request_id) do
       {:ok, :pending} ->
         json_response(conn, 200, %{"id" => request_id, "status" => "processing"})
+
       {:ok, reply} ->
         PendingReplyStore.delete(request_id)
         json_response(conn, 200, reply)
+
       {:error, error} ->
         PendingReplyStore.delete(request_id)
         json_response(conn, 200, %{"id" => request_id, "status" => "error", "error" => error})
+
       :not_found ->
         json_error(conn, 404, "request #{request_id} not found")
     end
@@ -102,7 +106,9 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
       :ok
     else
       case Ezagent.KindRegistry.lookup(agent_uri) do
-        {:ok, _pid} -> :ok
+        {:ok, _pid} ->
+          :ok
+
         :error ->
           Process.sleep(200)
           wait_for_kind_registry(agent_uri, deadline)
@@ -110,13 +116,31 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  # The agent that handles a request when the API key carries no explicit
-  # `target_agent`. Built via the typed `Ezagent.URI.agent/2` helper so the
-  # `entity://` form lives behind Ezagent.URI, not a raw string in this plug.
-  defp default_agent, do: Ezagent.URI.agent("system", "echo_default")
+  # Register flavor attribute so AgentModuleResolver can find the Kind module.
+  defp maybe_register_flavor(agent_uri) do
+    flavor = flavor_from_uri(agent_uri)
+    if flavor, do: Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+  end
+
+  defp flavor_from_uri(agent_uri) do
+    name =
+      case Ezagent.URI.name(agent_uri) do
+        n when is_binary(n) -> n
+        _ -> ""
+      end
+
+    cond do
+      String.starts_with?(name, "curl_") -> "curl"
+      String.starts_with?(name, "cc_") -> "cc"
+      String.starts_with?(name, "codex_") -> "codex"
+      String.starts_with?(name, "echo_") -> "echo"
+      true -> nil
+    end
+  end
 
   defp extract_id_from_path(conn) do
     path = conn.request_path
+
     case String.split(path, "/v1/chat/completions/") do
       [_, id] when byte_size(id) > 0 -> {:ok, id}
       _ -> :error
@@ -146,7 +170,9 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp extract_conversation_id(body, conn) do
     # Durable path: explicit conversation_id in body or header
     case Map.get(body, "conversation_id") do
-      id when is_binary(id) and id != "" -> {:ok, id}
+      id when is_binary(id) and id != "" ->
+        {:ok, id}
+
       _ ->
         case Plug.Conn.get_req_header(conn, "x-conversation-id") do
           [id | _] when id != "" -> {:ok, id}
@@ -160,20 +186,20 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   # Defaults to echo agent when target_agent is nil.
   defp join_agent(session_uri, entity_uri, target_agent) do
     require Logger
-    agent = target_agent || default_agent()
+    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
-    # Flavor → Kind-module resolution (AgentModuleResolver) reads the agent's
-    # STORED flavor via Ezagent.UriQuery — never the URI name prefix. Custom
-    # target agents are operator-provisioned (template-instantiated), so their
-    # flavor is already in the durable snapshot and resolves automatically.
-    # The default echo agent may be spawned cold (no prior snapshot), so store
-    # its flavor as a constant — it is echo by definition, nothing to derive.
-    if is_nil(target_agent), do: Ezagent.AgentFlavorAttributes.put(agent, "echo")
+    # Register flavor attribute so AgentModuleResolver can find the Kind module.
+    # The URI name prefix determines the flavor (e.g. "curl_e2e" → "curl").
+    maybe_register_flavor(agent)
 
     case SpawnRegistry.spawn(agent) do
-      {:ok, _pid} -> Logger.info("ProtocolApi: agent spawned OK")
-      {:error, :already_started} -> Logger.info("ProtocolApi: agent already started")
+      {:ok, _pid} ->
+        Logger.info("ProtocolApi: agent spawned OK")
+
+      {:error, :already_started} ->
+        Logger.info("ProtocolApi: agent already started")
+
       {:error, reason} ->
         Logger.error("ProtocolApi: agent spawn failed: #{inspect(reason)}")
         {:error, 500, "spawn_failed", inspect(reason)}
@@ -186,14 +212,25 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     Process.sleep(3000)
 
     target = URI.with_action(session_uri, :session, :join)
+
     cmd = %Ezagent.Cmd{
-      target: target, action: :join, args: %{member: agent},
+      target: target,
+      action: :join,
+      args: %{member: agent},
       ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
     }
+
     Logger.info("ProtocolApi: joining agent to session...")
+
     case Router.dispatch(cmd) do
-      {:ok, _} -> Logger.info("ProtocolApi: join OK"); :ok
-      :ok -> Logger.info("ProtocolApi: join OK"); :ok
+      {:ok, _} ->
+        Logger.info("ProtocolApi: join OK")
+        :ok
+
+      :ok ->
+        Logger.info("ProtocolApi: join OK")
+        :ok
+
       {:error, reason} ->
         Logger.error("ProtocolApi: join failed: #{inspect(reason)}")
         {:error, 500, "join_failed", inspect(reason)}
@@ -222,7 +259,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
     # $session_users only delivers to Users. Add target agent to mentions
     # so the $mentions routing rule delivers agent.receive to it.
-    agent = target_agent || default_agent()
+    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
     mentions = if agent, do: [agent], else: []
 
     msg =
@@ -237,6 +274,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp subscribe_publisher(session_uri, entity_uri) do
     # Subscribe from the CALLING process (Task PID for async, Plug PID for sync)
     target = URI.with_action(session_uri, :publisher, :subscribe_from)
+
     cmd = %Ezagent.Cmd{
       target: target,
       action: :subscribe_from,

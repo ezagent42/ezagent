@@ -152,6 +152,9 @@ defmodule Ezagent.Invocation do
       {:ready, _} ->
         deliver_to_ready(instance_uri, mode, inv)
 
+      {:failed, _} ->
+        {:error, :failed}
+
       {:not_ready, :cast} ->
         # Buffer for delivery once instance announces ready.
         Ezagent.PendingDelivery.buffer(instance_uri, inv)

@@ -13,7 +13,7 @@ Files touching `feishu://`:
 
 ## Target shape (SPEC §5.8)
 
-### Inbound (Feishu webhook → ESR)
+### Inbound (Feishu webhook → Ezagent)
 
 Webhook arrives with `chat_id: oc_xxx, sender_open_id: ou_yyy, message: ...`.
 
@@ -25,7 +25,7 @@ Pipeline:
 
 The `feishu://oc_xxx` Receiver Kind goes away entirely. Inbound dispatcher writes directly to the session.
 
-### Outbound (ESR → Feishu)
+### Outbound (Ezagent → Feishu)
 
 A Behavior on Session Kind, registered by feishu plugin: `Behavior.FeishuOutbound` with action `:send_to_feishu`. When chat fan-out hits a session that has a feishu binding, the resolver dispatches to that session's `feishu_outbound/send_to_feishu` action, which calls the Feishu API.
 

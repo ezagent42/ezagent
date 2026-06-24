@@ -319,9 +319,11 @@ defmodule Ezagent.Kind.Server do
     # post-init clause below).
     case queue do
       [] ->
-        drain_then_mark_ready(uri_str)
-        # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
-        run_on_ready_hooks(state.kind, uri, state.state)
+        if Ezagent.Kind.ReadyTransition.drain_then_mark_ready(uri_str, self()) == :ready do
+          # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
+          run_on_ready_hooks(state.kind, uri, state.state)
+        end
+
         {:noreply, state}
 
       _ ->
@@ -365,10 +367,13 @@ defmodule Ezagent.Kind.Server do
         # arriving between mark_ready and the self-cast loop could
         # overtake older buffered entries in the GenServer mailbox,
         # breaking per-target FIFO).
-        drain_then_mark_ready(URI.to_string(self_uri))
-        # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
-        # Uses the post-init mutated slice state.
-        run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+        if Ezagent.Kind.ReadyTransition.drain_then_mark_ready(URI.to_string(self_uri), self()) ==
+             :ready do
+          # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
+          # Uses the post-init mutated slice state.
+          run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+        end
+
         {:noreply, new_state}
 
       _ ->
@@ -481,22 +486,6 @@ defmodule Ezagent.Kind.Server do
   # Kind init is not the hot dispatch path so this is acceptable for
   # v1; if production data shows unbounded loops, switch to a
   # `:draining` ReadyGate state with a hand-off semaphore.
-  defp drain_then_mark_ready(uri_str) when is_binary(uri_str) do
-    case Ezagent.PendingDelivery.flush(uri_str) do
-      [] ->
-        :ok = Ezagent.ReadyGate.mark_ready(uri_str)
-
-      entries ->
-        Enum.each(entries, fn buffered_inv ->
-          GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
-        end)
-
-        # Re-check — dispatchers may have added entries while we were
-        # self-casting (they still saw :not_ready).
-        drain_then_mark_ready(uri_str)
-    end
-  end
-
   # Task #49 (2026-05-27) — codex round-1 FAIL #6 fix.
   #
   # Run each Behavior's optional `on_ready/2` callback AFTER ReadyGate
@@ -751,6 +740,19 @@ defmodule Ezagent.Kind.Server do
   # callback. See `Ezagent.Kind.DeferredDispatch` for the full ordering /
   # no-deadlock / failure-handling contract.
   @impl true
+  def handle_info({:ezagent_external_ready_gate, uri_str, :ok}, state)
+      when is_binary(uri_str) do
+    Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(uri_str, self())
+    run_on_ready_hooks(state.kind, state.uri, state.state)
+    {:noreply, state}
+  end
+
+  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, :timeout}}, state)
+      when is_binary(uri_str) do
+    :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
+    {:noreply, state}
+  end
+
   def handle_info({:ezagent_run_deferred, cmds}, state) when is_list(cmds) do
     Ezagent.Kind.DeferredDispatch.run(cmds)
     {:noreply, state}

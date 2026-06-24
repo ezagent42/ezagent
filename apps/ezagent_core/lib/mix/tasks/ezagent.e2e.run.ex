@@ -1,8 +1,8 @@
 defmodule Mix.Tasks.Ezagent.E2e.Run do
-  @shortdoc "Run an E2E scenario inside the running ESR node (#21 harness)"
+  @shortdoc "Run an E2E scenario inside the running Ezagent node (#21 harness)"
 
   @moduledoc """
-  Run an E2E scenario IN the live ESR runtime (scenarios seed via the production paths,
+  Run an E2E scenario IN the live Ezagent runtime (scenarios seed via the production paths,
   which need the running node's DB + in-memory Kind state).
 
       mix ezagent.e2e.run scenario_0
@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Ezagent.E2e.Run do
       {:error, _} ->
         IO.puts(
           :stderr,
-          "error: ESR runtime not reachable at #{Ezagent.Runtime.runtime_node()} " <>
+          "error: Ezagent runtime not reachable at #{Ezagent.Runtime.runtime_node()} " <>
             "(start `mix phx.server` or set EZAGENT_RUNTIME_NODE)"
         )
 

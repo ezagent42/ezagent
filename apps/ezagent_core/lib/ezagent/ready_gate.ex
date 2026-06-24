@@ -4,7 +4,7 @@ defmodule Ezagent.ReadyGate do
 
   States: `:unknown` (default for unseen URIs), `:not_ready` (registered
   but not yet announced ready — see `Ezagent.Kind.Server` init), `:ready`
-  (announced).
+  (announced), `:failed` (readiness gate exhausted).
 
   Used by `Ezagent.Invocation.dispatch/1` to decide:
   - `:not_ready` + `:cast` → buffer to `Ezagent.PendingDelivery`
@@ -16,8 +16,9 @@ defmodule Ezagent.ReadyGate do
   """
 
   @table :ezagent_ready_gate
+  @external_gates_key {__MODULE__, :external_gates}
 
-  @type status :: :unknown | :not_ready | :ready
+  @type status :: :unknown | :not_ready | :ready | :failed
 
   @doc "ETS table name — for `EzagentCore.EtsOwner` to create at boot."
   def table, do: @table
@@ -37,7 +38,7 @@ defmodule Ezagent.ReadyGate do
 
   @doc "Set a URI's status. Idempotent."
   @spec put(URI.t() | String.t(), status()) :: :ok
-  def put(uri, status) when status in [:unknown, :not_ready, :ready] do
+  def put(uri, status) when status in [:unknown, :not_ready, :ready, :failed] do
     :ets.insert(@table, {key(uri), status})
     :ok
   end
@@ -45,6 +46,44 @@ defmodule Ezagent.ReadyGate do
   @doc "Convenience for `put(uri, :ready)`."
   @spec mark_ready(URI.t() | String.t()) :: :ok
   def mark_ready(uri), do: put(uri, :ready)
+
+  @doc "Convenience for `put(uri, :failed)`."
+  @spec mark_failed(URI.t() | String.t()) :: :ok
+  def mark_failed(uri), do: put(uri, :failed)
+
+  @doc """
+  Register a module that can defer a Kind's ready flip on an external condition.
+
+  Gate modules implement `defer_ready?/1` and return `:ready` or
+  `{:defer, timeout_ms}`. They may also implement `await_transport_or_fail/1`;
+  `Kind.Server` uses that when a gate defers.
+  """
+  @spec register_external_gate(module()) :: :ok
+  def register_external_gate(module) when is_atom(module) do
+    gates = external_gates()
+    :persistent_term.put(@external_gates_key, Enum.uniq([module | gates]))
+    :ok
+  end
+
+  @doc false
+  @spec external_gate(URI.t() | String.t()) :: :ready | {:defer, module(), pos_integer()}
+  def external_gate(uri) do
+    Enum.find_value(external_gates(), :ready, fn module ->
+      if Code.ensure_loaded?(module) and function_exported?(module, :defer_ready?, 1) do
+        case module.defer_ready?(uri) do
+          :ready -> false
+          {:defer, ms} when is_integer(ms) and ms > 0 -> {:defer, module, ms}
+          _ -> false
+        end
+      else
+        false
+      end
+    end)
+  end
+
+  defp external_gates do
+    :persistent_term.get(@external_gates_key, [])
+  end
 
   @doc """
   Block (with bounded polling) until `uri` reaches `:ready` status.

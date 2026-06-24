@@ -11,6 +11,11 @@ End-of-day retrospective that closes the loop and feeds tomorrow's `plan`.
    pass" only.
 4. **Next-day planning suggestions** — what to sequence differently, which
    conflicts to pre-empt, which deferrals to schedule, process tweaks.
+5. **Update the roster (single writer).** For each human dev, set their
+   `current_track` and `latest_return` in `docs/together/team.md` to the next
+   track — this is what tomorrow's `plan` derives from. `review` is the **only**
+   writer of `current_track`/`latest_return`; `return`/`close` do NOT touch them
+   (avoids double-write). A mid-stream pivot may be reflected by the lead.
 
 ## Required accounting
 

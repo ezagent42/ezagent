@@ -60,6 +60,29 @@ docs/together/YYYY-MM-DD/
 Durable design specs/notes still live in `docs/superpowers/`; `docs/together/` is
 the **daily operational record**.
 
+## Durable team state — the inputs `plan`/`handoff`/`review` read
+
+Two durable files outlive the dated daily folders and are the source of truth so
+the daily plan is **derived, not guessed**:
+
+- **`docs/together/team.md`** — the roster. **Row identity = `github_username`**;
+  carries `role` (`human-dev` | `agent` | `lead`), `short_name` (the alias plans
+  cite), `current_track` (what each dev is on now), `latest_return`, `timezone`.
+  - `plan` reads it, filters `role: human-dev`, and derives each dev's next
+    increment from `current_track` + `latest_return`.
+  - `handoff` reads the assignee's row to tailor handoff depth.
+  - `review` is the **single writer** of `current_track`/`latest_return` (end of
+    day). `return`/`close` never write them. A mid-stream pivot may be reflected
+    by the lead.
+- **`docs/together/<ISO-week>/weekly-goals.md`** — the week's goals; every daily
+  track ladders up to one. `plan` reads it to tag each track with its goal.
+
+**Week-folder naming:** `docs/together/YYYY-Www/` where `YYYY-Www` is the **ISO
+week** of the day being planned (ISO weeks start Monday; the year is the
+ISO-week-numbering year, which can differ from the calendar year at Jan/Dec
+edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
+`date -j -f %Y-%m-%d <date> +%G-W%V` (macOS) or `date -d <date> +%G-W%V` (GNU).
+
 ## Ledger rules — do not skip these
 
 - **No empty plan.** `plan.md` is invalid until it lists every planned task with

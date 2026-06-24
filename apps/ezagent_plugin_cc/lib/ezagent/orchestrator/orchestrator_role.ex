@@ -26,10 +26,9 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
 
   ## Scope (PR-2)
 
-  `behaviors` and `requested_caps` are deliberately empty here: PR-2 migrates
-  the sandbox **content** (skills + persona), not the caps/behaviors→spawn
-  threading (that is the live `TemplateSpawn` cap path, deferred). The recipe is
-  shaped so those fields can be populated later without changing consumers.
+  `requested_caps` carries only concrete behavior/action requests. Wildcard or
+  genesis-style authority is deliberately not expressible here; materialization
+  must intersect these requests with a fail-closed policy.
   """
 
   alias Ezagent.Role
@@ -39,8 +38,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   @doc """
   The orchestrator role recipe — the map `Ezagent.Role.new/1` consumes (and the
   future `template://system/role/orchestrator` content). Flavor-agnostic: it
-  names no flavor field. `behaviors`/`requested_caps` are empty in PR-2 (see the
-  moduledoc).
+  names no flavor field.
   """
   @spec recipe() :: map()
   def recipe do
@@ -48,7 +46,12 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
       skills: [@skill_ref],
       prompt: persona(),
       behaviors: [],
-      requested_caps: [],
+      requested_caps: [
+        %{behavior: Ezagent.Behavior.Template, action: :read},
+        %{behavior: Ezagent.Behavior.Template, action: :write},
+        %{behavior: Ezagent.Behavior.Template, action: :instantiate},
+        %{behavior: Ezagent.Behavior.Template, action: :fork}
+      ],
       session_template: nil
     }
   end
@@ -61,7 +64,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   @spec persona() :: String.t()
   def persona do
     """
-    # You are an ESR session orchestrator
+    # You are an Ezagent session orchestrator
 
     You manage a team of worker agents inside one chat session. You build
     the team from MEMBERS + RULE-SETS (via the `esr-orchestrator` MCP

@@ -84,4 +84,4 @@ bytes — comfortably under SUN_LEN, even for long worker URIs.
 - **Live (the gate)**: orchestrator `add_agent_slot` a codex worker →
   app-server binds + stays alive → bridge writes thread-id → no
   `codex_thread_id_file_timeout` → the codex worker round-trips a reply,
-  mirrored to the bound ESR Feishu group (`FeishuClient code=0`).
+  mirrored to the bound Ezagent Feishu group (`FeishuClient code=0`).

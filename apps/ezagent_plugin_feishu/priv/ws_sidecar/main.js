@@ -8,15 +8,15 @@
 //   not publicly documented. Re-implementing in Elixir is 300-600 LOC
 //   of reverse-engineering risk. The sidecar is ~80 LOC of glue.
 //
-// Wire format with ESR:
-//   stdin   = (unused for now; future ESR→sidecar commands)
+// Wire format with Ezagent:
+//   stdin   = (unused for now; future Ezagent→sidecar commands)
 //   stdout  = one JSON line per event:
 //     {"type":"event","schema":"2.0","header":{...},"event":{...}}
 //     {"type":"connected"}
 //     {"type":"disconnected","reason":"..."}
 //     {"type":"error","message":"..."}
 //
-// Credentials come via env vars (ESR sets them when spawning):
+// Credentials come via env vars (Ezagent sets them when spawning):
 //   FEISHU_APP_ID
 //   FEISHU_APP_SECRET
 //   FEISHU_DOMAIN    (default "https://open.feishu.cn", set
@@ -32,7 +32,7 @@ function emit(obj) {
     try {
         process.stdout.write(JSON.stringify(obj) + '\n');
     } catch (err) {
-        // EPIPE: ESR side closed the pipe (e.g. code reload restarted
+        // EPIPE: Ezagent side closed the pipe (e.g. code reload restarted
         // the WsClient GenServer). Exit cleanly so the Elixir
         // supervisor respawns us with a fresh Port.
         if (err && err.code === 'EPIPE') {
@@ -60,11 +60,11 @@ if (!APP_ID || !APP_SECRET) {
     fatal('FEISHU_APP_ID and FEISHU_APP_SECRET env vars are required');
 }
 
-// Forward every lark event to ESR as a JSON line. ESR's Elixir-side
+// Forward every lark event to Ezagent as a JSON line. Ezagent's Elixir-side
 // Port reader parses one line at a time.
 const eventDispatcher = new lark.EventDispatcher({}).register({
     'im.message.receive_v1': async (data) => {
-        // SDK strips schema/header wrapping; re-wrap so ESR's existing
+        // SDK strips schema/header wrapping; re-wrap so Ezagent's existing
         // build_message_body code reads the same shape it did from
         // HTTP webhook events.
         emit({

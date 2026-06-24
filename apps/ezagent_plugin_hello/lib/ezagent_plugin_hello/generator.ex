@@ -24,6 +24,12 @@ defmodule EzagentPluginHello.Generator do
 
   require Logger
 
+  # User-facing builder narration goes through the plugin-owned gettext backend
+  # (#91). No Han-character literals may live in this app's `lib/` — the
+  # `CjkLiteralGate` arch test enforces it; the Chinese copy lives in
+  # `priv/gettext/zh_CN/LC_MESSAGES/default.po`.
+  use Gettext, backend: EzagentPluginHello.Gettext
+
   alias EzagentPluginHello.{Prompts, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
@@ -52,40 +58,59 @@ defmodule EzagentPluginHello.Generator do
   """
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
+    # Pin the turn's locale for narration: this Task process has no per-request
+    # Locale plug, so without this the copy would fall back to the gettext
+    # default. Covers every `say` below (all run in this process).
+    Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
     builder = builder_uri(session_uri)
     # First-moment acknowledgement (before the slow planner LLM call).
-    TurnDriver.say(session_uri, builder, "收到 ✅ 正在理解你的需求…")
+    TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
     case decompose(user_text) do
       {:complex, %{title: title, sections: sections}} ->
         TurnDriver.say(
           session_uri,
           builder,
-          "🧭 规划:页面「#{title}」拆成 #{length(sections)} 个区块,并行生成。"
+          gettext("🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
+            title: title,
+            count: length(sections)
+          )
         )
 
         generate_complex(session_uri, builder, title, sections, user_text)
 
       {:simple} ->
-        TurnDriver.say(session_uri, builder, "🧭 规划:单页直接生成。")
+        TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
         generate_simple(session_uri, builder, user_text)
     end
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
   defp generate_simple(session_uri, builder, user_text) do
-    TurnDriver.say(session_uri, builder, "🧠 正在调用模型生成页面…")
+    TurnDriver.say(session_uri, builder, gettext("🧠 Calling model to generate the page…"))
 
     with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), user_text),
          {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
       log_spec(session_uri, spec)
-      TurnDriver.say(session_uri, builder, "📦 已生成结构:#{describe_page(spec)}")
+
+      TurnDriver.say(
+        session_uri,
+        builder,
+        gettext("📦 Structure generated: %{desc}", desc: describe_page(spec))
+      )
+
       land_page(session_uri, builder, spec)
     else
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
-        TurnDriver.say(session_uri, builder, "⚠ 生成失败:#{inspect(reason)}")
+
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("⚠ Generation failed: %{reason}", reason: inspect(reason))
+        )
+
         err
     end
   end
@@ -96,7 +121,15 @@ defmodule EzagentPluginHello.Generator do
   # single-page path so the turn still produces something.
   defp generate_complex(session_uri, builder, title, sections, user_text) do
     briefs = sections |> Enum.map(fn %{brief: b} -> "・#{b}" end) |> Enum.join("\n")
-    TurnDriver.say(session_uri, builder, "⏳ 并行生成 #{length(sections)} 个区块:\n#{briefs}")
+
+    TurnDriver.say(
+      session_uri,
+      builder,
+      gettext("⏳ Generating %{count} blocks in parallel:\n%{briefs}",
+        count: length(sections),
+        briefs: briefs
+      )
+    )
 
     section_trees =
       sections
@@ -115,12 +148,21 @@ defmodule EzagentPluginHello.Generator do
     kept = length(section_trees)
     failed = length(sections) - kept
 
-    TurnDriver.say(
-      session_uri,
-      builder,
-      "📦 区块完成:#{kept}/#{length(sections)} 成功" <>
-        if(failed > 0, do: "(#{failed} 个失败已跳过)", else: "") <> "。"
-    )
+    blocks_done_msg =
+      if failed > 0 do
+        gettext("📦 Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped).",
+          kept: kept,
+          total: length(sections),
+          failed: failed
+        )
+      else
+        gettext("📦 Blocks done: %{kept}/%{total} succeeded.",
+          kept: kept,
+          total: length(sections)
+        )
+      end
+
+    TurnDriver.say(session_uri, builder, blocks_done_msg)
 
     case section_trees do
       [] ->
@@ -128,18 +170,35 @@ defmodule EzagentPluginHello.Generator do
           "hello.Generator: all #{length(sections)} sections failed; single-page fallback"
         )
 
-        TurnDriver.say(session_uri, builder, "⚠ 全部区块失败,改用单页兜底重新生成…")
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("⚠ All blocks failed; regenerating with the single-page fallback…")
+        )
+
         generate_simple(session_uri, builder, user_text)
 
       trees ->
         with {:ok, page} <- Spec.compose_page(title, trees) do
           log_spec(session_uri, page)
-          TurnDriver.say(session_uri, builder, "📦 已组装:#{describe_page(page)}")
+
+          TurnDriver.say(
+            session_uri,
+            builder,
+            gettext("📦 Assembled: %{desc}", desc: describe_page(page))
+          )
+
           land_page(session_uri, builder, page)
         else
           {:error, reason} = err ->
             Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
-            TurnDriver.say(session_uri, builder, "⚠ 组装页面失败:#{inspect(reason)}")
+
+            TurnDriver.say(
+              session_uri,
+              builder,
+              gettext("⚠ Page assembly failed: %{reason}", reason: inspect(reason))
+            )
+
             err
         end
     end
@@ -239,26 +298,33 @@ defmodule EzagentPluginHello.Generator do
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
   # the RESULT goes through say to guarantee the operator sees completion live.
   defp land_page(session_uri, builder, spec) do
-    TurnDriver.say(session_uri, builder, "🛠 正在渲染到右侧预览…")
+    TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
         TurnDriver.say(
           session_uri,
           builder,
-          "✅ 完成!页面「#{get_title(spec)}」已渲染到右侧预览。"
+          gettext("✅ Done! Page \"%{title}\" rendered to the right-side preview.",
+            title: get_title(spec)
+          )
         )
 
         ok
 
       {:error, reason} = err ->
-        TurnDriver.say(session_uri, builder, "⚠ 渲染失败:#{inspect(reason)}")
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("⚠ Render failed: %{reason}", reason: inspect(reason))
+        )
+
         err
     end
   end
 
   defp get_title(%{"props" => %{"title" => t}}) when is_binary(t) and t != "", do: t
-  defp get_title(_), do: "未命名"
+  defp get_title(_), do: gettext("Untitled")
 
   # Human description of the generated page: title + per-type component counts —
   # the "what did it actually build" line.
@@ -272,7 +338,11 @@ defmodule EzagentPluginHello.Generator do
       |> Enum.map(fn {t, c} -> "#{t}×#{c}" end)
       |> Enum.join("、")
 
-    "页面「#{get_title(spec)}」· 共 #{n} 个组件(#{parts})"
+    gettext("Page \"%{title}\" · %{n} components total (%{parts})",
+      title: get_title(spec),
+      n: n,
+      parts: parts
+    )
   end
 
   defp collect_types(%{} = node, acc) do
@@ -293,7 +363,8 @@ defmodule EzagentPluginHello.Generator do
   # The session's builder agent URI, derived from the session URI:
   # session://<ws>/hello/<name> → entity://<ws>/agent/hello_<name>
   # (matches `App.ensure_app/2`'s builder_uri).
-  defp builder_uri(%URI{host: ws} = session_uri) do
+  defp builder_uri(%URI{} = session_uri) do
+    ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
   end

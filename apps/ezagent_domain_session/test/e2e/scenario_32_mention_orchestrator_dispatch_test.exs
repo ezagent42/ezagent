@@ -12,15 +12,10 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   two invariants that the orchestrator-startup-atomicity round actually
   fixed and that NO existing test covered:
 
-    * **G1 (membership)** — after the atomic `create_session/3`,
-      `Ezagent.Entity.Session.session_member_uris/1` includes BOTH the
-      owner AND the orchestrator URI. This is the exact regression the
-      scenario gates: pre-fix `members` was empty (the readiness-gate
-      timeout rolled the session back before the step-8 join), so the
-      orchestrator — though registered — received no session messages.
-      Per `feedback_completion_requires_invariant_test`, THIS test is
-      the architectural gate: it fails when the goal (orchestrator is a
-      reachable member) is unmet.
+    * **G1 (membership)** — after `create_session/3`, the session is
+      live and the owner is joined, but the orchestrator role has NOT
+      been eagerly spawned. The first route to `role: orchestrator`
+      provisions that ordinary member and joins it.
 
     * **G2 (delivery routing)** — a message that @-mentions the
       orchestrator resolves the orchestrator as a recipient via
@@ -45,15 +40,16 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   — the true end-to-end — and is NOT this CI gate.
 
   In `:test` env the cc PtyServer short-circuits the real `:exec.run/2`
-  (no live claude) and the readiness gate is compile-time bypassed
-  (`@compile_env == :test`), so `create_session/3` runs the full atomic
-  flow — including the step-8 member join — without a subprocess.
+  (no live claude), so the route-time provision path can be exercised
+  deterministically without a live bridge.
   """
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.{Message, RoutingRegistry, Routing.Matcher, Routing.Resolver}
-  alias Ezagent.Entity.{Session, User}
+  alias Ezagent.{Invocation, KindRegistry, Message}
+  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{Session, SessionTemplate, User}
 
   @moduletag scenario: "32-feishu-mention-orchestrator-dispatch"
 
@@ -86,11 +82,6 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
     |> Enum.map(&URI.to_string/1)
   end
 
-  defp workspace_of(session_uri) do
-    {:ok, ws} = Ezagent.WorkspaceRegistry.lookup(session_uri)
-    ws
-  end
-
   defp create_session_via_workspace(short_name, creator_uri, opts) do
     template_name = Keyword.fetch!(opts, :template_name)
 
@@ -105,13 +96,44 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
              %{short_name: short_name, template_name: template_name},
              %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
            ) do
-      {:ok, result.session_uri,
-       %{
-         orchestrator_uri: result.orchestrator_uri,
-         orchestrator_status: result.orchestrator_status,
-         orchestrator_error: result.orchestrator_error
-       }}
+      {:ok, result.session_uri, %{}}
     end
+  end
+
+  defp route_to_orchestrator_template do
+    n = uniq()
+    template_name = "s32-route-orch-#{n}"
+    source_template_uri = seed_echo_agent_template(n)
+
+    persist_session_template(%{
+      name: template_name,
+      description: "Scenario 32 route-time orchestrator role",
+      default_workspace_uri: Ezagent.URI.workspace(:system),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-23 00:00:00Z],
+      members: [
+        %{
+          uri: nil,
+          role_name: "orchestrator",
+          in_session_template: true,
+          source_template_uri: source_template_uri
+        }
+      ],
+      routing_rules: [
+        %{
+          matcher: Ezagent.Routing.Matcher.from(User.admin_uri()),
+          receivers: ["orchestrator"],
+          rule_set: nil,
+          position: 0
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{}
+    })
+
+    template_name
   end
 
   defp ensure_workspace_seeded!(%URI{scheme: "workspace", host: name})
@@ -131,47 +153,31 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   end
 
   # ----------------------------------------------------------------------
-  # G1 — orchestrator is a session member after create_session/3
+  # G1 — create joins owner only; route-time role delivery provisions orchestrator
   # ----------------------------------------------------------------------
 
-  describe "G1 — membership: orchestrator + owner are members after create_session/3" do
-    test "session_member_uris includes BOTH the owner and the orchestrator" do
+  describe "G1 — create is decoupled; role route provisions orchestrator" do
+    test "create_session joins owner only, then session.send provisions role: orchestrator" do
       admin = User.admin_uri()
 
-      {:ok, session_uri, meta} =
-        create_session_via_workspace("s32-g1-#{uniq()}", admin, template_name: "default")
+      {:ok, session_uri, %{}} =
+        create_session_via_workspace("s32-g1-#{uniq()}", admin,
+          template_name: route_to_orchestrator_template()
+        )
 
-      # The orchestrator reached :ready (gate bypassed in :test) and its
-      # URI is populated — precondition for it being a member.
-      assert meta.orchestrator_status == :ready,
-             "orchestrator must reach :ready, got #{inspect(meta.orchestrator_status)} " <>
-               "(error=#{inspect(meta.orchestrator_error)})"
-
-      orch = URI.to_string(meta.orchestrator_uri)
       owner = URI.to_string(admin)
 
-      # The step-8 join ([owner, orchestrator]) is async; wait for both.
-      assert wait_until(fn ->
-               members = member_strs(session_uri)
-               owner in members and orch in members
-             end),
-             "after create_session, session_member_uris MUST include BOTH the owner " <>
-               "(#{owner}) AND the orchestrator (#{orch}) — the 'empty members' regression. " <>
-               "Got: #{inspect(member_strs(session_uri))}"
-    end
+      assert member_strs(session_uri) == [owner]
 
-    test "the orchestrator member URI equals meta.orchestrator_uri (no drift)" do
-      admin = User.admin_uri()
+      assert nil == role_member_uri(session_uri, "orchestrator")
 
-      {:ok, session_uri, meta} =
-        create_session_via_workspace("s32-g1b-#{uniq()}", admin, template_name: "default")
+      :ok = dispatch_send(admin, session_uri, "wake the orchestrator")
 
-      orch = URI.to_string(meta.orchestrator_uri)
+      assert wait_until(fn -> match?(%URI{}, role_member_uri(session_uri, "orchestrator")) end),
+             "first route to role: orchestrator must provision and join the ordinary member"
 
-      assert wait_until(fn -> orch in member_strs(session_uri) end),
-             "the orchestrator that joined as a member MUST be exactly the one in " <>
-               "meta.orchestrator_uri (#{orch}) — divergent member vs registered URI " <>
-               "would silently mis-bind mention routing. Got: #{inspect(member_strs(session_uri))}"
+      orch = role_member_uri(session_uri, "orchestrator")
+      assert URI.to_string(orch) in member_strs(session_uri)
     end
   end
 
@@ -179,95 +185,96 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   # G2 — a mention to the orchestrator resolves it as a recipient
   # ----------------------------------------------------------------------
 
-  describe "G2 — delivery routing: mention to the orchestrator resolves it as a recipient" do
-    setup do
-      table = String.to_atom("s32_routing_#{uniq()}")
-      :ok = RoutingRegistry.declare_table(table, key_uniqueness: :duplicate)
+  describe "G2 — delivery routing: route-time role delivery is durable" do
+    test "subsequent sends keep the provisioned orchestrator as a member" do
+      admin = User.admin_uri()
 
-      :ok =
-        RoutingRegistry.put(
-          table,
-          Matcher.always(),
-          %{
-            receivers: [Resolver.session_users_token(), Resolver.mentions_token()],
-            applies_to_users: [],
-            workspace_uri: nil
-          }
+      {:ok, session_uri, %{}} =
+        create_session_via_workspace("s32-g2-#{uniq()}", admin,
+          template_name: route_to_orchestrator_template()
         )
 
-      original = Application.get_env(:ezagent_core, :routing_tables)
-      Application.put_env(:ezagent_core, :routing_tables, [table])
+      :ok = dispatch_send(admin, session_uri, "wake orchestrator once")
+      assert wait_until(fn -> match?(%URI{}, role_member_uri(session_uri, "orchestrator")) end)
 
-      on_exit(fn ->
-        if original do
-          Application.put_env(:ezagent_core, :routing_tables, original)
-        else
-          Application.delete_env(:ezagent_core, :routing_tables)
-        end
-      end)
+      orch = role_member_uri(session_uri, "orchestrator")
 
-      :ok
+      :ok = dispatch_send(admin, session_uri, "second message")
+
+      assert wait_until(fn -> URI.to_string(orch) in member_strs(session_uri) end)
     end
+  end
 
-    defp build_msg(sender, text, mentions) do
-      %Message{
-        id: "s32-#{System.unique_integer([:positive])}",
-        sender: sender,
-        body: %{text: text, attachments: []},
-        mentions: mentions,
-        ref_id: nil,
-        inserted_at: ~U[2026-05-31 00:00:00.000000Z]
+  defp role_member_uri(session_uri, role_name) do
+    {:ok, pid} = KindRegistry.lookup(session_uri)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
+    SessionBehavior.role_name_to_uri(slice.members, role_name)
+  end
+
+  defp dispatch_send(caller_uri, session_uri, text) do
+    msg = Message.new(caller_uri, %{text: text, attachments: []})
+
+    Invocation.dispatch(%Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: caller_uri,
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: :ignore
       }
-    end
+    })
+  end
 
-    test "mentioning the orchestrator (a member) delivers to it" do
-      admin = User.admin_uri()
+  defp seed_echo_agent_template(n) do
+    uri = Ezagent.URI.new!("template://system/agent/s32-lazy-role-#{n}")
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
-      {:ok, session_uri, meta} =
-        create_session_via_workspace("s32-g2-#{uniq()}", admin, template_name: "default")
+    {:ok, _} =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        mode: :call,
+        args: %{
+          content: %{
+            flavor: "echo",
+            project_cwd: "/tmp",
+            default_caps: [],
+            created_by: User.admin_uri(),
+            created_at: ~U[2026-06-23 00:00:00Z]
+          }
+        },
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          reply: {:caller_inbox, self()}
+        }
+      })
 
-      orch_uri = meta.orchestrator_uri
-      orch = URI.to_string(orch_uri)
+    on_exit(fn -> terminate_if_alive(EzagentDomainInstanceMessage.AgentTemplateSupervisor, uri) end)
 
-      assert wait_until(fn -> orch in member_strs(session_uri) end)
+    uri
+  end
 
-      # The real member list as create_session populated it.
-      members = Session.session_member_uris(session_uri)
-      workspace_uri = workspace_of(session_uri)
+  defp persist_session_template(content) do
+    hash = SessionTemplate.compute_version_hash(content)
+    uri = SessionTemplate.build_uri(content.name, hash, workspace: "system")
+    :ok = KindSnapshot.delete(URI.to_string(uri))
+    {:ok, persisted_uri} = SessionTemplate.persist_version_as_system(content, "system")
 
-      msg = build_msg(admin, "@orch please create a worker", [orch_uri])
+    on_exit(fn ->
+      terminate_if_alive(EzagentDomainInstanceMessage.SessionTemplateSupervisor, persisted_uri)
+    end)
 
-      recipients =
-        Resolver.resolve(msg, session_uri, members, workspace_uri: workspace_uri)
-        |> Enum.map(&URI.to_string/1)
+    persisted_uri
+  end
 
-      assert orch in recipients,
-             "an @-mention of the orchestrator MUST route to it (it is a member) — " <>
-               "this is the routing half of G2 delivery. Got: #{inspect(recipients)}"
-    end
+  defp terminate_if_alive(supervisor, uri) do
+    case KindRegistry.lookup(uri) do
+      {:ok, pid} when is_pid(pid) ->
+        if Process.alive?(pid), do: DynamicSupervisor.terminate_child(supervisor, pid)
 
-    test "a NON-mention message does NOT fan out to the orchestrator (mention-gated)" do
-      admin = User.admin_uri()
-
-      {:ok, session_uri, meta} =
-        create_session_via_workspace("s32-g2b-#{uniq()}", admin, template_name: "default")
-
-      orch = URI.to_string(meta.orchestrator_uri)
-      assert wait_until(fn -> orch in member_strs(session_uri) end)
-
-      members = Session.session_member_uris(session_uri)
-      workspace_uri = workspace_of(session_uri)
-
-      # No mention → the orchestrator (an Agent Kind) must NOT receive.
-      msg = build_msg(admin, "just chatting, no mention", [])
-
-      recipients =
-        Resolver.resolve(msg, session_uri, members, workspace_uri: workspace_uri)
-        |> Enum.map(&URI.to_string/1)
-
-      refute orch in recipients,
-             "without an @-mention the orchestrator MUST NOT receive — mention-gated " <>
-               "routing (agents only via $mentions). Got: #{inspect(recipients)}"
+      _ ->
+        :ok
     end
   end
 end

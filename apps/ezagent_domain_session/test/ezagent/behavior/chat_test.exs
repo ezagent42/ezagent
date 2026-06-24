@@ -110,8 +110,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert wc == %{
                routing_rules: [],
-               orchestrator_template_uri: nil,
-               orchestrator_uri: nil,
+               member_declarations: [],
                # Task #110 — durable SessionTemplate URI for cold-load
                # McpRegistry re-registration (the parent_template_uri).
                session_template_uri: nil,

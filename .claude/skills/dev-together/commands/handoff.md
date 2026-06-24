@@ -6,15 +6,21 @@ Generate the day's handoffs — **in parallel**, one per task in `plan.md`.
 (static-only adversarial review).
 
 **Do (per task, parallelized — a subagent per task):**
-1. Brainstorm the design to settle the load-bearing decisions
+1. **Read the assignee's `team.md` row** (`role` / `current_track` /
+   `latest_return`). Use it to **tailor handoff depth** — a dev continuing their
+   own track needs less context re-derivation (cite their `latest_return`); a dev
+   new to a surface gets more required-reading + a worked example. The handoff
+   *standard* ([../references/handoff-standard.md](../references/handoff-standard.md))
+   is invariant — only the explanation depth flexes.
+2. Brainstorm the design to settle the load-bearing decisions
    (**superpowers:brainstorming**).
-2. Author the handoff from [../references/handoff-template.md](../references/handoff-template.md),
+3. Author the handoff from [../references/handoff-template.md](../references/handoff-template.md),
    applying [../references/handoff-standard.md](../references/handoff-standard.md)
    (DoD = demonstrable artifact; discuss-first; defer rules; per-task-branch merge).
-3. **Adversarial review:** Claude self-review + a **codex-rescue** static pass —
+4. **Adversarial review:** Claude self-review + a **codex-rescue** static pass —
    each told to *attack the design*, not proofread. Incorporate findings; a
    handoff ships only after it survives review.
-4. Save to `docs/together/<date>/handoffs/<task>.md` and emit a **paste-ready dev
+5. Save to `docs/together/<date>/handoffs/<task>.md` and emit a **paste-ready dev
    prompt** for the lead to dispatch.
 
 **Output:** `docs/together/<date>/handoffs/*.md` + one dev prompt per task.

@@ -1,6 +1,6 @@
 defmodule Ezagent.Runtime do
   @moduledoc """
-  ESR runtime node-name + cookie management (Allen 2026-05-17 directive:
+  Ezagent runtime node-name + cookie management (Allen 2026-05-17 directive:
   CLI should reach the runtime via distributed Erlang RPC, not HTTP).
 
   ## Node name convention
@@ -90,6 +90,20 @@ defmodule Ezagent.Runtime do
   CLI can connect to a known node name with a known cookie.
   """
   def configure_for_runtime! do
+    # dev 提速:`EZAGENT_NO_DISTRIBUTION=1` 时完全跳过分布式 Erlang 启动。WSL 等没起
+    # epmd 的环境,`:net_kernel.start(.., :longnames)` 会 etimedout 干等数十秒~数分钟,
+    # 严重拖慢 boot。单机 dev 不需要分布式(分布式只给 CLI `:rpc.call` 连进运行节点用)。
+    # 默认不开 → 行为不变;开了 → CLI RPC 命令不可用。
+    if System.get_env("EZAGENT_NO_DISTRIBUTION") in ["1", "true"] do
+      require Logger
+      Logger.info("Ezagent.Runtime: distribution skipped (EZAGENT_NO_DISTRIBUTION).")
+      :ok
+    else
+      do_configure_for_runtime!()
+    end
+  end
+
+  defp do_configure_for_runtime! do
     cookie = ensure_cookie!()
     node_name = runtime_node()
 

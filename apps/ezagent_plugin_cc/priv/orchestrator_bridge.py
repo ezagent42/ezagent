@@ -9,7 +9,7 @@ orchestrator_bridge — the orchestrator MCP transport bridge
 
 ## Why this exists
 
-`Ezagent.Orchestrator.McpServer` is an ESR-side Elixir module — the 7
+`Ezagent.Orchestrator.McpServer` is an Ezagent-side Elixir module — the 7
 privileged orchestration tools (`add_agent_slot`, `write_matcher`,
 `update_template`, ...). A live `claude` orchestrator cannot talk to an
 Elixir module: it talks to MCP servers listed in its `--mcp-config`.
@@ -28,7 +28,7 @@ tool. The two bridges are deliberately structurally identical:
 ## tools/list — served locally from a shipped schema file
 
 The 7 tool JSON schemas live in `Ezagent.Orchestrator.McpServer.tool_schemas/0`
-(Elixir). The ESR seed (`Ezagent.Orchestrator.CcOrchestratorSeed`)
+(Elixir). The Ezagent seed (`Ezagent.Orchestrator.CcOrchestratorSeed`)
 exports them to a JSON file next to this script and points
 ``EZAGENT_ORCHESTRATOR_TOOLS_PATH`` at it. `tools/list` is answered
 from that file — so the configured `uv run --script` command starts a
@@ -46,7 +46,7 @@ SERVER-SIDE from the token-authenticated agent URI — this bridge
 carries NO identity beyond the URI its token authenticates, so neither
 the bridge nor the `claude` process can spoof another orchestrator.
 
-## Env (written by the ESR seed / cc Template Class into the mcp.json)
+## Env (written by the Ezagent seed / cc Template Class into the mcp.json)
 
 * ``EZAGENT_BRIDGE_WS_URL`` — base WS URL. Default
   ``ws://127.0.0.1:10042/orchestrator_socket/websocket``.
@@ -157,7 +157,7 @@ def respond_error(req_id: Any, code: int, message: str) -> None:
 def load_tool_schemas() -> list[dict]:
     """Read the 7 orchestrator tool JSON schemas from the exported file.
 
-    The file is written by the ESR seed
+    The file is written by the Ezagent seed
     (`Ezagent.Orchestrator.CcOrchestratorSeed`) from
     `Ezagent.Orchestrator.McpServer.tool_schemas/0` — the single
     source of truth. Returns ``[]`` if the file is absent (the bridge
@@ -359,11 +359,11 @@ def handle_tools_call(req_id: Any, params: dict) -> None:
             {
                 "isError": True,
                 "content": [
-                    {"type": "text", "text": "orchestrator bridge not connected to ESR"}
+                    {"type": "text", "text": "orchestrator bridge not connected to Ezagent"}
                 ],
                 "error": {
                     "code": "transport_unavailable",
-                    "message": "orchestrator bridge not connected to ESR",
+                    "message": "orchestrator bridge not connected to Ezagent",
                 },
             },
         )
@@ -414,7 +414,7 @@ def handle_mcp(msg: dict) -> None:
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "esr-orchestrator", "version": "1.0.0"},
                 "instructions": (
-                    "The esr-orchestrator MCP server exposes the 7 ESR "
+                    "The esr-orchestrator MCP server exposes the 7 Ezagent "
                     "session-orchestration tools. Call them to compose and "
                     "route a team of worker agents within your session."
                 ),

@@ -177,4 +177,43 @@ defmodule Ezagent.Routing.ResolverTest do
       assert ctx.prompt_template_ref == "from_rule_1"
     end
   end
+
+  describe "tagged receivers" do
+    test "tagged role receivers resolve through the route-time role resolver", %{table: t} do
+      role_target = Ezagent.URI.agent(:team_alpha, "cc_orchestrator")
+      session_uri = Ezagent.URI.session(:team_alpha, :default, "main")
+
+      :ok =
+        RoutingRegistry.put(t, Matcher.always(), %{
+          receivers: [Ezagent.Routing.Receiver.role("orchestrator")],
+          applies_to_users: []
+        })
+
+      assert [{^role_target, _ctx}] =
+               Resolver.resolve_with_ctx(msg(), session_uri, [],
+                 role_resolver: fn
+                   "orchestrator", _ctx -> role_target
+                 end
+               )
+    end
+
+    test "legacy bare role-looking strings are not role receivers", %{table: t} do
+      :ok =
+        RoutingRegistry.put(t, Matcher.always(), %{
+          receivers: ["orchestrator"],
+          applies_to_users: []
+        })
+
+      assert_raise ArgumentError, fn ->
+        Resolver.resolve_with_ctx(
+          msg(),
+          Ezagent.URI.session(:team_alpha, :default, "main"),
+          [],
+          role_resolver: fn "orchestrator", _ctx ->
+            flunk("legacy string reached role resolver")
+          end
+        )
+      end
+    end
+  end
 end

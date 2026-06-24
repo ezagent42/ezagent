@@ -9,7 +9,8 @@ _status: approved for dispatch by Allen_
 | planned_at | 2026-06-23 11:23:06 +08:00 |
 | timezone | Asia/Shanghai |
 | lead | Allen + Codex lead support |
-| base | `origin/main` @ `56148805` |
+| base | `origin/main` @ `3cd5a5a4` (re-dispatched 16:20 on latest main; was `56148805`) |
+| re-dispatch | 2026-06-23 16:20 — handoffs 1/3/4 rebased to latest `origin/main` + each annotated with the now-available E2E support matrix/root-cause (PR [#902](https://github.com/ezagent42/ezagent/pull/902), `e2e-blocker-analysis.md`). Task 2 (`world-deploy-e2e-pg`) **returned** (`returns/world-deploy-e2e-pg.md`, `on_time`). New gap surfaced for the lead: the session-create-timeout + snapshot crux (steps 3/4/8) — not yet a planned task. |
 | day deadline | 2026-06-23 20:00 +08:00 |
 | 18:00 checkpoint | Begin close-down. If a task cannot finish by 20:00, split and return the smallest demonstrable artifact first. |
 | merge policy | Task branches only; PR first; lead/admin merge to `main`; no direct push to `main`. |

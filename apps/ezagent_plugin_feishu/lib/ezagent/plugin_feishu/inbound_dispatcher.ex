@@ -6,7 +6,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
   Responsibilities (in order):
 
     1. Resolve sender via `SenderResolver`.
-    2. If pending → log + react `THUMBSDOWN` so the human sees ESR
+    2. If pending → log + react `THUMBSDOWN` so the human sees Ezagent
        got the message but ops needs to bind their identity.
     3. If bound → look up session_uri for chat_id via
        `EzagentPluginFeishu.InboundChatLookup.resolve/2` (PR-EM-6 —
@@ -116,7 +116,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                   chat_id,
                   message_id,
                   "THUMBSDOWN",
-                  "🚫 ESR: 没有权限发送到 #{Ezagent.URI.stable_key(session_uri)} " <>
+                  "🚫 Ezagent: 没有权限发送到 #{Ezagent.URI.stable_key(session_uri)} " <>
                     "(missing cap: session.send). " <>
                     "请联系管理员补一条 `kind=:session behavior=:session` 的 cap。"
                 )
@@ -148,7 +148,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                   chat_id,
                   message_id,
                   "NO",
-                  "🌐 ESR: 跨 workspace dispatch 被拒绝。" <>
+                  "🌐 Ezagent: 跨 workspace dispatch 被拒绝。" <>
                     "你的身份 (#{Ezagent.URI.stable_key(caller_uri)}) 与目标 session " <>
                     "(#{Ezagent.URI.stable_key(session_uri)}) 不在同一 workspace。" <>
                     "需要 admin 授予 cross-workspace cap 才能跨 workspace 发送。"
@@ -165,7 +165,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                   chat_id,
                   message_id,
                   "THUMBSDOWN",
-                  "❌ ESR: dispatch 失败: #{inspect(reason)}"
+                  "❌ Ezagent: dispatch 失败: #{inspect(reason)}"
                 )
 
                 {:error, reason}
@@ -186,7 +186,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
               chat_id,
               message_id,
               "THUMBSDOWN",
-              "⚠️ ESR: 该 Feishu chat 被绑定到多个 session 上（运维错误）。" <>
+              "⚠️ Ezagent: 该 Feishu chat 被绑定到多个 session 上（运维错误）。" <>
                 "请用 `mix ezagent.external_mirror.unbind` 解绑多余的 session 后重试。"
             )
 
@@ -332,7 +332,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  # Send a Feishu text back to the source chat when ESR dispatch
+  # Send a Feishu text back to the source chat when Ezagent dispatch
   # can't proceed, so the human sees the failure instead of
   # waiting in silence. The react emoji paired with the explanation
   # text mirrors the existing :pending → THUMBSDOWN pattern: emoji
@@ -365,7 +365,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
   # Allen 2026-05-17: react latency was ~seconds because chat/send
   # fan-out fired sync HTTP calls (feishu echo) before this line.
   # Push react into a Task so the user sees ack immediately while
-  # ESR is still finishing the fan-out work.
+  # Ezagent is still finishing the fan-out work.
   defp react_safe(message_id, emoji) do
     Task.start(fn ->
       case Client.react(message_id, emoji) do

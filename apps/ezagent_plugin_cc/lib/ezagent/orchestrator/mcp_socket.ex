@@ -6,7 +6,7 @@ defmodule Ezagent.Orchestrator.McpSocket do
   ## What this is
 
   The orchestrator MCP server (`Ezagent.Orchestrator.McpServer`) is an
-  ESR-side Elixir module — the 7 privileged orchestration tools. A live
+  Ezagent-side Elixir module — the 7 privileged orchestration tools. A live
   `claude` orchestrator reaches it through the MCP stdio bridge
   (`priv/orchestrator_bridge.py`). That bridge speaks the MCP protocol
   to `claude` over stdio and forwards `tools/call` to the BEAM over a

@@ -259,12 +259,7 @@ defmodule Ezagent.Behavior.Workspace do
 
   action(:create_session,
     args: %{short_name: :string, template_name: :string},
-    returns: %{
-      session_uri: :uri,
-      orchestrator_uri: {:option, :uri},
-      orchestrator_status: :atom,
-      orchestrator_error: {:option, :string}
-    },
+    returns: %{session_uri: :uri},
     caps: [:create_session],
     modes: [:call],
     description:
@@ -559,7 +554,7 @@ defmodule Ezagent.Behavior.Workspace do
   # `ctx.self_uri` is the workspace URI — passed as `:workspace_uri` to
   # the facade. The caller URI is the session creator (becomes the
   # session owner_uri + receives the OrchestratorAdmin :restart cap).
-  @doc "Create a session in this workspace (unified CLI/LV path): validate name/template, call the runtime-resolved session facade's `create_session/3` (synchronously, to return the session URI), grant the caller the creator manage-cap, and surface the orchestrator URI/status. The caller becomes the session owner."
+  @doc "Create a session in this workspace (unified CLI/LV path): validate name/template, call the runtime-resolved session facade's `create_session/3` (synchronously, to return the session URI), and grant the caller the creator manage-cap. The caller becomes the session owner."
   def handle_create_session(args, ctx) when is_map(args) do
     workspace_uri = Map.get(ctx, :self_uri)
     caller = Map.get(ctx, :caller)
@@ -657,13 +652,7 @@ defmodule Ezagent.Behavior.Workspace do
                    workspace_uri,
                    caller
                  ) do
-            {:ok,
-             %{
-               session_uri: session_uri,
-               orchestrator_uri: Map.get(meta, :orchestrator_uri),
-               orchestrator_status: Map.get(meta, :orchestrator_status),
-               orchestrator_error: format_orchestrator_error(Map.get(meta, :orchestrator_error))
-             }, []}
+            {:ok, %{session_uri: session_uri}, []}
           end
 
         {:error, reason} ->
@@ -724,12 +713,6 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp require_caller(%URI{} = caller), do: {:ok, caller}
   defp require_caller(other), do: {:error, {:bad_caller, other}}
-
-  # Format the orchestrator_error term for the CLI/LV consumers.
-  # `nil` (happy path) stays `nil`; non-nil gets stringified so the
-  # auto-derived CLI formatter doesn't trip on opaque tuples.
-  defp format_orchestrator_error(nil), do: nil
-  defp format_orchestrator_error(err), do: inspect(err)
 
   # --- instantiate (the north-star action) -----------------------------
 

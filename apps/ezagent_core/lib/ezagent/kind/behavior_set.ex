@@ -85,6 +85,47 @@ defmodule Ezagent.Kind.BehaviorSet do
     Enum.uniq([KindBase | Ezagent.UniversalBehaviors.all()])
   end
 
+  # P5-0b accessor — optional callback (default `false`); `Code.ensure_loaded?/1`
+  # first for cold-VM load determinism. Scopes the `effective_set/2` nil-guard.
+  # Extracted from `Ezagent.Kind` (oversized-module arch gate, 2026-06-23) —
+  # `Ezagent.Kind.requires_explicit_behavior_set?/1` now delegates here.
+  @doc """
+  Does `kind_module` declare `requires_explicit_behavior_set?/0 == true`?
+
+  True only for the session Kind(s) that require an explicit `:kind_base`
+  capture on every instance (scopes `effective_set/2`'s nil-guard). Defaults to
+  `false` for every Kind without the optional callback.
+  """
+  @spec requires_explicit_behavior_set?(module()) :: boolean()
+  def requires_explicit_behavior_set?(kind_module) when is_atom(kind_module) do
+    Code.ensure_loaded?(kind_module) and
+      function_exported?(kind_module, :requires_explicit_behavior_set?, 0) and
+      kind_module.requires_explicit_behavior_set?()
+  end
+
+  # Behavior set for an ABSENT/`nil` `:kind_base` instance (PR-6, §3.5). Default
+  # = `behaviors_of/1` (byte-identical pre-PR-6). A SUPERSET Kind overrides it
+  # to its BASE subset so a flavor-only declared Behavior never pollutes legacy
+  # nil-`:kind_base` agents. Extracted from `Ezagent.Kind` (oversized-module arch
+  # gate, 2026-06-23) — `Ezagent.Kind.nil_capture_behavior_set/1` delegates here.
+  @doc """
+  The behavior set for an ABSENT / `nil` `:kind_base` capture.
+
+  Defaults to `Ezagent.Kind.behaviors_of/1` (byte-identical to pre-PR-6); a
+  superset Kind (e.g. `Entity.Agent`) overrides `nil_capture_behavior_set/0` to
+  return its BASE subset so a flavor-only declared Behavior never pollutes a
+  legacy nil-`:kind_base` instance.
+  """
+  @spec nil_capture_behavior_set(module()) :: [module()]
+  def nil_capture_behavior_set(kind_module) when is_atom(kind_module) do
+    if Code.ensure_loaded?(kind_module) and
+         function_exported?(kind_module, :nil_capture_behavior_set, 0) do
+      kind_module.nil_capture_behavior_set()
+    else
+      Ezagent.Kind.behaviors_of(kind_module)
+    end
+  end
+
   @doc """
   The set `init_fresh_first_spawn/2` enumerates at FIRST spawn, computed from
   spawn args (no slice state yet). Declaration order preserved; base behaviors
@@ -107,7 +148,7 @@ defmodule Ezagent.Kind.BehaviorSet do
         # its BASE subset here so legacy nil-`:kind_base` agents never gain a
         # flavor-only declared behavior.
         :error ->
-          Ezagent.Kind.nil_capture_behavior_set(kind_module)
+          nil_capture_behavior_set(kind_module)
 
         # PRESENT list (INCLUDING []) → intersect with declared, order-preserved.
         {:ok, list} when is_list(list) ->
@@ -142,7 +183,7 @@ defmodule Ezagent.Kind.BehaviorSet do
           # break P1's per-instance denial. For every other (legacy static)
           # Kind, the sentinel nil → full declared list is the intentional
           # compat path and is UNCHANGED.
-          if Ezagent.Kind.requires_explicit_behavior_set?(kind_module) do
+          if requires_explicit_behavior_set?(kind_module) do
             raise Ezagent.Kind.BehaviorSet.MissingKindBaseError,
               kind_module: kind_module,
               message:
@@ -155,7 +196,7 @@ defmodule Ezagent.Kind.BehaviorSet do
           # PR-6 — the Kind's nil-capture default (= `behaviors_of/1` for every
           # Kind without an override; the BASE subset for a superset Kind like
           # Entity.Agent). Symmetric with `init_set/2`'s absent-key branch.
-          Ezagent.Kind.nil_capture_behavior_set(kind_module)
+          nil_capture_behavior_set(kind_module)
 
         # PRESENT captured list (INCLUDING []) → intersect with declared.
         list when is_list(list) ->

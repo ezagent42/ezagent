@@ -1,7 +1,7 @@
 defmodule Ezagent.Behavior.Session do
   @moduledoc """
   Chat Behavior — Decision P2-D2 K-path: 4 actions, registered per-Kind
-  subset to realize Decision #61 "ESR is router not req/resp app".
+  subset to realize Decision #61 "Ezagent is router not req/resp app".
 
   ## Action / Kind matrix
 
@@ -121,6 +121,7 @@ defmodule Ezagent.Behavior.Session do
 
   alias Ezagent.{KindRegistry, Message, MessageStore}
   alias Ezagent.Behavior.Session.{ConfigActions, Delivery, Legends, Members, Membership}
+  alias Ezagent.Behavior.Session.RouteProvisioner
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 ring depth + `recent_messages_ring_depth/0` MOVED to
@@ -483,13 +484,26 @@ defmodule Ezagent.Behavior.Session do
         # ctx so the per-recipient delivery can render that rule's prompt
         # template. The bare URI list (for notify_dropped_mentions) is mapped
         # off; ctx is threaded into the dispatch loop below.
-        recipients_with_ctx =
-          Ezagent.Routing.Resolver.resolve_with_ctx(
-            msg,
-            session_uri,
-            in_session_members,
-            workspace_uri: workspace_uri
-          )
+        provision_key = {__MODULE__, :route_time_provision_effects}
+        Process.put(provision_key, [])
+
+        {recipients_with_ctx, provision_effects} =
+          try do
+            recipients =
+              Ezagent.Routing.Resolver.resolve_with_ctx(
+                msg,
+                session_uri,
+                in_session_members,
+                workspace_uri: workspace_uri,
+                role_resolver: fn role_name, _route_ctx ->
+                  RouteProvisioner.resolve_role(role_name, ctx, provision_key, __MODULE__)
+                end
+              )
+
+            {recipients, Process.get(provision_key, [])}
+          after
+            Process.delete(provision_key)
+          end
 
         recipients = Enum.map(recipients_with_ctx, fn {uri, _ctx} -> uri end)
         prompt_templates = ctx[:read].(:prompt_templates, %{})
@@ -544,13 +558,14 @@ defmodule Ezagent.Behavior.Session do
         canonical_session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
 
         {:ok, %{stored: true},
-         [
-           {:set, :last_message_id, msg.id},
-           {:set, :last_message, msg},
-           {:set, :send_cursor, prev_cursor + 1},
-           {:notify, session_events_topic(session_uri),
-            {:chat_message, canonical_session_uri, msg}}
-         ]}
+         provision_effects ++
+           [
+             {:set, :last_message_id, msg.id},
+             {:set, :last_message, msg},
+             {:set, :send_cursor, prev_cursor + 1},
+             {:notify, session_events_topic(session_uri),
+              {:chat_message, canonical_session_uri, msg}}
+           ]}
 
       {:error, reason} ->
         {:error, {:message_store_write_failed, reason}}
@@ -911,31 +926,6 @@ defmodule Ezagent.Behavior.Session do
         :ok
     end
   end
-
-  # --- Task #110 — orchestrator MCP context is now LAZILY REBUILT --------
-  #
-  # The earlier patch (commit 73044554) re-registered the orchestrator
-  # `McpRegistry` row from an `on_ready/2` cache-warm here. That has been
-  # REMOVED in favour of the read-through cache in
-  # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`: on an ETS
-  # miss it lazily rebuilds the context from the Session's durable
-  # `kind_snapshots` row and fills the cache.
-  #
-  # Lazy rebuild fully subsumes the on_ready cache-warm for correctness
-  # AND covers a case on_ready could not: the orchestrator bridge can
-  # join `orch:bridge:<uri>` BEFORE the Session Kind cold-spawns (or
-  # while it is not running at all) — on_ready only fires when the
-  # Session Kind itself reaches `:ready`, so it could not have warmed
-  # the cache in time for that race. The cache-warm offered at best a
-  # marginal first-join latency saving (one indexed snapshot query,
-  # once per orchestrator per restart, cached thereafter), so it is
-  # dropped to reduce surface per the plugin-isolation north star.
-  #
-  # The durable `:session_template_uri` field on the working copy
-  # (written by `EzagentDomainInstanceMessage.SessionCreator.create_session/3`'s step-4
-  # `materialize_orchestrator_working_copy/3` — replacing the deleted
-  # Generator `Session.merge_working_copy/6`) is KEPT — it is the
-  # canonical source the lazy rebuild prefers for `parent_template_uri`.
 
   # --- Topic helpers (public — Ezagent.Kind.Server / LV subscribe via these) -
 
