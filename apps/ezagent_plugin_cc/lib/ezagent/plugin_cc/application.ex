@@ -64,6 +64,9 @@ defmodule EzagentPluginCc.Application do
   use Application
   use Ezagent.Plugin
 
+  alias Ezagent.Behavior.CcHeadlessAgent, as: CcHeadlessBehavior
+  alias Ezagent.Entity.Agent, as: AgentKind
+
   # --- OTP Application -------------------------------------------------
 
   @impl Application
@@ -79,6 +82,11 @@ defmodule EzagentPluginCc.Application do
       description: "Spawn Claude Code agents via PTY.",
       version: "0.1.0"
     }
+  end
+
+  @impl Ezagent.Plugin
+  def behaviors do
+    for action <- CcHeadlessBehavior.actions(), do: {AgentKind, action, CcHeadlessBehavior}
   end
 
   @impl Ezagent.Plugin
@@ -102,9 +110,10 @@ defmodule EzagentPluginCc.Application do
       },
       %{
         flavor: "cc-headless",
-        kind: Ezagent.Entity.Agent,
+        kind: AgentKind,
         template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
-        bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter
+        bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter,
+        instance_behaviors: &AgentKind.cc_headless_behaviors/0
       }
     ]
   end
@@ -115,7 +124,12 @@ defmodule EzagentPluginCc.Application do
   end
 
   @impl Ezagent.Plugin
-  def children, do: []
+  def children do
+    [
+      {Registry, keys: :unique, name: EzagentPluginCc.SdkSidecarRegistry},
+      {DynamicSupervisor, name: EzagentPluginCc.SdkSidecarSupervisor, strategy: :one_for_one}
+    ]
+  end
 
   # Phase 3 post-register hook. The `load_all/0` re-run is the Decision
   # #112 boot-ordering fix — see moduledoc.

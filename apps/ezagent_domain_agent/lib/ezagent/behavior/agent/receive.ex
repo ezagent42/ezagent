@@ -212,7 +212,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
           # :subprocess_ws — async reply through the bridge; nothing to do.
           {:ok, %{}, []}
 
-        {:sync, sync_result} ->
+        {:sync, flavor, sync_result} ->
           # :in_process_sync — re-dispatch the result into the flavor's
           # :sync_result Behavior to persist + reply.
           #
@@ -224,7 +224,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
           # `:session`, the conversation lives in `:curl_agent`). See the
           # moduledoc "KNOWN LIMITATION" section + the `:known_limitation`
           # regression for the precise blocker + the three redesign options.
-          {:ok, %{}, [sync_result_effect(msg, ctx, sync_result)]}
+          {:ok, %{}, [sync_result_effect(msg, ctx, flavor, sync_result)]}
       end
     end
   end
@@ -272,18 +272,24 @@ defmodule Ezagent.Behavior.Agent.Receive do
   # behavior module — `:any` field-matches them all while `action`
   # (`:sync_result`) + `instance` (the agent's OWN URI) keep it
   # least-privilege: it authorizes only this agent's own sync_result.
-  defp sync_result_effect(%Message{} = msg, ctx, sync_result) do
+  defp sync_result_effect(%Message{} = msg, ctx, flavor, sync_result) do
     self_uri = ctx[:self_uri]
     source_session = ctx[:caller]
     user_text = Body.body_text(msg.body)
+    action = sync_result_action(flavor)
 
-    target = Ezagent.URI.with_action(self_uri, :sync_result, :sync_result)
+    target = Ezagent.URI.with_action(self_uri, action, action)
 
     cmd =
       Cmd.new(
         target,
-        :sync_result,
-        %{result: sync_result, source_session: source_session, user_text: user_text, in_msg_id: msg.id},
+        action,
+        %{
+          result: sync_result,
+          source_session: source_session,
+          user_text: user_text,
+          in_msg_id: msg.id
+        },
         %{
           caller: source_session,
           caps:
@@ -292,7 +298,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
                 Ezagent.Capability.cap(
                   :any,
                   :any,
-                  :sync_result,
+                  action,
                   Ezagent.URI.instance(self_uri),
                   Ezagent.Capability.workspace_of(self_uri)
                 )
@@ -306,4 +312,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
     {:dispatch, cmd}
   end
+
+  defp sync_result_action("cc-headless"), do: :cc_headless_sync_result
+  defp sync_result_action(_), do: :sync_result
 end

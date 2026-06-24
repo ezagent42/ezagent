@@ -253,6 +253,7 @@ defmodule Ezagent.Kind.BehaviorSet do
     publisher: Ezagent.Behavior.Publisher.SessionImpl,
     sandbox: Ezagent.Behavior.Sandbox,
     api_keys: Ezagent.Behavior.ApiKeys,
+    cc_headless_agent: Ezagent.Behavior.CcHeadlessAgent,
     external_mirror: Ezagent.Behavior.ExternalMirror,
     kind_base: Ezagent.Behavior.KindBase
   }
