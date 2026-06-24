@@ -38,7 +38,18 @@ printf 'deadline=%s\n' "$DEADLINE" > "$TARGET/dev-together.conf"
 echo "✓ deadline   → $TARGET/dev-together.conf (deadline=$DEADLINE)"
 
 SETTINGS="$TARGET/settings.json"
-HOOK_CMD="DEV_TOGETHER_CONF=$TARGET/dev-together.conf $TARGET/hooks/handoff-deadline-reminder.sh"
+# The command STRING baked into settings.json must be PORTABLE: settings.json is
+# committed and shared across machines, so a baked absolute path (e.g.
+# /home/<user>/.../.claude/...) breaks every other checkout's Stop hook. When the
+# target is the repo's own .claude, emit the literal ${CLAUDE_PROJECT_DIR} token
+# (Claude Code expands it per-machine at runtime). Only fall back to an absolute
+# path for a non-repo target (e.g. ~/.claude), whose settings.json isn't committed.
+if git rev-parse --show-toplevel >/dev/null 2>&1 && [ "$TARGET" = "$(git rev-parse --show-toplevel)/.claude" ]; then
+  CMD_BASE='${CLAUDE_PROJECT_DIR}/.claude'
+else
+  CMD_BASE="$TARGET"
+fi
+HOOK_CMD="DEV_TOGETHER_CONF=$CMD_BASE/dev-together.conf $CMD_BASE/hooks/handoff-deadline-reminder.sh"
 if command -v jq >/dev/null 2>&1; then
   [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
   tmp="$(mktemp)"
