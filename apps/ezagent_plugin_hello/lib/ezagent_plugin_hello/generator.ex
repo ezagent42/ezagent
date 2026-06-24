@@ -156,15 +156,25 @@ defmodule EzagentPluginHello.Generator do
 
     %{
       "type" => "Stack",
-      "props" => %{"direction" => "vertical", "gap" => "xl", "className" => "p-8", "title" => "Preview"},
+      "props" => %{
+        "direction" => "vertical",
+        "gap" => "xl",
+        "align" => "stretch",
+        "className" => "mx-auto w-full max-w-6xl px-6 py-16",
+        "title" => "Preview"
+      },
       "children" => [
         %{
           "type" => "Stack",
-          "props" => %{"direction" => "vertical", "gap" => "md"},
+          "props" => %{"direction" => "vertical", "gap" => "md", "align" => "stretch"},
           "children" => [
             leaf.("Heading", %{"text" => "Your Headline Here", "level" => 1}),
             leaf.("Text", %{"text" => "A one-line value proposition — real content comes next."}),
-            leaf.("Button", %{"label" => "Get Started", "variant" => "default"})
+            %{
+              "type" => "Stack",
+              "props" => %{"direction" => "horizontal", "gap" => "sm"},
+              "children" => [leaf.("Button", %{"label" => "Get Started", "variant" => "default"})]
+            }
           ]
         },
         %{

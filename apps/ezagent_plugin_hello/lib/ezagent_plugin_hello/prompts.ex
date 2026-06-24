@@ -26,8 +26,15 @@ defmodule EzagentPluginHello.Prompts do
     - CONTAINER nodes hold children: Stack {direction "vertical"|"horizontal", gap
       "sm"|"md"|"lg"|"xl", align, justify, className}, Grid {columns 1-6, gap,
       className}, Card {title, description, className}.
-    - The ROOT MUST be a vertical Stack:
-      {"type":"Stack","props":{"direction":"vertical","gap":"xl"},"children":[ … ]}.
+    - The ROOT MUST be a vertical Stack that is CENTERED and FULL-WIDTH:
+      {"type":"Stack","props":{"direction":"vertical","gap":"xl","align":"stretch",
+        "className":"mx-auto w-full max-w-6xl px-6 py-16"},"children":[ … ]}.
+
+    CRITICAL LAYOUT RULE — a vertical Stack does NOT stretch its children by
+    default; they shrink to content width and squish Grids/Cards into thin strips.
+    So set "align":"stretch" on EVERY vertical Stack that holds a Grid, Card, or a
+    full-width section. Use a horizontal Stack {"direction":"horizontal"} for rows
+    of Buttons; use Grid {columns:2|3|4} for card rows (features/pricing/logos).
     - "children" is a JSON array (use [] for none). Real, specific copy from the
       user's request — never lorem ipsum.
 
