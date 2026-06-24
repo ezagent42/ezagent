@@ -136,27 +136,17 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // page is rendered regardless (the renderer fails closed per node), but a tree
   // that does not conform to the Zod catalog is flagged for observability/E2E.
   const page = snapshot.page || emptyPage()
+  // Page-type socialware (hello official sites): the customer sees ONLY the
+  // generated page — no "Your conversation" header / chat feed, which exposed
+  // the builder's internal status narration (customer_visible so the operator
+  // sees it live) to public visitors. The chat lives in the operator world view.
+  // (`sw-customer-shell` + `data-catalog-valid` kept — E2E asserts on them.)
   return React.createElement(
     "div",
     {
-      className: "sw-customer-shell mx-auto flex w-full max-w-2xl flex-col gap-6",
+      className: "sw-customer-shell w-full",
       "data-catalog-valid": String(isValidTree(page)),
     },
-    React.createElement(
-      "header",
-      {className: "flex flex-col gap-1"},
-      React.createElement(
-        "h1",
-        {className: "text-xl font-semibold tracking-tight text-base-content"},
-        "Your conversation"
-      ),
-      React.createElement(
-        "p",
-        {className: "text-sm text-base-content/60"},
-        "Live updates appear here automatically."
-      )
-    ),
-    React.createElement(ChatPane, {messages: snapshot.messages || []}),
     React.createElement(JsonRenderPage, {page})
   )
 }
