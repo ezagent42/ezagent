@@ -63,6 +63,38 @@ Therefore this Ezagent implementation should extract the narrow runtime pattern,
    - Stores `config_dir`, `cwd`, `claude_session_id`, and runner options in respawn data.
    - `ensure_subprocess_alive/2` becomes `ensure_sidecar_alive/2`.
 
+## Scope Delta From 3B
+
+The earlier 3B and 3B-variant estimates assumed `cc-headless` could remain a
+plugin-local transport change: keep the existing Claude Code bridge semantics,
+remove the PTY, and let the existing async bridge/session reply path carry the
+assistant response. Under that assumption, core/domain changes were expected to
+be unnecessary.
+
+Validation changed that premise. Claude Code 2.1 does not keep
+`server:esr-bridge` alive without a TTY, and `claude -p` does not provide the
+same long-running bridge process. The selected SDK sidecar route is therefore
+not an async WebSocket bridge variant; it is an in-process synchronous agent
+flavor similar to curl, with the Python SDK returning a result directly to
+`Agent.Receive`.
+
+That changes the required integration boundary:
+
+- `Agent.Delivery` must preserve the resolved flavor in sync delivery results,
+  because both curl and cc-headless use `:in_process_sync` but require different
+  post-result actions.
+- `Agent.Receive` must route `cc-headless` results to
+  `:cc_headless_sync_result` instead of curl's `:sync_result`.
+- `Ezagent.Entity.Agent` must expose a `cc_headless_behaviors/0` per-instance
+  behavior set so cc-headless agents capture the correct state behavior.
+- `Ezagent.Kind.BehaviorSet` must know the `:cc_headless_agent` state slice
+  owner so the behavior can persist conversation/error/token metadata.
+
+The SDK worker, process supervision, template spawn/respawn logic, and adapter
+remain in `ezagent_plugin_cc`. The core/domain changes are the minimal
+Behavior/Kind dispatch and state-registration surface needed by the new sync
+flavor; Python SDK details do not cross into core/domain.
+
 ## Scope
 
 In scope:
