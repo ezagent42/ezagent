@@ -3,7 +3,12 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   import Phoenix.LiveViewTest
 
+  @fs_types_table :ezagent_resource_fs_types
+  @world_layouts "world-layouts"
+
   setup do
+    ensure_world_layouts_registered!()
+
     prior_home = System.get_env("EZAGENT_HOME")
 
     home =
@@ -18,6 +23,27 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
       File.rm_rf!(home)
     end)
+
+    :ok
+  end
+
+  # `world-layouts` IS registered at the world plugin's boot, but a full umbrella
+  # `mix test` sweep can wipe it: a sibling core suite restarts the resolver
+  # Registry GenServer, whose init/1 replays ONLY core boot types (plugin types
+  # are not replayed — a latent production bug tracked in docs/futures/todo.md).
+  # Ensure-if-absent (using the EXACT production spec so it can't drift), removing
+  # only what we add, so the layout.manage dispatch below can resolve.
+  defp ensure_world_layouts_registered! do
+    if :ets.lookup(@fs_types_table, @world_layouts) == [] do
+      {@world_layouts, spec} =
+        Enum.find(
+          EzagentPluginWorld.Application.resource_types(),
+          fn {type, _spec} -> type == @world_layouts end
+        )
+
+      :ok = Ezagent.Resource.FsResolver.register_type(@world_layouts, spec)
+      on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(@world_layouts) end)
+    end
 
     :ok
   end
@@ -236,9 +262,12 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     assert html =~ ~s(data-last-dispatch="ok")
 
+    # R-3: read_layout/2 threads the AUTHENTICATED caller scope separately from
+    # the target URI. The dispatch above ran as admin in workspace://system, so
+    # the reload uses that same-workspace caller scope.
     assert ["sessions_table", "layout_editor"] =
              workspace_uri
-             |> Ezagent.World.LayoutManager.read_layout()
+             |> Ezagent.World.LayoutManager.read_layout(%{workspace: "system"})
              |> Map.fetch!("components")
              |> Enum.map(& &1["type"])
 
