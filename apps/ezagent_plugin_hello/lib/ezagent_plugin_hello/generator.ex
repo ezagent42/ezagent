@@ -385,6 +385,20 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
+  # The shell owns the chrome (nav / footer / banner); drop any of those the model
+  # put in the BODY so they don't render twice. Recurses through children.
+  @frame_node_types ~w(nav footer banner)
+  defp strip_frame_nodes(%{"children" => children} = node) when is_list(children) do
+    kept =
+      children
+      |> Enum.reject(fn c -> is_map(c) and c["type"] in @frame_node_types end)
+      |> Enum.map(&strip_frame_nodes/1)
+
+    Map.put(node, "children", kept)
+  end
+
+  defp strip_frame_nodes(node), do: node
+
   # Shell-only path (scope == :shell): regenerate just the frame, keep the
   # existing json-render body. No page_gen, so the content is untouched.
   defp regenerate_shell_only(session_uri, builder, title) do
@@ -439,6 +453,10 @@ defmodule EzagentPluginHello.Generator do
   # the RESULT goes through say to guarantee the operator sees completion live.
   defp land_page(session_uri, builder, spec, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
+    # The HTML frame already provides nav / footer / banner; strip any the model
+    # emitted into the BODY (it doesn't always obey the prompt) so they don't
+    # double up with the shell.
+    spec = strip_frame_nodes(spec)
     # The frame: reused when stable (body-only edit), regenerated when `reframe`
     # (scope == :both). The body's AI `class` styling is compiled into the
     # per-session CSS by `store_frame` after the body lands.

@@ -58,11 +58,14 @@ defmodule EzagentPluginHello.Prompts do
     - Pick 5-9 sections that genuinely fit the request; don't force every type.
     - Don't render images you can't supply — prefer icons, stats, and gradients.
 
-    Appearance is YOURS to decide — any node may carry a "class" prop of Tailwind
-    utility classes that restyle it ON TOP of the designed defaults. Use the theme
-    tokens (primary, accent, secondary, base-100/200/300, base-content, neutral)
-    and feel free to use arbitrary values. Give each page its OWN look — vary
-    rounding, backgrounds, borders, shadows, gradients, spacing. Examples:
+    Appearance is YOURS to decide and you SHOULD decide it: set a "class" prop of
+    Tailwind utility classes on the main blocks (the hero, EVERY feature, the cta,
+    and section/card blocks) — do NOT leave them all on the plain defaults, or
+    every page looks identical. The class restyles the node ON TOP of the defaults.
+    Use the theme tokens (primary, accent, secondary, base-100/200/300,
+    base-content, neutral) and arbitrary values freely. Give THIS page its own
+    identity — pick a consistent rounding, background treatment, border/shadow and
+    accent and apply it across the blocks. Examples:
       {"type":"feature","props":{"title":"Fast","icon":"zap",
         "class":"bg-base-100/80 rounded-3xl ring-1 ring-primary/20 shadow-2xl shadow-primary/10"}}
       {"type":"cta","props":{"title":"Start now","button_label":"Go",
