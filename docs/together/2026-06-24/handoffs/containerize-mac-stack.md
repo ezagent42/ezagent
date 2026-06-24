@@ -29,10 +29,9 @@ already expects PG — correct as-is).
    `ezagent depends_on postgres(healthy)+mihomo(started)`.
 2. **Runtime (gate — needs the JMS secret; DO NOT bring up the prod tunnel):**
    ```bash
-   cp docker/.env.example docker/.env            # set POSTGRES_PASSWORD
-   mkdir -p docker/secrets-prod/mihomo
-   cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
-   #   set proxy-providers.jms.url to the real JMS subscription
+   cp docker/.env.example docker/.env            # set POSTGRES_PASSWORD + JMS_SUBSCRIPTION_URL
+   #   (mihomo renders config.template.yaml from JMS_SUBSCRIPTION_URL — no secret file)
+   #   Docker Desktop must pull via the host proxy (Settings→Resources→Proxies→http://127.0.0.1:7897)
    export DOCKER_BUILD_PROXY=http://host.docker.internal:7897   # host proxy for build
    docker compose --env-file docker/.env -f docker/docker-compose.prod.yml build
    # bring up ONLY the safe subset (NO cloudflared → does not touch app.ezagent.chat):

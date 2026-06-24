@@ -21,9 +21,10 @@ containerized: **BEAM + agents + Postgres + mihomo proxy + cloudflared**, all in
   `ezagent depends_on postgres(service_healthy)` so `Release.migrate()` runs after
   PG is up. Password via gitignored `docker/.env` (compose interpolation).
 - **mihomo containerized** (`metacubex/mihomo`), replacing the host clash/mihomo.
-  Config mounted read-only from gitignored `docker/secrets-prod/mihomo/config.yaml`
-  (the secret JMS subscription URL stays out of git). Committed template
-  `docker/mihomo/config.example.yaml`. **Port `7897`** (matches external Mac),
+  Config is **rendered at container start from a committed template**
+  (`docker/mihomo/config.template.yaml`) substituting `JMS_SUBSCRIPTION_URL` from
+  `docker/.env` via `docker/mihomo/render-config.sh` — the secret URL lives only in
+  the env, no committed/gitignored config file. **Port `7897`** (matches external Mac),
   **cluster-internal only** (no `ports:` mapping), `bind-address: '*'`,
   `GEOIP,CN,DIRECT` so only foreign traffic uses JMS.
 - **Proxy scoped to agents only (per Allen's analysis):** the proxy env is set
@@ -52,15 +53,36 @@ containerized: **BEAM + agents + Postgres + mihomo proxy + cloudflared**, all in
 
 `docker/`-only; no `mix` gates apply. Static compose + bash validation green.
 
-## Remaining gate (NOT done here — needs a secret + must avoid the prod tunnel)
+## Runtime gate — PASSED (2026-06-24, live on the Mac)
 
-The **runtime E2E** (build → `up postgres mihomo ezagent` → migrate → app health →
-one agent provider round-trip through the mihomo container) is **not run** because
-it needs (a) the real **JMS subscription URL** (a secret not in this repo) and
-(b) a ~10-min Elixir release build, and it must **not** bring up the prod
-cloudflared tunnel (would touch `app.ezagent.chat`, #65 boundary). The exact safe
-command sequence is in the handoff DoD §2 (bring up the 3-service subset by name,
-cloudflared excluded). Recommend Allen runs it on the Mac (has the JMS secret).
+Two of the three moving parts were tested live with real credentials; the full
+ezagent build is the only remaining piece.
+
+- **Docker Desktop pull proxy:** configured to pull through `http://127.0.0.1:7897`
+  (Docker Hub is GFW'd). Verified: `docker pull metacubex/mihomo` succeeded after
+  the change (timed out before).
+- **mihomo proxy (containerized, ENV-rendered config) — PASS.** Ran the
+  `metacubex/mihomo` container with `JMS_SUBSCRIPTION_URL=<JMS sub>`; the
+  template rendered correctly and the proxy came up (`Mixed proxy listening at
+  :7897`). Egress through it: `https://www.gstatic.com/generate_204` → **204**
+  (routed `GeoIP(cn) DIRECT`), `api.openai.com` → **401** and `api.anthropic.com`
+  → **401**, both routed `Match using auto[JMS-622510@...]` — i.e. foreign traffic
+  goes via JMS, domestic direct. Exactly the intended behavior.
+- **cloudflared tunnel — PASS.** Created a throwaway tunnel `test-0624`, routed
+  `test-0624.ezagent.chat` to it, ran cloudflared (connected **directly** to the
+  CF edge, no proxy — validating §8.5 proxy scoping; one transient QUIC retry then
+  registered at `sjc10`), and `curl https://test-0624.ezagent.chat/` → **HTTP 200**
+  serving the local origin. Then torn down: cloudflared stopped, tunnel deleted,
+  cred removed.
+
+**Remaining:** the full `ezagent` release build (~10 min) + `up postgres mihomo
+ezagent` (subset, no prod tunnel) + migrate + an in-app agent round-trip. Not run
+to avoid a long build mid-session; the proxy+tunnel halves (the parts unique to
+this change) are proven.
+
+**Cleanup leftover (needs you):** the DNS CNAME `test-0624.ezagent.chat` still
+exists (cloudflared CLI can't delete DNS records) and now points to a deleted
+tunnel. Remove it in the Cloudflare dashboard (or via API token) when convenient.
 
 ## Merge request
 

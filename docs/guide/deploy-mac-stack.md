@@ -57,7 +57,12 @@ must reach `api.anthropic.com` / `api.openai.com` past the GFW. Therefore:
 
 ## 2. Prerequisites
 
-- Docker Desktop for Mac (running).
+- Docker Desktop for Mac (running), configured to **pull images through the host
+  proxy** (Docker Hub is GFW'd): Settings → Resources → Proxies → Manual →
+  `http://127.0.0.1:7897` (equivalently set in
+  `~/Library/Group Containers/group.com.docker/settings-store.json` as
+  `ProxyHTTPMode: manual` + `OverrideProxyHTTP/HTTPS`, then restart Docker).
+  Verified working on this host (2026-06-24).
 - A host proxy reachable at `host.docker.internal:7897` **for the build only**
   (hex/npm/CLI fetches go through the GFW). The runtime agent egress uses the
   containerized mihomo, not this.
@@ -72,22 +77,20 @@ must reach `api.anthropic.com` / `api.openai.com` past the GFW. Therefore:
 All secrets are gitignored. Create them once:
 
 ```bash
-# (a) Postgres password — compose interpolation value
+# (a) docker/.env — Postgres password + mihomo JMS subscription URL (compose vars)
 cp docker/.env.example docker/.env
-#   edit docker/.env → POSTGRES_PASSWORD=$(openssl rand -hex 24)
+#   POSTGRES_PASSWORD=$(openssl rand -hex 24)
+#   JMS_SUBSCRIPTION_URL=<your JMS subscription URL>
+#   mihomo renders docker/mihomo/config.template.yaml from JMS_SUBSCRIPTION_URL at
+#   container start (pure-shell render via docker/mihomo/render-config.sh) — the
+#   secret URL lives ONLY in docker/.env, never in a committed file.
 
-# (b) mihomo proxy config WITH the JMS subscription URL
-mkdir -p docker/secrets-prod/mihomo
-cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
-#   edit docker/secrets-prod/mihomo/config.yaml → set proxy-providers.jms.url
-#   (keep mixed-port: 7897 and bind-address: '*')
-
-# (c) app distribution cookie (random per host) — env_file
+# (b) app distribution cookie (random per host) — env_file
 #   docker/secrets-prod/ezagent.env must contain EZAGENT_COOKIE + RELEASE_COOKIE
 #   e.g.:  printf 'EZAGENT_COOKIE=%s\nRELEASE_COOKIE=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > docker/secrets-prod/ezagent.env
 #   (RELEASE_COOKIE must equal EZAGENT_COOKIE)
 
-# (d) static prod credentials seeded on first boot (as before):
+# (c) static prod credentials seeded on first boot (as before):
 #   docker/secrets-prod/feishu.yaml  (and optionally smtp_config.json)
 ```
 
@@ -190,7 +193,8 @@ Migrations run automatically on each boot via the entrypoint.
 |---|---|
 | `FATAL: DATABASE_URL is not set` on boot | `docker/.env` missing `POSTGRES_PASSWORD`, or you didn't pass `--env-file docker/.env`. |
 | ezagent exits before postgres ready | shouldn't happen (`depends_on: postgres service_healthy`); check `postgres` logs / `pg_isready`. |
-| agents can't reach Anthropic/OpenAI | mihomo config: bad `jms.url`, or not `bind-address: '*'`, or port ≠ 7897. Check `docker compose logs mihomo` and that `proxy-providers.jms` fetched. |
+| agents can't reach Anthropic/OpenAI | bad/empty `JMS_SUBSCRIPTION_URL` in `docker/.env`. Check `docker compose logs mihomo` for the provider fetch + a routing line like `api.openai.com ... using auto[JMS-...]`. |
+| `docker pull` / build times out on Docker Hub | Docker Desktop proxy not set — point it at `http://127.0.0.1:7897` (see §2). |
 | build fails fetching hex/npm | host proxy on 7897 not reachable from the Docker VM — enable "Allow LAN" on the host proxy / set Docker Desktop proxies. |
 | tunnel down / app.ezagent.chat unreachable | cloudflared goes direct by default; if this network can't reach the CF edge directly, add `HTTPS_PROXY=http://mihomo:7897` back on the `cloudflared` service (see the comment in the compose file). |
 | WS 403 on the Tailscale admin port | add the origin to `EZAGENT_EXTRA_CHECK_ORIGINS`. |

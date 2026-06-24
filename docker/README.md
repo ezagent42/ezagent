@@ -51,25 +51,28 @@ Reachable at `http://100.64.0.27:10042` (Tailscale — `feedback_remote_browser_
 > **directly**, and ezagent's own traffic (Feishu/Postgres) goes direct too.
 
 ```bash
-# 1. compose interpolation secret (Postgres password)
-cp docker/.env.example docker/.env        # set POSTGRES_PASSWORD=$(openssl rand -hex 24)
+# 1. compose secrets in docker/.env (Postgres password + JMS subscription URL)
+cp docker/.env.example docker/.env
+#   set POSTGRES_PASSWORD=$(openssl rand -hex 24)
+#   set JMS_SUBSCRIPTION_URL=<your JMS subscription URL>
+#   (mihomo renders docker/mihomo/config.template.yaml from JMS_SUBSCRIPTION_URL
+#    at container start — no separate proxy config file to manage.)
 
-# 2. mihomo proxy config WITH the JMS subscription URL (gitignored)
-mkdir -p docker/secrets-prod/mihomo
-cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
-#   edit → set proxy-providers.jms.url ; keep bind-address: '*'
-
-# 3. app cookie env_file (docker/secrets-prod/ezagent.env) + the prod tunnel
+# 2. app cookie env_file (docker/secrets-prod/ezagent.env) + the prod tunnel
 #    credential (~/.cloudflared/8e249ea0-...json) must exist (as before).
 
-# 4. build — runtime agent egress uses the mihomo SERVICE, but the BUILD runs
+# 3. build — runtime agent egress uses the mihomo SERVICE, but the BUILD runs
 #    before that container exists, so point build-time fetches at the HOST proxy (:7897):
 export DOCKER_BUILD_PROXY=http://host.docker.internal:7897
 docker compose --env-file docker/.env -f docker/docker-compose.prod.yml build
 
-# 5. run (mihomo + postgres come up first; ezagent waits for PG healthy)
+# 4. run (mihomo + postgres come up first; ezagent waits for PG healthy)
 docker compose --env-file docker/.env -f docker/docker-compose.prod.yml up -d
 ```
+
+> Docker Desktop must pull images through your host proxy (Docker Hub is GFW'd):
+> Settings → Resources → Proxies → Manual → `http://127.0.0.1:7897` (verified
+> working on this host).
 
 > DB durability: Postgres data lives in the `prod_pg` named volume. Back it up
 > with `pg_dump` on a schedule (the D1 leg of the §5 backup design in
