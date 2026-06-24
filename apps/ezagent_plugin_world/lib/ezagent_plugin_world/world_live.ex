@@ -437,7 +437,7 @@ defmodule EzagentPluginWorld.WorldLive do
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
-         false <- Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri),
+         {:ok, []} <- EzagentDomainInstanceMessage.agent_live_sessions(agent_uri),
          target = Ezagent.URI.with_action(agent_uri, :manage, :delete),
          {:ok, {:ok, :deleted}} <-
            Invocation.dispatch(%Invocation{
@@ -451,8 +451,8 @@ defmodule EzagentPluginWorld.WorldLive do
        |> assign(:last_dispatch_status, "ok")
        |> push_navigate(to: "/identities/agents")}
     else
-      true ->
-        {:noreply, push_agent_action_error(socket, :agent_bound_to_live_session)}
+      {:ok, sessions} when is_list(sessions) ->
+        {:noreply, push_agent_action_error(socket, {:agent_bound_to_live_session, sessions})}
 
       :error ->
         {:noreply, push_agent_action_error(socket, :invalid_agent_uri)}
@@ -478,6 +478,10 @@ defmodule EzagentPluginWorld.WorldLive do
     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
     |> push_event("world:state", state)
   end
+
+  defp action_error_message({:agent_bound_to_live_session, sessions}) when is_list(sessions),
+    do:
+      "该 agent 正在 #{length(sessions)} 个对话中（#{Enum.map_join(sessions, "、", &short_session_name/1)}），先从这些对话移出再删除"
 
   defp action_error_message(:agent_bound_to_live_session),
     do: "该 agent 正在某个对话中，先把它从对话移出再删除"
@@ -895,6 +899,24 @@ defmodule EzagentPluginWorld.WorldLive do
   defp jsonable(value) when is_binary(value) or is_number(value) or is_boolean(value), do: value
   defp jsonable(nil), do: nil
   defp jsonable(other), do: inspect(other)
+
+  # Returns the name segment of a session URI as a short human-readable label.
+  # Handles both %URI{} structs and plain strings (the canonical helper returns %URI{}).
+  # Uses Ezagent.URI.name!/1 so no positional URI field reads (uri_query.scan safe).
+  defp short_session_name(%URI{} = uri) do
+    Ezagent.URI.name!(uri)
+  rescue
+    _ -> URI.to_string(uri)
+  end
+
+  defp short_session_name(str) when is_binary(str) do
+    case Ezagent.URI.parse(str) do
+      {:ok, uri} -> short_session_name(uri)
+      _ -> str
+    end
+  end
+
+  defp short_session_name(other), do: inspect(other)
 
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)

@@ -9,12 +9,11 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   (b) cap-denial: dispatch with empty caps → agent STILL registered AND
       dispatch returns {:error, :unauthorized}.
   (c) bound: agent is a member of a live session → agent STILL registered
-      AND the delete gate returns {:error, :agent_bound_to_live_session}.
+      AND the delete gate returns {:error, {:agent_bound_to_live_session, sessions}}.
 
   Fixtures mirror:
   - `agent_create_appears_in_list_test.exs` (workspace + admin caps setup)
-  - `orchestrator_bound_test.exs` (session spawn + session.join dispatch
-    to create a live-session membership)
+  - session spawn + session.join dispatch to create a live-session membership
 
   Invariant P14 — all dispatches go through `Ezagent.Invocation.dispatch/1`.
   No silent drops: every failure returns `{:error, reason}`.
@@ -90,9 +89,9 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   end
 
   # Replicates the `dispatch_agent_delete/2` logic from WorldLive:
-  # 1. checks the bound-session gate (same `with false <-` step),
-  # 2. if bound, returns `{:error, :agent_bound_to_live_session}` without
-  #    dispatching,
+  # 1. checks the bound-session gate via EzagentDomainInstanceMessage.agent_live_sessions/1,
+  # 2. if bound (non-empty sessions list), returns `{:error, {:agent_bound_to_live_session, sessions}}`
+  #    without dispatching,
   # 3. otherwise delegates to `dispatch_delete/3` so the rest of the pipeline
   #    is identical to cases (a) and (b).
   #
@@ -102,10 +101,11 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   # the subsequent KindRegistry.lookup assert would fail when the async destroy
   # task eventually removes the agent.
   defp dispatch_delete_with_bound_check(agent_uri, caps, caller \\ User.admin_uri()) do
-    with false <- Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri) do
+    with {:ok, []} <- EzagentDomainInstanceMessage.agent_live_sessions(agent_uri) do
       dispatch_delete(agent_uri, caps, caller)
     else
-      true -> {:error, :agent_bound_to_live_session}
+      {:ok, sessions} when is_list(sessions) ->
+        {:error, {:agent_bound_to_live_session, sessions}}
     end
   end
 
@@ -122,11 +122,13 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
     end
   end
 
-  # Spawn a bare Session Kind and register it in the workspace so KindRegistry
-  # list_all/0 sees it (mirrors orchestrator_bound_test.exs spawn_session/1).
+  # Spawn a bare Session Kind in the given workspace so that
+  # `EzagentDomainInstanceMessage.agent_live_sessions/1` (which filters sessions
+  # by the agent's workspace) can find it. The session URI carries the workspace
+  # name as its authority segment to satisfy the workspace filter in Listing.
   defp spawn_session_for_ws(ws_name) do
     n = System.unique_integer([:positive])
-    session_uri = Ezagent.URI.new!("session://system/default/del-test-#{n}")
+    session_uri = Ezagent.URI.new!("session://#{ws_name}/default/del-test-#{n}")
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
@@ -263,7 +265,10 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
       join_member(session_uri, agent_uri)
 
       # Sanity-check: the join dispatched successfully before we try to delete.
-      assert Ezagent.Entity.Session.Orchestrator.agent_bound_to_live_session?(agent_uri) == true,
+      assert {:ok, live_sessions} = EzagentDomainInstanceMessage.agent_live_sessions(agent_uri),
+             "agent_live_sessions must return {:ok, [...]} — if this fails, the join did not land"
+
+      assert live_sessions != [],
              "session join must register the agent as a member before testing the delete gate"
 
       # Attempt the delete WITH manage-cap (same as the happy-path in case (a))
@@ -272,9 +277,14 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
       # bound error INSTEAD of dispatching manage.delete to the Kind.
       result = dispatch_delete_with_bound_check(agent_uri, admin_ctx.caps)
 
-      assert result == {:error, :agent_bound_to_live_session},
+      assert match?({:error, {:agent_bound_to_live_session, _sessions}}, result),
              "dispatch_delete_with_bound_check with manage-cap must return " <>
-               "{:error, :agent_bound_to_live_session} when agent is bound; got: #{inspect(result)}"
+               "{:error, {:agent_bound_to_live_session, sessions}} when agent is bound; got: #{inspect(result)}"
+
+      {:error, {:agent_bound_to_live_session, bound_sessions}} = result
+
+      assert is_list(bound_sessions) and bound_sessions != [],
+             "bound_sessions must be a non-empty list of session URIs; got: #{inspect(bound_sessions)}"
 
       # The agent must still be alive — the gate blocked the dispatch entirely,
       # so no destroy task was scheduled and the Kind was not terminated.
