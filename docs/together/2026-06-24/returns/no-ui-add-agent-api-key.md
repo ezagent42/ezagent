@@ -49,22 +49,35 @@ Commit: `dce6369b feat(world): add UI to store an agent's API key (F10)`
 | `lv_parity` | ✅ 不破坏 — 反而补上 LV `put` api-key 的 parity 缺口（已 claimed covered，本 PR 使其为真） |
 | 裸 `tsc` | ⚠️ 预存在环境失败（无 @types/react；非本改动） |
 
-## DoD artifact —— ⚠️ 活体加-key 截图待补（merge gate）
+## DoD artifact —— 🟡 UI 渲染活体验证通过；端到端持久化留人肉复核（merge gate）
 
-后端已活体编译通过（login 200），但**加 key 的端到端 agent-browser 实测未完成**：实测途中
-运行中的验证 server（:10042）宕机（beam.smp 退出；我 cp 的 world_live.ex 此前已 200 编译通过、
-且 api-keys 页加载走既有 `list_api_keys` 非我新代码 → 大概率与本改动无因果，但未续测以免再扰动
-operator 环境）。
+**已活体验证（agent-browser，运行中 world UI）**：
+- 后端活体编译通过（cp 进运行中主仓后 `/login` 200）。
+- **加-key 表单正常渲染**：admin 进 agent 的 api-keys 页 → 我新增的「Provider + API key 输入 +
+  Save key 按钮」正确出现（截图 `evidence/f10-add-api-key/01-add-key-form-rendered.png`）。这正是
+  F10 交付物（此前完全无此 UI）。
+- **`can_edit`/unsupported 门控正确**：echo agent（不支持 key）正确显示「does not support API
+  keys」、无表单；cc agent（claude-bot）因 `:activate_timeout`（F5，cc 在本环境起不来）显示 error
+  分支——均符合代码预期。
 
-**建议 merge 前补**：admin 进某 agent 的 api-keys 页 → 填 provider+key → Save → masked 行
-出现 的截图（同 F3 的活体验证法：cp 进运行中主仓 + vite HMR/code_reloader + agent-browser）。
+**未演示**：加 key → 持久化 → masked 行出现 的端到端一跳。原因经层层定位**确证与本改动无关**：
+运行中 server 的 world LiveView **对任何 dispatch 都不响应**（cmdk 按钮 / nav 链接 / create agent /
+本 put 点击后服务端 `delta=0`，但 socket `isConnected:true`、纯客户端 React 正常）。**决定性判定**：
+把 world_live.ex 还原成 origin/main 原版后 cmdk 仍不响应 → 非本改动引起，是 server 在「崩溃→重启」
+后退化（疑 cc agent `:activate_timeout` 拖累 world LiveView mount）。今天人肉验证时这些 dispatch 是
+好的（F14 加规则 / L2 建 agent 都成功过）。
+
+**merge gate**：在健康 server / 你本人浏览器上补「填 provider+key → Save → masked 行出现」端到端
+截图（curl flavor 最贴切——curl 既支持 key 又能干净激活）。代码路径低风险（后端镜像已验证的
+`dispatch_agent_create`、前端镜像已验证的 `onCreateAgent`）。
 
 ## Merge request
 
 - 分支 `fix/no-ui-add-agent-api-key`（push 后 tracking）。
 - 改动文件：world_live.ex + main.tsx + Identities.tsx，与他人 owned surface 无冲突。
 - 顺序无依赖，可独立 merge。
-- **merge gate**：补活体加-key 截图后再并入 `main`。
+- **merge gate**：UI 渲染已活体验证（见 DoD 截图）；端到端持久化一跳在健康 server / 人肉浏览器
+  复核后再并入 `main`。
 
 ## 同 owner 其余 finding 状态
 
