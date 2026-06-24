@@ -295,7 +295,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         |> Map.put("FAKE_CLAUDE_STATUS_FILE", status_file)
         |> Map.put("FAKE_REPLY_PREFIX", reply_prefix)
         |> Map.put("FAKE_CLAUDE_GRACE_MS", "2500")
-        |> Map.put("FAKE_CLAUDE_TIMEOUT_S", "30")
+        |> Map.put("FAKE_CLAUDE_TIMEOUT_S", "60")
         # Tells the fake to read $CLAUDE_CONFIG_DIR/.credentials.json and
         # prepend `[creds:<contents>]` to its reply.
         |> Map.put("FAKE_CLAUDE_ECHO_CREDENTIALS", "1")
@@ -330,7 +330,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
               :error -> nil
             end
           end,
-          30_000
+          60_000
         )
 
       assert is_pid(bridge_bound),

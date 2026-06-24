@@ -11,6 +11,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   alias Ezagent.ProtocolApi.{ApiKeyStore, ConversationRegistry, PendingReplyStore, ReplyWaiter}
   @behaviour Plug
   @deadline_ms 120_000
+  @default_agent_name "echo_default"
 
   @impl Plug
   def init(opts), do: opts
@@ -38,7 +39,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
          :ok <- join_agent(session_uri, entity_uri, target_agent),
          {:ok, request_id, msg} <- build_message(body, entity_uri, target_agent),
          :ok <- dispatch_send(session_uri, entity_uri, msg) do
-      agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
+      agent = target_agent || default_agent_uri()
 
       # Register pending request, spawn background waiter (subscribes + waits in Task)
       PendingReplyStore.put_pending(request_id)
@@ -118,23 +119,17 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
   # Register flavor attribute so AgentModuleResolver can find the Kind module.
   defp maybe_register_flavor(agent_uri) do
-    flavor = flavor_from_uri(agent_uri)
-    if flavor, do: Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} -> Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+      _ -> maybe_register_default_echo(agent_uri)
+    end
   end
 
-  defp flavor_from_uri(agent_uri) do
-    name =
-      case Ezagent.URI.name(agent_uri) do
-        n when is_binary(n) -> n
-        _ -> ""
-      end
-
-    cond do
-      String.starts_with?(name, "curl_") -> "curl"
-      String.starts_with?(name, "cc_") -> "cc"
-      String.starts_with?(name, "codex_") -> "codex"
-      String.starts_with?(name, "echo_") -> "echo"
-      true -> nil
+  defp maybe_register_default_echo(agent_uri) do
+    if URI.stable_key(agent_uri) == URI.stable_key(default_agent_uri()) do
+      Ezagent.AgentFlavorAttributes.put(agent_uri, "echo")
+    else
+      :ok
     end
   end
 
@@ -186,7 +181,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   # Defaults to echo agent when target_agent is nil.
   defp join_agent(session_uri, entity_uri, target_agent) do
     require Logger
-    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
+    agent = target_agent || default_agent_uri()
     Logger.info("ProtocolApi: spawning agent #{inspect(agent)}...")
 
     # Register flavor attribute so AgentModuleResolver can find the Kind module.
@@ -259,7 +254,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
     # $session_users only delivers to Users. Add target agent to mentions
     # so the $mentions routing rule delivers agent.receive to it.
-    agent = target_agent || Ezagent.URI.entity("system", :agent, "echo_default")
+    agent = target_agent || default_agent_uri()
     mentions = if agent, do: [agent], else: []
 
     msg =
@@ -270,6 +265,8 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
 
     {:ok, request_id, msg}
   end
+
+  defp default_agent_uri, do: URI.agent("system", @default_agent_name)
 
   defp subscribe_publisher(session_uri, entity_uri) do
     # Subscribe from the CALLING process (Task PID for async, Plug PID for sync)

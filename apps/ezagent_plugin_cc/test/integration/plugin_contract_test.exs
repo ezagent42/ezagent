@@ -32,9 +32,27 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
     assert template_class == Ezagent.PluginCc.Template.CcAgent
   end
 
+  test "cc-headless flavor declares SDK sync adapter and behavior set" do
+    assert {:ok,
+            %{
+              kind: Ezagent.Entity.Agent,
+              template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
+              instance_behaviors: instance_behaviors
+            }} = Ezagent.AgentFlavorRegistry.lookup("cc-headless")
+
+    assert is_function(instance_behaviors, 0)
+    assert Ezagent.Behavior.CcHeadlessAgent in instance_behaviors.()
+    assert EzagentPluginCc.CcHeadlessBridgeAdapter.transport_class() == :in_process_sync
+  end
+
   test "cc's cc.agent Template Class was published to TemplateRegistry by boot/1" do
     assert {:ok, Ezagent.PluginCc.Template.CcAgent} =
              Ezagent.TemplateRegistry.lookup("cc.agent")
+  end
+
+  test "cc_headless.agent Template Class was published to TemplateRegistry by boot/1" do
+    assert {:ok, Ezagent.PluginCc.Template.CcHeadlessAgent} =
+             Ezagent.TemplateRegistry.lookup("cc_headless.agent")
   end
 
   test "AgentBridge domain owns the bridge registry ETS table" do
