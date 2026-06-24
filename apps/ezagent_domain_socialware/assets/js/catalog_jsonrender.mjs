@@ -95,19 +95,7 @@ const {registry} = defineRegistry(catalog, {
         : h("button", {className: cls, type: "button"}, label)
     },
 
-    image: ({props}) =>
-      props.src
-        ? h("img", {
-            className: "w-full rounded-2xl border border-base-300 object-cover shadow-sm",
-            src: String(props.src),
-            alt: String(props.alt ?? ""),
-            loading: "lazy",
-          })
-        : h(
-            "div",
-            {className: "rounded-2xl border border-dashed border-base-300 py-12 text-center text-sm italic text-base-content/40"},
-            "Image unavailable",
-          ),
+    image: ImageNode,
 
     // ── Block-level "official-site" components ──────────────────────────────
     hero: ({props}) =>
@@ -199,6 +187,33 @@ const {registry} = defineRegistry(catalog, {
       ),
   },
 })
+
+// LLM-authored pages carry made-up image `src`es (the model can't know real
+// URLs), so a broken src is the COMMON case. Render a polished gradient
+// placeholder (with the alt as a caption) on a missing OR failed-to-load src,
+// instead of the browser's broken-image glyph.
+function ImageNode({props}) {
+  const [failed, setFailed] = React.useState(false)
+  const alt = String(props.alt ?? "")
+  const src = props.src ? String(props.src) : ""
+
+  if (src && !failed) {
+    return h("img", {
+      className: "w-full rounded-2xl border border-base-300 object-cover shadow-sm",
+      src,
+      alt,
+      loading: "lazy",
+      onError: () => setFailed(true),
+    })
+  }
+
+  return h(
+    "div",
+    {className: "flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 rounded-2xl border border-base-300 bg-gradient-to-br from-primary/10 via-base-200 to-accent/10 text-base-content/40"},
+    h("div", {className: "flex h-12 w-12 items-center justify-center rounded-xl bg-base-100/70 text-2xl shadow-sm"}, "🖼"),
+    alt ? h("span", {className: "px-4 text-center text-sm"}, alt) : null,
+  )
+}
 
 function Unknown({element}) {
   return h(
