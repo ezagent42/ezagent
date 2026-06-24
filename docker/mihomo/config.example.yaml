@@ -1,0 +1,50 @@
+# mihomo egress-proxy config — EXAMPLE / TEMPLATE.
+#
+# The prod stack (docker-compose.prod.yml) runs mihomo as a container and mounts
+# the REAL config from docker/secrets-prod/mihomo/config.yaml (gitignored — it
+# contains the JMS subscription URL, which is a secret). Copy this file there and
+# fill in the subscription URL:
+#
+#   mkdir -p docker/secrets-prod/mihomo
+#   cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
+#   # edit docker/secrets-prod/mihomo/config.yaml → set proxy-providers.jms.url
+#
+# This mirrors the host mihomo scheme on :7896 (~/mihomo-test/config.yaml) with
+# ONE container-specific change: bind-address must be '*' (0.0.0.0) so other
+# compose services (ezagent, cloudflared) can reach it — the host instance binds
+# 127.0.0.1 only.
+
+mixed-port: 7896
+# CONTAINER CHANGE: bind all interfaces so the compose network can reach 7896
+# (the host instance uses `bind-address: 127.0.0.1`). The port is NOT published
+# to the host, so this stays inside the compose network.
+bind-address: '*'
+allow-lan: true
+external-controller: 127.0.0.1:9896
+mode: rule
+log-level: info
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver: [223.5.5.5, 119.29.29.29]
+  proxy-server-nameserver: [223.5.5.5, 119.29.29.29]
+  fallback: [1.1.1.1, 8.8.8.8]
+
+proxy-providers:
+  jms:
+    type: http
+    # SECRET — set this in docker/secrets-prod/mihomo/config.yaml, do not commit.
+    url: "https://REPLACE-WITH-YOUR-JMS-SUBSCRIPTION-URL"
+    interval: 600
+    # Subscription is pulled DIRECT (no proxy) to avoid a boot deadlock.
+    health-check: {enable: true, url: "https://www.gstatic.com/generate_204", interval: 180}
+
+proxy-groups:
+  - {name: auto, type: url-test, use: [jms], url: "https://www.gstatic.com/generate_204", interval: 180, tolerance: 50}
+
+rules:
+  - DOMAIN-SUFFIX,jmssub.net,DIRECT
+  - MATCH,auto

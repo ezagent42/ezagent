@@ -1,18 +1,64 @@
-# ezagent PROD environment — `mix release` image + a containerized cloudflared that
-# fronts app.ezagent.chat (reusing tunnel 7339e970). Prod data binds the STABLE
-# host home ~/.ezagent (persistent across redeploys); dev/test use named volumes
-# in docker-compose.dev.yml instead.
+# ezagent PROD environment — FULLY containerized Mac stack:
+#   ezagent (mix release) + postgres (DB) + mihomo (egress proxy) + cloudflared
+#   (tunnel fronting app.ezagent.chat). Every moving part runs in a container;
+#   the only host dependency is Docker + the gitignored secrets.
+#
+#   secrets (gitignored):
+#     docker/.env                     → POSTGRES_PASSWORD=...           (compose interpolation)
+#     docker/secrets-prod/ezagent.env → EZAGENT_COOKIE/RELEASE_COOKIE  (env_file)
+#     docker/secrets-prod/mihomo/config.yaml → real mihomo config with the JMS
+#                                       subscription URL (see docker/mihomo/config.example.yaml)
+#     ${HOME}/.cloudflared/8e249ea0-...json → prod tunnel credentials
+#
 #   build: docker compose -f docker/docker-compose.prod.yml build \
-#            --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
-#            --build-arg HTTPS_PROXY=http://host.docker.internal:7897
-#   run:   ESR_PROXY=http://host.docker.internal:7897 \
-#            docker compose -f docker/docker-compose.prod.yml up -d
+#            --build-arg HTTP_PROXY=http://host.docker.internal:7896 \
+#            --build-arg HTTPS_PROXY=http://host.docker.internal:7896
+#          (build runs before the mihomo container exists → use the HOST mihomo
+#           on :7896 for build-time fetches; runtime egress uses the mihomo SERVICE.)
+#   run:   docker compose -f docker/docker-compose.prod.yml up -d
+#
 # Distinct compose PROJECT name so prod never collides with the dev stack (both
-# compose files live in docker/ → same default project "docker" → prod `up`
-# would clobber the dev container). dev stays project "docker"; prod = ezagent-prod.
+# compose files live in docker/ → same default project "docker"). dev = "docker";
+# prod = ezagent-prod.
 name: ezagent-prod
 
 services:
+  # ----- Postgres: the durable Repo (SQLite→PG migration). Internal-only: no
+  # host port published; reachable on the compose network as `postgres:5432`. -----
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ezagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env}
+      POSTGRES_DB: ezagent_prod
+    volumes:
+      - prod_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ezagent -d ezagent_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ----- mihomo: containerized egress proxy (replaces the host clash/mihomo on
+  # :7897/:7896). Agents' claude/codex subprocesses + cloudflared reach the
+  # internet through this. Config (with the secret JMS subscription) is mounted
+  # read-only from the gitignored secrets dir; see docker/mihomo/config.example.yaml. -----
+  mihomo:
+    image: metacubex/mihomo:latest
+    restart: unless-stopped
+    # The mounted config MUST bind 0.0.0.0 (bind-address: '*') so other compose
+    # services can reach mixed-port 7896 — the host instance binds 127.0.0.1 only.
+    volumes:
+      - ./secrets-prod/mihomo:/root/.config/mihomo:ro
+    healthcheck:
+      # mixed-port 7896 accepting connections = proxy is up. Image ships wget.
+      test: ["CMD-SHELL", "wget -q -T2 -O- http://127.0.0.1:7896 >/dev/null 2>&1 || true; nc -z 127.0.0.1 7896 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   ezagent:
     build:
       context: ..
@@ -38,6 +84,9 @@ services:
       EZAGENT_PROFILE: default
       EZAGENT_PUBLIC_HOST: app.ezagent.chat
       EZAGENT_PUBLIC_SCHEME: https
+      # DB: Postgres on the compose network (runtime.exs requires DATABASE_URL).
+      DATABASE_URL: ecto://ezagent:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env}@postgres:5432/ezagent_prod
+      POOL_SIZE: ${POOL_SIZE:-5}
       # WS check_origin for the Tailscale admin fallback on the published host
       # port :10043 (the public app.ezagent.chat path is allowed in runtime.exs).
       EZAGENT_EXTRA_CHECK_ORIGINS: "http://100.64.0.27:10043,http://localhost:10043,http://127.0.0.1:10043"
@@ -47,20 +96,19 @@ services:
       # the rpc helper (RELEASE_COOKIE).
       RELEASE_DISTRIBUTION: name
       RELEASE_NODE: ezagent_runtime@127.0.0.1
-      # Agents' claude/codex subprocesses reach providers via the proxy; Feishu
-      # + localhost go direct.
-      HTTP_PROXY: ${ESR_PROXY:-}
-      HTTPS_PROXY: ${ESR_PROXY:-}
-      http_proxy: ${ESR_PROXY:-}
-      https_proxy: ${ESR_PROXY:-}
-      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
-      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      # Agents' claude/codex subprocesses reach providers via the mihomo SERVICE.
+      # Postgres (compose net), Feishu + localhost go direct (NO_PROXY).
+      HTTP_PROXY: ${ESR_PROXY:-http://mihomo:7896}
+      HTTPS_PROXY: ${ESR_PROXY:-http://mihomo:7896}
+      http_proxy: ${ESR_PROXY:-http://mihomo:7896}
+      https_proxy: ${ESR_PROXY:-http://mihomo:7896}
+      NO_PROXY: "localhost,127.0.0.1,::1,postgres,mihomo,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "localhost,127.0.0.1,::1,postgres,mihomo,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
     volumes:
       # STABLE prod data — Docker NAMED VOLUME (persists across redeploys; only
-      # `down -v` removes it). Chosen over a ${HOME}/.ezagent host bind because
-      # Docker Desktop's VirtioFS maps host-dir ownership inconsistently for a
-      # non-root container (uid 1000 can't create /data/default on the bind),
-      # which is unreliable for a writable data dir. Inspect via:
+      # `down -v` removes it). Holds the prod PROFILE: credentials, snapshots,
+      # logs, agent working dirs. The DB no longer lives here — it's in Postgres.
+      # Inspect via:
       #   docker compose -f docker/docker-compose.prod.yml exec ezagent ls -la /data/default
       - prod_home:/data
       # Static prod secrets (feishu app cli_a96e) — seeded into the volume on
@@ -68,6 +116,11 @@ services:
       - ./secrets-prod:/secrets:ro
       # Iterate the entrypoint without a full image rebuild.
       - ./entrypoint.prod.sh:/app/entrypoint.prod.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mihomo:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
       interval: 10s
@@ -79,13 +132,13 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
-    # cloudflared must reach the cloudflare edge; if the host requires a proxy,
-    # supply it here. Feishu/cloudflare egress validation is a known check.
+    # cloudflared reaches the cloudflare edge through the mihomo SERVICE (the host
+    # is behind a proxy-required network). Internal compose names go direct.
     environment:
-      HTTPS_PROXY: ${ESR_PROXY:-}
-      https_proxy: ${ESR_PROXY:-}
-      NO_PROXY: "ezagent,localhost,127.0.0.1,::1"
-      no_proxy: "ezagent,localhost,127.0.0.1,::1"
+      HTTPS_PROXY: ${ESR_PROXY:-http://mihomo:7896}
+      https_proxy: ${ESR_PROXY:-http://mihomo:7896}
+      NO_PROXY: "ezagent,postgres,mihomo,localhost,127.0.0.1,::1"
+      no_proxy: "ezagent,postgres,mihomo,localhost,127.0.0.1,::1"
     volumes:
       - ./cloudflared/prod-config.yml:/etc/cloudflared/config.yml:ro
       # ezagent-prod tunnel (8e249ea0) credentials (read-only) from the host.
@@ -93,6 +146,9 @@ services:
     depends_on:
       ezagent:
         condition: service_healthy
+      mihomo:
+        condition: service_started
 
 volumes:
-  prod_home:   # stable prod data (DB, profile, credentials) — survives redeploys
+  prod_home:   # stable prod profile (credentials, snapshots, logs, agent dirs) — survives redeploys
+  prod_pg:     # Postgres data — survives redeploys; only `down -v` removes it
