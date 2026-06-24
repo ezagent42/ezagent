@@ -67,12 +67,14 @@ defmodule EzagentPluginHello.Generator do
     TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
     cond do
-      # ROUND 1 — a fresh session (no frame yet). Design the FRAME first (styled by
-      # this request), show it with a placeholder preview, and ask for approval
-      # BEFORE generating real content. The next message fills the content in.
+      # FRESH session (no frame yet) — single round: generate the HTML frame AND
+      # the real content together. `reframe: true` makes `land_page` build the
+      # frame (styled by this request) alongside the body, so one message yields a
+      # complete page (no placeholder-skeleton approval step).
       current_shell_html(session_uri) == "" ->
-        design_round(session_uri, builder, user_text)
+        generate_simple(session_uri, builder, user_text, true)
 
+      # Follow-up edits to an existing page keep the scoped flow (body/shell/both).
       true ->
         generate_for_scope(session_uri, builder, user_text)
     end
@@ -113,81 +115,6 @@ defmodule EzagentPluginHello.Generator do
             generate_simple(session_uri, builder, user_text, reframe)
         end
     end
-  end
-
-  # ROUND 1: design just the FRAME (styled by `user_text`), then land a PLACEHOLDER
-  # skeleton body so the design is visible (and the surface commit pushes it live),
-  # and ask for approval before any real content is built.
-  defp design_round(session_uri, builder, user_text) do
-    TurnDriver.say(session_uri, builder, gettext("🎨 Designing the page frame to match your request…"))
-    shell_html = ensure_shell_html(session_uri, builder, "Website", user_text, true)
-
-    if shell_html == "" do
-      TurnDriver.say(session_uri, builder, gettext("⚠ Frame design failed."))
-      {:error, :frame_failed}
-    else
-      skeleton = skeleton_page()
-      store_frame(session_uri, builder, shell_html, skeleton)
-
-      case TurnDriver.drive(session_uri, skeleton, "", builder) do
-        {:ok, _turn} ->
-          TurnDriver.say(
-            session_uri,
-            builder,
-            gettext(
-              "✅ The frame is ready — a placeholder preview is on the right. Happy with the design? Tell me what content to fill in, or how to tweak the frame."
-            )
-          )
-
-          {:ok, :design_round}
-
-        {:error, _} = err ->
-          TurnDriver.say(session_uri, builder, gettext("⚠ Frame preview failed."))
-          err
-      end
-    end
-  end
-
-  # A placeholder body for the round-1 design preview (ASCII only — CjkLiteralGate
-  # forbids Han literals in lib/; real content replaces it in round 2).
-  defp skeleton_page do
-    leaf = fn type, props -> %{"type" => type, "props" => props, "children" => []} end
-    card = fn title, desc -> leaf.("Card", %{"title" => title, "description" => desc}) end
-
-    %{
-      "type" => "Stack",
-      "props" => %{
-        "direction" => "vertical",
-        "gap" => "xl",
-        "align" => "stretch",
-        "className" => "mx-auto w-full max-w-6xl px-6 py-16",
-        "title" => "Preview"
-      },
-      "children" => [
-        %{
-          "type" => "Stack",
-          "props" => %{"direction" => "vertical", "gap" => "md", "align" => "stretch"},
-          "children" => [
-            leaf.("Heading", %{"text" => "Your Headline Here", "level" => 1}),
-            leaf.("Text", %{"text" => "A one-line value proposition — real content comes next."}),
-            %{
-              "type" => "Stack",
-              "props" => %{"direction" => "horizontal", "gap" => "sm"},
-              "children" => [leaf.("Button", %{"label" => "Get Started", "variant" => "default"})]
-            }
-          ]
-        },
-        %{
-          "type" => "Grid",
-          "props" => %{"columns" => 3, "gap" => "md"},
-          "children" => [
-            card.("Feature One", "Placeholder description."),
-            card.("Feature Two", "Placeholder description."),
-            card.("Feature Three", "Placeholder description.")
-          ]
-        }
-      ]
-    }
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
