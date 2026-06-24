@@ -18,13 +18,16 @@ defmodule EzagentPluginHello.Sanitize do
   input. See `references` / the hybrid-shell decision.
   """
 
-  # Tags removed entirely (with their content for paired ones).
-  @dangerous_tags ~w(script style iframe object embed link meta base form input textarea select noscript template)
+  # Tags removed entirely (with their content for paired ones). `head`/`title`
+  # are here so a full-document reply doesn't leak its <title> text as a visible
+  # node when injected via innerHTML.
+  @dangerous_tags ~w(script style iframe object embed link meta base form input textarea select noscript template head title)
 
   @doc "Sanitise an AI-authored shell HTML string; always returns safe markup with a `data-slot`."
   @spec html(term()) :: binary()
   def html(input) when is_binary(input) do
     input
+    |> strip_document_tags()
     |> strip_dangerous_tags()
     |> strip_event_handlers()
     |> strip_js_uris()
@@ -32,6 +35,15 @@ defmodule EzagentPluginHello.Sanitize do
   end
 
   def html(_), do: ~s(<div data-slot></div>)
+
+  # Drop document-level wrapper tags (keep their inner content) — the shell is
+  # injected into a <div>, so <!DOCTYPE>/<html>/<body> are meaningless there.
+  defp strip_document_tags(html) do
+    html
+    |> String.replace(~r/<!DOCTYPE[^>]*>/i, "")
+    |> String.replace(~r/<\/?html\b[^>]*>/i, "")
+    |> String.replace(~r/<\/?body\b[^>]*>/i, "")
+  end
 
   defp strip_dangerous_tags(html) do
     Enum.reduce(@dangerous_tags, html, fn tag, acc ->
