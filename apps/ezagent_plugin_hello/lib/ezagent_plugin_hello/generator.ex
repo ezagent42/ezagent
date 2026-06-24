@@ -66,7 +66,10 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
-    case decompose(user_text) do
+    {plan, reframe} = decompose(user_text)
+    if reframe, do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame…"))
+
+    case plan do
       {:complex, %{title: title, sections: sections}} ->
         TurnDriver.say(
           session_uri,
@@ -77,16 +80,16 @@ defmodule EzagentPluginHello.Generator do
           )
         )
 
-        generate_complex(session_uri, builder, title, sections, user_text)
+        generate_complex(session_uri, builder, title, sections, user_text, reframe)
 
       {:simple} ->
         TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
-        generate_simple(session_uri, builder, user_text)
+        generate_simple(session_uri, builder, user_text, reframe)
     end
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
-  defp generate_simple(session_uri, builder, user_text) do
+  defp generate_simple(session_uri, builder, user_text, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🧠 Calling model to generate the page…"))
 
     with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), user_text),
@@ -100,7 +103,7 @@ defmodule EzagentPluginHello.Generator do
         gettext("📦 Structure generated: %{desc}", desc: describe_page(spec))
       )
 
-      land_page(session_uri, builder, spec)
+      land_page(session_uri, builder, spec, reframe)
     else
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
@@ -119,7 +122,7 @@ defmodule EzagentPluginHello.Generator do
   # Sections that fail (LLM error / out-of-catalog) are dropped; the page is built
   # from those that succeeded (in plan order). If NONE survive, fall back to the
   # single-page path so the turn still produces something.
-  defp generate_complex(session_uri, builder, title, sections, user_text) do
+  defp generate_complex(session_uri, builder, title, sections, user_text, reframe) do
     briefs = sections |> Enum.map(fn %{brief: b} -> "・#{b}" end) |> Enum.join("\n")
 
     TurnDriver.say(
@@ -176,7 +179,7 @@ defmodule EzagentPluginHello.Generator do
           gettext("⚠ All blocks failed; regenerating with the single-page fallback…")
         )
 
-        generate_simple(session_uri, builder, user_text)
+        generate_simple(session_uri, builder, user_text, reframe)
 
       trees ->
         with {:ok, page} <- Spec.compose_page(title, trees) do
@@ -188,7 +191,7 @@ defmodule EzagentPluginHello.Generator do
             gettext("📦 Assembled: %{desc}", desc: describe_page(page))
           )
 
-          land_page(session_uri, builder, page)
+          land_page(session_uri, builder, page, reframe)
         else
           {:error, reason} = err ->
             Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
@@ -222,11 +225,12 @@ defmodule EzagentPluginHello.Generator do
   Phase-1 orchestrator's pre-classification (decision D-1). Calls the planner LLM;
   a failed/ambiguous reply degrades to `{:simple}` so generation always proceeds.
   """
-  @spec decompose(String.t()) :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  @type plan :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  @spec decompose(String.t()) :: {plan(), boolean()}
   def decompose(user_text) when is_binary(user_text) do
     case call_llm(Prompts.decompose_system(), user_text) do
       {:ok, %{content: content}} -> parse_plan(content)
-      {:error, _} -> {:simple}
+      {:error, _} -> {{:simple}, false}
     end
   end
 
@@ -237,31 +241,34 @@ defmodule EzagentPluginHello.Generator do
   are assigned deterministically (`"s0"`, `"s1"`, …), NEVER taken from the LLM, so
   no untrusted strings become turn subtask keys.
   """
-  @spec parse_plan(term()) :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
+  @spec parse_plan(term()) :: {plan(), boolean()}
   def parse_plan(content) when is_binary(content) do
     case Spec.extract(content) do
-      {:ok, %{"mode" => "complex"} = plan} ->
-        case briefs_of(plan) do
-          briefs when length(briefs) >= 2 ->
-            title = plan |> Map.get("title", "") |> to_string()
+      {:ok, plan} when is_map(plan) -> {classify_plan(plan), plan["reframe"] == true}
+      _ -> {{:simple}, false}
+    end
+  end
 
-            sections =
-              briefs
-              |> Enum.with_index()
-              |> Enum.map(fn {brief, i} -> %{id: "s#{i}", brief: brief} end)
+  def parse_plan(_), do: {{:simple}, false}
 
-            {:complex, %{title: title, sections: sections}}
+  defp classify_plan(%{"mode" => "complex"} = plan) do
+    case briefs_of(plan) do
+      briefs when length(briefs) >= 2 ->
+        title = plan |> Map.get("title", "") |> to_string()
 
-          _ ->
-            {:simple}
-        end
+        sections =
+          briefs
+          |> Enum.with_index()
+          |> Enum.map(fn {brief, i} -> %{id: "s#{i}", brief: brief} end)
+
+        {:complex, %{title: title, sections: sections}}
 
       _ ->
         {:simple}
     end
   end
 
-  def parse_plan(_), do: {:simple}
+  defp classify_plan(_), do: {:simple}
 
   defp briefs_of(%{"sections" => sections}) when is_list(sections) do
     sections
@@ -278,8 +285,8 @@ defmodule EzagentPluginHello.Generator do
   # Author the bespoke HTML frame once per session (lazy). Reads the Surface
   # slice; only generates when no shell is stored yet, so the frame stays stable
   # across content edits. The LLM output is sanitised before storage.
-  defp maybe_set_shell(session_uri, builder, title) do
-    if shell_present?(session_uri) do
+  defp maybe_set_shell(session_uri, builder, title, force) do
+    if not force and shell_present?(session_uri) do
       :ok
     else
       brand = if is_binary(title) and title != "", do: title, else: "Website"
@@ -337,13 +344,14 @@ defmodule EzagentPluginHello.Generator do
   # `say` (:session :send). Turn-composed chat does NOT push to the operator
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
   # the RESULT goes through say to guarantee the operator sees completion live.
-  defp land_page(session_uri, builder, spec) do
+  defp land_page(session_uri, builder, spec, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
     # Hybrid architecture: lazily author the bespoke HTML site-frame (shell) once
     # per session. It wraps the json-render body and is STABLE across page edits
     # (only generated when absent), matching "AI edits the content, the frame
-    # stays put unless asked to redesign it".
-    maybe_set_shell(session_uri, builder, get_title(spec))
+    # stays put unless asked to redesign it". `reframe` (planner-detected) forces
+    # a fresh frame even when one exists.
+    maybe_set_shell(session_uri, builder, get_title(spec), reframe)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->

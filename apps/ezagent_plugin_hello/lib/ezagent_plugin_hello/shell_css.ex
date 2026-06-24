@@ -95,7 +95,8 @@ defmodule EzagentPluginHello.ShellCss do
   defp bin_path do
     cond do
       Code.ensure_loaded?(Tailwind) and function_exported?(Tailwind, :bin_path, 0) ->
-        path = Tailwind.bin_path()
+        # `apply/3` so the compiler doesn't warn on the dev-only `tailwind` dep.
+        path = apply(Tailwind, :bin_path, [])
         if is_binary(path) and File.exists?(path), do: {:ok, path}, else: wildcard_bin()
 
       true ->
