@@ -125,7 +125,11 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   # The socialware-config-object resource type stays self-authorizing — a bare
   # URI for it is NOT rejected by the config-dir guard (it delegates).
   test "config_dir still delegates a bare socialware-config-object resource URI (unchanged)" do
-    uri = Ezagent.Socialware.ConfigProjection.object_uri(URI.new!("workspace://system"), Ecto.UUID.generate())
+    uri =
+      Ezagent.Socialware.ConfigProjection.object_uri(
+        URI.new!("workspace://system"),
+        Ecto.UUID.generate()
+      )
 
     refute match?(
              {:error, :config_dir_resource_requires_scope},
@@ -193,6 +197,23 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert member_uri in members
     assert {:ok, ^member_uri} = UriQuery.resolve(:member_by_role, {session_uri, role_name})
     assert :none = UriQuery.resolve(:member_by_role, {session_uri, "missing"})
+  end
+
+  test "agent_live_sessions lists live sessions containing an agent member" do
+    session_uri = spawn_session!("agent-live")
+    member_uri = unique_agent_uri("agent-live-member")
+    other_uri = unique_agent_uri("agent-live-other")
+
+    assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "cc")
+    assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(other_uri, "cc")
+    assert {:ok, %{members: members}} = join(session_uri, member_uri, role_name: "worker")
+    assert member_uri in members
+
+    assert {:ok, [^session_uri]} = EzagentDomainInstanceMessage.agent_live_sessions(member_uri)
+    assert {:ok, true} = EzagentDomainInstanceMessage.agent_in_live_session?(member_uri)
+
+    assert {:ok, []} = EzagentDomainInstanceMessage.agent_live_sessions(other_uri)
+    assert {:ok, false} = EzagentDomainInstanceMessage.agent_in_live_session?(other_uri)
   end
 
   defp spawn_session!(label) do

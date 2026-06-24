@@ -3,7 +3,7 @@
 > Date: 2026-06-24
 > Branch: `feat/agent-config-backend`
 > Audience: backend (@黄佳佳) + frontend (@戴明)
-> Status: draft for immediate alignment. Backend implementation should follow this after confirmation.
+> Status: backend contract implemented on this branch for frontend alignment.
 
 ## Scope
 
@@ -28,10 +28,11 @@ First version does not support:
 
 ## Backend Facade
 
-Backend will expose a domain facade:
+Backend exposes a domain facade:
 
 ```elixir
 Ezagent.AgentConfig.read_cascade(agent_uri, opts \\ [])
+Ezagent.AgentConfig.read_key(agent_uri, key, opts \\ [])
 Ezagent.AgentConfig.apply_delta(agent_uri, caller, caps, attrs)
 Ezagent.AgentConfig.delete_path(agent_uri, caller, caps, attrs)
 Ezagent.AgentConfig.repoint(agent_uri, caller, caps, attrs)
@@ -64,7 +65,7 @@ Supported layers:
 ["workspace", "user", "session"]
 ```
 
-First implementation should let the frontend edit the `user` layer. Other layers can be rendered read-only until the UI decides to expose them.
+Current implementation lets the frontend edit the `user` layer by default. Other layers can be rendered read-only until the UI decides to expose them.
 
 ## Read Request
 
@@ -102,7 +103,7 @@ Therefore V1 defines "full config" as:
 - every distinct config `key` currently present in `ConfigPointer` for this agent across supported layers;
 - plus the default key `advisor.behavior`, even if no pointer exists yet.
 
-The backend should expose this through one `read_cascade` call. Frontend should not need to call `list_keys` and then batch `resolve` per key.
+The backend exposes this through one `read_cascade` call. Frontend should not need to call `list_keys` and then batch `resolve` per key.
 
 If product later requires "full config" to mean a fixed, known schema of every possible agent setting, that is a separate schema/manifest design. It is not present in the current backend.
 
@@ -258,31 +259,27 @@ Semantics:
 - The target object must belong to the same agent/workspace/key.
 - Requires the same manage-cap as update.
 
-Frontend can defer this UI. Backend will test it as part of the contract.
+Frontend can defer this UI. Backend tests it as part of the contract.
 
 ## Delete Agent Live-Session Gate
 
 Agent deletion must be blocked while the target agent is currently a member of any live session.
 
-This check should live in the session domain, not in world UI code. The frontend/world layer should not scan `KindRegistry` directly.
+This check lives in the session domain, not in world UI code. The frontend/world layer should not scan `KindRegistry` directly.
 
-Proposed backend helpers:
+Implemented backend helpers:
 
 ```elixir
 EzagentDomainInstanceMessage.agent_live_sessions(agent_uri)
 EzagentDomainInstanceMessage.agent_in_live_session?(agent_uri)
 ```
 
-Suggested return shapes:
+Return shapes:
 
 ```elixir
 {:ok, [%URI{}, ...]}
-```
-
-or:
-
-```elixir
-{:ok, %{bound?: true, sessions: ["session://team_alpha/chat/main"]}}
+{:ok, true | false}
+{:error, :invalid_agent_uri}
 ```
 
 Existing building blocks are:
@@ -291,7 +288,7 @@ Existing building blocks are:
 - `EzagentDomainInstanceMessage.list_sessions/1`
 - `Ezagent.Entity.Session.session_member_uris/1`
 
-The new helper centralizes the definition of "live session membership" in the session domain. The world delete path should call this helper and block deletion when the result is non-empty.
+The helper centralizes the definition of "live session membership" in the session domain. The world delete path should call `agent_live_sessions/1` and block deletion when the returned session list is non-empty, or call `agent_in_live_session?/1` when it only needs a boolean.
 
 ## Mutation Response
 
@@ -362,4 +359,4 @@ Initial error codes:
 - Do not use `%{"field" => nil}` as delete.
 - Keep `ConfigObject` append-only.
 - Keep all writes manage-cap gated.
-- Keep `ConfigEvolveTest` for behavior internals; add `AgentConfigTest` for this facade contract.
+- Keep `ConfigEvolveTest` for behavior internals; `AgentConfigTest` covers this facade contract.
