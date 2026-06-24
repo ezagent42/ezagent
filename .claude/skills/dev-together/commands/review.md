@@ -11,7 +11,16 @@ End-of-day retrospective that closes the loop and feeds tomorrow's `plan`.
    pass" only.
 4. **Next-day planning suggestions** — what to sequence differently, which
    conflicts to pre-empt, which deferrals to schedule, process tweaks.
-5. **Update the roster (single writer).** For each human dev, set their
+5. **Method deltas (MANDATORY section — promote, don't just collect).** Read the
+   **DoD-reconciliation + method-friction** notes from every `return`. Triage them:
+   each real process gap becomes either a **dev-together PR** (edit the skill — the
+   lead is the single writer of the contract) or a tracked **process-debt** item
+   with an owner. Write this section **even if it's "none"** — a missing section
+   means the learning step was skipped, and that must be visible. Every
+   close-review finding should name the **process rule (existing or new) that would
+   have caught it**; a finding with no mapped rule is a signal to add one. This is
+   the *Act* phase of the loop: it updates the **method**, not just the roster.
+6. **Update the roster (single writer).** For each human dev, set their
    `current_track` and `latest_return` in `docs/together/team.md` to the next
    track — this is what tomorrow's `plan` derives from. `review` is the **only**
    writer of `current_track`/`latest_return`; `return`/`close` do NOT touch them

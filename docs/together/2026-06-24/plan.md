@@ -57,3 +57,29 @@ All four tracks are independently startable now (fatnine's handoff is READY; gag
 
 - **Claude (me)**: finish resource-type PR-2 (world layout → resource://) + verify/merge; then available for the session-create crux fix if zyli's run needs it.
 - **codex**: bounded verifiable sub-tasks on request (e.g. #55 doc-coverage burn-down batch).
+
+---
+
+## NEXT task for 张宁 (zhaomato) — 官网/hello json-render 重做 (lead analysis 2026-06-24)
+
+@林懿伦 2026-06-24: 官网（#956 已落地，PR #961）"看起来太丑了，json-render 没有用好"。Reference of "good" = the demo Allen built with codex: **http://100.64.0.27:5173/** (repo **github.com/ezagent42/json-render-demo**) — a polished shadcn/Tailwind landing page (bold hero, stat cards, feature blocks, pricing tiers, FAQ accordion, CTA). Plus a **design system** Allen will hand over (style separation), and the goal that **每个 session 的 hello 都能单独指定自己的样式**.
+
+### Root cause (lead analysis — code-verified)
+1. **前后端 catalog 脱节 = 直接的"坏/丑"**. #956 migrated the BACKEND catalog `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/spec.ex` to **36 capitalized shadcn types** (`Stack/Grid/Card/Heading/Text/Button/Link/Image/Badge/Tabs/Accordion/Table/Input/...`) and the prompts (`prompts.ex`) inject that set — but the **FRONTEND renderer was NOT migrated**: `apps/ezagent_plugin_hello/assets/src/catalog.ts` + `registry.tsx` still only know the **old 7 lowercase** types (`page/section/card/heading/text/button/image`). So the LLM now emits `{"type":"Stack"}`, `{"type":"Heading"}`, … which the frontend @json-render catalog doesn't recognise → nodes fail validation / render nothing → the page is mostly empty/fallback. Same incomplete-shadcn-migration that left #956's tests red (lead fixed the tests to land it; the **frontend renderer desync is the remaining runtime half**).
+2. **即便对齐了也丑**: `registry.tsx` renders its 7 components with **hand-rolled inline styles** (`border:1px #e5e7eb`, etc.), not real shadcn components, no theme. Meanwhile the **world operator UI already has a proper Tailwind/shadcn design-token system** (`apps/ezagent_plugin_world/assets/src/styles.css` + `components/ui/primitives.tsx`) that the hello renderer does NOT reuse. "json-render 没用好" = map the catalog to real shadcn components, not bare inline divs.
+3. **无 per-session 样式**: #956 added a shell channel (`TurnDriver.set_shell` → `Surface.handle_set_shell` stores HTML + CSS) — a starting point — but the json-render body uses fixed inline styles, so a session can't theme its own page.
+
+### Task (zhaomato, next cycle)
+1. **Align the frontend catalog to the backend shadcn set**: rewrite `catalog.ts` + `registry.tsx` so the frontend @json-render catalog == `spec.ex`'s 36 capitalized components, each implemented as a **real shadcn/Tailwind component** (reuse/align with world's `primitives.tsx` + design tokens; reference the `json-render-demo` renderer). Do NOT touch `spec.ex` (backend catalog is already correct/shadcn).
+2. **Design system / style separation**: per Allen's incoming design system, extract design tokens (color/radius/shadow/type/spacing) into one theme layer; json-render components reference tokens, never hardcode styles.
+3. **Per-session theme override**: each session's hello can specify its own theme (a design-token / CSS-variable set). Extend the existing `set_shell` channel into a per-session theme override that the json-render body applies at render.
+4. **Gate / DoD**: `mix precommit` green (CI now enforces it on PRs); plus a visual E2E — generate a page → render at `/socialware/customer` → **agent-browser screenshot** compared against the demo's quality bar.
+
+### Key files
+- Frontend renderer (rewrite): `apps/ezagent_plugin_hello/assets/src/{catalog.ts, registry.tsx, main.tsx}`
+- Backend catalog (reference, do NOT change): `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/spec.ex` (+ `prompts.ex`)
+- Existing design tokens to reuse: `apps/ezagent_plugin_world/assets/src/{styles.css, components/ui/primitives.tsx}`
+- Per-session shell/theme channel: `TurnDriver.set_shell` + `Surface.handle_set_shell` (#956)
+- Reference implementation: `github.com/ezagent42/json-render-demo` (live: http://100.64.0.27:5173/)
+
+> **Process note (CI now live)**: PRs to `main` are gated by `precommit + check_invariants` (branch protection set 2026-06-24). Rebase onto current `main` and confirm `mix precommit` EXIT=0 **before** returning — a branch must be green on its own tip.
