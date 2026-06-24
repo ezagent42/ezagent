@@ -7,6 +7,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   alias Ezagent.Invocation
   alias Ezagent.World.AdminActions
+  alias Ezagent.World.AgentActions
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
@@ -200,12 +201,10 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_layout_manage(socket, layout)
   end
 
-  def handle_event(
-        "world:dispatch",
-        %{"action" => "agents.create", "args" => %{"agent" => agent_params}},
-        socket
-      ) do
-    dispatch_agent_create(socket, agent_params)
+  @agent_actions ~w(agents.create agents.delete agents.config.update agents.config.delete_path agents.config.repoint)
+  def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
+      when action in @agent_actions and is_map(args) do
+    AgentActions.handle_dispatch(socket, action, args)
   end
 
   def handle_event(
@@ -370,66 +369,6 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:last_dispatch_status, "ok")
      |> push_event("world:state", %{"layout" => saved_layout})}
-  end
-
-  defp dispatch_agent_create(socket, params) when is_map(params) do
-    workspace_uri = socket.assigns.current_workspace_uri
-    caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Map.get(socket.assigns, :current_caps, MapSet.new())}
-
-    flavor = params |> Map.get("flavor", "") |> to_string() |> String.trim()
-    name = params |> Map.get("name", "") |> to_string() |> String.trim()
-    cwd = params |> Map.get("cwd", "") |> to_string() |> String.trim()
-    caps_str = params |> Map.get("caps", "") |> to_string() |> String.trim()
-    with_pty? = Map.get(params, "with_pty") in [true, "true", "on"]
-
-    with %URI{scheme: "workspace"} <- workspace_uri,
-         {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, caller),
-         {:ok, %{agent_uri: agent_uri}} <-
-           Ezagent.Workspace.create_agent(
-             workspace_uri,
-             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?},
-             caller_ctx
-           ),
-         :ok <- Ezagent.Workspace.grant_initial_caps(agent_uri, caps, caller_ctx) do
-      encoded = agent_uri |> URI.to_string() |> URI.encode_www_form()
-
-      {:noreply,
-       socket
-       |> assign(:agent_create_error, nil)
-       |> assign(:last_dispatch_status, "ok")
-       |> push_navigate(to: "/identities/agents/#{encoded}")}
-    else
-      {:error, reason} ->
-        {:noreply, push_agent_create_error(socket, reason)}
-
-      _ ->
-        {:noreply, push_agent_create_error(socket, :invalid_workspace_scope)}
-    end
-  end
-
-  defp dispatch_agent_create(socket, _params) do
-    {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent")}
-  end
-
-  # No silent drop: rebuild the agent_new_form state with the operator-facing
-  # message and re-push it through the SAME `world:state` channel the route uses
-  # so the React island re-renders the error. The reason is also stashed on the
-  # socket so a subsequent `handle_params` re-render (e.g. PTY refresh) keeps the
-  # message until the operator navigates away (push_navigate on success clears it).
-  defp push_agent_create_error(socket, reason) do
-    # Resolve the route from the single source (Routes.route_for) so the title/
-    # path can't silently drift from routes.ex if it ever changes there.
-    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents/new")
-    layout = socket.assigns.world_state["layout"]
-    socket = assign(socket, :agent_create_error, reason)
-    state = state_for_route(route, socket, layout)
-
-    socket
-    |> assign(:world_state, state)
-    |> assign(:world_state_json, Jason.encode!(state))
-    |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
-    |> push_event("world:state", state)
   end
 
   # Store/replace an agent's downstream-LLM API key from the world UI — the write
@@ -904,6 +843,9 @@ defmodule EzagentPluginWorld.WorldLive do
   defp jsonable(nil), do: nil
   defp jsonable(other), do: inspect(other)
 
+  # Returns the name segment of a session URI as a short human-readable label.
+  # Handles both %URI{} structs and plain strings (the canonical helper returns %URI{}).
+  # Uses Ezagent.URI.name!/1 so no positional URI field reads (uri_query.scan safe).
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)
 

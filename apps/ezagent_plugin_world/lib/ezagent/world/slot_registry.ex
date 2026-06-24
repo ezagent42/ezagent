@@ -76,7 +76,8 @@ defmodule Ezagent.World.SlotRegistry do
          {"agent_detail", "Agent Detail"},
          {"entity_caps", "Entity Caps"},
          {"agent_api_keys", "Agent API Keys"},
-         {"agent_extensions", "Agent Extensions"}
+         {"agent_extensions", "Agent Extensions"},
+         {"agent_config", "Agent Config"}
        ]}
   }
 

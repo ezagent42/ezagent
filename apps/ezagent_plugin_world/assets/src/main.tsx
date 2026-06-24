@@ -200,6 +200,24 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onDeleteAgent: (agentUri: string) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.delete",
+                    args: {agent_uri: agentUri},
+                  })
+                },
+                onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.config.update",
+                    args: {agent_uri: agentUri, layer: "user", key, patch},
+                  })
+                },
+                onConfigDeletePath: (agentUri: string, key: string, path: string[]) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.config.delete_path",
+                    args: {agent_uri: agentUri, layer: "user", key, path},
+                  })
+                },
                 onPutApiKey: (payload) => {
                   pushEvent?.("world:dispatch", {
                     action: "agent.api_key.put",
@@ -506,6 +524,9 @@ type RenderContext = {
   onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onDeleteAgent: (agentUri: string) => void
+  onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath: (agentUri: string, key: string, path: string[]) => void
   onPutApiKey: (payload: {agent_uri: string; provider: string; key: string}) => void
   onAdminAction: (action: string, args: Record<string, unknown>) => void
   onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
@@ -595,6 +616,9 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           key={component.id}
           state={{...context.state, component: component.type}}
           onCreateAgent={context.onCreateAgent}
+          onDeleteAgent={context.onDeleteAgent}
+          onConfigUpdate={context.onConfigUpdate}
+          onConfigDeletePath={context.onConfigDeletePath}
           onPutApiKey={context.onPutApiKey}
         />
       )
