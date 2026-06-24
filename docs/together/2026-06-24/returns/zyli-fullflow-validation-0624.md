@@ -63,3 +63,30 @@
 
 ## 6. 纪律说明
 全程 validation-only:不改任何 `apps/**` 产品代码;仅写 `docs/together/2026-06-24/evidence/` + 开 `fix/*` 占位分支(只带 branch description,无 diff)。为继续测试在**用户授权下**做过几处 DB 写入(配 key / 绑群 / 加规则)+ 2 次重启,均为绕过 UI 缺口验证底层管道,非产品改动。
+
+---
+
+## 附录:rebase-batch + lifecycle 续验(下午,rebased `c2971d9c`)
+
+7 腿验证后,rebase 到最新 main 验本批 4 PR + 续测,新增 F15–F24(详见 `evidence/rebase-batch-validation.md` + `blockers.md`):
+
+### 本批 4 PR(#939/#937/#931/#938)
+- **#939 Bug A**(快照竞态 + no_such_actor 可观测)✅ PASS(正/负路)
+- **#937 Bug B**(resource type 重启自愈)✅ PASS(uploads + 布局)
+- **#938 agent-config 后端** ✅ PASS(IEx 冒烟:read_cascade/apply_delta/delete_path/repoint + 跨-agent cap 拒绝)
+- **#931 cc-headless** ⛔ **F15**:config-dir resource type `cc-headless-agents`/`codex-remote-agents` 未注册 → cc-headless + codex-remote 都不可创建 → @黄佳佳
+- 🎁 bonus:world UI **@提及 agent → 回复 work**(06-23 L4 核心阻塞已修)
+
+### PTY(F18 关键)
+- echo+PTY 后端正常(`/bin/bash -i` 起来、真提示符),但**前端序列化 PTY 状态裸 PID 未转 jsonable → LiveView Jason 崩 → 所有 flavor 的 PTY 终端在 UI 不可见**(flavor 无关前端 bug,取代 F16/F17)→ @李震宇
+
+### lifecycle / operator-UI 完整性(F19–F24)
+「只能加不能删/缺创建入口」一组:F19 agent删 · F20 移成员 · F21 session删 · F22 路由规则删(后端有UI没暴露)· F23 protocol-api key 铸造 · F24 hello 模板/创建入口。大多 world/socialware 前端,根因一致,建议统一一批补。
+
+### 环境踩坑(已解决,供复跑参考)
+- github/pypi 需走代理 `http://127.0.0.1:7890`(`git -c http.proxy=…`;uv 预热缓存)
+- assets 用 **pnpm**,但 main 的 pnpm 11 需 Node22;本机 Node20 → 用 `pnpm@9`
+- codex CLI 需 `npm i -g @openai/codex`;cc-headless 需 `claude-agent-sdk`(uv 缓存)
+- **boot 慢根因**:每建 session spawn 一个 cc orchestrator,累积十几个,boot 时各 F5 超时 10s 拖到 120s+;清 cc/codex 快照 + agent_lineage 后秒起(对应 F19 agent 不可删)
+
+**最终:F1–F24 全部路由 owner,21 个 `fix/*` 占位分支;PR #944(本 track docs)+ 三条评论汇总。**
