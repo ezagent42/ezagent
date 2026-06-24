@@ -200,6 +200,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onPutApiKey: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agent.api_key.put",
+                    args: payload,
+                  })
+                },
                 onAdminAction: (action, args) => {
                   pushEvent?.("world:dispatch", {action, args})
                 },
@@ -500,6 +506,7 @@ type RenderContext = {
   onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onPutApiKey: (payload: {agent_uri: string; provider: string; key: string}) => void
   onAdminAction: (action: string, args: Record<string, unknown>) => void
   onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
   onChatSend: (sessionUri: string, text: string, grants: string[]) => void
@@ -583,7 +590,14 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       )
 
     case "identities":
-      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+      return (
+        <IdentitiesSurface
+          key={component.id}
+          state={{...context.state, component: component.type}}
+          onCreateAgent={context.onCreateAgent}
+          onPutApiKey={context.onPutApiKey}
+        />
+      )
 
     default:
       throw new Error(
