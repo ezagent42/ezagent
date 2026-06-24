@@ -77,7 +77,10 @@
   #   call sites moved onto LocalRuntime, so the scanned count dropped 43→36. Cap
   #   lowered to actual to keep the gate tight (the LocalRuntime delegation sites
   #   in core remain; only the cc plugin-side direct calls were removed). 43→36.
-  spawn_registry_call_sites: 36,
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): the 11 direct
+  #   SpawnRegistry call sites in these 4 plugins moved onto LocalRuntime, so the
+  #   scanned count dropped 36→30. Cap lowered to actual. 36→30.
+  spawn_registry_call_sites: 30,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -100,7 +103,11 @@
   #   SpawnRegistry references (cc_orchestrator_seed, mcp_server, cc_agent/spawn,
   #   seed_cc_agent, seed_cc_sandbox), so the scanned module count fell 37→32. Cap
   #   lowered to actual. 37→32.
-  spawn_registry_modules: 32,
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): 6 plugin modules
+  #   dropped their direct SpawnRegistry references (codex_agent, codex_remote_agent,
+  #   echo_agent, echo application, feishu binding_policy, feishu sender_resolver),
+  #   so the scanned module count fell 32→26. Cap lowered to actual. 32→26.
+  spawn_registry_modules: 26,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -112,7 +119,10 @@
   # RATCHET-DOWN #95 PR-2 (cc migration): cc's off-chokepoint SpawnRegistry modules
   #   moved onto LocalRuntime, so the scanned off-chokepoint count fell 27→22. Cap
   #   lowered to actual. 27→22.
-  spawn_registry_off_chokepoint_modules: 22,
+  # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): these plugins'
+  #   off-chokepoint SpawnRegistry modules moved onto LocalRuntime, so the scanned
+  #   off-chokepoint count fell 22→16. Cap lowered to actual. 22→16.
+  spawn_registry_off_chokepoint_modules: 16,
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
