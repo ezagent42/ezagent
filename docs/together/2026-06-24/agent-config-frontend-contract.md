@@ -17,6 +17,7 @@ First version supports:
 - update a config body via patch;
 - delete a field/path from a config body;
 - repoint/rollback to an existing config object.
+- check whether an agent is currently bound to any live session before deletion.
 
 First version does not support:
 
@@ -85,6 +86,25 @@ Optional:
   "keys": ["advisor.behavior"]
 }
 ```
+
+## What "Full Config" Means In V1
+
+There is no fixed agent config schema registry on current `main`.
+
+Config keys are dynamic: they exist when a `ConfigPointer` exists for the agent/layer/key tuple. The only built-in/default key in the current config-evolve path is:
+
+```json
+"advisor.behavior"
+```
+
+Therefore V1 defines "full config" as:
+
+- every distinct config `key` currently present in `ConfigPointer` for this agent across supported layers;
+- plus the default key `advisor.behavior`, even if no pointer exists yet.
+
+The backend should expose this through one `read_cascade` call. Frontend should not need to call `list_keys` and then batch `resolve` per key.
+
+If product later requires "full config" to mean a fixed, known schema of every possible agent setting, that is a separate schema/manifest design. It is not present in the current backend.
 
 ## Read Response
 
@@ -240,6 +260,39 @@ Semantics:
 
 Frontend can defer this UI. Backend will test it as part of the contract.
 
+## Delete Agent Live-Session Gate
+
+Agent deletion must be blocked while the target agent is currently a member of any live session.
+
+This check should live in the session domain, not in world UI code. The frontend/world layer should not scan `KindRegistry` directly.
+
+Proposed backend helpers:
+
+```elixir
+EzagentDomainInstanceMessage.agent_live_sessions(agent_uri)
+EzagentDomainInstanceMessage.agent_in_live_session?(agent_uri)
+```
+
+Suggested return shapes:
+
+```elixir
+{:ok, [%URI{}, ...]}
+```
+
+or:
+
+```elixir
+{:ok, %{bound?: true, sessions: ["session://team_alpha/chat/main"]}}
+```
+
+Existing building blocks are:
+
+- `EzagentDomainInstanceMessage.list_sessions/0`
+- `EzagentDomainInstanceMessage.list_sessions/1`
+- `Ezagent.Entity.Session.session_member_uris/1`
+
+The new helper centralizes the definition of "live session membership" in the session domain. The world delete path should call this helper and block deletion when the result is non-empty.
+
 ## Mutation Response
 
 Success:
@@ -296,11 +349,12 @@ Initial error codes:
 
 ## Frontend Questions To Confirm
 
-1. Should `agents.config.read` return only `advisor.behavior` for v1, or discover all pointer keys for the agent?
+1. Is the V1 definition of "full config" acceptable: all existing pointer keys plus default `advisor.behavior`, with no fixed schema registry yet?
 2. Will the editor be full JSON editing, key/value editing, or path-based field editing?
 3. Is field/path delete enough for v1, with whole-key delete deferred?
 4. After mutation, should backend include refreshed cascade, or should frontend call read again?
 5. Are reason codes enough for the UI, or does frontend need localized/user-facing messages from backend?
+6. For delete-agent blocking, is `agent_live_sessions/1` returning the session URI list enough for the UI copy?
 
 ## Backend Implementation Notes
 
