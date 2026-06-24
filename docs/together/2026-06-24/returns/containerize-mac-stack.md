@@ -75,14 +75,23 @@ ezagent build is the only remaining piece.
   serving the local origin. Then torn down: cloudflared stopped, tunnel deleted,
   cred removed.
 
-**Remaining:** the full `ezagent` release build (~10 min) + `up postgres mihomo
-ezagent` (subset, no prod tunnel) + migrate + an in-app agent round-trip. Not run
-to avoid a long build mid-session; the proxy+tunnel halves (the parts unique to
-this change) are proven.
+- **Full ezagent release build + stack bring-up — PASS.** Built
+  `ezagent-prod:latest` (1.84 GB; deps→compile→assets→npm sidecar→`mix release`,
+  all GFW'd fetches via the Docker Desktop proxy). Brought up the subset
+  `postgres mihomo ezagent` (NO cloudflared): all three reached **healthy** in
+  dependency order (postgres healthy → ezagent). **Migrations ran into Postgres**
+  (PgBaseline + ProtocolApiKeys + EmailThreadState + EmailInboundBinding; `\dt`
+  shows the full schema — `invocations`, `dlq`, `credential_grants`, …). Phoenix
+  served **HTTP 302** on :10043; Feishu node sidecar started in the release image.
+  Then torn down (`down -v`, test volumes removed for a clean real deploy).
 
-**Cleanup leftover (needs you):** the DNS CNAME `test-0624.ezagent.chat` still
-exists (cloudflared CLI can't delete DNS records) and now points to a deleted
-tunnel. Remove it in the Cloudflare dashboard (or via API token) when convenient.
+**All gates PASSED.** Nothing functional remains; an in-app live-agent round-trip
+(needs OAuth creds seeded) is the only thing not exercised, but agent→provider
+egress was already proven directly against the mihomo container.
+
+**Leftovers:** none. The `test-0624.ezagent.chat` DNS record was deleted via the
+CF API (token saved gitignored at `docker/secrets-prod/cf_api_token` in the main
+checkout).
 
 ## Merge request
 
