@@ -62,10 +62,13 @@
   #   All on-chokepoint, so off_chokepoint is unchanged. 37→40.
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor spawn paths route
   #   through the SANCTIONED SpawnRegistry chokepoint (one site each). 40→42.
-  # arch-cap-bump: cc-headless SDK sidecar adds one sanctioned plugin-side
-  #   ensure_live path through SpawnRegistry for the Python worker lifecycle.
-  #   Off-chokepoint remains unchanged.
-  spawn_registry_call_sites: 43,
+  # RATCHET-DOWN (cc-headless PR #931, codex review): the cc-headless template
+  #   REPLACED its prior `SpawnRegistry.spawn_detailed/1` call with
+  #   `Ezagent.Kind.spawn/2`, and the SDK sidecar owns its Python worker via
+  #   `DynamicSupervisor.start_child/2` (the sidecar allowlist, NOT this count).
+  #   Net call sites 42 → 41 — cap lowered to actual (the earlier +1 bump comment
+  #   was directionally wrong; corrected here so the gate stays tight).
+  spawn_registry_call_sites: 41,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -76,9 +79,11 @@
   # +2 protocol_api P0 (conversation_registry + openai_chat_plug spawn)
   # arch-cap-bump: +2 #907 — cc-headless + codex-remote flavor modules spawn through
   #   the SpawnRegistry chokepoint. 35→37.
-  # arch-cap-bump: +1 cc-headless SDK sidecar module owns its worker lifecycle
-  #   through the sanctioned SpawnRegistry surface.
-  spawn_registry_modules: 38,
+  # RATCHET-DOWN (cc-headless PR #931, codex review): modules 37 → 36 — the
+  #   cc-headless template module no longer calls SpawnRegistry (uses Kind.spawn);
+  #   the SDK sidecar uses DynamicSupervisor (sidecar allowlist), not this count.
+  #   Cap lowered to actual; the earlier +1 bump comment was directionally wrong.
+  spawn_registry_modules: 36,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
