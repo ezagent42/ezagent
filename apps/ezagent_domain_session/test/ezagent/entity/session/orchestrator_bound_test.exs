@@ -136,12 +136,13 @@ defmodule Ezagent.Entity.Session.OrchestratorBoundTest do
       agent_uri =
         Ezagent.URI.new!("entity://system/agent/no-session-agent-#{n}")
 
-      # Confirm there are no session:// entries in the registry for this test.
+      # Capture any session:// entries only for the failure message below. The
+      # assertion holds regardless of whether other sessions are live: this
+      # unique agent URI has never joined any session, so it must be unbound.
       live_sessions =
         Ezagent.KindRegistry.list_all()
         |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "session://") end)
 
-      # Either no live sessions, or the agent is not a member of any of them.
       assert Orchestrator.agent_bound_to_live_session?(agent_uri) == false,
              "expected false for an agent that has never joined any session; " <>
                "live sessions = #{inspect(Enum.map(live_sessions, &elem(&1, 0)))}"

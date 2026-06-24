@@ -523,6 +523,11 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   session domain follows P9 (reads session data → session domain); pending
   @黄佳佳 confirm (discussion item #3, reversible). O(N sessions × M members) —
   acceptable for the current scale; index later if it shows up in profiling.
+
+  Membership comparison normalizes BOTH sides with `to_string/1`:
+  `session_member_uris/1` returns `%URI{}` struct keys, `KindRegistry.list_all/0`
+  returns string URIs. If the session members-map key type ever changes, keep
+  this normalization or the comparison silently always returns false.
   """
   @spec agent_bound_to_live_session?(URI.t()) :: boolean()
   def agent_bound_to_live_session?(%URI{} = agent_uri) do
