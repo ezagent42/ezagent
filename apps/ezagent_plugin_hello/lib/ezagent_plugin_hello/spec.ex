@@ -31,7 +31,15 @@ defmodule EzagentPluginHello.Spec do
     "heading" => %{props: ["text", "level"], container?: false},
     "text" => %{props: ["text"], container?: false},
     "button" => %{props: ["label", "href"], container?: false},
-    "image" => %{props: ["src", "alt"], container?: false}
+    "image" => %{props: ["src", "alt"], container?: false},
+    # Block-level "official-site" components — composed sections, each renders a
+    # polished, designed block from simple props (Phase 3).
+    "hero" => %{props: ["title", "subtitle", "cta_label", "cta_href"], container?: false},
+    "features" => %{props: ["title"], container?: true},
+    "feature" => %{props: ["title", "text"], container?: false},
+    "cta" => %{props: ["title", "text", "button_label", "button_href"], container?: false},
+    "stats" => %{props: [], container?: true},
+    "stat" => %{props: ["value", "label"], container?: false}
   }
 
   @doc "The allowed component catalog (type → %{props, container?})."

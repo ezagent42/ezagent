@@ -28,6 +28,12 @@ const catalog = defineCatalog(schema, {
     text: {props: z.object({text: opt}), description: "A paragraph of text."},
     button: {props: z.object({label: opt, href: opt}), description: "A link when href is set, else a plain button."},
     image: {props: z.object({src: opt, alt: opt}), description: "A responsive image."},
+    hero: {props: z.object({title: opt, subtitle: opt, cta_label: opt, cta_href: opt}), description: "Big centered hero banner: title + subtitle + a call-to-action button. Use ONE at the top of the page."},
+    features: {props: z.object({title: opt}), description: "A features section with an optional title; children are `feature` nodes laid out in a responsive grid."},
+    feature: {props: z.object({title: opt, text: opt}), description: "One feature card (title + short description). Use inside `features`."},
+    cta: {props: z.object({title: opt, text: opt, button_label: opt, button_href: opt}), description: "A prominent call-to-action banner (colored): title + text + button. Use near the bottom."},
+    stats: {props: z.object({}), description: "A row of metrics; children are `stat` nodes."},
+    stat: {props: z.object({value: opt, label: opt}), description: "One metric: a big value + a label. Use inside `stats`."},
   },
   actions: {},
 })
@@ -102,6 +108,95 @@ const {registry} = defineRegistry(catalog, {
             {className: "rounded-2xl border border-dashed border-base-300 py-12 text-center text-sm italic text-base-content/40"},
             "Image unavailable",
           ),
+
+    // ── Block-level "official-site" components ──────────────────────────────
+    hero: ({props}) =>
+      h(
+        "section",
+        {className: "overflow-hidden rounded-3xl border border-base-300 bg-gradient-to-b from-base-200 to-base-100 px-6 py-16 text-center sm:py-24"},
+        h(
+          "div",
+          {className: "mx-auto max-w-2xl space-y-6"},
+          props.title ? h("h1", {className: "text-4xl font-bold tracking-tight text-base-content sm:text-6xl"}, String(props.title)) : null,
+          props.subtitle ? h("p", {className: "text-lg leading-8 text-base-content/60 sm:text-xl"}, String(props.subtitle)) : null,
+          props.cta_label
+            ? h(
+                "div",
+                {className: "pt-2"},
+                h(
+                  "a",
+                  {
+                    className: "inline-flex items-center justify-center rounded-xl bg-primary px-7 py-3 text-base font-semibold text-primary-content shadow-lg shadow-primary/20 transition hover:opacity-90",
+                    href: String(props.cta_href || "#"),
+                  },
+                  String(props.cta_label),
+                ),
+              )
+            : null,
+        ),
+      ),
+
+    features: ({props, children}) =>
+      h(
+        "section",
+        {className: "space-y-8"},
+        props.title ? h("h2", {className: "text-center text-2xl font-bold tracking-tight text-base-content sm:text-3xl"}, String(props.title)) : null,
+        h("div", {className: "grid gap-6 sm:grid-cols-2 lg:grid-cols-3"}, children),
+      ),
+
+    feature: ({props}) =>
+      h(
+        "div",
+        {className: "rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"},
+        h(
+          "div",
+          {className: "mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary"},
+          "✦",
+        ),
+        props.title ? h("h3", {className: "text-lg font-semibold text-base-content"}, String(props.title)) : null,
+        props.text ? h("p", {className: "mt-1.5 text-sm leading-6 text-base-content/60"}, String(props.text)) : null,
+      ),
+
+    cta: ({props}) =>
+      h(
+        "section",
+        {className: "rounded-3xl bg-primary px-6 py-12 text-center text-primary-content sm:py-16"},
+        h(
+          "div",
+          {className: "mx-auto max-w-xl space-y-4"},
+          props.title ? h("h2", {className: "text-2xl font-bold tracking-tight sm:text-3xl"}, String(props.title)) : null,
+          props.text ? h("p", {className: "text-base leading-7 text-primary-content/80"}, String(props.text)) : null,
+          props.button_label
+            ? h(
+                "div",
+                {className: "pt-2"},
+                h(
+                  "a",
+                  {
+                    className: "inline-flex items-center justify-center rounded-xl bg-base-100 px-7 py-3 text-base font-semibold text-base-content shadow-lg transition hover:opacity-90",
+                    href: String(props.button_href || "#"),
+                  },
+                  String(props.button_label),
+                ),
+              )
+            : null,
+        ),
+      ),
+
+    stats: ({children}) =>
+      h(
+        "section",
+        {className: "grid grid-cols-2 gap-6 rounded-2xl border border-base-300 bg-base-100 px-6 py-8 sm:grid-cols-4"},
+        children,
+      ),
+
+    stat: ({props}) =>
+      h(
+        "div",
+        {className: "text-center"},
+        h("div", {className: "text-3xl font-bold tracking-tight text-primary sm:text-4xl"}, String(props.value ?? "")),
+        h("div", {className: "mt-1 text-sm text-base-content/60"}, String(props.label ?? "")),
+      ),
   },
 })
 

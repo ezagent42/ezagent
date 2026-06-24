@@ -27,6 +27,18 @@ defmodule EzagentPluginHello.Prompts do
       props — never lorem ipsum.
     - Keep it a single self-contained page. No scripts, no external state.
 
+    Compose like a polished official website, NOT a flat stack of cards:
+    - START with ONE "hero" (title + subtitle + cta_label) — this is the
+      page's headline. Make the title punchy and the subtitle a real one-liner.
+    - Then a "features" block holding 3 "feature" children (title + short text)
+      for the key selling points.
+    - Optionally a "stats" block with 3-4 "stat" children (value + label) for
+      credibility numbers.
+    - Use "section" + "card"/"heading"/"text"/"image" for any extra content.
+    - END with ONE "cta" (title + text + button_label) — a closing call to action.
+    - Prefer these block components over bare card/heading stacks; they are what
+      make the page look designed.
+
     Respond with the JSON object only.
     """
   end
