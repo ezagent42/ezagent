@@ -33,6 +33,14 @@ defmodule Ezagent.Behavior.Surface do
     description: "Commit a prepared socialware settlement after the approved pointer advances"
   )
 
+  action(:set_shell,
+    args: %{html: :string, css: :string},
+    returns: %{ok: :boolean},
+    caps: [:set_shell],
+    modes: [:call],
+    description: "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
+  )
+
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{versions: %{}, approved: nil, version_seq: 0}}
 
@@ -64,6 +72,19 @@ defmodule Ezagent.Behavior.Surface do
        ]}
     end
   end
+
+  @doc """
+  Surface action that stores the (already-sanitised) site shell: sets the
+  `:shell` (HTML frame) and `:shell_css` slice keys. Requires a binary `html`;
+  returns `{:error, :invalid_shell}` otherwise.
+  """
+  @spec handle_set_shell(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
+  def handle_set_shell(%{html: html} = args, _ctx) when is_binary(html) do
+    css = Map.get(args, :css, "")
+    {:ok, %{ok: true}, [{:set, :shell, html}, {:set, :shell_css, css}]}
+  end
+
+  def handle_set_shell(_args, _ctx), do: {:error, :invalid_shell}
 
   @spec handle_approve(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_approve(%{version: version}, ctx) do

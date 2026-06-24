@@ -16,6 +16,12 @@
    file). The renderer registry + the shell/chat live in the socialware domain
    app, not under ezagent_web/assets, so they must be listed explicitly. */
 @source "../../../ezagent_domain_socialware/assets/js/catalog_render.mjs";
+@source "../../../ezagent_domain_socialware/assets/js/catalog_jsonrender.mjs";
+@source "../../../ezagent_domain_socialware/assets/js/theme_shell.mjs";
+/* @json-render/shadcn components carry Tailwind classes in their compiled dist —
+   scan it so those utilities are generated for the customer build. */
+@source "../node_modules/@json-render/shadcn/dist/chunk-*.mjs";
+@source "../node_modules/@json-render/shadcn/dist/index.mjs";
 @source "../../../ezagent_domain_socialware/assets/js/catalog.mjs";
 @source "../../../ezagent_domain_socialware/assets/js/customer_app.js";
 /* The customer page's root shell (<body>/<main>) Tailwind utilities live in the
@@ -72,6 +78,33 @@
     Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     "Liberation Mono", "Courier New", monospace;
+}
+
+/* shadcn semantic color tokens (@json-render/shadcn components use bg-background /
+   bg-card / bg-primary / text-foreground / border-border / …). Tailwind v4 maps
+   `bg-<name>` to `--color-<name>`, so define them here — aligned to the daisyUI
+   palette above so the AI HTML frame and the shadcn content read as one site. */
+@theme {
+  --color-background: oklch(99% 0 0);
+  --color-foreground: oklch(21% 0.006 285.885);
+  --color-card: oklch(99% 0 0);
+  --color-card-foreground: oklch(21% 0.006 285.885);
+  --color-popover: oklch(99% 0 0);
+  --color-popover-foreground: oklch(21% 0.006 285.885);
+  --color-primary: oklch(58% 0.233 277.117);
+  --color-primary-foreground: oklch(96% 0.018 272.314);
+  --color-secondary: oklch(96% 0.001 286.375);
+  --color-secondary-foreground: oklch(21% 0.006 285.885);
+  --color-muted: oklch(96% 0.001 286.375);
+  --color-muted-foreground: oklch(52% 0.013 285.8);
+  --color-accent: oklch(95% 0.02 277);
+  --color-accent-foreground: oklch(30% 0.08 277);
+  --color-destructive: oklch(58% 0.253 17.585);
+  --color-destructive-foreground: oklch(98% 0 0);
+  --color-border: oklch(92% 0.004 286.32);
+  --color-input: oklch(92% 0.004 286.32);
+  --color-ring: oklch(58% 0.233 277.117);
+  --radius: 0.625rem;
 }
 
 html,

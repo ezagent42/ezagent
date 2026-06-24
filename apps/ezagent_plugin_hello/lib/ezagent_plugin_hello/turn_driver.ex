@@ -115,4 +115,21 @@ defmodule EzagentPluginHello.TurnDriver do
   end
 
   def say(_session_uri, _actor, _text), do: :ok
+
+  @doc """
+  Store the (already-sanitised) HTML site-frame for the customer page, via the
+  Surface `:set_shell` action. The hybrid architecture: this hand-off frame wraps
+  the json-render body at the `data-slot`. Same admin-genesis authority as the
+  turn dispatches. No-ops on blank html.
+  """
+  @spec set_shell(URI.t(), URI.t(), String.t(), String.t()) ::
+          {:ok, term()} | {:error, term()} | :ok
+  def set_shell(session_uri, actor, html, css \\ "")
+
+  def set_shell(%URI{} = session_uri, %URI{} = actor, html, css)
+      when is_binary(html) and html != "" do
+    dispatch(session_uri, :surface, :set_shell, %{html: html, css: to_string(css)}, actor)
+  end
+
+  def set_shell(_session_uri, _actor, _html, _css), do: :ok
 end
