@@ -30,7 +30,7 @@ defmodule EzagentPluginHello.Generator do
   # `priv/gettext/zh_CN/LC_MESSAGES/default.po`.
   use Gettext, backend: EzagentPluginHello.Gettext
 
-  alias EzagentPluginHello.{Prompts, Sanitize, Spec, TurnDriver}
+  alias EzagentPluginHello.{Prompts, Sanitize, ShellCss, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
   # Per-section worker deadline — a margin over the LLM client's 60s call timeout.
@@ -287,7 +287,10 @@ defmodule EzagentPluginHello.Generator do
       case call_llm(Prompts.shell_gen_system(), "Brand/title: #{brand}") do
         {:ok, %{content: content}} ->
           html = content |> extract_html() |> Sanitize.html()
-          TurnDriver.set_shell(session_uri, builder, html)
+          # Compile this shell's own minimal Tailwind CSS (its AI-authored classes
+          # are invisible to the build-time scan), stored + served with it.
+          css = ShellCss.compile(html)
+          TurnDriver.set_shell(session_uri, builder, html, css)
 
         other ->
           Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")

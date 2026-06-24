@@ -34,11 +34,11 @@ defmodule Ezagent.Behavior.Surface do
   )
 
   action(:set_shell,
-    args: %{html: :string},
+    args: %{html: :string, css: :string},
     returns: %{ok: :boolean},
     caps: [:set_shell],
     modes: [:call],
-    description: "Store the (pre-sanitised) HTML site-frame that wraps the customer page body"
+    description: "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
   )
 
   @impl Ezagent.Lifecycle
@@ -74,8 +74,9 @@ defmodule Ezagent.Behavior.Surface do
   end
 
   @spec handle_set_shell(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
-  def handle_set_shell(%{html: html}, _ctx) when is_binary(html) do
-    {:ok, %{ok: true}, [{:set, :shell, html}]}
+  def handle_set_shell(%{html: html} = args, _ctx) when is_binary(html) do
+    css = Map.get(args, :css, "")
+    {:ok, %{ok: true}, [{:set, :shell, html}, {:set, :shell_css, css}]}
   end
 
   def handle_set_shell(_args, _ctx), do: {:error, :invalid_shell}

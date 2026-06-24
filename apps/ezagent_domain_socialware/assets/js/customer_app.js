@@ -147,7 +147,11 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // per site). Fall back to the built-in hand-crafted PageShell theme when the
   // session has no shell yet (e.g. pages built before the shell existed).
   if (snapshot.shell) {
-    return React.createElement(HybridPage, {shell: snapshot.shell, page})
+    return React.createElement(HybridPage, {
+      shell: snapshot.shell,
+      shellCss: snapshot.shell_css,
+      page,
+    })
   }
   return React.createElement(
     "div",
@@ -163,7 +167,7 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
 // BODY into its [data-slot] via a SEPARATE React root. The shell is inert (no
 // scripts/handlers survive sanitization), so innerHTML is safe; the slot root
 // re-renders on page updates without rebuilding the frame.
-function HybridPage({shell, page}) {
+function HybridPage({shell, shellCss, page}) {
   const hostRef = useRef(null)
   const rootRef = useRef(null)
 
@@ -192,11 +196,14 @@ function HybridPage({shell, page}) {
     if (rootRef.current) rootRef.current.render(React.createElement(JsonRenderPage, {page}))
   }, [page])
 
-  return React.createElement("div", {
-    ref: hostRef,
-    className: "sw-customer-shell w-full",
-    "data-catalog-valid": String(isValidTree(page)),
-  })
+  // The shell's own compiled Tailwind CSS (its AI classes are invisible to the
+  // build-time scan) is inlined here; the sanitized shell HTML mounts in hostRef.
+  return React.createElement(
+    "div",
+    {className: "sw-customer-shell w-full", "data-catalog-valid": String(isValidTree(page))},
+    shellCss ? React.createElement("style", {dangerouslySetInnerHTML: {__html: shellCss}}) : null,
+    React.createElement("div", {ref: hostRef})
+  )
 }
 
 function ChatPane({messages}) {
