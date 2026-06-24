@@ -113,12 +113,12 @@ const {registry} = defineRegistry(catalog, {
     hero: ({props}) =>
       h(
         "section",
-        {className: "overflow-hidden rounded-3xl border border-base-300 bg-gradient-to-b from-base-200 to-base-100 px-6 py-16 text-center sm:py-24"},
+        {className: "overflow-hidden rounded-3xl bg-gradient-to-br from-primary via-primary to-accent px-6 py-20 text-center text-primary-content shadow-xl shadow-primary/30 sm:py-28"},
         h(
           "div",
           {className: "mx-auto max-w-2xl space-y-6"},
-          props.title ? h("h1", {className: "text-4xl font-bold tracking-tight text-base-content sm:text-6xl"}, String(props.title)) : null,
-          props.subtitle ? h("p", {className: "text-lg leading-8 text-base-content/60 sm:text-xl"}, String(props.subtitle)) : null,
+          props.title ? h("h1", {className: "text-4xl font-extrabold tracking-tight text-primary-content drop-shadow-sm sm:text-6xl"}, String(props.title)) : null,
+          props.subtitle ? h("p", {className: "text-lg leading-8 text-primary-content/85 sm:text-xl"}, String(props.subtitle)) : null,
           props.cta_label
             ? h(
                 "div",
@@ -126,7 +126,7 @@ const {registry} = defineRegistry(catalog, {
                 h(
                   "a",
                   {
-                    className: "inline-flex items-center justify-center rounded-xl bg-primary px-7 py-3 text-base font-semibold text-primary-content shadow-lg shadow-primary/20 transition hover:opacity-90",
+                    className: "inline-flex items-center justify-center rounded-xl bg-base-100 px-8 py-3.5 text-base font-bold text-primary shadow-lg transition hover:scale-105 hover:shadow-xl",
                     href: String(props.cta_href || "#"),
                   },
                   String(props.cta_label),
@@ -147,20 +147,20 @@ const {registry} = defineRegistry(catalog, {
     feature: ({props}) =>
       h(
         "div",
-        {className: "rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"},
+        {className: "group rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10"},
         h(
           "div",
-          {className: "mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-lg font-bold text-primary"},
+          {className: "mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent text-xl font-bold text-primary-content shadow-md shadow-primary/30"},
           "✦",
         ),
-        props.title ? h("h3", {className: "text-lg font-semibold text-base-content"}, String(props.title)) : null,
-        props.text ? h("p", {className: "mt-1.5 text-sm leading-6 text-base-content/60"}, String(props.text)) : null,
+        props.title ? h("h3", {className: "text-lg font-bold text-base-content"}, String(props.title)) : null,
+        props.text ? h("p", {className: "mt-2 text-sm leading-6 text-base-content/60"}, String(props.text)) : null,
       ),
 
     cta: ({props}) =>
       h(
         "section",
-        {className: "rounded-3xl bg-primary px-6 py-12 text-center text-primary-content sm:py-16"},
+        {className: "rounded-3xl bg-gradient-to-r from-primary to-accent px-6 py-14 text-center text-primary-content shadow-xl shadow-primary/30 sm:py-16"},
         h(
           "div",
           {className: "mx-auto max-w-xl space-y-4"},
@@ -186,7 +186,7 @@ const {registry} = defineRegistry(catalog, {
     stats: ({children}) =>
       h(
         "section",
-        {className: "grid grid-cols-2 gap-6 rounded-2xl border border-base-300 bg-base-100 px-6 py-8 sm:grid-cols-4"},
+        {className: "grid grid-cols-2 gap-6 rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/5 to-accent/5 px-6 py-10 sm:grid-cols-4"},
         children,
       ),
 
@@ -194,8 +194,8 @@ const {registry} = defineRegistry(catalog, {
       h(
         "div",
         {className: "text-center"},
-        h("div", {className: "text-3xl font-bold tracking-tight text-primary sm:text-4xl"}, String(props.value ?? "")),
-        h("div", {className: "mt-1 text-sm text-base-content/60"}, String(props.label ?? "")),
+        h("div", {className: "bg-gradient-to-br from-primary to-accent bg-clip-text text-4xl font-extrabold tracking-tight text-transparent sm:text-5xl"}, String(props.value ?? "")),
+        h("div", {className: "mt-1.5 text-sm font-medium text-base-content/60"}, String(props.label ?? "")),
       ),
   },
 })
