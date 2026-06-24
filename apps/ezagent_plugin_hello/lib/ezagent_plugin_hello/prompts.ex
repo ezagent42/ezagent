@@ -42,7 +42,11 @@ defmodule EzagentPluginHello.Prompts do
     8. "pricing" (`plan` children; mark the best one featured:"true") if relevant.
     9. "faq" (`qa` children) — common questions.
     10. "cta" (title + text + button_label) — closing call to action.
-    11. "footer" (text) — a short copyright/footer line.
+
+    The page is wrapped in a FIXED, hand-designed site frame that ALREADY
+    provides the top navigation bar AND the footer (brand taken from the page
+    title). Do NOT emit "nav", "banner", or "footer" nodes — start the page
+    directly with the "hero".
 
     Design rules:
     - ALTERNATE backgrounds for rhythm: set "tone" on section-blocks to one of

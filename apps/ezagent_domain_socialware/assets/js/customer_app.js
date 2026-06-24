@@ -2,6 +2,7 @@ import {Socket} from "phoenix"
 import React, {useEffect, useMemo, useState} from "react"
 import {createRoot} from "react-dom/client"
 import {JsonRenderPage} from "./catalog_jsonrender.mjs"
+import {PageShell} from "./theme_shell.mjs"
 import {isValidTree} from "./catalog.mjs"
 
 // Print the @json-render page data that actually drives the rendered page to the
@@ -136,18 +137,19 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // page is rendered regardless (the renderer fails closed per node), but a tree
   // that does not conform to the Zod catalog is flagged for observability/E2E.
   const page = snapshot.page || emptyPage()
-  // Page-type socialware (hello official sites): the customer sees ONLY the
-  // generated page — no "Your conversation" header / chat feed, which exposed
-  // the builder's internal status narration (customer_visible so the operator
-  // sees it live) to public visitors. The chat lives in the operator world view.
+  // Hybrid architecture: a HAND-CRAFTED, fixed theme shell (PageShell — nav,
+  // aurora background, footer, brand) wraps the AI-authored json-render BODY.
+  // The AI only edits the body (json-render data); the beautiful frame is human
+  // code and never AI-written → beauty + safety. Brand comes from the page title.
   // (`sw-customer-shell` + `data-catalog-valid` kept — E2E asserts on them.)
+  const brand = (page && page.props && page.props.title) || "Hello"
   return React.createElement(
     "div",
     {
       className: "sw-customer-shell w-full",
       "data-catalog-valid": String(isValidTree(page)),
     },
-    React.createElement(JsonRenderPage, {page})
+    React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
   )
 }
 
