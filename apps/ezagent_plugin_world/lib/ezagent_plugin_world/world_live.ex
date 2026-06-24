@@ -216,6 +216,33 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_agent_delete(socket, agent_uri_str)
   end
 
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agents.config.update", "args" => args},
+        socket
+      )
+      when is_map(args) do
+    dispatch_config_update(socket, args)
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agents.config.delete_path", "args" => args},
+        socket
+      )
+      when is_map(args) do
+    dispatch_config_delete_path(socket, args)
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agents.config.repoint", "args" => args},
+        socket
+      )
+      when is_map(args) do
+    dispatch_config_repoint(socket, args)
+  end
+
   @cmdk_actions ~w(cmdk.open cmdk.close cmdk.query cmdk.select)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
@@ -463,6 +490,138 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp dispatch_agent_delete(socket, _), do: {:noreply, push_agent_action_error(socket, :invalid_agent)}
+
+  # ── Config mutation dispatches (C3) ─────────────────────────────────────────
+  # All three helpers follow the same shape:
+  # 1. Parse the agent_uri from args.
+  # 2. Extract caller + caps from the operator's socket assigns.
+  # 3. Call the AgentConfig facade (never ConfigStore/ConfigEvolve directly — P14).
+  # 4. On success: re-build the agent_config route state and push "world:state"
+  #    (per spec: re-read after mutation, not an in-form echo).
+  # 5. On error: push_config_error/2 (no silent drop — Invariant #9).
+
+  defp dispatch_config_update(socket, args) when is_map(args) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    agent_uri_str = Map.get(args, "agent_uri")
+    key = Map.get(args, "key")
+    patch = Map.get(args, "patch")
+    layer = Map.get(args, "layer", "user")
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         {:ok, _result} <-
+           Ezagent.AgentConfig.apply_delta(agent_uri, caller, caps, %{
+             layer: layer,
+             key: key,
+             patch: patch
+           }) do
+      {:noreply, push_config_state(socket, agent_uri)}
+    else
+      :error -> {:noreply, push_config_error(socket, :invalid_agent_uri)}
+      {:error, reason} -> {:noreply, push_config_error(socket, reason)}
+    end
+  end
+
+  defp dispatch_config_delete_path(socket, args) when is_map(args) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    agent_uri_str = Map.get(args, "agent_uri")
+    key = Map.get(args, "key")
+    path = Map.get(args, "path")
+    layer = Map.get(args, "layer", "user")
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         {:ok, _result} <-
+           Ezagent.AgentConfig.delete_path(agent_uri, caller, caps, %{
+             layer: layer,
+             key: key,
+             path: path
+           }) do
+      {:noreply, push_config_state(socket, agent_uri)}
+    else
+      :error -> {:noreply, push_config_error(socket, :invalid_agent_uri)}
+      {:error, reason} -> {:noreply, push_config_error(socket, reason)}
+    end
+  end
+
+  defp dispatch_config_repoint(socket, args) when is_map(args) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    agent_uri_str = Map.get(args, "agent_uri")
+    key = Map.get(args, "key")
+    config_id = Map.get(args, "config_id")
+    layer = Map.get(args, "layer", "user")
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         {:ok, _result} <-
+           Ezagent.AgentConfig.repoint(agent_uri, caller, caps, %{
+             layer: layer,
+             key: key,
+             config_id: config_id
+           }) do
+      {:noreply, push_config_state(socket, agent_uri)}
+    else
+      :error -> {:noreply, push_config_error(socket, :invalid_agent_uri)}
+      {:error, reason} -> {:noreply, push_config_error(socket, reason)}
+    end
+  end
+
+  # After a successful config mutation: re-build the agent_config route state and
+  # push it through "world:state" so the React island reflects the authoritative
+  # persisted value (not an in-form echo). The route is rebuilt fresh from routes.ex
+  # so the title/path stay consistent with how `handle_params` would build it.
+  defp push_config_state(socket, %URI{} = agent_uri) do
+    agent_uri_str = URI.to_string(agent_uri)
+    encoded = URI.encode_www_form(agent_uri_str)
+
+    route =
+      Ezagent.World.Routes.route_for(
+        %{"uri" => encoded},
+        "/identities/agents/#{encoded}/config"
+      )
+
+    layout = socket.assigns.world_state["layout"]
+    state = state_for_route(route, socket, layout)
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "ok")
+    |> push_event("world:state", state)
+  end
+
+  # No silent drop: rebuild the agent_config route state with an operator-facing
+  # error via the SAME `world:state` channel the route uses (mirrors push_agent_action_error/2).
+  # The error key is "config_error" so the React config page component can surface it
+  # without conflicting with the agents-list "action_error".
+  defp push_config_error(socket, reason) do
+    state = Map.put(socket.assigns.world_state, "config_error", config_error_message(reason))
+
+    socket
+    |> assign(:world_state, state)
+    |> assign(:world_state_json, Jason.encode!(state))
+    |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
+    |> push_event("world:state", state)
+  end
+
+  defp config_error_message(:unauthorized), do: "没有修改权限（需要 manage 权限）"
+  defp config_error_message(:agent_not_found), do: "Agent 不存在"
+  defp config_error_message(:invalid_uri), do: "无效的 URI"
+  defp config_error_message(:invalid_agent_uri), do: "无效的 agent URI"
+  defp config_error_message(:invalid_layer), do: "无效的配置层（layer 必须是 workspace/user/session）"
+  defp config_error_message(:invalid_key), do: "无效的配置键（key 不能为空）"
+  defp config_error_message(:invalid_patch), do: "无效的 patch（必须是 map 类型）"
+  defp config_error_message(:invalid_replace_body), do: "无效的替换内容（replace_body 必须是 map 类型）"
+  defp config_error_message(:invalid_path), do: "无效的路径（path 必须是非空字符串列表）"
+  defp config_error_message(:path_not_found), do: "路径不存在（字段未找到）"
+  defp config_error_message(:config_not_found), do: "配置不存在（该层/键尚无配置对象）"
+  defp config_error_message(:cross_tenant_target), do: "跨租户操作被拒绝"
+  defp config_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
+  defp config_error_message(:subject_not_self), do: "配置目标与调用者不符"
+  defp config_error_message(reason), do: "配置操作失败：#{reason_to_string(reason)}"
 
   # No silent drop: rebuild the agents-list state with an operator-facing error
   # via the SAME `world:state` channel the route uses (mirrors push_agent_create_error).
