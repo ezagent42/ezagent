@@ -9,7 +9,13 @@ _returned handoffs in analyzed merge order · dependencies · conflict check · 
 
 | # | Task | Dev | PR | Branch | DoD | returned | status |
 |---|---|---|---|---|---|---|---|
-| 1 | cc-headless real implementation | @黄佳佳 (gagameow) | [#931](https://github.com/ezagent42/ezagent/pull/931) | `agent-flavor-headless-cc-headless-impl` | real SDK sidecar + cc-headless behavior + reply writeback + fake SDK + E2E seed/screenshots; cc tests pass, full precommit (cc pass, 2 pre-existing web-flaky `--failed`-passed) | on_time | ✅ stacked — verifying |
+| 1 | cc-headless real implementation | @黄佳佳 (gagameow) | [#931](https://github.com/ezagent42/ezagent/pull/931) | `agent-flavor-headless-cc-headless-impl` | real SDK sidecar + cc-headless behavior + reply writeback + fake SDK + E2E seed/screenshots | on_time | ✅ **MERGED** `2c5bb208` |
+
+## Close outcome (#931)
+
+Lead re-verified: `mix precommit` EXIT=0 (all suites 0 failures, grep-confirmed) + `check_invariants` EXIT=0 + 45 arch tests 0 failures. **codex adversarial-review of the core/domain diff:** all routing-correctness (cc/codex/curl/echo not mis-routed), cap-gating, slice-ownership, single-spawn-entry axes **sound**. Two MEDIUMs:
+- **MEDIUM-2 (fixed at close):** `spawn_registry_call_sites`/`_modules` caps were bumped UP (43/38) while the actual count DROPPED to 41/36 (cc-headless template now uses `Kind.spawn`; sidecar uses `DynamicSupervisor` in the sidecar allowlist). Ratcheted caps DOWN to 41/36 so the gate stays tight (was masking 2 future regressions).
+- **MEDIUM-1 (flagged, intended tightening — NOT fixed):** `openai_chat_plug` dropped prefix-magic flavor parsing (`cc_`/`codex_`/`curl_`) for `UriQuery.resolve(:flavor)`. This matches the no-prefix-parsing architecture (flavor = stored attr); restoring the prefix fallback would reintroduce the anti-pattern. Behavioral note: non-echo protocol targets must now be PROVISIONED (have a stored flavor), not conjured from a URI prefix. Surfaced to @林懿伦 for a conscious call on whether an auto-provision-on-target path is wanted.
 
 ## Reconciliation (every return accounted for)
 
