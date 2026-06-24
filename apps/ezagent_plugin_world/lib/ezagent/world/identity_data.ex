@@ -174,6 +174,35 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("pty_initial_buffer", pty_initial_buffer(agent_uri))
   end
 
+  defp component_state(
+         %{component: "agent_config", entity_uri: agent_uri},
+         base,
+         _workspace_uri,
+         caller,
+         caps
+       ) do
+    case Ezagent.AgentConfig.read_cascade(agent_uri, caller, caps) do
+      {:ok, cascade} ->
+        base
+        |> Map.put("agent_uri", encode_uri(agent_uri))
+        |> Map.put("cascade", jsonable(cascade))
+
+      {:error, :unauthorized} ->
+        Map.put(base, "config_error", "没有查看权限（需要 manage 权限）")
+
+      {:error, :invalid_agent_uri} ->
+        Map.put(base, "config_error", "无效的 agent URI")
+
+      {:error, :agent_not_found} ->
+        Map.put(base, "config_error", "Agent 不存在")
+
+      {:error, reason} ->
+        Map.put(base, "config_error", "配置读取失败：#{inspect(reason)}")
+    end
+  rescue
+    err -> Map.put(base, "config_error", "配置读取异常：#{inspect(err)}")
+  end
+
   defp component_state(_route, base, _workspace, _caller, _caps), do: base
 
   @doc "List entity rows for the identities and agents components."
