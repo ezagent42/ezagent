@@ -213,3 +213,27 @@ The invariant test is what stops a future PR from re-breaking the architectural 
 Caveats:
 - `Mix.env()` returns BUILD-time env (use `System.get_env("MIX_ENV")` if env-sensitive)
 - Plugin unload is NOT supported (Decision #142). To remove a plugin, restart phx after deleting its OTP app from the umbrella.
+
+## How-to: check a Kind is alive / ensure it's started — from a plugin (task #95)
+
+Plugins NEVER call `Ezagent.KindRegistry`/`Ezagent.SpawnRegistry` directly (architecture-invariants #22). Use the owner-gated facade `Ezagent.LocalRuntime`:
+
+```elixir
+# liveness probe (replaces `case KindRegistry.lookup(uri) do {:ok,_}->true; :error->false end`)
+if Ezagent.LocalRuntime.kind_alive?(agent_uri), do: ...
+
+# ensure started (replaces SpawnRegistry.spawn)
+case Ezagent.LocalRuntime.ensure_started(agent_uri) do
+  {:ok, _pid} -> :ok
+  {:error, reason} -> ...   # incl. {:not_workspace_owner, ...} on a non-owner node
+end
+
+# need to know fresh-vs-already-running (replaces SpawnRegistry.spawn_detailed)
+case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
+  {:ok, :started, _pid} -> ...        # freshly spawned (do first-time setup, e.g. workspace bind)
+  {:ok, :already_started, _pid} -> :ok
+  {:error, reason} -> ...
+end
+```
+
+Single-node these behave exactly like the old direct calls (the owner gate is a no-op when the local node owns the workspace); on a future multi-node deployment they return `false` / `{:error, {:not_workspace_owner, …}}` for a foreign-owned Kind instead of silently mis-reading the local registry. Do NOT add the agent's URI to any allowlist — only genuine read-only-pid probes / sidecar IPC stay allowlisted.
