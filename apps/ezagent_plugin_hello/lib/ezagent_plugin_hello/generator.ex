@@ -313,7 +313,13 @@ defmodule EzagentPluginHello.Generator do
 
       case call_llm(Prompts.shell_gen_system(), "Brand/title: #{brand}") do
         {:ok, %{content: content}} ->
-          content |> extract_html() |> Sanitize.html()
+          frame = extract_html(content)
+          # Second, focused call: a CSS theme for the json-render content classes
+          # (.hl-*), matching THIS frame — so the whole page is one coherent design.
+          # A dedicated single-output call is followed far more reliably than a
+          # "also write a <style>" buried in the frame prompt.
+          theme = generate_content_theme(frame)
+          Sanitize.html(frame <> "\n<style>\n" <> theme <> "\n</style>\n")
 
         other ->
           Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
@@ -321,6 +327,28 @@ defmodule EzagentPluginHello.Generator do
       end
     end
   end
+
+  # Focused content-theme call. Returns CSS rules (no <style> tag) or "" on failure.
+  defp generate_content_theme(frame) when is_binary(frame) and frame != "" do
+    case call_llm(Prompts.theme_gen_system(), frame) do
+      {:ok, %{content: content}} -> extract_css(content)
+      other ->
+        Logger.warning("hello.Generator: content theme failed: #{inspect(other)}")
+        ""
+    end
+  end
+
+  defp generate_content_theme(_), do: ""
+
+  # Strip markdown fences / a stray leading <style> the model may add.
+  defp extract_css(content) when is_binary(content) do
+    content
+    |> String.replace(~r/```[a-z]*/i, "")
+    |> String.replace(~r/<\/?style[^>]*>/i, "")
+    |> String.trim()
+  end
+
+  defp extract_css(_), do: ""
 
   # Compile the per-session CSS from BOTH the shell HTML and the body's
   # AI-authored `class` props (both invisible to the build-time Tailwind scan),

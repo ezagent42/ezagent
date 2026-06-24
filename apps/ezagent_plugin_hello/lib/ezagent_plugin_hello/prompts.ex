@@ -103,8 +103,8 @@ defmodule EzagentPluginHello.Prompts do
       to-accent, border-base-300/60). Arbitrary values are allowed (w-[40rem],
       bg-[oklch(...)]).
     - NO <script>/<iframe>/<form>/<input>; NO on* handlers; NO javascript: links.
-      Anchors point to "#". A single <style> block IS allowed and REQUIRED (see
-      "THEME THE CONTENT").
+      Anchors point to "#". (The CONTENT styling is authored separately — you only
+      write the FRAME here.)
 
     DESIGN BAR — make it look genuinely premium, not a bootstrap template:
     - Sticky glass nav: `sticky top-0 z-50 border-b border-base-300/60
@@ -132,47 +132,62 @@ defmodule EzagentPluginHello.Prompts do
       hover:opacity-90 / hover:-translate-y-0.5), tasteful letter-spacing
       (tracking-tight on headings), consistent max-w-6xl gutters.
 
-    THEME THE CONTENT — this is what makes the page cohere. The body is rendered
-    SEPARATELY as semantic elements; you design how they look by writing ONE
-    <style> block (real CSS) that themes these classes to MATCH your frame's
-    aesthetic. Style backgrounds, borders, radius, shadows, gradients, typography,
-    spacing, hover states — give them the SAME design language as your nav/footer
-    so the whole page looks like one coherent site, not a kit dropped in.
-
-      .hl-hero       — the headline band: <h1> title, <p> subtitle, a CTA <a>.
-      .hl-features   — a wrapper; inside, a grid of .hl-feature cards.
-      .hl-feature    — one feature card: an icon <div>, <h3> title, <p> text.
-      .hl-split      — a text+visual row.
-      .hl-stats / .hl-stat        — a metrics row; each stat has a big value + label.
-      .hl-testimonials / .hl-testimonial — quote cards (blockquote + author).
-      .hl-logos / .hl-logo        — a trusted-by row of brand chips.
-      .hl-pricing / .hl-plan      — pricing tiers (.hl-plan is one card).
-      .hl-faq / .hl-qa            — an FAQ; each .hl-qa is a <details>.
-      .hl-steps / .hl-step        — a numbered process.
-      .hl-cta        — the closing call-to-action band.
-      .hl-section / .hl-card      — generic section / card.
-
-    Each of these already has light default styles — your <style> rules OVERRIDE
-    them (your <style> loads last), so set the look you want. Use the theme tokens
-    via CSS vars: var(--color-primary), var(--color-accent), var(--color-base-100),
-    var(--color-base-200), var(--color-base-content), var(--color-neutral). Keep
-    text readable. The content elements are full-width sections — theme their inner
-    look, not their width.
-
-    SHAPE (adapt freely; keep exactly one data-slot AND one <style>):
+    SHAPE (adapt freely; keep exactly one data-slot):
 
         <div class="relative min-h-screen overflow-hidden bg-base-100 text-base-content">
-          <style>
-            .hl-hero { ... } .hl-feature { ... } .hl-stat .hl-stat-value { ... }
-            .hl-cta { ... } /* …theme every content class to match the frame… */
-          </style>
           <div class="pointer-events-none absolute inset-0 -z-10"> …blurred orbs… </div>
-          <header class="sticky top-0 z-50 …"> <nav class="mx-auto flex h-16 max-w-6xl …"> …brand · links · CTA… </nav> </header>
+          <header class="sticky top-0 z-50 border-b border-base-300/60 bg-base-100/70 backdrop-blur-xl">
+            <nav class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"> …brand · links · CTA… </nav>
+          </header>
           <main><div data-slot></div></main>
           <footer class="border-t border-base-300 bg-neutral text-neutral-content"> …columns · copyright… </footer>
         </div>
 
-    Respond with the HTML only (frame + the single <style>).
+    Respond with the HTML only.
+    """
+  end
+
+  @doc """
+  The **content theme** prompt — a focused second call that, given the just-made
+  frame, writes ONLY a CSS theme for the json-render content's semantic classes so
+  the whole page is one coherent design. Focused single-output → the model
+  actually does it (unlike burying it in the frame prompt).
+  """
+  @spec theme_gen_system() :: String.t()
+  def theme_gen_system do
+    """
+    You are a senior CSS designer. The user message is a website's HTML FRAME
+    (its nav, footer, background, colors). Write a CSS theme for the page's
+    CONTENT blocks so they look like ONE coherent site WITH that frame — same
+    palette, rounding, shadows, typography, spacing, hover feel.
+
+    Output ONLY raw CSS rules. No <style> tag, no HTML, no markdown, no prose.
+
+    Theme these classes (each is a full-width section unless noted; style the
+    LOOK, not the width — leave layout/width alone):
+      .hl-hero        headline band — has an <h1>, a <p> subtitle, a CTA <a>
+      .hl-features    a grid wrapper around .hl-feature cards
+      .hl-feature     one feature card — an icon <div>, an <h3>, a <p>
+      .hl-split       a text + visual row
+      .hl-stats       a row wrapper around .hl-stat
+      .hl-stat        one metric — a big value <div> then a label <div>
+      .hl-testimonials wrapper; .hl-testimonial is one quote card (blockquote + author)
+      .hl-logos       a row; .hl-logo is one brand chip
+      .hl-pricing     wrapper; .hl-plan is one price card
+      .hl-faq         wrapper; .hl-qa is one <details> question
+      .hl-steps       wrapper; .hl-step is one numbered step
+      .hl-cta         the closing call-to-action band
+      .hl-section / .hl-card   generic section / card
+
+    Use the page's theme variables: var(--color-primary), var(--color-accent),
+    var(--color-secondary), var(--color-base-100), var(--color-base-200),
+    var(--color-base-300), var(--color-base-content), var(--color-neutral),
+    var(--color-neutral-content). Design it for real — cards with backgrounds /
+    borders / radius / shadows, headings with weight + tracking, gradients and
+    hover transitions where tasteful, generous padding. These rules load LAST so
+    they win over defaults. Keep good contrast / readability.
+
+    Output the CSS only.
     """
   end
 
