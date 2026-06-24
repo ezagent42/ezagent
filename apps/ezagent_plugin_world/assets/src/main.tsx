@@ -201,6 +201,18 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent_uri: agentUri},
                   })
                 },
+                onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.config.update",
+                    args: {agent_uri: agentUri, layer: "user", key, patch},
+                  })
+                },
+                onConfigDeletePath: (agentUri: string, key: string, path: string[]) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.config.delete_path",
+                    args: {agent_uri: agentUri, layer: "user", key, path},
+                  })
+                },
                 onAdminAction: (action, args) => {
                   pushEvent?.("world:dispatch", {action, args})
                 },
@@ -411,6 +423,8 @@ type RenderContext = {
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
   onDeleteAgent: (agentUri: string) => void
+  onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath: (agentUri: string, key: string, path: string[]) => void
   onAdminAction: (action: string, args: Record<string, unknown>) => void
   onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
   onChatSend: (sessionUri: string, text: string, grants: string[]) => void
@@ -494,7 +508,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       )
 
     case "identities":
-      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} onDeleteAgent={context.onDeleteAgent} />
+      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} onDeleteAgent={context.onDeleteAgent} onConfigUpdate={context.onConfigUpdate} onConfigDeletePath={context.onConfigDeletePath} />
 
     default:
       throw new Error(

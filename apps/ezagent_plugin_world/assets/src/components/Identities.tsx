@@ -49,6 +49,31 @@ type ExtensionRow = {
   enabled?: boolean
 }
 
+type CascadeLayer = {
+  body?: Record<string, unknown> | null
+  config_id?: string | null
+}
+
+type CascadeKeyEntry = {
+  key: string
+  effective_body: Record<string, unknown>
+  editable: boolean
+  editable_layer: string
+  layers: {
+    workspace?: CascadeLayer | null
+    user?: CascadeLayer | null
+    session?: CascadeLayer | null
+  }
+}
+
+type CascadeState = {
+  agent_uri: string
+  workspace_uri: string
+  default_key: string
+  layer_order: string[]
+  keys: CascadeKeyEntry[]
+}
+
 export type IdentitiesState = {
   agent_flavors?: string[]
   agent_status?: Record<string, unknown>
@@ -85,12 +110,16 @@ export type IdentitiesState = {
   cwd_required_with_pty_flavors?: string[]
   create_error?: string
   action_error?: string
+  cascade?: CascadeState
+  config_error?: string
 }
 
 type Props = {
   state: IdentitiesState
   onCreateAgent?: (payload: Record<string, unknown>) => void
   onDeleteAgent?: (agentUri: string) => void
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
 }
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
@@ -107,7 +136,7 @@ const codeClass = "font-mono text-xs text-muted-foreground"
 const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 
-export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent, onConfigUpdate, onConfigDeletePath}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "agents_table") return <AgentsTable state={state} />
   if (state.component === "entity_caps") return <EntityCaps state={state} />
@@ -115,7 +144,7 @@ export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent}: Props) 
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
   if (state.component === "agent_api_keys") return <AgentApiKeys state={state} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
-  if (state.component === "agent_config") return <AgentConfigPlaceholder state={state} />
+  if (state.component === "agent_config") return <AgentConfigEditor state={state} onConfigUpdate={onConfigUpdate} onConfigDeletePath={onConfigDeletePath} />
   return <IdentityDirectory state={state} />
 }
 
@@ -458,13 +487,218 @@ function ContractCoverage() {
   )
 }
 
-function AgentConfigPlaceholder({state}: {state: IdentitiesState}) {
+type AgentConfigEditorProps = {
+  state: IdentitiesState
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
+}
+
+function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentConfigEditorProps) {
+  const agentUri = state.agent_uri || ""
+
+  if (state.config_error) {
+    return (
+      <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+        <SectionHeader eyebrow="Agent" title="Agent config" />
+        <code className={uriClass}>{agentUri}</code>
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.config_error}
+        </p>
+      </section>
+    )
+  }
+
+  const cascade = state.cascade
+  if (!cascade) {
+    return (
+      <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+        <SectionHeader eyebrow="Agent" title="Agent config" />
+        <code className={uriClass}>{agentUri}</code>
+        <p className="text-sm text-muted-foreground">Loading config…</p>
+      </section>
+    )
+  }
+
   return (
     <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
       <SectionHeader eyebrow="Agent" title="Agent config" />
-      <code className={uriClass}>{state.agent_uri}</code>
-      <p className="text-sm text-muted-foreground">配置编辑器（C2 实现中）。</p>
+      <code className={uriClass}>{agentUri}</code>
+      <div className="space-y-6">
+        {cascade.keys.map((keyEntry) => (
+          <AgentConfigKeySection
+            key={keyEntry.key}
+            agentUri={agentUri}
+            keyEntry={keyEntry}
+            onConfigUpdate={onConfigUpdate}
+            onConfigDeletePath={onConfigDeletePath}
+          />
+        ))}
+        {cascade.keys.length === 0 && (
+          <p className="text-sm text-muted-foreground">No config keys found.</p>
+        )}
+      </div>
     </section>
+  )
+}
+
+type AgentConfigKeySectionProps = {
+  agentUri: string
+  keyEntry: CascadeKeyEntry
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
+}
+
+function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
+  // Initialize editable fields from the effective_body
+  const [editedFields, setEditedFields] = React.useState<Record<string, unknown>>(() => ({...keyEntry.effective_body}))
+  const [newFieldName, setNewFieldName] = React.useState("")
+  const [newFieldValue, setNewFieldValue] = React.useState("")
+  const [dirty, setDirty] = React.useState(false)
+
+  const handleFieldChange = (field: string, value: string) => {
+    setEditedFields((prev) => ({...prev, [field]: value}))
+    setDirty(true)
+  }
+
+  const handleSave = () => {
+    onConfigUpdate?.(agentUri, keyEntry.key, editedFields)
+    setDirty(false)
+  }
+
+  const handleDeleteField = (field: string) => {
+    onConfigDeletePath?.(agentUri, keyEntry.key, [field])
+  }
+
+  const handleAddField = () => {
+    if (!newFieldName.trim()) return
+    setEditedFields((prev) => ({...prev, [newFieldName.trim()]: newFieldValue}))
+    setNewFieldName("")
+    setNewFieldValue("")
+    setDirty(true)
+  }
+
+  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
+
+  // Read-only context: workspace and session layer values
+  const workspaceBody = keyEntry.layers.workspace?.body
+  const sessionBody = keyEntry.layers.session?.body
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-mono text-sm font-semibold text-foreground">{keyEntry.key}</h3>
+        <span className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">
+          user layer editable
+        </span>
+      </div>
+
+      {/* Read-only context: workspace layer */}
+      {workspaceBody && Object.keys(workspaceBody).length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Workspace layer (read-only)</p>
+          <div className="grid gap-1 rounded-md bg-muted/30 p-2">
+            {Object.entries(workspaceBody).map(([field, val]) => (
+              <div className="flex items-center gap-2 text-xs" key={field}>
+                <span className="w-32 shrink-0 font-mono text-muted-foreground">{field}</span>
+                <span className="font-mono text-foreground">{String(val ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Read-only context: session layer */}
+      {sessionBody && Object.keys(sessionBody).length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session layer (read-only)</p>
+          <div className="grid gap-1 rounded-md bg-muted/30 p-2">
+            {Object.entries(sessionBody).map(([field, val]) => (
+              <div className="flex items-center gap-2 text-xs" key={field}>
+                <span className="w-32 shrink-0 font-mono text-muted-foreground">{field}</span>
+                <span className="font-mono text-foreground">{String(val ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Editable user layer fields */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User layer (editable)</p>
+        {Object.entries(editedFields).map(([field, val]) => (
+          <div className="flex items-start gap-2" key={field}>
+            <div className="flex-1">
+              <label className={fieldLabel}>
+                <span className="font-mono">{field}</span>
+                {field === "soul_md" ? (
+                  <textarea
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    rows={4}
+                    value={String(val ?? "")}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                  />
+                ) : (
+                  <Input
+                    value={String(val ?? "")}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    className="font-mono"
+                  />
+                )}
+              </label>
+            </div>
+            <button
+              type="button"
+              className="mt-5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:border-destructive hover:text-destructive"
+              title={`Remove field ${field}`}
+              onClick={() => handleDeleteField(field)}
+              aria-label={`Remove field ${field}`}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+
+        {/* Add new field row */}
+        <div className="flex items-end gap-2 border-t border-border pt-2">
+          <label className={`${fieldLabel} flex-1`}>
+            <span>New field name</span>
+            <Input
+              value={newFieldName}
+              onChange={(e) => setNewFieldName(e.target.value)}
+              placeholder="field_name"
+              className="font-mono"
+            />
+          </label>
+          <label className={`${fieldLabel} flex-1`}>
+            <span>Value</span>
+            <Input
+              value={newFieldValue}
+              onChange={(e) => setNewFieldValue(e.target.value)}
+              placeholder="value"
+              className="font-mono"
+            />
+          </label>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleAddField}
+            disabled={!newFieldName.trim()}
+          >
+            Add
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex justify-end border-t border-border pt-2">
+        <Button
+          type="button"
+          onClick={handleSave}
+          disabled={!dirty}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
   )
 }
 
