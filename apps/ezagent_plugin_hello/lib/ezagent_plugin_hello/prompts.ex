@@ -38,17 +38,23 @@ defmodule EzagentPluginHello.Prompts do
     - "children" is a JSON array (use [] for none). Real, specific copy from the
       user's request — never lorem ipsum.
 
-    The page is wrapped in a FIXED site frame (top nav + footer). Do NOT build a
-    nav or footer — start with the hero.
+    The page is wrapped in a FIXED site frame that ALREADY provides the top nav,
+    the big HERO (the headline lives in the HTML frame), and the footer. So do NOT
+    build a nav, a hero, or a footer — your tree is ONLY the structured content
+    sections that sit BELOW the hero.
+
+    BE COMPLETE — produce a FULL marketing page body, not a stub: 5-8 real content
+    sections in a sensible order, e.g. social-proof / how-it-works / key features /
+    metrics / use-cases / testimonials / pricing / FAQ / a closing CTA. Pick the
+    ones that genuinely fit the request; never return just 1-2 sections.
 
     COMPOSE like a designer, not a flat list of identical cards:
-    - HERO: a Stack(gap lg) — a big Heading(level 1), a Text subtitle, a Button
-      (or two Buttons in a horizontal Stack). Give it a distinctive className.
-    - SECTION: usually Stack(gap md){ Heading(level 2) + Text + a Grid(columns 3)
-      of Cards }, each Card {title, description}.
+    - SECTION: usually Stack(gap md, align stretch){ a small label Badge? + a
+      Heading(level 2) + a Text intro + a Grid(columns 3) of Cards }, each Card
+      {title, description}. Separate major sections with a Separator.
     - Use real components for real jobs: Accordion {items:[{title,content}]} for
       FAQ, Tabs for grouped content, Table for comparisons, Badge for labels,
-      Separator between major sections, Avatar in testimonials.
+      Avatar in testimonials, Alert for a callout.
 
     DESIGN INTENT (don't produce a generic template):
     - Ground it in the SUBJECT of the request — its real vocabulary, audience, and
@@ -74,61 +80,50 @@ defmodule EzagentPluginHello.Prompts do
   @spec shell_gen_system() :: String.t()
   def shell_gen_system do
     """
-    You are a world-class product designer (think Linear, Vercel, Stripe, Framer).
-    Given a site BRAND/title, output the bespoke HTML+Tailwind page FRAME (the
-    "chrome") for a premium modern marketing site. Output ONLY raw HTML — no
-    markdown fences, no prose.
+    You are a world-class product designer (Linear / Vercel / Stripe / Framer).
+    Given a BRAND and a short design brief, output the bespoke HTML+Tailwind page
+    FRAME for a premium marketing site. Output ONLY raw HTML — no markdown, no prose.
 
-    The frame is everything EXCEPT the body content: a top nav, the page
-    background/wrapper, and a rich footer. The body (hero, features, pricing, …)
-    is injected SEPARATELY, so include EXACTLY ONE empty `<div data-slot></div>`
-    between the nav and the footer. Never put body content yourself.
+    The FRAME = a sticky nav, a HERO section (the big visual centrepiece), an
+    atmospheric background, a rich footer, and EXACTLY ONE empty <div data-slot>
+    placed BETWEEN the hero and the footer — that slot is where the structured
+    content sections are injected later. You author everything EXCEPT the slot.
 
-    HARD RULES (output is sanitised; violations are stripped):
-    - Tailwind utility classes ONLY. Use these theme tokens so colors match the
-      injected body: base-100/200/300, base-content, primary, primary-content,
-      accent, accent-content, neutral, neutral-content (e.g. bg-base-100,
-      text-base-content, bg-primary, text-primary-content, from-primary,
-      to-accent, border-base-300/60). Arbitrary values are allowed (w-[40rem],
-      bg-[oklch(...)]).
+    HARD RULES (output is sanitised):
+    - Tailwind utility classes ONLY. Theme tokens: base-100/200/300, base-content,
+      primary, primary-content, accent, neutral, neutral-content (bg-primary,
+      text-base-content, from-primary, to-accent, …). Arbitrary values are allowed
+      (text-[5.5rem], w-[40rem], leading-[0.95]).
     - NO <script>/<iframe>/<form>/<input>; NO on* handlers; NO javascript: links.
-      Anchors point to "#". (The CONTENT styling is authored separately — you only
-      write the FRAME here.)
+      Anchors point to "#". A single <style> (keyframes / custom CSS) is allowed.
 
-    DESIGN BAR — make it look genuinely premium, not a bootstrap template:
-    - Sticky glass nav: `sticky top-0 z-50 border-b border-base-300/60
-      bg-base-100/70 backdrop-blur-xl`, height ~h-16, inner `mx-auto max-w-6xl
-      px-6 flex items-center justify-between`. Brand lockup = a gradient logo
-      chip (rounded-xl, bg-gradient-to-br from-primary to-accent, the brand
-      initial in white) + the brand name in semibold. 3-4 nav links
-      (text-sm text-base-content/70 hover:text-base-content). A pill CTA button
-      (rounded-full px-5 py-2 bg-gradient-to-r from-primary to-accent
-      text-primary-content text-sm font-semibold shadow-lg shadow-primary/25).
-    - Atmospheric background — THIS CARRIES THE BEAUTY. The body content injected
-      into the slot is TRANSLUCENT GLASS and floats on TOP of this background, so
-      make the background rich and the visual star: a layered gradient mesh of
-      3-5 LARGE blurred orbs (e.g. `absolute -top-40 right-0 h-[42rem] w-[42rem]
-      rounded-full bg-primary/25 blur-[130px]`, plus accent/secondary ones at
-      other corners and a soft center glow), inside a `relative overflow-hidden`
-      wrapper, optionally a faint dotted/grid radial overlay at low opacity. Make
-      it colorful and premium (Linear / Vercel aesthetic). Purely decorative
-      <div>s, pointer-events-none, behind content (-z-10).
-    - Generous, refined footer: a top CTA-ish band is fine; brand + one-line
-      tagline, 3 link columns (product / company / resources style), social row,
-      a `border-t pt-8` copyright bar. Use bg-neutral text-neutral-content with
-      muted `/60` link colors and hover states.
-    - Polish: rounded-2xl/3xl, soft shadows, hover transitions (transition
-      hover:opacity-90 / hover:-translate-y-0.5), tasteful letter-spacing
-      (tracking-tight on headings), consistent max-w-6xl gutters.
+    THE HERO IS THE THESIS — this is where the page earns "premium", and it is why
+    the hero lives in the HTML (not the structured body): it needs BIG, dramatic
+    type that a component library can't give.
+    - A HUGE display headline: text-5xl sm:text-6xl lg:text-7xl, font-extrabold,
+      tracking-tight, leading-tight, with a max-w so it wraps to 2-3 lines. Make the
+      copy specific to the brief's product — never generic filler.
+    - A supporting subhead (text-lg sm:text-xl text-base-content/60, max-w-2xl), a
+      primary CTA + a secondary link, optionally a small eyebrow badge or a row of
+      trust signals. Generous vertical rhythm (py-24 sm:py-32).
+    - Make ONE deliberate move for THIS brand: a gradient or color accent on a key
+      word, an asymmetric or centered layout, a tasteful entrance — not a template.
 
-    SHAPE (adapt freely; keep exactly one data-slot):
+    Also: sticky glass nav (brand lockup + 3-4 links + a pill CTA); an atmospheric
+    layered-gradient background (3-5 large blurred orbs, decorative, -z-10, behind
+    everything); a generous footer (brand + tagline + 3 link columns + copyright).
+    Polish: rounded-2xl/3xl, soft shadows, hover transitions, tracking-tight heads,
+    consistent max-w-6xl gutters.
+
+    SHAPE (adapt freely; keep ONE data-slot, between the hero and the footer):
 
         <div class="relative min-h-screen overflow-hidden bg-base-100 text-base-content">
           <div class="pointer-events-none absolute inset-0 -z-10"> …blurred orbs… </div>
           <header class="sticky top-0 z-50 border-b border-base-300/60 bg-base-100/70 backdrop-blur-xl">
             <nav class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"> …brand · links · CTA… </nav>
           </header>
-          <main><div data-slot></div></main>
+          <section class="mx-auto max-w-6xl px-6 py-24 sm:py-32"> …HUGE headline · subhead · CTAs… </section>
+          <main class="mx-auto max-w-6xl px-6 pb-24"><div data-slot></div></main>
           <footer class="border-t border-base-300 bg-neutral text-neutral-content"> …columns · copyright… </footer>
         </div>
 

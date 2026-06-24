@@ -407,13 +407,9 @@ defmodule EzagentPluginHello.Generator do
 
       case call_llm(Prompts.shell_gen_system(), user_msg) do
         {:ok, %{content: content}} ->
-          frame = extract_html(content)
-          # Second, focused call: a CSS theme for the json-render content classes
-          # (.hl-*), matching THIS frame — so the whole page is one coherent design.
-          # A dedicated single-output call is followed far more reliably than a
-          # "also write a <style>" buried in the frame prompt.
-          theme = generate_content_theme(frame)
-          Sanitize.html(frame <> "\n<style>\n" <> theme <> "\n</style>\n")
+          # The frame now carries the hero (big design type) + nav + footer. The
+          # shadcn content below styles itself, so no separate content-theme pass.
+          content |> extract_html() |> Sanitize.html()
 
         other ->
           Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
@@ -486,9 +482,11 @@ defmodule EzagentPluginHello.Generator do
   end
 
   defp collect_classes(%{} = node) do
+    # shadcn nodes carry custom Tailwind on `className`; legacy nodes on `class`.
+    # Collect both so the per-session CSS compile generates whatever the model added.
     cls =
       case node["props"] || node[:props] do
-        %{} = p -> [p["class"] || p[:class]]
+        %{} = p -> [p["className"] || p[:className], p["class"] || p[:class]]
         _ -> []
       end
 
