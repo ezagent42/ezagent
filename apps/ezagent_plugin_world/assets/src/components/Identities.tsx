@@ -82,11 +82,13 @@ export type IdentitiesState = {
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
   create_error?: string
+  action_error?: string
 }
 
 type Props = {
   state: IdentitiesState
   onCreateAgent?: (payload: Record<string, unknown>) => void
+  onDeleteAgent?: (agentUri: string) => void
 }
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
@@ -103,11 +105,11 @@ const codeClass = "font-mono text-xs text-muted-foreground"
 const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 
-export function IdentitiesSurface({state, onCreateAgent}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "agents_table") return <AgentsTable state={state} />
   if (state.component === "entity_caps") return <EntityCaps state={state} />
-  if (state.component === "agent_detail") return <AgentDetail state={state} />
+  if (state.component === "agent_detail") return <AgentDetail state={state} onDeleteAgent={onDeleteAgent} />
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
   if (state.component === "agent_api_keys") return <AgentApiKeys state={state} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
@@ -199,6 +201,11 @@ function AgentsTable({state}: {state: IdentitiesState}) {
           </a>
         }
       />
+      {state.action_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.action_error}
+        </p>
+      )}
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-agents-table">
           <thead className={theadClass}>
@@ -280,7 +287,8 @@ function EntityCaps({state}: {state: IdentitiesState}) {
   )
 }
 
-function AgentDetail({state}: {state: IdentitiesState}) {
+function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAgent?: (agentUri: string) => void}) {
+  const [confirming, setConfirming] = React.useState(false)
   const status = (state.agent_status || {}) as Record<string, unknown>
   const grantedCaps = Array.isArray(state.granted_caps) ? state.granted_caps : []
   const rows: Array<[string, string]> = [
@@ -318,6 +326,26 @@ function AgentDetail({state}: {state: IdentitiesState}) {
       <p className="text-xs text-muted-foreground">
         派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
       </p>
+      <div className="border-t border-border pt-3">
+        {!confirming && (
+          <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirming(true)}>
+            Delete agent
+          </Button>
+        )}
+        {confirming && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-destructive">确认删除该 agent？此操作不可撤销。</span>
+            <Button
+              onClick={() => {
+                if (state.agent_uri) onDeleteAgent?.(state.agent_uri)
+              }}
+            >
+              确认删除
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>取消</Button>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

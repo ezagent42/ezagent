@@ -195,6 +195,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onDeleteAgent: (agentUri: string) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "agents.delete",
+                    args: {agent_uri: agentUri},
+                  })
+                },
                 onAdminAction: (action, args) => {
                   pushEvent?.("world:dispatch", {action, args})
                 },
@@ -404,6 +410,7 @@ type RenderContext = {
   onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onDeleteAgent: (agentUri: string) => void
   onAdminAction: (action: string, args: Record<string, unknown>) => void
   onWorkspacePluginAction: (action: string, args: Record<string, unknown>) => void
   onChatSend: (sessionUri: string, text: string, grants: string[]) => void
@@ -487,7 +494,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       )
 
     case "identities":
-      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} />
+      return <IdentitiesSurface key={component.id} state={{...context.state, component: component.type}} onCreateAgent={context.onCreateAgent} onDeleteAgent={context.onDeleteAgent} />
 
     default:
       throw new Error(
