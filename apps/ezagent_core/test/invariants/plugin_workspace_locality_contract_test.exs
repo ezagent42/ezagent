@@ -176,14 +176,14 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     },
     %{
       path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_remote_agent.ex",
-      line: 314,
+      line: 320,
       key: :kind_registry_lookup,
       line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
       reason: "existing codex remote liveness probe; pending owner-gated liveness wrapper"
     },
     %{
       path: "apps/ezagent_plugin_codex/lib/ezagent/template/codex_remote_agent.ex",
-      line: 335,
+      line: 341,
       key: :spawn_registry,
       line_substring: "case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do",
       reason: "existing codex remote instantiate ensure; SpawnRegistry is owner-gated in PR1"
