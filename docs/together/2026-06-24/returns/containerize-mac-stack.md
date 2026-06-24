@@ -23,15 +23,22 @@ containerized: **BEAM + agents + Postgres + mihomo proxy + cloudflared**, all in
 - **mihomo containerized** (`metacubex/mihomo`), replacing the host clash/mihomo.
   Config mounted read-only from gitignored `docker/secrets-prod/mihomo/config.yaml`
   (the secret JMS subscription URL stays out of git). Committed template
-  `docker/mihomo/config.example.yaml` mirrors the host :7896 scheme with the one
-  container change `bind-address: '*'`. Agents + cloudflared egress now default to
-  `http://mihomo:7896`.
+  `docker/mihomo/config.example.yaml`. **Port `7897`** (matches external Mac),
+  **cluster-internal only** (no `ports:` mapping), `bind-address: '*'`,
+  `GEOIP,CN,DIRECT` so only foreign traffic uses JMS.
+- **Proxy scoped to agents only (per Allen's analysis):** the proxy env is set
+  **only on the `ezagent` service** (`http://mihomo:7897`) — the claude/codex
+  subprocesses inherit it to reach Anthropic/OpenAI. **cloudflared now connects to
+  the CF edge directly** (proxy removed), and the BEAM core's own traffic stays
+  direct. Build-time uses the HOST proxy on `:7897`.
 - **Stale SQLite leftovers fixed:** `entrypoint.prod.sh` drops the SQLite
   `DATABASE_PATH`, now fails fast if `DATABASE_URL` is missing, and no longer
   creates a `db/` dir; `Dockerfile.prod` comments corrected (postgrex, no exqlite);
   `prod_home` volume comment no longer claims it holds the DB.
-- **Docs:** `docker/README.md` gains a "Prod stack — fully containerized" section;
-  `docker/.env.example` added.
+- **Docs:** new durable deploy guide **`docs/guide/deploy-mac-stack.md`** (full
+  architecture, proxy model, secrets setup, build/run/verify, backups, redeploy,
+  rollback, troubleshooting); `docker/README.md` gains a "Prod stack — fully
+  containerized" quick-start; `docker/.env.example` added.
 
 ## DoD artifact
 

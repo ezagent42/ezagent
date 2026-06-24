@@ -33,7 +33,7 @@ already expects PG — correct as-is).
    mkdir -p docker/secrets-prod/mihomo
    cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
    #   set proxy-providers.jms.url to the real JMS subscription
-   export DOCKER_BUILD_PROXY=http://host.docker.internal:7896   # host mihomo for build
+   export DOCKER_BUILD_PROXY=http://host.docker.internal:7897   # host proxy for build
    docker compose --env-file docker/.env -f docker/docker-compose.prod.yml build
    # bring up ONLY the safe subset (NO cloudflared → does not touch app.ezagent.chat):
    docker compose --env-file docker/.env -f docker/docker-compose.prod.yml up -d postgres mihomo ezagent
@@ -50,13 +50,17 @@ already expects PG — correct as-is).
   interpolation) → both the postgres service and `DATABASE_URL`.
 - **mihomo containerized** (`metacubex/mihomo`), config mounted read-only from
   gitignored `docker/secrets-prod/mihomo/config.yaml` (holds the secret JMS
-  subscription URL). One container-specific change vs the host scheme:
-  `bind-address: '*'` so the compose network can reach `mixed-port 7896`. Port is
-  NOT host-published. Committed template: `docker/mihomo/config.example.yaml`.
-- **Egress rewire:** `ESR_PROXY` now defaults to `http://mihomo:7896` (was
-  `host.docker.internal:7897`) for both agents and cloudflared. Build-time still
-  uses the HOST mihomo (`:7896`) because the mihomo container doesn't exist yet
-  at build.
+  subscription URL). Two container-specific changes vs the host scheme:
+  `mixed-port: 7897` (match the external Mac proxy port) and `bind-address: '*'`
+  so the compose network can reach it. **NO `ports:` mapping → 7897 is
+  cluster-internal only** (not reachable from host/LAN). `GEOIP,CN,DIRECT` rule so
+  only foreign traffic uses JMS. Committed template: `docker/mihomo/config.example.yaml`.
+- **Egress scope (refined):** the proxy is set **only on the `ezagent` service**
+  (`ESR_PROXY` default `http://mihomo:7897`) so the spawned claude/codex
+  subprocesses reach Anthropic/OpenAI. **cloudflared connects to the CF edge
+  directly** (no proxy), and the BEAM core's own traffic stays direct
+  (Feishu/Postgres + Elixir HTTP clients ignore the env). Build-time uses the HOST
+  proxy (`:7897`) since the mihomo container doesn't exist yet at build.
 - **Safe verification:** bring up `postgres mihomo ezagent` by name; cloudflared
   is left out so testing never exposes the real prod tunnel (#65 boundary).
 

@@ -9,15 +9,15 @@
 #   cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
 #   # edit docker/secrets-prod/mihomo/config.yaml → set proxy-providers.jms.url
 #
-# This mirrors the host mihomo scheme on :7896 (~/mihomo-test/config.yaml) with
-# ONE container-specific change: bind-address must be '*' (0.0.0.0) so other
-# compose services (ezagent, cloudflared) can reach it — the host instance binds
-# 127.0.0.1 only.
+# This mirrors the host mihomo scheme (~/mihomo-test/config.yaml) with two
+# container-specific changes: (1) mixed-port 7897 to match the external Mac proxy
+# port; (2) bind-address '*' (0.0.0.0) so the ezagent container can reach it — the
+# host instance binds 127.0.0.1 only. The port is NOT published to the host, so it
+# stays cluster-internal.
 
-mixed-port: 7896
-# CONTAINER CHANGE: bind all interfaces so the compose network can reach 7896
-# (the host instance uses `bind-address: 127.0.0.1`). The port is NOT published
-# to the host, so this stays inside the compose network.
+mixed-port: 7897
+# CONTAINER CHANGE: bind all interfaces so the compose network can reach 7897
+# (the host instance uses `bind-address: 127.0.0.1`). NOT published to the host.
 bind-address: '*'
 allow-lan: true
 external-controller: 127.0.0.1:9896
@@ -47,4 +47,6 @@ proxy-groups:
 
 rules:
   - DOMAIN-SUFFIX,jmssub.net,DIRECT
+  # Domestic traffic stays direct; only foreign (Anthropic/OpenAI) goes via JMS.
+  - GEOIP,CN,DIRECT
   - MATCH,auto

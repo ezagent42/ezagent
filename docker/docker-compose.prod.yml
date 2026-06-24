@@ -11,10 +11,11 @@
 #     ${HOME}/.cloudflared/8e249ea0-...json → prod tunnel credentials
 #
 #   build: docker compose -f docker/docker-compose.prod.yml build \
-#            --build-arg HTTP_PROXY=http://host.docker.internal:7896 \
-#            --build-arg HTTPS_PROXY=http://host.docker.internal:7896
-#          (build runs before the mihomo container exists → use the HOST mihomo
-#           on :7896 for build-time fetches; runtime egress uses the mihomo SERVICE.)
+#            --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
+#            --build-arg HTTPS_PROXY=http://host.docker.internal:7897
+#          (build runs before the mihomo container exists → use the HOST proxy on
+#           :7897 for build-time hex/npm/CLI fetches; runtime agent egress uses the
+#           mihomo SERVICE on the compose network.)
 #   run:   docker compose -f docker/docker-compose.prod.yml up -d
 #
 # Distinct compose PROJECT name so prod never collides with the dev stack (both
@@ -40,20 +41,27 @@ services:
       timeout: 5s
       retries: 20
 
-  # ----- mihomo: containerized egress proxy (replaces the host clash/mihomo on
-  # :7897/:7896). Agents' claude/codex subprocesses + cloudflared reach the
-  # internet through this. Config (with the secret JMS subscription) is mounted
-  # read-only from the gitignored secrets dir; see docker/mihomo/config.example.yaml. -----
+  # ----- mihomo: containerized egress proxy (replaces the host clash/mihomo).
+  # ONLY the agent (claude/codex) subprocesses need it — to reach
+  # api.anthropic.com / api.openai.com past the GFW. ezagent's own traffic
+  # (Feishu=China-direct, Postgres=internal) and cloudflared (tunnel→CF edge)
+  # do NOT go through it. So the proxy env is set ONLY on the `ezagent` service
+  # (the agents inherit it); see that service below.
+  #
+  # mixed-port is 7897 to match the external Mac proxy port. There is deliberately
+  # NO `ports:` mapping → 7897 is reachable ONLY inside the compose network, never
+  # from the host or LAN. (bind-address: '*' in the config is required so sibling
+  # containers can reach it; the host instance binds 127.0.0.1 only.)
+  # Config (with the secret JMS subscription) is mounted read-only from the
+  # gitignored secrets dir; see docker/mihomo/config.example.yaml.
   mihomo:
     image: metacubex/mihomo:latest
     restart: unless-stopped
-    # The mounted config MUST bind 0.0.0.0 (bind-address: '*') so other compose
-    # services can reach mixed-port 7896 — the host instance binds 127.0.0.1 only.
     volumes:
       - ./secrets-prod/mihomo:/root/.config/mihomo:ro
     healthcheck:
-      # mixed-port 7896 accepting connections = proxy is up. Image ships wget.
-      test: ["CMD-SHELL", "wget -q -T2 -O- http://127.0.0.1:7896 >/dev/null 2>&1 || true; nc -z 127.0.0.1 7896 || exit 1"]
+      # mixed-port 7897 accepting connections = proxy is up. Image ships wget.
+      test: ["CMD-SHELL", "wget -q -T2 -O- http://127.0.0.1:7897 >/dev/null 2>&1 || true; nc -z 127.0.0.1 7897 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -96,12 +104,15 @@ services:
       # the rpc helper (RELEASE_COOKIE).
       RELEASE_DISTRIBUTION: name
       RELEASE_NODE: ezagent_runtime@127.0.0.1
-      # Agents' claude/codex subprocesses reach providers via the mihomo SERVICE.
-      # Postgres (compose net), Feishu + localhost go direct (NO_PROXY).
-      HTTP_PROXY: ${ESR_PROXY:-http://mihomo:7896}
-      HTTPS_PROXY: ${ESR_PROXY:-http://mihomo:7896}
-      http_proxy: ${ESR_PROXY:-http://mihomo:7896}
-      https_proxy: ${ESR_PROXY:-http://mihomo:7896}
+      # Proxy is set HERE ONLY (not on cloudflared) — the spawned claude/codex
+      # subprocesses inherit it to reach api.anthropic.com / api.openai.com via
+      # the mihomo SERVICE. Postgres (compose net), Feishu + localhost go direct
+      # (NO_PROXY). Elixir's own HTTP clients don't auto-honor these env vars, so
+      # the BEAM core's traffic stays direct regardless.
+      HTTP_PROXY: ${ESR_PROXY:-http://mihomo:7897}
+      HTTPS_PROXY: ${ESR_PROXY:-http://mihomo:7897}
+      http_proxy: ${ESR_PROXY:-http://mihomo:7897}
+      https_proxy: ${ESR_PROXY:-http://mihomo:7897}
       NO_PROXY: "localhost,127.0.0.1,::1,postgres,mihomo,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
       no_proxy: "localhost,127.0.0.1,::1,postgres,mihomo,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
     volumes:
@@ -132,13 +143,10 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
-    # cloudflared reaches the cloudflare edge through the mihomo SERVICE (the host
-    # is behind a proxy-required network). Internal compose names go direct.
-    environment:
-      HTTPS_PROXY: ${ESR_PROXY:-http://mihomo:7896}
-      https_proxy: ${ESR_PROXY:-http://mihomo:7896}
-      NO_PROXY: "ezagent,postgres,mihomo,localhost,127.0.0.1,::1"
-      no_proxy: "ezagent,postgres,mihomo,localhost,127.0.0.1,::1"
+    # NO proxy: the tunnel connects to the Cloudflare edge DIRECTLY (it does not
+    # need the JMS proxy, and routing it through mihomo only adds a hop). If this
+    # specific network ever can't reach the CF edge directly, re-add
+    # HTTPS_PROXY=http://mihomo:7897 here as a fallback.
     volumes:
       - ./cloudflared/prod-config.yml:/etc/cloudflared/config.yml:ro
       # ezagent-prod tunnel (8e249ea0) credentials (read-only) from the host.
@@ -146,8 +154,6 @@ services:
     depends_on:
       ezagent:
         condition: service_healthy
-      mihomo:
-        condition: service_started
 
 volumes:
   prod_home:   # stable prod profile (credentials, snapshots, logs, agent dirs) — survives redeploys

@@ -44,6 +44,12 @@ Reachable at `http://100.64.0.27:10042` (Tailscale — `feedback_remote_browser_
 **cloudflared** fronting `app.ezagent.chat`. The only host dependency is Docker
 + the gitignored secrets.
 
+> Proxy scope: mihomo (`mixed-port 7897`, cluster-internal — no host port) is
+> used **only by the agent (claude/codex) subprocesses** to reach
+> Anthropic/OpenAI past the GFW. It is configured **only on the `ezagent`
+> service** (the agents inherit its env). cloudflared connects to the CF edge
+> **directly**, and ezagent's own traffic (Feishu/Postgres) goes direct too.
+
 ```bash
 # 1. compose interpolation secret (Postgres password)
 cp docker/.env.example docker/.env        # set POSTGRES_PASSWORD=$(openssl rand -hex 24)
@@ -56,9 +62,9 @@ cp docker/mihomo/config.example.yaml docker/secrets-prod/mihomo/config.yaml
 # 3. app cookie env_file (docker/secrets-prod/ezagent.env) + the prod tunnel
 #    credential (~/.cloudflared/8e249ea0-...json) must exist (as before).
 
-# 4. build — runtime egress uses the mihomo SERVICE, but the BUILD runs before
-#    that container exists, so point build-time fetches at the HOST mihomo (:7896):
-export DOCKER_BUILD_PROXY=http://host.docker.internal:7896
+# 4. build — runtime agent egress uses the mihomo SERVICE, but the BUILD runs
+#    before that container exists, so point build-time fetches at the HOST proxy (:7897):
+export DOCKER_BUILD_PROXY=http://host.docker.internal:7897
 docker compose --env-file docker/.env -f docker/docker-compose.prod.yml build
 
 # 5. run (mihomo + postgres come up first; ezagent waits for PG healthy)
