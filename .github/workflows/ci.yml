@@ -73,10 +73,14 @@ jobs:
         run: mix deps.get
 
       - name: Install JS deps (assets esbuild needs node_modules)
+        # --no-frozen-lockfile mirrors the lead's local `pnpm install`: the goal
+        # here is to populate node_modules so esbuild can resolve react/zod during
+        # `mix compile`, NOT to gate lockfile integrity (a separate concern; the
+        # CI default would otherwise be --frozen-lockfile).
         run: |
-          pnpm --dir apps/ezagent_web/assets install --frozen-lockfile
-          pnpm --dir apps/ezagent_plugin_world/assets install --frozen-lockfile
-          pnpm --dir apps/ezagent_plugin_hello/assets install --frozen-lockfile
+          pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile
+          pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile
+          pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile
 
       - name: Create + migrate test DB
         run: |
