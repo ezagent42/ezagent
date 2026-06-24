@@ -357,23 +357,9 @@ defmodule EzagentPluginHello.Generator do
   defp scope_of(%{"scope" => s}) when s in ["shell", "both"], do: String.to_atom(s)
   defp scope_of(_), do: :body
 
-  defp classify_plan(%{"mode" => "complex"} = plan) do
-    case briefs_of(plan) do
-      briefs when length(briefs) >= 2 ->
-        title = plan |> Map.get("title", "") |> to_string()
-
-        sections =
-          briefs
-          |> Enum.with_index()
-          |> Enum.map(fn {brief, i} -> %{id: "s#{i}", brief: brief} end)
-
-        {:complex, %{title: title, sections: sections}}
-
-      _ ->
-        {:simple}
-    end
-  end
-
+  # Fan-out (complex) is disabled for the shadcn era — the per-section worker
+  # prompt predates shadcn and produces invalid sub-trees, so it always failed and
+  # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
   defp classify_plan(_), do: {:simple}
 
   defp briefs_of(%{"sections" => sections}) when is_list(sections) do
