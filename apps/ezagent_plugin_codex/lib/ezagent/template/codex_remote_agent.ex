@@ -227,6 +227,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
           codex_path,
           test_mode
         )
+        |> Map.put(:bridge_topic, remote_bridge_topic(agent_uri))
 
       case EzagentPluginCodex.BridgeSidecar.start(agent_uri, params) do
         {:ok, _pid} -> :ok
@@ -251,6 +252,11 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     _ = EzagentPluginCodex.BridgeSidecar.stop(agent_uri)
     _ = EzagentPluginCodex.AppServer.stop(agent_uri)
     :ok
+  end
+
+  @doc false
+  def remote_bridge_topic(%URI{} = agent_uri) do
+    EzagentPluginCodex.CodexRemoteBridgeAdapter.channel_topic_prefix() <> URI.to_string(agent_uri)
   end
 
   # ---- ensure_subprocess_alive (respawn on cold restart) ------------------

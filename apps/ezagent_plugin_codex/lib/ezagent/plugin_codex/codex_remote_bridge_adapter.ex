@@ -21,7 +21,7 @@ defmodule EzagentPluginCodex.CodexRemoteBridgeAdapter do
   defdelegate socket_path, to: EzagentPluginCodex.BridgeAdapter
 
   @impl Ezagent.AgentBridge.Adapter
-  defdelegate channel_topic_prefix, to: EzagentPluginCodex.BridgeAdapter
+  def channel_topic_prefix, do: "agent_bridge:codex-remote:"
 
   @impl Ezagent.AgentBridge.Adapter
   defdelegate join_info(params, socket), to: EzagentPluginCodex.BridgeAdapter

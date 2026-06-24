@@ -379,9 +379,9 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # `Home.path("<ns>-agents")/<ws>/<name>` — BYTE-IDENTICAL to the pre-P1
   # `Ezagent.Sandbox.ConfigDir.path/2` layout (Locked-contract #7). The namespaces
   # are the catalog declared by Template classes' `config_dir_namespace/0` (cc,
-  # codex); listed here statically because the resolver allowlist is immutable at
+  # codex, codex-remote); listed here statically because the resolver allowlist is immutable at
   # boot and must not depend on plugin Application start ordering.
-  @config_dir_namespaces ["cc", "codex"]
+  @config_dir_namespaces ["cc", "codex", "codex-remote"]
 
   # Resource-unification P2b — uploads type. Chat attachments live at
   # `Home.path("uploads")/<ws>/<name>` (ws-partitioned). `uploads_authority/2`
