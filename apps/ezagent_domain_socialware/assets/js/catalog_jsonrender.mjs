@@ -47,9 +47,13 @@ function Icon({name, className}) {
 }
 
 // ── Tone (full-bleed section background) variants ────────────────────────────
+// `default` is TRANSPARENT so the hand-authored HTML shell's decorative
+// background (gradients / orbs / mesh) shows THROUGH the json-render content —
+// the content "floats" on the atmosphere rather than covering it with opaque
+// blocks. Explicit tones still paint a band when the page wants contrast.
 const TONE = {
-  default: "bg-base-100 text-base-content",
-  muted: "bg-base-200 text-base-content",
+  default: "text-base-content",
+  muted: "bg-base-200/50 text-base-content backdrop-blur-sm",
   dark: "bg-neutral text-neutral-content",
   brand: "bg-gradient-to-br from-primary via-primary to-accent text-primary-content",
 }
@@ -166,7 +170,7 @@ const {registry} = defineRegistry(catalog, {
     card: ({props, children}) =>
       h(
         "div",
-        {className: "rounded-2xl border border-base-300 bg-base-100 p-6 shadow-sm transition hover:shadow-md"},
+        {className: "rounded-2xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl p-6 shadow-sm transition hover:shadow-md"},
         props.title ? h("h3", {className: "text-lg font-semibold"}, str(props.title)) : null,
         h("div", {className: "mt-2 space-y-3"}, children),
       ),
@@ -203,7 +207,7 @@ const {registry} = defineRegistry(catalog, {
     feature: ({props}) =>
       h(
         "div",
-        {className: "group rounded-2xl border border-base-300 bg-base-100 p-6 text-base-content shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10"},
+        {className: "group rounded-2xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl p-6 text-base-content shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/10"},
         h("div", {className: "mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent text-primary-content shadow-md shadow-primary/30"}, h(Icon, {name: str(props.icon), className: "h-6 w-6"})),
         props.title ? h("h3", {className: "text-lg font-bold"}, str(props.title)) : null,
         props.text ? h("p", {className: "mt-2 text-sm leading-6 opacity-60"}, str(props.text)) : null,
@@ -260,7 +264,7 @@ const {registry} = defineRegistry(catalog, {
     testimonial: ({props}) =>
       h(
         "figure",
-        {className: "flex h-full flex-col justify-between rounded-2xl border border-base-300 bg-base-100 p-6 text-base-content shadow-sm"},
+        {className: "flex h-full flex-col justify-between rounded-2xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl p-6 text-base-content shadow-sm"},
         h("blockquote", {className: "text-base leading-7 opacity-80"}, "“", str(props.quote), "”"),
         h(
           "figcaption",
@@ -281,7 +285,7 @@ const {registry} = defineRegistry(catalog, {
           h("div", {className: "flex flex-wrap items-center justify-center gap-4"}, children),
         ),
       ),
-    logo: ({props}) => h("div", {className: "rounded-xl border border-base-300 bg-base-100 px-5 py-2.5 text-base font-bold text-base-content/70"}, str(props.name)),
+    logo: ({props}) => h("div", {className: "rounded-xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl px-5 py-2.5 text-base font-bold text-base-content/70"}, str(props.name)),
 
     pricing: ({props, children}) =>
       band(
@@ -303,7 +307,7 @@ const {registry} = defineRegistry(catalog, {
       const featured = str(props.featured) === "true"
       return h(
         "div",
-        {className: `flex flex-col rounded-2xl border bg-base-100 p-6 text-base-content shadow-sm ${featured ? "border-primary ring-2 ring-primary/30 shadow-lg shadow-primary/10" : "border-base-300"}`},
+        {className: `flex flex-col rounded-2xl border bg-base-100/70 backdrop-blur-xl p-6 text-base-content shadow-sm ${featured ? "border-primary ring-2 ring-primary/30 shadow-lg shadow-primary/10" : "border-base-300"}`},
         featured ? h("span", {className: "mb-3 inline-block w-fit rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-content"}, "推荐") : null,
         h("h3", {className: "text-lg font-bold"}, str(props.name)),
         h("div", {className: "mt-2 flex items-end gap-1"}, h("span", {className: "text-4xl font-extrabold tracking-tight"}, str(props.price)), props.period ? h("span", {className: "pb-1 text-sm opacity-50"}, "/" + str(props.period)) : null),
@@ -326,7 +330,7 @@ const {registry} = defineRegistry(catalog, {
     qa: ({props}) =>
       h(
         "details",
-        {className: "group rounded-xl border border-base-300 bg-base-100 p-5 text-base-content [&_summary::-webkit-details-marker]:hidden"},
+        {className: "group rounded-xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl p-5 text-base-content [&_summary::-webkit-details-marker]:hidden"},
         h("summary", {className: "flex cursor-pointer items-center justify-between gap-4 font-semibold"}, str(props.question), h("span", {className: "text-primary transition group-open:rotate-45"}, "+")),
         h("p", {className: "mt-3 text-sm leading-6 opacity-70"}, str(props.answer)),
       ),
@@ -339,7 +343,7 @@ const {registry} = defineRegistry(catalog, {
           "div",
           {className: "space-y-10"},
           props.title ? h("h2", {className: "text-center text-2xl font-bold tracking-tight sm:text-3xl"}, str(props.title)) : null,
-          h("div", {className: "grid gap-6 sm:grid-cols-3"}, React.Children.map(children, (c, i) => h("div", {className: "relative rounded-2xl border border-base-300 bg-base-100 p-6 text-base-content shadow-sm"}, h("div", {className: "mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-bold text-primary-content"}, String(i + 1)), c))),
+          h("div", {className: "grid gap-6 sm:grid-cols-3"}, React.Children.map(children, (c, i) => h("div", {className: "relative rounded-2xl border border-base-300/60 bg-base-100/70 backdrop-blur-xl p-6 text-base-content shadow-sm"}, h("div", {className: "mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-bold text-primary-content"}, String(i + 1)), c))),
         ),
       ),
     step: ({props}) =>

@@ -100,10 +100,15 @@ defmodule EzagentPluginHello.Prompts do
       (text-sm text-base-content/70 hover:text-base-content). A pill CTA button
       (rounded-full px-5 py-2 bg-gradient-to-r from-primary to-accent
       text-primary-content text-sm font-semibold shadow-lg shadow-primary/25).
-    - Atmospheric background: 2-3 absolute blurred gradient orbs behind content
-      (e.g. `absolute -top-32 right-0 h-[36rem] w-[36rem] rounded-full
-      bg-primary/20 blur-[120px]`) inside a `relative overflow-hidden` wrapper,
-      optionally a faint dotted/grid radial. Purely decorative <div>s.
+    - Atmospheric background — THIS CARRIES THE BEAUTY. The body content injected
+      into the slot is TRANSLUCENT GLASS and floats on TOP of this background, so
+      make the background rich and the visual star: a layered gradient mesh of
+      3-5 LARGE blurred orbs (e.g. `absolute -top-40 right-0 h-[42rem] w-[42rem]
+      rounded-full bg-primary/25 blur-[130px]`, plus accent/secondary ones at
+      other corners and a soft center glow), inside a `relative overflow-hidden`
+      wrapper, optionally a faint dotted/grid radial overlay at low opacity. Make
+      it colorful and premium (Linear / Vercel aesthetic). Purely decorative
+      <div>s, pointer-events-none, behind content (-z-10).
     - Generous, refined footer: a top CTA-ish band is fine; brand + one-line
       tagline, 3 link columns (product / company / resources style), social row,
       a `border-t pt-8` copyright bar. Use bg-neutral text-neutral-content with

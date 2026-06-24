@@ -34,8 +34,9 @@ export function PageShell({brand, children}) {
     h(
       "div",
       {className: "pointer-events-none fixed inset-0 -z-10", "aria-hidden": "true"},
-      h("div", {className: "absolute -top-40 left-1/4 h-96 w-96 rounded-full bg-primary/20 blur-3xl"}),
-      h("div", {className: "absolute top-1/3 -right-40 h-96 w-96 rounded-full bg-accent/20 blur-3xl"}),
+      h("div", {className: "absolute -top-40 -left-20 h-[42rem] w-[42rem] rounded-full bg-primary/25 blur-[130px]"}),
+      h("div", {className: "absolute top-1/4 -right-32 h-[40rem] w-[40rem] rounded-full bg-accent/25 blur-[130px]"}),
+      h("div", {className: "absolute bottom-0 left-1/3 h-[34rem] w-[34rem] rounded-full bg-secondary/20 blur-[120px]"}),
       h("div", {className: "absolute inset-0 bg-[radial-gradient(circle_at_1px_1px,theme(colors.base-300)_1px,transparent_0)] bg-[size:32px_32px] opacity-40"}),
     ),
 
