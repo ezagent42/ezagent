@@ -449,6 +449,35 @@ defmodule EzagentPluginHello.Generator do
 
   defp strip_frame_nodes(node), do: node
 
+  # Section-level blocks are meant to be TOP-LEVEL, full-width sections. The model
+  # often wrongly nests them inside a `section` (whose grid/stack layout then
+  # squishes them into a cell — e.g. testimonials become 1-char strips). Hoist any
+  # such block OUT of its `section` wrapper, recursively, so each renders full
+  # width with its own grid intact. Sections wrapping only leaves (card/text/…)
+  # are kept.
+  @hoistable_blocks ~w(hero features stats testimonials logos pricing faq steps cta split banner)
+  defp unwrap_sections(%{"children" => children} = node) when is_list(children) do
+    new_children =
+      Enum.flat_map(children, fn child ->
+        child = unwrap_sections(child)
+
+        case child do
+          %{"type" => "section", "children" => kids} when is_list(kids) ->
+            if Enum.any?(kids, &hoistable_block?/1), do: kids, else: [child]
+
+          _ ->
+            [child]
+        end
+      end)
+
+    Map.put(node, "children", new_children)
+  end
+
+  defp unwrap_sections(node), do: node
+
+  defp hoistable_block?(%{"type" => t}), do: t in @hoistable_blocks
+  defp hoistable_block?(_), do: false
+
   # Shell-only path (scope == :shell): regenerate just the frame, keep the
   # existing json-render body. No page_gen, so the content is untouched.
   defp regenerate_shell_only(session_uri, builder, title) do
@@ -506,7 +535,7 @@ defmodule EzagentPluginHello.Generator do
     # The HTML frame already provides nav / footer / banner; strip any the model
     # emitted into the BODY (it doesn't always obey the prompt) so they don't
     # double up with the shell.
-    spec = strip_frame_nodes(spec)
+    spec = spec |> strip_frame_nodes() |> unwrap_sections()
     # The frame: reused when stable (body-only edit), regenerated when `reframe`
     # (scope == :both). The body's AI `class` styling is compiled into the
     # per-session CSS by `store_frame` after the body lands.
