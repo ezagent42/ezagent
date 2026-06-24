@@ -612,21 +612,30 @@ defmodule EzagentPluginHello.Generator do
 
   defp extract_html(_), do: ""
 
+  # Backend switch: `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI
+  # (much stronger designer); otherwise the DeepSeek HTTP API. Both return
+  # `{:ok, %{content: ...}}`.
   defp call_llm(system, user_text) do
-    case api_key() do
-      key when is_binary(key) and key != "" ->
-        ApiClient.chat_completion(%{
-          api_url: api_url(),
-          api_key: key,
-          model: model(),
-          messages: [
-            %{role: "system", content: system},
-            %{role: "user", content: user_text}
-          ]
-        })
+    case System.get_env("HELLO_LLM_BACKEND") do
+      "claude_code" ->
+        EzagentPluginHello.LLM.ClaudeCode.chat(system, user_text)
 
       _ ->
-        {:error, :no_api_key}
+        case api_key() do
+          key when is_binary(key) and key != "" ->
+            ApiClient.chat_completion(%{
+              api_url: api_url(),
+              api_key: key,
+              model: model(),
+              messages: [
+                %{role: "system", content: system},
+                %{role: "user", content: user_text}
+              ]
+            })
+
+          _ ->
+            {:error, :no_api_key}
+        end
     end
   end
 
