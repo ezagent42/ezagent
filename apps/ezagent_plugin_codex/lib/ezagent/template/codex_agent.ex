@@ -552,7 +552,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
       {:ok, :started, _pid} -> {:ok, :started}
       {:ok, :already_started, _pid} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
@@ -617,10 +617,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
 
   defp agent_kind_alive?(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
 
   defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do

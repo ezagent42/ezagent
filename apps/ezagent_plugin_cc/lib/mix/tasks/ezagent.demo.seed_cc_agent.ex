@@ -88,50 +88,42 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   end
 
   defp spawn_agent_if_absent(%URI{} = agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} ->
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
+      {:ok, :already_started, _pid} ->
         Mix.shell().info("  agent already alive: #{URI.to_string(agent_uri)}")
         :ok
 
-      :error ->
-        case Ezagent.SpawnRegistry.spawn(agent_uri) do
-          {:ok, _pid} ->
-            Mix.shell().info("  spawned: #{URI.to_string(agent_uri)}")
-            :ok
+      {:ok, :started, _pid} ->
+        Mix.shell().info("  spawned: #{URI.to_string(agent_uri)}")
+        :ok
 
-          {:error, {:already_started, _pid}} ->
-            :ok
-
-          {:error, reason} ->
-            {:error, {:spawn_failed, reason}}
-        end
+      {:error, reason} ->
+        {:error, {:spawn_failed, reason}}
     end
   end
 
   defp ensure_session_alive(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, _pid} ->
+    # Try a rehydrate-on-reference ensure — snapshot may exist from the
+    # previous static-child boot. If still missing, surface the error so the
+    # caller prints the friendly wizard hint.
+    case Ezagent.LocalRuntime.ensure_started_detailed(session_uri) do
+      {:ok, :already_started, _pid} ->
         :ok
 
-      :error ->
-        # Try a rehydrate-on-reference spawn — snapshot may exist from
-        # the previous static-child boot. If still missing, surface the
-        # error so the caller prints the friendly wizard hint.
-        case Ezagent.SpawnRegistry.spawn(session_uri) do
-          {:ok, _pid} ->
-            # Re-bind to workspace structurally derived from session URI —
-            # same invariant as the wizard's create path (SPEC #324).
-            :ok =
-              Ezagent.WorkspaceRegistry.bind(
-                session_uri,
-                Ezagent.Capability.workspace_of(session_uri)
-              )
+      {:ok, :started, _pid} ->
+        # Re-bind to workspace structurally derived from session URI —
+        # same invariant as the wizard's create path (SPEC #324). Only on a
+        # FRESH spawn (an already-alive session is already bound).
+        :ok =
+          Ezagent.WorkspaceRegistry.bind(
+            session_uri,
+            Ezagent.Capability.workspace_of(session_uri)
+          )
 
-            :ok
+        :ok
 
-          {:error, _} ->
-            {:error, {:session_missing, URI.to_string(session_uri)}}
-        end
+      {:error, _} ->
+        {:error, {:session_missing, URI.to_string(session_uri)}}
     end
   end
 
