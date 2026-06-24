@@ -682,6 +682,36 @@ the same tables. If the answer is "yes, harden", the migration
 is SPEC + a sweep PR across every registry — out of scope for
 the ExternalMirror PR sequence.
 
+### Plugin-contributed resource types are DROPPED on a Registry restart — OPEN (MED, latent prod bug, surfaced PR-2 resource-types)
+
+> **OPEN, surfaced 2026-06-24 (PR-2 plugin-resource-type-registration).**
+> `Ezagent.Resource.FsResolver.Registry` is a `:protected`-table-owning GenServer.
+> Plugin-contributed resource types are written via `register_all/1` at each
+> plugin's `Ezagent.Plugin.boot/2` Phase 2. On a Registry GenServer **restart**,
+> `init/1` re-applies ONLY core `boot_registrations/0` (`cc-agents`,
+> `codex-agents`, `uploads`) — **plugin types are NOT replayed** (the Registry
+> moduledoc states this as an accepted trade-off). So after any Registry crash, a
+> live release loses EVERY plugin-contributed resource type until those plugins
+> re-boot (which they never do — they already booted). For the first adopter this
+> means `world-layouts` resolution silently fails post-restart.
+>
+> **Verbatim evidence** (instrumented full umbrella `mix test`, 2026-06-24):
+> `init/1` ran 4× (1 boot + 3 restarts triggered by `ezagent_core`'s
+> restart-resilience tests). World registered once at boot
+> (`register_all=[{"world-layouts", …}] -> :ok`), but by the world test phase the
+> table held only `[cc-agents, uploads, codex-agents]` — `world-layouts` gone,
+> while `world_started=true`. Same class for the sibling EtsOwner registries
+> (Behavior/Template/AgentFlavor), which the moduledoc admits come back empty too.
+>
+> **Scope decision**: NOT fixed in PR-2 (the production boot flow is correct;
+> only shared-BEAM test state is affected, and the affected suites were made
+> self-contained via `Ezagent.World.ResourceTypeCase.ensure_world_layouts!/0` +
+> the inline ensure in `EzagentWeb.WorldHostRoutingTest`). The wiring fix
+> (replay plugin types on restart, OR prevent the restart, OR core re-publishes)
+> must preserve HIGH-1 (a plugin can never shadow a core type / alias a core
+> backend) and is therefore its own brainstorm → spec → codex-review PR.
+> **Owner**: TBD (needs Allen 拍板 on the restart-replay mechanism).
+
 ### Architecture audit follow-ups
 From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 1. **DONE** — `Capability.cross_workspace?/2` `apply/3` →

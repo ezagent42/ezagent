@@ -30,7 +30,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "display_name" => caller_display_name(caller)
     }
 
-    layout = layout_for(workspace)
+    layout = layout_for(workspace, caller)
     if connected?(socket), do: subscribe_global_inbound(caller)
 
     state =
@@ -63,7 +63,8 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_params(params, uri, socket) do
     route = Ezagent.World.Routes.route_for(params, uri)
     workspace = socket.assigns.current_workspace_uri
-    layout = layout_for_route(route, workspace)
+    caller = Map.get(socket.assigns, :current_entity_uri)
+    layout = layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
     state = state_for_route(route, socket, layout)
     socket = maybe_subscribe_pty(socket, route)
@@ -450,10 +451,23 @@ defmodule EzagentPluginWorld.WorldLive do
     Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
   end
 
-  defp layout_for(%URI{} = workspace_uri),
-    do: Ezagent.World.LayoutManager.read_layout(workspace_uri)
+  # R-3 (codex HIGH-4): the persisted-layout read threads the CALLER's
+  # authenticated scope (`caller` = `current_entity_uri`) SEPARATELY from the
+  # target `workspace_uri`. The resolver's authority check then compares the two
+  # independently-sourced `<ws>` values, so a mount whose caller is not
+  # authoritative for the target workspace falls back to `default_layout`
+  # (fail-closed) rather than reading the foreign layout.
+  defp layout_for(%URI{} = workspace_uri, %URI{} = caller_uri) do
+    case Ezagent.URI.workspace_name(caller_uri) do
+      {:ok, ws} ->
+        Ezagent.World.LayoutManager.read_layout(workspace_uri, %{workspace: ws})
 
-  defp layout_for(_),
+      :error ->
+        Ezagent.World.LayoutManager.default_layout(workspace_uri)
+    end
+  end
+
+  defp layout_for(_, _),
     do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
   # The /sessions landing reads its (multi-slot, user-arrangeable) persisted
@@ -462,10 +476,10 @@ defmodule EzagentPluginWorld.WorldLive do
   # registry-validated layout — a route that produces an unregistered slot
   # fails loudly here (and is caught pre-merge by the layout gate) instead of
   # silently falling through to a renderer default.
-  defp layout_for_route(%{component: "sessions_table"}, workspace_uri),
-    do: layout_for(workspace_uri)
+  defp layout_for_route(%{component: "sessions_table"}, workspace_uri, caller_uri),
+    do: layout_for(workspace_uri, caller_uri)
 
-  defp layout_for_route(%{component: component, title: title}, workspace_uri) do
+  defp layout_for_route(%{component: component, title: title}, workspace_uri, _caller_uri) do
     scope_uri =
       if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
 

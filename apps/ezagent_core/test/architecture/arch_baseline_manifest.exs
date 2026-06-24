@@ -164,12 +164,17 @@
   # `HomePathExceptions`. Reconciles with the uri_query.scan
   # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
   #
-  # World PR-2 (SPEC 2026-06-21 §4.2) adds one more sanctioned outside-core
-  # caller: `Ezagent.World.LayoutManager.layout_dir/0`, the required
-  # EZAGENT_HOME-backed runtime layout JSON store. It is also exact-anchored in
-  # `HomePathExceptions`, so the hard-fail-new URI scanner still constrains it.
-  # arch-cap-bump: raw_home_path_outside_core: World PR-2 layout_dir/0 runtime layout store
-  raw_home_path_outside_core: 2,
+  # World PR-2 (plugin-resource SPEC §4.4) migrated `Ezagent.World.LayoutManager`
+  # OFF raw `Home.path("world/layouts")` ONTO the `resource://<ws>/world-layouts`
+  # seam (`Ezagent.Resource.FsResolver.resolve/2`). The runtime LayoutManager now
+  # has NO `Home.path` call; the one-shot `mix ezagent.world.migrate_layouts`
+  # operator task's `Home.path` reads live in `ezagent_core` (excluded from this
+  # outside-core metric by construction, like the `Mix.Tasks.Ezagent.Home.*`
+  # tasks) and are exact-anchored in `HomePathExceptions`. RATCHET-DOWN 2 → 1:
+  # the codex app-server SUN_LEN socket (`codex_agent.ex`) is the sole remaining
+  # genuinely un-migratable outside-core caller. (Lowering a cap needs no
+  # arch-cap-bump annotation; only raising does.)
+  raw_home_path_outside_core: 1,
   # Cleanup-1 FF-5 fix: `mcp_config_writer.ex` no longer hardcodes
   # `Path.expand("~/.ezagent")` — its default dir now resolves through the
   # post-Resource-unification `system://` seam (Ezagent.System.FsResolver). The
