@@ -256,7 +256,9 @@
   # counts 7). The PR-2 applied-turn marker remains.
   # arch-cap-bump: cc-headless SDK sync_result state slice persists conversation/error/token fields (+5)
   # arch-cap-bump: #956 hello Surface.handle_set_shell persists the generated site shell — {:set, :shell} + {:set, :shell_css} (within the surface slice, cross-slice stays 0); net +1
-  set_effect_sites: 127,
+  # arch-cap-bump: ezagent_plugin_kanban (kanban Behavior) 把整棵节点树+drop历史收在单一 `:tree`
+  #   key、所有写动作经唯一的 `commit/1` 收敛，全插件只新增 1 处 set-effect 站点（结构最小）。127→128。
+  set_effect_sites: 128,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

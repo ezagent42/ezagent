@@ -1,8 +1,14 @@
 import React from "react"
-import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
+import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Network, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
+import {Kanban} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
+
+// chat 里 kanban 卡片消息的 sentinel 前缀（分享时发，气泡识别后渲染成可点卡片）。
+const KANBAN_CARD_TAG = "[[kanban]]"
+// 单条 attachment 卡片：`[[artifact]] 名称 ::: url`，气泡渲染成可点卡片，点击打开 url。
+const ARTIFACT_CARD_TAG = "[[artifact]]"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
@@ -88,6 +94,7 @@ type Props = {
   onInvite: (sessionUri: string, member: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
+  onKanbanAction: (action: string, args: Record<string, unknown>) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
@@ -110,13 +117,21 @@ export function Conversation({
   onInvite,
   onPtyInput,
   onPtyResize,
+  onKanbanAction,
   onServerEvent,
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
-  const activeView = state.active_view === "pty" ? "pty" : "chat"
+  const activeView =
+    state.active_view === "pty"
+      ? "pty"
+      : state.active_view === "kanban"
+        ? "kanban"
+        : state.active_view === "page"
+          ? "page"
+          : "chat"
   // TEMPORARY (hello operator view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the customer surface. See HelloPagePreview below.
@@ -351,6 +366,10 @@ export function Conversation({
                 <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
                 PTY
               </button>
+              <button type="button" className={segmentClass(activeView === "kanban")} onClick={() => sessionUri && onSwitchView(sessionUri, "kanban")} aria-label="Show kanban">
+                <Network aria-hidden="true" className="h-[15px] w-[15px]" />
+                看板
+              </button>
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
               <RotateCcw aria-hidden="true" />
@@ -380,6 +399,33 @@ export function Conversation({
               onServerEvent={onServerEvent}
             />
           </div>
+        ) : activeView === "kanban" ? (
+          // session 内 kanban 子视图 = :subcomponent（Conversation 自挂，不进 layout registry）。
+          <div data-world-subcomponent="kanban_board" className="flex-1 overflow-y-auto bg-card">
+            <Kanban
+              state={state}
+              onAction={onKanbanAction}
+              onShare={() => {
+                if (!sessionUri) return
+                const nm = (state.kanban_uri || "").split("/").pop()
+                onSend(sessionUri, `${KANBAN_CARD_TAG} 看板${nm ? ` · ${nm}` : ""}`, [])
+              }}
+              onShareArtifact={(name, url) => sessionUri && onSend(sessionUri, `${ARTIFACT_CARD_TAG} ${name} ::: ${url}`, [])}
+              onUploadFile={async (file) => {
+                if (!sessionUri) return null
+                const csrf = document.querySelector("meta[name='csrf-token']")?.getAttribute("content") || ""
+                const form = new FormData()
+                form.append("session", sessionUri)
+                form.append("file", file)
+                const res = await fetch("/world/uploads", {method: "POST", headers: {"x-csrf-token": csrf}, body: form, credentials: "same-origin"})
+                if (!res.ok) return null
+                const data = (await res.json()) as {name?: string; grant?: string}
+                return data.grant ? {grant: data.grant, name: data.name || file.name} : null
+              }}
+            />
+          </div>
+        ) : activeView === "page" ? (
+          <HelloPagePreview sessionUri={sessionUri} />
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -420,7 +466,42 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.text &&
+                        (message.text.startsWith(KANBAN_CARD_TAG) ? (
+                          // kanban 卡片：点击跳回 Kanban 子视图编辑（chat↔kanban 来回）。
+                          <button
+                            type="button"
+                            onClick={() => sessionUri && onSwitchView(sessionUri, "kanban")}
+                            className="mt-1 flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-left hover:border-primary"
+                          >
+                            <Network aria-hidden="true" className="h-4 w-4 text-primary" />
+                            <span className="flex-1 text-sm font-medium text-foreground">
+                              {message.text.slice(KANBAN_CARD_TAG.length).trim() || "看板"}
+                            </span>
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">点击编辑 →</span>
+                          </button>
+                        ) : message.text.startsWith(ARTIFACT_CARD_TAG) ? (
+                          (() => {
+                            const rest = message.text.slice(ARTIFACT_CARD_TAG.length).trim()
+                            const sep = rest.indexOf(" ::: ")
+                            const name = sep >= 0 ? rest.slice(0, sep) : rest
+                            const url = sep >= 0 ? rest.slice(sep + 5).trim() : ""
+                            return (
+                              <a
+                                href={url || "#"}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 flex w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-2 hover:border-primary"
+                              >
+                                <Paperclip aria-hidden="true" className="h-4 w-4 text-primary" />
+                                <span className="flex-1 truncate text-sm font-medium text-foreground">{name || "产物"}</span>
+                                <span className="whitespace-nowrap text-xs text-muted-foreground">{url ? "打开 →" : "（内容在节点）"}</span>
+                              </a>
+                            )
+                          })()
+                        ) : (
+                          <p className={bubbleTextClass(mine, kind)}>{message.text}</p>
+                        ))}
                       {message.attachments && message.attachments.length > 0 && (
                         <ul className="m-0 mt-0.5 flex list-none flex-wrap gap-1.5 p-0">
                           {message.attachments.map((attachment, index) => (

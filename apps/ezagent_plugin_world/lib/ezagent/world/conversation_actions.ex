@@ -268,6 +268,19 @@ defmodule Ezagent.World.ConversationActions do
   # "page" (TEMPORARY): the hello operator page-preview view. Proper world
   # surfacing of registered SessionViews is Phase 3; this just toggles the
   # active view so the React UI can embed the customer surface.
+  # kanban 子视图（df-tech 新增）：按 session 派生 board + 推树数据给 :subcomponent。
+  def switch_view(socket, %URI{} = session_uri, "kanban") do
+    board =
+      Ezagent.World.KanbanData.session_board(session_uri, %{
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+
+    # 平铺合并（kanban_uri/tree/stages/statuses 直接进 state，跟独立页 + KanbanActions
+    # 的 push_tree 一致——动作更新的 state.tree 才能被子视图读到）。
+    {:noreply, push_world_state(socket, Map.put(board, "active_view", "kanban"))}
+  end
+
   def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty", "page"] do
     {:noreply, push_world_state(socket, %{"active_view" => view})}
   end
