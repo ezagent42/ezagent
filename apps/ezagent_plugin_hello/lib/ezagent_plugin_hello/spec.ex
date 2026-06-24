@@ -25,21 +25,38 @@ defmodule EzagentPluginHello.Spec do
   # Catalog v0 — allowed node types → the prop keys the renderer honors.
   # `children` is allowed on the container-ish types (page/section/card).
   @catalog %{
+    # primitives
     "page" => %{props: ["title"], container?: true},
-    "section" => %{props: ["layout"], container?: true},
+    "section" => %{props: ["layout", "tone", "title"], container?: true},
     "card" => %{props: ["title"], container?: true},
     "heading" => %{props: ["text", "level"], container?: false},
     "text" => %{props: ["text"], container?: false},
     "button" => %{props: ["label", "href"], container?: false},
     "image" => %{props: ["src", "alt"], container?: false},
-    # Block-level "official-site" components — composed sections, each renders a
-    # polished, designed block from simple props (Phase 3).
-    "hero" => %{props: ["title", "subtitle", "cta_label", "cta_href"], container?: false},
-    "features" => %{props: ["title"], container?: true},
-    "feature" => %{props: ["title", "text"], container?: false},
-    "cta" => %{props: ["title", "text", "button_label", "button_href"], container?: false},
-    "stats" => %{props: [], container?: true},
-    "stat" => %{props: ["value", "label"], container?: false}
+    # block-level "official-site" components — each renders a full-width, designed
+    # section. `tone` ("default"|"muted"|"dark"|"brand") alternates backgrounds;
+    # `icon` is an icon name (shield/zap/rocket/lock/globe/chart/users/cloud/code/
+    # gauge/star/check/heart/sparkles/clock/layers).
+    "nav" => %{props: ["brand"], container?: true},
+    "banner" => %{props: ["text"], container?: false},
+    "hero" => %{props: ["title", "subtitle", "cta_label", "cta_href", "badge"], container?: false},
+    "features" => %{props: ["title", "subtitle", "tone"], container?: true},
+    "feature" => %{props: ["title", "text", "icon"], container?: false},
+    "split" => %{props: ["title", "text", "cta_label", "cta_href", "reverse", "icon", "tone"], container?: false},
+    "stats" => %{props: ["title", "tone"], container?: true},
+    "stat" => %{props: ["value", "label"], container?: false},
+    "testimonials" => %{props: ["title", "tone"], container?: true},
+    "testimonial" => %{props: ["quote", "author", "role"], container?: false},
+    "logos" => %{props: ["title", "tone"], container?: true},
+    "logo" => %{props: ["name"], container?: false},
+    "pricing" => %{props: ["title", "subtitle", "tone"], container?: true},
+    "plan" => %{props: ["name", "price", "period", "cta_label", "featured"], container?: true},
+    "faq" => %{props: ["title", "tone"], container?: true},
+    "qa" => %{props: ["question", "answer"], container?: false},
+    "steps" => %{props: ["title", "tone"], container?: true},
+    "step" => %{props: ["title", "text"], container?: false},
+    "cta" => %{props: ["title", "text", "button_label", "button_href", "tone"], container?: false},
+    "footer" => %{props: ["text"], container?: false}
   }
 
   @doc "The allowed component catalog (type → %{props, container?})."

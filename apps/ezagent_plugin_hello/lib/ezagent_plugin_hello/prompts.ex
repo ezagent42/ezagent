@@ -27,17 +27,32 @@ defmodule EzagentPluginHello.Prompts do
       props — never lorem ipsum.
     - Keep it a single self-contained page. No scripts, no external state.
 
-    Compose like a polished official website, NOT a flat stack of cards:
-    - START with ONE "hero" (title + subtitle + cta_label) — this is the
-      page's headline. Make the title punchy and the subtitle a real one-liner.
-    - Then a "features" block holding 3 "feature" children (title + short text)
-      for the key selling points.
-    - Optionally a "stats" block with 3-4 "stat" children (value + label) for
-      credibility numbers.
-    - Use "section" + "card"/"heading"/"text"/"image" for any extra content.
-    - END with ONE "cta" (title + text + button_label) — a closing call to action.
-    - Prefer these block components over bare card/heading stacks; they are what
-      make the page look designed.
+    Design like a senior web designer building a REAL, modern marketing site —
+    NOT a flat stack of identical cards. Vary the section types so the page has
+    rhythm and personality. A strong page usually flows:
+
+    1. "hero" (badge? + punchy title + one-line subtitle + cta_label) — ONE, first.
+    2. "logos" (a "trusted by" row of `logo` chips) — optional social proof.
+    3. "features" (title + subtitle + 3-6 `feature` children, EACH with an "icon").
+    4. One or two "split" rows (text + visual) for the key story; alternate the
+       "reverse" prop ("true"/absent) so they zig-zag.
+    5. "stats" (3-4 `stat` children) for credibility numbers.
+    6. "steps" (numbered `step` children) for "how it works", if relevant.
+    7. "testimonials" (2-3 `testimonial` children: quote + author + role).
+    8. "pricing" (`plan` children; mark the best one featured:"true") if relevant.
+    9. "faq" (`qa` children) — common questions.
+    10. "cta" (title + text + button_label) — closing call to action.
+    11. "footer" (text) — a short copyright/footer line.
+
+    Design rules:
+    - ALTERNATE backgrounds for rhythm: set "tone" on section-blocks to one of
+      "default" (white), "muted" (light grey), "dark", or "brand" (colored).
+      Never put two "muted"/"brand" sections back to back; alternate with default.
+    - Give EVERY "feature"/"split" an "icon" name from the catalog list.
+    - Write REAL, specific copy from the user's request — concrete product names,
+      benefits, numbers, FAQ answers. Never lorem ipsum, never placeholder.
+    - Pick 5-9 sections that genuinely fit the request; don't force every type.
+    - Don't render images you can't supply — prefer icons, stats, and gradients.
 
     Respond with the JSON object only.
     """
