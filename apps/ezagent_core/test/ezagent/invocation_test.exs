@@ -1,5 +1,7 @@
 defmodule Ezagent.InvocationTest do
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
+  import ExUnit.CaptureLog
+
   alias Ezagent.{Invocation, Test.TestKind, Test.TestBehavior}
 
   setup do
@@ -54,6 +56,51 @@ defmodule Ezagent.InvocationTest do
       }
 
       assert {:error, :no_such_actor} = Invocation.dispatch(inv)
+    end
+
+    test ":cast + reply ignore pre-delivery no_such_actor is logged" do
+      target =
+        Ezagent.URI.new!("session://system/default/missing-cast-log?action=session.send")
+
+      inv = %Invocation{
+        target: target,
+        mode: :cast,
+        args: %{message: %{text: "x"}},
+        ctx: %{reply: :ignore}
+      }
+
+      handler_id = {__MODULE__, self(), :cast_failed}
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:ezagent, :dispatch, :cast_failed],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:cast_failed, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      log =
+        try do
+          capture_log(fn ->
+            assert {:error, :no_such_actor} = Invocation.dispatch(inv)
+          end)
+        after
+          :telemetry.detach(handler_id)
+        end
+
+      assert log =~ "fire-and-forget cast dispatch FAILED before delivery"
+      assert log =~ "session://system/default/missing-cast-log?action=session.send"
+      assert log =~ ":no_such_actor"
+
+      assert_receive {:cast_failed, [:ezagent, :dispatch, :cast_failed], %{},
+                      %{
+                        target: ^target,
+                        mode: :cast,
+                        reason: :no_such_actor,
+                        stage: :pre_delivery
+                      }}
     end
 
     test ":not_ready + :call → waits through the activate window then serves (C-A readiness)",

@@ -33,10 +33,21 @@ The remaining Bug A symptom was the silent `:cast` loss: pre-delivery `:no_such_
 - `mix format --check-formatted` passed.
 - `mix ezagent.check_invariants` passed: all in-scope invariants clean.
 - `mix precommit` passed.
+- `agent-browser` manual world check passed:
+  - Started local Phoenix on `http://localhost:10042` with `WORLD_VITE_PORT=5174`.
+  - Logged in on `http://world.localhost:10042/login` as local dev admin (`admin@example.test`, temporary local password).
+  - Opened `http://world.localhost:10042/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fmanual-missing-agent-browser-20260624`, a syntactically valid but nonexistent session URI.
+  - Sent `agent-browser missing session probe` from the normal world conversation composer.
+  - Confirmed `#world-root[data-last-dispatch] == "error:no_such_actor"`.
+  - Confirmed server log emitted `Ezagent.Invocation: fire-and-forget cast dispatch FAILED before delivery target=session://system/default/manual-missing-agent-browser-20260624?action=session.send instance=session://system/default/manual-missing-agent-browser-20260624 reason=:no_such_actor`.
+  - Screenshot evidence: `/private/tmp/world-missing-session-agent-browser.png`.
 
 ## Caveats
 
 - `mix precommit` initially failed because `apps/ezagent_web/assets/node_modules` was missing; `npm install` in that asset directory restored local dependencies and did not change tracked files.
+- Browser validation also required `npm install` in `apps/ezagent_plugin_world/assets`; this restored local Vite dependencies and did not change tracked files.
+- Browser validation required `mix ecto.migrate` against the local dev database; pending dev migrations were `CreateProtocolApiKeys`, `EmailThreadState`, and `EmailInboundBinding`.
+- Browser validation set a temporary local dev login on the seeded admin user (`entity://system/user/admin`) via `mix ezagent.user.set_password` and `mix ezagent.user.set_email`.
 - Mix commands needed escalated execution in this environment because sandboxed Mix hit local TCP/PubSub `:eperm`.
 - The full precommit emits existing test-intentional warnings/errors from other subsystems; the command exited successfully.
 
