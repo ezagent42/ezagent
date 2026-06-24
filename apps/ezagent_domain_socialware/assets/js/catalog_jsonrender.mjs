@@ -79,9 +79,10 @@ const TONE = {
   brand: "bg-gradient-to-br from-primary via-primary to-accent text-primary-content",
 }
 const toneClass = (t) => TONE[t] || TONE.default
-// A full-width section band with a centered inner content column.
+// A full-width section band with a centered inner content column. max-w-6xl so
+// content fills more of a wide monitor (max-w-5xl read as a thin strip).
 const band = (tone, extra, inner) =>
-  h("section", {className: `w-full px-6 py-16 sm:py-24 ${toneClass(tone)} ${extra || ""}`}, h("div", {className: "mx-auto max-w-5xl"}, inner))
+  h("section", {className: `w-full px-6 py-16 sm:py-24 ${toneClass(tone)} ${extra || ""}`}, h("div", {className: "mx-auto max-w-6xl"}, inner))
 const eyebrow = (text) =>
   text ? h("p", {className: "mb-3 text-center text-sm font-semibold uppercase tracking-widest text-primary"}, str(text)) : null
 
