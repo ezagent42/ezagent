@@ -340,15 +340,37 @@ defmodule EzagentPluginHello.Generator do
 
   defp generate_content_theme(_), do: ""
 
-  # Strip markdown fences / a stray leading <style> the model may add.
+  # Strip markdown fences / a stray <style> tag, AND every LAYOUT/sizing property
+  # — the json-render components own their layout (grid/flex/width via their
+  # default classes); the theme must only restyle the LOOK. Without this the model
+  # sets widths/flex/columns and squishes cards into 1-char strips.
   defp extract_css(content) when is_binary(content) do
     content
     |> String.replace(~r/```[a-z]*/i, "")
     |> String.replace(~r/<\/?style[^>]*>/i, "")
+    |> strip_layout_props()
     |> String.trim()
   end
 
   defp extract_css(_), do: ""
+
+  @theme_strip_props ~w(
+    display position top right bottom left inset float clear z-index
+    width min-width max-width height min-height max-height
+    flex flex-basis flex-grow flex-shrink flex-direction flex-wrap flex-flow
+    grid grid-template grid-template-columns grid-template-rows grid-template-areas
+    grid-auto-flow grid-auto-columns grid-auto-rows grid-column grid-row grid-area
+    gap column-gap row-gap columns column-count column-width
+    place-items place-content place-self justify-content justify-items justify-self
+    align-items align-content align-self order overflow overflow-x overflow-y
+    white-space writing-mode
+  )
+
+  defp strip_layout_props(css) do
+    Enum.reduce(@theme_strip_props, css, fn p, acc ->
+      String.replace(acc, ~r/(^|[;{\s])#{Regex.escape(p)}\s*:[^;{}]*;?/i, "\\1")
+    end)
+  end
 
   # Compile the per-session CSS from BOTH the shell HTML and the body's
   # AI-authored `class` props (both invisible to the build-time Tailwind scan),
