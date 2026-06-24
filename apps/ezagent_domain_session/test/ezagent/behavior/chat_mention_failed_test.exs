@@ -24,11 +24,23 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
   alias Ezagent.Message
 
   setup do
+    # #94: UNIQUE URIs per test. These spawn globally-supervised Kinds
+    # (session + agents) that live in `KindRegistry` for the BEAM's lifetime —
+    # `DataCase` rolls back the DB but NOT the live GenServers. With FIXED URIs
+    # the same session Kind was reused across tests/runs carrying STALE
+    # in-memory membership while the DB was reset underneath it, so a later
+    # `refute_receive {:mention_failed}` intermittently saw a spurious
+    # mention_failed (member present in the test's just-committed-then-rolled-back
+    # view but absent in the carried-over live Kind). Unique URIs give every test
+    # a FRESH Kind — no cross-test/cross-run carry-over. (Passed in isolation,
+    # flaked under the umbrella's concurrent load precisely because of this.)
+    uniq = System.unique_integer([:positive])
+
     # Subscribe to the sender's notification topic so we can assert.
-    sender_uri = Ezagent.URI.new!("entity://system/user/test-sender")
-    session_uri = Ezagent.URI.new!("session://system/default/test-mention-fail")
-    member_uri = Ezagent.URI.new!("entity://system/agent/echo_member-agent")
-    non_member_uri = Ezagent.URI.new!("entity://system/agent/echo_non-member-agent")
+    sender_uri = Ezagent.URI.new!("entity://system/user/test-sender-#{uniq}")
+    session_uri = Ezagent.URI.new!("session://system/default/test-mention-fail-#{uniq}")
+    member_uri = Ezagent.URI.new!("entity://system/agent/echo_member-agent-#{uniq}")
+    non_member_uri = Ezagent.URI.new!("entity://system/agent/echo_non-member-agent-#{uniq}")
     :ok = AgentFlavorAttributes.put(member_uri, "echo")
     :ok = AgentFlavorAttributes.put(non_member_uri, "echo")
 
