@@ -102,8 +102,9 @@ defmodule EzagentPluginHello.Prompts do
       text-base-content, bg-primary, text-primary-content, from-primary,
       to-accent, border-base-300/60). Arbitrary values are allowed (w-[40rem],
       bg-[oklch(...)]).
-    - NO <script>/<style>/<iframe>/<form>/<input>; NO on* handlers; NO
-      javascript: links. Anchors point to "#". Decorative markup only.
+    - NO <script>/<iframe>/<form>/<input>; NO on* handlers; NO javascript: links.
+      Anchors point to "#". A single <style> block IS allowed and REQUIRED (see
+      "THEME THE CONTENT").
 
     DESIGN BAR — make it look genuinely premium, not a bootstrap template:
     - Sticky glass nav: `sticky top-0 z-50 border-b border-base-300/60
@@ -131,18 +132,47 @@ defmodule EzagentPluginHello.Prompts do
       hover:opacity-90 / hover:-translate-y-0.5), tasteful letter-spacing
       (tracking-tight on headings), consistent max-w-6xl gutters.
 
-    SHAPE (adapt freely; keep exactly one data-slot):
+    THEME THE CONTENT — this is what makes the page cohere. The body is rendered
+    SEPARATELY as semantic elements; you design how they look by writing ONE
+    <style> block (real CSS) that themes these classes to MATCH your frame's
+    aesthetic. Style backgrounds, borders, radius, shadows, gradients, typography,
+    spacing, hover states — give them the SAME design language as your nav/footer
+    so the whole page looks like one coherent site, not a kit dropped in.
+
+      .hl-hero       — the headline band: <h1> title, <p> subtitle, a CTA <a>.
+      .hl-features   — a wrapper; inside, a grid of .hl-feature cards.
+      .hl-feature    — one feature card: an icon <div>, <h3> title, <p> text.
+      .hl-split      — a text+visual row.
+      .hl-stats / .hl-stat        — a metrics row; each stat has a big value + label.
+      .hl-testimonials / .hl-testimonial — quote cards (blockquote + author).
+      .hl-logos / .hl-logo        — a trusted-by row of brand chips.
+      .hl-pricing / .hl-plan      — pricing tiers (.hl-plan is one card).
+      .hl-faq / .hl-qa            — an FAQ; each .hl-qa is a <details>.
+      .hl-steps / .hl-step        — a numbered process.
+      .hl-cta        — the closing call-to-action band.
+      .hl-section / .hl-card      — generic section / card.
+
+    Each of these already has light default styles — your <style> rules OVERRIDE
+    them (your <style> loads last), so set the look you want. Use the theme tokens
+    via CSS vars: var(--color-primary), var(--color-accent), var(--color-base-100),
+    var(--color-base-200), var(--color-base-content), var(--color-neutral). Keep
+    text readable. The content elements are full-width sections — theme their inner
+    look, not their width.
+
+    SHAPE (adapt freely; keep exactly one data-slot AND one <style>):
 
         <div class="relative min-h-screen overflow-hidden bg-base-100 text-base-content">
+          <style>
+            .hl-hero { ... } .hl-feature { ... } .hl-stat .hl-stat-value { ... }
+            .hl-cta { ... } /* …theme every content class to match the frame… */
+          </style>
           <div class="pointer-events-none absolute inset-0 -z-10"> …blurred orbs… </div>
-          <header class="sticky top-0 z-50 border-b border-base-300/60 bg-base-100/70 backdrop-blur-xl">
-            <nav class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"> …brand · links · CTA… </nav>
-          </header>
+          <header class="sticky top-0 z-50 …"> <nav class="mx-auto flex h-16 max-w-6xl …"> …brand · links · CTA… </nav> </header>
           <main><div data-slot></div></main>
           <footer class="border-t border-base-300 bg-neutral text-neutral-content"> …columns · copyright… </footer>
         </div>
 
-    Respond with the HTML only.
+    Respond with the HTML only (frame + the single <style>).
     """
   end
 

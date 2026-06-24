@@ -17,26 +17,25 @@ const opt = z.string().nullable().optional()
 const optNum = z.union([z.number(), z.string()]).nullable().optional()
 const str = (v) => (v == null ? "" : String(v))
 
-// AI-controlled appearance: any node may carry an optional `class` prop (Tailwind
-// utilities). `withClass` appends it to the component's ROOT element so the model
-// can restyle a node (colors, spacing, effects, even arbitrary values like
-// w-[40rem]) on top of the designed defaults. Safe (classes are pure CSS); the
-// custom classes are compiled into the per-session CSS server-side. `applyClass`
-// wraps every registry component automatically.
-function withClass(fn) {
+// Coherent AI styling: every component root gets a SEMANTIC class `hl-<type>`
+// (hl-hero, hl-feature, …) that the AI-authored shell themes via a <style> block,
+// so the WHOLE page — frame AND content — shares one design the model authored
+// (it's good at cohesive CSS). Plus any per-node `class` prop (Tailwind) the model
+// adds. Both layer on top of the built-in defaults; safe (pure CSS).
+function withClass(fn, key) {
   return (args) => {
     const el = fn(args)
-    const extra = args && args.props && args.props.class
-    if (extra && el && el.props) {
-      return React.cloneElement(el, {
-        className: ((el.props.className || "") + " " + String(extra)).trim(),
-      })
-    }
-    return el
+    if (!el || !el.props) return el
+    const semantic = key ? "hl-" + key : ""
+    const extra = (args && args.props && args.props.class) || ""
+    const merged = ((el.props.className || "") + " " + semantic + " " + extra)
+      .replace(/\s+/g, " ")
+      .trim()
+    return React.cloneElement(el, {className: merged})
   }
 }
 const applyClass = (components) =>
-  Object.fromEntries(Object.entries(components).map(([k, fn]) => [k, withClass(fn)]))
+  Object.fromEntries(Object.entries(components).map(([k, fn]) => [k, withClass(fn, k)]))
 
 // ── Inline SVG icon set (stroke, currentColor) ───────────────────────────────
 const ICON_PATHS = {

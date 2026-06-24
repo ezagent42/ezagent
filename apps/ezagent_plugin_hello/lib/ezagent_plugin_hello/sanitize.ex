@@ -20,8 +20,10 @@ defmodule EzagentPluginHello.Sanitize do
 
   # Tags removed entirely (with their content for paired ones). `head`/`title`
   # are here so a full-document reply doesn't leak its <title> text as a visible
-  # node when injected via innerHTML.
-  @dangerous_tags ~w(script style iframe object embed link meta base form input textarea select noscript template head title)
+  # node when injected via innerHTML. `<style>` is INTENTIONALLY allowed (the AI
+  # themes the page's content classes through it) — its CSS is sanitised below,
+  # and any `</style>`-breakout into <script>/on*/js: is caught by the other passes.
+  @dangerous_tags ~w(script iframe object embed link meta base form input textarea select noscript template head title)
 
   @doc "Sanitise an AI-authored shell HTML string; always returns safe markup with a `data-slot`."
   @spec html(term()) :: binary()
@@ -31,6 +33,7 @@ defmodule EzagentPluginHello.Sanitize do
     |> strip_dangerous_tags()
     |> strip_event_handlers()
     |> strip_js_uris()
+    |> strip_css_vectors()
     |> ensure_slot()
   end
 
@@ -66,6 +69,18 @@ defmodule EzagentPluginHello.Sanitize do
     html
     |> String.replace(~r/(href|src|xlink:href)\s*=\s*"\s*(?:javascript|vbscript|data):[^"]*"/i, ~S(\1="#"))
     |> String.replace(~r/(href|src|xlink:href)\s*=\s*'\s*(?:javascript|vbscript|data):[^']*'/i, ~S(\1='#'))
+  end
+
+  # CSS-level active-content vectors (mostly legacy, but cheap defence): IE
+  # expression(), Mozilla -moz-binding, behavior:, @import (external fetch), and
+  # any stray javascript:/vbscript: in url()/values.
+  defp strip_css_vectors(html) do
+    html
+    |> String.replace(~r/expression\s*\(/i, "x_(")
+    |> String.replace(~r/-moz-binding\s*:/i, "x-moz:")
+    |> String.replace(~r/\bbehaviou?r\s*:/i, "x-behavior:")
+    |> String.replace(~r/@import\b/i, "x-import")
+    |> String.replace(~r/(javascript|vbscript)\s*:/i, "x-script:")
   end
 
   # The body mount point. Guarantee exactly one; if the model omitted it, append
