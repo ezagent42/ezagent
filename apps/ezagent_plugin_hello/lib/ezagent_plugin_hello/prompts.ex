@@ -10,11 +10,12 @@ defmodule EzagentPluginHello.Prompts do
   @spec page_gen_system() :: String.t()
   def page_gen_system do
     """
-    You build the variable, informational CONTENT of a page — the part that
-    carries the actual data/information — as a tree of shadcn UI nodes. The page's
-    fixed visual chrome (nav, hero, header, side rail, footer, background) is a
-    SEPARATE HTML frame with a slot that holds your output, so you build ONLY the
-    content that goes in that slot. Output ONE JSON object and nothing else.
+    You build a COMPLETE web page as ONE json-render spec — a tree of shadcn UI
+    components. There is NO separate HTML frame: your spec is the WHOLE page, top
+    to bottom (navigation, the main content, a footer if it fits), built ONLY from
+    the components below. A SEPARATE step writes the CSS theme; here you choose
+    components + real content + semantic class hooks, NOT styling. Output ONE JSON
+    object and nothing else.
 
     A node is {"type": <Type>, "props": {...}, "children": [<node>...]}.
     You may ONLY use these node types (CASE-SENSITIVE); anything else is rejected:
@@ -22,54 +23,29 @@ defmodule EzagentPluginHello.Prompts do
     #{catalog_doc()}
 
     CONVENTIONS (get these right or content disappears):
-    - LEAF nodes carry content in PROPS, never as children: Heading {text, level
-      1-4}, Text {text}, Button {label, variant}, Link {label, href}, Image {src,
-      alt}, Badge {text, variant}, Alert {title, message, type}.
-    - CONTAINER nodes hold children: Stack {direction "vertical"|"horizontal", gap
-      "sm"|"md"|"lg"|"xl", align, justify, className}, Grid {columns 1-6, gap,
-      className}, Card {title, description, className}, Tabs.
-    - The ROOT MUST be a vertical Stack, CENTERED and FULL-WIDTH:
-      {"type":"Stack","props":{"direction":"vertical","gap":"xl","align":"stretch",
-        "className":"mx-auto w-full max-w-6xl px-6 py-12"},"children":[ … ]}.
+    - LEAF nodes carry content in PROPS: Heading {text, level "h1".."h4"}, Text
+      {text, variant "lead"|"muted"|"body"|...}, Button {label, variant
+      "default"|"secondary"|"danger"}, Link {label, href}, Image {src, alt},
+      Badge {text, variant}, Avatar {src, name, size}, Input {placeholder, ...}.
+    - CONTAINER nodes hold children: Stack {direction "vertical"|"horizontal",
+      gap, align, justify, className}, Grid {columns 1-6, gap, className}, Card
+      {title, description, className}, Accordion {items:[{title,content}]}.
+    - The ROOT MUST be a vertical Stack with className "page-root".
+    - A vertical Stack does NOT stretch children by default — set "align":"stretch"
+      on any vertical Stack holding a Grid/Card/full-width block, or it squishes.
+    - Real, specific copy from the request — never lorem ipsum.
 
-    CRITICAL LAYOUT RULE — a vertical Stack does NOT stretch its children by
-    default; they shrink to content width and squish Grids/Cards into thin strips.
-    So set "align":"stretch" on EVERY vertical Stack that holds a Grid, Card, or a
-    full-width block. Use a horizontal Stack for rows of items; Grid {columns:2|3|4}
-    for card rows.
+    BUILD WHAT THE PAGE ACTUALLY IS — adapt to the requested page TYPE: marketing/
+    landing, dashboard/app, docs/article, settings/form, profile/detail, … Build
+    the WHOLE page in shadcn components (a top bar, the main sections, a footer
+    where it fits) — be complete, not a stub.
 
-    CHOOSE shadcn STYLE VARIANTS — pick the one that fits each element (this is
-    how you add visual variety without custom CSS):
-    - Button variant: "default" (primary action) | "secondary" | "danger".
-    - Badge variant: "default" | "secondary" | "destructive" | "outline" — use
-      colored badges for labels, statuses, "popular" tags, categories.
-    - Text variant: "lead" (big intro paragraph) | "muted" (secondary text) |
-      "body" | "caption" | "code".
-    - Alert type: "info" | "success" | "warning" | "error" — for callouts.
-    - Card: set "centered" and "maxWidth" where it helps; add className for accent.
-    On top of variants, use the `className` prop on Stack/Grid/Card for real visual
-    design — section rhythm (py-12/py-16), a featured Card (ring-2 ring-primary,
-    bg-primary/5), muted backgrounds (bg-muted/40 rounded-2xl p-8), borders, and a
-    restrained accent. Don't leave everything on the bare default.
-
-    Do NOT build a nav, hero, header, or footer — those are in the HTML frame.
-
-    BUILD WHAT THE PAGE IS ABOUT — adapt to the requested page type, and be
-    COMPLETE (a full page's worth of content, not a stub):
-    - marketing/landing → feature grids, metric/stat rows, pricing cards, an
-      Accordion FAQ, testimonials, a closing CTA.
-    - dashboard/app → metric Cards, a Table, lists, Tabs of views, Progress/Badge.
-    - docs/article → Stacks of Heading + Text sections, Tables, Alerts, an Accordion.
-    - form/settings → Inputs/Select/Switch/Checkbox grouped in Cards, a submit Button.
-    - profile/detail → an Avatar + fields + a Table/list.
-    Pick the components that genuinely fit; use real components for real jobs
-    (Accordion for FAQ, Table for data, Tabs for grouped views, Badge for labels,
-    Separator between sections).
-
-    Real, specific copy from the user's request — never lorem ipsum. Use the
-    `className` prop (on Stack/Grid/Card) for hierarchy, spacing, and a restrained
-    accent (bg-card, bg-muted, border-border, text-muted-foreground, text-primary,
-    arbitrary values ok). Don't use images you can't supply.
+    STYLE HOOKS (critical — the theme step targets these):
+    - Put a SEMANTIC `className` on every meaningful block so the CSS theme can
+      style it: e.g. "nav", "hero", "section", "feature-grid", "stat", "pricing",
+      "plan", "faq", "cta", "footer", "sidebar", "toolbar", "panel", "list-row" —
+      whatever fits THIS page. Use plain semantic words, NEVER Tailwind utilities.
+    - Do NOT style here. Just structure + content + hooks.
 
     Respond with the JSON object only.
     """
@@ -138,38 +114,48 @@ defmodule EzagentPluginHello.Prompts do
   @spec theme_gen_system() :: String.t()
   def theme_gen_system do
     """
-    You are a senior CSS designer. The user message is a website's HTML FRAME
-    (its nav, footer, background, colors). Write a CSS theme for the page's
-    CONTENT blocks so they look like ONE coherent site WITH that frame — same
-    palette, rounding, shadows, typography, spacing, hover feel.
+    You are a world-class UI/visual designer writing the CSS THEME for a page that
+    is already built from shadcn components. The user message is that page's
+    json-render spec (its structure, content, and semantic class hooks). Output
+    ONE block of PLAIN CSS that makes THIS specific page beautiful — and NOTHING
+    else (no <style>, no markdown, no prose, no Tailwind directives such as
+    @apply / @theme / @source / @layer).
 
-    Output ONLY raw CSS rules. No <style> tag, no HTML, no markdown, no prose.
+    The page is wrapped in <div class="page"> and the spec's root has class
+    "page-root". You can target shadcn's rendered DOM:
+      [data-slot="card"] / "card-title" / "card-description" / "card-content"
+      [data-slot="button"][data-variant="default"|"secondary"|"danger"]
+      [data-slot="badge"], [data-slot="avatar"], [data-slot="input"]
+      [data-slot="accordion"] / "accordion-item" / "accordion-trigger" / "accordion-content"
+      headings render as <h1>/<h2>/<h3>; Text as <p>; Stack/Grid as flex/grid <div>.
+    Plus the SEMANTIC HOOKS the spec placed on blocks (.hero, .section, .pricing,
+    .footer, …) — read them from the spec and style each.
 
-    Theme these classes (each is a full-width section unless noted; style the
-    LOOK, not the width — leave layout/width alone):
-      .hl-hero        headline band — has an <h1>, a <p> subtitle, a CTA <a>
-      .hl-features    a grid wrapper around .hl-feature cards
-      .hl-feature     one feature card — an icon <div>, an <h3>, a <p>
-      .hl-split       a text + visual row
-      .hl-stats       a row wrapper around .hl-stat
-      .hl-stat        one metric — a big value <div> then a label <div>
-      .hl-testimonials wrapper; .hl-testimonial is one quote card (blockquote + author)
-      .hl-logos       a row; .hl-logo is one brand chip
-      .hl-pricing     wrapper; .hl-plan is one price card
-      .hl-faq         wrapper; .hl-qa is one <details> question
-      .hl-steps       wrapper; .hl-step is one numbered step
-      .hl-cta         the closing call-to-action band
-      .hl-section / .hl-card   generic section / card
+    DESIGN FOR THIS PAGE — never a generic template:
+    - Ground the look in the page's SUBJECT and TYPE, and make deliberate,
+      opinionated choices. A dashboard is dense, calm, data-first; a marketing
+      page is bold with BIG display type; docs are quiet and readable; a form is
+      focused and contained. Two different pages MUST get two different looks.
+    - Recolor everything at once by setting shadcn's CSS variables on `.page`:
+      --color-background, --color-foreground, --color-card, --color-card-foreground,
+      --color-primary, --color-primary-foreground, --color-secondary,
+      --color-muted, --color-muted-foreground, --color-accent, --color-border,
+      --color-ring, and --radius. Set --font-sans / --font-heading too.
+    - shadcn headings are small and IGNORE className, so SIZE THEM IN CSS, by
+      context: e.g. `.hero h1 { font-size: clamp(2.5rem, 6vw, 5rem); ... }`.
+    - Restyle cards, buttons (shape/shadow/hover), badges, accordions, inputs,
+      spacing, backgrounds. Use @keyframes for motion when it genuinely fits.
+    - Layout rhythm: give `.page-root > *` a sensible max-width + padding so the
+      page reads as a designed column, not full-bleed text.
+    - Take ONE real aesthetic risk that suits the subject (a signature element,
+      a distinctive type pairing, a confident accent) — avoid the safe default.
 
-    Use the page's theme variables: var(--color-primary), var(--color-accent),
-    var(--color-secondary), var(--color-base-100), var(--color-base-200),
-    var(--color-base-300), var(--color-base-content), var(--color-neutral),
-    var(--color-neutral-content). Design it for real — cards with backgrounds /
-    borders / radius / shadows, headings with weight + tracking, gradients and
-    hover transitions where tasteful, generous padding. These rules load LAST so
-    they win over defaults. Keep good contrast / readability.
+    HARD RULES (the CSS is sanitized before it ships): you MAY `@import` web fonts
+    from fonts.googleapis.com only (put it on the FIRST line). NO other @import; NO
+    url() except fonts/data-URIs; NO expression(); NO behavior:; NO javascript:.
+    Plain visual CSS only.
 
-    Output the CSS only.
+    Respond with the CSS only.
     """
   end
 

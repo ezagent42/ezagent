@@ -39,6 +39,45 @@ defmodule EzagentPluginHello.Sanitize do
 
   def html(_), do: ~s(<div data-slot></div>)
 
+  @doc """
+  Sanitise an AI-authored CSS THEME string → safe PLAIN CSS (no markup, no active
+  content). Unlike `html/1`, a Google-Fonts `@import` is allowed (custom fonts are
+  a big design lever); every other `@import` / off-allowlist `url()` is neutralised.
+  """
+  @spec css(term()) :: binary()
+  def css(input) when is_binary(input) do
+    input
+    |> strip_code_fences()
+    |> String.replace(~r/<\/?style\b[^>]*>/i, "")
+    |> String.replace(~r/<[^>]+>/, "")
+    |> sanitize_imports()
+    |> sanitize_css_urls()
+    |> String.replace(~r/expression\s*\(/i, "x_(")
+    |> String.replace(~r/-moz-binding\s*:/i, "x-moz:")
+    |> String.replace(~r/\bbehaviou?r\s*:/i, "x-behavior:")
+    |> String.replace(~r/(javascript|vbscript)\s*:/i, "x-script:")
+  end
+
+  def css(_), do: ""
+
+  defp strip_code_fences(s), do: s |> String.replace(~r/```[a-z]*/i, "") |> String.trim()
+
+  # Keep @import ONLY when it targets Google Fonts; neutralise every other @import.
+  defp sanitize_imports(css) do
+    Regex.replace(~r/@import\s+[^;]+;?/i, css, fn full ->
+      if String.match?(full, ~r/fonts\.googleapis\.com/i), do: full, else: "/* import removed */"
+    end)
+  end
+
+  # Allow url() only for Google Fonts / data URIs; neutralise external/script urls.
+  defp sanitize_css_urls(css) do
+    Regex.replace(~r/url\(\s*['"]?([^'")]*)['"]?\s*\)/i, css, fn full, u ->
+      if String.match?(u, ~r/^(data:|https:\/\/fonts\.(googleapis|gstatic)\.com)/i),
+        do: full,
+        else: "none"
+    end)
+  end
+
   # Drop document-level wrapper tags (keep their inner content) — the shell is
   # injected into a <div>, so <!DOCTYPE>/<html>/<body> are meaningless there.
   defp strip_document_tags(html) do
@@ -67,8 +106,14 @@ defmodule EzagentPluginHello.Sanitize do
 
   defp strip_js_uris(html) do
     html
-    |> String.replace(~r/(href|src|xlink:href)\s*=\s*"\s*(?:javascript|vbscript|data):[^"]*"/i, ~S(\1="#"))
-    |> String.replace(~r/(href|src|xlink:href)\s*=\s*'\s*(?:javascript|vbscript|data):[^']*'/i, ~S(\1='#'))
+    |> String.replace(
+      ~r/(href|src|xlink:href)\s*=\s*"\s*(?:javascript|vbscript|data):[^"]*"/i,
+      ~S(\1="#")
+    )
+    |> String.replace(
+      ~r/(href|src|xlink:href)\s*=\s*'\s*(?:javascript|vbscript|data):[^']*'/i,
+      ~S(\1='#')
+    )
   end
 
   # CSS-level active-content vectors (mostly legacy, but cheap defence): IE

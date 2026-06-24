@@ -178,13 +178,19 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // yet. Show the frame WITH a placeholder skeleton in the slot so its design is
   // visible for approval. ROUND 2 fills the real json-render body.
   if (snapshot.shell) {
+    // Legacy hybrid (AI HTML frame + json-render body in a [data-slot]).
     content = React.createElement(HybridPage, {
       shell: snapshot.shell,
       shellCss: snapshot.shell_css,
       page: hasBody ? page : SKELETON_PAGE,
     })
-  } else if (!hasBody) {
-    // No frame yet (and no body) → clean empty state.
+  } else if (hasBody) {
+    // Pure shadcn page + AI-generated CSS theme: the whole page is a shadcn spec,
+    // and `shell_css` is a sanitized plain-CSS theme designed for THIS page. No
+    // HTML frame. The theme targets `.page` / `.page-root` / shadcn data-slots.
+    content = React.createElement(PureThemePage, {page, themeCss: snapshot.shell_css})
+  } else {
+    // No page yet → clean empty state.
     content = React.createElement(
       "div",
       {
@@ -195,17 +201,6 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
       React.createElement("div", {className: "text-4xl"}, "🪄"),
       React.createElement("p", {className: "text-base font-medium text-base-content/70"}, "还没有页面"),
       React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
-    )
-  } else {
-    // Body but no AI frame yet → built-in PageShell theme.
-    const brand = (page && page.props && page.props.title) || "Hello"
-    content = React.createElement(
-      "div",
-      {
-        className: "sw-customer-shell w-full",
-        "data-catalog-valid": String(isValidTree(page)),
-      },
-      React.createElement(PageShell, {brand}, React.createElement(JsonRenderPage, {page}))
     )
   }
 
@@ -236,6 +231,19 @@ body.jr-highlight [data-slot]{outline:2px solid #d946ef;outline-offset:-2px}
 body.jr-highlight [data-jr-type]{outline:1px dashed rgba(217,70,239,.55);outline-offset:-1px;position:relative}
 body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:2px 4px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
 `
+
+// Pure shadcn page + AI CSS theme. The whole page is ONE shadcn json-render spec;
+// `themeCss` is a sanitized plain-CSS theme designed for THIS page (recolors shadcn
+// via CSS vars, sizes headings in CSS, restyles [data-slot] elements, adds
+// keyframes/etc.). No HTML frame. The theme is scoped to the `.page` wrapper.
+function PureThemePage({page, themeCss}) {
+  return React.createElement(
+    "div",
+    {className: "sw-customer-shell page w-full", "data-catalog-valid": String(isValidTree(page))},
+    themeCss ? React.createElement("style", {dangerouslySetInnerHTML: {__html: themeCss}}) : null,
+    React.createElement(JsonRenderPage, {page})
+  )
+}
 
 // Inject the sanitized HTML shell as static markup, then mount the json-render
 // BODY into its [data-slot] via a SEPARATE React root. The shell is inert (no

@@ -66,18 +66,9 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
-    cond do
-      # FRESH session (no frame yet) — single round: generate the HTML frame AND
-      # the real content together. `reframe: true` makes `land_page` build the
-      # frame (styled by this request) alongside the body, so one message yields a
-      # complete page (no placeholder-skeleton approval step).
-      current_shell_html(session_uri) == "" ->
-        generate_simple(session_uri, builder, user_text, true)
-
-      # Follow-up edits to an existing page keep the scoped flow (body/shell/both).
-      true ->
-        generate_for_scope(session_uri, builder, user_text)
-    end
+    # Every request regenerates the WHOLE page: one shadcn spec (the full page) +
+    # a fresh CSS theme designed for it. No HTML frame, no scoped edit path.
+    generate_simple(session_uri, builder, user_text, true)
   end
 
   defp generate_for_scope(session_uri, builder, user_text) do
@@ -88,21 +79,29 @@ defmodule EzagentPluginHello.Generator do
       # the HTML frame. No page_gen call, so the content the user didn't ask to
       # change stays exactly as-is.
       :shell ->
-        TurnDriver.say(session_uri, builder, gettext("🎨 Plan: redesign the frame only (content unchanged)."))
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("🎨 Plan: redesign the frame only (content unchanged).")
+        )
+
         regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri), user_text)
 
       # Body (default) or both: run the normal content generation. `reframe?`
       # forces a fresh frame too when the user asked for "both".
       _ ->
         reframe = scope == :both
-        if reframe, do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
+
+        if reframe,
+          do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
 
         case plan do
           {:complex, %{title: title, sections: sections}} ->
             TurnDriver.say(
               session_uri,
               builder,
-              gettext("🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
+              gettext(
+                "🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
                 title: title,
                 count: length(sections)
               )
@@ -111,7 +110,12 @@ defmodule EzagentPluginHello.Generator do
             generate_complex(session_uri, builder, title, sections, user_text, reframe)
 
           {:simple} ->
-            TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
+            TurnDriver.say(
+              session_uri,
+              builder,
+              gettext("🧭 Plan: single page, direct generation.")
+            )
+
             generate_simple(session_uri, builder, user_text, reframe)
         end
     end
@@ -334,7 +338,9 @@ defmodule EzagentPluginHello.Generator do
   # Focused content-theme call. Returns CSS rules (no <style> tag) or "" on failure.
   defp generate_content_theme(frame) when is_binary(frame) and frame != "" do
     case call_llm(Prompts.theme_gen_system(), frame) do
-      {:ok, %{content: content}} -> extract_css(content)
+      {:ok, %{content: content}} ->
+        extract_css(content)
+
       other ->
         Logger.warning("hello.Generator: content theme failed: #{inspect(other)}")
         ""
@@ -499,7 +505,13 @@ defmodule EzagentPluginHello.Generator do
       {:error, :shell_failed}
     else
       store_frame(session_uri, builder, shell_html, current_body_tree(session_uri))
-      TurnDriver.say(session_uri, builder, gettext("✅ Frame redesigned — your content is unchanged."))
+
+      TurnDriver.say(
+        session_uri,
+        builder,
+        gettext("✅ Frame redesigned — your content is unchanged.")
+      )
+
       {:ok, :shell_only}
     end
   end
@@ -544,31 +556,27 @@ defmodule EzagentPluginHello.Generator do
   # `say` (:session :send). Turn-composed chat does NOT push to the operator
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
   # the RESULT goes through say to guarantee the operator sees completion live.
-  defp land_page(session_uri, builder, spec, user_text, reframe) do
-    TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
-    # The HTML frame already provides nav / footer / banner; strip any the model
-    # emitted into the BODY (it doesn't always obey the prompt) so they don't
-    # double up with the shell.
-    spec = spec |> strip_frame_nodes() |> unwrap_sections()
-    # The frame: reused when stable (body-only edit), regenerated when `reframe`
-    # (scope == :both). The body's AI `class` styling is compiled into the
-    # per-session CSS by `store_frame` after the body lands.
-    shell_html = ensure_shell_html(session_uri, builder, get_title(spec), user_text, reframe)
+  defp land_page(session_uri, builder, spec, _user_text, _reframe) do
+    # The spec is the WHOLE page (nav / content / footer, all shadcn). A focused
+    # SECOND call writes a PLAIN CSS theme designed for THIS page; there is no
+    # HTML frame. The page = shadcn spec + sanitized AI theme CSS.
+    TurnDriver.say(session_uri, builder, gettext("🎨 Designing a theme for this page…"))
+    theme = generate_theme(spec)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
-        store_frame(session_uri, builder, shell_html, spec)
+        # No HTML shell, and NO per-session Tailwind compile: the spec's classNames
+        # are SEMANTIC HOOKS (not utilities), and shadcn's own utility classes ship
+        # from the build-time customer.css scan. The per-session CSS is ONLY the
+        # sanitized AI theme — a plain-CSS stylesheet that restyles the shadcn DOM.
+        TurnDriver.set_shell(session_uri, builder, "", theme)
 
-        msg =
-          if reframe do
-            gettext("✅ Done! Content AND frame updated for \"%{title}\".", title: get_title(spec))
-          else
-            gettext("✅ Done! Content updated for \"%{title}\" (frame unchanged).",
-              title: get_title(spec)
-            )
-          end
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("✅ Done! Page \"%{title}\" generated.", title: get_title(spec))
+        )
 
-        TurnDriver.say(session_uri, builder, msg)
         ok
 
       {:error, reason} = err ->
@@ -579,6 +587,19 @@ defmodule EzagentPluginHello.Generator do
         )
 
         err
+    end
+  end
+
+  # Focused second LLM call: given the page spec, write a PLAIN CSS theme that
+  # makes THIS page beautiful. Sanitized (declarative CSS, safe on the public page).
+  defp generate_theme(spec) do
+    case call_llm(Prompts.theme_gen_system(), Jason.encode!(spec)) do
+      {:ok, %{content: content}} ->
+        Sanitize.css(content)
+
+      other ->
+        Logger.warning("hello.Generator: theme generation failed: #{inspect(other)}")
+        ""
     end
   end
 

@@ -83,7 +83,15 @@ defmodule EzagentWeb.Socialware.CustomerChannel do
     end
   end
 
-  defp encode_snapshot(%{messages: messages, page: page}) do
-    %{messages: FeedEncoding.encode_messages(messages), page: page}
+  defp encode_snapshot(%{messages: messages, page: page} = snap) do
+    # `shell` / `shell_css` carry the page's frame + theme (hybrid HTML shell, or
+    # the pure-shadcn AI CSS theme). They MUST ship to the client or the customer
+    # SPA renders an unstyled page (PureThemePage/HybridPage need them).
+    %{
+      messages: FeedEncoding.encode_messages(messages),
+      page: page,
+      shell: Map.get(snap, :shell),
+      shell_css: Map.get(snap, :shell_css)
+    }
   end
 end

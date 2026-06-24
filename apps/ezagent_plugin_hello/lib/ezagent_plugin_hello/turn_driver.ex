@@ -44,15 +44,27 @@ defmodule EzagentPluginHello.TurnDriver do
     caller = actor || User.admin_uri()
 
     with {:ok, %{turn_id: turn_id}} <-
-           dispatch(session_uri, :turn, :open, %{
-             trigger: %{source: "hello-builder"},
-             opened_at: System.system_time(:millisecond)
-           }, caller),
+           dispatch(
+             session_uri,
+             :turn,
+             :open,
+             %{
+               trigger: %{source: "hello-builder"},
+               opened_at: System.system_time(:millisecond)
+             },
+             caller
+           ),
          {:ok, _composed} <-
-           dispatch(session_uri, :turn, :compose, %{
-             turn_id: turn_id,
-             result_refs: result_refs(spec, summary)
-           }, caller),
+           dispatch(
+             session_uri,
+             :turn,
+             :compose,
+             %{
+               turn_id: turn_id,
+               result_refs: result_refs(spec, summary)
+             },
+             caller
+           ),
          {:ok, %{status: :settled}} <-
            dispatch(session_uri, :turn, :settle, %{turn_id: turn_id}, caller) do
       {:ok, turn_id}
@@ -127,7 +139,7 @@ defmodule EzagentPluginHello.TurnDriver do
   def set_shell(session_uri, actor, html, css \\ "")
 
   def set_shell(%URI{} = session_uri, %URI{} = actor, html, css)
-      when is_binary(html) and html != "" do
+      when is_binary(html) and is_binary(css) and (html != "" or css != "") do
     dispatch(session_uri, :surface, :set_shell, %{html: html, css: to_string(css)}, actor)
   end
 
