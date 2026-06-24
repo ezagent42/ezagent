@@ -9,9 +9,28 @@ basis: continuity from the 2026-06-23 returns (docs/together/2026-06-23/returns/
 base_main: c2365462
 ```
 
-> Each track CONTINUES yesterday's work; the concrete next increment is derived
-> from that dev's 2026-06-23 return. Conflict map at the bottom — the four tracks
-> are largely disjoint plugins, so they parallelize cleanly.
+## Weekly goals (本周) — what the daily tracks ladder up to
+
+1. **Get ezagent running inside the team** — the product works end-to-end well
+   enough that the team uses it daily. zyli's 人肉 run is the *measurement* of
+   this; gaga (cc-headless), fatnine (agent-console), zhaomato (hello), and the
+   session-create crux fix are the *gaps* that block it.
+2. **Build the official website (官网)** — a public marketing/landing site for
+   ezagent. **This is a NEW workstream with no owner among the four continuity
+   tracks** — see "官网 — owner TBD" below; needs a lead decision (5th track /
+   one dev pivots / stretch after in-team rollout lands).
+
+| Track | Serves goal |
+|---|---|
+| zyli 人肉 full-flow | ① (the measurement) |
+| gaga cc-headless real | ① (agent coverage gap) |
+| fatnine #84 agent-console | ① (operator can manage agents) |
+| zhaomato hello | ① (app/page generation) — possibly ② if 官网 is built on the render substrate |
+| **官网 (NEW)** | **② — owner TBD** |
+
+> Each track below CONTINUES yesterday's work; the concrete next increment is
+> derived from that dev's 2026-06-23 return. Conflict map at the bottom — the four
+> tracks are largely disjoint plugins, so they parallelize cleanly.
 
 ## Tracks
 
