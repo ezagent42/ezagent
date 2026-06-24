@@ -117,7 +117,14 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   # to the unknown-kind `nil` like any other.
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
   defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
-  defp kind_module_from_kind_type(_), do: nil
+
+  # Fall back to the AgentFlavorRegistry: a bespoke agent Kind (e.g. a hello
+  # builder, kind_type "hello_builder") registers a matching flavor via its
+  # plugin's `agent_flavors/0`, so its persisted snapshot kind_type resolves to
+  # the Kind module on REVIVAL — without hardcoding the plugin module here, and
+  # for already-existing agents that carry no stored `?flavor=` query. An unknown
+  # kind_type (no matching flavor) still resolves to nil, unchanged.
+  defp kind_module_from_kind_type(kt) when is_binary(kt), do: kind_module_from_flavor(kt)
 
   # Template Class names (e.g. "cc.agent" registered by the cc plugin;
   # "curl.agent" by ezagent_plugin_curl_agent; "echo.agent" by
