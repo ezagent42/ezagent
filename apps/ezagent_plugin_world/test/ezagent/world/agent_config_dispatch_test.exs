@@ -233,12 +233,15 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       assert match?({:error, _}, result),
              "delete_path with empty caps must fail; got: #{inspect(result)}"
 
-      # NOTE: The facade reads the config body BEFORE the auth-gated dispatch, so
-      # the error for an empty-cap caller may be :config_not_found (body read ok,
-      # dispatch blocked with different error path) or :unauthorized or
-      # :cross_workspace_denied, depending on the dispatch chokepoint ordering.
-      # The key invariant: the field must NOT have been deleted.
-      {:error, _reason} = result
+      # The field EXISTS, so the body-read succeeds and the auth gate MUST fire.
+      # Pin the reason: we expect :unauthorized or :cross_workspace_denied.
+      # If instead we see :config_not_found/:path_not_found, auth-ordering is broken
+      # (the gate did not fire on an existing field) — that is a real bug, not a
+      # test fudge.
+      {:error, reason} = result
+
+      assert reason in [:unauthorized, :cross_workspace_denied],
+             "cap-denial on an existing field must be :unauthorized or :cross_workspace_denied; got: #{inspect(reason)}"
 
       body_after = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
 
