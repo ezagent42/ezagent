@@ -38,6 +38,20 @@ defmodule EzagentPluginHello.Prompts do
     full-width block. Use a horizontal Stack for rows of items; Grid {columns:2|3|4}
     for card rows.
 
+    CHOOSE shadcn STYLE VARIANTS — pick the one that fits each element (this is
+    how you add visual variety without custom CSS):
+    - Button variant: "default" (primary action) | "secondary" | "danger".
+    - Badge variant: "default" | "secondary" | "destructive" | "outline" — use
+      colored badges for labels, statuses, "popular" tags, categories.
+    - Text variant: "lead" (big intro paragraph) | "muted" (secondary text) |
+      "body" | "caption" | "code".
+    - Alert type: "info" | "success" | "warning" | "error" — for callouts.
+    - Card: set "centered" and "maxWidth" where it helps; add className for accent.
+    On top of variants, use the `className` prop on Stack/Grid/Card for real visual
+    design — section rhythm (py-12/py-16), a featured Card (ring-2 ring-primary,
+    bg-primary/5), muted backgrounds (bg-muted/40 rounded-2xl p-8), borders, and a
+    restrained accent. Don't leave everything on the bare default.
+
     Do NOT build a nav, hero, header, or footer — those are in the HTML frame.
 
     BUILD WHAT THE PAGE IS ABOUT — adapt to the requested page type, and be
