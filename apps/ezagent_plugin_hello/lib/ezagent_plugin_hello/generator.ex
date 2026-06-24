@@ -4,16 +4,15 @@ defmodule EzagentPluginHello.Generator do
   GenServer process (so the slow LLM round-trip never blocks dispatch).
 
   `start/2` spawns a supervised Task (under `EzagentPluginHello.TaskSupervisor`);
-  `generate/2` PLANS the request (`decompose/1`) and either:
+  `generate/2` PLANS the request (`decompose/1`) for its EDIT SCOPE (body / shell /
+  both) and runs the single-page path: one LLM call → catalog page →
+  `TurnDriver.drive/3`. Out-of-catalog output fails closed (`Spec.validate/1`).
 
-    * **simple** — one LLM call → catalog page → `TurnDriver.drive/3` (Phase 0); or
-    * **complex** — FANS OUT one concurrent worker per section, each building a
-      catalog sub-tree, assembled into one page (`Spec.compose_page/2`) and driven
-      onto the Surface (Phase 1).
-
-  Out-of-catalog output fails closed (`Spec.validate/1`); a failed section is
-  dropped and the page is composed from the survivors (single-page fallback if
-  none survive), so a turn always produces something.
+  Fan-out (the complex/per-section-worker path) is DISABLED for the shadcn era —
+  one `page_gen` call now produces the whole (5–8 section) body, and the per-section
+  worker prompt predated shadcn so it produced invalid sub-trees and always fell
+  back anyway. `classify_plan/1` therefore always returns `{:simple}`; `decompose/1`
+  / `parse_plan/1` still run to extract the edit SCOPE.
 
   ## API config (Phase 0)
 
@@ -33,9 +32,6 @@ defmodule EzagentPluginHello.Generator do
   alias EzagentPluginHello.{Prompts, Sanitize, ShellCss, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
-  # Per-section worker deadline — a margin over the LLM client's 60s call timeout.
-  @section_timeout_ms 90_000
-
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
   @spec start(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
   def start(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -45,16 +41,11 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Generate a page and land it on `session_uri`'s Surface. The orchestrator first
-  PLANS (`decompose/1`): a simple request takes the single-page path; a complex
-  one FANS OUT — one concurrent worker per section, each building a sub-tree,
-  assembled into one page (`Spec.compose_page/2`) and driven onto the Surface.
-
-  Worker fan-out runs as concurrent Tasks calling the same LLM path (decision:
-  Phase-1 keeps workers in-process; the curl-flavor `Entity.Agent` member-worker
-  fold via `add_managed_member` is a flagged follow-up — it needs a worker
-  credential cascade not yet wired. The orchestrator caps for that path are
-  already granted, see `App.ensure_app`).
+  Generate a page and land it on `session_uri`'s Surface. A FRESH session (no
+  frame yet) generates frame + content in one round; a follow-up edit PLANS its
+  scope (`decompose/1`) and regenerates body / shell / both. All content goes
+  through the single-page path (`generate_simple/4`) — fan-out is disabled, see the
+  moduledoc.
   """
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -81,39 +72,31 @@ defmodule EzagentPluginHello.Generator do
   end
 
   defp generate_for_scope(session_uri, builder, user_text) do
-    {plan, scope} = decompose(user_text)
+    {_plan, scope} = decompose(user_text)
 
     case scope do
       # Shell-only: keep the existing json-render BODY untouched, regenerate just
       # the HTML frame. No page_gen call, so the content the user didn't ask to
       # change stays exactly as-is.
       :shell ->
-        TurnDriver.say(session_uri, builder, gettext("🎨 Plan: redesign the frame only (content unchanged)."))
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("🎨 Plan: redesign the frame only (content unchanged).")
+        )
+
         regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri), user_text)
 
       # Body (default) or both: run the normal content generation. `reframe?`
       # forces a fresh frame too when the user asked for "both".
       _ ->
         reframe = scope == :both
-        if reframe, do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
 
-        case plan do
-          {:complex, %{title: title, sections: sections}} ->
-            TurnDriver.say(
-              session_uri,
-              builder,
-              gettext("🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
-                title: title,
-                count: length(sections)
-              )
-            )
+        if reframe,
+          do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
 
-            generate_complex(session_uri, builder, title, sections, user_text, reframe)
-
-          {:simple} ->
-            TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
-            generate_simple(session_uri, builder, user_text, reframe)
-        end
+        TurnDriver.say(session_uri, builder, gettext("🧭 Plan: single page, direct generation."))
+        generate_simple(session_uri, builder, user_text, reframe)
     end
   end
 
@@ -144,108 +127,6 @@ defmodule EzagentPluginHello.Generator do
         )
 
         err
-    end
-  end
-
-  # The Phase-1 fan-out path: build every section concurrently, assemble, drive.
-  # Sections that fail (LLM error / out-of-catalog) are dropped; the page is built
-  # from those that succeeded (in plan order). If NONE survive, fall back to the
-  # single-page path so the turn still produces something.
-  defp generate_complex(session_uri, builder, title, sections, user_text, reframe) do
-    briefs = sections |> Enum.map(fn %{brief: b} -> "・#{b}" end) |> Enum.join("\n")
-
-    TurnDriver.say(
-      session_uri,
-      builder,
-      gettext("⏳ Generating %{count} blocks in parallel:\n%{briefs}",
-        count: length(sections),
-        briefs: briefs
-      )
-    )
-
-    section_trees =
-      sections
-      |> Task.async_stream(
-        fn %{brief: brief} -> gen_section(brief) end,
-        max_concurrency: max(length(sections), 1),
-        timeout: @section_timeout_ms,
-        on_timeout: :kill_task
-      )
-      |> Enum.map(fn
-        {:ok, {:ok, tree}} -> tree
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-
-    kept = length(section_trees)
-    failed = length(sections) - kept
-
-    blocks_done_msg =
-      if failed > 0 do
-        gettext("📦 Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped).",
-          kept: kept,
-          total: length(sections),
-          failed: failed
-        )
-      else
-        gettext("📦 Blocks done: %{kept}/%{total} succeeded.",
-          kept: kept,
-          total: length(sections)
-        )
-      end
-
-    TurnDriver.say(session_uri, builder, blocks_done_msg)
-
-    case section_trees do
-      [] ->
-        Logger.warning(
-          "hello.Generator: all #{length(sections)} sections failed; single-page fallback"
-        )
-
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("⚠ All blocks failed; regenerating with the single-page fallback…")
-        )
-
-        generate_simple(session_uri, builder, user_text, reframe)
-
-      trees ->
-        with {:ok, page} <- Spec.compose_page(title, trees) do
-          log_spec(session_uri, page)
-
-          TurnDriver.say(
-            session_uri,
-            builder,
-            gettext("📦 Assembled: %{desc}", desc: describe_page(page))
-          )
-
-          land_page(session_uri, builder, page, user_text, reframe)
-        else
-          {:error, reason} = err ->
-            Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
-
-            TurnDriver.say(
-              session_uri,
-              builder,
-              gettext("⚠ Page assembly failed: %{reason}", reason: inspect(reason))
-            )
-
-            err
-        end
-    end
-  end
-
-  # One worker: build a single catalog sub-tree from a section brief.
-  defp gen_section(brief) do
-    with {:ok, %{content: content}} <- call_llm(Prompts.worker_section_system(), brief),
-         {:ok, raw} <- Spec.extract(content),
-         {:ok, node} <- Spec.validate(raw) do
-      {:ok, node}
-    else
-      other ->
-        Logger.warning("hello.Generator: section build failed: #{inspect(other)}")
-        :error
     end
   end
 
@@ -289,22 +170,10 @@ defmodule EzagentPluginHello.Generator do
   # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
   defp classify_plan(_), do: {:simple}
 
-  defp briefs_of(%{"sections" => sections}) when is_list(sections) do
-    sections
-    |> Enum.map(fn
-      %{"brief" => b} when is_binary(b) -> String.trim(b)
-      %{"title" => t} when is_binary(t) -> String.trim(t)
-      _ -> nil
-    end)
-    |> Enum.reject(&(&1 in [nil, ""]))
-  end
-
-  defp briefs_of(_), do: []
-
   # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
   # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
   # otherwise reuse the stored frame so ordinary content edits leave it untouched.
-  defp ensure_shell_html(session_uri, builder, title, brief, force) do
+  defp ensure_shell_html(session_uri, _builder, title, brief, force) do
     existing = current_shell_html(session_uri)
 
     if not force and existing != "" do
@@ -329,50 +198,6 @@ defmodule EzagentPluginHello.Generator do
           existing
       end
     end
-  end
-
-  # Focused content-theme call. Returns CSS rules (no <style> tag) or "" on failure.
-  defp generate_content_theme(frame) when is_binary(frame) and frame != "" do
-    case call_llm(Prompts.theme_gen_system(), frame) do
-      {:ok, %{content: content}} -> extract_css(content)
-      other ->
-        Logger.warning("hello.Generator: content theme failed: #{inspect(other)}")
-        ""
-    end
-  end
-
-  defp generate_content_theme(_), do: ""
-
-  # Strip markdown fences / a stray <style> tag, AND every LAYOUT/sizing property
-  # — the json-render components own their layout (grid/flex/width via their
-  # default classes); the theme must only restyle the LOOK. Without this the model
-  # sets widths/flex/columns and squishes cards into 1-char strips.
-  defp extract_css(content) when is_binary(content) do
-    content
-    |> String.replace(~r/```[a-z]*/i, "")
-    |> String.replace(~r/<\/?style[^>]*>/i, "")
-    |> strip_layout_props()
-    |> String.trim()
-  end
-
-  defp extract_css(_), do: ""
-
-  @theme_strip_props ~w(
-    display position top right bottom left inset float clear z-index
-    width min-width max-width height min-height max-height
-    flex flex-basis flex-grow flex-shrink flex-direction flex-wrap flex-flow
-    grid grid-template grid-template-columns grid-template-rows grid-template-areas
-    grid-auto-flow grid-auto-columns grid-auto-rows grid-column grid-row grid-area
-    gap column-gap row-gap columns column-count column-width
-    place-items place-content place-self justify-content justify-items justify-self
-    align-items align-content align-self order overflow overflow-x overflow-y
-    white-space writing-mode
-  )
-
-  defp strip_layout_props(css) do
-    Enum.reduce(@theme_strip_props, css, fn p, acc ->
-      String.replace(acc, ~r/(^|[;{\s])#{Regex.escape(p)}\s*:[^;{}]*;?/i, "\\1")
-    end)
   end
 
   # Compile the per-session CSS from BOTH the shell HTML and the body's
@@ -499,7 +324,13 @@ defmodule EzagentPluginHello.Generator do
       {:error, :shell_failed}
     else
       store_frame(session_uri, builder, shell_html, current_body_tree(session_uri))
-      TurnDriver.say(session_uri, builder, gettext("✅ Frame redesigned — your content is unchanged."))
+
+      TurnDriver.say(
+        session_uri,
+        builder,
+        gettext("✅ Frame redesigned — your content is unchanged.")
+      )
+
       {:ok, :shell_only}
     end
   end
