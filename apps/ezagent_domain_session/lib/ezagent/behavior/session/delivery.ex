@@ -151,6 +151,19 @@ defmodule Ezagent.Behavior.Session.Delivery do
     # A user URI → `user.receive`; everything else (agent + plugin agent
     # flavors, all `agent`-typed) → `agent.receive`.
     receive_prefix = receive_behavior_prefix(recipient_uri)
+
+    # Cold-member revival: an `agent` member (e.g. a hello builder) that has gone
+    # cold since the last boot would otherwise never process this fan-out receive
+    # — a `reply: :ignore` cast to a non-live Kind lands in PendingDelivery and is
+    # never delivered (the session's chat never gets a reply after a restart).
+    # Revive it from its snapshot first so the receive reaches a live process.
+    # `ensure_live/1` no-ops when already live or when there is no snapshot
+    # ({:error, :not_created}); `user` recipients are passive inboxes that do not
+    # need a live process, so they are left untouched.
+    if receive_prefix == :agent do
+      _ = Ezagent.SpawnRegistry.ensure_live(recipient_uri)
+    end
+
     receive_target = Ezagent.URI.with_action(recipient_uri, receive_prefix, :receive)
 
     result =
