@@ -56,4 +56,4 @@ PR2:
 
 ## Suggested Next Step
 
-Open two PRs with target branch `remove-localization-assumption`, one for `feat/workspace-locality-core-gate` and one for `feat/workspace-locality-plugin-invariants`, then have lead review the integration branch as the combined return.
+Lead should review and receive the already-assembled `remove-localization-assumption` integration branch. PR1 and PR2 have both been fast-forward merged locally into this target before return; no additional PR-to-target merge step remains in this handoff.
