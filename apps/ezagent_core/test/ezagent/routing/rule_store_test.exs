@@ -1,13 +1,9 @@
 defmodule Ezagent.Routing.RuleStoreTest do
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Routing.{Matcher, Receiver, RuleStore}
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   # PR 9 §A: DefaultRules.bootstrap seeds a system_default rule into
   # MentionRouting at chat plugin boot. Tests that assert specific row

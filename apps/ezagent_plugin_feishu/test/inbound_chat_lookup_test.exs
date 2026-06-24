@@ -10,16 +10,12 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
   reads them back correctly.
   """
 
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.BindingRow
   alias EzagentPluginFeishu.InboundChatLookup
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   describe "resolve/1" do
     test "returns :error for a chat_id with no binding row" do

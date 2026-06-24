@@ -13,8 +13,10 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
   @endpoint EzagentWeb.Endpoint
 
   setup do
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # `use EzagentCore.DataCase, async: false` already shares the sandbox via a
+    # drainable Agent owner; a redundant `Sandbox.mode({:shared, self()})` here
+    # only re-globalized the connection onto the dying test pid and clobbered
+    # concurrent suites with "owner exited" errors (#92).
     case Ezagent.Workspace.Store.get_by_name("team-alpha") do
       nil -> {:ok, _} = Ezagent.Workspace.Store.create("team-alpha", %{})
       _ -> :ok

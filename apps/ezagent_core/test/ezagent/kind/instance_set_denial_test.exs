@@ -1,5 +1,10 @@
 defmodule Ezagent.Kind.InstanceSetDenialTest do
-  use ExUnit.Case, async: false
+  # #92: was `use ExUnit.Case` + a hand-rolled `checkout` + `{:shared, self()}`,
+  # which made the dying test process the global shared owner and clobbered
+  # concurrent suites on exit. DataCase shares via a drainable Agent owner +
+  # drain teardown; the per-test `on_exit` below additionally drains this
+  # suite's gate-supervisor Kinds.
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -29,12 +34,10 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   end
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     # Spawn-based tests (E9/E4/E5/E3/E2) start the Kind GenServer in the gate
-    # DynamicSupervisor — a SEPARATE process that touches the snapshot DB.
-    # `async: false` + shared mode lets that process use this test's checked-out
-    # connection (same pattern as audit_case.ex:56).
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # DynamicSupervisor — a SEPARATE process that touches the snapshot DB. The
+    # DataCase shared (drainable) owner lets that process use the sandbox
+    # connection without globalizing it onto the dying test pid (#92).
 
     # codex HIGH finding 3: SupersetSessionKind.supervisor/0 returns the
     # dedicated test DynamicSupervisor `Ezagent.LifecycleCase.gate_supervisor()`.

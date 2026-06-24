@@ -34,7 +34,12 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   `{:not_a_behavior, _}` return in `invoke_behavior/5` (lib/ezagent/kind/runtime.ex).
   """
 
-  use ExUnit.Case, async: false
+  # #92: was `use ExUnit.Case` + two describe-scoped `checkout` + `{:shared,
+  # self()}` setups that made the dying test process the global shared owner,
+  # clobbering concurrent suites on exit. DataCase shares via a drainable Agent
+  # owner module-wide, so the :emit / multi-effect EventLog writes run under a
+  # safe shared connection without re-globalizing it onto the test pid.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
 
@@ -552,11 +557,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   end
 
   describe "Phase 1.5b — :emit effect" do
-    setup do
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-      Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-      :ok
-    end
+    # Shared sandbox provided module-wide by `use EzagentCore.DataCase` (#92).
 
     test "EventLog.append/4 is called for each :emit effect",
          %{state: state, self_uri: self_uri} do
@@ -692,11 +693,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   end
 
   describe "Phase 1.5b — multi-effect handler" do
-    setup do
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-      Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-      :ok
-    end
+    # Shared sandbox provided module-wide by `use EzagentCore.DataCase` (#92).
 
     test "handler returning :set + :notify + :emit executes all three buckets",
          %{state: state, self_uri: self_uri} do

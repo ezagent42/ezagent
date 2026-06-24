@@ -30,15 +30,13 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
   a future enhancement.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{Message}
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.User
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
     Ezagent.AgentBridge.Registry.init()
     :ok = EzagentDomainInstanceMessage.AgentBridgeTestAdapter.ensure_registered()
     :ok

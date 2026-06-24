@@ -30,9 +30,11 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
   @endpoint EzagentWeb.Endpoint
 
   setup do
-    # spawned Session / User Kinds run in their own processes — share the sandbox.
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # spawned Session / User Kinds run in their own processes; `use
+    # EzagentCore.DataCase, async: false` already shares the sandbox via a
+    # drainable Agent owner, so a redundant `Sandbox.mode({:shared, self()})`
+    # only re-globalized the connection onto the dying test pid and clobbered
+    # concurrent suites with "owner exited" errors (#92).
     case Ezagent.Workspace.Store.get_by_name("team-alpha") do
       nil -> {:ok, _} = Ezagent.Workspace.Store.create("team-alpha", %{})
       _ -> :ok

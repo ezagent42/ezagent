@@ -1,5 +1,10 @@
 defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
+
+  # DataCase's `using` block `import Ecto.Query`, whose `join/3` macro would
+  # shadow this module's `defp join/3` session-join helper (#92). This module
+  # uses no Ecto.Query macros, so exclude the colliding one.
+  import Ecto.Query, except: [join: 3]
 
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
@@ -8,9 +13,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   alias EzagentCore.Repo
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())
 
     :ok

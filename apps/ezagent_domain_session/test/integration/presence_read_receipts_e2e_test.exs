@@ -32,18 +32,14 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
   non-admin tests would prove.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message, Presence}
   alias Ezagent.Session.ReadMarker
 
   defp unique_suffix, do: System.unique_integer([:positive])
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp ensure_admin_spawned do
     admin_uri = Ezagent.Entity.User.admin_uri()

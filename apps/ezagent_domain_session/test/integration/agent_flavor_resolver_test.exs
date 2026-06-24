@@ -24,14 +24,12 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentFlavorResolverTest do
   plugin apps are started.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentFlavorRegistry, KindRegistry}
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
     Ezagent.UriQuery.init()
     previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
 

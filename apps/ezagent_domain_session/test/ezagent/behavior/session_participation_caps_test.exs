@@ -30,13 +30,13 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
   alias Ezagent.Capability
   alias Ezagent.Behavior.Session.Membership
 
-  setup do
-    # Spawned Session / User Kinds run in their own processes — share the
-    # sandbox so the caller-side `Users.confirmed?` + cap reads see the rows
-    # this test inserts (the 甲-1 lesson — the mount runs CALLER-SIDE).
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # NOTE: spawned Session / User Kinds run in their own processes and read the
+  # rows this test inserts (the 甲-1 lesson — the mount runs CALLER-SIDE).
+  # `use EzagentCore.DataCase, async: false` already shares the sandbox via a
+  # drainable Agent owner (DataCase.start_owner_stable!), so those cross-process
+  # reads work WITHOUT a redundant `Sandbox.mode({:shared, self()})` — that
+  # re-globalized the connection onto the test pid, which dies at test exit and
+  # clobbered concurrent suites with "owner exited" errors (#92).
 
   defp uniq, do: System.unique_integer([:positive])
 
