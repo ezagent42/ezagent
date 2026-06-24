@@ -96,7 +96,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       workspace_uri: {:option, :uri},
       subject_uri: {:option, :uri},
       key: {:option, :string},
-      patch: {:option, :map}
+      patch: {:option, :map},
+      replace_body: {:option, :map}
     },
     returns: %{config_id: :string, previous_config_id: {:option, :string}},
     caps: [:apply_config_delta],
@@ -254,13 +255,19 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   defp do_apply_config_delta(turn_id, attrs, ctx) do
     body =
-      ConfigStore.merge_delta(
-        attrs.layer,
-        attrs.workspace_uri,
-        attrs.subject_uri,
-        attrs.key,
-        attrs.patch
-      )
+      case Map.get(attrs, :replace_body) do
+        %{} = replacement ->
+          replacement
+
+        nil ->
+          ConfigStore.merge_delta(
+            attrs.layer,
+            attrs.workspace_uri,
+            attrs.subject_uri,
+            attrs.key,
+            attrs.patch
+          )
+      end
 
     # CE-3 — write the immutable object AND advance the pointer in ONE
     # transaction (`write_and_point/1`). Atomic write = no orphan object, so
@@ -577,7 +584,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     with {:ok, layer} <- ConfigStore.normalize_layer(attrs.layer),
          {:ok, workspace_uri} <- ConfigStore.normalize_uri(attrs.workspace_uri, :workspace_uri),
          {:ok, subject_uri} <- ConfigStore.normalize_uri(attrs.subject_uri, :subject_uri),
-         {:ok, key} <- ConfigStore.validate_key(attrs.key) do
+         {:ok, key} <- ConfigStore.validate_key(attrs.key),
+         :ok <- validate_replace_body(Map.get(attrs, :replace_body)) do
       {:ok,
        attrs
        |> Map.put(:layer, layer)
@@ -586,6 +594,12 @@ defmodule Ezagent.Behavior.ConfigEvolve do
        |> Map.put(:key, key)}
     end
   end
+
+  defp validate_replace_body(nil), do: :ok
+  defp validate_replace_body(body) when is_map(body), do: :ok
+
+  defp validate_replace_body(other),
+    do: {:error, {:invalid_replace_body, %{got: inspect(other)}}}
 
   # The delta is carried in the dispatch ARGS (the agent has no turn slice).
   # `subject_uri` defaults to the agent itself (it IS the subject); a caller
@@ -598,6 +612,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       subject_uri: Map.get(args, :subject_uri) || ctx.self_uri,
       key: Map.get(args, :key) || @default_cascade_key,
       patch: Map.get(args, :patch) || %{},
+      replace_body: Map.get(args, :replace_body),
       actor_uri: ctx.caller,
       source_turn_id: turn_id
     }

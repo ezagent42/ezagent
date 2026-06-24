@@ -565,4 +565,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
   @spec list_sessions(URI.t()) :: [URI.t()]
   defdelegate list_sessions(workspace_uri), to: Listing
+
+  @doc """
+  Return live sessions in the agent's workspace whose chat membership includes
+  `agent_uri`. Used by operator surfaces to block destructive agent deletion
+  while the agent is still bound to a running session.
+  """
+  @spec agent_live_sessions(URI.t()) :: {:ok, [URI.t()]} | {:error, term()}
+  defdelegate agent_live_sessions(agent_uri), to: Listing
+
+  @doc "True when `agent_uri` is a member of at least one live session."
+  @spec agent_in_live_session?(URI.t()) :: {:ok, boolean()} | {:error, term()}
+  defdelegate agent_in_live_session?(agent_uri), to: Listing
 end

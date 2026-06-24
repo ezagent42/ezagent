@@ -21,6 +21,11 @@ defmodule Ezagent.Socialware.ConfigStore do
           required(:previous_config_id) => String.t() | nil
         }
 
+  @type pointer_with_object :: %{
+          required(:pointer) => ConfigPointer.t(),
+          required(:object) => ConfigObject.t()
+        }
+
   # PR-7 (LOW) — the public object-only insert (`write_config/1`) was REMOVED.
   # The ONLY public durable-write path is now the atomic `write_and_point/1`
   # (object + pointer in one transaction). A public object-only insert let a
@@ -151,6 +156,52 @@ defmodule Ezagent.Socialware.ConfigStore do
       %ConfigPointer{config_id: config_id} -> {:ok, get!(config_id)}
       nil -> :none
     end
+  end
+
+  @doc """
+  List distinct config keys that currently have a pointer for `agent_uri`.
+
+  This is intentionally pointer-derived, not schema-derived: current config
+  evolution has no fixed key registry. Console callers should union this with
+  their built-in/default keys.
+  """
+  @spec list_keys_for_subject(URI.t() | String.t()) :: [String.t()]
+  def list_keys_for_subject(subject_uri) do
+    subject = uri_string!(subject_uri)
+
+    Repo.all(
+      from(p in ConfigPointer,
+        where: p.subject_uri == ^subject,
+        distinct: true,
+        select: p.key,
+        order_by: p.key
+      )
+    )
+  end
+
+  @doc """
+  Read all currently-pointed layer objects for a subject/key.
+
+  Returns entries keyed by canonical layer string (`"workspace"`, `"user"`,
+  `"session"`). Missing layers are absent from the returned map.
+  """
+  @spec layer_objects_for_key(URI.t() | String.t(), String.t()) :: %{
+          optional(String.t()) => pointer_with_object()
+        }
+  def layer_objects_for_key(subject_uri, key) when is_binary(key) do
+    subject = uri_string!(subject_uri)
+
+    Repo.all(
+      from(p in ConfigPointer,
+        join: o in ConfigObject,
+        on: o.id == p.config_id,
+        where: p.subject_uri == ^subject and p.key == ^key,
+        select: {p.layer, p, o}
+      )
+    )
+    |> Map.new(fn {layer, pointer, object} ->
+      {layer, %{pointer: pointer, object: object}}
+    end)
   end
 
   @spec resolve!(atom() | String.t(), URI.t() | String.t(), URI.t() | String.t(), String.t()) ::
