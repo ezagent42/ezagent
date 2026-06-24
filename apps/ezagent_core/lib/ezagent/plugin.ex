@@ -474,23 +474,6 @@ defmodule Ezagent.Plugin do
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
     end)
 
-    # Plugin-owned resource://<ws>/<type>/<name> types (plugin-resource SPEC
-    # §4.2). Whole-batch register_all/1 so the plugin contributes ALL its types
-    # or none (HIGH-5: no dangling type if a later decl is bad). A duplicate
-    # `<type>` OR `backend_component` (codex HIGH-1) is an author/operator error
-    # — fail boot loud naming the plugin, consistent with how spawns/0 etc. are
-    # rejected above. Core types are already claimed at Registry.init/1 (before
-    # any plugin boots), so a plugin can neither shadow a core type nor alias a
-    # core backend.
-    case Ezagent.Resource.FsResolver.Registry.register_all(plugin_module.resource_types()) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        raise ArgumentError,
-              "#{inspect(plugin_module)} resource_types → #{inspect(reason)}"
-    end
-
     # ExternalMirror PR-EM-1 (SPEC §5.1) — codex r1 HIGH-1 fix:
     # publish ALL adapter pairs atomically. Prevalidate every entry
     # (Grill-5 + duplicate-id detection inside this batch) BEFORE
@@ -507,6 +490,26 @@ defmodule Ezagent.Plugin do
     publish_adapters!(plugin_module, plugin_module.adapters())
 
     :ok = Ezagent.PluginRegistry.register(plugin_module)
+
+    # Plugin-owned resource://<ws>/<type>/<name> types (plugin-resource SPEC §4.2)
+    # — registered LAST (codex MEDIUM): the resource Registry has no production
+    # unregister path, so if a resource registration ran before a later publish
+    # step that raised (e.g. PluginRegistry duplicate-slug), the types would leak
+    # for a plugin whose boot never completed. By running after every other
+    # fallible step, a failure upstream means resource types were never written.
+    # Whole-batch register_all/1 so the plugin contributes ALL its types or none
+    # (HIGH-5). A duplicate `<type>` OR `backend_component` (codex HIGH-1) is an
+    # author/operator error — fail boot loud naming the plugin. Core types are
+    # claimed at Registry.init/1 before any plugin boots, so a plugin can neither
+    # shadow a core type nor alias a core backend.
+    case Ezagent.Resource.FsResolver.Registry.register_all(plugin_module.resource_types()) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} resource_types → #{inspect(reason)}"
+    end
 
     :ok
   end

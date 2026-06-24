@@ -176,16 +176,26 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # against the live table). Halts on the first failure → nothing is inserted.
   defp precheck_batch(decls) do
     decls
-    |> Enum.reduce_while({:ok, MapSet.new(), MapSet.new()}, fn {type, spec},
-                                                               {:ok, seen_types, seen_backends} ->
-      case precheck(type, spec, seen_types, seen_backends) do
-        :ok ->
-          backend = backend_component_of(spec)
-          {:cont, {:ok, MapSet.put(seen_types, type), MapSet.put(seen_backends, backend)}}
+    |> Enum.reduce_while({:ok, MapSet.new(), MapSet.new()}, fn
+      {type, spec}, {:ok, seen_types, seen_backends}
+      when is_binary(type) and is_map(spec) ->
+        case precheck(type, spec, seen_types, seen_backends) do
+          :ok ->
+            backend = backend_component_of(spec)
+            {:cont, {:ok, MapSet.put(seen_types, type), MapSet.put(seen_backends, backend)}}
 
-        {:error, _} = err ->
-          {:halt, err}
-      end
+          {:error, _} = err ->
+            {:halt, err}
+        end
+
+      # A malformed declaration (not a `{binary, map}` tuple) must NOT crash the
+      # owner GenServer (codex MEDIUM — a plugin returning e.g. `[:bad]` from
+      # resource_types/0 would otherwise FunctionClauseError the Registry and, on
+      # the supervised restart, drop every OTHER plugin's already-registered
+      # types). Reject it as a normal error → `Plugin.boot/1` raises naming the
+      # offending plugin; the Registry stays alive.
+      other, {:ok, _seen_types, _seen_backends} ->
+        {:halt, {:error, {:invalid_resource_type_decl, other}}}
     end)
     |> case do
       {:ok, _, _} -> :ok

@@ -328,6 +328,26 @@ defmodule Ezagent.Resource.FsResolverTest do
       end
     end
 
+    test "a malformed decl is rejected as an error, does NOT crash the Registry (codex MEDIUM)" do
+      # A plugin returning e.g. [:bad] from resource_types/0 must NOT
+      # FunctionClauseError the owner GenServer (which would, on the supervised
+      # restart, drop every other plugin's already-registered types).
+      assert {:error, {:invalid_resource_type_decl, :bad}} = Registry.register_all([:bad])
+
+      assert {:error, {:invalid_resource_type_decl, _}} =
+               Registry.register_all([{"only-a-type-no-spec"}])
+
+      # The Registry is still alive + functional after the rejected malformed batch.
+      t = "ra-#{System.unique_integer([:positive])}"
+
+      try do
+        assert :ok =
+                 Registry.register_all([{t, %{backend_component: t, authority: &ok_authority/2}}])
+      after
+        scrub([t])
+      end
+    end
+
     test "a second register_all of an existing <type> → {:error, {:duplicate_type, _}} (write-once on type)" do
       t = "ra-#{System.unique_integer([:positive])}"
       decl = [{t, %{backend_component: t, authority: &ok_authority/2}}]
