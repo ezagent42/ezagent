@@ -8,38 +8,27 @@ import {isValidTree} from "./catalog.mjs"
 // Round-1 preview: a placeholder body shown inside the AI frame so its design is
 // visible for approval before real content is generated (round 2).
 const SKELETON_PAGE = {
-  type: "page",
-  props: {title: "预览"},
+  type: "Stack",
+  props: {direction: "vertical", gap: "xl", className: "p-8"},
   children: [
-    {type: "hero", props: {title: "标题占位 · Your Headline", subtitle: "这里是副标题占位 —— 真实内容将在下一步填充。", cta_label: "开始", cta_href: "#"}},
     {
-      type: "features",
-      props: {title: "核心特性(占位)"},
+      type: "Stack",
+      props: {direction: "vertical", gap: "md"},
       children: [
-        {type: "feature", props: {title: "特性一", text: "占位说明文字。", icon: "zap"}},
-        {type: "feature", props: {title: "特性二", text: "占位说明文字。", icon: "shield"}},
-        {type: "feature", props: {title: "特性三", text: "占位说明文字。", icon: "rocket"}},
+        {type: "Heading", props: {text: "标题占位 · Your Headline", level: 1}},
+        {type: "Text", props: {text: "这里是副标题占位 —— 真实内容将在下一步填充。"}},
+        {type: "Button", props: {label: "开始", variant: "default"}},
       ],
     },
     {
-      type: "stats",
-      props: {title: "数据(占位)"},
+      type: "Grid",
+      props: {columns: 3, gap: "md"},
       children: [
-        {type: "stat", props: {value: "99%", label: "占位指标"}},
-        {type: "stat", props: {value: "1.2k", label: "占位指标"}},
-        {type: "stat", props: {value: "4.9", label: "占位指标"}},
-        {type: "stat", props: {value: "24/7", label: "占位指标"}},
+        {type: "Card", props: {title: "特性一", description: "占位说明文字。"}},
+        {type: "Card", props: {title: "特性二", description: "占位说明文字。"}},
+        {type: "Card", props: {title: "特性三", description: "占位说明文字。"}},
       ],
     },
-    {
-      type: "testimonials",
-      props: {title: "用户评价(占位)"},
-      children: [
-        {type: "testimonial", props: {quote: "这是一段占位评价内容。", author: "张三", role: "职位 · 公司"}},
-        {type: "testimonial", props: {quote: "这是一段占位评价内容。", author: "李四", role: "职位 · 公司"}},
-      ],
-    },
-    {type: "cta", props: {title: "准备好了吗?(占位)", text: "占位行动号召文案。", button_label: "开始", button_href: "#"}},
   ],
 }
 

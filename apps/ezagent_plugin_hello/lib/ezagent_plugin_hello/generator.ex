@@ -682,7 +682,19 @@ defmodule EzagentPluginHello.Generator do
   end
 
   defp get_title(%{"props" => %{"title" => t}}) when is_binary(t) and t != "", do: t
+  # shadcn trees have no page title — use the first Heading's text as the brand.
+  defp get_title(%{} = node), do: first_heading_text(node) || gettext("Untitled")
   defp get_title(_), do: gettext("Untitled")
+
+  defp first_heading_text(%{"type" => "Heading", "props" => %{"text" => t}})
+       when is_binary(t) and t != "",
+       do: t
+
+  defp first_heading_text(%{"children" => kids}) when is_list(kids) do
+    Enum.find_value(kids, &first_heading_text/1)
+  end
+
+  defp first_heading_text(_), do: nil
 
   # Human description of the generated page: title + per-type component counts —
   # the "what did it actually build" line.

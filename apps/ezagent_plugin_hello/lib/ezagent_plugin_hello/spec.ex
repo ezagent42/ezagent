@@ -22,41 +22,52 @@ defmodule EzagentPluginHello.Spec do
   string-keyed (JSON round-trips through `MessageStore`/snapshots as strings).
   """
 
-  # Catalog v0 — allowed node types → the prop keys the renderer honors.
-  # `children` is allowed on the container-ish types (page/section/card).
+  # Catalog — the @json-render/shadcn component set (36). Container types (with a
+  # `default` slot) take `children`; leaves carry content in props. The renderer
+  # (zod) validates props; this list gates the allowed TYPES + documents props for
+  # the prompt. `className` (where present) lets the model add Tailwind utilities.
   @catalog %{
-    # primitives
-    "page" => %{props: ["title"], container?: true},
-    "section" => %{props: ["layout", "tone", "title"], container?: true},
-    "card" => %{props: ["title"], container?: true},
-    "heading" => %{props: ["text", "level"], container?: false},
-    "text" => %{props: ["text"], container?: false},
-    "button" => %{props: ["label", "href"], container?: false},
-    "image" => %{props: ["src", "alt"], container?: false},
-    # block-level "official-site" components — each renders a full-width, designed
-    # section. `tone` ("default"|"muted"|"dark"|"brand") alternates backgrounds;
-    # `icon` is an icon name (shield/zap/rocket/lock/globe/chart/users/cloud/code/
-    # gauge/star/check/heart/sparkles/clock/layers).
-    "nav" => %{props: ["brand"], container?: true},
-    "banner" => %{props: ["text"], container?: false},
-    "hero" => %{props: ["title", "subtitle", "cta_label", "cta_href", "badge"], container?: false},
-    "features" => %{props: ["title", "subtitle", "tone"], container?: true},
-    "feature" => %{props: ["title", "text", "icon"], container?: false},
-    "split" => %{props: ["title", "text", "cta_label", "cta_href", "reverse", "icon", "tone"], container?: false},
-    "stats" => %{props: ["title", "tone"], container?: true},
-    "stat" => %{props: ["value", "label"], container?: false},
-    "testimonials" => %{props: ["title", "tone"], container?: true},
-    "testimonial" => %{props: ["quote", "author", "role"], container?: false},
-    "logos" => %{props: ["title", "tone"], container?: true},
-    "logo" => %{props: ["name"], container?: false},
-    "pricing" => %{props: ["title", "subtitle", "tone"], container?: true},
-    "plan" => %{props: ["name", "price", "period", "cta_label", "featured"], container?: true},
-    "faq" => %{props: ["title", "tone"], container?: true},
-    "qa" => %{props: ["question", "answer"], container?: false},
-    "steps" => %{props: ["title", "tone"], container?: true},
-    "step" => %{props: ["title", "text"], container?: false},
-    "cta" => %{props: ["title", "text", "button_label", "button_href", "tone"], container?: false},
-    "footer" => %{props: ["text"], container?: false}
+    # layout containers
+    "Stack" => %{props: ["direction", "gap", "align", "justify", "className"], container?: true},
+    "Grid" => %{props: ["columns", "gap", "className"], container?: true},
+    "Card" => %{props: ["title", "description", "maxWidth", "centered", "className"], container?: true},
+    # content leaves
+    "Heading" => %{props: ["text", "level"], container?: false},
+    "Text" => %{props: ["text", "variant"], container?: false},
+    "Button" => %{props: ["label", "variant", "disabled"], container?: false},
+    "Link" => %{props: ["label", "href"], container?: false},
+    "Image" => %{props: ["src", "alt", "width", "height"], container?: false},
+    "Badge" => %{props: ["text", "variant"], container?: false},
+    "Avatar" => %{props: ["src", "name", "size"], container?: false},
+    "Alert" => %{props: ["title", "message", "type"], container?: false},
+    "Separator" => %{props: ["orientation"], container?: false},
+    # disclosure / navigation
+    "Tabs" => %{props: ["tabs", "defaultValue", "value"], container?: true},
+    "Accordion" => %{props: ["items", "type"], container?: false},
+    "Collapsible" => %{props: ["title", "defaultOpen"], container?: true},
+    "Carousel" => %{props: ["items"], container?: false},
+    "Table" => %{props: ["columns", "rows", "caption"], container?: false},
+    "Dialog" => %{props: ["title", "description", "openPath"], container?: true},
+    "Drawer" => %{props: ["title", "description", "openPath"], container?: true},
+    "Popover" => %{props: ["trigger", "content"], container?: false},
+    "Tooltip" => %{props: ["content", "text"], container?: false},
+    "DropdownMenu" => %{props: ["label", "items", "value"], container?: false},
+    "Pagination" => %{props: ["totalPages", "page"], container?: false},
+    # feedback
+    "Progress" => %{props: ["value", "max", "label"], container?: false},
+    "Skeleton" => %{props: ["width", "height", "rounded"], container?: false},
+    "Spinner" => %{props: ["size", "label"], container?: false},
+    # form controls
+    "Input" => %{props: ["label", "name", "type", "placeholder", "value"], container?: false},
+    "Textarea" => %{props: ["label", "name", "placeholder", "rows", "value"], container?: false},
+    "Select" => %{props: ["label", "name", "options", "placeholder", "value"], container?: false},
+    "Checkbox" => %{props: ["label", "name", "checked"], container?: false},
+    "Radio" => %{props: ["label", "name", "options", "value"], container?: false},
+    "Switch" => %{props: ["label", "name", "checked"], container?: false},
+    "Slider" => %{props: ["label", "min", "max", "step", "value"], container?: false},
+    "Toggle" => %{props: ["label", "pressed", "variant"], container?: false},
+    "ToggleGroup" => %{props: ["items", "type", "value"], container?: false},
+    "ButtonGroup" => %{props: ["buttons", "selected"], container?: false}
   }
 
   @doc "The allowed component catalog (type → %{props, container?})."
@@ -136,8 +147,8 @@ defmodule EzagentPluginHello.Spec do
   @spec compose_page(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
   def compose_page(title, sections) when is_binary(title) and is_list(sections) do
     page = %{
-      "type" => "page",
-      "props" => %{"title" => title},
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "gap" => "lg", "title" => title},
       "children" => sections
     }
 
