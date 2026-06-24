@@ -33,7 +33,9 @@ finding 之一（F3/F9/F10/F13/F14），同日开始修复。base = 最新 `orig
 4. 补 `caller.display_name` 的 TS 类型（WorldLive 早已在 `caller_payload` 传，类型漏声明）
    + lucide `User`/`LogOut` 图标。
 
-Commit: `54e097fe feat(world): expose logout / switch-account entry in world UI header (F3)`
+Commits:
+- `54e097fe feat(world): expose logout / switch-account entry in world UI header (F3)`
+- `0ab87eaa fix(world): drive logout POST programmatically so LiveView can't swallow it`（活体验证抓到的 submit 拦截 bug）
 
 ## Gate status
 
@@ -44,22 +46,34 @@ Commit: `54e097fe feat(world): expose logout / switch-account entry in world UI 
 | `lv_parity` | N/A — 不引入新 `world:dispatch` action（logout 是 controller 路由） |
 | 裸 `tsc --noEmit` | ⚠️ 预存在失败（tsconfig `moduleResolution` 在 TS6 弃用 + 项目 devDeps 未装 `@types/react`；origin/main 我改之前同样失败）——本项目类型 gate 走 vite/esbuild，非裸 tsc |
 
-## DoD artifact —— ⚠️ 活体截图待补（merge gate）
+## DoD artifact —— ✅ 活体 agent-browser 验证通过（含抓到并修掉一个真 bug）
 
-**未做 agent-browser 实测截图**。dev 下 world 走 `localhost:5173/src/main.tsx`，当前
-:10042/:5173 上跑的是**另一分支的主仓 server**，不反映本 worktree；从 worktree 起独立栈
-需整编译（无 `_build`）+ 端口/PG 与运行中的验证 server 冲突，故未擅自起以免干扰。
+活体验证手段：把改好的 `main.tsx` **临时**复制进运行中主仓的同一文件，靠 vite HMR 让
+:10042 的 server 直接渲染（后端/PG/编译均未动），agent-browser 实测后 `git checkout`
+还原主仓（主仓是 docs-only 验证分支，main.tsx == origin/main，还原干净）。
 
-**建议 merge 前补的证据**：world UI header 点开 AccountMenu → Sign out → 跳转登录页
-（session 已清）的截图 / 录屏。改动低风险（复用 `ide_shell.ex` 已验证表单 + meta token），
-但 evidence 文化下应在 merge 时补这一跳。
+**实测抓到真 bug（build/静态检查发现不了）**：初版点 "Sign out" **毫无反应**——网络里
+根本没有 `POST /logout`，session 仍认证。world 是 LiveView 页，其 client JS 截获了
+`phx-update="ignore"` React 岛内 form 的原生 submit 事件并吞掉。`form.submit()`（绕过
+submit 事件）能正常登出，证明 form/路由/CSRF 都对、只是事件路径被挡。
+→ 修复 commit `0ab87eaa`：Sign out 的 onClick `preventDefault()` + 程序化 `formRef.submit()`。
+
+**修复后端到端复测（点真按钮）**：
+1. admin 登录 → `/sessions`（world shell，header 出现 `Admin ▾` 账户菜单）
+2. 点开菜单 → 显示 `Admin` + `entity://system/user/admin` + 玫红 `Sign out`
+3. **点 Sign out → 302 跳 `/login`**
+4. 重新请求 `/sessions` → 被 `require_entity` 弹回 `/login`（session 已清）
+
+证据截图：`docs/together/2026-06-24/evidence/f3-world-ui-logout/`
+- `01-account-menu-open.png` — header 账户菜单展开
+- `02-after-logout-login-page.png` — 点 Sign out 后落在登录页
 
 ## Merge request
 
 - 分支 `fix/world-ui-no-logout`（已 push，tracking `origin/fix/world-ui-no-logout`）。
 - 无与他人 owned surface 的冲突：唯一改动文件 `main.tsx`，且只在 header 增量插入。
 - 顺序无依赖，可独立 merge。
-- **merge gate**：补活体登出截图（见上）后再并入 `main`。
+- **merge gate 已满足**：活体端到端登出已验证（见上 DoD），无遗留 gate。
 
 ## 同 owner 的其余 finding（尚未动）
 
