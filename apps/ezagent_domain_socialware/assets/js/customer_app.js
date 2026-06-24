@@ -5,6 +5,44 @@ import {JsonRenderPage} from "./catalog_jsonrender.mjs"
 import {PageShell} from "./theme_shell.mjs"
 import {isValidTree} from "./catalog.mjs"
 
+// Round-1 preview: a placeholder body shown inside the AI frame so its design is
+// visible for approval before real content is generated (round 2).
+const SKELETON_PAGE = {
+  type: "page",
+  props: {title: "预览"},
+  children: [
+    {type: "hero", props: {title: "标题占位 · Your Headline", subtitle: "这里是副标题占位 —— 真实内容将在下一步填充。", cta_label: "开始", cta_href: "#"}},
+    {
+      type: "features",
+      props: {title: "核心特性(占位)"},
+      children: [
+        {type: "feature", props: {title: "特性一", text: "占位说明文字。", icon: "zap"}},
+        {type: "feature", props: {title: "特性二", text: "占位说明文字。", icon: "shield"}},
+        {type: "feature", props: {title: "特性三", text: "占位说明文字。", icon: "rocket"}},
+      ],
+    },
+    {
+      type: "stats",
+      props: {title: "数据(占位)"},
+      children: [
+        {type: "stat", props: {value: "99%", label: "占位指标"}},
+        {type: "stat", props: {value: "1.2k", label: "占位指标"}},
+        {type: "stat", props: {value: "4.9", label: "占位指标"}},
+        {type: "stat", props: {value: "24/7", label: "占位指标"}},
+      ],
+    },
+    {
+      type: "testimonials",
+      props: {title: "用户评价(占位)"},
+      children: [
+        {type: "testimonial", props: {quote: "这是一段占位评价内容。", author: "张三", role: "职位 · 公司"}},
+        {type: "testimonial", props: {quote: "这是一段占位评价内容。", author: "李四", role: "职位 · 公司"}},
+      ],
+    },
+    {type: "cta", props: {title: "准备好了吗?(占位)", text: "占位行动号召文案。", button_label: "开始", button_href: "#"}},
+  ],
+}
+
 // Print the @json-render page data that actually drives the rendered page to the
 // browser DevTools (F12) console — the "useful generated data" an operator wants
 // to inspect. Logs the title, a per-type component count, and the full tree.
@@ -137,13 +175,21 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   // page is rendered regardless (the renderer fails closed per node), but a tree
   // that does not conform to the Zod catalog is flagged for observability/E2E.
   const page = snapshot.page
-  // A freshly created session has NO generated page yet. Show a clean empty
-  // state instead of rendering the theme frame around an empty/placeholder body
-  // (which previously surfaced as "Unsupported node: container" — emptyPage()'s
-  // node type isn't in the renderer catalog). The frame/page only appears once
-  // the builder has actually landed content.
   const childCount = page && Array.isArray(page.children) ? page.children.length : 0
-  if (!page || childCount === 0) {
+  const hasBody = childCount > 0
+
+  // Two-round flow: ROUND 1 lands only the FRAME (snapshot.shell) with no body
+  // yet. Show the frame WITH a placeholder skeleton in the slot so its design is
+  // visible for approval. ROUND 2 fills the real json-render body.
+  if (snapshot.shell) {
+    return React.createElement(HybridPage, {
+      shell: snapshot.shell,
+      shellCss: snapshot.shell_css,
+      page: hasBody ? page : SKELETON_PAGE,
+    })
+  }
+  // No frame yet (and no body) → clean empty state.
+  if (!hasBody) {
     return React.createElement(
       "div",
       {
@@ -156,22 +202,8 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
       React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
     )
   }
-  // Hybrid architecture: a HAND-CRAFTED, fixed theme shell (PageShell — nav,
-  // aurora background, footer, brand) wraps the AI-authored json-render BODY.
-  // The AI only edits the body (json-render data); the beautiful frame is human
-  // code and never AI-written → beauty + safety. Brand comes from the page title.
-  // (`sw-customer-shell` + `data-catalog-valid` kept — E2E asserts on them.)
+  // Body but no AI frame yet → built-in PageShell theme.
   const brand = (page && page.props && page.props.title) || "Hello"
-  // Hybrid: prefer the AI-authored, server-sanitised HTML shell (bespoke frame
-  // per site). Fall back to the built-in hand-crafted PageShell theme when the
-  // session has no shell yet (e.g. pages built before the shell existed).
-  if (snapshot.shell) {
-    return React.createElement(HybridPage, {
-      shell: snapshot.shell,
-      shellCss: snapshot.shell_css,
-      page,
-    })
-  }
   return React.createElement(
     "div",
     {

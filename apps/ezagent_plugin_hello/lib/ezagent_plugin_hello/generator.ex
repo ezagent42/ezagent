@@ -66,6 +66,19 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
 
+    cond do
+      # ROUND 1 — a fresh session (no frame yet). Design the FRAME first (styled by
+      # this request), show it with a placeholder preview, and ask for approval
+      # BEFORE generating real content. The next message fills the content in.
+      current_shell_html(session_uri) == "" ->
+        design_round(session_uri, builder, user_text)
+
+      true ->
+        generate_for_scope(session_uri, builder, user_text)
+    end
+  end
+
+  defp generate_for_scope(session_uri, builder, user_text) do
     {plan, scope} = decompose(user_text)
 
     case scope do
@@ -74,7 +87,7 @@ defmodule EzagentPluginHello.Generator do
       # change stays exactly as-is.
       :shell ->
         TurnDriver.say(session_uri, builder, gettext("🎨 Plan: redesign the frame only (content unchanged)."))
-        regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri))
+        regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri), user_text)
 
       # Body (default) or both: run the normal content generation. `reframe?`
       # forces a fresh frame too when the user asked for "both".
@@ -102,6 +115,30 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
+  # ROUND 1: design just the FRAME (styled by `user_text`), show it with a
+  # placeholder preview, and ask for approval before any real content is built.
+  defp design_round(session_uri, builder, user_text) do
+    TurnDriver.say(session_uri, builder, gettext("🎨 Designing the page frame to match your request…"))
+    shell_html = ensure_shell_html(session_uri, builder, "Website", user_text, true)
+
+    if shell_html == "" do
+      TurnDriver.say(session_uri, builder, gettext("⚠ Frame design failed."))
+      {:error, :frame_failed}
+    else
+      store_frame(session_uri, builder, shell_html, nil)
+
+      TurnDriver.say(
+        session_uri,
+        builder,
+        gettext(
+          "✅ The frame is ready — a placeholder preview is on the right. Happy with the design? Tell me what content to fill in, or how to tweak the frame."
+        )
+      )
+
+      {:ok, :design_round}
+    end
+  end
+
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
   defp generate_simple(session_uri, builder, user_text, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🧠 Calling model to generate the page…"))
@@ -117,7 +154,7 @@ defmodule EzagentPluginHello.Generator do
         gettext("📦 Structure generated: %{desc}", desc: describe_page(spec))
       )
 
-      land_page(session_uri, builder, spec, reframe)
+      land_page(session_uri, builder, spec, user_text, reframe)
     else
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
@@ -205,7 +242,7 @@ defmodule EzagentPluginHello.Generator do
             gettext("📦 Assembled: %{desc}", desc: describe_page(page))
           )
 
-          land_page(session_uri, builder, page, reframe)
+          land_page(session_uri, builder, page, user_text, reframe)
         else
           {:error, reason} = err ->
             Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
@@ -303,15 +340,21 @@ defmodule EzagentPluginHello.Generator do
   # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
   # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
   # otherwise reuse the stored frame so ordinary content edits leave it untouched.
-  defp ensure_shell_html(session_uri, builder, title, force) do
+  defp ensure_shell_html(session_uri, builder, title, brief, force) do
     existing = current_shell_html(session_uri)
 
     if not force and existing != "" do
       existing
     else
       brand = if is_binary(title) and title != "", do: title, else: "Website"
+      brief = if is_binary(brief), do: String.trim(brief), else: ""
 
-      case call_llm(Prompts.shell_gen_system(), "Brand/title: #{brand}") do
+      user_msg =
+        if brief == "",
+          do: "Brand/title: #{brand}",
+          else: "Brand/title: #{brand}\nDesign request (style the frame to match): #{brief}"
+
+      case call_llm(Prompts.shell_gen_system(), user_msg) do
         {:ok, %{content: content}} ->
           frame = extract_html(content)
           # Second, focused call: a CSS theme for the json-render content classes
@@ -480,14 +523,14 @@ defmodule EzagentPluginHello.Generator do
 
   # Shell-only path (scope == :shell): regenerate just the frame, keep the
   # existing json-render body. No page_gen, so the content is untouched.
-  defp regenerate_shell_only(session_uri, builder, title) do
+  defp regenerate_shell_only(session_uri, builder, title, brief) do
     TurnDriver.say(
       session_uri,
       builder,
       gettext("🎨 Generating a new frame (keeping your content)…")
     )
 
-    shell_html = ensure_shell_html(session_uri, builder, title, true)
+    shell_html = ensure_shell_html(session_uri, builder, title, brief, true)
 
     if shell_html == "" do
       TurnDriver.say(session_uri, builder, gettext("⚠ Frame generation failed."))
@@ -530,7 +573,7 @@ defmodule EzagentPluginHello.Generator do
   # `say` (:session :send). Turn-composed chat does NOT push to the operator
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
   # the RESULT goes through say to guarantee the operator sees completion live.
-  defp land_page(session_uri, builder, spec, reframe) do
+  defp land_page(session_uri, builder, spec, user_text, reframe) do
     TurnDriver.say(session_uri, builder, gettext("🛠 Rendering to the right-side preview…"))
     # The HTML frame already provides nav / footer / banner; strip any the model
     # emitted into the BODY (it doesn't always obey the prompt) so they don't
@@ -539,7 +582,7 @@ defmodule EzagentPluginHello.Generator do
     # The frame: reused when stable (body-only edit), regenerated when `reframe`
     # (scope == :both). The body's AI `class` styling is compiled into the
     # per-session CSS by `store_frame` after the body lands.
-    shell_html = ensure_shell_html(session_uri, builder, get_title(spec), reframe)
+    shell_html = ensure_shell_html(session_uri, builder, get_title(spec), user_text, reframe)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
