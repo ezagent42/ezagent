@@ -6,6 +6,14 @@ defmodule Ezagent.World.KanbanActions do
   委派到这里。每个动作经 `Ezagent.Invocation.dispatch/1` 打到 kanban Kind（P14），
   **ctx 带登录者 `current_entity_uri`/`current_caps`**——per-node CapBAC 在 Behavior 内
   如实判，world 层不放水。动作成功后 re-read 树 + `push_event("world:state")` 刷前端。
+
+  ## df-tech 下沉（kanban-clean）
+  本模块退成**纯 dispatcher**：原先直引 kanban plugin 出站连接器（Github / Miro / MiroSync /
+  BoardConfig / Ci / InstanceSupervisor / Kanban）的逻辑全部下沉进 `Ezagent.Behavior.Kanban`
+  的新动作（sync_github / push_pr / register_pr / attach_code_file / sync_prs / sync_miro /
+  set_board_config / save_github_creds / save_miro_creds）。world 只 dispatch + 刷 UI，不再
+  直引任何 kanban plugin 模块。spawn 靠 dispatch 自动起活（ReadyGate），不再
+  `DynamicSupervisor.start_child`。
   """
 
   import Phoenix.Component, only: [assign: 3]
@@ -82,22 +90,35 @@ defmodule Ezagent.World.KanbanActions do
   def handle_dispatch(socket, "kanban.select_board", %{"kanban_uri" => u}),
     do: select_board(socket, u)
 
+  # 一键推 Miro：dispatch → 拿 board_id → 推 miro_board_url（出站动作，结果带链接）。
   def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u}),
     do: sync_miro(socket, u)
 
   def handle_dispatch(socket, "kanban.save_miro_creds", %{"access_token" => token} = a)
       when is_binary(token),
-      do: save_miro_creds(socket, token, Map.get(a, "board_id", ""))
+      do:
+        act_board(socket, kanban_uri(socket, a), :save_miro_creds, %{
+          access_token: token,
+          board_id: Map.get(a, "board_id", "")
+        })
 
   def handle_dispatch(socket, "kanban.sync_github", %{"kanban_uri" => u, "id" => id}),
-    do: sync_github(socket, u, id)
+    do: act(socket, u, :sync_github, %{id: id})
 
   def handle_dispatch(socket, "kanban.save_github_creds", %{"access_token" => token} = a)
       when is_binary(token),
-      do: save_github_creds(socket, token, Map.get(a, "repo", ""))
+      do:
+        act_board(socket, kanban_uri(socket, a), :save_github_creds, %{
+          access_token: token,
+          repo: Map.get(a, "repo", "")
+        })
 
   def handle_dispatch(socket, "kanban.set_board_config", %{"kanban_uri" => u} = a),
-    do: set_board_config(socket, u, Map.get(a, "github_repo", ""), Map.get(a, "miro_board", ""))
+    do:
+      act_board(socket, u, :set_board_config, %{
+        github_repo: Map.get(a, "github_repo", ""),
+        miro_board: Map.get(a, "miro_board", "")
+      })
 
   def handle_dispatch(
         socket,
@@ -108,13 +129,13 @@ defmodule Ezagent.World.KanbanActions do
       do: attach_upload(socket, u, id, grant, Map.get(a, "name", "file"))
 
   def handle_dispatch(socket, "kanban.register_pr", %{"kanban_uri" => u, "id" => id, "pr" => pr}),
-    do: register_pr(socket, u, id, pr)
+    do: act(socket, u, :register_pr, %{id: id, pr: to_string(pr)})
 
   def handle_dispatch(socket, "kanban.sync_prs", %{"kanban_uri" => u}),
-    do: sync_prs(socket, u)
+    do: act(socket, u, :sync_prs, %{})
 
   def handle_dispatch(socket, "kanban.push_pr", %{"kanban_uri" => u, "id" => id}),
-    do: push_pr(socket, u, id)
+    do: act(socket, u, :push_pr, %{id: id})
 
   def handle_dispatch(socket, "kanban.attach_code_file", %{
         "kanban_uri" => u,
@@ -123,7 +144,7 @@ defmodule Ezagent.World.KanbanActions do
         "path" => path
       })
       when is_binary(sha) and is_binary(path),
-      do: attach_code_file(socket, u, id, sha, path)
+      do: act(socket, u, :attach_code_file, %{id: id, sha: sha, path: path})
 
   def handle_dispatch(socket, _action, _args),
     do: {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
@@ -132,11 +153,12 @@ defmodule Ezagent.World.KanbanActions do
   @upload_grant_salt "world_attach"
   @upload_grant_max_age 86_400
 
-  # --- 节点动作：dispatch（登录者身份）→ re-read 树 → push ----------------
+  # --- 动作：dispatch（登录者身份）→ re-read 树 → push tree --------------
 
   defp act(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
+        :ok = KanbanData.ensure_spawned(uri)
         target = Ezagent.URI.with_action(uri, :kanban, action)
 
         result =
@@ -154,16 +176,52 @@ defmodule Ezagent.World.KanbanActions do
     end
   end
 
-  # --- 一键推 Miro（首次建板+绑定，之后复用）----------------------------
+  # 图级动作（set_board_config / save_*_creds）：dispatch → 推全量 board 快照（含
+  # 刷新的 config / miro / github 状态），让前端连接器面同步。
+  defp act_board(socket, uri_str, action, args) do
+    case parse(uri_str) do
+      %URI{} = uri ->
+        :ok = KanbanData.ensure_spawned(uri)
+
+        result =
+          Invocation.dispatch(%Invocation{
+            target: Ezagent.URI.with_action(uri, :kanban, action),
+            mode: :call,
+            args: args,
+            ctx: ctx(socket)
+          })
+
+        status = status_of(result)
+
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, status)
+         |> push_event(
+           "world:state",
+           Map.put(KanbanData.board_state(uri, read_ctx(socket)), "last_dispatch_status", status)
+         )}
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
+    end
+  end
+
+  # --- 一键推 Miro：dispatch → board_id → 推 miro_board_url -----------------
 
   defp sync_miro(socket, uri_str) do
     case parse(uri_str) do
       %URI{} = uri ->
-        # 板名取本图配置(用户填的,按名不按id)；没配就默认 "ezagent: 图名"
-        miro_name =
-          EzagentPluginKanban.BoardConfig.read(uri).miro_board || "ezagent: " <> uri_name(uri)
+        :ok = KanbanData.ensure_spawned(uri)
 
-        case EzagentPluginKanban.MiroSync.sync_or_bind(uri, miro_name) do
+        result =
+          Invocation.dispatch(%Invocation{
+            target: Ezagent.URI.with_action(uri, :kanban, :sync_miro),
+            mode: :call,
+            args: %{},
+            ctx: ctx(socket)
+          })
+
+        case result do
           {:ok, %{board_id: board}} ->
             {:noreply,
              socket
@@ -173,366 +231,12 @@ defmodule Ezagent.World.KanbanActions do
                "last_dispatch_status" => "ok"
              })}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          _ ->
+            {:noreply, assign(socket, :last_dispatch_status, status_of(result))}
         end
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
-    end
-  end
-
-  # --- 保存 Miro 凭证（配置页，admin-gated）------------------------------
-
-  defp save_miro_creds(socket, token, board) do
-    cond do
-      not Ezagent.Identity.admin?(socket.assigns.current_entity_uri) ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
-
-      true ->
-        case EzagentPluginKanban.Miro.write_creds(%{access_token: token, board_id: board}) do
-          :ok ->
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", %{
-               "miro" => Ezagent.World.KanbanData.miro_status(),
-               "last_dispatch_status" => "ok"
-             })}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-        end
-    end
-  end
-
-  # --- 出站到 GitHub（片6，纯出站）：把节点出站成 issue + 回挂 issue 到节点 -----
-
-  defp sync_github(socket, uri_str, node_id) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        tree = KanbanData.read_tree(uri, read_ctx(socket))
-        node = get_in(tree, ["nodes", node_id])
-
-        case {board_creds(uri), node} do
-          {{:ok, %{token: token, repo: repo}}, %{} = n} when is_binary(repo) ->
-            case EzagentPluginKanban.Github.create_issue(
-                   token,
-                   repo,
-                   n["title"] || "(untitled)",
-                   github_body(n)
-                 ) do
-              {:ok, %{number: num, url: url}} ->
-                # issue 回挂到节点（走已注册的 attach_artifact 动作）
-                _ =
-                  Invocation.dispatch(%Invocation{
-                    target: Ezagent.URI.with_action(uri, :kanban, :attach_artifact),
-                    mode: :call,
-                    args: %{
-                      id: node_id,
-                      artifact: %{tool: "github", kind: "issue", ref: "##{num}", url: url}
-                    },
-                    ctx: ctx(socket)
-                  })
-
-                {:noreply, push_tree(socket, uri, "ok")}
-
-              {:error, reason} ->
-                {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-            end
-
-          {{:ok, %{repo: nil}}, _} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:github_repo_missing")}
-
-          {{:error, _}, _} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:github_token_missing")}
-
-          {_, nil} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:node_not_found")}
-        end
-
-      :error ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
-    end
-  end
-
-  defp github_body(n) do
-    content =
-      (n["artifacts"] || [])
-      |> Enum.map(& &1["content"])
-      |> Enum.reject(&is_nil/1)
-      |> Enum.join("\n\n")
-
-    "**stage**: #{n["stage"]} · **status**: #{n["status"]}\n\n" <>
-      content <> "\n\n_由 ezagent kanban 节点出站_"
-  end
-
-  # --- 保存 GitHub 凭证（配置页，admin-gated；同 Miro 不写死）-------------
-
-  defp save_github_creds(socket, token, repo) do
-    cond do
-      not Ezagent.Identity.admin?(socket.assigns.current_entity_uri) ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
-
-      true ->
-        case EzagentPluginKanban.Github.write_creds(%{access_token: token, repo: repo}) do
-          :ok ->
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", %{
-               "github" => Ezagent.World.KanbanData.github_status(),
-               "last_dispatch_status" => "ok"
-             })}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-        end
-    end
-  end
-
-  # --- GitHub PR 闭环（确定性 worker）：登记 PR→出站产品需求摘要；轮询 PR→merged/closed→done -
-
-  # 登记 PR：先有配置页的仓库(定位仓库)，这里填 PR 号(定位 PR)→ 出站「产品需求摘要」留言到该 PR
-  # + 把 PR 回挂到节点。失败(无凭证/无仓库/401/404/连不上)都给干净错误码 → 前端中文提示。
-  defp register_pr(socket, uri_str, node_id, pr_in) do
-    case {parse(uri_str), to_pr_number(pr_in)} do
-      {%URI{} = uri, pr} when is_integer(pr) -> do_register_pr(socket, uri, node_id, pr)
-      {:error, _} -> gerr(socket, "bad_kanban_uri")
-      {_, :error} -> gerr(socket, "bad_pr_number")
-    end
-  end
-
-  # 登记 PR = 只把 PR 链接挂到节点（不发 github 评论）。出站留言在 push_pr。
-  defp do_register_pr(socket, uri, node_id, pr) do
-    case board_creds(uri) do
-      {:ok, %{repo: repo}} when is_binary(repo) ->
-        _ =
-          Invocation.dispatch(%Invocation{
-            target: Ezagent.URI.with_action(uri, :kanban, :attach_artifact),
-            mode: :call,
-            args: %{
-              id: node_id,
-              artifact: %{
-                tool: "github",
-                kind: "pr",
-                ref: "##{pr}",
-                url: "https://github.com/#{repo}/pull/#{pr}"
-              }
-            },
-            ctx: ctx(socket)
-          })
-
-        {:noreply, push_tree(socket, uri, "ok")}
-
-      {:ok, %{repo: nil}} ->
-        gerr(socket, "github_repo_missing")
-
-      _ ->
-        gerr(socket, "github_token_missing")
-    end
-  end
-
-  # 出站 GitHub = 把产品需求摘要留言推到节点上**已登记的 PR**（没登记报错，这是验证）。
-  defp push_pr(socket, uri_str, node_id) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        with {:ok, %{token: token, repo: repo}} when is_binary(repo) <- board_creds(uri),
-             {:ok, %{tree: %{nodes: nodes} = tree}} <- get_internal_tree(socket, uri),
-             node when is_map(node) <- Map.get(nodes, node_id),
-             pr when is_integer(pr) <- node_pr(node),
-             digest = EzagentPluginKanban.Ci.requirement_digest(tree, node_id),
-             {:ok, _url} <- EzagentPluginKanban.Github.post_comment(token, repo, pr, digest) do
-          {:noreply, push_tree(socket, uri, "ok")}
-        else
-          nil -> gerr(socket, "no_pr_registered")
-          {:ok, %{repo: nil}} -> gerr(socket, "github_repo_missing")
-          {:error, :github_token_missing} -> gerr(socket, "github_token_missing")
-          {:error, reason} -> gerr(socket, gh_error(reason))
-          _ -> gerr(socket, "no_pr_registered")
-        end
-
-      :error ->
-        gerr(socket, "bad_kanban_uri")
-    end
-  end
-
-  # 挂 PR 文件 = 读节点已登记的 PR → 取 PR head 分支 → 构造该文件的 github blob 链接(可点跳转)。
-  # 挂代码文件 = 直接给 commit SHA + 文件路径 → 拼 github blob 链接（钉 SHA=永久,merge/删分支后也能开）。
-  # 不绕 PR 登记,每阶段都能用。repo 取自配置;token 不需要(blob 链接公开可拼)。
-  defp attach_code_file(socket, uri_str, node_id, sha, path) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        case board_creds(uri) do
-          {:ok, %{repo: repo}} when is_binary(repo) ->
-            clean = String.trim_leading(path, "/")
-            url = "https://github.com/#{repo}/blob/#{sha}/#{clean}"
-            name = clean |> String.split("/") |> List.last()
-
-            _ =
-              Invocation.dispatch(%Invocation{
-                target: Ezagent.URI.with_action(uri, :kanban, :attach_artifact),
-                mode: :call,
-                args: %{
-                  id: node_id,
-                  artifact: %{tool: "github", kind: "github_file", ref: name, url: url}
-                },
-                ctx: ctx(socket)
-              })
-
-            {:noreply, push_tree(socket, uri, "ok")}
-
-          {:ok, %{repo: nil}} ->
-            gerr(socket, "github_repo_missing")
-
-          _ ->
-            gerr(socket, "github_token_missing")
-        end
-
-      :error ->
-        gerr(socket, "bad_kanban_uri")
-    end
-  end
-
-  # 轮询：遍历"登记过 PR 的节点"(不遍历全仓)，查 PR 状态；merged/closed → set_status done。
-  defp sync_prs(socket, uri_str) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        case board_creds(uri) do
-          {:ok, %{token: token, repo: repo}} when is_binary(repo) ->
-            case get_internal_tree(socket, uri) do
-              {:ok, %{tree: %{nodes: nodes}}} ->
-                n = sync_pr_nodes(socket, uri, token, repo, nodes)
-
-                {:noreply,
-                 push_tree(
-                   socket,
-                   uri,
-                   if(n == :unreachable, do: "error:github_unreachable", else: "ok")
-                 )}
-
-              _ ->
-                gerr(socket, "github_error")
-            end
-
-          {:ok, %{repo: nil}} ->
-            gerr(socket, "github_repo_missing")
-
-          _ ->
-            gerr(socket, "github_token_missing")
-        end
-
-      :error ->
-        gerr(socket, "bad_kanban_uri")
-    end
-  end
-
-  defp sync_pr_nodes(socket, uri, token, repo, nodes) do
-    Enum.reduce(nodes, :ok, fn {id, node}, acc ->
-      case node_pr(node) do
-        nil ->
-          acc
-
-        pr ->
-          case EzagentPluginKanban.Github.get_pull(token, repo, pr) do
-            {:ok, %{merged: true}} -> advance_done(socket, uri, id)
-            {:ok, %{state: "closed"}} -> advance_done(socket, uri, id)
-            {:error, {:http_error, _}} -> :unreachable
-            _ -> acc
-          end
-      end
-    end)
-  end
-
-  defp advance_done(socket, uri, id) do
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.with_action(uri, :kanban, :set_status),
-      mode: :call,
-      args: %{id: id, status: "done"},
-      ctx: ctx(socket)
-    })
-
-    :ok
-  end
-
-  # 从节点的 pr 产物里抠出 PR 号（"#42"→42）。
-  defp node_pr(node) do
-    node
-    |> Map.get(:artifacts, [])
-    |> Enum.find_value(fn a ->
-      if to_string(Map.get(a, :kind)) == "pr" do
-        case to_pr_number(to_string(Map.get(a, :ref))) do
-          n when is_integer(n) -> n
-          _ -> nil
-        end
-      end
-    end)
-  end
-
-  defp to_pr_number(pr) when is_integer(pr), do: pr
-
-  defp to_pr_number(pr) when is_binary(pr) do
-    case pr |> String.trim() |> String.trim_leading("#") |> Integer.parse() do
-      {n, _} -> n
-      :error -> :error
-    end
-  end
-
-  defp to_pr_number(_), do: :error
-
-  defp get_internal_tree(socket, %URI{} = uri) do
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.with_action(uri, :kanban, :get_tree),
-      mode: :call,
-      args: %{},
-      ctx: ctx(socket)
-    })
-  end
-
-  # GitHub 失败 → 干净错误码（前端 dispatchError 映射成中文提示）。注：用 REST API(httpc)，不依赖 gh CLI。
-  defp gh_error({:http_status, code, _}) when code in [401, 403], do: "github_unauthorized"
-  defp gh_error({:http_status, 404, _}), do: "github_not_found"
-  defp gh_error({:http_status, code, _}), do: "github_http_#{code}"
-  defp gh_error({:http_error, _}), do: "github_unreachable"
-  defp gh_error(other), do: reason(other)
-
-  defp gerr(socket, code), do: {:noreply, assign(socket, :last_dispatch_status, "error:#{code}")}
-
-  # 每图独立配置：token 取**全局**(github.yaml,以后每用户配),repo 取**本图**配置。
-  # 返回跟 Github.read_creds 同形状({:ok,%{token,repo}}|{:error,_}),repo=本图 repo 或 nil。
-  defp board_creds(%URI{} = uri) do
-    case EzagentPluginKanban.Github.read_creds() do
-      {:ok, %{token: token}} ->
-        {:ok, %{token: token, repo: EzagentPluginKanban.BoardConfig.read(uri).github_repo}}
-
-      err ->
-        err
-    end
-  end
-
-  # 保存本图配置（github_repo + miro 板名）。token 不在这,在全局配置页。
-  defp set_board_config(socket, uri_str, github_repo, miro_board) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        case EzagentPluginKanban.BoardConfig.write(uri, %{
-               github_repo: github_repo,
-               miro_board: miro_board
-             }) do
-          :ok ->
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", %{
-               "config" => Ezagent.World.KanbanData.board_config(uri),
-               "last_dispatch_status" => "ok"
-             })}
-
-          {:error, reason} ->
-            gerr(socket, reason(reason))
-        end
-
-      :error ->
-        gerr(socket, "bad_kanban_uri")
     end
   end
 
@@ -570,7 +274,7 @@ defmodule Ezagent.World.KanbanActions do
 
   defp verify_upload_grant(_socket, _grant, _caller), do: {:error, :no_caller}
 
-  # --- 新建 kanban（在 plugin InstanceSupervisor 下 spawn）---------------
+  # --- 新建 kanban（dispatch 自动起活：get_tree 打到没 live 的 Kind → ReadyGate 起）---
 
   defp create_kanban(socket, name) do
     ws_host = workspace_host(socket.assigns.current_workspace_uri)
@@ -585,32 +289,21 @@ defmodule Ezagent.World.KanbanActions do
 
       true ->
         # kanban 是数据资源 Kind（`pattern: :resource`）→ `resource://<ws>/kanban/<name>`，
-        # 经 sanctioned `URI.resource/3`（type 段任意，过 uri_query.scan）。经
-        # InstanceSupervisor 直起（对齐 e2e/测试的 spawn 路径）。
+        # 经 sanctioned `URI.resource/3`（type 段任意，过 uri_query.scan）。dispatch 自动起活。
         uri = Ezagent.URI.resource(ws_host, "kanban", clean)
-        spawn_result = spawn_kanban(uri)
 
-        case spawn_result do
-          ok when ok in [:ok, :already] ->
-            # 留在 session 子视图：把新建的导图作为选中 board 推回（不再 push_patch 离开）。
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", KanbanData.board_state(uri, read_ctx(socket)))}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-        end
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok")
+         |> push_event("world:state", KanbanData.board_state(uri, read_ctx(socket)))}
     end
   end
 
-  # --- 侧边栏选另一张导图：起活 + 推该 board 的 tree -----------------------
+  # --- 侧边栏选另一张导图：推该 board 的快照（dispatch 自动起活）-----------
 
   defp select_board(socket, uri_str) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_board(uri)
-
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
@@ -618,20 +311,6 @@ defmodule Ezagent.World.KanbanActions do
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
-    end
-  end
-
-  defp spawn_kanban(%URI{} = uri) do
-    spec = %{
-      id: {:kanban, URI.to_string(uri)},
-      start: {Ezagent.Kind.Server, :start_link, [{EzagentPluginKanban.Kanban, %{uri: uri}}]},
-      restart: :transient
-    }
-
-    case DynamicSupervisor.start_child(EzagentPluginKanban.InstanceSupervisor, spec) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :already
-      {:error, _} = err -> err
     end
   end
 
@@ -653,16 +332,24 @@ defmodule Ezagent.World.KanbanActions do
     }
   end
 
+  # cred-saving 动作无 kanban_uri 时，挂到一个稳定的系统配置图（凭证是全局的，
+  # dispatch target 只用于路由到 kanban Kind；admin 校验在 Behavior 内做）。
+  defp kanban_uri(_socket, %{"kanban_uri" => u}) when is_binary(u) and u != "", do: u
+
+  defp kanban_uri(socket, _a) do
+    ws = workspace_host(socket.assigns.current_workspace_uri) || "system"
+    URI.to_string(Ezagent.URI.resource(ws, "kanban", "config"))
+  end
+
   defp push_tree(socket, uri, status) do
-    tree =
-      KanbanData.read_tree(uri, %{
-        caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-      })
+    snapshot = KanbanData.board_snapshot(uri, read_ctx(socket))
 
     socket
     |> assign(:last_dispatch_status, status)
-    |> push_event("world:state", %{"tree" => tree, "last_dispatch_status" => status})
+    |> push_event(
+      "world:state",
+      Map.merge(snapshot, %{"last_dispatch_status" => status})
+    )
   end
 
   defp status_of(:ok), do: "ok"
@@ -678,8 +365,6 @@ defmodule Ezagent.World.KanbanActions do
   end
 
   defp parse(_), do: :error
-
-  defp uri_name(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
 
   # sanctioned 读 workspace 名（`workspace_name/1` 返 `{:ok, name}` | `:error`）。
   defp workspace_host(%URI{} = uri) do

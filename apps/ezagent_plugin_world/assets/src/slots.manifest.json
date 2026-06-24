@@ -30,11 +30,11 @@
       "identities",
       "users_table"
     ],
-    "layout_editor": [
-      "layout_editor"
-    ],
     "kanban": [
       "kanban"
+    ],
+    "layout_editor": [
+      "layout_editor"
     ],
     "pty": [
       "pty_terminal"
@@ -147,17 +147,17 @@
       "renderer_family": "identities",
       "title": "Identities"
     },
-    "layout_editor": {
-      "category": "layout_slot",
-      "data_source": "layout",
-      "renderer_family": "layout_editor",
-      "title": "Layout"
-    },
     "kanban": {
       "category": "layout_slot",
       "data_source": "Ezagent.World.KanbanData",
       "renderer_family": "kanban",
       "title": "看板"
+    },
+    "layout_editor": {
+      "category": "layout_slot",
+      "data_source": "layout",
+      "renderer_family": "layout_editor",
+      "title": "Layout"
     },
     "observability": {
       "category": "layout_slot",

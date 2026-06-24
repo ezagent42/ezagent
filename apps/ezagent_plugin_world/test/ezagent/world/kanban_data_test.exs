@@ -4,13 +4,23 @@ defmodule Ezagent.World.KanbanDataTest do
 
   alias Ezagent.World.KanbanData
 
+  # world 不再编译期依赖 kanban plugin（mix.exs 已删 dep），但 dispatch 到 kanban Kind
+  # 需运行期 kanban app 已起（注册 :kanban resource-type 工厂 → dispatch 自动起活）。
+  # umbrella 跑测试时全 app 在 code path，运行期起一下即可（非模块引用、非 mix dep）。
+  setup_all do
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kanban)
+    :ok
+  end
+
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
+    # Kind 经 world 的 `KanbanData.ensure_spawned/1`（核心 SpawnRegistry → kanban plugin
+    # 注册的 `resource://*/kanban/*` 工厂）起活——不再直引 `EzagentPluginKanban.Kanban` 手动
+    # start_link（df-tech 下沉：world 测试也不依赖 kanban plugin 模块）。
     uri = Ezagent.URI.resource("system", "kanban", "wd-#{System.unique_integer([:positive])}")
-    {:ok, _} = Ezagent.Kind.Server.start_link({EzagentPluginKanban.Kanban, %{uri: uri}})
-    :ok = wait_ready(uri)
+    :ok = KanbanData.ensure_spawned(uri)
 
     caller = Ezagent.URI.user(:system, :admin)
     caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
@@ -57,16 +67,5 @@ defmodule Ezagent.World.KanbanDataTest do
       args: args,
       ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })
-  end
-
-  defp wait_ready(uri) do
-    case Ezagent.ReadyGate.status(uri) do
-      :ready ->
-        :ok
-
-      _ ->
-        Process.sleep(5)
-        wait_ready(uri)
-    end
   end
 end
