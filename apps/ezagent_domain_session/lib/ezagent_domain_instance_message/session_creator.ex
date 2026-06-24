@@ -149,24 +149,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
     session_uri = Ezagent.URI.session(workspace_name, template_name, short_name)
 
-    # 2026-05-31 orchestrator-startup-atomicity §4 — a thin per-URI lock.
-    # With adoption gone + spawn idempotent, the `:fresh`-rollback vs
-    # `:adopted`-commit interleave that originally justified this lock
-    # (codex #409) no longer exists. We KEEP a thin per-URI lock because
-    # it remains cheap and clearly safe: two callers racing the SAME URI
-    # would otherwise both run the 4-8 setup + a possible rollback,
-    # tearing each other's partial state. Single-machine BEAM per the
-    # project constraint, so `:global` within `[node()]` suffices; the
-    # explicit `[node()]` scope keeps a future clustering change from
-    # silently broadening the lock.
-    lock_id =
-      {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner(
+             workspace_uri,
+             {:session_create, session_uri}
+           ) do
+      # 2026-05-31 orchestrator-startup-atomicity §4 — a thin per-URI lock.
+      # With adoption gone + spawn idempotent, the `:fresh`-rollback vs
+      # `:adopted`-commit interleave that originally justified this lock
+      # (codex #409) no longer exists. We KEEP a thin per-URI lock because
+      # it remains cheap and clearly safe inside the workspace owner runtime:
+      # two callers racing the SAME URI would otherwise both run the 4-8 setup
+      # + a possible rollback, tearing each other's partial state. The explicit
+      # `[node()]` scope remains local and must not be treated as cross-runtime
+      # ownership.
+      lock_id =
+        {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
 
-    try do
-      true = :global.set_lock(lock_id, [node()])
-      do_create_session(session_uri, workspace_uri, creator_uri, template_name)
-    after
-      _ = :global.del_lock(lock_id, [node()])
+      try do
+        true = :global.set_lock(lock_id, [node()])
+        do_create_session(session_uri, workspace_uri, creator_uri, template_name)
+      after
+        _ = :global.del_lock(lock_id, [node()])
+      end
     end
   end
 
@@ -216,17 +221,23 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
       ) do
     _template_name = Ezagent.URI.type!(session_uri)
 
-    # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
-    # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
-    # create/repair of the same session actually serialize on one lock. (codex Q4.)
-    lock_id =
-      {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner(
+             workspace_uri,
+             {:session_repair, session_uri}
+           ) do
+      # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
+      # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
+      # create/repair of the same session actually serialize on one lock. (codex Q4.)
+      lock_id =
+        {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
 
-    try do
-      true = :global.set_lock(lock_id, [node()])
-      do_repair_orchestrator(session_uri, workspace_uri)
-    after
-      _ = :global.del_lock(lock_id, [node()])
+      try do
+        true = :global.set_lock(lock_id, [node()])
+        do_repair_orchestrator(session_uri, workspace_uri)
+      after
+        _ = :global.del_lock(lock_id, [node()])
+      end
     end
   end
 
