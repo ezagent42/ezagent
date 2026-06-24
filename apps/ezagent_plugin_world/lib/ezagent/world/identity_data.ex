@@ -632,13 +632,19 @@ defmodule Ezagent.World.IdentityData do
   defp jsonable(nil), do: nil
   defp jsonable(value) when is_list(value), do: Enum.map(value, &jsonable/1)
 
-  defp jsonable(value) when is_map(value) do
+  defp jsonable(%_{} = value) do
     value
     |> Map.from_struct()
     |> Enum.map(fn {key, val} -> {to_string(key), jsonable(val)} end)
     |> Map.new()
   rescue
     _ -> inspect(value)
+  end
+
+  defp jsonable(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, val} -> {to_string(key), jsonable(val)} end)
+    |> Map.new()
   end
 
   defp jsonable(value), do: inspect(value)
