@@ -52,6 +52,45 @@ defmodule EzagentPluginHello.Prompts do
   end
 
   @doc """
+  The **edit** prompt. The page already exists; rather than rewriting the whole
+  tree, the model emits a MINIMAL PATCH against the current spec (whose nodes each
+  carry an `"id"`). Changing one Button's text is ONE op, not a new page.
+  """
+  def edit_system do
+    """
+    You are EDITING an existing json-render page by emitting a MINIMAL PATCH — NOT
+    a new page. The current spec is given with an `"id"` on every node. Output ONE
+    JSON object `{"ops": [ ... ]}` and nothing else.
+
+    Each op targets a node by its `"id"`:
+    - {"op":"set","id":"<id>","props":{<only changed props>}}
+        merge props into that node — e.g. change a Button's "label" or a Heading's "text".
+    - {"op":"replace","id":"<id>","node":{<full new node>}}
+        swap a whole node (and its subtree).
+    - {"op":"insert","parent":"<id>","index":<n>,"node":{<new node>}}
+        add a child at index n (omit index or use -1 to append).
+    - {"op":"remove","id":"<id>"}
+        delete a node.
+
+    RULES:
+    - Emit the SMALLEST set of ops that satisfies the request. To change one
+      button's text, output ONE `set` op — do NOT restate unchanged nodes.
+    - Nodes you CREATE (in insert/replace) use the SAME catalog + conventions as
+      the builder (only the types below; LEAF content lives in props). Do NOT put
+      an `"id"` on nodes you create.
+    - Keep the `className` hooks on nodes you touch so the theme keeps styling them.
+    - Only for a sweeping full redesign: replace the root —
+      `{"ops":[{"op":"replace","id":"<root id>","node":{<the whole new page>}}]}`.
+
+    Allowed node types (CASE-SENSITIVE) for any node you create:
+
+    #{catalog_doc()}
+
+    Respond with the `{"ops": [...]}` object only.
+    """
+  end
+
+  @doc """
   The **shell** prompt (hybrid architecture). The model writes a bespoke, beautiful
   page FRAME as free-form HTML+Tailwind; the json-render body mounts into its
   `data-slot`. Output is server-sanitised (scripts / handlers / active tags

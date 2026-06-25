@@ -35,9 +35,44 @@ const SKELETON_PAGE = {
 // Print the @json-render page data that actually drives the rendered page to the
 // browser DevTools (F12) console — the "useful generated data" an operator wants
 // to inspect. Logs the title, a per-type component count, and the full tree.
+let prevHelloPage = null
+let prevHelloPageJson = null
+
+// A shallow structural diff (parallel position walk) that reports the NET change
+// between two spec trees as human-readable lines — "what changed" for the console,
+// instead of dumping the whole tree. Works whether the backend patched or fully
+// regenerated (it shows the real difference either way).
+function diffNodes(a, b, path, out) {
+  if (!a && !b) return
+  if (a && !b) return out.push(`− remove ${a.type || "?"} @ ${path}`)
+  if (!a && b) return out.push(`+ add ${b.type || "?"} @ ${path}`)
+  if (a.type !== b.type) return out.push(`⇄ replace @ ${path}: ${a.type} → ${b.type}`)
+  const ap = a.props || {}
+  const bp = b.props || {}
+  for (const k of new Set([...Object.keys(ap), ...Object.keys(bp)])) {
+    const av = JSON.stringify(ap[k])
+    const bv = JSON.stringify(bp[k])
+    if (av !== bv) out.push(`✎ ${a.type}.${k} @ ${path}: ${av ?? "∅"} → ${bv ?? "∅"}`)
+  }
+  const ac = a.children || []
+  const bc = b.children || []
+  for (let i = 0; i < Math.max(ac.length, bc.length); i++) {
+    diffNodes(ac[i], bc[i], `${path}/${(b.type || "").toLowerCase()}[${i}]`, out)
+  }
+}
+
 function logHelloPage(snapshot, source) {
   const page = snapshot && snapshot.page
   if (!page) return
+  // The snapshot re-pushes on EVERY chat message (progress heartbeats, user
+  // messages, …), but the PAGE usually hasn't changed. Skip those entirely so the
+  // console shows ONLY real page edits — never the per-message "no change" noise.
+  const pageJson = JSON.stringify(page)
+  if (pageJson === prevHelloPageJson) return
+  const prev = prevHelloPage
+  prevHelloPage = page
+  prevHelloPageJson = pageJson
+
   const counts = {}
   const walk = (n) => {
     if (Array.isArray(n)) return n.forEach(walk)
@@ -48,13 +83,38 @@ function logHelloPage(snapshot, source) {
   }
   walk(page)
   const total = Object.values(counts).reduce((a, b) => a + b, 0)
-  console.log(
-    `%c[hello] page ${source} %c${page?.props?.title ?? ""}%c — ${total} nodes`,
-    "color:#16a34a;font-weight:bold",
-    "color:#2563eb;font-weight:bold",
-    "color:inherit",
-    {title: page?.props?.title, total, byType: counts, page, messages: snapshot.messages},
-  )
+
+  // Headline = WHAT CHANGED vs the previous page (the full tree is collapsed below).
+  if (prev) {
+    const changes = []
+    diffNodes(prev, page, "page-root", changes)
+    console.group(
+      `%c✏️ [hello] ${changes.length} change(s)`,
+      "color:#16a34a;font-weight:bold",
+    )
+    changes.forEach((c) => console.log("  " + c))
+    console.groupEnd()
+  } else {
+    console.log(
+      `%c[hello] page loaded%c · ${total} nodes · ${page?.props?.title ?? ""}`,
+      "color:#16a34a;font-weight:bold",
+      "color:inherit",
+    )
+  }
+
+  // Full spec — collapsed (reference only) + globals for copy/inspect.
+  console.groupCollapsed("%c  ↳ full spec / JSON / theme (reference)", "color:#888")
+  console.log("byType:", counts)
+  console.log("tree:", page)
+  console.log("JSON:\n" + JSON.stringify(page, null, 2))
+  if (snapshot.shell_css) console.log("theme CSS:\n" + snapshot.shell_css)
+  console.log("globals: window.__helloSpec / __helloSnapshot — try copy(__helloSpec)")
+  console.groupEnd()
+
+  try {
+    window.__helloSpec = page
+    window.__helloSnapshot = snapshot
+  } catch (_e) {}
 }
 
 function boot(root) {
@@ -67,6 +127,9 @@ function boot(root) {
   // before.
   const socketPath = root.dataset.socketPath || "/socialware_socket"
   const topicPrefix = root.dataset.topicPrefix || "socialware:customer"
+  // Identity token for the logged-in viewer (or "" anonymous). Drives the bar's
+  // login/join/post states; the channel re-derives logged_in/member from it.
+  const viewerToken = root.dataset.viewerToken || ""
   const reactRoot = createRoot(root)
 
   reactRoot.render(
@@ -75,25 +138,31 @@ function boot(root) {
       token,
       socketPath,
       topicPrefix,
+      viewerToken,
     })
   )
 }
 
-function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
+function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
   // Debug: highlight which parts of the page are json-render (vs the HTML frame).
   const [jrHighlight, setJrHighlight] = useState(false)
+  // The bottom preview bar: whether the chat history panel is expanded, and a
+  // ref to the live channel so the bar's join/post actions can push to it.
+  const [chatOpen, setChatOpen] = useState(false)
+  const channelRef = useRef(null)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
     return () => document.body.classList.remove("jr-highlight")
   }, [jrHighlight])
 
   useEffect(() => {
-    const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
+    const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token, viewer_token: viewerToken}})
     socket.connect()
 
     const channel = socket.channel(`${topicPrefix}:${sessionUri}`, {})
+    channelRef.current = channel
     channel
       .join()
       .receive("ok", ({snapshot}) => {
@@ -131,10 +200,11 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
 
     return () => {
       leaving = true
+      channelRef.current = null
       channel.leave()
       socket.disconnect()
     }
-  }, [sessionUri, token, socketPath, topicPrefix])
+  }, [sessionUri, token, socketPath, topicPrefix, viewerToken])
 
   if (unauthorized) {
     return React.createElement(
@@ -204,11 +274,51 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
     )
   }
 
+  // Viewer identity + actions for the fixed bottom preview bar. `snapshot.viewer`
+  // (server-derived from the customer token) tells us whether the opener is
+  // logged-in and a member; everything else stays read-only by construction.
+  const viewer = snapshot.viewer || {logged_in: false, member: false}
+  // The collaborative chat panel shows the FULL conversation (`snapshot.chat` —
+  // every participant's messages), not the committed customer-delivery projection
+  // (`snapshot.messages`). Fall back to `messages` if an older server omits chat.
+  const messages = Array.isArray(snapshot.chat)
+    ? snapshot.chat
+    : Array.isArray(snapshot.messages)
+      ? snapshot.messages
+      : []
+  const doJoin = () => {
+    const ch = channelRef.current
+    if (!ch) return
+    ch.push("join", {})
+      .receive("ok", () => console.log("%c[hello] joined ✓", "color:#16a34a"))
+      .receive("error", (e) => console.warn("[hello] join failed:", e))
+      .receive("timeout", () => console.warn("[hello] join timed out"))
+  }
+  const doPost = (text) => {
+    const ch = channelRef.current
+    if (!ch) return
+    ch.push("post", {text})
+      .receive("error", (e) => console.warn("[hello] post failed:", e))
+  }
+  const doLogin = () => {
+    const back = window.location.pathname + window.location.search
+    window.location.href = "/login?return_to=" + encodeURIComponent(back)
+  }
+
   return React.createElement(
     React.Fragment,
     null,
-    React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS}}),
+    React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
+    React.createElement(PreviewBar, {
+      viewer,
+      messages,
+      chatOpen,
+      setChatOpen,
+      onJoin: doJoin,
+      onPost: doPost,
+      onLogin: doLogin,
+    }),
     React.createElement(
       "button",
       {
@@ -230,6 +340,135 @@ const JR_HIGHLIGHT_CSS = `
 body.jr-highlight [data-slot]{outline:2px solid #d946ef;outline-offset:-2px}
 body.jr-highlight [data-jr-type]{outline:1px dashed rgba(217,70,239,.55);outline-offset:-1px;position:relative}
 body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:2px 4px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
+`
+
+// The fixed bottom-center preview bar — page chrome, NOT part of the generated
+// json-render spec. It is the single interaction surface on the otherwise
+// read-only public page: a glass input pill with an inner-right action button
+// whose label/behaviour is driven by `viewer` (server-derived from the customer
+// token), plus a chevron that expands the session chat history UPWARD.
+//
+//   not logged in        → "登录"  → /login (the page stays read-only)
+//   logged in, not member→ "加入"  → channel push "join" (become a member)
+//   logged in + member   → "发送"  → channel push "post" (== @hello, no manual @)
+//
+// Anon viewers are read-only BY CONSTRUCTION (the anon-User's caps deny
+// chat.send), so a disabled input is the honest affordance, not a security gate.
+function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin}) {
+  const [draft, setDraft] = useState("")
+  const loggedIn = !!(viewer && viewer.logged_in)
+  const member = loggedIn && !!viewer.member
+  const submit = () => {
+    const t = draft.trim()
+    if (!t || !member) return
+    onPost(t)
+    setDraft("")
+  }
+
+  let action
+  if (!loggedIn) {
+    action = React.createElement("button", {type: "button", className: "previewbar-action", onClick: onLogin}, "登录")
+  } else if (!member) {
+    action = React.createElement("button", {type: "button", className: "previewbar-action", onClick: onJoin}, "加入")
+  } else {
+    action = React.createElement(
+      "button",
+      {type: "button", className: "previewbar-action", onClick: submit, disabled: !draft.trim()},
+      "发送"
+    )
+  }
+
+  const placeholder = !loggedIn
+    ? "登录后参与对话"
+    : !member
+      ? "加入会话后即可发言"
+      : "说点什么 —— 直接发给页面作者,无需 @hello"
+
+  return React.createElement(
+    "div",
+    {className: "previewbar-wrap", "data-viewer": member ? "member" : loggedIn ? "guest" : "anon"},
+    chatOpen ? React.createElement(ChatPanel, {messages, onClose: () => setChatOpen(false)}) : null,
+    React.createElement(
+      "div",
+      {className: "previewbar"},
+      React.createElement(
+        "button",
+        {type: "button", className: "previewbar-toggle", onClick: () => setChatOpen((v) => !v), title: "查看会话", "aria-label": "查看会话"},
+        chatOpen ? "▾" : "▴"
+      ),
+      React.createElement("input", {
+        className: "previewbar-input",
+        value: draft,
+        disabled: !member,
+        placeholder,
+        onChange: (e) => setDraft(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            submit()
+          }
+        },
+      }),
+      action
+    )
+  )
+}
+
+function ChatPanel({messages, onClose}) {
+  return React.createElement(
+    "div",
+    {className: "previewbar-chat"},
+    React.createElement(
+      "div",
+      {className: "previewbar-chat-head"},
+      React.createElement("span", null, "会话"),
+      React.createElement("button", {type: "button", className: "previewbar-chat-close", onClick: onClose, "aria-label": "收起"}, "✕")
+    ),
+    React.createElement(
+      "div",
+      {className: "previewbar-chat-body"},
+      messages.length === 0
+        ? React.createElement("p", {className: "previewbar-chat-empty"}, "还没有消息。")
+        : messages.map((m, i) =>
+            React.createElement(
+              "div",
+              {key: m.id || i, className: "previewbar-msg"},
+              m.sender ? React.createElement("span", {className: "previewbar-msg-who"}, shortSender(m.sender)) : null,
+              React.createElement("span", {className: "previewbar-msg-text"}, m.text || "")
+            )
+          )
+    )
+  )
+}
+
+// entity://ws/user/alice → "alice" ; entity://ws/agent/hello_x → "hello".
+function shortSender(uri) {
+  const m = String(uri).match(/\/([^/]+)$/)
+  const last = m ? m[1] : String(uri)
+  return last.indexOf("hello_") === 0 ? "hello" : last
+}
+
+const PREVIEWBAR_CSS = `
+.previewbar-wrap{position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);z-index:60;width:min(40rem,calc(100vw - 1.5rem));display:flex;flex-direction:column;gap:.5rem;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.previewbar{display:flex;align-items:center;gap:.5rem;padding:.4rem .45rem .4rem .65rem;border-radius:999px;background:rgba(255,255,255,.72);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.65);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 16px 44px rgba(0,0,0,.16)}
+.previewbar-toggle{flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#444;cursor:pointer;font-size:.85rem;line-height:1;transition:background .15s}
+.previewbar-toggle:hover{background:rgba(0,0,0,.1)}
+.previewbar-input{flex:1;min-width:0;border:none;background:transparent;outline:none;font-size:.95rem;color:#181818;height:2.4rem;padding:0 .25rem}
+.previewbar-input:disabled{color:#8a8a8a;cursor:not-allowed}
+.previewbar-input::placeholder{color:#9a9a9a}
+.previewbar-action{flex-shrink:0;height:2.4rem;padding:0 1.25rem;border-radius:999px;border:none;background:#1c1c1c;color:#fff;font-weight:600;font-size:.88rem;cursor:pointer;transition:opacity .15s,transform .1s}
+.previewbar-action:hover{opacity:.9}
+.previewbar-action:active{transform:scale(.97)}
+.previewbar-action:disabled{opacity:.38;cursor:default}
+.previewbar-chat{max-height:50vh;display:flex;flex-direction:column;border-radius:1.4rem;background:rgba(255,255,255,.86);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(0,0,0,.06);box-shadow:0 16px 44px rgba(0,0,0,.16);overflow:hidden;animation:previewbar-rise .18s ease}
+@keyframes previewbar-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.previewbar-chat-head{display:flex;align-items:center;justify-content:space-between;padding:.65rem .95rem;border-bottom:1px solid rgba(0,0,0,.06);font-weight:600;font-size:.85rem;color:#444;flex-shrink:0}
+.previewbar-chat-close{border:none;background:transparent;cursor:pointer;color:#999;font-size:.85rem;line-height:1}
+.previewbar-chat-body{overflow-y:auto;padding:.8rem .95rem;display:flex;flex-direction:column;gap:.7rem}
+.previewbar-chat-empty{color:#9a9a9a;font-size:.85rem;text-align:center;padding:1.2rem 0;margin:0}
+.previewbar-msg{display:flex;flex-direction:column;gap:.12rem}
+.previewbar-msg-who{font-size:.68rem;font-weight:700;color:#6d5cf0;text-transform:uppercase;letter-spacing:.03em}
+.previewbar-msg-text{font-size:.9rem;line-height:1.5;color:#222;white-space:pre-wrap;word-break:break-word}
 `
 
 // Pure shadcn page + AI CSS theme. The whole page is ONE shadcn json-render spec;

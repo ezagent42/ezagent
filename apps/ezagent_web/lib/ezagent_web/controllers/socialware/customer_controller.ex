@@ -8,7 +8,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
   """
   use EzagentWeb, :controller
 
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, PublicView}
+  alias Ezagent.Socialware.{ChatFeedAuth, CustomerAuth, CustomerFeed, PublicView}
   alias Ezagent.Uploads.DownloadToken
 
   @doc """
@@ -64,7 +64,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
          {:ok, _snapshot} <- CustomerFeed.snapshot(session_uri, token) do
       conn
       |> put_resp_content_type("text/html")
-      |> send_resp(200, page(session_uri, token))
+      |> send_resp(200, page(session_uri, token, viewer_token(conn, session_uri)))
     else
       _ ->
         conn
@@ -97,7 +97,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
          {:ok, _snapshot} <- CustomerFeed.snapshot(session_uri, token) do
       conn
       |> put_resp_content_type("text/html")
-      |> send_resp(200, page(session_uri, token))
+      |> send_resp(200, page(session_uri, token, viewer_token(conn, session_uri)))
     else
       _ ->
         conn
@@ -123,9 +123,48 @@ defmodule EzagentWeb.Socialware.CustomerController do
 
   defp parse_session(_value), do: :error
 
-  defp page(session_uri, token) do
+  # A signed identity token for the logged-in viewer (or "" for anonymous). The
+  # customer URL `token` is identity-LESS (CustomerAuth binds only session+ws); the
+  # bottom preview bar needs to know WHO is viewing to switch login/join/post. We
+  # reuse `ChatFeedAuth` (binds a caller principal to a session) so the customer
+  # socket recovers a TRUSTED principal — the live membership re-check at the
+  # channel remains the authorization, exactly as the chat feed does.
+  defp viewer_token(conn, %URI{} = session_uri) do
+    case optional_current_entity(conn) do
+      %URI{} = principal_uri -> ChatFeedAuth.issue_token(principal_uri, session_uri)
+      nil -> ""
+    end
+  end
+
+  # Recover a signed-in principal from the `:browser` session WITHOUT bouncing (the
+  # public route has no RequireEntity). Same validation RequireEntity does (entity
+  # scheme + user/agent type), but assign-or-nil. Mirrors ChatFeedController.
+  defp optional_current_entity(conn) do
+    case get_session(conn, :current_entity_uri) do
+      uri_str when is_binary(uri_str) ->
+        try do
+          # `new!/1` returns a `%URI{}` or raises ArgumentError (caught below).
+          uri = Ezagent.URI.new!(uri_str)
+
+          if Ezagent.URI.scheme?(uri, :entity) and
+               match?({:ok, kind} when kind in ["user", "agent"], Ezagent.URI.type(uri)) do
+            uri
+          else
+            nil
+          end
+        rescue
+          ArgumentError -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp page(session_uri, token, viewer_token) do
     session = session_uri |> uri_to_string() |> escape()
     token = escape(token)
+    viewer_token = escape(viewer_token)
 
     """
     <!doctype html>
@@ -141,7 +180,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
         <script defer type="module" src="/assets/js/customer_app.js"></script>
       </head>
       <body class="min-h-screen bg-base-200 text-base-content antialiased">
-        <main id="socialware-customer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}"></main>
+        <main id="socialware-customer-root" class="block min-h-screen w-full" data-session-uri="#{session}" data-token="#{token}" data-viewer-token="#{viewer_token}"></main>
       </body>
     </html>
     """

@@ -114,31 +114,284 @@ defmodule EzagentPluginHello.Generator do
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
   defp generate_simple(session_uri, builder, user_text, reframe) do
-    TurnDriver.say(session_uri, builder, gettext("🧠 Calling model to generate the page…"))
+    # The page is all json-render: when one already exists, EDIT it (feed the LLM
+    # the current spec + apply only the change) instead of rewriting from scratch.
+    # The collaborative whiteboard expects each message to TWEAK the page.
+    current = current_body_tree(session_uri)
+    is_edit = is_map(current)
 
-    with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), user_text),
-         {:ok, raw_spec} <- Spec.extract(content),
-         {:ok, spec} <- Spec.validate(raw_spec) do
-      log_spec(session_uri, spec)
-
-      TurnDriver.say(
-        session_uri,
-        builder,
-        gettext("📦 Structure generated: %{desc}", desc: describe_page(spec))
+    TurnDriver.say(
+      session_uri,
+      builder,
+      if(is_edit,
+        do: gettext("🧠 Editing the page per your request…"),
+        else: gettext("🧠 Calling model to generate the page…")
       )
+    )
 
-      land_page(session_uri, builder, spec, user_text, reframe)
-    else
+    {result, secs} =
+      with_progress(session_uri, builder, gettext("Model thinking"), fn ->
+        build_spec(current, user_text, is_edit)
+      end)
+
+    case result do
+      {:ok, spec, mode} ->
+        log_spec(session_uri, spec)
+
+        TurnDriver.say(session_uri, builder, mode_narration(mode))
+
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("📦 Model done in %{s}s — %{desc}", s: secs, desc: describe_page(spec))
+        )
+
+        land_page(session_uri, builder, spec, user_text, reframe, is_edit)
+
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
 
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("⚠ Generation failed: %{reason}", reason: inspect(reason))
+          gettext("⚠ Generation failed after %{s}s: %{reason}", s: secs, reason: inspect(reason))
         )
 
         err
+    end
+  end
+
+  # Run `fun` (the slow LLM work) in a Task and emit a HEARTBEAT every few seconds
+  # with elapsed time, so a long generation is never a silent black box — the
+  # operator sees it is still working + how long it has taken. Returns
+  # `{result, elapsed_seconds}`.
+  @heartbeat_ms 6_000
+  defp with_progress(session_uri, builder, label, fun) do
+    start = System.monotonic_time(:millisecond)
+    result = heartbeat(Task.async(fun), session_uri, builder, label, start)
+    {result, div(System.monotonic_time(:millisecond) - start, 1000)}
+  end
+
+  defp heartbeat(task, session_uri, builder, label, start) do
+    case Task.yield(task, @heartbeat_ms) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error, {:task_exit, reason}}
+
+      nil ->
+        s = div(System.monotonic_time(:millisecond) - start, 1000)
+        TurnDriver.say(session_uri, builder, gettext("⏳ %{label}… %{s}s", label: label, s: s))
+        heartbeat(task, session_uri, builder, label, start)
+    end
+  end
+
+  # On an EDIT, ask the model for a MINIMAL PATCH against the current spec and
+  # apply it (cheap + precise — "change one button" is one op, not a new tree). A
+  # patch that fails to parse/apply/validate falls back to a full context-aware
+  # regeneration, so an edit never dead-ends. A FIRST generation builds the whole
+  # spec from scratch.
+  defp build_spec(current, user_text, true) do
+    case patch_edit(current, user_text) do
+      {:ok, spec, ops} ->
+        {:ok, spec, {:patch, ops}}
+
+      {:error, reason} ->
+        Logger.warning("hello.Generator: patch edit failed (#{inspect(reason)}); full-regen fallback")
+
+        case fresh_spec(gen_prompt(current, user_text)) do
+          {:ok, spec} -> {:ok, spec, :fallback}
+          err -> err
+        end
+    end
+  end
+
+  defp build_spec(_current, user_text, false) do
+    case fresh_spec(user_text) do
+      {:ok, spec} -> {:ok, spec, :fresh}
+      err -> err
+    end
+  end
+
+  # Human-visible note on HOW the page was built this turn — so the operator can
+  # tell at a glance whether the edit was a cheap incremental patch (and WHICH
+  # nodes it touched) or a full rebuild.
+  defp mode_narration({:patch, ops}) do
+    detail = ops |> Enum.map(&describe_op/1) |> Enum.join("; ")
+    gettext("✏️ Incremental edit — %{n} op(s): %{detail}", n: length(ops), detail: detail)
+  end
+
+  defp mode_narration(:fallback),
+    do: gettext("🔁 Patch didn't apply cleanly — regenerated the whole page instead.")
+
+  defp mode_narration(:fresh), do: gettext("🆕 Built a fresh page.")
+
+  defp describe_op(%{"op" => "set", "id" => id, "props" => props}) when is_map(props),
+    do: "set #{id}.#{props |> Map.keys() |> Enum.join(",")}"
+
+  defp describe_op(%{"op" => "replace", "id" => id}), do: "replace #{id}"
+  defp describe_op(%{"op" => "insert", "parent" => parent}), do: "insert → #{parent}"
+  defp describe_op(%{"op" => "remove", "id" => id}), do: "remove #{id}"
+  defp describe_op(_), do: "op"
+
+  defp fresh_spec(prompt_text) do
+    with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), prompt_text),
+         {:ok, raw_spec} <- Spec.extract(content),
+         {:ok, spec} <- Spec.validate(raw_spec) do
+      {:ok, spec}
+    end
+  end
+
+  # The patch path: annotate every node with an "id", ask the model for `{"ops":
+  # [...]}`, apply the ops to the annotated tree, strip the ids, validate.
+  defp patch_edit(current, user_text) do
+    annotated = annotate_ids(current)
+
+    with {:ok, %{content: content}} <-
+           call_llm(Prompts.edit_system(), edit_user_prompt(annotated, user_text)),
+         {:ok, ops} <- extract_ops(content),
+         patched = apply_ops(annotated, ops),
+         stripped = strip_ids(patched),
+         {:ok, spec} <- Spec.validate(stripped) do
+      {:ok, spec, ops}
+    end
+  end
+
+  defp edit_user_prompt(annotated, user_text) do
+    """
+    Current page spec (every node has an "id"):
+
+    ```json
+    #{Jason.encode!(annotated)}
+    ```
+
+    Change requested:
+
+    #{user_text}
+
+    Emit the MINIMAL patch (ops referencing ids) to make ONLY this change.
+    """
+  end
+
+  # Parse a `{"ops": [...]}` object from the model output. Be lenient about how it
+  # wrapped the JSON — ```json fences, single backticks, or stray prose — by
+  # grabbing the outermost `{...}` (greedy, dotall) rather than a fence-only regex.
+  defp extract_ops(content) when is_binary(content) do
+    json =
+      case Regex.run(~r/\{.*\}/s, content) do
+        [match] -> match
+        _ -> ""
+      end
+
+    case Jason.decode(json) do
+      {:ok, %{"ops" => ops}} when is_list(ops) -> {:ok, ops}
+      {:ok, _} -> {:error, :no_ops}
+      {:error, reason} -> {:error, {:json, reason}}
+    end
+  end
+
+  # --- tree patching -----------------------------------------------------
+
+  # Assign a stable "id" ("n0", "n1", …) to every node in a fresh pre-order walk,
+  # so the model + the patch ops can reference nodes unambiguously.
+  defp annotate_ids(node) do
+    {annotated, _next} = annotate_ids(node, 0)
+    annotated
+  end
+
+  defp annotate_ids(node, n) when is_map(node) do
+    {children, next} =
+      node
+      |> Map.get("children", [])
+      |> Enum.reduce({[], n + 1}, fn child, {acc, cn} ->
+        {a, cn2} = annotate_ids(child, cn)
+        {[a | acc], cn2}
+      end)
+
+    {node |> Map.put("id", "n#{n}") |> Map.put("children", Enum.reverse(children)), next}
+  end
+
+  defp annotate_ids(other, n), do: {other, n}
+
+  defp strip_ids(node) when is_map(node) do
+    node = Map.delete(node, "id")
+
+    case Map.get(node, "children") do
+      children when is_list(children) -> Map.put(node, "children", Enum.map(children, &strip_ids/1))
+      _ -> node
+    end
+  end
+
+  defp strip_ids(other), do: other
+
+  defp apply_ops(spec, ops), do: Enum.reduce(ops, spec, fn op, acc -> apply_op(acc, op) end)
+
+  defp apply_op(spec, %{"op" => "set", "id" => id, "props" => props}) when is_map(props) do
+    update_node(spec, id, fn node ->
+      Map.update(node, "props", props, fn existing -> Map.merge(existing || %{}, props) end)
+    end)
+  end
+
+  defp apply_op(spec, %{"op" => "replace", "id" => id, "node" => new_node}) when is_map(new_node) do
+    update_node(spec, id, fn _node -> new_node end)
+  end
+
+  defp apply_op(spec, %{"op" => "remove", "id" => id}) when is_binary(id) do
+    remove_node(spec, id)
+  end
+
+  defp apply_op(spec, %{"op" => "insert", "parent" => pid, "node" => new_node} = op)
+       when is_binary(pid) and is_map(new_node) do
+    index = Map.get(op, "index", -1)
+
+    update_node(spec, pid, fn node ->
+      children = Map.get(node, "children", [])
+      Map.put(node, "children", insert_at(children, index, new_node))
+    end)
+  end
+
+  defp apply_op(spec, _unknown), do: spec
+
+  # Apply `fun` to the node whose "id" matches; otherwise recurse into children.
+  defp update_node(node, id, fun) when is_map(node) do
+    if Map.get(node, "id") == id do
+      fun.(node)
+    else
+      case Map.get(node, "children") do
+        children when is_list(children) ->
+          Map.put(node, "children", Enum.map(children, &update_node(&1, id, fun)))
+
+        _ ->
+          node
+      end
+    end
+  end
+
+  defp update_node(other, _id, _fun), do: other
+
+  defp remove_node(node, id) when is_map(node) do
+    case Map.get(node, "children") do
+      children when is_list(children) ->
+        kept =
+          children
+          |> Enum.reject(fn c -> is_map(c) and Map.get(c, "id") == id end)
+          |> Enum.map(&remove_node(&1, id))
+
+        Map.put(node, "children", kept)
+
+      _ ->
+        node
+    end
+  end
+
+  defp remove_node(other, _id), do: other
+
+  defp insert_at(list, index, item) when is_list(list) do
+    if is_integer(index) and index >= 0 and index < length(list) do
+      List.insert_at(list, index, item)
+    else
+      list ++ [item]
     end
   end
 
@@ -215,7 +468,7 @@ defmodule EzagentPluginHello.Generator do
             gettext("📦 Assembled: %{desc}", desc: describe_page(page))
           )
 
-          land_page(session_uri, builder, page, user_text, reframe)
+          land_page(session_uri, builder, page, user_text, reframe, false)
         else
           {:error, reason} = err ->
             Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
@@ -582,12 +835,50 @@ defmodule EzagentPluginHello.Generator do
   # `say` (:session :send). Turn-composed chat does NOT push to the operator
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
   # the RESULT goes through say to guarantee the operator sees completion live.
-  defp land_page(session_uri, builder, spec, _user_text, _reframe) do
-    # The spec is the WHOLE page (nav / content / footer, all shadcn). A focused
-    # SECOND call writes a PLAIN CSS theme designed for THIS page; there is no
-    # HTML frame. The page = shadcn spec + sanitized AI theme CSS.
-    TurnDriver.say(session_uri, builder, gettext("🎨 Designing a theme for this page…"))
-    theme = generate_theme(spec)
+  # The LLM user message. On a FIRST generation (no current page) it is just the
+  # user's request. On a FOLLOW-UP EDIT we hand the model the CURRENT spec and ask
+  # it to apply ONLY the requested change, preserving everything else — the page
+  # is all json-render, so an edit need not be a full rewrite.
+  defp gen_prompt(current, user_text) when is_map(current) do
+    """
+    You are EDITING an existing page. Its current json-render spec is:
+
+    ```json
+    #{Jason.encode!(current)}
+    ```
+
+    Apply the change below, modifying ONLY what it asks for and preserving
+    everything else EXACTLY — same nodes, text, props, classNames, and order for
+    anything the request does not touch:
+
+    #{user_text}
+
+    Return the COMPLETE updated page spec (the whole tree), not a diff or fragment.
+    """
+  end
+
+  defp gen_prompt(_current, user_text), do: user_text
+
+  defp land_page(session_uri, builder, spec, _user_text, _reframe, is_edit) do
+    # The spec is the WHOLE page (nav / content / footer, all shadcn). A FIRST
+    # generation also writes a PLAIN CSS theme designed for THIS page. On an EDIT
+    # we KEEP the existing theme (preserve the design across tweaks) — the
+    # collaborative whiteboard edits the page on every message, and regenerating
+    # the theme each time would churn the look the user is iterating on.
+    theme =
+      if is_edit do
+        nil
+      else
+        TurnDriver.say(session_uri, builder, gettext("🎨 Designing a theme for this page…"))
+
+        {t, secs} =
+          with_progress(session_uri, builder, gettext("Designing theme"), fn ->
+            generate_theme(spec)
+          end)
+
+        TurnDriver.say(session_uri, builder, gettext("🎨 Theme ready in %{s}s.", s: secs))
+        t
+      end
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
@@ -595,7 +886,8 @@ defmodule EzagentPluginHello.Generator do
         # are SEMANTIC HOOKS (not utilities), and shadcn's own utility classes ship
         # from the build-time customer.css scan. The per-session CSS is ONLY the
         # sanitized AI theme — a plain-CSS stylesheet that restyles the shadcn DOM.
-        TurnDriver.set_shell(session_uri, builder, "", theme)
+        # nil theme ⇒ an edit ⇒ leave the existing stored theme untouched.
+        if theme, do: TurnDriver.set_shell(session_uri, builder, "", theme)
 
         TurnDriver.say(
           session_uri,

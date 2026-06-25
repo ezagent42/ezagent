@@ -71,6 +71,24 @@ defmodule Ezagent.Socialware.CustomerFeed do
   end
 
   @doc """
+  The FULL collaborative chat (every chat-visible message), not the delivered
+  customer-visible projection `snapshot/2` returns. The customer preview is a
+  shared whiteboard: every viewer sees all participants' messages live, and each
+  message drives a hello page edit. Gated by the same public-view customer token
+  (the page is already public_view), so it carries no membership leak the page
+  itself doesn't. Mirrors `Ezagent.Socialware.ChatFeed`'s message source.
+  """
+  @spec chat_messages(URI.t(), String.t()) :: {:ok, [map()]} | {:error, :unauthorized}
+  def chat_messages(%URI{} = session_uri, token) do
+    with {:ok, workspace_uri} <- workspace(session_uri),
+         :ok <- CustomerAuth.authorize(token, session_uri, workspace_uri) do
+      {:ok, MessageStore.chat_visible_recent(session_uri, @history_limit)}
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  @doc """
   P2.5b — durable, cursor-addressable replay of committed customer deliveries.
   Returns committed outbox rows with `committed_seq > cursor` (ascending), each
   `%{cursor, turn_id, message_ids, surface_version}`. `committed_seq` is assigned
