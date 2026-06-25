@@ -89,7 +89,7 @@ function logHelloPage(snapshot, source) {
     const changes = []
     diffNodes(prev, page, "page-root", changes)
     console.group(
-      `%c✏️ [hello] ${changes.length} change(s)`,
+      `%c[hello] ${changes.length} change(s)`,
       "color:#16a34a;font-weight:bold",
     )
     changes.forEach((c) => console.log("  " + c))
@@ -115,6 +115,46 @@ function logHelloPage(snapshot, source) {
     window.__helloSpec = page
     window.__helloSnapshot = snapshot
   } catch (_e) {}
+}
+
+// --- element selection (Lovable-style point-to-edit) ------------------------
+
+// Capture a clicked page element as a model-readable "address": its kind
+// (shadcn data-slot or tag), its visible text, and the nearest semantic section
+// it sits in. The model uses this + the current spec to locate the node to edit.
+function describeElement(el) {
+  const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 100)
+  const kind = el.getAttribute("data-slot") || el.tagName.toLowerCase()
+  let section = null
+  let p = el
+  while (p && p.classList && !p.classList.contains("page-root")) {
+    for (const c of p.classList) {
+      if (/^(nav|hero|section|feature|grid|pricing|plan|faq|cta|footer|sidebar|stat|card|toolbar|panel|list|row|header|title|price)/.test(c)) {
+        section = c
+        break
+      }
+    }
+    if (section) break
+    p = p.parentElement
+  }
+  return {kind, text, section}
+}
+
+function selectionLabel(sel) {
+  if (!sel) return ""
+  const t = sel.text ? `「${sel.text.slice(0, 22)}${sel.text.length > 22 ? "…" : ""}」` : ""
+  return `${sel.kind}${t}`
+}
+
+// Prefix the user's request with the selected element so the model edits THAT
+// node (or inserts relative to it), instead of guessing which one.
+function selectionPrefix(sel) {
+  const where = sel.section ? `, inside the .${sel.section} block` : ""
+  return (
+    `[The user selected an element on the page — a ${sel.kind}` +
+    (sel.text ? ` showing «${sel.text}»` : "") +
+    `${where}. Apply the request below to THAT specific element (edit it, or insert relative to it as asked):]\n`
+  )
 }
 
 function boot(root) {
@@ -143,6 +183,17 @@ function boot(root) {
   )
 }
 
+// The page chrome (input bar + json-render highlight) shows ONLY on the
+// standalone public preview, NOT when the page is EMBEDDED as an iframe inside the
+// world operator console (the operator just wants to SEE the rendered page there).
+const IS_EMBEDDED = (() => {
+  try {
+    return window.self !== window.top
+  } catch (_e) {
+    return true
+  }
+})()
+
 function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -151,6 +202,10 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
   // The bottom preview bar: whether the chat history panel is expanded, and a
   // ref to the live channel so the bar's join/post actions can push to it.
   const [chatOpen, setChatOpen] = useState(false)
+  // Point-to-edit: `selectMode` arms element picking; `selected` holds the chosen
+  // element's address (kind/text/section) to ride the next message.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selected, setSelected] = useState(null)
   const channelRef = useRef(null)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
@@ -205,6 +260,44 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
       socket.disconnect()
     }
   }, [sessionUri, token, socketPath, topicPrefix, viewerToken])
+
+  // Element-picking mode: hover outlines the element under the cursor; a click
+  // captures it as `selected` and exits. Capture-phase listeners so a click
+  // selects instead of activating the underlying button/link.
+  useEffect(() => {
+    if (!selectMode) return
+    document.body.classList.add("jr-selecting")
+    let hovered = null
+    const clear = () => {
+      if (hovered) hovered.classList.remove("jr-hover")
+      hovered = null
+    }
+    const inPage = (el) => el && el.closest && el.closest(".page-root")
+    const onMove = (e) => {
+      const el = inPage(e.target) ? e.target : null
+      if (el === hovered) return
+      clear()
+      if (el && !el.classList.contains("page-root")) {
+        el.classList.add("jr-hover")
+        hovered = el
+      }
+    }
+    const onClick = (e) => {
+      if (!inPage(e.target)) return
+      e.preventDefault()
+      e.stopPropagation()
+      setSelected(describeElement(e.target))
+      setSelectMode(false)
+    }
+    document.addEventListener("mousemove", onMove, true)
+    document.addEventListener("click", onClick, true)
+    return () => {
+      document.body.classList.remove("jr-selecting")
+      clear()
+      document.removeEventListener("mousemove", onMove, true)
+      document.removeEventListener("click", onClick, true)
+    }
+  }, [selectMode])
 
   if (unauthorized) {
     return React.createElement(
@@ -268,7 +361,6 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
         "data-catalog-valid": "true",
         "data-empty": "true",
       },
-      React.createElement("div", {className: "text-4xl"}, "🪄"),
       React.createElement("p", {className: "text-base font-medium text-base-content/70"}, "还没有页面"),
       React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
     )
@@ -297,8 +389,11 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
   const doPost = (text) => {
     const ch = channelRef.current
     if (!ch) return
-    ch.push("post", {text})
+    // If an element is selected, prepend its address so hello edits THAT node.
+    const full = selected ? selectionPrefix(selected) + text : text
+    ch.push("post", {text: full})
       .receive("error", (e) => console.warn("[hello] post failed:", e))
+    setSelected(null)
   }
   const doLogin = () => {
     const back = window.location.pathname + window.location.search
@@ -310,7 +405,9 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
     null,
     React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
-    React.createElement(PreviewBar, {
+    IS_EMBEDDED
+      ? null
+      : React.createElement(PreviewBar, {
       viewer,
       messages,
       chatOpen,
@@ -318,28 +415,32 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
       onJoin: doJoin,
       onPost: doPost,
       onLogin: doLogin,
-    }),
-    React.createElement(
-      "button",
-      {
-        type: "button",
-        onClick: () => setJrHighlight((v) => !v),
-        className:
-          "fixed bottom-4 right-4 z-[9999] rounded-full px-4 py-2 text-sm font-semibold shadow-lg transition " +
-          (jrHighlight ? "bg-fuchsia-600 text-white" : "bg-base-100 text-base-content/70 ring-1 ring-base-300 hover:ring-fuchsia-400"),
-        title: "高亮页面里属于 json-render 的部分(框架是 HTML,不高亮)",
+      selected,
+      onClearSelection: () => setSelected(null),
+      selectMode,
+      onToggleSelect: () => {
+        setSelectMode((v) => !v)
+        setSelected(null)
       },
-      jrHighlight ? "✕ 隐藏 json-render" : "◐ 高亮 json-render"
-    )
+      jrHighlight,
+      onToggleHighlight: () => setJrHighlight((v) => !v),
+    })
   )
 }
 
 // Highlight overlay: every json-render node carries `data-jr-type`; the HTML frame
 // (nav/footer/background) has none, so toggling this clearly separates the two.
+// The whole page IS json-render now (no HTML frame), so highlight the ENTIRE
+// json-render tree: the `.page-root` (the spec root — labelled), EVERY element
+// under it (layout containers like Stack/Grid render as plain divs with no
+// `data-slot`, so they need a descendant rule), and the shadcn components
+// (`[data-slot]`) a touch stronger. The old `[data-jr-type]` selector matched
+// nothing — the shadcn renderer never emits it.
 const JR_HIGHLIGHT_CSS = `
-body.jr-highlight [data-slot]{outline:2px solid #d946ef;outline-offset:-2px}
-body.jr-highlight [data-jr-type]{outline:1px dashed rgba(217,70,239,.55);outline-offset:-1px;position:relative}
-body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:2px 4px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
+body.jr-highlight .page-root{outline:3px solid #d946ef;outline-offset:3px;position:relative}
+body.jr-highlight .page-root::before{content:"json-render — whole page";position:absolute;top:0;left:0;background:#d946ef;color:#fff;font:600 10px/1 ui-monospace,monospace;padding:3px 5px;border-radius:0 0 4px 0;z-index:9999;pointer-events:none}
+body.jr-highlight .page-root *{outline:1px solid rgba(217,70,239,.28);outline-offset:-1px}
+body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-offset:-1px}
 `
 
 // The fixed bottom-center preview bar — page chrome, NOT part of the generated
@@ -354,7 +455,7 @@ body.jr-highlight [data-jr-type]::before{content:attr(data-jr-type);position:abs
 //
 // Anon viewers are read-only BY CONSTRUCTION (the anon-User's caps deny
 // chat.send), so a disabled input is the honest affordance, not a security gate.
-function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin}) {
+function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
   const [draft, setDraft] = useState("")
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
@@ -379,15 +480,33 @@ function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, on
   }
 
   const placeholder = !loggedIn
-    ? "登录后参与对话"
+    ? "登录后参与"
     : !member
-      ? "加入会话后即可发言"
-      : "说点什么 —— 直接发给页面作者,无需 @hello"
+      ? "加入后可发言"
+      : selected
+        ? "想怎么改这个?"
+        : "说点什么…"
+
+  // When an element is selected, show a removable chip so the next message targets it.
+  const chip =
+    selected && member
+      ? React.createElement(
+          "div",
+          {className: "previewbar-chip"},
+          React.createElement("span", {className: "previewbar-chip-text"}, `已选中:${selectionLabel(selected)}`),
+          React.createElement(
+            "button",
+            {type: "button", className: "previewbar-chip-x", onClick: onClearSelection, "aria-label": "取消选择"},
+            "✕"
+          )
+        )
+      : null
 
   return React.createElement(
     "div",
     {className: "previewbar-wrap", "data-viewer": member ? "member" : loggedIn ? "guest" : "anon"},
     chatOpen ? React.createElement(ChatPanel, {messages, onClose: () => setChatOpen(false)}) : null,
+    chip,
     React.createElement(
       "div",
       {className: "previewbar"},
@@ -409,12 +528,63 @@ function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, on
           }
         },
       }),
-      action
+      member
+        ? React.createElement(
+            "button",
+            {
+              type: "button",
+              className: "previewbar-select" + (selectMode ? " is-active" : ""),
+              onClick: onToggleSelect,
+              title: "点选页面任意元素,再描述要怎么改",
+            },
+            selectMode ? "选择中" : "选择"
+          )
+        : null,
+      action,
+      React.createElement(
+        "button",
+        {
+          type: "button",
+          className: "previewbar-hl" + (jrHighlight ? " is-on" : ""),
+          onClick: onToggleHighlight,
+          title: jrHighlight ? "隐藏 json-render 高亮" : "高亮 json-render 结构",
+          "aria-label": "高亮 json-render",
+        },
+        "◐"
+      )
     )
   )
 }
 
+// A live elapsed-seconds counter rendered next to the latest "⏳ …" progress line,
+// so a long generation shows ticking time WITHOUT the server spamming a message per
+// second. Resets per message (keyed by message id); unmounts when a newer message
+// supersedes the progress line.
+function ProgressTicker() {
+  const [s, setS] = useState(0)
+  useEffect(() => {
+    const start = Date.now()
+    const id = setInterval(() => setS(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return React.createElement("span", {className: "previewbar-tick"}, ` · ${s}s`)
+}
+
 function ChatPanel({messages, onClose}) {
+  const bodyRef = useRef(null)
+  const stickRef = useRef(true)
+
+  // Auto-scroll to the newest message ONLY when the user is already near the
+  // bottom; if they scrolled up to read history, leave them there.
+  const onScroll = () => {
+    const el = bodyRef.current
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  }
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight
+  }, [messages])
+
   return React.createElement(
     "div",
     {className: "previewbar-chat"},
@@ -426,17 +596,25 @@ function ChatPanel({messages, onClose}) {
     ),
     React.createElement(
       "div",
-      {className: "previewbar-chat-body"},
+      {className: "previewbar-chat-body", ref: bodyRef, onScroll: onScroll},
       messages.length === 0
         ? React.createElement("p", {className: "previewbar-chat-empty"}, "还没有消息。")
-        : messages.map((m, i) =>
-            React.createElement(
+        : messages.map((m, i) => {
+            // The LAST message, if it is a "…"-terminated progress line, gets a
+            // live ticker (the backend's `with_progress` lines end with an ellipsis).
+            const live = i === messages.length - 1 && (m.text || "").endsWith("…")
+            return React.createElement(
               "div",
               {key: m.id || i, className: "previewbar-msg"},
               m.sender ? React.createElement("span", {className: "previewbar-msg-who"}, shortSender(m.sender)) : null,
-              React.createElement("span", {className: "previewbar-msg-text"}, m.text || "")
+              React.createElement(
+                "span",
+                {className: "previewbar-msg-text"},
+                m.text || "",
+                live ? React.createElement(ProgressTicker, {key: "tick-" + (m.id || i)}) : null
+              )
             )
-          )
+          })
     )
   )
 }
@@ -460,6 +638,16 @@ const PREVIEWBAR_CSS = `
 .previewbar-action:hover{opacity:.9}
 .previewbar-action:active{transform:scale(.97)}
 .previewbar-action:disabled{opacity:.38;cursor:default}
+.previewbar-select{flex-shrink:0;height:2.4rem;padding:0 1.25rem;border-radius:999px;border:none;background:#1c1c1c;color:#fff;font-weight:600;font-size:.88rem;cursor:pointer;white-space:nowrap;transition:opacity .15s,transform .1s}
+.previewbar-select:hover{opacity:.9}
+.previewbar-select:active{transform:scale(.97)}
+.previewbar-select.is-active{background:#52525b}
+.previewbar-hl{flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#999;cursor:pointer;font-size:.9rem;line-height:1;transition:background .15s,color .15s}
+.previewbar-hl:hover{background:rgba(0,0,0,.1);color:#555}
+.previewbar-hl.is-on{background:#d946ef;color:#fff}
+.jr-highlight-btn{position:fixed;top:2.75rem;right:.625rem;z-index:9999;width:1.75rem;height:1.75rem;display:inline-flex;align-items:center;justify-content:center;border-radius:.375rem;border:1px solid rgba(0,0,0,.1);background:rgba(255,255,255,.9);color:#444;box-shadow:0 1px 2px rgba(0,0,0,.06);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer;font-size:.95rem;line-height:1;transition:background .15s}
+.jr-highlight-btn:hover{background:rgba(0,0,0,.05)}
+.jr-highlight-btn.is-on{background:#d946ef;color:#fff;border-color:#d946ef}
 .previewbar-chat{max-height:50vh;display:flex;flex-direction:column;border-radius:1.4rem;background:rgba(255,255,255,.86);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(0,0,0,.06);box-shadow:0 16px 44px rgba(0,0,0,.16);overflow:hidden;animation:previewbar-rise .18s ease}
 @keyframes previewbar-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .previewbar-chat-head{display:flex;align-items:center;justify-content:space-between;padding:.65rem .95rem;border-bottom:1px solid rgba(0,0,0,.06);font-weight:600;font-size:.85rem;color:#444;flex-shrink:0}
@@ -469,6 +657,14 @@ const PREVIEWBAR_CSS = `
 .previewbar-msg{display:flex;flex-direction:column;gap:.12rem}
 .previewbar-msg-who{font-size:.68rem;font-weight:700;color:#6d5cf0;text-transform:uppercase;letter-spacing:.03em}
 .previewbar-msg-text{font-size:.9rem;line-height:1.5;color:#222;white-space:pre-wrap;word-break:break-word}
+.previewbar-tick{color:#6d5cf0;font-weight:700;font-variant-numeric:tabular-nums}
+body.jr-selecting,body.jr-selecting .page-root *{cursor:crosshair !important}
+body.jr-selecting .previewbar-wrap,body.jr-selecting .previewbar-wrap *{cursor:auto !important}
+.jr-hover{outline:2px solid #6366f1 !important;outline-offset:-1px !important;background:rgba(99,102,241,.06) !important}
+.previewbar-chip{display:inline-flex;align-items:center;gap:.4rem;align-self:flex-start;max-width:100%;margin-left:.5rem;padding:.32rem .5rem .32rem .72rem;border-radius:999px;background:rgba(255,255,255,.72);border:1px solid rgba(0,0,0,.08);font-size:.78rem;color:#444;backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);box-shadow:0 6px 20px rgba(0,0,0,.1)}
+.previewbar-chip-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#333}
+.previewbar-chip-x{border:none;background:rgba(0,0,0,.08);color:#666;border-radius:999px;width:1.15rem;height:1.15rem;font-size:.7rem;cursor:pointer;flex-shrink:0;line-height:1}
+.previewbar-chip-x:hover{background:rgba(0,0,0,.14)}
 `
 
 // Pure shadcn page + AI CSS theme. The whole page is ONE shadcn json-render spec;

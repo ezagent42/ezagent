@@ -27,7 +27,36 @@ function Unknown({element}) {
   )
 }
 
+// Defensive coercion before rendering: the LLM occasionally emits a shape a
+// shadcn component can't take (e.g. Table `rows` as objects instead of
+// cell-arrays), which throws INSIDE the component (past the per-node error
+// boundary's usefulness). Fix the known cases so a malformed node degrades
+// gracefully instead of blanking out.
+function coerceCell(c) {
+  if (c == null) return ""
+  return typeof c === "object" ? JSON.stringify(c) : c
+}
+
+function coerceRow(row) {
+  if (Array.isArray(row)) return row.map(coerceCell)
+  if (row && typeof row === "object") return Object.values(row).map(coerceCell)
+  return [coerceCell(row)]
+}
+
+function normalizeSpec(node) {
+  if (Array.isArray(node)) return node.map(normalizeSpec)
+  if (!node || typeof node !== "object") return node
+  let props = node.props
+  // Table: rows MUST be an array of cell-arrays; coerce objects/strings.
+  if (node.type === "Table" && props && Array.isArray(props.rows)) {
+    props = {...props, rows: props.rows.map(coerceRow)}
+  }
+  const children = Array.isArray(node.children) ? node.children.map(normalizeSpec) : node.children
+  return {...node, props, children}
+}
+
 export function JsonRenderPage({page}) {
-  const spec = page && typeof page === "object" ? nestedToFlat(page) : null
+  const safe = page && typeof page === "object" ? normalizeSpec(page) : null
+  const spec = safe ? nestedToFlat(safe) : null
   return h(JSONUIProvider, {registry}, h(Renderer, {spec, registry, fallback: Unknown}))
 }

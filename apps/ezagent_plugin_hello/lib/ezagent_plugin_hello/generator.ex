@@ -55,7 +55,7 @@ defmodule EzagentPluginHello.Generator do
     Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
     builder = builder_uri(session_uri)
     # First-moment acknowledgement (before the slow planner LLM call).
-    TurnDriver.say(session_uri, builder, gettext("Got it ✅ understanding your request…"))
+    TurnDriver.say(session_uri, builder, gettext("Got it, understanding your request…"))
 
     # Every request regenerates the WHOLE page: one shadcn spec (the full page) +
     # a fresh CSS theme designed for it. No HTML frame, no scoped edit path.
@@ -73,7 +73,7 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("🎨 Plan: redesign the frame only (content unchanged).")
+          gettext("Plan: redesign the frame only (content unchanged).")
         )
 
         regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri), user_text)
@@ -84,7 +84,7 @@ defmodule EzagentPluginHello.Generator do
         reframe = scope == :both
 
         if reframe,
-          do: TurnDriver.say(session_uri, builder, gettext("🎨 Redesigning the site frame too…"))
+          do: TurnDriver.say(session_uri, builder, gettext("Redesigning the site frame too…"))
 
         case plan do
           {:complex, %{title: title, sections: sections}} ->
@@ -120,19 +120,13 @@ defmodule EzagentPluginHello.Generator do
     current = current_body_tree(session_uri)
     is_edit = is_map(current)
 
-    TurnDriver.say(
-      session_uri,
-      builder,
-      if(is_edit,
-        do: gettext("🧠 Editing the page per your request…"),
-        else: gettext("🧠 Calling model to generate the page…")
-      )
-    )
-
     {result, secs} =
-      with_progress(session_uri, builder, gettext("Model thinking"), fn ->
-        build_spec(current, user_text, is_edit)
-      end)
+      with_progress(
+        session_uri,
+        builder,
+        if(is_edit, do: gettext("Editing the page"), else: gettext("Generating the page")),
+        fn -> build_spec(current, user_text, is_edit) end
+      )
 
     case result do
       {:ok, spec, mode} ->
@@ -143,10 +137,10 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("📦 Model done in %{s}s — %{desc}", s: secs, desc: describe_page(spec))
+          gettext("Model done in %{s}s — %{desc}", s: secs, desc: describe_page(spec))
         )
 
-        land_page(session_uri, builder, spec, user_text, reframe, is_edit)
+        land_page(session_uri, builder, spec, user_text, reframe, theme_action(mode))
 
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
@@ -154,37 +148,22 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("⚠ Generation failed after %{s}s: %{reason}", s: secs, reason: inspect(reason))
+          gettext("Generation failed after %{s}s: %{reason}", s: secs, reason: inspect(reason))
         )
 
         err
     end
   end
 
-  # Run `fun` (the slow LLM work) in a Task and emit a HEARTBEAT every few seconds
-  # with elapsed time, so a long generation is never a silent black box — the
-  # operator sees it is still working + how long it has taken. Returns
-  # `{result, elapsed_seconds}`.
-  @heartbeat_ms 6_000
+  # Emit ONE "<label>…" line, then run the slow work inline. The client renders a
+  # LIVE ticking elapsed time next to that one line (no per-tick chat spam); the
+  # caller's terminal "… in Ns" line then supersedes it and stops the ticker.
+  # Returns {result, elapsed_seconds}.
   defp with_progress(session_uri, builder, label, fun) do
+    TurnDriver.say(session_uri, builder, gettext("%{label}…", label: label))
     start = System.monotonic_time(:millisecond)
-    result = heartbeat(Task.async(fun), session_uri, builder, label, start)
+    result = fun.()
     {result, div(System.monotonic_time(:millisecond) - start, 1000)}
-  end
-
-  defp heartbeat(task, session_uri, builder, label, start) do
-    case Task.yield(task, @heartbeat_ms) do
-      {:ok, result} ->
-        result
-
-      {:exit, reason} ->
-        {:error, {:task_exit, reason}}
-
-      nil ->
-        s = div(System.monotonic_time(:millisecond) - start, 1000)
-        TurnDriver.say(session_uri, builder, gettext("⏳ %{label}… %{s}s", label: label, s: s))
-        heartbeat(task, session_uri, builder, label, start)
-    end
   end
 
   # On an EDIT, ask the model for a MINIMAL PATCH against the current spec and
@@ -219,13 +198,13 @@ defmodule EzagentPluginHello.Generator do
   # nodes it touched) or a full rebuild.
   defp mode_narration({:patch, ops}) do
     detail = ops |> Enum.map(&describe_op/1) |> Enum.join("; ")
-    gettext("✏️ Incremental edit — %{n} op(s): %{detail}", n: length(ops), detail: detail)
+    gettext("Incremental edit — %{n} op(s): %{detail}", n: length(ops), detail: detail)
   end
 
   defp mode_narration(:fallback),
-    do: gettext("🔁 Patch didn't apply cleanly — regenerated the whole page instead.")
+    do: gettext("Patch didn't apply cleanly — regenerated the whole page instead.")
 
-  defp mode_narration(:fresh), do: gettext("🆕 Built a fresh page.")
+  defp mode_narration(:fresh), do: gettext("Built a fresh page.")
 
   defp describe_op(%{"op" => "set", "id" => id, "props" => props}) when is_map(props),
     do: "set #{id}.#{props |> Map.keys() |> Enum.join(",")}"
@@ -405,7 +384,7 @@ defmodule EzagentPluginHello.Generator do
     TurnDriver.say(
       session_uri,
       builder,
-      gettext("⏳ Generating %{count} blocks in parallel:\n%{briefs}",
+      gettext("Generating %{count} blocks in parallel:\n%{briefs}",
         count: length(sections),
         briefs: briefs
       )
@@ -430,13 +409,13 @@ defmodule EzagentPluginHello.Generator do
 
     blocks_done_msg =
       if failed > 0 do
-        gettext("📦 Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped).",
+        gettext("Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped).",
           kept: kept,
           total: length(sections),
           failed: failed
         )
       else
-        gettext("📦 Blocks done: %{kept}/%{total} succeeded.",
+        gettext("Blocks done: %{kept}/%{total} succeeded.",
           kept: kept,
           total: length(sections)
         )
@@ -453,7 +432,7 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("⚠ All blocks failed; regenerating with the single-page fallback…")
+          gettext("All blocks failed; regenerating with the single-page fallback…")
         )
 
         generate_simple(session_uri, builder, user_text, reframe)
@@ -465,10 +444,10 @@ defmodule EzagentPluginHello.Generator do
           TurnDriver.say(
             session_uri,
             builder,
-            gettext("📦 Assembled: %{desc}", desc: describe_page(page))
+            gettext("Assembled: %{desc}", desc: describe_page(page))
           )
 
-          land_page(session_uri, builder, page, user_text, reframe, false)
+          land_page(session_uri, builder, page, user_text, reframe, :generate)
         else
           {:error, reason} = err ->
             Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
@@ -476,7 +455,7 @@ defmodule EzagentPluginHello.Generator do
             TurnDriver.say(
               session_uri,
               builder,
-              gettext("⚠ Page assembly failed: %{reason}", reason: inspect(reason))
+              gettext("Page assembly failed: %{reason}", reason: inspect(reason))
             )
 
             err
@@ -774,13 +753,13 @@ defmodule EzagentPluginHello.Generator do
     TurnDriver.say(
       session_uri,
       builder,
-      gettext("🎨 Generating a new frame (keeping your content)…")
+      gettext("Generating a new frame (keeping your content)…")
     )
 
     shell_html = ensure_shell_html(session_uri, builder, title, brief, true)
 
     if shell_html == "" do
-      TurnDriver.say(session_uri, builder, gettext("⚠ Frame generation failed."))
+      TurnDriver.say(session_uri, builder, gettext("Frame generation failed."))
       {:error, :shell_failed}
     else
       store_frame(session_uri, builder, shell_html, current_body_tree(session_uri))
@@ -788,7 +767,7 @@ defmodule EzagentPluginHello.Generator do
       TurnDriver.say(
         session_uri,
         builder,
-        gettext("✅ Frame redesigned — your content is unchanged.")
+        gettext("Frame redesigned — your content is unchanged.")
       )
 
       {:ok, :shell_only}
@@ -859,26 +838,14 @@ defmodule EzagentPluginHello.Generator do
 
   defp gen_prompt(_current, user_text), do: user_text
 
-  defp land_page(session_uri, builder, spec, _user_text, _reframe, is_edit) do
-    # The spec is the WHOLE page (nav / content / footer, all shadcn). A FIRST
-    # generation also writes a PLAIN CSS theme designed for THIS page. On an EDIT
-    # we KEEP the existing theme (preserve the design across tweaks) — the
-    # collaborative whiteboard edits the page on every message, and regenerating
-    # the theme each time would churn the look the user is iterating on.
-    theme =
-      if is_edit do
-        nil
-      else
-        TurnDriver.say(session_uri, builder, gettext("🎨 Designing a theme for this page…"))
-
-        {t, secs} =
-          with_progress(session_uri, builder, gettext("Designing theme"), fn ->
-            generate_theme(spec)
-          end)
-
-        TurnDriver.say(session_uri, builder, gettext("🎨 Theme ready in %{s}s.", s: secs))
-        t
-      end
+  defp land_page(session_uri, builder, spec, _user_text, _reframe, theme_action) do
+    # The spec is the WHOLE page (all shadcn). The per-page CSS THEME is built per
+    # `theme_action`: a FIRST generation designs it; a TEXT-only edit KEEPS it (fast,
+    # design stays put); a STRUCTURAL edit (new / replaced elements) RE-themes — but
+    # SEEDED with the current theme so the look is preserved while the NEW elements
+    # get styled consistently (otherwise new json-render nodes render as unstyled
+    # shadcn defaults that clash with the page).
+    theme = build_theme(session_uri, builder, spec, theme_action)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
@@ -892,7 +859,7 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("✅ Done! Page \"%{title}\" generated.", title: get_title(spec))
+          gettext("Done! Page \"%{title}\" generated.", title: get_title(spec))
         )
 
         ok
@@ -901,7 +868,7 @@ defmodule EzagentPluginHello.Generator do
         TurnDriver.say(
           session_uri,
           builder,
-          gettext("⚠ Render failed: %{reason}", reason: inspect(reason))
+          gettext("Render failed: %{reason}", reason: inspect(reason))
         )
 
         err
@@ -910,8 +877,55 @@ defmodule EzagentPluginHello.Generator do
 
   # Focused second LLM call: given the page spec, write a PLAIN CSS theme that
   # makes THIS page beautiful. Sanitized (declarative CSS, safe on the public page).
-  defp generate_theme(spec) do
-    case call_llm(Prompts.theme_gen_system(), Jason.encode!(spec)) do
+  # How to treat the per-page theme this turn, derived from what the model did:
+  #   :generate  — fresh page → design a new theme
+  #   :regenerate— structural edit (insert/replace) or a full rebuild → re-theme so
+  #                the new elements are styled (seeded with the current theme)
+  #   :keep      — text/prop-only edit → leave the theme untouched (fast)
+  defp theme_action(:fresh), do: :generate
+  defp theme_action(:fallback), do: :regenerate
+
+  defp theme_action({:patch, ops}) do
+    if Enum.any?(ops, fn op -> Map.get(op, "op") in ["insert", "replace"] end),
+      do: :regenerate,
+      else: :keep
+  end
+
+  defp build_theme(_session_uri, _builder, _spec, :keep), do: nil
+
+  defp build_theme(session_uri, builder, spec, :generate) do
+    {theme, secs} =
+      with_progress(session_uri, builder, gettext("Designing theme"), fn ->
+        generate_theme(spec, nil)
+      end)
+
+    TurnDriver.say(session_uri, builder, gettext("Theme ready in %{s}s.", s: secs))
+    theme
+  end
+
+  defp build_theme(session_uri, builder, spec, :regenerate) do
+    base = current_theme(session_uri)
+
+    {theme, secs} =
+      with_progress(session_uri, builder, gettext("Restyling so new parts match"), fn ->
+        generate_theme(spec, base)
+      end)
+
+    TurnDriver.say(session_uri, builder, gettext("Theme updated in %{s}s.", s: secs))
+    theme
+  end
+
+  # The session's current per-page theme CSS (nil if none yet) — the seed that lets
+  # a re-theme PRESERVE the existing design while covering new elements.
+  defp current_theme(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, %{shell_css: css}} when is_binary(css) and css != "" -> css
+      _ -> nil
+    end
+  end
+
+  defp generate_theme(spec, base_theme) do
+    case call_llm(Prompts.theme_gen_system(), theme_user_prompt(spec, base_theme)) do
       {:ok, %{content: content}} ->
         Sanitize.css(content)
 
@@ -920,6 +934,28 @@ defmodule EzagentPluginHello.Generator do
         ""
     end
   end
+
+  # On a re-theme we hand the model the CURRENT theme and tell it to KEEP the design
+  # language, only EXTENDING coverage to every (incl. new) element — so an edit's
+  # new nodes are styled in harmony, not redesigned.
+  defp theme_user_prompt(spec, base) when is_binary(base) and base != "" do
+    """
+    Here is the page's CURRENT theme. KEEP its design language EXACTLY — same
+    palette, fonts, sizing, spacing, radii, overall feel. EXTEND it so EVERY element
+    in the spec below is styled consistently, INCLUDING any newly added ones. Do not
+    redesign; just make sure nothing renders unstyled.
+
+    ```css
+    #{base}
+    ```
+
+    The page spec:
+
+    #{Jason.encode!(spec)}
+    """
+  end
+
+  defp theme_user_prompt(spec, _base), do: Jason.encode!(spec)
 
   defp get_title(%{"props" => %{"title" => t}}) when is_binary(t) and t != "", do: t
   # shadcn trees have no page title — use the first Heading's text as the brand.
