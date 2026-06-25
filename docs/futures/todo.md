@@ -14,6 +14,9 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Cross-workspace session join (2026-06-25 research, NOT yet implemented)
+- **Cross-workspace join for logged-in users** — research in `docs/together/2026-06-25/research/cross-workspace-join.md`. Blocker = `do_workspace_isolation_check` (runtime.ex:664) derives caller's ws from the caller URI → `:cross_workspace_denied`; the anon→login takeover shares the same gap. **Recommended: M2** (mint a guest principal in the session's workspace linked to the home account; generalizes the existing anon mint/binding/merge — isolation-preserving, multi-host-safe). Lead decisions pending: write-participation policy gate; guest history inheritance; whether takeover's cross-ws failure is accepted vs a bug; scope into hello vs a socialware-identity epic. hello (#982) stands on the same-workspace assumption for now.
+
 ### Role-materialization + kanban-as-role (2026-06-25, Allen "do it right")
 
 - **Role-materialization foundation (#54 follow-on)** — the role×flavor spawn
