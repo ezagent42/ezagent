@@ -1,5 +1,6 @@
 import {defineConfig} from "vite"
 import react from "@vitejs/plugin-react"
+import tailwindcss from "@tailwindcss/vite"
 
 // Mirrors ezagent_plugin_world's island build: a single-file ES-module library
 // that the `HelloRenderer` phx-hook dynamically imports and calls `mountHello`
@@ -7,7 +8,7 @@ import react from "@vitejs/plugin-react"
 // `/assets/hello/main.js`. In dev a Vite server (distinct port) serves it with
 // HMR; config wires `hello_module_url` to one or the other.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
     port: Number(process.env.HELLO_VITE_PORT || 5174),

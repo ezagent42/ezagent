@@ -1,0 +1,43 @@
+/* The hello operator-island stylesheet — compiled by @tailwindcss/vite and
+   injected as a self-contained <style> by main.tsx (imported `?inline`), so the
+   island renders correctly inside the world LiveView operator shell without
+   depending on the world CSS build.
+
+   Tailwind is imported WITHOUT preflight (theme + utilities only): preflight is a
+   global `*` reset that would clobber the surrounding world-console styling. The
+   shadcn components set their own box-model/spacing, so the reset is not needed
+   here. */
+@layer theme, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Scan the @json-render/shadcn dist so every utility class the shadcn components
+   emit at runtime is generated (invisible to the build-time source scan). */
+@source "../node_modules/@json-render/shadcn/dist";
+
+/* shadcn semantic design tokens — mirrored from the customer surface
+   (apps/ezagent_web/assets/css/customer.css @theme) so the operator preview and
+   the public /socialware/customer page share ONE palette. Tailwind v4 maps
+   `bg-<name>` → `var(--color-<name>)`, so these drive the shadcn components. */
+@theme {
+  --color-background: oklch(99% 0 0);
+  --color-foreground: oklch(21% 0.006 285.885);
+  --color-card: oklch(99% 0 0);
+  --color-card-foreground: oklch(21% 0.006 285.885);
+  --color-popover: oklch(99% 0 0);
+  --color-popover-foreground: oklch(21% 0.006 285.885);
+  --color-primary: oklch(58% 0.233 277.117);
+  --color-primary-foreground: oklch(96% 0.018 272.314);
+  --color-secondary: oklch(96% 0.001 286.375);
+  --color-secondary-foreground: oklch(21% 0.006 285.885);
+  --color-muted: oklch(96% 0.001 286.375);
+  --color-muted-foreground: oklch(52% 0.013 285.8);
+  --color-accent: oklch(95% 0.02 277);
+  --color-accent-foreground: oklch(30% 0.08 277);
+  --color-destructive: oklch(58% 0.253 17.585);
+  --color-destructive-foreground: oklch(98% 0 0);
+  --color-border: oklch(92% 0.004 286.32);
+  --color-input: oklch(92% 0.004 286.32);
+  --color-ring: oklch(58% 0.233 277.117);
+  --radius: 0.625rem;
+}

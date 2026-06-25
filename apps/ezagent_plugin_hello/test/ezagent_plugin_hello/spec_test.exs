@@ -3,6 +3,41 @@ defmodule EzagentPluginHello.SpecTest do
 
   alias EzagentPluginHello.Spec
 
+  describe "catalog/0 — the shadcn component contract (frontend↔backend parity)" do
+    # The 36 @json-render/shadcn components the frontend renderer
+    # (catalog_jsonrender.mjs -> shadcnComponentDefinitions) renders. The backend
+    # Spec catalog MUST match this set exactly, or an LLM-emitted node validates
+    # server-side but fails to render (the "Unsupported node" class of bug). This
+    # is the DoD parity check (frontend catalog == backend Spec, diff = empty).
+    @shadcn_components ~w(
+      Accordion Alert Avatar Badge Button ButtonGroup Card Carousel Checkbox
+      Collapsible Dialog Drawer DropdownMenu Grid Heading Image Input Link
+      Pagination Popover Progress Radio Select Separator Skeleton Slider Spinner
+      Stack Switch Table Tabs Text Textarea Toggle ToggleGroup Tooltip
+    )
+
+    test "catalog is exactly the 36 shadcn components (parity diff = empty)" do
+      backend = MapSet.new(Spec.types())
+      shadcn = MapSet.new(@shadcn_components)
+
+      assert MapSet.size(shadcn) == 36
+
+      assert MapSet.difference(backend, shadcn) |> MapSet.to_list() == [],
+             "backend has components the shadcn renderer does not"
+
+      assert MapSet.difference(shadcn, backend) |> MapSet.to_list() == [],
+             "shadcn renderer has components the backend catalog does not"
+    end
+
+    test "every catalog entry declares props and a container? flag" do
+      for {type, meta} <- Spec.catalog() do
+        assert is_binary(type)
+        assert is_list(meta.props), "#{type} props must be a list"
+        assert is_boolean(meta.container?), "#{type} container? must be boolean"
+      end
+    end
+  end
+
   describe "validate/1 — the catalog-constraint chokepoint" do
     test "accepts a tree built only from catalog node types" do
       assert {:ok, _} = Spec.validate(Spec.seed())

@@ -38,7 +38,8 @@ defmodule Ezagent.Behavior.Surface do
     returns: %{ok: :boolean},
     caps: [:set_shell],
     modes: [:call],
-    description: "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
+    description:
+      "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
   )
 
   @impl Ezagent.Lifecycle

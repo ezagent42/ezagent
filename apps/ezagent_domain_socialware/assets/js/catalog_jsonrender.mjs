@@ -13,6 +13,7 @@ import {schema} from "@json-render/react/schema"
 import {defineCatalog, nestedToFlat} from "@json-render/core"
 import {shadcnComponentDefinitions} from "@json-render/shadcn/catalog"
 import {shadcnComponents} from "@json-render/shadcn"
+import {normalizeSpec} from "./catalog_normalize.mjs"
 
 const h = React.createElement
 
@@ -28,6 +29,7 @@ function Unknown({element}) {
 }
 
 export function JsonRenderPage({page}) {
-  const spec = page && typeof page === "object" ? nestedToFlat(page) : null
+  const safe = page && typeof page === "object" ? normalizeSpec(page) : null
+  const spec = safe ? nestedToFlat(safe) : null
   return h(JSONUIProvider, {registry}, h(Renderer, {spec, registry, fallback: Unknown}))
 }
