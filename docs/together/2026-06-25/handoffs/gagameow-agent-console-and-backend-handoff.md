@@ -19,6 +19,9 @@ console 现在在 `apps/ezagent_plugin_world/.../Identities.tsx`：`IdentitiesSu
 2. **config 面板**：从通用 kv 编辑器升级到**结构化每字段编辑**（"operator 能配每个字段"），走 `AgentConfig` facade（#938 + #966 加固）。
 3. **对接 `domain.agent`**：把 console 接到 domain.agent 原语；**凡是当前下探/打通不了的，UI 上显式标注"还没接线"**（不留隐藏假象）。
 
+## 接口契约（与 `allenwoods` 的 A 子任务约定 —— 提前定，互不阻塞）
+console 消费 agent 配置后端 = **`Ezagent.AgentConfig` facade 的稳定签名**：`read_cascade/4`、`read_key/5`、`apply_delta/4`、`delete_path/4`、`repoint/4` + 结构化每字段 schema。`allenwoods` 的 A 子任务在底下把它收拢到 `domain.agent`，**不改这些签名**（要改先群里改契约 + 通知你）。**你按这个稳定契约建 console（A 没好也能用 / 可 mock），不用等 A。** 见 `allenwoods-agent-runtime-consolidation-plan.md` 的"gaga console 接口契约"。
+
 ## DoD（四性质）
 - [ ] **A handoff 文档**落地，覆盖上面要点（`allenwoods` 能据此厘清方案）。
 - [ ] **console 全功能可用**：create/查/改**每个配置字段**/删，且**对接 domain.agent**；未接线处显式标注。
