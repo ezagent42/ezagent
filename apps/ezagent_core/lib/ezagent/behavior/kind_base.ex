@@ -57,4 +57,37 @@ defmodule Ezagent.Behavior.KindBase do
   def behaviors_in_slice(%{behaviors: behaviors}) when is_list(behaviors), do: behaviors
   def behaviors_in_slice(%{behaviors: nil}), do: nil
   def behaviors_in_slice(_), do: nil
+
+  @doc """
+  RF-2/RF-3 — REWRITE the captured behavior list in a `:kind_base` slice.
+
+  The ONLY writer of the captured set after first spawn (`create/1` is the
+  first-spawn writer). `Ezagent.Kind.MountDetach` calls this to record a LIVE
+  instance's mount/detach of a behavior so the new set PERSISTS and rehydrates
+  identically on cold restart (the whole point of the `:kind_base` capture).
+
+  `new_list` is the PRESENT-list form (a list, possibly `[]`) — NEVER the
+  legacy `nil` sentinel: a live mount/detach acts on an instance whose set is
+  now explicit, so it must be persisted as a present list (an explicit `[]`
+  yields only base behaviors on reload, never the declared superset — the
+  §3.1 invariant). Preserves the two-container shape KindBase persists.
+
+  Accepts both the persisted `%{state: %{behaviors: _}, transients: _}` shape
+  and a missing/legacy slice (seeds a fresh two-container slice) so a live
+  mount on a pre-existing instance with only a sentinel-`nil` capture still
+  records a concrete list.
+  """
+  @spec put_behaviors(map() | nil, [module()]) :: map()
+  def put_behaviors(slice, new_list) when is_list(new_list) do
+    case slice do
+      %{state: state} = s when is_map(state) ->
+        %{s | state: Map.put(state, :behaviors, new_list)}
+
+      %{} = s ->
+        Map.put(s, :state, %{behaviors: new_list})
+
+      _ ->
+        %{state: %{behaviors: new_list}, transients: %{}}
+    end
+  end
 end

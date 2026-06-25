@@ -513,6 +513,60 @@ defmodule Ezagent.Kind do
     end
   end
 
+  @doc """
+  RF-2 — MOUNT a Behavior onto a LIVE instance at runtime.
+
+  Adds `behavior` to the instance's per-instance behavior set: materializes its
+  slice (runs `create` + `activate` + `activated`, NOT just slice-init — codex
+  HIGH-A), rewrites the persisted `:kind_base` capture so the change survives
+  cold restart, and re-validates closure under required sibling reads. After a
+  successful mount the behavior's actions dispatch on this instance (per RF-1's
+  per-instance resolution) and its slice is non-empty.
+
+  Synchronous `:call` — the single `Kind.Server` mailbox serializes mount with
+  dispatch/detach. Validates BEFORE mutating; a rejected mount (not a real
+  Behavior / would leave the set unclosed) returns `{:error, reason}` with the
+  live instance unchanged. Idempotent (mounting a present behavior → `:ok`).
+
+  `args` (default `%{}`) is merged with `%{uri: <instance uri>}` and passed to
+  the behavior's create/activate, mirroring the spawn contract.
+  """
+  @spec mount(URI.t() | String.t(), module(), map()) :: :ok | {:error, term()}
+  def mount(uri, behavior, args \\ %{})
+
+  def mount(%URI{} = uri, behavior, args) when is_atom(behavior) and is_map(args) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
+      GenServer.call(pid, {:ezagent_mount, behavior, args})
+    end
+  end
+
+  def mount(uri_str, behavior, args) when is_binary(uri_str),
+    do: mount(Ezagent.URI.new!(uri_str), behavior, args)
+
+  @doc """
+  RF-3 — DETACH a Behavior from a LIVE instance at runtime.
+
+  Runs the behavior's optional `on_detach/2` per-behavior teardown (the seam
+  designed for this — `deactivate`/`destroy` are WHOLE-ENTITY and cannot do
+  per-behavior cleanup, codex HIGH-B), drops its slice, and rewrites the
+  persisted `:kind_base` capture to exclude it. After a successful detach the
+  behavior's actions no longer dispatch.
+
+  REJECTS (reverse-closure) when a REMAINING behavior still REQUIRES the one
+  being detached as a sibling read (`{:error, {:still_required, ...}}`), and
+  refuses to detach a base behavior (`KindBase` / universal). Idempotent
+  (detaching an absent behavior → `:ok`). Synchronous `:call` (serialized).
+  """
+  @spec detach(URI.t() | String.t(), module()) :: :ok | {:error, term()}
+  def detach(%URI{} = uri, behavior) when is_atom(behavior) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
+      GenServer.call(pid, {:ezagent_detach, behavior})
+    end
+  end
+
+  def detach(uri_str, behavior) when is_binary(uri_str),
+    do: detach(Ezagent.URI.new!(uri_str), behavior)
+
   # Slice cross-process reads + T3 normalization extracted to
   # `Ezagent.Kind.SliceAccess` (oversized-module arch gate, 2026-06-23). Kept as
   # delegates so the public API + every call site are unchanged.
@@ -822,56 +876,16 @@ defmodule Ezagent.Kind do
     end
   end
 
-  @doc """
-  Top-level entry for attaching a Behavior to a Kind from outside
-  the Kind's module body (e.g. from a plugin module). Performs
-  the same collision check as `attach/2` but at runtime — emits
-  an error if a collision is detected.
-
-  Phase 1 implementation: registers via the existing
-  `Ezagent.BehaviorRegistry.register/3` using the Behavior's
-  declared actions.
-  """
-  @spec attach_behavior(module(), to: module()) :: :ok | {:error, term()}
-  def attach_behavior(behavior_module, to: kind_module)
-      when is_atom(behavior_module) and is_atom(kind_module) do
-    actions = action_names_of_behavior(behavior_module)
-
-    # Detect collision with already-registered Behaviors on this Kind.
-    existing = collected_actions(kind_module)
-
-    case Enum.find(actions, &Map.has_key?(existing, &1)) do
-      nil ->
-        # Route through CapabilityRegistry (SPEC 2026-05-23) — the
-        # single canonical chokepoint for BehaviorRegistry +
-        # CapSubject co-registration. Direct BehaviorRegistry.register/3
-        # is blocked by the invariant.
-        Enum.each(actions, fn action ->
-          :ok = Ezagent.CapabilityRegistry.register(kind_module, action, behavior_module)
-        end)
-
-        :ok
-
-      colliding ->
-        {:error,
-         {:action_collision, colliding, existing[colliding], behavior_module, kind_module}}
-    end
-  end
-
-  defp collected_actions(kind_module) do
-    cond do
-      function_exported?(kind_module, :__action_to_behavior__, 0) ->
-        apply(kind_module, :__action_to_behavior__, [])
-
-      function_exported?(kind_module, :behaviors, 0) ->
-        kind_module.behaviors()
-        |> Enum.flat_map(fn b -> Enum.map(action_names_of_behavior(b), &{&1, b}) end)
-        |> Map.new()
-
-      true ->
-        %{}
-    end
-  end
+  # RF-3 — the Kind-level `attach_behavior/2` runtime registration entry was
+  # RETIRED here (it had NO runtime callers — only a unit test + a docstring
+  # reference). Per-instance behavior loading is the supported path: a
+  # recipe-loaded behavior dispatches via RF-1's per-instance resolution
+  # without any Kind-level `{kind, action}` registration, and a behavior is
+  # added/removed on a LIVE instance via `Ezagent.Kind.mount/2` /
+  # `Ezagent.Kind.detach/2` (RF-2/RF-3). The compile-time declaration +
+  # action-collision machinery (`attach/2`, `__before_compile__`,
+  # `action_names_of_behavior/1`) is UNCHANGED — only the unused runtime
+  # registration helper (+ its `collected_actions/1`) was removed.
 
   @spec new_style?(module()) :: boolean()
   defdelegate new_style?(mod), to: Ezagent.Kind.Introspection

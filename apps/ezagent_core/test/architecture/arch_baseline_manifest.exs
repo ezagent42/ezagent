@@ -298,7 +298,13 @@
   # arch-cap-bump: #55 doc-coverage burn-down 441→392
   # arch-cap-bump: RF-4 adds optional roles/0 plugin callback; its only def is the
   #   use-macro default (no @doc target until the first @impl impl lands in RF-9)
-  undocumented_public_defs: 393,
+  # arch-cap-bump: RF-3 adds the Lifecycle `detached/2` developer hook (the
+  #   per-behavior runtime-detach teardown seam). The @callback IS documented
+  #   (lifecycle.ex) but the `use Ezagent.Lifecycle` macro emits an overridable
+  #   `def detached(_state, _ctx), do: :ok` default INSIDE the quote — exactly
+  #   like its siblings `activated/2`/`deactivate/2`/`create/1`, which are also
+  #   counted-undocumented quote defaults. +1 symmetric with them. 393→394.
+  undocumented_public_defs: 394,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

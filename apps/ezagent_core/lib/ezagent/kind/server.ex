@@ -502,37 +502,12 @@ defmodule Ezagent.Kind.Server do
   # `on_ready/2` is logged + isolated; we do NOT un-flip ReadyGate
   # (an external observer may have already seen `:ready` and routed
   # through). The Kind stays `:ready`; siblings still run.
+  #
+  # The implementation lives in `Ezagent.Kind.MountDetach.run_on_ready_all/3`
+  # (RF-2 extraction — shared with mount's single-behavior path; keeps
+  # server.ex under the oversized-module gate).
   defp run_on_ready_hooks(kind_module, self_uri, slice_state) do
-    ctx = %{kind_module: kind_module, self_uri: self_uri}
-
-    # P1 (SPEC §3.1, E2) — only the INSTANCE effective set runs on_ready.
-    Enum.each(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state), fn behavior ->
-      if function_exported?(behavior, :on_ready, 2) do
-        slice = Map.get(slice_state, behavior.state_slice(), %{})
-
-        try do
-          _ = behavior.on_ready(slice, ctx)
-        rescue
-          err ->
-            require Logger
-
-            Logger.warning(
-              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.on_ready/2 raised " <>
-                "(#{inspect(err)}). Kind remains `:ready`; continuing on_ready of " <>
-                "remaining behaviors. URI=#{URI.to_string(self_uri)}"
-            )
-        catch
-          kind, value ->
-            require Logger
-
-            Logger.warning(
-              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.on_ready/2 threw " <>
-                "#{inspect({kind, value})}. Kind remains `:ready`; continuing " <>
-                "on_ready of remaining behaviors. URI=#{URI.to_string(self_uri)}"
-            )
-        end
-      end
-    end)
+    Ezagent.Kind.MountDetach.run_on_ready_all(kind_module, self_uri, slice_state)
   end
 
   # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind
@@ -600,6 +575,27 @@ defmodule Ezagent.Kind.Server do
     end)
 
     {:reply, :ok, state}
+  end
+
+  # RF-2/RF-3 — runtime mount/detach of a behavior on this LIVE instance. The
+  # single GenServer mailbox serializes mount/detach/dispatch (an in-flight
+  # dispatch can't interleave with the set mutation; deferred/saga to OTHER
+  # Kinds is out of scope per spec). `MountDetach.mount/5`/`detach/4` validate
+  # BEFORE any mutation, run the behavior's create+activate+activated (mount) /
+  # on_detach (detach), and return the new slice state; `reply_after_set_change`
+  # durably snapshots it (no SliceChange emit — structural reconfig, mirroring
+  # commit_post_init).
+  def handle_call({:ezagent_mount, behavior, args}, _from, state)
+      when is_atom(behavior) and is_map(args) do
+    %{kind: kind_module, uri: uri, state: slice_state} = state
+    result = Ezagent.Kind.MountDetach.mount(slice_state, kind_module, behavior, args, uri)
+    reply_after_set_change(result, state)
+  end
+
+  def handle_call({:ezagent_detach, behavior}, _from, state) when is_atom(behavior) do
+    %{kind: kind_module, uri: uri, state: slice_state} = state
+    result = Ezagent.Kind.MountDetach.detach(slice_state, kind_module, behavior, uri)
+    reply_after_set_change(result, state)
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
@@ -708,6 +704,24 @@ defmodule Ezagent.Kind.Server do
   #    instead of falsely reporting success to the caller.
   @spec commit_and_notify(map(), %{atom() => map()}, any()) ::
           :ok | :not_durable | {:error, term()}
+  # Shared mount/detach (RF-2/RF-3) reply: a no-op set (same slice) replies :ok;
+  # a changed set is durably snapshotted (un-advanced + error-propagated on a
+  # failed write, per let-it-crash — no half-persisted reconfig); a rejected
+  # validation propagates {:error, reason} with zero residue.
+  defp reply_after_set_change({:ok, same}, %{state: same} = state), do: {:reply, :ok, state}
+
+  defp reply_after_set_change({:ok, new_slice_state}, state) do
+    case commit_and_notify(state, new_slice_state, nil) do
+      commit_ok when commit_ok in [:ok, :not_durable] ->
+        {:reply, :ok, %{state | state: new_slice_state}}
+
+      {:error, reason} ->
+        {:reply, {:error, {:persistence_failed, reason}}, state}
+    end
+  end
+
+  defp reply_after_set_change({:error, _reason} = err, state), do: {:reply, err, state}
+
   defp commit_and_notify(state, new_slice_state, slice_change_event) do
     commit_result =
       Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
