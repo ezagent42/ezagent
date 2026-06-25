@@ -61,7 +61,10 @@ defmodule Ezagent.World.AgentActions do
     caps_str = params |> Map.get("caps", "") |> to_string() |> String.trim()
     with_pty? = Map.get(params, "with_pty") in [true, "true", "on"]
     # M4: extra flavor-specific config fields from the create form
-    config_fields = Map.get(params, "config_fields", %{})
+    config_fields = case Map.get(params, "config_fields") do
+      fields when is_map(fields) -> fields
+      _ -> %{}
+    end
 
     with %URI{scheme: "workspace"} <- workspace_uri,
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, caller),
