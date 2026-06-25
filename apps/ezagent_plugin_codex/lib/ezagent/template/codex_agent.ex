@@ -74,6 +74,9 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   def template_data_extra(_), do: %{}
 
+  @impl Ezagent.Kind.Template
+  defdelegate config_schema, to: Ezagent.PluginCodex.Template.CodexAgent.ConfigSchema, as: :fields
+
   defp maybe_put_binary(map, content, key, str_key) do
     case Ezagent.Kind.Template.content_field(content, key) do
       v when is_binary(v) and v != "" -> Map.put(map, str_key, v)

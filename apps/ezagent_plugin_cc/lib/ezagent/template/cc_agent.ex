@@ -268,6 +268,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def template_data_extra(_), do: %{}
 
   @impl Ezagent.Kind.Template
+  defdelegate config_schema, to: Ezagent.PluginCc.Template.CcAgent.ConfigSchema, as: :fields
+
+  @impl Ezagent.Kind.Template
   def compile(resolved, params),
     do: Ezagent.Kind.Template.compile_cc_agent_data(resolved, params, &template_data_extra/1)
 

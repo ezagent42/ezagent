@@ -97,6 +97,17 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   def template_data_extra(_), do: %{}
 
+  @impl Ezagent.Kind.Template
+  def config_schema do
+    [
+      %{key: "provider", type: :string, label: "Provider", required: true},
+      %{key: "api_url", type: :string, label: "API URL", required: true},
+      %{key: "model", type: :string, label: "Model", required: true},
+      %{key: "system_prompt", type: :text, label: "System prompt"},
+      %{key: "max_history", type: :integer, label: "Max history", default: 20}
+    ]
+  end
+
   # Cleanup-2: shared tolerant content reader lives in core.
   defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
