@@ -39,4 +39,28 @@ defmodule Ezagent.World.RoutesTest do
     assert route.component == "agent_detail"
     assert %URI{scheme: "entity"} = route.entity_uri
   end
+
+  # kanban-as-role K4 — the world kanban surface. The list page + the detail page
+  # (entity_uri = a kanban-manager agent's entity://<ws>/agent/<id>). Regression
+  # for the e2e gap where `/plugins/kanban` rendered "此路径无处可去" because the
+  # router live-route was missing (added in ezagent_web/router.ex) — this asserts
+  # `route_for` produces the kanban route so the LiveView mounts the surface.
+  test "kanban list route (entity_uri=nil) resolves to the kanban component" do
+    route = Routes.route_for(%{}, "https://example.com/plugins/kanban")
+
+    assert route.component == "kanban"
+    assert route.group == :workspace_plugins
+    assert route.entity_uri == nil
+  end
+
+  test "kanban detail route resolves to the kanban component with the kanban-manager agent URI" do
+    kanban_uri = "entity://acme/agent/kanban-mgr-1"
+    encoded = URI.encode_www_form(kanban_uri)
+    route = Routes.route_for(%{}, "https://example.com/plugins/kanban/#{encoded}")
+
+    assert route.component == "kanban"
+    assert route.group == :workspace_plugins
+    assert %URI{scheme: "entity"} = route.entity_uri
+    assert URI.to_string(route.entity_uri) == kanban_uri
+  end
 end
