@@ -118,6 +118,17 @@ defmodule EzagentPluginCc.Application do
     ]
   end
 
+  # Built-in role recipes (role-foundation RF-4/RF-9). `Ezagent.Plugin.boot/1`
+  # Phase 2 registers each one in `Ezagent.RoleRegistry` by name. The
+  # orchestrator is the load-bearing existing role and the `roles/0` exemplar —
+  # registering it here makes it a first-class named role
+  # (`RoleRegistry.lookup("orchestrator")`) consumed by the cc-flavor loader
+  # (`OrchestratorBootstrap.resolve_orchestrator_role/0`) at agent-spawn time,
+  # AND the re-point target for the future persisted
+  # `template://system/role/orchestrator` Template subtype.
+  @impl Ezagent.Plugin
+  def roles, do: [Ezagent.Orchestrator.OrchestratorRole.recipe()]
+
   @impl Ezagent.Plugin
   def config_surface do
     %{kind: :flavor, flavor: "cc", label: "Claude Code Agents"}

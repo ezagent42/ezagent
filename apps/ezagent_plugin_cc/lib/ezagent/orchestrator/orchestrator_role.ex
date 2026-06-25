@@ -12,17 +12,24 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   future `codex` / `curl` flavor (the §6 invariant, proven by
   `Ezagent.Role.ComposeTest`).
 
-  ## Code-seeded built-in (Option B, Allen 2026-06-15)
+  ## Code-seeded built-in, registered via `roles/0` (RF-9)
 
-  This is a **code recipe** fed through the real `Ezagent.Role.new/1` core
-  primitive — NOT a registry (design §2.1 endorses code-seeded built-in roles).
+  This is a **code recipe** (design §2.1 endorses code-seeded built-in roles).
+  RF-9 brings it onto the unified path: the cc plugin's `roles/0` callback
+  (`EzagentPluginCc.Application.roles/0`) returns this `recipe/0`, and
+  `Ezagent.Plugin.boot/1` Phase 2 registers it in `Ezagent.RoleRegistry` by
+  `name/0` ("orchestrator") — a first-class named role like any other.
+  `OrchestratorBootstrap.resolve_orchestrator_role/0` then looks it up BY NAME
+  in that registry (the same indirection RF-5a uses), instead of re-deriving it
+  from a bespoke `Role.Compose` call.
+
   The design's forkable, persisted `template://<ws>/role/orchestrator` Template
   subtype (tenant fork/override) is a documented follow-up: it needs a
   `role`-type branch in the `template://` spawn resolver (the session domain)
-  and a RoleTemplate Kind, neither of which exists yet. PR-2 delivers the
-  in-lane decoupling now; the persisted Template is layered on later by
-  re-pointing `OrchestratorBootstrap.resolve_orchestrator_role/0` at the live
-  Template once that machinery lands.
+  and a RoleTemplate Kind, neither of which exists yet. The persisted Template
+  is layered on later by re-pointing the registry source (or the
+  `resolve_orchestrator_role/0` lookup) at the live Template once that machinery
+  lands — the `RoleRegistry` lookup IS that re-point seam.
 
   ## Scope (PR-2)
 
@@ -31,18 +38,33 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   must intersect these requests with a fail-closed policy.
   """
 
-  alias Ezagent.Role
-
   @skill_ref "ezagent-session-orchestrator"
+
+  # The registry NAME this role is keyed by (`roles/0` → `RoleRegistry`, RF-4)
+  # AND the name the future persisted `template://system/role/orchestrator`
+  # Template subtype is keyed by. Single-sourced so the `roles/0` declaration,
+  # the `RoleRegistry.lookup/1`, and the `OrchestratorBootstrap` resolver all
+  # agree on one string.
+  @role_name "orchestrator"
+
+  @doc "The registry name this role is keyed by (`RoleRegistry.lookup(name/0)`)."
+  @spec name() :: String.t()
+  def name, do: @role_name
 
   @doc """
   The orchestrator role recipe — the map `Ezagent.Role.new/1` consumes (and the
   future `template://system/role/orchestrator` content). Flavor-agnostic: it
   names no flavor field.
+
+  Carries a `:name` ("orchestrator") so the cc plugin's `roles/0` callback (RF-4)
+  registers it as a first-class named role in `Ezagent.RoleRegistry`, looked up
+  by `OrchestratorBootstrap.resolve_orchestrator_role/0` at agent-spawn time
+  (RF-9 — the orchestrator joins the unified `roles/0` + `Role.Compose` path).
   """
   @spec recipe() :: map()
   def recipe do
     %{
+      name: @role_name,
       skills: [@skill_ref],
       prompt: persona(),
       behaviors: [],
@@ -105,21 +127,5 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
       the baton — workers never emit hop tokens), and front it with a
       `@legend` if the user should trigger it by name.
     """
-  end
-
-  @doc """
-  Build the composed sandbox content for the orchestrator role × the given
-  flavor's per-instance behaviors. Returns `Ezagent.Role.Compose`'s
-  `%{behaviors, sandbox_content}` (the context-free half of materialization).
-
-  `flavor_behaviors` defaults to `[]` — PR-2 composes content only; the cc
-  flavor declares no `:instance_behaviors`.
-  """
-  @spec compose([module()]) ::
-          {:ok, Ezagent.Role.Compose.materialized()} | {:error, term()}
-  def compose(flavor_behaviors \\ []) when is_list(flavor_behaviors) do
-    with {:ok, role} <- Role.new(recipe()) do
-      {:ok, Role.Compose.materialize(role, %{flavor_behaviors: flavor_behaviors})}
-    end
   end
 end

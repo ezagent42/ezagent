@@ -110,11 +110,37 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
     end
   end
 
-  describe "resolve_orchestrator_role/0 — recipe → sandbox_content" do
+  describe "resolve_orchestrator_role/0 — registry lookup → sandbox_content (RF-9)" do
     test "yields the orchestrator skill + persona, no flavor" do
+      # RF-9: resolve now looks the recipe up BY NAME in `RoleRegistry` (the
+      # cc plugin's `roles/0` populates it at boot). Register it explicitly here
+      # so the unit test exercises the real registry-sourced path rather than a
+      # bespoke compose.
+      :ok = Ezagent.RoleRegistry.register(OrchestratorRole.recipe())
+
       assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_role()
       assert "ezagent-session-orchestrator" in sandbox_content.skills
       assert sandbox_content.prompt == OrchestratorRole.persona()
+    end
+
+    test "fails closed when the orchestrator role is not registered" do
+      # No production fallback to a bespoke compose masks an empty registry
+      # (let-it-crash) — an unregistered role surfaces as `{:role_unresolved,
+      # {:role_not_registered, _}}`, which `try_apply/3` degrades to a plain cc
+      # spawn + telemetry. The registry is a shared ETS table boot populates, so
+      # this `async: false` test deterministically drives the missing-role branch
+      # by removing the entry, asserting the fail-closed result, then RESTORING
+      # it (other suites depend on the boot-registered role).
+      name = OrchestratorRole.name()
+      had_entry? = match?({:ok, _}, Ezagent.RoleRegistry.lookup(name))
+      :ets.delete(Ezagent.RoleRegistry.table(), name)
+
+      try do
+        assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
+                 Bootstrap.resolve_orchestrator_role()
+      after
+        if had_entry?, do: :ok = Ezagent.RoleRegistry.register(OrchestratorRole.recipe())
+      end
     end
   end
 end
