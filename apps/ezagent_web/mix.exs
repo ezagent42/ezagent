@@ -107,6 +107,10 @@ defmodule EzagentWeb.MixProject do
       # `all_plugin_apps_wired_to_web_test` invariant in
       # ezagent_core/test/invariants/ locks this in.
       {:ezagent_plugin_np, in_umbrella: true},
+      # py-agent — the general operator-script python flavor. Web boot must
+      # start it so the "py" flavor registers in AgentFlavorRegistry +
+      # `py.agent` in TemplateRegistry (locked by all_plugin_apps_wired_to_web).
+      {:ezagent_plugin_py, in_umbrella: true},
       # Role-foundation RF-8 — native plugin (the generic no-engine host for
       # role agents). Web boot must start it so the "native" flavor + its
       # CapMint cap-policy register in AgentFlavorRegistry.

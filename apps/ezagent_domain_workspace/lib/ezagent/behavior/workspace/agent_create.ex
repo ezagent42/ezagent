@@ -13,6 +13,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   `grant_agent_creator_manage_cap/3` / `resolve_source_config_dir/2`).
   """
 
+  alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
   alias Ezagent.Behavior.Workspace.AgentCreate.RoleStep
 
   # ===================================================================
@@ -135,7 +136,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp validate_flavor(flavor) when is_binary(flavor) do
     case Ezagent.AgentFlavorRegistry.list_all() do
       [] ->
-        if flavor in ~w(cc echo curl np codex),
+        if flavor in ~w(cc echo curl np codex py),
           do: :ok,
           else: {:error, {:bad_flavor, flavor}}
 
@@ -451,6 +452,38 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       agent_uri,
       Map.get(params, :caller),
       Map.get(params, :caps),
+      nil
+    )
+  end
+
+  # py-agent (Task 1.4) — the operator-script general python flavor. Routes
+  # via the SAME template route as echo (`register_and_invoke_template`, the
+  # non-cascade Loader path) — NOT the generic direct-spawn route below (which
+  # skips `instantiate/3` + drops cwd, the np gap). py is NON-credentialled
+  # (no CredentialAdapter → must NOT route through the #17 cascade) YET the
+  # persisted template carries a `"config_dir"` reference so
+  # `provision_and_instantiate/4` allocates the per-agent config_dir; the
+  # operator `script` (in `flavor_config`) is written into it by
+  # `Template.PyAgent.instantiate/3`, which starts the subprocess. nil caps/
+  # from keep py on the non-cascade Loader path (like echo).
+  defp do_create_agent("py", agent_uri, session_templates, params) do
+    %{
+      workspace_name: workspace_name,
+      workspace_uri: workspace_uri
+    } = params
+
+    tmpl_name = "py.agent." <> agent_name(agent_uri)
+    tmpl = PyTemplate.build(agent_uri, Map.get(params, :flavor_config))
+
+    register_and_invoke_template(
+      session_templates,
+      workspace_name,
+      workspace_uri,
+      tmpl_name,
+      tmpl,
+      agent_uri,
+      Map.get(params, :caller),
+      nil,
       nil
     )
   end
