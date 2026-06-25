@@ -43,10 +43,19 @@ defmodule Ezagent.Runtime.PidFile do
 
   ## File format
 
-  Two lines, both required:
+  Three lines:
 
       <os_pid>
       <process_start_epoch_seconds>
+      <URI.to_string(key)>
+
+  Line 3 (the full URI string) was added 2026-06-25 (sidecar erlexec
+  runtime, SPEC §3.4) so that NON-`entity://` keys round-trip. The
+  legacy filename reverse-parse (`agent_uri_from_filename/1`) only
+  understands `entity://ws/agent/name`; a `system://feishu/ws` key
+  cannot be recovered from the sanitised filename, so line 3 is its
+  ONLY source. Legacy 2-line files (no line 3) still round-trip via
+  the filename fallback for `entity://` URIs.
 
   The start time is used for PID-recycle protection: on reaper boot,
   we re-read the current start time of `os_pid` via `ps -o lstart=`;
@@ -68,8 +77,14 @@ defmodule Ezagent.Runtime.PidFile do
   - `enumerate/1` — called by plugin OrphanReaper modules. Returns
     `[{agent_uri, os_pid, start_seconds, file_path}]` for every pid
     file currently in this deployment's subdir of the given plugin
-    name. Files whose contents fail to parse are deleted (unrecoverable
-    garbage) and skipped.
+    name. Two distinct failure modes:
+      * pid/start unparseable (`:bad_pid_file`) → deleted (garbage)
+        and skipped.
+      * pid/start OK but the URI cannot be resolved (no line 3 AND the
+        filename is not an `entity://` shape — `:unrecoverable_uri`) →
+        SKIPPED, NOT deleted (a missing-line-3 feishu file is a
+        recoverable orphan, not garbage; blind-deleting it would
+        silently drop a feishu orphan — SPEC §3.4 invariant).
 
   ## Test mode
 
@@ -115,11 +130,11 @@ defmodule Ezagent.Runtime.PidFile do
   best-effort).
   """
   @spec write(String.t(), URI.t(), pos_integer()) :: :ok | {:error, term()}
-  def write(plugin, %URI{} = agent_uri, os_pid)
+  def write(plugin, %URI{} = key, os_pid)
       when is_binary(plugin) and is_integer(os_pid) and os_pid > 0 do
     start = process_start_seconds(os_pid)
-    body = "#{os_pid}\n#{start || 0}\n"
-    path = file_path(plugin, agent_uri)
+    body = "#{os_pid}\n#{start || 0}\n#{URI.to_string(key)}\n"
+    path = file_path(plugin, key)
 
     case File.write(path, body) do
       :ok ->
@@ -181,9 +196,22 @@ defmodule Ezagent.Runtime.PidFile do
             {:ok, entry} ->
               [entry]
 
-            {:error, _reason} ->
-              # Garbage file — delete + skip.
+            {:error, :bad_pid_file} ->
+              # Truly unparseable (bad pid/start lines) — delete + skip.
               _ = File.rm(path)
+              []
+
+            {:error, :unrecoverable_uri} ->
+              # pid/start parsed, but the URI can't be resolved (no
+              # line 3 and not an entity:// filename). This is a
+              # RECOVERABLE skip — NOT garbage. Blind-deleting would
+              # silently drop a feishu orphan (SPEC §3.4 invariant).
+              Logger.warning(
+                "PidFile.enumerate: skipping #{path} — pid/start valid but URI " <>
+                  "unrecoverable (missing line-3 body + non-entity filename); " <>
+                  "leaving file in place"
+              )
+
               []
           end
         end)
@@ -244,21 +272,51 @@ defmodule Ezagent.Runtime.PidFile do
 
   defp parse(path) do
     with {:ok, body} <- File.read(path),
-         [pid_str, start_str | _] <- String.split(body, "\n", trim: true),
+         [pid_str, start_str | rest] <- String.split(body, "\n", trim: true),
          {pid, ""} <- Integer.parse(pid_str),
-         {start, ""} <- Integer.parse(start_str),
-         {:ok, agent_uri} <- agent_uri_from_filename(path) do
-      {:ok,
-       %{
-         agent_uri: agent_uri,
-         os_pid: pid,
-         start_seconds: start,
-         path: path
-       }}
+         {start, ""} <- Integer.parse(start_str) do
+      # pid/start are valid; resolving the URI is a SEPARATE failure
+      # mode (recoverable skip, not garbage-delete) — see enumerate/1.
+      case resolve_uri(rest, path) do
+        {:ok, %URI{} = agent_uri} ->
+          {:ok,
+           %{
+             agent_uri: agent_uri,
+             os_pid: pid,
+             start_seconds: start,
+             path: path
+           }}
+
+        :error ->
+          {:error, :unrecoverable_uri}
+      end
     else
       _ -> {:error, :bad_pid_file}
     end
   end
+
+  # Resolve the key URI. Prefer line 3 of the body (the only source for
+  # non-`entity://` keys like `system://feishu/ws`); fall back to the
+  # filename reverse-parse for legacy 2-line `entity://` files (and for
+  # a line-3 that fails to parse — costs nothing, recovers an entity file).
+  defp resolve_uri([uri_str | _], path) when is_binary(uri_str) do
+    # Ezagent.URI.parse/1 (NOT stdlib URI.parse/1): gate-safe in product
+    # lib/, returns {:ok, uri} | {:error, _}, and yields the canonical
+    # `authority: nil` form so the round-trip is struct-equal to the key.
+    case Ezagent.URI.parse(uri_str) do
+      {:ok, %URI{} = uri} -> {:ok, uri}
+      {:error, _} -> agent_uri_from_filename(path) |> normalize_filename_result()
+    end
+  end
+
+  defp resolve_uri([], path) do
+    # Legacy 2-line file — no body URI. Filename fallback only works for
+    # `entity://`; anything else is a recoverable skip (:error).
+    agent_uri_from_filename(path) |> normalize_filename_result()
+  end
+
+  defp normalize_filename_result({:ok, %URI{} = uri}), do: {:ok, uri}
+  defp normalize_filename_result({:error, _}), do: :error
 
   # The filename is the sanitized URI + ".pid". Reverse the sanitize:
   # `_` becomes `/` (best-effort — URIs we sanitized don't contain
