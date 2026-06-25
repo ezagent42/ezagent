@@ -82,6 +82,29 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
              )
   end
 
+  test "RF-5a: :passive layers ETS → durable snapshot (cold-restart, NOT fail-open)" do
+    agent_uri = URI.new!("entity://system/agent/passive-durable-source")
+
+    # No ETS entry → falls through to the durable :sandbox snapshot, which marks
+    # the agent passive. This is the RF-6 fail-open fix: a passive data-actor
+    # stays passive across a cold restart instead of reverting to a principal.
+    assert :none = AgentPassiveAttributes.fetch(agent_uri)
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               agent_uri,
+               %{sandbox: %{state: %{passive: true}}},
+               kind_type: :agent
+             )
+
+    assert {:ok, true} = UriQuery.resolve(:passive, agent_uri)
+
+    # A stored ETS entry is authoritative + stops the layering (fast path).
+    on_exit(fn -> AgentPassiveAttributes.delete(agent_uri) end)
+    :ok = AgentPassiveAttributes.put(agent_uri, false)
+    assert {:ok, false} = UriQuery.resolve(:passive, agent_uri)
+  end
+
   test "config_dir resolves AgentTemplate content from durable snapshot" do
     template_uri = URI.new!("template://system/agent/ws-cc")
 

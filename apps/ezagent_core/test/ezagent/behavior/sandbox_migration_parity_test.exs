@@ -382,7 +382,8 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
                    config_dir_path: nil,
                    template_class: nil,
                    respawn_template_data: nil,
-                   pty_phase: nil
+                   pty_phase: nil,
+                   passive: false
                  },
                  transients: %{}
                }

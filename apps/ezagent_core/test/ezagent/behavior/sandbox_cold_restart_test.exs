@@ -121,7 +121,10 @@ defmodule Ezagent.Behavior.SandboxColdRestartTest do
              config_dir_path: "/tmp/sandbox-cold-restart",
              template_class: Enum,
              respawn_template_data: %{"cwd" => "/tmp/sandbox-cold-restart"},
-             pty_phase: :running
+             pty_phase: :running,
+             # RF-5a/RF-6 durable passive marker — rehydrated false (principal)
+             # for a non-role agent across the crash.
+             passive: false
            }
 
     # ---- 2. Transient REBUILT to a live equivalent. ----
