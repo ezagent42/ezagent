@@ -44,7 +44,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   deterministically without a live bridge.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message}
   alias Ezagent.Behavior.Session, as: SessionBehavior
@@ -54,8 +54,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   @moduletag scenario: "32-feishu-mention-orchestrator-dispatch"
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # Shared sandbox provided by EzagentCore.DataCase (#92).
 
     # The orchestrator-spawn path reads owner lineage; admin is the
     # bootstrap principal in test env.

@@ -15,13 +15,19 @@ PROFILE="${EZAGENT_PROFILE:-default}"
 HOME_DIR="${EZAGENT_HOME:-/data}"
 PROFILE_DIR="${HOME_DIR}/${PROFILE}"
 
-export DATABASE_PATH="${DATABASE_PATH:-${PROFILE_DIR}/db/ezagent_core.db}"
+# DB is Postgres now (DATABASE_URL, required by config/runtime.exs). No SQLite
+# DATABASE_PATH. Fail fast with a clear message if the compose wiring is missing.
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "[entrypoint.prod] FATAL: DATABASE_URL is not set — the Postgres service/compose wiring is missing." >&2
+  exit 1
+fi
 
 # Home skeleton (release has no `mix ezagent.home.init`). Mirror
-# Ezagent.Home.skeleton_dirs (credentials/db/snapshots/logs/plugins) + runtime,
-# so a CLEAN bind-mounted home (prod starts blank) has the dirs the BEAM needs.
+# Ezagent.Home.skeleton_dirs (credentials/snapshots/logs/plugins) + runtime,
+# so a CLEAN named-volume home (prod starts blank) has the dirs the BEAM needs.
+# (No `db` dir — the DB lives in Postgres, not on this volume.)
 chmod 700 "${PROFILE_DIR}" 2>/dev/null || true
-for d in credentials db snapshots logs plugins runtime; do
+for d in credentials snapshots logs plugins runtime; do
   mkdir -p "${PROFILE_DIR}/${d}"
 done
 chmod 700 "${PROFILE_DIR}/credentials" 2>/dev/null || true
@@ -55,7 +61,7 @@ if [ -z "${SECRET_KEY_BASE:-}" ]; then
   export SECRET_KEY_BASE="$(cat "${SKB_FILE}")"
 fi
 
-echo "[entrypoint.prod] migrating (DATABASE_PATH=${DATABASE_PATH})"
+echo "[entrypoint.prod] migrating (Postgres via DATABASE_URL)"
 /app/bin/ezagent eval "EzagentCore.Release.migrate()"
 
 echo "[entrypoint.prod] starting release on :${PORT:-10042} (public: ${EZAGENT_PUBLIC_HOST:-app.ezagent.chat})"

@@ -18,20 +18,16 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
   `instantiate/3` touches `Ezagent.SpawnRegistry.spawn/1` which goes
   through the chat domain's `entity://` spawn fn → snapshot
-  persistence path → DB writes. This requires sandbox checkout so we
-  manually plumb it in `setup` (echo plugin doesn't `use
-  EzagentCore.DataCase` because that module lives in another app's
-  test/support — and echo's mix.exs deliberately doesn't pull it in).
+  persistence path → DB writes. This requires a sandboxed Repo
+  connection, provided by `EzagentCore.DataCase` (#92) — it lives in
+  `ezagent_core/lib`, so any app depending on `ezagent_core` (echo
+  does) can `use` it.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.PluginEcho.Template.EchoAgent
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   describe "template_name/0" do
     test "returns 'echo.agent'" do

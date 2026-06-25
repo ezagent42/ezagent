@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.Agent.Delivery do
       `{:error, :no_bridge}` is never mistaken for a sync result.
   """
   @spec deliver_agent_receive(Message.t(), map()) ::
-          :ok | {:sync, {:ok, term()} | {:error, term()}}
+          :ok | {:sync, String.t(), {:ok, term()} | {:error, term()}}
   def deliver_agent_receive(%Message{} = msg, ctx) do
     # AgentBridge PR-D: keep chat receive flavor-neutral. The
     # bridge domain resolves the bound channel and adapter for the
@@ -116,7 +116,7 @@ defmodule Ezagent.Behavior.Agent.Delivery do
 
     if in_process_sync?(flavor) do
       {:ok, fl} = flavor
-      {:sync, Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, fl)}
+      {:sync, fl, Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, fl)}
     else
       _ =
         case flavor do

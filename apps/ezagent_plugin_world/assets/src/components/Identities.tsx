@@ -14,6 +14,7 @@ type IdentityRow = {
   detail_path?: string | null
   api_keys_path?: string | null
   extensions_path?: string | null
+  config_path?: string | null
 }
 
 type UserRow = {
@@ -48,6 +49,31 @@ type ExtensionRow = {
   enabled?: boolean
 }
 
+type CascadeLayer = {
+  body?: Record<string, unknown> | null
+  config_id?: string | null
+}
+
+type CascadeKeyEntry = {
+  key: string
+  effective_body: Record<string, unknown>
+  editable: boolean
+  editable_layer: string
+  layers: {
+    workspace?: CascadeLayer | null
+    user?: CascadeLayer | null
+    session?: CascadeLayer | null
+  }
+}
+
+type CascadeState = {
+  agent_uri: string
+  workspace_uri: string
+  default_key: string
+  layer_order: string[]
+  keys: CascadeKeyEntry[]
+}
+
 export type IdentitiesState = {
   agent_flavors?: string[]
   agent_status?: Record<string, unknown>
@@ -60,6 +86,7 @@ export type IdentitiesState = {
   granted_caps?: CapRow[] | {error?: string}
   project_cwd?: string | null
   config_dir?: string | null
+  config_path?: string | null
   source_template?: string | null
   flavor?: string
   component?: string
@@ -82,15 +109,23 @@ export type IdentitiesState = {
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
   create_error?: string
+  action_error?: string
+  cascade?: CascadeState
+  config_error?: string
 }
 
 type Props = {
   state: IdentitiesState
   onCreateAgent?: (payload: Record<string, unknown>) => void
+  onDeleteAgent?: (agentUri: string) => void
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
 }
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
 const surfaceClass = "space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground"
+const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 const tableWrapClass = "overflow-x-auto rounded-md border border-border"
 const tableClass = "w-full border-collapse text-sm"
 const theadClass = "bg-muted/50 text-muted-foreground"
@@ -103,14 +138,15 @@ const codeClass = "font-mono text-xs text-muted-foreground"
 const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 
-export function IdentitiesSurface({state, onCreateAgent}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "agents_table") return <AgentsTable state={state} />
   if (state.component === "entity_caps") return <EntityCaps state={state} />
-  if (state.component === "agent_detail") return <AgentDetail state={state} />
+  if (state.component === "agent_detail") return <AgentDetail state={state} onDeleteAgent={onDeleteAgent} />
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
-  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} />
+  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} onPutApiKey={onPutApiKey} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
+  if (state.component === "agent_config") return <AgentConfigEditor state={state} onConfigUpdate={onConfigUpdate} onConfigDeletePath={onConfigDeletePath} />
   return <IdentityDirectory state={state} />
 }
 
@@ -199,6 +235,11 @@ function AgentsTable({state}: {state: IdentitiesState}) {
           </a>
         }
       />
+      {state.action_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.action_error}
+        </p>
+      )}
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-agents-table">
           <thead className={theadClass}>
@@ -225,6 +266,7 @@ function AgentsTable({state}: {state: IdentitiesState}) {
                       ["Caps", agent.caps_path],
                       ["API Keys", agent.api_keys_path],
                       ["Extensions", agent.extensions_path],
+                      ["Config", agent.config_path],
                     ]}
                   />
                 </td>
@@ -280,7 +322,8 @@ function EntityCaps({state}: {state: IdentitiesState}) {
   )
 }
 
-function AgentDetail({state}: {state: IdentitiesState}) {
+function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAgent?: (agentUri: string) => void}) {
+  const [confirming, setConfirming] = React.useState(false)
   const status = (state.agent_status || {}) as Record<string, unknown>
   const grantedCaps = Array.isArray(state.granted_caps) ? state.granted_caps : []
   const rows: Array<[string, string]> = [
@@ -318,6 +361,29 @@ function AgentDetail({state}: {state: IdentitiesState}) {
       <p className="text-xs text-muted-foreground">
         派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
       </p>
+      <div className="flex flex-wrap gap-3">
+        <InlineLinks links={[["Config", state.config_path]]} />
+      </div>
+      <div className="border-t border-border pt-3">
+        {!confirming && (
+          <Button variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirming(true)}>
+            Delete agent
+          </Button>
+        )}
+        {confirming && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-destructive">确认删除该 agent？此操作不可撤销。</span>
+            <Button
+              onClick={() => {
+                if (state.agent_uri) onDeleteAgent?.(state.agent_uri)
+              }}
+            >
+              确认删除
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>取消</Button>
+          </div>
+        )}
+      </div>
     </section>
   )
 }
@@ -331,7 +397,6 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     with_pty: false,
   })
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
-  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
 
   const cwdRequired =
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
@@ -423,7 +488,242 @@ function ContractCoverage() {
   )
 }
 
-function AgentApiKeys({state}: {state: IdentitiesState}) {
+type AgentConfigEditorProps = {
+  state: IdentitiesState
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
+}
+
+function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentConfigEditorProps) {
+  const agentUri = state.agent_uri || ""
+
+  if (state.config_error) {
+    return (
+      <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+        <SectionHeader eyebrow="Agent" title="Agent config" />
+        <code className={uriClass}>{agentUri}</code>
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.config_error}
+        </p>
+      </section>
+    )
+  }
+
+  const cascade = state.cascade
+  if (!cascade) {
+    return (
+      <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+        <SectionHeader eyebrow="Agent" title="Agent config" />
+        <code className={uriClass}>{agentUri}</code>
+        <p className="text-sm text-muted-foreground">Loading config…</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
+      <SectionHeader eyebrow="Agent" title="Agent config" />
+      <code className={uriClass}>{agentUri}</code>
+      <div className="space-y-6">
+        {(cascade.keys ?? []).map((keyEntry) => (
+          <AgentConfigKeySection
+            key={keyEntry.key}
+            agentUri={agentUri}
+            keyEntry={keyEntry}
+            onConfigUpdate={onConfigUpdate}
+            onConfigDeletePath={onConfigDeletePath}
+          />
+        ))}
+        {(cascade.keys ?? []).length === 0 && (
+          <p className="text-sm text-muted-foreground">No config keys found.</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+type AgentConfigKeySectionProps = {
+  agentUri: string
+  keyEntry: CascadeKeyEntry
+  onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
+  onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
+}
+
+function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
+  // Initialize editable fields from the effective_body
+  const [editedFields, setEditedFields] = React.useState<Record<string, unknown>>(() => ({...keyEntry.effective_body}))
+  const [newFieldName, setNewFieldName] = React.useState("")
+  const [newFieldValue, setNewFieldValue] = React.useState("")
+  const [dirty, setDirty] = React.useState(false)
+
+  // Fix #1: re-sync to the durable server value whenever the server re-pushes a
+  // fresh cascade (e.g. after Save or delete).  useState only runs the initializer
+  // once — this effect keeps the editor honest across prop updates.
+  React.useEffect(() => {
+    setEditedFields({...keyEntry.effective_body})
+    setDirty(false)
+  }, [keyEntry.effective_body])
+
+  const handleFieldChange = (field: string, value: string) => {
+    setEditedFields((prev) => ({...prev, [field]: value}))
+    setDirty(true)
+  }
+
+  const handleSave = () => {
+    onConfigUpdate?.(agentUri, keyEntry.key, editedFields)
+    setDirty(false)
+  }
+
+  const handleDeleteField = (field: string) => {
+    // Fix #2: optimistically drop the field so it doesn't bounce back
+    // visually during the server round-trip.  The useEffect above will
+    // re-sync the authoritative value once the server re-pushes.
+    setEditedFields((prev) => {
+      const next = {...prev}
+      delete next[field]
+      return next
+    })
+    onConfigDeletePath?.(agentUri, keyEntry.key, [field])
+  }
+
+  const handleAddField = () => {
+    if (!newFieldName.trim()) return
+    setEditedFields((prev) => ({...prev, [newFieldName.trim()]: newFieldValue}))
+    setNewFieldName("")
+    setNewFieldValue("")
+    setDirty(true)
+  }
+
+  // Read-only context: workspace and session layer values
+  const workspaceBody = keyEntry.layers.workspace?.body
+  const sessionBody = keyEntry.layers.session?.body
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-mono text-sm font-semibold text-foreground">{keyEntry.key}</h3>
+        <span className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">
+          user layer editable
+        </span>
+      </div>
+
+      {/* Read-only context: workspace layer */}
+      {workspaceBody && Object.keys(workspaceBody).length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Workspace layer (read-only)</p>
+          <div className="grid gap-1 rounded-md bg-muted/30 p-2">
+            {Object.entries(workspaceBody).map(([field, val]) => (
+              <div className="flex items-center gap-2 text-xs" key={field}>
+                <span className="w-32 shrink-0 font-mono text-muted-foreground">{field}</span>
+                <span className="font-mono text-foreground">{String(val ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Read-only context: session layer */}
+      {sessionBody && Object.keys(sessionBody).length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session layer (read-only)</p>
+          <div className="grid gap-1 rounded-md bg-muted/30 p-2">
+            {Object.entries(sessionBody).map(([field, val]) => (
+              <div className="flex items-center gap-2 text-xs" key={field}>
+                <span className="w-32 shrink-0 font-mono text-muted-foreground">{field}</span>
+                <span className="font-mono text-foreground">{String(val ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Editable user layer fields */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User layer (editable)</p>
+        {Object.entries(editedFields).map(([field, val]) => (
+          <div className="flex items-start gap-2" key={field}>
+            <div className="flex-1">
+              <label className={fieldLabel}>
+                <span className="font-mono">{field}</span>
+                {field === "soul_md" ? (
+                  <textarea
+                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    rows={4}
+                    value={String(val ?? "")}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                  />
+                ) : (
+                  <Input
+                    value={String(val ?? "")}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    className="font-mono"
+                  />
+                )}
+              </label>
+            </div>
+            <button
+              type="button"
+              className="mt-5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition hover:border-destructive hover:text-destructive"
+              title={`Remove field ${field}`}
+              onClick={() => handleDeleteField(field)}
+              aria-label={`Remove field ${field}`}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+
+        {/* Add new field row */}
+        <div className="flex items-end gap-2 border-t border-border pt-2">
+          <label className={`${fieldLabel} flex-1`}>
+            <span>New field name</span>
+            <Input
+              value={newFieldName}
+              onChange={(e) => setNewFieldName(e.target.value)}
+              placeholder="field_name"
+              className="font-mono"
+            />
+          </label>
+          <label className={`${fieldLabel} flex-1`}>
+            <span>Value</span>
+            <Input
+              value={newFieldValue}
+              onChange={(e) => setNewFieldValue(e.target.value)}
+              placeholder="value"
+              className="font-mono"
+            />
+          </label>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleAddField}
+            disabled={!newFieldName.trim()}
+          >
+            Add
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex justify-end border-t border-border pt-2">
+        <Button
+          type="button"
+          onClick={handleSave}
+          disabled={!dirty}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function AgentApiKeys({
+  state,
+  onPutApiKey,
+}: {
+  state: IdentitiesState
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+}) {
   const keys = Array.isArray(state.api_keys) ? state.api_keys : []
   const error = !Array.isArray(state.api_keys) ? state.api_keys?.error : undefined
   const unsupported = !Array.isArray(state.api_keys) ? state.api_keys?.unsupported : false
@@ -464,7 +764,68 @@ function AgentApiKeys({state}: {state: IdentitiesState}) {
         </table>
         {keys.length === 0 && !error && <EmptyState label="No stored keys." />}
       </div>
+      {state.can_edit && state.agent_uri && (
+        <AddApiKeyForm agentUri={state.agent_uri} onPutApiKey={onPutApiKey} />
+      )}
     </section>
+  )
+}
+
+// The write half of the API-keys page (F10). Only rendered when `can_edit` —
+// the same data-owner/admin affordance the server gate enforces — so a viewer
+// without edit rights never sees it. Dispatches `agent.api_key.put` over the LV
+// socket (NOT a native form POST: the world surface is a LiveView page whose
+// client JS swallows native submits from the React island); the masked table
+// refreshes from the server's re-pushed world:state. The key is a secret, so
+// the input is masked and cleared on submit.
+function AddApiKeyForm({
+  agentUri,
+  onPutApiKey,
+}: {
+  agentUri: string
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+}) {
+  const [form, setForm] = React.useState({provider: "", key: ""})
+  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
+  const canSubmit = form.provider.trim() !== "" && form.key.trim() !== ""
+
+  return (
+    <form
+      id="world-api-key-form"
+      className="grid gap-3 border-t border-border pt-4 sm:grid-cols-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!canSubmit) return
+        onPutApiKey?.({agent_uri: agentUri, provider: form.provider.trim(), key: form.key.trim()})
+        setForm({provider: "", key: ""})
+      }}
+    >
+      <label className={fieldLabel}>
+        <span>Provider *</span>
+        <Input
+          value={form.provider}
+          onChange={(event) => setForm({...form, provider: event.target.value})}
+          placeholder="deepseek"
+          autoComplete="off"
+        />
+      </label>
+      <label className={fieldLabel}>
+        <span>API key *</span>
+        <Input
+          type="password"
+          value={form.key}
+          onChange={(event) => setForm({...form, key: event.target.value})}
+          placeholder="sk-…"
+          autoComplete="off"
+        />
+      </label>
+      <div className="flex items-center justify-end sm:col-span-2">
+        <Button type="submit" disabled={!canSubmit}>
+          <Plus aria-hidden="true" />
+          Save key
+        </Button>
+      </div>
+    </form>
   )
 }
 

@@ -4,16 +4,15 @@ defmodule EzagentPluginHello.Generator do
   GenServer process (so the slow LLM round-trip never blocks dispatch).
 
   `start/2` spawns a supervised Task (under `EzagentPluginHello.TaskSupervisor`);
-  `generate/2` PLANS the request (`decompose/1`) and either:
+  `generate/2` PLANS the request (`decompose/1`) for its EDIT SCOPE (body / shell /
+  both) and runs the single-page path: one LLM call → catalog page →
+  `TurnDriver.drive/3`. Out-of-catalog output fails closed (`Spec.validate/1`).
 
-    * **simple** — one LLM call → catalog page → `TurnDriver.drive/3` (Phase 0); or
-    * **complex** — FANS OUT one concurrent worker per section, each building a
-      catalog sub-tree, assembled into one page (`Spec.compose_page/2`) and driven
-      onto the Surface (Phase 1).
-
-  Out-of-catalog output fails closed (`Spec.validate/1`); a failed section is
-  dropped and the page is composed from the survivors (single-page fallback if
-  none survive), so a turn always produces something.
+  Fan-out (the complex/per-section-worker path) is DISABLED for the shadcn era —
+  one `page_gen` call now produces the whole (5–8 section) body, and the per-section
+  worker prompt predated shadcn so it produced invalid sub-trees and always fell
+  back anyway. `classify_plan/1` therefore always returns `{:simple}`; `decompose/1`
+  / `parse_plan/1` still run to extract the edit SCOPE.
 
   ## API config (Phase 0)
 
@@ -33,9 +32,6 @@ defmodule EzagentPluginHello.Generator do
   alias EzagentPluginHello.{Prompts, Sanitize, ShellCss, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
-  # Per-section worker deadline — a margin over the LLM client's 60s call timeout.
-  @section_timeout_ms 90_000
-
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
   @spec start(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
   def start(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -45,16 +41,11 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Generate a page and land it on `session_uri`'s Surface. The orchestrator first
-  PLANS (`decompose/1`): a simple request takes the single-page path; a complex
-  one FANS OUT — one concurrent worker per section, each building a sub-tree,
-  assembled into one page (`Spec.compose_page/2`) and driven onto the Surface.
-
-  Worker fan-out runs as concurrent Tasks calling the same LLM path (decision:
-  Phase-1 keeps workers in-process; the curl-flavor `Entity.Agent` member-worker
-  fold via `add_managed_member` is a flagged follow-up — it needs a worker
-  credential cascade not yet wired. The orchestrator caps for that path are
-  already granted, see `App.ensure_app`).
+  Generate a page and land it on `session_uri`'s Surface. A FRESH session (no
+  frame yet) generates frame + content in one round; a follow-up edit PLANS its
+  scope (`decompose/1`) and regenerates body / shell / both. All content goes
+  through the single-page path (`generate_simple/4`) — fan-out is disabled, see the
+  moduledoc.
   """
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -293,17 +284,52 @@ defmodule EzagentPluginHello.Generator do
   # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
   defp classify_plan(_), do: {:simple}
 
-  defp briefs_of(%{"sections" => sections}) when is_list(sections) do
-    sections
-    |> Enum.map(fn
-      %{"brief" => b} when is_binary(b) -> String.trim(b)
-      %{"title" => t} when is_binary(t) -> String.trim(t)
-      _ -> nil
-    end)
-    |> Enum.reject(&(&1 in [nil, ""]))
+  defp scope_of(%{"scope" => s}) when s in ["shell", "both"], do: String.to_atom(s)
+  defp scope_of(_), do: :body
+
+  # Fan-out (complex) is disabled for the shadcn era — the per-section worker
+  # prompt predates shadcn and produces invalid sub-trees, so it always failed and
+  # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
+  defp classify_plan(_), do: {:simple}
+
+  # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
+  # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
+  # otherwise reuse the stored frame so ordinary content edits leave it untouched.
+  defp ensure_shell_html(session_uri, _builder, title, brief, force) do
+    existing = current_shell_html(session_uri)
+
+    if not force and existing != "" do
+      existing
+    else
+      brand = if is_binary(title) and title != "", do: title, else: "Website"
+      brief = if is_binary(brief), do: String.trim(brief), else: ""
+
+      user_msg =
+        if brief == "",
+          do: "Brand/title: #{brand}",
+          else: "Brand/title: #{brand}\nDesign request (style the frame to match): #{brief}"
+
+      case call_llm(Prompts.shell_gen_system(), user_msg) do
+        {:ok, %{content: content}} ->
+          # The frame now carries the hero (big design type) + nav + footer. The
+          # shadcn content below styles itself, so no separate content-theme pass.
+          content |> extract_html() |> Sanitize.html()
+
+        other ->
+          Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
+          existing
+      end
+    end
   end
 
-  defp briefs_of(_), do: []
+  # Compile the per-session CSS from BOTH the shell HTML and the body's
+  # AI-authored `class` props (both invisible to the build-time Tailwind scan),
+  # then store frame + css together. Recomputed each build so body styling stays
+  # covered as the content changes.
+  defp store_frame(session_uri, builder, shell_html, body_tree) do
+    css = ShellCss.compile(shell_html <> "\n" <> body_class_markup(body_tree))
+    TurnDriver.set_shell(session_uri, builder, shell_html, css)
+  end
 
   # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
   # when `force` (a "shell"/"both"-scoped request) or none is stored yet;

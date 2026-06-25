@@ -23,6 +23,11 @@ The Design Principles (references/design-principles.md) capture *what / why*; th
 15. ExternalMirror Domain: outbound mirrors go through the 3-layer model
 16. No `Phoenix.PubSub.subscribe` in ExternalMirror Domain or any Binding module
 17. No re-entry to Ezagent dispatch from `target_ownership_check/2` or `event_to_payload/1`
+18. Sibling slice reads are opt-in via `reads_sibling_slices/0`
+19. Capability inputs flow through `Ezagent.Capability.normalize!/2`
+20. Behaviors with DB projections implement `reconcile_after_load/2`
+21. Routing never routes a message back to its own sender
+22. Plugins access the local Kind runtime ONLY through `Ezagent.LocalRuntime`
 
 ---
 
@@ -234,3 +239,27 @@ The fix: implement the optional `Ezagent.Behavior.reconcile_after_load/2` callba
 **Idempotence required**: union-by-natural-key, not list-append. Calling reconcile twice must equal once.
 
 CI gates: `apps/ezagent_domain_external_mirror/test/ezagent/behavior/external_mirror_reconcile_test.exs` (4 tests covering empty-slice + idempotence + union + non-URI safety).
+
+## 21. **Routing never routes a message back to its own sender** (task #98 / F14, PR #959)
+
+`Ezagent.Routing.Resolver.resolve_with_ctx/4` excludes the message **sender** from its final recipient list (in addition to the session URI). A message must NEVER be delivered back to the entity that sent it.
+
+**Why:** sender-exclusion used to live ONLY in the magic-token expansion (`$session_members` / `$session_users` / `$mentions`). Rule-resolved explicit targets (`Always→X` / `from→X` / `mention→X`) bypassed it, so an `Always` rule matched an agent's OWN reply and routed it back to the agent → self-loop FLOOD (F14: ~800→1168+ msgs/sec, saturating LiveView). Excluding the sender at the resolver's final output makes the no-self-route invariant universal across ALL rule types. Don't add per-rule thresholds/debounce — eliminate the self-route at the source.
+
+CI gate: `apps/ezagent_core/test/ezagent/routing/resolver_test.exs` ("an Always rule does NOT route a message back to its own sender").
+
+## 22. **Plugins access the local Kind runtime ONLY through `Ezagent.LocalRuntime`** (task #95, PRs #954/#955/#957)
+
+`apps/ezagent_plugin_*` code MUST NOT call `Ezagent.KindRegistry.lookup/1` or `Ezagent.SpawnRegistry.spawn[_detailed]/1` directly. Use the owner-gated facade `Ezagent.LocalRuntime`:
+
+- `kind_alive?(uri) :: boolean` — owner-gated liveness probe (replaces a `case KindRegistry.lookup(uri) do {:ok,_}->true; :error->false end` check).
+- `ensure_started(uri) :: {:ok, pid} | {:error, term}` — replaces `SpawnRegistry.spawn(uri)`.
+- `ensure_started_detailed(uri) :: {:ok, :started | :already_started, pid} | {:error, term}` — replaces `SpawnRegistry.spawn_detailed(uri)`.
+
+**Why (decentralization — a FUNDAMENTAL assumption change):** a bare `KindRegistry.lookup/1` is a LOCAL-ONLY read. Single-node it is correct, but the workspace-locality direction (`Ezagent.RuntimeIdentity` / `Ezagent.WorkspacePlacement` / `Ezagent.WorkspaceOwnerGate`) targets a future multi-node deployment where a Kind owned by ANOTHER node is alive THERE and absent HERE. A plugin reading the bare `:error` would make a wrong decision (spurious respawn). `kind_alive?/1` routes the probe through the owner gate so the locality assumption is EXPLICIT: single-node it is a no-op; on a non-owner runtime it returns `false` WITHOUT implying "dead, respawn locally", and a non-owner `ensure_started/1` returns the gate's `{:error, {:not_workspace_owner, …}}` rather than materialising a foreign agent locally. **Stop assuming "the Kind is on my node".**
+
+**Why (plugin-isolation north-star):** one owner-gated chokepoint; plugin authors never depend on core registry internals. `LocalRuntime` (in `ezagent_core`) is the single sanctioned caller of `KindRegistry`/`SpawnRegistry`.
+
+**Exempt (do NOT wrap):** per-agent sidecar / executor `GenServer.call(pid, …)` — cc `SdkSidecar`, codex `BridgeSidecar`, orchestrator `mcp_server` run_tool. These are agent-local subprocess / executor IPC, NOT workspace-bound Kind resolution; locality is enforced upstream at agent spawn/dispatch. A genuine read-only status probe that needs the registered pid (e.g. cc `CcOrchestratorSeed.seed_status`) stays allowlisted with a documented reason until an owner-aware status-read API exists.
+
+CI gate: `apps/ezagent_core/test/invariants/plugin_workspace_locality_contract_test.exs` (hard-fails on any un-allowlisted direct `KindRegistry.lookup` / `SpawnRegistry.spawn` in `apps/ezagent_plugin_*`; the debt allowlist tracks remaining exemptions, ratcheting toward 0).

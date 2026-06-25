@@ -83,7 +83,8 @@ defmodule Ezagent.Entity.Agent do
   # forward-only curl-snapshot migration onto this Kind is `mix
   # ezagent.curl.migrate` (rewrites pre-fold rows; no rollback window).
   @impl Ezagent.Kind
-  def behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+  def behaviors,
+    do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.CcHeadlessAgent]
 
   @doc """
   The BASE (non-flavor) Agent behavior set — the pre-PR-6 declared list.
@@ -118,6 +119,16 @@ defmodule Ezagent.Entity.Agent do
   """
   @spec curl_behaviors() :: [module()]
   def curl_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+
+  @doc """
+  Behavior set for the `cc-headless` flavor.
+
+  The base Agent behaviors handle identity, sandbox, credentials, and generic
+  receive. `Behavior.CcHeadlessAgent` owns the SDK sync-result persistence and
+  session reply step.
+  """
+  @spec cc_headless_behaviors() :: [module()]
+  def cc_headless_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CcHeadlessAgent]
 
   @doc """
   Behavior set for a `nil`/absent `:kind_base` instance (PR-6). Returns the

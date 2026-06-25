@@ -15,7 +15,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   module, asserts result.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias EzagentCli.{Dispatch, TreeBuilder}
 
@@ -64,8 +64,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   end
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # Sandbox provided by EzagentCore.DataCase (#92).
 
     # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
     # admin. Tests set the per-process caller override.

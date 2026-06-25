@@ -38,7 +38,8 @@ defmodule Ezagent.Behavior.Surface do
     returns: %{ok: :boolean},
     caps: [:set_shell],
     modes: [:call],
-    description: "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
+    description:
+      "Store the (pre-sanitised) HTML site-frame + its compiled CSS for the customer page"
   )
 
   @impl Ezagent.Lifecycle
@@ -73,6 +74,11 @@ defmodule Ezagent.Behavior.Surface do
     end
   end
 
+  @doc """
+  Surface action that stores the (already-sanitised) site shell: sets the
+  `:shell` (HTML frame) and `:shell_css` slice keys. Requires a binary `html`;
+  returns `{:error, :invalid_shell}` otherwise.
+  """
   @spec handle_set_shell(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_set_shell(%{html: html} = args, _ctx) when is_binary(html) do
     css = Map.get(args, :css, "")

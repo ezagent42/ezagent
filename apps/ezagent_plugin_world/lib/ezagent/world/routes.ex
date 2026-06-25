@@ -169,6 +169,16 @@ defmodule Ezagent.World.Routes do
           entity_uri: parse_entity_uri(encoded)
         }
 
+      match = Regex.run(~r{\A/identities/agents/([^/]+)/config\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "agent_config",
+          title: "Agent Config",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
       match = Regex.run(~r{\A/identities/agents/([^/]+)/extensions\z}, path) ->
         [_full, encoded] = match
 

@@ -17,7 +17,7 @@ defmodule Ezagent.Routing.RuntimeAddTest do
   the test process which would otherwise be the table owner if it
   declared the test table itself).
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -26,11 +26,7 @@ defmodule Ezagent.Routing.RuntimeAddTest do
   alias Ezagent.RoutingRegistry
   alias Ezagent.Routing.{Matcher, RuleStore}
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   test "replace_table_contents/2 works from a non-owner process" do
     # Declare table under THIS process. Then call replace from another.

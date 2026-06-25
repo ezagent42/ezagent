@@ -186,12 +186,13 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri),
     do: {:error, {:invalid_template, tmpl}}
 
-  # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
-  # the atomic `DynamicSupervisor` outcome (`:started` vs
+  # codex round-6 HIGH-1 — `LocalRuntime.ensure_started_detailed/1`
+  # (delegating to the owner-gated `SpawnRegistry.spawn_detailed/1`)
+  # preserves the atomic `DynamicSupervisor` outcome (`:started` vs
   # `:already_started`) — the ground-truth freshness signal, not a
   # TOCTOU-prone pre-probe. Returns `{:ok, :started | :already_started}`.
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
       {:ok, :started, _pid} ->
         {:ok, :started}
 
@@ -203,7 +204,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
       {:error, reason} ->
         Logger.warning(
-          "echo.agent: SpawnRegistry.spawn_detailed failed for #{URI.to_string(agent_uri)}: " <>
+          "echo.agent: LocalRuntime.ensure_started_detailed failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 
@@ -245,10 +246,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   defp maybe_start_pty(_tmpl, _agent_uri), do: :ok
 
   defp agent_kind_alive?(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
 
   # If the template asks for PTY, idempotency requires checking the

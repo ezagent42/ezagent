@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   the integration suite.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Behavior.Session, as: SessionBehavior
@@ -29,13 +29,9 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   # SessionBehavior into two first-class Behaviors.
   alias Ezagent.Behavior.User.Receive, as: UserReceive
   alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp bind_to_default(session_uri) do
     ws = URI.new!("workspace://team-alpha")

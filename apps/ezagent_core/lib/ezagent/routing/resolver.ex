@@ -188,6 +188,7 @@ defmodule Ezagent.Routing.Resolver do
     workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string()
     role_resolver = Keyword.get(opts, :role_resolver)
     current_str = URI.to_string(current_session_uri)
+    sender_str = uri_to_string(message.sender)
 
     Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
     |> Enum.flat_map(&query_table_with_ctx(&1, message, workspace_uri))
@@ -209,7 +210,17 @@ defmodule Ezagent.Routing.Resolver do
     # recipient. (Also makes `resolve/4`'s recipient order deterministic.)
     |> Enum.sort_by(fn {_uri, ctx} -> ctx_rank(ctx) end)
     |> Enum.uniq_by(fn {uri, _ctx} -> URI.to_string(uri) end)
-    |> Enum.reject(fn {uri, _ctx} -> URI.to_string(uri) == current_str end)
+    # F14 (#98): a message must NEVER route back to its own sender. Sender-exclusion
+    # previously lived ONLY in the magic-token expansion ($session_members /
+    # $session_users / $mentions); rule-resolved explicit targets (Always→X / from→X
+    # / mention→X) bypassed it, so an `Always` rule matched an agent's OWN reply and
+    # routed it back to itself → self-loop FLOOD (validation F14: 800→1168+ msgs/s).
+    # Excluding the sender at the resolver's FINAL output makes the no-self-route
+    # invariant UNIVERSAL across all rule types (still also excludes the session URI).
+    |> Enum.reject(fn {uri, _ctx} ->
+      s = URI.to_string(uri)
+      s == current_str or s == sender_str
+    end)
   end
 
   # Rank for the duplicate-recipient ctx tie-break (§3.5): lower rule_id wins;

@@ -43,6 +43,13 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   exists as the SOLE Kind-spawn entry — it just delegates the
   child-spec shape to this Domain helper because the two-tier
   topology is Domain-specific and doesn't belong in core.
+
+  ## CC SDK sidecar (added 2026-06-23, cc-headless)
+
+  `EzagentPluginCc.SdkSidecar` starts one Python Claude Code SDK worker
+  per cc-headless agent through a plugin-owned DynamicSupervisor. It is a
+  supervised transport sidecar, not a Kind process; the Agent Kind is still
+  spawned exclusively through `Ezagent.Kind.spawn/2`.
   """
   use ExUnit.Case, async: true
 
@@ -194,6 +201,10 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # call-sites came in with PR #436 but the allowlist entry was missed).
       "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
       "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
+      # EzagentPluginCc.SdkSidecar (2026-06-23, cc-headless) starts the
+      # Python Claude Code SDK worker under a plugin-owned DynamicSupervisor.
+      # It is transport infrastructure, not a Kind process.
+      "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
       # Ezagent.Session.SessionManager (Transport #53 Decision C, the
       # im→session→agent split) — `ensure_started/1` spawns the
       # PER-ORCHESTRATOR MCP-executor GenServer (`start_link/1`, a

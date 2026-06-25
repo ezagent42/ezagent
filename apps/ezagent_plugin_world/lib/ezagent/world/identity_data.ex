@@ -99,8 +99,10 @@ defmodule Ezagent.World.IdentityData do
     # a direct-spawn (curl/np) agent has neither, so both render nil ("—").
     sandbox = agent_sandbox_state(agent_uri, caller, caps)
 
+    agent_uri_str = encode_uri(agent_uri)
+
     base
-    |> Map.put("agent_uri", encode_uri(agent_uri))
+    |> Map.put("agent_uri", agent_uri_str)
     |> Map.put("agent_status", agent_status(agent_uri))
     # Flavor from the same reliable source the agents table uses
     # (`UriQuery.resolve(:flavor, uri)`), NOT `agent_status.flavor` which is
@@ -111,6 +113,7 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
     |> Map.put("config_dir", sandbox_config_dir(sandbox))
     |> Map.put("source_template", sandbox_source_template(sandbox))
+    |> Map.put("config_path", config_path("agent", agent_uri_str))
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -171,6 +174,35 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("pty_initial_buffer", pty_initial_buffer(agent_uri))
   end
 
+  defp component_state(
+         %{component: "agent_config", entity_uri: agent_uri},
+         base,
+         _workspace_uri,
+         caller,
+         caps
+       ) do
+    case Ezagent.AgentConfig.read_cascade(agent_uri, caller, caps) do
+      {:ok, cascade} ->
+        base
+        |> Map.put("agent_uri", encode_uri(agent_uri))
+        |> Map.put("cascade", jsonable(cascade))
+
+      {:error, :unauthorized} ->
+        Map.put(base, "config_error", "没有查看权限（需要 manage 权限）")
+
+      {:error, :invalid_agent_uri} ->
+        Map.put(base, "config_error", "无效的 agent URI")
+
+      {:error, :agent_not_found} ->
+        Map.put(base, "config_error", "Agent 不存在")
+
+      {:error, reason} ->
+        Map.put(base, "config_error", "配置读取失败：#{inspect(reason)}")
+    end
+  rescue
+    err -> Map.put(base, "config_error", "配置读取异常：#{inspect(err)}")
+  end
+
   defp component_state(_route, base, _workspace, _caller, _caps), do: base
 
   @doc "List entity rows for the identities and agents components."
@@ -198,7 +230,8 @@ defmodule Ezagent.World.IdentityData do
               "caps_path" => caps_path(entity_type, uri_str),
               "detail_path" => detail_path(entity_type, uri_str),
               "api_keys_path" => api_keys_path(entity_type, uri_str),
-              "extensions_path" => extensions_path(entity_type, uri_str)
+              "extensions_path" => extensions_path(entity_type, uri_str),
+              "config_path" => config_path(entity_type, uri_str)
             }
           ]
         else
@@ -604,6 +637,11 @@ defmodule Ezagent.World.IdentityData do
 
   defp extensions_path(_kind, _uri_str), do: nil
 
+  defp config_path("agent", uri_str),
+    do: "/identities/agents/#{URI.encode_www_form(uri_str)}/config"
+
+  defp config_path(_kind, _uri_str), do: nil
+
   defp transports_summary(presence_list) do
     for entries <- Map.values(presence_list),
         meta <- entries,
@@ -632,13 +670,19 @@ defmodule Ezagent.World.IdentityData do
   defp jsonable(nil), do: nil
   defp jsonable(value) when is_list(value), do: Enum.map(value, &jsonable/1)
 
-  defp jsonable(value) when is_map(value) do
+  defp jsonable(%_{} = value) do
     value
     |> Map.from_struct()
     |> Enum.map(fn {key, val} -> {to_string(key), jsonable(val)} end)
     |> Map.new()
   rescue
     _ -> inspect(value)
+  end
+
+  defp jsonable(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, val} -> {to_string(key), jsonable(val)} end)
+    |> Map.new()
   end
 
   defp jsonable(value), do: inspect(value)

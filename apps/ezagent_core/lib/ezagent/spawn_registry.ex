@@ -173,6 +173,12 @@ defmodule Ezagent.SpawnRegistry do
   @spec spawn_detailed(URI.t()) ::
           {:ok, :started | :already_started, pid()} | {:error, term()}
   def spawn_detailed(%URI{scheme: scheme} = uri) when is_binary(scheme) do
+    with :ok <- Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:spawn, uri}) do
+      do_spawn_detailed(uri, scheme)
+    end
+  end
+
+  defp do_spawn_detailed(%URI{} = uri, scheme) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, pid} ->
         {:ok, :already_started, pid}

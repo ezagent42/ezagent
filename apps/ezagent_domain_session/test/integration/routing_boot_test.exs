@@ -12,14 +12,10 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingBootTest do
   guards that SessionRouting is NOT (re-)introduced.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.RoutingRegistry
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   test "MentionRouting table is declared at chat plugin boot" do
     # list_all raises ArgumentError if not declared; reaching here

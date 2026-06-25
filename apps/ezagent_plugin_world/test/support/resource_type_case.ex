@@ -8,19 +8,19 @@ defmodule Ezagent.World.ResourceTypeCase do
 
   `world-layouts` IS registered at boot by `EzagentPluginWorld.Application`'s
   `Ezagent.Plugin.boot/2` Phase 2 (`Registry.register_all/1`) — verified directly
-  (the production flow works). But the umbrella `mix test` runs every app's suite
-  in ONE shared BEAM, and `ezagent_core`'s restart-resilience tests RESTART the
-  `Ezagent.Resource.FsResolver.Registry` GenServer. Its `init/1` re-applies ONLY
-  the core `boot_registrations/0` (`cc-agents`, `codex-agents`, `uploads`) — plugin
-  types are NOT replayed (see the Registry moduledoc). So by the time the world
-  test phase runs in a full sweep, `world-layouts` has been wiped, even though the
-  app stayed `started`.
+  (the production flow works). The umbrella `mix test` runs every app's suite in
+  ONE shared BEAM, and `ezagent_core`'s restart-resilience tests RESTART the
+  `Ezagent.Resource.FsResolver.Registry` GenServer.
 
-  > NOTE: that non-replay is a latent PRODUCTION bug class (a Registry crash drops
-  > every plugin's resource types until those plugins re-boot). It is tracked
-  > separately in `docs/futures/todo.md` and is out of scope for this PR. This
-  > helper does NOT mask it — it only makes the affected SUITES deterministic by
-  > ensuring the same real production spec is present for their fixtures.
+  > As of Bug B (`fix/resolver-restart-replay`, 2026-06-24) the Registry's `init/1`
+  > rebuilds the FULL allowlist from source on EVERY start — core
+  > `boot_registrations/0` PLUS a discovery-replay of every loaded plugin's
+  > `resource_types/0` — so a Registry restart now RE-registers `world-layouts`
+  > rather than dropping it (the latent production bug class is fixed; see the
+  > Registry moduledoc + `resource_type_restart_replay_test.exs`). This helper is
+  > therefore now belt-and-suspenders: it stays so the affected suites remain
+  > deterministic regardless of restart timing, but it is idempotent (no-op when
+  > the boot/replay registration is live, which post-fix is the normal case).
 
   ## Behaviour
 

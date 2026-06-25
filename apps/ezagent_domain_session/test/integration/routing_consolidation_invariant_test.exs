@@ -25,15 +25,11 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingConsolidationInvariant
   routing. Hard-to-debug bugs.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp build_msg(text \\ "hi", mentions \\ [], sender \\ "entity://system/user/admin") do
     %Ezagent.Message{

@@ -1,0 +1,94 @@
+name: CI
+
+# Runs the SAME merge gate the lead runs locally — `mix precommit`
+# (compile --warnings-as-errors --force + deps.unlock --unused + format + test,
+# which includes every architecture/invariant gate) plus
+# `mix ezagent.check_invariants` — on every PR and on pushes to main, so a
+# never-green branch can no longer reach `main`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  precommit:
+    name: precommit + check_invariants
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ezagent_pg_compat
+          POSTGRES_PASSWORD: ezagent_pg_compat
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ezagent_pg_compat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25"
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+      - name: Cache deps + _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-test-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-test-
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Install JS deps (assets esbuild needs node_modules)
+        # --no-frozen-lockfile mirrors the lead's local `pnpm install`: the goal
+        # here is to populate node_modules so esbuild can resolve react/zod during
+        # `mix compile`, NOT to gate lockfile integrity (a separate concern; the
+        # CI default would otherwise be --frozen-lockfile).
+        run: |
+          pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile
+          pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile
+          pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile
+
+      - name: Create + migrate test DB
+        run: |
+          mix ecto.create --quiet
+          mix ecto.migrate --quiet
+
+      - name: mix precommit
+        run: mix precommit
+
+      - name: mix ezagent.check_invariants
+        run: mix ezagent.check_invariants

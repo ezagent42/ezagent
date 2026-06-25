@@ -17,7 +17,7 @@ defmodule Ezagent.Routing.BootHydrationTest do
   domain's `Application.start/2`); this test pins the underlying contract
   that wiring depends on.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -31,11 +31,7 @@ defmodule Ezagent.Routing.BootHydrationTest do
   # the resolver reads it.
   @table EzagentDomainInstanceMessage.Routing.MentionRouting
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   test "a durable rule survives a simulated fresh boot via load_into_registry/1" do
     receiver = "test-receiver://g1b-boot-hydration"

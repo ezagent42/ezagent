@@ -9,14 +9,12 @@ defmodule Ezagent.Routing.LegendTest do
   BEFORE the URI-mention path, so a legend name fires its bound rule-set's entry
   rule instead of silent-dropping / mis-routing through the URI matcher.
   """
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Routing.{Legend, Matcher, Resolver, RuleStore}
-  alias EzagentCore.Repo
+  # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-
+    # Sandbox provided by EzagentCore.DataCase (#92).
     original = Application.get_env(:ezagent_core, :routing_tables)
 
     on_exit(fn ->

@@ -16,8 +16,8 @@ This handoff covers two independent bugs; they can be two separate PRs.
 
 **What already landed (do NOT redo):** the **session-create ↔ orchestrator decouple** (spec #902 → impl #912, MERGED). It removed the 90 s wait/kill/rollback gate and made `create_session` return a usable session without waiting for orchestrator startup. That removes the *orchestrator-coupling* contributor to the timeout — but the **snapshot-on-create race itself is NOT confirmed fixed** (the decouple return was marked `out_of_scope` for the race).
 
-**The task:**
-1. **Verify first** — on the post-#912 main, reproduce @李震宇's repro (concurrent/back-to-back `create_session`): is the race still present now that the orchestrator wait is gone? (If create is now fast + synchronous-snapshot, it may be cleared — confirm before fixing.)
+**The task (you own this end-to-end — independently reproduce AND fix; no longer gated on @李震宇):**
+1. **Reproduce first, yourself** — on the post-#912 main, **you** reproduce the race (concurrent/back-to-back `create_session`): is it still present now that the orchestrator wait is gone? (If create is now fast + synchronous-snapshot, it may be cleared — confirm before fixing.) The original symptom was found by @李震宇 in the 2026-06-23 `world-deploy-e2e-pg` run (return §7) — that's provenance; this week @李震宇 is **validation-only** and is **not** a participant in this fix.
 2. If still present: make snapshot-on-create **not race the dispatch budget** — i.e. the create path must not return "session usable" until its respawnable snapshot is durably stored (snapshot ordered *before* the session is announceable), OR the 5 s budget must not apply to the snapshot write. The fix is bounded — send itself works on a snapshotted session.
 3. **Stop the silent swallow** — the `:session :send` → `:no_such_actor` on the `:cast` path should surface (log/telemetry), not vanish, so this class is never silent again.
 4. Regression test: a created session is **immediately respawnable** (snapshot present) before it is announceable; a concurrent double-create both snapshot.
@@ -44,6 +44,6 @@ This handoff covers two independent bugs; they can be two separate PRs.
 
 ## 讨论项（早会 standup — who needs to be in the room）
 
-- **Bug A — is it still live post-#912?** participants: **@林懿伦 @李震宇** — @李震宇 has the repro + runs today's 人肉; align on whether the snapshot race still reproduces before @林懿伦 writes the fix (avoid fixing a cleared bug). This gates goal ① ("跑起来").
+- **Bug A — is it still live post-#912?** participants: **@林懿伦** (only) — you **independently reproduce AND fix** it; **no discussion-gate with @李震宇** (this week @李震宇 is validation-only and is decoupled from this bug). Confirm-by-repro on post-#912 main before writing the fix (avoid fixing a cleared bug). This gates goal ① ("跑起来").
 - **Bug B — priority + approach (a/b/c).** participants: **@林懿伦** (+ Claude for resolver context if needed) — decide whether it blocks the in-team rollout this week (does a crash realistically drop world-layouts/uploads in the team setup?) and which restore option. Security invariant (PR-1 write-once) must hold.
 - **Disposable stack retired this week** (per @林懿伦): all dev tracks run on each dev's **own host**; to view another dev's running work, use the **intranet Tailscale (tailnet) address**, not a shared stack. (Recorded in today's plan.)

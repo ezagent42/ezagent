@@ -11,7 +11,7 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
 
   @behaviour Ezagent.Kind.Template
 
-  alias Ezagent.{Invocation, KindRegistry, WorkspaceRegistry}
+  alias Ezagent.{Invocation, WorkspaceRegistry}
   alias Ezagent.Entity.{Session, User}
   alias EzagentPluginAdvisor.NodeTypes
 
@@ -129,19 +129,17 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   end
 
   defp ensure_operator_user(%URI{} = operator_uri) do
-    case KindRegistry.lookup(operator_uri) do
-      {:ok, _pid} ->
-        :ok
-
-      :error ->
-        case Ezagent.Kind.spawn(User, %{
-               uri: operator_uri,
-               initial_caps: User.initial_caps_for_spawn(operator_uri)
-             }) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
+    if Ezagent.LocalRuntime.kind_alive?(operator_uri) do
+      :ok
+    else
+      case Ezagent.Kind.spawn(User, %{
+             uri: operator_uri,
+             initial_caps: User.initial_caps_for_spawn(operator_uri)
+           }) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 

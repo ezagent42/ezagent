@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "DEV_TOGETHER_CONF=/home/lenovo/workspace/ezagent/.claude/dev-together.conf /home/lenovo/workspace/ezagent/.claude/hooks/handoff-deadline-reminder.sh"
+            "command": "DEV_TOGETHER_CONF=${CLAUDE_PROJECT_DIR}/.claude/dev-together.conf ${CLAUDE_PROJECT_DIR}/.claude/hooks/handoff-deadline-reminder.sh"
           }
         ]
       }

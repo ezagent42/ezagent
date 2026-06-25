@@ -41,6 +41,7 @@ defmodule EzagentWeb.Router do
       live "/identities/users/:uri/caps", WorldLive
       live "/identities/agents/:uri/caps", WorldLive
       live "/identities/agents/:uri/api-keys", WorldLive
+      live "/identities/agents/:uri/config", WorldLive
       live "/identities/agents/new", WorldLive
       live "/identities/agents/:uri/extensions", WorldLive
       live "/identities/agents/:uri/terminal", WorldLive

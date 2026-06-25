@@ -92,8 +92,10 @@ defmodule EzagentPluginHello.Sanitize do
       acc
       # paired <tag ...> ... </tag>
       |> String.replace(~r/<#{tag}\b[^>]*>.*?<\/#{tag}>/is, "")
-      # any stray open / self-closing / closing tag
-      |> String.replace(~r/<\/?#{tag}\b[^>]*>/i, "")
+      # any stray open / self-closing / closing tag (`\/{0,1}`, not `\/?`: the
+      # literal `?#{...}` would false-trip the database-agnostic guard's
+      # SQL-numbered-placeholder heuristic — this is HTML, not SQL)
+      |> String.replace(~r/<\/{0,1}#{tag}\b[^>]*>/i, "")
     end)
   end
 

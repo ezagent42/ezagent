@@ -10,16 +10,12 @@ defmodule Ezagent.Session.ReadMarkerTest do
   - PubSub `:read_marker_updated` broadcast on session events topic
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias EzagentCore.Repo
   alias Ezagent.Session.ReadMarker
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok
-  end
+  # Sandbox provided by EzagentCore.DataCase (#92).
 
   # Canonical (`authority: nil`) construction — `ReadMarker.mark/4`
   # rebuilds the broadcast URIs via `Ezagent.URI.new!/1`, so a test

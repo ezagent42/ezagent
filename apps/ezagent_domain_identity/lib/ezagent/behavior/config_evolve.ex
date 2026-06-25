@@ -67,6 +67,9 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   alias Ezagent.Socialware.{ConfigProjection, ConfigStore}
 
+  @layer_order ~w(workspace user session)
+  @editable_layer "user"
+
   # rev-4: step 1 / reconcile read the agent's OWN Sandbox cascade in-process
   # (the genuine ApiKeys in-process read precedent) to compute the refreshed
   # respawn_template_data. Surfaced as `ctx.siblings[:sandbox]` on action ctx.
@@ -96,7 +99,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       workspace_uri: {:option, :uri},
       subject_uri: {:option, :uri},
       key: {:option, :string},
-      patch: {:option, :map}
+      patch: {:option, :map},
+      replace_body: {:option, :map}
     },
     returns: %{config_id: :string, previous_config_id: {:option, :string}},
     caps: [:apply_config_delta],
@@ -116,6 +120,21 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     caps: [:repoint_config],
     modes: [:call],
     description: "Rollback/advance THIS agent's config pointer (step 1)"
+  )
+
+  # READ — the cap-gated config cascade read. Symmetric with the writes: the
+  # console facade (`Ezagent.AgentConfig`) must NOT read `ConfigStore` directly
+  # (an authorization asymmetry — anyone could read any agent's
+  # `advisor.behavior` / soul_md). Routing the read through dispatch gates it on
+  # the SAME agent manage-cap the writes use (step-5.5 enforcement, on the
+  # caller's real caps, instance substituted to THIS agent), so the gate is
+  # structural, not a hand-rolled facade check.
+  action(:read_cascade,
+    args: %{keys: {:option, {:list, :string}}},
+    returns: %{cascade: :map},
+    caps: [:read_cascade],
+    modes: [:call],
+    description: "Read THIS agent's editable config cascade (manage-cap gated)"
   )
 
   action(:reconcile_cascade,
@@ -145,6 +164,11 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     %{
       apply_config_delta: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
       repoint_config: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
+      # READ is gated by the SAME agent manage-cap as the writes — "whoever
+      # manages the agent may read its config" (the runtime overwrites the
+      # needed-cap action to the dispatched `:read_cascade`; the manager's held
+      # cap(:agent, Manage, :any, instance: agent) has action :any → matches).
+      read_cascade: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
       reconcile_cascade: Ezagent.Capability.cap(:agent, __MODULE__, :reconcile_cascade)
     }
   end
@@ -254,13 +278,19 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   defp do_apply_config_delta(turn_id, attrs, ctx) do
     body =
-      ConfigStore.merge_delta(
-        attrs.layer,
-        attrs.workspace_uri,
-        attrs.subject_uri,
-        attrs.key,
-        attrs.patch
-      )
+      case Map.get(attrs, :replace_body) do
+        %{} = replacement ->
+          replacement
+
+        nil ->
+          ConfigStore.merge_delta(
+            attrs.layer,
+            attrs.workspace_uri,
+            attrs.subject_uri,
+            attrs.key,
+            attrs.patch
+          )
+      end
 
     # CE-3 — write the immutable object AND advance the pointer in ONE
     # transaction (`write_and_point/1`). Atomic write = no orphan object, so
@@ -370,6 +400,88 @@ defmodule Ezagent.Behavior.ConfigEvolve do
        sandbox_write_effects(ctx, attrs, attrs.config_id)}
     end
   end
+
+  # ---- READ — manage-cap-gated config cascade read -------------------------
+  #
+  # The agent reads ITS OWN config cascade. The dispatch is authorized by the
+  # agent's manage-cap (step-5.5, on the caller's real caps) — symmetric with
+  # the writes — so a caller without the manage-cap gets `{:error, :unauthorized}`
+  # BEFORE this handler runs. The read subject is always `ctx.self_uri` (the
+  # agent being read), never caller-supplied, so the gate is non-tautological:
+  # the cap is checked against the AUTHENTICATED caller, the data is scoped to
+  # the dispatched-to agent. Builds the same cascade shape the console facade
+  # exposes (`Ezagent.AgentConfig`).
+  @spec handle_read_cascade(map(), map()) :: {:ok, map(), [term()]}
+  def handle_read_cascade(args, ctx) do
+    agent_uri = ctx.self_uri
+    workspace_uri = Ezagent.URI.workspace_of(agent_uri)
+    keys = keys_for(agent_uri, Map.get(args, :keys))
+
+    cascade = %{
+      agent_uri: URI.to_string(agent_uri),
+      workspace_uri: URI.to_string(workspace_uri),
+      default_key: @default_cascade_key,
+      layer_order: @layer_order,
+      keys: Enum.map(keys, &key_state(agent_uri, workspace_uri, &1))
+    }
+
+    {:ok, %{cascade: cascade}, []}
+  end
+
+  # The cascade-shape readers (ported from the facade — the facade no longer
+  # reads ConfigStore directly; it dispatches THIS action so the read is gated).
+  defp keys_for(agent_uri, requested) do
+    requested =
+      case requested do
+        keys when is_list(keys) -> Enum.map(keys, &to_string/1)
+        _ -> ConfigStore.list_keys_for_subject(agent_uri)
+      end
+
+    requested
+    |> Kernel.++([@default_cascade_key])
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp key_state(agent_uri, workspace_uri, key) do
+    layers = ConfigStore.layer_objects_for_key(agent_uri, key)
+    layer_states = Map.new(@layer_order, &{&1, layer_state(workspace_uri, &1, layers[&1])})
+
+    %{
+      key: key,
+      effective_body: effective_body(layer_states),
+      editable: true,
+      editable_layer: @editable_layer,
+      layers: layer_states
+    }
+  end
+
+  defp layer_state(_workspace_uri, _layer, nil), do: nil
+
+  defp layer_state(workspace_uri, layer, %{pointer: pointer, object: object}) do
+    %{
+      layer: layer,
+      config_id: object.id,
+      previous_config_id: pointer.previous_config_id,
+      object_uri: workspace_uri |> ConfigProjection.object_uri(object.id) |> URI.to_string(),
+      body: object.body || %{},
+      source_turn_id: object.source_turn_id,
+      updated_at: datetime(pointer.updated_at)
+    }
+  end
+
+  defp effective_body(layer_states) do
+    Enum.reduce(@layer_order, %{}, fn layer, acc ->
+      case layer_states[layer] do
+        %{body: %{} = body} -> Map.merge(acc, body)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp datetime(nil), do: nil
+  defp datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp datetime(other), do: to_string(other)
 
   # ---- reconcile_cascade — boot self-heal (full action ctx) ----------------
   #
@@ -577,7 +689,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     with {:ok, layer} <- ConfigStore.normalize_layer(attrs.layer),
          {:ok, workspace_uri} <- ConfigStore.normalize_uri(attrs.workspace_uri, :workspace_uri),
          {:ok, subject_uri} <- ConfigStore.normalize_uri(attrs.subject_uri, :subject_uri),
-         {:ok, key} <- ConfigStore.validate_key(attrs.key) do
+         {:ok, key} <- ConfigStore.validate_key(attrs.key),
+         :ok <- validate_replace_body(Map.get(attrs, :replace_body)) do
       {:ok,
        attrs
        |> Map.put(:layer, layer)
@@ -586,6 +699,12 @@ defmodule Ezagent.Behavior.ConfigEvolve do
        |> Map.put(:key, key)}
     end
   end
+
+  defp validate_replace_body(nil), do: :ok
+  defp validate_replace_body(body) when is_map(body), do: :ok
+
+  defp validate_replace_body(other),
+    do: {:error, {:invalid_replace_body, %{got: inspect(other)}}}
 
   # The delta is carried in the dispatch ARGS (the agent has no turn slice).
   # `subject_uri` defaults to the agent itself (it IS the subject); a caller
@@ -598,6 +717,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       subject_uri: Map.get(args, :subject_uri) || ctx.self_uri,
       key: Map.get(args, :key) || @default_cascade_key,
       patch: Map.get(args, :patch) || %{},
+      replace_body: Map.get(args, :replace_body),
       actor_uri: ctx.caller,
       source_turn_id: turn_id
     }

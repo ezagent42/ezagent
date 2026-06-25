@@ -17,6 +17,13 @@ defmodule EzagentPluginHello.LLM.ClaudeCode do
   """
   require Logger
 
+  @doc """
+  Run one Claude Code CLI completion. `chat(system, user)` returns
+  `{:ok, %{content: binary()}}` | `{:error, reason}` — the same shape as the
+  DeepSeek client so `Generator.call_llm/2` swaps transparently. Returns
+  `{:error, :claude_not_found}` when no `claude` binary is located,
+  `{:error, :bad_args}` for non-binary inputs.
+  """
   @spec chat(String.t(), String.t()) :: {:ok, %{content: String.t()}} | {:error, term()}
   def chat(system, user) when is_binary(system) and is_binary(user) do
     case bin() do
@@ -58,12 +65,23 @@ defmodule EzagentPluginHello.LLM.ClaudeCode do
   end
 
   defp bin do
+    # Locate the external `claude` CLI: explicit override, then $PATH, then the
+    # conventional install locations. The home candidate is derived from
+    # `System.user_home/0` (the OS user's home — distinct from EZAGENT_HOME)
+    # rather than a raw home-tilde expansion, which the arch gate reserves for
+    # ezagent's own home resolution.
+    fallbacks =
+      case System.user_home() do
+        home when is_binary(home) ->
+          [Path.join(home, ".local/bin/claude"), "/usr/local/bin/claude"]
+
+        _ ->
+          ["/usr/local/bin/claude"]
+      end
+
     System.get_env("HELLO_CLAUDE_BIN") ||
       System.find_executable("claude") ||
-      Enum.find(
-        [Path.expand("~/.local/bin/claude"), "/usr/local/bin/claude"],
-        &File.exists?/1
-      )
+      Enum.find(fallbacks, &File.exists?/1)
   end
 
   # Optional `HELLO_LLM_MODEL` → `--model <m>`; absent uses Claude Code's default.

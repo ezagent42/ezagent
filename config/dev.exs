@@ -44,16 +44,17 @@ config :ezagent_web, EzagentWeb.Endpoint,
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:ezagent_web, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:ezagent_web, ~w(--watch)]},
-    npm: [
-      "--prefix",
-      Path.expand("../apps/ezagent_plugin_world/assets", __DIR__),
-      "run",
-      "dev",
-      "--",
+    # 直接跑 vite(不经 `npm run dev`)。`npm run dev` 会派生 npm→sh→node(vite) 三层进程树;
+    # BEAM 关闭时 Phoenix.Endpoint.Watcher 只 SIGTERM 到直接子进程 npm,孙子 vite 漏杀、被
+    # reparent 到 init 成孤儿、继续占 5173,下次启动 watcher 的 vite 撞端口 → :watcher_command_error。
+    # node 直跑 vite = 单进程、BEAM 直接管,关闭即清,根治孤儿占端口。
+    node: [
+      "node_modules/.bin/vite",
       "--host",
       "0.0.0.0",
       "--port",
-      System.get_env("WORLD_VITE_PORT") || "5173"
+      System.get_env("WORLD_VITE_PORT") || "5173",
+      cd: Path.expand("../apps/ezagent_plugin_world/assets", __DIR__)
     ]
   ]
 

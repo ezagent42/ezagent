@@ -17,7 +17,10 @@ defmodule Ezagent.Socialware.AnonUser.SweeperTest do
   end
 
   test "a :sweep tick runs GC.sweep on an empty table without crashing and re-arms" do
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    # The Sweeper GenServer runs its `:sweep` Repo read in its own process;
+    # `use EzagentCore.DataCase, async: false` already shares the sandbox via a
+    # drainable Agent owner, so it sees the connection WITHOUT re-globalizing it
+    # onto the dying test pid (which clobbered concurrent suites — #92).
     {:ok, pid} = Sweeper.start_link(name: nil, interval_ms: 3_600_000)
 
     send(pid, :sweep)
