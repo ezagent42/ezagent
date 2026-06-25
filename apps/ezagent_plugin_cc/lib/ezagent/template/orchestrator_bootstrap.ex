@@ -13,10 +13,12 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   Two stages, decoupled so the dispatch-free recipe read is testable apart from
   the filesystem install:
 
-  - `resolve_orchestrator_role/0` — compose the orchestrator role recipe →
-    `sandbox_content` (`%{skills, plugins, prompt}`). PR-2 reads a code-seeded
-    recipe (Option B); a later PR re-points this at the persisted
-    `template://system/role/orchestrator` Template without touching the installer.
+  - `resolve_orchestrator_role/0` — look the orchestrator role recipe up BY NAME
+    in `Ezagent.RoleRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
+    and compose it → `sandbox_content` (`%{skills, plugins, prompt}`). The
+    registry IS the re-point seam: a later PR swaps the lookup source to the
+    persisted `template://system/role/orchestrator` Template without touching the
+    installer.
   - `install_role_sandbox/2` — PURE filesystem: for each `skills` ref, resolve its
     source dir + copy it into `config_dir/skills/<ref>`, then append the cc
     skill-load hint to `CLAUDE.md`. No hardcoded skill: it installs whatever the
@@ -69,17 +71,39 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   @doc """
   Compose the orchestrator role recipe into its `sandbox_content`
-  (`%{skills, plugins, prompt}`) via the `Ezagent.Role` core primitives. PR-2
-  reads a code-seeded recipe; a malformed recipe fails closed as
-  `{:error, {:role_unresolved, reason}}` (the migration has no hardcoded-skill
-  fallback). The cc flavor declares no per-instance behaviors, so the role's are
-  composed alone.
+  (`%{skills, plugins, prompt}`) via the unified `roles/0` + `Ezagent.Role.Compose`
+  path (RF-9).
+
+  The recipe is looked up BY NAME in `Ezagent.RoleRegistry` (populated at cc
+  plugin boot from `roles/0`) — NOT re-derived from `OrchestratorRole.compose/0`.
+  This routes the orchestrator through the SAME registry indirection RF-5a uses,
+  and is the documented re-point seam for the future persisted
+  `template://system/role/orchestrator` Template (swap the lookup source without
+  touching the installer).
+
+  Fails closed as `{:error, {:role_unresolved, reason}}`:
+
+  - `{:role_unresolved, {:role_not_registered, "orchestrator"}}` — the registry
+    has no orchestrator role. This is a real boot-order / wiring bug: `roles/0`
+    runs in boot Phase 2, long before any agent spawn, so it MUST be present at
+    spawn time. We do NOT fall back to `OrchestratorRole.compose/0` to mask an
+    empty registry (let-it-crash) — `try_apply/3` surfaces it as a degraded
+    spawn + telemetry, exactly as a missing skill source does.
+
+  The cc flavor declares no per-instance behaviors, so the role's are composed
+  alone (`flavor_behaviors: []`).
   """
   @spec resolve_orchestrator_role() :: {:ok, map()} | {:error, term()}
   def resolve_orchestrator_role do
-    case OrchestratorRole.compose() do
-      {:ok, %{sandbox_content: sandbox_content}} -> {:ok, sandbox_content}
-      {:error, reason} -> {:error, {:role_unresolved, reason}}
+    case Ezagent.RoleRegistry.lookup(OrchestratorRole.name()) do
+      {:ok, %Ezagent.Role{} = role} ->
+        %{sandbox_content: sandbox_content} =
+          Ezagent.Role.Compose.materialize(role, %{flavor_behaviors: []})
+
+        {:ok, sandbox_content}
+
+      :error ->
+        {:error, {:role_unresolved, {:role_not_registered, OrchestratorRole.name()}}}
     end
   end
 

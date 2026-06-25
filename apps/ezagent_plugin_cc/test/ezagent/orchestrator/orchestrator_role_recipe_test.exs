@@ -13,10 +13,17 @@ defmodule Ezagent.Orchestrator.OrchestratorRoleTest do
   alias Ezagent.Orchestrator.CcOrchestratorSeed
   alias Ezagent.Orchestrator.OrchestratorRole
   alias Ezagent.Role
+  alias Ezagent.RoleRegistry
 
   describe "recipe/0 — a well-formed flavor-agnostic Role" do
     test "Role.new/1 accepts the recipe (no flavor field, valid shape)" do
       assert {:ok, %Role{}} = Role.new(OrchestratorRole.recipe())
+    end
+
+    test "carries the registry name (\"orchestrator\") so roles/0 can key it" do
+      assert OrchestratorRole.name() == "orchestrator"
+      {:ok, role} = Role.new(OrchestratorRole.recipe())
+      assert role.name == "orchestrator"
     end
 
     test "carries the ezagent-session-orchestrator skill" do
@@ -37,6 +44,31 @@ defmodule Ezagent.Orchestrator.OrchestratorRoleTest do
         refute Map.has_key?(recipe, flavor_field)
         refute Map.has_key?(recipe, Atom.to_string(flavor_field))
       end
+    end
+  end
+
+  describe "roles/0 + RoleRegistry — registered as a first-class named role (RF-9)" do
+    test "the cc plugin's roles/0 declares the orchestrator recipe" do
+      assert OrchestratorRole.recipe() in EzagentPluginCc.Application.roles()
+    end
+
+    test "RoleRegistry.lookup(\"orchestrator\") returns the recipe end-to-end" do
+      # Drive the real `roles/0` → `RoleRegistry.register/1` wiring: starting the
+      # cc plugin application runs `boot/1` Phase 2, which registers every
+      # `roles/0` recipe by name. (Idempotent if the suite already started it.)
+      {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
+
+      assert {:ok, %Role{name: "orchestrator"} = role} =
+               RoleRegistry.lookup(OrchestratorRole.name())
+
+      # The looked-up recipe IS the orchestrator role (skill + persona).
+      assert "ezagent-session-orchestrator" in role.skills
+      assert role.prompt == OrchestratorRole.persona()
+
+      # And it equals what `Role.new/1` would build from `recipe/0` — proving the
+      # registry stores the validated recipe, not a re-derived variant.
+      {:ok, expected} = Role.new(OrchestratorRole.recipe())
+      assert role == expected
     end
   end
 
