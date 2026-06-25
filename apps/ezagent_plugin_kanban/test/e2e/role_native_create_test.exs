@@ -173,6 +173,58 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
     end)
   end
 
+  # Re-homed from the deleted K5 `roundtrip_test.exs` (was a `resource://` Kanban
+  # Kind e2e): the markmap export/import ACTION roundtrip via DISPATCH on the
+  # kanban-manager `Entity.Agent` host. `markmap_test` covers the pure Markmap
+  # render/parse; `behavior/kanban_test` covers `handle_import_markmap` authz;
+  # neither covers the full export-edit-import-get_tree loop through dispatch —
+  # so it lives here on the as-role path (parity audit: enumerate FROM the thing
+  # being retired). Proves ezagent (the agent's `:kanban` slice) is the source of
+  # truth and the markmap file is a bidirectional projection.
+  @tag :integration
+  test "markmap roundtrip via dispatch on the kanban-manager agent: export → edit → import → get_tree reflects",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+    skip_if_no_entity_spawn(fn ->
+      name = "kanban-mgr-mm-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{agent_uri: agent_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{flavor: @flavor, name: name, role: "kanban-manager", cwd: "", with_pty: false},
+                 admin_ctx
+               )
+
+      assert agent_uri == Ezagent.URI.agent(ws_name, name)
+
+      # build the tree on the agent's :kanban slice (source of truth)
+      assert {:ok, %{id: "n1"}} =
+               dispatch(agent_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+
+      assert {:ok, %{id: "n2"}} =
+               dispatch(agent_uri, :add_node, %{parent_id: "n1", title: "子1"}, admin_ctx)
+
+      assert {:ok, %{id: "n3"}} =
+               dispatch(agent_uri, :add_node, %{parent_id: "n1", title: "子2"}, admin_ctx)
+
+      # export → markmap markdown
+      assert {:ok, %{markdown: md}} = dispatch(agent_uri, :export_markmap, %{}, admin_ctx)
+      assert md == "# 根\n## 子1\n## 子2\n"
+
+      # simulate a human editing the file: add a node, overwrite
+      edited = md <> "## 子3\n"
+
+      # import the edited markdown back (admin-gated; admin dispatches)
+      assert {:ok, %{count: 4}} =
+               dispatch(agent_uri, :import_markmap, %{markdown: edited}, admin_ctx)
+
+      # the agent's tree reflects the human's edit (bidirectional)
+      assert {:ok, %{tree: %{nodes: nodes}}} = dispatch(agent_uri, :get_tree, %{}, admin_ctx)
+      titles = nodes |> Map.values() |> Enum.map(& &1.title)
+      assert "子3" in titles
+      assert map_size(nodes) == 4
+    end)
+  end
+
   defp dispatch(agent_uri, action, args, %{caller: caller, caps: caps}) do
     cmd =
       Ezagent.Cmd.new(

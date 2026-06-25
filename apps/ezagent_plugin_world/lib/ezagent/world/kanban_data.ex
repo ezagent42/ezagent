@@ -1,0 +1,271 @@
+defmodule Ezagent.World.KanbanData do
+  @moduledoc """
+  Read model for the world **kanban operating surface**（df-prd）。
+
+  纯数据整形（对齐 `Ezagent.World.ConversationData` 的分工）：列出 kanban 实例、
+  读某个 kanban 的节点树（经 `:get_tree` dispatch，**带登录者身份/caps**，让 per-node
+  CapBAC 在 Behavior 内如实判）、把树整成 JSON-safe（atom→string）给前端。
+
+  ## kanban-as-role（K4 — read-model 重接）
+  看板不再是 `resource://<ws>/kanban/<name>` 的独立 Kind，而是一个 **agent**
+  （role `kanban-manager` × flavor `native`）。board = 该 agent 的 `:kanban` snapshot
+  slice。本读模型据此重接两处（spec §3.5 / plan K4）：
+
+    * **list_instances** ——`Ezagent.AgentRoleResolver.list_by_role("kanban-manager",
+      workspace_uri)`（RF-7，**快照来源**，覆盖 live + dormant，冷启动仍枚举），
+      不再 `EzagentDomainUi.AutoDerive.list_instances(:kanban)`（按 Kind 类型，
+      kanban-manager 的 Kind 是 `Entity.Agent` → 类型匹配为假）。返回的 URI 即
+      `entity://<ws>/agent/<id>` ——既是列表项、也是前端 dispatch 目标。
+    * **dispatch 目标** ——`Ezagent.URI.with_action(entity://agent, :kanban, action)`
+      = `entity://<ws>/agent/<id>?action=kanban.<action>`，**带登录者身份/caps**
+      （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
+
+  连接器配置（github_repo/miro 板名）、Miro/GitHub 凭证连接状态、pr 节点的 CI 评价，
+  全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 不直引 kanban
+  plugin 任何模块。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
+  （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
+
+  写动作在 `Ezagent.World.KanbanActions`；本模块只读。
+  """
+
+  alias Ezagent.Invocation
+
+  @stages ~w(positioning metric pain anchor ux feature issue test pr)
+  @statuses ~w(claimed doing done)
+
+  @doc "为 kanban 路由（列表页 entity_uri=nil / 详情页带 uri）构建前端 state。"
+  @spec state_for(map(), map()) :: map()
+  def state_for(%{component: "kanban"} = route, ctx) do
+    uri = Map.get(route, :entity_uri)
+    snapshot = uri && board_snapshot(uri, ctx)
+
+    %{
+      "component" => "kanban",
+      "kanban_uri" => encode_uri(uri),
+      "instances" => list_instances(ctx),
+      "tree" => snapshot && snapshot["tree"],
+      "stages" => @stages,
+      "statuses" => @statuses,
+      "miro" => (snapshot && snapshot["miro"]) || %{"configured" => false},
+      "github" => (snapshot && snapshot["github"]) || %{"configured" => false},
+      "config" => snapshot && snapshot["config"],
+      "last_dispatch_status" => nil
+    }
+  end
+
+  @doc """
+  列出本 workspace 的 kanban-manager agents（role `kanban-manager`）。
+
+  RF-7 `Ezagent.AgentRoleResolver.list_by_role/2` ——**快照来源**，覆盖 live +
+  dormant：一个 passive 的 kanban-manager 在 BEAM 重启后即便没 live 仍枚举得到
+  （否则 board 会从 UI 静默消失，HIGH-3）。`workspace_uri`（ctx 携带）把扫描限定
+  在本 tenant，不跨租户泄漏。返回的 URI 即 `entity://<ws>/agent/<id>` ——既是列表项
+  也是前端 dispatch 目标。
+  """
+  @spec list_instances(map()) :: [map()]
+  def list_instances(ctx) do
+    "kanban-manager"
+    |> Ezagent.AgentRoleResolver.list_by_role(workspace_scope(ctx))
+    |> Enum.map(fn %URI{} = uri ->
+      %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
+    end)
+  rescue
+    _ -> []
+  end
+
+  @doc "选中某个 kanban 的 state：`kanban_uri` + `tree` + 全量 `instances`（侧边栏切换用）。"
+  @spec board_state(URI.t(), map()) :: map()
+  def board_state(%URI{} = uri, ctx) do
+    snapshot = board_snapshot(uri, ctx)
+
+    %{
+      "kanban_uri" => encode_uri(uri),
+      "tree" => snapshot["tree"],
+      "instances" => list_instances(ctx),
+      "config" => snapshot["config"],
+      "miro" => snapshot["miro"],
+      "github" => snapshot["github"],
+      "last_dispatch_status" => "ok"
+    }
+  end
+
+  @doc """
+  确保一个 kanban-manager agent 起活：dormant 的 passive agent 无 chat 流量保温，
+  BEAM 重启后处于休眠。`get_tree` dispatch 打到没 live 的 agent 前先经核心 owner-gated
+  chokepoint `Ezagent.LocalRuntime.ensure_started/1`（委托 `SpawnRegistry.spawn`，从
+  `entity://<ws>/agent/<id>` 的快照 rehydrate）起活（HIGH-3 liveness）。已 live 幂等返回。
+  """
+  @spec ensure_spawned(URI.t()) :: :ok
+  def ensure_spawned(%URI{} = uri) do
+    _ = Ezagent.LocalRuntime.ensure_started(uri)
+    :ok
+  end
+
+  @doc """
+  读一个 kanban 的节点树（dispatch get_tree，身份=登录者），整成 JSON-safe。
+  只返回 tree（nodes/root_id/drops，pr 节点附 ci）；连接器配置/状态走 `board_snapshot/2`。
+  """
+  @spec read_tree(URI.t(), map()) :: map()
+  def read_tree(%URI{} = uri, ctx), do: board_snapshot(uri, ctx)["tree"]
+
+  @doc """
+  一次 `:get_tree` dispatch 拿全量看板快照：`tree`（JSON-safe 富树，pr 节点附 ci）+
+  `config`（本图连接器配置）+ `miro`/`github`（凭证连接状态）。Behavior 内只读投影，
+  world 不再直引 kanban plugin 的连接器模块。
+  """
+  @spec board_snapshot(URI.t(), map()) :: map()
+  def board_snapshot(%URI{} = uri, ctx) do
+    # fresh kanban（无快照）不会被 dispatch 自动起活 → 先确保起活（已 live 幂等返回）。
+    :ok = ensure_spawned(uri)
+    target = Ezagent.URI.with_action(uri, :kanban, :get_tree)
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: %{},
+        ctx: dispatch_ctx(ctx)
+      })
+
+    case result do
+      {:ok, %{tree: %{nodes: nodes, root_id: root} = t} = res} ->
+        ci = Map.get(res, :ci, %{})
+
+        %{
+          "tree" => %{
+            "nodes" => jsonable_nodes(nodes, t, ci),
+            "root_id" => root,
+            "drops" => Enum.map(Map.get(res, :drops, []), &jsonable_map/1)
+          },
+          "config" => jsonable_config(Map.get(res, :config)),
+          "miro" => jsonable_status(Map.get(res, :miro)),
+          "github" => jsonable_status(Map.get(res, :github))
+        }
+
+      _ ->
+        %{
+          "tree" => %{"nodes" => %{}, "root_id" => nil, "drops" => []},
+          "config" => %{"github_repo" => nil, "miro_board" => nil},
+          "miro" => %{"configured" => false},
+          "github" => %{"configured" => false}
+        }
+    end
+  end
+
+  @doc false
+  def dispatch_ctx(ctx) do
+    %{
+      caller: Map.get(ctx, :caller_uri),
+      caps: Map.get(ctx, :caller_caps, MapSet.new()),
+      reply: {:caller_inbox, self()}
+    }
+  end
+
+  # --- helpers --------------------------------------------------------
+
+  # list-by-role 的 workspace 边界（RF-7 scoping）：ctx 携带 `workspace_uri`
+  # （world_live `state_for_route` 注入）→ 限定快照扫描在本 tenant。缺省 `:all`
+  # 仅 system-scope 才走得到（world 永远带 workspace_uri）。
+  defp workspace_scope(ctx) do
+    case Map.get(ctx, :workspace_uri) do
+      %URI{} = ws -> ws
+      ws when is_binary(ws) and ws != "" -> ws
+      _ -> :all
+    end
+  end
+
+  # 连接器配置（github_repo + miro 板名）：Behavior 返回 atom 键 map，转 string 键给前端。
+  defp jsonable_config(%{github_repo: repo, miro_board: board}),
+    do: %{"github_repo" => repo, "miro_board" => board}
+
+  defp jsonable_config(_), do: %{"github_repo" => nil, "miro_board" => nil}
+
+  # 凭证连接状态（configured + board_id/repo）：atom 键 → string 键。
+  defp jsonable_status(%{configured: true} = s),
+    do:
+      %{"configured" => true}
+      |> maybe_put("board_id", Map.get(s, :board_id))
+      |> maybe_put("repo", Map.get(s, :repo))
+
+  defp jsonable_status(_), do: %{"configured" => false}
+
+  defp maybe_put(m, _k, nil), do: m
+  defp maybe_put(m, k, v), do: Map.put(m, k, v)
+
+  defp jsonable_nodes(nodes, tree, ci) when is_map(nodes) do
+    Map.new(nodes, fn {id, n} -> {id, jsonable_node(n, id, tree, ci)} end)
+  end
+
+  defp jsonable_node(n, id, _tree, ci) do
+    base = %{
+      "parent_id" => Map.get(n, :parent_id),
+      "title" => Map.get(n, :title),
+      "order" => Map.get(n, :order),
+      "stage" => to_str(Map.get(n, :stage)),
+      "owner" => Map.get(n, :owner),
+      "status" => to_str(Map.get(n, :status)),
+      "artifacts" => Enum.map(Map.get(n, :artifacts, []), &jsonable_artifact/1),
+      "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1)
+    }
+
+    # 片5：pr 节点附 CI 评价摘要（Behavior 在 get_tree 里算好，按 node_id 索引）。
+    case Map.get(n, :stage) == :pr && Map.get(ci, id) do
+      %{} = v -> Map.put(base, "ci", jsonable_ci(v))
+      _ -> base
+    end
+  end
+
+  defp jsonable_ci(v) do
+    %{
+      "score" => Map.get(v, :score),
+      "max" => Map.get(v, :max),
+      "markdown" => Map.get(v, :markdown),
+      "criteria" =>
+        v |> Map.get(:criteria, []) |> Enum.map(fn c -> %{"name" => c.name, "ok" => c.ok} end)
+    }
+  end
+
+  defp jsonable_map(m) when is_map(m), do: Map.new(m, fn {k, v} -> {to_string(k), v} end)
+
+  # file 类 artifact：url 是 uploads URI(resource://<ws>/uploads/…)，签发一个下载 href
+  # (DownloadToken，同 chat 附件)，让"打开"可下载；其余 artifact 原样。
+  defp jsonable_artifact(a) do
+    base = jsonable_map(a)
+    url = base["url"]
+
+    if base["kind"] == "file" and is_binary(url) do
+      case mint_download(url) do
+        {:ok, href} -> Map.put(base, "url", href)
+        _ -> base
+      end
+    else
+      base
+    end
+  end
+
+  # 仅当 url 解析为 resource:// URI（uploads 附件）时签发下载 href；
+  # 其余（非 URI / 别的 scheme）返回 :error，原样保留。scheme 判断走
+  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。
+  defp mint_download(url) do
+    with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
+         true <- Ezagent.URI.scheme?(uri, :resource) do
+      {:ok, "/uploads/download?token=" <> Ezagent.Uploads.DownloadToken.mint!(uri)}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp to_str(nil), do: nil
+  defp to_str(a) when is_atom(a), do: Atom.to_string(a)
+  defp to_str(s), do: s
+
+  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
+  defp encode_uri(_), do: nil
+
+  defp uri_name(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
+
+  defp detail_path(%URI{} = uri),
+    do: "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(uri))
+end

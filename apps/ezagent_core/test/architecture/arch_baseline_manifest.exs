@@ -269,6 +269,13 @@
   # group-kill subtree reaping). All 4 sidecars (cc SdkSidecar, codex AppServer +
   # BridgeSidecar, feishu WsClient) are migrated → hard zero, no allowlist.
   raw_port_spawn_executable: 0,
+  # kanban-as-role K5 (2026-06-25) — resource-only-files gate. `resource://` stays
+  # pure FS (`uri-design.md`); it must NEVER be a live spawnable Kind / GenServer.
+  # Forbids the abandoned Plan-B (#964) pattern: a plugin `resource_kinds/0`
+  # callback OR any `*ResourceKindRegistry.register(...)` call. The SANCTIONED FS
+  # resolver shape (`resource_types/0`) is NOT flagged. Hard zero, no allowlist —
+  # Plan-B never landed on main; this locks it out.
+  resource_kind_as_genserver: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

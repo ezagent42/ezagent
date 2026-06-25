@@ -66,6 +66,8 @@ defmodule Ezagent.World.SlotRegistry do
          {"auto_derive", "Auto Derive"},
          {"profile", "Profile"}
        ]},
+    # kanban 操作面（kanban-as-role K4）—— 自有 renderer family + KanbanData。
+    kanban: {Ezagent.World.KanbanData, [{"kanban", "看板"}]},
     identities:
       {Ezagent.World.IdentityData,
        [

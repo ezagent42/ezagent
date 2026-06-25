@@ -319,9 +319,98 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       kind_runtime_reentry_violations: kind_runtime_reentry_violations(),
       no_flavor_refs_in_core: length(flavor_refs_in_core),
       cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
-      raw_port_spawn_executable: raw_port_spawn_executable()
+      raw_port_spawn_executable: raw_port_spawn_executable(),
+      resource_kind_as_genserver: resource_kind_as_genserver()
     ]
   end
+
+  # kanban-as-role K5 (2026-06-25) — resource-only-files gate (cap 0). `resource://`
+  # is "not a live Kind — pure data ref, filesystem on disk" (`uri-design.md`). The
+  # abandoned Plan-B (#964) overloaded it with live spawnable Kinds
+  # (`resource_kinds/0` plugin callback + a `ResourceKindRegistry` + a workspace
+  # resource-dispatcher). kanban-as-role re-homes the board onto an `Entity.Agent`
+  # (role × native), so `resource://` returns to pure-FS. This gate LOCKS that out
+  # permanently (Plan-B never landed on main; this prevents its regression).
+  #
+  # AST-based (mirror `raw_port_spawn_executable`): walks every lib file's AST and
+  # flags two shapes —
+  #   (a) a plugin `resource_kinds/0` callback: `def resource_kinds(...)` (the
+  #       Plan-B `@callback resource_kinds() :: [...]` plugin declaration), and
+  #   (b) any call to a `ResourceKindRegistry`-style register:
+  #       `(_.)*ResourceKindRegistry.register(...)`.
+  # It must NOT flag the FS resolver's `resource_types/0` (the pure-FS resolver
+  # callback) — that is the SANCTIONED resource shape. `# arch-allow:` on the
+  # `def`/call line suppresses one site.
+  defp resource_kind_as_genserver do
+    lib_files()
+    |> Enum.map(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> count_resource_kind_as_genserver(ast, arch_allowed_lines(file))
+        {:error, _} -> 0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  @doc """
+  Testable entry for the `resource_kind_as_genserver` predicate: count the
+  Plan-B-shaped violations in a SOURCE STRING (positive/negative fixtures), so the
+  K5 gate test can prove a `resource_kinds/0` module IS flagged and a
+  `resource_types/0` FsResolver is NOT — without writing fixture files into the
+  scanned lib tree. `# arch-allow:` on the offending line suppresses it, same as
+  the real scan.
+  """
+  @spec count_resource_kind_as_genserver_in_source(String.t()) :: non_neg_integer()
+  def count_resource_kind_as_genserver_in_source(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} -> count_resource_kind_as_genserver(ast, allowed_lines_in_source(source))
+      {:error, _} -> 0
+    end
+  end
+
+  # `# arch-allow:` line numbers within a raw source string (fixture-side mirror
+  # of `arch_allowed_lines/1`, which reads a file).
+  defp allowed_lines_in_source(source) do
+    source
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.filter(fn {line, _no} -> String.contains?(line, "# arch-allow:") end)
+    |> Enum.map(fn {_line, no} -> no end)
+    |> MapSet.new()
+  end
+
+  defp count_resource_kind_as_genserver(ast, allowed_lines) do
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn node, acc ->
+        if resource_kind_node?(node, allowed_lines),
+          do: {node, acc + 1},
+          else: {node, acc}
+      end)
+
+    count
+  end
+
+  # (a) a `def resource_kinds(...)` / `defp resource_kinds(...)` definition — the
+  # Plan-B plugin callback. (Match the def head by name; arity-agnostic.)
+  defp resource_kind_node?(
+         {def_kw, meta, [{:resource_kinds, _, _args} | _]},
+         allowed_lines
+       )
+       when def_kw in [:def, :defp] do
+    not MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0))
+  end
+
+  # (b) any `*ResourceKindRegistry.register(...)` call (the registration API a
+  # plugin author must never touch for a resource:// → live Kind).
+  defp resource_kind_node?(
+         {{:., meta, [{:__aliases__, _, aliases}, :register]}, _call_meta, _args},
+         allowed_lines
+       ) do
+    List.last(aliases) == :ResourceKindRegistry and
+      not MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0))
+  end
+
+  defp resource_kind_node?(_node, _allowed_lines), do: false
 
   # Subtask B (2026-06-25) — forbid raw `Port.open({:spawn_executable, …}, …)`.
   # The sanctioned OS-process spawn exit is `Ezagent.Runtime.OsProcess` (erlexec
