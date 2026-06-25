@@ -5,7 +5,7 @@ defmodule Ezagent.Behavior.Kanban.Shared do
 
   抽出来纯粹是为了让两个 handler 模块复用同一套读/写/授权/归一逻辑，**不引入新语义**：
   - 读：`tree/1`（经 `ctx[:read]`）；
-  - 写：`commit/1`——**全 Behavior 唯一的 `{:set, :tree, ...}` 字面**（main + connectors
+  - 写：`commit/1`——**全 Behavior 唯一的 `tree set-effect（经 commit/1 收口）` 字面**（main + connectors
     所有树变更都经此收敛，守 moduledoc「所有写动作经唯一 commit/1」约定）；
   - 授权：`owner_or_admin?/2` / `admin?/1`（per-node owner 或 wildcard cap）；
   - 归一：`normalize_artifact/1`（artifact 进节点快照前归一 + content 限长）。

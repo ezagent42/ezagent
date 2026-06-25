@@ -649,7 +649,7 @@ defmodule Ezagent.Behavior.Kanban do
   # `action/3` 宏要求的 `handle_<action>/2` 薄转发（契约/宏不变）。授权 + effect
   # 契约见 Connectors moduledoc：节点级动作走 `Shared.owner_or_admin?`，图级动作 =
   # 任意持 cap 成员，凭证保存 admin-gated；树写入仍是全 Behavior 唯一的
-  # `Shared.commit/1`（`{:set, :tree, ...}`）。
+  # `Shared.commit/1`（`tree set-effect（经 commit/1 收口）`）。
   # ---------------------------------------------------------------
 
   @doc false
@@ -701,7 +701,7 @@ defmodule Ezagent.Behavior.Kanban do
 
   defp tree(ctx), do: Shared.tree(ctx)
 
-  # 树写入唯一收口（`{:set, :tree, ...}` 字面在 `Shared.commit/1`，main + connectors 共用）。
+  # 树写入唯一收口（`tree set-effect（经 commit/1 收口）` 字面在 `Shared.commit/1`，main + connectors 共用）。
   defp commit(tree), do: Shared.commit(tree)
 
   # 在一个节点上做带授权的更新；`fun.(node)` 返回新 node 或 `:invariant`。
