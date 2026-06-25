@@ -77,6 +77,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 | Agent Console (#84) | agent-console dev | Phase 0: standalone static demo (`apps/ezagent_web/priv/static/agent-console-demo/` + `static_paths` allowlist) — touches NO world files. Phase 1+: new `agent_console` surface + `*_data/*_actions` + `world_live.ex` route clause | Phase 0 demo merged (`#892`) |
 | Agent Console CRUD (#84) | claude (`feat/agent-console-crud`) | identities/agents Delete + Create-hardening: `Identities.tsx` (agent components), `main.tsx` (renderer wiring), `world_live.ex` (`agents.delete` clause + helpers), `identity_data.ex` (additive); bound-gate via `EzagentDomainInstanceMessage.agent_live_sessions/1` | in-flight |
 | hello (Phase 0, #81) | TBD | none in world (isolated plugin) | handoff merged |
+| F9 external-mirror bind UI | zyli (`feat/product-gaps-f9-f12`) | `Admin.tsx` (ExternalMirror surface only — additive bind form + unbind col), `admin_actions.ex` (external_mirror.bind/unbind handlers), `admin_data.ex` (promote `external_mirror_bindings_for/1` public), `world_live.ex` (`@admin_actions` whitelist) | in-flight — no `styles.css`, no shared-surface conflict (agent-console-crud owns `Identities.tsx`, not `Admin.tsx`) |
 
 ## 6. The checklist every world-touching handoff must include
 

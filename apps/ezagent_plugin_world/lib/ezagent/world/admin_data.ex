@@ -259,7 +259,9 @@ defmodule Ezagent.World.AdminData do
     err -> [%{"error" => inspect(err)}]
   end
 
-  defp external_mirror_bindings_for(%URI{} = session_uri) do
+  @doc "List external-mirror bindings for one session (used to refresh the surface after bind/unbind)."
+  @spec external_mirror_bindings_for(URI.t() | term()) :: [map()]
+  def external_mirror_bindings_for(%URI{} = session_uri) do
     session = URI.to_string(session_uri)
 
     from(b in "external_mirror_bindings",
@@ -278,7 +280,7 @@ defmodule Ezagent.World.AdminData do
     err -> [%{"error" => inspect(err)}]
   end
 
-  defp external_mirror_bindings_for(_), do: []
+  def external_mirror_bindings_for(_), do: []
 
   defp bridges do
     if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do

@@ -1,5 +1,5 @@
 import React from "react"
-import {Activity, Database, Route, Send, Settings, ShieldCheck, TableProperties} from "lucide-react"
+import {Activity, Database, Route, Send, Settings, ShieldCheck, TableProperties, Trash2} from "lucide-react"
 
 import {Badge, Button, EmptyState, Input, Stat} from "./ui/primitives"
 
@@ -58,7 +58,7 @@ export function AdminSurface({
     case "routing":
       return <RoutingPanel state={state} />
     case "external_mirror":
-      return <ExternalMirror state={state} />
+      return <ExternalMirror state={state} onAction={onAction} />
     default:
       return <Dashboard state={state} />
   }
@@ -543,19 +543,67 @@ function RoutingPanel({state}: {state: AdminState}) {
   )
 }
 
-function ExternalMirror({state}: {state: AdminState}) {
+function ExternalMirror({
+  state,
+  onAction,
+}: {
+  state: AdminState
+  onAction: (action: string, args: Record<string, unknown>) => void
+}) {
+  const sessionUri = s(state.session_uri)
+  const [adapterId, setAdapterId] = React.useState("feishu")
+  const [targetId, setTargetId] = React.useState("")
+  const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
+
   return (
     <Surface component="external_mirror">
       <SectionHeader eyebrow="Session" title="External mirror" />
       <code className="block w-fit rounded-md border border-border bg-muted/50 px-2 py-1 font-mono text-xs text-muted-foreground">
-        {s(state.session_uri)}
+        {sessionUri}
       </code>
-      <ExternalMirrorTable rows={state.bindings || []} />
+      <form
+        id="world-external-mirror-bind-form"
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          // phx-update="ignore" island: native form POST is swallowed by
+          // LiveView, so we preventDefault + dispatch through onAction (pushEvent).
+          event.preventDefault()
+          if (!sessionUri || !targetId.trim()) return
+          onAction("external_mirror.bind", {
+            session_uri: sessionUri,
+            adapter_id: adapterId.trim() || "feishu",
+            target_id: targetId.trim(),
+          })
+          setTargetId("")
+        }}
+      >
+        <label className={fieldLabel}>
+          Adapter
+          <Input value={adapterId} onChange={(event) => setAdapterId(event.target.value)} />
+        </label>
+        <label className={fieldLabel}>
+          Target (chat id)
+          <Input placeholder="oc_..." value={targetId} onChange={(event) => setTargetId(event.target.value)} />
+        </label>
+        <Button variant="primary" type="submit">
+          Bind
+        </Button>
+      </form>
+      <ExternalMirrorTable
+        rows={state.bindings || []}
+        onUnbind={(row) =>
+          onAction("external_mirror.unbind", {
+            session_uri: sessionUri,
+            adapter_id: s(row.adapter_id),
+            target_id: s(row.target_id),
+          })
+        }
+      />
     </Surface>
   )
 }
 
-function ExternalMirrorTable({rows}: {rows: DataRow[]}) {
+function ExternalMirrorTable({rows, onUnbind}: {rows: DataRow[]; onUnbind?: (row: DataRow) => void}) {
   return (
     <Table
       rows={rows}
@@ -568,6 +616,23 @@ function ExternalMirrorTable({rows}: {rows: DataRow[]}) {
           ? [{header: "Session", cell: (row: DataRow) => <code className={mutedMono}>{s(row.session_uri)}</code>}]
           : []),
         {header: "Bound", cell: (row) => <span className={mutedMono}>{s(row.bound_at)}</span>},
+        ...(onUnbind
+          ? [
+              {
+                header: "",
+                cell: (row: DataRow) => (
+                  <button
+                    type="button"
+                    title="Unbind"
+                    className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                    onClick={() => onUnbind(row)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                ),
+              },
+            ]
+          : []),
       ]}
     />
   )
