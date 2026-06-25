@@ -51,6 +51,23 @@ function normalizeSpec(node) {
   if (node.type === "Table" && props && Array.isArray(props.rows)) {
     props = {...props, rows: props.rows.map(coerceRow)}
   }
+  // A vertical shadcn Stack defaults to `items-start`, so a Grid/Card/nested-Stack
+  // child shrinks to its min-content width (CJK text then wraps one char per line,
+  // the squished-columns bug). Default such a stack to `align:stretch` so its block
+  // children fill the width — ONLY when it holds a container child, so a leaf-only
+  // stack (heading/text/buttons) keeps items-start and buttons don't stretch full.
+  if (node.type === "Stack") {
+    const p = props || {}
+    const vertical = p.direction !== "horizontal"
+
+    if (vertical && p.align == null) {
+      const kids = Array.isArray(node.children) ? node.children : []
+      const hasContainer = kids.some(
+        (c) => c && (c.type === "Grid" || c.type === "Card" || c.type === "Table" || c.type === "Stack"),
+      )
+      if (hasContainer) props = {...p, align: "stretch"}
+    }
+  }
   const children = Array.isArray(node.children) ? node.children.map(normalizeSpec) : node.children
   return {...node, props, children}
 }

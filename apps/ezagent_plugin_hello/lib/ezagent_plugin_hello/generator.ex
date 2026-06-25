@@ -838,14 +838,18 @@ defmodule EzagentPluginHello.Generator do
 
   defp gen_prompt(_current, user_text), do: user_text
 
-  defp land_page(session_uri, builder, spec, _user_text, _reframe, theme_action) do
+  defp land_page(session_uri, builder, spec, user_text, _reframe, theme_action) do
     # The spec is the WHOLE page (all shadcn). The per-page CSS THEME is built per
     # `theme_action`: a FIRST generation designs it; a TEXT-only edit KEEPS it (fast,
     # design stays put); a STRUCTURAL edit (new / replaced elements) RE-themes — but
     # SEEDED with the current theme so the look is preserved while the NEW elements
     # get styled consistently (otherwise new json-render nodes render as unstyled
     # shadcn defaults that clash with the page).
-    theme = build_theme(session_uri, builder, spec, theme_action)
+    # An explicit APPEARANCE request (make it cooler / change the colors / …)
+    # RE-themes with that instruction — the look lives in the THEME (CSS), not the
+    # spec, so a spec patch alone can only change text/structure, never the style.
+    action = if style_request?(user_text), do: :restyle, else: theme_action
+    theme = build_theme(session_uri, builder, spec, action, user_text)
 
     case TurnDriver.drive(session_uri, spec, "", builder) do
       {:ok, _turn} = ok ->
@@ -891,29 +895,52 @@ defmodule EzagentPluginHello.Generator do
       else: :keep
   end
 
-  defp build_theme(_session_uri, _builder, _spec, :keep), do: nil
+  defp build_theme(_session_uri, _builder, _spec, :keep, _user_text), do: nil
 
-  defp build_theme(session_uri, builder, spec, :generate) do
+  defp build_theme(session_uri, builder, spec, :generate, _user_text) do
     {theme, secs} =
       with_progress(session_uri, builder, gettext("Designing theme"), fn ->
-        generate_theme(spec, nil)
+        generate_theme(spec, nil, nil)
       end)
 
     TurnDriver.say(session_uri, builder, gettext("Theme ready in %{s}s.", s: secs))
     theme
   end
 
-  defp build_theme(session_uri, builder, spec, :regenerate) do
+  defp build_theme(session_uri, builder, spec, :regenerate, _user_text) do
     base = current_theme(session_uri)
 
     {theme, secs} =
       with_progress(session_uri, builder, gettext("Restyling so new parts match"), fn ->
-        generate_theme(spec, base)
+        generate_theme(spec, base, nil)
       end)
 
     TurnDriver.say(session_uri, builder, gettext("Theme updated in %{s}s.", s: secs))
     theme
   end
+
+  # An APPEARANCE request restyles the theme WITH the user's instruction (seeded
+  # with the current theme so unrelated parts stay coherent).
+  defp build_theme(session_uri, builder, spec, :restyle, user_text) do
+    base = current_theme(session_uri)
+
+    {theme, secs} =
+      with_progress(session_uri, builder, gettext("Restyling the look"), fn ->
+        generate_theme(spec, base, user_text)
+      end)
+
+    TurnDriver.say(session_uri, builder, gettext("Restyled in %{s}s.", s: secs))
+    theme
+  end
+
+  # Appearance/style intent → route to the theme step. Heuristic; a false positive
+  # just costs an extra re-theme, never a wrong edit.
+  defp style_request?(text) when is_binary(text) do
+    text =~
+      ~r/炫酷|酷一?点|好看|美化|漂亮|颜色|配色|样式|风格|背景|渐变|阴影|动画|字体|圆角|边框|质感|高级|大气|主题|暗色|深色|亮色|浅色|cooler|fancy|beautiful|pretty|stylish|sleek|modern|gradient|shadow|animation|theme|colou?r|font|dark mode|polish|vibe|aesthetic|look nicer|restyle/i
+  end
+
+  defp style_request?(_), do: false
 
   # The session's current per-page theme CSS (nil if none yet) — the seed that lets
   # a re-theme PRESERVE the existing design while covering new elements.
@@ -924,8 +951,8 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  defp generate_theme(spec, base_theme) do
-    case call_llm(Prompts.theme_gen_system(), theme_user_prompt(spec, base_theme)) do
+  defp generate_theme(spec, base_theme, instruction) do
+    case call_llm(Prompts.theme_gen_system(), theme_user_prompt(spec, base_theme, instruction)) do
       {:ok, %{content: content}} ->
         Sanitize.css(content)
 
@@ -935,27 +962,43 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # On a re-theme we hand the model the CURRENT theme and tell it to KEEP the design
-  # language, only EXTENDING coverage to every (incl. new) element — so an edit's
-  # new nodes are styled in harmony, not redesigned.
-  defp theme_user_prompt(spec, base) when is_binary(base) and base != "" do
-    """
-    Here is the page's CURRENT theme. KEEP its design language EXACTLY — same
-    palette, fonts, sizing, spacing, radii, overall feel. EXTEND it so EVERY element
-    in the spec below is styled consistently, INCLUDING any newly added ones. Do not
-    redesign; just make sure nothing renders unstyled.
+  # Build the theme-model user message: an optional STYLE instruction (an
+  # appearance edit), the optional CURRENT theme to preserve + extend, then the
+  # spec. With an instruction the model restyles the asked-for element; without
+  # one it keeps the design and just covers every (incl. new) element.
+  defp theme_user_prompt(spec, base, instruction) do
+    instr_part =
+      if is_binary(instruction) and String.trim(instruction) != "" do
+        """
+        STYLE CHANGE the user asked for — APPLY it. Restyle the relevant element /
+        section (bold colors, gradients, shadows, motion, better type & spacing are
+        all fair game — make it genuinely look great), keeping the rest coherent:
 
-    ```css
-    #{base}
-    ```
+        #{instruction}
 
-    The page spec:
+        """
+      else
+        ""
+      end
 
-    #{Jason.encode!(spec)}
-    """
+    base_part =
+      if is_binary(base) and base != "" do
+        """
+        The page's CURRENT theme — KEEP its design language (palette, fonts, spacing,
+        radii) EXCEPT where the change above asks otherwise, and EXTEND it so EVERY
+        element in the spec (including any newly added ones) is styled, nothing bare:
+
+        ```css
+        #{base}
+        ```
+
+        """
+      else
+        ""
+      end
+
+    instr_part <> base_part <> "The page spec:\n\n#{Jason.encode!(spec)}"
   end
-
-  defp theme_user_prompt(spec, _base), do: Jason.encode!(spec)
 
   defp get_title(%{"props" => %{"title" => t}}) when is_binary(t) and t != "", do: t
   # shadcn trees have no page title — use the first Heading's text as the brand.
