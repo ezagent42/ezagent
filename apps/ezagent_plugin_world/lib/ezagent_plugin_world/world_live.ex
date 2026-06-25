@@ -221,7 +221,7 @@ defmodule EzagentPluginWorld.WorldLive do
     CommandPaletteActions.handle_dispatch(socket, action, args)
   end
 
-  @admin_actions ~w(admin.smtp.save admin.smtp.test admin.smtp.update_recipient)
+  @admin_actions ~w(admin.smtp.save admin.smtp.test admin.smtp.update_recipient external_mirror.bind external_mirror.unbind)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @admin_actions and is_map(args) do
     AdminActions.handle_dispatch(socket, action, args)
