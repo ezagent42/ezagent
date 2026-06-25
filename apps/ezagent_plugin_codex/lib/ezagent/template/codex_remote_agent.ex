@@ -60,9 +60,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_config_dir(tmpl),
-         :ok <- check_optional_string(tmpl, "model"),
-         :ok <- check_optional_string(tmpl, "approval_policy"),
-         :ok <- check_optional_string(tmpl, "sandbox") do
+         :ok <- Ezagent.PluginCodex.Template.CodexAgent.ConfigSchema.validate_values(tmpl) do
       :ok
     end
   end
@@ -432,14 +430,6 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
       :error -> :ok
       {:ok, value} when is_binary(value) and value != "" -> :ok
       {:ok, bad} -> {:error, {:invalid_config_dir, bad}}
-    end
-  end
-
-  defp check_optional_string(tmpl, key) do
-    case Map.fetch(tmpl, key) do
-      :error -> :ok
-      {:ok, value} when is_binary(value) -> :ok
-      {:ok, bad} -> {:error, {:invalid_string_field, key, bad}}
     end
   end
 

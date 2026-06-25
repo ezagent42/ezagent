@@ -249,6 +249,10 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         Ezagent.Kind.Template.content_field(content, :mcp_config_path),
       "api_key_helper" => Ezagent.Kind.Template.content_field(content, :api_key_helper),
       "role" => Ezagent.Kind.Template.content_field(content, :role),
+      "model" => Ezagent.Kind.Template.content_field(content, :model),
+      "effort" => Ezagent.Kind.Template.content_field(content, :effort),
+      "permission_mode" => Ezagent.Kind.Template.content_field(content, :permission_mode),
+      "tools" => Ezagent.Kind.Template.content_field(content, :tools),
       # §5.B follow-up (c) — the TEST/E2E source-credential path. The
       # refresh-if-expired provisioner (`refresh_test_credentials/3`) needs a
       # SOURCE `.credentials.json` to refresh FROM on the source agent's OWN
@@ -281,6 +285,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_sandbox_keys(tmpl),
+         :ok <- Ezagent.PluginCc.Template.CcAgent.ConfigSchema.validate_values(tmpl),
          :ok <- check_role(tmpl) do
       :ok
     end
