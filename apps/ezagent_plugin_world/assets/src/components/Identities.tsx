@@ -76,7 +76,7 @@ type CascadeState = {
 
 type ConfigFieldRow = {
   key: string
-  value?: string | null
+  value?: unknown
   source?: string
 }
 
@@ -997,9 +997,14 @@ function formatList(values: string[] | undefined) {
   return `via ${values.join(", ")}`
 }
 
-function formatConfigValue(value: string | null | undefined): string {
+function formatConfigValue(value: unknown): string {
   if (value == null) return "—"
-  // Truncate long text values for display
-  if (value.length > 80) return value.slice(0, 80) + "…"
-  return value
+  if (typeof value === "boolean") return value ? "true" : "false"
+  if (typeof value === "number") return String(value)
+  if (typeof value === "string") {
+    if (value.length > 80) return value.slice(0, 80) + "…"
+    return value
+  }
+  // objects, arrays — JSON compact
+  try { return JSON.stringify(value) } catch { return String(value) }
 }

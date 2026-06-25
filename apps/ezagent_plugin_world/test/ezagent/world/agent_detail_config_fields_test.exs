@@ -68,17 +68,23 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
       refute config_fields == [],
              "config_fields must not be empty for a created curl agent"
 
-      # Verify known curl fields appear
+      # Verify known curl fields appear (values may be null for direct-spawn)
       field_keys = Enum.map(config_fields, & &1["key"]) |> MapSet.new()
       assert MapSet.subset?(MapSet.new(["model", "provider", "api_url"]), field_keys),
              "curl agent config_fields must include model/provider/api_url; got: #{inspect(field_keys)}"
 
-      # Verify each field has key, value, source
+      # Verify each field has key, value key, source
       for field <- config_fields do
         assert is_binary(field["key"]), "config_field key must be a string"
         assert Map.has_key?(field, "value"), "config_field must have value key"
         assert field["source"] in ["template", "cascade", "runtime"],
                "config_field source must be template|cascade|runtime; got: #{inspect(field["source"])}"
+      end
+
+      # Direct-spawn curl agents have no respawn_template_data, so values are nil
+      template_fields = Enum.filter(config_fields, &(&1["source"] == "template"))
+      for field <- template_fields do
+        assert field["key"] != nil, "template field key must be present even for direct-spawn"
       end
     end
 

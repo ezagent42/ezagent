@@ -570,10 +570,13 @@ defmodule Ezagent.World.IdentityData do
   # ── M1: per-flavor config fields + not-wired annotations ─────────────────
 
   # M1: temporary per-flavor field lists. M2+ replaced by config_schema/0.
-  defp template_field_keys_for("cc"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt)
-  defp template_field_keys_for("cc-headless"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt)
-  defp template_field_keys_for("codex"), do: ~w(model approval_policy sandbox)
-  defp template_field_keys_for("codex-remote"), do: ~w(model approval_policy sandbox)
+  # Derived from each Template Class's template_data_extra/1.
+  # cc/cc-headless: appends operator_settings_path/operator_mcp_config_path/api_key_helper/role/credential_source
+  # codex/codex-remote: appends bridge_ws_url/codex_path
+  defp template_field_keys_for("cc"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
+  defp template_field_keys_for("cc-headless"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
+  defp template_field_keys_for("codex"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
+  defp template_field_keys_for("codex-remote"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
   defp template_field_keys_for("curl"), do: ~w(model provider api_url system_prompt max_history)
   defp template_field_keys_for(_), do: []
 
@@ -582,7 +585,9 @@ defmodule Ezagent.World.IdentityData do
       (sandbox_state && (Map.get(sandbox_state, :respawn_template_data) || Map.get(sandbox_state, "respawn_template_data"))) ||
         %{}
 
-    # Template data fields (storage B)
+    # Template data fields (storage B) — always emit known keys per flavor
+    # Values may be nil for direct-spawn agents (no respawn_template_data)
+    # M2+ replaced by config_schema/0 discovery
     template_fields =
       flavor
       |> template_field_keys_for()
