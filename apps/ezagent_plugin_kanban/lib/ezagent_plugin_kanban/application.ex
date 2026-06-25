@@ -6,12 +6,23 @@ defmodule EzagentPluginKanban.Application do
   Kind 实例（`resource://<ws>/kanban/<name>`，数据资源 Kind），节点树住在它的 state（真相源）；
   与 markmap markdown 文件双向同步。
 
-  纯 plugin（路 A）：只声明 `kinds/0` / `behaviors/0` / `children/0`，框架的
-  `Ezagent.Plugin.boot/1` 代为注册，作者不碰任何 `*Registry`。
+  纯 plugin（路 A）：只声明 `kinds/0` / `behaviors/0` / `resource_kinds/0` / `children/0`，
+  框架的 `Ezagent.Plugin.boot/1` 代为注册，作者不碰任何 `*Registry`。
   `:ezagent_plugin_check` 编译器是非旁路的强制 gate。
 
   本模块同时 `use Application`（OTP plumbing）与 `use Ezagent.Plugin`（声明契约），
   对齐 `EzagentPluginEcho.Application` 先例。
+
+  ## 怎么起活（kanban-clean Plan B）
+
+  kanban Kind 经 `resource://<ws>/kanban/<name>` 寻址。`resource` scheme 的 spawn
+  dispatcher 由 **workspace domain** 独占（`EzagentDomainWorkspace.Application`），
+  按 `Ezagent.URI.type/1` 查 `Ezagent.ResourceKindRegistry` 找回 Kind 模块——这正是
+  session domain 的 `entity` dispatcher 查 user/agent（agent 经 `AgentFlavorRegistry`）的
+  同构范式。plugin **永不**注册 scheme spawn fn（invariant 8），只在 `resource_kinds/0`
+  声明自己的 type→Kind，`Ezagent.Plugin.boot/1` 代为登记进 ResourceKindRegistry。
+  dispatch 到没 live 的 fresh kanban URI 仍只 `:no_such_actor`（无快照 → 不自动起），
+  故 world 在 create/select/session-board 入口先 `SpawnRegistry.spawn`。
   """
 
   use Application
@@ -19,27 +30,6 @@ defmodule EzagentPluginKanban.Application do
 
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
-
-  # df-tech 下沉（kanban-clean）：注册 `resource://*/kanban/*` 的 spawn fn，让 world（及任何
-  # caller）经核心 `Ezagent.SpawnRegistry.spawn/1` 起活 kanban Kind——**不必直引** kanban 模块、
-  # 不必直碰 `InstanceSupervisor`。dispatch 到没 live 的 fresh kanban URI 仍只会 `:no_such_actor`
-  # （无快照 → 不自动起），故 world 在 create/select/session-board 入口先 `SpawnRegistry.spawn`。
-  #
-  # `resource` scheme 当前无 spawn fn 占用（socialware/world 只用 `resource://` 寻址 FS 数据，
-  # 不起 Kind），故此处不 hijack 任何核心 scheme（invariant 8）。spawn fn 按 type 段判，只认
-  # `kanban`，其它 resource 类型 reject。`spawns/0` 仍返 []（gate 友好）；这是 runtime register。
-  @impl Ezagent.Plugin
-  def after_boot do
-    :ok =
-      Ezagent.SpawnRegistry.register("resource", fn %URI{} = uri ->
-        case Ezagent.URI.type(uri) do
-          {:ok, "kanban"} -> Ezagent.Kind.spawn(EzagentPluginKanban.Kanban, %{uri: uri})
-          other -> {:error, {:unsupported_resource_type, other}}
-        end
-      end)
-
-    :ok
-  end
 
   @impl Ezagent.Plugin
   def plugin_info do
@@ -53,6 +43,12 @@ defmodule EzagentPluginKanban.Application do
 
   @impl Ezagent.Plugin
   def kinds, do: [EzagentPluginKanban.Kanban]
+
+  # df-tech（kanban-clean）：声明 `resource://<ws>/kanban/<name>` → kanban Kind。
+  # `Ezagent.Plugin.boot/1` 登记进 `Ezagent.ResourceKindRegistry`；workspace domain
+  # 的 `resource` dispatcher 据此起活。作者只声明、不碰 SpawnRegistry（invariant 8）。
+  @impl Ezagent.Plugin
+  def resource_kinds, do: [{"kanban", EzagentPluginKanban.Kanban}]
 
   @impl Ezagent.Plugin
   def behaviors do

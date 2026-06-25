@@ -281,7 +281,11 @@
   #   false-negatives caught). Same-name defs across compile-time branches/quotes
   #   merge conservatively — documented only if EVERY branch is (+1 caught).
   # arch-cap-bump: #55 doc-coverage burn-down 441→392
-  undocumented_public_defs: 392,
+  # arch-cap-bump: df-tech kanban-clean — +1 for the `resource_kinds/0`
+  #   `defoverridable` default stub injected by `Ezagent.Plugin.__using__`
+  #   (a macro-emitted public API head that can't carry a `@doc`, same as
+  #   the 11 sibling plugin-callback defaults already in this baseline).
+  undocumented_public_defs: 393,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

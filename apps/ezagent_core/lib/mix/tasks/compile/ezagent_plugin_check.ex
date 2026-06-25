@@ -244,6 +244,16 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
         Ezagent.Kind.Template,
         "template_classes/0"
       )
+      # df-tech (kanban-clean) — spawnable resource Kinds declared via
+      # `resource_kinds/0`. Each `{type, kind_module}` must have
+      # `kind_module` implement `Ezagent.Kind` (the sanctioned declaration
+      # outlet — analogous to `kinds/0`). A plugin uses this instead of a
+      # `SpawnRegistry.register` boot hook (which check 7 rejects).
+      |> check_modules(
+        Enum.map(plugin_module.resource_kinds(), fn {_type, kind_module} -> kind_module end),
+        Ezagent.Kind,
+        "resource_kinds/0"
+      )
     else
       diagnostics
     end

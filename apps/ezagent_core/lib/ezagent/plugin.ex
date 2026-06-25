@@ -186,6 +186,18 @@ defmodule Ezagent.Plugin do
           {type :: String.t(), Ezagent.Resource.FsResolver.type_spec()}
 
   @typedoc """
+  A plugin-contributed *spawnable* `resource://<ws>/<type>/<name>` Kind
+  declaration (df-tech kanban-clean) — the `resource`-scheme analogue of
+  `agent_flavor_decl/0`. `{type, kind_module}` (kind implements
+  `Ezagent.Kind`). `boot/1` registers each pair into
+  `Ezagent.ResourceKindRegistry`, which the domain-owned `resource` spawn
+  dispatcher reads — the plugin owns no scheme (invariant 8). Distinct
+  from `resource_type_decl/0` (FS *addressing*, no live Kind).
+  """
+  @type resource_kind_decl ::
+          {type :: String.t(), kind_module :: module()}
+
+  @typedoc """
   What the `/plugins` config icon opens. V1 is `:route | :flavor | nil`
   — `:form` is rejected until the plugin-settings store ships (V2,
   codex MEDIUM-6).
@@ -239,6 +251,13 @@ defmodule Ezagent.Plugin do
   `use Ezagent.Plugin`.
   """
   @callback resource_types() :: [resource_type_decl()]
+
+  @doc """
+  Plugin-contributed spawnable `resource://<ws>/<type>/<name>` Kind
+  declarations (df-tech kanban-clean). `boot/1` registers each
+  `{type, kind_module}` into `Ezagent.ResourceKindRegistry`. Default `[]`.
+  """
+  @callback resource_kinds() :: [resource_kind_decl()]
   @callback config_surface() :: config_surface()
   @callback children() :: [Supervisor.child_spec() | {module(), term()}]
   @callback after_boot() :: :ok
@@ -251,6 +270,7 @@ defmodule Ezagent.Plugin do
                       adapters: 0,
                       routing_tables: 0,
                       resource_types: 0,
+                      resource_kinds: 0,
                       config_surface: 0,
                       children: 0,
                       after_boot: 0
@@ -286,6 +306,7 @@ defmodule Ezagent.Plugin do
       def adapters, do: []
       def routing_tables, do: []
       def resource_types, do: []
+      def resource_kinds, do: []
       def config_surface, do: nil
       def children, do: []
       def after_boot, do: :ok
@@ -298,6 +319,7 @@ defmodule Ezagent.Plugin do
                      adapters: 0,
                      routing_tables: 0,
                      resource_types: 0,
+                     resource_kinds: 0,
                      config_surface: 0,
                      children: 0,
                      after_boot: 0
@@ -450,7 +472,7 @@ defmodule Ezagent.Plugin do
     end)
 
     Enum.each(plugin_module.config_surface() |> List.wrap(), fn surface ->
-      assert_config_surface!(plugin_module, surface)
+      Ezagent.Plugin.ConfigSurface.assert!(plugin_module, surface)
     end)
 
     Enum.each(plugin_module.template_classes(), fn class_module ->
@@ -472,6 +494,14 @@ defmodule Ezagent.Plugin do
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
+    end)
+
+    # df-tech (kanban-clean) — spawnable `resource://` Kinds →
+    # ResourceKindRegistry, read by the domain-owned `resource` spawn
+    # dispatcher. Same declarative shape as `agent_flavors/0`.
+    Enum.each(plugin_module.resource_kinds(), fn decl ->
+      {type, kind_module} = assert_resource_kind!(plugin_module, decl)
+      :ok = Ezagent.ResourceKindRegistry.register(type, kind_module)
     end)
 
     # ExternalMirror PR-EM-1 (SPEC §5.1) — codex r1 HIGH-1 fix:
@@ -593,6 +623,22 @@ defmodule Ezagent.Plugin do
           "#{inspect(plugin_module)} declared a malformed agent_flavors/0 entry: " <>
             "#{inspect(decl)}. Each entry must be a map " <>
             "%{flavor: String.t(), kind: module(), template_class: module()}."
+  end
+
+  # df-tech (kanban-clean) — runtime validation for a `resource_kinds/0`
+  # entry; mirrors `assert_agent_flavor!/2`. Returns the validated pair.
+  defp assert_resource_kind!(plugin_module, {type, kind_module})
+       when is_binary(type) and is_atom(kind_module) do
+    src = "resource_kinds/0 (type #{inspect(type)})"
+    assert_implements!(plugin_module, kind_module, Ezagent.Kind, src)
+    {type, kind_module}
+  end
+
+  defp assert_resource_kind!(plugin_module, decl) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed resource_kinds/0 entry: " <>
+            "#{inspect(decl)}. Each entry must be a " <>
+            "`{type :: String.t(), kind_module :: module()}` tuple."
   end
 
   # ExternalMirror PR-EM-1 — runtime Grill-5 verification for an
@@ -948,38 +994,5 @@ defmodule Ezagent.Plugin do
     |> Enum.member?(behaviour)
   rescue
     _ -> false
-  end
-
-  # codex PR-5 MEDIUM-5 — `config_surface/0` is `:route | :flavor |
-  # nil` in V1. `:form` (auto-rendered settings persisted to a store
-  # that does not exist yet) is V2 — reject it. A malformed map (or
-  # any non-conforming value) is also rejected so it cannot reach
-  # `plugins_live` and crash `/plugins`. Mirrors the
-  # `:ezagent_plugin_check` gate's compile-time check.
-  defp assert_config_surface!(_plugin_module, nil), do: :ok
-
-  defp assert_config_surface!(_plugin_module, %{kind: :route, path: path, label: label})
-       when is_binary(path) and is_binary(label),
-       do: :ok
-
-  defp assert_config_surface!(_plugin_module, %{kind: :flavor, flavor: flavor, label: label})
-       when is_binary(flavor) and is_binary(label),
-       do: :ok
-
-  defp assert_config_surface!(plugin_module, %{kind: :form} = surface) do
-    raise ArgumentError,
-          "#{inspect(plugin_module)} declared a `:form` config_surface/0 " <>
-            "(#{inspect(surface)}). The plugin settings store is V2 — `:form` " <>
-            "is rejected in V1. V1 config_surface/0 is :route | :flavor | nil " <>
-            "(SPEC §6.1)."
-  end
-
-  defp assert_config_surface!(plugin_module, surface) do
-    raise ArgumentError,
-          "#{inspect(plugin_module)} declared a malformed config_surface/0: " <>
-            "#{inspect(surface)}. V1 config_surface/0 is one of " <>
-            "%{kind: :route, path: String.t(), label: String.t()}, " <>
-            "%{kind: :flavor, flavor: String.t(), label: String.t()}, or nil " <>
-            "(SPEC §6.1)."
   end
 end
