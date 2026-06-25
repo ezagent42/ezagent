@@ -156,31 +156,45 @@ jobs:
 - 每环境**独立 Postgres 容器 + 独立 `_pg` volume** → 数据完全隔离。
 - 每环境**独立 `.env` + 独立 `POSTGRES_PASSWORD`**。
 
-### 4.2 共享 mihomo + Caddy,两层网络
+### 4.2 共享 tailscale + mihomo + Caddy,两层网络
 
-`mihomo`(无状态出口代理)和 `Caddy`(nightly/beta 入口)**三环境共用**;为跨 compose project 互通,
-网络分两层:
+`tailscale`(sidecar,加入 Headscale)、`mihomo`(无状态出口代理)、`Caddy`(nightly/beta 入口)
+**三环境共用**;为跨 compose project 互通,网络分两层:
 
 ```
 每环境私有网络(隔离):   ezagent ↔ postgres          ← PG 只在这,永不外露
 共享 edge 网络(external): ezagent ↔ mihomo(出口,三环境共用一个)
-                          Caddy ↔ ezagent(nightly/beta 入口,一个 Caddy 多 site-block)
-                          cloudflared ↔ ezagent(stable 入口)
+                          tailscale(sidecar:加入 head.h2os.cloud,拿自己的 100.x)
+                            └─ Caddy 共享其 netns(network_mode: service:tailscale)
+                               → reverse_proxy ezagent-nightly/beta:10042(多 site-block)
+                          cloudflared ↔ ezagent(stable 入口,公网)
 ```
 
-- 一个 **shared infra compose**(`ezagent-infra`)装共用 **mihomo + Caddy**;stable 的 `cloudflared`
-  放 infra 或留在 stable stack(实现时定)。
+- 一个 **shared infra compose**(`ezagent-infra`)装共用 **tailscale + mihomo + Caddy**;stable 的
+  `cloudflared` 走 stable stack 的 compose profile。
 - 每个 env stack attach 到 external edge 网络 + 自己的私有网络。
-- 取舍:为共用 mihomo/Caddy,egress/ingress 这条线**故意打通**(非全隔离);但 **PG + 数据卷仍完全隔离**。
+- 取舍:为共用 tailscale/mihomo/Caddy,egress/ingress 这条线**故意打通**(非全隔离);但 **PG + 数据卷仍完全隔离**。
 
-### 4.3 接入(承接 deploy-flow 早先决策)
+### 4.3 接入(tailscale sidecar —— 避开 OrbStack host-utun 绑定坑)
 
-- **nightly / beta**:**Caddy** 只监听 Headscale `100.x` 接口,用 **Cloudflare DNS-01 ACME**
-  (复用 `ezagent-cf-token`)给 `nightly/beta.ezagent.chat` 签真 Let's Encrypt 证书(DNS 验证,无需公网端口)。
-  CF DNS:`nightly`/`beta` 的 A 记录指向 Mac 的 `100.x` —— 公网解析到私网地址走不通,仅 tailnet 内可达。
-  > 注:Headscale **不支持** `tailscale serve`/`tailscale cert`(issue #2527/#2137 仍 open),
-  > 故走 Caddy 自签而非 Tailscale Serve。
-- **stable**:`cloudflared` 隧道 → `app.ezagent.chat`(公网)。
+**为何不绑 host 的 `100.64.0.27`**:OrbStack 在 VM 里发布端口,把 publish 绑到 host 的 Tailscale `utun`
+地址历史上不稳(`cannot assign requested address`),而 Headscale 又无 Tailscale Serve 兜底 → 单点风险。
+改用 **tailscale sidecar**:
+
+- **nightly / beta**:`tailscale` 容器(`tailscale/tailscale`,kernel 模式:`TS_USERSPACE=false` +
+  `/dev/net/tun` + `NET_ADMIN`)用 **Headscale preauth key** 加入 `head.h2os.cloud`,以 hostname
+  `ezagent-edge` 拿到**自己的 100.x**。**Caddy 用 `network_mode: service:tailscale` 共享其 netns** →
+  直接在该 tailnet IP 上 listen;TLS 走 **Cloudflare DNS-01 ACME**(复用 CF token)给
+  `nightly/beta.ezagent.chat` 签真证书(DNS 验证,无需公网端口)。
+  CF DNS:`nightly`/`beta` 的 A 记录指向 **ts 容器的 100.x**(持久化 `ts_state` 卷 → 重启保号);公网解析到
+  CGNAT 私网地址走不通,仅 tailnet 内可达。
+  > 注:Headscale **不支持** `tailscale serve`/`tailscale cert`(issue #2527/#2137 仍 open),故仍用
+  > Caddy 做 TLS(DNS-01),tailscale 只提供"仅 tailnet 可达"的网络面。
+  > 新的待验证项(取代 host-bind 风险):OrbStack VM 内 `/dev/net/tun` + kernel 模式可用 → 部署时先验。
+- **stable**:`cloudflared` 隧道 → `app.ezagent.chat`(公网,与 tailscale 无关)。
+
+> operator 输入:**Headscale preauth key**(在 `head.h2os.cloud` 上 `headscale preauthkeys create
+> --user <user> --reusable`),写入 gitignored `docker/.env.infra` 的 `TS_AUTHKEY`。
 
 ---
 
@@ -208,6 +222,8 @@ TM 备份它会出事(显示 8TB → "no available space to restore";`data.img` 
 
 → **铁律**:
 1. 把 `~/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data` **从 Time Machine 排除**。
+   **已查证:本机 OrbStack `data_allow_backup: false` 默认就排除了该目录**(等价 `tmutil addexclusion`)。
+   故本期只需**核对该 flag 保持 false**(`orb config get data_allow_backup`),无需手动 `tmutil`。
 2. ezagent 状态保护**完全靠 §5.2 的逻辑备份 → `./backups/<env>/`**;Time Machine 只备份该 host 文件夹
    (在 `data.img` 之外,小而一致,可单文件恢复)。
 
@@ -217,8 +233,11 @@ TM 备份它会出事(显示 8TB → "no available space to restore";`data.img` 
 
 - **从 Docker Desktop 迁移**:旧 volume/镜像**不自动过来**;本期是 fresh 三环境部署,无影响,只需知晓
   现有 Docker Desktop 上 prod 数据(若有)不带过来。
-- **开机自启**:stable 要长期在线 → 确保 OrbStack 随登录自启,Mac 保持登录/不休眠;`restart: unless-stopped`
-  仅在 OrbStack 运行时生效。
+- **开机自启**:stable 要长期在线 → 确保 OrbStack 随登录自启(本机 `app.start_at_login: true` 已开),
+  Mac 保持登录/不休眠;`restart: unless-stopped` 仅在 OrbStack 运行时生效。
+- **启动竞态**:tailscale sidecar 容器**自己**加入 Headscale(用 `ts_state` 卷里的状态重连),不依赖 host
+  的 tailscaled,故无 host-tailscale 先后竞态;但 sidecar 首次拉起需能出网到 `head.h2os.cloud`。`restart:
+  unless-stopped` 自愈,runbook 注明"重启后确认 `ezagent-edge` 节点在线 + Caddy 起来"。
 - **bind mount 性能**:OrbStack 已把 bind mount 提到近原生 75–95%,若将来某处需要 bind mount,代价远小于
   Docker Desktop(但热数据仍用 volume)。
 
