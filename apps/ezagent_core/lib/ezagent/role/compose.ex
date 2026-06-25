@@ -34,6 +34,7 @@ defmodule Ezagent.Role.Compose do
   @type materialized :: %{
           behaviors: [module() | atom()],
           passive: boolean(),
+          role: String.t() | nil,
           sandbox_content: %{
             skills: [Role.skill_ref()],
             plugins: [Role.plugin_ref()],
@@ -64,6 +65,11 @@ defmodule Ezagent.Role.Compose do
       # attribute (RF-5a) — the routing/join/mention gates source `passive?` from
       # that attribute, never from a parsed URI.
       passive: role.passive,
+      # RF-7: carry the role NAME through to materialization so the create step
+      # records it as the durable `:sandbox`-slice `:role` field (the list-by-role
+      # read model + the `:role` UriQuery resolver source it from that snapshot,
+      # never from a parsed URI). `nil` only for an unnamed recipe.
+      role: role.name,
       sandbox_content: %{
         skills: role.skills,
         plugins: role.plugins,

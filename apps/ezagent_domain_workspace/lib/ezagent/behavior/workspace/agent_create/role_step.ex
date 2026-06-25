@@ -117,6 +117,46 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   def grant_passive_marker(_agent_uri, _materialized), do: :ok
 
   @doc """
+  Build the DURABLE marker spawn-args (`:passive` RF-6 + `:role` NAME RF-7) the
+  host merges into `Sandbox.create/1`'s args — both snapshot-backed in the
+  `:sandbox` slice (the cold-restart source for the `:passive`/`:role` UriQuery
+  resolvers + `Ezagent.AgentRoleResolver.list_by_role/2`). A roleless create
+  (`nil` materialized) contributes nothing → the slice's defaults.
+  """
+  @spec spawn_marker_args(map() | nil) :: map()
+  def spawn_marker_args(%{} = materialized) do
+    %{}
+    |> maybe_put(:passive, Map.get(materialized, :passive), &is_boolean/1)
+    |> maybe_put(:role, Map.get(materialized, :role), &(is_binary(&1) and &1 != ""))
+  end
+
+  def spawn_marker_args(_), do: %{}
+
+  defp maybe_put(args, key, value, valid?) do
+    if valid?.(value), do: Map.put(args, key, value), else: args
+  end
+
+  @doc """
+  Write the DURABLE role-NAME marker for a role-driven agent (RF-7).
+
+  The `:sandbox`-slice `:role` field (threaded via the spawn args by the host) is
+  the snapshot-backed source of truth for `Ezagent.AgentRoleResolver.list_by_role/2`
+  + the `:role` UriQuery resolver. This ALSO primes the volatile ETS fast path
+  (`Ezagent.AgentRoleAttributes`) so the per-URI `:role` resolver answers
+  correctly BEFORE the first snapshot. A roleless create (`nil` materialized or
+  an unnamed recipe) writes nothing — an absent ETS entry + a `nil` slice field
+  both resolve to "no role".
+  """
+  @spec grant_role_marker(URI.t(), map() | nil) :: :ok
+  def grant_role_marker(_agent_uri, nil), do: :ok
+
+  def grant_role_marker(%URI{} = agent_uri, %{role: role}) when is_binary(role) and role != "" do
+    Ezagent.AgentRoleAttributes.put(agent_uri, role)
+  end
+
+  def grant_role_marker(_agent_uri, _materialized), do: :ok
+
+  @doc """
   Mint the role recipe's authorized caps fail-closed and grant them at the
   workspace granter ctx.
 

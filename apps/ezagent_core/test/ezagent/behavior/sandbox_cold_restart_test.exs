@@ -124,7 +124,9 @@ defmodule Ezagent.Behavior.SandboxColdRestartTest do
              pty_phase: :running,
              # RF-5a/RF-6 durable passive marker — rehydrated false (principal)
              # for a non-role agent across the crash.
-             passive: false
+             passive: false,
+             # RF-7 durable role NAME — nil (no role) for this non-role agent.
+             role: nil
            }
 
     # ---- 2. Transient REBUILT to a live equivalent. ----

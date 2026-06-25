@@ -41,13 +41,23 @@ defmodule Ezagent.Behavior.Sandbox do
                                                    # snapshot-persisted so the LV badge shows
                                                    # the last-known phase across a phx restart
                                                    # until activate/2 re-spawns the subprocess.
-        passive:               boolean()           # RF-5a/RF-6: DURABLE non-principal
+        passive:               boolean(),          # RF-5a/RF-6: DURABLE non-principal
                                                    # (data-actor) marker. The role create step
                                                    # writes it from the materialized recipe's
                                                    # `passive`; the `:passive` UriQuery resolver
                                                    # reads it from this slice (snapshot-backed)
                                                    # so a passive actor stays passive across a
                                                    # cold restart (NOT fail-open to principal).
+        role:                  nil | String.t()    # RF-7: DURABLE role NAME. The role create
+                                                   # step writes it from the requested recipe
+                                                   # (`role.name`); the `:role` UriQuery resolver
+                                                   # + `Ezagent.AgentRoleResolver.list_by_role/2`
+                                                   # read it from this slice (snapshot-backed) so
+                                                   # a DORMANT passive role agent (e.g. the
+                                                   # kanban-manager) still enumerates by role
+                                                   # after a BEAM restart (else the board
+                                                   # vanishes). `nil` = no role (every existing
+                                                   # agent), never enumerated by any role.
       }
 
   Every one of these is DURABLE: the cold-load `activate/2` reads
@@ -208,9 +218,23 @@ defmodule Ezagent.Behavior.Sandbox do
        # recipe; an absent value (every non-role agent) is `false` (principal).
        # A snapshot rehydrate shadows this on cold-load, so it survives a
        # restart — the `:passive` UriQuery resolver reads it from this slice.
-       passive: validate_passive(Map.get(args, :passive))
+       passive: validate_passive(Map.get(args, :passive)),
+       # RF-7 DURABLE role NAME. The role create step threads `:role` into the
+       # spawn args from the requested recipe; an absent value (every non-role
+       # agent) is `nil` (not enumerated by any role). A snapshot rehydrate
+       # shadows this on cold-load, so it survives a restart — the `:role`
+       # UriQuery resolver + `Ezagent.AgentRoleResolver.list_by_role/2` read it
+       # from the persisted slice, so a DORMANT passive role agent still
+       # enumerates by role after a BEAM restart.
+       role: validate_role(Map.get(args, :role))
      }}
   end
+
+  # `role` comes from spawn args (role create step) or a rehydrated snapshot
+  # value; a non-empty string is the role NAME, anything else (nil/missing/
+  # corrupt/empty) is the no-role default `nil` — never enumerated by a role.
+  defp validate_role(r) when is_binary(r) and r != "", do: r
+  defp validate_role(_), do: nil
 
   # `passive` comes from spawn args (role create step) or a rehydrated snapshot
   # value; anything that is not a boolean (nil/missing/corrupt) is the
