@@ -23,8 +23,14 @@
 | `jjkysy` | 姚升悦 | dev-together skill 改进（**owner**） | 分析并查看当前的 review/plan，**完善 dev-together skill 并提交改进 PR**：让分析强制走**系统功能层面 + 按人完成 + 待办**，plan 强制声明 **off-plan/越界预算**，产出**可外发**标准版式。 | `chore/dev-together-skill-improve` | `.claude/skills/dev-together/**`（单一写者） |
 | `ruihuachen-designer` | 陈瑞华 | 协助 `jjkysy`（设计） | **协助** `jjkysy`：设计 review/plan 的**可外发版式**（章节结构、可读性、团队同步需要哪些信息），作为设计输入交给 `jjkysy` 落进 skill；**不直接改 skill 文件**。 | （设计输入） | 版式设计稿 |
 
-## 待 `allenwoods` 重新分派
-- **`FatNine`（戴明）今日暂无 track** —— agent console 已整体交 `gagameow`。需重新分派。建议二选一：(a) **rebase + 收尾 #918**（echo→Entity.Agent，他的 OPEN PR；但与 `allenwoods` 的 LocalRuntime 整合纠缠 —— 需约定 echo 业务侧 vs LocalRuntime 侧的边界，或 #918 并进整合任务、`FatNine` 转做别的）；(b) 给 agent console 补**UI 回归测试框架**（world LiveViewTest）。请 `allenwoods` 定。
+## 休息
+- **`FatNine`（戴明）今日休息**，不派任务（@林懿伦 2026-06-25）。echo→Entity.Agent（#918）的 LocalRuntime 决策并入 `allenwoods` 的整合任务（A+B+C）。
+
+## `allenwoods` 任务范围已定（A+B+C）
+- **A** 配置统一 → `domain.agent` 统一入口 + registrar（cc/codex/curl/echo 全收拢）。
+- **B** 把 3 个 sidecar（`Cc.SdkSidecar` / `Codex.AppServer` / `Codex.BridgeSidecar`）从 `Port.open` **迁到 erlexec**（根治孤儿进程；不改普通 cc PTY）。
+- **C** LocalRuntime 收口（#99）+ 加带-behaviors 的 spawn arity（解锁 #918）。
+- 详见 `handoffs/allenwoods-agent-runtime-consolidation-plan.md`。
 
 ## 依赖与顺序
 1. **`gagameow` 的现状 handoff → 解锁 `allenwoods` 的后端整合任务**（厘清后再动手）。`gagameow` 先出 handoff，再做 console。
