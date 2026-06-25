@@ -13,6 +13,7 @@
    - `commands/review.md`：强制**系统功能层面分析** + **按人完成情况** + **待处理事项**；强制产出**可外发版本**（去内部讨论过程）+ 内部底稿分离。
    - `commands/plan.md`：强制**off-plan/越界预算声明**；用**完整 github 名**；中文可外发。
    - `references/`：加一个 review/plan 的**标准版式模版**（吸收 `ruihuachen-designer` 的设计）。
+   - **修正 clarify 原则（@林懿伦 2026-06-25 拍板）**：把"遇未知就停下问、别猜"改成 —— **快速迭代下：开工前一次性想清所有可能要澄清的问题（一起问/带明确默认假设）→ 过程中自驱做到完成、不逐个停问 → 完成后回头澄清是否要改**；只有"猜错会推翻整个方案"才中途停。改进 SKILL.md / handoff / return 命令里所有 clarify-first 措辞，使其符合这个"front-load → self-drive → post-clarify"模型（与 wake-but-don't-stop 一致）。
 3. 通过 `scripts/validate_skill.sh`。
 
 ## DoD（四性质）
