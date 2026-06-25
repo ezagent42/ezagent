@@ -39,8 +39,19 @@ defmodule Ezagent.Entity.AgentTest do
       assert Agent.base_behaviors() == base
       assert Agent.nil_capture_behavior_set() == base
 
-      assert Agent.behaviors() ==
-               base ++ [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.CcHeadlessAgent]
+      expected_behaviors =
+        Ezagent.AgentFlavorRegistry.list_all()
+        |> Enum.flat_map(fn
+          {_flavor, %{kind: Agent, instance_behaviors: fun}} when is_function(fun, 0) ->
+            fun.()
+
+          _other ->
+            []
+        end)
+        |> then(&(base ++ &1))
+        |> MapSet.new()
+
+      assert MapSet.new(Agent.behaviors()) == expected_behaviors
 
       assert Agent.curl_behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
       assert Agent.cc_headless_behaviors() == base ++ [Ezagent.Behavior.CcHeadlessAgent]

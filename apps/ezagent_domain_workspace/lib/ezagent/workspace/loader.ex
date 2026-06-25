@@ -402,17 +402,32 @@ defmodule Ezagent.Workspace.Loader do
     # state shouldn't crash the whole umbrella — log and return [].
     # The plugin's later Loader.load_all runs catch up; tests checkout
     # connections explicitly per Sandbox docs.
-    try do
-      Workspace.Store.list_all() |> Enum.map(&load_one/1)
-    rescue
-      e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-        Logger.warning(
-          "Workspace.Loader.load_all: DB unavailable at boot (#{inspect(e.__struct__)}); " <>
-            "skipping — plugin re-runs or per-test setup will pick up Workspaces"
-        )
+    if agent_flavor_registry_unsealed?() do
+      Logger.info(
+        "Workspace.Loader.load_all: agent flavor registry is not sealed yet; " <>
+          "skipping until the domain-agent flavor publish hook re-runs load_all/0"
+      )
 
-        []
+      []
+    else
+      try do
+        Workspace.Store.list_all() |> Enum.map(&load_one/1)
+      rescue
+        e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+          Logger.warning(
+            "Workspace.Loader.load_all: DB unavailable at boot (#{inspect(e.__struct__)}); " <>
+              "skipping — plugin re-runs or per-test setup will pick up Workspaces"
+          )
+
+          []
+      end
     end
+  end
+
+  defp agent_flavor_registry_unsealed? do
+    Code.ensure_loaded?(Ezagent.AgentFlavorRegistry) and
+      function_exported?(Ezagent.AgentFlavorRegistry, :sealed?, 0) and
+      not Ezagent.AgentFlavorRegistry.sealed?()
   end
 
   defp load_one(%{name: name} = decoded) do

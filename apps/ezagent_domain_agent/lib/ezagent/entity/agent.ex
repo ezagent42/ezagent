@@ -71,20 +71,17 @@ defmodule Ezagent.Entity.Agent do
   # who can rotate. CapabilityRegistry binding lives in
   # `EzagentDomainIdentity.Application` against `Ezagent.Entity.Agent`
   # — same cross-domain pattern as Identity Behavior registration.
-  # PR-6+7 (im/session/agent decomposition §3.5 / §OQ-1) — `behaviors/0` is
-  # the declared SUPERSET. It gains `Ezagent.Behavior.CurlAgent` (the curl
-  # flavor's STATE behavior, reparented off the now-DELETED standalone
-  # curl Kind). CurlAgent is ACTIVE only on a `curl`-flavor
-  # instance, which threads an explicit `:behaviors` set
-  # (`curl_behaviors/0`) at spawn. EVERY OTHER agent (cc / codex / echo)
-  # has a `nil`/absent `:kind_base` and resolves to `nil_capture_behavior_set/0`
-  # below — the BASE subset, which EXCLUDES CurlAgent — so they stay
-  # byte-identical to pre-PR-6 (no `:curl_agent` slice pollution). The
-  # forward-only curl-snapshot migration onto this Kind is `mix
-  # ezagent.curl.migrate` (rewrites pre-fold rows; no rollback window).
+  # PR-6+7 (im/session/agent decomposition §3.5 / §OQ-1) introduced a declared
+  # Agent behavior SUPERSET for folded flavors. A2/A3 makes that set
+  # plugin-derived: every registered flavor targeting this Kind may declare an
+  # `instance_behaviors/0` thunk. The Kind exposes the union for Capability/
+  # BehaviorRegistry declaration, while each concrete instance still activates
+  # only its persisted `:behaviors` set (or the base nil-capture set).
   @impl Ezagent.Kind
-  def behaviors,
-    do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.CcHeadlessAgent]
+  def behaviors do
+    (base_behaviors() ++ registry_instance_behaviors())
+    |> Enum.uniq()
+  end
 
   @doc """
   The BASE (non-flavor) Agent behavior set — the pre-PR-6 declared list.
@@ -108,6 +105,17 @@ defmodule Ezagent.Entity.Agent do
       # behaviors that live on the Agent Kind.
       Ezagent.Behavior.ConfigEvolve
     ]
+
+  defp registry_instance_behaviors do
+    Ezagent.AgentFlavorRegistry.list_all()
+    |> Enum.flat_map(fn
+      {_flavor, %{kind: __MODULE__, instance_behaviors: fun}} when is_function(fun, 0) ->
+        fun.()
+
+      _ ->
+        []
+    end)
+  end
 
   @doc """
   The curl-flavor per-instance behavior subset (the explicit `:behaviors`
