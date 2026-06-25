@@ -7,13 +7,25 @@ defmodule EzagentPluginCodex.AppServer do
   (`codex app-server proxy --sock ...`). It is deliberately separate from
   Domain.Pty: the app-server is a control daemon, while Domain.Pty owns the
   interactive TUI process and terminal surface.
+
+  ## Transport
+
+  Spawns the Codex app-server process via `Ezagent.Runtime.OsProcess`
+  (erlexec `run_link` + `{group,0}` + `kill_group`) so every teardown path
+  — graceful shutdown, owner crash, brutal BEAM SIGKILL — reaps the full
+  process group (codex → vendored bins). Replaces the native `Port.open`
+  used before.
+
+  SPEC `docs/superpowers/specs/2026-06-25-sidecar-erlexec-runtime.md` §4.
   """
 
   use GenServer
 
   require Logger
 
-  defstruct [:agent_uri, :cwd, :socket_path, :port, :test_mode, output: ""]
+  alias Ezagent.Runtime.OsProcess
+
+  defstruct [:agent_uri, :cwd, :socket_path, :exec_pid, :os_pid, :test_mode, output: ""]
 
   @compile_env Mix.env()
 
@@ -61,6 +73,10 @@ defmodule EzagentPluginCodex.AppServer do
 
   @impl true
   def init(%{agent_uri: agent_uri, cwd: cwd, socket_path: socket_path} = args) do
+    # SPEC §3.1 caller contract: trap_exit UNCONDITIONALLY — even in test_mode
+    # where no child spawns — so supervisor :shutdown reaches terminate/2.
+    Process.flag(:trap_exit, true)
+
     test_mode = Map.get(args, :test_mode, @compile_env == :test)
 
     state = %__MODULE__{
@@ -73,51 +89,73 @@ defmodule EzagentPluginCodex.AppServer do
     if test_mode do
       {:ok, state}
     else
-      case start_port(cwd, socket_path, args) do
-        {:ok, port} -> {:ok, %{state | port: port}}
+      case start_os_process(cwd, socket_path, args) do
+        {:ok, exec_pid, os_pid} -> {:ok, %{state | exec_pid: exec_pid, os_pid: os_pid}}
         {:error, reason} -> {:stop, reason}
       end
     end
   end
 
+  # ─── stdout: raw framing — accumulate chunks directly (no LineBuffer) ────
+
   @impl true
-  def handle_info({_port, {:data, data}}, state) when is_binary(data) do
-    {:noreply, %{state | output: trim_output(state.output <> data)}}
+  def handle_info({:stdout, _os_pid, bytes}, state) when is_binary(bytes) do
+    {:noreply, %{state | output: trim_output(state.output <> bytes)}}
   end
 
-  def handle_info({_port, {:exit_status, status}}, state) do
+  # ─── stderr: :merge means stderr arrives as :stdout — defensive clause ────
+
+  def handle_info({:stderr, _os_pid, bytes}, state) when is_binary(bytes) do
+    # With stderr: :merge, erlexec routes stderr to {:stdout, …}. This clause
+    # is defensive; it won't fire under normal configuration.
+    {:noreply, %{state | output: trim_output(state.output <> bytes)}}
+  end
+
+  # ─── child exit via run_link — handle ALL reason shapes ──────────────────
+
+  def handle_info({:EXIT, exec_pid, reason}, %{exec_pid: exec_pid} = state) do
     Logger.warning(
-      "codex app-server exited for #{URI.to_string(state.agent_uri)} with status #{status}"
+      "codex app-server exited for #{URI.to_string(state.agent_uri)} " <>
+        "reason=#{inspect(reason)}; recent output:\n#{state.output}"
     )
 
-    {:stop, {:app_server_exit, status}, state}
+    {:stop, {:app_server_exit, reason}, state}
+  end
+
+  # Defensive: ignore exits from processes we didn't spawn.
+  def handle_info({:EXIT, _other, _reason}, state) do
+    {:noreply, state}
   end
 
   @impl true
-  def terminate(_reason, %{port: port}) when not is_nil(port) do
-    Port.close(port)
-  catch
-    _, _ -> :ok
+  def terminate(_reason, %{exec_pid: exec_pid, agent_uri: agent_uri} = _state)
+      when not is_nil(exec_pid) do
+    OsProcess.stop(exec_pid)
+    OsProcess.cleanup_pid_file("codex-appserver", agent_uri)
   end
 
   def terminate(_reason, _state), do: :ok
 
-  defp start_port(cwd, socket_path, args) do
+  defp start_os_process(cwd, socket_path, args) do
     with {:ok, codex} <- codex_executable(args),
          :ok <- File.mkdir_p(Path.dirname(socket_path)) do
       _ = File.rm(socket_path)
 
-      port =
-        Port.open({:spawn_executable, codex}, [
-          :binary,
-          :exit_status,
-          :stderr_to_stdout,
-          {:args, ["app-server", "--listen", "unix://#{socket_path}"]},
-          {:cd, cwd},
-          {:env, port_env(Map.get(args, :cmd_env, %{}))}
-        ])
+      agent_uri = Map.fetch!(args, :agent_uri)
 
-      {:ok, port}
+      case OsProcess.spawn(
+             [codex, "app-server", "--listen", "unix://#{socket_path}"],
+             cd: cwd,
+             env: port_env(Map.get(args, :cmd_env, %{})),
+             stderr: :merge,
+             pid_file: {"codex-appserver", agent_uri}
+           ) do
+        {:ok, %{exec_pid: exec_pid, os_pid: os_pid}} ->
+          {:ok, exec_pid, os_pid}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -129,7 +167,8 @@ defmodule EzagentPluginCodex.AppServer do
 
   defp port_env(_), do: []
 
-  defp codex_executable(args) do
+  @doc false
+  def codex_executable(args) do
     case Map.get(args, :codex_path) || System.find_executable("codex") do
       path when is_binary(path) -> {:ok, path}
       nil -> {:error, :codex_not_found}
