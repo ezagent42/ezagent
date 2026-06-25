@@ -5,7 +5,9 @@
 ## 1. Problem / north star
 **North star (Allen): adding an agent flavor should = adding a plugin, with ZERO edits to core/domain.** Today that's *almost* true — the flavor-plugin registry exists and is wired — but three hold-outs still force core edits or break uniformity. A finishes the contract.
 
-## 2. Current state (code-verified, origin/main @ 1901dd35)
+## 2. Current state (code-verified, origin/main @ 1901dd35; cross-checked against gaga's `handoffs/agent-runtime-situation.md`)
+> gaga's 现状分析 frames it as 3 orthogonal dimensions — **entrance protocol** (console/protocol_api/Feishu) × **Kind runtime** (Entity.Agent vs Entity.Echo) × **sidecar** (PTY/SdkSidecar/AppServer). A owns the **Kind-runtime + flavor + config** dimension; B owns sidecar; C owns entrance/LocalRuntime. There are **6** AI flavors — cc, cc-headless, codex, codex-remote, curl, echo — **5/6 already share `Entity.Agent`**; only **echo** has its own Kind. (So D1's behaviors-union must cover all folded flavors' `instance_behaviors`, not just curl's.)
+
 - `Ezagent.Plugin` declares `@callback agent_flavors/0` + `agent_flavor_decl` type. **cc/codex/curl/echo all implement it**; `Plugin.boot/1` registers each into `Ezagent.AgentFlavorRegistry`.
 - `Ezagent.AgentFlavorRegistry` (in **ezagent_core**) = ETS `flavor → %{kind, template_class, instance_behaviors}`. It **is consumed** (template_spawn, agent_template, domain_session resolver, workspace/agent_create). (Its moduledoc "nothing reads it yet" is STALE.)
 - **behaviors are already flavor-plugin-owned** via the optional `instance_behaviors` 0-arity thunk in the decl (curl uses it; consumed at `workspace/agent_create.ex:437`).
