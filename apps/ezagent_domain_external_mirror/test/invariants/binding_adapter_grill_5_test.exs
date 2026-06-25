@@ -164,6 +164,13 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
     # at the moment the test runs. ExUnit.start has already started the
     # ExternalMirror app + loaded every umbrella module, so production
     # offenders show up here.
+    #
+    # EXCLUDE test-fixture modules: this invariant is about PRODUCTION code, but
+    # `:code.all_loaded/0` is a global snapshot, so dual-behaviour fixtures that
+    # OTHER (async) tests define on purpose — e.g. `PluginContractTest.Dual_*`,
+    # which exists to prove the contract REJECTS them — leak in depending on
+    # load order, making this test flaky. A module defined under a `/test/`
+    # source path is a fixture, not production, so reject it.
     offenders =
       :code.all_loaded()
       |> Enum.map(fn {mod, _file} -> mod end)
@@ -171,6 +178,7 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
         behaviour?(mod, Ezagent.ExternalMirror.Adapter) and
           behaviour?(mod, Ezagent.ExternalMirror.Binding)
       end)
+      |> Enum.reject(&defined_in_test?/1)
 
     assert offenders == [],
            """
@@ -189,6 +197,18 @@ defmodule Ezagent.ExternalMirror.Invariants.BindingAdapterGrill5Test do
     |> Keyword.get_values(:behaviour)
     |> List.flatten()
     |> Enum.member?(behaviour)
+  rescue
+    UndefinedFunctionError -> false
+  end
+
+  # A module is a test fixture (not production) if its compiled source lives under
+  # a `/test/` directory. Production code lives in `lib/`. Modules without compile
+  # info are treated as production (conservative — don't hide a real offender).
+  defp defined_in_test?(module) do
+    module.module_info(:compile)
+    |> Keyword.get(:source, ~c"")
+    |> to_string()
+    |> String.contains?("/test/")
   rescue
     UndefinedFunctionError -> false
   end
