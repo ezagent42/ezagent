@@ -2,7 +2,7 @@
 
 > **Task:** zyli-developer ②（plan.md 行 22 第②项）— 把人肉测试沉淀为 `docs/e2e/`
 > **Branch:** `zyli/e2e-fullflow-validation-0625`（off `main` `8b673310`）
-> **PR:** <待 gh 认证后创建,创建后回填>
+> **PR:** [#990](https://github.com/ezagent42/ezagent/pull/990)
 > **Dev:** 李震宇（zyli,操作员)+ Claude(记录/取证)
 > **returned_at:** 2026-06-25 18:24 +0800
 > **deadline:** 2026-06-25 23:59 +0800
@@ -39,8 +39,8 @@ DoD 来自 plan.md ②:`docs/e2e/`(`scenario-<no>.md` + `guide.md` + evidence ex
 
 - Branch `zyli/e2e-fullflow-validation-0625`,off `main` `8b673310`(rebase 后,F9/F12 已在 main)。
 - **改动纯 docs**(`docs/e2e/` + 本 return);**无 tracked 代码改动**(cc 临时实验已还原,`git diff -- '*.ex' '*.exs'` 空)。
-- CI(precommit + check_invariants):<待 PR 创建后回填 run URL + status;docs-only 预期 green>
-- rebase-base SHA:`8b673310`(= 当前 `origin/main`)。
+- CI(precommit + check_invariants):PR #990,docs-only 改动(无代码/无测试触及)→ 预期 green;run 状态见 PR checks。
+- rebase-base SHA:`8b673310`(= 当前 `origin/main`,push 时 0 behind)。
 
 ## 合并请求(merge request)
 
