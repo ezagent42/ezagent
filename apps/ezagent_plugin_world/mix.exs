@@ -32,6 +32,7 @@ defmodule EzagentPluginWorld.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
+      {:ezagent_domain_external_mirror, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
