@@ -167,8 +167,7 @@ defmodule EzagentPluginCodex.AppServer do
 
   defp port_env(_), do: []
 
-  @doc false
-  def codex_executable(args) do
+  defp codex_executable(args) do
     case Map.get(args, :codex_path) || System.find_executable("codex") do
       path when is_binary(path) -> {:ok, path}
       nil -> {:error, :codex_not_found}
