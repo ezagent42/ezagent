@@ -1,36 +1,40 @@
-# Handoff — A: 配置统一 → domain.agent（allenwoods）
+# Handoff — A: agent flavor + config unification (allenwoods)
 
-> 三条并行子任务之一（见主文档 `allenwoods-agent-runtime-consolidation-plan.md`）。Allen 会对本 handoff 走 brainstorm 完善。
+> Complete handoff. Brainstorm + spec + plan + **two** codex adversarial reviews done. Ready to implement after lead sets `/goal`.
 
-## 目标
-所有 agent flavor（cc/codex/curl/echo）的 **config + behaviors 都从存储的 flavor 统一解析**，收拢到 `domain.agent` 的统一入口 + 注册器。消除"spawn 时 thread behaviors"的特例。
+## What & why
+Finish the flavor-plugin contract so **adding an agent flavor = adding a plugin, ZERO core edits**, locked by an arch gate. Today flavor logic has leaked into `ezagent_core` (generic `Kind.Template` + `Plugin.publish` know about flavors) and `Entity.Agent.behaviors/0` is hardcoded. North star: plugin isolation, machine-enforced.
 
-## 背景（现状）
-- `Entity.Agent.behaviors/0 = base ++ [CurlAgent, CcHeadlessAgent]`（Kind 声明的超集）。
-- **只有 curl 在 spawn 时 thread 一个缩减集 `curl_behaviors`**（`entity/agent.ex:121`）；cc/codex 用 Kind 默认；echo（#918）照抄 curl 去 thread `echo_behaviors`。
-- config 后端 = `Ezagent.AgentConfig` facade（cap-gated，#938/#943/#966）。
+## Read order (authoritative)
+1. SPEC — `docs/together/2026-06-25/specs/A-agent-flavor-config-unification.md` (decisions D1–D6, /goal §6)
+2. PLAN (rev 2) — `docs/together/2026-06-25/specs/A-plan.md` (PR-A1..A6, exact files/idioms/risks)
+3. Spec review — `docs/together/2026-06-25/specs/A-codex-adversarial-review.md`
+4. Backend现状 — `docs/together/2026-06-25/handoffs/agent-runtime-situation.md` (gaga)
 
-## 设计（待 brainstorm 定稿）
-1. **Entity.Agent 在 init 从存储 flavor 统一解析 behaviors**：spawn 只给 URI；`Entity.Agent` 读自己的 flavor（stored attr，经 UriQuery）→ 解析该 flavor 的 behavior 集。**curl 的 spawn-thread 重构成同一机制**（不再特例）。→ 这同时让 LocalRuntime 保持 URL-only（C 受益）。
-2. **echo 接入**（吸收 #918）：echo 作为 `Entity.Agent` 的一个 flavor case，flavor=echo → 解析 echo behaviors（含 Behavior.Echo + Identity + ConfigEvolve）→ echo 自动获得 config。
-3. **config 入口收拢到 domain.agent**：保持 `Ezagent.AgentConfig` facade 签名稳定（console 契约，见主文档），domain.agent 成为统一实现/注册器。
+## Skills (load first)
+`Skill: ezagent-developer` + `Skill: elixir-phoenix-helper`. (If dispatched to codex: it has no Skill tool → `cat .claude/skills/ezagent-developer/SKILL.md` + `.../elixir-phoenix-helper/SKILL.md` first.)
 
-## DoD（四性质）
-- [ ] **parity 4/4**：cc/codex/curl/echo 都经"从 flavor 统一解析"拿到 behaviors（无 spawn-thread 特例）—— 给出 4 flavor 的解析对照。
-- [ ] **echo 有 config**：echo agent 能读/改 config（解 #958 echo 配不了）—— 测试证明。
-- [ ] **console 契约不破**：`AgentConfig` facade 签名不变（或改了先通知 gaga）。
-- [ ] **回归**：flavor→behaviors 解析的单测 + 全量 mix test 绿；CI 绿 + rebase。
+## Branch / worktree
+Branch `feat/agent-flavor-config-unification` off current `main`. **Work in a DEDICATED `git worktree`, never the shared `/Users/h2oslabs/Workspace/esr-ng` checkout** (it drifts onto other agents' branches — caused two corrupted reviews + a clobber this cycle).
 
-## 关键文件
-- `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex`（behaviors 解析）+ `entity/agent/template_spawn.ex`
-- flavor 解析：`agent_flavor_registry` / UriQuery
-- config facade（保持契约）：`apps/ezagent_domain_identity/lib/ezagent/agent_config.ex`
-- echo：吸收 `#918`（`agent-contract-echo-soul` 分支）的 echo→Entity.Agent 逻辑
+## PR sequence (detail in PLAN)
+- **A1** invert `Kind.Template` flavor coupling via a `ReadyGate.register_external_gate`-style registered hook (persistent_term + function_exported? + no-op default).
+- **A2** (a) invert `Plugin.publish`'s registry write via a 2nd ReadyGate-style hook *(the crux — keeps core flavor-blind, no core→agent edge)*; (b) add a domain.agent EtsOwner (started first); (c) move registry+resolver+attributes core→domain.agent + fix readers; (d) add arch gate `no_flavor_refs_in_core`=0.
+- **A3** `behaviors/0` registry-derived behind a **sealed-registry boot barrier** (else cold-restart bug class #110/#113/#114 — cc `after_boot` `load_all` spawns before all flavors register).
+- **A4** `config_schema` in `agent_flavor_decl`.
+- **A5** replace `Ezagent.AgentConfig` with a domain.agent config API; migrate the real callers — `world/agent_actions.ex:196/219/242`, `world/identity_data.ex:184`, `domain_identity/config_evolve.ex` (+ add `domain_agent→domain_identity` dep). **Coordinate gaga** (console wires this contract).
+- **A6** drop the `AgentKind` alias.
+Order: A1→A2(a→d)→A3; A4/A5/A6 independent after A2. A2/A3 are high-blast-radius.
 
-## 冲突点
-- 与 C 已解耦（behaviors 不 spawn-thread）。
-- 与 gaga console = facade 契约（主文档），不破签名。
-- echo 逻辑来自 FatNine 的 #918（今日休息）—— 吸收其逻辑，无并发写。
+## DoD (the /goal, spec §6 — verbatim acceptance)
+1. core has zero flavor refs (gate `no_flavor_refs_in_core`=0; cluster in domain.agent; Kind.Template + Plugin.publish via hooks).
+2. `behaviors/0` registry-derived + boot-order guarantee + cold-restart regression test.
+3. `AgentConfig` replaced by domain.agent config API (cap-gated); real callers migrated; `config_schema` in decl.
+4. cc/codex/curl all `kind: Entity.Agent` (no AgentKind alias).
+Gates: full `mix test` 0 failures + CI green; `no_flavor_refs_in_core` green; "add flavor = plugin, zero core edit" invariant test passes; gaga console reads/writes via domain.agent API.
 
-## 必读
-skill `ezagent-developer`；主文档；`#918` 的现有实现；dev-together（四性质 DoD / clarify / rebase）。
+## Out of scope (sequenced follow-up, own spec)
+- **echo → py-agent → delete echo** (SPEC §8): build a `python` program-agent flavor (folded onto Entity.Agent, shared `:receive`, runs py) → swap into echo's ~77 test/seed refs → delete echo + `Entity.Echo`. Logged in `docs/futures/todo.md`.
+
+## Process
+Per-PR: four-property DoD reconciliation at return, CI green on PR head, rebased on current main, **dedicated worktree**, not self-merged into main unless self-driven by the lead.
