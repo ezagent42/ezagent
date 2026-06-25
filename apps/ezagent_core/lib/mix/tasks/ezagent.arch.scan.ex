@@ -103,7 +103,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # P5-1b — shifted 180→168: condensed the PR-N3 cursor comment to absorb the
     # `instance_set_gate` denial-telemetry caller/target enrichment (audit
     # handler no longer detaches on a per-instance denial) under the LOC gate.
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 168},
+    # RF-1 — shifted 168→169: the `lookup_behavior` call became a 2-line
+    # `Ezagent.Kind.BehaviorSet.resolve_action/3` call in `handle_dispatch`'s
+    # `with` chain (per-instance action→behavior resolution, role-foundation).
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 169},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment

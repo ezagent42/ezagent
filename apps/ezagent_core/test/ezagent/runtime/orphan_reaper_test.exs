@@ -30,22 +30,11 @@ defmodule Ezagent.Runtime.OrphanReaperTest do
     end
   end
 
-  defp eventually_dead?(os_pid, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-
-    Stream.repeatedly(fn ->
-      cond do
-        System.monotonic_time(:millisecond) > deadline -> :timeout
-        os_alive?(os_pid) -> :alive
-        true -> :dead
-      end
-    end)
-    |> Enum.reduce_while(nil, fn
-      :dead, _ -> {:halt, true}
-      :timeout, _ -> {:halt, false}
-      :alive, _ -> Process.sleep(200) && {:cont, nil}
-    end)
-  end
+  # NOTE: death is asserted DETERMINISTICALLY via the erlexec `:monitor`
+  # `{:DOWN, os_pid, :process, _, _}` message (the orphan is spawned with
+  # `:exec.run(..., [:monitor])` in `spawn_sleep/1`), NOT by polling `ps -p`
+  # against a wall-clock budget — the old `eventually_dead?/2` poll flaked
+  # under load (the SIGTERM reap is async; reap could slip past the budget).
 
   # Spawn a real `sleep` and return its OS pid. Registered for cleanup.
   defp spawn_sleep(test_ctx) do
@@ -140,8 +129,9 @@ defmodule Ezagent.Runtime.OrphanReaperTest do
       assert :ok = OrphanReaper.reap(@plugin)
       refute File.exists?(path)
 
-      assert eventually_dead?(os_pid, 10_000),
-             "orphan sleep #{os_pid} survived reap — it was not signalled"
+      assert_receive {:DOWN, ^os_pid, :process, _exec_pid, _reason},
+                     10_000,
+                     "orphan sleep #{os_pid} survived reap — no erlexec :DOWN (not signalled)"
     end
 
     @tag :slow

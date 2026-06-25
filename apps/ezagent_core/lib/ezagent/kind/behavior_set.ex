@@ -150,10 +150,26 @@ defmodule Ezagent.Kind.BehaviorSet do
         :error ->
           nil_capture_behavior_set(kind_module)
 
-        # PRESENT list (INCLUDING []) → intersect with declared, order-preserved.
+        # PRESENT list (INCLUDING []). RF-1 (generalized keystone): keep
+        # `declared ∩ requested` (declared order — byte-identical to pre-RF-1)
+        # AND ALSO requested members that are NOT declared but ARE validated
+        # real Behaviors (recipe-loaded role behaviors on a generic host Kind
+        # that declares nothing flavor/role-specific). A declared-but-scoped-out
+        # behavior stays excluded (it is not in `requested`) → P1 subset-denial
+        # holds. `real_behavior?/1` is the trust check that replaces "∩ declared"
+        # (Role.new/1 validates recipe behaviors are real Behaviors); authz still
+        # gates every action, so presence in the set grants NO privilege.
         {:ok, list} when is_list(list) ->
           requested = MapSet.new(list)
-          Enum.filter(declared, &MapSet.member?(requested, &1))
+          declared_part = Enum.filter(declared, &MapSet.member?(requested, &1))
+          declared_set = MapSet.new(declared)
+
+          extra_part =
+            Enum.filter(list, fn b ->
+              not MapSet.member?(declared_set, b) and real_behavior?(b)
+            end)
+
+          declared_part ++ extra_part
       end
 
     Enum.uniq(chosen ++ base_behaviors())
@@ -198,13 +214,77 @@ defmodule Ezagent.Kind.BehaviorSet do
           # Entity.Agent). Symmetric with `init_set/2`'s absent-key branch.
           nil_capture_behavior_set(kind_module)
 
-        # PRESENT captured list (INCLUDING []) → intersect with declared.
+        # PRESENT captured list (INCLUDING []). RF-1: symmetric with init_set —
+        # keep `declared ∩ captured` (declared order) AND captured members that
+        # are undeclared-but-real Behaviors (recipe-loaded). Scoped-out declared
+        # behaviors stay excluded → P1 subset-denial holds; cold-restart
+        # rehydrates the identical set from the persisted `:kind_base`.
         list when is_list(list) ->
           captured_set = MapSet.new(list)
-          Enum.filter(declared, &MapSet.member?(captured_set, &1))
+          declared_part = Enum.filter(declared, &MapSet.member?(captured_set, &1))
+          declared_set = MapSet.new(declared)
+
+          extra_part =
+            Enum.filter(list, fn b ->
+              not MapSet.member?(declared_set, b) and real_behavior?(b)
+            end)
+
+          declared_part ++ extra_part
       end
 
     Enum.uniq(chosen ++ base_behaviors())
+  end
+
+  # RF-1 trust check: a module is admissible into an instance's behavior set iff
+  # it is a loaded, validated real Behavior (same predicate `Ezagent.Role` uses
+  # at recipe-validation time). This REPLACES the prior "∩ behaviors_of" gate for
+  # undeclared recipe-loaded behaviors; declared behaviors are unaffected. authz
+  # (`required_caps()` + caller caps) remains the independent privilege gate.
+  defp real_behavior?(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
+    Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+  end
+
+  defp real_behavior?(_), do: false
+
+  @doc """
+  Resolve `action → behavior` for an instance: STATIC-FIRST, then per-instance.
+
+  RF-1 (role-foundation, generalized keystone): the `{kind,action}`
+  `BehaviorRegistry` resolves declared + registry-only behaviors to their
+  CANONICAL module first (so a recipe-loaded behavior can NEVER shadow
+  `IdentityAdmin`/`Manage`/etc.); only a genuinely-unregistered action falls
+  back to this instance's loaded set (a recipe-loaded UNDECLARED behavior whose
+  `actions/0` includes `action`). `authz_check` still independently gates every
+  action, so presence in the set grants NO privilege.
+  """
+  @spec resolve_action(module(), atom(), %{atom() => map()}) ::
+          {:ok, module()} | {:error, {:unknown_action, atom()}}
+  def resolve_action(kind_module, action, slice_state) do
+    case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
+      {:ok, behavior_module} ->
+        {:ok, behavior_module}
+
+      :error ->
+        case per_instance_behavior(kind_module, action, slice_state) do
+          nil -> {:error, {:unknown_action, action}}
+          behavior_module -> {:ok, behavior_module}
+        end
+    end
+  end
+
+  # `effective_set/2` can raise MissingKindBaseError for a Kind that requires an
+  # explicit set with a nil capture — preserve the prior unknown-action semantics
+  # on the registry-miss path (→ nil → :unknown_action) rather than newly
+  # raising. Guard `actions/0` (e.g. KindBase has none).
+  defp per_instance_behavior(kind_module, action, slice_state) do
+    eff =
+      try do
+        effective_set(kind_module, slice_state)
+      rescue
+        Ezagent.Kind.BehaviorSet.MissingKindBaseError -> []
+      end
+
+    Enum.find(eff, fn b -> function_exported?(b, :actions, 0) and action in b.actions() end)
   end
 
   @doc "Is `behavior` a member of `effective_set`?"
