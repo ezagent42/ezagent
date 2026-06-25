@@ -155,7 +155,8 @@ defmodule Ezagent.Kind.Runtime do
       |> Map.put(:slice_change_cursor, slice_change_cursor)
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
-         {:ok, behavior_module} <- lookup_behavior(kind_module, action),
+         {:ok, behavior_module} <-
+           Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, state),
          :ok <- instance_set_gate(behavior_module, kind_module, state, target, enriched_ctx),
          :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
@@ -269,12 +270,9 @@ defmodule Ezagent.Kind.Runtime do
 
   defp strip_transients_one(other), do: other
 
-  defp lookup_behavior(kind_module, action) do
-    case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
-      {:ok, behavior_module} -> {:ok, behavior_module}
-      :error -> {:error, {:unknown_action, action}}
-    end
-  end
+  # RF-1: `action → behavior` resolution (static-first + per-instance fallback)
+  # lives in `Ezagent.Kind.BehaviorSet.resolve_action/3` (cohesive with the
+  # per-instance set logic; keeps runtime.ex under the gt_1000 LOC gate).
 
   # P1 (SPEC §3.1, E9) — the per-instance subset gate. The §3.1 threat is a
   # SUPERSET Kind: one Kind module DECLARES `behaviors/0 = [Chat, Surface, …]`

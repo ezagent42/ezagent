@@ -90,6 +90,38 @@ defmodule Ezagent.Kind.InstanceSetSupport do
     end
   end
 
+  defmodule UndeclaredProbe do
+    @moduledoc false
+    # RF-1 (generalized keystone): a recipe-loaded behavior that is NOT in any
+    # Kind's `behaviors/0` (NOT in SupersetSessionKind below). It must (a)
+    # materialize its slice via `init_set`/`effective_set` despite being
+    # undeclared, (b) dispatch via per-instance (static-first FALLBACK)
+    # resolution, and (c) STILL be cap-gated by `authz_check` — its presence in
+    # the instance set must grant NO privilege. Registered NOWHERE in
+    # `BehaviorRegistry` (per-instance only), closure-clean (no sibling reads).
+    use Ezagent.Lifecycle, state_slice: :undeclared_probe
+
+    action(:undeclared_poke,
+      args: %{},
+      returns: %{},
+      caps: [:undeclared_poke],
+      modes: [:call],
+      description: "test-only undeclared (recipe-loaded) probe action for RF-1"
+    )
+
+    @impl Ezagent.Lifecycle
+    def create(_args), do: {:ok, %{poked: false}}
+
+    def handle_undeclared_poke(_args, _ctx) do
+      case :persistent_term.get({__MODULE__, :probe_pid}, nil) do
+        pid when is_pid(pid) -> send(pid, {:undeclared_probe, :handled})
+        _ -> :ok
+      end
+
+      {:ok, %{poked: true}, []}
+    end
+  end
+
   defmodule SupersetSessionKind do
     @moduledoc false
     @behaviour Ezagent.Kind

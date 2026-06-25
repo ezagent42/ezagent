@@ -109,15 +109,32 @@ defmodule Ezagent.Kind.BehaviorSetTest do
       assert Ezagent.Behavior.Manage in set
     end
 
-    test "args :behaviors are intersected with declared (an undeclared module is ignored)" do
+    test "args :behaviors KEEP an undeclared REAL Behavior (RF-1 generalized keystone)" do
+      # RF-1 (role-foundation): a generic host admits recipe-loaded behaviors it
+      # does NOT declare, as long as they are validated real Behaviors. ApiKeys
+      # is a real Behavior NOT declared by SupersetKind → now KEPT (pre-RF-1 the
+      # ∩-declared filter dropped it). authz still gates every action, so this
+      # grants no privilege.
       set =
         BehaviorSet.init_set(SupersetKind, %{
           behaviors: [Ezagent.Behavior.Session, Ezagent.Behavior.ApiKeys]
         })
 
       assert Ezagent.Behavior.Session in set
-      # ApiKeys is NOT declared by SupersetKind → must not be admitted.
-      refute Ezagent.Behavior.ApiKeys in set
+      assert Ezagent.Behavior.ApiKeys in set
+    end
+
+    test "args :behaviors IGNORE an undeclared NON-Behavior module (RF-1 trust check)" do
+      # The trust check that REPLACES ∩-declared is `real_behavior?/1`
+      # (Code.ensure_loaded? + new_style?). A module that is not a real Behavior
+      # is never admitted — declared or not.
+      set =
+        BehaviorSet.init_set(SupersetKind, %{
+          behaviors: [Ezagent.Behavior.Session, Ezagent.Kind.BehaviorSetTest.PlainModule]
+        })
+
+      assert Ezagent.Behavior.Session in set
+      refute Ezagent.Kind.BehaviorSetTest.PlainModule in set
     end
 
     test "base behaviors with their own slice are NOT double-counted" do
@@ -132,6 +149,12 @@ defmodule Ezagent.Kind.BehaviorSetTest do
   # must NOT falsely satisfy Turn's required `:surface` dependency.
   defmodule FakeSurfaceOwner do
     use Ezagent.Lifecycle, state_slice: :surface
+  end
+
+  # RF-1: a plain module that is NOT a Behavior (no `use Ezagent.Behavior`) —
+  # `real_behavior?/1` must reject it from an instance behavior set.
+  defmodule PlainModule do
+    @moduledoc false
   end
 
   describe "resolve_closure/1 (required/optional siblings)" do
