@@ -46,21 +46,21 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     },
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 72,
+      line: 86,
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason: "existing sidecar status call; sidecar has no workspace owner facade yet"
     },
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 86,
+      line: 100,
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, {:query, text, session_id}, timeout)",
       reason: "existing sidecar query call; sidecar has no workspace owner facade yet"
     },
     %{
       path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
-      line: 45,
+      line: 56,
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"

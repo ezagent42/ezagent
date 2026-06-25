@@ -50,7 +50,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/ezagent/runtime.ex", "Ezagent.Runtime.cookie_path/0", 29,
      "early boot, pre-supervision (D2)"},
     # OS pid-file handle ("pty-pids"), registry-independent (D2)
-    {"apps/ezagent_core/lib/ezagent/runtime/pid_file.ex", "Ezagent.Runtime.PidFile.dir/1", 98,
+    {"apps/ezagent_core/lib/ezagent/runtime/pid_file.ex", "Ezagent.Runtime.PidFile.dir/1", 113,
      "OS pid-file handle, registry-independent (D2)"},
     # operator mix-task: ezagent.home.init (app-not-started)
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex", "Mix.Tasks.Ezagent.Home.Init.run/1",
