@@ -14,8 +14,9 @@ defmodule EzagentPluginFeishu.WsClient do
 
   1. Read credentials from `system://credentials/feishu.yaml` via
      `Ezagent.System.FsResolver.read_yaml/1`
-  2. Spawn `node priv/ws_sidecar/main.js` via Port with FEISHU_APP_ID
-     + FEISHU_APP_SECRET in the env
+  2. Spawn `node priv/ws_sidecar/main.js` via `Ezagent.Runtime.OsProcess`
+     (erlexec: {group,0}+:kill_group → no orphan node subtree) with
+     FEISHU_APP_ID + FEISHU_APP_SECRET in the env
   3. Read newline-delimited JSON events from stdout
   4. For each event: hand off to `EzagentPluginFeishu.InboundDispatcher`
      using the SAME shape as the HTTP webhook (`build_message_body`
@@ -33,12 +34,25 @@ defmodule EzagentPluginFeishu.WsClient do
   require Logger
 
   alias EzagentPluginFeishu.InboundDispatcher
+  alias Ezagent.Runtime.LineBuffer
+  alias Ezagent.Runtime.OsProcess
 
   @restart_backoff_ms 5_000
+  @line_buffer_max 1_048_576
+  @sidecar_plugin "feishu-ws"
+
+  # SPEC §3.4: reap prior-incarnation feishu-ws orphans at boot. Skipped in
+  # `:test` by default (the test BEAM has an empty registry, so every orphan
+  # from a prior run looks reapable). Mirrors cc's `@default_reap_enabled?`
+  # gate; operators can flip it in dedicated e2e via
+  # `config :ezagent_plugin_feishu, reap_orphans_on_boot: true`.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
 
   defstruct [
-    :port,
-    :buffer,
+    :exec_pid,
+    :os_pid,
+    :line_buffer,
     :app_id,
     :app_secret,
     :domain,
@@ -58,8 +72,23 @@ defmodule EzagentPluginFeishu.WsClient do
 
   @impl true
   def init(_) do
+    # SPEC §3.1 caller contract: trap_exit BEFORE any spawn so a supervisor
+    # `:shutdown` runs terminate/2 (→ OsProcess.stop + cleanup) instead of
+    # orphaning the node sidecar.
+    Process.flag(:trap_exit, true)
+
+    # SPEC §3.4: reap a prior-incarnation feishu-ws orphan HERE (in the owner,
+    # before the deferred `:open_sidecar` spawn) rather than in the plugin's
+    # `after_boot/0`. WsClient is a supervision-tree child that spawns the node
+    # sidecar ASYNCHRONOUSLY, so an `after_boot` reap would race the fresh spawn
+    # and could group-kill the just-started sidecar. Running it before the first
+    # spawn is ordering-safe; `URI.SchemeRegistry` (needed to parse the
+    # `system://feishu/ws` pid-file key) is already seeded because `ezagent_core`
+    # boots before this plugin.
+    _ = maybe_reap_feishu_orphans()
+
     state = %__MODULE__{
-      buffer: "",
+      line_buffer: LineBuffer.new(@line_buffer_max),
       sidecar_path: sidecar_path(),
       node_bin: System.find_executable("node"),
       enabled?: System.get_env("EZAGENT_FEISHU_WS") != "0"
@@ -88,20 +117,34 @@ defmodule EzagentPluginFeishu.WsClient do
   def handle_info(:open_sidecar, state) do
     case load_credentials() do
       {:ok, app_id, app_secret, domain} ->
-        port =
-          Port.open(
-            {:spawn_executable, state.node_bin},
-            [
-              :binary,
-              :exit_status,
-              {:args, [state.sidecar_path]},
-              {:env, env_for_sidecar(app_id, app_secret, domain)},
-              {:line, 65_536}
-            ]
-          )
+        case OsProcess.spawn([state.node_bin, state.sidecar_path],
+               cd: File.cwd!(),
+               env: env_for_sidecar(app_id, app_secret, domain),
+               stderr: :separate,
+               pid_file: {@sidecar_plugin, pidfile_key()}
+             ) do
+          {:ok, %{exec_pid: exec_pid, os_pid: os_pid}} ->
+            Logger.info("EzagentPluginFeishu.WsClient: sidecar started (os_pid=#{os_pid})")
 
-        Logger.info("EzagentPluginFeishu.WsClient: sidecar started (port=#{inspect(port)})")
-        {:noreply, %{state | port: port, app_id: app_id, app_secret: app_secret, domain: domain}}
+            {:noreply,
+             %{
+               state
+               | exec_pid: exec_pid,
+                 os_pid: os_pid,
+                 line_buffer: LineBuffer.new(@line_buffer_max),
+                 app_id: app_id,
+                 app_secret: app_secret,
+                 domain: domain
+             }}
+
+          {:error, reason} ->
+            Logger.warning(
+              "EzagentPluginFeishu.WsClient: spawn failed (#{inspect(reason)}); retry in #{@restart_backoff_ms}ms"
+            )
+
+            Process.send_after(self(), :open_sidecar, @restart_backoff_ms)
+            {:noreply, state}
+        end
 
       {:error, reason} ->
         Logger.warning(
@@ -113,24 +156,37 @@ defmodule EzagentPluginFeishu.WsClient do
     end
   end
 
-  def handle_info({port, {:data, {:eol, line}}}, %{port: port} = state) do
-    full = state.buffer <> line
-    handle_json_line(full)
-    {:noreply, %{state | buffer: ""}}
+  # erlexec delivers arbitrary stdout chunks (not native Port `{:line, N}`
+  # frames); LineBuffer reassembles complete newline-delimited JSON lines.
+  def handle_info({:stdout, os_pid, bytes}, %{os_pid: os_pid} = state) do
+    {new_lb, lines} = LineBuffer.feed(state.line_buffer, bytes)
+    Enum.each(lines, &handle_json_line/1)
+    {:noreply, %{state | line_buffer: new_lb}}
   end
 
-  def handle_info({port, {:data, {:noeol, chunk}}}, %{port: port} = state) do
-    {:noreply, %{state | buffer: state.buffer <> chunk}}
+  # stderr is a SEPARATE stream (never merged into the JSON stdout channel) —
+  # log and drop.
+  def handle_info({:stderr, os_pid, bytes}, %{os_pid: os_pid} = state) do
+    Logger.debug("EzagentPluginFeishu.WsClient sidecar stderr: #{String.trim(to_string(bytes))}")
+    {:noreply, state}
   end
 
-  def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
+  # Child exit via the run_link BEAM link (no `:monitor`). Reason taxonomy:
+  # `:normal` (clean) | `{:exit_status, n}` | `:port_closed`. Clean up the pid
+  # file and auto-restart with backoff (preserved from the Port era).
+  def handle_info({:EXIT, exec_pid, reason}, %{exec_pid: exec_pid} = state) do
     Logger.warning(
-      "EzagentPluginFeishu.WsClient: sidecar exited status=#{status}; restart in #{@restart_backoff_ms}ms"
+      "EzagentPluginFeishu.WsClient: sidecar exited (#{inspect(reason)}); restart in #{@restart_backoff_ms}ms"
     )
 
+    OsProcess.cleanup_pid_file(@sidecar_plugin, pidfile_key())
     Process.send_after(self(), :open_sidecar, @restart_backoff_ms)
-    {:noreply, %{state | port: nil}}
+    {:noreply, %{state | exec_pid: nil, os_pid: nil}}
   end
+
+  # Defensive: an EXIT from any other linked process (the parent supervisor's
+  # exit is handled by gen_server itself, not delivered here).
+  def handle_info({:EXIT, _other, _reason}, state), do: {:noreply, state}
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -139,17 +195,39 @@ defmodule EzagentPluginFeishu.WsClient do
     {:reply,
      %{
        enabled?: state.enabled?,
-       port_alive: state.port != nil,
+       port_alive: state.os_pid != nil,
        sidecar_path: state.sidecar_path,
        app_id_prefix: state.app_id && String.slice(state.app_id, 0..14)
      }, state}
   end
 
+  @impl true
+  def terminate(_reason, %__MODULE__{exec_pid: exec_pid}) when not is_nil(exec_pid) do
+    OsProcess.stop(exec_pid)
+    OsProcess.cleanup_pid_file(@sidecar_plugin, pidfile_key())
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
   # --- Internals ---------------------------------------------------------
 
+  # The pid-file key for the feishu node sidecar. A `system://feishu/ws` URI
+  # (node-global singleton — there is no per-agent/per-tenant feishu ws sidecar).
+  # Carried in the pid-file body (line 3) since it cannot be reversed from the
+  # sanitised filename (SPEC §3.4 invariant).
+  defp pidfile_key, do: Ezagent.URI.system("feishu", "ws")
+
+  defp maybe_reap_feishu_orphans do
+    if Application.get_env(:ezagent_plugin_feishu, :reap_orphans_on_boot, @default_reap_enabled?) do
+      Ezagent.Runtime.OrphanReaper.reap(@sidecar_plugin)
+    end
+  end
+
   defp sidecar_path do
-    :code.priv_dir(:ezagent_plugin_feishu)
-    |> Path.join("ws_sidecar/main.js")
+    # Test-only override seam (prod: env unset → the vendored priv main.js).
+    Application.get_env(:ezagent_plugin_feishu, :ws_sidecar_path) ||
+      :code.priv_dir(:ezagent_plugin_feishu) |> Path.join("ws_sidecar/main.js")
   end
 
   defp env_for_sidecar(app_id, app_secret, domain) do
