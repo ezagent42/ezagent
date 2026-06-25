@@ -1,57 +1,71 @@
-# SPEC — Role materialization foundation (per-instance behavior mount + role recipes)
+# SPEC — Role materialization foundation (per-instance behavior mount/detach + role recipes)
 
-> Brainstormed with @林懿伦 (Feishu 2026-06-25) — this is the収口'd design. Prerequisite for **kanban-as-role** AND **orchestrator** (both currently waiting on it). Status: spec → codex adversarial review → plan → implement. The `#54` role-over-flavor work landed `Ezagent.Role` + `Role.Compose` + `Role.CapMint` but **left the spawn/create path unbuilt** (verified: `Workspace.AgentCreate` ignores Role; `Role.Compose.materialize` is only called by `OrchestratorRole` for cc's CLAUDE.md, not a spawn; no `template://role` resolver / RoleTemplate Kind).
+> Brainstormed + adversarially reviewed with @林懿伦 (Feishu 2026-06-25). **rev 2** — folds in the codex spec review + Allen's final scope decision. Prerequisite for **kanban-as-role** AND **orchestrator**. Next: codex review of this rev → plan → implement.
 
 ## 1. North star
-**agent = actor** (any non-human operator, actor-model sense, not just LLM). An actor = **role (what it does) × flavor (how it executes)**. Creating an agent with a role = mounting that role's behaviors onto the instance + materializing its sandbox/caps. No flavor- or role-specific branches in the create path.
+**agent = actor** (any non-human operator, actor-model sense, not just LLM) = **role (what it does) × flavor (how it executes)**. An instance's active behaviors are **mounted per-instance at runtime**; creating with a role = mounting the role's behaviors. No flavor/role-specific branches in the create path.
 
-## 2. The收口'd model (3 parts)
+## 2. What ALREADY exists (verified on origin/main — the dispatch half is built)
+- **Per-instance dispatch is already there.** `kind/runtime.ex:159` chain = `lookup_behavior` (global menu) → **`instance_set_gate`** (denies if the behavior is not in this instance's `BehaviorSet.effective_set/2`) → `authz_check`. So **the per-instance active set is already the dispatch truth.**
+- **Per-instance behavior subsets ship today.** `Session` spawns `Kind.spawn(Session, %{behaviors: Session.chat_behaviors()})` (`…instance_message/application.ex:725`); captured to `:kind_base`; re-derived via `effective_set/2` on cold restart (free).
+- `effective_set/2` **intersects** the captured set with the Kind's `behaviors_of/1` (`behavior_set.ex:172-204`).
+- `Ezagent.Role` (recipe), `Role.Compose.materialize` (pure compose → `%{behaviors, sandbox_content}`), `Role.CapMint.mint/3` ✓ exist; `OrchestratorRole.recipe/0` is the code-seed exemplar (currently only feeds CLAUDE.md). `Workspace.grant_initial_caps/3` (`workspace.ex:901`) is the cap-grant chokepoint.
+- `Kind.attach_behavior(b, to: kind_module)` (`kind.ex:835`) is **Kind-level** (registers action→behavior globally) and has **no runtime callers** — the conceptual mistake to replace.
 
-### Part 1 — Per-instance behavior mount/detach (the core new mechanism)
-**Today's mistake:** `Kind.attach_behavior(behavior, to: kind_module)` is **Kind-level** (registers action→behavior globally in `CapabilityRegistry` for ALL instances of a Kind). Kind-level mounting has no real meaning — *mounting is inherently per-instance*. (Verified: `CapabilityRegistry`/`BehaviorRegistry` are global Kind→action→behavior; the instance's `:kind_base` slice holds its behavior set but is fixed at spawn; `attach_behavior` has no runtime callers.)
+So the **dispatch + persistence + cold-restart of a per-instance set is done.** The genuinely new work is **mutating a LIVE instance's active set** (runtime mount/detach).
 
-**Correct model:**
-- **Kind declares the AVAILABLE-behavior menu** (which behaviors *may* be mounted on this Kind) — validation/declaration only.
-- **Per-instance, at runtime, mount/detach the ACTIVE behaviors** — mutate the instance's active set (`:kind_base`) + resolve dispatch (action→behavior) **per-instance** from that active set.
-- API: `attach_behavior` becomes **per-instance** (`mount(instance_uri, behavior)`); add **`detach_behavior`/`unmount(instance_uri, behavior)`**.
-- `CapabilityRegistry` demotes to the per-Kind **menu + collision/authority validation**; the per-instance active set is the dispatch truth.
+## 3. Scope (Allen-decided, rev 2)
+**No respawn-shortcut. Build per-instance RUNTIME mount/detach as THE mechanism, replacing the Kind-level `attach_behavior`. create uses it too (unified).**
 
-### Part 2 — Role = a recipe (definition)
-`Ezagent.Role` already exists: `%{skills, plugins, prompt, behaviors, requested_caps, session_template}` (flavor-agnostic). A role is **defined** by:
-- **code-seed module** (`OrchestratorRole`-style): `def recipe(), do: Role.new(%{behaviors: [...], skills: [...], prompt: ..., requested_caps: [...], session_template: nil})` — built-in roles in code.
-- **`roles/0` plugin callback** — a plugin declares its built-in roles (parallel to `agent_flavors/0`); registered into a **name→recipe registry** at boot. (kanban plugin declares `kanban-manager`.)
-- **`template://<ws>/role/<name>`** — operator-forkable role Templates (a RoleTemplate Kind + a `role` branch in the template:// resolver) for user-defined roles.
+### Part 1 — Per-instance runtime mount/detach (the core new work)
+- `mount(instance_uri, behavior)`: add to the live instance's active set (`:kind_base`) — must **run the behavior's slice-init** (else dispatch reads an empty slice = silent-wrong), **re-validate closure** (`behavior_set.ex:360` — set stays closed under `@required_reads`), snapshot.
+- `detach(instance_uri, behavior)`: remove it — run its **`deactivate`/`destroy`**, **reverse-closure check** (nothing remaining REQUIRES it), handle **in-flight dispatch** (a `:call` already past `instance_set_gate`).
+- **create unified**: the existing batch `Kind.spawn(%{behaviors: ...})` is the **create-time/batch form** of "set the active set"; runtime mount is the **live form**. Same active-set + dispatch + cold-restart semantics; one model.
+- **Retire** the Kind-level `attach_behavior` (no callers). Kind-level **declaration** stays (the menu + the `__before_compile__` collision guard + `BehaviorRegistry` 1:1 `{kind,action}→behavior`).
+- **Why runtime, not respawn**: the sidecar (PtyServer/SdkSidecar/AppServer) is **separately supervised** (`EzagentDomainPty.Supervisor`), so for sidecar-backed agents (cc/codex) a destroy-based respawn restarts the sidecar (loses LLM/PTY session). Runtime mount mutates behaviors **without touching the sidecar** — strictly better, and enables near-term "add role/tool to a running agent."
 
-### Part 3 — Apply at create, via the lifecycle (not a create branch)
-`AgentCreate` (workspace-side provisioning) → `Kind.spawn` → the agent Kind's `Lifecycle.create/1` (self-init). Role application distributes over these without a role-specific branch:
-- **behaviors** → mounted per-instance (Part 1) during spawn/activate (sourced from the role recipe).
-- **skills/plugins/prompt** → written to config_dir in `create/1`/`activate/2` hooks.
-- **requested_caps** → minted via `Role.CapMint` at the existing `grant_initial_caps` step.
-So "create-with-role" = look up the role recipe → `Role.Compose.materialize(recipe, flavor)` → mount + materialize via lifecycle. `AgentCreate` stays generic.
+### Part 2 — Role = recipe (definition)
+`Ezagent.Role` recipe; **defined** via code-seed module (`recipe/0`, OrchestratorRole-style) + a **`roles/0` plugin callback** (parallel to `agent_flavors/0`) → name→recipe registry at boot. (`template://<ws>/role/<name>` operator-forkable Templates + RoleTemplate Kind = **follow-up**, not needed to unblock kanban/orchestrator.)
 
-## 3. Existing pieces to reuse / 收编
-- `Ezagent.Role` (recipe struct) ✓; `Role.Compose.materialize` (pure compose of role+flavor behaviors + skills/prompt) ✓; `Role.CapMint` ✓ (wire it into create); `Lifecycle` hooks (`create/1`,`activate/2`,`grant_initial_caps`) ✓; `:kind_base` slice ✓.
-- **OrchestratorRole** = the existing code-seed exemplar (currently only feeds CLAUDE.md, not a spawn) → migrate it onto the unified role path (收编, repays #54 debt).
+### Part 3 — Apply at create via lifecycle
+create-with-role → look up recipe → `Role.Compose.materialize(recipe, flavor)` →
+- **behaviors** → **mount** (Part 1) at create (batch form),
+- **skills/plugins/prompt** → config_dir in `create/1`/`activate/2`,
+- **requested_caps** → `Role.CapMint.mint/3` at **`Workspace.grant_initial_caps`** (workspace provisioning layer — NOT the agent's own `Lifecycle.create/1`, which lacks the granter ctx).
+No role-**specific** branch in `AgentCreate`; one generic role-resolution step (parallel to how flavor is already handled).
 
-## 4. To build (the foundation)
-1. **Per-instance mount/detach** (Part 1): runtime `:kind_base` mutation + per-instance dispatch resolution + `mount`/`detach` API; `CapabilityRegistry`→menu/validation. *(Highest blast radius — touches the core Kind/Behavior/dispatch model.)*
-2. **Role registry + seed** (Part 2): name→recipe registry; `roles/0` plugin callback; `template://role` resolver branch + RoleTemplate Kind.
-3. **Role-driven create via lifecycle** (Part 3): wire recipe lookup → `Role.Compose.materialize` → mount behaviors + config_dir + `CapMint` into the create/activate lifecycle; no `AgentCreate` role-branch.
-4. **收编 OrchestratorRole** onto the unified path.
+## 4. Hard constraint (HIGH-1 — shapes downstreams)
+`effective_set/2` intersects with the Kind's declared `behaviors_of/1`, and `instance_set_gate` only admits **declared** behaviors. So **a role can only mount behaviors the target flavor's Kind declares in `behaviors/0`** (or a shared base Kind). → kanban-as-role's gate must include: the `native` flavor's Kind declares the kanban behaviors.
 
-## 5. Risks (for codex review)
-- **R1 (BLOCKER-class)** Part 1 is a core change to dispatch resolution (global→per-instance). Every Kind dispatches through this. Must preserve current behavior for agents that mount their full declared set; the per-instance resolution must be correct + performant + persistent (survive restart via `:kind_base` snapshot).
-- **R2** `CapabilityRegistry` demotion: caps + collision checks are currently keyed Kind-global; per-instance mounting must still enforce caps/collisions correctly.
-- **R3** boot/restart ordering: a mounted behavior set must rehydrate on cold restart (the #110/#113/#114 class).
-- **R4** orchestrator收编 must not regress the cc orchestrator.
+## 4.5 Consumer-review findings (jjkysy, as the kanban consumer — folded into scope)
+- **🔴 FATAL (both specs missed): passive-data-actor principal isolation.** `agent = actor` splits into **principal actors** (cc/codex/curl/echo — chat participants: @-mentionable, `:join`-able as members, receive chat) vs **passive/data actors** (kanban-manager — acts on dispatch but is NOT a chat principal). Making the board an `entity://agent/...` gives it principal semantics **for free** (`agent.ex:48-49` "entity://agent/* works at routing layer") — it could be @-mentioned, joined into others' sessions, receive chat. `session_template: nil` does NOT cover this. **Foundation MUST add an explicit `passive` (non-principal: non-mentionable / non-joinable / no-receive) flag on the recipe (and/or native flavor), + gates in the session mention-resolver, the `:join` path, and receive-routing that reject passive actors.** This generalizes (future data-manager actors), so it belongs in the foundation, not just kanban.
+- **🟡 board source-of-truth = snapshot (converge Q3):** the board persists via Kind **snapshot** (NOT a config_dir file). kanban's 24 handlers + per-node CapBAC + `commit/1` are all built on "tree = instance snapshot state"; a file = full rewrite. (This spec §8 already says snapshot — the kanban-as-role spec body must drop the file idea.)
+- **🟡 list-by-role read model:** the foundation has no role→instance reverse lookup. Materialization must **tag the instance with its role + provide a "list instances by role" query**, so world migrates off list-by-Kind-type.
+- **🟡 native flavor cap policy:** `CapMint` needs a **policy predicate** deciding which of a role's `requested_caps` to grant. The `native` flavor's default cap policy must be **explicitly defined** (blank → fail-closed → all 24 kanban caps dropped).
+- ✅ Confirmed sufficient: Lifecycle-based custom `Behavior.Kanban` fits a recipe; agent snapshot holds the tree; per-node CapBAC ctx injection works; `?action=kanban.<action>` moves resource://→entity:// cleanly at dispatch.
 
-## 6. Acceptance (/goal — set after review)
-- An agent is created with a role; its behaviors are **mounted per-instance** (and **detachable** at runtime); dispatch resolves per-instance.
-- Roles are **defined as recipes** (code-seed + `roles/0` + `template://role`) and **applied via the lifecycle** with no role-specific branch in `AgentCreate`.
-- `OrchestratorRole` migrated onto the unified path; cc orchestrator unregressed.
-- Unblocks **kanban-as-role** (kanban-manager = a recipe mounted on a native flavor) — verified by that follow-on.
-- full `mix test` 0 failures + CI green; cold-restart regression test for mounted sets.
+## 5. To build
+1. **Part 1 runtime mount/detach** (the core; full scope above incl slice-init / closure / detach teardown / in-flight). Retire Kind-level `attach_behavior`.
+2. **Part 2** `roles/0` callback + name→recipe registry (code-seed). (`template://role` follow-up.)
+3. **Part 3** wire compose → mount + config_dir + `CapMint@grant_initial_caps` into create; generic role step in `AgentCreate`.
+4. **收编 `OrchestratorRole`** onto this path.
+5. **Passive-actor isolation (🔴)**: `passive` flag on recipe/flavor + mention-resolver / `:join` / receive-routing gates rejecting passive actors.
+6. **list-by-role**: tag instance with role at materialize + a "list instances by role" query.
+7. **native flavor cap policy**: an explicit CapMint policy predicate for `native` (which requested_caps pass; fail-closed default stated).
 
-## 7. Downstream (separate specs, depend on this)
-- **kanban-as-role** (`kanban-as-role-spec.md` on `integration/kanban`) — kanban-manager recipe × native flavor; board via snapshot; delete Plan-B; world read-model list-by-role. Update it to reference this foundation + the corrections (board snapshot not file; native flavor needs no bridge).
-- **orchestrator** — its long-pending role-Template materialization.
+## 6. Risks
+- **R1** Part 1 mounts/detaches on a LIVE GenServer mid-flight — slice-init correctness, closure re-validation, detach teardown + in-flight dispatch are the real difficulty (the dispatch resolution itself is NOT changing — it already reads the per-instance set).
+- **R2** caps stay caller-side (4-tuple `{behavior,action,instance,workspace}`); mount/detach changes the target's active set, NOT cap storage. (`CapabilityRegistry` is already menu/validation, not dispatch truth — nothing to "demote".)
+- **R3** cold-restart must rehydrate the mounted set (the `:kind_base`/`effective_set` path already does this for the spawn-set; mount/detach must persist the same way).
+- **R4** orchestrator收编 must not regress cc orchestrator.
+
+## 7. Acceptance (/goal — set after review)
+- An agent's behaviors are **mounted per-instance at runtime** (and **detachable**) via the new mechanism, which also backs create; Kind-level `attach_behavior` retired.
+- Roles defined as recipes (code-seed + `roles/0`) + applied via the lifecycle (mount + config_dir + CapMint@grant); no role-specific `AgentCreate` branch.
+- `OrchestratorRole` migrated; cc orchestrator unregressed.
+- Unblocks **kanban-as-role** (kanban-manager recipe mounted on `native`, whose Kind declares the kanban behaviors per §4).
+- full `mix test` 0 failures + CI green; cold-restart + mount/detach + closure regression tests.
+
+## 8. Downstream (depend on this)
+- **kanban-as-role** (`kanban-as-role-spec.md` on `integration/kanban`) — add §4 (native Kind declares kanban behaviors); board via snapshot (not file); delete Plan-B; world read-model list-by-role.
+- **orchestrator** role-Template materialization.
