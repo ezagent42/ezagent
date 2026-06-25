@@ -1,8 +1,8 @@
-# Handoff — 产品日用缺口 F9 / F12（zyli-developer / 李震宇）
+# Handoff — 产品日用缺口 F9/F12 + e2e 场景文档（zyli-developer / 李震宇）
 
-> **任务**: 实现你人肉验证暴露的两个 Feishu 日用入口缺口。
-> **分支**: `feat/product-gaps-f9-f12`（off `main`，保持 rebase）
-> **本周目标**: 团队日用（目标①）—— 这两个缺口直接挡着"团队能日常用"。
+> **任务**: ①实现人肉验证暴露的两个 Feishu 日用入口缺口（F9/F12）②把人肉测试过程沉淀为 agent 可自动执行的 e2e 场景文档。
+> **分支**: `feat/product-gaps-f9-f12`（F9/F12）+ `docs/e2e-scenarios`（e2e 文档，可拆两个 PR）
+> **本周目标**: 团队日用（目标①）。
 
 ## 背景
 你 2026-06-24 的全流程人肉验证跑通了主链路，但 L3/L4 只能靠 DB 手段验证，因为两个产品 UI 缺口：
@@ -29,6 +29,27 @@
 - 你自己 2026-06-24 的人肉验证 return（F9/F12 的现场）
 - dev-together skill（DoD 四性质；返还前 rebase+自测绿）
 
-## 注意
+## 注意（F9/F12）
 - 触及 world UI 与 `gagameow`(console)/`zhaomaota97`(hello) 协调声明面。
 - 先确认 F9/F12 的需求边界（绑定的粒度、@ 的语法）—— 不确定就先 clarify 再做（discuss-first）。
+
+---
+
+## 任务 ②：e2e 场景文档（@林懿伦 2026-06-25 新增）
+
+**目标**：把人肉测试过程沉淀成一个 **agent 能直接读取、用 agent-browser 自动推进**的 e2e 测试资料夹 `docs/e2e/`，以后跑流程测试不用人肉。
+
+**要做什么**：
+1. **`docs/e2e/scenario-<no>.md`**：把你 2026-06-24 的人肉全流程拆成编号场景（至少第一个 `scenario-1.md`）。每个场景写成 **agent 可机读的步骤脚本**：前置/seed、逐步操作（每步：在哪个 URL、点/填什么、期望看到什么断言）、所需凭据来源、清理。语言要让一个 agent 拿 agent-browser 就能照着自动跑。
+2. **`docs/e2e/guide.md`**：怎么用这个资料夹 —— agent 如何选场景、起 stack/seed、用 agent-browser 逐步执行、判定通过/失败、产出 evidence。
+3. **evidence example**：放一份示例 evidence（截图 + 一个 `scenario-1` 跑通的 evidence 目录结构样例），让后来者知道"证据长什么样"。
+
+**DoD（四性质）**：
+- [ ] `docs/e2e/` 有 `guide.md` + ≥1 个 `scenario-<no>.md` + 一份 evidence example。
+- [ ] **可机读验证**：场景文件足够具体到"一个不熟悉的 agent 拿 agent-browser 能照着把 scenario-1 自动跑通"——最好你自己用 agent-browser 跑一遍 scenario-1 验证它可执行，并把那次的 evidence 作为 example。
+- [ ] 与现有 `docs/guide/world-e2e-seed.md` 不重复、相互引用（seed 复用那份）。
+- [ ] CI 绿（纯 docs）+ rebase。
+
+**关键文件**：新建 `docs/e2e/{guide.md, scenario-1.md, evidence/...}`；参考 `docs/guide/world-e2e-seed.md` + 你 2026-06-24 的人肉 return/evidence；skill `agent-browser`。
+
+**注意**：这是把"人肉"变"agent 自动化"的资料底座，重点是**场景文件的机器可执行性**（步骤够具体、断言明确），不是写给人看的散文。

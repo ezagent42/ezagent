@@ -19,17 +19,18 @@
 | `zhaomaota97` | 张宁 | hello / json-render 底座 | 前端 json-render catalog/渲染器**对齐后端 shadcn 目录**（`catalog.ts`/`registry.tsx` == `spec.ex` 的 36 个 shadcn 组件，用真 shadcn/Tailwind 实现、复用 world 设计 token）；**验证 style 切换**；**稳定 hello 整体结构**。验收：生成页在 `/socialware/customer` 正确渲染（agent-browser 截图）+ 一次 per-session 样式切换生效。 | `feat/hello-jsonrender-align` | `apps/ezagent_plugin_hello/assets/*`（`spec.ex` 只读） |
 | `gagameow` | 黄佳佳 | **整个 agent console** + 后端 handoff | **接管整个 agent console**：UI 界面 + **config 面板**（结构化每字段编辑）+ **对接 `domain.agent`**（下探不了的显式标"还没接线"）。并先给 `allenwoods` 的后端整合任务写一份**后端现状分析 handoff**（cc-headless sidecar + protocol_api + LocalRuntime 现在怎么拼、接缝、未决问题）。 | `feat/agent-console`（+ handoff 文档） | `apps/ezagent_plugin_world`（agent console 全部）；handoff 于 `docs/together/2026-06-25/handoffs/` |
 | `allenwoods` | 林懿伦 | agent 运行时后端整合 | 把 **LocalRuntime + agent 后端（cc-headless sidecar + protocol_api）整合为一个完整任务**（含 hello/protocol_api/world 迁 LocalRuntime、echo→Entity.Agent 的 LocalRuntime 决策、sidecar 生命周期）。**从 `gagameow` 的现状 handoff 开始**（先厘清再动手）。 | `feat/agent-runtime-consolidation` | `apps/ezagent_core`、`apps/ezagent_plugin_cc`、`apps/ezagent_plugin_protocol_api` |
-| `zyli-developer` | 李震宇 | 产品日用缺口 | 实现人肉验证暴露的缺口：**F9**（Feishu chat→session 绑定 UI）+ **F12**（Feishu `@` 解析成 agent mention）。 | `feat/product-gaps-f9-f12` | Feishu 适配器 + session 接线（触及 world 遵守 world-coordination） |
+| `zyli-developer` | 李震宇 | 产品日用缺口 + e2e 场景文档 | **①** 实现人肉验证暴露的缺口：**F9**（Feishu chat→session 绑定 UI）+ **F12**（Feishu `@` 解析成 agent mention）。**②** 把人肉测试沉淀为 `docs/e2e/`（`scenario-<no>.md` + `guide.md` + evidence example，**agent 拿 agent-browser 能照着自动跑通**）。 | `feat/product-gaps-f9-f12` + `docs/e2e-scenarios` | Feishu 适配器 + session 接线 + `docs/e2e/`（触及 world 遵守 world-coordination） |
 | `jjkysy` | 姚升悦 | dev-together skill 改进（**owner**） | 分析并查看当前的 review/plan，**完善 dev-together skill 并提交改进 PR**：让分析强制走**系统功能层面 + 按人完成 + 待办**，plan 强制声明 **off-plan/越界预算**，产出**可外发**标准版式。 | `chore/dev-together-skill-improve` | `.claude/skills/dev-together/**`（单一写者） |
 | `ruihuachen-designer` | 陈瑞华 | 协助 `jjkysy`（设计） | **协助** `jjkysy`：设计 review/plan 的**可外发版式**（章节结构、可读性、团队同步需要哪些信息），作为设计输入交给 `jjkysy` 落进 skill；**不直接改 skill 文件**。 | （设计输入） | 版式设计稿 |
 
 ## 休息
 - **`FatNine`（戴明）今日休息**，不派任务（@林懿伦 2026-06-25）。echo→Entity.Agent（#918）的 LocalRuntime 决策并入 `allenwoods` 的整合任务（A+B+C）。
 
-## `allenwoods` 任务范围已定（A+B+C）
-- **A** 配置统一 → `domain.agent` 统一入口 + registrar（cc/codex/curl/echo 全收拢）。
-- **B** 把 3 个 sidecar（`Cc.SdkSidecar` / `Codex.AppServer` / `Codex.BridgeSidecar`）从 `Port.open` **迁到 erlexec**（根治孤儿进程；不改普通 cc PTY）。
-- **C** LocalRuntime 收口（#99）+ 加带-behaviors 的 spawn arity（解锁 #918）。
+## `allenwoods` 任务范围已定（A+B+C 三条并行；详见 handoffs/allenwoods-*）
+- **A（大/L）** 配置统一 → `domain.agent`：**Entity.Agent 从存储 flavor 统一解析 config+behaviors**（curl 去 spawn-thread、echo 接入#918），保持 `AgentConfig` facade 契约。
+- **B（中-大/M-L）** 4 个 sidecar（`Cc.SdkSidecar`/`Codex.AppServer`/`Codex.BridgeSidecar`/`Feishu.WsClient`）从 `Port.open` **迁 erlexec** + 统一封装 + **arch gate 禁裸 Port.open**（不改普通 cc PTY）。
+- **C（小/S-M）** LocalRuntime 收口（#99，6 处 URI-only swap）；**LocalRuntime 保持 URI-only / behavior-agnostic**（behaviors 归 A，不加 arity）。
+- **排序**：C、B 现可并行开工；A 等 lead brainstorm 定稿。**B 与 C 串行改 `arch_baseline_manifest.exs`**。
 - 详见 `handoffs/allenwoods-agent-runtime-consolidation-plan.md`。
 
 ## 依赖与顺序
