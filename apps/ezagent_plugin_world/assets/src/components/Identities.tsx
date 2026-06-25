@@ -74,6 +74,17 @@ type CascadeState = {
   keys: CascadeKeyEntry[]
 }
 
+type ConfigFieldRow = {
+  key: string
+  value?: string | null
+  source?: string
+}
+
+type NotWiredRow = {
+  key: string
+  reason: string
+}
+
 export type IdentitiesState = {
   agent_flavors?: string[]
   agent_status?: Record<string, unknown>
@@ -88,6 +99,8 @@ export type IdentitiesState = {
   config_dir?: string | null
   config_path?: string | null
   source_template?: string | null
+  config_fields?: ConfigFieldRow[]
+  not_wired?: NotWiredRow[]
   flavor?: string
   component?: string
   config_dir_path?: string | null
@@ -335,6 +348,9 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
     ["Bridge", state.bridge ? "connected" : "not connected"],
   ]
 
+  const configFields = state.config_fields || []
+  const notWired = state.not_wired || []
+
   return (
     <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
@@ -347,6 +363,46 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
           </div>
         ))}
       </dl>
+
+      {/* M1: Per-flavor config fields from template data + config cascade */}
+      {configFields.length > 0 && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            Configuration (按 flavor 展示)
+          </p>
+          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {configFields.map((f) => (
+              <div className="flex justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" key={f.key}>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  {f.key}
+                  <span className="ml-1 text-[10px] text-muted-foreground/60">({f.source})</span>
+                </dt>
+                <dd className="text-sm text-foreground truncate max-w-[200px]" title={f.value ?? ""}>
+                  {formatConfigValue(f.value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
+      {/* M1: Not-wired annotations — per-field, precise labels */}
+      {notWired.length > 0 && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            还没接线
+          </p>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {notWired.map((nw) => (
+              <div className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-1.5" key={nw.key}>
+                <span className="font-mono text-xs text-muted-foreground">{nw.key}</span>
+                <span className="text-xs text-muted-foreground/70">{nw.reason}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Granted caps (CapBAC)</p>
         <div className="flex flex-wrap gap-2 pt-1">
@@ -358,9 +414,6 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
           {grantedCaps.length === 0 && <span className="text-sm text-muted-foreground">none</span>}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
-      </p>
       <div className="flex flex-wrap gap-3">
         <InlineLinks links={[["Config", state.config_path]]} />
       </div>
@@ -942,4 +995,11 @@ function previewAgentUri(workspaceUri: string | null | undefined, name: string) 
 function formatList(values: string[] | undefined) {
   if (!values || values.length === 0) return ""
   return `via ${values.join(", ")}`
+}
+
+function formatConfigValue(value: string | null | undefined): string {
+  if (value == null) return "—"
+  // Truncate long text values for display
+  if (value.length > 80) return value.slice(0, 80) + "…"
+  return value
 }

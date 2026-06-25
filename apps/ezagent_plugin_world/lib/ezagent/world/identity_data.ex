@@ -100,20 +100,21 @@ defmodule Ezagent.World.IdentityData do
     sandbox = agent_sandbox_state(agent_uri, caller, caps)
 
     agent_uri_str = encode_uri(agent_uri)
+    flavor = flavor_for("agent", agent_uri)
 
     base
     |> Map.put("agent_uri", agent_uri_str)
     |> Map.put("agent_status", agent_status(agent_uri))
-    # Flavor from the same reliable source the agents table uses
-    # (`UriQuery.resolve(:flavor, uri)`), NOT `agent_status.flavor` which is
-    # `unknown` for a freshly-spawned / direct-spawn agent.
-    |> Map.put("flavor", flavor_for("agent", agent_uri))
+    |> Map.put("flavor", flavor)
     |> Map.put("bridge", bridge_entry(agent_uri))
     |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
     |> Map.put("config_dir", sandbox_config_dir(sandbox))
     |> Map.put("source_template", sandbox_source_template(sandbox))
     |> Map.put("config_path", config_path("agent", agent_uri_str))
+    # M1: per-flavor config fields from template data + config cascade
+    |> Map.put("config_fields", config_fields_for(agent_uri, flavor, sandbox, caller, caps))
+    |> Map.put("not_wired", not_wired_annotations())
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -565,6 +566,64 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp sandbox_source_template(_sandbox), do: nil
+
+  # ── M1: per-flavor config fields + not-wired annotations ─────────────────
+
+  # M1: temporary per-flavor field lists. M2+ replaced by config_schema/0.
+  defp template_field_keys_for("cc"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt)
+  defp template_field_keys_for("cc-headless"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt)
+  defp template_field_keys_for("codex"), do: ~w(model approval_policy sandbox)
+  defp template_field_keys_for("codex-remote"), do: ~w(model approval_policy sandbox)
+  defp template_field_keys_for("curl"), do: ~w(model provider api_url system_prompt max_history)
+  defp template_field_keys_for(_), do: []
+
+  defp config_fields_for(agent_uri, flavor, sandbox_state, caller, caps) do
+    respawn =
+      (sandbox_state && (Map.get(sandbox_state, :respawn_template_data) || Map.get(sandbox_state, "respawn_template_data"))) ||
+        %{}
+
+    # Template data fields (storage B)
+    template_fields =
+      flavor
+      |> template_field_keys_for()
+      |> Enum.map(fn key ->
+        value = Map.get(respawn, key) || Map.get(respawn, to_string(key))
+        %{"key" => key, "value" => jsonable(value), "source" => "template"}
+      end)
+
+    # Config cascade soul_md (storage A) — best-effort read
+    soul_fields = read_soul_field(agent_uri, caller, caps)
+
+    template_fields ++ soul_fields
+  end
+
+  defp read_soul_field(_agent_uri, nil, _caps), do: []
+  defp read_soul_field(_agent_uri, _caller, caps) when caps == %{}, do: []
+
+  defp read_soul_field(agent_uri, caller, caps) do
+    if Code.ensure_loaded?(Ezagent.AgentConfig) do
+      case Ezagent.AgentConfig.read_key(agent_uri, "advisor.behavior", caller, caps) do
+        {:ok, %{effective_body: %{"soul_md" => soul_md}}} when is_binary(soul_md) and soul_md != "" ->
+          [%{"key" => "soul_md", "value" => soul_md, "source" => "cascade"}]
+        _ -> []
+      end
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp not_wired_annotations do
+    [
+      %{"key" => "skills", "reason" => "还没接线（需 Role 模型编辑 + skill store）"},
+      %{"key" => "tools", "reason" => "还没接线（需 tool registry）"},
+      %{"key" => "kb", "reason" => "还没接线（需 ezagent_plugin_kb）"},
+      %{"key" => "lifecycle_detail", "reason" => "还没接线（Domain.Agent 仅返回 phase+flavor）"},
+      %{"key" => "settings_mgmt", "reason" => "还没接线（需 settings store）"},
+      %{"key" => "fork", "reason" => "Deferred（Behavior.Template.:fork action 已存在，缺 UI）"}
+    ]
+  end
 
   defp agent_flavors(rows) do
     rows
