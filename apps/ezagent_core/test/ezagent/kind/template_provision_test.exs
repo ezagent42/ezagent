@@ -10,7 +10,9 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.Kind.Template
+  alias Ezagent.Kind.Template.FlavorHook
   alias Ezagent.Sandbox.ConfigDir
+  alias Ezagent.TestSupport.TemplateFlavorHookProbe
 
   defmodule FakeClass do
     def template_name, do: "cc.agent"
@@ -66,6 +68,33 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
     refute Map.has_key?(received, "allocated_config_dir")
   end
 
+  test "stores agent flavor attributes through the registered template hook" do
+    TemplateFlavorHookProbe.attach(self())
+    on_exit(fn -> TemplateFlavorHookProbe.detach() end)
+    :ok = FlavorHook.register(TemplateFlavorHookProbe)
+
+    uri = Ezagent.URI.new!("entity://myws/agent/cc_hooked")
+    data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
+
+    assert {:ok, _uris, _meta} =
+             Template.provision_and_instantiate(FakeClass, "cc.agent", data, ws())
+
+    assert_receive {:store_flavor_attrs, ^uri, FakeClass}
+  end
+
+  test "template flavor hook is a safe no-op when no implementation is registered" do
+    hooks_key = {FlavorHook, :hooks}
+    previous_hooks = :persistent_term.get(hooks_key, [])
+
+    :persistent_term.erase(hooks_key)
+    on_exit(fn -> :persistent_term.put(hooks_key, previous_hooks) end)
+
+    uri = Ezagent.URI.new!("entity://myws/agent/no_hook")
+
+    assert :ok = FlavorHook.store(uri, FakeClass)
+    assert :ok = FlavorHook.delete(uri)
+  end
+
   test "a config_dir reference without an agent_uri fails loud (no silent skip)" do
     data = %{"config_dir" => "/some/reference/dir", "cwd" => "/tmp"}
 
@@ -92,5 +121,20 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
              Template.provision_and_instantiate(FailingClass, "failing.agent", data, ws())
 
     assert :none = Ezagent.AgentFlavorAttributes.get(uri)
+  end
+
+  test "deletes agent flavor attributes through the registered template hook when instantiate fails" do
+    TemplateFlavorHookProbe.attach(self())
+    on_exit(fn -> TemplateFlavorHookProbe.detach() end)
+    :ok = FlavorHook.register(TemplateFlavorHookProbe)
+
+    uri = Ezagent.URI.new!("entity://myws/agent/failing-hook")
+    data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
+
+    assert {:error, :boom} =
+             Template.provision_and_instantiate(FailingClass, "failing.agent", data, ws())
+
+    assert_receive {:store_flavor_attrs, ^uri, FailingClass}
+    assert_receive {:delete_flavor_attrs, ^uri}
   end
 end
