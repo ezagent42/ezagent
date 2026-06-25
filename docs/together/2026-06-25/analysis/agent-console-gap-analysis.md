@@ -705,9 +705,11 @@ curl：
 # curl_agent.ex
 def config_schema do
   [
-    %{key: "model",    type: :enum,   options: ["deepseek-chat","deepseek-v4-pro"], source: :template, editable: false},
-    %{key: "provider", type: :enum,   options: ["deepseek","openai","anthropic"],    source: :template, editable: false},
-    %{key: "api_url",  type: :string,                                               source: :template, editable: false},
+    %{key: "model",         type: :enum,   options: ["deepseek-chat","deepseek-v4-pro"], source: :template, editable: false},
+    %{key: "provider",      type: :enum,   options: ["deepseek","openai","anthropic"],    source: :template, editable: false},
+    %{key: "api_url",       type: :string,                                                source: :template, editable: false},
+    %{key: "system_prompt", type: :text,                                                  source: :template, editable: false},
+    %{key: "max_history",   type: :string,                                                source: :template, editable: false},
   ]
 end
 ```
