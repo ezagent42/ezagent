@@ -50,6 +50,15 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   per cc-headless agent through a plugin-owned DynamicSupervisor. It is a
   supervised transport sidecar, not a Kind process; the Agent Kind is still
   spawned exclusively through `Ezagent.Kind.spawn/2`.
+
+  ## Kanban MiroSync sidecar (added 2026-06-25, kanban-clean)
+
+  `EzagentPluginKanban.MiroSync.bind/3` starts one kanban↔Miro bidirectional
+  sync poller (a GenServer) per board through the plugin-owned
+  `EzagentPluginKanban.MiroSyncSupervisor`. It is a supervised transport
+  sidecar — it drives the external Miro integration entirely through
+  `Ezagent.Invocation.dispatch/1` — not a Kind process; the kanban Kind is
+  still spawned exclusively through the `Ezagent.Kind.spawn/2` chokepoint.
   """
   use ExUnit.Case, async: true
 
@@ -214,7 +223,14 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # call-site came in with the transport split but the allowlist entry was
       # missed (same class as the PR #436 codex miss above), leaving `mix test`
       # RED on main; this restores it.
-      "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex"
+      "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex",
+      # EzagentPluginKanban.MiroSync (2026-06-25, kanban-clean) —
+      # `bind/3` starts a per-board kanban↔Miro bidirectional sync poller
+      # (a GenServer) under the plugin-owned `MiroSyncSupervisor`. It is a
+      # supervised transport sidecar that drives the external Miro
+      # integration through `Ezagent.Invocation.dispatch/1` — NOT a Kind.
+      # The kanban Kind is still spawned exclusively via `Ezagent.Kind.spawn/2`.
+      "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex"
     ]
   end
 end

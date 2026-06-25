@@ -113,6 +113,12 @@ defmodule EzagentWeb.MixProject do
       # task #88 — ezagent.chat email capability (CLI-only). World/web reach
       # Ezagent.Email via runtime-apply; declared here so its OTP app boots.
       {:ezagent_plugin_email, in_umbrella: true},
+      # kanban-clean — kanban plugin registers the resource://*/kanban/*
+      # Kind factory + after_boot SpawnRegistry entry. Web boot must start
+      # the plugin so world's :get_tree dispatch can auto-spawn boards and
+      # the connector Behavior actions resolve. The
+      # `all_plugin_apps_wired_to_web_test` invariant locks this in.
+      {:ezagent_plugin_kanban, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]

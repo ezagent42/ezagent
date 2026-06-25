@@ -81,12 +81,12 @@ defmodule Ezagent.World.KanbanData do
 
   @doc """
   确保某 kanban Kind 起活（fresh kanban 无快照不会被 dispatch 自动起）：经核心
-  `Ezagent.SpawnRegistry.spawn/1`（kanban plugin 注册的 `resource://*/kanban/*` 工厂），
-  world 不直引 kanban 模块。已 live 幂等返回。
+  owner-gated chokepoint `Ezagent.LocalRuntime.ensure_started/1`（内部委托 kanban plugin
+  注册的 `resource://*/kanban/*` 工厂），world 不直引 kanban 模块。已 live 幂等返回。
   """
   @spec ensure_spawned(URI.t()) :: :ok
   def ensure_spawned(%URI{} = uri) do
-    _ = Ezagent.SpawnRegistry.spawn(uri)
+    _ = Ezagent.LocalRuntime.ensure_started(uri)
     :ok
   end
 
@@ -218,7 +218,7 @@ defmodule Ezagent.World.KanbanData do
     base = jsonable_map(a)
     url = base["url"]
 
-    if base["kind"] == "file" and is_binary(url) and String.starts_with?(url, "resource://") do
+    if base["kind"] == "file" and is_binary(url) do
       case mint_download(url) do
         {:ok, href} -> Map.put(base, "url", href)
         _ -> base
@@ -228,9 +228,15 @@ defmodule Ezagent.World.KanbanData do
     end
   end
 
+  # 仅当 url 解析为 resource:// URI（uploads 附件）时签发下载 href；
+  # 其余（非 URI / 别的 scheme）返回 :error，原样保留。scheme 判断走
+  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。
   defp mint_download(url) do
-    with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url) do
+    with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
+         true <- Ezagent.URI.scheme?(uri, :resource) do
       {:ok, "/uploads/download?token=" <> Ezagent.Uploads.DownloadToken.mint!(uri)}
+    else
+      _ -> :error
     end
   rescue
     _ -> :error

@@ -248,9 +248,11 @@ defmodule Ezagent.World.KanbanActions do
     case {parse(uri_str), verify_upload_grant(socket, grant, caller)} do
       {%URI{}, {:ok, %URI{} = upload_uri}} ->
         # url = uploads URI；jsonable_artifact(kind=file) 会签发下载 href
+        upload_url = URI.to_string(upload_uri)
+
         act(socket, uri_str, :attach_artifact, %{
           id: node_id,
-          artifact: %{tool: "upload", kind: "file", ref: name, url: URI.to_string(upload_uri)}
+          artifact: %{tool: "upload", kind: "file", ref: name, url: upload_url}
         })
 
       {:error, _} ->

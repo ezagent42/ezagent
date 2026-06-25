@@ -62,7 +62,7 @@ defmodule EzagentPluginKanban.BoardConfig do
   defp path,
     do: Ezagent.System.FsResolver.path!(Ezagent.URI.system("credentials", "kanban-boards.json"))
 
-  defp uri_key(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_key(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp uri_key(s) when is_binary(s), do: s
 
   defp blank_to_nil(nil), do: nil
