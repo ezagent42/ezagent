@@ -313,9 +313,55 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       missing_cap_check_mutating_actions: missing_cap_check_mutating_actions(),
       kind_runtime_ordering_violations: kind_runtime_ordering_violations(),
       kind_runtime_reentry_violations: kind_runtime_reentry_violations(),
-      cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift()
+      cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
+      raw_port_spawn_executable: raw_port_spawn_executable()
     ]
   end
+
+  # Subtask B (2026-06-25) — forbid raw `Port.open({:spawn_executable, …}, …)`.
+  # The sanctioned OS-process spawn exit is `Ezagent.Runtime.OsProcess` (erlexec
+  # `run_link` + `{group,0}`+`:kill_group` subtree reaping); a bare `Port.open`
+  # only signals the DIRECT child on close, orphaning the `uv→python` /
+  # `codex→vendor` / `node→workers` subtree.
+  #
+  # AST-based (NOT the line-based `grep/2`): the feishu call spans two lines
+  # (`Port.open(` then `{:spawn_executable, …}` on the next), which a per-line
+  # regex can never match. The first arg is a BARE 2-tuple `{:spawn_executable,
+  # _}` — in Elixir AST a 2-element tuple is a literal `{a, b}`, NOT the `{:{},
+  # _, [...]}` form (that is 3+-element tuples like `{:fd, 0, 1}`, which must NOT
+  # match). `# arch-allow:` on the `Port.open` line suppresses one site.
+  defp raw_port_spawn_executable do
+    lib_files()
+    |> Enum.map(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> count_port_spawn_executable(ast, arch_allowed_lines(file))
+        {:error, _} -> 0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  defp count_port_spawn_executable(ast, allowed_lines) do
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn node, acc ->
+        if port_spawn_executable_node?(node, allowed_lines),
+          do: {node, acc + 1},
+          else: {node, acc}
+      end)
+
+    count
+  end
+
+  defp port_spawn_executable_node?(
+         {{:., _, [{:__aliases__, _, [:Port]}, :open]}, meta, [first_arg | _]},
+         allowed_lines
+       ) do
+    not MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0)) and
+      (match?({:spawn_executable, _}, first_arg) or
+         match?({:{}, _, [:spawn_executable | _]}, first_arg))
+  end
+
+  defp port_spawn_executable_node?(_node, _allowed_lines), do: false
 
   defp manifest do
     @manifest_path
