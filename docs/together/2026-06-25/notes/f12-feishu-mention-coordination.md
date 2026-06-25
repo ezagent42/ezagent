@@ -1,9 +1,19 @@
 # F12 协调 note — 飞书 @ 解析成 agent mention（拆出单独跟进）
 
-> **状态**：从 `feat/product-gaps-f9-f12` 分支**拆出**。本分支今天只交付 **F9**（world UI 绑群入口，见 `returns/`）。F12 需先跟 Allen / 林懿伦 / 张宁对齐再开实现分支。
+> **状态（2026-06-25 PM 终结）**：**F12「飞书 @ → agent 回复」能力已验证可用,无需新 mention-解析代码。** 方向 C（占位符桥接）已实现+测试后**收掉**（删分支 `feat/f12-feishu-mention-bridge`，tip SHA `057a0bb4`，reflog 可寻）。详见 §6。
 > **来源**：F12 = 06-24 全流程验证发现的 high 级缺口（`docs/together/2026-06-24/evidence/blockers.md` 行 F12）。
 > **owner（验证文档）**：@林懿伦（routing / mention 解析）+ @张宁（会话路由规则 UI）。
-> **作者**：zyli（李震宇），2026-06-25 scoping。
+> **作者**：zyli（李震宇），2026-06-25 scoping + 收口。
+
+## 0. 终结论（先读这段）
+
+2026-06-25 下午用 world UI（F9 绑群）+ 真飞书群手测后,结论翻转:
+
+1. **「飞书 @ 一个 agent → 它回复」的能力已经能用**,且**不靠新代码**——靠的是早就存在的 **text-grep**（Allen 2026-05-17，文字 `@<agent名>`）+ 本日交付的 **F9 绑群 UI** + **默认路由规则** `{:always}→[$session_users,$mentions]`。手测证据：`evidence/f12-feishu-@-agent.png`（飞书群）+ `evidence/f12-feishu-@agent-world-ui.png`（world 对话页），均为 **text-grep 路径**（操作员手打文字 `@r3-echo-pty-1`）。
+2. **方向 C（占位符→文字桥接）经测无真实触发场景**:agent 在飞书无身份、不可被原生 @ 选中;bot 只是**全 app 的传输入口**（`system://credentials/feishu.yaml` 的 app_id/secret），不对应任何单个 agent。C 唯一作用是把存储文本里的 `@_user_N` 美化成可读名,**不影响路由**。→ **收掉**（已删分支）。
+3. **真正可能还剩的口子（非 mention 解析,非本人范围）**:验证里 protocol-api session「无 `$mentions` 路由规则」。正常 session 靠全局默认规则即可（手测的 feishu-bing 就是,"ROUTING 0" 仍路由）。**某些 session 类型是否默认 seed 该规则** = 林懿伦/张宁的路由那半,作为独立线索移交,不在本 return。
+
+下面 §1-§5 是当时的 scoping 记录（保留备查；方向 C 的代码面地图对将来若要做「装饰性占位符清理」仍有参考价值）。
 
 ## 1. 缺口复述
 
