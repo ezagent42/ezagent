@@ -100,6 +100,7 @@ export type IdentitiesState = {
   config_path?: string | null
   source_template?: string | null
   config_fields?: ConfigFieldRow[]
+  config_schema?: ConfigSchemaField[]
   not_wired?: NotWiredRow[]
   flavor?: string
   component?: string
@@ -583,6 +584,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
             key={keyEntry.key}
             agentUri={agentUri}
             keyEntry={keyEntry}
+            schema={state.config_schema}
             onConfigUpdate={onConfigUpdate}
             onConfigDeletePath={onConfigDeletePath}
           />
@@ -595,14 +597,25 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
   )
 }
 
+type ConfigSchemaField = {
+  key: string
+  type: string
+  label?: string
+  options?: string[]
+  default?: unknown
+  required?: boolean
+  help?: string
+}
+
 type AgentConfigKeySectionProps = {
   agentUri: string
   keyEntry: CascadeKeyEntry
+  schema?: ConfigSchemaField[]
   onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
   onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
 }
 
-function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
+function AgentConfigKeySection({agentUri, keyEntry, schema, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
   // Initialize editable fields from the effective_body
   const [editedFields, setEditedFields] = React.useState<Record<string, unknown>>(() => ({...keyEntry.effective_body}))
   const [newFieldName, setNewFieldName] = React.useState("")
@@ -693,25 +706,21 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
       {/* Editable user layer fields */}
       <div className="space-y-2">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User layer (editable)</p>
-        {Object.entries(editedFields).map(([field, val]) => (
+        {Object.entries(editedFields).map(([field, val]) => {
+          const schemaField = (schema || []).find(s => s.key === field)
+          return (
           <div className="flex items-start gap-2" key={field}>
             <div className="flex-1">
               <label className={fieldLabel}>
-                <span className="font-mono">{field}</span>
-                {field === "soul_md" ? (
-                  <textarea
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    rows={4}
-                    value={String(val ?? "")}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                  />
-                ) : (
-                  <Input
-                    value={String(val ?? "")}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    className="font-mono"
-                  />
-                )}
+                <span className="font-mono">{schemaField?.label || field}</span>
+                {schemaField?.help && <span className="text-[10px] text-muted-foreground ml-1">({schemaField.help})</span>}
+                <ConfigFieldWidget
+                  field={field}
+                  value={val}
+                  schemaType={schemaField?.type}
+                  options={schemaField?.options}
+                  onChange={(v) => handleFieldChange(field, v)}
+                />
               </label>
             </div>
             <button
@@ -724,7 +733,7 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
               ×
             </button>
           </div>
-        ))}
+        )})}
 
         {/* Add new field row */}
         <div className="flex items-end gap-2 border-t border-border pt-2">
@@ -768,6 +777,95 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
       </div>
     </div>
   )
+}
+
+// ── M3: Schema-aware config field widget ────────────────────────────
+
+type ConfigFieldWidgetProps = {
+  field: string
+  value: unknown
+  schemaType?: string
+  options?: string[]
+  onChange: (value: string) => void
+}
+
+function ConfigFieldWidget({field, value, schemaType, options, onChange}: ConfigFieldWidgetProps) {
+  const strValue = String(value ?? "")
+
+  switch (schemaType) {
+    case "text":
+      return (
+        <textarea
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          rows={4}
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+    case "enum":
+    case "list":
+      return options && options.length > 0 ? (
+        <Select value={strValue} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          {options.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </Select>
+      ) : (
+        <Input
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+          placeholder={schemaType === "list" ? "逗号分隔" : ""}
+        />
+      )
+    case "json":
+      return (
+        <textarea
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          rows={3}
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder='{"key": "value"}'
+        />
+      )
+    case "boolean":
+      return (
+        <Select value={strValue} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </Select>
+      )
+    case "integer":
+      return (
+        <Input
+          type="number"
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+        />
+      )
+    case "secret":
+      return (
+        <Input
+          type="password"
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+          autoComplete="off"
+        />
+      )
+    default:
+      // string or unknown type — fallback to generic Input
+      return (
+        <Input
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+        />
+      )
+  }
 }
 
 function AgentApiKeys({
