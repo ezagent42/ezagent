@@ -617,94 +617,126 @@ end
 
 ---
 
-### M2：Flavor Config Schema 声明（~45 行，6 文件）
+### M2：Flavor Config Schema 声明（~82 行，6 文件）
 
 **目标**：后端能告诉前端"每个 flavor 有哪些可配置字段、每个字段是什么类型、枚举选项是什么"
 
-#### 设计决策（已定）
+#### 设计决策（已定，经 codex review 确认）
 
-基于 ezagent 设计原则推演：
+**最终方案：Option A（`@callback config_schema/0` 在 `Kind.Template`）+ Option C（shape 在 core，data 在 plugin）**
 
-| 决策 | 选择 | 理由 |
-|---|---|---|
-| **Schema 声明在哪** | `@callback config_schema/0` 在 `Kind.Template` 上（作为 `@optional_callback`） | P12 — flavor-specific 知识在 plugin 层。Template Class 已经通过 `validate/1`、`template_data_extra/1`、`sdk_sidecar_params/2` 拥有"接受什么字段"的知识，schema 只是显式化。通过 `AgentFlavorRegistry.lookup(flavor) → template_class` 就能拿到 |
-| **Enum 选项从哪来** | Template Class 硬编码 | model 列表不频繁变。运行时查询 API 太重；配置文件增加部署复杂度且本质和硬编码无区别。未来如需动态 → 加 `options_source: :dynamic` callback |
-| **Cascade vs Template 区分** | 用 `source` + `editable` 标注，不做物理统一 | 如实标注：template data 字段 `editable: false`，cascade 字段 `editable: true`。将来 M4+ 再决定是否引入改 template + respawn 流程 |
+核心澄清：**变的是 data，不是 shape**。
 
-#### Schema Entry 定义
+| 层 | 内容 | 位置 | 变化频率 |
+|---|---|---|---|
+| **Shape** | `config_field` 类型定义（`key`、`type`、`options`、`editable`、`source`） | core `kind/template.ex` | **极低**——只在加新字段类型时变 |
+| **Data** | model 列表、effort 级别、permission_mode 值 | plugin Template Class | **高**——每次出新 model 就变 |
+
+**为什么是 `Kind.Template` 而不是 `agent_flavor_decl`**（codex 分析要点）：
+
+> `agent_flavor_decl` 保存的是**布线引用**（`template_class` 是 module atom、`bridge_adapter` 是 module atom），不是 **UI schema**。把嵌套数组结构塞进 ETS 行，违反 declaration / wiring / UI 的分离。Template Class 已经是 flavor 的配置知识权威——`template_data_extra/1` 返回字段、`validate/1` 校验字段、`sdk_sidecar_params/2` 消费字段。`config_schema/0` 只是把这份知识声明式写出来。
+
+**enum 选项的数据来源完全自由**：Template Class 可以硬编码、从 `priv/config/` YAML 读取、或用 `Application.get_env`——core 不关心。
+
+#### Core 改动
+
+**一个文件**：`apps/ezagent_core/lib/ezagent/kind/template.ex`（+~20 行）
 
 ```elixir
-# kind/template.ex（core，+3行）
-@callback config_schema() :: [map()]  # 新增 optional callback
-# @optional_callbacks 中加 config_schema: 0
+# 新增 type 定义（一次性，后续改 data 不动 core）
+@type config_field_type :: :string | :enum | :list | :json | :text | :boolean
+
+@type config_field :: %{
+  required(:key) => String.t(),
+  required(:type) => config_field_type(),
+  optional(:options) => [String.t()],
+  optional(:editable) => boolean(),
+  optional(:source) => :template | :cascade
+}
+
+# 新增 optional callback
+@callback config_schema() :: [config_field()]
 ```
 
-每个 Template Class 实现示例（以 cc 为例）：
+`@optional_callbacks` 中加 `config_schema: 0`。
+
+#### Plugin 改动（每个 Template Class ~15-18 行）
+
+cc（model 列表通过 `Application.get_env` 可覆盖）：
 
 ```elixir
-# cc_agent.ex（+10行）
+# cc_agent.ex
+@default_models ["deepseek-chat", "deepseek-v4-pro", "deepseek-v4-flash",
+                 "claude-sonnet-4-6", "claude-opus-4-8"]
+
 @impl true
 def config_schema do
+  models = Application.get_env(:ezagent_plugin_cc, :models, @default_models)
   [
-    %{key: "model",            type: :enum,   options: ["deepseek-chat", "deepseek-v4-pro", "deepseek-v4-flash", "claude-sonnet-4-6", "claude-opus-4-8"], editable: false, source: :template},
-    %{key: "effort",           type: :enum,   options: ["low", "medium", "high", "xhigh", "max"], editable: false, source: :template},
-    %{key: "permission_mode",  type: :enum,   options: ["default", "acceptEdits", "plan", "bypass"], editable: false, source: :template},
-    %{key: "system_prompt",    type: :text,   editable: false, source: :template},
-    %{key: "allowed_tools",    type: :list,   editable: false, source: :template},
-    %{key: "disallowed_tools", type: :list,   editable: false, source: :template},
-    %{key: "mcp_servers",      type: :json,   editable: false, source: :template},
-    %{key: "soul_md",          type: :text,   editable: true,  source: :cascade},
+    %{key: "model",            type: :enum, options: models,                    source: :template, editable: false},
+    %{key: "effort",           type: :enum, options: ["low","medium","high","xhigh","max"], source: :template, editable: false},
+    %{key: "permission_mode",  type: :enum, options: ["default","acceptEdits","plan","bypass"], source: :template, editable: false},
+    %{key: "system_prompt",    type: :text,                                     source: :template, editable: false},
+    %{key: "allowed_tools",    type: :list,                                     source: :template, editable: false},
+    %{key: "disallowed_tools", type: :list,                                     source: :template, editable: false},
+    %{key: "mcp_servers",      type: :json,                                     source: :template, editable: false},
+    %{key: "soul_md",          type: :text,                                     source: :cascade, editable: true},
   ]
 end
 ```
 
-codex flavor（~6 行）：
+codex：
 
 ```elixir
 # codex_agent.ex
 def config_schema do
   [
-    %{key: "model",           type: :enum, options: ["codex-default"], editable: false, source: :template},
-    %{key: "approval_policy", type: :enum, options: ["never", "on-request", "always"], editable: false, source: :template},
-    %{key: "sandbox",         type: :enum, options: ["enabled", "disabled"], editable: false, source: :template},
-    %{key: "soul_md",         type: :text, editable: true, source: :cascade},
+    %{key: "model",           type: :enum, options: ["codex-default"],                source: :template, editable: false},
+    %{key: "approval_policy", type: :enum, options: ["never","on-request","always"],  source: :template, editable: false},
+    %{key: "sandbox",         type: :enum, options: ["enabled","disabled"],           source: :template, editable: false},
+    %{key: "soul_md",         type: :text,                                            source: :cascade, editable: true},
   ]
 end
 ```
 
-curl flavor（~5 行）：
+curl：
 
 ```elixir
-# curl_agent.ex（已注册 Template Class）
+# curl_agent.ex
 def config_schema do
   [
-    %{key: "model",    type: :enum,   options: ["deepseek-chat", "deepseek-v4-pro"], editable: false, source: :template},
-    %{key: "provider", type: :enum,   options: ["deepseek", "openai", "anthropic"], editable: false, source: :template},
-    %{key: "api_url",   type: :string, editable: false, source: :template},
+    %{key: "model",    type: :enum,   options: ["deepseek-chat","deepseek-v4-pro"], source: :template, editable: false},
+    %{key: "provider", type: :enum,   options: ["deepseek","openai","anthropic"],    source: :template, editable: false},
+    %{key: "api_url",  type: :string,                                               source: :template, editable: false},
   ]
 end
 ```
 
-echo flavor（~3 行）：
+echo：不实现 → 默认返回 `nil`（`@optional_callback` 自动处理）。
 
-```elixir
-# echo_agent.ex
-def config_schema do
-  []  # echo 无可配置字段
-end
+#### 发现路径
+
 ```
+identity_data.ex
+  → AgentFlavorRegistry.list_all()
+  → [{flavor, %{template_class: tc}, ...]
+  → tc.config_schema()  （不实现则为 nil/[]）
+  → 放入 world:state
+```
+
+**不改** `AgentFlavorRegistry`。发现路径通过已有的 `template_class` 字段隐式完成。
 
 #### 改动清单
 
 | 文件 | 改动 | 行数 |
 |---|---|---|
-| `kind/template.ex`（core） | 加 `@callback config_schema()` + `@optional_callbacks` | +3 |
-| `cc_agent.ex` | `def config_schema` → 8 个字段 | +10 |
-| `cc_headless_agent.ex` | `def config_schema` → 同 cc | +10 |
-| `codex_agent.ex` | `def config_schema` → 4 个字段 | +6 |
-| `codex_remote_agent.ex` | `def config_schema` → 同 codex | +6 |
-| `identity_data.ex` | `state_for` 中通过 `AgentFlavorRegistry` 拿 template_class → 调 `config_schema()` → 放入 world:state | +10 |
-| **总计** | | **~45 行** |
+| `kind/template.ex`（core） | 加 `@type config_field` + `@callback config_schema()` + `@optional_callbacks` | +20 |
+| `cc_agent.ex` | `def config_schema` → 8 个字段 + env override | +18 |
+| `cc_headless_agent.ex` | `def config_schema` → 同 cc | +18 |
+| `codex_agent.ex` | `def config_schema` → 4 个字段 | +8 |
+| `codex_remote_agent.ex` | `def config_schema` → 同 codex | +8 |
+| `identity_data.ex` | `state_for` 中读 schema 放入 world:state | +10 |
+| **总计** | | **~82 行** |
 
 #### 契约变化
 
@@ -716,7 +748,7 @@ config_schema: Array<{
   type: "string" | "enum" | "list" | "json" | "text" | "boolean",
   options?: string[],       // enum 类型的可选值
   editable: boolean,        // 是否可运行时编辑
-  source: "template" | "cascade",  // 数据来源（存储 A 还是存储 B）
+  source: "template" | "cascade",
 }>
 ```
 
@@ -724,15 +756,12 @@ config_schema: Array<{
 
 ```
 Template Class.config_schema/0
-  → identity_data.ex: AgentFlavorRegistry.lookup(flavor) → template_class.config_schema()
+  → identity_data.ex: AgentFlavorRegistry.list_all → tc.config_schema()
   → 放入 world:state JSON
   → M1: React 读 config_schema 遍历展示
   → M3: React 按 config_schema.type 选择 widget
   → M4: React 按 config_schema 动态渲染创建表单
 ```
-
----
-
 ### M3：Config 面板结构化编辑（依赖 M2）
 
 **目标**：Config Cascade 的字段不再是通用 kv Input，而是按 schema 选 widget
