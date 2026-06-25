@@ -23,7 +23,7 @@ defmodule EzagentCore.MixProject do
   def application do
     [
       mod: {EzagentCore.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :erlexec]
     ]
   end
 
@@ -46,7 +46,8 @@ defmodule EzagentCore.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:jason, "~> 1.2"},
-      {:yaml_elixir, "~> 2.9"}
+      {:yaml_elixir, "~> 2.9"},
+      {:erlexec, "~> 2.3"}
       # bcrypt_elixir moved to ezagent_domain_identity in Phase 6 PR 2.
     ]
   end
