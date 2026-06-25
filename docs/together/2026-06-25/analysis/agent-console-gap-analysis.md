@@ -140,7 +140,7 @@ IdentityData (identity_data.ex, 692行)
 |---|---|
 | **详情页缺 template data 字段** | `respawn_template_data` 里有 model/effort/permission_mode/system_prompt/allowed_tools/disallowed_tools/mcp_servers，但 `IdentityData.state_for(:agent_detail)` 只解了 project_cwd/config_dir/source_template，其他字段没有放入 state |
 | **详情页缺 config cascade soul** | `advisor.behavior` body 里的 `soul_md` 没有在详情页展示 |
-| **详情页缺 sections/skills/KB** | 这些概念在 main 后端完全不存在（见 §5 的 autoservice-dev-v3 参考方案） |
+| **详情页缺 sections/skills/KB** | 这些概念的 UI/管理面在 main 不存在。domain 层有 `Ezagent.Role` 结构体（`skills`/`plugins`/`prompt`/`behaviors`/`requested_caps`）和 `AgentTemplate.desired_skills`/`desired_caps` 字段，但缺少 operator 可视化管理面（见 §5-6） |
 | **Config 面板缺结构化编辑** | 当前是通用 kv 编辑器，没有按字段类型选择 widget（见 §3.3） |
 
 ---
@@ -196,7 +196,7 @@ IdentityData (identity_data.ex, 692行)
 | **KB** | 无 KB 存储/检索机制 | ❌ 标"还没接线" |
 | **lifecycle 详情** | `Domain.Agent.lifecycle_status/1` 只返回 phase+flavor，无更多详情 | ❌ 标"还没接线" |
 | **settings 管理** | cc operator_settings 在 template data 里，无独立管理面 | ❌ 标"还没接线" |
-| **fork (parent template)** | 不存在 | ❌ 标"Deferred" |
+| **fork (parent template)** | `Behavior.Template` 有 `:fork` action（domain 层存在），但无 UI 触发入口 | ❌ 标"Deferred（domain 层已有，缺 UI）" |
 
 ### 3.3 Config 面板：字段编辑现状 vs 目标
 
@@ -398,7 +398,7 @@ action(:create_agent_skeleton, args: %{name, template},    caps: [:create_agent_
 | **P1（本任务可做）** | ContentAdmin Behavior | 让 skills/soul 操作走 dispatch（CapBAC + audit） | 依赖 SkillStore/SoulStore 先移植 |
 | **P2（后续）** | KbStore | KB 需要 Python MCP script（`kb_search_mcp.py`） | 依赖 P1 基础设施 + Python 依赖 |
 | **P2（后续）** | AgentConfig YAML 模型 | agent 定义注册（sections/worker 结构） | 需要先确定简化版模型，去掉 autoservice 特定概念 |
-| **Deferred** | fork (parent template) | 整个 fork 机制不存在 | — |
+| **Deferred** | fork (parent template) | `Behavior.Template.:fork` action 存在，缺 UI | — |
 
 ---
 
@@ -429,9 +429,9 @@ Layer 3: Claude Code 原生加载
 
 ### 6.2 当前缺失
 
-- **Skill 编辑**：Role 是代码写死的（`OrchestratorRole.compose()`），operator 不能通过 console 编辑 role 或上传 skill 文件
-- **KB 完全不存在**：没有 KB store、没有 KB MCP provider、没有 KB Role 字段、没有 KB bootstrap
-- **Role 持久化**：Role 没有 DB 存储，没有 Template URI（当前是代码内联的 `@skill_ref "ezagent-session-orchestrator"`）
+- **Skill 编辑**：domain 层已有 `Ezagent.Role` 结构体（`skills`/`plugins`/`prompt`/`behaviors`/`requested_caps`）和 `AgentTemplate.desired_skills`/`desired_caps`，但 Role 目前是代码写死的（`OrchestratorRole.compose()`），operator 不能通过 console 编辑 role 或上传 skill 文件
+- **KB 完全不存在**：没有 KB store、没有 KB MCP provider、没有 KB Role 字段
+- **Role 持久化**：Role 没有 DB 存储，没有 Template URI（当前是代码内联的 `@skill_ref`）
 
 ### 6.3 KB 设计方向：作为独立 Plugin
 
@@ -481,20 +481,20 @@ defstruct skills: [], plugins: [], kb: nil, prompt: nil, ...
 
 ## 7. 实施计划（按优先级，分里程碑）
 
-### 前置认知：各 Flavor 字段不同
+### 前置认知：各 Flavor 字段不同（以 `template_data_extra/1` 为权威源）
 
 在进入计划之前，必须明确：**不同 flavor 的 agent 有完全不同的配置字段**。不能假设"所有 agent 都有 model/effort/permission_mode"。
 
-| Flavor | 有效字段（来自 `respawn_template_data`） |
-|---|---|
-| **cc** | `model`, `effort`, `permission_mode`, `allowed_tools`, `disallowed_tools`, `mcp_servers`, `system_prompt` |
-| **cc-headless** | `model`, `effort`, `permission_mode`, `allowed_tools`, `disallowed_tools`, `mcp_servers`, `system_prompt` |
-| **codex** | `model`, `approval_policy`, `sandbox` |
-| **codex-remote** | `model`, `approval_policy`, `sandbox` |
-| **curl** | `model`, `provider`, `endpoint` |
-| **echo** | 无 |
+真实字段来源是各 Template Class 的 `template_data_extra/1` + `AgentTemplate.to_template_data/2` 的通用键（`class`、`agent_uri`、`cwd`、`config_dir`、`desired_skills`、`desired_caps`）。以下是各 flavor **额外**字段的概况（非完整清单）：
 
-**结论**：前端不能硬编码字段列表。后端按 flavor 解出实际存在的字段，前端遍历展示。
+| Flavor | 额外字段（来自 `template_data_extra/1`） |
+|---|---|
+| **cc / cc-headless** | `model`, `effort`, `permission_mode`, `allowed_tools`, `disallowed_tools`, `mcp_servers`, `system_prompt`, `operator_settings_path`, `operator_mcp_config_path`, `api_key_helper`, `role`, `credential_source`。cc-headless 额外有 SDK 运行时参数：`claude_session_id`, `claude_cli_path`, `uv_path`, `python_path`, `sdk_worker_path` |
+| **codex / codex-remote** | `model`, `approval_policy`, `sandbox`, `bridge_ws_url`, `codex_path` |
+| **curl** | `provider`, `api_url`, `model`, `system_prompt`, `max_history` |
+| **echo** | 无额外字段 |
+
+**结论**：前端不能硬编码字段列表。M1 按已知字段 case/when 解出实际存在的字段，M2 后通过 `config_schema/0` 自动发现。
 
 ---
 
@@ -568,7 +568,7 @@ defp config_fields_for(agent_uri, flavor, sandbox_state) do
     f when f in ["codex", "codex-remote"] ->
       ~w(model approval_policy sandbox)
     "curl" ->
-      ~w(model provider endpoint)
+      ~w(model provider api_url)
     _ -> []
   end
   
@@ -680,7 +680,7 @@ def config_schema do
   [
     %{key: "model",    type: :enum,   options: ["deepseek-chat", "deepseek-v4-pro"], editable: false, source: :template},
     %{key: "provider", type: :enum,   options: ["deepseek", "openai", "anthropic"], editable: false, source: :template},
-    %{key: "endpoint", type: :string, editable: false, source: :template},
+    %{key: "api_url",   type: :string, editable: false, source: :template},
   ]
 end
 ```
@@ -768,7 +768,7 @@ Template Class.config_schema/0
 |---|---|
 | Skill/Soul/KB 存储 | 需要先确定存储方案（DB vs 文件）+ Role 模型扩展（见 §6） |
 | Template Data 运行时编辑 | 需要改 template + respawn agent 流程 |
-| fork | 整个机制不存在 |
+| fork | `Behavior.Template.:fork` action 已存在，缺 UI 触发入口 |
 
 ---
 
