@@ -14,6 +14,28 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Role-materialization + kanban-as-role (2026-06-25, Allen "do it right")
+
+- **Role-materialization foundation (#54 follow-on)** — the role×flavor spawn
+  path does not exist yet (verified 2026-06-25): `Workspace.AgentCreate` ignores
+  Role; `Role.Compose.materialize` is only called by `OrchestratorRole` for cc's
+  CLAUDE.md content (not a spawn); no `template://<ws>/role/<name>` resolver
+  branch + no RoleTemplate Kind. Build: role Template subtype + `template://role`
+  resolver branch + role-driven agent create + `Role.CapMint` integration into
+  create. Prerequisite for kanban-as-role AND for orchestrator (which is also
+  waiting on it). This is the "do it right" path Allen chose (2026-06-25).
+- **kanban-as-role (depends on the role foundation above)** — convert kanban
+  from a `resource://` live Kind (Plan-B) to an agent: role `kanban-manager` ×
+  flavor `native`, board persists via Kind snapshot (NOT a file), `resource://`
+  stays pure FS, delete Plan-B (`resource_kinds/0` + `ResourceKindRegistry` +
+  workspace resource-dispatcher), world UI reused (only backend dispatch target
+  changes; the read-model must move from list-by-Kind-type to list-by-role).
+  Rebased #964 + the spec live on `origin/integration/kanban` (spec:
+  `docs/together/2026-06-25/specs/kanban-as-role-spec.md`). Codex-review
+  corrections to apply when resumed: drop the board.json idea (snapshot already
+  works), native flavor needs no bridge, the world read-model change is in-scope
+  (not "UI unchanged").
+
 ### Arch-debt deferred tracks (2026-06-23 close, Allen "clean all cleanable")
 
 > Cleaned at close: `oversized_modules_gt_1000` 3→0 (#919). The items below are
