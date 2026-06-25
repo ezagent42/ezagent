@@ -3,7 +3,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
   Anti-stub gate for the `agent_config` component state builder (Task C2).
 
   Verifies that `IdentityData.state_for/2` for the `agent_config` route calls
-  `Ezagent.AgentConfig.read_cascade/4` (cap-gated) and surfaces the real cascade
+  `Ezagent.Config.read_cascade/4` (cap-gated) and surfaces the real cascade
   state, NOT a stub. Also verifies that a caller WITHOUT the manage-cap gets a
   `"config_error"` key instead of a crash.
 
@@ -16,7 +16,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.World.IdentityData
-  alias Ezagent.AgentConfig
+  alias Ezagent.Agent.Config
 
   # ── bootstrap ────────────────────────────────────────────────────────────────
 
@@ -115,7 +115,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
 
       # Apply a delta first — this writes to the user layer.
       assert {:ok, _} =
-               AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+               Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
                  key: "advisor.behavior",
                  patch: %{"tone" => "decisive"}

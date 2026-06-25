@@ -59,13 +59,16 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   @allowlist_agent_to_plugin []
 
   describe "im → session → agent acyclic dependency graph" do
-    test "ezagent_domain_agent is a LEAF: in_umbrella deps ⊆ {core, agent_bridge}" do
+    test "ezagent_domain_agent is a LEAF: in_umbrella deps ⊆ {core, agent_bridge, identity}" do
       deps = umbrella_dep_graph() |> Map.fetch!(@agent_app) |> MapSet.new()
-      allowed = MapSet.new([:ezagent_core, :ezagent_domain_agent_bridge])
+
+      allowed =
+        MapSet.new([:ezagent_core, :ezagent_domain_agent_bridge, :ezagent_domain_identity])
+
       extra = MapSet.difference(deps, allowed)
 
       assert MapSet.size(extra) == 0,
-             "ezagent_domain_agent must depend ONLY on core + agent_bridge " <>
+             "ezagent_domain_agent must depend ONLY on core + agent_bridge + identity " <>
                "(im → session → agent leaf); forbidden deps: #{inspect(MapSet.to_list(extra))}"
     end
 

@@ -177,7 +177,7 @@ defmodule Ezagent.World.AgentActions do
   # All three helpers follow the same shape:
   # 1. Parse the agent_uri from args.
   # 2. Extract caller + caps from the operator's socket assigns.
-  # 3. Call the AgentConfig facade (never ConfigStore/ConfigEvolve directly — P14).
+  # 3. Call the Agent.Config API (never ConfigStore/ConfigEvolve directly — P14).
   # 4. On success: re-build the agent_config route state and push "world:state"
   #    (per spec: re-read after mutation, not an in-form echo).
   # 5. On error: push_config_error/2 (no silent drop — Invariant #9).
@@ -193,7 +193,7 @@ defmodule Ezagent.World.AgentActions do
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          {:ok, _result} <-
-           Ezagent.AgentConfig.apply_delta(agent_uri, caller, caps, %{
+           Ezagent.Agent.Config.apply_delta(agent_uri, caller, caps, %{
              layer: layer,
              key: key,
              patch: patch
@@ -216,7 +216,7 @@ defmodule Ezagent.World.AgentActions do
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          {:ok, _result} <-
-           Ezagent.AgentConfig.delete_path(agent_uri, caller, caps, %{
+           Ezagent.Agent.Config.delete_path(agent_uri, caller, caps, %{
              layer: layer,
              key: key,
              path: path
@@ -239,7 +239,7 @@ defmodule Ezagent.World.AgentActions do
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          {:ok, _result} <-
-           Ezagent.AgentConfig.repoint(agent_uri, caller, caps, %{
+           Ezagent.Agent.Config.repoint(agent_uri, caller, caps, %{
              layer: layer,
              key: key,
              config_id: config_id
