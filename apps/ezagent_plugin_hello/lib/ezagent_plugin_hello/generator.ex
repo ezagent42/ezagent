@@ -4,15 +4,14 @@ defmodule EzagentPluginHello.Generator do
   GenServer process (so the slow LLM round-trip never blocks dispatch).
 
   `start/2` spawns a supervised Task (under `EzagentPluginHello.TaskSupervisor`);
-  `generate/2` PLANS the request (`decompose/1`) for its EDIT SCOPE (body / shell /
-  both) and runs the single-page path: one LLM call → catalog page →
-  `TurnDriver.drive/3`. Out-of-catalog output fails closed (`Spec.validate/1`).
+  `generate/2` runs the single-page path (`generate_simple/4`): one LLM call →
+  catalog page → `TurnDriver.drive/3`. Out-of-catalog output fails closed
+  (`Spec.validate/1`).
 
-  Fan-out (the complex/per-section-worker path) is DISABLED for the shadcn era —
-  one `page_gen` call now produces the whole (5–8 section) body, and the per-section
-  worker prompt predated shadcn so it produced invalid sub-trees and always fell
-  back anyway. `classify_plan/1` therefore always returns `{:simple}`; `decompose/1`
-  / `parse_plan/1` still run to extract the edit SCOPE.
+  Every request regenerates the WHOLE page. `build_spec/3` PATCHES the current
+  spec when one exists (minimal ops, with a full-regen fallback) or builds a
+  FRESH spec otherwise; `land_page/6` drives the spec onto the Surface and then
+  designs / updates the per-page CSS theme (`build_theme/5`).
 
   ## API config (Phase 0)
 
@@ -29,7 +28,7 @@ defmodule EzagentPluginHello.Generator do
   # `priv/gettext/zh_CN/LC_MESSAGES/default.po`.
   use Gettext, backend: EzagentPluginHello.Gettext
 
-  alias EzagentPluginHello.{Prompts, Sanitize, ShellCss, Spec, TurnDriver}
+  alias EzagentPluginHello.{Prompts, Sanitize, Spec, TurnDriver}
   alias EzagentPluginHello.LLM.ApiClient
 
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
@@ -41,11 +40,10 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Generate a page and land it on `session_uri`'s Surface. A FRESH session (no
-  frame yet) generates frame + content in one round; a follow-up edit PLANS its
-  scope (`decompose/1`) and regenerates body / shell / both. All content goes
-  through the single-page path (`generate_simple/4`) — fan-out is disabled, see the
-  moduledoc.
+  Generate a page and land it on `session_uri`'s Surface. Every request goes
+  through the single-page path (`generate_simple/4`): a FRESH session builds the
+  whole spec from scratch, a follow-up edit PATCHES the current spec (with a
+  full-regen fallback). See the moduledoc.
   """
   @spec generate(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate(%URI{} = session_uri, user_text) when is_binary(user_text) do
@@ -60,56 +58,6 @@ defmodule EzagentPluginHello.Generator do
     # Every request regenerates the WHOLE page: one shadcn spec (the full page) +
     # a fresh CSS theme designed for it. No HTML frame, no scoped edit path.
     generate_simple(session_uri, builder, user_text, true)
-  end
-
-  defp generate_for_scope(session_uri, builder, user_text) do
-    {plan, scope} = decompose(user_text)
-
-    case scope do
-      # Shell-only: keep the existing json-render BODY untouched, regenerate just
-      # the HTML frame. No page_gen call, so the content the user didn't ask to
-      # change stays exactly as-is.
-      :shell ->
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("Plan: redesign the frame only (content unchanged).")
-        )
-
-        regenerate_shell_only(session_uri, builder, get_title_for_shell(session_uri), user_text)
-
-      # Body (default) or both: run the normal content generation. `reframe?`
-      # forces a fresh frame too when the user asked for "both".
-      _ ->
-        reframe = scope == :both
-
-        if reframe,
-          do: TurnDriver.say(session_uri, builder, gettext("Redesigning the site frame too…"))
-
-        case plan do
-          {:complex, %{title: title, sections: sections}} ->
-            TurnDriver.say(
-              session_uri,
-              builder,
-              gettext(
-                "🧭 Plan: page \"%{title}\" split into %{count} blocks, generating in parallel.",
-                title: title,
-                count: length(sections)
-              )
-            )
-
-            generate_complex(session_uri, builder, title, sections, user_text, reframe)
-
-          {:simple} ->
-            TurnDriver.say(
-              session_uri,
-              builder,
-              gettext("🧭 Plan: single page, direct generation.")
-            )
-
-            generate_simple(session_uri, builder, user_text, reframe)
-        end
-    end
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
@@ -177,7 +125,9 @@ defmodule EzagentPluginHello.Generator do
         {:ok, spec, {:patch, ops}}
 
       {:error, reason} ->
-        Logger.warning("hello.Generator: patch edit failed (#{inspect(reason)}); full-regen fallback")
+        Logger.warning(
+          "hello.Generator: patch edit failed (#{inspect(reason)}); full-regen fallback"
+        )
 
         case fresh_spec(gen_prompt(current, user_text)) do
           {:ok, spec} -> {:ok, spec, :fallback}
@@ -297,8 +247,11 @@ defmodule EzagentPluginHello.Generator do
     node = Map.delete(node, "id")
 
     case Map.get(node, "children") do
-      children when is_list(children) -> Map.put(node, "children", Enum.map(children, &strip_ids/1))
-      _ -> node
+      children when is_list(children) ->
+        Map.put(node, "children", Enum.map(children, &strip_ids/1))
+
+      _ ->
+        node
     end
   end
 
@@ -312,7 +265,8 @@ defmodule EzagentPluginHello.Generator do
     end)
   end
 
-  defp apply_op(spec, %{"op" => "replace", "id" => id, "node" => new_node}) when is_map(new_node) do
+  defp apply_op(spec, %{"op" => "replace", "id" => id, "node" => new_node})
+       when is_map(new_node) do
     update_node(spec, id, fn _node -> new_node end)
   end
 
@@ -374,315 +328,6 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # The Phase-1 fan-out path: build every section concurrently, assemble, drive.
-  # Sections that fail (LLM error / out-of-catalog) are dropped; the page is built
-  # from those that succeeded (in plan order). If NONE survive, fall back to the
-  # single-page path so the turn still produces something.
-  defp generate_complex(session_uri, builder, title, sections, user_text, reframe) do
-    briefs = sections |> Enum.map(fn %{brief: b} -> "・#{b}" end) |> Enum.join("\n")
-
-    TurnDriver.say(
-      session_uri,
-      builder,
-      gettext("Generating %{count} blocks in parallel:\n%{briefs}",
-        count: length(sections),
-        briefs: briefs
-      )
-    )
-
-    section_trees =
-      sections
-      |> Task.async_stream(
-        fn %{brief: brief} -> gen_section(brief) end,
-        max_concurrency: max(length(sections), 1),
-        timeout: @section_timeout_ms,
-        on_timeout: :kill_task
-      )
-      |> Enum.map(fn
-        {:ok, {:ok, tree}} -> tree
-        _ -> nil
-      end)
-      |> Enum.reject(&is_nil/1)
-
-    kept = length(section_trees)
-    failed = length(sections) - kept
-
-    blocks_done_msg =
-      if failed > 0 do
-        gettext("Blocks done: %{kept}/%{total} succeeded (%{failed} failed, skipped).",
-          kept: kept,
-          total: length(sections),
-          failed: failed
-        )
-      else
-        gettext("Blocks done: %{kept}/%{total} succeeded.",
-          kept: kept,
-          total: length(sections)
-        )
-      end
-
-    TurnDriver.say(session_uri, builder, blocks_done_msg)
-
-    case section_trees do
-      [] ->
-        Logger.warning(
-          "hello.Generator: all #{length(sections)} sections failed; single-page fallback"
-        )
-
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("All blocks failed; regenerating with the single-page fallback…")
-        )
-
-        generate_simple(session_uri, builder, user_text, reframe)
-
-      trees ->
-        with {:ok, page} <- Spec.compose_page(title, trees) do
-          log_spec(session_uri, page)
-
-          TurnDriver.say(
-            session_uri,
-            builder,
-            gettext("Assembled: %{desc}", desc: describe_page(page))
-          )
-
-          land_page(session_uri, builder, page, user_text, reframe, :generate)
-        else
-          {:error, reason} = err ->
-            Logger.warning("hello.Generator: compose failed: #{inspect(reason)}")
-
-            TurnDriver.say(
-              session_uri,
-              builder,
-              gettext("Page assembly failed: %{reason}", reason: inspect(reason))
-            )
-
-            err
-        end
-    end
-  end
-
-  # One worker: build a single catalog sub-tree from a section brief.
-  defp gen_section(brief) do
-    with {:ok, %{content: content}} <- call_llm(Prompts.worker_section_system(), brief),
-         {:ok, raw} <- Spec.extract(content),
-         {:ok, node} <- Spec.validate(raw) do
-      {:ok, node}
-    else
-      other ->
-        Logger.warning("hello.Generator: section build failed: #{inspect(other)}")
-        :error
-    end
-  end
-
-  @doc """
-  Plan a request into `{:simple}` or `{:complex, %{title, sections}}` — the
-  Phase-1 orchestrator's pre-classification (decision D-1). Calls the planner LLM;
-  a failed/ambiguous reply degrades to `{:simple}` so generation always proceeds.
-  """
-  @type plan :: {:simple} | {:complex, %{title: String.t(), sections: [map()]}}
-  @type scope :: :body | :shell | :both
-  @spec decompose(String.t()) :: {plan(), scope()}
-  def decompose(user_text) when is_binary(user_text) do
-    case call_llm(Prompts.decompose_system(), user_text) do
-      {:ok, %{content: content}} -> parse_plan(content)
-      {:error, _} -> {{:simple}, :body}
-    end
-  end
-
-  @doc """
-  Parse the planner's reply into a plan. Pure. Anything that is not an explicit,
-  well-formed `complex` plan with ≥2 usable section briefs degrades to `{:simple}`
-  (the hard floor — fan-out is opt-in, only when it clearly pays off). Section ids
-  are assigned deterministically (`"s0"`, `"s1"`, …), NEVER taken from the LLM, so
-  no untrusted strings become turn subtask keys.
-  """
-  @spec parse_plan(term()) :: {plan(), scope()}
-  def parse_plan(content) when is_binary(content) do
-    case Spec.extract(content) do
-      {:ok, plan} when is_map(plan) -> {classify_plan(plan), scope_of(plan)}
-      _ -> {{:simple}, :body}
-    end
-  end
-
-  def parse_plan(_), do: {{:simple}, :body}
-
-  defp scope_of(%{"scope" => s}) when s in ["shell", "both"], do: String.to_atom(s)
-  defp scope_of(_), do: :body
-
-  # Fan-out (complex) is disabled for the shadcn era — the per-section worker
-  # prompt predates shadcn and produces invalid sub-trees, so it always failed and
-  # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
-  defp classify_plan(_), do: {:simple}
-
-  defp scope_of(%{"scope" => s}) when s in ["shell", "both"], do: String.to_atom(s)
-  defp scope_of(_), do: :body
-
-  # Fan-out (complex) is disabled for the shadcn era — the per-section worker
-  # prompt predates shadcn and produces invalid sub-trees, so it always failed and
-  # fell back anyway. One page_gen call now produces the whole (5-8 section) body.
-  defp classify_plan(_), do: {:simple}
-
-  # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
-  # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
-  # otherwise reuse the stored frame so ordinary content edits leave it untouched.
-  defp ensure_shell_html(session_uri, _builder, title, brief, force) do
-    existing = current_shell_html(session_uri)
-
-    if not force and existing != "" do
-      existing
-    else
-      brand = if is_binary(title) and title != "", do: title, else: "Website"
-      brief = if is_binary(brief), do: String.trim(brief), else: ""
-
-      user_msg =
-        if brief == "",
-          do: "Brand/title: #{brand}",
-          else: "Brand/title: #{brand}\nDesign request (style the frame to match): #{brief}"
-
-      case call_llm(Prompts.shell_gen_system(), user_msg) do
-        {:ok, %{content: content}} ->
-          # The frame now carries the hero (big design type) + nav + footer. The
-          # shadcn content below styles itself, so no separate content-theme pass.
-          content |> extract_html() |> Sanitize.html()
-
-        other ->
-          Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
-          existing
-      end
-    end
-  end
-
-  # Compile the per-session CSS from BOTH the shell HTML and the body's
-  # AI-authored `class` props (both invisible to the build-time Tailwind scan),
-  # then store frame + css together. Recomputed each build so body styling stays
-  # covered as the content changes.
-  defp store_frame(session_uri, builder, shell_html, body_tree) do
-    css = ShellCss.compile(shell_html <> "\n" <> body_class_markup(body_tree))
-    TurnDriver.set_shell(session_uri, builder, shell_html, css)
-  end
-
-  # Return the bespoke HTML frame (shell) for this session: regenerate it (LLM)
-  # when `force` (a "shell"/"both"-scoped request) or none is stored yet;
-  # otherwise reuse the stored frame so ordinary content edits leave it untouched.
-  defp ensure_shell_html(session_uri, builder, title, brief, force) do
-    existing = current_shell_html(session_uri)
-
-    if not force and existing != "" do
-      existing
-    else
-      brand = if is_binary(title) and title != "", do: title, else: "Website"
-      brief = if is_binary(brief), do: String.trim(brief), else: ""
-
-      user_msg =
-        if brief == "",
-          do: "Brand/title: #{brand}",
-          else: "Brand/title: #{brand}\nDesign request (style the frame to match): #{brief}"
-
-      case call_llm(Prompts.shell_gen_system(), user_msg) do
-        {:ok, %{content: content}} ->
-          # The frame now carries the hero (big design type) + nav + footer. The
-          # shadcn content below styles itself, so no separate content-theme pass.
-          content |> extract_html() |> Sanitize.html()
-
-        other ->
-          Logger.warning("hello.Generator: shell generation failed: #{inspect(other)}")
-          existing
-      end
-    end
-  end
-
-  # Focused content-theme call. Returns CSS rules (no <style> tag) or "" on failure.
-  defp generate_content_theme(frame) when is_binary(frame) and frame != "" do
-    case call_llm(Prompts.theme_gen_system(), frame) do
-      {:ok, %{content: content}} ->
-        extract_css(content)
-
-      other ->
-        Logger.warning("hello.Generator: content theme failed: #{inspect(other)}")
-        ""
-    end
-  end
-
-  defp generate_content_theme(_), do: ""
-
-  # Strip markdown fences / a stray <style> tag, AND every LAYOUT/sizing property
-  # — the json-render components own their layout (grid/flex/width via their
-  # default classes); the theme must only restyle the LOOK. Without this the model
-  # sets widths/flex/columns and squishes cards into 1-char strips.
-  defp extract_css(content) when is_binary(content) do
-    content
-    |> String.replace(~r/```[a-z]*/i, "")
-    |> String.replace(~r/<\/?style[^>]*>/i, "")
-    |> strip_layout_props()
-    |> String.trim()
-  end
-
-  defp extract_css(_), do: ""
-
-  @theme_strip_props ~w(
-    display position top right bottom left inset float clear z-index
-    width min-width max-width height min-height max-height
-    flex flex-basis flex-grow flex-shrink flex-direction flex-wrap flex-flow
-    grid grid-template grid-template-columns grid-template-rows grid-template-areas
-    grid-auto-flow grid-auto-columns grid-auto-rows grid-column grid-row grid-area
-    gap column-gap row-gap columns column-count column-width
-    place-items place-content place-self justify-content justify-items justify-self
-    align-items align-content align-self order overflow overflow-x overflow-y
-    white-space writing-mode
-  )
-
-  defp strip_layout_props(css) do
-    Enum.reduce(@theme_strip_props, css, fn p, acc ->
-      String.replace(acc, ~r/(^|[;{\s])#{Regex.escape(p)}\s*:[^;{}]*;?/i, "\\1")
-    end)
-  end
-
-  # Compile the per-session CSS from BOTH the shell HTML and the body's
-  # AI-authored `class` props (both invisible to the build-time Tailwind scan),
-  # then store frame + css together. Recomputed each build so body styling stays
-  # covered as the content changes.
-  defp store_frame(session_uri, builder, shell_html, body_tree) do
-    css = ShellCss.compile(shell_html <> "\n" <> body_class_markup(body_tree))
-    TurnDriver.set_shell(session_uri, builder, shell_html, css)
-  end
-
-  # Throwaway markup carrying every `class` string found in the body tree, so
-  # ShellCss.compile emits CSS for the AI's custom content styling too.
-  defp body_class_markup(tree) do
-    tree
-    |> collect_classes()
-    |> Enum.uniq()
-    |> Enum.map(&~s(<div class="#{&1}"></div>))
-    |> Enum.join("\n")
-  end
-
-  defp collect_classes(%{} = node) do
-    # shadcn nodes carry custom Tailwind on `className`; legacy nodes on `class`.
-    # Collect both so the per-session CSS compile generates whatever the model added.
-    cls =
-      case node["props"] || node[:props] do
-        %{} = p -> [p["className"] || p[:className], p["class"] || p[:class]]
-        _ -> []
-      end
-
-    children = List.wrap(node["children"] || node[:children] || [])
-
-    (cls ++ Enum.flat_map(children, &collect_classes/1))
-    |> Enum.filter(&(is_binary(&1) and &1 != ""))
-  end
-
-  defp collect_classes(list) when is_list(list), do: Enum.flat_map(list, &collect_classes/1)
-  defp collect_classes(_), do: []
-
-  defp current_shell_html(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, %{shell: s}} when is_binary(s) -> s
-      _ -> ""
-    end
-  end
-
   defp current_body_tree(session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :surface) do
       {:ok, %{versions: versions, approved: approved}} when is_map(versions) ->
@@ -696,92 +341,6 @@ defmodule EzagentPluginHello.Generator do
         nil
     end
   end
-
-  defp get_title_for_shell(session_uri) do
-    case current_body_tree(session_uri) do
-      %{} = tree -> get_title(tree)
-      _ -> "Website"
-    end
-  end
-
-  # The shell owns the chrome (nav / footer / banner); drop any of those the model
-  # put in the BODY so they don't render twice. Recurses through children.
-  @frame_node_types ~w(nav footer banner)
-  defp strip_frame_nodes(%{"children" => children} = node) when is_list(children) do
-    kept =
-      children
-      |> Enum.reject(fn c -> is_map(c) and c["type"] in @frame_node_types end)
-      |> Enum.map(&strip_frame_nodes/1)
-
-    Map.put(node, "children", kept)
-  end
-
-  defp strip_frame_nodes(node), do: node
-
-  # Section-level blocks are meant to be TOP-LEVEL, full-width sections. The model
-  # often wrongly nests them inside a `section` (whose grid/stack layout then
-  # squishes them into a cell — e.g. testimonials become 1-char strips). Hoist any
-  # such block OUT of its `section` wrapper, recursively, so each renders full
-  # width with its own grid intact. Sections wrapping only leaves (card/text/…)
-  # are kept.
-  @hoistable_blocks ~w(hero features stats testimonials logos pricing faq steps cta split banner)
-  defp unwrap_sections(%{"children" => children} = node) when is_list(children) do
-    new_children =
-      Enum.flat_map(children, fn child ->
-        child = unwrap_sections(child)
-
-        case child do
-          %{"type" => "section", "children" => kids} when is_list(kids) ->
-            if Enum.any?(kids, &hoistable_block?/1), do: kids, else: [child]
-
-          _ ->
-            [child]
-        end
-      end)
-
-    Map.put(node, "children", new_children)
-  end
-
-  defp unwrap_sections(node), do: node
-
-  defp hoistable_block?(%{"type" => t}), do: t in @hoistable_blocks
-  defp hoistable_block?(_), do: false
-
-  # Shell-only path (scope == :shell): regenerate just the frame, keep the
-  # existing json-render body. No page_gen, so the content is untouched.
-  defp regenerate_shell_only(session_uri, builder, title, brief) do
-    TurnDriver.say(
-      session_uri,
-      builder,
-      gettext("Generating a new frame (keeping your content)…")
-    )
-
-    shell_html = ensure_shell_html(session_uri, builder, title, brief, true)
-
-    if shell_html == "" do
-      TurnDriver.say(session_uri, builder, gettext("Frame generation failed."))
-      {:error, :shell_failed}
-    else
-      store_frame(session_uri, builder, shell_html, current_body_tree(session_uri))
-
-      TurnDriver.say(
-        session_uri,
-        builder,
-        gettext("Frame redesigned — your content is unchanged.")
-      )
-
-      {:ok, :shell_only}
-    end
-  end
-
-  # Strip markdown fences / stray prose around an HTML reply.
-  defp extract_html(content) when is_binary(content) do
-    content
-    |> String.replace(~r/```[a-z]*/i, "")
-    |> String.trim()
-  end
-
-  defp extract_html(_), do: ""
 
   # Backend switch: `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI
   # (much stronger designer); otherwise the DeepSeek HTTP API. Both return
