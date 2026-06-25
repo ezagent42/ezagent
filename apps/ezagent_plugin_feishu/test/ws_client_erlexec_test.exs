@@ -103,10 +103,13 @@ defmodule EzagentPluginFeishu.WsClientErlexecTest do
     System.put_env("EZAGENT_FEISHU_WS", "0")
     Application.put_env(:ezagent_plugin_feishu, :reap_orphans_on_boot, true)
 
-    # Plant a stale pid file pointing at a real live process. Spawn it UNLINKED
-    # (`:exec.run`, not OsProcess.spawn/run_link) so the reaper killing it does
-    # not propagate an exit to this test process.
-    {:ok, _ep, stale_os_pid} = :exec.run([~c"/bin/sleep", ~c"300"], [])
+    # Plant a stale pid file pointing at a real live process. Spawn it with
+    # `:monitor` (NOT `:link`/`run_link`) so (a) the reaper killing it does not
+    # propagate an exit to this test process, and (b) erlexec delivers a
+    # `{:DOWN, os_pid, :process, exec_pid, reason}` message to THIS process the
+    # instant the OS process actually exits. That DOWN message is the
+    # deterministic death signal we wait on below — no wall-clock liveness poll.
+    {:ok, _ep, stale_os_pid} = :exec.run([~c"/bin/sleep", ~c"300"], [:monitor])
 
     key = Ezagent.URI.system("feishu", "ws")
     :ok = PidFile.write("feishu-ws", key, stale_os_pid)
@@ -115,9 +118,16 @@ defmodule EzagentPluginFeishu.WsClientErlexecTest do
     # Booting WsClient runs the init reaper, which kills + removes the stale entry.
     _pid = start_supervised!(EzagentPluginFeishu.WsClient, restart: :temporary)
 
-    assert eventually_dead?(stale_os_pid, 10_000),
-           "init reaper did not reap the planted feishu-ws orphan #{stale_os_pid}"
+    # Deterministic: erlexec's monitor LWP sends DOWN exactly when the SIGTERM'd
+    # `sleep` actually exits. assert_receive returns the moment it arrives (the
+    # 10s budget is only a backstop against scheduler starvation under load, not
+    # a polling interval). Pinning ^stale_os_pid guarantees it's OUR process.
+    assert_receive {:DOWN, ^stale_os_pid, :process, _exec_pid, _reason},
+                   10_000,
+                   "init reaper did not reap the planted feishu-ws orphan #{stale_os_pid}"
 
+    # The reaper's PidFile.remove runs synchronously inside init/1, so by the time
+    # start_supervised! returned the stale entry is already gone.
     assert PidFile.enumerate("feishu-ws") == [],
            "init reaper did not remove the stale feishu-ws pid file"
   end
