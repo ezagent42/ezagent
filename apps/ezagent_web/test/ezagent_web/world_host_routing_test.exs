@@ -146,6 +146,38 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     end
   end
 
+  # kanban-as-role K4 — the router MUST have `live "/plugins/kanban"` +
+  # `/plugins/kanban/:uri` or WorldLive never mounts the surface (the e2e bug:
+  # the path 404'd to the "此路径无处可去" fallback even though Routes.route_for
+  # produced the kanban route). This is a ROUTER-level guard: `live/2` raises if
+  # the route is absent — exactly the layer the bug lived in (a route_for unit
+  # test stays green without the router line, so it can't catch this).
+  test "world kanban plugin paths mount the kanban surface (router live routes)", %{conn: conn} do
+    kanban_uri = "entity://system/agent/kanban-mgr-route-test"
+    encoded = URI.encode_www_form(kanban_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    paths = [
+      {"/plugins/kanban", "kanban"},
+      {"/plugins/kanban/#{encoded}", "kanban"}
+    ]
+
+    for {path, component} <- paths do
+      {:ok, view, html} = live(conn, path)
+
+      assert html =~ ~s(id="world-root")
+      assert has_element?(view, "#world-root[data-world-component='#{component}']")
+      refute html =~ "此路径无处可去", "#{path} fell through to the no-route fallback"
+    end
+  end
+
   test "world admin group paths stay inside the world scope", %{conn: conn} do
     session_uri = URI.to_string(world_session_uri())
     encoded_session = URI.encode_www_form(session_uri)
