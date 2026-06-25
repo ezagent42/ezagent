@@ -67,7 +67,7 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
       # Spawn session with ONLY the sender as a member (non_member is
       # the @-target that's NOT a member — that's the case we want).
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
-      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+      {:ok, _members} = join_session(ctx.session, ctx.sender, ctx.sender)
 
       msg = %Message{
         id: "test-mf-#{System.unique_integer([:positive])}",
@@ -90,8 +90,18 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.member)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
-      :ok = join_session(ctx.session, ctx.member, ctx.sender)
-      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+
+      # Synchronously CONFIRM the member's join is committed/visible before
+      # we send: the join reply's `members` snapshot MUST already contain the
+      # member, so the negative `refute_receive {:mention_failed}` below can
+      # never race a transiently-non-resolved member. (`:call` join commits
+      # the slice before replying — this assertion proves it deterministically
+      # rather than trusting timing.)
+      {:ok, members_after_member_join} = join_session(ctx.session, ctx.member, ctx.sender)
+      assert ctx.member in members_after_member_join
+
+      {:ok, members_after_sender_join} = join_session(ctx.session, ctx.sender, ctx.sender)
+      assert ctx.member in members_after_sender_join
 
       msg = %Message{
         id: "test-mf-ok-#{System.unique_integer([:positive])}",
@@ -109,7 +119,7 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
     test "empty mentions list is silent (casual @text case)", ctx do
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
-      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+      {:ok, _members} = join_session(ctx.session, ctx.sender, ctx.sender)
 
       msg = %Message{
         id: "test-mf-empty-#{System.unique_integer([:positive])}",
@@ -135,9 +145,19 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
     }
 
+    # `:join` is dispatched `mode: :call`, so `Kind.Server.handle_call/3`
+    # commits the `{:set, :members, ...}` effect into the Session actor's
+    # slice state BEFORE it replies (server.ex — `commit_and_notify` then
+    # `{:reply, ..., %{state | state: new_slice_state}}`). The `:join`
+    # action also `returns: %{members: {:list, :uri}}`, so the reply carries
+    # the post-join membership snapshot. Return it so callers can SYNCHRONOUSLY
+    # confirm the new member is committed/visible before a subsequent
+    # `send_message` evaluates membership — closing any join↔send ordering
+    # window for the negative `refute_receive {:mention_failed}` assertion.
     case Invocation.dispatch(inv) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      {:ok, %{members: members}} -> {:ok, members}
+      :ok -> {:ok, []}
+      {:ok, _} -> {:ok, []}
       other -> raise "join_session failed: #{inspect(other)}"
     end
   end
