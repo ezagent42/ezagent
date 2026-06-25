@@ -1,6 +1,13 @@
 # SPEC — kanban as an agent (role `kanban-manager` × flavor `native`)
 
-> Re-scheme of #964's kanban from a `resource://` live Kind (Plan-B) to an **agent** (`entity://agent/...`) with **role = kanban-manager**, **flavor = native**. Decided with @林懿伦 (Feishu 2026-06-25). Base: `integration/kanban` (= #964 rebased onto main `dde54e1b`). Goal: keep `resource://` as pure FS; reuse the agent (actor) model; delete Plan-B.
+> Re-scheme of #964's kanban from a `resource://` live Kind (Plan-B) to an **agent** (`entity://agent/...`) with **role = kanban-manager**, **flavor = native**. Decided with @林懿伦 (Feishu 2026-06-25). Base: `integration/kanban` (= #964 rebased onto main). Goal: keep `resource://` as pure FS; reuse the agent (actor) model; delete Plan-B.
+>
+> **DEPENDS ON role-foundation rev3** (`role-foundation-design.md` on main) — implement kanban-as-role only after it lands. Corrections to this spec from the foundation review + jjkysy's consumer-review (apply when implementing):
+> - **HIGH-1**: a role can only mount behaviors the target flavor's Kind **declares** in `behaviors/0` → the `native` flavor's Kind MUST declare the kanban behaviors (`Behavior.Kanban` + `Connectors`).
+> - **board = Kind snapshot, NOT a config_dir file** (supersedes §"board data" / §3 file mentions below; kanban's 24 handlers + commit/1 already build on "tree = instance snapshot state").
+> - **kanban-manager is a PASSIVE actor** — must be non-mentionable / non-joinable / no-receive (the foundation's passive-actor isolation flag + gates). It is NOT a chat principal.
+> - **list-by-role**: world read-model moves from list-by-Kind-type(:kanban) to list-by-role.
+> - **native flavor cap policy**: explicit CapMint predicate granting the kanban requested_caps.
 
 ## 1. Why
 `resource://` is documented (`uri-design.md`) as "**not a live Kind — pure data ref, filesystem on disk**" + the prior plugin-resource-type design (`resource_types/0` + `FsResolver`) made it the unified FS-encapsulation seam. #964 overloaded `resource://` with live spawnable Kinds (`resource_kinds/0`), conflicting with that. Allen's resolution: **agent = actor (any non-human operator, not just LLM)**; a kanban is such an actor; its job is a **role** (`kanban-manager`); *how* it executes is a **flavor** (`native` — no external engine). The board's data is a `resource://` file the agent holds.
