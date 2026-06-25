@@ -173,6 +173,7 @@ FS:解 `fs-snapshot.tar.gz` 回 `*_home` 卷。跨域一致性快照(quiesce+LSN
 - **`docker compose` unknown command** → 用 `docker-compose`(本机无插件子命令)。
 - **镜像拉取 Bad Gateway** → `orb config get network_proxy` 应 `http://127.0.0.1:7896`。
 - **tailscale Restarting / auth-key parse error** → preauth key 损坏,重新生成(§1)并 `docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d tailscale`。
+- **nightly/beta tailnet TCP 通但 TLS reset(从 host 自测)** → 本机有用户自有 host caddy(launchd,`~/.config/caddy/Caddyfile`)占 `*:443`,遮蔽 docker 发布。这正是用 **sidecar**(绑 sidecar 自己的 100.x:443,不碰 host :443)的原因 —— 不要把 docker caddy 绑 host `100.64.0.27:443`。验证:`lsof -nP -iTCP:443 -sTCP:LISTEN`。(替代:若想复用 host caddy,在 `~/.config/caddy/Caddyfile` 加 nightly/beta vhost 反代 `127.0.0.1:10041/10042`,DNS A 指 host 100.64.0.27。)
 - **Caddy 取不到证书** → CF token 缺 Zone:DNS:Edit;或 DNS A 记录 `proxied:true`(必须 false)。
 - **stable `app.ezagent.chat` 530** → cloudflared 没连上 / ezagent-stable 未 healthy;`docker logs ezagent-stable-cloudflared-1`。
 - **build 拉依赖失败** → host clash 未在 7897;`docker run --rm alpine nc -z host.docker.internal 7897`。

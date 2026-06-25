@@ -43,14 +43,30 @@
 | ⑥ | 待合并 PR | **met** | 见 Merge request |
 | ⑦ | return 报告 | **met** | 本文件 |
 
-## ⛔ Blocker(唯一)—— Headscale preauth key
+## ⛔ Blocker(唯一)—— Headscale preauth key(nightly/beta tailnet 入口)
 
-nightly/beta 的 **tailnet 入口**(Caddy DNS-01 证书 + tailnet 200)依赖 tailscale sidecar 加入 Headscale。
-提供的 key 解析失败:`failed to parse auth-key: hash length mismatch, expected 64 chars, got 65`(89 字符、7 个 `-` 段、尾随多余 `-` → 粘贴损坏)。**kernel/tun/控制面连通已验证**,只差一个干净 key。
+**ingress 栈已实证可用**,只差 sidecar 用一个干净 key 加入 Headscale。完整诊断:
 
-**Unblock(2 分钟)**:`ssh head.h2os.cloud headscale preauthkeys create --user 45 --reusable --expiration 24h` →
-写入 `docker/.env.infra` 的 `TS_AUTHKEY` → `docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d tailscale`
-→ 取 `tailscale ip -4` → 建 `nightly`/`beta` 的 CF A 记录(`proxied:false`)指向它 → tailnet 验证 200。runbook §3 有完整步骤。
+1. **sidecar de-risk PASSED**:tailscale 在 OrbStack VM 内 kernel 模式起(`/dev/net/tun` OK),达 `head.h2os.cloud`,生成 nodekey,发 RegisterReq。
+2. **唯一失败 = key 损坏**:`failed to parse auth-key: hash length mismatch, expected 64 chars, got 65`(89 字符、7 个 `-` 段、尾随多余 `-` → 粘贴损坏)。crash-loop 又破坏了 caddy 共享 netns 的 DNS(`127.0.0.11:53 refused`)。
+3. **host-bind 备选已探索并证明 ingress 栈正确**:临时把 Caddy 绑 host `100.64.0.27:443`(正常 netns)→ Caddy **成功签发 nightly+beta 的 Let's Encrypt 证书(DNS-01,CF token 可写 DNS)**,从 edge 网实测 `https://{nightly,beta}.ezagent.chat` → **HTTP 302 + `tls_verify=0`(证书有效)**,反代到 ezagent app 正常。
+4. **但 host-bind 不可用**:本机有一个**用户自有的 host caddy(PID 1439,launchd,`~/.config/caddy/Caddyfile`)占着 `*:443`**,遮蔽了 `100.64.0.27:443` 的 docker 发布 → 经 host/utun 的连接被它 reset。**不能动它(用户的服务)。**
+5. **结论:sidecar 是正确设计**(绑 sidecar 自己的 100.x:443,不碰 host :443,无冲突,且可从本机自验)。已 revert 回 sidecar。**只差干净 key。**
+
+**Unblock(≈2 分钟)**:
+```bash
+ssh head.h2os.cloud headscale preauthkeys create --user 45 --reusable --expiration 24h
+# → docker/secrets-prod/headscale_authkey + docker/.env.infra TS_AUTHKEY
+docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d   # sidecar 加入,caddy 共享其 netns
+TS_IP=$(docker exec ezagent-infra-tailscale-1 tailscale ip -4 | head -1)               # sidecar 自己的 100.x
+# 把 nightly/beta 的 CF A 记录改指 $TS_IP(现指 host 100.64.0.27,需更新)
+# 从本机 curl https://nightly.ezagent.chat/ → 200/302(走 sidecar IP,不经 host :443)
+```
+runbook §3 有完整步骤。
+
+> **替代方案(若偏好不跑容器化 ingress)**:既然本机已有 host caddy 占 `:443`,可直接在
+> `~/.config/caddy/Caddyfile` 加 `nightly/beta.ezagent.chat` 两个 vhost(DNS-01 + reverse_proxy 到
+> `127.0.0.1:10041/10042`),DNS A 指 host `100.64.0.27`。这样不需要 sidecar/preauth key。**待 Allen 定方向。**
 
 ## Gate status
 
