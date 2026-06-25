@@ -504,13 +504,31 @@ defmodule EzagentPluginHello.Generator do
   end
 
   # Appearance/style intent → route to the theme step. Heuristic; a false positive
-  # just costs an extra re-theme, never a wrong edit.
+  # just costs an extra re-theme, never a wrong edit. The keyword list (incl.
+  # Chinese terms) lives in `priv/style_keywords.txt`, NOT inline — the
+  # CjkLiteralGate forbids Han literals in lib/*.ex, and a data file keeps the copy
+  # out of source. Matched case-insensitively as a plain substring contains.
   defp style_request?(text) when is_binary(text) do
-    text =~
-      ~r/炫酷|酷一?点|好看|美化|漂亮|颜色|配色|样式|风格|背景|渐变|阴影|动画|字体|圆角|边框|质感|高级|大气|主题|暗色|深色|亮色|浅色|cooler|fancy|beautiful|pretty|stylish|sleek|modern|gradient|shadow|animation|theme|colou?r|font|dark mode|polish|vibe|aesthetic|look nicer|restyle/i
+    down = String.downcase(text)
+    Enum.any?(style_keywords(), fn kw -> String.contains?(down, kw) end)
   end
 
   defp style_request?(_), do: false
+
+  defp style_keywords do
+    path = Path.join(:code.priv_dir(:ezagent_plugin_hello), "style_keywords.txt")
+
+    case File.read(path) do
+      {:ok, body} ->
+        body
+        |> String.split("\n", trim: true)
+        |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+        |> Enum.reject(&(&1 == ""))
+
+      _ ->
+        []
+    end
+  end
 
   # The session's current per-page theme CSS (nil if none yet) — the seed that lets
   # a re-theme PRESERVE the existing design while covering new elements.
