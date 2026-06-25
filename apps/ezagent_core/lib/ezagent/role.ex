@@ -42,6 +42,7 @@ defmodule Ezagent.Role do
 
   @enforce_keys []
   defstruct name: nil,
+            passive: false,
             skills: [],
             plugins: [],
             prompt: nil,
@@ -55,6 +56,7 @@ defmodule Ezagent.Role do
 
   @type t :: %__MODULE__{
           name: String.t() | nil,
+          passive: boolean(),
           skills: [skill_ref()],
           plugins: [plugin_ref()],
           prompt: String.t() | nil,
@@ -88,6 +90,7 @@ defmodule Ezagent.Role do
         # feed non-cap input into the policy predicate downstream in Compose (codex).
         validate(%__MODULE__{
           name: get(recipe, :name, nil),
+          passive: get(recipe, :passive, false),
           skills: get(recipe, :skills, []),
           plugins: get(recipe, :plugins, []),
           prompt: get(recipe, :prompt, nil),
@@ -108,6 +111,7 @@ defmodule Ezagent.Role do
   # are `nil` or a string/URI ref.
   defp validate(%__MODULE__{} = role) do
     with :ok <- ref_field(role.name, :name),
+         {:ok, passive} <- passive_field(role.passive),
          :ok <- string_list_field(role.skills, :skills),
          :ok <- string_list_field(role.plugins, :plugins),
          {:ok, behaviors} <- behaviors_field(role.behaviors),
@@ -115,10 +119,22 @@ defmodule Ezagent.Role do
          :ok <- ref_field(role.prompt, :prompt),
          :ok <- ref_field(role.session_template, :session_template) do
       # behaviors → module atoms; requested_caps → atom-keyed templates (value
-      # canonicalization + minting are PR-1b's).
-      {:ok, %{role | behaviors: behaviors, requested_caps: requested_caps}}
+      # canonicalization + minting are PR-1b's); passive → coerced boolean.
+      {:ok, %{role | passive: passive, behaviors: behaviors, requested_caps: requested_caps}}
     end
   end
+
+  # `passive` marks a NON-PRINCIPAL data actor (RF-6): an `entity://agent/*`
+  # that acts only on dispatch and must NOT be a chat principal — non-mentionable,
+  # non-`:join`-able as a member, and never a `chat.receive` target via ANY
+  # routing rule (the kanban-manager class). A persisted/operator recipe may omit
+  # the field (→ `false`, the principal-actor default) or supply a string-keyed
+  # `true`/`false` from JSON round-trip; anything that is not a boolean (or the
+  # `nil`/missing default) is REJECTED fail-loud rather than coerced to a
+  # surprising truth value.
+  defp passive_field(nil), do: {:ok, false}
+  defp passive_field(value) when is_boolean(value), do: {:ok, value}
+  defp passive_field(value), do: {:error, {:invalid_role_field, :passive, value}}
 
   defp string_list_field(value, name) when is_list(value) do
     if Enum.all?(value, &is_binary/1), do: :ok, else: {:error, {:invalid_role_field, name, value}}

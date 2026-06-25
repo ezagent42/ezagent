@@ -187,6 +187,14 @@ defmodule Ezagent.Routing.Resolver do
       when is_list(members) and is_list(opts) do
     workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string()
     role_resolver = Keyword.get(opts, :role_resolver)
+    # RF-6: `passive?` is a (URI -> boolean) predicate injected by the domain
+    # call site (parallel to `role_resolver`) answering "is this recipient a
+    # PASSIVE/non-principal data actor?". The default never-passive predicate is
+    # what makes the regression guarantee STRUCTURAL: every existing
+    # `resolve/3`/`resolve/4` caller (echo, legend, tests) passes no opt → no URI
+    # is passive → byte-identical recipient set. `passive?` lives on the domain
+    # (the stored agent attribute) and is kept out of core via this opt seam.
+    passive? = Keyword.get(opts, :passive?, fn _uri -> false end)
     current_str = URI.to_string(current_session_uri)
     sender_str = uri_to_string(message.sender)
 
@@ -199,7 +207,8 @@ defmodule Ezagent.Routing.Resolver do
         current_session_uri,
         members,
         workspace_uri,
-        role_resolver
+        role_resolver,
+        passive?
       )
       |> Enum.map(&{&1, ctx})
     end)
@@ -221,6 +230,15 @@ defmodule Ezagent.Routing.Resolver do
       s = URI.to_string(uri)
       s == current_str or s == sender_str
     end)
+    # RF-6 (the UNIVERSAL passive-actor gate): a PASSIVE/non-principal data actor
+    # must NEVER receive chat — via ANY rule type. Dropping it at the resolver's
+    # FINAL output (the same chokepoint as the F14 self-loop fix) makes the
+    # no-passive-receive invariant universal across `{:uri,_}` / `{:from,_}` /
+    # `Always→X` / `{:role,_}` / `$mentions` alike — including the rule shapes
+    # that bypass `valid_member?`. The Session delivery fan-out mints a `:receive`
+    # cap PER recipient it is handed, so a passive actor surviving to here would
+    # leak a principal cap; this reject is the load-bearing gate.
+    |> Enum.reject(fn {uri, _ctx} -> passive?.(uri) end)
   end
 
   # Rank for the duplicate-recipient ctx tie-break (§3.5): lower rule_id wins;
@@ -323,7 +341,8 @@ defmodule Ezagent.Routing.Resolver do
          _current_session_uri,
          members,
          _ws,
-         _role_resolver
+         _role_resolver,
+         _passive?
        ) do
     sender_str = sender_string(message)
 
@@ -340,7 +359,8 @@ defmodule Ezagent.Routing.Resolver do
          current_session_uri,
          members,
          _ws,
-         _role_resolver
+         _role_resolver,
+         _passive?
        ) do
     sender_str = sender_string(message)
 
@@ -358,13 +378,21 @@ defmodule Ezagent.Routing.Resolver do
   # `system://chat-router` admin wildcard is gone), so unvalidated
   # mentions would be a privilege hole — the membership filter is what
   # bounds the minted cap to real members.
+  #
+  # RF-6 gate (mention): a PASSIVE/non-principal data actor is not a valid
+  # @-mention TARGET — even if it were somehow a session member, a passive actor
+  # must not be addressable by chat. Rejecting it here (in addition to the
+  # universal final-output gate) keeps the mention-resolver itself honest:
+  # `$mentions` never yields a passive URI, so no `:receive` cap is even
+  # considered for one via the mention path.
   defp expand_receiver(
          @mentions_token,
          message,
          current_session_uri,
          members,
          _ws,
-         _role_resolver
+         _role_resolver,
+         passive?
        ) do
     sender_str = sender_string(message)
 
@@ -373,11 +401,12 @@ defmodule Ezagent.Routing.Resolver do
     |> Enum.reject(&is_nil/1)
     |> Enum.filter(&valid_member?(&1, current_session_uri, members))
     |> Enum.reject(fn m -> URI.to_string(m) == sender_str end)
+    |> Enum.reject(fn m -> passive?.(m) end)
   end
 
-  defp expand_receiver({:magic, token}, message, current, members, ws, role_resolver)
+  defp expand_receiver({:magic, token}, message, current, members, ws, role_resolver, passive?)
        when is_binary(token) do
-    expand_receiver(token, message, current, members, ws, role_resolver)
+    expand_receiver(token, message, current, members, ws, role_resolver, passive?)
   end
 
   defp expand_receiver(
@@ -386,15 +415,32 @@ defmodule Ezagent.Routing.Resolver do
          _current,
          _members,
          _ws,
-         _role_resolver
+         _role_resolver,
+         _passive?
        ),
        do: [receiver]
 
-  defp expand_receiver({:uri, receiver}, _message, _current, _members, _ws, _role_resolver)
+  defp expand_receiver(
+         {:uri, receiver},
+         _message,
+         _current,
+         _members,
+         _ws,
+         _role_resolver,
+         _passive?
+       )
        when is_binary(receiver),
        do: [Ezagent.URI.new!(receiver)]
 
-  defp expand_receiver({:role, role_name}, message, current, members, ws, role_resolver)
+  defp expand_receiver(
+         {:role, role_name},
+         message,
+         current,
+         members,
+         ws,
+         role_resolver,
+         _passive?
+       )
        when is_binary(role_name) and is_function(role_resolver, 2) do
     case role_resolver.(role_name, %{
            message: message,
@@ -411,15 +457,31 @@ defmodule Ezagent.Routing.Resolver do
     end
   end
 
-  defp expand_receiver({:role, _role_name}, _message, _current, _members, _ws, _role_resolver),
-    do: []
+  defp expand_receiver(
+         {:role, _role_name},
+         _message,
+         _current,
+         _members,
+         _ws,
+         _role_resolver,
+         _passive?
+       ),
+       do: []
 
-  defp expand_receiver(receiver, _message, _current, _members, _ws, _role_resolver)
+  defp expand_receiver(receiver, _message, _current, _members, _ws, _role_resolver, _passive?)
        when is_binary(receiver),
        do: [Ezagent.URI.new!(receiver)]
 
-  defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws, _role_resolver),
-    do: [receiver]
+  defp expand_receiver(
+         %URI{} = receiver,
+         _message,
+         _current,
+         _members,
+         _ws,
+         _role_resolver,
+         _passive?
+       ),
+       do: [receiver]
 
   @doc """
   The shared trust boundary for `$session_users` + `$mentions`.

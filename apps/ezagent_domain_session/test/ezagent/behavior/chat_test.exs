@@ -1029,6 +1029,65 @@ defmodule Ezagent.Behavior.ChatTest do
                )
     end
 
+    test "RF-6: a PASSIVE data actor is REJECTED from :join even when registered" do
+      # A passive (non-principal) data actor must never become a session MEMBER —
+      # membership is the chat-principal grant. The gate fires BEFORE
+      # KindRegistry.lookup/monitor, so the passive actor never enters
+      # slice.members. Register a live pid + mark it passive to prove the
+      # rejection is the passive gate (not a missing-registration fallthrough).
+      session_uri =
+        URI.new!(
+          "session://team-alpha/default/join-passive-#{System.unique_integer([:positive])}"
+        )
+
+      passive_uri =
+        URI.new!("entity://team-alpha/agent/kanban_board-#{System.unique_integer([:positive])}")
+
+      {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, passive_uri)
+      on_exit(fn -> if Process.alive?(member_pid), do: GenServer.stop(member_pid) end)
+
+      on_exit(fn -> Ezagent.AgentPassiveAttributes.delete(passive_uri) end)
+      :ok = Ezagent.AgentPassiveAttributes.put(passive_uri, true)
+
+      slice = SessionBehavior.init_slice(%{}).state
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: passive_uri}
+
+      assert {:error, {:passive_actor_cannot_join, ^passive_uri}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.Behavior.Session,
+                 :join,
+                 slice,
+                 %{member: passive_uri},
+                 ctx
+               )
+    end
+
+    test "RF-6 regression: a NORMAL (non-passive) agent still joins" do
+      session_uri =
+        URI.new!("session://team-alpha/default/join-normal-#{System.unique_integer([:positive])}")
+
+      normal_uri =
+        URI.new!("entity://team-alpha/agent/cc_worker-#{System.unique_integer([:positive])}")
+
+      {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, normal_uri)
+      on_exit(fn -> if Process.alive?(member_pid), do: GenServer.stop(member_pid) end)
+
+      # No passive attribute stored → principal actor → joins normally.
+      slice = SessionBehavior.init_slice(%{}).state
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: normal_uri}
+
+      assert {:ok, new_slice, %{members: [^normal_uri]}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.Behavior.Session,
+                 :join,
+                 slice,
+                 %{member: normal_uri},
+                 ctx
+               )
+
+      assert Map.has_key?(new_slice.members, normal_uri)
+    end
+
     test "notifies the joinee when member is a user URI (todo.md notification coverage)" do
       # med-batch MED-3 — :join must emit a `:session_member_joined`
       # notification to the joinee's inbox so a freshly-added member

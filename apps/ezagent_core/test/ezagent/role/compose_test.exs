@@ -48,7 +48,17 @@ defmodule Ezagent.Role.ComposeTest do
     test "does NOT emit caps (cap authorization/minting is the materialization step's job)" do
       out = Compose.materialize(role(), %{flavor_behaviors: []})
       refute Map.has_key?(out, :effective_caps)
-      assert Map.keys(out) |> Enum.sort() == [:behaviors, :sandbox_content]
+      assert Map.keys(out) |> Enum.sort() == [:behaviors, :passive, :sandbox_content]
+    end
+
+    test "RF-6: threads the role's `passive` marker through to the materialized output" do
+      # default (principal) role
+      assert %{passive: false} = Compose.materialize(role(), %{flavor_behaviors: []})
+
+      # a passive (non-principal data-actor) role carries passive: true through so
+      # the create step (RF-5a) can record it as the stored agent attribute.
+      {:ok, passive_role} = Role.new(%{skills: ["kanban"], passive: true})
+      assert %{passive: true} = Compose.materialize(passive_role, %{flavor_behaviors: []})
     end
   end
 end

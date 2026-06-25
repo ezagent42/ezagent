@@ -497,7 +497,11 @@ defmodule Ezagent.Behavior.Session do
                 workspace_uri: workspace_uri,
                 role_resolver: fn role_name, _route_ctx ->
                   RouteProvisioner.resolve_role(role_name, ctx, provision_key, __MODULE__)
-                end
+                end,
+                # RF-6: inject the passive-actor predicate (parallel to
+                # `role_resolver`) so the resolver's universal final-output gate
+                # drops any PASSIVE data actor a rule resolved to (any rule type).
+                passive?: &passive_actor?/1
               )
 
             {recipients, Process.get(provision_key, [])}
@@ -614,6 +618,14 @@ defmodule Ezagent.Behavior.Session do
       |> Map.take([:role_name, :in_session_template, :source_template_uri])
       |> Members.sanitize_facets()
 
+    # RF-6 gate (`:join`): reject a PASSIVE data actor BEFORE lookup/monitor so it
+    # never becomes a session MEMBER. Shares `passive_actor?/1` with the routing gate.
+    if passive_actor?(member_uri),
+      do: {:error, {:passive_actor_cannot_join, member_uri}},
+      else: do_handle_join(member_uri, facets, ctx)
+  end
+
+  defp do_handle_join(%URI{} = member_uri, facets, ctx) do
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
         # Session auto-join (Allen 2026-05-26) — idempotency: when a
@@ -654,6 +666,16 @@ defmodule Ezagent.Behavior.Session do
         {:error, {:member_not_registered, member_uri}}
     end
   end
+
+  # RF-6: is `uri` a PASSIVE data actor? Reads the stored `:passive` attribute via
+  # `Ezagent.UriQuery` (the SAME resolver feeding the routing-gate predicate, so
+  # all RF-6 gates agree). Fail-closed-to-PRINCIPAL: only `{:ok, true}` is passive.
+  @spec passive_actor?(URI.t()) :: boolean()
+  defp passive_actor?(%URI{} = uri) do
+    match?({:ok, true}, Ezagent.UriQuery.resolve(:passive, uri))
+  end
+
+  defp passive_actor?(_), do: false
 
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable

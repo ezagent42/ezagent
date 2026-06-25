@@ -13,6 +13,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   @spec register() :: :ok | {:error, term()}
   def register do
     with :ok <- Ezagent.UriQuery.register(:flavor, &__MODULE__.resolve_flavor/1),
+         :ok <- Ezagent.UriQuery.register(:passive, &__MODULE__.resolve_passive/1),
          :ok <- Ezagent.UriQuery.register(:orchestrator, &__MODULE__.resolve_orchestrator/1),
          :ok <- Ezagent.UriQuery.register(:member_by_role, &__MODULE__.resolve_member_by_role/1),
          :ok <-
@@ -175,6 +176,28 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
 
   def resolve_flavor(_), do: :none
 
+  @doc false
+  # RF-6: resolve whether `agent_uri` is a PASSIVE (non-principal) data actor.
+  # Source of truth is the per-instance `Ezagent.AgentPassiveAttributes` launch
+  # table (parallel to the `:flavor` attribute) — never parsed from the URI. An
+  # absent attribute is `false` (principal actor), so an unmarked agent keeps its
+  # normal chat-principal semantics. Always `{:ok, boolean}` (never `:none`): the
+  # gates need a definite principal/passive verdict, and "unknown ⇒ principal" is
+  # the safe-by-default for legitimate agents.
+  #
+  # ⚠️ NOT restart-safe yet: unlike `resolve_flavor/1` (ETS → kind-slice →
+  # durable snapshot), this reads ONLY the volatile ETS launch table — no
+  # kind-slice/snapshot fallback. RF-5a (recipe → create-step population) owns
+  # adding the durable layers so a passive actor stays passive across a cold
+  # restart; until then a restart fails OPEN to principal. See
+  # `Ezagent.AgentPassiveAttributes`'s moduledoc.
+  @spec resolve_passive(term()) :: Ezagent.UriQuery.result()
+  def resolve_passive(%URI{} = agent_uri) do
+    {:ok, Ezagent.AgentPassiveAttributes.passive?(agent_uri)}
+  end
+
+  def resolve_passive(_), do: {:ok, false}
+
   defp resolve_flavor_from_kind(%URI{} = agent_uri) do
     with {:ok, sandbox} <- kind_slice(agent_uri, :sandbox) do
       Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(sandbox)
@@ -259,5 +282,4 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
 
   defp uri_result(%URI{} = uri), do: {:ok, uri}
   defp uri_result(_), do: :none
-
 end
