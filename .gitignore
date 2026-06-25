@@ -68,3 +68,7 @@ bin/dev-pg
 # Local helper script and JS dependencies.
 claude.sh
 node_modules/
+
+# 本地使用文档(不进 PR)
+docs/discuss/
+docs/status/

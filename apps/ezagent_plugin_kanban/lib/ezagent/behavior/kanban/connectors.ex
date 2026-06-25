@@ -16,7 +16,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   - 出站 HTTP 副作用在 Kind 进程内同步调（拿结果决定是否 commit + 拼回返回值，纯 `{:ref}`
     替换表达不了这层逻辑，对齐 UserTokens handler 内联 Token.list 先例）；只有真改树
     （挂 artifact / set done）才经 `Shared.commit/1`——**树写入仍是全 Behavior 唯一的
-    `{:set, :tree, ...}` 收口点**。
+    `tree set-effect（经 commit/1 收口）` 收口点**。
   """
 
   alias Ezagent.Behavior.Kanban.Shared
@@ -27,6 +27,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   alias EzagentPluginKanban.MiroSync
 
   # 出站到 GitHub：建 issue + 回挂 issue 产物到节点（同节点 = 折进一次 commit，不自分发）。
+  @doc false
   def sync_github(%{id: id}, ctx) do
     t = Shared.tree(ctx)
 
@@ -69,6 +70,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 出站 PR 留言：把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）。
+  @doc false
   def push_pr(%{id: id}, ctx) do
     t = Shared.tree(ctx)
 
@@ -91,6 +93,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 登记 PR：把 PR 链接挂到节点（不发评论；出站留言在 push_pr）。
+  @doc false
   def register_pr(%{id: id, pr: pr_in}, ctx) do
     t = Shared.tree(ctx)
 
@@ -126,6 +129,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 挂代码文件：钉 commit SHA + 路径 → 拼 github blob 链接（永久可点）。repo 取本图配置。
+  @doc false
   def attach_code_file(%{id: id, sha: sha, path: path}, ctx)
       when is_binary(sha) and is_binary(path) do
     t = Shared.tree(ctx)
@@ -166,6 +170,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 轮询已登记 PR 的节点；merged/closed → set_status done（折进一次 commit）。
+  @doc false
   def sync_prs(_args, ctx) do
     t = Shared.tree(ctx)
 
@@ -188,6 +193,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 一键推 Miro：已绑定则 sync；未绑定则建板+绑定+sync。板名取本图配置或默认。
+  @doc false
   def sync_miro(_args, ctx) do
     uri = ctx[:self_uri]
 
@@ -204,6 +210,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 写本图连接器配置（github_repo + miro 板名）。任意持 cap 的成员（cap gate 收口）。
+  @doc false
   def set_board_config(%{github_repo: github_repo, miro_board: miro_board}, ctx) do
     uri = ctx[:self_uri]
 
@@ -218,6 +225,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 保存全局 GitHub 凭证（admin-gated）。
+  @doc false
   def save_github_creds(%{access_token: token} = args, ctx) when is_binary(token) do
     if Shared.admin?(ctx) do
       case Github.write_creds(%{access_token: token, repo: Map.get(args, :repo, "")}) do
@@ -230,6 +238,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
   end
 
   # 保存全局 Miro 凭证（admin-gated）。
+  @doc false
   def save_miro_creds(%{access_token: token} = args, ctx) when is_binary(token) do
     if Shared.admin?(ctx) do
       case Miro.write_creds(%{access_token: token, board_id: Map.get(args, :board_id, "")}) do
