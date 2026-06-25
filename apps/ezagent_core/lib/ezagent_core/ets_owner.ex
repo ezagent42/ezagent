@@ -66,6 +66,13 @@ defmodule EzagentCore.EtsOwner do
     #   template_class} map; populated by `boot/1` per `agent_flavors/0`.
     {Ezagent.PluginRegistry, :set},
     {Ezagent.AgentFlavorRegistry, :set},
+    # df-tech (kanban-clean) — ResourceKindRegistry: declarative
+    # `resource type → kind_module` map, the `resource`-scheme analogue
+    # of AgentFlavorRegistry. Populated by `Ezagent.Plugin.boot/1` per a
+    # plugin's `resource_kinds/0`; read by the domain-owned `resource`
+    # SpawnRegistry dispatcher (EzagentDomainWorkspace) so a plugin ships
+    # a spawnable resource Kind WITHOUT owning the scheme (invariant 8).
+    {Ezagent.ResourceKindRegistry, :set},
     # Unify URI Query PR-B/PR-E: launch-time agent_uri → stored flavor
     # attributes. Template classes seed this before first spawn so
     # SpawnRegistry can resolve the Kind module through UriQuery without

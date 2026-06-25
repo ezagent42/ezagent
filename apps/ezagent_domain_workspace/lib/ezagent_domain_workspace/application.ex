@@ -31,12 +31,49 @@ defmodule EzagentDomainWorkspace.Application do
   @impl true
   def start(_type, _args) do
     :ok = register_workspace_behavior()
+    :ok = register_resource_spawn_fn()
 
     children = [
       {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+  end
+
+  # df-tech (kanban-clean) — own the single `resource://<ws>/<type>/<name>`
+  # SpawnRegistry dispatcher. This is the EXACT analogue of the session
+  # domain's `entity` dispatcher (`EzagentDomainInstanceMessage` registers
+  # one `entity` spawn fn that switches on `Ezagent.URI.type/1` to spawn
+  # user/agent Kinds, consulting `AgentFlavorRegistry` for agent flavors).
+  #
+  # Here we switch on the resource URI's type segment and look up the
+  # backing Kind module in `Ezagent.ResourceKindRegistry` — which each
+  # plugin populates declaratively via `Ezagent.Plugin.resource_kinds/0`
+  # (the kanban plugin declares `{"kanban", EzagentPluginKanban.Kanban}`).
+  # The plugin never touches `SpawnRegistry` (invariant 8); the domain
+  # owns the scheme dispatcher and never compile-depends on the plugin's
+  # Kind module (resolved at runtime through the registry).
+  #
+  # A `resource://` URI with no registered type → `{:error,
+  # {:no_resource_kind, type}}`. A fresh URI with no snapshot still only
+  # surfaces on explicit `SpawnRegistry.spawn`, never auto-spawned by a
+  # bare dispatch (same as `entity`).
+  defp register_resource_spawn_fn do
+    :ok =
+      Ezagent.SpawnRegistry.register("resource", fn %URI{} = uri ->
+        case Ezagent.URI.type(uri) do
+          {:ok, type} ->
+            case Ezagent.ResourceKindRegistry.lookup(type) do
+              {:ok, kind_module} -> Ezagent.Kind.spawn(kind_module, %{uri: uri})
+              :error -> {:error, {:no_resource_kind, type}}
+            end
+
+          :error ->
+            {:error, {:resource_uri_has_no_type, URI.to_string(uri)}}
+        end
+      end)
+
+    :ok
   end
 
   defp register_workspace_behavior do
