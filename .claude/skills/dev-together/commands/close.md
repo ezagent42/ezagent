@@ -3,6 +3,24 @@
 Process the merge stack: review/test each entry, then merge to `main`. **This is
 the only path to `main`.**
 
+> ## ⚠️ Deploy pointers — `beta` / `release` are NOT task branches
+> The deploy flow (`docs/superpowers/specs/2026-06-25-deploy-flow-design.md`) keeps
+> three long-lived refs that are **promotion pointers into `main`'s history**, not
+> developer work:
+> - **`main`** — the trunk + the **only** merge target for task branches (= the
+>   nightly channel; dev env tracks it).
+> - **`beta`** — smoke channel pointer. Advanced **only** by the deploy promotion
+>   flow (`git branch -f beta <main-sha> && git push origin beta`), never by `close`.
+> - **`release`** — stable channel pointer (+ `vX.Y.Z` tags). Same rule.
+>
+> Therefore in `push`/`close`:
+> - **Never** merge a task branch into `beta`/`release`; task branches merge into `main` only.
+> - **Never** treat `beta`/`release`/`vX.Y.Z` as a return/stale branch to delete or clean up.
+> - A return branch named `*-beta`/`*-release` is a *task* branch and is fine; the bare
+>   `beta`/`release` refs are the protected pointers.
+> - Promotion (`main→beta→stable`) happens **after** `close`, via the deploy flow, by
+>   whoever owns release — it is not a `close` step.
+
 **Do:** for each entry in `docs/together/<date>/stack.md`, in the analyzed order:
 1. Confirm `stack.md` has reconciled every file in `returns/`. Stop if any
    return is missing from the reconciliation table or lacks a status.

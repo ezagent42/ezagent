@@ -48,6 +48,13 @@ standard + conflict/merge management:
 - **Developer** — human or agent. Accepts handoffs, builds on per-task branches,
   returns results.
 
+> **Branch model — `main` is trunk; `beta`/`release` are deploy pointers, not task
+> branches.** Task branches merge into `main` only. `beta` (smoke) and `release`
+> (stable, + `vX.Y.Z` tags) are long-lived **promotion pointers** advanced solely by
+> the deploy flow (`git branch -f beta <main-sha> && git push`), never merged into by
+> `close`/`push`. See the guard in [commands/close.md](commands/close.md) and the deploy
+> spec `docs/superpowers/specs/2026-06-25-deploy-flow-design.md`.
+
 ## Artifacts — `docs/together/YYYY-MM-DD/` (one dated folder per day)
 ```
 docs/together/YYYY-MM-DD/
