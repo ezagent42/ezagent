@@ -211,6 +211,10 @@ defmodule Ezagent.Plugin do
   @callback template_classes() :: [module()]
   @callback agent_flavors() :: [agent_flavor_decl()]
 
+  # Built-in role recipes (role-foundation RF-4) — recipe MAPs registered in
+  # `Ezagent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
+  @callback roles() :: [map()]
+
   @doc """
   ExternalMirror adapter declarations (SPEC
   `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
@@ -248,6 +252,7 @@ defmodule Ezagent.Plugin do
                       spawns: 0,
                       template_classes: 0,
                       agent_flavors: 0,
+                      roles: 0,
                       adapters: 0,
                       routing_tables: 0,
                       resource_types: 0,
@@ -283,6 +288,7 @@ defmodule Ezagent.Plugin do
       def spawns, do: []
       def template_classes, do: []
       def agent_flavors, do: []
+      def roles, do: []
       def adapters, do: []
       def routing_tables, do: []
       def resource_types, do: []
@@ -295,6 +301,7 @@ defmodule Ezagent.Plugin do
                      spawns: 0,
                      template_classes: 0,
                      agent_flavors: 0,
+                     roles: 0,
                      adapters: 0,
                      routing_tables: 0,
                      resource_types: 0,
@@ -468,6 +475,12 @@ defmodule Ezagent.Plugin do
     Enum.each(plugin_module.agent_flavors(), fn decl ->
       :ok = Ezagent.Plugin.FlavorPublishHook.publish_agent_flavor(decl)
       :ok = maybe_register_bridge_adapter(decl)
+    end)
+
+    # role-foundation RF-4 — `RoleRegistry`/`Role` are core so `boot/1` calls
+    # `register/1` DIRECTLY (it validates via `Role.new/1`) — no publish hook.
+    Enum.each(plugin_module.roles(), fn recipe ->
+      :ok = Ezagent.RoleRegistry.register(recipe)
     end)
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
