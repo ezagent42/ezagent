@@ -118,19 +118,13 @@ defmodule Ezagent.World.WorkspacePluginData do
   defp list_workspaces(caller_uri, caller_caps) do
     Ezagent.Workspace.list_workspaces_for(caller_uri, caller_caps)
     |> Enum.map(fn ws ->
-      live_pid =
-        case Ezagent.KindRegistry.lookup(ws.uri) do
-          {:ok, pid} -> pid
-          :error -> nil
-        end
-
       %{
         "name" => ws.name,
         "uri" => encode_uri(ws.uri),
         "members_count" => length(ws.members || []),
         "templates_count" => map_size(ws.session_templates || %{}),
         "routing_rules_count" => length(ws.routing_rules || []),
-        "live" => is_pid(live_pid) and Process.alive?(live_pid),
+        "live" => Ezagent.LocalRuntime.kind_alive?(ws.uri),
         "detail_path" => "/workspaces/#{URI.encode_www_form(ws.name)}"
       }
     end)
@@ -161,10 +155,7 @@ defmodule Ezagent.World.WorkspacePluginData do
   defp workspace_detail(_), do: %{"not_found" => true}
 
   defp workspace_live?(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid} -> is_pid(pid) and Process.alive?(pid)
-      :error -> false
-    end
+    Ezagent.LocalRuntime.kind_alive?(uri)
   end
 
   @doc "List SessionTemplate rows for a workspace detail surface."

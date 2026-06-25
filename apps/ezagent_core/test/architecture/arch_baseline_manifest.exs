@@ -80,7 +80,11 @@
   # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): the 11 direct
   #   SpawnRegistry call sites in these 4 plugins moved onto LocalRuntime, so the
   #   scanned count dropped 36→30. Cap lowered to actual. 36→30.
-  spawn_registry_call_sites: 30,
+  # RATCHET-DOWN #99 C (LocalRuntime收口 hello/protocol_api/world): conversation_registry
+  #   (2 sites) + openai_chat_plug (1 site) moved off direct SpawnRegistry onto the
+  #   owner-gated `Ezagent.LocalRuntime.ensure_started`, so the scanned count dropped
+  #   30→27. Cap lowered to actual. 30→27.
+  spawn_registry_call_sites: 27,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -107,7 +111,10 @@
   #   dropped their direct SpawnRegistry references (codex_agent, codex_remote_agent,
   #   echo_agent, echo application, feishu binding_policy, feishu sender_resolver),
   #   so the scanned module count fell 32→26. Cap lowered to actual. 32→26.
-  spawn_registry_modules: 26,
+  # RATCHET-DOWN #99 C: conversation_registry + openai_chat_plug dropped their direct
+  #   SpawnRegistry references (onto LocalRuntime), so the scanned module count fell
+  #   26→24. Cap lowered to actual. 26→24.
+  spawn_registry_modules: 24,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -122,6 +129,10 @@
   # arch-cap-bump: #95 PR-3 (codex/echo/feishu/advisor migration): these plugins'
   #   off-chokepoint SpawnRegistry modules moved onto LocalRuntime, so the scanned
   #   off-chokepoint count fell 22→16. Cap lowered to actual. 22→16.
+  # #99 C: conversation_registry + openai_chat_plug were SANCTIONED (on-chokepoint),
+  #   so removing their direct SpawnRegistry calls leaves off_chokepoint UNCHANGED.
+  #   The architectural win shows in call_sites/modules above + the sanctioned
+  #   allowlist shrinking (conv_reg/openai removed; local_runtime.ex stays). Stays 16.
   spawn_registry_off_chokepoint_modules: 16,
   create_session_call_sites: 6,
   create_session_modules: 5,

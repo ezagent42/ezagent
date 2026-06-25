@@ -16,7 +16,7 @@ defmodule EzagentPluginHello.Template.HelloSession do
 
   @behaviour Ezagent.Kind.Template
 
-  alias Ezagent.KindRegistry
+  alias Ezagent.LocalRuntime
   alias EzagentPluginHello.App
 
   @impl Ezagent.Kind.Template
@@ -38,7 +38,7 @@ defmodule EzagentPluginHello.Template.HelloSession do
     with :ok <- check_class(tmpl) do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
-      fresh? = KindRegistry.lookup(session_uri) == :error
+      fresh? = not LocalRuntime.kind_alive?(session_uri)
 
       case App.ensure_app(workspace_name, session_name) do
         {:ok, ^session_uri, _builder_uri} ->

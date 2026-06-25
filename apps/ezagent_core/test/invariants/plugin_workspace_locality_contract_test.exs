@@ -64,57 +64,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/template/hello_session.ex",
-      line: 41,
-      key: :kind_registry_lookup,
-      line_substring: "fresh? = KindRegistry.lookup(session_uri) == :error",
-      reason: "existing hello template freshness probe; pending owner-gated freshness wrapper"
-    },
-    %{
-      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      line: 53,
-      key: :spawn_registry,
-      line_substring: "with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),",
-      reason: "existing stateless protocol session spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      line: 90,
-      key: :spawn_registry,
-      line_substring: "with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),",
-      reason: "existing bound protocol session spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_protocol_api/lib/ezagent_plugin_protocol_api/openai_chat_plug.ex",
-      line: 109,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(agent_uri) do",
-      reason: "existing protocol API readiness probe; pending owner-gated readiness wrapper"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_protocol_api/lib/ezagent_plugin_protocol_api/openai_chat_plug.ex",
-      line: 195,
-      key: :spawn_registry,
-      line_substring: "case SpawnRegistry.spawn(agent) do",
-      reason: "existing protocol API agent spawn; SpawnRegistry is owner-gated in PR1"
-    },
-    %{
-      path: "apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_data.ex",
-      line: 122,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(ws.uri) do",
-      reason: "existing world read-only liveness display; pending owner-aware status API"
-    },
-    %{
-      path: "apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_data.ex",
-      line: 164,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason: "existing world read-only liveness display; pending owner-aware status API"
     }
   ]
 
