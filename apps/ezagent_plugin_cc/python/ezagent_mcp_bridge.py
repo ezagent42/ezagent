@@ -202,7 +202,7 @@ async def connect_loop() -> None:
     while True:
         try:
             LOG.info("connecting %s", url)
-            async with websockets.connect(url, max_size=None) as ws:
+            async with websockets.connect(url, max_size=None, proxy=None) as ws:
                 topic = bridge_topic()
                 LOG.info("ws connected; joining %s", topic)
 

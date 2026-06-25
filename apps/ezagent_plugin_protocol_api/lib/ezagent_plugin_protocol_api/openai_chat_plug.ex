@@ -7,7 +7,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   `GET /v1/chat/completions/:id` to retrieve the result.
   """
   import Plug.Conn
-  alias Ezagent.{Invocation, Message, Router, SpawnRegistry, URI}
+  alias Ezagent.{Invocation, LocalRuntime, Message, Router, SpawnRegistry, URI}
   alias Ezagent.ProtocolApi.{ApiKeyStore, ConversationRegistry, PendingReplyStore, ReplyWaiter}
   @behaviour Plug
   @deadline_ms 120_000
@@ -96,24 +96,23 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     end
   end
 
-  # Poll KindRegistry until agent appears (post-init activation completes).
+  # Poll owner-gated liveness until agent appears (post-init activation completes).
   defp wait_for_kind_registry(agent_uri) do
     deadline = :erlang.monotonic_time(:millisecond) + 10_000
     wait_for_kind_registry(agent_uri, deadline)
   end
 
   defp wait_for_kind_registry(agent_uri, deadline) do
-    if :erlang.monotonic_time(:millisecond) >= deadline do
-      :ok
-    else
-      case Ezagent.KindRegistry.lookup(agent_uri) do
-        {:ok, _pid} ->
-          :ok
+    cond do
+      :erlang.monotonic_time(:millisecond) >= deadline ->
+        :ok
 
-        :error ->
-          Process.sleep(200)
-          wait_for_kind_registry(agent_uri, deadline)
-      end
+      LocalRuntime.kind_alive?(agent_uri) ->
+        :ok
+
+      true ->
+        Process.sleep(200)
+        wait_for_kind_registry(agent_uri, deadline)
     end
   end
 
@@ -192,7 +191,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     # only the default echo agent is auto-registered (see `maybe_register_default_echo/1`).
     maybe_register_flavor(agent)
 
-    case SpawnRegistry.spawn(agent) do
+    case LocalRuntime.ensure_started(agent) do
       {:ok, _pid} ->
         Logger.info("ProtocolApi: agent spawned OK")
 

@@ -1,0 +1,20 @@
+defmodule Ezagent.Agent.FlavorTemplateHook do
+  @moduledoc """
+  Domain-agent implementation of the core Template flavor hook.
+
+  A1 keeps `Ezagent.AgentFlavorAttributes` in core while reversing the call
+  direction from `Ezagent.Kind.Template`; A2 moves the attribute store here.
+  """
+
+  @behaviour Ezagent.Kind.Template.FlavorHook
+
+  @impl true
+  def store_flavor_attrs(%URI{} = agent_uri, class_module) when is_atom(class_module) do
+    Ezagent.AgentFlavorAttributes.maybe_put_from_template_class(agent_uri, class_module)
+  end
+
+  @impl true
+  def delete_flavor_attrs(%URI{} = agent_uri) do
+    Ezagent.AgentFlavorAttributes.delete(agent_uri)
+  end
+end

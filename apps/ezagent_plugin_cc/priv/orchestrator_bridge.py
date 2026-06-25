@@ -301,7 +301,7 @@ async def connect_loop() -> None:
     while True:
         try:
             LOG.info("connecting %s", safe_url)
-            async with websockets.connect(url, max_size=None) as ws:
+            async with websockets.connect(url, max_size=None, proxy=None) as ws:
                 _ws_send = ws.send
                 LOG.info("ws connected; joining %s", TOPIC)
 

@@ -8,14 +8,15 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
   on every call — preserving agent identity, caps, cwd, and history.
 
   If no binding exists for the given conversation_id, a new session is
-  spawned via `SpawnRegistry.spawn` and bound via `BindingRow.insert/1`.
+  spawned via the owner-gated `Ezagent.LocalRuntime.ensure_started/1` and bound
+  via `BindingRow.insert/1`.
   """
 
   require Logger
 
   import Ecto.Query
 
-  alias Ezagent.{SpawnRegistry, WorkspaceRegistry}
+  alias Ezagent.{LocalRuntime, WorkspaceRegistry}
   alias Ezagent.ExternalMirror.BindingRow
   alias EzagentCore.Repo
 
@@ -50,7 +51,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
     name = "stateless_#{stateless_suffix()}"
     session_uri = Ezagent.URI.session(:system, "generic", name)
 
-    with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),
+    with {:ok, _pid} <- LocalRuntime.ensure_started(session_uri),
          :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri) do
       Logger.info("ProtocolApi: stateless session #{Ezagent.URI.stable_key(session_uri)}")
       {:ok, session_uri}
@@ -87,7 +88,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
     name = "conv_#{ws}_#{short_id(conversation_id)}"
     session_uri = Ezagent.URI.session(:system, "generic", name)
 
-    with {:ok, _pid} <- SpawnRegistry.spawn(session_uri),
+    with {:ok, _pid} <- LocalRuntime.ensure_started(session_uri),
          :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri),
          {:ok, _row} <- insert_binding_row(conversation_id, session_uri, workspace_uri, bound_by) do
       Logger.info(

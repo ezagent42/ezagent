@@ -1,5 +1,5 @@
 import React from "react"
-import {ArrowRight, Circle, Plus, X} from "lucide-react"
+import {ArrowRight, Cable, Circle, Plus, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
 
@@ -135,10 +135,20 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                     <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">{session.workspace_uri || "-"}</td>
                     <td className="px-3 py-2 align-top">{active ? "Open" : "Available"}</td>
                     <td className="px-3 py-2 text-right align-top">
-                      <Button size="sm" variant={active ? "secondary" : "default"} onClick={() => onJoin?.(session.uri)}>
-                        <ArrowRight aria-hidden="true" />
-                        Open
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <a
+                          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                          href={`/admin/sessions/${encodeURIComponent(session.uri)}/external_mirror`}
+                          title="Bind a Feishu chat to this session"
+                        >
+                          <Cable className="h-3.5 w-3.5" aria-hidden="true" />
+                          External mirror
+                        </a>
+                        <Button size="sm" variant={active ? "secondary" : "default"} onClick={() => onJoin?.(session.uri)}>
+                          <ArrowRight aria-hidden="true" />
+                          Open
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 )
