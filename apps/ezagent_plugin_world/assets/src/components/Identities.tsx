@@ -74,6 +74,17 @@ type CascadeState = {
   keys: CascadeKeyEntry[]
 }
 
+type ConfigFieldRow = {
+  key: string
+  value?: unknown
+  source?: string
+}
+
+type NotWiredRow = {
+  key: string
+  reason: string
+}
+
 export type IdentitiesState = {
   agent_flavors?: string[]
   agent_status?: Record<string, unknown>
@@ -88,6 +99,10 @@ export type IdentitiesState = {
   config_dir?: string | null
   config_path?: string | null
   source_template?: string | null
+  config_fields?: ConfigFieldRow[]
+  config_schema?: ConfigSchemaField[]
+  config_schemas?: Record<string, ConfigSchemaField[]>
+  not_wired?: NotWiredRow[]
   flavor?: string
   component?: string
   config_dir_path?: string | null
@@ -335,6 +350,9 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
     ["Bridge", state.bridge ? "connected" : "not connected"],
   ]
 
+  const configFields = state.config_fields || []
+  const notWired = state.not_wired || []
+
   return (
     <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
@@ -347,6 +365,46 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
           </div>
         ))}
       </dl>
+
+      {/* M1: Per-flavor config fields from template data + config cascade */}
+      {configFields.length > 0 && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            Configuration (按 flavor 展示)
+          </p>
+          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {configFields.map((f) => (
+              <div className="flex justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" key={f.key}>
+                <dt className="text-xs font-medium text-muted-foreground">
+                  {f.key}
+                  <span className="ml-1 text-[10px] text-muted-foreground/60">({f.source})</span>
+                </dt>
+                <dd className="text-sm text-foreground truncate max-w-[200px]" title={f.value ?? ""}>
+                  {formatConfigValue(f.value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+
+      {/* M1: Not-wired annotations — per-field, precise labels */}
+      {notWired.length > 0 && (
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+            还没接线
+          </p>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {notWired.map((nw) => (
+              <div className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-1.5" key={nw.key}>
+                <span className="font-mono text-xs text-muted-foreground">{nw.key}</span>
+                <span className="text-xs text-muted-foreground/70">{nw.reason}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Granted caps (CapBAC)</p>
         <div className="flex flex-wrap gap-2 pt-1">
@@ -358,9 +416,6 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
           {grantedCaps.length === 0 && <span className="text-sm text-muted-foreground">none</span>}
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">
-        派生/编译配置（CLAUDE.md · settings.json · system_prompt）只读，由 flavor.compile 生成（G-INV-2 / G-INV-5）。
-      </p>
       <div className="flex flex-wrap gap-3">
         <InlineLinks links={[["Config", state.config_path]]} />
       </div>
@@ -395,6 +450,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     cwd: "",
     caps: "",
     with_pty: false,
+    configFields: {} as Record<string, string>,
   })
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
 
@@ -402,12 +458,23 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
     (form.with_pty && (state.cwd_required_with_pty_flavors || ["echo"]).includes(form.flavor))
 
+  // M4: flavor-specific schema for dynamic create fields
+  const flavorSchema = (state.config_schemas || {})[form.flavor] || []
+
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
-  // Grammar is `kind.behavior` (Capability.Parser splits on the first dot;
-  // the action axis is not in the grammar yet and defaults to :any). Allow
-  // digits in either segment.
   const capsInvalid = capTokens.some((t) => !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t))
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    // M4: submit flavor-specific config fields via A7 ingest pathway
+    const cf = form.configFields || {}
+    const filteredFields: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(cf)) {
+      if (v != null && v !== "") filteredFields[k] = v
+    }
+    onCreateAgent?.({...form, config_fields: filteredFields})
+  }
 
   return (
     <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
@@ -420,10 +487,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
       <form
         id="world-agent-new-form"
         className="grid gap-3 sm:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onCreateAgent?.(form)
-        }}
+        onSubmit={handleSubmit}
       >
         <label className={fieldLabel}>
           <span>Flavor</span>
@@ -441,6 +505,52 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <span>project_cwd {cwdRequired ? "*" : "(optional for this flavor)"}</span>
           <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/srv/acme/storefront" />
         </label>
+
+        {/* M4: Flavor-specific config fields from schema (A4/A7 enabled) */}
+        {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
+          <div className="sm:col-span-2 border-t border-border pt-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+              {form.flavor} configuration
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {flavorSchema.filter(f => f.key !== "soul_md").map((f) => (
+                <label className={fieldLabel} key={f.key}>
+                  <span className="font-mono text-xs">
+                    {f.label || f.key}
+                    {f.help && <span className="text-[10px] text-muted-foreground ml-1">({f.help})</span>}
+                  </span>
+                  {f.type === "enum" && f.options ? (
+                    <Select
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                    >
+                      <option value="">{f.default ? `默认: ${f.default}` : "—"}</option>
+                      {f.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </Select>
+                  ) : f.type === "text" ? (
+                    <textarea
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      rows={2}
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                      placeholder={String(f.default || "")}
+                    />
+                  ) : (
+                    <Input
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                      className="font-mono text-xs"
+                      placeholder={String(f.default || "")}
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <label className={fieldLabel}>
           <span>Requested caps</span>
           <Input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />
@@ -530,6 +640,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
             key={keyEntry.key}
             agentUri={agentUri}
             keyEntry={keyEntry}
+            schema={state.config_schema}
             onConfigUpdate={onConfigUpdate}
             onConfigDeletePath={onConfigDeletePath}
           />
@@ -542,14 +653,25 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
   )
 }
 
+type ConfigSchemaField = {
+  key: string
+  type: string
+  label?: string
+  options?: string[]
+  default?: unknown
+  required?: boolean
+  help?: string
+}
+
 type AgentConfigKeySectionProps = {
   agentUri: string
   keyEntry: CascadeKeyEntry
+  schema?: ConfigSchemaField[]
   onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
   onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
 }
 
-function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
+function AgentConfigKeySection({agentUri, keyEntry, schema, onConfigUpdate, onConfigDeletePath}: AgentConfigKeySectionProps) {
   // Initialize editable fields from the effective_body
   const [editedFields, setEditedFields] = React.useState<Record<string, unknown>>(() => ({...keyEntry.effective_body}))
   const [newFieldName, setNewFieldName] = React.useState("")
@@ -640,25 +762,21 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
       {/* Editable user layer fields */}
       <div className="space-y-2">
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">User layer (editable)</p>
-        {Object.entries(editedFields).map(([field, val]) => (
+        {Object.entries(editedFields).map(([field, val]) => {
+          const schemaField = (schema || []).find(s => s.key === field)
+          return (
           <div className="flex items-start gap-2" key={field}>
             <div className="flex-1">
               <label className={fieldLabel}>
-                <span className="font-mono">{field}</span>
-                {field === "soul_md" ? (
-                  <textarea
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    rows={4}
-                    value={String(val ?? "")}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                  />
-                ) : (
-                  <Input
-                    value={String(val ?? "")}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    className="font-mono"
-                  />
-                )}
+                <span className="font-mono">{schemaField?.label || field}</span>
+                {schemaField?.help && <span className="text-[10px] text-muted-foreground ml-1">({schemaField.help})</span>}
+                <ConfigFieldWidget
+                  field={field}
+                  value={val}
+                  schemaType={schemaField?.type}
+                  options={schemaField?.options}
+                  onChange={(v) => handleFieldChange(field, v)}
+                />
               </label>
             </div>
             <button
@@ -671,7 +789,7 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
               ×
             </button>
           </div>
-        ))}
+        )})}
 
         {/* Add new field row */}
         <div className="flex items-end gap-2 border-t border-border pt-2">
@@ -715,6 +833,95 @@ function AgentConfigKeySection({agentUri, keyEntry, onConfigUpdate, onConfigDele
       </div>
     </div>
   )
+}
+
+// ── M3: Schema-aware config field widget ────────────────────────────
+
+type ConfigFieldWidgetProps = {
+  field: string
+  value: unknown
+  schemaType?: string
+  options?: string[]
+  onChange: (value: string) => void
+}
+
+function ConfigFieldWidget({field, value, schemaType, options, onChange}: ConfigFieldWidgetProps) {
+  const strValue = String(value ?? "")
+
+  switch (schemaType) {
+    case "text":
+      return (
+        <textarea
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          rows={4}
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+    case "enum":
+    case "list":
+      return options && options.length > 0 ? (
+        <Select value={strValue} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          {options.map((opt) => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </Select>
+      ) : (
+        <Input
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+          placeholder={schemaType === "list" ? "逗号分隔" : ""}
+        />
+      )
+    case "json":
+      return (
+        <textarea
+          className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          rows={3}
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder='{"key": "value"}'
+        />
+      )
+    case "boolean":
+      return (
+        <Select value={strValue} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </Select>
+      )
+    case "integer":
+      return (
+        <Input
+          type="number"
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+        />
+      )
+    case "secret":
+      return (
+        <Input
+          type="password"
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+          autoComplete="off"
+        />
+      )
+    default:
+      // string or unknown type — fallback to generic Input
+      return (
+        <Input
+          value={strValue}
+          onChange={(e) => onChange(e.target.value)}
+          className="font-mono"
+        />
+      )
+  }
 }
 
 function AgentApiKeys({
@@ -942,4 +1149,16 @@ function previewAgentUri(workspaceUri: string | null | undefined, name: string) 
 function formatList(values: string[] | undefined) {
   if (!values || values.length === 0) return ""
   return `via ${values.join(", ")}`
+}
+
+function formatConfigValue(value: unknown): string {
+  if (value == null) return "—"
+  if (typeof value === "boolean") return value ? "true" : "false"
+  if (typeof value === "number") return String(value)
+  if (typeof value === "string") {
+    if (value.length > 80) return value.slice(0, 80) + "…"
+    return value
+  }
+  // objects, arrays — JSON compact
+  try { return JSON.stringify(value) } catch { return String(value) }
 }

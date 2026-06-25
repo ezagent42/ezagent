@@ -60,13 +60,19 @@ defmodule Ezagent.World.AgentActions do
     cwd = params |> Map.get("cwd", "") |> to_string() |> String.trim()
     caps_str = params |> Map.get("caps", "") |> to_string() |> String.trim()
     with_pty? = Map.get(params, "with_pty") in [true, "true", "on"]
+    # M4: extra flavor-specific config fields from the create form
+    config_fields = case Map.get(params, "config_fields") do
+      fields when is_map(fields) -> fields
+      _ -> %{}
+    end
 
     with %URI{scheme: "workspace"} <- workspace_uri,
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, caller),
          {:ok, %{agent_uri: agent_uri}} <-
            Ezagent.Workspace.create_agent(
              workspace_uri,
-             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?},
+             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?}
+             |> Map.merge(config_fields),
              caller_ctx
            ),
          :ok <- Ezagent.Workspace.grant_initial_caps(agent_uri, caps, caller_ctx) do
