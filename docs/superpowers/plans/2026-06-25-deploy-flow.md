@@ -76,8 +76,9 @@ Expected: 打印 `MISSING`
 
 ```yaml
 # docker/docker-compose.yml — 参数化单通道 stack(nightly/beta/stable 共用)
-# 用法: docker compose --env-file docker/.env.<channel> -f docker/docker-compose.yml \
-#         -f docker/docker-compose.infra.yml up -d   (见 docker/deploy.sh)
+# 用法(channel 只用本文件,infra 独立起 —— codex 致命#1,绝不 -f 合并 infra):
+#   docker compose --env-file docker/.env.<channel> -f docker/docker-compose.yml up -d   (见 docker/deploy.sh)
+# infra 单独: docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
 name: ezagent-${CHANNEL:?set CHANNEL in .env.<channel>}
 
 services:
@@ -184,20 +185,22 @@ git commit -m "feat(deploy): parameterized single-channel compose (2-tier networ
 - Consumes:Task 1 的 compose 变量。
 - Produces:`docker/.env.<channel>` 提供 `CHANNEL/EZAGENT_IMAGE/PUBLIC_HOST/HOST_ADMIN_PORT/POSTGRES_PASSWORD/SECRETS_DIR/JMS_SUBSCRIPTION_URL/DOCKER_BUILD_PROXY`。
 
-- [ ] **Step 1: 确认 .gitignore 覆盖 secrets(应已忽略 .env*)**
+- [ ] **Step 1: 先补 .gitignore(codex 高#9:现状只忽略根 `.env`,会误提交 secrets)— 必须先做**
 
-Run: `git check-ignore docker/.env.nightly docker/secrets-nightly/ezagent.env || echo NOT_IGNORED`
-Expected: 打印两路径(已忽略);若 `NOT_IGNORED` → 下一步补 .gitignore。
-
-- [ ] **Step 2: (如需)补 .gitignore**
-
-Modify `.gitignore`,确保含:
+在 `.gitignore` 末尾追加(committed):
 ```
+# deploy flow per-channel secrets
 docker/.env
 docker/.env.*
 !docker/.env.channel.example
 docker/secrets-*/
+docker/.env.infra
 ```
+
+- [ ] **Step 2: 验证忽略生效(任何 secret 文件创建前必须绿)**
+
+Run: `git check-ignore docker/.env.nightly docker/.env.infra docker/secrets-nightly/ezagent.env && echo IGNORED_OK`
+Expected: 打印三路径 + `IGNORED_OK`。**不绿不许往下造任何 secret。**
 
 - [ ] **Step 3: 写 committed 模板**
 
@@ -218,8 +221,9 @@ DOCKER_BUILD_PROXY=http://host.docker.internal:7897
 ```bash
 cp docker/.env.channel.example docker/.env.nightly   # 填 POSTGRES_PASSWORD(openssl rand -hex 16)、JMS URL
 mkdir -p docker/secrets-nightly/mihomo
-# ezagent.env: 随机分布 cookie(沿用现有 prod 做法)
-printf 'EZAGENT_COOKIE=%s\nRELEASE_COOKIE=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > docker/secrets-nightly/ezagent.env
+# ezagent.env: codex 高#10 —— EZAGENT_COOKIE 必须 == RELEASE_COOKIE(现有 runtime+rpc 依赖),用同一个值
+COOKIE=$(openssl rand -hex 24)
+printf 'EZAGENT_COOKIE=%s\nRELEASE_COOKIE=%s\n' "$COOKIE" "$COOKIE" > docker/secrets-nightly/ezagent.env
 # mihomo config 见 Task 3
 ```
 
@@ -429,12 +433,25 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 ```
 Expected: `success:true`,name `nightly.ezagent.chat`,content = `$TS_IP`。(`proxied:false` 关键——不能走 CF 代理,否则公网会试图连私网 IP。)
 
-- [ ] **Step 4: 起 nightly stack**
+- [ ] **Step 4: 起 nightly stack(只用 channel compose,不混 infra 文件 —— codex 致命#1)**
 
 ```bash
-docker compose --env-file docker/.env.nightly -f docker/docker-compose.yml -f docker/docker-compose.infra.yml up -d --build
+docker compose --env-file docker/.env.nightly -f docker/docker-compose.yml up -d --build
 ```
-> 注:首次 `--build` 编译 ezagent 镜像(GFW fetch 走 `DOCKER_BUILD_PROXY`);后续由 deploy.sh 控制 build/re-tag。
+> 注:infra(Step 2)已独立起;channel 经 external `ezagent_edge` 连。首次 `--build` 编译 ezagent 镜像
+> (GFW fetch 走 `DOCKER_BUILD_PROXY=host.docker.internal:7897`,**前置:host clash 在 7897/7896 在跑**);
+> 后续由 deploy.sh 控制 build/re-tag。
+
+- [ ] **Step 4b: 验证 Caddy 经 ts netns 能解析+到达 upstream(codex#11,共享 netns 关键假设)**
+
+```bash
+# tailscale 容器的 netns 内(Caddy 与之共享):解析 ezagent-nightly + 访问 upstream
+docker exec ezagent-infra-tailscale-1 getent hosts ezagent-nightly
+docker exec ezagent-infra-caddy-1 wget -qO- http://ezagent-nightly:10042/ >/dev/null && echo UPSTREAM_OK
+```
+Expected: `getent` 解析出 edge 网内 IP;`UPSTREAM_OK`。**若解析失败** → Caddy 仅共享 netns 拿不到 edge DNS,
+退路:让 Caddy **直接加入 edge 网络**(去掉 `network_mode`,但那样就不在 tailnet 上 listen)→ 暂停上报,
+改用"ts 容器跑 Caddy 二进制"或 per-env ts。
 
 - [ ] **Step 5: 验证健康 + tailnet 可达 + 公网不可达**
 
@@ -472,49 +489,62 @@ git commit -m "docs(deploy): nightly bring-up runbook (operator steps)"
 ```bash
 #!/usr/bin/env bash
 # docker/deploy.sh <channel> — build-once/promote-artifact 部署 + 健康检查 + 回滚
+# codex 致命#1/#2:infra 独立生命周期(自带 .env.infra),channel 只用自己的 compose,
+#   经 external ezagent_edge 连通。绝不把 infra 文件混进 channel 命令(否则合成单 project + 缺 infra env)。
 set -euo pipefail
 CHANNEL="${1:?usage: deploy.sh <nightly|beta|stable>}"
 cd "$(dirname "$0")/.."
+case "$CHANNEL" in nightly|beta|stable) : ;; *) echo "unknown channel $CHANNEL"; exit 2 ;; esac
 ENVFILE="docker/.env.${CHANNEL}"
-COMPOSE=(docker compose --env-file "$ENVFILE" -f docker/docker-compose.yml -f docker/docker-compose.infra.yml)
 
-# 部署的 SHA = 当前 checkout 的 HEAD。workflow 的 actions/checkout@v4 会把对应 ref 放到 HEAD:
-#   schedule(nightly)→ 默认 main tip;push beta → beta tip;push release → release tip。
-# 用 HEAD 而非 origin/<ref>:checkout 后 remote-tracking ref 未必存在(advisor)。
-case "$CHANNEL" in
-  nightly|beta|stable) : ;;
-  *) echo "unknown channel $CHANNEL"; exit 2 ;;
-esac
+# channel compose:project 名来自 compose 里的 name: ezagent-${CHANNEL};stable 加 cloudflared profile
+CH=(docker compose --env-file "$ENVFILE" -f docker/docker-compose.yml)
+[ "$CHANNEL" = stable ] && CH+=(--profile stable)
+CTR="ezagent-${CHANNEL}-ezagent-1"   # compose 容器名(project=ezagent-<channel>, service=ezagent)
+
+# 确保共享 infra(tailscale+mihomo+caddy)在跑 —— 独立 project + 独立 env(codex#1/#2)
+docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
+
+# 部署 SHA = 当前 checkout HEAD(checkout@v4 已把对应 ref 放 HEAD;不用 origin/<ref>,advisor)
 SHA=$(git rev-parse --short HEAD)
-SHA_IMG="ezagent:${SHA}"
-CHAN_IMG="ezagent:${CHANNEL}"
+SHA_IMG="ezagent:${SHA}"; CHAN_IMG="ezagent:${CHANNEL}"
 PREV=$(docker image inspect "$CHAN_IMG" --format '{{.Id}}' 2>/dev/null || echo none)
-
 echo "==> $CHANNEL @ $SHA"
-# build once per SHA;已存在则复用(晋级路径走这里,不重编)
+
+# build-once:仅 nightly 允许构建;beta/stable 必须晋级已存在的 nightly 制品(codex 致命#3,fail-closed)
 if ! docker image inspect "$SHA_IMG" >/dev/null 2>&1; then
-  echo "==> building $SHA_IMG"
-  EZAGENT_IMAGE="$SHA_IMG" "${COMPOSE[@]}" build ezagent
+  if [ "$CHANNEL" = nightly ]; then
+    echo "==> building $SHA_IMG"; EZAGENT_IMAGE="$SHA_IMG" "${CH[@]}" build ezagent
+  else
+    echo "!! $SHA_IMG 不存在 — beta/stable 只晋级已构建制品,拒绝重编"; exit 3
+  fi
 fi
 docker tag "$SHA_IMG" "$CHAN_IMG"
+TARGET_ID=$(docker image inspect "$CHAN_IMG" --format '{{.Id}}')
 
-# 起栈(infra 幂等)
-"${COMPOSE[@]}" up -d --no-build
+# 起 postgres(幂等),再 force-recreate ezagent 让它真正换到新镜像(codex 致命#4)
+"${CH[@]}" up -d --no-build
+EZAGENT_IMAGE="$CHAN_IMG" "${CH[@]}" up -d --no-build --force-recreate --no-deps ezagent
+RUN_ID=$(docker inspect --format '{{.Image}}' "$CTR")
+[ "$RUN_ID" = "$TARGET_ID" ] || { echo "!! 运行容器 image($RUN_ID) != 目标($TARGET_ID)"; exit 4; }
 
-# 健康检查
-echo "==> health check"
-ok=0
-for i in $(seq 1 30); do
-  if docker compose --env-file "$ENVFILE" -f docker/docker-compose.yml ps --format json \
-       | jq -e 'select(.Service=="ezagent") | .Health=="healthy"' >/dev/null 2>&1; then ok=1; break; fi
+# 健康检查:直接读容器 health(codex#5,不靠 compose ps json)
+echo "==> health check"; ok=0
+for _ in $(seq 1 30); do
+  [ "$(docker inspect --format '{{.State.Health.Status}}' "$CTR" 2>/dev/null)" = healthy ] && { ok=1; break; }
   sleep 5
 done
 if [ "$ok" != 1 ]; then
-  echo "!! health failed — rolling back to $PREV"
-  if [ "$PREV" != none ]; then docker tag "$PREV" "$CHAN_IMG"; "${COMPOSE[@]}" up -d --no-build; fi
+  echo "!! health failed"
+  if [ "$PREV" != none ]; then
+    echo "==> rollback → $PREV"; docker tag "$PREV" "$CHAN_IMG"
+    EZAGENT_IMAGE="$CHAN_IMG" "${CH[@]}" up -d --no-build --force-recreate --no-deps ezagent
+  else
+    echo "!! 首部署无可回滚镜像 — 保留失败态,需人工介入"
+  fi
   exit 1
 fi
-echo "==> $CHANNEL healthy on $CHAN_IMG"
+echo "==> $CHANNEL healthy on $CHAN_IMG ($TARGET_ID)"
 ```
 
 - [ ] **Step 2: 语法校验**
@@ -539,6 +569,14 @@ git commit -m "feat(deploy): deploy.sh — build-once/promote + health + rollbac
 ### Task 7: 安装 self-hosted runner(operator,我执行 + 记 runbook)
 
 **Files:** 无代码;记入 `docs/guide/deploy-mac-stack.md`。
+
+- [ ] **Step 0: 安全前置(codex 高#7/#8)— 装 runner 前先满足**
+  - **分支保护**:GitHub `beta`/`release` 设 branch protection,限制可 push 人员(push 即在 Mac 上执行该 ref 代码)。
+  - **Environments**:repo Settings→Environments 建 `stable`(required reviewers),配合 deploy.yml 的 `environment:`。
+  - **build 代理前置**:nightly 在 runner 上 `--build` 时 mihomo 容器可能还没起,build 走
+    `host.docker.internal:7897` → **host clash/mihomo 必须在 7897(及 7896 供 OrbStack 拉镜像)常驻**。装 runner 时校验:
+    `curl -x http://127.0.0.1:7897 -sI https://registry.npmjs.org | head -1`。
+  - **(可选)专用低权用户**跑 runner,限制其文件系统权限。
 
 - [ ] **Step 1: mint 注册 token(gh,admin-gated)**
 
@@ -594,12 +632,16 @@ on:
     - cron: '0 19 * * *'   # 每日 19:00 UTC = 03:00 CST → nightly
   push:
     branches: [beta, release]
+permissions:
+  contents: read              # codex 高#7:最小权限
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   deploy:
     runs-on: [self-hosted, macos, ezagent-deploy]
+    # codex#7:用 GitHub Environment 给 stable(release)加人工审批门(在 repo Settings→Environments 配 required reviewers)
+    environment: ${{ github.ref == 'refs/heads/release' && 'stable' || (github.ref == 'refs/heads/beta' && 'beta' || 'nightly') }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -679,31 +721,34 @@ git commit -m "feat(deploy): deploy.yml (nightly cron + beta/release push) + smo
         condition: service_healthy
 ```
 
-并在 `docker/deploy.sh` 的 `COMPOSE=(...)` 后,对 stable 追加 profile:
-```bash
-[ "$CHANNEL" = stable ] && COMPOSE+=(--profile stable)
-```
+> `deploy.sh` 已含 stable profile(Task 6 的 `[ "$CHANNEL" = stable ] && CH+=(--profile stable)`),此处无需再改。
 
-- [ ] **Step 2: cloudflared config(stable → ezagent-stable:10042)**
+- [ ] **Step 2: cloudflared config(stable → ezagent-stable:10042;codex#14 保留 originRequest)**
 
 ```yaml
-# docker/cloudflared/stable-config.yml
+# docker/cloudflared/stable-config.yml — 从现有 prod-config.yml 迁移,保留 originRequest,
+# 仅把 service 改为 edge 网上稳定可解析的 ezagent-stable:10042
 tunnel: 8e249ea0-1285-4a86-81fc-eb3733a16cf4
 credentials-file: /etc/cloudflared/cred.json
 ingress:
   - hostname: app.ezagent.chat
     service: http://ezagent-stable:10042
+    originRequest:
+      connectTimeout: 30s
+      tcpKeepAlive: 30s
   - service: http_status:404
 ```
+> 落地前 `diff` 现有 `docker/cloudflared/prod-config.yml`,把它实际的 `originRequest.*` 逐项搬过来(以现网为准)。
 
 - [ ] **Step 3: operator 造 beta/stable env(端口 10042/10043,独立 PG 密码)**
 
 ```bash
 for c in beta stable; do cp docker/.env.channel.example docker/.env.$c; mkdir -p docker/secrets-$c/mihomo
-  printf 'EZAGENT_COOKIE=%s\nRELEASE_COOKIE=%s\n' "$(openssl rand -hex 24)" "$(openssl rand -hex 24)" > docker/secrets-$c/ezagent.env; done
+  CK=$(openssl rand -hex 24)   # codex#10:EZAGENT_COOKIE == RELEASE_COOKIE,每环境一个独立值
+  printf 'EZAGENT_COOKIE=%s\nRELEASE_COOKIE=%s\n' "$CK" "$CK" > docker/secrets-$c/ezagent.env; done
 # 编辑: beta → CHANNEL=beta EZAGENT_IMAGE=ezagent:beta PUBLIC_HOST=beta.ezagent.chat HOST_ADMIN_PORT=10042 SECRETS_DIR=./secrets-beta
 #       stable → CHANNEL=stable EZAGENT_IMAGE=ezagent:stable PUBLIC_HOST=app.ezagent.chat HOST_ADMIN_PORT=10043 SECRETS_DIR=./secrets-stable
-# beta 的 DNS A 记录(同 Task5 Step2,name=beta);stable 的 app 记录已由现有 cloudflared 隧道托管
+# beta 的 DNS A 记录(同 Task5 Step3,name=beta → ts 容器 100.x);stable 的 app 记录已由现有 cloudflared 隧道托管
 ```
 
 - [ ] **Step 4: 校验 stable profile 合法**
@@ -752,23 +797,36 @@ git commit -m "feat(deploy): beta + stable stacks (cloudflared profile for stabl
 ```bash
 #!/usr/bin/env bash
 # docker/backup.sh <channel> — 逐域逻辑备份 → ./backups/<channel>/<ts>/
+# codex#12:不硬编码容器/卷名,用 compose 解析(project=ezagent-<channel>)
 set -euo pipefail
 CHANNEL="${1:?usage: backup.sh <channel>}"; cd "$(dirname "$0")/.."
-source "docker/.env.${CHANNEL}"
-TS=$(date +%Y%m%dT%H%M%S); OUT="backups/${CHANNEL}/${TS}"; mkdir -p "$OUT"
+set -a; . "docker/.env.${CHANNEL}"; set +a
+CH=(docker compose --env-file "docker/.env.${CHANNEL}" -f docker/docker-compose.yml)
+TS=$(date -u +%Y%m%dT%H%M%SZ); OUT="backups/${CHANNEL}/${TS}"; mkdir -p "$OUT"
+
+# 实际容器名/卷名由 compose 解析,不靠字符串猜(codex#12)
+PG_CTR=$("${CH[@]}" ps -q postgres)
+HOME_VOL=$(docker inspect "$("${CH[@]}" ps -q ezagent)" \
+  --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}')
+RUN_IMG=$(docker inspect "$("${CH[@]}" ps -q ezagent)" --format '{{.Image}}')
+GIT_SHA=$(git rev-parse HEAD)
+DB_START=$(date -u +%Y%m%dT%H%M%SZ)
 
 # 域1: Postgres — 逻辑 dump(一致)
-docker exec "ezagent-${CHANNEL}-postgres-1" \
-  pg_dump -U ezagent -d "ezagent_${CHANNEL}" | gzip > "$OUT/db.sql.gz"
+docker exec "$PG_CTR" pg_dump -U ezagent -d "ezagent_${CHANNEL}" | gzip > "$OUT/db.sql.gz"
+DB_END=$(date -u +%Y%m%dT%H%M%SZ)
 
 # 域2: Agent FS — 精选快照(跳过 node_modules / _build / deps)
-docker run --rm -v "ezagent-${CHANNEL}_home:/src:ro" -v "$PWD/$OUT:/dst" alpine \
+docker run --rm -v "${HOME_VOL}:/src:ro" -v "$PWD/$OUT:/dst" alpine \
   tar czf /dst/fs-snapshot.tar.gz \
     --exclude='*/node_modules' --exclude='*/_build' --exclude='*/deps' -C /src .
 
-# manifest 绑定两域 + 当前发布 SHA
+# manifest:记录真实可恢复锚点(codex#13)。非原子快照(无 quiesce/LSN)明确标注。
 cat > "$OUT/manifest.json" <<JSON
-{"channel":"${CHANNEL}","ts":"${TS}","image":"${EZAGENT_IMAGE}","db":"db.sql.gz","fs":"fs-snapshot.tar.gz"}
+{"channel":"${CHANNEL}","ts":"${TS}","git_sha":"${GIT_SHA}","running_image":"${RUN_IMG}",
+ "image_tag":"${EZAGENT_IMAGE}","home_volume":"${HOME_VOL}","pg_dump_start":"${DB_START}",
+ "pg_dump_end":"${DB_END}","db":"db.sql.gz","fs":"fs-snapshot.tar.gz","atomic":false,
+ "note":"per-domain logical backup; DB and FS NOT a single consistent snapshot"}
 JSON
 echo "backup done: $OUT"
 ```
@@ -780,22 +838,30 @@ Expected: 见 `db.sql.gz`(非空)、`fs-snapshot.tar.gz`、`manifest.json`。
 
 - [ ] **Step 3: launchd 定时(每日 04:00,nightly+beta+stable)**
 
+> codex#15:plist **不硬编码开发 worktree**。`.example` 模板用占位符 `__DEPLOY_DIR__`,operator 用安装脚本
+> 渲染成**部署最终 checkout 的绝对路径**(self-hosted runner 的 `_work/ezagent/ezagent`,或你固定的部署目录)。
+
 ```xml
-<!-- docker/com.ezagent.backup.plist → 安装到 ~/Library/LaunchAgents/ -->
+<!-- docker/com.ezagent.backup.plist.example → 渲染 __DEPLOY_DIR__ 后装到 ~/Library/LaunchAgents/ -->
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.ezagent.backup</string>
   <key>ProgramArguments</key>
   <array><string>/bin/zsh</string><string>-lc</string>
-    <string>cd /Users/h2oslabs/Workspace/esr-ng &amp;&amp; for c in nightly beta stable; do docker/backup.sh $c; done</string>
+    <string>cd __DEPLOY_DIR__ &amp;&amp; for c in nightly beta stable; do docker/backup.sh $c; done</string>
   </array>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
   <key>StandardErrorPath</key><string>/tmp/ezagent-backup.err</string>
   <key>StandardOutPath</key><string>/tmp/ezagent-backup.out</string>
 </dict></plist>
 ```
-operator 装:`cp docker/com.ezagent.backup.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.ezagent.backup.plist`
+operator 装(渲染绝对路径):
+```bash
+DEPLOY_DIR=$(pwd)   # 在最终部署 checkout 里执行
+sed "s#__DEPLOY_DIR__#${DEPLOY_DIR}#" docker/com.ezagent.backup.plist.example > ~/Library/LaunchAgents/com.ezagent.backup.plist
+launchctl load ~/Library/LaunchAgents/com.ezagent.backup.plist
+```
 
 - [ ] **Step 4: Commit**
 
@@ -859,14 +925,15 @@ git rm docker/docker-compose.prod.yml docker/cloudflared/prod-config.yml
 
 - [ ] **Step 3: 全量静态校验(三通道 config 均绿)**
 
-Run:
+Run(channel 与 infra 分开校验 —— 不合并,codex 致命#1):
 ```bash
+JMS_SUBSCRIPTION_URL=x CF_API_TOKEN=x TS_AUTHKEY=x docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml config -q && echo "infra OK"
 for c in nightly beta stable; do
   P=""; [ "$c" = stable ] && P="--profile stable"
-  docker compose --env-file docker/.env.$c -f docker/docker-compose.yml -f docker/docker-compose.infra.yml $P config -q && echo "$c OK"
+  docker compose --env-file docker/.env.$c -f docker/docker-compose.yml $P config -q && echo "$c OK"
 done
 ```
-Expected: `nightly OK` / `beta OK` / `stable OK`。
+Expected: `infra OK` / `nightly OK` / `beta OK` / `stable OK`。
 
 - [ ] **Step 4: Commit**
 
