@@ -80,9 +80,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # the line anchors hold, only the app-dir path prefix changed.
     # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
     # anchors lower; the spawn-fresh ownership boundary is unchanged.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 240},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 279},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 281},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 248},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 287},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 289},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
@@ -275,6 +275,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     spawn_fresh_hits = grep(~r/spawn_fresh(?:_member)?\(/, skip_comment_lines?: true)
     all_slices_hits = grep(~r/:all_slices/)
     set_effect_hits = grep(~r/\{:set,\s*:[a-z_]+,/)
+    flavor_refs_in_core = grep_core(~r/AgentFlavor(?:Registry|Attributes|Resolver)/)
 
     [
       oversized_modules_gt_1500: count_oversized(oversized, 1500),
@@ -313,6 +314,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       missing_cap_check_mutating_actions: missing_cap_check_mutating_actions(),
       kind_runtime_ordering_violations: kind_runtime_ordering_violations(),
       kind_runtime_reentry_violations: kind_runtime_reentry_violations(),
+      no_flavor_refs_in_core: length(flavor_refs_in_core),
       cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
       raw_port_spawn_executable: raw_port_spawn_executable()
     ]
@@ -383,6 +385,15 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     |> Enum.sort()
   end
 
+  defp core_lib_files do
+    repo_root()
+    |> Path.join("apps/ezagent_core/lib/**/*.ex")
+    |> Path.wildcard()
+    |> Enum.map(&relative/1)
+    |> Enum.reject(&excluded_file?/1)
+    |> Enum.sort()
+  end
+
   defp excluded_file?(path) do
     # E2E scenario modules (`lib/ezagent/e2e/scenarios/`) are TEST FIXTURES that
     # live under `lib/` only so the running node loads them (the harness resolves
@@ -405,6 +416,15 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
         {line, line_no} <- file_lines(file),
         not String.contains?(line, "# arch-allow:"),
         not (skip_comment_lines? and comment_line?(line)),
+        Regex.match?(regex, line) do
+      {file, line_no, String.trim(line)}
+    end
+  end
+
+  defp grep_core(regex) do
+    for file <- core_lib_files(),
+        {line, line_no} <- file_lines(file),
+        not String.contains?(line, "# arch-allow:"),
         Regex.match?(regex, line) do
       {file, line_no, String.trim(line)}
     end

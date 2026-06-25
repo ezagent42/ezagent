@@ -62,15 +62,7 @@ defmodule EzagentCore.EtsOwner do
     # docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md):
     # - PluginRegistry §4 — runtime catalog of installed plugins;
     #   each plugin self-registers during `Ezagent.Plugin.boot/1`.
-    # - AgentFlavorRegistry §6.3 — declarative flavor→{kind,
-    #   template_class} map; populated by `boot/1` per `agent_flavors/0`.
     {Ezagent.PluginRegistry, :set},
-    {Ezagent.AgentFlavorRegistry, :set},
-    # Unify URI Query PR-B/PR-E: launch-time agent_uri → stored flavor
-    # attributes. Template classes seed this before first spawn so
-    # SpawnRegistry can resolve the Kind module through UriQuery without
-    # parsing a flavor prefix from the URI name.
-    {Ezagent.AgentFlavorAttributes, :set},
     # Unify URI Query PR-A: attr → resolver function dispatcher. Domain
     # and plugin owners register query resolvers at boot; core callers use
     # `Ezagent.UriQuery.resolve/2` without depending on downstream apps.

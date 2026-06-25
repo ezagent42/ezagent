@@ -65,7 +65,6 @@ defmodule EzagentPluginCc.Application do
   use Ezagent.Plugin
 
   alias Ezagent.Behavior.CcHeadlessAgent, as: CcHeadlessBehavior
-  alias Ezagent.Entity.Agent, as: AgentKind
 
   # --- OTP Application -------------------------------------------------
 
@@ -86,7 +85,8 @@ defmodule EzagentPluginCc.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
-    for action <- CcHeadlessBehavior.actions(), do: {AgentKind, action, CcHeadlessBehavior}
+    for action <- CcHeadlessBehavior.actions(),
+        do: {Ezagent.Entity.Agent, action, CcHeadlessBehavior}
   end
 
   @impl Ezagent.Plugin
@@ -110,10 +110,10 @@ defmodule EzagentPluginCc.Application do
       },
       %{
         flavor: "cc-headless",
-        kind: AgentKind,
+        kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
         bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter,
-        instance_behaviors: &AgentKind.cc_headless_behaviors/0
+        instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       }
     ]
   end

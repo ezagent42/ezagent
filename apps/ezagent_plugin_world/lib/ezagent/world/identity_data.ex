@@ -181,7 +181,7 @@ defmodule Ezagent.World.IdentityData do
          caller,
          caps
        ) do
-    case Ezagent.AgentConfig.read_cascade(agent_uri, caller, caps) do
+    case Ezagent.Agent.Config.read_cascade(agent_uri, caller, caps) do
       {:ok, cascade} ->
         base
         |> Map.put("agent_uri", encode_uri(agent_uri))

@@ -24,6 +24,7 @@ defmodule EzagentDomainAgent.Application do
   @impl Application
   def start(_type, _args) do
     children = [
+      {EzagentDomainAgent.EtsOwner, []},
       # Agent Kind DynamicSupervisor — 0 children at boot; agents demand-spawn
       # / rehydrate lazily. Frozen name (D1a).
       {DynamicSupervisor,
@@ -47,6 +48,7 @@ defmodule EzagentDomainAgent.Application do
     :ok = Ezagent.Agent.TransportReadiness.init()
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.Agent.TransportReadiness)
     :ok = Ezagent.Kind.Template.FlavorHook.register(Ezagent.Agent.FlavorTemplateHook)
+    :ok = Ezagent.Plugin.FlavorPublishHook.register(Ezagent.Agent.FlavorPublishHook)
 
     result
   end

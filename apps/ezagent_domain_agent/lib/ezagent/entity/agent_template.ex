@@ -213,7 +213,8 @@ defmodule Ezagent.Entity.AgentTemplate do
   Authoring/front-end publish code may wrap it with stricter caller-threaded
   auth, but migration consumes only the resulting immutable source URI.
   """
-  @spec persist_version_as_system(map(), URI.t() | String.t()) :: {:ok, URI.t()} | {:error, term()}
+  @spec persist_version_as_system(map(), URI.t() | String.t()) ::
+          {:ok, URI.t()} | {:error, term()}
   def persist_version_as_system(content, workspace) when is_map(content) do
     name = Map.get(content, :name) || Map.get(content, "name")
     workspace_segment = workspace_segment(workspace)
@@ -324,7 +325,10 @@ defmodule Ezagent.Entity.AgentTemplate do
         |> put_universal_desired(content, :desired_skills)
         |> put_universal_desired(content, :desired_caps)
 
-      data = merge_template_extra(base, extra)
+      data =
+        base
+        |> merge_template_extra(extra)
+        |> merge_template_extra(config_schema_extra(tc, content))
 
       # Fail-fast (codex review HIGH): a misconfigured flavor template
       # (e.g. curl missing provider) must NOT spawn a nil-config worker.
@@ -428,6 +432,27 @@ defmodule Ezagent.Entity.AgentTemplate do
     if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok
   end
 
+  defp config_schema_extra(tc, content) do
+    if function_exported?(tc, :config_schema, 0) do
+      tc.config_schema()
+      |> Enum.filter(&is_map/1)
+      |> Enum.reduce(%{}, fn field, acc ->
+        case Map.get(field, :key) do
+          key when is_binary(key) and key != "" ->
+            case content_config_get(content, key) do
+              nil -> acc
+              value -> Map.put(acc, key, value)
+            end
+
+          _ ->
+            acc
+        end
+      end)
+    else
+      %{}
+    end
+  end
+
   defp template_extra(tc, content) do
     case manifest_compile_payload(content) do
       {:ok, resolved, params} ->
@@ -520,6 +545,25 @@ defmodule Ezagent.Entity.AgentTemplate do
       nil -> Map.get(content, Atom.to_string(key))
       value -> value
     end
+  end
+
+  defp content_config_get(content, key) when is_binary(key) do
+    case Map.fetch(content, key) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        case existing_atom(key) do
+          {:ok, atom} -> Map.get(content, atom)
+          :error -> nil
+        end
+    end
+  end
+
+  defp existing_atom(key) when is_binary(key) do
+    {:ok, String.to_existing_atom(key)}
+  rescue
+    ArgumentError -> :error
   end
 
   @doc """

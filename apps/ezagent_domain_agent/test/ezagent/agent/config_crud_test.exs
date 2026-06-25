@@ -1,7 +1,8 @@
-defmodule Ezagent.AgentConfigTest do
+defmodule Ezagent.Agent.ConfigCrudTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{AgentConfig, CreatorGrant}
+  alias Ezagent.Agent.Config
+  alias Ezagent.CreatorGrant
   alias Ezagent.Entity.Agent
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
   alias EzagentCore.Repo
@@ -22,7 +23,7 @@ defmodule Ezagent.AgentConfigTest do
   end
 
   test "read_cascade returns stable empty default key shape", %{agent: agent, manager: manager} do
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
+    assert {:ok, cascade} = Config.read_cascade(agent, manager.uri, manager.caps)
 
     assert cascade.agent_uri == URI.to_string(agent)
     assert cascade.default_key == @default_key
@@ -44,12 +45,12 @@ defmodule Ezagent.AgentConfigTest do
     manager: manager
   } do
     assert {:ok, %{config_id: cid, previous_config_id: nil}} =
-             AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+             Config.apply_delta(agent, manager.uri, manager.caps, %{
                patch: %{"tone" => "decisive"},
                turn_id: turn_id("create")
              })
 
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
+    assert {:ok, cascade} = Config.read_cascade(agent, manager.uri, manager.caps)
     [state] = cascade.keys
 
     assert state.effective_body == %{"tone" => "decisive"}
@@ -62,31 +63,31 @@ defmodule Ezagent.AgentConfigTest do
     manager: manager
   } do
     assert {:ok, _} =
-             AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+             Config.apply_delta(agent, manager.uri, manager.caps, %{
                key: "model.settings",
                patch: %{"model" => "gpt-test"},
                turn_id: turn_id("dynamic")
              })
 
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
+    assert {:ok, cascade} = Config.read_cascade(agent, manager.uri, manager.caps)
     assert Enum.map(cascade.keys, & &1.key) == [@default_key, "model.settings"]
   end
 
   test "apply_delta updates with shallow merge semantics", %{agent: agent, manager: manager} do
     {:ok, %{config_id: first}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "neutral", "soul_md" => "# Soul"},
         turn_id: turn_id("merge-a")
       })
 
     {:ok, %{config_id: second, previous_config_id: ^first}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "decisive"},
         turn_id: turn_id("merge-b")
       })
 
     assert second != first
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
+    assert {:ok, state} = Config.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"tone" => "decisive", "soul_md" => "# Soul"}
   end
 
@@ -95,7 +96,7 @@ defmodule Ezagent.AgentConfigTest do
     manager: manager
   } do
     {:ok, %{config_id: first}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "neutral", "soul_md" => "# Soul"},
         turn_id: turn_id("delete-a")
       })
@@ -103,7 +104,7 @@ defmodule Ezagent.AgentConfigTest do
     count_before_delete = config_object_count()
 
     assert {:ok, %{config_id: second, previous_config_id: ^first}} =
-             AgentConfig.delete_path(agent, manager.uri, manager.caps, %{
+             Config.delete_path(agent, manager.uri, manager.caps, %{
                path: ["tone"],
                turn_id: turn_id("delete-b")
              })
@@ -112,7 +113,7 @@ defmodule Ezagent.AgentConfigTest do
     assert config_object_count() == count_before_delete + 1
     assert {:ok, _old_object} = ConfigStore.fetch_object(first)
 
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
+    assert {:ok, state} = Config.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"soul_md" => "# Soul"}
   end
 
@@ -124,7 +125,7 @@ defmodule Ezagent.AgentConfigTest do
     # NOT :config_not_found / :path_not_found — otherwise an uncapped caller could
     # probe which config fields exist (the #958 existence oracle).
     assert {:error, :unauthorized} =
-             AgentConfig.delete_path(agent, stranger, MapSet.new(), %{
+             Config.delete_path(agent, stranger, MapSet.new(), %{
                key: "nonexistent.key",
                path: ["nope"],
                turn_id: turn_id("leak-nonexistent")
@@ -133,7 +134,7 @@ defmodule Ezagent.AgentConfigTest do
     # An existing path is likewise denied — same error, so the two are
     # indistinguishable to an uncapped caller.
     assert {:error, :unauthorized} =
-             AgentConfig.delete_path(agent, stranger, MapSet.new(), %{
+             Config.delete_path(agent, stranger, MapSet.new(), %{
                path: ["tone"],
                turn_id: turn_id("leak-existing")
              })
@@ -143,7 +144,7 @@ defmodule Ezagent.AgentConfigTest do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
     assert {:error, :unauthorized} =
-             AgentConfig.repoint(agent, stranger, MapSet.new(), %{config_id: "whatever"})
+             Config.repoint(agent, stranger, MapSet.new(), %{config_id: "whatever"})
   end
 
   test "repoint rolls a key back to an existing in-scope object", %{
@@ -151,23 +152,23 @@ defmodule Ezagent.AgentConfigTest do
     manager: manager
   } do
     {:ok, %{config_id: first}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "A"},
         turn_id: turn_id("repoint-a")
       })
 
     {:ok, %{config_id: second}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "B"},
         turn_id: turn_id("repoint-b")
       })
 
     assert {:ok, %{config_id: ^first, previous_config_id: ^second}} =
-             AgentConfig.repoint(agent, manager.uri, manager.caps, %{
+             Config.repoint(agent, manager.uri, manager.caps, %{
                config_id: first
              })
 
-    assert {:ok, state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
+    assert {:ok, state} = Config.read_key(agent, @default_key, manager.uri, manager.caps)
     assert state.effective_body == %{"tone" => "A"}
   end
 
@@ -175,7 +176,7 @@ defmodule Ezagent.AgentConfigTest do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
     assert {:error, :unauthorized} =
-             AgentConfig.apply_delta(agent, stranger, MapSet.new(), %{
+             Config.apply_delta(agent, stranger, MapSet.new(), %{
                patch: %{"tone" => "denied"},
                turn_id: turn_id("denied")
              })
@@ -191,7 +192,7 @@ defmodule Ezagent.AgentConfigTest do
     other_manager = grant_manage_cap(other, workspace)
 
     assert {:error, :unauthorized} =
-             AgentConfig.apply_delta(agent, other_manager.uri, other_manager.caps, %{
+             Config.apply_delta(agent, other_manager.uri, other_manager.caps, %{
                patch: %{"tone" => "denied"},
                turn_id: turn_id("wrong-cap")
              })
@@ -201,14 +202,14 @@ defmodule Ezagent.AgentConfigTest do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
     assert {:error, :unauthorized} =
-             AgentConfig.read_cascade(agent, stranger, MapSet.new())
+             Config.read_cascade(agent, stranger, MapSet.new())
   end
 
   test "read_key is denied without the agent manage-cap", %{agent: agent} do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
     assert {:error, :unauthorized} =
-             AgentConfig.read_key(agent, @default_key, stranger, MapSet.new())
+             Config.read_key(agent, @default_key, stranger, MapSet.new())
   end
 
   test "manage-cap for another agent does not authorize read_cascade", %{
@@ -221,7 +222,7 @@ defmodule Ezagent.AgentConfigTest do
     other_manager = grant_manage_cap(other, workspace)
 
     assert {:error, :unauthorized} =
-             AgentConfig.read_cascade(agent, other_manager.uri, other_manager.caps)
+             Config.read_cascade(agent, other_manager.uri, other_manager.caps)
   end
 
   test "manage-cap for another agent does not authorize read_key", %{
@@ -234,23 +235,23 @@ defmodule Ezagent.AgentConfigTest do
     other_manager = grant_manage_cap(other, workspace)
 
     assert {:error, :unauthorized} =
-             AgentConfig.read_key(agent, @default_key, other_manager.uri, other_manager.caps)
+             Config.read_key(agent, @default_key, other_manager.uri, other_manager.caps)
   end
 
   test "manage-cap holder reads the cascade", %{agent: agent, manager: manager} do
     {:ok, %{config_id: cid}} =
-      AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+      Config.apply_delta(agent, manager.uri, manager.caps, %{
         patch: %{"tone" => "allowed"},
         turn_id: turn_id("read-allow")
       })
 
-    assert {:ok, cascade} = AgentConfig.read_cascade(agent, manager.uri, manager.caps)
+    assert {:ok, cascade} = Config.read_cascade(agent, manager.uri, manager.caps)
     assert cascade.agent_uri == URI.to_string(agent)
     [state] = cascade.keys
     assert state.effective_body == %{"tone" => "allowed"}
     assert state.layers["user"].config_id == cid
 
-    assert {:ok, key_state} = AgentConfig.read_key(agent, @default_key, manager.uri, manager.caps)
+    assert {:ok, key_state} = Config.read_key(agent, @default_key, manager.uri, manager.caps)
     assert key_state.effective_body == %{"tone" => "allowed"}
   end
 
@@ -262,7 +263,7 @@ defmodule Ezagent.AgentConfigTest do
     soul = "# New Soul\n\nOperate carefully.\n"
 
     assert {:ok, %{config_id: cid}} =
-             AgentConfig.apply_delta(agent, manager.uri, manager.caps, %{
+             Config.apply_delta(agent, manager.uri, manager.caps, %{
                patch: %{"soul_md" => soul},
                turn_id: turn_id("soul")
              })

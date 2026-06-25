@@ -24,6 +24,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
+         {:ok, flavor_config} <-
+           Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig.coerce(flavor, args),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
          :ok <- validate_from_for_flavor(flavor, from_uri),
@@ -49,7 +51,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         # (`caps`) and to preserve single-reference clone semantics under the
         # cascade (`from_uri` → `explicit_source`).
         caps: Map.get(ctx, :caps),
-        from_uri: from_uri
+        from_uri: from_uri,
+        flavor_config: flavor_config
       })
     end
   end
@@ -290,7 +293,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
-    tmpl = file_flavor_template("cc", "cc.agent", agent_uri, cwd)
+    tmpl = file_flavor_template("cc", "cc.agent", agent_uri, cwd, Map.get(params, :flavor_config))
 
     register_and_invoke_template(
       session_templates,
@@ -314,7 +317,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     tmpl_name = "cc_headless.agent." <> agent_name(agent_uri)
 
-    tmpl = file_flavor_template("cc-headless", "cc_headless.agent", agent_uri, cwd)
+    tmpl =
+      file_flavor_template(
+        "cc-headless",
+        "cc_headless.agent",
+        agent_uri,
+        cwd,
+        Map.get(params, :flavor_config)
+      )
 
     register_and_invoke_template(
       session_templates,
@@ -370,7 +380,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     tmpl_name = "codex.agent." <> agent_name(agent_uri)
 
-    tmpl = file_flavor_template("codex", "codex.agent", agent_uri, cwd)
+    tmpl =
+      file_flavor_template(
+        "codex",
+        "codex.agent",
+        agent_uri,
+        cwd,
+        Map.get(params, :flavor_config)
+      )
 
     register_and_invoke_template(
       session_templates,
@@ -394,7 +411,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     tmpl_name = "codex_remote.agent." <> agent_name(agent_uri)
 
-    tmpl = file_flavor_template("codex-remote", "codex_remote.agent", agent_uri, cwd)
+    tmpl =
+      file_flavor_template(
+        "codex-remote",
+        "codex_remote.agent",
+        agent_uri,
+        cwd,
+        Map.get(params, :flavor_config)
+      )
 
     register_and_invoke_template(
       session_templates,
@@ -413,7 +437,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # stored flavor declaration. URI names are opaque; do not recover the
   # flavor from the agent URI.
   defp do_create_agent(other_flavor, agent_uri, _session_templates, params) do
-    case direct_spawn_flavor_agent(other_flavor, agent_uri) do
+    case direct_spawn_flavor_agent(other_flavor, agent_uri, Map.get(params, :flavor_config, %{})) do
       {:ok, _pid} ->
         record_creator_lineage(agent_uri, params)
 
@@ -444,24 +468,98 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # which only runs when the behavior is in the effective set) — i.e. a broken
   # curl agent. A flavor with its own dedicated Kind (np) declares no thunk →
   # `:behaviors` is omitted → the Kind's full declared set applies (unchanged).
-  defp direct_spawn_flavor_agent(flavor, agent_uri) when is_binary(flavor) do
+  defp direct_spawn_flavor_agent(flavor, agent_uri, flavor_config)
+       when is_binary(flavor) and is_map(flavor_config) do
     with {:ok, decl} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
+         :ok <- validate_direct_spawn_flavor_config(flavor, decl, agent_uri, flavor_config),
          :ok <- Ezagent.AgentFlavorAttributes.put(agent_uri, flavor) do
-      Ezagent.Kind.spawn(decl.kind, spawn_args_for_flavor(decl, agent_uri))
+      Ezagent.Kind.spawn(decl.kind, spawn_args_for_flavor(flavor, decl, agent_uri, flavor_config))
     end
   end
 
   # Thread `:behaviors` ONLY when the flavor declares a per-instance set
   # (curl). Omitting the key for other flavors preserves the legacy-sentinel
   # rule (`init_set/2`: absent `:behaviors` → the Kind's full declared set).
-  defp spawn_args_for_flavor(decl, %URI{} = agent_uri) do
-    base = %{uri: agent_uri}
+  defp spawn_args_for_flavor(flavor, decl, %URI{} = agent_uri, flavor_config) do
+    base =
+      %{uri: agent_uri}
+      |> Map.merge(direct_spawn_config_args(flavor, flavor_config))
 
     case Map.get(decl, :instance_behaviors) do
       thunk when is_function(thunk, 0) -> Map.put(base, :behaviors, thunk.())
       _ -> base
     end
   end
+
+  defp validate_direct_spawn_flavor_config(_flavor, _decl, _agent_uri, config)
+       when config == %{},
+       do: :ok
+
+  defp validate_direct_spawn_flavor_config(flavor, decl, %URI{} = agent_uri, config) do
+    template_class = Map.get(decl, :template_class)
+
+    cond do
+      not is_atom(template_class) ->
+        :ok
+
+      not Code.ensure_loaded?(template_class) or
+          not function_exported?(template_class, :validate, 1) ->
+        :ok
+
+      true ->
+        data = direct_spawn_template_data(flavor, template_class, agent_uri, config)
+
+        case template_class.validate(data) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:invalid_flavor_config, flavor, reason}}
+        end
+    end
+  end
+
+  defp direct_spawn_template_data("curl", template_class, agent_uri, config) do
+    %{
+      "class" => template_class.template_name(),
+      "agent_uri" => agent_uri_string(agent_uri),
+      "provider" => "deepseek",
+      "api_url" => "https://api.deepseek.com/chat/completions",
+      "model" => "deepseek-chat"
+    }
+    |> Map.merge(config)
+  end
+
+  defp direct_spawn_template_data(_flavor, template_class, agent_uri, config) do
+    %{
+      "class" => template_class.template_name(),
+      "agent_uri" => agent_uri_string(agent_uri)
+    }
+    |> Map.merge(config)
+  end
+
+  defp direct_spawn_config_args("curl", config) do
+    config
+    |> Enum.flat_map(fn
+      {"provider", value} -> [provider: value]
+      {"api_url", value} -> [api_url: value]
+      {"model", value} -> [model: value]
+      {"system_prompt", value} -> [system_prompt: value]
+      {"max_history", value} -> [max_history: parse_positive_int(value, value)]
+      {_key, _value} -> []
+    end)
+    |> Map.new()
+  end
+
+  defp direct_spawn_config_args(_flavor, _config), do: %{}
+
+  defp parse_positive_int(value, _fallback) when is_integer(value) and value > 0, do: value
+
+  defp parse_positive_int(value, fallback) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> int
+      _ -> fallback
+    end
+  end
+
+  defp parse_positive_int(_value, fallback), do: fallback
 
   # Allen 2026-05-26 (codex HIGH-1 closure) — record `agent_uri → caller`
   # in `Ezagent.AgentLineage`. Best-effort: a missing caller (system-internal
@@ -497,14 +595,18 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # Test-only accessor — the persisted file-flavor template ALWAYS carries a
   # config_dir reference (the no-silent-fallback structural guarantee).
   def __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd),
-    do: file_flavor_template(flavor, class_name, agent_uri, cwd)
+    do: file_flavor_template(flavor, class_name, agent_uri, cwd, %{})
+
+  @doc false
+  def __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd, flavor_config),
+    do: file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config)
 
   @doc false
   # Test-only accessor — the cascade-content builder's no-silent-fallback
   # guard (a file-flavor content missing config_dir is rejected, never spawned).
   def __cascade_content_for_test__(tmpl), do: to_cascade_content(tmpl)
 
-  defp file_flavor_template(flavor, class_name, agent_uri, cwd)
+  defp file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config)
        when is_binary(flavor) and is_binary(class_name) do
     %{
       "class" => class_name,
@@ -513,6 +615,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       "project_cwd" => Path.expand(cwd),
       "config_dir" => per_agent_config_dir(class_name, agent_uri)
     }
+    |> Map.merge(flavor_config || %{})
   end
 
   # The per-agent config_dir TARGET — core authority (`Ezagent.Sandbox.ConfigDir`),
@@ -776,8 +879,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         {:error, :missing_config_dir}
 
       true ->
-        {:ok, %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}}
+        {:ok,
+         %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}
+         |> Map.merge(cascade_flavor_config(flavor, tmpl))}
     end
+  end
+
+  defp cascade_flavor_config(flavor, tmpl) do
+    Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig.from_template(flavor, tmpl)
   end
 
   defp require_spawn_caller(spawn_opts) do

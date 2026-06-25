@@ -1,4 +1,4 @@
-defmodule Ezagent.AgentConfig do
+defmodule Ezagent.Agent.Config do
   @moduledoc """
   Console-facing facade for runtime agent config cascade reads and mutations.
 

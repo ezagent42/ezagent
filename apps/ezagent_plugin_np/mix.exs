@@ -37,6 +37,7 @@ defmodule EzagentPluginNp.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_agent, in_umbrella: true},
       # Outbound chat/send dispatch into the originating session uses
       # the Chat behavior (no new outbound wire).
       {:ezagent_domain_session, in_umbrella: true},

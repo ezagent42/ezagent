@@ -247,7 +247,8 @@ defmodule Ezagent.Behavior.Workspace do
       name: :string,
       cwd: :string,
       with_pty: :boolean,
-      from: {:option, :uri}
+      from: {:option, :uri},
+      flavor_config: {:option, :map}
     },
     returns: %{agent_uri: :uri, template_name: :string},
     caps: [:create_agent],

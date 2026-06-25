@@ -74,6 +74,9 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   def template_data_extra(_), do: %{}
 
+  @impl Ezagent.Kind.Template
+  defdelegate config_schema, to: Ezagent.PluginCodex.Template.CodexAgent.ConfigSchema, as: :fields
+
   defp maybe_put_binary(map, content, key, str_key) do
     case Ezagent.Kind.Template.content_field(content, key) do
       v when is_binary(v) and v != "" -> Map.put(map, str_key, v)
@@ -91,9 +94,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_config_dir(tmpl),
-         :ok <- check_optional_string(tmpl, "model"),
-         :ok <- check_optional_string(tmpl, "approval_policy"),
-         :ok <- check_optional_string(tmpl, "sandbox") do
+         :ok <- Ezagent.PluginCodex.Template.CodexAgent.ConfigSchema.validate_values(tmpl) do
       :ok
     end
   end
@@ -734,14 +735,6 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       :error -> :ok
       {:ok, value} when is_binary(value) and value != "" -> :ok
       {:ok, bad} -> {:error, {:invalid_config_dir, bad}}
-    end
-  end
-
-  defp check_optional_string(tmpl, key) do
-    case Map.fetch(tmpl, key) do
-      :error -> :ok
-      {:ok, value} when is_binary(value) -> :ok
-      {:ok, bad} -> {:error, {:invalid_string_field, key, bad}}
     end
   end
 

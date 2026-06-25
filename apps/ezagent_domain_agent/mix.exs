@@ -35,6 +35,9 @@ defmodule EzagentDomainAgent.MixProject do
       # the Agent Kind are referenced as bare atoms (runtime, via the umbrella
       # app load + the BehaviorRegistry), not compile deps.
       {:ezagent_core, in_umbrella: true},
+      # Agent.Config is the cap-gated facade over ConfigEvolve + ConfigStore,
+      # both owned by the identity/socialware substrate.
+      {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true}
     ]
   end

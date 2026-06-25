@@ -391,6 +391,90 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
 
     @tag :integration
+    test "curl direct-spawn ingests create-time config into the durable curl slice",
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
+           "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
+        IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
+        :ok
+      else
+        name = "curl-config-#{System.unique_integer([:positive])}"
+        expected_uri = Ezagent.URI.agent(ws_name, name)
+
+        assert {:ok, %{agent_uri: agent_uri, template_name: nil}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: "curl",
+                     name: name,
+                     cwd: "",
+                     with_pty: false,
+                     provider: "openai",
+                     api_url: "https://api.openai.com/v1/chat/completions",
+                     model: "gpt-4o",
+                     max_history: 7
+                   },
+                   admin_ctx
+                 )
+
+        assert agent_uri == expected_uri
+        assert {:ok, curl_slice} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
+        assert curl_slice.provider == "openai"
+        assert curl_slice.api_url == "https://api.openai.com/v1/chat/completions"
+        assert curl_slice.model == "gpt-4o"
+        assert curl_slice.max_history == 7
+
+        _ = Ezagent.Kind.terminate(agent_uri)
+        assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+        assert {:ok, rehydrated} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
+
+        assert rehydrated.provider == "openai"
+        assert rehydrated.api_url == "https://api.openai.com/v1/chat/completions"
+        assert rehydrated.model == "gpt-4o"
+        assert rehydrated.max_history == 7
+      end
+    end
+
+    @tag :integration
+    test "curl direct-spawn rejects invalid schema config through Template.validate/1",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      assert {:error,
+              {:spawn_failed, {:invalid_flavor_config, "curl", {:bad_api_url, "ftp://bad"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "curl",
+                   name: "curl-invalid-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{
+                     "provider" => "openai",
+                     "api_url" => "ftp://bad",
+                     "model" => "gpt-4o"
+                   }
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "flavor config rejects keys not declared by config_schema/0",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      assert {:error, {:unknown_flavor_config_keys, "curl", ["not_a_schema_key"]}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "curl",
+                   name: "curl-unknown-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"not_a_schema_key" => "do-not-store"}
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
     test "np flavor (dedicated Kind, NO :instance_behaviors) still direct-spawns unchanged",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       # PR-6+7 — a flavor whose `kind` is its OWN dedicated Kind (np →

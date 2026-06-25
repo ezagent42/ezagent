@@ -57,6 +57,17 @@ defmodule Ezagent.Kind.Template do
   @type template_name :: String.t()
   @type instantiate_meta :: %{optional(:fresh?) => boolean()}
   @type resolved_manifest :: map()
+  @type config_field_type ::
+          :string | :text | :integer | :boolean | :enum | :list | :json | :secret
+  @type config_field :: %{
+          required(:key) => String.t(),
+          required(:type) => config_field_type(),
+          required(:label) => String.t(),
+          optional(:options) => [String.t()],
+          optional(:default) => term(),
+          optional(:required) => boolean(),
+          optional(:help) => String.t()
+        }
 
   @callback template_name() :: template_name()
   @callback validate(template_data()) :: :ok | {:error, term()}
@@ -107,6 +118,14 @@ defmodule Ezagent.Kind.Template do
   # (`{:error, {:invalid_template_data, _}}`) instead of spawning a
   # nil-config worker.
   @callback template_data_extra(content :: map()) :: %{optional(String.t()) => term()}
+
+  @doc """
+  Describe operator-editable config fields for this Template Class.
+
+  This is a UI shape contract only. The Template Class's `validate/1` remains
+  the authoritative runtime validation boundary.
+  """
+  @callback config_schema() :: [config_field()]
 
   # --- per-agent extension management (PR2 2026-05-24, codex round-1) ---
   #
@@ -259,6 +278,7 @@ defmodule Ezagent.Kind.Template do
     validate: 1,
     compile: 2,
     template_data_extra: 1,
+    config_schema: 0,
     config_dir_namespace: 0,
     list_extensions: 1,
     toggle_extension: 3,

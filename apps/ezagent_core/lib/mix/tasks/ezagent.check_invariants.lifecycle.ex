@@ -84,19 +84,6 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     # rebuilt as a transient in the Agent's activate. A pure index over
     # opaque URIs.
     "apps/ezagent_core/lib/ezagent/agent_lineage.ex",
-    # AgentFlavorRegistry — the agent-flavor declaration registry; holds
-    # flavor decls as data registered by plugins via Plugin.boot/1.
-    "apps/ezagent_core/lib/ezagent/agent_flavor_registry.ex",
-    # AgentFlavorAttributes — shared data-shape normalizer for agent
-    # flavor declarations; holds attributes as data, not Agent runtime
-    # composition.
-    "apps/ezagent_core/lib/ezagent/agent_flavor_attributes.ex",
-    # AgentFlavorResolver — deadlock-safe agent-flavor RESOLUTION (snapshot
-    # scan + sandbox/registry lookup) shared by the session `:flavor` resolver
-    # and the agent-domain delivery seam (PR-9a, #53). Reads flavor DATA from
-    # core stores (AgentFlavorAttributes/Registry, SnapshotStore); it does not
-    # own Agent runtime composition. Sibling of the two entries above.
-    "apps/ezagent_core/lib/ezagent/agent_flavor_resolver.ex",
     # Agent.Materializer — core provisioning helper for template
     # materialization; this is cross-cutting infrastructure used by
     # plugin template classes, not a concrete upper-layer Agent Kind.

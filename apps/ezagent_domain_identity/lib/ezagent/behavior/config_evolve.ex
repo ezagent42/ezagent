@@ -123,7 +123,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   )
 
   # READ — the cap-gated config cascade read. Symmetric with the writes: the
-  # console facade (`Ezagent.AgentConfig`) must NOT read `ConfigStore` directly
+  # console facade (`Ezagent.Agent.Config`) must NOT read `ConfigStore` directly
   # (an authorization asymmetry — anyone could read any agent's
   # `advisor.behavior` / soul_md). Routing the read through dispatch gates it on
   # the SAME agent manage-cap the writes use (step-5.5 enforcement, on the
@@ -410,7 +410,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # agent being read), never caller-supplied, so the gate is non-tautological:
   # the cap is checked against the AUTHENTICATED caller, the data is scoped to
   # the dispatched-to agent. Builds the same cascade shape the console facade
-  # exposes (`Ezagent.AgentConfig`).
+  # exposes (`Ezagent.Agent.Config`).
   @spec handle_read_cascade(map(), map()) :: {:ok, map(), [term()]}
   def handle_read_cascade(args, ctx) do
     agent_uri = ctx.self_uri

@@ -261,6 +261,7 @@
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
   kind_runtime_reentry_violations: 0,
+  no_flavor_refs_in_core: 0,
   cold_restart_respawn_round_trip_drift: 0,
   # Subtask B (2026-06-25) — raw `Port.open({:spawn_executable, …})` is forbidden;
   # the sanctioned OS-process spawn exit is `Ezagent.Runtime.OsProcess` (erlexec
