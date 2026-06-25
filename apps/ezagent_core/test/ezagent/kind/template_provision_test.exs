@@ -9,6 +9,10 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   """
   use ExUnit.Case, async: false
 
+  # The flavor-attribute cleanup assertion crosses into domain_agent; standalone
+  # ezagent_core does not own that registry anymore.
+  @moduletag :umbrella_only
+
   alias Ezagent.Kind.Template
   alias Ezagent.Kind.Template.FlavorHook
   alias Ezagent.Sandbox.ConfigDir

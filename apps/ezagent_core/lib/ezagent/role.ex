@@ -9,7 +9,7 @@ defmodule Ezagent.Role do
   subtype: what fills an agent's `config_dir` sandbox — skills, plugins, a
   system-prompt persona, the behavior subset it runs, the caps it **requests**,
   and a **reference** to a session-template. It is composed with a *flavor*
-  (the `Ezagent.AgentFlavorRegistry` loader — `config_dir` env + kind + bridge)
+  (the domain-agent flavor loader — `config_dir` env + kind + bridge)
   at materialization (`Ezagent.Role.Compose`).
 
   ## Flavor-agnostic by construction

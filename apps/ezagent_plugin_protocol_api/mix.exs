@@ -31,6 +31,7 @@ defmodule EzagentPluginProtocolApi.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_external_mirror, in_umbrella: true}
     ]

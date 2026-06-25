@@ -2,8 +2,8 @@ defmodule Ezagent.Agent.FlavorTemplateHook do
   @moduledoc """
   Domain-agent implementation of the core Template flavor hook.
 
-  A1 keeps `Ezagent.AgentFlavorAttributes` in core while reversing the call
-  direction from `Ezagent.Kind.Template`; A2 moves the attribute store here.
+  A1 reversed the call direction from `Ezagent.Kind.Template`; A2 moves the
+  attribute store into this domain.
   """
 
   @behaviour Ezagent.Kind.Template.FlavorHook

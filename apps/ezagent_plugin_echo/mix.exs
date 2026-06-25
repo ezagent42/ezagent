@@ -37,6 +37,7 @@ defmodule EzagentPluginEcho.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_agent, in_umbrella: true},
       # Domain.Pty SPEC v1 §4 cross-flavor opt-in
       # (`Ezagent.PluginEcho.Template.EchoAgent`): when an echo agent
       # template sets `with_pty: true`, instantiate calls
