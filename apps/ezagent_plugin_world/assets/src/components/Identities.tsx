@@ -101,6 +101,7 @@ export type IdentitiesState = {
   source_template?: string | null
   config_fields?: ConfigFieldRow[]
   config_schema?: ConfigSchemaField[]
+  config_schemas?: Record<string, ConfigSchemaField[]>
   not_wired?: NotWiredRow[]
   flavor?: string
   component?: string
@@ -449,6 +450,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     cwd: "",
     caps: "",
     with_pty: false,
+    configFields: {} as Record<string, string>,
   })
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
 
@@ -456,12 +458,23 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
     (form.with_pty && (state.cwd_required_with_pty_flavors || ["echo"]).includes(form.flavor))
 
+  // M4: flavor-specific schema for dynamic create fields
+  const flavorSchema = (state.config_schemas || {})[form.flavor] || []
+
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
-  // Grammar is `kind.behavior` (Capability.Parser splits on the first dot;
-  // the action axis is not in the grammar yet and defaults to :any). Allow
-  // digits in either segment.
   const capsInvalid = capTokens.some((t) => !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t))
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    // M4: include flavor-specific config fields in the payload
+    const configFields = form.configFields || {}
+    const filteredFields: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(configFields)) {
+      if (v != null && v !== "") filteredFields[k] = v
+    }
+    onCreateAgent?.({...form, config_fields: filteredFields})
+  }
 
   return (
     <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
@@ -474,10 +487,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
       <form
         id="world-agent-new-form"
         className="grid gap-3 sm:grid-cols-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onCreateAgent?.(form)
-        }}
+        onSubmit={handleSubmit}
       >
         <label className={fieldLabel}>
           <span>Flavor</span>
@@ -495,6 +505,61 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <span>project_cwd {cwdRequired ? "*" : "(optional for this flavor)"}</span>
           <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/srv/acme/storefront" />
         </label>
+
+        {/* M4: Flavor-specific config fields from schema */}
+        {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
+          <div className="sm:col-span-2 border-t border-border pt-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+              {form.flavor} configuration
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {flavorSchema.filter(f => f.key !== "soul_md").map((f) => (
+                <label className={fieldLabel} key={f.key}>
+                  <span className="font-mono text-xs">
+                    {f.label || f.key}
+                    {f.help && <span className="text-[10px] text-muted-foreground ml-1">({f.help})</span>}
+                  </span>
+                  {f.type === "enum" && f.options ? (
+                    <Select
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                    >
+                      <option value="">{f.default ? `默认: ${f.default}` : "—"}</option>
+                      {f.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </Select>
+                  ) : f.type === "text" ? (
+                    <textarea
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      rows={2}
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                      placeholder={String(f.default || "")}
+                    />
+                  ) : f.type === "boolean" ? (
+                    <Select
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                    >
+                      <option value="">—</option>
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </Select>
+                  ) : (
+                    <Input
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                      className="font-mono text-xs"
+                      placeholder={String(f.default || "")}
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <label className={fieldLabel}>
           <span>Requested caps</span>
           <Input value={form.caps} onChange={(event) => setForm({...form, caps: event.target.value})} placeholder="chat.send, workspace.read" />

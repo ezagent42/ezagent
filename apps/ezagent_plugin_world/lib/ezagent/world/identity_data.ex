@@ -123,9 +123,13 @@ defmodule Ezagent.World.IdentityData do
     flavors = list_flavors()
     default_flavor = if "cc" in flavors, do: "cc", else: List.first(flavors) || "cc"
 
+    # M4: per-flavor config schemas for dynamic create form fields
+    schemas = Map.new(flavors, &{&1, mock_config_schema(&1)})
+
     base
     |> Map.put("flavors", flavors)
     |> Map.put("default_flavor", default_flavor)
+    |> Map.put("config_schemas", schemas)
     |> Map.put("preview_uri", preview_agent_uri(workspace_uri, ""))
     # Mirrors validate_cwd_for_flavor/3 in agent_create.ex:144-157 (UI hint only;
     # the authoritative check is server-side on submit / fail-closed).
