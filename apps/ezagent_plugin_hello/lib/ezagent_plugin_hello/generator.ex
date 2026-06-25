@@ -172,6 +172,17 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
+  @doc """
+  Apply a list of edit `ops` to a spec tree and return the patched (id-stripped)
+  tree — the pure core of the incremental-edit path, exposed for testing. Each op
+  is `%{"op" => "set"|"replace"|"insert"|"remove", ...}` referencing a node by the
+  `"id"` assigned in a fresh pre-order walk. An unknown op is a no-op.
+  """
+  @spec apply_patch(map(), [map()]) :: map()
+  def apply_patch(spec, ops) when is_map(spec) and is_list(ops) do
+    spec |> annotate_ids() |> apply_ops(ops) |> strip_ids()
+  end
+
   # The patch path: annotate every node with an "id", ask the model for `{"ops":
   # [...]}`, apply the ops to the annotated tree, strip the ids, validate.
   defp patch_edit(current, user_text) do
