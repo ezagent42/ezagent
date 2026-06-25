@@ -191,6 +191,48 @@ defmodule Ezagent.Plugin.BootTest do
       Supervisor.stop(sup_pid)
     end
 
+    test "registers each declared role recipe by name in RoleRegistry (RF-4)" do
+      role_name = "boot-role-#{System.unique_integer([:positive])}"
+
+      on_exit(fn -> :ets.delete(Ezagent.RoleRegistry.table(), role_name) end)
+
+      # An unknown role name is absent before boot.
+      assert :error == Ezagent.RoleRegistry.lookup(role_name)
+
+      Process.put({:role_name, __MODULE__}, role_name)
+
+      defmodule RolePublishingPlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-roles", name: "Roles", description: "d", version: "1.0.0"}
+
+        @impl true
+        def roles do
+          [
+            %{
+              name: Process.get({:role_name, Ezagent.Plugin.BootTest}),
+              skills: ["some-skill"],
+              prompt: "be helpful",
+              behaviors: [],
+              requested_caps: []
+            }
+          ]
+        end
+      end
+
+      assert {:ok, sup_pid} = Ezagent.Plugin.boot(RolePublishingPlugin)
+
+      # The plugin's role is registered + looked up by name → a validated Role.
+      assert {:ok, %Ezagent.Role{name: ^role_name, skills: ["some-skill"], prompt: "be helpful"}} =
+               Ezagent.RoleRegistry.lookup(role_name)
+
+      # An unknown name still misses.
+      assert :error == Ezagent.RoleRegistry.lookup("no-such-role-#{role_name}")
+
+      Supervisor.stop(sup_pid)
+    end
+
     test "calls after_boot/0 in Phase 3" do
       test_pid = self()
       ref = make_ref()

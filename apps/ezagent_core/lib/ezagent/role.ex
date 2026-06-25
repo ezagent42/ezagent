@@ -41,7 +41,8 @@ defmodule Ezagent.Role do
   @cap_axes [:behavior, :action | @cap_materialization_axes]
 
   @enforce_keys []
-  defstruct skills: [],
+  defstruct name: nil,
+            skills: [],
             plugins: [],
             prompt: nil,
             behaviors: [],
@@ -53,6 +54,7 @@ defmodule Ezagent.Role do
   @type cap_template :: map()
 
   @type t :: %__MODULE__{
+          name: String.t() | nil,
           skills: [skill_ref()],
           plugins: [plugin_ref()],
           prompt: String.t() | nil,
@@ -85,6 +87,7 @@ defmodule Ezagent.Role do
         # `behaviors: nil`, `requested_caps: "x"`) must fail HERE, not crash or
         # feed non-cap input into the policy predicate downstream in Compose (codex).
         validate(%__MODULE__{
+          name: get(recipe, :name, nil),
           skills: get(recipe, :skills, []),
           plugins: get(recipe, :plugins, []),
           prompt: get(recipe, :prompt, nil),
@@ -104,7 +107,8 @@ defmodule Ezagent.Role do
   # predicate never receives a non-cap term), and `prompt`/`session_template`
   # are `nil` or a string/URI ref.
   defp validate(%__MODULE__{} = role) do
-    with :ok <- string_list_field(role.skills, :skills),
+    with :ok <- ref_field(role.name, :name),
+         :ok <- string_list_field(role.skills, :skills),
          :ok <- string_list_field(role.plugins, :plugins),
          {:ok, behaviors} <- behaviors_field(role.behaviors),
          {:ok, requested_caps} <- caps_field(role.requested_caps),
