@@ -236,4 +236,106 @@ defmodule Ezagent.Routing.ResolverTest do
       end
     end
   end
+
+  # RF-6 — passive-actor (non-principal data-actor) isolation. The `passive?`
+  # predicate is injected via opts (parallel to `role_resolver`); the domain call
+  # site sources it from the stored agent attribute. Here it is injected directly
+  # so the gates are tested as pure functions. A passive actor must NOT receive
+  # chat via ANY rule type, and must NOT be a valid @-mention target; a NORMAL
+  # agent (no opt, or `passive? -> false`) is unaffected.
+  describe "RF-6 passive-actor isolation" do
+    setup do
+      # SAME workspace (`system`) as the session, so `valid_member?` PASSES for
+      # the passive URI in the `$mentions` test — the exclusion is then
+      # attributable to the passive gate, not a cross-workspace drop (otherwise
+      # the mention-gate test would be a false positive that passes even if the
+      # gate-3 reject is deleted).
+      passive = URI.new!("entity://system/agent/kanban_board")
+      normal = URI.new!("entity://system/agent/cc_worker")
+      session = URI.new!("session://system/default/main")
+
+      # Predicate marking ONLY `passive` as a passive actor.
+      passive? = fn uri -> URI.to_string(uri) == URI.to_string(passive) end
+
+      {:ok, passive: passive, normal: normal, session: session, passive?: passive?}
+    end
+
+    test "passive actor does NOT receive via an Always→X rule (concrete URI / Always)",
+         %{table: t, passive: passive, session: session, passive?: passive?} do
+      :ok = RoutingRegistry.put(t, Matcher.always(), [URI.to_string(passive)])
+
+      assert [] =
+               Resolver.resolve(msg(), session, [], passive?: passive?)
+
+      # Control: without the gate the SAME rule routes to the passive URI.
+      assert [^passive] = Resolver.resolve(msg(), session, [])
+    end
+
+    test "passive actor does NOT receive via a {:from, sender}→X rule (from-matcher)",
+         %{table: t, passive: passive, session: session, passive?: passive?} do
+      sender = URI.new!("entity://system/user/admin")
+      # msg/2's sender is entity://system/user/admin — a `from(sender)` rule fires.
+      :ok = RoutingRegistry.put(t, Matcher.from(sender), [URI.to_string(passive)])
+
+      assert [] = Resolver.resolve(msg(), session, [], passive?: passive?)
+      assert [^passive] = Resolver.resolve(msg(), session, [])
+    end
+
+    test "passive actor does NOT receive via a concrete-URI receiver on a mention rule",
+         %{table: t, passive: passive, session: session, passive?: passive?} do
+      trigger = URI.new!("entity://team-alpha/agent/trigger")
+      :ok = RoutingRegistry.put(t, Matcher.mention(trigger), [URI.to_string(passive)])
+
+      assert [] =
+               Resolver.resolve(msg("hi", [trigger]), session, [], passive?: passive?)
+
+      assert [^passive] = Resolver.resolve(msg("hi", [trigger]), session, [])
+    end
+
+    test "passive actor is NOT a valid @-mention target ($mentions gate)",
+         %{table: t, passive: passive, session: session, passive?: passive?} do
+      # The mention-gated default: `$mentions` resolves to mentioned members.
+      :ok =
+        RoutingRegistry.put(t, Matcher.always(), [Resolver.mentions_token()])
+
+      # passive is BOTH mentioned AND a same-workspace session member, so it
+      # PASSES `valid_member?` — only the passive gate (gate 3) can keep it out.
+      members = [passive]
+
+      # Control (attribution): WITHOUT the passive predicate the SAME mention of
+      # the SAME member IS delivered — proving `valid_member?` admits it and the
+      # exclusion below is the passive gate, not the membership filter.
+      assert [^passive] = Resolver.resolve(msg("hi", [passive]), session, members)
+
+      # With the passive gate, the mentioned passive member is dropped.
+      assert [] =
+               Resolver.resolve(msg("hi", [passive]), session, members, passive?: passive?)
+
+      # Control: a NORMAL agent member, mentioned, IS delivered to even with the
+      # predicate present (regression — only the passive URI is excluded).
+      normal = URI.new!("entity://system/agent/cc_normal")
+
+      assert [^normal] =
+               Resolver.resolve(msg("hi", [normal]), session, [normal], passive?: passive?)
+    end
+
+    test "a NORMAL agent is unaffected — receives via every rule type (regression)",
+         %{table: t, normal: normal, session: session, passive?: passive?} do
+      :ok = RoutingRegistry.put(t, Matcher.always(), [URI.to_string(normal)])
+
+      # With the passive? predicate present, a NON-passive agent still delivers.
+      assert [^normal] = Resolver.resolve(msg(), session, [], passive?: passive?)
+    end
+
+    test "no passive? opt → default never-passive predicate → byte-identical (regression)",
+         %{table: t, passive: passive, session: session} do
+      # The STRUCTURAL regression guarantee: an existing caller passing no opt
+      # treats nothing as passive, so the passive URI is delivered to exactly as
+      # before RF-6.
+      :ok = RoutingRegistry.put(t, Matcher.always(), [URI.to_string(passive)])
+
+      assert [^passive] = Resolver.resolve(msg(), session, [])
+      assert [^passive] = Resolver.resolve(msg(), session, [], [])
+    end
+  end
 end

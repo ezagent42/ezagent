@@ -9,7 +9,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.{AgentFlavorAttributes, Invocation, Kind, UriQuery}
+  alias Ezagent.{AgentFlavorAttributes, AgentPassiveAttributes, Invocation, Kind, UriQuery}
   alias EzagentCore.Repo
 
   setup do
@@ -38,6 +38,23 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     :ok = AgentFlavorAttributes.put(agent_uri, "cc")
 
     assert {:ok, "cc"} = UriQuery.resolve(:flavor, agent_uri)
+  end
+
+  test "RF-6: :passive resolves false by default and true once the attribute is stored" do
+    agent_uri =
+      Ezagent.URI.agent("system", "passive-attr-#{System.unique_integer([:positive])}")
+
+    on_exit(fn -> AgentPassiveAttributes.delete(agent_uri) end)
+
+    # No stored attribute → principal actor (false), NOT :none — the gates need a
+    # definite verdict and "unknown ⇒ principal" is the safe-by-default.
+    assert {:ok, false} = UriQuery.resolve(:passive, agent_uri)
+
+    :ok = AgentPassiveAttributes.put(agent_uri, true)
+    assert {:ok, true} = UriQuery.resolve(:passive, agent_uri)
+
+    :ok = AgentPassiveAttributes.put(agent_uri, false)
+    assert {:ok, false} = UriQuery.resolve(:passive, agent_uri)
   end
 
   test "workspace_shared_credential_source resolves from workspace/flavor storage" do

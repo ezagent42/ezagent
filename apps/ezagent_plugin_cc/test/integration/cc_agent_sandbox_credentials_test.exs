@@ -250,7 +250,12 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       end)
 
       agent_uri_str = "entity://team-alpha/agent/cc_sbxcreds-#{uniq()}"
-      agent_uri = URI.parse(agent_uri_str)
+      # Use the canonical constructor — `URI.parse/1` builds a non-canonical
+      # %URI{} (authority set) that the deprecated parse leaves, which now trips
+      # the canonical boundary in the RF-6 `:join` passive-actor gate
+      # (`Ezagent.URI.stable_key/1`). Production always supplies canonical member
+      # URIs; the test must mirror that.
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "cc.agent",

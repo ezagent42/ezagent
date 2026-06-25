@@ -38,6 +38,26 @@ defmodule Ezagent.RoleTest do
       assert role.requested_caps == []
       assert role.prompt == nil
       assert role.session_template == nil
+      # RF-6: `passive` defaults to false (a role yields a PRINCIPAL actor unless
+      # the recipe explicitly opts into non-principal/passive).
+      assert role.passive == false
+    end
+
+    test "RF-6: passive field — nil/absent → false, true → true, coerced + validated" do
+      # absent → false
+      assert {:ok, %{passive: false}} = Role.new(%{})
+      # explicit nil → false (the principal default)
+      assert {:ok, %{passive: false}} = Role.new(%{passive: nil})
+      # explicit false → false
+      assert {:ok, %{passive: false}} = Role.new(%{passive: false})
+      # explicit true → true
+      assert {:ok, %{passive: true}} = Role.new(%{passive: true})
+      # STRING-keyed (persisted JSON/snapshot round-trip)
+      assert {:ok, %{passive: true}} = Role.new(%{"passive" => true})
+      assert {:ok, %{passive: false}} = Role.new(%{"passive" => false})
+      # non-boolean → fail loud (not silently coerced to a surprising truth value)
+      assert {:error, {:invalid_role_field, :passive, "yes"}} = Role.new(%{passive: "yes"})
+      assert {:error, {:invalid_role_field, :passive, 1}} = Role.new(%{passive: 1})
     end
 
     test "rejects a recipe that names a FLAVOR field (must be flavor-agnostic)" do
