@@ -556,6 +556,46 @@ defmodule Ezagent.Behavior do
   """
   @callback on_ready(slice :: slice(), ctx :: ctx()) :: :ok
 
+  @doc """
+  RF-3 per-behavior teardown hook — invoked by `Ezagent.Kind.MountDetach`
+  when this Behavior is DETACHED from a LIVE instance (runtime
+  `Ezagent.Kind.detach/2`).
+
+  ## Why a NEW hook (not `terminate/3` / deactivate / destroy)
+
+  `terminate/3` (→ `deactivate/2`) fires on WHOLE-ENTITY graceful stop and
+  runs AFTER the final snapshot, so it CANNOT mutate persisted state.
+  `destroy/2` is PERMANENT deletion of the WHOLE entity. Detaching ONE
+  behavior from a still-living instance is neither: the entity persists and
+  the OTHER behaviors keep running, but THIS behavior's slice must be cleaned
+  up and its captured-set membership removed — a write that survives the
+  snapshot. There was no seam for that; `on_detach/2` is it.
+
+  ## Arguments + return
+
+  - `slice` — this Behavior's slice (the two-container `%{state: _,
+    transients: _}` view) as it stands at detach time.
+  - `ctx` — `%{kind_module: module(), self_uri: URI.t()}`.
+  - Returns `:ok` (slice cleanup is structural — `MountDetach` DROPS the
+    whole slice key after this hook runs, so a returned slice would be
+    discarded; `on_detach/2` is for side-effecting teardown of TRANSIENT
+    handles: close a transport, release a port, deregister from an ETS
+    index, broadcast a "going away" notice).
+
+  ## Error semantics
+
+  A raise / throw / exit is logged + isolated by `MountDetach` — detach still
+  proceeds (the behavior is removed regardless; a failed teardown side-effect
+  must not strand the behavior half-attached). Best-effort, mirroring
+  `terminate/3` / `on_ready/2`.
+
+  Optional callback — `function_exported?/3` probed at detach time; Behaviors
+  that don't export it contribute zero overhead.
+
+  Added 2026-06-26 as part of RF-3 (role-foundation runtime detach).
+  """
+  @callback on_detach(slice :: slice(), ctx :: ctx()) :: :ok
+
   @optional_callbacks [
     invoke: 4,
     dispatchable?: 0,
@@ -568,7 +608,8 @@ defmodule Ezagent.Behavior do
     reads_sibling_slices: 0,
     reads_siblings: 0,
     reconcile_after_load: 2,
-    on_ready: 2
+    on_ready: 2,
+    on_detach: 2
   ]
 
   # ---------------------------------------------------------------
@@ -594,8 +635,8 @@ defmodule Ezagent.Behavior do
     derived callbacks (`actions/0`, `interface/0`, `required_caps/0`,
     `cap_subjects/0`) so a single Behavior can be discovered by the
     legacy registry AND the new Router.
-  - A `__behavior__?/0` marker function returning `true` (used by
-    `Ezagent.Kind.attach_behavior` collision check).
+  - A `__behavior__?/0` marker function returning `true` (used by the
+    compile-time `Ezagent.Kind.attach/2` collision check).
 
   ## Compile-time invariants
 

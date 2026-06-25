@@ -218,13 +218,9 @@ defmodule Ezagent.KindExtensionsTest do
     end
   end
 
-  describe "attach_behavior/2 runtime API" do
-    test "attach_behavior/2 detects collisions against the Kind's compiled action map" do
-      # SessionKind already has :a_action via BehaviorA. Attempting
-      # to attach BehaviorACollide at runtime should detect the
-      # collision (both declare :a_action).
-      assert {:error, {:action_collision, :a_action, BehaviorA, BehaviorACollide, SessionKind}} =
-               Kind.attach_behavior(BehaviorACollide, to: SessionKind)
-    end
-  end
+  # RF-3 — the Kind-level runtime `attach_behavior/2` API was RETIRED (no
+  # runtime callers). Behaviors reach an instance per-instance (RF-1) and are
+  # added/removed on a LIVE instance via `Ezagent.Kind.mount/2`/`detach/2`. The
+  # COMPILE-TIME collision machinery (`attach/2` + `__before_compile__`) is
+  # unchanged and still tested by the declaration-collision suites.
 end

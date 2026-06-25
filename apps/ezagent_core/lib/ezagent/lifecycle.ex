@@ -126,6 +126,18 @@ defmodule Ezagent.Lifecycle do
   @callback activated(state :: state(), ctx :: ctx()) :: :ok
 
   @doc """
+  `detached/2` — RF-3 per-behavior teardown hook. Runs when THIS behavior is
+  DETACHED from a LIVE instance (`Ezagent.Kind.detach/2`). Side-effecting
+  cleanup of TRANSIENT handles (close a transport, release a port, deregister
+  from an ETS index, broadcast a "going away" notice). `:ok`-only — the
+  framework DROPS the slice afterward, so a returned state is discarded.
+  Compiles down to the engine's `on_detach/2`. The whole-entity `deactivate`
+  (graceful stop) / `destroy` (permanent deletion) are distinct: detaching one
+  behavior leaves the entity + its other behaviors running.
+  """
+  @callback detached(state :: state(), ctx :: ctx()) :: :ok
+
+  @doc """
   `handle_signal/2` — non-action GenServer messages (`:DOWN`, PubSub
   deliveries). Returns the same effect list as `handle_<action>/2` (so a
   `:DOWN` returns `{:set_transient, :monitors, ...}` + `{:set,
@@ -158,6 +170,7 @@ defmodule Ezagent.Lifecycle do
     deactivate: 2,
     destroy: 2,
     activated: 2,
+    detached: 2,
     handle_signal: 2,
     pre_handle: 3,
     post_handle: 4
@@ -285,6 +298,15 @@ defmodule Ezagent.Lifecycle do
         Ezagent.Lifecycle.__run_activated__(__MODULE__, slice, ctx)
       end
 
+      # on_detach/2 → detached/2 (RF-3, runtime per-behavior teardown). Runs
+      # the author's `detached/2` hook (side-effecting cleanup of TRANSIENT
+      # handles) when this behavior is detached from a LIVE instance. The
+      # framework drops the slice afterward, so the return is :ok-only.
+      @impl Ezagent.Behavior
+      def on_detach(slice, ctx) do
+        Ezagent.Lifecycle.__run_detached__(__MODULE__, slice, ctx)
+      end
+
       # ---- Overridable developer-hook defaults (SPEC §2.3 — a module
       # may omit any of these) ----
       def create(_args), do: {:ok, %{}}
@@ -292,6 +314,7 @@ defmodule Ezagent.Lifecycle do
       def deactivate(_reason, _ctx), do: :ok
       def destroy(_reason, _ctx), do: :ok
       def activated(_state, _ctx), do: :ok
+      def detached(_state, _ctx), do: :ok
       def handle_signal(_message, _ctx), do: :ignore
 
       defoverridable create: 1,
@@ -299,6 +322,7 @@ defmodule Ezagent.Lifecycle do
                      deactivate: 2,
                      destroy: 2,
                      activated: 2,
+                     detached: 2,
                      handle_signal: 2
     end
   end
@@ -548,6 +572,49 @@ defmodule Ezagent.Lifecycle do
     activated_ctx = Map.put(ctx, :state, st)
     _ = module.activated(st, activated_ctx)
     :ok
+  end
+
+  @doc false
+  # RF-3 — run the author's `detached/2` developer hook (engine `on_detach/2`)
+  # with the live slice's `:state` view. Side-effecting cleanup of TRANSIENT
+  # handles; the return is discarded (the framework drops the slice afterward),
+  # mirroring `__run_activated__`/`__run_deactivate__`.
+  @spec __run_detached__(module(), %{state: map(), transients: map()} | map(), map()) :: :ok
+  def __run_detached__(module, slice, ctx) do
+    st = Map.get(slice, :state, %{})
+    transients = Map.get(slice, :transients, %{})
+
+    detach_ctx =
+      ctx
+      |> Map.put(:state, st)
+      |> Map.put(:transients, transients)
+      |> Map.put(:read, fn key, default -> Map.get(st, key, default) end)
+
+    _ = module.detached(st, detach_ctx)
+    :ok
+  end
+
+  @doc """
+  RF-2 — build the FRESH two-container slice for a behavior MOUNTED onto a
+  LIVE instance (`Ezagent.Kind.mount/2`).
+
+  Unlike `__init_slice__/2`, this ALWAYS runs `create/1` (never the
+  ever-created-marker SKIP branch). The marker tracks the INSTANCE's first
+  existence and is TRUE by mount time, but the MOUNTED behavior has never been
+  created on THIS instance — its persistent `state` must be built now, exactly
+  as it would at first spawn. The `transients` container starts empty and is
+  filled by `activate/2` (run via the post-init continuation in
+  `Ezagent.Kind.MountDetach`), so the cold-restart guarantee is preserved: on
+  reload `activate` rebuilds the transients via the normal boot path.
+
+  For a non-Lifecycle behavior `init_slice/1` is the right fresh builder (no
+  marker gate exists), so `MountDetach` calls `init_slice/1` for those and
+  this only for Lifecycle behaviors.
+  """
+  @spec __mount_slice__(module(), map()) :: %{state: map(), transients: map()}
+  def __mount_slice__(module, args) do
+    {:ok, st} = module.create(args)
+    %{state: st, transients: %{}}
   end
 
   @doc false

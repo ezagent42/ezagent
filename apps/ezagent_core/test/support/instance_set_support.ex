@@ -122,6 +122,58 @@ defmodule Ezagent.Kind.InstanceSetSupport do
     end
   end
 
+  defmodule DetachProbe do
+    @moduledoc false
+    # RF-3 — a recipe-loaded probe with an `on_detach/2` teardown (authored via
+    # the Lifecycle `detached/2` developer hook). On mount its create/activate/
+    # activated run (observable); on detach its `detached/2` fires (observable)
+    # and its slice is dropped. Registered NOWHERE (per-instance only),
+    # closure-clean.
+    use Ezagent.Lifecycle, state_slice: :detach_probe
+
+    action(:detach_poke,
+      args: %{},
+      returns: %{},
+      caps: [:detach_poke],
+      modes: [:call],
+      description: "test-only detach-probe action for RF-3"
+    )
+
+    @impl Ezagent.Lifecycle
+    def create(_args) do
+      notify(:create)
+      {:ok, %{poked: false}}
+    end
+
+    @impl Ezagent.Lifecycle
+    def activated(_state, _ctx) do
+      notify(:activated)
+      :ok
+    end
+
+    # on_detach observation via the OVERRIDABLE `detached/2` developer hook
+    # (the macro emits engine `on_detach/2`, which calls this — RF-3).
+    @impl Ezagent.Lifecycle
+    def detached(_state, _ctx) do
+      notify(:detached)
+      :ok
+    end
+
+    def handle_detach_poke(_args, _ctx) do
+      notify(:handle_detach_poke)
+      {:ok, %{poked: true}, []}
+    end
+
+    defp notify(event) do
+      case :persistent_term.get({__MODULE__, :probe_pid}, nil) do
+        pid when is_pid(pid) -> send(pid, {:detach_probe, event})
+        _ -> :ok
+      end
+
+      :ok
+    end
+  end
+
   defmodule SupersetSessionKind do
     @moduledoc false
     @behaviour Ezagent.Kind
