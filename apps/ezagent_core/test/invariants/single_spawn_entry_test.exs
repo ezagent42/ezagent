@@ -214,7 +214,14 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # call-site came in with the transport split but the allowlist entry was
       # missed (same class as the PR #436 codex miss above), leaving `mix test`
       # RED on main; this restores it.
-      "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex"
+      "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex",
+      # EzagentPluginKanban.MiroSync (kanban-as-role bring-in) — the kanban↔Miro
+      # bidirectional sync POLLER, a plugin-owned GenServer started under the
+      # plugin's own MiroSyncSupervisor. It is background integration
+      # infrastructure (mirrors the ExternalMirror/codex/cc-sidecar exemptions),
+      # NOT a Kind process — kanban boards are now the :kanban snapshot slice on
+      # the kanban-manager Entity.Agent, spawned via Ezagent.Kind.spawn.
+      "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex"
     ]
   end
 end

@@ -117,6 +117,11 @@ defmodule EzagentWeb.MixProject do
       # task #88 — ezagent.chat email capability (CLI-only). World/web reach
       # Ezagent.Email via runtime-apply; declared here so its OTP app boots.
       {:ezagent_plugin_email, in_umbrella: true},
+      # kanban-as-role — declared so the kanban plugin's OTP app boots (its
+      # roles/0 registers the kanban-manager recipe + its Behavior/support
+      # modules load). The world UI wiring (read-model list-by-role + the
+      # entity://agent dispatch target) lands in the K4 follow-up.
+      {:ezagent_plugin_kanban, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
