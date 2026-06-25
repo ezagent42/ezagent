@@ -253,10 +253,23 @@ defmodule Ezagent.Invocation do
   end
 
   defp deliver_to_ready(instance_uri, :cast, inv) do
+    # Kind-death race (see the :call clause below for the full picture).
+    # A `GenServer.cast` to a dead pid does NOT raise — it SILENTLY DROPS
+    # (invariant #9: no silent drops). So a dead pid must be guarded: it
+    # is treated EXACTLY as the pre-existing `lookup == :error` (target
+    # gone) case → `pre_delivery_error(:no_such_actor)`, which surfaces
+    # the error instead of dropping it. No new semantics — the dead-pid
+    # subcase simply joins the already-correct missing-target subcase.
+    # (We do NOT respawn here: a dispatch landing in the death window
+    # against a gone target must report "gone", not resurrect it.)
     case Ezagent.KindRegistry.lookup(instance_uri) do
       {:ok, pid} ->
-        GenServer.cast(pid, {:ezagent_dispatch, inv})
-        :ok
+        if Process.alive?(pid) do
+          GenServer.cast(pid, {:ezagent_dispatch, inv})
+          :ok
+        else
+          pre_delivery_error(inv, :no_such_actor)
+        end
 
       :error ->
         pre_delivery_error(inv, :no_such_actor)
@@ -264,13 +277,78 @@ defmodule Ezagent.Invocation do
   end
 
   defp deliver_to_ready(instance_uri, mode, inv) when mode in [:call, :call_stream] do
+    # Kind-death race (fix/readygate-death-race): a Kind can die in the
+    # window AFTER `ReadyGate.status == :ready` but BEFORE `KindRegistry`
+    # (a stdlib unique Registry) asynchronously reaps the dead pid on its
+    # monitor `:DOWN`. In that window there are TWO racing sub-states,
+    # decided purely by Registry-cleanup timing:
+    #
+    #   a. `lookup` still returns the (now dead) pid → a raw
+    #      `GenServer.call` raises an uncaught `:noproc`/`:normal`/
+    #      `:shutdown` EXIT — the bug (surfaced as the `em3 subscribe_from`
+    #      / DefaultSessionTemplateSeed / DB-ownership-churn CI flakes).
+    #   b. Registry already reaped → `lookup == :error`.
+    #
+    # Both are the SAME logical condition — "the :ready gate is stale, the
+    # target is gone" — and the correct, semantics-preserving answer is
+    # the one the pre-existing `lookup == :error` branch already gave:
+    # `{:error, :no_such_actor}`. The ONLY bug is that sub-state (a)
+    # CRASHED instead of returning that. So we CATCH the dead-target EXIT
+    # (`call_live_target/3`) and return `:no_such_actor`, unifying (a)
+    # with (b). We do NOT respawn here: a dispatch landing in the death
+    # window against a gone target must report "gone", not resurrect it
+    # (resurrecting it broke idempotent-terminate semantics — a 2nd
+    # terminate on a gone agent must stay `:no_such_actor`). Legitimate
+    # cold rehydration of a never-spawned-this-boot Kind goes through the
+    # separate `{:unknown, _}` branch in `dispatch_with_lazy_spawn/3` (+
+    # `ExternalMirror.BootReconciler`), which this change does NOT touch.
     case Ezagent.KindRegistry.lookup(instance_uri) do
       {:ok, pid} ->
         timeout = inv.ctx[:deadline_ms] || 5_000
-        GenServer.call(pid, {:ezagent_dispatch, inv}, timeout)
+
+        case call_live_target(pid, {:ezagent_dispatch, inv}, timeout) do
+          {:ok, result} -> result
+          :dead_target -> {:error, :no_such_actor}
+        end
 
       :error ->
         {:error, :no_such_actor}
+    end
+  end
+
+  # Issue the `GenServer.call`, discriminating a DEAD/closing target (the
+  # benign death-race case) from a real failure (propagate). Returns
+  # `{:ok, result}` for any normal call return, or the `:dead_target`
+  # sentinel when the target was gone — the caller maps that to the same
+  # `{:error, :no_such_actor}` the missing-target path returns (it does
+  # NOT respawn). Extracted so the crash-catch is unit-testable in
+  # isolation (spawn → kill → call) without a Registry/ReadyGate setup —
+  # that unit test is the regression test for the `(EXIT) no process` bug.
+  #
+  # Discrimination (the "don't swallow real errors" line):
+  # - `:noproc` / `:normal` / `:shutdown` / `{:shutdown, _}` EXIT → the
+  #   target died or is closing → `:dead_target` (→ `:no_such_actor`).
+  # - `:timeout` EXIT → target is alive-but-slow; masking it would hide a
+  #   genuinely stuck handler → RE-RAISE.
+  # - any other EXIT reason (a handler crash) → RE-RAISE.
+  @doc false
+  @spec call_live_target(pid(), term(), timeout()) :: {:ok, term()} | :dead_target
+  def call_live_target(pid, message, timeout) do
+    # Fast-path: skip the call entirely if the pid is already known dead.
+    # (TOCTOU-safe — the try/catch below is the actual guarantee; this
+    # only avoids a guaranteed-failing round-trip.)
+    if Process.alive?(pid) do
+      try do
+        {:ok, GenServer.call(pid, message, timeout)}
+      catch
+        :exit, {reason, _call} when reason in [:noproc, :normal, :shutdown] ->
+          :dead_target
+
+        :exit, {{:shutdown, _}, _call} ->
+          :dead_target
+      end
+    else
+      :dead_target
     end
   end
 
