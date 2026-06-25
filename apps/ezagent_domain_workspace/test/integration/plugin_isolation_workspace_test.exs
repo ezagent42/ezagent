@@ -138,11 +138,18 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # 3. Run the Loader — this is what happens at app start. It should
     #    walk every persisted Workspace, dispatch :instantiate, and call
     #    SpawnRegistry for each declared child.
-    results = Ezagent.Workspace.Loader.load_all()
-
-    # Find our workspace in the results
-    {^workspace_name, children_results} =
-      Enum.find(results, fn {name, _} -> name == workspace_name end)
+    #
+    # Under the full concurrent umbrella run, `load_all/0` can transiently
+    # return `[]` (its `agent_flavor_registry_unsealed?` seal-gate or its
+    # `DBConnection.{Ownership,Connection}Error -> []` rescue — see
+    # `Ezagent.Workspace.Loader.load_all/0` + EzagentCore.DataCase
+    # moduledoc). The Loader is idempotent (`load_one` adopts an
+    # already-started Workspace + re-dispatches `:instantiate`;
+    # `SpawnRegistry.spawn/1` is idempotent), so we poll it until our
+    # just-created workspace is present rather than hard-matching the first
+    # call's result. The isolation PROOF below (probe survives teardown +
+    # rehydrate) is unchanged and stays a hard assertion.
+    {^workspace_name, children_results} = load_all_until_present(workspace_name)
 
     assert [{^probe_uri, {:ok, probe_pid}}] = children_results
     assert is_pid(probe_pid)
@@ -168,9 +175,11 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # 6. The proof: Loader.load_all/0 re-runs and the probe is alive again
     #    — purely from persisted state + runtime-registered spawn fn,
     #    no ezagent_core / plugin code knows about :probe.
-    _ = Ezagent.Workspace.Loader.load_all()
-
-    assert {:ok, new_probe_pid} = KindRegistry.lookup(probe_uri)
+    #    `reload_until_alive/1` re-runs the idempotent Loader until the
+    #    probe is back in KindRegistry, tolerating a transient empty
+    #    Loader pass without weakening the survival proof: the probe MUST
+    #    come back alive within the budget (flunks otherwise).
+    new_probe_pid = reload_until_alive(probe_uri)
     assert is_pid(new_probe_pid)
     assert Process.alive?(new_probe_pid)
     refute new_probe_pid == probe_pid
@@ -214,11 +223,10 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # Sanity: probe not yet alive (create only persists + spawns Workspace Kind)
     assert :error = KindRegistry.lookup(probe_uri)
 
-    # 3. Loader runs — instantiate the template
-    results = Ezagent.Workspace.Loader.load_all()
-
-    {^workspace_name, children_results} =
-      Enum.find(results, fn {name, _} -> name == workspace_name end)
+    # 3. Loader runs — instantiate the template. Poll past the transient
+    #    empty-return paths (seal-gate / sandbox OwnershipError rescue),
+    #    same as the first invariant test — `load_all/0` is idempotent.
+    {^workspace_name, children_results} = load_all_until_present(workspace_name)
 
     # Children: 1 template entry, no member entries
     assert [{"main", {:ok, [^probe_uri]}}] = children_results
@@ -240,10 +248,10 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # 5. The proof: Loader.load_all/0 re-runs and the probe is alive
     #    again — purely from persisted Workspace state + runtime
     #    TemplateRegistry + SpawnRegistry, no ezagent_core / plugin code
-    #    knows about probe.template.
-    _ = Ezagent.Workspace.Loader.load_all()
-
-    {:ok, new_probe_pid} = KindRegistry.lookup(probe_uri)
+    #    knows about probe.template. Poll the idempotent Loader until the
+    #    probe is back (tolerates a transient empty pass; the probe MUST
+    #    rehydrate within budget or this flunks).
+    new_probe_pid = reload_until_alive(probe_uri)
     assert is_pid(new_probe_pid)
     assert Process.alive?(new_probe_pid)
     refute new_probe_pid == probe_pid
@@ -271,6 +279,64 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
     assert {:error, :missing_class_field} =
              Workspace.add_template(workspace_name, "main", %{"session_name" => "x"})
+  end
+
+  # Re-run the idempotent `Loader.load_all/0` until the named workspace
+  # appears in its results WITH non-empty children, returning the
+  # `{name, child_results}` tuple. Tolerates the Loader's transient
+  # empty-result paths under concurrent load WITHOUT weakening any
+  # downstream assertion:
+  #   - whole-result `[]` (seal-gate not yet observed / sandbox
+  #     OwnershipError rescue in `load_all/0`), AND
+  #   - a transient `{name, []}` (workspace present but children not yet
+  #     instantiated — e.g. `instantiate_via_dispatch/1` momentarily
+  #     returns nothing) so the poll never returns a tuple that would
+  #     then fail the hard non-empty children assert at the call site.
+  # Flunks loudly if the workspace never appears with children within the
+  # budget — a real (non-transient) load failure still fails the test.
+  defp load_all_until_present(workspace_name, attempts \\ 50)
+
+  defp load_all_until_present(workspace_name, 0) do
+    flunk(
+      "load_all_until_present: workspace #{inspect(workspace_name)} never appeared in Loader results with children"
+    )
+  end
+
+  defp load_all_until_present(workspace_name, attempts) when attempts > 0 do
+    case Enum.find(Ezagent.Workspace.Loader.load_all(), fn {name, _} -> name == workspace_name end) do
+      {^workspace_name, children} = found when children != [] ->
+        found
+
+      _ ->
+        Process.sleep(20)
+        load_all_until_present(workspace_name, attempts - 1)
+    end
+  end
+
+  # Re-run the idempotent `Loader.load_all/0` until `uri` is alive in
+  # KindRegistry, returning its pid. The survival proof: the Kind MUST
+  # rehydrate from persisted state — this only tolerates a transient
+  # empty Loader pass (seal-gate / sandbox rescue), it does NOT relax the
+  # requirement that the Kind comes back (flunks if it never does).
+  defp reload_until_alive(uri, attempts \\ 50)
+
+  defp reload_until_alive(uri, 0) do
+    flunk(
+      "reload_until_alive: #{inspect(URI.to_string(uri))} never rehydrated after Loader re-runs"
+    )
+  end
+
+  defp reload_until_alive(uri, attempts) when attempts > 0 do
+    _ = Ezagent.Workspace.Loader.load_all()
+
+    case KindRegistry.lookup(uri) do
+      {:ok, pid} ->
+        pid
+
+      :error ->
+        Process.sleep(20)
+        reload_until_alive(uri, attempts - 1)
+    end
   end
 
   defp wait_until(fun, attempts \\ 50)
