@@ -37,11 +37,21 @@ No role-**specific** branch in `AgentCreate`; one generic role-resolution step (
 ## 4. Hard constraint (HIGH-1 — shapes downstreams)
 `effective_set/2` intersects with the Kind's declared `behaviors_of/1`, and `instance_set_gate` only admits **declared** behaviors. So **a role can only mount behaviors the target flavor's Kind declares in `behaviors/0`** (or a shared base Kind). → kanban-as-role's gate must include: the `native` flavor's Kind declares the kanban behaviors.
 
+## 4.5 Consumer-review findings (jjkysy, as the kanban consumer — folded into scope)
+- **🔴 FATAL (both specs missed): passive-data-actor principal isolation.** `agent = actor` splits into **principal actors** (cc/codex/curl/echo — chat participants: @-mentionable, `:join`-able as members, receive chat) vs **passive/data actors** (kanban-manager — acts on dispatch but is NOT a chat principal). Making the board an `entity://agent/...` gives it principal semantics **for free** (`agent.ex:48-49` "entity://agent/* works at routing layer") — it could be @-mentioned, joined into others' sessions, receive chat. `session_template: nil` does NOT cover this. **Foundation MUST add an explicit `passive` (non-principal: non-mentionable / non-joinable / no-receive) flag on the recipe (and/or native flavor), + gates in the session mention-resolver, the `:join` path, and receive-routing that reject passive actors.** This generalizes (future data-manager actors), so it belongs in the foundation, not just kanban.
+- **🟡 board source-of-truth = snapshot (converge Q3):** the board persists via Kind **snapshot** (NOT a config_dir file). kanban's 24 handlers + per-node CapBAC + `commit/1` are all built on "tree = instance snapshot state"; a file = full rewrite. (This spec §8 already says snapshot — the kanban-as-role spec body must drop the file idea.)
+- **🟡 list-by-role read model:** the foundation has no role→instance reverse lookup. Materialization must **tag the instance with its role + provide a "list instances by role" query**, so world migrates off list-by-Kind-type.
+- **🟡 native flavor cap policy:** `CapMint` needs a **policy predicate** deciding which of a role's `requested_caps` to grant. The `native` flavor's default cap policy must be **explicitly defined** (blank → fail-closed → all 24 kanban caps dropped).
+- ✅ Confirmed sufficient: Lifecycle-based custom `Behavior.Kanban` fits a recipe; agent snapshot holds the tree; per-node CapBAC ctx injection works; `?action=kanban.<action>` moves resource://→entity:// cleanly at dispatch.
+
 ## 5. To build
 1. **Part 1 runtime mount/detach** (the core; full scope above incl slice-init / closure / detach teardown / in-flight). Retire Kind-level `attach_behavior`.
 2. **Part 2** `roles/0` callback + name→recipe registry (code-seed). (`template://role` follow-up.)
 3. **Part 3** wire compose → mount + config_dir + `CapMint@grant_initial_caps` into create; generic role step in `AgentCreate`.
 4. **收编 `OrchestratorRole`** onto this path.
+5. **Passive-actor isolation (🔴)**: `passive` flag on recipe/flavor + mention-resolver / `:join` / receive-routing gates rejecting passive actors.
+6. **list-by-role**: tag instance with role at materialize + a "list instances by role" query.
+7. **native flavor cap policy**: an explicit CapMint policy predicate for `native` (which requested_caps pass; fail-closed default stated).
 
 ## 6. Risks
 - **R1** Part 1 mounts/detaches on a LIVE GenServer mid-flight — slice-init correctness, closure re-validation, detach teardown + in-flight dispatch are the real difficulty (the dispatch resolution itself is NOT changing — it already reads the per-instance set).
