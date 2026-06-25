@@ -638,81 +638,89 @@ end
 
 **enum 选项的数据来源完全自由**：Template Class 可以硬编码、从 `priv/config/` YAML 读取、或用 `Application.get_env`——core 不关心。
 
-#### Core 改动
+#### Core 改动（由 allenwoods 在 A4 中实现，本任务不直接改 core）
 
-**一个文件**：`apps/ezagent_core/lib/ezagent/kind/template.ex`（+~20 行）
+> ⚠️ 2026-06-25 allenwoods 确认：`config_schema/0` 的 core 变更**归入 A 任务（A4）**，由 codex/allenwoods 实现。我们**不需要动 core**，只需按契约 shape 用 mock 数据搭 console，A4 落地后换真数据。
+
+**契约文件**：`apps/ezagent_core/lib/ezagent/kind/template.ex`（+~25 行）
+
+**`config_field` 契约定稿（allenwoods 2026-06-25）**：
 
 ```elixir
-# 新增 type 定义（一次性，后续改 data 不动 core）
-@type config_field_type :: :string | :enum | :list | :json | :text | :boolean
+@type config_field_type ::
+        :string | :text | :integer | :boolean | :enum | :list | :json | :secret
 
 @type config_field :: %{
-  required(:key) => String.t(),
-  required(:type) => config_field_type(),
-  optional(:options) => [String.t()],
-  optional(:editable) => boolean(),
-  optional(:source) => :template | :cascade
-}
+        required(:key) => String.t(),      # 配置键，如 "model" / "permission_mode"
+        required(:type) => config_field_type(),
+        required(:label) => String.t(),    # 展示名
+        optional(:options) => [String.t()],# :enum/:list 的可选值（可经 Application.get_env 运行时覆盖）
+        optional(:default) => term(),
+        optional(:required) => boolean(),  # 是否必填（默认 false）
+        optional(:help) => String.t()      # 帮助文本
+      }
 
-# 新增 optional callback
-@callback config_schema() :: [config_field()]
+@callback config_schema() :: [config_field()]   # optional callback on Kind.Template
 ```
 
-`@optional_callbacks` 中加 `config_schema: 0`。
+**约定要点**：
+1. **校验分两层**：`config_field` 只声明 type/required/options/default（前端渲染 + 客户端校验），**权威服务端校验仍走各 Template Class 的 `validate/1`**（已存在）
+2. **type→控件映射**：enum→下拉(options)、list→多选、boolean→开关、secret→密码框(脱敏)、integer→数字输入、text→多行文本、json→代码框、string→单行输入
+3. **消费路径**：`AgentFlavorRegistry.lookup(flavor).template_class.config_schema()` → `[config_field]` → 前端按 type 渲染
+4. **不实现的 flavor**（如 echo）→ optional callback 不实现 → 该 flavor 无可编辑配置面板
 
 #### Plugin 改动（每个 Template Class ~15-18 行）
 
-cc（model 列表通过 `Application.get_env` 可覆盖）：
+cc（model 列表通过 `Application.get_env` 可覆盖，A4 落地后的真数据示例）：
 
 ```elixir
-# cc_agent.ex
-@default_models ["deepseek-chat", "deepseek-v4-pro", "deepseek-v4-flash",
-                 "claude-sonnet-4-6", "claude-opus-4-8"]
-
+# cc_agent.ex（A4 实现后）
 @impl true
 def config_schema do
   models = Application.get_env(:ezagent_plugin_cc, :models, @default_models)
   [
-    %{key: "model",            type: :enum, options: models,                    source: :template, editable: false},
-    %{key: "effort",           type: :enum, options: ["low","medium","high","xhigh","max"], source: :template, editable: false},
-    %{key: "permission_mode",  type: :enum, options: ["default","acceptEdits","plan","bypass"], source: :template, editable: false},
-    %{key: "system_prompt",    type: :text,                                     source: :template, editable: false},
-    %{key: "allowed_tools",    type: :list,                                     source: :template, editable: false},
-    %{key: "disallowed_tools", type: :list,                                     source: :template, editable: false},
-    %{key: "mcp_servers",      type: :json,                                     source: :template, editable: false},
-    %{key: "soul_md",          type: :text,                                     source: :cascade, editable: true},
+    %{key: "model",           type: :enum,   label: "Model",            options: models,                                    default: "deepseek-chat"},
+    %{key: "effort",          type: :enum,   label: "Effort Level",     options: ["low","medium","high","xhigh","max"],    default: "medium"},
+    %{key: "permission_mode", type: :enum,   label: "Permission Mode",  options: ["default","acceptEdits","plan","bypass"], default: "default"},
+    %{key: "system_prompt",   type: :text,   label: "System Prompt"),
+    %{key: "allowed_tools",   type: :list,   label: "Allowed Tools",   options: ["bash","read","write","grep","glob","web_search","web_fetch"]},
+    %{key: "disallowed_tools",type: :list,   label: "Disallowed Tools"),
+    %{key: "mcp_servers",     type: :json,   label: "MCP Servers"),
+    %{key: "soul_md",         type: :text,   label: "Soul (CLAUDE.md)"),
   ]
 end
 ```
 
-codex：
+#### Mock Schema（M3/M4 在 A4 落地前使用）
+
+在 A4 实现 `config_schema/0` 之前，`identity_data.ex` 返回**硬编码的 mock schema**（按 allenwoods 契约定稿的 shape）：
 
 ```elixir
-# codex_agent.ex
-def config_schema do
-  [
-    %{key: "model",           type: :enum, options: ["codex-default"],                source: :template, editable: false},
-    %{key: "approval_policy", type: :enum, options: ["never","on-request","always"],  source: :template, editable: false},
-    %{key: "sandbox",         type: :enum, options: ["enabled","disabled"],           source: :template, editable: false},
-    %{key: "soul_md",         type: :text,                                            source: :cascade, editable: true},
-  ]
-end
+# identity_data.ex — M3 期间的临时 mock（A4 落地后删除，改为调 tc.config_schema()）
+defp mock_config_schema("cc"), do: [
+  %{key: "model", type: :enum, label: "Model", options: ["deepseek-chat", "deepseek-v4-pro"], default: "deepseek-chat"},
+  %{key: "effort", type: :enum, label: "Effort", options: ["low","medium","high"], default: "medium"},
+]
+defp mock_config_schema("codex"), do: [...]
+defp mock_config_schema(_), do: []
 ```
 
-curl：
+---
 
-```elixir
-# curl_agent.ex
-def config_schema do
-  [
-    %{key: "model",         type: :enum,   options: ["deepseek-chat","deepseek-v4-pro"], source: :template, editable: false},
-    %{key: "provider",      type: :enum,   options: ["deepseek","openai","anthropic"],    source: :template, editable: false},
-    %{key: "api_url",       type: :string,                                                source: :template, editable: false},
-    %{key: "system_prompt", type: :text,                                                  source: :template, editable: false},
-    %{key: "max_history",   type: :string,                                                source: :template, editable: false},
-  ]
-end
-```
+#### 改动清单（本任务）
+
+| 文件 | 改动 | 行数 |
+|---|---|---|
+| `identity_data.ex` | M1: 按 flavor 解已有的 template data 字段 | +30 |
+| `identity_data.ex` | M3: 加 `mock_config_schema/1` → A4 落地后删除 | +30 |
+| `Identities.tsx` | M1: 详情页遍历 `config_fields` | +50 |
+| `Identities.tsx` | M1: 精准标注未接线 | +30 |
+| `Identities.tsx` | M3: 按 `config_schema` 选 widget | +80 |
+| `Identities.tsx` | M4: 创建表单动态渲染 | +60 |
+| `agent_console_live_test.exs`（新） | M1: LiveView 路由测试 | +150 |
+| **总计（本任务）** | | **~430 行** |
+
+**不在本任务**：core 的 `@callback config_schema/0` + `@type config_field` 定义（归 allenwoods A4）。
 
 echo：不实现 → 默认返回 `nil`（`@optional_callback` 自动处理）。
 
