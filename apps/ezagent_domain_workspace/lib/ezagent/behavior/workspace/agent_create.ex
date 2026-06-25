@@ -476,6 +476,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
           record_creator_lineage(agent_uri, params)
 
           with :ok <- RoleStep.grant_passive_marker(agent_uri, materialized),
+               :ok <- RoleStep.grant_role_marker(agent_uri, materialized),
                :ok <- RoleStep.mint_and_grant_caps(agent_uri, other_flavor, materialized, params),
                :ok <-
                  grant_agent_creator_manage_cap(
@@ -516,15 +517,13 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     end
   end
 
-  # Build the direct-spawn args. `:behaviors` precedence (RF-5a HIGH-1):
-  #   1. a MATERIALIZED ROLE → the composed `role ++ flavor` behaviors OVERRIDE
-  #      the thunk-sourced value (`RoleStep.resolve/2` already folded the flavor
-  #      base in, so the role's behaviors AND the base both reach `:kind_base`).
-  #   2. no role, flavor declares a thunk (curl) → the thunk's set (unchanged).
-  #   3. no role, no thunk → omit `:behaviors` → the Kind's nil-capture default.
-  # A materialized PASSIVE role also threads `:passive` so `Sandbox.create/1`
-  # records it in the DURABLE `:sandbox` slice (the cold-restart source of truth
-  # for the `:passive` resolver).
+  # Build the direct-spawn args. `:behaviors` precedence (RF-5a HIGH-1): a
+  # MATERIALIZED ROLE's composed `role ++ flavor` set OVERRIDES the thunk-sourced
+  # value (`RoleStep.resolve/2` folded the flavor base in, so role behaviors AND
+  # base both reach `:kind_base`); else a flavor thunk (curl); else omit (the
+  # Kind's nil-capture default). A materialized role also threads the DURABLE
+  # `:passive` (RF-6) + `:role` (RF-7) into the `:sandbox` slice — the
+  # cold-restart source of truth for the `:passive`/`:role` resolvers.
   defp spawn_args_for_flavor(flavor, decl, %URI{} = agent_uri, flavor_config, materialized) do
     base =
       %{uri: agent_uri}
@@ -532,7 +531,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
     base
     |> put_role_behaviors(decl, materialized)
-    |> put_role_passive(materialized)
+    # RF-6/RF-7 DURABLE markers (`:passive` + `:role` NAME) — owned by RoleStep.
+    |> Map.merge(RoleStep.spawn_marker_args(materialized))
   end
 
   defp put_role_behaviors(base, _decl, %{behaviors: behaviors}) when is_list(behaviors),
@@ -544,11 +544,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       _ -> base
     end
   end
-
-  defp put_role_passive(base, %{passive: passive}) when is_boolean(passive),
-    do: Map.put(base, :passive, passive)
-
-  defp put_role_passive(base, _materialized), do: base
 
   defp validate_direct_spawn_flavor_config(_flavor, _decl, _agent_uri, config)
        when config == %{},

@@ -12,7 +12,8 @@ defmodule EzagentDomainAgent.EtsOwner do
   @tables [
     {Ezagent.AgentFlavorRegistry, :set},
     {Ezagent.AgentFlavorAttributes, :set},
-    {Ezagent.AgentPassiveAttributes, :set}
+    {Ezagent.AgentPassiveAttributes, :set},
+    {Ezagent.AgentRoleAttributes, :set}
   ]
 
   def start_link(_opts) do
