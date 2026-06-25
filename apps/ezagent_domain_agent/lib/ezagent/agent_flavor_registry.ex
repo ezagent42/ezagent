@@ -31,16 +31,26 @@ defmodule Ezagent.AgentFlavorRegistry do
 
   @typedoc """
   The stored value — a flavor's kind + template-class wiring, plus the
-  OPTIONAL per-instance behavior-set thunk (PR-6+7 curl-as-flavor). The thunk
-  is `nil` for a flavor backed by its own dedicated Kind (np); it is a 0-arity
-  fn returning the flavor's behavior SUBSET for a flavor folded onto a SHARED
-  Kind (`curl` → `Entity.Agent`), so the generic direct-spawn path threads
+  OPTIONAL per-instance behavior-set thunk (PR-6+7 curl-as-flavor) and the
+  OPTIONAL CapMint cap-policy (role-foundation RF-8). The thunk is `nil` for a
+  flavor backed by its own dedicated Kind (np); it is a 0-arity fn returning
+  the flavor's behavior SUBSET for a flavor folded onto a SHARED Kind
+  (`curl` → `Entity.Agent`), so the generic direct-spawn path threads
   `:behaviors` without the workspace domain knowing the flavor.
+
+  `cap_policy` is `nil` for a flavor that has no role-driven cap minting; it is
+  a 1-arity fn `(recipe.requested_caps -> (needed_cap -> boolean()))` — the
+  flavor's fail-closed CapMint policy FACTORY. The role-driven create path
+  (RF-5a) reads it here and passes `cap_policy.(recipe.requested_caps)` to
+  `Ezagent.Role.CapMint.mint/3`, so the workspace domain selects the flavor's
+  cap policy from data WITHOUT depending on the flavor plugin (the same seam as
+  `instance_behaviors`).
   """
   @type decl :: %{
           kind: module(),
           template_class: module() | nil,
-          instance_behaviors: (-> [module()]) | nil
+          instance_behaviors: (-> [module()]) | nil,
+          cap_policy: ([map()] -> (map() -> boolean())) | nil
         }
 
   @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
@@ -60,7 +70,16 @@ defmodule Ezagent.AgentFlavorRegistry do
     # PR-6+7 — carry the OPTIONAL per-instance behavior-set thunk through.
     # Absent → nil (the common case; a flavor with its own dedicated Kind).
     instance_behaviors = validate_instance_behaviors!(Map.get(decl, :instance_behaviors))
-    value = %{kind: kind, template_class: template_class, instance_behaviors: instance_behaviors}
+    # RF-8 — carry the OPTIONAL CapMint cap-policy factory through. Absent →
+    # nil (the common case; a flavor with no role-driven cap minting).
+    cap_policy = validate_cap_policy!(Map.get(decl, :cap_policy))
+
+    value = %{
+      kind: kind,
+      template_class: template_class,
+      instance_behaviors: instance_behaviors,
+      cap_policy: cap_policy
+    }
 
     case :ets.lookup(@table, flavor) do
       [{^flavor, ^value}] ->
@@ -154,6 +173,19 @@ defmodule Ezagent.AgentFlavorRegistry do
   defp validate_instance_behaviors!(other) do
     raise ArgumentError,
           "AgentFlavorRegistry: :instance_behaviors must be a 0-arity fn or nil, " <>
+            "got #{inspect(other)}."
+  end
+
+  # RF-8 — the cap-policy must be a 1-arity fn (recipe.requested_caps → the
+  # per-recipe needed-cap predicate) or nil. A bad value is a plugin authoring
+  # bug — fail loud at register time, not at the first role-driven create.
+  defp validate_cap_policy!(nil), do: nil
+
+  defp validate_cap_policy!(fun) when is_function(fun, 1), do: fun
+
+  defp validate_cap_policy!(other) do
+    raise ArgumentError,
+          "AgentFlavorRegistry: :cap_policy must be a 1-arity fn or nil, " <>
             "got #{inspect(other)}."
   end
 
