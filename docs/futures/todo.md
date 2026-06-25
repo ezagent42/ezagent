@@ -23,6 +23,13 @@
 - **#55 `undocumented_public_defs` 392 burn-down** — reducible but a mass @doc
   sweep ships unverified claims (violates `feedback_doc_why_must_be_code_verified`).
   Needs a deliberate, codex-reviewed, batched campaign.
+- **`python` program-agent flavor** (Allen 2026-06-25) — `echo` is currently a
+  deterministic no-LLM test fixture (folded onto `Entity.Agent` as flavor `echo`
+  in the A consolidation). Future: add a real `python` agent flavor (its own
+  flavor plugin) that loads + runs a py script to produce replies. echo serves as
+  the template/exemplar. Do this as a NEW flavor plugin (zero core edit, per the
+  AgentFlavorRegistry contract) — NOT by mutating echo. Rename echo→python only
+  if that flavor subsumes echo's test-fixture role.
 - **Plugin-owned resource-type registration** on `Resource.FsResolver` (currently
   core-compile-time-only `boot_registrations/0`, no plugin self-registration) →
   then migrate world `LayoutManager.layout_dir/0` off raw `Home.path` behind a
