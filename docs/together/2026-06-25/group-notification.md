@@ -34,7 +34,7 @@ F9（Feishu chat→session 绑定 UI）+ F12（Feishu `@` 解析成 agent mentio
 设计 review/plan 的可外发版式，交 `jjkysy` 落进 skill（不直接改 skill 文件）。
 handoff: `ruihuachen-designer-review-plan-format.md`
 
-**@戴明(FatNine)** — 今日任务待 @林懿伦 重新分派（agent console 已整体交 gagameow）。
+**@戴明(FatNine)** — 今日休息。
 
 **依赖**：gagameow 先出现状 handoff → 解锁 allenwoods；其余并行。
 
