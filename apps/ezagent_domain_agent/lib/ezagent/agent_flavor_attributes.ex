@@ -11,24 +11,13 @@ defmodule Ezagent.AgentFlavorAttributes do
 
   @table :ezagent_agent_flavor_attributes
 
-  @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
+  @doc "Return the ETS table name (used by `EzagentDomainAgent.EtsOwner`)."
   @spec table() :: atom()
   def table, do: @table
-
-  @doc "Ensure the table exists for early tests/tools."
-  @spec init() :: :ok
-  def init do
-    if :ets.whereis(@table) == :undefined do
-      :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
-    end
-
-    :ok
-  end
 
   @doc "Store the launch flavor for an agent URI."
   @spec put(URI.t(), String.t()) :: :ok
   def put(%URI{} = agent_uri, flavor) when is_binary(flavor) and flavor != "" do
-    init()
     :ets.insert(@table, {Ezagent.URI.stable_key(agent_uri), flavor})
     :ok
   end
@@ -64,8 +53,6 @@ defmodule Ezagent.AgentFlavorAttributes do
   @doc "Resolve the stored launch flavor for an agent URI."
   @spec get(URI.t()) :: {:ok, String.t()} | :none
   def get(%URI{} = agent_uri) do
-    init()
-
     case :ets.lookup(@table, Ezagent.URI.stable_key(agent_uri)) do
       [{_key, flavor}] when is_binary(flavor) and flavor != "" -> {:ok, flavor}
       _ -> :none
@@ -75,7 +62,6 @@ defmodule Ezagent.AgentFlavorAttributes do
   @doc "Delete any stored launch flavor for an agent URI."
   @spec delete(URI.t()) :: :ok
   def delete(%URI{} = agent_uri) do
-    init()
     :ets.delete(@table, Ezagent.URI.stable_key(agent_uri))
     :ok
   end

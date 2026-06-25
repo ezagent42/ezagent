@@ -97,6 +97,17 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   def template_data_extra(_), do: %{}
 
+  @impl Ezagent.Kind.Template
+  def config_schema do
+    [
+      %{key: "provider", type: :string, label: "Provider", required: true},
+      %{key: "api_url", type: :string, label: "API URL", required: true},
+      %{key: "model", type: :string, label: "Model", required: true},
+      %{key: "system_prompt", type: :text, label: "System prompt"},
+      %{key: "max_history", type: :integer, label: "Max history", default: 20}
+    ]
+  end
+
   # Cleanup-2: shared tolerant content reader lives in core.
   defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
@@ -110,7 +121,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
          :ok <- check_agent_uri(tmpl),
          :ok <- check_provider(tmpl),
          :ok <- check_api_url(tmpl),
-         :ok <- check_model(tmpl) do
+         :ok <- check_model(tmpl),
+         :ok <- check_optional_max_history(tmpl) do
       :ok
     end
   end
@@ -140,6 +152,22 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   defp check_model(%{"model" => m}) when is_binary(m) and m != "", do: :ok
   defp check_model(_), do: {:error, :missing_model}
+
+  defp check_optional_max_history(tmpl) do
+    case Map.fetch(tmpl, "max_history") do
+      :error -> :ok
+      {:ok, n} when is_integer(n) and n > 0 -> :ok
+      {:ok, s} when is_binary(s) -> check_max_history_string(s)
+      {:ok, bad} -> {:error, {:bad_max_history, bad}}
+    end
+  end
+
+  defp check_max_history_string(s) do
+    case Integer.parse(s) do
+      {n, ""} when n > 0 -> :ok
+      _ -> {:error, {:bad_max_history, s}}
+    end
+  end
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do

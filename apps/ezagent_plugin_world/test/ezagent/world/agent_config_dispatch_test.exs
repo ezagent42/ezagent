@@ -21,7 +21,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
     so a caller WITHOUT caps on a MISSING key may get :config_not_found before
     :unauthorized. Tests (c)/(d) create the field first to avoid this leak.
 
-  Invariant P14: all mutations go through Ezagent.AgentConfig facade (which
+  Invariant P14: all mutations go through Ezagent.Agent.Config facade (which
   dispatches internally). No silent drops.
   """
 
@@ -29,7 +29,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.AgentConfig
+  alias Ezagent.Agent.Config
 
   # ── bootstrap ────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
   # Read the cascade for a key and return the user-layer body (or nil).
   defp user_layer_body(agent_uri, key, admin_ctx) do
-    case AgentConfig.read_cascade(agent_uri, admin_ctx.caller, admin_ctx.caps) do
+    case Config.read_cascade(agent_uri, admin_ctx.caller, admin_ctx.caps) do
       {:ok, %{keys: keys}} ->
         case Enum.find(keys, &(&1.key == key || &1["key"] == key)) do
           nil ->
@@ -103,7 +103,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Dispatch the update via the facade (same call WorldLive will make).
       result =
-        AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+        Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
           key: "advisor.behavior",
           patch: %{"tone" => "decisive"}
@@ -136,7 +136,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Attempt the update without caps.
       result =
-        AgentConfig.apply_delta(agent_uri, admin_ctx.caller, MapSet.new(), %{
+        Config.apply_delta(agent_uri, admin_ctx.caller, MapSet.new(), %{
           layer: "user",
           key: "advisor.behavior",
           patch: %{"tone" => "assertive"}
@@ -168,7 +168,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Write the field first so it exists.
       assert {:ok, _} =
-               AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+               Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
                  key: "advisor.behavior",
                  patch: %{"to_delete" => "yes"}
@@ -182,7 +182,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Now delete the field.
       result =
-        AgentConfig.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+        Config.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
           key: "advisor.behavior",
           path: ["to_delete"]
@@ -211,7 +211,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       # This avoids the auth-ordering caveat where a missing key returns
       # :config_not_found before :unauthorized.
       assert {:ok, _} =
-               AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+               Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
                  key: "advisor.behavior",
                  patch: %{"cap_denial_probe" => "present"}
@@ -224,7 +224,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Attempt delete_path with empty caps.
       result =
-        AgentConfig.delete_path(agent_uri, admin_ctx.caller, MapSet.new(), %{
+        Config.delete_path(agent_uri, admin_ctx.caller, MapSet.new(), %{
           layer: "user",
           key: "advisor.behavior",
           path: ["cap_denial_probe"]
@@ -259,7 +259,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
 
       result =
-        AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+        Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
           key: "advisor.behavior",
           patch: "not-a-map"
@@ -281,7 +281,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       # Write an initial body so the config object EXISTS (otherwise we'd get config_not_found
       # from layer_objects_for_key returning nil — that's a different code).
       assert {:ok, _} =
-               AgentConfig.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+               Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
                  key: "advisor.behavior",
                  patch: %{"some_field" => "value"}
@@ -289,7 +289,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
 
       # Now delete a path that does NOT exist in that config body.
       result =
-        AgentConfig.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+        Config.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
           key: "advisor.behavior",
           path: ["nonexistent_field"]

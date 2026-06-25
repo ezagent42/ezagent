@@ -65,7 +65,6 @@ defmodule EzagentPluginCc.Application do
   use Ezagent.Plugin
 
   alias Ezagent.Behavior.CcHeadlessAgent, as: CcHeadlessBehavior
-  alias Ezagent.Entity.Agent, as: AgentKind
 
   # --- OTP Application -------------------------------------------------
 
@@ -86,7 +85,8 @@ defmodule EzagentPluginCc.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
-    for action <- CcHeadlessBehavior.actions(), do: {AgentKind, action, CcHeadlessBehavior}
+    for action <- CcHeadlessBehavior.actions(),
+        do: {Ezagent.Entity.Agent, action, CcHeadlessBehavior}
   end
 
   @impl Ezagent.Plugin
@@ -110,10 +110,10 @@ defmodule EzagentPluginCc.Application do
       },
       %{
         flavor: "cc-headless",
-        kind: AgentKind,
+        kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
         bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter,
-        instance_behaviors: &AgentKind.cc_headless_behaviors/0
+        instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       }
     ]
   end
@@ -153,6 +153,7 @@ defmodule EzagentPluginCc.Application do
     :ok = Ezagent.Agent.LiveJoinRegistry.init()
 
     _ = maybe_reap_orphans()
+    _ = maybe_reap_cc_sdk_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
 
     # PR-8 (transport #53) APPROVED SEED RELOCATION — the cc-orchestrator
@@ -203,6 +204,21 @@ defmodule EzagentPluginCc.Application do
       EzagentPluginCc.OrphanReaper.reap()
     else
       {:ok, 0}
+    end
+  end
+
+  # cc-sdk sidecar orphan reaper (erlexec sidecar runtime, 2026-06-25).
+  # Same test-skip gate as maybe_reap_orphans/0: disabled in :test by
+  # default, flippable via config :ezagent_plugin_cc, :reap_orphans_on_boot.
+  # Ezagent.Runtime.OrphanReaper.reap/1 returns :ok (not {:ok, n}).
+  defp maybe_reap_cc_sdk_orphans do
+    enabled? =
+      Application.get_env(:ezagent_plugin_cc, :reap_orphans_on_boot, @default_reap_enabled?)
+
+    if enabled? do
+      Ezagent.Runtime.OrphanReaper.reap("cc-sdk")
+    else
+      :ok
     end
   end
 end

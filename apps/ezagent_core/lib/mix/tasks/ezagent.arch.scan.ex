@@ -80,9 +80,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # the line anchors hold, only the app-dir path prefix changed.
     # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
     # anchors lower; the spawn-fresh ownership boundary is unchanged.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 240},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 279},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 281},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 248},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 287},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 289},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
@@ -275,6 +275,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     spawn_fresh_hits = grep(~r/spawn_fresh(?:_member)?\(/, skip_comment_lines?: true)
     all_slices_hits = grep(~r/:all_slices/)
     set_effect_hits = grep(~r/\{:set,\s*:[a-z_]+,/)
+    flavor_refs_in_core = grep_core(~r/AgentFlavor(?:Registry|Attributes|Resolver)/)
 
     [
       oversized_modules_gt_1500: count_oversized(oversized, 1500),
@@ -313,9 +314,56 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       missing_cap_check_mutating_actions: missing_cap_check_mutating_actions(),
       kind_runtime_ordering_violations: kind_runtime_ordering_violations(),
       kind_runtime_reentry_violations: kind_runtime_reentry_violations(),
-      cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift()
+      no_flavor_refs_in_core: length(flavor_refs_in_core),
+      cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
+      raw_port_spawn_executable: raw_port_spawn_executable()
     ]
   end
+
+  # Subtask B (2026-06-25) — forbid raw `Port.open({:spawn_executable, …}, …)`.
+  # The sanctioned OS-process spawn exit is `Ezagent.Runtime.OsProcess` (erlexec
+  # `run_link` + `{group,0}`+`:kill_group` subtree reaping); a bare `Port.open`
+  # only signals the DIRECT child on close, orphaning the `uv→python` /
+  # `codex→vendor` / `node→workers` subtree.
+  #
+  # AST-based (NOT the line-based `grep/2`): the feishu call spans two lines
+  # (`Port.open(` then `{:spawn_executable, …}` on the next), which a per-line
+  # regex can never match. The first arg is a BARE 2-tuple `{:spawn_executable,
+  # _}` — in Elixir AST a 2-element tuple is a literal `{a, b}`, NOT the `{:{},
+  # _, [...]}` form (that is 3+-element tuples like `{:fd, 0, 1}`, which must NOT
+  # match). `# arch-allow:` on the `Port.open` line suppresses one site.
+  defp raw_port_spawn_executable do
+    lib_files()
+    |> Enum.map(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> count_port_spawn_executable(ast, arch_allowed_lines(file))
+        {:error, _} -> 0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  defp count_port_spawn_executable(ast, allowed_lines) do
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn node, acc ->
+        if port_spawn_executable_node?(node, allowed_lines),
+          do: {node, acc + 1},
+          else: {node, acc}
+      end)
+
+    count
+  end
+
+  defp port_spawn_executable_node?(
+         {{:., _, [{:__aliases__, _, [:Port]}, :open]}, meta, [first_arg | _]},
+         allowed_lines
+       ) do
+    not MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0)) and
+      (match?({:spawn_executable, _}, first_arg) or
+         match?({:{}, _, [:spawn_executable | _]}, first_arg))
+  end
+
+  defp port_spawn_executable_node?(_node, _allowed_lines), do: false
 
   defp manifest do
     @manifest_path
@@ -331,6 +379,15 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   defp lib_files do
     repo_root()
     |> Path.join("apps/*/lib/**/*.ex")
+    |> Path.wildcard()
+    |> Enum.map(&relative/1)
+    |> Enum.reject(&excluded_file?/1)
+    |> Enum.sort()
+  end
+
+  defp core_lib_files do
+    repo_root()
+    |> Path.join("apps/ezagent_core/lib/**/*.ex")
     |> Path.wildcard()
     |> Enum.map(&relative/1)
     |> Enum.reject(&excluded_file?/1)
@@ -359,6 +416,15 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
         {line, line_no} <- file_lines(file),
         not String.contains?(line, "# arch-allow:"),
         not (skip_comment_lines? and comment_line?(line)),
+        Regex.match?(regex, line) do
+      {file, line_no, String.trim(line)}
+    end
+  end
+
+  defp grep_core(regex) do
+    for file <- core_lib_files(),
+        {line, line_no} <- file_lines(file),
+        not String.contains?(line, "# arch-allow:"),
         Regex.match?(regex, line) do
       {file, line_no, String.trim(line)}
     end

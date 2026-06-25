@@ -34,6 +34,25 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
   alias Ezagent.Credential.{GrantRow, WorkspaceSharedSource}
   alias EzagentCore.Repo
 
+  defmodule FlavorConfigSpawnFacade do
+    @moduledoc false
+
+    def spawn_from_template_content(content, agent_uri, _caller, _workspace_uri, _opts) do
+      case Ezagent.Entity.AgentTemplate.to_template_data(content, agent_uri) do
+        {:ok, data} ->
+          send(test_pid(), {:cc_flavor_config_spawn, content, data})
+          {:ok, %{fresh?: true}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+
+    defp test_pid do
+      Application.fetch_env!(:ezagent_domain_workspace, :agent_create_flavor_config_test_pid)
+    end
+  end
+
   setup do
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
@@ -76,6 +95,102 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
     case Ezagent.URI.name(uri) do
       {:ok, n} -> n
       :error -> URI.to_string(uri)
+    end
+  end
+
+  defp install_flavor_config_spawn_facade(_context) do
+    previous = Application.get_env(:ezagent_domain_workspace, :agent_spawn_facade)
+
+    previous_pid =
+      Application.get_env(:ezagent_domain_workspace, :agent_create_flavor_config_test_pid)
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :agent_spawn_facade,
+      FlavorConfigSpawnFacade
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :agent_create_flavor_config_test_pid, self())
+
+    on_exit(fn ->
+      restore_env(:agent_spawn_facade, previous)
+      restore_env(:agent_create_flavor_config_test_pid, previous_pid)
+    end)
+
+    :ok
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:ezagent_domain_workspace, key)
+  defp restore_env(key, value), do: Application.put_env(:ezagent_domain_workspace, key, value)
+
+  describe "create-time flavor config ingest — cc file flavor" do
+    setup :install_flavor_config_spawn_facade
+
+    test "Workspace.create_agent carries schema-whitelisted cc config into content and respawn data",
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd} do
+      name = "cc-config-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{agent_uri: agent_uri, template_name: tmpl_name}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc",
+                   name: name,
+                   cwd: cwd,
+                   with_pty: false,
+                   flavor_config: %{
+                     "model" => "claude-opus-4-20250514",
+                     "effort" => "high",
+                     "permission_mode" => "bypassPermissions",
+                     "tools" => ["reply"]
+                   }
+                 },
+                 admin_ctx
+               )
+
+      assert_receive {:cc_flavor_config_spawn, content, data}
+
+      assert Map.take(content, ["model", "effort", "permission_mode", "tools"]) == %{
+               "model" => "claude-opus-4-20250514",
+               "effort" => "high",
+               "permission_mode" => "bypassPermissions",
+               "tools" => ["reply"]
+             }
+
+      assert Map.take(data, ["model", "effort", "permission_mode", "tools"]) == %{
+               "model" => "claude-opus-4-20250514",
+               "effort" => "high",
+               "permission_mode" => "bypassPermissions",
+               "tools" => ["reply"]
+             }
+
+      %{session_templates: tmpls} = Store.get_by_name(ws_name)
+      persisted = Map.fetch!(tmpls, tmpl_name)
+
+      assert Map.take(persisted, ["model", "effort", "permission_mode", "tools"]) ==
+               Map.take(data, ["model", "effort", "permission_mode", "tools"])
+
+      assert URI.to_string(agent_uri) == persisted["agent_uri"]
+    end
+
+    test "invalid cc config is rejected by the Template Class validator before create succeeds",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd} do
+      name = "cc-invalid-#{System.unique_integer([:positive])}"
+
+      assert {:error,
+              {:cascade_spawn_failed,
+               {:invalid_template_data, {:invalid_config_field, "effort", "turbo"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc",
+                   name: name,
+                   cwd: cwd,
+                   with_pty: false,
+                   flavor_config: %{"effort" => "turbo"}
+                 },
+                 admin_ctx
+               )
     end
   end
 

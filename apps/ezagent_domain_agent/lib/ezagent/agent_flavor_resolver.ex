@@ -4,12 +4,11 @@ defmodule Ezagent.AgentFlavorResolver do
   `:flavor` UriQuery resolver and the agent domain's delivery seam
   (`Ezagent.Behavior.Agent.Delivery`).
 
-  Lives in `ezagent_core` (PR-9a, #53) so both the session and agent domains
-  reach it without a cross-domain compile edge — keeping `im → session → agent`
-  acyclic. Reads only ETS (`AgentFlavorAttributes` / `AgentFlavorRegistry`) and
-  `SnapshotStore` (a DB read) — never `Kind.get_slice/2` — so it is safe to call
-  from inside an agent's OWN dispatch process (delivery), where a self-`call`
-  would deadlock.
+  Lives in `ezagent_domain_agent` so both the session and agent domains reach the
+  flavor cluster through the agent domain. Reads only ETS
+  (`AgentFlavorAttributes` / `AgentFlavorRegistry`) and `SnapshotStore` (a DB
+  read) — never `Kind.get_slice/2` — so it is safe to call from inside an
+  agent's OWN dispatch process (delivery), where a self-`call` would deadlock.
   """
 
   @doc """

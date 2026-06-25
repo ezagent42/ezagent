@@ -5,15 +5,29 @@ defmodule EzagentPluginCc.SdkSidecar do
   The worker speaks stdin/stdout JSON lines. It owns the SDK client and
   serializes `query + receive_response`; this GenServer owns process lifecycle
   and request correlation.
+
+  ## Transport
+
+  Spawns the Python worker via `Ezagent.Runtime.OsProcess` (erlexec
+  `run_link` + `{group,0}` + `kill_group`) so every teardown path — graceful
+  shutdown, owner crash, brutal BEAM SIGKILL — reaps the full process group
+  (uv → python). Replaces the native `Port.open` used before.
+
+  SPEC `docs/superpowers/specs/2026-06-25-sidecar-erlexec-runtime.md` §4.
   """
 
   use GenServer
 
   require Logger
 
+  alias Ezagent.Runtime.LineBuffer
+  alias Ezagent.Runtime.OsProcess
+
   defstruct [
     :agent_uri,
-    :port,
+    :exec_pid,
+    :os_pid,
+    :line_buffer,
     :session_id,
     :cwd,
     :config_dir,
@@ -22,7 +36,7 @@ defmodule EzagentPluginCc.SdkSidecar do
     output: ""
   ]
 
-  @line_length 1_048_576
+  @line_buffer_max 1_048_576
   @default_timeout 120_000
 
   @doc false
@@ -99,16 +113,24 @@ defmodule EzagentPluginCc.SdkSidecar do
 
   @impl true
   def init(%{agent_uri: agent_uri} = args) do
+    # SPEC §3.1 caller contract: trap_exit BEFORE spawn so supervisor :shutdown
+    # reaches terminate/2 and orphans are not left behind.
+    Process.flag(:trap_exit, true)
+
     state = %__MODULE__{
       agent_uri: agent_uri,
       session_id: Map.get(args, :session_id, new_session_id()),
       cwd: Map.fetch!(args, :cwd),
-      config_dir: Map.fetch!(args, :config_dir)
+      config_dir: Map.fetch!(args, :config_dir),
+      line_buffer: LineBuffer.new(@line_buffer_max)
     }
 
-    case start_port(args) do
-      {:ok, port} -> {:ok, %{state | port: port}}
-      {:error, reason} -> {:stop, reason}
+    case start_process(args) do
+      {:ok, exec_pid, os_pid} ->
+        {:ok, %{state | exec_pid: exec_pid, os_pid: os_pid}}
+
+      {:error, reason} ->
+        {:stop, reason}
     end
   end
 
@@ -127,7 +149,7 @@ defmodule EzagentPluginCc.SdkSidecar do
       session_id: session_id || state.session_id
     }
 
-    case send_frame(state.port, frame) do
+    case send_frame(state.exec_pid, frame) do
       :ok ->
         pending = Map.put(state.pending, req_id, from)
         {:noreply, %{state | pending: pending, next_id: state.next_id + 1}}
@@ -137,33 +159,62 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   end
 
+  # ─── stdout: bytes arrive from erlexec in arbitrary chunks ────────────────
+
   @impl true
-  def handle_info({_port, {:data, {:eol, line}}}, state) do
-    handle_line(to_string(line), state)
+  def handle_info({:stdout, os_pid, bytes}, %{os_pid: os_pid} = state) do
+    {new_lb, lines} = LineBuffer.feed(state.line_buffer, bytes)
+
+    # Thread state through each complete line (id-correlation may pop pending).
+    new_state =
+      Enum.reduce(lines, %{state | line_buffer: new_lb}, fn line, acc ->
+        case handle_line(line, acc) do
+          {:noreply, updated} -> updated
+          # handle_line always returns {:noreply, _}
+          other -> elem(other, 1)
+        end
+      end)
+
+    {:noreply, new_state}
   end
 
-  def handle_info({_port, {:data, {:noeol, line}}}, state) do
-    {:noreply, %{state | output: trim_output(state.output <> to_string(line))}}
-  end
+  # ─── stderr: log and drop — NEVER merge into JSON channel ─────────────────
 
-  def handle_info({_port, {:exit_status, status}}, state) do
+  def handle_info({:stderr, os_pid, bytes}, %{os_pid: os_pid} = state) do
     Logger.warning(
-      "cc-headless SDK sidecar exited for #{URI.to_string(state.agent_uri)} " <>
-        "with status #{status}; recent output:\n#{state.output}"
+      "cc-headless SDK sidecar stderr for #{URI.to_string(state.agent_uri)}: " <>
+        inspect(bytes)
     )
 
+    {:noreply, state}
+  end
+
+  # ─── child exit via run_link — handle ALL reason shapes ───────────────────
+
+  def handle_info({:EXIT, exec_pid, reason}, %{exec_pid: exec_pid} = state) do
+    Logger.warning(
+      "cc-headless SDK sidecar exited for #{URI.to_string(state.agent_uri)} " <>
+        "reason=#{inspect(reason)}; recent output:\n#{state.output}"
+    )
+
+    # Reply all pending callers with an error before stopping.
     Enum.each(state.pending, fn {_id, from} ->
-      GenServer.reply(from, {:error, {:sdk_sidecar_exit, status}})
+      GenServer.reply(from, {:error, {:sdk_sidecar_exit, reason}})
     end)
 
-    {:stop, {:sdk_sidecar_exit, status}, %{state | pending: %{}}}
+    {:stop, {:sdk_sidecar_exit, reason}, %{state | pending: %{}}}
+  end
+
+  # Defensive: ignore exits from processes we didn't spawn.
+  def handle_info({:EXIT, _other, _reason}, state) do
+    {:noreply, state}
   end
 
   @impl true
-  def terminate(_reason, %{port: port}) when not is_nil(port) do
-    Port.close(port)
-  catch
-    _, _ -> :ok
+  def terminate(_reason, %{exec_pid: exec_pid, agent_uri: agent_uri} = _state)
+      when not is_nil(exec_pid) do
+    OsProcess.stop(exec_pid)
+    OsProcess.cleanup_pid_file("cc-sdk", agent_uri)
   end
 
   def terminate(_reason, _state), do: :ok
@@ -188,12 +239,18 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   end
 
-  defp start_port(args) do
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp start_process(args) do
     with {:ok, {runner, runner_args}} <- sdk_runner(args),
          {:ok, script} <- sdk_worker_path(args) do
+      cwd = Map.fetch!(args, :cwd)
+
       env =
         [
-          {~c"EZAGENT_CC_SDK_CWD", args |> Map.fetch!(:cwd) |> String.to_charlist()},
+          {~c"EZAGENT_CC_SDK_CWD", cwd |> String.to_charlist()},
           {~c"EZAGENT_CC_SDK_CONFIG_DIR",
            args |> Map.fetch!(:config_dir) |> String.to_charlist()},
           {~c"EZAGENT_CC_SDK_SESSION_ID",
@@ -210,17 +267,20 @@ defmodule EzagentPluginCc.SdkSidecar do
         |> maybe_json_env(~c"EZAGENT_CC_SDK_MCP_SERVERS", Map.get(args, :mcp_servers))
         |> maybe_json_env(~c"EZAGENT_CC_SDK_ENV", Map.get(args, :cmd_env))
 
-      port =
-        Port.open({:spawn_executable, runner}, [
-          :binary,
-          :exit_status,
-          {:line, @line_length},
-          {:args, runner_args ++ [script]},
-          {:cd, Map.fetch!(args, :cwd)},
-          {:env, env}
-        ])
+      cmd = [runner | runner_args ++ [script]]
 
-      {:ok, port}
+      case OsProcess.spawn(cmd,
+             cd: cwd,
+             env: env,
+             stderr: :separate,
+             pid_file: {"cc-sdk", Map.fetch!(args, :agent_uri)}
+           ) do
+        {:ok, %{exec_pid: exec_pid, os_pid: os_pid}} ->
+          {:ok, exec_pid, os_pid}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -236,14 +296,9 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   end
 
-  defp send_frame(port, frame) when is_port(port) do
+  defp send_frame(exec_pid, frame) when is_pid(exec_pid) do
     data = Jason.encode!(frame) <> "\n"
-
-    if Port.command(port, data) do
-      :ok
-    else
-      {:error, :port_closed}
-    end
+    OsProcess.send(exec_pid, data)
   catch
     :error, reason -> {:error, reason}
   end

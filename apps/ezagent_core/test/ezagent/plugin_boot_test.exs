@@ -73,11 +73,13 @@ defmodule Ezagent.Plugin.BootTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "publishes behaviors, template classes and agent flavors" do
+    test "publishes behaviors, template classes and agent flavor declarations through hook" do
       kind = Ezagent.Plugin.BootTest.Kind1
       behavior = Ezagent.Plugin.BootTest.Behavior1
       template_class = Ezagent.Plugin.BootTest.TemplateClass1
       tname = "boot-tc-#{System.unique_integer([:positive])}"
+      :ok = Ezagent.Plugin.FlavorPublishHook.register(Ezagent.TestSupport.FlavorPublishHookProbe)
+      :ok = Ezagent.TestSupport.FlavorPublishHookProbe.attach(self())
 
       # PR-5 MEDIUM-4: `boot/1` now behaviour-checks every
       # `agent_flavors/0` entry — `kind` must @behaviour Ezagent.Kind
@@ -138,14 +140,14 @@ defmodule Ezagent.Plugin.BootTest do
       )
 
       # `boot/1`'s Phase-2 publish writes to the global BehaviorRegistry
-      # / TemplateRegistry / AgentFlavorRegistry ETS tables — shared
+      # / TemplateRegistry ETS tables and invokes the flavor publish hook — shared
       # process-wide state. Clean them up so this test's throwaway
       # modules do not leak into other suites (the CLI TreeBuilder
       # enumerates BehaviorRegistry; a stale fake entry would crash it).
       on_exit(fn ->
+        Ezagent.TestSupport.FlavorPublishHookProbe.detach()
         :ets.delete(Ezagent.BehaviorRegistry.table(), {kind, :do_thing})
         :ets.delete(Ezagent.TemplateRegistry.table(), tname)
-        :ets.delete(Ezagent.AgentFlavorRegistry.table(), "boot-flavor-x")
       end)
 
       defmodule PublishingPlugin do
@@ -179,8 +181,12 @@ defmodule Ezagent.Plugin.BootTest do
       assert {:ok, ^behavior} = Ezagent.BehaviorRegistry.lookup(kind, :do_thing)
       assert {:ok, ^template_class} = Ezagent.TemplateRegistry.lookup(tname)
 
-      assert {:ok, %{kind: ^kind, template_class: ^template_class}} =
-               Ezagent.AgentFlavorRegistry.lookup("boot-flavor-x")
+      assert_received {:publish_agent_flavor,
+                       %{
+                         flavor: "boot-flavor-x",
+                         kind: ^kind,
+                         template_class: ^template_class
+                       }}
 
       Supervisor.stop(sup_pid)
     end
@@ -223,6 +229,7 @@ defmodule Ezagent.Plugin.BootTest do
   defmodule OrderBehavior do
     @behaviour Ezagent.Behavior
     def actions, do: [:ordered_action]
+    def required_caps, do: %{}
     def cap_subjects, do: [{:ordered_action, "test fixture — ordering probe"}]
     def state_slice, do: :order_test
     def init_slice(_), do: %{}

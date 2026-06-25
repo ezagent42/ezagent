@@ -15,7 +15,7 @@ defmodule Ezagent.AgentFlavorRegistry do
   PR-1 only BUILDS this registry; nothing reads it yet.
 
   Bare ETS, same house style as `Ezagent.TemplateRegistry`. The table
-  is owned by `EzagentCore.EtsOwner` (in its `@tables` list).
+  is owned by `EzagentDomainAgent.EtsOwner` (in its `@tables` list).
 
   ## ETS layout
 
@@ -25,6 +25,9 @@ defmodule Ezagent.AgentFlavorRegistry do
   """
 
   @table :ezagent_agent_flavor_registry
+  @sealed_key {__MODULE__, :sealed?}
+  @published_plugins_key {__MODULE__, :published_plugins}
+  @load_all_started_key {__MODULE__, :load_all_started_after_seal?}
 
   @typedoc """
   The stored value — a flavor's kind + template-class wiring, plus the
@@ -36,7 +39,7 @@ defmodule Ezagent.AgentFlavorRegistry do
   """
   @type decl :: %{
           kind: module(),
-          template_class: module(),
+          template_class: module() | nil,
           instance_behaviors: (-> [module()]) | nil
         }
 
@@ -92,6 +95,55 @@ defmodule Ezagent.AgentFlavorRegistry do
   @spec list_all() :: [{String.t(), decl()}]
   def list_all, do: :ets.tab2list(@table)
 
+  @doc """
+  Mark the boot-time flavor registry as sealed.
+
+  Sealing means the current boot's loaded flavor plugins have all published
+  their declarations. It is a boot barrier for cold-restart paths that would
+  otherwise instantiate agents before every folded flavor behavior set exists.
+  """
+  @spec seal!() :: :ok
+  def seal! do
+    :persistent_term.put(@sealed_key, true)
+    :ok
+  end
+
+  @doc "Return whether the flavor registry has been sealed for this BEAM boot."
+  @spec sealed?() :: boolean()
+  def sealed?, do: :persistent_term.get(@sealed_key, false)
+
+  @doc "Wait for the registry seal, returning `:ok` or `{:error, :timeout}`."
+  @spec await_sealed(timeout()) :: :ok | {:error, :timeout}
+  def await_sealed(timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_sealed_until(deadline)
+  end
+
+  @doc false
+  @spec note_plugin_published(module()) :: :ok
+  def note_plugin_published(plugin_module) when is_atom(plugin_module) do
+    if flavor_plugin?(plugin_module) do
+      published =
+        @published_plugins_key
+        |> :persistent_term.get(MapSet.new())
+        |> MapSet.put(plugin_module)
+
+      :persistent_term.put(@published_plugins_key, published)
+      maybe_seal_after_plugin_publish(published)
+    end
+
+    :ok
+  end
+
+  @doc false
+  @spec reset_seal_for_test!() :: :ok
+  def reset_seal_for_test! do
+    :persistent_term.erase(@sealed_key)
+    :persistent_term.erase(@published_plugins_key)
+    :persistent_term.erase(@load_all_started_key)
+    :ok
+  end
+
   # The per-instance behavior-set thunk must be a 0-arity fn or nil. A bad
   # value is a plugin authoring bug — fail loud at register time, not at the
   # first agent spawn.
@@ -103,5 +155,68 @@ defmodule Ezagent.AgentFlavorRegistry do
     raise ArgumentError,
           "AgentFlavorRegistry: :instance_behaviors must be a 0-arity fn or nil, " <>
             "got #{inspect(other)}."
+  end
+
+  defp await_sealed_until(deadline) do
+    cond do
+      sealed?() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        {:error, :timeout}
+
+      true ->
+        Process.sleep(10)
+        await_sealed_until(deadline)
+    end
+  end
+
+  defp flavor_plugin?(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, :agent_flavors, 0) and
+      module.agent_flavors() != []
+  rescue
+    _ -> false
+  end
+
+  defp maybe_seal_after_plugin_publish(published) do
+    expected = expected_flavor_plugins()
+
+    if expected != [] and Enum.all?(expected, &MapSet.member?(published, &1)) do
+      :ok = seal!()
+      maybe_trigger_load_all_after_seal()
+    end
+  end
+
+  defp expected_flavor_plugins do
+    Application.loaded_applications()
+    |> Enum.flat_map(fn {app, _description, _version} ->
+      case Application.spec(app, :mod) do
+        {module, _args} when is_atom(module) ->
+          if flavor_plugin?(module), do: [module], else: []
+
+        _ ->
+          []
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp maybe_trigger_load_all_after_seal do
+    unless :persistent_term.get(@load_all_started_key, false) do
+      :persistent_term.put(@load_all_started_key, true)
+
+      _ =
+        Task.start(fn ->
+          if Code.ensure_loaded?(Ezagent.Workspace.Loader) and
+               function_exported?(Ezagent.Workspace.Loader, :load_all, 0) do
+            _ = apply(Ezagent.Workspace.Loader, :load_all, [])
+            :ok
+          else
+            :ok
+          end
+        end)
+    end
+
+    :ok
   end
 end

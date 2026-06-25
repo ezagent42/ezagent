@@ -50,7 +50,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/ezagent/runtime.ex", "Ezagent.Runtime.cookie_path/0", 29,
      "early boot, pre-supervision (D2)"},
     # OS pid-file handle ("pty-pids"), registry-independent (D2)
-    {"apps/ezagent_core/lib/ezagent/runtime/pid_file.ex", "Ezagent.Runtime.PidFile.dir/1", 98,
+    {"apps/ezagent_core/lib/ezagent/runtime/pid_file.ex", "Ezagent.Runtime.PidFile.dir/1", 113,
      "OS pid-file handle, registry-independent (D2)"},
     # operator mix-task: ezagent.home.init (app-not-started)
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex", "Mix.Tasks.Ezagent.Home.Init.run/1",
@@ -92,7 +92,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
      154, "operator migration tooling, app-not-started (D2)"},
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 656,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 657,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # world layout one-shot migration (plugin-resource SPEC §4.4, HIGH-8) —
     # operator mix-task run app-not-started; re-keys legacy world/layouts JSON

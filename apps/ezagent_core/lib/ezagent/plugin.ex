@@ -126,7 +126,7 @@ defmodule Ezagent.Plugin do
   @typedoc """
   An agent-flavor → `{kind, template_class}` mapping. Declared by an
   agent-flavor plugin so the domain_instance_message spawn resolver consumes it
-  from `Ezagent.AgentFlavorRegistry` declaratively instead of a
+  from the domain-agent flavor registry declaratively instead of a
   hardcoded map (codex MEDIUM-5).
   """
   @type agent_flavor_decl :: %{
@@ -390,8 +390,8 @@ defmodule Ezagent.Plugin do
   ## Phase 2 — publish
 
   Only now register: `BehaviorRegistry` per `behaviors/0`;
-  `TemplateRegistry` per `template_classes/0`; `AgentFlavorRegistry`
-  per `agent_flavors/0`; `RoutingRegistry.declare_table/2` per
+  `TemplateRegistry` per `template_classes/0`; the domain-agent flavor publish
+  hook per `agent_flavors/0`; `RoutingRegistry.declare_table/2` per
   `routing_tables/0`; `Resource.FsResolver.Registry.register_all/1`
   per `resource_types/0` (write-once on both `<type>` and
   `backend_component`, all-or-nothing; raises `ArgumentError` naming
@@ -466,7 +466,7 @@ defmodule Ezagent.Plugin do
     end)
 
     Enum.each(plugin_module.agent_flavors(), fn decl ->
-      :ok = Ezagent.AgentFlavorRegistry.register(decl)
+      :ok = Ezagent.Plugin.FlavorPublishHook.publish_agent_flavor(decl)
       :ok = maybe_register_bridge_adapter(decl)
     end)
 
@@ -510,6 +510,8 @@ defmodule Ezagent.Plugin do
         raise ArgumentError,
               "#{inspect(plugin_module)} resource_types → #{inspect(reason)}"
     end
+
+    :ok = Ezagent.Plugin.FlavorPublishHook.after_plugin_publish(plugin_module)
 
     :ok
   end

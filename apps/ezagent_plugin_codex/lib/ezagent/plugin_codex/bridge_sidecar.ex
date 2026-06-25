@@ -5,13 +5,24 @@ defmodule EzagentPluginCodex.BridgeSidecar do
   The sidecar connects to `Ezagent.AgentBridge.Socket`, receives
   `codex_turn` pushes from BEAM, forwards them to the per-agent Codex
   app-server, and emits `reply` events back through AgentBridge.
+
+  ## Transport
+
+  Spawns the Python bridge worker via `Ezagent.Runtime.OsProcess`
+  (erlexec `run_link` + `{group,0}` + `kill_group`) so every teardown path
+  — graceful shutdown, owner crash, brutal BEAM SIGKILL — reaps the full
+  process group (uv → python). Replaces the native `Port.open` used before.
+
+  SPEC `docs/superpowers/specs/2026-06-25-sidecar-erlexec-runtime.md` §4.
   """
 
   use GenServer
 
   require Logger
 
-  defstruct [:agent_uri, :port, :test_mode, output: ""]
+  alias Ezagent.Runtime.OsProcess
+
+  defstruct [:agent_uri, :exec_pid, :os_pid, :test_mode, output: ""]
 
   @compile_env Mix.env()
 
@@ -69,14 +80,18 @@ defmodule EzagentPluginCodex.BridgeSidecar do
 
   @impl true
   def init(%{agent_uri: agent_uri} = args) do
+    # SPEC §3.1 caller contract: trap_exit UNCONDITIONALLY — even in test_mode
+    # where no child spawns — so supervisor :shutdown reaches terminate/2.
+    Process.flag(:trap_exit, true)
+
     test_mode = Map.get(args, :test_mode, @compile_env == :test)
     state = %__MODULE__{agent_uri: agent_uri, test_mode: test_mode}
 
     if test_mode do
       {:ok, state}
     else
-      case start_port(agent_uri, args) do
-        {:ok, port} -> {:ok, %{state | port: port}}
+      case start_os_process(agent_uri, args) do
+        {:ok, exec_pid, os_pid} -> {:ok, %{state | exec_pid: exec_pid, os_pid: os_pid}}
         {:error, reason} -> {:stop, reason}
       end
     end
@@ -87,9 +102,11 @@ defmodule EzagentPluginCodex.BridgeSidecar do
     {:reply, state.output, state}
   end
 
+  # ─── stdout: raw framing — accumulate and log chunks directly ────────────
+
   @impl true
-  def handle_info({_port, {:data, data}}, state) when is_binary(data) do
-    case String.trim(data) do
+  def handle_info({:stdout, _os_pid, bytes}, state) when is_binary(bytes) do
+    case String.trim(bytes) do
       "" ->
         :ok
 
@@ -99,44 +116,65 @@ defmodule EzagentPluginCodex.BridgeSidecar do
         )
     end
 
-    {:noreply, %{state | output: trim_output(state.output <> data)}}
+    {:noreply, %{state | output: trim_output(state.output <> bytes)}}
   end
 
-  def handle_info({_port, {:exit_status, status}}, state) do
-    Logger.warning(
-      "codex bridge sidecar exited for #{URI.to_string(state.agent_uri)} " <>
-        "with status #{status}; recent output:\n#{state.output}"
+  # ─── stderr: :merge means stderr arrives as :stdout — defensive clause ────
+
+  def handle_info({:stderr, _os_pid, bytes}, state) when is_binary(bytes) do
+    # With stderr: :merge, erlexec routes stderr to {:stdout, …}. This clause
+    # is defensive; it won't fire under normal configuration.
+    Logger.info(
+      "codex bridge sidecar stderr for #{URI.to_string(state.agent_uri)}: #{inspect(bytes)}"
     )
 
-    {:stop, {:bridge_sidecar_exit, status}, state}
+    {:noreply, %{state | output: trim_output(state.output <> bytes)}}
+  end
+
+  # ─── child exit via run_link — handle ALL reason shapes ──────────────────
+
+  def handle_info({:EXIT, exec_pid, reason}, %{exec_pid: exec_pid} = state) do
+    Logger.warning(
+      "codex bridge sidecar exited for #{URI.to_string(state.agent_uri)} " <>
+        "reason=#{inspect(reason)}; recent output:\n#{state.output}"
+    )
+
+    {:stop, {:bridge_sidecar_exit, reason}, state}
+  end
+
+  # Defensive: ignore exits from processes we didn't spawn.
+  def handle_info({:EXIT, _other, _reason}, state) do
+    {:noreply, state}
   end
 
   @impl true
-  def terminate(_reason, %{port: port}) when not is_nil(port) do
-    Port.close(port)
-  catch
-    _, _ -> :ok
+  def terminate(_reason, %{exec_pid: exec_pid, agent_uri: agent_uri} = _state)
+      when not is_nil(exec_pid) do
+    OsProcess.stop(exec_pid)
+    OsProcess.cleanup_pid_file("codex-bridge", agent_uri)
   end
 
   def terminate(_reason, _state), do: :ok
 
-  defp start_port(agent_uri, args) do
+  defp start_os_process(agent_uri, args) do
     with {:ok, {runner, runner_args}} <- bridge_runner(args),
          {:ok, token} <- Ezagent.AgentBridge.TokenStore.mint(agent_uri),
          {:ok, script} <- bridge_script_path() do
       env = port_env(agent_uri, args, token)
 
-      port =
-        Port.open({:spawn_executable, runner}, [
-          :binary,
-          :exit_status,
-          :stderr_to_stdout,
-          {:args, runner_args ++ [script]},
-          {:cd, Map.fetch!(args, :cwd)},
-          {:env, env}
-        ])
+      case OsProcess.spawn(
+             [runner | runner_args ++ [script]],
+             cd: Map.fetch!(args, :cwd),
+             env: env,
+             stderr: :merge,
+             pid_file: {"codex-bridge", agent_uri}
+           ) do
+        {:ok, %{exec_pid: exec_pid, os_pid: os_pid}} ->
+          {:ok, exec_pid, os_pid}
 
-      {:ok, port}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 

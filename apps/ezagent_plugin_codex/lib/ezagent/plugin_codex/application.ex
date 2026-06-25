@@ -65,9 +65,35 @@ defmodule EzagentPluginCodex.Application do
     ]
   end
 
+  # Codex sidecar orphan reaping (erlexec sidecar runtime, 2026-06-25).
+  # In :test env we SKIP the reap by default: codex sidecars don't spawn in
+  # :test (test_mode short-circuit), so no pid-files accumulate; more
+  # importantly, reaping in :test would indiscriminately kill any codex/uv
+  # OS processes from prior e2e runs that the next test wants to inspect.
+  # Flippable via `config :ezagent_plugin_codex, :reap_orphans_on_boot, true`.
+  #
+  # `Mix.env()` resolved at compile time (baked in; same pattern as
+  # EzagentPluginCc.Application).
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
   @impl Ezagent.Plugin
   def after_boot do
+    _ = maybe_reap_codex_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
     :ok
+  end
+
+  defp maybe_reap_codex_orphans do
+    enabled? =
+      Application.get_env(:ezagent_plugin_codex, :reap_orphans_on_boot, @default_reap_enabled?)
+
+    if enabled? do
+      _ = Ezagent.Runtime.OrphanReaper.reap("codex-appserver")
+      _ = Ezagent.Runtime.OrphanReaper.reap("codex-bridge")
+      :ok
+    else
+      :ok
+    end
   end
 end

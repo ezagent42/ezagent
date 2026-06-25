@@ -261,7 +261,13 @@
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
   kind_runtime_reentry_violations: 0,
+  no_flavor_refs_in_core: 0,
   cold_restart_respawn_round_trip_drift: 0,
+  # Subtask B (2026-06-25) — raw `Port.open({:spawn_executable, …})` is forbidden;
+  # the sanctioned OS-process spawn exit is `Ezagent.Runtime.OsProcess` (erlexec
+  # group-kill subtree reaping). All 4 sidecars (cc SdkSidecar, codex AppServer +
+  # BridgeSidecar, feishu WsClient) are migrated → hard zero, no allowlist.
+  raw_port_spawn_executable: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT
