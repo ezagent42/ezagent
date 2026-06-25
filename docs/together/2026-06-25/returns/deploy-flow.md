@@ -64,9 +64,12 @@ TS_IP=$(docker exec ezagent-infra-tailscale-1 tailscale ip -4 | head -1)        
 ```
 runbook §3 有完整步骤。
 
-> **替代方案(若偏好不跑容器化 ingress)**:既然本机已有 host caddy 占 `:443`,可直接在
-> `~/.config/caddy/Caddyfile` 加 `nightly/beta.ezagent.chat` 两个 vhost(DNS-01 + reverse_proxy 到
-> `127.0.0.1:10041/10042`),DNS A 指 host `100.64.0.27`。这样不需要 sidecar/preauth key。**待 Allen 定方向。**
+> **替代方案 B 已评估为 invasive(不推荐)**:本机 host caddy(`~/.config/caddy/Caddyfile`)用 **alidns**
+> 服务 `*.inside.h2os.cloud`(zchat/hackforger/saneledger 等内网应用),**不含 cloudflare DNS 模块**。
+> 要在它上面服务 `nightly/beta.ezagent.chat` 需:① 重建该 caddy 二进制加 CF 模块(动用户服务),或
+> ② 改用 `*.inside.h2os.cloud`(偏离 goal 的 `.ezagent.chat` 域名)。两者都不干净。
+> → **A(干净 preauth key → sidecar)是正解**:容器化 caddy 已带 CF 模块,在 sidecar 自己的 100.x:443 上
+> 服务正确域名,不碰 host :443、不动用户 caddy。**唯一待办 = 干净 key。**
 
 ## Gate status
 
