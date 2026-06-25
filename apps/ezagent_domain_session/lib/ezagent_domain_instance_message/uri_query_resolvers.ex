@@ -177,26 +177,59 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   def resolve_flavor(_), do: :none
 
   @doc false
-  # RF-6: resolve whether `agent_uri` is a PASSIVE (non-principal) data actor.
-  # Source of truth is the per-instance `Ezagent.AgentPassiveAttributes` launch
-  # table (parallel to the `:flavor` attribute) — never parsed from the URI. An
-  # absent attribute is `false` (principal actor), so an unmarked agent keeps its
-  # normal chat-principal semantics. Always `{:ok, boolean}` (never `:none`): the
-  # gates need a definite principal/passive verdict, and "unknown ⇒ principal" is
-  # the safe-by-default for legitimate agents.
+  # RF-6/RF-5a: resolve whether `agent_uri` is a PASSIVE (non-principal) data
+  # actor — never parsed from the URI. Always `{:ok, boolean}` (never `:none`):
+  # the routing/`:join`/mention gates need a definite principal/passive verdict,
+  # and "unknown ⇒ principal" (false) is the safe-by-default for legitimate
+  # agents.
   #
-  # ⚠️ NOT restart-safe yet: unlike `resolve_flavor/1` (ETS → kind-slice →
-  # durable snapshot), this reads ONLY the volatile ETS launch table — no
-  # kind-slice/snapshot fallback. RF-5a (recipe → create-step population) owns
-  # adding the durable layers so a passive actor stays passive across a cold
-  # restart; until then a restart fails OPEN to principal. See
-  # `Ezagent.AgentPassiveAttributes`'s moduledoc.
+  # RESTART-SAFE LAYERING (RF-5a — the RF-6 fail-open fix): ETS fast path →
+  # durable SNAPSHOT. Two layers, NOT three:
+  #
+  #   1. `AgentPassiveAttributes.fetch/1` — the volatile ETS fast path. A stored
+  #      entry (`{:ok, bool}`) is authoritative. ONLY an ABSENT entry (`:none`)
+  #      falls through — a bare `passive?/1 == false` would shadow the durable
+  #      layer and reintroduce the cold-restart fail-open RF-6 flagged. The
+  #      create step primes this at spawn, so the steady-state path never touches
+  #      the snapshot.
+  #   2. durable SNAPSHOT `:sandbox` slice `:passive` — after a cold restart the
+  #      ETS table is empty, so the passive verdict is recovered from the
+  #      persisted snapshot. THIS keeps a passive data-actor from reverting to a
+  #      chat principal across a restart.
+  #
+  # NO live `Kind.get_slice` layer (unlike `resolve_flavor`): `:passive` is
+  # IMMUTABLE after create (set once from the recipe), so the snapshot is always
+  # current — a live slice read would add nothing. Critically, `resolve_passive`
+  # runs on the SESSION `:join` / mention / routing hot path (gating a member
+  # being added), where a synchronous cross-Kind `get_slice` to the joining
+  # member could deadlock or stall; the snapshot read is a pure DB lookup that
+  # never re-enters a Kind. A missing snapshot or non-boolean field → `false`
+  # (principal — fail-closed-to-principal, the regression guarantee).
   @spec resolve_passive(term()) :: Ezagent.UriQuery.result()
   def resolve_passive(%URI{} = agent_uri) do
-    {:ok, Ezagent.AgentPassiveAttributes.passive?(agent_uri)}
+    case Ezagent.AgentPassiveAttributes.fetch(agent_uri) do
+      {:ok, passive?} -> {:ok, passive?}
+      :none -> {:ok, passive_from_snapshot(agent_uri)}
+    end
   end
 
   def resolve_passive(_), do: {:ok, false}
+
+  # Durable passive verdict from the persisted `:sandbox` snapshot slice. Any
+  # miss / non-boolean → `false` (principal). No live-Kind read (see the
+  # resolver's comment for why the join hot path forbids it).
+  defp passive_from_snapshot(%URI{} = agent_uri) do
+    case snapshot_slice(agent_uri, :sandbox) do
+      {:ok, sandbox} ->
+        case Map.get(sandbox, :passive) do
+          v when is_boolean(v) -> v
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
 
   defp resolve_flavor_from_kind(%URI{} = agent_uri) do
     with {:ok, sandbox} <- kind_slice(agent_uri, :sandbox) do

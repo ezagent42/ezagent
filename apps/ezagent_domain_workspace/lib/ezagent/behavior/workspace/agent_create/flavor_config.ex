@@ -1,7 +1,9 @@
 defmodule Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig do
   @moduledoc false
 
-  @create_arg_keys ~w(flavor name cwd with_pty from flavor_config)
+  # RF-5a — `role` is a create-control key (the role NAME), not flavor config;
+  # exclude it from the flavor-config-key validation like flavor/name/cwd/….
+  @create_arg_keys ~w(flavor name cwd with_pty from flavor_config role)
 
   @doc false
   def coerce(flavor, args) when is_binary(flavor) and is_map(args) do

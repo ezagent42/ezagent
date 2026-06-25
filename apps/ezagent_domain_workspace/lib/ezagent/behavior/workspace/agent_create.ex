@@ -13,6 +13,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   `grant_agent_creator_manage_cap/3` / `resolve_source_config_dir/2`).
   """
 
+  alias Ezagent.Behavior.Workspace.AgentCreate.RoleStep
+
   # ===================================================================
   # Entry point — the `:create_agent` handler body (delegated to from the
   # Behavior's `handle_create_agent/2` engine callback). Body byte-identical
@@ -22,13 +24,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     raw_workspace_uri = Map.get(ctx, :self_uri)
     session_templates = ctx[:read].(:session_templates, %{})
 
-    with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
+    with {:ok, flavor, name, cwd, with_pty?, from_uri, role} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
          {:ok, flavor_config} <-
            Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig.coerce(flavor, args),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
          :ok <- validate_from_for_flavor(flavor, from_uri),
+         :ok <- validate_role_for_flavor(flavor, role),
          {:ok, workspace_uri} <- require_workspace_uri(raw_workspace_uri),
          workspace_name = workspace_uri.host,
          {:ok, agent_uri} <- compose_agent_uri(flavor, name, workspace_name),
@@ -37,6 +40,12 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       do_create_agent(flavor, agent_uri, session_templates, %{
         cwd: cwd,
         with_pty?: with_pty?,
+        # RF-5a — the OPTIONAL role NAME. Present → the direct-spawn path
+        # resolves its recipe (RoleRegistry) + composes it with the flavor
+        # (Role.Compose) into the spawn `:behaviors` + minted caps + the
+        # durable `passive` marker. Absent (nil) → every existing create path
+        # is byte-identical (the strict no-op gate).
+        role: role,
         workspace_name: workspace_name,
         workspace_uri: workspace_uri,
         source_config_dir: source_config_dir,
@@ -70,6 +79,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     cwd = Map.get(args, :cwd, "")
     with_pty = Map.get(args, :with_pty, false)
     from = Map.get(args, :from)
+    role = Map.get(args, :role)
 
     cond do
       not is_binary(flavor) ->
@@ -87,10 +97,18 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       not valid_from?(from) ->
         {:error, {:bad_from, from}}
 
+      not valid_role?(role) ->
+        {:error, {:bad_role, role}}
+
       true ->
-        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from}
+        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from,
+         coerce_role(role)}
     end
   end
+
+  # `role` arg coercion/validation (RF-5a) lives in `RoleStep`.
+  defp valid_role?(role), do: RoleStep.valid_role_arg?(role)
+  defp coerce_role(role), do: RoleStep.coerce_role_arg(role)
 
   defp valid_from?(nil), do: true
 
@@ -187,6 +205,10 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
   defp validate_from_for_flavor(other_flavor, %URI{}),
     do: {:error, {:from_unsupported_for_flavor, other_flavor}}
+
+  # RF-5a is the DIRECT-SPAWN role path only; a role on a file-flavor (cc/codex/
+  # echo/…) FAILS LOUD (RF-5b deferred). Delegated to `RoleStep`.
+  defp validate_role_for_flavor(flavor, role), do: RoleStep.validate_for_flavor(flavor, role)
 
   # Resolve the source agent's per-agent config_dir by dispatching
   # `sandbox.read` on the source URI WITH THE CALLER'S CAPS. This:
@@ -433,63 +455,100 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     )
   end
 
-  # Any other flavor (curl / np / future) — direct Kind spawn via the
+  # Any other flavor (native / curl / np / future) — direct Kind spawn via the
   # stored flavor declaration. URI names are opaque; do not recover the
   # flavor from the agent URI.
+  #
+  # RF-5a — the GENERIC role step (`RoleStep`) runs on this direct-spawn route.
+  # A requested `role` materializes (recipe × flavor) into the spawn `:behaviors`
+  # override + the durable `:passive` marker, then mints + grants the recipe's
+  # caps fail-closed. ONE generic step; absent role → `materialized = nil` →
+  # byte-identical to the pre-RF-5a curl/np path.
   defp do_create_agent(other_flavor, agent_uri, _session_templates, params) do
-    case direct_spawn_flavor_agent(other_flavor, agent_uri, Map.get(params, :flavor_config, %{})) do
-      {:ok, _pid} ->
-        record_creator_lineage(agent_uri, params)
+    with {:ok, materialized} <- RoleStep.resolve(Map.get(params, :role), other_flavor) do
+      case direct_spawn_flavor_agent(
+             other_flavor,
+             agent_uri,
+             Map.get(params, :flavor_config, %{}),
+             materialized
+           ) do
+        {:ok, _pid} ->
+          record_creator_lineage(agent_uri, params)
 
-        with :ok <-
-               grant_agent_creator_manage_cap(agent_uri, Map.get(params, :workspace_uri), params) do
-          # No slice mutation (no template registered for curl/np).
+          with :ok <- RoleStep.grant_passive_marker(agent_uri, materialized),
+               :ok <- RoleStep.mint_and_grant_caps(agent_uri, other_flavor, materialized, params),
+               :ok <-
+                 grant_agent_creator_manage_cap(
+                   agent_uri,
+                   Map.get(params, :workspace_uri),
+                   params
+                 ) do
+            # No slice mutation (no template registered for native/curl/np).
+            {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
+          end
+
+        {:error, {:already_started, _pid}} ->
+          # Idempotent re-create — do NOT re-record lineage.
           {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
-        end
 
-      {:error, {:already_started, _pid}} ->
-        # Idempotent re-create — do NOT re-record lineage.
-        {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
-
-      {:error, reason} ->
-        {:error, {:spawn_failed, reason}}
+        {:error, reason} ->
+          {:error, {:spawn_failed, reason}}
+      end
     end
   end
 
-  # PR-6+7 (curl-as-flavor, codex round-3 P1-1 fix) — the direct-create path
-  # for a flavor with NO workspace Template (curl / np / future). It now threads
-  # the flavor's OPTIONAL per-instance behavior SET (`:instance_behaviors`) as
-  # `:behaviors` in the spawn args. This is LOAD-BEARING for curl: curl's `kind`
-  # is the SHARED `Entity.Agent`, whose nil-`:kind_base` default set EXCLUDES
-  # `Behavior.CurlAgent`. Without threading `curl_behaviors/0` here, a
-  # `Workspace.create_agent/3` curl agent captured the BASE (non-curl) set — no
-  # `:curl_agent` slice, no `reset_conversation`/`configure`/`sync_result`, no
-  # `flavor: "curl"` slice field (that field is written by `Behavior.CurlAgent.create/1`,
-  # which only runs when the behavior is in the effective set) — i.e. a broken
-  # curl agent. A flavor with its own dedicated Kind (np) declares no thunk →
-  # `:behaviors` is omitted → the Kind's full declared set applies (unchanged).
-  defp direct_spawn_flavor_agent(flavor, agent_uri, flavor_config)
+  # PR-6+7 (curl-as-flavor, codex round-3 P1-1 fix) — the direct-create path for
+  # a flavor with NO workspace Template (native / curl / np / future). Threads
+  # the flavor's OPTIONAL per-instance behavior SET as `:behaviors` (LOAD-BEARING
+  # for curl: its shared `Entity.Agent` Kind excludes `Behavior.CurlAgent` from
+  # the nil-`:kind_base` default; without `curl_behaviors/0` the agent is broken).
+  # RF-5a `materialized` (a requested role) OVERRIDES that thunk — see
+  # `spawn_args_for_flavor/5`.
+  defp direct_spawn_flavor_agent(flavor, agent_uri, flavor_config, materialized)
        when is_binary(flavor) and is_map(flavor_config) do
     with {:ok, decl} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
          :ok <- validate_direct_spawn_flavor_config(flavor, decl, agent_uri, flavor_config),
          :ok <- Ezagent.AgentFlavorAttributes.put(agent_uri, flavor) do
-      Ezagent.Kind.spawn(decl.kind, spawn_args_for_flavor(flavor, decl, agent_uri, flavor_config))
+      Ezagent.Kind.spawn(
+        decl.kind,
+        spawn_args_for_flavor(flavor, decl, agent_uri, flavor_config, materialized)
+      )
     end
   end
 
-  # Thread `:behaviors` ONLY when the flavor declares a per-instance set
-  # (curl). Omitting the key for other flavors preserves the legacy-sentinel
-  # rule (`init_set/2`: absent `:behaviors` → the Kind's full declared set).
-  defp spawn_args_for_flavor(flavor, decl, %URI{} = agent_uri, flavor_config) do
+  # Build the direct-spawn args. `:behaviors` precedence (RF-5a HIGH-1):
+  #   1. a MATERIALIZED ROLE → the composed `role ++ flavor` behaviors OVERRIDE
+  #      the thunk-sourced value (`RoleStep.resolve/2` already folded the flavor
+  #      base in, so the role's behaviors AND the base both reach `:kind_base`).
+  #   2. no role, flavor declares a thunk (curl) → the thunk's set (unchanged).
+  #   3. no role, no thunk → omit `:behaviors` → the Kind's nil-capture default.
+  # A materialized PASSIVE role also threads `:passive` so `Sandbox.create/1`
+  # records it in the DURABLE `:sandbox` slice (the cold-restart source of truth
+  # for the `:passive` resolver).
+  defp spawn_args_for_flavor(flavor, decl, %URI{} = agent_uri, flavor_config, materialized) do
     base =
       %{uri: agent_uri}
       |> Map.merge(direct_spawn_config_args(flavor, flavor_config))
 
+    base
+    |> put_role_behaviors(decl, materialized)
+    |> put_role_passive(materialized)
+  end
+
+  defp put_role_behaviors(base, _decl, %{behaviors: behaviors}) when is_list(behaviors),
+    do: Map.put(base, :behaviors, behaviors)
+
+  defp put_role_behaviors(base, decl, _materialized) do
     case Map.get(decl, :instance_behaviors) do
       thunk when is_function(thunk, 0) -> Map.put(base, :behaviors, thunk.())
       _ -> base
     end
   end
+
+  defp put_role_passive(base, %{passive: passive}) when is_boolean(passive),
+    do: Map.put(base, :passive, passive)
+
+  defp put_role_passive(base, _materialized), do: base
 
   defp validate_direct_spawn_flavor_config(_flavor, _decl, _agent_uri, config)
        when config == %{},

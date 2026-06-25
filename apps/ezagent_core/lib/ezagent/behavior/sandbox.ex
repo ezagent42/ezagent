@@ -36,11 +36,18 @@ defmodule Ezagent.Behavior.Sandbox do
                                                    # on cold-load — without re-walking
                                                    # Workspace.Store (which would couple core
                                                    # to ezagent_domain_workspace).
-        pty_phase:             nil | :starting | :running | :dead
+        pty_phase:             nil | :starting | :running | :dead,
                                                    # mirror of the PtyServer's `phase`;
                                                    # snapshot-persisted so the LV badge shows
                                                    # the last-known phase across a phx restart
                                                    # until activate/2 re-spawns the subprocess.
+        passive:               boolean()           # RF-5a/RF-6: DURABLE non-principal
+                                                   # (data-actor) marker. The role create step
+                                                   # writes it from the materialized recipe's
+                                                   # `passive`; the `:passive` UriQuery resolver
+                                                   # reads it from this slice (snapshot-backed)
+                                                   # so a passive actor stays passive across a
+                                                   # cold restart (NOT fail-open to principal).
       }
 
   Every one of these is DURABLE: the cold-load `activate/2` reads
@@ -195,9 +202,21 @@ defmodule Ezagent.Behavior.Sandbox do
        # PTY-phase mirror — nil at fresh spawn; transitions to
        # :starting | :running | :dead as PtyServer broadcasts arrive.
        # `validate_phase/1` rejects corrupt rehydrated values.
-       pty_phase: validate_phase(Map.get(args, :pty_phase))
+       pty_phase: validate_phase(Map.get(args, :pty_phase)),
+       # RF-5a/RF-6 DURABLE passive (non-principal) marker. The role create
+       # step threads `:passive` into the spawn args from the materialized
+       # recipe; an absent value (every non-role agent) is `false` (principal).
+       # A snapshot rehydrate shadows this on cold-load, so it survives a
+       # restart — the `:passive` UriQuery resolver reads it from this slice.
+       passive: validate_passive(Map.get(args, :passive))
      }}
   end
+
+  # `passive` comes from spawn args (role create step) or a rehydrated snapshot
+  # value; anything that is not a boolean (nil/missing/corrupt) is the
+  # principal-actor default `false` — never a surprising truth value.
+  defp validate_passive(p) when is_boolean(p), do: p
+  defp validate_passive(_), do: false
 
   # `create/1`'s `args` may be a rehydrated snapshot value; reject corrupt
   # values (anything that isn't nil-or-one-of-the-three-atoms) by resetting

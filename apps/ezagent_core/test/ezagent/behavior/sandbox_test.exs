@@ -64,7 +64,9 @@ defmodule Ezagent.Behavior.SandboxTest do
                    template_class: nil,
                    respawn_template_data: nil,
                    # PTY-phase-state-machine 2026-05-26 follow-up (b)
-                   pty_phase: nil
+                   pty_phase: nil,
+                   # RF-5a/RF-6 durable passive marker — false (principal) default.
+                   passive: false
                  },
                  transients: %{}
                }
@@ -83,7 +85,8 @@ defmodule Ezagent.Behavior.SandboxTest do
                    config_dir_path: "/tmp/agent-x",
                    template_class: SomeMod,
                    respawn_template_data: %{"cwd" => "/tmp/agent-x"},
-                   pty_phase: nil
+                   pty_phase: nil,
+                   passive: false
                  },
                  transients: %{}
                }
@@ -101,7 +104,8 @@ defmodule Ezagent.Behavior.SandboxTest do
                    config_dir_path: "/tmp/agent-x",
                    template_class: SomeMod,
                    respawn_template_data: nil,
-                   pty_phase: nil
+                   pty_phase: nil,
+                   passive: false
                  },
                  transients: %{}
                }
