@@ -74,3 +74,6 @@ bin/dev-pg
 # Local helper script and JS dependencies.
 claude.sh
 node_modules/
+
+# deploy flow logical backups (operator-local)
+backups/
