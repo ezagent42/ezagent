@@ -116,7 +116,7 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("config_fields", config_fields_for(agent_uri, flavor, sandbox, caller, caps))
     |> Map.put("not_wired", not_wired_annotations())
     # M2-mock: config schema (A4 落地后改为 tc.config_schema())
-    |> Map.put("config_schema", mock_config_schema(flavor))
+    |> Map.put("config_schema", config_schema_for(flavor))
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -124,7 +124,7 @@ defmodule Ezagent.World.IdentityData do
     default_flavor = if "cc" in flavors, do: "cc", else: List.first(flavors) || "cc"
 
     # M4: per-flavor config schemas for dynamic create form fields
-    schemas = Map.new(flavors, &{&1, mock_config_schema(&1)})
+    schemas = Map.new(flavors, &{&1, config_schema_for(&1)})
 
     base
     |> Map.put("flavors", flavors)
@@ -194,7 +194,7 @@ defmodule Ezagent.World.IdentityData do
         base
         |> Map.put("agent_uri", encode_uri(agent_uri))
         |> Map.put("cascade", jsonable(cascade))
-        |> Map.put("config_schema", mock_config_schema(flavor))
+        |> Map.put("config_schema", config_schema_for(flavor))
 
       {:error, :unauthorized} ->
         Map.put(base, "config_error", "没有查看权限（需要 manage 权限）")
@@ -575,42 +575,43 @@ defmodule Ezagent.World.IdentityData do
 
   defp sandbox_source_template(_sandbox), do: nil
 
-  # ── M2-mock: per-flavor config schema (A4 落地前使用，A4 后删除) ──────
+  # ── M2: per-flavor config schema (A4 real config_schema/0) ────────────
 
-  # M2-mock schema following allenwoods' finalized config_field contract.
-  # A4 drops: replaced by AgentFlavorRegistry.lookup(flavor).template_class.config_schema()
-  defp mock_config_schema("cc"), do: mock_config_schema("cc-headless")
-  defp mock_config_schema("cc-headless") do
-    [
-      %{"key" => "model", "type" => "enum", "label" => "Model", "options" => ["deepseek-chat", "deepseek-v4-pro", "deepseek-v4-flash", "claude-sonnet-4-6", "claude-opus-4-8"], "default" => "deepseek-chat"},
-      %{"key" => "effort", "type" => "enum", "label" => "Effort Level", "options" => ["low", "medium", "high", "xhigh", "max"], "default" => "medium"},
-      %{"key" => "permission_mode", "type" => "enum", "label" => "Permission Mode", "options" => ["default", "acceptEdits", "plan", "bypass"], "default" => "default"},
-      %{"key" => "system_prompt", "type" => "text", "label" => "System Prompt"},
-      %{"key" => "allowed_tools", "type" => "list", "label" => "Allowed Tools", "options" => ["bash", "read", "write", "grep", "glob", "web_search", "web_fetch"]},
-      %{"key" => "disallowed_tools", "type" => "list", "label" => "Disallowed Tools"},
-      %{"key" => "mcp_servers", "type" => "json", "label" => "MCP Servers"},
-      %{"key" => "soul_md", "type" => "text", "label" => "Soul (CLAUDE.md)"},
-    ]
+  defp config_schema_for(flavor) when is_binary(flavor) and flavor != "" do
+    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+      {:ok, %{template_class: tc}} ->
+        if function_exported?(tc, :config_schema, 0) do
+          tc.config_schema() |> Enum.map(&schema_field_to_map/1)
+        else
+          []
+        end
+      :error -> []
+    end
+  rescue
+    _ -> []
   end
-  defp mock_config_schema("codex"), do: mock_config_schema("codex-remote")
-  defp mock_config_schema("codex-remote") do
-    [
-      %{"key" => "model", "type" => "enum", "label" => "Model", "options" => ["codex-default"], "default" => "codex-default"},
-      %{"key" => "approval_policy", "type" => "enum", "label" => "Approval Policy", "options" => ["never", "on-request", "always"], "default" => "never"},
-      %{"key" => "sandbox", "type" => "enum", "label" => "Sandbox", "options" => ["enabled", "disabled"], "default" => "enabled"},
-      %{"key" => "soul_md", "type" => "text", "label" => "Soul (CLAUDE.md)"},
-    ]
+
+  defp config_schema_for(_), do: []
+
+  defp schema_field_to_map(field) when is_map(field) do
+    %{}
+    |> put_schema_string("key", Map.get(field, :key))
+    |> put_schema_string("type", Map.get(field, :type) |> to_string())
+    |> put_schema_string("label", Map.get(field, :label))
+    |> put_schema_list("options", Map.get(field, :options))
+    |> put_schema_any("default", Map.get(field, :default))
   end
-  defp mock_config_schema("curl") do
-    [
-      %{"key" => "model", "type" => "enum", "label" => "Model", "options" => ["deepseek-chat", "deepseek-v4-pro"], "default" => "deepseek-chat"},
-      %{"key" => "provider", "type" => "enum", "label" => "Provider", "options" => ["deepseek", "openai", "anthropic"], "default" => "deepseek"},
-      %{"key" => "api_url", "type" => "string", "label" => "API URL", "default" => "https://api.deepseek.com/chat/completions"},
-      %{"key" => "system_prompt", "type" => "text", "label" => "System Prompt"},
-      %{"key" => "max_history", "type" => "integer", "label" => "Max History", "default" => "20"},
-    ]
-  end
-  defp mock_config_schema(_), do: []
+
+  defp put_schema_string(acc, _k, nil), do: acc
+  defp put_schema_string(acc, k, v) when is_binary(v), do: Map.put(acc, k, v)
+  defp put_schema_string(acc, k, v), do: Map.put(acc, k, to_string(v))
+
+  defp put_schema_list(acc, _k, nil), do: acc
+  defp put_schema_list(acc, k, v) when is_list(v), do: Map.put(acc, k, v)
+  defp put_schema_list(acc, _k, _), do: acc
+
+  defp put_schema_any(acc, _k, nil), do: acc
+  defp put_schema_any(acc, k, v), do: Map.put(acc, k, v)
 
   # ── M1: per-flavor config fields + not-wired annotations ─────────────────
 
@@ -651,8 +652,8 @@ defmodule Ezagent.World.IdentityData do
   defp read_soul_field(_agent_uri, _caller, caps) when caps == %{}, do: []
 
   defp read_soul_field(agent_uri, caller, caps) do
-    if Code.ensure_loaded?(Ezagent.AgentConfig) do
-      case Ezagent.AgentConfig.read_key(agent_uri, "advisor.behavior", caller, caps) do
+    if Code.ensure_loaded?(Ezagent.Agent.Config) do
+      case Ezagent.Agent.Config.read_key(agent_uri, "advisor.behavior", caller, caps) do
         {:ok, %{effective_body: %{"soul_md" => soul_md}}} when is_binary(soul_md) and soul_md != "" ->
           [%{"key" => "soul_md", "value" => soul_md, "source" => "cascade"}]
         _ -> []

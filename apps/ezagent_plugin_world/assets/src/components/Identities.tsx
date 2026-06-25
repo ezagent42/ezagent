@@ -467,10 +467,13 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
-    // M4: config_fields disabled pending backend ingest pathway (A4 follow-up)
-    // Once AgentCreate supports arbitrary extra fields, re-enable:
-    //   const filteredFields = ...; onCreateAgent?.({...form, config_fields: filteredFields})
-    onCreateAgent?.(form)
+    // M4: submit flavor-specific config fields via A7 ingest pathway
+    const cf = form.configFields || {}
+    const filteredFields: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(cf)) {
+      if (v != null && v !== "") filteredFields[k] = v
+    }
+    onCreateAgent?.({...form, config_fields: filteredFields})
   }
 
   return (
@@ -503,18 +506,13 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/srv/acme/storefront" />
         </label>
 
-        {/* M4: Flavor-specific config fields from schema (disabled — pending backend ingest pathway) */}
+        {/* M4: Flavor-specific config fields from schema (A4/A7 enabled) */}
         {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
           <div className="sm:col-span-2 border-t border-border pt-3">
-            <div className="flex items-center gap-2 mb-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {form.flavor} configuration
-              </p>
-              <span className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-                待后端 ingest 通路
-              </span>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 opacity-50 pointer-events-none">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
+              {form.flavor} configuration
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
               {flavorSchema.filter(f => f.key !== "soul_md").map((f) => (
                 <label className={fieldLabel} key={f.key}>
                   <span className="font-mono text-xs">
@@ -522,31 +520,34 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                     {f.help && <span className="text-[10px] text-muted-foreground ml-1">({f.help})</span>}
                   </span>
                   {f.type === "enum" && f.options ? (
-                    <Select value="" disabled>
+                    <Select
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
+                    >
                       <option value="">{f.default ? `默认: ${f.default}` : "—"}</option>
+                      {f.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
                     </Select>
                   ) : f.type === "text" ? (
                     <textarea
-                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-muted-foreground"
+                      className="w-full rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                       rows={2}
-                      value=""
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
                       placeholder={String(f.default || "")}
-                      disabled
                     />
                   ) : (
                     <Input
-                      value=""
+                      value={form.configFields[f.key] || ""}
+                      onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
                       className="font-mono text-xs"
                       placeholder={String(f.default || "")}
-                      disabled
                     />
                   )}
                 </label>
               ))}
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1">
-              这些字段将在 create_agent ingest 通路完成后启用。当前仅作预览。
-            </p>
           </div>
         )}
 
