@@ -50,6 +50,12 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 # Local env vars (DEEPSEEK_KEY etc.) — operator-local, never commit.
 .env
 
+# deploy flow per-channel secrets (nightly/beta/stable + infra) — never commit.
+docker/.env
+docker/.env.*
+!docker/.env.channel.example
+docker/secrets-*/
+
 # Python bytecode cache
 __pycache__/
 *.pyc

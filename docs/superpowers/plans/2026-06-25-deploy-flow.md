@@ -49,7 +49,7 @@
 | `docs/guide/deploy-mac-stack.md` | 升级为三环境 runbook(含所有 operator 步骤) | Modify |
 | `docker/docker-compose.prod.yml` | 删除(被参数化版取代) | Delete(末尾) |
 
-> 验证方式说明:本计划是 infra-as-code,"测试"= 验证命令(`docker compose config`、`bash -n`、`docker compose up`+健康检查、`curl`)。每个任务的 TDD 节奏 = 先写/跑验证命令确认"制品缺失即失败"→ 造制品 → 验证命令通过 → commit。
+> 验证方式说明:本计划是 infra-as-code,"测试"= 验证命令(`docker-compose config`、`bash -n`、`docker-compose up`+健康检查、`curl`)。每个任务的 TDD 节奏 = 先写/跑验证命令确认"制品缺失即失败"→ 造制品 → 验证命令通过 → commit。
 
 ---
 
@@ -77,8 +77,8 @@ Expected: 打印 `MISSING`
 ```yaml
 # docker/docker-compose.yml — 参数化单通道 stack(nightly/beta/stable 共用)
 # 用法(channel 只用本文件,infra 独立起 —— codex 致命#1,绝不 -f 合并 infra):
-#   docker compose --env-file docker/.env.<channel> -f docker/docker-compose.yml up -d   (见 docker/deploy.sh)
-# infra 单独: docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
+#   docker-compose --env-file docker/.env.<channel> -f docker/docker-compose.yml up -d   (见 docker/deploy.sh)
+# infra 单独: docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
 name: ezagent-${CHANNEL:?set CHANNEL in .env.<channel>}
 
 services:
@@ -163,7 +163,7 @@ networks:
 
 - [ ] **Step 3: 语法校验(此时 infra/env 未就绪,预期报缺 external 网或 env)**
 
-Run: `CHANNEL=nightly EZAGENT_IMAGE=x PUBLIC_HOST=x HOST_ADMIN_PORT=10041 POSTGRES_PASSWORD=x SECRETS_DIR=./secrets-nightly docker compose -f docker/docker-compose.yml config -q; echo $?`
+Run: `CHANNEL=nightly EZAGENT_IMAGE=x PUBLIC_HOST=x HOST_ADMIN_PORT=10041 POSTGRES_PASSWORD=x SECRETS_DIR=./secrets-nightly docker-compose -f docker/docker-compose.yml config -q; echo $?`
 Expected: 报 `network ezagent_edge declared as external, but could not be found`(说明 YAML 本身合法,仅缺 external 网)→ 该错误在 Task 3 后消失。
 
 - [ ] **Step 4: Commit**
@@ -333,7 +333,7 @@ networks:
 
 - [ ] **Step 3: 校验 infra 语法**
 
-Run: `JMS_SUBSCRIPTION_URL=x CF_API_TOKEN=x TS_AUTHKEY=x docker compose -f docker/docker-compose.infra.yml config -q && echo OK`
+Run: `JMS_SUBSCRIPTION_URL=x CF_API_TOKEN=x TS_AUTHKEY=x docker-compose -f docker/docker-compose.infra.yml config -q && echo OK`
 Expected: `OK`
 
 > infra 的 secrets 放 gitignored `docker/.env.infra`(`JMS_SUBSCRIPTION_URL` / `CF_API_TOKEN` / `TS_AUTHKEY`);
@@ -415,7 +415,7 @@ Expected: `true` → token 可读 DNS。若 Caddy DNS-01 失败(需 edit),operat
 - [ ] **Step 2: 起 infra,确认 ts 加入 Headscale 并拿到 100.x(取代 host-bind 验证)**
 
 ```bash
-docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d --build
+docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d --build
 # ts 进 kernel 模式 + 拿到 tailnet IP(这是新的 de-risk 点:验证 OrbStack VM 内 /dev/net/tun 可用)
 docker exec ezagent-infra-tailscale-1 tailscale ip -4
 docker exec ezagent-infra-tailscale-1 tailscale status | head -3
@@ -436,7 +436,7 @@ Expected: `success:true`,name `nightly.ezagent.chat`,content = `$TS_IP`。(`prox
 - [ ] **Step 4: 起 nightly stack(只用 channel compose,不混 infra 文件 —— codex 致命#1)**
 
 ```bash
-docker compose --env-file docker/.env.nightly -f docker/docker-compose.yml up -d --build
+docker-compose --env-file docker/.env.nightly -f docker/docker-compose.yml up -d --build
 ```
 > 注:infra(Step 2)已独立起;channel 经 external `ezagent_edge` 连。首次 `--build` 编译 ezagent 镜像
 > (GFW fetch 走 `DOCKER_BUILD_PROXY=host.docker.internal:7897`,**前置:host clash 在 7897/7896 在跑**);
@@ -456,7 +456,7 @@ Expected: `getent` 解析出 edge 网内 IP;`UPSTREAM_OK`。**若解析失败** 
 - [ ] **Step 5: 验证健康 + tailnet 可达 + 公网不可达**
 
 ```bash
-docker compose --env-file docker/.env.nightly -f docker/docker-compose.yml ps   # ezagent + postgres healthy
+docker-compose --env-file docker/.env.nightly -f docker/docker-compose.yml ps   # ezagent + postgres healthy
 # Caddy 在 ts netns 内,经 tailnet IP 服务;从另一台 tailnet 机器验证:
 #   curl -sI https://nightly.ezagent.chat/  → 200/302(DNS-01 证书有效)
 # 从 tailnet 外: 解析到 $TS_IP(CGNAT)但连不通(预期 → 证明仅 tailnet 可达)
@@ -498,12 +498,12 @@ case "$CHANNEL" in nightly|beta|stable) : ;; *) echo "unknown channel $CHANNEL";
 ENVFILE="docker/.env.${CHANNEL}"
 
 # channel compose:project 名来自 compose 里的 name: ezagent-${CHANNEL};stable 加 cloudflared profile
-CH=(docker compose --env-file "$ENVFILE" -f docker/docker-compose.yml)
+CH=(docker-compose --env-file "$ENVFILE" -f docker/docker-compose.yml)
 [ "$CHANNEL" = stable ] && CH+=(--profile stable)
 CTR="ezagent-${CHANNEL}-ezagent-1"   # compose 容器名(project=ezagent-<channel>, service=ezagent)
 
 # 确保共享 infra(tailscale+mihomo+caddy)在跑 —— 独立 project + 独立 env(codex#1/#2)
-docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
+docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
 
 # 部署 SHA = 当前 checkout HEAD(checkout@v4 已把对应 ref 放 HEAD;不用 origin/<ref>,advisor)
 SHA=$(git rev-parse --short HEAD)
@@ -753,7 +753,7 @@ for c in beta stable; do cp docker/.env.channel.example docker/.env.$c; mkdir -p
 
 - [ ] **Step 4: 校验 stable profile 合法**
 
-Run: `docker compose --env-file docker/.env.stable -f docker/docker-compose.yml --profile stable config -q && echo OK`
+Run: `docker-compose --env-file docker/.env.stable -f docker/docker-compose.yml --profile stable config -q && echo OK`
 Expected: `OK`(cloudflared 出现在渲染结果)。
 
 - [ ] **Step 5: 端到端晋级实测(nightly→beta→stable,验证 build-once)**
@@ -801,7 +801,7 @@ git commit -m "feat(deploy): beta + stable stacks (cloudflared profile for stabl
 set -euo pipefail
 CHANNEL="${1:?usage: backup.sh <channel>}"; cd "$(dirname "$0")/.."
 set -a; . "docker/.env.${CHANNEL}"; set +a
-CH=(docker compose --env-file "docker/.env.${CHANNEL}" -f docker/docker-compose.yml)
+CH=(docker-compose --env-file "docker/.env.${CHANNEL}" -f docker/docker-compose.yml)
 TS=$(date -u +%Y%m%dT%H%M%SZ); OUT="backups/${CHANNEL}/${TS}"; mkdir -p "$OUT"
 
 # 实际容器名/卷名由 compose 解析,不靠字符串猜(codex#12)
@@ -927,10 +927,10 @@ git rm docker/docker-compose.prod.yml docker/cloudflared/prod-config.yml
 
 Run(channel 与 infra 分开校验 —— 不合并,codex 致命#1):
 ```bash
-JMS_SUBSCRIPTION_URL=x CF_API_TOKEN=x TS_AUTHKEY=x docker compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml config -q && echo "infra OK"
+JMS_SUBSCRIPTION_URL=x CF_API_TOKEN=x TS_AUTHKEY=x docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml config -q && echo "infra OK"
 for c in nightly beta stable; do
   P=""; [ "$c" = stable ] && P="--profile stable"
-  docker compose --env-file docker/.env.$c -f docker/docker-compose.yml $P config -q && echo "$c OK"
+  docker-compose --env-file docker/.env.$c -f docker/docker-compose.yml $P config -q && echo "$c OK"
 done
 ```
 Expected: `infra OK` / `nightly OK` / `beta OK` / `stable OK`。
