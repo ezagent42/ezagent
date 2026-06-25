@@ -46,6 +46,7 @@ defmodule EzagentDomainAgent.Application do
     :ok = CapabilityRegistry.register(Agent, :receive, AgentReceive)
     :ok = Ezagent.Agent.TransportReadiness.init()
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.Agent.TransportReadiness)
+    :ok = Ezagent.Kind.Template.FlavorHook.register(Ezagent.Agent.FlavorTemplateHook)
 
     result
   end
