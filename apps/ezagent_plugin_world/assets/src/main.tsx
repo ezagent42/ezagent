@@ -8,6 +8,7 @@ import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
+import {Kanban} from "./components/Kanban"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
@@ -604,6 +605,17 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     case "workspace_plugins":
       return (
         <WorkspacePluginSurface
+          key={component.id}
+          state={{...context.state, component: component.type}}
+          onAction={context.onWorkspacePluginAction}
+        />
+      )
+
+    case "kanban":
+      // kanban 操作面（kanban-as-role K4）：复用 onWorkspacePluginAction 透传 world:dispatch
+      // （kanban.* 动作经 WorldLive 的 @kanban_actions 子句路由到 KanbanActions）。
+      return (
+        <Kanban
           key={component.id}
           state={{...context.state, component: component.type}}
           onAction={context.onWorkspacePluginAction}

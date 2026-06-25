@@ -238,12 +238,11 @@ defmodule Ezagent.Behavior.Kanban do
     description: "保存全局 Miro 凭证（admin-gated）"
   )
 
-  # kanban-as-role：本 Behavior 现在是 **multi-Kind**——既挂在独立 `:kanban`
-  # 资源 Kind（`EzagentPluginKanban.Kanban`），也经 `kanban-manager` role 经 RF-1
-  # per-instance 挂在 `Entity.Agent`（kind `:agent`）。故 cap 的 kind 轴声明 `:any`：
-  # 运行时（`Kind.Runtime` §7 check 11b）按目标宿主 type_name 替换 needed-cap 的 kind
-  # （Kanban Kind→`:kanban`；Entity.Agent→`:agent`），两条路都授权。硬写 `:kanban`
-  # 会让 role×native 路（recipe 铸出的 held cap 是 `:agent`）必拒。
+  # kanban-as-role：本 Behavior 经 `kanban-manager` role 经 RF-1 per-instance 挂在
+  # 通用 `Entity.Agent`（kind `:agent`）宿主上（K5 删了独立 `:kanban` 资源 Kind）。cap
+  # 的 kind 轴声明 `:any`：运行时（`Kind.Runtime` §7 check 11b）按目标宿主 type_name
+  # 替换 needed-cap 的 kind（Entity.Agent→`:agent`）后授权。硬写 `:kanban` 会让
+  # role×native 路（recipe 铸出的 held cap 是 `:agent`）必拒。
   @doc false
   def required_caps do
     for a <- [

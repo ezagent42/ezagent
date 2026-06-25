@@ -7,18 +7,85 @@ defmodule EzagentPluginKanban.MiroLiveTest do
   验：① 复用同一块板（删旧建新，不新建板）；② ezagent 改名 → Miro 反映；
   ③ **布局**：节点位置不重叠。
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
   @moduletag :live_miro
 
   alias EzagentPluginKanban.Miro
   alias EzagentPluginKanban.Miro.Sync
+  alias Ezagent.Workspace
+  alias Ezagent.{AgentFlavorRegistry, RoleRegistry}
+  alias EzagentPluginKanban.Application, as: KanbanApp
+
+  # kanban-as-role：board = 一个 kanban-manager agent（K5 删了 resource Kanban Kind）。
+  @flavor "miro-live-native"
 
   setup do
     {:ok, creds} = Miro.read_creds()
     board = creds.board_id || "uXjVHDS77F0="
     # 起点清空，保证断言确定
     :ok = Miro.delete_all_nodes(creds.token, board)
-    %{board: board, token: creds.token}
+
+    # bootstrap the role × native machinery (mirror of K2/K3 setup) so the board
+    # = a kanban-manager agent. Inlined (not a `test/support/*.ex` helper) because
+    # `ezagent_plugin_check`'s registry-direct-call gate scans `elixirc_paths`
+    # `.ex` files; `.exs` test files are exempt.
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+
+    case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+      :ok -> :ok
+      {:error, {:already_registered, _attr}} -> :ok
+    end
+
+    ws_name = "miro-live-#{System.unique_integer([:positive])}"
+    {:ok, _ws_pid} = Workspace.create(ws_name, %{})
+    workspace_uri = URI.new!("workspace://#{ws_name}")
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: @flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: nil,
+        cap_policy: &cap_policy/1
+      })
+
+    :ok = RoleRegistry.register(KanbanApp.kanban_manager_recipe())
+
+    admin_ctx = %{
+      caller: Ezagent.Entity.User.admin_uri(),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    }
+
+    %{
+      board: board,
+      token: creds.token,
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    }
+  end
+
+  defp cap_policy(requested_caps) do
+    allowed =
+      requested_caps
+      |> Enum.map(fn c -> {Map.get(c, :behavior), Map.get(c, :action)} end)
+      |> MapSet.new()
+
+    fn needed ->
+      MapSet.member?(allowed, {Map.get(needed, :behavior), Map.get(needed, :action)})
+    end
+  end
+
+  # mint a fresh kanban-manager agent → its entity://agent URI is the board.
+  defp new_board(%{workspace_uri: ws, admin_ctx: ctx}) do
+    name = "kanban-mgr-#{System.unique_integer([:positive])}"
+
+    {:ok, %{agent_uri: agent_uri}} =
+      Workspace.create_agent(
+        ws,
+        %{flavor: @flavor, name: name, role: "kanban-manager", cwd: "", with_pty: false},
+        ctx
+      )
+
+    agent_uri
   end
 
   defp contents(nodes), do: Enum.map(nodes, &get_in(&1, ["data", "nodeView", "data", "content"]))
@@ -62,15 +129,9 @@ defmodule EzagentPluginKanban.MiroLiveTest do
     refute Enum.any?(c2, &(&1 == "<p>功能A</p>")), "旧名应已删: #{inspect(c2)}"
   end
 
-  test "入站非破坏性：人在 Miro 新加节点 → detect → dispatch 回 ezagent 树", %{board: board, token: token} do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
-    uri =
-      Ezagent.URI.resource("system", "kanban", "live-in-#{System.unique_integer([:positive])}")
-
-    {:ok, _} = Ezagent.Kind.Server.start_link({EzagentPluginKanban.Kanban, %{uri: uri}})
-    :ok = wait_ready(uri)
+  test "入站非破坏性：人在 Miro 新加节点 → detect → dispatch 回 ezagent 树",
+       %{board: board, token: token} = ctx do
+    uri = new_board(ctx)
 
     admin =
       {Ezagent.URI.new!("entity://system/user/admin"),
@@ -108,13 +169,9 @@ defmodule EzagentPluginKanban.MiroLiveTest do
     assert "人在Miro加的" in titles
   end
 
-  test "富格式出站：真节点(认领+状态+指标) → Miro label 含 ◑/[stage]/@owner/📊", %{board: board, token: token} do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
-    uri = Ezagent.URI.resource("system", "kanban", "rich-#{System.unique_integer([:positive])}")
-    {:ok, _} = Ezagent.Kind.Server.start_link({EzagentPluginKanban.Kanban, %{uri: uri}})
-    :ok = wait_ready(uri)
+  test "富格式出站：真节点(认领+状态+指标) → Miro label 含 ◑/[stage]/@owner/📊",
+       %{board: board, token: token} = ctx do
+    uri = new_board(ctx)
 
     admin =
       {Ezagent.URI.new!("entity://system/user/admin"),
@@ -146,12 +203,8 @@ defmodule EzagentPluginKanban.MiroLiveTest do
   end
 
   describe "MiroSync 双向轮询器 + 生命周期" do
-    setup do
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-      Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-      uri = Ezagent.URI.resource("system", "kanban", "poll-#{System.unique_integer([:positive])}")
-      {:ok, _} = Ezagent.Kind.Server.start_link({EzagentPluginKanban.Kanban, %{uri: uri}})
-      :ok = wait_ready(uri)
+    setup ctx do
+      uri = new_board(ctx)
 
       %{
         uri: uri,
@@ -240,16 +293,5 @@ defmodule EzagentPluginKanban.MiroLiveTest do
       args: args,
       ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })
-  end
-
-  defp wait_ready(uri) do
-    case Ezagent.ReadyGate.status(uri) do
-      :ready ->
-        :ok
-
-      _ ->
-        Process.sleep(5)
-        wait_ready(uri)
-    end
   end
 end

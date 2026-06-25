@@ -31,6 +31,9 @@
       "identities",
       "users_table"
     ],
+    "kanban": [
+      "kanban"
+    ],
     "layout_editor": [
       "layout_editor"
     ],
@@ -150,6 +153,12 @@
       "data_source": "Ezagent.World.IdentityData",
       "renderer_family": "identities",
       "title": "Identities"
+    },
+    "kanban": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.KanbanData",
+      "renderer_family": "kanban",
+      "title": "看板"
     },
     "layout_editor": {
       "category": "layout_slot",
