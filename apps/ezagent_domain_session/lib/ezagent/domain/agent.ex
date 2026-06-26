@@ -122,10 +122,13 @@ defmodule Ezagent.Domain.Agent do
           :dead
         end
 
-      "np" ->
+      "py" ->
         # `Ezagent.Domain.Python.Server` lives in `ezagent_domain_python`,
-        # which is downstream of this app (only `ezagent_plugin_np` depends
+        # which is downstream of this app (only `ezagent_plugin_py` depends
         # on it — this flavor facade must NOT depend on a plugin's runtime).
+        # py is THE python flavor (py-agent P4 — `np` is now a py-ROLE, not
+        # its own flavor; the deleted `np` flavor's subprocess phase folds into
+        # `py` since both back onto Domain.Python).
         # A direct call would emit a "module not available" warning at
         # compile time even though the `Code.ensure_loaded?/1` guard makes
         # the call runtime-safe. `apply/3` defers resolution to runtime —

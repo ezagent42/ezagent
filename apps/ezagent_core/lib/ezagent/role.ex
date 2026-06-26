@@ -7,8 +7,10 @@ defmodule Ezagent.Role do
 
   A Role is the content of a forkable `template://<ws>/role/<name>` Template
   subtype: what fills an agent's `config_dir` sandbox — skills, plugins, a
-  system-prompt persona, the behavior subset it runs, the caps it **requests**,
-  and a **reference** to a session-template. It is composed with a *flavor*
+  system-prompt persona, an optional operator-authored `script` (the RF-5b
+  content→config_dir channel — py-agent P4: a py-role carries its python script
+  here), the behavior subset it runs, the caps it **requests**, and a
+  **reference** to a session-template. It is composed with a *flavor*
   (the domain-agent flavor loader — `config_dir` env + kind + bridge)
   at materialization (`Ezagent.Role.Compose`).
 
@@ -46,6 +48,7 @@ defmodule Ezagent.Role do
             skills: [],
             plugins: [],
             prompt: nil,
+            script: nil,
             behaviors: [],
             requested_caps: [],
             session_template: nil
@@ -60,6 +63,7 @@ defmodule Ezagent.Role do
           skills: [skill_ref()],
           plugins: [plugin_ref()],
           prompt: String.t() | nil,
+          script: String.t() | nil,
           behaviors: [module()],
           requested_caps: [cap_template()],
           session_template: String.t() | URI.t() | nil
@@ -94,6 +98,7 @@ defmodule Ezagent.Role do
           skills: get(recipe, :skills, []),
           plugins: get(recipe, :plugins, []),
           prompt: get(recipe, :prompt, nil),
+          script: get(recipe, :script, nil),
           behaviors: get(recipe, :behaviors, []),
           requested_caps: get(recipe, :requested_caps, []),
           session_template: get(recipe, :session_template, nil)
@@ -117,6 +122,7 @@ defmodule Ezagent.Role do
          {:ok, behaviors} <- behaviors_field(role.behaviors),
          {:ok, requested_caps} <- caps_field(role.requested_caps),
          :ok <- ref_field(role.prompt, :prompt),
+         :ok <- ref_field(role.script, :script),
          :ok <- ref_field(role.session_template, :session_template) do
       # behaviors → module atoms; requested_caps → atom-keyed templates (value
       # canonicalization + minting are PR-1b's); passive → coerced boolean.

@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
 
   # A minimal Kind that lists Terminable in behaviors/0 so the engine's
   # init path runs `create/1` (the after-the-fact registration on the
-  # real Agent/NpAgent Kinds skips create; here we exercise the create
+  # real Agent/PyAgent Kinds skips create; here we exercise the create
   # path directly). `{:snapshot, :on_change}` so the persistent `:lifecycle`
   # slice survives a cold restart.
   defmodule TerminableHostKind do

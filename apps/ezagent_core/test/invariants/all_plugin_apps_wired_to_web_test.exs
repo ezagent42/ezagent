@@ -10,12 +10,14 @@ defmodule EzagentCore.Invariants.AllPluginAppsWiredToWebTest do
   weight — `:no_kind_module_for_agent` from any code path expecting
   the plugin's Kind to exist.
 
-  Lesson (2026-05-25): PR #258 created `ezagent_plugin_np` but never
-  added it to `apps/ezagent_web/mix.exs` deps. The plugin compiled
-  + ran its own tests against `EzagentPluginNp.Application` directly,
-  so unit tests passed. But the long-running web server never started
-  the OTP app → np-flavor agents couldn't be invited (per Allen
-  2026-05-25). One-line fix; this test locks it in for future plugins.
+  Lesson (2026-05-25): PR #258 created a flavor plugin (the now-retired
+  `np` compute plugin) but never added it to `apps/ezagent_web/mix.exs`
+  deps. The plugin compiled + ran its own tests against its Application
+  module directly, so unit tests passed. But the long-running web server
+  never started the OTP app → that flavor's agents couldn't be invited
+  (per Allen 2026-05-25). One-line fix; this test locks it in for future
+  plugins. (py-agent P4 later retired `np` into a py-role; the lesson
+  stands for every flavor plugin.)
 
   Exemption: add `# plugin-wire-exempt: <reason>` on the matching
   `apps/ezagent_plugin_*` directory's mix.exs `@app` declaration or

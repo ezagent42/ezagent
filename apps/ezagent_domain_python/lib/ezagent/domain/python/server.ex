@@ -163,7 +163,7 @@ defmodule Ezagent.Domain.Python.Server do
     }
 
     # PTY-phase-state-machine follow-up (b): emit :starting before any
-    # spawn / ping work. Subscribers (NpAgent slice + LV) see the
+    # spawn / ping work. Subscribers (PyAgent slice + LV) see the
     # canonical opening transition even on a fast-fail
     # (uv_not_found / bad cwd / etc).
     broadcast_phase(state, :starting, %{})
@@ -675,13 +675,21 @@ defmodule Ezagent.Domain.Python.Server do
     :ok
   end
 
+  # Domain-owned pid-file namespace (flavor-NEUTRAL). Every Domain.Python
+  # subprocess writes here regardless of the flavor/role that spawned it (py +
+  # the np py-role both back onto Domain.Python). py-agent P4 renamed this from
+  # the flavor-specific `"np"` to `"python"` when `np` stopped being its own
+  # flavor; the orphan reaper (`EzagentPluginPy.OrphanReaper`) enumerates this
+  # same namespace.
+  @pid_namespace "python"
+
   defp maybe_write_pid_file(%URI{} = uri, os_pid),
-    do: Ezagent.Runtime.PidFile.write("np", uri, os_pid)
+    do: Ezagent.Runtime.PidFile.write(@pid_namespace, uri, os_pid)
 
   defp maybe_write_pid_file(_handle, _os_pid), do: :ok
 
   defp maybe_remove_pid_file(%URI{} = uri),
-    do: Ezagent.Runtime.PidFile.remove("np", uri)
+    do: Ezagent.Runtime.PidFile.remove(@pid_namespace, uri)
 
   defp maybe_remove_pid_file(_handle), do: :ok
 

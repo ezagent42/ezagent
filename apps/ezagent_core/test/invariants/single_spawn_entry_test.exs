@@ -23,7 +23,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   domain/python.ex`) calls `DynamicSupervisor.start_child` to spawn
   `Ezagent.Domain.Python.Server` — the uv-launched Python subprocess
   wrapper. Server is a sidecar (not a Kind), managed by plugin
-  Template Classes (np.agent today; other Python-backed flavors
+  Template Classes (py.agent today; other Python-backed flavors
   later). Mirror of the Domain.Pty exemption.
 
   ## ExternalMirror.WorkerSpawn (added 2026-05-25, PR-EM-2)
@@ -172,7 +172,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # Ezagent.Domain.Python.start_subprocess/1 is the facade over
       # the Domain.Python supervision tree (Domain.Python SPEC
       # 2026-05-23 §1.1, merged #256). The Server it starts is a
-      # sidecar managed by plugin Template Classes (np.agent today;
+      # sidecar managed by plugin Template Classes (py.agent today;
       # other Python-backed flavors later) — NOT a Kind. The
       # `child_spec/1` heredoc in server.ex is matched too (line 62 in
       # the @doc string referencing DynamicSupervisor.start_child/2 as

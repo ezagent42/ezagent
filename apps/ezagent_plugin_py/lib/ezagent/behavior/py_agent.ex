@@ -6,11 +6,12 @@ defmodule Ezagent.Behavior.PyAgent do
   `"receive"` JSON-RPC method on the per-agent `Ezagent.Domain.Python`
   subprocess; a non-nil reply is dispatched back into the originating session.
 
-  Sibling of `Ezagent.Behavior.NpAgent`, but:
+  A general script-driven Python agent (py-agent P4: the former `np` compute
+  agent retired into this as a py-ROLE — its chat→compute heuristic now lives
+  in the role's script, not in a Behavior):
 
-  - **one method** — `"receive"` (vs np's `compute`/`compute_latex` LaTeX
-    heuristic). The script's per-message logic is operator-authored, not
-    baked into the Behavior.
+  - **one method** — `"receive"`. The script's per-message logic is
+    operator-authored (the role/operator script), not baked into the Behavior.
   - **own cap axis** — `:py_agent` (`required_caps/0`).
   - **script is immutable post-create** — `:configure` sets `timeout_ms`
     ONLY (never the script); `:reset` clears `last_*`. The script file is
@@ -90,7 +91,7 @@ defmodule Ezagent.Behavior.PyAgent do
 
   # Own kind axis `:py_agent` — PyAgent is registered on Entity.PyAgent Kind
   # (type_name :py_agent). Manually exported to override the macro's `:any`
-  # default (same pattern as NpAgent).
+  # default (the per-subprocess-agent pattern).
   @doc false
   def required_caps do
     %{
@@ -235,7 +236,7 @@ defmodule Ezagent.Behavior.PyAgent do
   defp error_kind(_), do: :other
 
   # Build a single `{:dispatch, %Cmd{}}` chat.send reply effect. Mirrors
-  # NpAgent: the agent presents its OWN inline narrow `session.send` cap on
+  # the per-subprocess agent: the agent presents its OWN inline narrow `session.send` cap on
   # the concrete reply session (#154 — no `system://chat-reply` wildcard).
   defp maybe_reply_effect(nil, _self_uri, _text, _in_msg), do: []
   defp maybe_reply_effect("", _self_uri, _text, _in_msg), do: []
@@ -291,7 +292,7 @@ defmodule Ezagent.Behavior.PyAgent do
 
   defp parse_session_uri(_), do: nil
 
-  # Admin-only Behavior — no per-entity owner (mirrors NpAgent).
+  # Admin-only Behavior — no per-entity owner.
   @doc false
   def data_owner(_), do: :no_owner
 

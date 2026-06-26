@@ -31,7 +31,7 @@ defmodule Ezagent.Kind.Introspection do
   #   - The new `use Ezagent.Kind, pattern: ...` + `attach Behavior, ...`
   #     DSL, which auto-generates `__attached_behaviors__/0`.
   #
-  # Plugin Kinds (Echo, CurlAgent, NpAgent) use BOTH simultaneously — they
+  # Plugin Kinds (CurlAgent, PyAgent) use BOTH simultaneously — they
   # `use Ezagent.Kind` AND keep `def behaviors/0` for explicit clarity.
   # Pre-PR-464 (Phase 3) the two could silently drift: Kind.Server +
   # Kind.Runtime called `kind.behaviors()` (explicit), the registry

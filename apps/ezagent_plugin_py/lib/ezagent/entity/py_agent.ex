@@ -13,7 +13,7 @@ defmodule Ezagent.Entity.PyAgent do
   ## Per-agent (not shared) Python subprocess
 
   Each PyAgent Kind owns its OWN `Ezagent.Domain.Python.Server` keyed by the
-  agent URI. Mirrors the per-NpAgent / per-cc-agent ownership pattern — keeps
+  agent URI. Mirrors the per-cc-agent ownership pattern — keeps
   interpreter state scoped to the agent and prevents cross-agent message
   interleaving in the single-threaded python event loop.
 

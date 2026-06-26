@@ -42,7 +42,29 @@ defmodule Ezagent.Role.ComposeTest do
       b = Compose.materialize(role(), %{flavor_behaviors: [:flavor_b]})
 
       assert a.sandbox_content == b.sandbox_content
-      assert a.sandbox_content == %{skills: ["orchestrator"], plugins: ["np"], prompt: "persona"}
+
+      assert a.sandbox_content == %{
+               skills: ["orchestrator"],
+               plugins: ["np"],
+               prompt: "persona",
+               script: nil
+             }
+    end
+
+    test "RF-5b (py-agent P4): carries the role's operator script through sandbox_content" do
+      src =
+        "from ezagent_python import method, run\n@method(\"receive\")\ndef r(p): return p\nrun()"
+
+      {:ok, py_role} = Role.new(%{name: "np", script: src})
+
+      out = Compose.materialize(py_role, %{flavor_behaviors: []})
+
+      # The script rides in sandbox_content — the flavor-independent content the
+      # create route installs into the agent's config_dir (py → agent.py).
+      assert out.sandbox_content.script == src
+      # A scriptless role yields script: nil (every existing role).
+      {:ok, plain} = Role.new(%{name: "x"})
+      assert Compose.materialize(plain, %{flavor_behaviors: []}).sandbox_content.script == nil
     end
 
     test "does NOT emit caps (cap authorization/minting is the materialization step's job)" do

@@ -3,8 +3,8 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
   System-principal elimination (#154, 甲-3) — `system://chat-reply` LINCHPIN
   regression.
 
-  The 5 agent/plugin bridge adapters (curl_agent, plugin_codex, plugin_cc,
-  echo, np_agent) used to reply into their session by borrowing the
+  The agent/plugin bridge adapters (curl_agent, plugin_codex, plugin_cc,
+  py_agent) used to reply into their session by borrowing the
   `system://chat-reply` WILDCARD principal's caps in `ctx.caps`. That ambient
   wildcard is now DELETED; each bridge instead presents its OWN narrow
   `session.send` cap on the concrete reply session as the step-5.5 authorizer
@@ -15,11 +15,11 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
   needed-behavior; a CONCRETE behavior only authorizes if the dispatch path's
   `cap_for_action(Entity.Session, :send, target)` derives EXACTLY
   `Ezagent.Behavior.Session` via `BehaviorRegistry.lookup/2`. If that runtime
-  resolution ever drifts, all 5 reply paths silently stop authorizing and
+  resolution ever drifts, all bridge reply paths silently stop authorizing and
   replies are dropped — a production break that no shape-only bridge test
   catches. This test is that gate.
 
-  The cap shape asserted here is IDENTICAL across all 5 bridge sites, so
+  The cap shape asserted here is IDENTICAL across all bridge sites, so
   proving ONE authorizing path proves the lot.
   """
 
@@ -31,9 +31,9 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
   # behavior_template_dispatch_test.
   alias Ezagent.{BehaviorRegistry, Capability}
 
-  # The exact inline cap the 5 bridges mint — kept in lock-step with the
-  # bridge-site code (curl_agent.ex / bridge_adapter.ex (codex+cc) / echo.ex /
-  # np_agent.ex). `granted_by` is the agent's own URI (genuine self-authority,
+  # The exact inline cap the bridges mint — kept in lock-step with the
+  # bridge-site code (curl_agent.ex / bridge_adapter.ex (codex+cc) /
+  # py_agent.ex). `granted_by` is the agent's own URI (genuine self-authority,
   # #154-ok); inline = provenance-only authorizer, never routed through Grant.
   defp inline_reply_cap(%URI{} = session, %URI{} = agent_uri) do
     %Capability{
@@ -54,7 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
       assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :send),
              "session.send must resolve to Ezagent.Behavior.Session — the behavior " <>
-               "axis the inline reply cap pins. If this drifts, all 5 bridge reply " <>
+               "axis the inline reply cap pins. If this drifts, all bridge reply " <>
                "paths stop authorizing."
     end
   end

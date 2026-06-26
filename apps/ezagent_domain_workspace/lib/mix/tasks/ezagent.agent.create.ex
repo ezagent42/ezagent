@@ -93,15 +93,15 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
     # Boot every flavor plugin we know about so AgentFlavorRegistry
     # populates. Without this the action body's `validate_flavor/1`
-    # only sees `cc` (chat domain's flavor) and rejects py / curl /
-    # np with `{:bad_flavor, _}`. Each `ensure_all_started/1` is a
-    # no-op if the app is missing from this build so the task degrades
-    # to whatever plugins are compiled in.
+    # only sees `cc` (chat domain's flavor) and rejects py / curl with
+    # `{:bad_flavor, _}`. Each `ensure_all_started/1` is a no-op if the
+    # app is missing from this build so the task degrades to whatever
+    # plugins are compiled in. (py-agent P4: `np` is now a py-ROLE — its
+    # role recipe rides `ezagent_plugin_py`'s boot, no separate plugin.)
     for plugin <- [
           :ezagent_plugin_cc,
           :ezagent_plugin_py,
-          :ezagent_plugin_curl_agent,
-          :ezagent_plugin_np
+          :ezagent_plugin_curl_agent
         ] do
       _ = Application.ensure_all_started(plugin)
     end

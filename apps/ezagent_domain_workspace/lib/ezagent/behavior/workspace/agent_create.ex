@@ -137,7 +137,9 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp validate_flavor(flavor) when is_binary(flavor) do
     case Ezagent.AgentFlavorRegistry.list_all() do
       [] ->
-        if flavor in ~w(cc curl np codex py),
+        # py-agent P4: `np` is no longer a flavor (retired to a py-role), so it
+        # is NOT in this empty-registry test-bootstrap fallback.
+        if flavor in ~w(cc curl codex py),
           do: :ok,
           else: {:error, {:bad_flavor, flavor}}
 
@@ -390,23 +392,48 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # py-agent (Task 1.4) — operator-script python flavor on the NON-cascade
   # template route (NOT the direct-spawn route, which skips instantiate/drops
   # cwd — the np gap). See `PyTemplate` for the config_dir-reference shape.
+  # py — the script-driven Python flavor. A py-agent is created either with an
+  # operator-supplied `flavor_config["script"]` (the direct create form) OR with
+  # a ROLE that CARRIES the script (py-agent P4 RF-5b — `np` = `py` flavor +
+  # the np role's `np.py` script). The role-script channel (`Role.script` →
+  # `Role.Compose.sandbox_content.script`) is folded into the template config
+  # HERE, so P1's existing config_dir install + `:script_immutable` injection
+  # gate carries it — py rides the TEMPLATE route (NOT the direct-spawn RoleStep
+  # route, which has no config_dir allocation; that generic install is the
+  # deferred native+role/RF-5b work). A role's caps + role-name marker are
+  # minted/granted AFTER instantiate, mirroring the direct-spawn role path.
   defp do_create_agent("py", agent_uri, session_templates, params) do
     %{workspace_name: workspace_name, workspace_uri: workspace_uri} = params
 
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      "py.agent." <> agent_name(agent_uri),
-      PyTemplate.build(agent_uri, Map.get(params, :flavor_config)),
-      agent_uri,
-      Map.get(params, :caller),
-      nil,
-      nil
-    )
+    with {:ok, materialized} <- RoleStep.resolve(Map.get(params, :role), "py"),
+         {:ok, flavor_config} <- merge_role_script(Map.get(params, :flavor_config), materialized) do
+      result =
+        register_and_invoke_template(
+          session_templates,
+          workspace_name,
+          workspace_uri,
+          "py.agent." <> agent_name(agent_uri),
+          PyTemplate.build(agent_uri, flavor_config),
+          agent_uri,
+          Map.get(params, :caller),
+          nil,
+          nil
+        )
+
+      case result do
+        {:ok, _, _effects} = ok ->
+          with :ok <- RoleStep.grant_role_marker(agent_uri, materialized),
+               :ok <- RoleStep.mint_and_grant_caps(agent_uri, "py", materialized, params) do
+            ok
+          end
+
+        other ->
+          other
+      end
+    end
   end
 
-  # Any other flavor (native / curl / np / future) — direct Kind spawn via the
+  # Any other flavor (native / curl / future) — direct Kind spawn via the
   # stored flavor declaration. URI names are opaque; do not recover the
   # flavor from the agent URI.
   #
@@ -448,6 +475,28 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
       end
     end
   end
+
+  # Fold a role-carried script (RF-5b `sandbox_content.script`, py-agent P4) into
+  # the py template's `flavor_config["script"]`. No role (or a scriptless role) →
+  # the operator-supplied `flavor_config` flows through unchanged. A role that
+  # carries a script AND an operator `script` arg is a CONFLICT (two authorities
+  # for the same immutable file) — fail loud rather than silently pick one.
+  defp merge_role_script(flavor_config, nil), do: {:ok, flavor_config}
+
+  defp merge_role_script(flavor_config, %{sandbox_content: %{script: nil}}),
+    do: {:ok, flavor_config}
+
+  defp merge_role_script(flavor_config, %{sandbox_content: %{script: script}})
+       when is_binary(script) do
+    fc = flavor_config || %{}
+
+    case Map.get(fc, "script") || Map.get(fc, :script) do
+      nil -> {:ok, Map.put(fc, "script", script)}
+      _ -> {:error, :role_script_conflicts_with_operator_script}
+    end
+  end
+
+  defp merge_role_script(flavor_config, _materialized), do: {:ok, flavor_config}
 
   # PR-6+7 (curl-as-flavor, codex round-3 P1-1 fix) — the direct-create path for
   # a flavor with NO workspace Template (native / curl / np / future). Threads

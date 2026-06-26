@@ -8,10 +8,13 @@ defmodule Ezagent.Role.Compose do
 
   - `behaviors` — the role's behavior subset UNIONed with the flavor's
     per-instance behaviors (deduped).
-  - `sandbox_content` — `%{skills, plugins, prompt}` to install into the
+  - `sandbox_content` — `%{skills, plugins, prompt, script}` to install into the
     flavor-allocated `config_dir`. **Flavor-independent**: the same role yields
     identical content for any flavor (the §6 completion invariant — same role ×
-    two flavors → identical sandbox contents).
+    two flavors → identical sandbox contents). `script` is the optional
+    operator-authored file content (py-agent P4 RF-5b channel — a py-role carries
+    its python script here; a flavor whose create route installs config_dir
+    content reads it from `sandbox_content.script`). `nil` for a scriptless role.
 
   ## Caps are deliberately NOT composed here
 
@@ -38,7 +41,8 @@ defmodule Ezagent.Role.Compose do
           sandbox_content: %{
             skills: [Role.skill_ref()],
             plugins: [Role.plugin_ref()],
-            prompt: term()
+            prompt: term(),
+            script: String.t() | nil
           }
         }
 
@@ -73,7 +77,11 @@ defmodule Ezagent.Role.Compose do
       sandbox_content: %{
         skills: role.skills,
         plugins: role.plugins,
-        prompt: role.prompt
+        prompt: role.prompt,
+        # RF-5b (py-agent P4): the role's operator-authored file content. A
+        # flavor whose create route installs config_dir content (py → agent.py)
+        # reads it here; `nil` for a scriptless role (every existing role).
+        script: role.script
       }
     }
   end

@@ -196,7 +196,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # System-principal elimination (north star / Decision #154, 甲-3) — the
       # `system://chat-reply` principal is DELETED. It held the
       # `bootstrap_wildcard()` cap, borrowed by the 5 agent/plugin bridge
-      # adapters (curl_agent, plugin_codex, plugin_cc, echo, np_agent) so they
+      # adapters (curl_agent, plugin_codex, plugin_cc, py_agent) so they
       # could dispatch `session.send` into the originating session. Each agent
       # is a real entity (`entity://agent/...`) and its reply dispatch already
       # used `caller: self_uri`/`caller: agent_uri`. Each now presents its OWN
