@@ -46,3 +46,22 @@
 
 - 设计场景:`docs/scenarios/NN-<slug>`
 - 相关 PR / SPEC / 已知 gap:<...>
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 让一个拿 agent-browser 的 agent 不靠人照着跑通。规范见 guide.md §8。 -->
+
+**前置(自动化)**:<干净 seed 后 + scenario-<前一条> 已自动跑;或本节可独立建立的最小态>
+**入口 URL**:`http://world.localhost:10042<path>`
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | navigate | — | — | `url~ <path>` | `sNN-step1-<slug>-auto.png` |
+| 2 | fill | `<selector>` | `<value>` | — | — |
+| 3 | click/submit | `<selector>` | — | `<谓词,见 guide §8.4>` | `sNN-step3-<slug>-auto.png` |
+
+**断言映射**:本 scenario「实测结果 vs 预期」表的每个预期 → 上表对应断言行。
+**清理**:<跑完删除自建实体,如 `e2e-*`;无则写"无">
+
