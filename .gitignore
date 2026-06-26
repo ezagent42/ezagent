@@ -77,3 +77,6 @@ node_modules/
 
 # deploy flow logical backups (operator-local)
 backups/
+
+# macOS finder metadata
+.DS_Store
