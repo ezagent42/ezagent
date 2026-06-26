@@ -11,7 +11,10 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   alias Ezagent.ProtocolApi.{ApiKeyStore, ConversationRegistry, PendingReplyStore, ReplyWaiter}
   @behaviour Plug
   @deadline_ms 120_000
-  @default_agent_name "echo_default"
+  # P2 — the default agent is the seeded `py_default` (echo.py py-agent) that
+  # replaced the deleted echo default agent. Its stored flavor is `py`.
+  @default_agent_name "py_default"
+  @default_agent_flavor "py"
 
   @impl Plug
   def init(opts), do: opts
@@ -120,13 +123,13 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
   defp maybe_register_flavor(agent_uri) do
     case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
       {:ok, flavor} -> Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
-      _ -> maybe_register_default_echo(agent_uri)
+      _ -> maybe_register_default_agent(agent_uri)
     end
   end
 
-  defp maybe_register_default_echo(agent_uri) do
+  defp maybe_register_default_agent(agent_uri) do
     if URI.stable_key(agent_uri) == URI.stable_key(default_agent_uri()) do
-      Ezagent.AgentFlavorAttributes.put(agent_uri, "echo")
+      Ezagent.AgentFlavorAttributes.put(agent_uri, @default_agent_flavor)
     else
       :ok
     end
@@ -269,7 +272,13 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlug do
     {:ok, request_id, msg}
   end
 
-  defp default_agent_uri, do: URI.agent("system", @default_agent_name)
+  @doc "URI of the default agent used when an API key carries no `target_agent`."
+  @spec default_agent_uri() :: URI.t()
+  def default_agent_uri, do: URI.agent("system", @default_agent_name)
+
+  @doc "Stored flavor of the default agent (`py`) — registered by `maybe_register_default_agent/1`."
+  @spec default_agent_flavor() :: String.t()
+  def default_agent_flavor, do: @default_agent_flavor
 
   defp subscribe_publisher(session_uri, entity_uri) do
     # Subscribe from the CALLING process (Task PID for async, Plug PID for sync)

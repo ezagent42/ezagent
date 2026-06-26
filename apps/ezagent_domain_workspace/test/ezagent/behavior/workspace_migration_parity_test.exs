@@ -296,12 +296,12 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":add_template" do
     test "puts the template into the slice's session_templates" do
       slice = slice(%{})
-      tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://x/agent/y"}
+      tmpl = %{"class" => "py.agent", "agent_uri" => "entity://x/agent/y"}
 
       assert {:ok, %{slice: new_slice}} =
-               dispatch(:add_template, %{name: "echo.demo", template: tmpl}, %{}, slice)
+               dispatch(:add_template, %{name: "py.demo", template: tmpl}, %{}, slice)
 
-      assert new_slice.session_templates == %{"echo.demo" => tmpl}
+      assert new_slice.session_templates == %{"py.demo" => tmpl}
     end
 
     test "replaces an existing template under the same name (last-write-wins)" do
@@ -368,7 +368,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "returns one {:member, URI} tuple per member and {:template, name, data} per template" do
       m1 = Ezagent.URI.new!("entity://system/user/admin")
       m2 = Ezagent.URI.new!("entity://team-alpha/agent/cc_bot")
-      tmpl = %{"class" => "echo.agent"}
+      tmpl = %{"class" => "py.agent"}
 
       slice =
         slice(%{

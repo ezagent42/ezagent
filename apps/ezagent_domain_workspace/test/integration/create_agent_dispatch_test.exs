@@ -12,7 +12,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   - `add_template_invokes_test.exs` — the Loader.invoke_template
     chain that the action body delegates to.
   - Plugin-side integration tests (`ezagent_plugin_cc/test/...`) —
-    cc/echo Template Class instantiate behaviour.
+    cc/py Template Class instantiate behaviour.
 
   This test verifies the unification's WIRING: the dispatched action
   routes through `Behavior.Workspace.:create_agent` and returns the
@@ -109,16 +109,6 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                )
     end
 
-    test "echo+with_pty missing cwd returns {:error, :cwd_required_for_echo_with_pty}",
-         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      assert {:error, :cwd_required_for_echo_with_pty} =
-               Workspace.create_agent(
-                 workspace_uri,
-                 %{flavor: "echo", name: "shell", cwd: "", with_pty: true},
-                 admin_ctx
-               )
-    end
-
     test "cc flavor nonexistent cwd returns {:error, {:cwd_not_a_dir, _}}", %{
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
@@ -210,21 +200,22 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     # (`cc_agent_clone_from_test.exs`) since the actual `File.cp_r/2`
     # lives in `Ezagent.PluginCc.Template.CcAgent.create_agent_config_dir/2`.
 
-    test "echo flavor with --from returns {:error, {:from_unsupported_for_flavor, _}}", %{
+    test "py flavor with --from returns {:error, {:from_unsupported_for_flavor, _}}", %{
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
     } do
       source_uri = Ezagent.URI.new!("entity://system/agent/cc_some-source")
 
-      assert {:error, {:from_unsupported_for_flavor, "echo"}} =
+      assert {:error, {:from_unsupported_for_flavor, "py"}} =
                Workspace.create_agent(
                  workspace_uri,
                  %{
-                   flavor: "echo",
+                   flavor: "py",
                    name: "clone-me",
                    cwd: "",
                    with_pty: false,
-                   from: source_uri
+                   from: source_uri,
+                   flavor_config: %{"script" => "print('x')"}
                  },
                  admin_ctx
                )

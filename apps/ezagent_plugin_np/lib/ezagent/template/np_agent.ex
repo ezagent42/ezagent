@@ -26,7 +26,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   ## codex round-10 HIGH-2 — partial-spawn teardown
 
   Mirrors `Ezagent.PluginCc.Template.CcAgent` /
-  `Ezagent.PluginEcho.Template.EchoAgent`. If `Ezagent.Kind.spawn/2`
+  `Ezagent.Template.PyAgent`. If `Ezagent.Kind.spawn/2`
   freshly started the NpAgent Kind and then
   `Ezagent.Domain.Python.start_subprocess/1` fails (uv not on PATH /
   bad script / etc.), the just-started Kind is terminated before the

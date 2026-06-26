@@ -13,7 +13,7 @@ defmodule Ezagent.Kind.Server do
 
   ```
   %{
-    kind: module(),                # the Kind module (e.g. Ezagent.Entity.Echo)
+    kind: module(),                # the Kind module (e.g. Ezagent.Entity.PyAgent)
     uri:  URI.t(),                 # this instance's URI
     state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
     post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations

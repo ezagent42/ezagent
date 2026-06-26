@@ -12,7 +12,9 @@ defmodule Ezagent.World.IdentityDataTest do
 
     assert "cc" in state["cwd_required_flavors"]
     assert "codex" in state["cwd_required_flavors"]
-    assert "echo" in state["cwd_required_with_pty_flavors"]
+    # P2: echo (the only cwd-required-with-PTY flavor) retired into py, which has
+    # no PTY-cwd rule — so no flavor requires cwd-with-PTY now.
+    assert state["cwd_required_with_pty_flavors"] == []
     refute "curl" in state["cwd_required_flavors"]
   end
 

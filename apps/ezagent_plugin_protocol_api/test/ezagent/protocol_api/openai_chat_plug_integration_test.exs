@@ -21,7 +21,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
       Repo.insert!(%ApiKeyStore{
         key_id: key_id,
         secret_hash: hash,
-        entity_uri: "entity://system/agent/echo_default",
+        entity_uri: "entity://system/agent/py_default",
         workspace_uri: "workspace://system",
         label: "test",
         allowed_models: [],
@@ -47,7 +47,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
       Repo.insert!(%ApiKeyStore{
         key_id: key_id,
         secret_hash: hash,
-        entity_uri: "entity://system/agent/echo_default",
+        entity_uri: "entity://system/agent/py_default",
         workspace_uri: "workspace://system",
         label: "test",
         allowed_models: [],

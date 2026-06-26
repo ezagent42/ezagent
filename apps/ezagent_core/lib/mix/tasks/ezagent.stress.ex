@@ -34,7 +34,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
   * `--ramp` — comma-separated ramp steps. Defaults per scenario.
   * `--hold-ms` — steady-state hold per ramp step (default 8000).
   * `--rate` — messages/sec injected during a hold (scenario A; default 5).
-  * `--turn-cap` — echo auto-reply hop cap. `0` = sink mode, no reply
+  * `--turn-cap` — auto-reply hop cap. `0` = sink mode, no reply (the only
+    mode supported after the echo→py retirement; see the sink-member note below)
     (the default, for pure capacity). `>0` enables bounded auto-reply.
   * `--mem-ceiling-mb` — abort the ramp if RSS exceeds this (default 3500,
     a ~4 GB Pi headroom).
@@ -53,10 +54,12 @@ defmodule Mix.Tasks.Ezagent.Stress do
   ## Loop-amplification safety (plan §7)
 
   Every injected message carries a `meta` map with `hop` + `turn_cap`
-  in its body. The echo `:receive` reply path (see
-  `Ezagent.Behavior.Echo`) refuses to reply when `hop >= turn_cap`;
-  `turn_cap: 0` disables auto-reply entirely (sink mode). The driver
-  injects a fixed message budget per hold window and never loops.
+  in its body. `turn_cap: 0` disables auto-reply entirely (sink mode),
+  the driver injects a fixed message budget per hold window and never
+  loops. (The echo `:receive` auto-reply path — `hop >= turn_cap`
+  refusal — was retired with the echo flavor in P2; sink members
+  now spawn on the unified `Ezagent.Entity.Agent` Kind. See the
+  `@sink_mod` note for the `turn_cap > 0` follow-up.)
   """
 
   use Mix.Task
@@ -64,7 +67,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   alias Ezagent.{Invocation, Kind, Message, ReadyGate, StressMetrics, WorkspaceRegistry}
 
   # Entity Kind modules live in higher-tier umbrella apps
-  # (`ezagent_domain_session`, `ezagent_domain_identity`, `ezagent_plugin_echo`)
+  # (`ezagent_domain_session`, `ezagent_domain_identity`, `ezagent_domain_agent`)
   # that depend on `ezagent_core` — `ezagent_core` cannot alias them at
   # compile time without a dependency cycle. They ARE loaded by the time
   # this task runs (`Mix.Task.run("app.start")` boots the whole
@@ -72,11 +75,21 @@ defmodule Mix.Tasks.Ezagent.Stress do
   # `session_mod/0` / `user_mod/0` / `echo_mod/0` accessors below.
   @session_mod Module.concat([:Ezagent, :Entity, :Session])
   @user_mod Module.concat([:Ezagent, :Entity, :User])
-  @echo_mod Module.concat([:Ezagent, :Entity, :Echo])
+  # P2 retired the echo flavor + its Kind (echo→py). The stress scenarios used
+  # it as a cheap in-BEAM SINK member (default `turn_cap: 0`, no reply). The
+  # unified `Ezagent.Entity.Agent` Kind stands in as a member. NOTE/TODO: the
+  # auto-reply bounce path (`turn_cap > 0`) was the echo flavor's hop logic — it
+  # is NOT reproduced here (Entity.Agent's `:receive` routes to the LLM-backed
+  # `Behavior.Agent.Receive`, which is not a trivial echo). For sink scenarios
+  # (the default) Entity.Agent is a clean drop-in; a purpose-built trivial sink
+  # or a py-agent member is the fast-follow if `turn_cap > 0` throughput is
+  # needed. This is a dev-only Mix task — it compiles + sink-runs; it does not
+  # gate P2.
+  @sink_mod Module.concat([:Ezagent, :Entity, :Agent])
 
   defp session_mod, do: @session_mod
   defp user_mod, do: @user_mod
-  defp echo_mod, do: @echo_mod
+  defp sink_mod, do: @sink_mod
   defp admin_uri, do: apply(@user_mod, :admin_uri, [])
 
   # System-principal elimination (#154, 2026-06-19) — the operator stress
@@ -225,8 +238,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
         await_ready!(session_uri)
 
         for i <- 1..n do
-          agent_uri = Ezagent.URI.agent(workspace, "echo_a#{n}_#{i}")
-          spawn_kind!(echo_mod(), agent_uri)
+          agent_uri = Ezagent.URI.agent(workspace, "sink_a#{n}_#{i}")
+          spawn_kind!(sink_mod(), agent_uri)
           await_ready!(agent_uri)
           join!(session_uri, agent_uri)
         end
@@ -311,8 +324,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
           join!(session_uri, user_uri)
 
           for a <- 1..2 do
-            agent_uri = Ezagent.URI.agent(workspace, "echo_b#{s}_#{a}")
-            spawn_kind!(echo_mod(), agent_uri)
+            agent_uri = Ezagent.URI.agent(workspace, "sink_b#{s}_#{a}")
+            spawn_kind!(sink_mod(), agent_uri)
             await_ready!(agent_uri)
             join!(session_uri, agent_uri)
           end

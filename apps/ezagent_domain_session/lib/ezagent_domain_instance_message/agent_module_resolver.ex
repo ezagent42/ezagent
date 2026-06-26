@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   @moduledoc """
   Resolve an `entity://agent/...` URI to its Kind module
-  (`Ezagent.Entity.Agent` / `CurlAgent` / `Echo`, or a plugin-declared
+  (`Ezagent.Entity.Agent` / `CurlAgent` / `PyAgent`, or a plugin-declared
   flavor's kind).
 
   Extracted verbatim from `EzagentDomainInstanceMessage.Application`
@@ -116,7 +116,6 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   # 2026-06-13), so `"curl_agent"` is simply a dead kind_type that falls through
   # to the unknown-kind `nil` like any other.
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
-  defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
 
   # Fall back to the AgentFlavorRegistry: a bespoke agent Kind (e.g. a hello
   # builder, kind_type "hello_builder") registers a matching flavor via its
@@ -127,8 +126,8 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   defp kind_module_from_kind_type(kt) when is_binary(kt), do: kind_module_from_flavor(kt)
 
   # Template Class names (e.g. "cc.agent" registered by the cc plugin;
-  # "curl.agent" by ezagent_plugin_curl_agent; "echo.agent" by
-  # ezagent_plugin_echo) map to Kind modules.
+  # "curl.agent" by ezagent_plugin_curl_agent; "py.agent" by
+  # ezagent_plugin_py) map to Kind modules.
   #
   # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: the
   # flavor→{kind, template_class} mapping is no longer hardcoded here —
@@ -158,7 +157,7 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   end
 
   # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: real agent
-  # flavors (cc / curl / echo) resolve via `Ezagent.AgentFlavorRegistry`
+  # flavors (cc / curl / py) resolve via `Ezagent.AgentFlavorRegistry`
   # — populated by each plugin's `agent_flavors/0` declaration through
   # `Ezagent.Plugin.boot/1`. The registry is published before this
   # resolver runs at dispatch time (the plugin apps boot, and

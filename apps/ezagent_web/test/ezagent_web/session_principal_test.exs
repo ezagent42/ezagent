@@ -16,8 +16,8 @@ defmodule EzagentWeb.SessionPrincipalTest do
       assert SessionPrincipal.canonicalize("entity://system/user/admin") ==
                "entity://system/user/admin"
 
-      assert SessionPrincipal.canonicalize("entity://team-alpha/agent/echo_default") ==
-               "entity://team-alpha/agent/echo_default"
+      assert SessionPrincipal.canonicalize("entity://team-alpha/agent/py_default") ==
+               "entity://team-alpha/agent/py_default"
     end
 
     test "bare handle is normalized to entity://user/<workspace>/<handle> (lowercased)" do

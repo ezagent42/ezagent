@@ -16,7 +16,7 @@ defmodule Ezagent.Kind.TemplateNamespaceTest do
   end
 
   defmodule WithoutCallback do
-    def template_name, do: "echo.agent"
+    def template_name, do: "demo.agent"
   end
 
   defmodule PlainName do
@@ -28,7 +28,7 @@ defmodule Ezagent.Kind.TemplateNamespaceTest do
   end
 
   test "derives from template_name by stripping the .agent suffix when no callback" do
-    assert Template.namespace_of(WithoutCallback) == "echo"
+    assert Template.namespace_of(WithoutCallback) == "demo"
   end
 
   test "a template_name without a .agent suffix is used as-is" do

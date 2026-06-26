@@ -107,7 +107,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `Ezagent.Kind.BehaviorSet.resolve_action/3` call in `handle_dispatch`'s
     # `with` chain (per-instance action→behavior resolution, role-foundation).
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 169},
-    {"apps/ezagent_core/lib/ezagent/behavior.ex", 454}
+    # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
+    # the echo worked-example moduledoc line was condensed to a
+    # `Ezagent.Behavior.PyAgent` reference (net -1 line ABOVE this comment).
+    {"apps/ezagent_core/lib/ezagent/behavior.ex", 453}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same

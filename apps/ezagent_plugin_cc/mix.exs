@@ -68,7 +68,7 @@ defmodule EzagentPluginCc.MixProject do
       # cc also implements `Ezagent.Session.OrchestratorReadinessPort` (the
       # session → transport seam) and hosts cc agents (the shared
       # `Ezagent.Entity.Agent` Kind, DEFINED in this domain). Declaring the
-      # honest dep mirrors ezagent_plugin_echo, which deps on session outright
+      # honest dep mirrors ezagent_plugin_py, which deps on session outright
       # for the same Agent-Kind/dispatcher reason. The acyclic invariant is
       # unaffected: plugin → session is allowed (only agent ⊅ session and
       # session ⊅ im are forbidden), and session does NOT dep on cc — no cycle.

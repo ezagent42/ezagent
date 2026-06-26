@@ -554,13 +554,13 @@ defmodule Ezagent.URITest do
 
   describe "instance/1 — entity:// 3-segment authority (SPEC v3)" do
     test "entity:// strips query (SPEC v2 §5.2 — action lives in query)" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
       inst = Ezagent.URI.instance(uri)
       assert inst.scheme == "entity"
       assert inst.host == "team-alpha"
-      assert inst.path == "/agent/echo_default"
+      assert inst.path == "/agent/py_default"
       assert inst.query == nil
-      assert URI.to_string(inst) == "entity://team-alpha/agent/echo_default"
+      assert URI.to_string(inst) == "entity://team-alpha/agent/py_default"
     end
 
     test "entity:// already-instance form is unchanged" do
@@ -702,8 +702,8 @@ defmodule Ezagent.URITest do
 
   describe "behavior_action/1 — query-string action parser (SPEC v2 §5.2, PR #148)" do
     test "extracts {behavior_atom, action_atom} from entity:// ?action=" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
-      assert {:ok, {:echo, :say}} = Ezagent.URI.behavior_action(uri)
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
+      assert {:ok, {:py, :receive}} = Ezagent.URI.behavior_action(uri)
     end
 
     test "extracts from 3-seg session:// scheme (SPEC v3 §3.6 PR-7)" do
@@ -717,30 +717,30 @@ defmodule Ezagent.URITest do
     end
 
     test "returns :missing_action for URI without query" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :missing_action when query lacks action key" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?foo=bar")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?foo=bar")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :missing_action for empty action value" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :malformed_action when action lacks a dot" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=justone")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=justone")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :malformed_action for empty behavior or action half" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=.say")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=.say")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
 
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_default?action=py.")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
     end
   end

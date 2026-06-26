@@ -49,7 +49,7 @@ defmodule EzagentCore.Invariants.ReceiverKindPatternTest do
     apps/ezagent_plugin_cc_bridge_v1_prototype
     apps/ezagent_plugin_cc
     apps/ezagent_plugin_cc
-    apps/ezagent_plugin_echo
+    apps/ezagent_plugin_py
     apps/ezagent_plugin_feishu
   )
 

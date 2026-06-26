@@ -16,7 +16,7 @@ defmodule Ezagent.Workspace.Store do
   ## DEPRECATED: `session_templates` field (G-12, audit 2026-05-23)
 
   Despite the name, this column stores **spawn-template REGISTRATIONS**
-  (`cc.agent`, `echo.agent` template-class instances written by
+  (`cc.agent`, `py.agent` template-class instances written by
   `Ezagent.Workspace.add_template/3`) — NOT Phase-7 `SessionTemplate`
   Kinds. The naming predates Phase-7 and is misleading.
 

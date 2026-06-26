@@ -19,12 +19,12 @@ defmodule Ezagent.Plugin do
 
   A plugin module `use`s this behaviour:
 
-      defmodule EzagentPluginEcho do
+      defmodule EzagentPluginPy do
         use Ezagent.Plugin
 
         @impl true
         def plugin_info do
-          %{slug: "echo", name: "Echo", description: "…", version: "0.1.0"}
+          %{slug: "py", name: "Py", description: "…", version: "0.1.0"}
         end
 
         # optional callbacks — defaults from `use Ezagent.Plugin` cover

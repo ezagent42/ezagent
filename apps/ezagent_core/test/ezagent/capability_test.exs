@@ -22,9 +22,9 @@ defmodule Ezagent.CapabilityTest do
     test "exact match on all four fields" do
       cap =
         cap(
-          kind: :echo,
-          behavior: Ezagent.Behavior.Echo,
-          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo"),
+          kind: :py_agent,
+          behavior: Ezagent.Behavior.PyAgent,
+          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py"),
           granted_by: @user_uri,
           granted_at: @now
         )
@@ -32,9 +32,9 @@ defmodule Ezagent.CapabilityTest do
       assert Capability.matches?(
                cap,
                needed(
-                 kind: :echo,
-                 behavior: Ezagent.Behavior.Echo,
-                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo")
+                 kind: :py_agent,
+                 behavior: Ezagent.Behavior.PyAgent,
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py")
                )
              )
     end
@@ -43,8 +43,8 @@ defmodule Ezagent.CapabilityTest do
       cap =
         cap(
           kind: :any,
-          behavior: Ezagent.Behavior.Echo,
-          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo"),
+          behavior: Ezagent.Behavior.PyAgent,
+          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py"),
           granted_by: @user_uri,
           granted_at: @now
         )
@@ -53,8 +53,8 @@ defmodule Ezagent.CapabilityTest do
                cap,
                needed(
                  kind: :anything,
-                 behavior: Ezagent.Behavior.Echo,
-                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo")
+                 behavior: Ezagent.Behavior.PyAgent,
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py")
                )
              )
     end
@@ -84,7 +84,7 @@ defmodule Ezagent.CapabilityTest do
     test "non-match on kind" do
       cap =
         cap(
-          kind: :echo,
+          kind: :py_agent,
           behavior: :any,
           instance: :any,
           granted_by: @user_uri,
@@ -152,7 +152,7 @@ defmodule Ezagent.CapabilityTest do
     test "removes a non-admin cap" do
       c =
         cap(
-          kind: :echo,
+          kind: :py_agent,
           behavior: :any,
           instance: :any,
           granted_by: @user_uri,
@@ -221,20 +221,20 @@ defmodule Ezagent.CapabilityTest do
 
   describe "cap_for_action/3 (Phase 3d + Phase 9 PR-3 workspace)" do
     test "entity URI → workspace from entity_workspace_uri/1" do
-      # Echo plugin pre-registers BehaviorRegistry at boot
-      target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
+      # The py plugin pre-registers BehaviorRegistry at boot
+      target = URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
 
-      n = Capability.cap_for_action(Ezagent.Entity.Echo, :say, target)
+      n = Capability.cap_for_action(Ezagent.Entity.PyAgent, :receive, target)
 
-      assert n.kind == :echo
-      assert n.behavior == Ezagent.Behavior.Echo
-      assert n.instance == URI.new!("entity://team-alpha/agent/echo_default")
+      assert n.kind == :py_agent
+      assert n.behavior == Ezagent.Behavior.PyAgent
+      assert n.instance == URI.new!("entity://team-alpha/agent/py_default")
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
     test "unknown action returns :unknown behavior" do
-      target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
-      n = Capability.cap_for_action(Ezagent.Entity.Echo, :nonexistent_action, target)
+      target = URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
+      n = Capability.cap_for_action(Ezagent.Entity.PyAgent, :nonexistent_action, target)
       assert n.behavior == :unknown
     end
 

@@ -12,10 +12,11 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   performs every `*Registry` registration the plugin declares.
 
   This test gates the **observable invariant** that mechanism delivers:
-  a real plugin OTP app (`ezagent_plugin_echo`) that has gone through
-  the boot path has its declared Behaviors / Template Classes / agent
-  flavors **present in the live core registries** — i.e. reachable
-  without a restart. It also pins the install task's idempotency:
+  a real plugin OTP app (`ezagent_plugin_py` — the reference flavor
+  plugin after the P2 echo retirement) that has gone through the boot
+  path has its declared Behaviors / Template Classes / agent flavors
+  **present in the live core registries** — i.e. reachable without a
+  restart. It also pins the install task's idempotency:
   `:application.ensure_all_started/1` on an already-running plugin is a
   clean no-op (`{:ok, []}`), the success path the task relies on.
 
@@ -33,7 +34,7 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
 
   alias Ezagent.{AgentFlavorRegistry, BehaviorRegistry, TemplateRegistry}
 
-  @plugin_app :ezagent_plugin_echo
+  @plugin_app :ezagent_plugin_py
 
   describe "the install mechanism — :application.ensure_all_started" do
     test "ensure_all_started on an already-running plugin is an idempotent no-op" do
@@ -64,43 +65,43 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   end
 
   describe "declared Behaviors are reachable in BehaviorRegistry (no restart)" do
-    test "the echo plugin's :say + :receive Behaviors resolve through BehaviorRegistry" do
-      # `EzagentPluginEcho.Application.behaviors/0` declares
-      # `{Ezagent.Entity.Echo, :say|:receive} → Ezagent.Behavior.Echo`.
-      # After `Ezagent.Plugin.boot/1` these MUST be resolvable via
-      # `BehaviorRegistry.lookup/2` — that IS "reachable without
-      # restart".
-      assert {:ok, Ezagent.Behavior.Echo} =
-               BehaviorRegistry.lookup(Ezagent.Entity.Echo, :say),
-             "the plugin's declared :say Behavior must be in BehaviorRegistry"
-
-      assert {:ok, Ezagent.Behavior.Echo} =
-               BehaviorRegistry.lookup(Ezagent.Entity.Echo, :receive),
+    test "the py plugin's :receive + :configure Behaviors resolve through BehaviorRegistry" do
+      # `EzagentPluginPy.Application.behaviors/0` declares
+      # `{Ezagent.Entity.PyAgent, :receive|:reset|:configure} →
+      # Ezagent.Behavior.PyAgent`. After `Ezagent.Plugin.boot/1` these MUST
+      # be resolvable via `BehaviorRegistry.lookup/2` — that IS "reachable
+      # without restart".
+      assert {:ok, Ezagent.Behavior.PyAgent} =
+               BehaviorRegistry.lookup(Ezagent.Entity.PyAgent, :receive),
              "the plugin's declared :receive Behavior must be in BehaviorRegistry"
+
+      assert {:ok, Ezagent.Behavior.PyAgent} =
+               BehaviorRegistry.lookup(Ezagent.Entity.PyAgent, :configure),
+             "the plugin's declared :configure Behavior must be in BehaviorRegistry"
     end
   end
 
   describe "declared Template Classes are reachable in TemplateRegistry (no restart)" do
-    test "the echo plugin's `echo.agent` Template Class resolves through TemplateRegistry" do
-      # `template_classes/0` declares `Ezagent.PluginEcho.Template.EchoAgent`;
+    test "the py plugin's `py.agent` Template Class resolves through TemplateRegistry" do
+      # `template_classes/0` declares `Ezagent.Template.PyAgent`;
       # its `template_name/0` is the registry key.
-      name = Ezagent.PluginEcho.Template.EchoAgent.template_name()
+      name = Ezagent.Template.PyAgent.template_name()
 
-      assert {:ok, Ezagent.PluginEcho.Template.EchoAgent} = TemplateRegistry.lookup(name),
+      assert {:ok, Ezagent.Template.PyAgent} = TemplateRegistry.lookup(name),
              "the plugin's declared Template Class must be in TemplateRegistry " <>
                "under #{inspect(name)}"
     end
   end
 
   describe "declared agent flavors are reachable in AgentFlavorRegistry (no restart)" do
-    test "the echo plugin's `echo` flavor resolves through AgentFlavorRegistry" do
-      # `agent_flavors/0` declares flavor `"echo"` →
-      # `{Ezagent.Entity.Echo, Ezagent.PluginEcho.Template.EchoAgent}`.
-      assert {:ok, %{kind: Ezagent.Entity.Echo, template_class: tc}} =
-               AgentFlavorRegistry.lookup("echo"),
-             "the plugin's declared `echo` flavor must be in AgentFlavorRegistry"
+    test "the py plugin's `py` flavor resolves through AgentFlavorRegistry" do
+      # `agent_flavors/0` declares flavor `"py"` →
+      # `{Ezagent.Entity.PyAgent, Ezagent.Template.PyAgent}`.
+      assert {:ok, %{kind: Ezagent.Entity.PyAgent, template_class: tc}} =
+               AgentFlavorRegistry.lookup("py"),
+             "the plugin's declared `py` flavor must be in AgentFlavorRegistry"
 
-      assert tc == Ezagent.PluginEcho.Template.EchoAgent
+      assert tc == Ezagent.Template.PyAgent
     end
   end
 end

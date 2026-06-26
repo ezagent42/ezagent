@@ -6,8 +6,8 @@ defmodule Ezagent.Capability do
   match (with `:any` acting as wildcard for `kind` / `behavior` /
   `action` / `instance` / `workspace_uri`):
 
-  - `kind` — Kind type atom (e.g. `:echo`); `:any` matches all
-  - `behavior` — Behavior module ref (e.g. `Ezagent.Behavior.Echo`);
+  - `kind` — Kind type atom (e.g. `:py_agent`); `:any` matches all
+  - `behavior` — Behavior module ref (e.g. `Ezagent.Behavior.PyAgent`);
     `:any` matches all
   - `action` — the action atom (e.g. `:send`, `:add_member`); `:any`
     matches all. NEW per SPEC 2026-05-27 (capability-action-axis).

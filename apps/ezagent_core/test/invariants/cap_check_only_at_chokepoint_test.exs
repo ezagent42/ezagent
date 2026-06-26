@@ -75,7 +75,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_pty/lib/ezagent/behavior/",
         "apps/ezagent_domain_workspace/lib/ezagent/behavior/",
         "apps/ezagent_plugin_curl_agent/lib/ezagent/behavior/",
-        "apps/ezagent_plugin_echo/lib/ezagent/behavior/",
+        "apps/ezagent_plugin_py/lib/ezagent/behavior/",
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/",
         "apps/ezagent_plugin_np/lib/ezagent/behavior/",
         # P3-2 — the socialware customer_feed `:pull` ExternalAdapter co-locates
