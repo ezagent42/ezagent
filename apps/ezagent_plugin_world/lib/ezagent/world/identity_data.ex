@@ -341,18 +341,24 @@ defmodule Ezagent.World.IdentityData do
     _ -> "<agent-uri>"
   end
 
+  # Read the entity's granted caps for the DETAIL surface WITHOUT activating the
+  # entity. The previous implementation dispatched `identity.list_caps` (mode
+  # `:call`), which lazy-spawns / force-activates a cold agent — the FP5 S5
+  # `:activate_timeout` bug (#115): a cold cc agent needs >5s to launch claude,
+  # blowing the ReadyGate budget so the caps panel errored. This is a READ of
+  # persisted state, so it reads the durable identity-slice caps via the
+  # sanctioned owner `Ezagent.Identity.read_entity_caps/1` (live registry read
+  # first — no spawn — then persisted-snapshot fallback for a cold entity).
+  # The caller authorization the `identity.list_caps` dispatch enforced is
+  # PRESERVED: the caller's `caller_caps` must satisfy the SAME needed-cap the
+  # dispatch built (`cap(:any, Identity, :list_caps)` with the entity Kind /
+  # instance / workspace substituted in, per runtime.ex:440-477), authorized via
+  # `Ezagent.Identity.caps_authorize?/2`. An unauthorized caller still gets
+  # `{:error, :unauthorized}` rendered as an error map.
   defp list_entity_caps(%URI{} = entity_uri, caller_uri, caller_caps) do
-    target = Ezagent.URI.with_action(entity_uri, :identity, :list_caps)
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync}
-         }) do
-      {:ok, %{caps: caps}} when is_list(caps) -> Enum.map(caps, &cap_row/1)
+    case authorize_list_caps(entity_uri, caller_uri, caller_caps) do
+      :ok -> entity_uri |> read_persisted_caps() |> Enum.map(&cap_row/1)
       {:error, reason} -> %{"error" => inspect(reason)}
-      other -> %{"error" => inspect(other)}
     end
   rescue
     err -> %{"error" => inspect(err)}
@@ -360,6 +366,49 @@ defmodule Ezagent.World.IdentityData do
 
   defp list_entity_caps(_entity_uri, _caller_uri, _caller_caps),
     do: %{"error" => "invalid_entity"}
+
+  # Preserve the `identity.list_caps` dispatch gate (step-5.5) without
+  # dispatching. The needed-cap mirrors `Ezagent.Behavior.Identity.required_caps`
+  # `list_caps: cap(:any, Identity, :list_caps)` with the runtime substitution
+  # the dispatch path applies (kind → entity Kind type, action → :list_caps,
+  # instance → entity instance, workspace → entity workspace). Authorization
+  # runs through the sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2`
+  # (the cap-check is not hand-rolled in this plugin facade). The self-read
+  # branch mirrors the `list_caps` self-grant the dispatch path honored.
+  defp authorize_list_caps(%URI{} = entity_uri, caller_uri, caller_caps) do
+    needed = %{
+      kind: entity_kind_type(entity_uri),
+      behavior: Ezagent.Behavior.Identity,
+      action: :list_caps,
+      instance: Ezagent.URI.instance(entity_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(entity_uri)
+    }
+
+    if Ezagent.Identity.caps_authorize?(caller_caps, needed) or same_uri?(caller_uri, entity_uri) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  # The entity Kind type the dispatch resolves for the needed-cap's `kind` axis
+  # (e.g. `:user` / `:agent`). Falls back to `:any` if it can't be derived.
+  defp entity_kind_type(%URI{} = entity_uri) do
+    case Ezagent.URI.type(entity_uri) do
+      {:ok, type} when is_binary(type) -> String.to_existing_atom(type)
+      _ -> :any
+    end
+  rescue
+    _ -> :any
+  end
+
+  # Read the entity's caps from durable identity-slice state via the sanctioned
+  # owner (`Ezagent.Identity.read_entity_caps/1`): live registry read (no spawn)
+  # then persisted-snapshot fallback for a cold entity — NO sensitive-slice read
+  # in this plugin facade.
+  defp read_persisted_caps(%URI{} = entity_uri) do
+    Ezagent.Identity.read_entity_caps(entity_uri)
+  end
 
   defp cap_row(cap) do
     %{
@@ -491,20 +540,67 @@ defmodule Ezagent.World.IdentityData do
     err -> %{"config_dir_path" => nil, "extensions" => [], "error" => inspect(err)}
   end
 
+  # Read the agent's sandbox state for the DETAIL / extension panels WITHOUT
+  # activating the agent. The previous implementation dispatched
+  # `:sandbox/:read` (mode `:call`), which lazy-spawns / force-activates a cold
+  # agent — the SAME FP5 S5 `:activate_timeout` bug (#115) the caps panel hit
+  # (codex MEDIUM-2): a cold cc agent needs >5s to launch claude, blowing the
+  # ReadyGate budget so the detail page (config_dir / project_cwd /
+  # source_template) AND the extension list errored. This is a READ of persisted
+  # state, so it reads the durable `:sandbox` slice via the OWNER's
+  # non-activating reader `Ezagent.Behavior.Sandbox.read_persisted_state/1`
+  # (live registry read first — no spawn — then persisted-snapshot fallback for
+  # a cold agent).
+  #
+  # The caller authorization the `:sandbox/:read` dispatch enforced is
+  # PRESERVED: the `:read` action gate is a PURE cap check (runtime.ex step 5.5
+  # — `:sandbox` has NO data_owner/self disjunct, unlike `identity.list_caps`),
+  # so the caller's `caller_caps` must satisfy the SAME needed-cap the dispatch
+  # built (`cap(:agent, Ezagent.Behavior.Sandbox, :read)` with the instance /
+  # workspace substituted in per runtime.ex:423-477), authorized via the
+  # sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2`. An
+  # unauthorized caller still gets `{:error, :unauthorized}`.
   defp sandbox_read(agent_uri, caller_uri, caller_caps) do
-    target = Ezagent.URI.with_action(agent_uri, :sandbox, :read)
+    case authorize_sandbox_read(agent_uri, caller_uri, caller_caps) do
+      :ok ->
+        case Ezagent.Behavior.Sandbox.read_persisted_state(agent_uri) do
+          state when is_map(state) -> {:ok, state}
+          _ -> {:error, :not_found}
+        end
 
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: {:caller_inbox, self()}}
-         }) do
-      {:ok, result} when is_map(result) -> {:ok, result}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_sandbox_read, other}}
+      {:error, _} = err ->
+        err
     end
   end
+
+  # Preserve the `:sandbox/:read` dispatch gate (step 5.5) without dispatching.
+  # The needed-cap mirrors `Ezagent.Behavior.Sandbox.required_caps` `read:
+  # cap(:agent, __MODULE__, :read)` with the runtime substitution the dispatch
+  # path applies (kind `:agent` is declared concretely; action → :read; instance
+  # → agent instance; workspace → agent workspace). Authorization runs through
+  # the sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2` (the
+  # cap-check is not hand-rolled in this plugin facade). There is NO self-read
+  # branch — unlike `identity.list_caps`, the `:sandbox/:read` runtime gate has
+  # no data_owner/self disjunct, so adding one here would WIDEN access beyond the
+  # dispatch path.
+  defp authorize_sandbox_read(%URI{} = agent_uri, _caller_uri, caller_caps) do
+    needed = %{
+      kind: :agent,
+      behavior: Ezagent.Behavior.Sandbox,
+      action: :read,
+      instance: Ezagent.URI.instance(agent_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
+    }
+
+    if Ezagent.Identity.caps_authorize?(caller_caps, needed) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  defp authorize_sandbox_read(_agent_uri, _caller_uri, _caller_caps),
+    do: {:error, :invalid_entity}
 
   # Read the agent's sandbox state through the SAME dispatch path
   # `list_extensions/3` uses (`:sandbox/:read`). Returns the raw result map

@@ -274,6 +274,95 @@ defmodule Ezagent.Identity do
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
   def read_held_caps(actor_uri), do: read_granter_caps(parse_uri(actor_uri))
 
+  @doc """
+  Authorize a held-cap set against a runtime `needed`-cap map, with the EXACT
+  predicate the dispatch chokepoint applies (`Ezagent.Kind.Runtime.authorizes?/2`):
+  a cap authorizes only if it traces to a real entity (`granted_by_entity?/1`)
+  AND `matches?/2` the needed cap.
+
+  This is the SANCTIONED home for the cap-shape check used by NON-dispatching
+  READ facades (`Ezagent.Agent.Config.read_cascade/4`,
+  `Ezagent.World.IdentityData` caps panel) that must preserve a dispatch gate
+  WITHOUT activating the target (FP5 S5 #115). It lives here — not in the facade
+  and not in `Ezagent.Capability` (which is def-count-capped) — so the cap-check
+  stays at an allowlisted chokepoint owner (`cap_check_only_at_chokepoint`).
+
+  `needed` is the runtime needed-cap shape the dispatch path builds for the
+  action (`%{kind:, behavior:, action:, instance:, workspace_uri:}`) — the
+  caller constructs it from the target (pure field assignment, no `matches?`),
+  so the instance binding (and thus the wrong-target denial) is preserved.
+  """
+  @spec caps_authorize?(MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()], map()) ::
+          boolean()
+  def caps_authorize?(caps, needed) when is_map(needed) do
+    caps
+    |> normalize_caps()
+    |> Enum.any?(&cap_authorizes?(&1, needed))
+  end
+
+  defp cap_authorizes?(%Ezagent.Capability{} = cap, needed) do
+    Ezagent.Capability.granted_by_entity?(cap) and
+      try do
+        Ezagent.Capability.matches?(cap, needed)
+      rescue
+        _ -> false
+      catch
+        _, _ -> false
+      end
+  end
+
+  defp cap_authorizes?(_, _), do: false
+
+  defp normalize_caps(%MapSet{} = caps), do: caps
+  defp normalize_caps(caps) when is_list(caps), do: MapSet.new(caps)
+  defp normalize_caps(_), do: MapSet.new()
+
+  @doc """
+  Read `entity_uri`'s granted caps from its durable `:identity` slice as a LIST
+  of `%Capability{}` — WITHOUT activating the entity.
+
+  Reads the LIVE slice via `Ezagent.Kind.get_slice/2` (a registry lookup —
+  returns `:not_found` for a cold entity, NEVER spawns), then falls back to the
+  persisted `Ezagent.SnapshotStore.latest/1` snapshot (cold-path), normalizing
+  the two-container slice via `Ezagent.Kind.normalize_slice_view/1`. Returns
+  `[]` when neither is present.
+
+  Distinct from `read_held_caps/1` (the GRANTER-authorization path, which falls
+  back to the `users` table to decide who may MINT a grant): this is a READ
+  surface for ANY entity (incl. agents), so its fallback is the snapshot, not
+  `users`. Keeping them separate avoids changing grant authority.
+  """
+  @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
+  def read_entity_caps(entity_uri) do
+    case Ezagent.Kind.get_slice(entity_uri, :identity) do
+      {:ok, slice} when is_map(slice) -> caps_from_slice(slice)
+      _ -> caps_from_snapshot(entity_uri)
+    end
+  end
+
+  defp caps_from_snapshot(entity_uri) do
+    case Ezagent.SnapshotStore.latest(entity_uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        state
+        |> Map.get(:identity, %{})
+        |> Ezagent.Kind.normalize_slice_view()
+        |> caps_from_slice()
+
+      _ ->
+        []
+    end
+  end
+
+  defp caps_from_slice(slice) when is_map(slice) do
+    case Map.get(slice, :caps) do
+      %MapSet{} = set -> MapSet.to_list(set)
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp caps_from_slice(_), do: []
+
   # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
   # Read the granter's current Identity slice caps via
   # `Ezagent.Kind.get_slice/2`. Skips dispatch (chicken-and-egg).

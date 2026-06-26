@@ -8,6 +8,7 @@ defmodule Ezagent.Agent.Config do
   """
 
   alias Ezagent.{Invocation, Socialware.ConfigStore}
+  alias Ezagent.Behavior.ConfigEvolve
 
   @default_key "advisor.behavior"
   @layer_order ~w(workspace user session)
@@ -18,11 +19,22 @@ defmodule Ezagent.Agent.Config do
   @doc """
   Reads the editable config cascade for an agent.
 
-  The read is gated by the agent's manage-cap — SYMMETRIC with the writes — by
-  routing through the `config_evolve.read_cascade` action via `Invocation`.
+  The read is gated by the agent's manage-cap — SYMMETRIC with the writes.
   Authorization is enforced on the AUTHENTICATED `caller`'s `caps` against the
-  target agent (dispatch step-5.5), NOT derived from the target uri: a caller
-  without the agent's manage-cap gets `{:error, :unauthorized}`.
+  target agent (the SAME `cap(:agent, Manage, :any)` instance-scoped gate the
+  `config_evolve.read_cascade` dispatch enforced at step-5.5), NOT derived from
+  the target uri: a caller without the agent's manage-cap — including a caller
+  holding the manage-cap for a DIFFERENT agent — gets `{:error, :unauthorized}`.
+
+  Unlike the writes, the read does NOT dispatch (which would lazy-spawn /
+  force-activate a cold agent — the FP5 S5 `:activate_timeout` bug, #115, where
+  the world config DETAIL surface activated a cold cc agent that needs >5s to
+  launch claude). After authorizing, it reads the cascade DIRECTLY from the
+  durable `ConfigStore` via `Ezagent.Behavior.ConfigEvolve.build_cascade/2` (a
+  pure DB projection — NO process, NO activation). The cap gate is preserved by
+  reconstructing the EXACT needed-cap the dispatch path builds (kind `:agent`,
+  behavior `Manage`, the target agent instance + workspace) and authorizing it
+  the SAME way step-5.5 does, via `Ezagent.Identity.caps_authorize?/2`.
 
   The returned shape is stable for empty agents: it always includes the default
   `advisor.behavior` key plus any dynamic keys currently present in
@@ -37,20 +49,40 @@ defmodule Ezagent.Agent.Config do
           {:ok, map()} | {:error, term()}
   def read_cascade(agent_uri, caller, caps, opts \\ []) do
     with {:ok, agent_uri} <- normalize_agent_uri(agent_uri),
-         {:ok, caller} <- normalize_uri(caller),
-         %URI{} <- Ezagent.URI.workspace_of(agent_uri) do
-      args = read_args(opts)
-
-      agent_uri
-      |> action_uri(:read_cascade)
-      |> dispatch(:call, args, caller, caps)
-      |> case do
-        {:ok, %{cascade: cascade}} -> {:ok, cascade}
-        {:error, _reason} = error -> error
-      end
+         {:ok, _caller} <- normalize_uri(caller),
+         %URI{} <- Ezagent.URI.workspace_of(agent_uri),
+         :ok <- authorize_read_cascade(agent_uri, caps) do
+      {:ok, ConfigEvolve.build_cascade(agent_uri, read_keys(opts))}
     else
       :any -> {:error, :invalid_agent_uri}
       {:error, _reason} = error -> error
+    end
+  end
+
+  # Preserve the manage-cap gate the `config_evolve.read_cascade` dispatch
+  # enforced (step-5.5) WITHOUT dispatching. The dispatch built the needed-cap
+  # from `ConfigEvolve.required_caps()[:read_cascade]` (== `cap(:agent, Manage,
+  # :any)`) and substituted the runtime instance/workspace from the target
+  # (runtime.ex:440-477). We rebuild the IDENTICAL needed-cap (pure field
+  # assignment) and authorize via the sanctioned chokepoint owner
+  # `Ezagent.Identity.caps_authorize?/2` (the same granted-by-entity + cap-match
+  # predicate the dispatch uses — the cap-check stays at an allowlisted owner,
+  # not hand-rolled here). Instance-scoped: a manage-cap
+  # over a DIFFERENT agent does NOT match (its `instance` is that other agent),
+  # so cross-agent reads fail closed — the exact discrimination dispatch gave.
+  defp authorize_read_cascade(agent_uri, caps) do
+    needed = %{
+      kind: :agent,
+      behavior: Ezagent.Behavior.Manage,
+      action: :read_cascade,
+      instance: Ezagent.URI.instance(agent_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
+    }
+
+    if Ezagent.Identity.caps_authorize?(caps, needed) do
+      :ok
+    else
+      {:error, :unauthorized}
     end
   end
 
@@ -151,12 +183,13 @@ defmodule Ezagent.Agent.Config do
     end
   end
 
-  # Build the `read_cascade` dispatch args from facade opts. Only forward an
-  # explicit `:keys` filter; an absent filter lets the action read all keys.
-  defp read_args(opts) do
+  # Build the `keys` filter for `ConfigEvolve.build_cascade/2` from facade opts.
+  # Only forward an explicit `:keys` filter (as strings); an absent filter is
+  # `nil`, which `build_cascade/2` reads as "all subject keys".
+  defp read_keys(opts) do
     case opt(opts, :keys, nil) do
-      keys when is_list(keys) -> %{keys: Enum.map(keys, &to_string/1)}
-      _ -> %{}
+      keys when is_list(keys) -> Enum.map(keys, &to_string/1)
+      _ -> nil
     end
   end
 

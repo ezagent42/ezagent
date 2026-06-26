@@ -413,20 +413,40 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # exposes (`Ezagent.Agent.Config`).
   @spec handle_read_cascade(map(), map()) :: {:ok, map(), [term()]}
   def handle_read_cascade(args, ctx) do
-    agent_uri = ctx.self_uri
-    workspace_uri = Ezagent.URI.workspace_of(agent_uri)
-    keys = keys_for(agent_uri, Map.get(args, :keys))
+    cascade = build_cascade(ctx.self_uri, Map.get(args, :keys))
+    {:ok, %{cascade: cascade}, []}
+  end
 
-    cascade = %{
+  @doc """
+  Build the editable config cascade for `agent_uri` PURELY from the durable
+  `ConfigStore` (DB only) — NO process, NO Kind activation, NO ctx/live slice.
+
+  This is the same shape `handle_read_cascade/2` returns (and the console facade
+  `Ezagent.Agent.Config.read_cascade/4` exposes). It is exposed as a public pure
+  function so the facade can read the cascade DIRECTLY without dispatching the
+  `read_cascade` action (which would force-activate a cold agent — the FP5 S5
+  `:activate_timeout` bug, #115). The facade preserves the manage-cap gate
+  itself BEFORE calling this; this function performs NO authorization (it is a
+  pure projection of durable rows). `keys` is `nil` (read all subject keys) or a
+  list of key strings to filter.
+  """
+  @spec build_cascade(URI.t() | String.t(), [String.t()] | nil) :: map()
+  def build_cascade(agent_uri, keys \\ nil) do
+    agent_uri = normalize_agent_uri(agent_uri)
+    workspace_uri = Ezagent.URI.workspace_of(agent_uri)
+    resolved_keys = keys_for(agent_uri, keys)
+
+    %{
       agent_uri: URI.to_string(agent_uri),
       workspace_uri: URI.to_string(workspace_uri),
       default_key: @default_cascade_key,
       layer_order: @layer_order,
-      keys: Enum.map(keys, &key_state(agent_uri, workspace_uri, &1))
+      keys: Enum.map(resolved_keys, &key_state(agent_uri, workspace_uri, &1))
     }
-
-    {:ok, %{cascade: cascade}, []}
   end
+
+  defp normalize_agent_uri(%URI{} = uri), do: uri
+  defp normalize_agent_uri(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 
   # The cascade-shape readers (ported from the facade — the facade no longer
   # reads ConfigStore directly; it dispatches THIS action so the read is gated).
