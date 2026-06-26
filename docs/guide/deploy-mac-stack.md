@@ -174,6 +174,22 @@ FS:解 `fs-snapshot.tar.gz` 回 `*_home` 卷。跨域一致性快照(quiesce+LSN
 
 ---
 
+## 6.1 数据回流(reflow:prod→beta/nightly,测迁移)
+
+把 **stable 数据单向回流**到低环境,验证(低环境的更新代码的)迁移能否成功跑过 prod 数据;
+**prod 真实凭据永不落到低环境**(回流后用目标环境自己的 credentials 盖回)。
+
+```bash
+docker/reflow.sh <beta|nightly>     # source 固定 stable;拒绝 stable 作 target(单向)
+```
+- **DB**:保存目标 11 张凭据表(data-only)→ stable 全量覆盖目标 DB → 目标 `Release.migrate()` → `DELETE`+`session_replication_role=replica` 盖回目标凭据(不 `TRUNCATE CASCADE`,避免误删 FK 依赖的非凭据表如 `email_thread_state`)。
+- **agent-FS**:stable `*_home` 覆盖目标 → 盖回目标的 `default/credentials` 子树。
+- 凭据表/FS 路径可用 `EZAGENT_CRED_TABLES` / `EZAGENT_CRED_FS_PATH` 覆盖。
+- 实测 stable→beta:stable 非凭据数据回流 ✓、beta 自己的 API key 存活 ✓、迁移后 healthy ✓。
+- ⚠️ 会**覆盖目标环境全部数据**(beta/nightly 是测试环境,符合预期);定时回流可挂 launchd。
+
+---
+
 ## 7. 故障排查
 
 - **`docker compose` unknown command** → 用 `docker-compose`(本机无插件子命令)。
