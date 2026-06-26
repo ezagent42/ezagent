@@ -229,6 +229,55 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
           },
           "required" => []
         }
+      },
+      %{
+        "name" => "kb_query",
+        "description" =>
+          "Retrieve the top-k most relevant chunks from a knowledge-base agent " <>
+            "(a `kb`-role agent in your workspace). Returns ranked chunks with " <>
+            "provenance (source_uri, chunk_id, score). Use this to ground an " <>
+            "answer in indexed documents (keyword/FTS retrieval).",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "kb_agent" => %{
+              "type" => "string",
+              "description" => "Name of the kb-agent in your workspace to query."
+            },
+            "query" => %{
+              "type" => "string",
+              "description" => "The search query (free text)."
+            },
+            "k" => %{
+              "type" => "integer",
+              "description" => "Max number of chunks to return (default 5)."
+            }
+          },
+          "required" => ["kb_agent", "query"]
+        }
+      },
+      %{
+        "name" => "kb_ingest",
+        "description" =>
+          "Ingest one source document into a knowledge-base agent (a `kb`-role " <>
+            "agent in your workspace). The source is referenced by a " <>
+            "resource:// URI; re-ingesting the same source replaces its chunks. " <>
+            "Requires the kb.ingest capability (distinct from kb.query).",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "kb_agent" => %{
+              "type" => "string",
+              "description" => "Name of the kb-agent in your workspace to ingest into."
+            },
+            "source_uri" => %{
+              "type" => "string",
+              "description" =>
+                "resource://<ws>/kb-source/<name> URI of the document to ingest."
+            }
+          },
+          "required" => ["kb_agent", "source_uri"]
+        }
       }
     ]
   end

@@ -12,7 +12,10 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
     :update_template,
     :save_template_as,
     :migrate_session,
-    :list_templates
+    :list_templates,
+    # kb-retrieval SPEC §5.3 option 1 — retrieve from / ingest into a kb-agent.
+    :kb_query,
+    :kb_ingest
   ]
 
   @doc """
