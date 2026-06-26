@@ -44,8 +44,10 @@ defmodule Ezagent.World.KanbanData do
       # 与 WorkspacePluginData / IdentityData 对齐：React 外壳用 "title" 渲染 H1、
       # 用 "path" 算导航高亮。缺这两个字段会让 H1 退回 pageTitle 默认 "Sessions"、
       # 且 path=undefined 触发 navClass 把 Overview 误判为 active（FP5 S9）。
-      "title" => route.title,
-      "path" => route.path,
+      # 用 Map.get 防御式取（与上面 :entity_uri 一致）：生产路由总带 title/path,
+      # 但测试可能传精简 route,避免 KeyError。
+      "title" => Map.get(route, :title),
+      "path" => Map.get(route, :path),
       "kanban_uri" => encode_uri(uri),
       "instances" => list_instances(ctx),
       "tree" => snapshot && snapshot["tree"],
