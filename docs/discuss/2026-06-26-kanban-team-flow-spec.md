@@ -87,9 +87,8 @@
 |---|---|---|---|---|
 | **A** | `config_surface/0` 声明 → Plugins 页有 kanban 入口 | kanban plugin + world | 低，纯插件 | 无 |
 | **B** | `bind_session` 自动（建板时绑当前会话）/ 给 UI 入口 | kanban plugin + world | 低 | ★ B1 |
-| **C** | `sync_prs` 定时器（GenServer，merged→done 自动） | kanban plugin `children/0` | 中 | 无 |
-| **CI** | CI 硬门：verdict→GitHub commit status（PR 事件触发） | kanban plugin + 入站触发 | 中 | ★ B2 |
-| **D** | **GitHub 入站 plugin**（`ezagent_plugin_github`，轮询 list PRs 按分支名自动 `register_pr` + PR 事件驱动 CI；后 webhook） | 新 plugin | 中-大，仿 MiroSync | 无 |
+| **GH** | **`ezagent_plugin_github`（新独立 plugin，github 全部 in+out 从 kanban 抽出，不再混在 kanban）**：出站(`create_issue`/`post_comment`/`get_pull`/`create_commit_status`) + 入站(轮询 list PRs 按分支名自动 `register_pr` / `sync_prs` merged→done / PR 事件驱动；后 webhook)。github token 归它。kanban 经 dispatch 调它，它 dispatch 回 kanban(register_pr/set_status)。 | 新 plugin | 大，**重构：从 kanban 抽 github** | ★ github.ex/B2/sync_prs/register_pr/push_pr 现都在 kanban，**待抽出** |
+| **CI** | CI 判据**计算**(`check_pr_gate` 读 board，产品语义)**留 kanban**；**推 commit status** 由 kanban dispatch 给 **GH plugin** 执行 | kanban(算) + GH(推) | 中 | ★ B2 推 status 部分待拆给 GH |
 | **E** | **worker agent ↔ 看板接力**（cc-headless worker + 自动 routing 规则） | 配置/seed + 用 RuleStore/create_agent 现成 API | 中，**近 core 边界，先跟 Allen 确认设计** | ★ B1 接力骨架 |
 | **F** | 需求自动拆解（goal→节点树，LLM agent） | 编排 agent | 大，P2 | 无 |
 | **G** | **artifact → PR 仓库存证**（节点 artifact 落 docs/together 文件夹随 PR 进仓库） | kanban plugin connector | 中（用户点 1） | 无 |
@@ -105,10 +104,11 @@
 - 交付：Plugins 页能点进 kanban；建板自动绑会话。
 - 测试：world 渲染 e2e + 截图；bind_session 单测已有。
 
-**Phase 2 — 自动 CI 闭环（拔人工断点）**
-- C `sync_prs` 定时器 + D GitHub 入站轮询器（自动 register_pr + 事件驱动 push_pr）。
-- 交付：PR 出现自动登记 → CI 硬门自动推 → merged 自动 done，全程无人手填。
-- 测试：真 test-ezagent repo e2e（开 PR→自动 status→merge→done）+ 截图。
+**Phase 2 — 抽出 `ezagent_plugin_github` + 自动 CI 闭环（拔人工断点）**
+- **GH 抽出**：建 `ezagent_plugin_github`，把 kanban 现有 github 全部（`github.ex` + connectors 的 github 动作 + B2 推 status + `sync_prs`/`register_pr`/`push_pr`）**抽进新 plugin**；加**入站**（轮询 list PRs 按分支名自动 `register_pr`，仿 MiroSync）+ PR 事件驱动。
+- kanban 只留 **CI 判据计算**（`check_pr_gate` 读 board），经 dispatch 调 GH 推 status；kanban↔GH 全程走 `Invocation.dispatch`（P14）。
+- 交付：github 独立成 plugin、kanban 不含 github 代码；PR 出现自动登记 → CI 硬门自动推 → merged 自动 done，无人手填。
+- 测试：真 test-ezagent repo e2e（开 PR→自动 register→自动 status→merge→自动 done）+ 截图。
 
 **Phase 3 — agent 接力（chat 全自动）**
 - E worker agent（cc-headless）+ routing 规则 + G 仓库存证。
@@ -120,8 +120,9 @@
 - F 需求自动拆解 + H 多仓库 + webhook 升级。
 
 **Phase 5 — 统一整理（开发完收口，用户要求）**
-- reconcile 现有零碎提交进整体结构：**2 个 kanban skill** 按 `kanban-skills-replan.md` 对齐 dev-together + 本 spec 流程；**B1/B2 github 类修改**——复用对的（如确实需要的接力/CI 机制）、删/改过时的、命名与边界对齐本 spec。
-- 删除整体流程不再需要的零碎动作/字段；统一文档（把本轮 discuss 文档收敛成最终 design + plan + readme）。
+- **B2 github 部分在 Phase 2 已抽进 `ezagent_plugin_github`**（不在 Phase 5 原地 reconcile）。
+- Phase 5 处理剩余：**B1 接力**复用对的/删过时的、对齐本 spec；**2 个 kanban skill** 按 `kanban-skills-replan.md` 对齐 dev-together + 本 spec；**删 `attach_code_file`**（sha/pr blob 下线，§flow-redesign §3）。
+- 删整体流程不再需要的零碎动作/字段；统一文档（本轮 discuss 收敛成最终 design+plan+readme）。
 - gate：全量 mix test 绿 + CI 绿 + 无遗留死代码。
 
 ---

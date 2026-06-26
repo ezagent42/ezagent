@@ -112,8 +112,10 @@ dev-together 命令**自动运行产生的文档**（`docs/together/<date>/`）�
 
 本文是**流程真相源**；要把它跑起来需 SPEC §6 的能力（按 Phase）：
 - Phase 1：config_surface(A) + bind_session(B) — UI 接线。
-- Phase 2：sync_prs 定时器(C) + GitHub 入站(D) + CI 硬门(CI) — 自动 CI 闭环，**自动 register_pr 取代手填**。
-- Phase 3：worker agent 接力(E) + 仓库存证(G) + dev-together 自动挂载(§4) — chat 全自动。
-- Phase 5：统一整理——**删 `attach_code_file`**（§3）、reconcile B1/B2 + 2 skill、收敛文档。
+- Phase 2：**抽出 `ezagent_plugin_github`**(GH，github 全部 in+out 从 kanban 抽出) + CI 自动闭环 — **自动 register_pr 取代手填**。kanban 只留 CI 判据计算、经 dispatch 调 GH 推 status。
+- Phase 3：worker agent 接力(E) + 仓库存证(G) + dev-together 自动挂载(§4) + 板级时间线(T) — chat 全自动。
+- Phase 5：统一整理——**删 `attach_code_file`**（§3）、reconcile B1 + 2 skill、收敛文档。
 
-**变更摘要（相对旧设计）**：① artifact 收敛成 attach_artifact 一条路、sha/pr blob 下线；② dev-together 自动产物按 §4 映射自动挂阶段节点；③ register_pr 手填被 github 入站自动化取代。
+**github 边界（重要）**：所有 github 操作（建 issue/PR 评论/读 PR/推 status/入站轮询）归 **`ezagent_plugin_github`**，**不混在 kanban**。kanban 只持有 board 真相源 + CI 判据计算（`check_pr_gate` 读 board），经 `Invocation.dispatch` 调 GH plugin 做 github；GH plugin dispatch 回 kanban（register_pr/set_status）。github token 归 GH plugin。
+
+**变更摘要（相对旧设计）**：① artifact 收敛成 attach_artifact 一条路、sha/pr blob 下线；② dev-together 自动产物按 §4 映射（节点级 + 板级时间线）；③ **github 全部抽成独立 plugin**、register_pr 手填被 github 入站自动化取代。
