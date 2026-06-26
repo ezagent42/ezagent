@@ -22,17 +22,8 @@ defmodule Ezagent.PluginPy.SeedDefaultTest do
 
   setup do
     case System.find_executable("uv") do
-      nil ->
-        {:skip, "uv not on PATH"}
-
-      _ ->
-        # Isolation: the seed installs echo.py into py_default's per-agent
-        # config_dir, which lives under the shared HOME. A stale leftover with
-        # DIFFERING bytes makes install_script refuse with :script_immutable and
-        # the boot-seed fail. Clear it so the seed always writes fresh (no-op on
-        # a clean HOME / CI).
-        _ = File.rm_rf(Ezagent.Sandbox.ConfigDir.path(PyApp.default_uri(), "py"))
-        :ok
+      nil -> {:skip, "uv not on PATH"}
+      _ -> :ok
     end
   end
 
