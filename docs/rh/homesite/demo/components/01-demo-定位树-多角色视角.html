@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>定位① Acquisition · 定位树 · 多角色视角</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2430; --muted:#8a93a3;
+    --line:#d7dce4; --dim:0.30; --radius:14px;
+    --shadow:0 1px 2px rgba(16,24,40,.06),0 6px 16px rgba(16,24,40,.06);
+    --rc:#1b61c9; --rc-soft:#e6f0fc;
+    /* 树层级配色 */
+    --c-pos:#1f2430; --c-ns:#c98a00; --c-metric:#495b76; --c-pain:#c92a2a;
+    --c-all:#8a93a3; --c-zhao:#0c8599; --c-qian:#f08c00; --c-sun:#7048e8;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
+      "Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 80px}
+  header h1{font-size:21px;margin:0 0 4px;letter-spacing:.3px}
+  header p.sub{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+
+  /* ---- role tabs (认领角色) ---- */
+  .roles{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 6px}
+  .role-tab{
+    border:1.5px solid var(--line);background:var(--card);color:var(--ink);
+    padding:8px 16px;border-radius:999px;font-size:14px;cursor:pointer;
+    font-weight:600;transition:all .15s ease;display:flex;align-items:center;gap:7px;
+  }
+  .role-tab .dot{width:9px;height:9px;border-radius:50%;background:var(--tc)}
+  .role-tab:hover{border-color:var(--tc)}
+  .role-tab.active{color:#fff;background:var(--tc);border-color:var(--tc)}
+  .role-tab.active .dot{background:#fff}
+  .role-hint{margin:10px 0 2px;font-size:13px;color:var(--muted)}
+  .role-hint b{color:var(--ink)}
+
+  /* ---- demo bar (drop 子树) ---- */
+  .demo-bar{margin:14px 0 4px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .demo-btn{
+    border:0;background:var(--ink);color:#fff;font-weight:700;font-size:13px;
+    padding:9px 16px;border-radius:10px;cursor:pointer;transition:all .15s;
+  }
+  .demo-btn:hover{opacity:.88}
+  .demo-btn.on{background:#c92a2a}
+  .demo-caption{font-size:12.5px;color:#c92a2a;font-weight:600;display:none}
+  .demo-caption.show{display:block}
+
+  /* ---- 主体：树 + 抽屉 双栏 ---- */
+  .stage{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:22px;margin-top:14px;align-items:start}
+  @media(max-width:860px){.stage{grid-template-columns:1fr}}
+
+  /* ---- CSS 树 (├─ └─) ---- */
+  .tree, .tree ul{list-style:none;margin:0;padding:0}
+  .tree{padding:6px 2px}
+  .tree ul{margin-left:13px}
+  .tree li{position:relative;padding-left:24px}
+  /* 竖线 */
+  .tree li::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;border-left:2px solid var(--line);
+  }
+  /* 横肘 */
+  .tree li::after{
+    content:"";position:absolute;left:0;top:22px;width:20px;border-top:2px solid var(--line);
+  }
+  /* 最后一个子节点：竖线只画到肘部 */
+  .tree li:last-child::before{height:22px}
+  /* 根：无连线 */
+  .tree > li{padding-left:0}
+  .tree > li::before,.tree > li::after{display:none}
+
+  .tnode{
+    display:inline-flex;align-items:center;gap:9px;flex-wrap:wrap;
+    background:var(--card);border:1.5px solid var(--line);border-radius:11px;
+    padding:7px 11px;margin:4px 0;cursor:pointer;box-shadow:var(--shadow);
+    transition:all .16s ease;position:relative;border-left-width:4px;border-left-color:var(--ac,var(--line));
+  }
+  .tnode:hover{transform:translateX(2px);border-color:var(--ink)}
+  .tnode .chip{
+    font-size:10.5px;font-weight:800;color:#fff;border-radius:6px;padding:2px 7px;
+    white-space:nowrap;background:var(--ac,var(--muted));
+  }
+  .tnode .tlabel{font-size:13.5px;font-weight:700}
+  .tnode .tsub{font-size:11.5px;color:var(--muted);font-weight:500}
+  .tnode .tagmini{
+    font-size:10.5px;color:var(--c-pain);font-weight:700;
+    border:1px solid #ffc9c9;background:#fff5f5;border-radius:5px;padding:1px 6px;
+  }
+  .badges{display:inline-flex;flex-wrap:wrap;gap:4px}
+  .badge{font-size:10px;font-weight:700;color:#fff;border-radius:5px;padding:2px 6px;white-space:nowrap}
+  .badge.kind{background:#495b76}
+  .badge.kind.fn{background:#2b8a3e}
+  .badge.prio{background:#1f2430}
+  .badge.prio.p0{background:#c92a2a}
+  .badge.prio.p1{background:#e8590c}
+  .badge.prio.p2{background:#868e96}
+
+  /* spotlight 状态 */
+  .tnode.owned{border-color:var(--rc);box-shadow:0 0 0 3px var(--rc-soft),var(--shadow)}
+  .tnode.owned::after{
+    content:"我认领 ◀";position:absolute;top:-9px;right:-6px;font-size:9.5px;font-weight:800;
+    color:var(--rc);border:1.5px solid var(--rc);border-radius:6px;padding:1px 5px;background:#fff;
+  }
+  .tnode.dim{opacity:var(--dim);filter:saturate(.5)}
+  .tnode.selected{outline:2.5px dashed var(--ink);outline-offset:2px}
+  .tnode.dropped{opacity:.26;filter:grayscale(1)}
+  .tnode.dropped .tlabel{text-decoration:line-through}
+
+  /* ---- 抽屉 ---- */
+  .drawer{
+    position:sticky;top:18px;background:var(--card);border:1.5px solid var(--line);
+    border-radius:var(--radius);padding:18px 18px;box-shadow:var(--shadow);min-height:160px;
+  }
+  .drawer.empty{color:var(--muted);display:flex;align-items:center;justify-content:center;
+    font-size:13px;text-align:center;background:transparent;box-shadow:none;border-style:dashed;min-height:140px}
+  .d-head{display:flex;align-items:center;gap:9px;margin-bottom:13px;flex-wrap:wrap}
+  .d-head .d-chip{font-size:11px;font-weight:800;color:#fff;border-radius:7px;padding:3px 9px;background:var(--ac,var(--muted))}
+  .d-head h3{margin:0;font-size:16px;flex:1 1 auto}
+  .mine{
+    background:var(--rc-soft);border:1.5px solid var(--rc);border-radius:11px;
+    padding:10px 12px;margin-bottom:13px;
+  }
+  .mine .mtag{font-size:10.5px;font-weight:800;color:var(--rc);margin-bottom:5px;letter-spacing:.3px}
+  .mine .mbody{font-size:13px;font-weight:600}
+  .meta-grid{display:grid;grid-template-columns:84px 1fr;gap:8px 12px;font-size:13px}
+  .meta-grid .k{color:var(--muted);font-weight:600}
+  .meta-grid .v{color:var(--ink)}
+  .meta-grid .v.strong{font-weight:700}
+  .meta-grid .v.truth{color:var(--rc);font-weight:700}
+  .warn{margin-top:11px;font-size:12.5px;color:#a8410a;background:#fff4e6;border:1px solid #ffd8a8;
+    border-radius:9px;padding:8px 10px}
+  .quote{font-size:13px;line-height:1.7;background:#f8f9fb;border-left:3px solid var(--ac,var(--muted));
+    border-radius:0 8px 8px 0;padding:9px 12px;color:#3a4150}
+  .mtable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+  .mtable td{border:1px solid var(--line);padding:5px 8px;vertical-align:top}
+  .mtable td.mk{color:var(--muted);font-weight:600;width:42%;background:#fafbfc}
+
+  footer{margin-top:30px;font-size:12px;color:var(--muted);line-height:1.7}
+  footer code{background:#eef1f6;padding:1px 5px;border-radius:4px}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:11.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:18px;height:8px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>定位① · Acquisition · 定位树（多角色视角）</h1>
+    <p class="sub">
+      把「基于浏览量的定位稿」长出来的树画出来：<b>定位 → 北极星 → 输入指标 → 痛点 → 角色(persona) → 卡 + 原型</b>。<br>
+      切换<b>认领角色</b>高亮「我要做的卡」；点任意节点看它的卡片明细；底部按钮模拟「指标不达标 → drop 子树」。
+    </p>
+  </header>
+
+  <div class="roles" id="roles"></div>
+  <div class="role-hint" id="roleHint"></div>
+
+  <div class="demo-bar">
+    <button class="demo-btn" id="dropBtn">▶ 模拟：①-B孙 留站率连续不达标 → drop 子树</button>
+    <span class="demo-caption" id="dropCaption">孙集成视角留站率连续 M 个窗口未达阈值 → drop「孙集成 · ①-B孙」子树 → 反哺回 P4 重选 persona / 重写内容（实验判读：连续未达即砍）</span>
+  </div>
+
+  <div class="stage">
+    <ul class="tree" id="tree"></ul>
+    <div class="drawer empty" id="drawer">点左侧任意节点<br>看它的定位稿 / 指标定义 / 痛点 / persona / 卡片明细</div>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <footer>
+    单文件 demo · 数据源 = <code>01-定位①-Acquisition.md</code> + <code>P-用户画像-personas.md</code> + <code>R-修改原则.md</code> · 形式承袭 <code>07-demo-接力链-多角色视角.html</code>。<br>
+    树读法：<b>北极星 = 果</b>（有效浏览量 ≈ 到站量 × 留站率；到站量 = 搜索曝光×搜索CTR ＋ 分享链点击率×分享次数）；<b>输入指标 = 因</b>（能动手推高的杠杆，公式里每个乘子都要有卡认领）；链条 <b>痛点 → 角色 → 卡 拨动输入指标 → 抬北极星</b>。<br>
+    卡型两类：<b>功能卡</b>需开发（开 issue）／<b>内容卡</b>不开发、只调内容（就地维护）。<b>闭环乘子</b>：分享次数主体在 ⑤ Referral，①-A3 只补「进站即转」增量（⑤ ↺ ①）。<br>
+    <b>渠道范围</b>：到站量 = 各渠道求和，当前刻意只算两条零成本自然流（搜索+分享）；付费投放/直接/外链等暂不纳入——先看自然流、不立即做有成本推广（点「北极星」节点看详情）。发起对话 / 对话重构 → 归 <b>② Activation</b>，不在本棒。
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   形 / 内容分离：以下全是「内容」（声明式数据）。
+   下方渲染函数是「形」，只读这些对象，不写死任何文案。
+   ============================================================ */
+
+// 认领角色（= 07 的 role tabs；这里换成「谁来做卡」）
+const ROLES = [
+  {key:'all',     name:'全部',  color:'#495b76'},
+  {key:'product', name:'产品',  color:'#1b61c9', soft:'#e6f0fc'},
+  {key:'design',  name:'设计',  color:'#d6336c', soft:'#fce7ef'},
+  {key:'dev',     name:'研发',  color:'#2b8a3e', soft:'#e6f4ea'},
+  {key:'ops',     name:'运营',  color:'#e8590c', soft:'#fdeede'},
+];
+const ROLE_NAME = Object.fromEntries(ROLES.map(r=>[r.key,r.name]));
+
+// persona 档案（P-用户画像-personas.md）
+const PERSONA = {
+  zhao:{name:'赵全扛 · 单干侠', color:'var(--c-zhao)', 一句话:'夫妻店 / 一人公司，选品+客服+物流一把抓',
+        痛点:'什么都自己扛、没人手', 想要:'开箱即跑（不用自己拼）', Ge:'✅ 锚点（但 ROI 要替他算）'},
+  qian:{name:'钱降本', color:'var(--c-qian)', 一句话:'8 人小队、有专职客服，想用 AI 砍人力',
+        痛点:'客服重复劳动、人力成本高', 想要:'降本数据', Ge:'✅ 锚点'},
+  sun: {name:'孙集成', color:'var(--c-sun)', 一句话:'略懂技术、自搭过自动化，评估「比我自搭强在哪」',
+        痛点:'自搭维护累、要更稳', 想要:'可集成 / 可靠', Ge:'⚠️ 替换成本高，要证明「比自搭强」'},
+};
+
+// 卡片明细（功能卡 / 内容卡）
+const CARDS = {
+  'A1':{kind:'功能', code:'①-A1', name:'搜索可见（SEO 底座）', owners:['dev'], 认领:'研发（产品定关键词）', prio:'P1', pain:'P2',
+    detail:{
+      用户故事:'作为搜「降本 / 选品 AI 方案」的跨境小老板，我想在搜索结果里看到并点进我们，以便对比方案。',
+      范围:'只做 默认骨架可抓取性(SSR/预渲染) + 每页 title/description/canonical + 语义化 H + sitemap.xml + robots + Organization/Product 结构化数据；不做 内容营销 / 外链。',
+      验收:'Given 爬虫抓任一页；When 取首屏 HTML；Then 含真实文案 + meta / 结构化数据（非空壳）。',
+      挂钩牌:'拨动 搜索曝光+CTR / 假设「做对 SEO 基建→自然搜索点击爬升」/ 闭环 收录页数 + 自然流量 UV',
+      产出去向:'→ 开 issue 只引本卡',
+    },
+    warn:'对话式坑：页面是生成 / 重构的，必须 SSR「默认骨架」，否则爬虫抓到空壳 → SEO=0。'},
+  'A2':{kind:'功能', code:'①-A2', name:'分享预览卡（OG 输出）', owners:['dev','design'], 认领:'研发(OG 输出) + 设计(封面)', prio:'P1', pain:'P3',
+    detail:{
+      用户故事:'作为收到转发链接的人，我想光看预览卡就懂值不值得点，以便不浪费时间。',
+      范围:'只做 每页输出 OG/Twitter meta(标题 / 描述 / 封面 URL) 能力 + 各渠道预览实测；不做 个性化分享卡(归 ⑤-A2)。封面图 / 标题为内容附件。',
+      验收:'Given 贴链接到微信 / X；When 生成预览；Then 自定义标题+封面、非秃链接、移动端不裁切关键字。',
+      挂钩牌:'拨动 分享链点击率 / 假设「好预览能把转发变成浏览量」/ 闭环 分享链点击率',
+      产出去向:'→ 开 issue 只引本卡（封面图复用给 ⑤-B1）',
+    }},
+  'A3':{kind:'功能', code:'①-A3', name:'进站转发钩子（早期分享）', owners:['dev','design'], 认领:'研发(复用⑤-B1) + 设计(钩子文案)', prio:'P2', pain:'P3b',
+    detail:{
+      用户故事:'作为刚进站被打动的访客，我想一键把官网转给同行、自带好预览，以便顺手推荐、不用复制链接配文。',
+      范围:'只做 进站视角（首屏 / 内容区）一个轻量「转给同行」入口（复用 ①-A2 OG 卡 + ⑤-B1 一键分享）+ 一句可转的价值钩子；不做 裂变激励(⑤-B2) / 满意后分享完整机制(⑤)。',
+      验收:'Given 访客在首屏 / 内容区；When 点「转给同行」；Then 一键带 OG 预览 + ref 参数转出、非秃链接；移动端入口不挤占主张 / 主 CTA。',
+      挂钩牌:'拨动 分享次数 → 到站量 / 假设「进站早期给入口能薅一波『刚发现就想转』」/ 闭环 进站转发入口分享数 + 带回到站量',
+      产出去向:'→ 开 issue 只引本卡（复用 ①-A2 / ⑤-B1，不新造分享组件）',
+    },
+    warn:'闭环乘子：分享次数主体（满意后转发）在 ⑤ Referral；本卡只接 ①「进站即转」早期增量，复用 ⑤-B1 / ①-A2，不重复造分享组件 / 激励。'},
+  'B1':{kind:'内容', code:'①-B1', name:'首屏一句话主张', owners:['product'], 认领:'产品（产品负责人对齐定位）', prio:'P0', pain:'P1',
+    detail:{
+      信息内容:'一句 ≤20 字、直击访客问题的主张（承接 §1 定位稿）',
+      数据来源:'定位稿 + 目标人群语言库',
+      落位:'默认骨架 Hero 顶部',
+      候选形式:'文字（默认）/ 文字+短视频 / 文字+结果图（形式实验暂缓）',
+      验收:'Given 落地未滚动；When 默认骨架渲染；Then 首屏可见区出现 ≤20 字主张 + 主 CTA。',
+      挂钩牌:'拨动 首屏3秒留存率 / 假设「一句话能拉住人」/ 闭环 首屏跳出率 < X%',
+      产出去向:'→ 内容就地维护（无需开 issue），变更记 changelog',
+    }},
+  'B2':{kind:'内容', code:'①-B2', name:'首屏结果图', owners:['design','product'], 认领:'设计 + 产品(成果数据)', prio:'P1', pain:'P1',
+    detail:{
+      信息内容:'让访客一眼看懂「长什么样 / 给什么结果」的视觉',
+      数据来源:'真实截图 / 录屏 + 成果数据',
+      落位:'默认骨架 Hero 视觉位',
+      候选形式:'截图（默认）/ demo 视频 / 交互 demo / 数据图表（暂缓）',
+      验收:'Given 首屏渲染；When 可见；Then 出现展示真实结果的视觉，移动端等比、弱网降级。',
+      挂钩牌:'拨动 首屏停留 / 假设「结果图比文字更快建立认知」/ 闭环 首屏停留 + 滚过率',
+      产出去向:'→ 内容就地维护（图片 / 视频替换），变更记 changelog',
+    }},
+  'B5':{kind:'内容', code:'①-B5', name:'信任素材', owners:['ops','design'], 认领:'运营(供素材) + 设计(版式)', prio:'P2', pain:'P1',
+    detail:{
+      信息内容:'可核实信任信号（数字 / 客户 logo / 证言）',
+      数据来源:'运营真实数据 / 客户授权',
+      落位:'默认骨架信任条',
+      候选形式:'logo 墙 / 数字看板 / 证言轮播（暂缓）',
+      验收:'Given 首屏附近；When 查看；Then ≥1 个真实可核实信任信号；无真实 logo 用数字 / 证言兜底，不放假 logo。',
+      挂钩牌:'拨动 首屏3秒留存率 / 假设「早给信任锚能压住跳出」/ 闭环 含信任条 vs 不含的跳出率',
+      产出去向:'→ 内容就地维护，变更记 changelog',
+    }},
+  'Bzhao':{kind:'内容', code:'①-B赵', name:'单干侠留站内容', owners:['product','ops'], 认领:'产品 + 运营(供原话)', prio:'P1', pain:'P4·P1',
+    detail:{
+      信息内容:'他的原话痛点（「我一个人忙不过来、工具拼不动」）+「一套接进来直接跑、不用自己拼」的结果 / 信任',
+      数据来源:'运营供该类真实原话 + 产品供「开箱即跑」案例',
+      落位:'赵全扛视角（默认骨架按此 persona 重构的内容区）',
+      候选形式:'原话引用 / 短视频证言（暂缓）',
+      验收:'Given 访客落到「单干·全扛」变体；When 渲染；Then 突出「不用自己拼、直接跑」+ 该类原话痛点；不虚构原话。',
+      挂钩牌:'拨动 留站率(赵) / 假设「开箱即跑能留住单干型」/ 闭环 赵视角留站率',
+      产出去向:'→ 内容就地维护，变更记 changelog',
+    }},
+  'Bqian':{kind:'内容', code:'①-B钱', name:'降本派留站内容', owners:['product','ops'], 认领:'产品 + 运营(供 ROI 数据/原话)', prio:'P1', pain:'P4·P1',
+    detail:{
+      信息内容:'客服人力成本对比 / 降本 ROI + 该类原话痛点（「客服重复劳动、养人贵」）',
+      数据来源:'运营供真实人力成本 / ROI 测算 + 原话',
+      落位:'钱降本视角内容区',
+      候选形式:'ROI 对比表 / 数字图表（暂缓）',
+      验收:'Given 访客落到「降本」变体；When 渲染；Then 突出人力 ROI 对比 + 该类原话；数字可核实。',
+      挂钩牌:'拨动 留站率(钱) / 假设「人力 ROI 能留住降本型」/ 闭环 钱视角留站率',
+      产出去向:'→ 内容就地维护，变更记 changelog',
+    }},
+  'Bsun':{kind:'内容', code:'①-B孙', name:'技术控留站内容', owners:['product','dev'], 认领:'产品 + 研发(供技术说明)', prio:'P2', pain:'P4·P1',
+    detail:{
+      信息内容:'「比你自己搭强在哪」+ 可集成 / 可靠性说明 + 该类原话痛点（「自搭维护累、不稳」）',
+      数据来源:'产品 / 研发供集成方式与对比',
+      落位:'孙集成视角内容区',
+      候选形式:'架构图 / 树图 / 对比表（暂缓）',
+      验收:'Given 访客落到「集成」变体；When 渲染；Then 突出可集成与「比自搭强」的论据 + 该类原话。',
+      挂钩牌:'拨动 留站率(孙) / 假设「可集成证据能留住技术型」/ 闭环 孙视角留站率',
+      产出去向:'→ 内容就地维护，变更记 changelog（优先级 P2：替换成本高，需强证据）',
+    }},
+};
+
+// 树（嵌套）。type 决定配色 / 抽屉渲染；leaf card 用 card 字段引 CARDS。
+const TREE = {
+  id:'root', type:'pos', label:'定位① · Acquisition', sub:'母定位 G-a · 交棒 = 有效浏览量',
+  detail:{
+    母定位:'让被投放或搜到我们的跨境小老板，在划走之前的 3 秒内就看懂「这就是解决我那个问题的东西」，而不必读一屏术语去猜它跟自己有没有关系。',
+    谁:'被带到站的跨境小老板', 新体验:'3 秒认出「这是给我的」', 旧成本:'读术语自猜、划走',
+    交棒:'AARRR 第 1 棒 → 有效浏览量',
+  },
+  children:[{
+    id:'ns', type:'ns', label:'北极星 · 有效浏览量', sub:'= 到站量 × 留站率',
+    detail:{
+      定义:'统计窗口内「真正看进去」的去重访客数（到站 且 停留 ≥ N 秒 或 滚过首屏）',
+      公式:'有效浏览量 ≈ 到站量 × 留站率；到站量 = 搜索曝光×搜索CTR ＋ 分享链点击率×分享次数',
+      乘子认领:'公式里每个乘子都要有卡认领（R-修改原则 §1）：搜索曝光/CTR→A1，分享链点击率→A2，分享次数→A3＋⑤(闭环)，留站率→B*',
+      渠道范围:'到站量=各渠道求和；当前刻意只纳入两条零成本自然流（自然搜索 A1 ＋ 分享 A2/A3＋⑤）。付费投放/直接/外链等暂不纳入——决策：先看自然流、不立即做有成本推广；off-site 渠道官网只认领落地承接（已由 loom 底座路由+①-B persona 变体覆盖）。R §5',
+      实验判读:'每个输入指标按「假设 + 窗口 N 天 + 判读{ 达标 T→继续 / 未达→先改方案 / 连续 M 窗口仍未达→drop }」，阈值待运营随上线拍板',
+      边界:'发起对话率归 ② Activation（进站后活跃信号），不计入本棒有效浏览量',
+    },
+    children:[
+      {
+        id:'A', type:'metric', label:'输入指标 A · 到站量', sub:'= 搜索曝光×CTR ＋ 分享链点击率×分享次数',
+        detail:{rows:[
+          ['搜索曝光','页面在搜索结果页被展示的次数'],
+          ['搜索 CTR','搜索结果点击数 ÷ 曝光数'],
+          ['分享链点击率','带分享来源参数的访问数 ÷ 分享卡发送 / 展示数'],
+          ['分享次数','官网被转发出去的次数（分享事件数）· 主驱动在 ⑤（闭环），① 补「进站即转」增量 → A3'],
+        ]},
+        children:[
+          {id:'P2', type:'pain', label:'痛点 P2 · 搜不到我们', tag:'压低到站量',
+           detail:{Gc:'当跨境小老板在搜索引擎找降本提效的办法时，他想找到并对比可信的方案，以便挑一个试；现状受阻于我们的官网在搜索结果里根本不出现，导致这部分人完全接触不到我们。', 影响:'压低 到站量'},
+           children:[
+             {id:'P2-all', type:'persona', persona:'all', label:'全体访客', sub:'原型：所有页 meta（无线框）',
+              children:[{id:'A1', type:'card', card:'A1'}]},
+           ]},
+          {id:'P3', type:'pain', label:'痛点 P3 · 分享是秃链接', tag:'压低到站量',
+           detail:{Gc:'当跨境小老板收到同行转发的官网链接时，他想从预览判断这值不值得点开，以便不浪费时间；现状受阻于分享出去只是一条没有标题、没有图的秃链接，导致他直接忽略不点。', 影响:'压低 到站量'},
+           children:[
+             {id:'P3-all', type:'persona', persona:'all', label:'全体访客', sub:'原型：分享卡',
+              children:[{id:'A2', type:'card', card:'A2'}]},
+           ]},
+          {id:'P3b', type:'pain', label:'痛点 P3b · 进站想转却没入口', tag:'压低分享次数',
+           detail:{Gc:'当刚进站、被首屏打动但还没深入体验的跨境小老板，想顺手把官网转给可能用得上的同行时，他想有个一键就能转、且转出去对方觉得有用的入口，以便举手之劳推荐；现状受阻于进站阶段根本没有转发入口、也没有「值得转」的钩子，导致这股「刚发现觉得不错」的转发冲动白白流失。', 影响:'压低 分享次数（进而压低到站量）', 注:'闭环乘子：分享次数主体（满意后转）在 ⑤ Referral；本卡只接 ①「进站即转」早期增量，复用 ⑤-B1 / ①-A2（R-修改原则 §2）。'},
+           children:[
+             {id:'P3b-all', type:'persona', persona:'all', label:'全体访客', sub:'原型：进站转发入口',
+              children:[{id:'A3', type:'card', card:'A3'}]},
+           ]},
+        ]
+      },
+      {
+        id:'B', type:'metric', label:'输入指标 B · 留站率',
+        detail:{rows:[
+          ['首屏 3 秒留存率','落地后 3 秒内未关闭 / 跳出的访客数 ÷ 落地访客数'],
+          ['滚过首屏率','滚动越过第一屏的访客数 ÷ 落地访客数'],
+        ]},
+        children:[
+          {id:'P1', type:'pain', label:'痛点 P1 · 首屏看不懂跟我有关', tag:'拉低留站率',
+           detail:{Gc:'当被投放 / 搜索 / 转发带到官网首屏时，跨境小老板想在 3 秒内判断「这跟我有没有关系」，以便决定要不要继续看；现状受阻于首屏是术语堆砌和自我夸耀，导致他还没看到与自己相关的东西就划走。', 影响:'拉低 留站率'},
+           children:[
+             {id:'P1-all', type:'persona', persona:'all', label:'全体（基座）', sub:'原型：默认骨架',
+              children:[{id:'B1', type:'card', card:'B1'},{id:'B2', type:'card', card:'B2'},{id:'B5', type:'card', card:'B5'}]},
+           ]},
+          {id:'P4', type:'pain', label:'痛点 P4 · 看不到「我这一类」', tag:'拉低留站率',
+           detail:{Gc:'当某一类跨境小老板（如只做选品的）浏览官网时，他想找到「我这一类」的内容对号入座，以便确认这是为他这种情况准备的；现状受阻于页面只有面向所有人的通用介绍，导致他觉得「这不是给我的」而提前离开。', 影响:'拉低 留站率', 注:'同一痛点对多个 persona 成立，各 persona 一套留站内容 + 一个落地变体（原型）。'},
+           children:[
+             {id:'P4-zhao', type:'persona', persona:'zhao', label:'赵全扛 · 单干侠', sub:'原型：赵全扛视角',
+              children:[{id:'Bzhao', type:'card', card:'Bzhao'}]},
+             {id:'P4-qian', type:'persona', persona:'qian', label:'钱降本', sub:'原型：钱降本视角',
+              children:[{id:'Bqian', type:'card', card:'Bqian'}]},
+             {id:'P4-sun', type:'persona', persona:'sun', label:'孙集成', sub:'原型：孙集成视角',
+              children:[{id:'Bsun', type:'card', card:'Bsun'}]},
+           ]},
+        ]
+      },
+    ]
+  }]
+};
+
+const DROP_SUBTREE = ['P4-sun','Bsun'];   // drop 演示砍掉的子树
+
+/* ============================================================
+   形：渲染 + 交互引擎。只读上面的数据。
+   ============================================================ */
+let activeRole = 'all';
+let selected = null;     // node id
+let dropped = false;
+
+const $ = s=>document.querySelector(s);
+const NODE_BY_ID = {};
+(function index(n){ NODE_BY_ID[n.id]=n; (n.children||[]).forEach(index); })(TREE);
+
+const TYPE_AC = {pos:'var(--c-pos)', ns:'var(--c-ns)', metric:'var(--c-metric)', pain:'var(--c-pain)'};
+const TYPE_CHIP = {pos:'定位', ns:'北极星', metric:'指标', pain:'痛点', persona:'角色', card:'卡'};
+
+function cardOf(n){ return n.type==='card' ? CARDS[n.card] : null; }
+function acOf(n){
+  if(n.type==='persona') return PERSONA[n.persona]?.color || 'var(--c-all)';
+  if(n.type==='card'){ const r=ROLES.find(x=>x.key===cardOf(n).owners[0]); return r?r.color:'var(--c-metric)'; }
+  return TYPE_AC[n.type] || 'var(--muted)';
+}
+
+// 该节点子树里是否含「activeRole 认领的卡」
+function subtreeOwned(n){
+  if(n.type==='card') return cardOf(n).owners.includes(activeRole);
+  return (n.children||[]).some(subtreeOwned);
+}
+function nodeClasses(n){
+  let c='';
+  if(activeRole!=='all'){
+    if(n.type==='card' && cardOf(n).owners.includes(activeRole)) c+=' owned';
+    else if(!subtreeOwned(n)) c+=' dim';
+  }
+  if(selected===n.id) c+=' selected';
+  if(dropped && DROP_SUBTREE.includes(n.id)) c+=' dropped';
+  return c;
+}
+
+function nodeInner(n){
+  const chip = `<span class="chip">${TYPE_CHIP[n.type]}</span>`;
+  if(n.type==='card'){
+    const c=cardOf(n);
+    const kindCls = c.kind==='功能'?'fn':'';
+    const prioCls = c.prio==='P0'?'p0':c.prio==='P1'?'p1':'p2';
+    const badges = c.owners.map(o=>{const r=ROLES.find(x=>x.key===o);return `<span class="badge" style="background:${r.color}">${r.name}</span>`}).join('');
+    return `<span class="chip">${c.code}</span><span class="tlabel">${c.name}</span>`
+      + `<span class="badges"><span class="badge kind ${kindCls}">${c.kind}卡</span>${badges}<span class="badge prio ${prioCls}">${c.prio}</span></span>`;
+  }
+  let s = chip + `<span class="tlabel">${n.label}</span>`;
+  if(n.sub) s += `<span class="tsub">${n.sub}</span>`;
+  if(n.tag) s += `<span class="tagmini">${n.tag}</span>`;
+  return s;
+}
+
+function renderNode(n){
+  const li=document.createElement('li');
+  const node=document.createElement('div');
+  node.className='tnode'+nodeClasses(n);
+  node.style.setProperty('--ac', acOf(n));
+  node.style.setProperty('--rc', roleColor());
+  node.style.setProperty('--rc-soft', roleSoft());
+  node.innerHTML=nodeInner(n);
+  node.onclick=()=>{ selected=n.id; renderAll(); };
+  li.appendChild(node);
+  if(n.children && n.children.length){
+    const ul=document.createElement('ul');
+    n.children.forEach(ch=>ul.appendChild(renderNode(ch)));
+    li.appendChild(ul);
+  }
+  return li;
+}
+
+function roleColor(){ return (ROLES.find(r=>r.key===activeRole)||ROLES[0]).color; }
+function roleSoft(){ return (ROLES.find(r=>r.key===activeRole)||{}).soft || '#e6f0fc'; }
+
+function renderRoles(){
+  const el=$('#roles'); el.innerHTML='';
+  ROLES.forEach(r=>{
+    const b=document.createElement('button');
+    b.className='role-tab'+(r.key===activeRole?' active':'');
+    b.style.setProperty('--tc', r.color);
+    b.innerHTML = r.key==='all' ? r.name : `<span class="dot"></span>${r.name}`;
+    b.onclick=()=>{ activeRole=r.key; renderAll(); };
+    el.appendChild(b);
+  });
+}
+
+function ownedCount(){
+  return Object.values(CARDS).filter(c=>c.owners.includes(activeRole)).length;
+}
+function renderHint(){
+  const h=$('#roleHint');
+  if(activeRole==='all'){
+    h.innerHTML='当前视角：<b>全部</b> · 展示完整定位树（9 张卡：3 功能 + 6 内容）。切到某角色 → 高亮 TA 认领的卡。';
+  }else{
+    const codes = Object.values(CARDS).filter(c=>c.owners.includes(activeRole)).map(c=>c.code).join(' / ');
+    h.innerHTML=`当前视角：<b style="color:${roleColor()}">${ROLE_NAME[activeRole]}</b> · 高亮我认领的 <b>${ownedCount()}</b> 张卡（${codes}）；其余变灰但仍可点。`;
+  }
+}
+
+function renderTree(){
+  const t=$('#tree'); t.innerHTML='';
+  t.appendChild(renderNode(TREE));
+}
+
+function row(k,v,cls){ return `<span class="k">${k}</span><span class="v ${cls||''}">${v}</span>`; }
+
+function renderDrawer(){
+  const dw=$('#drawer');
+  if(!selected){ dw.className='drawer empty'; dw.innerHTML='点左侧任意节点<br>看它的定位稿 / 指标定义 / 痛点 / persona / 卡片明细'; return; }
+  const n=NODE_BY_ID[selected];
+  dw.className='drawer';
+  const ac=acOf(n);
+  let h='';
+
+  if(n.type==='card'){
+    const c=cardOf(n), d=c.detail;
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">${c.code}</span><h3>${c.name}</h3>
+        <span class="badge kind ${c.kind==='功能'?'fn':''}">${c.kind}卡</span></div>`;
+    if(activeRole!=='all' && c.owners.includes(activeRole)){
+      h+=`<div class="mine"><div class="mtag">${ROLE_NAME[activeRole]}视角 · 我认领这张卡</div>
+          <div class="mbody">${c.认领}</div></div>`;
+    }
+    h+=`<div class="meta-grid">
+        ${row('卡型', c.kind==='功能'?'功能卡（需开发 → 开 issue）':'内容卡（不开发 → 就地维护）')}
+        ${row('服务痛点', c.pain)}
+        ${row('认领', c.认领,'strong')}
+        ${row('优先级', c.prio,'strong')}`;
+    for(const k in d){ h+=row(k, d[k]); }
+    h+=`</div>`;
+    if(c.warn) h+=`<div class="warn">⚠ ${c.warn}</div>`;
+
+  }else if(n.type==='persona'){
+    const p = n.persona==='all' ? null : PERSONA[n.persona];
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">角色</span><h3>${n.label}</h3></div>`;
+    h+=`<div class="meta-grid">${row('原型 / 落地变体', n.sub.replace('原型：',''))}`;
+    if(p){
+      h+=row('一句话', p.一句话)+row('主要痛点', p.痛点)+row('想要', p.想要,'strong')+row('G-e 锚点判定', p.Ge);
+    }else{
+      h+=row('说明','面向所有人的基座内容；无参数落地 → 默认骨架(基座)，靠投放 / 分享落地变体触发 persona 视角');
+    }
+    h+=`</div>`;
+    if(!p) h+=`<div class="warn" style="color:#5a6472;background:#f4f6f9;border-color:var(--line)">persona 视角触发（① 阶段）靠投放 / 分享落地变体（loom 变体，无需开发）；对话驱动重构在 ② Activation。</div>`;
+
+  }else if(n.type==='pain'){
+    const d=n.detail;
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">痛点</span><h3>${n.label}</h3></div>`;
+    h+=`<div class="quote" style="--ac:${ac}">${d.Gc}</div>`;
+    h+=`<div class="meta-grid" style="margin-top:11px">${row('对北极星的影响', d.影响,'strong')}`;
+    if(d.注) h+=row('备注', d.注);
+    h+=`</div>`;
+
+  }else if(n.type==='metric'){
+    const d=n.detail;
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">输入指标</span><h3>${n.label}</h3></div>`;
+    h+=`<div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">该杠杆包含的输入指标 · 精确定义：</div>`;
+    h+=`<table class="mtable">${d.rows.map(r=>`<tr><td class="mk">${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`;
+
+  }else if(n.type==='ns'){
+    const d=n.detail;
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">北极星</span><h3>${n.label}</h3></div>`;
+    h+=`<div class="meta-grid">${row('定义', d.定义)}${row('公式', d.公式,'truth')}${row('乘子认领', d.乘子认领)}${row('渠道范围', d.渠道范围)}${row('实验判读', d.实验判读)}${row('边界', d.边界)}</div>`;
+
+  }else{ // pos
+    const d=n.detail;
+    h+=`<div class="d-head"><span class="d-chip" style="--ac:${ac}">定位 G-a</span><h3>${n.label}</h3></div>`;
+    h+=`<div class="quote" style="--ac:${ac}">${d.母定位}</div>`;
+    h+=`<div class="meta-grid" style="margin-top:11px">${row('谁', d.谁)}${row('新体验', d.新体验)}${row('旧成本', d.旧成本)}${row('交棒', d.交棒,'truth')}</div>`;
+  }
+  dw.innerHTML=h;
+}
+
+function renderDrop(){
+  $('#dropBtn').classList.toggle('on', dropped);
+  $('#dropBtn').textContent = dropped ? '↺ 复位（取消 drop）' : '▶ 模拟：①-B孙 留站率连续不达标 → drop 子树';
+  $('#dropCaption').classList.toggle('show', dropped);
+}
+
+function renderLegend(){
+  const items=[
+    ['定位','var(--c-pos)'],['北极星','var(--c-ns)'],['输入指标','var(--c-metric)'],['痛点','var(--c-pain)'],
+    ['赵全扛','var(--c-zhao)'],['钱降本','var(--c-qian)'],['孙集成','var(--c-sun)'],
+  ];
+  $('#legend').innerHTML = '层级配色：' + items.map(i=>`<span><i style="background:${i[1]}"></i>${i[0]}</span>`).join('');
+}
+
+function renderAll(){ renderRoles(); renderHint(); renderTree(); renderDrawer(); renderDrop(); }
+
+$('#dropBtn').onclick=()=>{ dropped=!dropped; renderAll(); };
+
+renderLegend();
+renderAll();
+</script>
+</body>
+</html>

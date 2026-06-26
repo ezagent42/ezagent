@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Have your customers at hello · Ezagent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Serif+SC:wght@400;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+  *{box-sizing:border-box}
+  :root{
+    /* 固定色板（取自参考 GIF） */
+    --cream:#fde7de; --coral:#ff677a; --blue:#0037fe; --ink:#0c0c14;
+    --line:rgba(255,255,255,.12);
+    --w70:rgba(255,255,255,.7); --w50:rgba(255,255,255,.5); --w40:rgba(255,255,255,.4);
+    --live:#79e0a8; --wip:#f5c06b;
+  }
+  html,body{margin:0;background:var(--ink);color:#fff;
+    font-family:'Inter','Noto Sans SC',-apple-system,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .serif{font-family:'Instrument Serif','Noto Serif SC',serif;font-weight:400}
+  em.serif,.serif em{font-style:italic}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px}
+  [hidden]{display:none!important}
+
+  /* ===== liquid glass (移植自 recreation prompt) ===== */
+  .liquid-glass{background:rgba(255,255,255,.01);background-blend-mode:luminosity;
+    backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:none;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.1);position:relative;overflow:hidden}
+  .liquid-glass::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.4px;
+    background:linear-gradient(180deg,rgba(255,255,255,.45) 0%,rgba(255,255,255,.15) 20%,rgba(255,255,255,0) 40%,rgba(255,255,255,0) 60%,rgba(255,255,255,.15) 80%,rgba(255,255,255,.45) 100%);
+    -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+
+  /* ===== 扁平形状素材（square→circle→triangle 单元素 morph） ===== */
+  @keyframes morph8{
+    0%,100%{clip-path:polygon(0% 0%,50% 0%,100% 0%,100% 50%,100% 100%,50% 100%,0% 100%,0% 50%)}      /* 方 */
+    33%{clip-path:polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%)}           /* 圆(八边形) */
+    66%{clip-path:polygon(50% 0%,66% 33%,83% 66%,100% 100%,66% 100%,33% 100%,0% 100%,25% 50%)}        /* 三角 */
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes floaty{0%,100%{transform:translate(0,0)}50%{transform:translate(0,-16px)}}
+  .art{position:relative;overflow:hidden;background:var(--cream)}
+  .art .grain{position:absolute;inset:0;opacity:.18;mix-blend-mode:multiply;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .sh{position:absolute;will-change:transform,clip-path;animation:morph8 9s ease-in-out infinite}
+  .sh.s2{animation:morph8 11s ease-in-out infinite,spin 26s linear infinite}
+  .sh.s3{animation:morph8 13s ease-in-out infinite reverse}
+  .sh.f{animation:morph8 10s ease-in-out infinite, floaty 7s ease-in-out infinite}
+  /* 面板配色变体（只用 cream/coral/blue 三色互换） */
+  .art-cream{background:var(--cream)} .art-coral{background:var(--coral)} .art-blue{background:var(--blue)}
+
+  /* ===== nav ===== */
+  .nav{position:fixed;top:0;left:0;right:0;z-index:50;padding:18px 22px}
+  .nav .pill{max-width:1060px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:11px 12px 11px 20px;border-radius:999px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:17px;cursor:pointer}
+  .brand svg{width:22px;height:22px}
+  .nav .links{display:flex;gap:4px;margin-left:6px}
+  .nav .links button{border:0;background:transparent;color:var(--w70);font-family:inherit;font-size:13.5px;font-weight:500;cursor:pointer;padding:6px 12px;border-radius:999px;transition:.15s}
+  .nav .links button:hover{color:#fff}.nav .links button.on{color:#fff;background:rgba(255,255,255,.08)}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .glassbtn{border-radius:999px;padding:9px 16px;color:#fff;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:transform .15s,background .15s}
+  .glassbtn:hover{background:rgba(255,255,255,.06)}.glassbtn:active{transform:scale(.96)}
+  #langBtn{min-width:46px;text-align:center;font-weight:700;letter-spacing:.5px}
+  @media(max-width:720px){.nav .links{display:none}}
+
+  /* ===== reveal ===== */
+  .reveal{opacity:0;transform:translateY(30px);transition:opacity .8s ease,transform .8s ease}
+  .reveal.in{opacity:1;transform:none}
+  .reveal.d1{transition-delay:.1s}.reveal.d2{transition-delay:.2s}.reveal.d3{transition-delay:.3s}
+
+  /* ===== hero ===== */
+  .hero{min-height:100vh;position:relative;overflow:hidden;display:flex;flex-direction:column}
+  .hero .art{position:absolute;inset:0}
+  .hero-shadow{position:absolute;inset:0;z-index:2;background:
+    radial-gradient(ellipse at 50% 32%,transparent 0%,rgba(8,8,16,.45) 72%),
+    linear-gradient(180deg,rgba(8,8,16,.5) 0%,transparent 20%,transparent 50%,var(--ink) 100%)}
+  .hero .inner{position:relative;z-index:10;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:120px 22px 40px;transform:translateY(-6%)}
+  .hero h1{font-size:clamp(54px,11vw,138px);line-height:.98;letter-spacing:-1px;margin:0 0 6px;text-shadow:0 2px 30px rgba(8,8,16,.4)}
+  .hero .zh{font-size:clamp(15px,2.2vw,19px);color:#fff;max-width:600px;margin:14px auto 0;line-height:1.6;text-shadow:0 1px 12px rgba(8,8,16,.5)}
+  .emailpill{max-width:430px;width:100%;margin:26px auto 0;border-radius:999px;display:flex;align-items:center;gap:10px;padding:8px 8px 8px 22px}
+  .emailpill input{flex:1;background:transparent;border:0;outline:0;color:#fff;font-size:14px;font-family:inherit}
+  .emailpill input::placeholder{color:var(--w40)}
+  .emailpill .go{background:#fff;color:#000;border:0;border-radius:999px;width:42px;height:42px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;transition:transform .15s}
+  .emailpill .go:hover{transform:scale(1.05)}
+  .hero .manifesto{margin-top:18px}
+  .hero .socials{position:relative;z-index:10;display:flex;justify-content:center;gap:14px;padding-bottom:44px}
+  .hero .socials a{width:50px;height:50px;border-radius:999px;display:flex;align-items:center;justify-content:center;color:var(--w70);transition:.2s}
+  .hero .socials a:hover{color:#fff;background:rgba(255,255,255,.05)}
+
+  /* ===== v2 主站文案组件（AI 时代不用浏览） ===== */
+  .hero .tagline{font-size:clamp(13px,1.7vw,17px);color:var(--w50);max-width:600px;margin:4px auto 0;font-style:italic;text-shadow:0 1px 12px rgba(8,8,16,.5)}
+  .hero .zhhead{font-family:'Instrument Serif','Noto Serif SC',serif;font-size:clamp(19px,3vw,30px);font-weight:500;margin:22px auto 0;letter-spacing:1px;color:var(--w70);text-shadow:0 1px 12px rgba(8,8,16,.5)}
+  .heroh1{display:flex;flex-direction:column;align-items:center;gap:3px;margin:0 0 6px}
+  .heroh1 .t1,.heroh1 .t2{display:block;white-space:nowrap;line-height:1.02}
+  .herocta{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:26px}
+  .herocta .ghost{color:var(--w70)}
+  .tcard{border-radius:22px;padding:24px 24px 26px}
+  .tcard .tnum{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:999px;background:var(--blue);color:#fff;font-weight:700;font-size:14px;margin-bottom:14px}
+  .tcard .tt{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--w40);display:block;margin-bottom:8px}
+  .tcard h3{font-size:21px;margin:0 0 10px;letter-spacing:-.3px}
+  .tcard p{margin:0;color:var(--w50);font-size:13.5px;line-height:1.65}
+  .tcard p b{color:#fff;font-weight:600}
+  .tcard.soft{cursor:default}.tcard.soft .soon{display:inline-block;margin-top:12px;font-size:11px;color:var(--wip);border:1px solid rgba(245,192,107,.4);background:rgba(245,192,107,.08);border-radius:999px;padding:3px 10px}
+  .endline{color:var(--w70);max-width:780px;font-size:clamp(15px,2vw,18px);margin:30px 0 0;line-height:1.6}
+  .endline b{color:#fff;font-weight:600}
+  /* 对照表 */
+  .cmp{margin-top:36px;border-radius:20px;overflow:hidden;border:1px solid var(--line)}
+  .cmp-row{display:grid;grid-template-columns:1fr 1.35fr 1.35fr;border-top:1px solid var(--line)}
+  .cmp-row:first-child{border-top:0}
+  .cmp-row>div{padding:14px 16px;font-size:13px;line-height:1.5}
+  .cmp-row .c0{font-weight:650;color:#fff}
+  .cmp-row .c1{color:var(--w50)}
+  .cmp-row .c2{color:var(--live);background:rgba(121,224,168,.05)}
+  .cmp-head>div{font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--w40);font-weight:600}
+  .cmp-head .c2{color:var(--live)}
+  @media(max-width:760px){.cmp-row{grid-template-columns:1fr}.cmp-row>div{border-top:1px solid var(--line)}.cmp-row .c0{border-top:0;padding-bottom:4px}.cmp-head{display:none}}
+  /* 成果与路线图 tab · 足球弹跳钩子 */
+  .navroad .rmball{display:inline-block;margin-right:5px;transform-origin:center 90%;animation:ballbounce 1.5s cubic-bezier(.3,.6,.3,1) infinite}
+  .navroad:hover .rmball{animation-duration:.7s}
+  @keyframes ballbounce{0%{transform:translateY(0) rotate(0)}20%{transform:translateY(-8px) rotate(-16deg)}40%{transform:translateY(0) rotate(0)}55%{transform:translateY(-4px) rotate(11deg)}70%,100%{transform:translateY(0) rotate(0)}}
+
+  /* ===== sections ===== */
+  .sec{padding:120px 22px 40px;position:relative;overflow:hidden}
+  .eyebrow{color:var(--w40);font-size:12px;letter-spacing:3px;text-transform:uppercase}
+  .bighead{font-size:clamp(34px,6vw,80px);line-height:1.08;letter-spacing:-1px;margin:14px 0 0;max-width:900px}
+  .bighead em{color:var(--w50)}
+  .lead{color:var(--w70);max-width:600px;font-size:16px;margin-top:16px}
+  .deco{position:absolute;width:200px;height:200px;right:-40px;top:60px;opacity:.9;pointer-events:none}
+  .deco .sh{width:120px;height:120px}
+
+  /* services */
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  .cards.two{grid-template-columns:repeat(2,1fr)}
+  .cards.two .vcard .media{aspect-ratio:16/9}
+  @media(max-width:860px){.cards,.cards.two{grid-template-columns:1fr}}
+  .bipword{display:inline-block;transition:opacity .3s ease,transform .3s ease;color:#fff}
+  .vcard{border-radius:26px;overflow:hidden}
+  .vcard .media{position:relative;aspect-ratio:16/11;overflow:hidden}
+  .vcard .body{padding:22px 22px 26px}
+  .vcard .toprow{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .vcard .toprow .t{color:var(--w40);font-size:11px;letter-spacing:2.5px;text-transform:uppercase}
+  .vcard .toprow .ic{width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center}
+  .vcard h3{font-size:23px;margin:0 0 8px;letter-spacing:-.3px}
+  .vcard p{margin:0;color:var(--w50);font-size:13.5px;line-height:1.6}
+
+  /* featured */
+  .feature{border-radius:30px;overflow:hidden;position:relative;margin-top:40px;min-height:380px}
+  .feature .art{position:absolute;inset:0}
+  .feature .ov{position:absolute;inset:0;background:linear-gradient(to top,rgba(8,8,16,.82),rgba(8,8,16,.1) 65%)}
+  .feature .content{position:absolute;left:0;right:0;bottom:0;padding:34px;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}
+  .feature .card{border-radius:22px;padding:24px 26px;max-width:440px}
+  .feature .card .eyebrow{display:block;margin-bottom:8px}
+  .metrics{display:flex;gap:26px;flex-wrap:wrap;margin-top:16px}
+  .metric .n{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .metric .n small{font-size:13px;color:var(--w40);margin-left:3px}
+  .metric .k{font-size:12px;color:var(--w50);margin-top:2px}
+
+  /* roadmap */
+  .viewtabs{display:inline-flex;border-radius:999px;padding:5px;gap:4px;margin:20px 0 6px}
+  .viewtabs button{border:0;background:transparent;color:var(--w70);padding:9px 18px;border-radius:999px;cursor:pointer;font-size:13.5px;font-weight:600;font-family:inherit;transition:.15s}
+  .viewtabs button.on{background:rgba(255,255,255,.12);color:#fff}
+  .viewhint{color:var(--w40);font-size:12.5px;margin:10px 0 20px}
+
+  .vote{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:7px 14px;cursor:pointer;font-weight:700;font-size:13px;color:#fff;font-family:inherit;transition:.15s}
+  .vote.on{background:var(--coral);color:#fff}.vote.on::before{display:none}
+  .vote.sm{padding:5px 11px;font-size:12px}
+  .chipbtn{border-radius:999px;padding:6px 12px;font-size:12px;font-weight:600;color:#fff;cursor:pointer;font-family:inherit;transition:.15s}
+  .chipbtn.on{background:var(--blue);color:#fff}.chipbtn.on::before{display:none}
+  .chipbtn.go{background:#fff;color:#000}.chipbtn.go::before{display:none}
+
+  .tag{display:inline-flex;align-items:center;padding:3px 11px;border-radius:999px;font-size:11px;font-weight:600;background:rgba(255,255,255,.06);color:var(--w70);border:1px solid var(--line)}
+  .tag.live{color:var(--live);border-color:rgba(121,224,168,.4);background:rgba(121,224,168,.08)}
+  .tag.wip{color:var(--wip);border-color:rgba(245,192,107,.4);background:rgba(245,192,107,.08)}
+  .tag.planned{color:var(--w50)}
+  .tag.scene{color:#9fb4ff;border-color:rgba(0,55,254,.5);background:rgba(0,55,254,.14)}
+  .tags{display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+  .hotbadge{font-size:10.5px;font-weight:800;color:var(--wip);border:1px solid rgba(245,192,107,.5);background:rgba(245,192,107,.1);border-radius:6px;padding:2px 7px;white-space:nowrap}
+
+  /* 价值视角 · mindmap 树（连接线参考 01-demo 定位树） */
+  .mtree,.mtree ul{list-style:none;margin:0;padding:0}
+  .mtree{margin-top:20px}
+  .mtree ul{margin-left:18px}
+  .mtree li{position:relative;padding-left:28px}
+  .mtree li::before{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1.5px solid var(--line)}
+  .mtree li::after{content:"";position:absolute;left:0;top:25px;width:24px;border-top:1.5px solid var(--line)}
+  .mtree li:last-child::before{height:25px}
+  .mtree>li{padding-left:0}.mtree>li::before,.mtree>li::after{display:none}
+  .mnode{display:inline-flex;align-items:center;gap:9px;flex-wrap:wrap;margin:6px 0;padding:9px 13px;border-radius:13px;border-left:3px solid var(--ac,var(--line))}
+  .mnode .mt{font-size:14px;font-weight:650}
+  .mnode.lf .mt{font-weight:600;color:var(--w70);font-size:13px}
+  .mnode .meye{font-size:9.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--w40)}
+  .mnode.hot{box-shadow:inset 0 0 0 1.4px rgba(245,192,107,.5)}
+
+  /* 时间线 · gantt（参考 phase 甘特图 · 可左右滑动） */
+  .gantt-hint{font-size:11px;color:var(--w40);margin:22px 0 8px;display:flex;align-items:center;gap:6px}
+  .gantt-scroll{overflow-x:auto;padding-bottom:10px;-webkit-overflow-scrolling:touch}
+  .gantt-scroll::-webkit-scrollbar{height:8px}
+  .gantt-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:99px}
+  .gantt-scroll::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.28)}
+  .gantt-scroll::-webkit-scrollbar-track{background:transparent}
+  .gantt{position:relative}
+  .gantt-bg{position:absolute;left:0;right:0;top:28px;bottom:0;display:grid;z-index:0;pointer-events:none}
+  .gantt-bg span{border-left:1px solid var(--line)}.gantt-bg span:first-child{border-left:0}
+  .gantt-head{display:grid;margin-bottom:18px;position:relative;z-index:1}
+  .gantt-head .q{font-size:11px;color:var(--w40);letter-spacing:1.5px;padding-left:10px}
+  .grow{display:grid;position:relative;z-index:1;margin-bottom:18px;row-gap:6px}
+  .gbar{height:28px;border-radius:7px;position:relative;align-self:start;min-width:30px;overflow:hidden}
+  .gbar.live{background:var(--blue)}.gbar.wip{background:var(--coral)}.gbar.planned{background:rgba(253,231,222,.5)}
+  .gbar .dk{position:absolute;left:0;top:0;bottom:0;width:44%;background:rgba(0,0,0,.30)}
+  .glabel{font-size:12.5px;color:var(--w70);font-weight:600;display:flex;align-items:center;gap:8px;padding-left:2px}
+  .glabel .gs{font-size:10px;color:var(--w40);font-weight:500;text-transform:uppercase;letter-spacing:.5px}
+
+  /* 场景视角 · notion gallery */
+  .galwrap{margin-top:18px;display:flex;flex-direction:column;gap:28px}
+  .galhead{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+  .galhead h3{font-size:15px;margin:0}
+  .galhead .cnt{margin-left:auto;font-size:12px;color:var(--w40)}
+  .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:15px;margin-top:12px}
+  .gcard{border-radius:18px;overflow:hidden;display:flex;flex-direction:column}
+  .gcard .cover{aspect-ratio:16/10;position:relative;overflow:hidden}
+  .gcard .gbody{padding:13px 14px;display:flex;flex-direction:column;gap:8px}
+  .gcard .gtitle{font-size:14px;font-weight:700}
+  .gcard .gsum{font-size:12px;color:var(--w50);margin:0;line-height:1.55}
+  .gcard .gacts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+
+  .cbox{margin-top:4px;display:none;flex-direction:column;gap:7px}.cbox.show{display:flex}
+  .cbox textarea{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12.5px;resize:vertical;min-height:44px;color:#fff;font-family:inherit}
+  .clist{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+  .clist li{font-size:12px;background:rgba(255,255,255,.05);border-radius:9px;padding:6px 10px;color:var(--w70)}
+
+  .loombar{position:fixed;left:0;right:0;bottom:0;z-index:45;padding:14px 22px}
+  .loombar .pill{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;border-radius:999px;padding:8px 8px 8px 22px}
+  .loombar input{flex:1;background:transparent;border:0;outline:0;color:#fff;font-size:13.5px;font-family:inherit}
+  .loombar input::placeholder{color:var(--w40)}
+  .loombar .send{background:#fff;color:#000;border:0;border-radius:999px;padding:10px 18px;font-weight:700;font-size:13px;opacity:.55;cursor:not-allowed;font-family:inherit}
+  .loombar .note{font-size:10px;color:var(--w40);white-space:nowrap}
+  @media(max-width:600px){.loombar .note{display:none}}
+
+  footer{padding:40px 22px 140px;color:var(--w40);font-size:12px;line-height:1.8;border-top:1px solid var(--line);margin-top:40px}
+  footer code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:4px}
+
+  /* 悬浮入口：指挥官驾照测试（区分于玻璃态常驻 tab —— 实心 coral + 脉冲发光） */
+  .fab-test{position:fixed;right:22px;bottom:88px;z-index:48;display:inline-flex;align-items:center;gap:9px;
+    padding:14px 22px;border-radius:999px;font-size:14.5px;font-weight:700;color:#fff;text-decoration:none;letter-spacing:.2px;
+    background:linear-gradient(135deg,var(--coral),#e0455c);box-shadow:0 10px 34px rgba(255,103,122,.5);
+    animation:fabpulse 2.6s ease-in-out infinite;transition:transform .16s}
+  .fab-test:hover{transform:translateY(-3px) scale(1.03)}
+  .fab-test:active{transform:scale(.97)}
+  .fab-test .fdot{width:8px;height:8px;border-radius:999px;background:#fff;box-shadow:0 0 8px #fff;animation:fabblink 1.3s ease-in-out infinite}
+  @keyframes fabpulse{0%,100%{box-shadow:0 10px 30px rgba(255,103,122,.42)}50%{box-shadow:0 12px 46px rgba(255,103,122,.78)}}
+  @keyframes fabblink{0%,100%{opacity:1}50%{opacity:.35}}
+  @media(max-width:600px){.fab-test{right:14px;bottom:80px;padding:12px 18px;font-size:13px}}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="pill liquid-glass">
+    <div class="brand" data-nav="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
+      Ezagent
+    </div>
+    <div class="links">
+      <button data-nav="home" data-i18n="nav_home">首页</button>
+      <button data-nav="roadmap" class="navroad"><span class="rmball" aria-hidden="true">⚽</span><span data-i18n="nav_road">成果与路线图</span></button>
+      <button onclick="return false" data-i18n="nav_about">关于</button>
+    </div>
+    <div class="right">
+      <button class="glassbtn liquid-glass" id="langBtn">EN</button>
+      <button class="glassbtn liquid-glass" id="loginBtn" onclick="return false" data-i18n="login">登录</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ===================== 首页 ===================== -->
+<main data-page-panel="home">
+  <section class="hero">
+    <div class="art art-blue">
+      <div class="grain"></div>
+      <span class="sh f" style="width:46vmin;height:46vmin;left:-8vmin;top:8vmin;background:var(--coral)"></span>
+      <span class="sh s2" style="width:30vmin;height:30vmin;right:6vmin;top:-6vmin;background:var(--cream)"></span>
+      <span class="sh s3" style="width:38vmin;height:38vmin;right:-6vmin;bottom:-8vmin;background:var(--coral)"></span>
+      <span class="sh" style="width:18vmin;height:18vmin;left:18vmin;bottom:6vmin;background:var(--cream)"></span>
+    </div>
+    <div class="hero-shadow"></div>
+    <div class="inner">
+      <h1 class="serif heroh1"><span class="t1" data-i18n="hero_t1">别再做网站</span><span class="t2" data-i18n="hero_t2">做一个会自己生成的网站</span></h1>
+      <p class="zhhead" data-i18n="hero_head">AI 时代的网站，不用浏览</p>
+    </div>
+    <div class="socials">
+      <a href="#" onclick="return false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1"/></svg></a>
+      <a href="#" onclick="return false"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M18 3h3l-7 8 8 10h-6l-5-6-5 6H3l8-9L3 3h6l4 5z"/></svg></a>
+      <a href="#" onclick="return false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg></a>
+    </div>
+  </section>
+
+  <!-- U3 痛点：你想要却做不出 -->
+  <section class="sec"><div class="wrap">
+    <div class="deco"><span class="sh s2" style="background:var(--coral)"></span></div>
+    <span class="eyebrow reveal" data-i18n="u3_eye">The problem</span>
+    <h2 class="bighead serif reveal d1" data-i18n="u3_head">你早就知道该给客户量身定制——<em>可你做不出来</em></h2>
+    <p class="lead reveal d2" data-i18n="u3_lead">客户要的不是一个网站，是「我的问题被解决」。可现实里你只有三条路，条条堵着——</p>
+    <div class="cards reveal d2">
+      <div class="tcard liquid-glass"><span class="tt" data-i18n="u3_r1t">路一 · 静态站</span><h3 class="serif" data-i18n="u3_r1h">把东西全摆出来</h3><p data-i18n="u3_r1b">客户自己翻、自己找、自己猜哪个是给他的——大多数翻两下就走，你连他想要什么都没看见。</p></div>
+      <div class="tcard liquid-glass"><span class="tt" data-i18n="u3_r2t">路二 · 自己做个"会变"的</span><h3 class="serif" data-i18n="u3_r2h">那得一整支工程队</h3><p data-i18n="u3_r2b">要有人写前端、保证客户消息一条不丢、防 AI 乱答乱改、再搭登录 / 权限 / 审计……你养不起，也等不起。</p></div>
+      <div class="tcard liquid-glass"><span class="tt" data-i18n="u3_r3t">路三 · 接个现成 bot</span><h3 class="serif" data-i18n="u3_r3h">到头来还是个聊天框</h3><p data-i18n="u3_r3b">给不了"为这个客户重组的界面"，更不敢把它直接公开挂出去，面对真实客户。</p></div>
+    </div>
+    <p class="endline reveal d3" data-i18n="u3_end">你卡在"想给客户做个会懂他的产品"和"做不出、不敢上线"之间。难的从来不是 AI——是底下那层<b>又难又危险</b>的地基。</p>
+  </div></section>
+
+  <!-- U4 增益：地基白拿 -->
+  <section class="sec" style="padding-top:20px"><div class="wrap">
+    <span class="eyebrow reveal" data-i18n="u4_eye">What you get</span>
+    <h2 class="bighead serif reveal d1" style="font-size:clamp(30px,5vw,60px)" data-i18n="u4_head">所以，你只管设计产品长什么样——<em>剩下的我们包了</em></h2>
+    <div class="cards reveal d2">
+      <div class="tcard liquid-glass"><span class="tnum">1</span><h3 class="serif" data-i18n="u4_p1h">最难也最危险的地基，开箱就有</h3><p data-i18n="u4_p1b">你<b>不用</b>自己搭消息路由、不用操心"客户消息丢了没人知道"、不用防 AI 越权、不用给每个场景手写前端、不用从零做登录 / 权限 / 审计 / 多租户。你站在它上面开始，而不是从零挖地。</p></div>
+      <div class="tcard liquid-glass"><span class="tnum">2</span><h3 class="serif" data-i18n="u4_p2h">不写代码，活收敛成两件事</h3><p data-i18n="u4_p2b">你<b>只需</b>：配置你的产品长什么样（一个会话模板）＋ 设计它怎么接待客户（谁应答、走什么流程、对谁公开）。描述清楚想要的体验，站点就照着长出来。</p></div>
+      <div class="tcard liquid-glass"><span class="tnum">3</span><h3 class="serif" data-i18n="u4_p3h">做到以前根本做不到的事</h3><p data-i18n="u4_p3b">你<b>不用</b>在"静态站"和"聊天框"之间将就。你能拥有一个会为每个客户实时重生成界面、还能直接公开给陌生客户打开就用的 AI-native 站点。</p></div>
+    </div>
+    <p class="endline reveal d3" data-i18n="u4_end">一句话：<b>地基白拿，配置代替编码，做出一个会懂客户、敢公开的站点。</b></p>
+  </div></section>
+
+  <!-- U5 用 vs 不用对照 -->
+  <section class="sec" style="padding-top:20px"><div class="wrap">
+    <span class="eyebrow reveal" data-i18n="u5_eye">Hard &amp; dangerous</span>
+    <h2 class="bighead serif reveal d1" style="font-size:clamp(28px,4.5vw,52px)" data-i18n="u5_head">"最难也最危险" <em>到底是什么？</em></h2>
+    <div class="cmp reveal d2" id="cmp"></div>
+    <p class="endline reveal d3" data-i18n="u5_end">这一列"你不用碰"的每一项，单拎出来都能拖垮一个小团队几个月——<b>而且错了就是事故</b>。这就是"最难也最危险"的实指。</p>
+  </div></section>
+
+  <!-- U6 How it works 三步 -->
+  <section class="sec" style="padding-top:20px"><div class="wrap">
+    <span class="eyebrow reveal" data-i18n="u6_eye">How it works</span>
+    <h2 class="bighead serif reveal d1" style="font-size:clamp(30px,5vw,56px)" data-i18n="u6_head">三步，把你的产品交到客户手里——<em>一行代码都不写</em></h2>
+    <div class="cards reveal d2">
+      <div class="tcard liquid-glass"><span class="tnum">1</span><h3 class="serif" data-i18n="u6_s1h">描述你的产品长什么样</h3><p data-i18n="u6_s1b">配一个"会话模板"：谁来接待客户、走什么流程、把什么对客户公开。就像跟人说清"我想要一个什么样的服务"——不碰代码。</p></div>
+      <div class="tcard liquid-glass"><span class="tnum">2</span><h3 class="serif" data-i18n="u6_s2h">生成一个运行中的实例</h3><p data-i18n="u6_s2b">一键从模板起一个活的产品实例，接待客户的 AI 编排器随之就位。你只是"开张"——底下的可靠、恢复、权限自动到位。</p></div>
+      <div class="tcard liquid-glass"><span class="tnum">3</span><h3 class="serif" data-i18n="u6_s3h">把链接发给你的客户</h3><p data-i18n="u6_s3b">客户打开就能用：平台自动给陌生访客建身份、加入会话、返回界面。你不用做注册系统、不用做前端——他打开那一刻，站点已经在为他生成。</p></div>
+    </div>
+    <p class="endline reveal d3" data-i18n="u6_end">客户看到的不是你写死的页面，是<b>为他这一刻重新组合出来的界面</b>。这就是"AI 时代的网站，不用浏览"——<b>Have your customers at hello.</b></p>
+  </div></section>
+
+  <!-- U7 Solutions 入口 -->
+  <section class="sec" style="padding-top:20px" id="sol-sec"><div class="wrap">
+    <span class="eyebrow reveal" data-i18n="u7_eye">Solutions</span>
+    <h2 class="bighead serif reveal d1" style="font-size:clamp(30px,5vw,56px)" data-i18n="u7_head">它在你这行，<em>长什么样？</em></h2>
+    <p class="lead reveal d2" data-i18n="u7_lead">"为每个客户重新生成"听着抽象？挑你最近的那一行，看一个真实的样子——同样的底座，换上你的场景。</p>
+    <div class="cards reveal d2">
+      <div class="tcard soft liquid-glass" onclick="return false"><span class="tt">AI</span><h3 class="serif" data-i18n="u7_ai_h">已经在用 AI 的团队</h3><p data-i18n="u7_ai_b">把多个 agent 编成一条对客流水线，消息不丢、还能直接公开。</p><span class="soon" data-i18n="u7_soon">即将上线 →</span></div>
+      <div class="tcard soft liquid-glass" onclick="return false"><span class="tt" data-i18n="u7_ec_t">电商</span><h3 class="serif" data-i18n="u7_ec_h">选品 · 客服 · 导购</h3><p data-i18n="u7_ec_b">合到一个会变样的对客页——买家要什么，页面就给什么。</p><span class="soon" data-i18n="u7_soon">即将上线 →</span></div>
+      <div class="tcard soft liquid-glass" onclick="return false"><span class="tt" data-i18n="u7_es_t">企业服务</span><h3 class="serif" data-i18n="u7_es_h">客服降本 · 能力对外</h3><p data-i18n="u7_es_b">把内部能力开放给客户，一套底座复制给一个个客户。</p><span class="soon" data-i18n="u7_soon">即将上线 →</span></div>
+    </div>
+  </div></section>
+
+  <section class="sec" style="padding-top:20px"><div class="wrap">
+    <span class="eyebrow reveal">Build in public</span>
+    <h2 class="bighead serif reveal d1" style="font-size:clamp(30px,5vw,60px)" data-i18n="bip_head">我们做到哪了，<em>你看得见、还能投票</em></h2>
+    <div class="feature reveal d2">
+      <div class="art art-coral"><div class="grain"></div>
+        <span class="sh f" style="width:34vmin;height:34vmin;left:4vmin;top:-6vmin;background:var(--blue)"></span>
+        <span class="sh s2" style="width:26vmin;height:26vmin;right:10vmin;top:4vmin;background:var(--cream)"></span>
+        <span class="sh s3" style="width:30vmin;height:30vmin;right:-6vmin;bottom:-8vmin;background:var(--blue)"></span></div>
+      <div class="ov"></div>
+      <div class="content">
+        <div class="card liquid-glass">
+          <span class="eyebrow" data-i18n="bip_eye">公开共建</span>
+          <span data-i18n="bip_body">所有成果都来自真实研发进度——不画饼。给你在意的痛点投票，影响我们先做什么。</span>
+          <div class="metrics" id="home-metrics"></div>
+        </div>
+        <button class="glassbtn liquid-glass" data-nav="roadmap" style="padding:13px 24px" data-i18n="bip_cta">进成果与路线图 →</button>
+      </div>
+    </div>
+  </div></section>
+</main>
+
+<!-- ===================== 成果与路线图 ===================== -->
+<main data-page-panel="roadmap" hidden>
+  <section class="sec"><div class="wrap">
+    <span class="eyebrow" data-i18n="rm_eye">成果与路线图</span>
+    <h2 class="bighead serif" style="font-size:clamp(30px,5vw,56px)"><span class="bipword" id="bipword">Build</span><em>&nbsp;in public.</em></h2>
+    <p class="lead" data-i18n="rm_lead">公开共建：这里的每件事，正处在「想做 / 在做 / 做完」的不同阶段。同一批东西，三种视角任你切。</p>
+    <div class="viewtabs liquid-glass" id="viewtabs"></div>
+    <div class="viewhint" id="viewhint"></div>
+    <div id="view"></div>
+  </div></section>
+</main>
+
+<div class="wrap"><footer>
+  <span data-i18n="foot1">访客版前端原型 · 暗黑玻璃 + 扁平形状（固定色板 cream/coral/blue）· 首页 + 成果与路线图 + 对话框。</span><br>
+  <span data-i18n="foot2">数据为示例（mock，结构见 ../value-chains/W-成果生产工作流.md）· 形状为单元素 morph（方→圆→三角）· 对话框 = hello，本原型未接。</span>
+</footer></div>
+
+<a class="fab-test" href="components/02-demo-指挥官驾照.html"><span class="fdot"></span><span data-i18n="hero_lic">🎫 测测你能指挥几个 Agent</span></a>
+
+<div class="loombar">
+  <div class="pill liquid-glass">
+    <input data-i18n-ph="loom_ph" placeholder="描述你想看什么，hello 帮你生成…（原型未接）" disabled>
+    <button class="send" disabled data-i18n="loom_send">发送</button>
+    <span class="note" data-i18n="loom_note">hello · 原型未接</span>
+  </div>
+</div>
+
+<script>
+/* ====== i18n ====== */
+let lang='zh';
+const T={
+ zh:{nav_home:'首页',nav_road:'world.cup',nav_lic:'指挥官驾照',nav_about:'关于',login:'登录',
+  hero_lic:'🎫 测测你能指挥几个 Agent',
+  hero_t1:'别再做网站',hero_t2:'做一个会自己生成的网站',
+  hero_head:'AI 时代的网站，不用浏览',
+  u3_eye:'你卡在哪',u3_head:'你早就知道该给客户量身定制——<em>可你做不出来</em>',
+  u3_lead:'客户要的不是一个网站，是「我的问题被解决」。可现实里你只有三条路，条条堵着——',
+  u3_r1t:'路一 · 静态站',u3_r1h:'把东西全摆出来',u3_r1b:'客户自己翻、自己找、自己猜哪个是给他的——大多数翻两下就走，你连他想要什么都没看见。',
+  u3_r2t:'路二 · 自己做个“会变”的',u3_r2h:'那得一整支工程队',u3_r2b:'要有人写前端、保证客户消息一条不丢、防 AI 乱答乱改、再搭登录 / 权限 / 审计……你养不起，也等不起。',
+  u3_r3t:'路三 · 接个现成 bot',u3_r3h:'到头来还是个聊天框',u3_r3b:'给不了“为这个客户重组的界面”，更不敢把它直接公开挂出去，面对真实客户。',
+  u3_end:'你卡在“想给客户做个会懂他的产品”和“做不出、不敢上线”之间。难的从来不是 AI——是底下那层<b>又难又危险</b>的地基。',
+  u4_eye:'你能白拿什么',u4_head:'所以，你只管设计产品长什么样——<em>剩下的我们包了</em>',
+  u4_p1h:'最难也最危险的地基，开箱就有',u4_p1b:'你<b>不用</b>自己搭消息路由、不用操心“客户消息丢了没人知道”、不用防 AI 越权、不用给每个场景手写前端、不用从零做登录 / 权限 / 审计 / 多租户。你站在它上面开始，而不是从零挖地。',
+  u4_p2h:'不写代码，活收敛成两件事',u4_p2b:'你<b>只需</b>：配置你的产品长什么样（一个会话模板）＋ 设计它怎么接待客户（谁应答、走什么流程、对谁公开）。描述清楚想要的体验，站点就照着长出来。',
+  u4_p3h:'做到以前根本做不到的事',u4_p3b:'你<b>不用</b>在“静态站”和“聊天框”之间将就。你能拥有一个会为每个客户实时重生成界面、还能直接公开给陌生客户打开就用的 AI-native 站点。',
+  u4_end:'一句话：<b>地基白拿，配置代替编码，做出一个会懂客户、敢公开的站点。</b>',
+  u5_eye:'最难也最危险',u5_head:'“最难也最危险” <em>到底是什么？</em>',
+  u5_end:'这一列“你不用碰”的每一项，单拎出来都能拖垮一个小团队几个月——<b>而且错了就是事故</b>。这就是“最难也最危险”的实指。',
+  u6_eye:'怎么做',u6_head:'三步，把你的产品交到客户手里——<em>一行代码都不写</em>',
+  u6_s1h:'描述你的产品长什么样',u6_s1b:'配一个“会话模板”：谁来接待客户、走什么流程、把什么对客户公开。就像跟人说清“我想要一个什么样的服务”——不碰代码。',
+  u6_s2h:'生成一个运行中的实例',u6_s2b:'一键从模板起一个活的产品实例，接待客户的 AI 编排器随之就位。你只是“开张”——底下的可靠、恢复、权限自动到位。',
+  u6_s3h:'把链接发给你的客户',u6_s3b:'客户打开就能用：平台自动给陌生访客建身份、加入会话、返回界面。你不用做注册系统、不用做前端——他打开那一刻，站点已经在为他生成。',
+  u6_end:'客户看到的不是你写死的页面，是<b>为他这一刻重新组合出来的界面</b>。这就是“AI 时代的网站，不用浏览”——<b>Have your customers at hello.</b>',
+  u7_eye:'Solutions',u7_head:'它在你这行，<em>长什么样？</em>',
+  u7_lead:'“为每个客户重新生成”听着抽象？挑你最近的那一行，看一个真实的样子——同样的底座，换上你的场景。',
+  u7_ai_h:'已经在用 AI 的团队',u7_ai_b:'把多个 agent 编成一条对客流水线，消息不丢、还能直接公开。',
+  u7_ec_t:'电商',u7_ec_h:'选品 · 客服 · 导购',u7_ec_b:'合到一个会变样的对客页——买家要什么，页面就给什么。',
+  u7_es_t:'企业服务',u7_es_h:'客服降本 · 能力对外',u7_es_b:'把内部能力开放给客户，一套底座复制给一个个客户。',
+  u7_soon:'即将上线 →',
+  bip_head:'我们做到哪了，<em>你看得见、还能投票</em>',bip_eye:'公开共建',
+  bip_body:'每个成果都是真实跑通的进展，不是 roadmap PPT。挑你最想要的投一票，决定我们先做哪个。',bip_cta:'进 world.cup →',
+  rm_eye:'成果与路线图',
+  rm_lead:'公开共建：这里的每件事，正处在「想做 / 在做 / 做完」的不同阶段。同一批东西，三种视角任你切。',
+  loom_ph:'描述你想看什么，hello 帮你生成…（原型未接）',loom_send:'发送',loom_note:'hello · 原型未接',
+  foot1:'访客版前端原型 · 暗黑玻璃 + 扁平形状（固定色板 cream/coral/blue）· 首页 + 成果与路线图 + 对话框。',
+  foot2:'数据为示例（mock，结构见 ../value-chains/W-成果生产工作流.md）· 形状为单元素 morph（方→圆→三角）· 对话框 = hello，本原型未接。',
+  v_value:'⊹ 价值视角',v_timeline:'◷ 时间线视角',v_scenario:'⊞ 场景视角',
+  h_value:'按战略定位 → 痛点展开，痛点按票数排序——最想要的浮到上面。',
+  h_timeline:'按季度看我们一路做出了什么、现在在做什么、未来计划什么。',
+  h_scenario:'按你关心的方面（连接 / 稳定 / 生成 / 定制…）归类，只看跟你相关的那块。',
+  st_live:'● 已上线',st_wip:'◌ 进行中',st_plan:'○ 计划中',vote:'投票',voted:'已投',
+  sub:'🔔 订阅上线通知',subbed:'✓ 已订阅',tryit:'🧪 试玩',collapse:'收起 ▲',hot:'🔥 最想要',
+  cph:'说说你的想法 / 你也有这个需求…',csub:'提交',prio:'待投票决定优先级',pos_eye:'战略定位',
+  future:'未来 · 计划中（你的投票决定先做哪个）',m_live:'已上线',m_wip:'进行中',m_votes:'累计投票',m_scene:'场景',
+  unit_vote:'票',unit_scene:'个',exp:(l,w)=>`${l} 成果 · ${w} 进行中 ▾`,scnt:(p,a)=>`${p} 个痛点 · ${a} 个成果`,slive:n=>`${n} 已上线`},
+ en:{nav_home:'Home',nav_road:'world.cup',nav_lic:'Commander License',nav_about:'About',login:'Login',
+  hero_lic:'🎫 How many agents can you command?',
+  hero_t1:"Don't build sites.",hero_t2:'Build a site that builds itself.',
+  hero_head:'AI-native websites — no need to browse.',
+  u3_eye:'The problem',u3_head:'You always knew you should tailor it to each customer — <em>but you can\'t build it</em>',
+  u3_lead:'Customers don\'t want a website — they want "my problem, solved." Today you have three options, all blocked —',
+  u3_r1t:'Option 1 · Static site',u3_r1h:'Lay everything out',u3_r1b:'Customers dig, hunt, and guess which part is for them — most leave after two clicks, and you never saw what they wanted.',
+  u3_r2t:'Option 2 · Build a "living" one',u3_r2h:'That needs a whole eng team',u3_r2b:'Someone writes the frontend, guarantees not one message is lost, guards a rogue AI, builds login / permissions / audit… You can\'t afford it, or wait for it.',
+  u3_r3t:'Option 3 · Bolt on a bot',u3_r3h:'Still just a chat box',u3_r3b:'It can\'t give a "reassembled-for-this-customer" interface, and you dare not put it straight in front of real customers.',
+  u3_end:'You\'re stuck between "I want a product that gets my customer" and "I can\'t build it / can\'t ship it." The hard part was never AI — it\'s the <b>hard, dangerous</b> groundwork underneath.',
+  u4_eye:'What you get',u4_head:'So you just design what the product is — <em>we handle the rest</em>',
+  u4_p1h:'The hardest, most dangerous groundwork — out of the box',u4_p1b:'You <b>don\'t</b> build message routing, worry about "a lost message no one notices," guard an over-reaching AI, hand-write a frontend per scenario, or build login / permissions / audit / multi-tenancy from scratch. You start standing on it — not digging from zero.',
+  u4_p2h:'No code — your work shrinks to two things',u4_p2b:'You <b>only</b>: configure what your product is (a session template) + design how it greets customers (who answers, what flow, who can see). Describe the experience you want, and the site grows into it.',
+  u4_p3h:'Do what you simply couldn\'t before',u4_p3b:'You <b>don\'t</b> settle between "static site" and "chat box." You get an AI-native site that regenerates its interface for every customer — and opens straight to strangers who just click and use it.',
+  u4_end:'In short: <b>groundwork for free, configuration instead of code, a site that gets your customer and dares to go public.</b>',
+  u5_eye:'Hard & dangerous',u5_head:'"Hard and dangerous" — <em>what does that mean?</em>',
+  u5_end:'Every item in the "not your problem" column could sink a small team for months — <b>and a mistake is an incident</b>. That\'s what "hard and dangerous" really means.',
+  u6_eye:'How it works',u6_head:'Three steps to hand your product to customers — <em>without one line of code</em>',
+  u6_s1h:'Describe what your product is',u6_s1b:'Configure a "session template": who greets the customer, what flow, what\'s public. Like telling someone "the kind of service I want" — no code.',
+  u6_s2h:'Spin up a live instance',u6_s2b:'One click turns the template into a live product instance; the AI orchestrator that serves customers comes online with it. You just "open shop" — reliability, recovery, permissions fall into place underneath.',
+  u6_s3h:'Send the link to your customer',u6_s3b:'They open it and it works: the platform mints an identity for the stranger, joins them in, returns the interface. No signup system, no frontend — the moment they open it, the site is already generating for them.',
+  u6_end:'What the customer sees isn\'t a page you hard-coded — it\'s <b>an interface reassembled for this very moment</b>. That\'s "websites in the AI era, no browsing" — <b>Have your customers at hello.</b>',
+  u7_eye:'Solutions',u7_head:'What does it look like <em>in your industry?</em>',
+  u7_lead:'"Regenerates for each customer" sounds abstract? Pick your industry and see a real one — same groundwork, your scenario.',
+  u7_ai_h:'Teams already using AI',u7_ai_b:'Orchestrate multiple agents into one customer-facing pipeline — no lost messages, public-ready.',
+  u7_ec_t:'E-commerce',u7_ec_h:'Selection · Support · Guided sell',u7_ec_b:'Folded into one shape-shifting customer page — buyers ask, the page delivers.',
+  u7_es_t:'Enterprise',u7_es_h:'Cheaper support · Capabilities outward',u7_es_b:'Open internal capabilities to clients; copy one base to client after client.',
+  u7_soon:'Coming soon →',
+  bip_head:'See exactly what we shipped — <em>and vote</em>',bip_eye:'In public',
+  bip_body:'Every result is real, working progress — not a roadmap slide. Vote for what you want most and shape what we build first.',bip_cta:'Enter world.cup →',
+  rm_eye:'Roadmap',
+  rm_lead:'Build in public: everything here is somewhere between planned, building, and shipped. Same things, three views.',
+  loom_ph:'Describe what you want, hello builds it… (not wired in this prototype)',loom_send:'Send',loom_note:'hello · not wired',
+  foot1:'Visitor prototype · dark glass + flat shapes (fixed palette) · Home + Roadmap + chat.',
+  foot2:'Sample (mock) data (see ../value-chains/W-成果生产工作流.md) · shapes are single-element morphs · chat = hello, not wired in this prototype.',
+  v_value:'⊹ Value',v_timeline:'◷ Timeline',v_scenario:'⊞ Scenario',
+  h_value:'Strategy → pains, sorted by votes — the most wanted floats up.',
+  h_timeline:'By quarter: what we shipped, what\'s in progress, what\'s planned.',
+  h_scenario:'Grouped by area (connect / reliable / generate / customize…) — see only what\'s relevant.',
+  st_live:'● Live',st_wip:'◌ In progress',st_plan:'○ Planned',vote:'Vote',voted:'Voted',
+  sub:'🔔 Notify me',subbed:'✓ Subscribed',tryit:'🧪 Try',collapse:'Collapse ▲',hot:'🔥 Most wanted',
+  cph:'Share your thoughts / you need this too…',csub:'Submit',prio:'vote to prioritize',pos_eye:'Strategy',
+  future:'Future · planned (your votes decide what\'s next)',m_live:'Live',m_wip:'In progress',m_votes:'Votes',m_scene:'Scenes',
+  unit_vote:'',unit_scene:'',exp:(l,w)=>`${l} live · ${w} wip ▾`,scnt:(p,a)=>`${p} pains · ${a} results`,slive:n=>`${n} live`}
+};
+const t=k=>T[lang][k];
+const pick=x=>(x&&typeof x==='object'&&!Array.isArray(x))?x[lang]:x;
+const SCN={连接:{zh:'连接',en:'Connect'},稳定:{zh:'稳定',en:'Reliable'},灵活:{zh:'灵活',en:'Flexible'},生成:{zh:'生成',en:'Generate'},定制:{zh:'定制',en:'Customize'}};
+const scn=s=>SCN[s]?SCN[s][lang]:s;
+
+/* ====== 数据（双语 title/gc/summary） ====== */
+const DATA={定位:[
+ {id:'pos-world',title:{zh:'world｜让消息在工具、渠道、AI 之间顺畅流转',en:'world｜messages flow across tools, channels & AI'},votes:46,痛点:[
+   {id:'p-w1',gc:{zh:'每接一个新渠道，都要重做一遍',en:'Every new channel means redoing the wiring'},场景:'连接',votes:40,成果:[
+     {prId:308,title:{zh:'渠道接入原型',en:'First channel prototype'},summary:{zh:'第一次把外部消息接进来。',en:'First time we piped external messages in.'},场景:'连接',when:'2024 Q2',status:'live',tryUrl:'',likes:6,comments:[]},
+     {prId:312,title:{zh:'常用渠道一键接入',en:'One-click channel connectors'},summary:{zh:'飞书等常用渠道，连上就能用。',en:'Feishu and more — connect and go.'},场景:'连接',when:'2025 Q1',status:'live',tryUrl:'#',likes:24,comments:['终于不用自己写了']},
+     {prId:318,title:{zh:'通用 webhook 接入',en:'Universal webhook intake'},summary:{zh:'任意系统发来的消息都接得住。',en:'Catch messages from any system.'},场景:'连接',when:'2025 Q3',status:'wip',tryUrl:'',likes:9,comments:[]}]},
+   {id:'p-w2',gc:{zh:'消息偶尔就悄悄丢了，没人知道',en:'Messages sometimes vanish, silently'},场景:'稳定',votes:33,成果:[
+     {prId:296,title:{zh:'消息先落库再处理',en:'Persist-then-process'},summary:{zh:'消息先存下来，重启也不丢。',en:'Store first; survives restarts.'},场景:'稳定',when:'2024 Q4',status:'live',tryUrl:'',likes:8,comments:[]},
+     {prId:301,title:{zh:'消息不丢、出错有兜底',en:'No lost messages, failures caught'},summary:{zh:'每条消息都有去处，出错也看得见。',en:'Every message lands somewhere; failures stay visible.'},场景:'稳定',when:'2025 Q1',status:'live',tryUrl:'#',likes:18,comments:['稳了']}]},
+   {id:'p-w3',gc:{zh:'想换个 AI 或后端，得改一大堆',en:'Switching AI or backend means big changes'},场景:'灵活',votes:27,成果:[
+     {prId:300,title:{zh:'首个可替换后端',en:'First swappable backend'},summary:{zh:'第一次让后端可以换。',en:'Made the backend swappable for the first time.'},场景:'灵活',when:'2024 Q3',status:'live',tryUrl:'',likes:5,comments:[]},
+     {prId:333,title:{zh:'换 AI / 后端不用重写',en:'Swap AI/backend without rewrites'},summary:{zh:'换个模型或服务，配置一下就行。',en:'New model or service? Just reconfigure.'},场景:'灵活',when:'2025 Q2',status:'live',tryUrl:'#',likes:15,comments:['省心']}]}]},
+ {id:'pos-hello',title:{zh:'hello｜用一句话，生成你要的界面',en:'hello｜a sentence becomes your interface'},votes:39,痛点:[
+   {id:'p-h1',gc:{zh:'想要个界面，还得等开发排期',en:'Want a UI? Wait for the dev queue'},场景:'生成',votes:38,成果:[
+     {prId:360,title:{zh:'一句话生成可用界面',en:'A sentence becomes a working UI'},summary:{zh:'说清你想要什么，界面当场生成。',en:'Say what you want; the interface appears.'},场景:'生成',when:'2025 Q3',status:'wip',tryUrl:'',likes:21,comments:['等这个！','能边用边改吗']}]},
+   {id:'p-h2',gc:{zh:'生成的界面想改细节很麻烦',en:'Tweaking a generated UI is a pain'},场景:'定制',votes:22,成果:[]},
+   {id:'p-h3',gc:{zh:'不同的人想看到不同的样子',en:'Different people want different views'},场景:'定制',votes:15,成果:[]}]},
+]};
+
+/* ====== U5 用 vs 不用对照（doc 08 §4 官网版 · 右栏=你不用碰） ====== */
+const CMP=[
+ {w:{zh:'客户消息',en:'Customer messages'},diy:{zh:'丢了往往没人知道，客户问了没回应你都不晓得',en:'Lost ones go unnoticed — a customer asks, gets nothing, and you never know'},ours:{zh:'每条都接得住、丢不了，没人接的有明确去处',en:'Every one is caught; nothing vanishes; unhandled ones have a clear destination'}},
+ {w:{zh:'断电 / 重启',en:'Crash / restart'},diy:{zh:'页面发出去了、那条却没存住，留一堆对不上的烂账',en:'A page went out but wasn\'t saved — leaving orphaned, mismatched state'},ours:{zh:'重启自己恢复，绝不"发一半丢一半"',en:'Restarts self-recover; never "half-sent, half-lost"'}},
+ {w:{zh:'AI 的边界',en:'The AI\'s limits'},diy:{zh:'AI 可能越权改库、串改别的客户的会话',en:'The AI may overreach — touch the DB, or another customer\'s session'},ours:{zh:'AI 只能在该它管的范围里动手，越不了权',en:'The AI acts only within its lane — it can\'t escalate'}},
+ {w:{zh:'客户界面',en:'Customer UI'},diy:{zh:'每个客户场景都得手写一遍页面',en:'Hand-write a page for every customer scenario'},ours:{zh:'界面 agent 实时生成，你不写一行前端',en:'The UI agent generates it live — you write zero frontend'}},
+ {w:{zh:'要不要人工把关',en:'Human in the loop'},diy:{zh:'想"AI 先草拟、我审完再发"，得自己造一套流程',en:'Want "AI drafts, I approve, then it sends"? Build that flow yourself'},ours:{zh:'内置把关闸门：AI 起草 → 你复核 → 才对客户可见',en:'Built-in gate: AI drafts → you review → only then customer-visible'}},
+ {w:{zh:'留痕 / 合规',en:'Audit / compliance'},diy:{zh:'想查"谁在什么时候做了什么"，得自己埋点',en:'Want "who did what, when"? Instrument it yourself'},ours:{zh:'每一步自动留痕，要查随时查',en:'Every step is logged automatically — query it anytime'}},
+ {w:{zh:'多个客户 / 实例',en:'Many customers / instances'},diy:{zh:'隔离、复制全要自己设计，做错就串数据',en:'Design isolation and copying yourself — get it wrong and data leaks across'},ours:{zh:'一套底座复制给很多客户，天然隔离',en:'Copy one base to many customers — isolation built in'}},
+];
+
+/* ====== 状态 + 渲染 ====== */
+let page='home',view='value';
+const voted=new Set(),liked=new Set(),subscribed=new Set(),openPains=new Set(),localComments={};
+const $=s=>document.querySelector(s),G='liquid-glass';
+const allPains=()=>DATA.定位.flatMap(p=>p.痛点.map(t=>({...t})));
+const allAch=()=>DATA.定位.flatMap(pos=>pos.痛点.flatMap(p=>p.成果.map(a=>({...a}))));
+const plannedPains=()=>allPains().filter(p=>p.成果.length===0);
+function hottest(){let b=null;allPains().forEach(p=>{if(!b||p.votes>b.votes)b=p;});return b?b.id:null;}
+
+const statusTag=s=>`<span class="tag ${s==='live'?'live':s==='wip'?'wip':'planned'}">${s==='live'?t('st_live'):s==='wip'?t('st_wip'):t('st_plan')}</span>`;
+const votePill=(id,v,sm)=>{const on=voted.has(id),n=v+(on?1:0);return `<button class="vote ${sm?'sm ':''}${on?'on':G}" data-vote="${id}"><span>▲</span><span>${n}</span><span style="font-weight:600;opacity:.85">${on?t('voted'):t('vote')}</span></button>`;};
+const subBtn=id=>{const on=subscribed.has(id);return `<button class="chipbtn ${on?'on':G}" data-sub="${id}">${on?t('subbed'):t('sub')}</button>`;};
+
+function achCard(a,o={}){
+  const isL=liked.has(a.prId),ln=a.likes+(isL?1:0),cm=(a.comments||[]).concat(localComments[a.prId]||[]);
+  const tryB=(a.status==='live'&&a.tryUrl)?`<a class="chipbtn go" href="${a.tryUrl}" onclick="return false">${t('tryit')}</a>`:'';
+  const subB=a.status==='wip'?subBtn('a'+a.prId):'';
+  const sc=o.hideScene?'':`<span class="tag scene">${scn(a.场景)}</span>`;
+  return `<div class="ach ${G}"><div class="atop">${statusTag(a.status)}<span class="atitle">${pick(a.title)}</span>${sc}<span class="when">${a.when||''}</span></div>
+    <p class="asum">${pick(a.summary)}</p>
+    <div class="aacts">${tryB}${subB}<button class="chipbtn ${isL?'on':G}" data-like="${a.prId}">❤ ${ln}</button><button class="chipbtn ${G}" data-cmt="${a.prId}">💬 ${cm.length}</button></div>
+    <div class="cbox" id="cbox-${a.prId}"><textarea placeholder="${t('cph')}"></textarea><div><button class="chipbtn go" data-csubmit="${a.prId}">${t('csub')}</button></div>
+      <ul class="clist">${cm.map(c=>`<li>💬 ${c}</li>`).join('')}</ul></div></div>`;
+}
+function plannedCard(p,o={}){const sc=o.hideScene?'':`<span class="tag scene">${scn(p.场景)}</span>`;
+  return `<div class="pcard ${G}"><div class="tags">${statusTag('planned')}<span class="ptext">${pick(p.gc)}</span>${sc}</div>
+    <div class="tags">${votePill(p.id,p.votes,true)}${subBtn(p.id)}<span style="color:var(--w40);font-size:11px">${t('prio')}</span></div></div>`;}
+
+/* ---- 价值视角：mindmap 树 ---- */
+const acColor=s=>s==='live'?'var(--live)':s==='wip'?'var(--wip)':'rgba(255,255,255,.35)';
+function mLeaf(a){const isL=liked.has(a.prId),ln=a.likes+(isL?1:0);
+  const tryB=(a.status==='live'&&a.tryUrl)?`<a class="chipbtn go" href="${a.tryUrl}" onclick="return false">${t('tryit')}</a>`:'';
+  return `<li><div class="mnode lf ${G}" style="--ac:${acColor(a.status)}">${statusTag(a.status)}<span class="mt">${pick(a.title)}</span>${tryB}<button class="chipbtn ${isL?'on':G}" data-like="${a.prId}">❤ ${ln}</button></div></li>`;}
+function mPain(p,hot){const leaves=p.成果.length?`<ul>${p.成果.map(mLeaf).join('')}</ul>`:'';
+  return `<li><div class="mnode ${G}${p.id===hot?' hot':''}" style="--ac:var(--blue)"><span class="mt">${pick(p.gc)}</span><span class="tag scene">${scn(p.场景)}</span>${p.id===hot?`<span class="hotbadge">${t('hot')}</span>`:''}${votePill(p.id,p.votes,true)}${p.成果.length?'':subBtn(p.id)}</div>${leaves}</li>`;}
+function renderValue(){const hot=hottest();
+  const posLi=pos=>`<li><div class="mnode ${G}" style="--ac:var(--coral)"><span class="meye">${t('pos_eye')}</span><span class="mt serif">${pick(pos.title)}</span>${votePill(pos.id,pos.votes,true)}</div><ul>${[...pos.痛点].sort((a,b)=>b.votes-a.votes).map(p=>mPain(p,hot)).join('')}</ul></li>`;
+  return `<ul class="mtree"><li><div class="mnode ${G}" style="--ac:#fff"><span class="mt serif">hello, world</span><span class="meye">${lang==='zh'?'两个产品':'two products'}</span></div>
+    <ul>${DATA.定位.map(posLi).join('')}</ul></li></ul>`;}
+
+/* ---- 时间线：gantt ---- */
+function renderTimeline(){
+  const ach=allAch().filter(a=>a.when);const qs=[...new Set(ach.map(a=>a.when))].sort();
+  const planned=plannedPains();const cols=qs.length+(planned.length?1:0);
+  const names=qs.concat(planned.length?[lang==='zh'?'计划中':'Planned']:[]);
+  const cs=`grid-template-columns:repeat(${cols},1fr)`;
+  const specs=[];
+  ach.forEach(a=>{const i=qs.indexOf(a.when)+1;
+    if(a.status==='live')specs.push({cls:'live',start:i,span:1,label:pick(a.title),sub:scn(a.场景)});
+    else specs.push({cls:'wip',start:i,span:cols-i+1,label:pick(a.title),sub:lang==='zh'?'进行中':'in progress'});});
+  planned.forEach(p=>specs.push({cls:'planned',start:cols,span:1,label:pick(p.gc),sub:scn(p.场景)}));
+  specs.sort((a,b)=>a.start-b.start||a.cls.localeCompare(b.cls));
+  const rows=specs.map(s=>`<div class="grow" style="${cs}">
+    <div class="gbar ${s.cls}" style="grid-column:${s.start}/span ${s.span};grid-row:1"><span class="dk"></span></div>
+    <div class="glabel" style="grid-column-start:${s.start};grid-row:2">${s.label}<span class="gs">${s.sub}</span></div></div>`).join('');
+  const minW=cols*168;
+  return `<div class="gantt-hint">↔ ${lang==='zh'?'左右滑动，回看更早 / 更晚的时间线':'scroll left / right through the timeline'}</div>
+   <div class="gantt-scroll"><div class="gantt" style="min-width:${minW}px"><div class="gantt-bg" style="${cs}">${names.map(()=>'<span></span>').join('')}</div>
+    <div class="gantt-head" style="${cs}">${names.map(q=>`<span class="q">${q}</span>`).join('')}</div>${rows}</div></div>`;}
+
+/* ---- 场景视角：notion gallery ---- */
+function galCover(st){const bg=st==='live'?'art-blue':st==='wip'?'art-coral':'art-cream';
+  const c1=st==='live'?'var(--cream)':st==='wip'?'var(--blue)':'var(--coral)',c2=st==='live'?'var(--coral)':st==='wip'?'var(--cream)':'var(--blue)';
+  return `<div class="cover art ${bg}"><div class="grain"></div><span class="sh f" style="width:52%;height:52%;left:10%;top:14%;background:${c1}"></span><span class="sh s2" style="width:34%;height:34%;right:8%;bottom:10%;background:${c2}"></span></div>`;}
+function galCard(a){const isL=liked.has(a.prId),ln=a.likes+(isL?1:0),cm=(a.comments||[]).concat(localComments[a.prId]||[]);
+  const tryB=(a.status==='live'&&a.tryUrl)?`<a class="chipbtn go" href="${a.tryUrl}" onclick="return false">${t('tryit')}</a>`:'';
+  const subB=a.status==='wip'?subBtn('a'+a.prId):'';
+  return `<div class="gcard ${G}">${galCover(a.status)}<div class="gbody">
+    <div class="tags">${statusTag(a.status)}<span style="margin-left:auto;font-size:11px;color:var(--w40)">${a.when||''}</span></div>
+    <span class="gtitle">${pick(a.title)}</span><p class="gsum">${pick(a.summary)}</p>
+    <div class="gacts">${tryB}${subB}<button class="chipbtn ${isL?'on':G}" data-like="${a.prId}">❤ ${ln}</button><button class="chipbtn ${G}" data-cmt="${a.prId}">💬 ${cm.length}</button></div>
+    <div class="cbox" id="cbox-${a.prId}"><textarea placeholder="${t('cph')}"></textarea><div><button class="chipbtn go" data-csubmit="${a.prId}">${t('csub')}</button></div><ul class="clist">${cm.map(c=>`<li>💬 ${c}</li>`).join('')}</ul></div></div></div>`;}
+function galPlanned(p){return `<div class="gcard ${G}">${galCover('planned')}<div class="gbody">
+    <div class="tags">${statusTag('planned')}</div><span class="gtitle">${pick(p.gc)}</span><p class="gsum" style="color:var(--w40)">${t('prio')}</p>
+    <div class="gacts">${votePill(p.id,p.votes,true)}${subBtn(p.id)}</div></div></div>`;}
+function renderScenario(){const scenes=[...new Set(allPains().map(p=>p.场景))];
+  return `<div class="galwrap">`+scenes.map(sc=>{const pains=allPains().filter(p=>p.场景===sc),achs=pains.flatMap(p=>p.成果);
+    const cards=achs.map(galCard).join('')+pains.filter(p=>!p.成果.length).map(galPlanned).join('');
+    return `<div><div class="galhead"><span class="tag scene">${scn(sc)}</span><h3 class="serif">${t('scnt')(pains.length,achs.length)}</h3><span class="cnt">${t('slive')(achs.filter(a=>a.status==='live').length)}</span></div><div class="gal">${cards}</div></div>`;}).join('')+`</div>`;}
+
+const VIEWS=[{k:'value',nk:'v_value',hk:'h_value'},{k:'timeline',nk:'v_timeline',hk:'h_timeline'},{k:'scenario',nk:'v_scenario',hk:'h_scenario'}];
+function metricCells(){const ach=allAch();const live=ach.filter(a=>a.status==='live').length,wip=ach.filter(a=>a.status==='wip').length;
+  const votes=allPains().reduce((s,p)=>s+p.votes,0)+DATA.定位.reduce((s,p)=>s+p.votes,0);const sc=new Set(allPains().map(p=>p.场景)).size;
+  return [[live,t('m_live'),''],[wip,t('m_wip'),''],[votes,t('m_votes'),t('unit_vote')],[sc,t('m_scene'),t('unit_scene')]];}
+function renderMetrics(){const el=$('#home-metrics');if(el)el.innerHTML=metricCells().map(c=>`<div class="metric"><div class="n">${c[0]}<small>${c[2]}</small></div><div class="k">${c[1]}</div></div>`).join('');}
+function renderTabs(){$('#viewtabs').innerHTML=VIEWS.map(v=>`<button class="${v.k===view?'on':''}" data-view="${v.k}">${t(v.nk)}</button>`).join('');$('#viewhint').textContent=t(VIEWS.find(v=>v.k===view).hk);}
+function renderView(){$('#view').innerHTML=view==='timeline'?renderTimeline():view==='scenario'?renderScenario():renderValue();
+  if(view==='timeline'){const sc=$('.gantt-scroll');if(sc)requestAnimationFrame(()=>{sc.scrollLeft=sc.scrollWidth;});}}
+
+function renderCmp(){const el=$('#cmp');if(!el)return;
+  const h=lang==='zh'?['你迟早要面对的','自己搓会怎样','用我们：你不用碰']:['What you\'ll face','Doing it yourself','With us: not your problem'];
+  el.innerHTML=`<div class="cmp-row cmp-head"><div class="c0">${h[0]}</div><div class="c1">${h[1]}</div><div class="c2">${h[2]}</div></div>`
+    +CMP.map(r=>`<div class="cmp-row"><div class="c0">${pick(r.w)}</div><div class="c1">${pick(r.diy)}</div><div class="c2">${pick(r.ours)}</div></div>`).join('');}
+function applyStatic(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.dataset.i18n;if(T[lang][k]!=null)el.innerHTML=T[lang][k];});
+  document.querySelectorAll('[data-i18n-ph]').forEach(el=>{const k=el.dataset.i18nPh;if(T[lang][k]!=null)el.placeholder=T[lang][k];});
+  $('#langBtn').textContent=lang==='zh'?'EN':'中';
+  document.documentElement.lang=lang==='zh'?'zh-CN':'en';
+}
+function setPage(p){page=p;document.querySelectorAll('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==p);
+  document.querySelectorAll('.links button[data-nav]').forEach(b=>b.classList.toggle('on',b.dataset.nav===p));
+  window.scrollTo({top:0,behavior:'smooth'});observeReveals();}
+function render(){applyStatic();renderCmp();renderMetrics();renderTabs();renderView();bind();fitHeroTitle();}
+function bind(){
+  document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.nav==='roadmap'){ location.href='components/03-demo-路线图押注.html'; return; }
+    setPage(b.dataset.nav);
+  });
+  $('#langBtn').onclick=()=>{lang=lang==='zh'?'en':'zh';render();};
+  document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view;render();});
+  document.querySelectorAll('[data-vote]').forEach(b=>b.onclick=()=>{const id=b.dataset.vote;voted.has(id)?voted.delete(id):voted.add(id);render();});
+  document.querySelectorAll('[data-like]').forEach(b=>b.onclick=()=>{const id=+b.dataset.like;liked.has(id)?liked.delete(id):liked.add(id);render();});
+  document.querySelectorAll('[data-sub]').forEach(b=>b.onclick=()=>{const id=b.dataset.sub;subscribed.has(id)?subscribed.delete(id):subscribed.add(id);render();});
+  document.querySelectorAll('[data-exp]').forEach(b=>b.onclick=()=>{const id=b.dataset.exp;openPains.has(id)?openPains.delete(id):openPains.add(id);render();});
+  document.querySelectorAll('[data-cmt]').forEach(b=>b.onclick=()=>{const x=$('#cbox-'+b.dataset.cmt);if(x)x.classList.toggle('show');});
+  document.querySelectorAll('[data-csubmit]').forEach(b=>b.onclick=()=>{const id=+b.dataset.csubmit,ta=$('#cbox-'+id+' textarea'),v=ta?ta.value.trim():'';if(!v)return;(localComments[id]=localComments[id]||[]).push(v);render();const x=$('#cbox-'+id);if(x)x.classList.add('show');});
+}
+let io;function observeReveals(){if(!io)io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{threshold:.12});
+  document.querySelectorAll('.reveal:not(.in)').forEach(el=>io.observe(el));}
+
+render();observeReveals();
+
+/* 路线图标题：Build → Building → Built 循环（表达 想做/在做/做完 三阶段） */
+const BIP=['Build','Building','Built'];let bipi=0;
+setInterval(()=>{const el=$('#bipword');if(!el)return;el.style.opacity='0';el.style.transform='translateY(-6px)';
+  setTimeout(()=>{bipi=(bipi+1)%BIP.length;el.textContent=BIP[bipi];el.style.opacity='1';el.style.transform='none';},350);},2200);
+
+/* Hero 标题：缩小第 2 行字号，使其宽度 = 第 1 行宽度（flush 等宽块） */
+function fitHeroTitle(){const a=$('.heroh1 .t1'),b=$('.heroh1 .t2');if(!a||!b)return;
+  b.style.fontSize='';
+  const wa=a.getBoundingClientRect().width,wb=b.getBoundingClientRect().width;
+  if(wa>0&&wb>0){const fs=parseFloat(getComputedStyle(b).fontSize);b.style.fontSize=(fs*wa/wb).toFixed(2)+'px';}}
+fitHeroTitle();
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(fitHeroTitle);
+window.addEventListener('resize',fitHeroTitle);
+</script>
+
+</body>
+</html>
