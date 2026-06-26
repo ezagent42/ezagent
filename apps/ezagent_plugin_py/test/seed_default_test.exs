@@ -22,8 +22,20 @@ defmodule Ezagent.PluginPy.SeedDefaultTest do
 
   setup do
     case System.find_executable("uv") do
-      nil -> {:skip, "uv not on PATH"}
-      _ -> :ok
+      nil ->
+        {:skip, "uv not on PATH"}
+
+      _ ->
+        # Deterministic start: tear down any boot-seeded py_default so the test's
+        # seed_default/0 takes the FRESH provision path. Adopting + respawning a
+        # long-lived boot singleton is racy under the full umbrella's shared-mode
+        # sandbox (P4b — Entity.Agent's respawn reads the DB; #108/#92 class),
+        # whereas fresh provision_and_instantiate is what py_template_test
+        # exercises green in the same run.
+        default_uri = PyApp.default_uri()
+        _ = Python.stop(default_uri)
+        _ = Ezagent.Kind.terminate(default_uri)
+        :ok
     end
   end
 
