@@ -314,5 +314,6 @@ defmodule Ezagent.Behavior.Agent.Receive do
   end
 
   defp sync_result_action("cc-headless"), do: :cc_headless_sync_result
+  defp sync_result_action("py"), do: :py_sync_result
   defp sync_result_action(_), do: :sync_result
 end

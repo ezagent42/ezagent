@@ -62,7 +62,7 @@ defmodule EzagentPluginPy.Application do
 
   alias Ezagent.Behavior.PyAgent, as: PyAgentBehavior
   alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
-  alias Ezagent.Entity.PyAgent, as: PyAgentKind
+  alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Template.PyAgent, as: PyAgentTemplate
 
   # --- OTP Application -------------------------------------------------
@@ -87,7 +87,7 @@ defmodule EzagentPluginPy.Application do
   @impl Ezagent.Plugin
   def behaviors do
     for action <- PyAgentBehavior.actions() do
-      {PyAgentKind, action, PyAgentBehavior}
+      {AgentKind, action, PyAgentBehavior}
     end
   end
 
@@ -99,7 +99,9 @@ defmodule EzagentPluginPy.Application do
     [
       %{
         flavor: "py",
-        kind: PyAgentKind,
+        kind: AgentKind,
+        instance_behaviors: fn -> AgentKind.base_behaviors() ++ [PyAgentBehavior] end,
+        bridge_adapter: EzagentPluginPy.BridgeAdapter,
         template_class: PyAgentTemplate,
         # RF-8 — py's fail-closed CapMint policy (py-agent P4). A py-ROLE (np)
         # requests `:py_agent` caps in its recipe; the role-create path reads
