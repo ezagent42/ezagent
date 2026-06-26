@@ -129,16 +129,21 @@ defmodule EzagentPluginHello.TurnDriver do
   def say(_session_uri, _actor, _text), do: :ok
 
   @doc """
-  Post a chat line that ALSO carries a json-render node tree (`spec`) in its body
-  `render` key. The bubble renders `spec` with the same json-render engine as the
-  preview page (a table/card/… shown inline in the conversation), with `text` as a
-  short caption. Same `:cast` admin-genesis authority as `say/3`. `spec` is a
-  nested `{type, props, children}` tree — the SAME format as the Surface page, so a
-  fragment from the page can be reused verbatim. No-ops on a missing spec.
+  Post a chat line carrying a json-render node tree (`spec`) in its body `render`
+  key, and an OPTIONAL per-card CSS theme (`css`) in `render_css`. The bubble
+  renders `spec` with the same engine as the preview page; when `css` is present
+  the bubble injects it SCOPED to that one card (so a user's explicit style ask is
+  honored without leaking across cards). `:cast` admin-genesis. No-ops on no spec.
   """
-  @spec say_render(URI.t(), URI.t(), String.t(), map()) :: :ok | {:ok, term()} | {:error, term()}
-  def say_render(%URI{} = session_uri, %URI{} = actor, text, %{} = spec) when is_binary(text) do
-    msg = Ezagent.Message.new(actor, %{text: text, render: spec, attachments: []})
+  @spec say_render(URI.t(), URI.t(), String.t(), map(), String.t() | nil) ::
+          :ok | {:ok, term()} | {:error, term()}
+  def say_render(session_uri, actor, text, spec, css \\ nil)
+
+  def say_render(%URI{} = session_uri, %URI{} = actor, text, %{} = spec, css)
+      when is_binary(text) do
+    body = %{text: text, render: spec, attachments: []}
+    body = if is_binary(css) and css != "", do: Map.put(body, :render_css, css), else: body
+    msg = Ezagent.Message.new(actor, body)
 
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.with_action(session_uri, :session, :send),
@@ -152,7 +157,7 @@ defmodule EzagentPluginHello.TurnDriver do
     })
   end
 
-  def say_render(_session_uri, _actor, _text, _spec), do: :ok
+  def say_render(_session_uri, _actor, _text, _spec, _css), do: :ok
 
   @doc """
   Store the (already-sanitised) HTML site-frame for the customer page, via the

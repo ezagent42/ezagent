@@ -40,6 +40,19 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
+  Spawn a supervised Task that replies to `user_text` with a json-render CARD as
+  a chat message (the `@card` agent path) — never touches the page. The card is
+  posted as the `card_<name>` agent, so it renders under that sender.
+  """
+  @spec start_card_reply(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
+  def start_card_reply(%URI{} = session_uri, user_text) when is_binary(user_text) do
+    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+      Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
+      generate_card(session_uri, salesperson_uri(session_uri), strip_mentions(user_text))
+    end)
+  end
+
+  @doc """
   Generate a page and land it on `session_uri`'s Surface. Every request goes
   through the single-page path (`generate_simple/4`): a FRESH session builds the
   whole spec from scratch, a follow-up edit PATCHES the current spec (with a
@@ -55,14 +68,39 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it, understanding your request…"))
 
-    # Two intents: a DATA-DISPLAY ask ("show me X" / a data/table request) returns
-    # a json-render FRAGMENT as a chat MESSAGE (a table/card in the bubble) WITHOUT
-    # touching the page; anything else builds/edits the whole page as before.
-    if data_display_request?(user_text) do
-      generate_card(session_uri, builder, user_text)
-    else
-      generate_simple(session_uri, builder, user_text, true)
+    # Strip any leading @mention (e.g. `@hello_page2 `) — it is routing syntax, not
+    # part of the request — so the `card` prefix / keyword checks see the real text.
+    text = strip_mentions(user_text)
+
+    # Routing of the turn:
+    #  - an explicit `card` prefix → ALWAYS a json-render card MESSAGE, never the
+    #    page (the decoupled way to verify "hello can reply json-render");
+    #  - a data-display keyword ("show me X" / table / data words) → card message;
+    #  - anything else → build/edit the whole page as before.
+    cond do
+      card_command?(text) ->
+        generate_card(session_uri, builder, strip_card_prefix(text))
+
+      data_display_request?(text) ->
+        generate_card(session_uri, builder, text)
+
+      true ->
+        generate_simple(session_uri, builder, text, true)
     end
+  end
+
+  # Remove one-or-more leading `@mention ` tokens (routing syntax) from a request.
+  defp strip_mentions(text), do: String.replace(text, ~r/^(\s*@\S+\s*)+/u, "")
+
+  # Explicit "give me a json-render card, don't touch the page" command: a message
+  # whose FIRST word is `card` / `/card` (case-insensitive), followed by any
+  # separator — half- or full-width colon (`:` / `：`), space, or nothing. The
+  # simplest fully-decoupled trigger, independent of the page-edit path. `text` is
+  # already @mention-stripped.
+  defp card_command?(text), do: is_binary(text) and text =~ ~r/^\s*\/?card\b/i
+
+  defp strip_card_prefix(text) do
+    String.replace(text, ~r/^\s*\/?card\b[:：\s]*/iu, "", global: false)
   end
 
   # Heuristic intent gate: does the user want to SEE data inline (a card/table in
@@ -97,22 +135,37 @@ defmodule EzagentPluginHello.Generator do
   defp generate_card(session_uri, builder, user_text) do
     current = current_body_tree(session_uri)
 
+    # The LLM occasionally emits malformed JSON (unbalanced braces) for a complex
+    # card — retry ONCE before giving up. A card request NEVER edits the page (that
+    # would betray the intent); on hard failure it replies with a plain note.
     {result, secs} =
       with_progress(session_uri, builder, gettext("Pulling the data"), fn ->
-        card_spec(current, user_text)
+        case card_spec(current, user_text) do
+          {:ok, _} = ok -> ok
+          {:error, _} -> card_spec(current, user_text)
+        end
       end)
 
     case result do
       {:ok, spec} ->
         log_spec(session_uri, spec)
-        TurnDriver.say_render(session_uri, builder, gettext("Here you go:"), spec)
+        # Only when the user EXPLICITLY asked for a look (cooler / colors / dark…)
+        # do we design a per-card CSS theme; otherwise the card uses the default
+        # shadcn styling. The theme is scoped to this one card on the client.
+        css = if style_request?(user_text), do: card_css(spec, user_text), else: nil
+        TurnDriver.say_render(session_uri, builder, gettext("Here you go:"), spec, css)
         TurnDriver.say(session_uri, builder, gettext("Card ready in %{s}s.", s: secs))
         {:ok, "card"}
 
       {:error, reason} = err ->
         Logger.warning("hello.Generator: card generation failed: #{inspect(reason)}")
-        # Fall back to a normal page build so the turn still produces something.
-        generate_simple(session_uri, builder, user_text, true)
+
+        TurnDriver.say(
+          session_uri,
+          builder,
+          gettext("Sorry — couldn't build that card. Try rephrasing it.")
+        )
+
         err
     end
   end
@@ -635,6 +688,33 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
+  # A per-CARD CSS theme for the chat bubble — the look the user explicitly asked
+  # for. The model writes selectors WITHOUT a root prefix (e.g. `[data-slot=card]`,
+  # `.section`); the client wraps them in the card's unique id, so the theme is
+  # scoped to this one bubble and never leaks. Returns nil on failure (default
+  # styling) rather than a broken theme.
+  defp card_css(spec, user_text) do
+    prompt = """
+    Style request: #{user_text}
+
+    The card spec:
+
+    #{Jason.encode!(spec)}
+    """
+
+    case call_llm(Prompts.card_theme_system(), prompt) do
+      {:ok, %{content: content}} ->
+        case Sanitize.css(content) do
+          css when is_binary(css) and css != "" -> css
+          _ -> nil
+        end
+
+      other ->
+        Logger.warning("hello.Generator: card theme failed: #{inspect(other)}")
+        nil
+    end
+  end
+
   # Build the theme-model user message: an optional STYLE instruction (an
   # appearance edit), the optional CURRENT theme to preserve + extend, then the
   # spec. With an instruction the model restyles the asked-for element; without
@@ -729,6 +809,14 @@ defmodule EzagentPluginHello.Generator do
     ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
+  end
+
+  # The `@salesperson` agent for this session: session://<ws>/hello/<name> ⇒
+  # entity://<ws>/agent/salesperson_<name> (counterpart to builder_uri/1).
+  defp salesperson_uri(%URI{} = session_uri) do
+    ws = Ezagent.URI.workspace_name!(session_uri)
+    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
+    Ezagent.URI.entity(ws, :agent, "salesperson_#{name}")
   end
 
   # Console log of the @json-render data that ACTUALLY drives the page — the

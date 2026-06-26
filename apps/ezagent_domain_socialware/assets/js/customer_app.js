@@ -647,29 +647,19 @@ function ChatPanel({messages, onClose}) {
             // The LAST message, if it is a "…"-terminated progress line, gets a
             // live ticker (the backend's `with_progress` lines end with an ellipsis).
             const live = i === messages.length - 1 && (m.text || "").endsWith("…")
-            // A message may carry a json-render fragment (`render`) — a table/card
-            // generated for a "show me the data" ask — rendered inline with the
-            // SAME engine as the preview page, below the caption text.
-            const hasRender = m.render && typeof m.render === "object"
+            // The preview already has the full page render area, so chat bubbles
+            // here stay TEXT-only — a json-render fragment in a message bubble is
+            // only meaningful in the WORLD operator console (no page area there).
             return React.createElement(
               "div",
               {key: m.id || i, className: "previewbar-msg"},
               m.sender ? React.createElement("span", {className: "previewbar-msg-who"}, shortSender(m.sender)) : null,
-              m.text
-                ? React.createElement(
-                    "span",
-                    {className: "previewbar-msg-text"},
-                    m.text,
-                    live ? React.createElement(ProgressTicker, {key: "tick-" + (m.id || i)}) : null
-                  )
-                : null,
-              hasRender
-                ? React.createElement(
-                    "div",
-                    {className: "previewbar-msg-render page"},
-                    React.createElement(JsonRenderPage, {page: m.render})
-                  )
-                : null
+              React.createElement(
+                "span",
+                {className: "previewbar-msg-text"},
+                m.text || "",
+                live ? React.createElement(ProgressTicker, {key: "tick-" + (m.id || i)}) : null
+              )
             )
           })
     )
@@ -714,7 +704,6 @@ const PREVIEWBAR_CSS = `
 .previewbar-msg{display:flex;flex-direction:column;gap:.12rem}
 .previewbar-msg-who{font-size:.68rem;font-weight:700;color:#6d5cf0;text-transform:uppercase;letter-spacing:.03em}
 .previewbar-msg-text{font-size:.9rem;line-height:1.5;color:#222;white-space:pre-wrap;word-break:break-word}
-.previewbar-msg-render{margin-top:.4rem;border:1px solid rgba(0,0,0,.08);border-radius:.6rem;padding:.6rem;background:#fff;overflow-x:auto}
 .previewbar-tick{color:#6d5cf0;font-weight:700;font-variant-numeric:tabular-nums}
 body.jr-selecting,body.jr-selecting .page-root *{cursor:crosshair !important}
 body.jr-selecting .previewbar-wrap,body.jr-selecting .previewbar-wrap *{cursor:auto !important}

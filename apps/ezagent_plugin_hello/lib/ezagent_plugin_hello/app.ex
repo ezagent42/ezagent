@@ -12,7 +12,7 @@ defmodule EzagentPluginHello.App do
   """
 
   alias Ezagent.{Capability, Invocation, WorkspaceRegistry}
-  alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
+  alias Ezagent.Entity.{HelloBuilder, Salesperson, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Session.ConfigActions
 
   @doc """
@@ -24,6 +24,9 @@ defmodule EzagentPluginHello.App do
   def ensure_app(ws, name) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     builder_uri = Ezagent.URI.entity(ws, :agent, "hello_#{name}")
+    # The `@salesperson` agent — replies with json-render data cards, never edits
+    # the page. Distinct role_name so it doesn't clash with the builder's "builder".
+    salesperson_uri = Ezagent.URI.entity(ws, :agent, "salesperson_#{name}")
     workspace = Capability.workspace_of(session_uri)
 
     with {:ok, tmpl} <-
@@ -37,7 +40,9 @@ defmodule EzagentPluginHello.App do
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
          :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}),
-         {:ok, _} <- join(session_uri, builder_uri) do
+         {:ok, _} <- join(session_uri, builder_uri, "builder"),
+         :ok <- spawn_kind(Salesperson, %{uri: salesperson_uri}),
+         {:ok, _} <- join(session_uri, salesperson_uri, "salesperson") do
       {:ok, session_uri, builder_uri}
     end
   end
@@ -71,11 +76,11 @@ defmodule EzagentPluginHello.App do
     end
   end
 
-  defp join(session_uri, member_uri) do
+  defp join(session_uri, member_uri, role_name) do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
-      args: %{member: member_uri, role_name: "builder"},
+      args: %{member: member_uri, role_name: role_name},
       ctx: %{
         caller: User.admin_uri(),
         caps: MapSet.new([Capability.admin_genesis_cap()]),

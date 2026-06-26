@@ -22,7 +22,8 @@ defmodule EzagentWeb.Socialware.FeedEncoding do
         id: message.id,
         text: message_text(message),
         sender: URI.to_string(message.sender),
-        render: message_render(message)
+        render: message_render(message),
+        render_css: message_render_css(message)
       }
     end)
   end
@@ -37,5 +38,11 @@ defmodule EzagentWeb.Socialware.FeedEncoding do
   @spec message_render(Ezagent.Message.t()) :: term()
   def message_render(message) do
     Map.get(message.body, "render") || Map.get(message.body, :render)
+  end
+
+  @doc "The optional per-card CSS theme carried in a message body, or nil."
+  @spec message_render_css(Ezagent.Message.t()) :: term()
+  def message_render_css(message) do
+    Map.get(message.body, "render_css") || Map.get(message.body, :render_css)
   end
 end

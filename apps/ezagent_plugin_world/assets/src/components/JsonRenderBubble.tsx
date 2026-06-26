@@ -7,6 +7,7 @@
 // `catalog_normalize.mjs` — kept as a small self-contained copy because world is
 // an independent bundle (its own React 19 + @json-render deps), so it cannot
 // import the socialware SPA module at runtime.
+import React from "react"
 import {Renderer, JSONUIProvider, defineRegistry} from "@json-render/react"
 import {schema} from "@json-render/react/schema"
 import {defineCatalog, nestedToFlat} from "@json-render/core"
@@ -67,13 +68,48 @@ function normalizeSpec(node: any): any {
   return {...node, props, children}
 }
 
-export function JsonRenderBubble({spec}: {spec: unknown}) {
+// A process-unique id per mounted card, so an injected theme scopes to THIS card.
+let cardSeq = 0
+
+export function JsonRenderBubble({
+  spec,
+  css,
+  onSend,
+}: {
+  spec: unknown
+  css?: string | null
+  // Interaction model: any in-card action (a Button press, a Select change, an
+  // Input submit, …) SENDS A CHAT MESSAGE as the user. `onSend(text)` posts it.
+  onSend?: (text: string) => void
+}) {
+  const id = React.useMemo(() => `jr-card-${++cardSeq}`, [])
+
+  // Every action a card can fire routes to "send a message as the user". The
+  // model may name the action anything sensible (send/post/submit/filter/search/
+  // refresh/ask) — they ALL map to the same send. The text comes from the action
+  // `params` (a literal message, or a value read from an Input via {$state}).
+  const handlers = React.useMemo(() => {
+    const send = (params: any) => {
+      const text = String(params?.message ?? params?.text ?? params?.query ?? params?.value ?? "").trim()
+      if (text && onSend) onSend(text)
+    }
+    return {send, post: send, submit: send, filter: send, search: send, refresh: send, ask: send, query: send}
+  }, [onSend])
+
   const safe = spec && typeof spec === "object" ? normalizeSpec(spec) : null
   const flat = safe ? nestedToFlat(safe) : null
   if (!flat) return null
+  // The model writes the theme with un-prefixed selectors; wrap them in this
+  // card's id (CSS nesting) so the user's style ask applies HERE only, never
+  // leaking to other cards or the page.
+  const scopedCss = css && css.trim() ? `#${id}{${css}}` : null
   return (
-    <div className="page jr-bubble mt-1.5 overflow-x-auto rounded-lg border border-border bg-background p-2">
-      <JSONUIProvider registry={registry}>
+    <div
+      id={id}
+      className="page jr-bubble mt-2 max-w-full overflow-x-auto rounded-xl border border-border bg-card p-3 text-card-foreground shadow-sm [&_table]:text-sm"
+    >
+      {scopedCss ? <style dangerouslySetInnerHTML={{__html: scopedCss}} /> : null}
+      <JSONUIProvider registry={registry} handlers={handlers}>
         <Renderer spec={flat as any} registry={registry} fallback={Unknown} />
       </JSONUIProvider>
     </div>

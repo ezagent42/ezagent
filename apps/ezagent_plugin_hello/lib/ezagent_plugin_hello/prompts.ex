@@ -70,16 +70,78 @@ defmodule EzagentPluginHello.Prompts do
     #{catalog_doc()}
 
     RULES:
-    - The ROOT is a SINGLE node sized for a chat bubble — prefer `Card` (with a
-      `title`) or a vertical `Stack`, wrapping a `Table` for tabular data. NOT a
-      full page, no nav/hero/footer.
+    - The ROOT is a SINGLE node — a `Card` (with a `title`) or a vertical `Stack`.
+      NOT a full page (no nav/hero/footer), but DO build a rich COMPOSITE inside it
+      when the request implies one. e.g. a "sales dashboard card" = a Stack of: a
+      `Grid` of stat blocks (Heading number + muted Text label) on top, a
+      `Separator`, a `Table` of detail rows, a `Separator`, and a `Progress` toward
+      a goal at the bottom. Combine the components — don't answer a compound ask
+      with a lone table.
+    - Use the RIGHT components: `Grid` for metric tiles, `Table` for rows, `Badge`
+      for status/labels, `Progress` for completion, `Accordion`/`Tabs` for grouped
+      sections, `Separator` between blocks. Reach for the catalog, not just Table.
     - For tabular data use `Table` — `columns` is a string array, `rows` is a 2D
       array of cell strings, e.g. [["Alice","admin"],["Bob","user"]].
     - Real, specific content drawn from the request (and the provided page spec, if
       any — reuse its data/components rather than inventing). Never lorem ipsum.
-    - Keep it compact; it renders in a message bubble, not a page.
+    - Fits a message bubble (not a full page), but a 2-3 level composite is good —
+      richer than one node.
+
+    INTERACTIONS (make the card actionable when the data is OPERABLE):
+    - Any node may carry an `on` field — a PEER of "type"/"props"/"children" (NOT
+      inside props) — that fires a chat MESSAGE (sent AS THE USER) when interacted
+      with. Shape:
+      "on": { "<event>": { "action": "send", "params": { "message": "<a sentence>" } } }
+    - Events per component: Button / Link → "press"; Input → "submit"; DropdownMenu
+      → "select"; Select / Checkbox / Switch / Toggle / Slider / Pagination /
+      ButtonGroup → "change". The action name is always "send".
+    - `params.message` is the chat message the interaction sends — write it as a
+      clear, natural instruction in the user's language (e.g. a refresh, a filter,
+      an export, a drill-down request). It will be sent verbatim into the chat.
+    - WHEN to add them: when the data can be refreshed, filtered, drilled into,
+      exported, or needs the user to type/choose something. A pure static snapshot
+      needs none — don't over-add; a few meaningful actions beat many.
+    - SEARCH / FORM: give an `Input` `"props": {"value": {"$bindState": "/q"}}` and a
+      `Button` `"on": {"press": {"action":"send","params":{"message": {"$state":"/q"}}}}`
+      so the TYPED text is sent.
+    - FILTER: a `Select`/`DropdownMenu` with
+      `"on": {"change": {"action":"send","params":{"message":"<filter instruction>"}}}`.
+    - A REFRESH/EXPORT/DRILL button: a `Button` with
+      `"on": {"press": {"action":"send","params":{"message":"<the instruction>"}}}`.
+
+    Output STRICT, VALID JSON: every `{` and `[` is closed, EVERY node object that
+    has `props`/`children`/`on` closes them all. Do not truncate.
 
     Respond with the JSON object only.
+    """
+  end
+
+  @doc """
+  The **card theme** prompt. Writes a small CSS theme for ONE chat-bubble card,
+  honoring the user's explicit style ask. Selectors carry NO root prefix — the
+  client scopes them to the card's unique id (CSS nesting), so the theme never
+  leaks to other cards or the page.
+  """
+  def card_theme_system do
+    """
+    You write a SMALL block of PLAIN CSS that restyles ONE chat-bubble card to
+    match the user's style request. Output CSS only — no markdown, no JSON.
+
+    The card is rendered from @json-render/shadcn components; target their DOM:
+    `[data-slot="card"]`, `[data-slot="card-title"]`, `[data-slot="table"]`,
+    `[data-slot="badge"]`, `th`, `td`, and the spec's semantic classNames
+    (`.section`, `.stat`, …). You may set CSS variables on the card root with a
+    bare `:scope { --color-primary: …; --radius: … }` block to recolor shadcn.
+
+    HARD RULES (the theme is auto-scoped + sanitized):
+    - Write selectors WITHOUT any root/page prefix — start at the element
+      (`[data-slot=card] { … }`, `th { … }`). The client wraps everything in the
+      card's unique id, so do NOT add your own `.page` / `#id` wrapper.
+    - NO `@keyframes`, NO `@import`, NO `url()` except none — keep it to colors,
+      backgrounds, gradients, borders, radius, spacing, font-size/weight, shadows.
+    - Keep it tight (a dozen rules max); this styles a bubble, not a page.
+
+    Respond with the CSS only.
     """
   end
 

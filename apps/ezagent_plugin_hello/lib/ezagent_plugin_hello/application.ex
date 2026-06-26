@@ -67,6 +67,11 @@ defmodule EzagentPluginHello.Application do
         flavor: "hello_builder",
         kind: Ezagent.Entity.HelloBuilder,
         template_class: nil
+      },
+      %{
+        flavor: "salesperson",
+        kind: Ezagent.Entity.Salesperson,
+        template_class: nil
       }
     ]
   end

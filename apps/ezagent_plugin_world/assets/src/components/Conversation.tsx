@@ -20,6 +20,8 @@ type MessageRow = {
   text?: string | null
   // Optional json-render node tree — a table/card shown inline in the bubble.
   render?: unknown
+  // Optional per-card CSS theme (a user's explicit style ask), scoped to the card.
+  render_css?: string | null
   attachments?: Attachment[]
   at?: string | null
 }
@@ -425,7 +427,11 @@ export function Conversation({
                       </div>
                       {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
                       {message.render && typeof message.render === "object" && (
-                        <JsonRenderBubble spec={message.render} />
+                        <JsonRenderBubble
+                          spec={message.render}
+                          css={message.render_css}
+                          onSend={(t) => onSend(sessionUri, t, [])}
+                        />
                       )}
                       {message.attachments && message.attachments.length > 0 && (
                         <ul className="m-0 mt-0.5 flex list-none flex-wrap gap-1.5 p-0">
