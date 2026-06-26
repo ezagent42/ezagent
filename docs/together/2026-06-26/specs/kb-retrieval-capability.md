@@ -135,9 +135,13 @@ ingest vs query (the np `pick_method` precedent — the chat→method heuristic
 lives IN the script). Persistence + consumption + caps detailed in §4–§6.
 
 **Pros**
-- **Fastest to working retrieval.** Nothing new in Elixir. `np` proves the
-  whole flavor path (create → config_dir → script → subprocess → `receive` →
-  reply) works end-to-end today; KB swaps the script + caps.
+- **Fastest to working retrieval — least new Elixir, not zero.** `np` proves
+  the whole flavor path (create → config_dir → script → subprocess →
+  re-dispatch → reply) works end-to-end today; KB reuses ALL of it and adds
+  only the thin `Behavior.Kb` (two cap-distinct actions, §4.4) plus the
+  non-Elixir deltas (`kb.py`, the vector backend, the `kb-source` resource type,
+  the MCP tool registration). The explicit MVP delta is enumerated in §3.5 —
+  this option adds the SMALLEST such delta of the three, not none.
 - **ML libs are native.** `sentence-transformers` / `faiss` / `chromadb` are
   the mature, maintained stack and they are *Python*. We meet them where they
   live (uv installs deps from the script's `# /// script` header, like np pulls
@@ -172,14 +176,18 @@ A `kb` role on the **`native`** flavor (kanban's flavor) + an Elixir
   tenant data.
 
 **Cons (why we do NOT pick it for the starting capability)**
-- **The embedding story is still Python anyway.** pgvector stores + searches
-  vectors but does NOT *produce* them. You still need an embedding model, which
-  in Elixir means either (a) calling an external embedding API (a network dep +
-  credential cascade) or (b) `Bumblebee`/`Nx` + an ONNX/transformers model in
-  the BEAM (heavy, immature for this use, and still not the maintained
-  sentence-transformers stack). So Option 2 does NOT remove Python from the ML
-  path — it splits it: Python (or an API) for embeddings, Postgres for storage.
-  That is *more* moving parts than Option 1, not fewer.
+- **pgvector does NOT solve the embedding problem — it only stores vectors.**
+  pgvector stores + searches vectors but does NOT *produce* them. Option 2 still
+  needs an embedding model from somewhere: (a) an external embedding API (a
+  network dep + the credential cascade), or (b) `Bumblebee`/`Nx` + an
+  ONNX/transformers model in the BEAM (heavy, immature for this use, not the
+  maintained sentence-transformers stack). (To be precise — codex Q1: path (a)
+  *can* avoid LOCAL Python, so Option 2 is not strictly "still Python." The
+  accurate claim is: Option 2 does not remove the embedding problem and, by
+  adding the storage/migration layer on top of an external-or-immature
+  embedding path, brings *more MVP infrastructure* than Option 1, where Python
+  owns the whole ML path natively.) Net: more moving parts for a *starting*
+  capability, not fewer.
 - **Adds a pgvector dependency + a per-tenant vector table.** New extension,
   new migration, a new table that must satisfy invariant #14
   (`workspace_uri NOT NULL`) and the per-tenant isolation gates. Real Elixir
@@ -233,6 +241,27 @@ DEFER: native/pgvector (Opt 2) until latency/txn need; domain_kb (Opt 3) until
        independent lifecycle / cross-ws governance / separate scaling axis.
 ```
 
+### 3.5 The MVP delta (what is NEW vs reused) — be honest about cost
+
+Reused wholesale (zero new code): the `py` flavor create path, config_dir
+allocation, script install + immutability gate, the per-agent
+`Ezagent.Domain.Python` subprocess + `activate/2` self-heal, the `Ezagent.Role`
++ `RoleRegistry` + py `CapPolicy` cap-minting, the passive-actor (RF-6) gates,
+and the FsResolver seam. **What the MVP must NEWLY build:**
+
+| New artifact | Tier | ~Size | Why it can't be avoided |
+|---|---|---|---|
+| `kb.py` (operator script) | py script | medium | the embed/index/query logic; no precedent does this |
+| `Behavior.Kb` (`:kb_query` / `:kb_ingest`) | plugin Elixir | thin | two cap-distinct dispatch actions (§4.4) — the receive-only adapter can't give two caps |
+| vector backend + embedding model | py deps | n/a (deps) | chromadb/faiss + sentence-transformers, declared in the `# /// script` header |
+| `kb-source` FsResolver type | core registration | tiny | `boot_registrations/0` entry + an `authority/2` (§4.3) |
+| MCP tool `kb_query`/`kb_ingest` | cc/plugin Elixir | small | the orchestrator MCP server is a FIXED catalog, NOT a generic dispatcher (§5.3) — KB tools are new catalog entries |
+| source storage path | plugin Elixir | small | how one source doc gets written to `resource://…/kb-source/…` before ingest (§4.3) |
+
+This is deliberately small and almost entirely Python — but it is **not zero
+Elixir** and the plan must budget the `Behavior.Kb` + MCP-tool + resource-type
+work. (This corrects the codex-flagged "nothing new in Elixir" overstatement.)
+
 ---
 
 ## 4. Recommended design — KB-as-`py`-role
@@ -249,10 +278,14 @@ py plugin). Shape (illustrative):
   name: "kb",
   passive: true,                       # RF-6: data actor, not a chat principal
   script: <kb.py contents>,            # RF-5b content→config_dir channel
-  behaviors: [],                       # see §4.4 — reuse PyAgent's state half
+  behaviors: [Ezagent.Behavior.Kb],    # the thin state half — see §4.4 (NOT []).
+                                        #   :kb_query (read) + :kb_ingest (write)
+                                        #   are the two cap-distinct dispatch
+                                        #   actions; the base Entity.Agent set is
+                                        #   added by the create path on top.
   requested_caps: [                    # §6 — fail-closed; minted by py CapPolicy
-    %{behavior: Ezagent.Behavior.PyAgent, action: :py_sync_result},
-    # + the kb-specific caps (kb.query / kb.ingest) — see §6
+    %{behavior: Ezagent.Behavior.Kb, action: :kb_query},
+    %{behavior: Ezagent.Behavior.Kb, action: :kb_ingest}
   ],
   session_template: nil
 }
@@ -261,7 +294,9 @@ py plugin). Shape (illustrative):
 Composed via `Role.Compose.materialize(recipe, :py)` at create; the py flavor's
 `EzagentPluginPy.CapPolicy.for_recipe/1` mints exactly the requested caps
 (fail-closed — a cap the recipe didn't ask for is dropped). This is the
-**identical mechanism `np` uses**; only the script + caps differ.
+**identical mechanism `np` uses**; the differences are the script, the two caps,
+and the thin `Behavior.Kb` (the deliberate exception to np's "ride `receive`
+only" — see §4.4, because np needs ONE cap and KB needs TWO).
 
 ### 4.2 Index storage + persistence (the one new sub-problem)
 
@@ -282,13 +317,31 @@ Composed via `Role.Compose.materialize(recipe, :py)` at create; the py flavor's
     being ingested — §4.3.)
   - *config_dir* — already per-agent, already tenant-scoped, already allocated
     by the py create seam, already the `cwd` handed to the subprocess.
+- **Exact layout (the plan must fix concretely):** `<cwd>/kb_index/` is the
+  persistent store root (chromadb persist dir, or `index.faiss` +
+  `chunks.jsonl`). `kb.py` opens it at startup and creates it on first ingest.
 - **Reopen across restart:** `Behavior.PyAgent.activate/2` re-spawns the
   subprocess from the SAME `script_path` + `cwd` on every start (the #113
   cold-restart fix). `kb.py` opens its persistent store from `cwd` at startup,
-  so a restarted kb-agent finds its existing index with zero extra wiring. **The
-  test plan (§6) asserts exactly this**: ingest → restart the agent → query
-  returns the ingested content. This is the property np never needed (np is
-  stateless), so it is the headline thing the SPEC must prove.
+  so a restarted kb-agent finds its existing index. **NOTE — this is a
+  REQUIREMENT on `kb.py`, not a property existing code proves:** the py flavor
+  guarantees the same `cwd`/script re-spawn; that the SCRIPT reopens (rather than
+  re-inits) the index is `kb.py`'s contract, asserted by test §8.2.
+- **Atomic writes + corruption (must-fix, codex #4):** ingest MUST write the
+  index atomically (write-to-temp + rename within the same backend, or the
+  vector lib's own transactional commit) so a crash mid-ingest never leaves a
+  half-written index. On startup, a corrupt/unreadable index is a **fail-loud**
+  condition: `kb.py` surfaces an error that the Behavior records to `last_error`
+  (it does NOT silently re-init to empty — that would erase data invisibly).
+- **Cold-load degraded path (codex #3 caveat — inherited, made explicit):**
+  py's `activate/2` SKIPS subprocess re-spawn if `script_path`/`cwd` are
+  missing, and stays alive-but-degraded if re-spawn fails (`py_agent.ex`). For
+  KB this means a kb-agent can be live with NO working index/subprocess; the
+  next `kb.query`/`kb.ingest` surfaces `:not_alive`. The plan must decide whether
+  KB tightens this (fail the create, or a health action) or accepts the py
+  default. Stated here so it is a conscious choice, not a latent hole.
+- This persistence behavior is the property np never needed (np is stateless),
+  so it is the headline thing the SPEC must prove (test §8.2).
 
 ### 4.3 Ingest path (source docs via `resource://` + FsResolver)
 
@@ -307,22 +360,54 @@ source doc lives as `resource://<ws>/kb-source/<name>`:
   (no ambient FS authority in Python).
 - `kb.py` chunks + embeds + writes to the config_dir index.
 
+**One source's lifecycle MUST be defined even though source-MANAGEMENT is
+deferred (codex #6).** The MVP defines, for a single source: how it is
+**created/named** (written to `resource://<ws>/kb-source/<name>` before ingest —
+the `source storage path` in §3.5), and what **re-ingesting the same name**
+does. MVP rule: re-ingesting an existing `<name>` **replaces** that source's
+chunks in the index (delete-by-source_uri then re-add), keyed by the
+`source_uri` provenance (§5.4) — idempotent, no silent duplication. What is
+deferred is the *management surface over MANY sources* (listing, refresh
+policy, orphan GC), not the single-source create/overwrite contract.
+
 This keeps the FS-authority decision in the hardened Elixir seam and the
 ML work in Python — the same split-of-responsibility as the rest of py.
 
-### 4.4 Behaviors — reuse, don't add
+### 4.4 Behaviors — one thin `Behavior.Kb` (the cap-split requires it)
 
-The MVP needs **no new Elixir Behavior if query/ingest can ride the existing
-`receive` → `:py_sync_result` round-trip** (the np shape: chat text in, reply
-out). That gives query-via-chat for free. The decision point (resolved in §5):
-*ingest* and *programmatic query* want a richer, cap-distinct surface than a
-single chat `receive`, which argues for either (a) a tiny `Behavior.Kb` with
-`:kb_ingest` / `:kb_query` actions (separate caps), or (b) additional JSON-RPC
-methods exposed through the MCP tool surface. The SPEC recommends **(a) a
-minimal `Behavior.Kb`** so ingest vs query are cap-distinct *at the dispatch
-layer* (where CapBAC actually gates), with the heavy work delegated to the
-subprocess. This is the only Elixir code the MVP adds, and it is thin
-(persist-and-delegate, like PyAgent's handlers).
+**Why the existing `receive` path is NOT enough.** np rides the base `receive`
+→ `:py_sync_result` round-trip because np needs exactly ONE operation (compute).
+But the `BridgeAdapter` transport is **`receive`-only** — it calls a single
+JSON-RPC method (`"receive"`) and is gated by a single cap. KB needs TWO
+cap-distinct operations: **`kb.query` (read)** and **`kb.ingest` (write)**, so a
+query-only consumer cannot mutate the index. A single chat `receive` cannot give
+two caps. Therefore the MVP adds **one thin Elixir Behavior, `Behavior.Kb`**:
+
+- `:kb_query` (cap `kb.query`, mode `:call`) and `:kb_ingest` (cap `kb.ingest`,
+  mode `:call`) — two actions, two caps, so **CapBAC gates ingest vs query at
+  the dispatch layer** (where caps are actually checked — invariant: cap check
+  only at the chokepoint). This is the property §8.3 tests.
+- Each handler calls the per-agent subprocess **DIRECTLY** via
+  `Ezagent.Domain.Python.call(handle, "query"|"ingest", params, timeout)` —
+  distinct JSON-RPC methods, **bypassing the receive-only `BridgeAdapter`** (the
+  adapter exists for the chat→`receive`→reply flow; programmatic kb actions do
+  not go through chat). `kb.py` therefore registers `@method("query")` /
+  `@method("ingest")` (the multi-method shape np's `compute`/`compute_latex`/
+  `ping` already demonstrate) in addition to (optionally) `receive` for a
+  chat-query convenience.
+- The handlers are **persist-and-delegate**, like PyAgent's: heavy work
+  (embed/store/search) is in the subprocess; the Behavior persists the
+  lightweight `last_*` result + returns the hits. `activate/2` + the config_dir
+  + the script-immutability gate are inherited unchanged from the py flavor (a
+  kb-agent still IS a py-agent, so it reuses `Behavior.PyAgent`'s lifecycle; it
+  ADDS `Behavior.Kb` for the two cap-distinct actions — per-instance behavior
+  composition, the role-foundation keystone).
+
+`Behavior.Kb` is the **primary** new Elixir the MVP adds (the MCP-tool
+registration + the `kb-source` resource type are the others — §3.5), and it is
+thin. The alternative — multiplexing ingest+query inside one `receive` cap — was
+rejected: it collapses the read/write cap distinction, which is the one security
+property that must hold even for the starting capability.
 
 ---
 
@@ -362,6 +447,29 @@ through CapBAC on `kb.query` / `kb.ingest`.
 
 Defer: a "auto-RAG" mode where retrieval is injected into every turn without the
 model asking — that is a prompt-pipeline concern, not a starting-KB concern.
+
+### 5.3 The MCP surface is NEW WORK, not free (codex must-fix #3)
+
+The orchestrator `Ezagent.Orchestrator.McpServer` is a **fixed tool catalog** —
+`tool_catalog.ex` lists a closed set of tools and `SessionManager` dispatches
+only those known tool atoms. It is NOT a generic "dispatch-to-any-action"
+adapter. So the MVP must NEWLY register `kb_query` / `kb_ingest` as catalog
+entries whose executor dispatches the corresponding `kb.*` action into the
+kb-agent, threading the caller URI + caps (the bridge-token-verified path the
+existing tools use). This is the small-but-real Elixir delta §3.5 lists; the
+plan must own it. (It is *patterned* on the existing transport — zero authority
+in the transport, caps flow through the dispatch — but it is added code, not a
+reuse-as-is.) Whether KB tools live in the orchestrator catalog or in a
+KB-scoped MCP server is a plan decision.
+
+### 5.4 Result schema (define the minimum now)
+
+`kb.query` returns top-k **hits with provenance**: each hit is
+`%{text: chunk, score: float, source_uri: resource://…/kb-source/…,
+chunk_id: …}`. Provenance (which source a chunk came from) is non-negotiable
+even for MVP — a RAG consumer must be able to cite/trace, and it is what makes
+later source-management/governance possible without re-ingest. Defining it now
+costs nothing and prevents a breaking schema change later.
 
 ---
 
@@ -407,6 +515,43 @@ model is stated explicitly:
   at agent-create latency (or pre-warm), but that is a plan/perf concern, not a
   security hole.
 
+#### 6.2.1 Where np's model is INSUFFICIENT for KB (codex must-fix #5)
+
+np parses math; KB reads files, pulls a large ML supply chain, and persists
+mutable state. The whitelist alone does NOT cover that. The plan must address:
+
+- **Dependency + model supply chain.** sentence-transformers + a downloaded
+  model are a far larger trust surface than numpy/sympy. The plan must PIN dep
+  versions (and ideally hashes) in the script header, decide the model source
+  (local-vendored vs first-run download — open question §9.1), and set the
+  model-cache + offline policy (a create-time network fetch is both a perf AND a
+  trust event).
+- **OS-level file confinement is NOT proven.** FsResolver authorizes the SOURCE
+  path in Elixir (good), but once `kb.py` (or a compromised dep) runs, nothing
+  in the cited code confines its filesystem access to `cwd` + the passed path.
+  The plan must state the confinement bar: at minimum `kb.py` reads ONLY the
+  explicitly-passed authorized path + its own `cwd`; ideally the py subprocess
+  runs with reduced FS privilege (a hardening item to scope, not hand-wave).
+- **Symlink / path hardening of the source backend.** FsResolver's R-2 rejects
+  `.`/`..`/separators in URI segments, but a `kb-source` file that IS a symlink
+  to `/etc/passwd` is resolved + handed to Python as an authorized path. The
+  `kb-source` `authority/2` (or the read step) must reject symlinked source
+  files (resolve realpath, assert it stays under the backend root).
+- **Poisoned-document / prompt-injection in retrieved chunks.** Retrieved
+  chunks are fed back to an LLM consumer; a malicious ingested doc can carry
+  instructions. MVP cannot fully solve this, but MUST (a) carry provenance
+  (§5.4) so the consumer can attribute/distrust, and (b) treat retrieved text as
+  untrusted data in the consumer's prompt assembly. The plan states this as a
+  known limitation with the provenance mitigation, not a solved problem.
+- **Single-subprocess / single-index concurrency.** One subprocess + one
+  on-disk index per kb-agent, and `:in_process_sync` serializes calls through
+  the agent's dispatch process — so ingest and query do NOT run concurrently
+  against the same index within one agent (good, by construction). The plan must
+  confirm the chosen vector backend is safe under that serial model and that an
+  ingest in flight cannot corrupt a concurrent reopen after restart (the atomic-
+  write requirement §4.2). Cross-agent there is no shared index, so no cross-
+  agent race. Parallel-query throughput is deferred (§7).
+
 ---
 
 ## 7. Explicitly deferred
@@ -415,7 +560,7 @@ model is stated explicitly:
 |---|---|---|
 | **pgvector / native flavor (Opt 2)** | embedding is still Python; adds Elixir infra; slower to first retrieval | proven need for in-process query latency or txn-consistency with BEAM state |
 | **`domain_kb` (Opt 3)** | YAGNI; a starting KB is one agent's sandbox | independent KB lifecycle / cross-ws governance / separate scaling axis |
-| **source-management** (list/refresh/dedupe sources) | not needed to prove retrieval | when KBs accrete many sources operators must curate |
+| **source-management** (list/refresh/dedupe MANY sources) | not needed to prove retrieval — but the SINGLE-source create/overwrite contract is IN scope (§4.3) | when KBs accrete many sources operators must curate |
 | **re-index / model-swap / migration** | one model, one index for MVP | when changing embedding models on a populated KB |
 | **governance** (per-source ACL, retention, retrieval audit) | the cap split (query≠ingest) is enough for MVP | cross-agent shared KB (= the domain trigger) |
 | **hybrid search / re-ranking / federation** | top-k vector search is the MVP | retrieval-quality tuning phase |
@@ -438,9 +583,18 @@ The acceptance gate must *fail* if the architectural claims are unmet:
 3. **Cap separation.** A consumer with only `kb.query` is REFUSED `kb.ingest`
    (`:cap_denied`); a consumer with neither is refused both. (Proves fail-closed
    + mutation separation.)
-4. **Source authority (FsResolver).** Ingesting `resource://victimWS/kb-source/x`
-   under attacker scope fails the R-3 authority check; a traversal segment
-   (`..`) fails R-2 BEFORE any backend touch.
+4. **Source authority (FsResolver) + symlink.** Ingesting
+   `resource://victimWS/kb-source/x` under attacker scope fails the R-3 authority
+   check; a traversal segment (`..`) fails R-2 BEFORE any backend touch; a
+   `kb-source` file that is a SYMLINK escaping the backend root is rejected
+   (§6.2.1 realpath check).
+4b. **Re-ingest = replace, not duplicate.** Ingest source `<name>` twice →
+   `kb.query` returns ONE copy of each chunk (delete-by-source_uri then re-add,
+   §4.3). Proves the single-source overwrite contract.
+4c. **Result schema + provenance.** `kb.query` hits carry `source_uri` +
+   `score` + `chunk_id` (§5.4).
+4d. **Atomic ingest.** A crash simulated mid-ingest leaves the prior index
+   intact + readable on restart (never a half-written index, §4.2).
 5. **Passive isolation (RF-6).** The kb-agent is NOT @-mentionable, NOT
    `:join`-able as a member, does NOT receive ambient chat — only direct
    `kb.*` dispatch + the MCP tool path reach it.
@@ -467,11 +621,13 @@ ingest a doc through the UI/CLI, query, screenshot the retrieved result.
    slightly heavier dep + more "server-ish." faiss = leaner, but we hand-manage
    the metadata sidecar + persistence. Recommend chromadb for MVP simplicity;
    want the leaner faiss path instead?
-3. **`Behavior.Kb` (thin Elixir actions) vs ride the existing `receive` only?**
-   §4.4/§5.2 recommend a minimal `Behavior.Kb` so ingest≠query is cap-distinct
-   at the dispatch layer. Accept the small amount of new Elixir, or insist on
-   *zero* new Elixir (query-via-chat-`receive` only, ingest via a separate
-   admin path)?
+3. **`Behavior.Kb` is now treated as MANDATORY (codex-confirmed), not optional.**
+   The cap-distinct `kb.query` ≠ `kb.ingest` split REQUIRES it (§4.4) — the
+   receive-only adapter gives only one cap. Remaining sub-question: accept the
+   thin `Behavior.Kb` as specified, or do you want ingest moved entirely
+   off-dispatch (an admin/CLI-only ingest path) so the agent exposes ONLY
+   `kb.query` to peers? (Default recommendation: keep both on dispatch, caps
+   separate.)
 4. **Plugin placement of the `kb` role** — declare it inside `ezagent_plugin_py`
    (no new app, role is flavor-agnostic) vs a new `ezagent_plugin_kb` that only
    *declares* the role + the `kb-source` FsResolver type + (optionally)
@@ -493,5 +649,35 @@ kb-retrieval-first 完成 = role kb × flavor py on Entity.Agent：
 5. passive 隔离 (RF-6 三闸)；MCP tool 消费 kb_query（transport 零授权）。
 6. MVP 不引入 pgvector / 新 per-tenant vector 表 / 新 Kind / 新 domain。
 验收：全量 mix test 0 失败 + CI 绿；live e2e（agent-browser）create+ingest+query+截图。
-DEFER: pgvector(Opt2)、domain_kb(Opt3)、source-mgmt/re-index/governance。
+DEFER: pgvector(Opt2)、domain_kb(Opt3)、source-mgmt(many)、re-index、governance。
 ```
+
+---
+
+## 10. Codex adversarial-review record (2026-06-26, static)
+
+Reviewed by `codex exec` (gpt-5.5, high reasoning, static read of this doc
+against the cited source). **Verdict: accept-with-changes.** Per-question:
+Q1 placement WEAK→refined (the Option-2 rebuttal was overstated; corrected in
+§3.2 to codex's stronger framing), Q3 persistence split **SOUND**, Q2/Q4 the
+cap-split needs a real `Behavior.Kb` (the receive-only adapter gives one cap)
+and the MCP surface is new work (FIXED catalog, not a generic dispatcher),
+Q5 the np-whitelist is insufficient for KB's file/ML/supply-chain surface,
+Q6 the single-source lifecycle + result-schema/provenance must be in MVP.
+
+All five must-fix items folded into this revision:
+
+| Codex must-fix | Where addressed |
+|---|---|
+| 1. Replace "nothing new in Elixir" with explicit MVP delta | §3.1 (corrected) + new **§3.5** delta table |
+| 2. Make `Behavior.Kb` mandatory for the cap split | §4.1 recipe (`behaviors: [Behavior.Kb]`) + rewritten **§4.4** + §9.3 |
+| 3. MCP integration is new work (fixed catalog) | new **§5.3** |
+| 4. Persistence: exact path, atomic writes, corrupt/cold-load | expanded **§4.2** + tests §8.4d |
+| 5. Security beyond FsResolver (deps/model, confinement, symlink, injection, concurrency) | new **§6.2.1** + tests §8.4/§8.4d |
+| 6. Single-source create/overwrite + result schema | **§4.3** (re-ingest=replace) + **§5.4** (provenance schema) + tests §8.4b/4c |
+
+Residual items are genuine lead decisions, carried as open questions (§9):
+embedding model source (local vs API), vector backend (chromadb vs faiss),
+ingest-on-dispatch vs admin-only, plugin placement, uv-install latency, and the
+/goal gate. No finding contradicts the core placement recommendation — codex
+agreed KB-as-`py`-role is the right *starting* placement.
