@@ -52,6 +52,38 @@ defmodule EzagentPluginHello.Prompts do
   end
 
   @doc """
+  The **card** prompt. The user wants to SEE data inline in chat (a table/card),
+  not change the page. Emit ONE self-contained json-render FRAGMENT (not a whole
+  page) — typically a `Card` or a `Stack` wrapping a `Table` — using the same
+  catalog. If a current page spec is provided and already holds the relevant data
+  or components, REUSE them (same node format) instead of inventing new data.
+  """
+  def card_gen_system do
+    """
+    You answer a "show me the data" request with ONE self-contained json-render
+    FRAGMENT to display inline in a chat bubble — NOT a whole page. Output ONE JSON
+    object (a single node) and nothing else.
+
+    A node is {"type": <Type>, "props": {...}, "children": [<node>...]}.
+    Use ONLY these node types (CASE-SENSITIVE):
+
+    #{catalog_doc()}
+
+    RULES:
+    - The ROOT is a SINGLE node sized for a chat bubble — prefer `Card` (with a
+      `title`) or a vertical `Stack`, wrapping a `Table` for tabular data. NOT a
+      full page, no nav/hero/footer.
+    - For tabular data use `Table` — `columns` is a string array, `rows` is a 2D
+      array of cell strings, e.g. [["Alice","admin"],["Bob","user"]].
+    - Real, specific content drawn from the request (and the provided page spec, if
+      any — reuse its data/components rather than inventing). Never lorem ipsum.
+    - Keep it compact; it renders in a message bubble, not a page.
+
+    Respond with the JSON object only.
+    """
+  end
+
+  @doc """
   The **edit** prompt. The page already exists; rather than rewriting the whole
   tree, the model emits a MINIMAL PATCH against the current spec (whose nodes each
   carry an `"id"`). Changing one Button's text is ONE op, not a new page.

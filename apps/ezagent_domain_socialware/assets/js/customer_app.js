@@ -1,7 +1,7 @@
 import {Socket} from "phoenix"
 import React, {useEffect, useMemo, useRef, useState} from "react"
 import {createRoot} from "react-dom/client"
-import {JsonRenderPage} from "./catalog_jsonrender.mjs"
+import {JsonRenderPage, lookupJrNode, markDevtoolsActive} from "./catalog_jsonrender.mjs"
 import {PageShell} from "./theme_shell.mjs"
 import {isValidTree} from "./catalog.mjs"
 
@@ -119,25 +119,71 @@ function logHelloPage(snapshot, source) {
 
 // --- element selection (Lovable-style point-to-edit) ------------------------
 
-// Capture a clicked page element as a model-readable "address": its kind
-// (shadcn data-slot or tag), its visible text, and the nearest semantic section
-// it sits in. The model uses this + the current spec to locate the node to edit.
+const SECTION_RE = /^(nav|hero|section|feature|grid|pricing|plan|faq|cta|footer|sidebar|stat|card|toolbar|panel|list|row|header|title|price)/
+
+// The semantic section hook on a node's className (e.g. "pricing"), or null.
+function sectionOf(className) {
+  if (!className) return null
+  for (const c of String(className).split(/\s+/)) {
+    if (SECTION_RE.test(c)) return c
+  }
+  return null
+}
+
+// A container's visible text = its leaf descendants' text, joined (depth-capped).
+// Used so a selected Stack/Grid/Card shows what it contains, with no DOM needed
+// (so "select parent" works after the tagging spans are gone).
+function collectNodeText(node, depth) {
+  if (!node || depth > 4) return ""
+  const p = node.props || {}
+  const parts = []
+  const own = p.text || p.label || p.title || p.caption || ""
+  if (own) parts.push(own)
+  for (const ck of node.children || []) {
+    const t = collectNodeText(lookupJrNode(ck), depth + 1)
+    if (t) parts.push(t)
+  }
+  return parts.join(" ")
+}
+
+// Describe a SPEC NODE (by its flat key) as a model-readable "address": its real
+// json-render type (Heading/Card/Stack/…), its text, the section it hooks, and
+// the key (so "select parent" can climb). Pure spec lookup — no DOM — so it works
+// both on click and when walking up.
+function describeKey(key) {
+  const node = lookupJrNode(key)
+  if (!node) return null
+  const p = node.props || {}
+  const own = p.text || p.label || p.title || p.description || p.caption || ""
+  const text = String(own || collectNodeText(node, 0))
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 100)
+  return {kind: node.type, text, section: sectionOf(p.className), key}
+}
+
+// Capture a clicked element as a selection — anchored on the json-render SPEC
+// NODE, not the raw DOM tag. While selecting, every node is wrapped in a
+// `<span data-jr-key="el-N">`, so the nearest such ancestor IS the clicked node.
 function describeElement(el) {
+  const jrEl = el.closest && el.closest("[data-jr-key]")
+  const byKey = jrEl && describeKey(jrEl.getAttribute("data-jr-key"))
+  if (byKey) return byKey
+
+  // Fallback (node unresolved): the raw DOM element.
   const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 100)
   const kind = el.getAttribute("data-slot") || el.tagName.toLowerCase()
-  let section = null
-  let p = el
-  while (p && p.classList && !p.classList.contains("page-root")) {
-    for (const c of p.classList) {
-      if (/^(nav|hero|section|feature|grid|pricing|plan|faq|cta|footer|sidebar|stat|card|toolbar|panel|list|row|header|title|price)/.test(c)) {
-        section = c
-        break
-      }
-    }
-    if (section) break
-    p = p.parentElement
-  }
-  return {kind, text, section}
+  return {kind, text, section: null, key: null}
+}
+
+// Outline the rendered element of the json-render node under a DOM target. The
+// node's `data-jr-key` span is display:contents (no box of its own), so we outline
+// its first real child — the hover feedback while picking.
+function highlightTarget(target) {
+  document.querySelectorAll(".jr-hover").forEach((e) => e.classList.remove("jr-hover"))
+  const span = target && target.closest && target.closest("[data-jr-key]")
+  const el = span && span.firstElementChild
+  if (el && el.classList && !el.classList.contains("page-root")) el.classList.add("jr-hover")
 }
 
 function selectionLabel(sel) {
@@ -267,20 +313,17 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
   useEffect(() => {
     if (!selectMode) return
     document.body.classList.add("jr-selecting")
-    let hovered = null
-    const clear = () => {
-      if (hovered) hovered.classList.remove("jr-hover")
-      hovered = null
-    }
+    // Tag every json-render node with a `data-jr-key` span WHILE picking, so a
+    // click resolves to the spec node — released on exit so the wrapper spans
+    // don't perturb the theme's `>`/`:nth-child` CSS in normal viewing.
+    const releaseTagging = markDevtoolsActive()
     const inPage = (el) => el && el.closest && el.closest(".page-root")
     const onMove = (e) => {
-      const el = inPage(e.target) ? e.target : null
-      if (el === hovered) return
-      clear()
-      if (el && !el.classList.contains("page-root")) {
-        el.classList.add("jr-hover")
-        hovered = el
+      if (!inPage(e.target)) {
+        highlightTarget(null)
+        return
       }
+      highlightTarget(e.target)
     }
     const onClick = (e) => {
       if (!inPage(e.target)) return
@@ -293,7 +336,8 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
     document.addEventListener("click", onClick, true)
     return () => {
       document.body.classList.remove("jr-selecting")
-      clear()
+      highlightTarget(null)
+      releaseTagging()
       document.removeEventListener("mousemove", onMove, true)
       document.removeEventListener("click", onClick, true)
     }
@@ -603,16 +647,29 @@ function ChatPanel({messages, onClose}) {
             // The LAST message, if it is a "…"-terminated progress line, gets a
             // live ticker (the backend's `with_progress` lines end with an ellipsis).
             const live = i === messages.length - 1 && (m.text || "").endsWith("…")
+            // A message may carry a json-render fragment (`render`) — a table/card
+            // generated for a "show me the data" ask — rendered inline with the
+            // SAME engine as the preview page, below the caption text.
+            const hasRender = m.render && typeof m.render === "object"
             return React.createElement(
               "div",
               {key: m.id || i, className: "previewbar-msg"},
               m.sender ? React.createElement("span", {className: "previewbar-msg-who"}, shortSender(m.sender)) : null,
-              React.createElement(
-                "span",
-                {className: "previewbar-msg-text"},
-                m.text || "",
-                live ? React.createElement(ProgressTicker, {key: "tick-" + (m.id || i)}) : null
-              )
+              m.text
+                ? React.createElement(
+                    "span",
+                    {className: "previewbar-msg-text"},
+                    m.text,
+                    live ? React.createElement(ProgressTicker, {key: "tick-" + (m.id || i)}) : null
+                  )
+                : null,
+              hasRender
+                ? React.createElement(
+                    "div",
+                    {className: "previewbar-msg-render page"},
+                    React.createElement(JsonRenderPage, {page: m.render})
+                  )
+                : null
             )
           })
     )
@@ -657,10 +714,11 @@ const PREVIEWBAR_CSS = `
 .previewbar-msg{display:flex;flex-direction:column;gap:.12rem}
 .previewbar-msg-who{font-size:.68rem;font-weight:700;color:#6d5cf0;text-transform:uppercase;letter-spacing:.03em}
 .previewbar-msg-text{font-size:.9rem;line-height:1.5;color:#222;white-space:pre-wrap;word-break:break-word}
+.previewbar-msg-render{margin-top:.4rem;border:1px solid rgba(0,0,0,.08);border-radius:.6rem;padding:.6rem;background:#fff;overflow-x:auto}
 .previewbar-tick{color:#6d5cf0;font-weight:700;font-variant-numeric:tabular-nums}
 body.jr-selecting,body.jr-selecting .page-root *{cursor:crosshair !important}
 body.jr-selecting .previewbar-wrap,body.jr-selecting .previewbar-wrap *{cursor:auto !important}
-.jr-hover{outline:2px solid #6366f1 !important;outline-offset:-1px !important;background:rgba(99,102,241,.06) !important}
+.jr-hover{outline:2px solid #6366f1 !important;outline-offset:-1px !important}
 .previewbar-chip{display:inline-flex;align-items:center;gap:.4rem;align-self:flex-start;max-width:100%;margin-left:.5rem;padding:.32rem .5rem .32rem .72rem;border-radius:999px;background:rgba(255,255,255,.72);border:1px solid rgba(0,0,0,.08);font-size:.78rem;color:#444;backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);box-shadow:0 6px 20px rgba(0,0,0,.1)}
 .previewbar-chip-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#333}
 .previewbar-chip-x{border:none;background:rgba(0,0,0,.08);color:#666;border-radius:999px;width:1.15rem;height:1.15rem;font-size:.7rem;cursor:pointer;flex-shrink:0;line-height:1}

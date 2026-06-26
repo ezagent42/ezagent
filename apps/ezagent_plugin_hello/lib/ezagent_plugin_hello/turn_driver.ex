@@ -129,6 +129,32 @@ defmodule EzagentPluginHello.TurnDriver do
   def say(_session_uri, _actor, _text), do: :ok
 
   @doc """
+  Post a chat line that ALSO carries a json-render node tree (`spec`) in its body
+  `render` key. The bubble renders `spec` with the same json-render engine as the
+  preview page (a table/card/… shown inline in the conversation), with `text` as a
+  short caption. Same `:cast` admin-genesis authority as `say/3`. `spec` is a
+  nested `{type, props, children}` tree — the SAME format as the Surface page, so a
+  fragment from the page can be reused verbatim. No-ops on a missing spec.
+  """
+  @spec say_render(URI.t(), URI.t(), String.t(), map()) :: :ok | {:ok, term()} | {:error, term()}
+  def say_render(%URI{} = session_uri, %URI{} = actor, text, %{} = spec) when is_binary(text) do
+    msg = Ezagent.Message.new(actor, %{text: text, render: spec, attachments: []})
+
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :send),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: actor,
+        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  def say_render(_session_uri, _actor, _text, _spec), do: :ok
+
+  @doc """
   Store the (already-sanitised) HTML site-frame for the customer page, via the
   Surface `:set_shell` action. The hybrid architecture: this hand-off frame wraps
   the json-render body at the `data-slot`. Same admin-genesis authority as the

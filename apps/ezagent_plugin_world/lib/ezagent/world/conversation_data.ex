@@ -203,10 +203,17 @@ defmodule Ezagent.World.ConversationData do
         Map.get(display_map, sender_str) || Ezagent.EntityPresenter.display(sender_str),
       "sender_kind" => sender_kind(sender_str),
       "text" => body_text(msg.body),
+      # Optional json-render node tree — when present the world bubble renders it
+      # with the json-render engine (like the preview), not plain text.
+      "render" => body_render(msg.body),
       "attachments" => body_attachments(msg.body),
       "at" => datetime_iso(msg.inserted_at)
     }
   end
+
+  defp body_render(%{render: r}) when not is_nil(r), do: r
+  defp body_render(%{"render" => r}) when not is_nil(r), do: r
+  defp body_render(_), do: nil
 
   defp sender_kind(uri_str) when is_binary(uri_str) do
     case Ezagent.URI.parse(uri_str) do

@@ -55,9 +55,94 @@ defmodule EzagentPluginHello.Generator do
     # First-moment acknowledgement (before the slow planner LLM call).
     TurnDriver.say(session_uri, builder, gettext("Got it, understanding your request…"))
 
-    # Every request regenerates the WHOLE page: one shadcn spec (the full page) +
-    # a fresh CSS theme designed for it. No HTML frame, no scoped edit path.
-    generate_simple(session_uri, builder, user_text, true)
+    # Two intents: a DATA-DISPLAY ask ("show me X" / a data/table request) returns
+    # a json-render FRAGMENT as a chat MESSAGE (a table/card in the bubble) WITHOUT
+    # touching the page; anything else builds/edits the whole page as before.
+    if data_display_request?(user_text) do
+      generate_card(session_uri, builder, user_text)
+    else
+      generate_simple(session_uri, builder, user_text, true)
+    end
+  end
+
+  # Heuristic intent gate: does the user want to SEE data inline (a card/table in
+  # chat) rather than change the page? Keyword list (CN + EN) lives in
+  # `priv/data_display_keywords.txt` (NOT inline — CjkLiteralGate forbids Han in
+  # lib). A false negative just builds a page; a false positive shows a card.
+  defp data_display_request?(text) do
+    is_binary(text) and
+      Enum.any?(data_display_keywords(), fn kw -> String.contains?(String.downcase(text), kw) end)
+  end
+
+  defp data_display_keywords do
+    path = Path.join(:code.priv_dir(:ezagent_plugin_hello), "data_display_keywords.txt")
+
+    case File.read(path) do
+      {:ok, body} ->
+        body
+        |> String.split("\n", trim: true)
+        |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+        |> Enum.reject(&(&1 == ""))
+
+      _ ->
+        []
+    end
+  end
+
+  # The card path: generate ONE json-render fragment (a Card/Stack/Table — NOT a
+  # whole page) for the data the user asked to see, and post it as a chat message
+  # via `say_render`. The current page spec is passed as context so the model can
+  # REUSE data/components already on the page (the preview and the card share the
+  # exact same node format). The page is left untouched.
+  defp generate_card(session_uri, builder, user_text) do
+    current = current_body_tree(session_uri)
+
+    {result, secs} =
+      with_progress(session_uri, builder, gettext("Pulling the data"), fn ->
+        card_spec(current, user_text)
+      end)
+
+    case result do
+      {:ok, spec} ->
+        log_spec(session_uri, spec)
+        TurnDriver.say_render(session_uri, builder, gettext("Here you go:"), spec)
+        TurnDriver.say(session_uri, builder, gettext("Card ready in %{s}s.", s: secs))
+        {:ok, "card"}
+
+      {:error, reason} = err ->
+        Logger.warning("hello.Generator: card generation failed: #{inspect(reason)}")
+        # Fall back to a normal page build so the turn still produces something.
+        generate_simple(session_uri, builder, user_text, true)
+        err
+    end
+  end
+
+  # Ask the model for ONE catalog fragment (root = Card/Stack/Table), validate it
+  # against the same catalog as a page. `current` page spec (if any) is context for
+  # reuse.
+  defp card_spec(current, user_text) do
+    prompt =
+      if is_map(current) do
+        """
+        The page's CURRENT spec (reuse its data/components where relevant):
+
+        ```json
+        #{Jason.encode!(current)}
+        ```
+
+        Show the user this, as a self-contained card/table fragment:
+
+        #{user_text}
+        """
+      else
+        user_text
+      end
+
+    with {:ok, %{content: content}} <- call_llm(Prompts.card_gen_system(), prompt),
+         {:ok, raw} <- Spec.extract(content),
+         {:ok, spec} <- Spec.validate(raw) do
+      {:ok, spec}
+    end
   end
 
   # The Phase-0 single-page path: one LLM call → one catalog page → Surface.
