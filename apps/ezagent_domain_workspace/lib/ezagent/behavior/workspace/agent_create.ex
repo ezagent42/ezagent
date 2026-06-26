@@ -13,6 +13,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   `grant_agent_creator_manage_cap/3` / `resolve_source_config_dir/2`).
   """
 
+  alias Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation
   alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
   alias Ezagent.Behavior.Workspace.AgentCreate.RoleStep
 
@@ -161,51 +162,13 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     end
   end
 
-  # cwd is required for cc, and for echo when `with_pty: true`.
-  # curl + echo-without-PTY tolerate an empty cwd.
-  defp validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
-  defp validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
+  # Per-flavor cwd + `--from` validators live in `FlavorValidation` (gt_1000
+  # extraction) — thin delegates here.
+  defp validate_cwd_for_flavor(flavor, with_pty?, cwd),
+    do: FlavorValidation.validate_cwd_for_flavor(flavor, with_pty?, cwd)
 
-  defp validate_cwd_for_flavor("cc-headless", _with_pty?, ""),
-    do: {:error, :cwd_required_for_cc_headless}
-
-  defp validate_cwd_for_flavor("cc-headless", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
-  defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
-  defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
-
-  defp validate_cwd_for_flavor("codex", _with_pty?, ""),
-    do: {:error, :cwd_required_for_codex}
-
-  defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("codex-remote", _with_pty?, ""),
-    do: {:error, :cwd_required_for_codex_remote}
-
-  defp validate_cwd_for_flavor("codex-remote", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("curl", _with_pty?, _cwd), do: :ok
-  defp validate_cwd_for_flavor(_, _, _), do: :ok
-
-  defp validate_cwd_dir(cwd) when is_binary(cwd) do
-    expanded = Path.expand(cwd)
-
-    if File.dir?(expanded) do
-      :ok
-    else
-      {:error, {:cwd_not_a_dir, cwd}}
-    end
-  end
-
-  # `--from` only meaningful for flavors that have a per-agent
-  # config_dir to clone. Today that's `cc` only — echo/curl/np have no
-  # CLAUDE_CONFIG_DIR concept.
-  defp validate_from_for_flavor(_flavor, nil), do: :ok
-  defp validate_from_for_flavor("cc", %URI{}), do: :ok
-
-  defp validate_from_for_flavor(other_flavor, %URI{}),
-    do: {:error, {:from_unsupported_for_flavor, other_flavor}}
+  defp validate_from_for_flavor(flavor, from),
+    do: FlavorValidation.validate_from_for_flavor(flavor, from)
 
   # RF-5a is the DIRECT-SPAWN role path only; a role on a file-flavor (cc/codex/
   # echo/…) FAILS LOUD (RF-5b deferred). Delegated to `RoleStep`.
@@ -456,31 +419,18 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     )
   end
 
-  # py-agent (Task 1.4) — the operator-script general python flavor. Routes
-  # via the SAME template route as echo (`register_and_invoke_template`, the
-  # non-cascade Loader path) — NOT the generic direct-spawn route below (which
-  # skips `instantiate/3` + drops cwd, the np gap). py is NON-credentialled
-  # (no CredentialAdapter → must NOT route through the #17 cascade) YET the
-  # persisted template carries a `"config_dir"` reference so
-  # `provision_and_instantiate/4` allocates the per-agent config_dir; the
-  # operator `script` (in `flavor_config`) is written into it by
-  # `Template.PyAgent.instantiate/3`, which starts the subprocess. nil caps/
-  # from keep py on the non-cascade Loader path (like echo).
+  # py-agent (Task 1.4) — operator-script python flavor on echo's NON-cascade
+  # template route (NOT the direct-spawn route, which skips instantiate/drops
+  # cwd — the np gap). See `PyTemplate` for the config_dir-reference shape.
   defp do_create_agent("py", agent_uri, session_templates, params) do
-    %{
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "py.agent." <> agent_name(agent_uri)
-    tmpl = PyTemplate.build(agent_uri, Map.get(params, :flavor_config))
+    %{workspace_name: workspace_name, workspace_uri: workspace_uri} = params
 
     register_and_invoke_template(
       session_templates,
       workspace_name,
       workspace_uri,
-      tmpl_name,
-      tmpl,
+      "py.agent." <> agent_name(agent_uri),
+      PyTemplate.build(agent_uri, Map.get(params, :flavor_config)),
       agent_uri,
       Map.get(params, :caller),
       nil,

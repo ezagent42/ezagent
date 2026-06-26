@@ -133,12 +133,14 @@ defmodule Ezagent.Behavior.PyAgent do
   end
 
   def handle_reset(_args, _ctx) do
-    {:ok, %{ok: true},
-     [
-       {:set, :last_input, nil},
-       {:set, :last_result, nil},
-       {:set, :last_error, nil}
-     ]}
+    {:ok, %{ok: true}, set_last(nil, nil, nil)}
+  end
+
+  # The `last_input / last_result / last_error` observability triple is always
+  # set together — one helper keeps the `{:set, ...}` site count low + the
+  # snapshot mutation atomic.
+  defp set_last(input, result, error) do
+    [{:set, :last_input, input}, {:set, :last_result, result}, {:set, :last_error, error}]
   end
 
   # `:configure` sets timeout_ms ONLY — NEVER the script (spec §5). Even if a
@@ -167,20 +169,12 @@ defmodule Ezagent.Behavior.PyAgent do
 
     case run_receive(python_handle, timeout_ms, params) do
       {:ok, :silent} ->
-        {:ok, %{ok: true},
-         [
-           {:set, :last_input, text},
-           {:set, :last_result, nil},
-           {:set, :last_error, nil}
-         ]}
+        {:ok, %{ok: true}, set_last(text, nil, nil)}
 
       {:ok, reply_text} ->
         effects =
-          [
-            {:set, :last_input, text},
-            {:set, :last_result, reply_text},
-            {:set, :last_error, nil}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, msg)
+          set_last(text, reply_text, nil) ++
+            maybe_reply_effect(source_session_uri, self_uri, reply_text, msg)
 
         {:ok, %{ok: true}, effects}
 
@@ -192,12 +186,7 @@ defmodule Ezagent.Behavior.PyAgent do
           )
         end
 
-        {:ok, %{ok: false, error: error_kind(reason)},
-         [
-           {:set, :last_input, text},
-           {:set, :last_result, nil},
-           {:set, :last_error, reason}
-         ]}
+        {:ok, %{ok: false, error: error_kind(reason)}, set_last(text, nil, reason)}
     end
   end
 
