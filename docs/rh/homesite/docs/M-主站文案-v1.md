@@ -39,20 +39,24 @@
 > 状态：✅ **锁定**（slogan + T1 + H1 + S2）。
 > 核心转向（用户定）：**主卖点 = AI-native 站点，按每个客户自动变样，端给他 exactly what he needs；不是让客户用传统方式浏览**。地基白拿降为副标支撑。
 
-### ✅ 最终 Hero（锁定 · rev2 · 实现照这个）
+### ✅ 最终 Hero（锁定 · rev3 · 实现照这个）
 
-> **rev2（2026-06-26 demo 落地时定）**：大标题改用 **tagline 文案**升格，不再展示 slogan「Have your customers at hello」；**去掉中文长副标 S2 + 两个 CTA 按钮**，hero 收敛成"一句英文宣言 + 一句中文钩子"。slogan 仍保留作页脚/分享封面用，不上 hero。
+> **rev3（2026-06-26）**：大标题**随语言切换**（双语 h1，等宽 fitter 对中英都生效）；中文版用 C1。slogan「Have your customers at hello」仍留作页脚/分享备用，不上 hero。
 
 ```
-┌─────────────────────────────────────────────┐
-│  Don't build sites.                           │  ← H1 主标（英 · 原 T1 升格）
-│  Build a site that builds itself.             │
-│                                               │
-│  AI 时代的网站，不用浏览                        │  ← 中文钩子（data-i18n hero_head）
-└─────────────────────────────────────────────┘
+EN 模式                                ZH 模式
+┌──────────────────────────────┐      ┌──────────────────────────────┐
+│  Don't build sites.           │      │  别再做网站                     │  ← h1 第1行（中文不用句号·避免行尾留白）
+│  Build a site that builds      │      │  做一个会自己生成的网站          │  ← h1 第2行(缩到与上行同宽)
+│  itself.                       │      │                                │
+│  AI-native websites —          │      │  AI 时代的网站，不用浏览          │  ← 副题(衬线/宋体, hero_head)
+│  no need to browse.            │      │                                │
+└──────────────────────────────┘      └──────────────────────────────┘
 ```
 
-（已去掉：slogan 行、S2 长副标、「亲手…」「看它…」两个 CTA。`Have your customers at hello` 留作 slogan 备用。）
+- h1：`data-i18n=hero_t1 / hero_t2`，等宽 fitter 在 `render()`（含切语言）后重算
+- 副题：`data-i18n=hero_head`，`Noto Serif SC` 宋体衬线
+- 已去掉：S2 长副标、「亲手…」「看它…」两个 CTA
 
 ### Slogan（英文主 slogan · 双语封面用）
 

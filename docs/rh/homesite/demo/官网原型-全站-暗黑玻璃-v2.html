@@ -285,7 +285,7 @@
     </div>
     <div class="hero-shadow"></div>
     <div class="inner">
-      <h1 class="serif heroh1"><span class="t1">Don't build sites.</span><span class="t2">Build a site that builds itself.</span></h1>
+      <h1 class="serif heroh1"><span class="t1" data-i18n="hero_t1">别再做网站</span><span class="t2" data-i18n="hero_t2">做一个会自己生成的网站</span></h1>
       <p class="zhhead" data-i18n="hero_head">AI 时代的网站，不用浏览</p>
     </div>
     <div class="socials">
@@ -407,6 +407,7 @@ let lang='zh';
 const T={
  zh:{nav_home:'首页',nav_road:'world.cup',nav_lic:'指挥官驾照',nav_about:'关于',login:'登录',
   hero_lic:'🎫 测测你能指挥几个 Agent',
+  hero_t1:'别再做网站',hero_t2:'做一个会自己生成的网站',
   hero_head:'AI 时代的网站，不用浏览',
   u3_eye:'你卡在哪',u3_head:'你早就知道该给客户量身定制——<em>可你做不出来</em>',
   u3_lead:'客户要的不是一个网站，是「我的问题被解决」。可现实里你只有三条路，条条堵着——',
@@ -450,7 +451,8 @@ const T={
   unit_vote:'票',unit_scene:'个',exp:(l,w)=>`${l} 成果 · ${w} 进行中 ▾`,scnt:(p,a)=>`${p} 个痛点 · ${a} 个成果`,slive:n=>`${n} 已上线`},
  en:{nav_home:'Home',nav_road:'world.cup',nav_lic:'Commander License',nav_about:'About',login:'Login',
   hero_lic:'🎫 How many agents can you command?',
-  hero_head:'Websites in the AI era. No browsing.',
+  hero_t1:"Don't build sites.",hero_t2:'Build a site that builds itself.',
+  hero_head:'AI-native websites — no need to browse.',
   u3_eye:'The problem',u3_head:'You always knew you should tailor it to each customer — <em>but you can\'t build it</em>',
   u3_lead:'Customers don\'t want a website — they want "my problem, solved." Today you have three options, all blocked —',
   u3_r1t:'Option 1 · Static site',u3_r1h:'Lay everything out',u3_r1b:'Customers dig, hunt, and guess which part is for them — most leave after two clicks, and you never saw what they wanted.',
@@ -630,7 +632,7 @@ function applyStatic(){
 function setPage(p){page=p;document.querySelectorAll('[data-page-panel]').forEach(el=>el.hidden=el.dataset.pagePanel!==p);
   document.querySelectorAll('.links button[data-nav]').forEach(b=>b.classList.toggle('on',b.dataset.nav===p));
   window.scrollTo({top:0,behavior:'smooth'});observeReveals();}
-function render(){applyStatic();renderCmp();renderMetrics();renderTabs();renderView();bind();}
+function render(){applyStatic();renderCmp();renderMetrics();renderTabs();renderView();bind();fitHeroTitle();}
 function bind(){
   document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{
     if(b.dataset.nav==='roadmap'){ location.href='components/03-demo-路线图押注.html'; return; }
