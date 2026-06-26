@@ -6,6 +6,16 @@
 **Replaces (consolidates):** the three PR #1028 per-site snapshot-read patches (config, caps, sandbox-in-flight).
 **Does NOT touch:** the generic render transport, the dispatch chokepoint, the cap struct shape.
 
+**Codex adversarial review (gpt-5.5, static):** initial verdict **REJECT** — 4 blocking issues, all
+addressed in this revision. (1)+(2) "APIs don't exist / config+caps still dispatch" — codex read the
+`origin/main` worktree where the #1028 reads aren't yet present; they live on `fix/cc-folder-trust`.
+Fixed by the §0 ⚠ branch-provenance callout + OQ-6 sequencing (design unchanged — labels qualified).
+(3) authz parity overclaim ("identical caller set") — corrected to a **bounded SUPERSET** on the
+cold-caller axis (§3.2) + honest §8 test 6. (4) `CapCheckOnlyAtChokepointTest` p3 allowlists the whole
+session dir so it can't PROVE the reader's discipline — §7 caveat added + §8 test 9 (module-scoped
+grep) compensates. Codex CONFIRMED (non-blocking): `:api_keys` exclusion, `:sandbox` durable+cap-gated
+classification, and the home/dep-DAG argument. See §10 for the resulting open questions.
+
 ---
 
 ## 0. The problem (lead's architectural observation)
@@ -17,13 +27,27 @@ Kind. A cold `cc` agent needs ~5–20s to launch claude and click its startup di
 5s `ReadyGate` budget → `{:error, :activate_timeout}` (FP5 S5, #115). A pure *read of persisted
 state* should never start a heavy subprocess.
 
-PR #1028 patched this **per site**, three times, independently:
+PR #1028 patched this **per site**, three times, independently.
 
-| read | facade | how it was de-activated |
+> **⚠ Branch provenance (read before verifying against the tree).** ALL of the #1028 work
+> described below lives on **`fix/cc-folder-trust`** (HEAD `3ee9e3a5`), **NOT on `origin/main`**.
+> Verified 2026-06-26: on `origin/main`, `Ezagent.Agent.Config.read_cascade/4` **still dispatches**
+> (`config.ex:223 Invocation.dispatch`), and `Ezagent.Identity.read_entity_caps/1` +
+> `Ezagent.Identity.caps_authorize?/2` **do not exist** (main's `identity.ex` has `read_held_caps/1`
+> + a users-table fallback instead). So on main, NONE of the three reads is non-activating yet.
+> "Landed" in the table below means "landed on `fix/cc-folder-trust`". This SPEC's worktree is off
+> `origin/main`; a reviewer reading the worktree tree will not find the `fix/cc-folder-trust`
+> symbols — read them via `git show origin/fix/cc-folder-trust:<path>`. **Consolidation
+> sequencing (OQ-6):** this SPEC assumes `fix/cc-folder-trust` (the config+caps non-activating
+> reads + their `Identity` owners) lands on main FIRST, or is rebased under, the unified reader.
+> If the unified reader is built against main as-is, steps 1–2 of §9 must FIRST port the config/caps
+> de-activation (not just "delegate to the landed owner").
+
+| read | facade | how it was de-activated (on `fix/cc-folder-trust`) |
 |------|--------|--------------------------|
-| **config cascade** | `Ezagent.Agent.Config.read_cascade/4` | reads `ConfigEvolve.build_cascade/2` directly (pure DB projection), authorizes via `Identity.caps_authorize?/2` instead of dispatching `config_evolve.read_cascade`. **Landed.** |
-| **caps** | `Ezagent.Identity.read_entity_caps/1` (consumed by `World.IdentityData.list_entity_caps/3`) | reads the `:identity` slice via `Kind.get_slice/2`, **falls back to `SnapshotStore.latest/1`** for a cold entity, normalized via `normalize_slice_view/1`; authorizes via `caps_authorize?/2` instead of dispatching `identity.list_caps`. **Landed.** |
-| **sandbox** | `World.IdentityData.sandbox_read/3` | **still `Invocation.dispatch(:sandbox/:read, :call)` → still activates.** In flight on `fix/cc-folder-trust`; not yet converted. |
+| **config cascade** | `Ezagent.Agent.Config.read_cascade/4` | reads `ConfigEvolve.build_cascade/2` directly (pure DB projection), authorizes via `Identity.caps_authorize?/2` instead of dispatching `config_evolve.read_cascade`. **Landed on `fix/cc-folder-trust`** (main still dispatches). |
+| **caps** | `Ezagent.Identity.read_entity_caps/1` (consumed by `World.IdentityData.list_entity_caps/3`) | reads the `:identity` slice via `Kind.get_slice/2`, **falls back to `SnapshotStore.latest/1`** for a cold entity, normalized via `normalize_slice_view/1`; authorizes via `caps_authorize?/2` instead of dispatching `identity.list_caps`. **Landed on `fix/cc-folder-trust`** (absent on main — main dispatches `identity.list_caps`). |
+| **sandbox** | `World.IdentityData.sandbox_read/3` | **still `Invocation.dispatch(:sandbox/:read, :call)` → still activates,** on BOTH branches. In flight; not yet converted anywhere. |
 
 Three separate snapshot-read patches in three apps = **local entropy** (memory
 `feedback_systematic_fix_over_local_entropy`, `feedback_question_the_problem_when_fix_keeps_failing`).
@@ -230,15 +254,23 @@ defp slice_caps(%URI{} = caller), do: Ezagent.Identity.read_entity_caps(caller)
 Both routes match through the SAME sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2`
 (`granted_by_entity?/1` AND `matches?/2`) — the new module never hand-rolls `matches?`. Properties:
 
-- **Mirrors the live dispatch exactly.** Same two routes, same OR, same predicate — so the reader
-  authorizes the identical caller set the dispatch did, no more, no less. No semantic drift.
+- **Same two routes + same predicate as the live dispatch — but route 2 is a deliberate SUPERSET,
+  not identical.** The reader uses the same OR-of-(`ctx.caps`, slice-caps) structure and the same
+  `granted_by_entity?` + `matches?` predicate. It is **NOT** "the identical caller set, no more no
+  less": on route 2 the reader reads the caller's caps via `read_entity_caps/1` (slice → snapshot
+  fallback), whereas the live dispatch reads them via bare `default_holds_cap?` (slice **only**, no
+  snapshot — `kind.ex:236`). So **the reader authorizes a strict SUPERSET of the dispatch's caller
+  set: it additionally authorizes a COLD caller whose persisted (snapshot) caps match** but whose
+  `:identity` Kind isn't currently hot. This is intentional (a read surface must work for a
+  logged-in user whose Kind is cold), and it is the ONLY divergence — it never authorizes a caller
+  with *insufficient* caps; it only refuses to deny a caller solely for being cold. See OQ-1 for the
+  proposal to make the dispatch path itself cold-safe (which would collapse the superset back to
+  equality).
 - **`ctx.caps` is permanent** (#154) — there is **no** future migration this reader must anticipate;
   it will not break when PR-CC-2c lands (PR-CC-2c keeps `ctx.caps`).
-- **Cold-caller-safe on route 2.** The live `default_holds_cap?` reads `get_slice(caller, :identity)`
-  with **no snapshot fallback** → it denies a **cold caller**. Route 2 here instead uses
-  `read_entity_caps/1`, which **adds** the `SnapshotStore.latest` fallback — so a cold logged-in
-  user is authorized from persisted caps. The reader's route 2 is therefore **strictly more correct**
-  than bare `holds_cap?` for a cold caller. (This divergence is intentional and called out as OQ-1.)
+- **Fail-closed on caps, never fail-open.** A caller with no matching cap (inline or
+  slice-or-snapshot) is denied on both routes. The superset is strictly along the cold/hot axis, not
+  the cap-content axis.
 - **Non-activating throughout.** Neither route spawns the caller's Kind.
 
 > **OQ-1 (for the lead):** route 2 uses `read_entity_caps` (slice+snapshot) where the live dispatch
@@ -346,9 +378,19 @@ not the view.)
   reader is *in* session, reaching *down*).
 - **No flavor-refs-in-core.** The reader is flavor-agnostic (it asks for slices, not "cc"). It
   lives in domain, not core; core gains nothing.
-- **Cap-check stays at the chokepoint** (`CapCheckOnlyAtChokepointTest`, esp. p3): the new module
-  calls `caps_authorize?` (allowlisted owner), never `Capability.matches?`. Construction of the
-  needed-cap is pure field assignment.
+- **Cap-check stays at the chokepoint** (design discipline — the new module calls `caps_authorize?`
+  at the allowlisted owner, never `Capability.matches?`; needed-cap construction is pure field
+  assignment).
+  > **Honest gate-strength caveat (do not overclaim).** `CapCheckOnlyAtChokepointTest` p3
+  > allowlists the ENTIRE `apps/ezagent_domain_session/lib/ezagent/` directory
+  > (`cap_check_only_at_chokepoint_test.exs:59`), which **includes** the proposed `Domain.Agent`
+  > home. So p3 will **not PROVE** the reader avoids a hand-rolled `matches?` — a stray `matches?`
+  > in `domain.agent.ex` would pass CI. p3 only guarantees the reader doesn't fail CI; it does not
+  > enforce the discipline here. Two consequences this SPEC accepts: (a) the "no hand-rolled
+  > `matches?`" property is a **review/design** obligation for `Domain.Agent`, not a gate-enforced
+  > one; (b) to give it teeth, §8 adds a **module-scoped** assertion that `domain.agent.ex` source
+  > contains no `Capability.matches?` token (a targeted unit grep, since the global p3 can't). The
+  > preferred match path stays `caps_authorize?` regardless.
 - **No new sensitive-slice read site** (`SensitiveSliceReadTest`): `read_caps` delegates to the
   allowlisted owner `Identity.read_entity_caps`; the new module adds NO `get_slice(:identity)` /
   `get_slice(:api_keys)` call. The sandbox `get_slice(:sandbox)` reader is placed at a sandbox-slice
@@ -382,15 +424,24 @@ spawned), assert `KindRegistry.lookup == :error` **before AND after** the read.
    (proves the `read_entity_caps` snapshot-fallback authorizes a cold caller — the bug bare
    `holds_cap?` would have). (c) **Neither route:** no inline cap + no slice cap → `:unauthorized`.
    All assert neither caller nor target Kind goes live.
-6. **Two-route mirror lock.** Assert the reader authorizes the SAME caller set the live dispatch
-   step 5.5 does (both `granted_via_ctx_caps?` and `granted_via_holds_cap?` honored) — a structural
-   lock that the reader does not silently drop one route. Guards against a refactor collapsing to a
-   single route (which would lock out one caller class).
+6. **Two-route structure lock (NOT "identical caller set").** Assert BOTH routes are honored — an
+   inline-`ctx.caps`-only caller AND a slice/snapshot-only caller each authorize — so a refactor
+   cannot silently drop one route (which would lock out one caller class). Do **not** assert "same
+   caller set as the live dispatch": the reader is a deliberate SUPERSET on the cold-caller axis
+   (§3.2). The bounded-divergence claim is instead pinned by an explicit pair: (a) a HOT caller is
+   authorized identically by the reader and by a real `Invocation.dispatch` step-5.5 (parity on the
+   hot path), and (b) a COLD caller with matching persisted caps is authorized by the reader but
+   DENIED by `Kind.default_holds_cap?` directly (proving the superset is exactly the cold-snapshot
+   set, nothing more). This is the honest invariant; "identical set" would be false.
 7. **Render parity.** The shapes returned by `Domain.Agent.read_*` equal what the per-site readers
    returned, so the world render path is unchanged (a fixture-equality test against the prior
    shapes).
 8. **Arch gates green** (run, don't assume): `mix ezagent.check_invariants` (incl. cap-check-only,
    sensitive-slice), `cap_check_only_at_chokepoint_test`, `sensitive_slice_read_test`.
+9. **Module-scoped no-hand-rolled-`matches?` (compensates for the p3 allowlist).** A unit test
+   asserting the `domain.agent.ex` source has zero `Capability.matches?` occurrences — because the
+   global p3 probe allowlists the whole session dir and therefore can't enforce this for the new
+   reader (§7 caveat). Guarantees the reader routes the match through `caps_authorize?`.
 
 ---
 
@@ -430,6 +481,16 @@ dispatch path is removed, not kept alongside.
   keep `ctx.caps` permanent) as part of — or as a prerequisite to — this work, so a future
   contributor reading the chokepoint doesn't re-derive the wrong "holds_cap?-only" premise this
   reader was almost specced against. (Doc-only; outside the reader itself but in its blast radius.)
+- **OQ-6 — consolidation sequencing vs. `fix/cc-folder-trust` (BLOCKING for implementation).** The
+  config + caps non-activating reads (and their `Identity.read_entity_caps` / `caps_authorize?`
+  owners) exist ONLY on `fix/cc-folder-trust`, not on `origin/main` (§0 ⚠ callout — verified). The
+  "delegate to the landed owner" framing of §4/§9 steps 1–2 assumes that branch is merged FIRST (or
+  the unified reader is built on top of it). If the lead wants the unified reader built against
+  `main` as-is, §9 must be reordered: the reader's first job becomes *porting* the config+caps
+  de-activation (not delegating to an owner that doesn't exist yet) — i.e. this SPEC then SUBSUMES
+  `fix/cc-folder-trust`'s config+caps work rather than building on it. **Confirm the merge order**:
+  (A) land `fix/cc-folder-trust` → then this reader delegates; or (B) this reader supersedes and
+  ports all three reads itself. The SPEC is written for (A); (B) is a larger single PR.
 - **OQ-5 — single `Identity.authorize_read/2` seam (optional).** The two-route authz (§3.2) is ~10
   lines that could fold into one `Identity` helper (`%{caller, caps}` + needed → boolean) so the
   unified reader makes one call and the two-route logic lives once, next to `caps_authorize?`, in
