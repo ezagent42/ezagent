@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>world.cup · Ezagent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Serif+SC:wght@400;600&family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+  *{box-sizing:border-box}
+  :root{
+    --cream:#fde7de; --coral:#ff677a; --blue:#0037fe; --ink:#0c0c14;
+    --line:rgba(255,255,255,.12);
+    --w70:rgba(255,255,255,.7); --w50:rgba(255,255,255,.5); --w40:rgba(255,255,255,.4);
+    --live:#79e0a8; --wip:#f5c06b; --plan:#9aa0b4;
+    --gold:#ffd76b; --win:#79e0a8; --lose:#ff677a;
+  }
+  html,body{margin:0;background:var(--ink);color:#fff;
+    font-family:'Inter','Noto Sans SC',-apple-system,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .serif{font-family:'Instrument Serif','Noto Serif SC',serif;font-weight:400}
+  em.serif,.serif em{font-style:italic}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 22px}
+  [hidden]{display:none!important}
+  button{font-family:inherit}
+
+  /* liquid glass */
+  .liquid-glass{background:rgba(255,255,255,.01);background-blend-mode:luminosity;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.1);position:relative;overflow:hidden}
+  .liquid-glass::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.4px;
+    background:linear-gradient(180deg,rgba(255,255,255,.45) 0%,rgba(255,255,255,.15) 20%,rgba(255,255,255,0) 40%,rgba(255,255,255,0) 60%,rgba(255,255,255,.15) 80%,rgba(255,255,255,.45) 100%);
+    -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+
+  /* nav（与 官网原型-全站-暗黑玻璃 统一） */
+  .nav{position:fixed;top:0;left:0;right:0;z-index:50;padding:18px 22px}
+  .nav .pill{max-width:1060px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:11px 12px 11px 20px;border-radius:999px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:17px;cursor:pointer}
+  .brand svg{width:22px;height:22px}
+  .nav .links{display:flex;gap:4px;margin-left:6px}
+  .nav .links button{border:0;background:transparent;color:var(--w70);font-family:inherit;font-size:13.5px;font-weight:500;cursor:pointer;padding:6px 12px;border-radius:999px;transition:.15s}
+  .nav .links button:hover{color:#fff}.nav .links button.on{color:#fff;background:rgba(255,255,255,.08)}
+  .nav .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .glassbtn{border-radius:999px;padding:9px 16px;color:#fff;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:transform .15s,background .15s}
+  .glassbtn:hover{background:rgba(255,255,255,.06)}.glassbtn:active{transform:scale(.96)}
+  #langBtn{min-width:46px;text-align:center;font-weight:700;letter-spacing:.5px}
+  @media(max-width:720px){.nav .links{display:none}}
+
+  /* header */
+  header.hd{padding:104px 0 14px}
+  .eyebrow{color:var(--w40);font-size:12px;letter-spacing:3px;text-transform:uppercase}
+  .hd h1{font-size:clamp(40px,7vw,76px);line-height:1.0;letter-spacing:-1.5px;margin:12px 0 0}
+  .hd h1 em{color:var(--coral);font-style:italic}
+  .hd .sub2{font-size:clamp(16px,2.4vw,22px);font-weight:700;letter-spacing:1px;margin:10px 0 0}
+  .hd .sub2 .w-i{color:var(--plan)} .hd .sub2 .w-p{color:var(--wip)} .hd .sub2 .w-m{color:var(--win)}
+  .hd .lead{color:var(--w70);max-width:640px;font-size:15px;margin-top:14px}
+
+  /* status bar */
+  .statusbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-radius:18px;padding:16px 18px;margin:26px 0 14px}
+  .stat{display:flex;flex-direction:column;gap:2px}
+  .stat .n{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+  .stat .n .u{font-size:12px;color:var(--w40);font-weight:500;margin-left:3px}
+  .stat .k{font-size:11px;color:var(--w50)}
+  .stat.click{cursor:pointer;border-radius:12px;padding:4px 8px;margin:-4px -8px;transition:.15s}
+  .stat.click:hover{background:rgba(255,255,255,.06)}
+  .statusbar .sep{width:1px;height:34px;background:var(--line)}
+  .statusbar .spacer{margin-left:auto}
+  .btn{border:0;border-radius:999px;padding:10px 16px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;transition:transform .12s,background .15s}
+  .btn:active{transform:scale(.96)}
+  .btn.glass{background:rgba(255,255,255,.06)}.btn.glass:hover{background:rgba(255,255,255,.12)}
+  .btn.coral{background:var(--coral);color:#1a0008}.btn.coral:hover{filter:brightness(1.07)}
+  .btn.gold{background:var(--gold);color:#241a00}.btn.gold:hover{filter:brightness(1.07)}
+  .btn.sm{padding:7px 12px;font-size:12px}
+
+  /* ticker */
+  .ticker{border-radius:14px;padding:0;margin-bottom:22px;overflow:hidden;white-space:nowrap}
+  .ticker .track{display:inline-flex;gap:40px;padding:11px 18px;animation:tk 26s linear infinite}
+  .ticker:hover .track{animation-play-state:paused}
+  @keyframes tk{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .ticker .ev{font-size:12.5px;color:var(--w50)}
+  .ticker .ev b{color:var(--w70);font-weight:600}
+  .ticker .ev .pr{color:#fff;font-weight:600}
+
+  /* view tabs */
+  .halltabs{display:flex;gap:6px;flex-wrap:wrap}
+  .halltabs button{border:0;background:rgba(255,255,255,.05);color:var(--w70);padding:9px 15px;border-radius:999px;cursor:pointer;font-size:13px;font-weight:600;transition:.15s}
+  .halltabs button:hover{color:#fff}
+  .halltabs button.on{background:#fff;color:#111}
+  .viewbar{display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap}
+  .viewhint{color:var(--w40);font-size:12.5px;margin:2px 0 18px}
+
+  /* grid + item card */
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .grouphd{font-size:13px;color:var(--coral);font-weight:600;letter-spacing:.5px;margin:24px 0 12px}
+  #view > .grouphd:first-child{margin-top:6px}
+  .mk{border-radius:20px;padding:18px}
+  .mk .mh{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .mk .mtitle{font-size:16px;font-weight:600;letter-spacing:-.2px;line-height:1.35;margin-right:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--w50);background:rgba(255,255,255,.05);border-radius:999px;padding:3px 9px}
+  .chip .id{color:var(--w70);font-variant-numeric:tabular-nums}
+  .chiprow{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+  .tag{font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:600;white-space:nowrap}
+  .tag.live,.tag.merged{background:rgba(121,224,168,.16);color:var(--live)}
+  .tag.wip,.tag.pr{background:rgba(245,192,107,.16);color:var(--wip)}
+  .tag.planned,.tag.issue{background:rgba(154,160,180,.16);color:var(--plan)}
+  /* 阶段：点+文字（替代填色块，减少彩色） */
+  .stg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--w50);font-weight:600;white-space:nowrap}
+  .stg .d{width:7px;height:7px;border-radius:50%;flex:none}
+  .stg.issue .d{background:var(--plan)} .stg.pr .d{background:var(--wip)} .stg.merged .d{background:var(--win)}
+  .nid{font-size:11px;color:var(--w40);font-variant-numeric:tabular-nums}
+
+  /* 第一层：我要用 */
+  .want{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .wantbtn{border:0;border-radius:12px;padding:10px 15px;cursor:pointer;font-weight:700;font-size:13.5px;background:#fff;color:#111;transition:transform .12s,filter .15s;display:flex;align-items:center;gap:6px}
+  .wantbtn:hover{filter:brightness(.92)} .wantbtn:active{transform:scale(.96)}
+  .wantbtn.on{background:transparent;color:var(--w70);box-shadow:inset 0 0 0 1.5px var(--line)}
+  .wantwrap{flex:1;min-width:150px}
+  .wantmeta{font-size:11.5px;color:var(--w50);margin-bottom:5px;display:flex;justify-content:space-between;gap:8px}
+  .unlocked{color:var(--win);font-weight:700}
+  .progress{height:7px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+  .progress > i{display:block;height:100%;background:rgba(255,255,255,.55);border-radius:999px;transition:width .4s}
+  .miniact{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center}
+  .iconbtn{border:0;border-radius:999px;padding:8px 13px;cursor:pointer;font-size:12.5px;font-weight:600;background:rgba(255,255,255,.06);color:var(--w70);transition:.15s}
+  .iconbtn:hover{background:rgba(255,255,255,.12);color:#fff}
+  .iconbtn.on{color:var(--coral);background:rgba(255,103,122,.14)}
+  .iconbtn.try{color:var(--win)}
+  .prlink{color:var(--blue);filter:brightness(1.7);font-size:12.5px;font-weight:600}
+
+  /* 第二层：看多看空（紧凑、次要） */
+  .l2{display:flex;align-items:center;gap:8px;margin-top:13px;padding-top:12px;border-top:1px dashed rgba(255,255,255,.1);flex-wrap:wrap}
+  .l2 .l2t{font-size:11px;color:var(--w40);margin-right:auto}
+  /* 默认中性灰；用户押过该方向才显示红/绿 */
+  .l2btn{border:0;border-radius:10px;padding:7px 11px;cursor:pointer;font-size:12px;font-weight:700;transition:.12s;display:flex;gap:5px;align-items:center;background:rgba(255,255,255,.06);color:var(--w70)}
+  .l2btn b{font-variant-numeric:tabular-nums}
+  .l2btn:hover{background:rgba(255,255,255,.13);color:#fff}
+  .l2btn.long.staked{background:rgba(121,224,168,.16);color:var(--win);box-shadow:inset 0 0 0 1.5px var(--win)}
+  .l2btn.short.staked{background:rgba(255,103,122,.16);color:var(--lose);box-shadow:inset 0 0 0 1.5px var(--lose)}
+  .l2 .ch{background:rgba(255,255,255,.06);color:var(--w70);border:0;border-radius:10px;padding:7px 9px;cursor:pointer;font-size:12px}
+  .l2 .ch:hover{background:rgba(255,255,255,.12)}
+
+  /* 紧凑节点动作（mindmap / gantt 复用） */
+  .nbtn{border:0;background:rgba(255,255,255,.06);color:var(--w70);border-radius:999px;padding:5px 10px;cursor:pointer;font-size:11.5px;font-weight:600;transition:.12s}
+  .nbtn:hover{background:rgba(255,255,255,.14);color:#fff}
+  .nbtn.want.on{color:var(--w50);box-shadow:inset 0 0 0 1.2px var(--line)}
+  .nbtn.dice{font-size:13px;padding:5px 9px}
+  .nbtn.like.on{color:var(--coral)}
+
+  /* 价值视角 · mindmap 树（连接线参考原型） */
+  .mtree,.mtree ul{list-style:none;margin:0;padding:0}
+  .mtree{margin-top:8px}
+  .mtree ul{margin-left:18px}
+  .mtree li{position:relative;padding-left:28px}
+  .mtree li::before{content:"";position:absolute;left:0;top:0;bottom:0;border-left:1.5px solid var(--line)}
+  .mtree li::after{content:"";position:absolute;left:0;top:24px;width:24px;border-top:1.5px solid var(--line)}
+  .mtree li:last-child::before{height:24px}
+  .mtree>li{padding-left:0}.mtree>li::before,.mtree>li::after{display:none}
+  .mnode{display:inline-flex;align-items:center;gap:9px;flex-wrap:wrap;margin:6px 0;padding:9px 13px;border-radius:13px;border-left:3px solid var(--ac,var(--line));background:rgba(255,255,255,.03)}
+  .mnode .mt{font-size:14px;font-weight:650}
+  .mnode.lf .mt{font-weight:600;color:var(--w70);font-size:13px}
+  .mnode .meye{font-size:9.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--w40)}
+
+  /* 时间线 · 年份甘特（每需求三段 issue/PR/merge） */
+  .gantt-hint{font-size:11.5px;color:var(--w40);margin:6px 0 14px}
+  .gchart{position:relative;margin-top:4px}
+  .gbg{position:absolute;left:0;right:0;top:24px;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);z-index:0;pointer-events:none}
+  .gbg span{border-left:1px solid var(--line)} .gbg span:first-child{border-left:0}
+  .gyears{display:grid;grid-template-columns:repeat(4,1fr);margin-bottom:14px;position:relative;z-index:1}
+  .gyears span{font-size:11px;color:var(--w40);letter-spacing:1px;padding-left:8px}
+  .grow2{position:relative;z-index:1;margin-bottom:15px}
+  .grow2 .glabel{display:inline-flex;align-items:center;gap:9px;font-size:13px;color:var(--w70);font-weight:600;margin-bottom:7px;white-space:nowrap}
+  .track{position:relative;height:16px}
+  .seg{position:absolute;top:0;height:16px;border-radius:5px}
+  .seg.issue{background:rgba(154,160,180,.6)}
+  .seg.pr{background:rgba(245,192,107,.72)}
+  .seg.merge{background:var(--win)}
+  .seg.proj{opacity:.3;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.3) 0 4px,transparent 4px 8px)}
+
+  /* 场景 · 紧凑 gallery（一行 3 张） */
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:860px){.grid3{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.grid3{grid-template-columns:1fr}}
+  .sccard{border-radius:16px;padding:14px}
+  .sctop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .sctitle{font-size:14px;font-weight:600;line-height:1.35;min-height:38px}
+  .scbar{margin:10px 0}
+  .scbar .wantmeta{font-size:11px;color:var(--w50);margin-bottom:5px}
+  .merged-note{font-size:12px;color:var(--win);margin:8px 0}
+  .scacts{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+  .wantbtn.sm2{padding:7px 12px;font-size:12.5px;border-radius:10px}
+
+  /* 看多看空选择（🎲 picker） */
+  .predrow{display:flex;gap:10px;margin-top:8px}
+  .bigchoice{flex:1;border:0;border-radius:14px;padding:18px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:13px;font-weight:700;transition:.12s}
+  .bigchoice b{font-size:22px;font-variant-numeric:tabular-nums}
+  .bigchoice.long{background:rgba(121,224,168,.13);color:var(--win)} .bigchoice.long:hover{background:rgba(121,224,168,.22)}
+  .bigchoice.short{background:rgba(255,103,122,.13);color:var(--lose)} .bigchoice.short:hover{background:rgba(255,103,122,.22)}
+
+  /* panels (仓位/候补) */
+  .empty{color:var(--w40);font-size:13.5px;padding:34px 0;text-align:center}
+  .poslist{display:flex;flex-direction:column;gap:10px}
+  .posrow{display:flex;align-items:center;gap:14px;border-radius:14px;padding:14px 16px}
+  .posrow .pt{font-size:14px;font-weight:600}
+  .posrow .ps{font-size:12px;color:var(--w50);margin-top:2px}
+  .posrow .pa{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+  .posrow .right{margin-left:auto;text-align:right}
+
+  /* footer + demo bar */
+  footer{color:var(--w40);font-size:12px;text-align:center;padding:40px 0 110px;line-height:1.8}
+  .compliance{color:var(--w50);font-weight:600}
+  .dembar{position:fixed;left:0;right:0;bottom:0;z-index:45;padding:14px 22px}
+  .dembar .pill{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px;border-radius:999px;padding:8px 8px 8px 22px;flex-wrap:wrap;justify-content:center}
+  .dembar .note{font-size:10px;color:var(--w40);white-space:nowrap}
+
+  /* modal */
+  .modal-mask{position:fixed;inset:0;z-index:60;background:rgba(6,6,12,.6);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal{width:100%;max-width:440px;border-radius:22px;padding:24px;background:#15151f;box-shadow:0 24px 80px rgba(0,0,0,.6);position:relative}
+  .modal.wide{max-width:580px}
+  .modal h3{margin:0 0 4px;font-size:19px}
+  .modal .x{position:absolute;top:14px;right:16px;cursor:pointer;color:var(--w40);font-size:20px;line-height:1}
+  .betpick{font-size:13.5px;color:var(--w70);margin-bottom:14px}
+  .amtrow{display:flex;gap:8px}
+  .amtb{flex:1;border:0;background:rgba(255,255,255,.06);color:#fff;border-radius:11px;padding:11px 0;font-weight:700;font-size:14px;cursor:pointer;transition:.12s}
+  .amtb:hover{background:rgba(255,255,255,.12)} .amtb.on{background:var(--gold);color:#241a00}
+  .winline{margin-top:14px;font-size:13.5px;color:var(--w70)}
+  .winline b{font-variant-numeric:tabular-nums}
+  .field{margin-top:12px}
+  .field label{display:block;font-size:12px;color:var(--w50);margin-bottom:5px}
+  .field input,.field select{width:100%;background:rgba(255,255,255,.06);border:0;border-radius:11px;padding:11px 13px;color:#fff;font-size:14px;font-family:inherit;outline:0}
+  .field input::placeholder{color:var(--w40)}
+  .ffspin{font-size:38px;display:inline-block;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* 裂变分享卡 */
+  .sharecard{border-radius:18px;padding:22px 22px 18px;background:linear-gradient(160deg,#17171f,#0e0e16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);position:relative;overflow:hidden}
+  .sharecard .sc-num{position:absolute;top:16px;right:18px;font-size:10.5px;color:var(--w40);font-variant-numeric:tabular-nums}
+  .sharecard .sc-eye{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--w40)}
+  .sharecard .sc-badge{font-size:12.5px;color:var(--gold);font-weight:700;margin-top:6px}
+  .sharecard .sc-title{font-size:23px;margin:6px 0 2px;line-height:1.25}
+  .sharecard .sc-sub{color:var(--w50);font-size:13px}
+  .sharecard .sc-lines{margin-top:14px;display:flex;flex-direction:column;gap:0}
+  .sharecard .sc-line{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--w70);border-top:1px solid rgba(255,255,255,.07);padding:8px 0}
+  .sharecard .sc-line b{color:#fff;font-variant-numeric:tabular-nums}
+  .sharecard .sc-cta{margin-top:14px;font-size:12.5px;color:var(--w50)}
+  .sharecard .sc-brand{margin-top:12px;font-size:10.5px;color:var(--w40);letter-spacing:1px}
+  .sharebtns{display:flex;gap:10px;margin-top:16px}
+
+  /* 排行榜 */
+  .lbtabs{display:flex;gap:6px;margin-top:12px}
+  .lbtabs button{flex:1;border:0;background:rgba(255,255,255,.05);color:var(--w70);padding:9px 8px;border-radius:10px;cursor:pointer;font-size:12.5px;font-weight:600}
+  .lbtabs button.on{background:#fff;color:#111}
+  .lbrow{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;font-size:13px}
+  .lbrow .rk{width:22px;color:var(--w40);font-variant-numeric:tabular-nums;font-weight:700;text-align:center}
+  .lbrow .nm{flex:1}
+  .lbrow .mt2{color:var(--w70);font-variant-numeric:tabular-nums}
+  .lbrow.me{background:rgba(255,215,107,.12);box-shadow:inset 0 0 0 1px rgba(255,215,107,.3)}
+  .lbrow.me .nm{color:var(--gold);font-weight:700}
+
+  /* toast */
+  .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%) translateY(20px);z-index:80;
+    background:#22222e;color:#fff;padding:11px 18px;border-radius:999px;font-size:13px;font-weight:500;
+    opacity:0;pointer-events:none;transition:.25s;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* reveal */
+  .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s,transform .7s}
+  .reveal.in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="pill liquid-glass">
+    <div class="brand" onclick="location.href='../官网原型-全站-暗黑玻璃-v2.html'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
+      Ezagent
+    </div>
+    <div class="links">
+      <button onclick="location.href='../官网原型-全站-暗黑玻璃-v2.html'">首页</button>
+      <button class="on" onclick="return false">成果与路线图</button>
+      <button onclick="location.href='../官网原型-全站-暗黑玻璃-v2.html'">关于</button>
+    </div>
+    <div class="right">
+      <button class="glassbtn liquid-glass" id="langBtn" onclick="return false">EN</button>
+      <button class="glassbtn liquid-glass" id="loginBtn" onclick="return false">登录</button>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <header class="hd reveal">
+    <span class="eyebrow">成果与路线图</span>
+    <h1 class="serif">world<em>.cup</em></h1>
+    <p class="sub2"><span class="w-i">Issue</span>, <span class="w-p">PR</span>, <span class="w-m">Merge!</span></p>
+  </header>
+
+  <div id="statusbar" class="statusbar liquid-glass reveal"></div>
+  <div id="ticker" class="ticker liquid-glass reveal"></div>
+
+  <div class="viewbar reveal">
+    <div id="viewtabs" class="halltabs"></div>
+    <button class="btn glass sm" id="proposeBtn" style="margin-left:auto">+ 提个需求</button>
+  </div>
+  <div id="viewhint" class="viewhint reveal"></div>
+  <div id="view" class="reveal"></div>
+
+  <footer>
+    <span class="compliance">虚拟声望 · 娱乐预测 · 不可提现</span><br>
+    本页为前端原型（mock 数据，无后端）。第一层"我要用"兑现源 = PR 合并；第二层"看多看空"结算源 = 结算日候补数。
+  </footer>
+</div>
+
+<div class="dembar">
+  <div class="pill liquid-glass">
+    <button class="btn coral sm" id="ffBtn">⏩ 快进结算</button>
+    <button class="btn glass sm" id="mergeBtn">🔀 模拟 PR 合并</button>
+    <span class="note">demo 控制</span>
+  </div>
+</div>
+
+<div id="modal"></div>
+<div id="toast" class="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const fmt = n => Math.round(n).toLocaleString();
+
+const io = new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}),{threshold:.08});
+$$('.reveal').forEach(el=>io.observe(el));
+
+/* ===================== R1: 数据模型 ===================== */
+/* item 生命周期：issue(想做) | pr(在做) | merged(已上线) */
+const ITEMS = [
+  {id:'#360', pos:'hello｜界面生成', title:'一句话生成可用界面',   stage:'pr',     scene:'生成', when:'2025 Q3', waitlist:128, unlockAt:150, prRef:'#360', t:{issue:2025.3, pr:2025.9, merge:2026.8}},
+  {id:'#318', pos:'world｜消息流转', title:'通用 webhook 接入',     stage:'pr',     scene:'连接', when:'2025 Q3', waitlist:92,  unlockAt:120, prRef:'#318', t:{issue:2025.6, pr:2026.2, merge:2026.9}},
+  {id:'#366', pos:'hello｜界面生成', title:'生成界面可二次编辑',     stage:'issue',  scene:'定制', when:'',        waitlist:138, unlockAt:150, prRef:'',     t:{issue:2026.2, pr:2026.9, merge:2027.2}},
+  {id:'#340', pos:'world｜消息流转', title:'渠道掉线自动重连',       stage:'issue',  scene:'稳定', when:'',        waitlist:64,  unlockAt:100, prRef:'',     t:{issue:2026.4, pr:2027.0, merge:2027.4}},
+  {id:'#380', pos:'hello｜界面生成', title:'移动端自适应生成',       stage:'issue',  scene:'生成', when:'',        waitlist:77,  unlockAt:100, prRef:'',     t:{issue:2026.5, pr:2027.1, merge:2027.5}},
+  {id:'#372', pos:'hello｜界面生成', title:'不同角色看到不同视图',   stage:'issue',  scene:'定制', when:'',        waitlist:41,  unlockAt:100, prRef:'',     t:{issue:2026.3, pr:2027.0, merge:2027.4}},
+  {id:'#355', pos:'world｜消息流转', title:'消息流量可视化看板',     stage:'issue',  scene:'观测', when:'',        waitlist:38,  unlockAt:100, prRef:'',     t:{issue:2026.5, pr:2027.2, merge:2027.6}},
+  {id:'#312', pos:'world｜消息流转', title:'常用渠道一键接入',       stage:'merged', scene:'连接', when:'2025 Q1', waitlist:210, unlockAt:120, prRef:'#312', t:{issue:2024.2, pr:2024.6, merge:2025.1}},
+  {id:'#333', pos:'world｜消息流转', title:'换 AI/后端不用重写',     stage:'merged', scene:'灵活', when:'2025 Q2', waitlist:176, unlockAt:150, prRef:'#333', t:{issue:2024.6, pr:2024.9, merge:2025.4}},
+  {id:'#301', pos:'world｜消息流转', title:'消息不丢、出错有兜底',   stage:'merged', scene:'稳定', when:'2025 Q1', waitlist:150, unlockAt:120, prRef:'#301', t:{issue:2024.1, pr:2024.5, merge:2025.0}},
+];
+const item = id => ITEMS.find(i=>i.id===id);
+
+/* 第一层状态 */
+const myWant = new Set();
+const liked = new Set();
+const subscribed = new Set();
+let SEQ = 137;
+
+/* 账本 / 仓位 / 战绩（第二层）*/
+const LEDGER = { renown:1000, hits:0, misses:0 };
+let POSITIONS = [];   // {marketId, sideKey, amount, lockedOdds, status:'open'|'won'|'lost'}
+
+/* 第二层市场：每个 issue/pr 一个「看多/看空」（标的=该 item 候补会不会破 hotAt） */
+let MARKETS = [];
+function buildMarkets(){
+  ITEMS.filter(i=>i.stage!=='merged').forEach(i=>{
+    if(MARKETS.find(m=>m.itemId===i.id)) return;          // 保留已有池/仓位
+    const lean = i.waitlist / i.unlockAt;                  // 越接近解锁，看多越热
+    MARKETS.push({id:'m'+i.id.slice(1), itemId:i.id, status:'open', hotAt:i.unlockAt,
+      sides:[{key:'long', label:'看多 · 会火', pool:Math.round(300+lean*500)},
+             {key:'short',label:'看空 · 火不起来', pool:Math.round(360-lean*120)}]});
+  });
+}
+buildMarkets();
+const mkById = id => MARKETS.find(m=>m.id===id);
+const marketFor = it => MARKETS.find(m=>m.itemId===it.id && m.status==='open');
+const itemOfMarket = mk => item(mk.itemId);
+
+/* ===== 引擎（同注分彩，复用） ===== */
+function odds(m, sideKey){ const tot=m.sides.reduce((s,x)=>s+x.pool,0); const s=m.sides.find(x=>x.key===sideKey); return Math.max(1.05, tot/s.pool); }
+function stake(marketId, sideKey, amount){
+  if(amount>LEDGER.renown) return {ok:false, msg:'声望不足'};
+  const m=mkById(marketId), lockedOdds=odds(m,sideKey);
+  LEDGER.renown-=amount; m.sides.find(x=>x.key===sideKey).pool+=amount;
+  POSITIONS.push({marketId, sideKey, amount, lockedOdds, status:'open'});
+  return {ok:true, lockedOdds};
+}
+function settle(marketId, winKey){
+  const m=mkById(marketId); if(!m) return; m.status='settled'; m.winKey=winKey;
+  POSITIONS.filter(p=>p.marketId===marketId && p.status==='open').forEach(p=>{
+    if(p.sideKey===winKey){ p.status='won'; LEDGER.renown+=p.amount*p.lockedOdds; LEDGER.hits++; }
+    else { p.status='lost'; LEDGER.misses++; }
+  });
+}
+const myStakeOn = (mid, sk) => POSITIONS.filter(p=>p.marketId===mid && p.sideKey===sk).reduce((s,p)=>s+p.amount,0);
+
+/* ===== 双榜 mock（眼光榜=命中率，声望榜=总声望） ===== */
+const RIVALS = [
+  {name:'盯盘老张', renown:4820, hits:31, misses:9},
+  {name:'eyes_of_qa', renown:3110, hits:22, misses:11},
+  {name:'押注狂魔', renown:5950, hits:18, misses:26},
+  {name:'@mia', renown:2440, hits:14, misses:6},
+  {name:'冷静观察者', renown:1890, hits:9, misses:3},
+  {name:'@kev', renown:2760, hits:17, misses:14},
+  {name:'all_in_dev', renown:980, hits:5, misses:12},
+  {name:'稳健派', renown:1620, hits:11, misses:7},
+  {name:'梭哈一时爽', renown:6300, hits:20, misses:30},
+  {name:'路过的PM', renown:1230, hits:6, misses:5},
+  {name:'信号挖掘机', renown:3540, hits:25, misses:8},
+];
+const totalBets = x => x.hits + x.misses;
+const hitRate = x => totalBets(x) ? x.hits/totalBets(x) : 0;
+const MIN_BETS = 5;
+function you(){ return {name:'你', renown:LEDGER.renown, hits:LEDGER.hits, misses:LEDGER.misses, me:true}; }
+function eyeRank(){ const me=you(); return RIVALS.filter(r=>totalBets(r)>=MIN_BETS && hitRate(r)>hitRate(me)).length + 1; }
+function renownRank(){ return RIVALS.filter(r=>r.renown>LEDGER.renown).length + 1; }
+
+/* ===================== 通用 UI：modal / toast ===================== */
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2300); }
+function openModal(html, wide){ $('#modal').innerHTML=`<div class="modal-mask" data-mask><div class="modal${wide?' wide':''}">${html}<span class="x" data-close>×</span></div></div>`; }
+function closeModal(){ $('#modal').innerHTML=''; }
+$('#modal').addEventListener('click', e=>{
+  if(e.target.closest('[data-close]')||e.target.hasAttribute('data-mask')){ closeModal(); return; }
+  const bet=e.target.closest('[data-bet]'); if(bet){ const [mid,sk]=bet.dataset.bet.split('|'); openBet(mid,sk); }
+});
+
+/* ===================== 状态条 ===================== */
+function renderStatus(){
+  const me=you(), tb=totalBets(me);
+  const eye = tb>=MIN_BETS ? '#'+eyeRank() : '未上榜';
+  const rate = tb ? Math.round(hitRate(me)*100)+'%' : '—';
+  $('#statusbar').innerHTML = `
+    <div class="stat"><div class="n">⛁ ${fmt(LEDGER.renown)}<span class="u">声望</span></div><div class="k">押注余额</div></div>
+    <div class="sep"></div>
+    <div class="stat click" data-lb="eye"><div class="n">🏆 ${eye}</div><div class="k">眼光榜 · 命中率 ${rate}</div></div>
+    <div class="sep"></div>
+    <div class="stat click" data-lb="renown"><div class="n">⛁ #${renownRank()}</div><div class="k">声望榜 · ${me.hits}胜${me.misses}负</div></div>
+    <div class="sep"></div>
+    <div class="stat click" data-panel="want"><div class="n">🙋 ${myWant.size}</div><div class="k">我要用的需求</div></div>
+    <div class="sep"></div>
+    <div class="stat click" data-panel="positions"><div class="n">🎲 ${POSITIONS.length}</div><div class="k">预测仓位 · 待结算 ${POSITIONS.filter(p=>p.status==='open').length}</div></div>
+    <div class="spacer"></div>
+    <button class="btn gold sm" id="recordBtn">🪪 晒卡</button>`;
+}
+function renderWantList(){
+  const ids=[...myWant]; if(!ids.length) return `<div class="empty">还没点「我要用」。在下面给真想用的功能举手，攒够人就解锁。</div>`;
+  return `<div class="poslist">${ids.map(id=>{const it=item(id); if(!it) return '';
+    const st = it.stage==='merged' ? '<span class="tag merged">已上线</span>' : it.waitlist>=it.unlockAt ? '<span class="tag live">已解锁</span>' : '<span class="tag pr">候补中</span>';
+    return `<div class="posrow liquid-glass"><div><div class="pt">${it.title}</div><div class="ps">${it.id} · ${it.scene} · 候补 ${it.waitlist}/${it.unlockAt}</div></div>${st}</div>`;
+  }).join('')}</div>`;
+}
+function renderPositions(){
+  if(!POSITIONS.length) return `<div class="empty">还没押注。在需求卡上「看多/看空」它会不会火，仓位会出现在这里 —— 这就是你回访的理由。</div>`;
+  return `<div class="poslist">${[...POSITIONS].reverse().map(p=>{
+    const m=mkById(p.marketId), it=itemOfMarket(m), s=m.sides.find(x=>x.key===p.sideKey);
+    const st = p.status==='won' ? '<span class="tag live">已赢</span>' : p.status==='lost' ? '<span class="tag issue">已输</span>' : '<span class="tag pr">待结算</span>';
+    return `<div class="posrow liquid-glass">
+      <div><div class="pt">${it?it.title:m.id} · 会不会火</div><div class="ps">押「${s.label}」· 锁定 ${p.lockedOdds.toFixed(2)}×</div></div>
+      <div class="right"><div class="pa">${fmt(p.amount)} 声望</div><div class="ps">${p.status==='won'?'赢得':'可赢'} ${fmt(p.amount*p.lockedOdds)}</div></div>
+      ${st}</div>`;
+  }).join('')}</div>`;
+}
+function openPanel(which){
+  const map={ want:['🙋 我要用的需求', renderWantList], positions:['🎲 我的预测仓位', renderPositions] };
+  const [title, fn]=map[which];
+  openModal(`<h3>${title}</h3><div style="margin-top:14px;max-height:62vh;overflow:auto">${fn()}</div>`, true);
+}
+$('#statusbar').addEventListener('click', e=>{
+  const p=e.target.closest('[data-panel]'); if(p){ openPanel(p.dataset.panel); return; }
+  const lb=e.target.closest('[data-lb]'); if(lb){ (typeof openLeaderboard==='function')?openLeaderboard(lb.dataset.lb):toast('榜单 · R8 接入'); return; }
+  if(e.target.closest('#recordBtn')){ (typeof shareRecordCard==='function')?shareRecordCard():toast('晒卡 · R7 接入'); return; }
+});
+
+/* ===================== R2: 三视图切换 ===================== */
+let view='value';
+const VIEWS=[{k:'value',label:'⊹ 价值'},{k:'timeline',label:'◷ 时间线'},{k:'scenario',label:'⊞ 场景'}];
+const VIEW_HINT={
+  value:'按战略定位分组 · 同一批需求按 Issue→PR→Merge 排列',
+  timeline:'按阶段看：计划(Issue) → 在做(PR) → 已上线战报(Merged)',
+  scenario:'按场景归类（连接/稳定/生成/定制…），只看跟你相关的那块',
+};
+const STAGE_ORD={issue:0,pr:1,merged:2};
+const byStage=(a,b)=>STAGE_ORD[a.stage]-STAGE_ORD[b.stage];
+const stageTag=s=>`<span class="stg ${s}"><span class="d"></span>${({issue:'Issue · 想做',pr:'PR · 在做',merged:'Merged · 已上线'})[s]}</span>`;
+const stageColor=s=>({issue:'var(--plan)',pr:'var(--wip)',merged:'var(--win)'})[s];
+
+function renderViewTabs(){
+  $('#viewtabs').innerHTML=VIEWS.map(v=>`<button class="${v.k===view?'on':''}" data-view="${v.k}">${v.label}</button>`).join('');
+  $('#viewhint').textContent=VIEW_HINT[view];
+}
+$('#viewtabs').addEventListener('click', e=>{ const b=e.target.closest('[data-view]'); if(!b) return; view=b.dataset.view; renderViewTabs(); renderView(); });
+
+/* 第一层 UI */
+function firstLayer(it){
+  if(it.stage==='merged'){
+    const lk=liked.has(it.id);
+    return `<div class="miniact">
+      <button class="iconbtn ${lk?'on':''}" data-like="${it.id}">❤ 点赞${lk?' ✓':''}</button>
+      <button class="iconbtn try" data-try="${it.id}">🧪 试玩</button>
+      <a class="prlink" href="#" onclick="return false" style="margin-left:2px">战报：${it.prRef||it.id} 已合并 ▸</a>
+    </div>`;
+  }
+  const want=myWant.has(it.id), pct=Math.min(100,Math.round(it.waitlist/it.unlockAt*100)), unlocked=it.waitlist>=it.unlockAt;
+  const subB = it.stage==='pr' ? `<button class="iconbtn ${subscribed.has(it.id)?'on':''}" data-sub="${it.id}">🔔 ${subscribed.has(it.id)?'已订阅上线':'订阅上线'}</button>` : '';
+  return `<div class="want">
+    <button class="wantbtn ${want?'on':''}" data-want="${it.id}">${want?'✓ 我要用':'🙋 我要用'}</button>
+    <div class="wantwrap">
+      <div class="wantmeta"><span>候补 ${it.waitlist} / ${it.unlockAt}</span>${unlocked?'<span class="unlocked">✅ 已解锁，团队评估中</span>':`<span>再 ${it.unlockAt-it.waitlist} 人解锁</span>`}</div>
+      <div class="progress"><i style="width:${pct}%"></i></div>
+    </div>
+  </div>
+  <div class="miniact">
+    <button class="iconbtn" data-invite="${it.id}">🤝 拉同行凑人解锁</button>
+    ${subB}
+  </div>`;
+}
+/* 第二层 UI（紧凑、可选） */
+function secondLayer(it){
+  const mk=marketFor(it); if(!mk) return '';
+  const sl=myStakeOn(mk.id,'long'), ss=myStakeOn(mk.id,'short');
+  return `<div class="l2">
+    <span class="l2t">🎲 赌它会不会火（押声望 · 赌候补破 ${mk.hotAt}）</span>
+    <button class="l2btn long ${sl>0?'staked':''}" data-bet="${mk.id}|long">看多 <b>${odds(mk,'long').toFixed(2)}×</b></button>
+    <button class="l2btn short ${ss>0?'staked':''}" data-bet="${mk.id}|short">看空 <b>${odds(mk,'short').toFixed(2)}×</b></button>
+    <button class="ch" data-challenge="${mk.id}" title="约同行对赌">⚔</button>
+  </div>`;
+}
+/* 统一 item 卡（三视图复用） */
+function itemCard(it){
+  return `<div class="mk liquid-glass">
+    <div class="mh"><span class="mtitle">${it.title}</span>${stageTag(it.stage)}</div>
+    <div class="chiprow"><span class="chip"><span class="id">${it.id}</span> ${it.scene}</span><span class="chip">${it.pos}</span>${it.when?`<span class="chip">${it.when}</span>`:''}</div>
+    ${firstLayer(it)}
+    ${secondLayer(it)}
+  </div>`;
+}
+function renderView(){
+  const el=$('#view');
+  if(view==='value') el.innerHTML=renderMindmap();
+  else if(view==='timeline') el.innerHTML=renderGantt();
+  else {
+    const scenes=[...new Set(ITEMS.map(i=>i.scene))];
+    el.innerHTML=scenes.map(sc=>{
+      const list=ITEMS.filter(i=>i.scene===sc);
+      return `<div class="grouphd">⊞ ${sc} <span style="opacity:.5">${list.length}</span></div><div class="grid3">${list.slice().sort(byStage).map(scenarioCard).join('')}</div>`;
+    }).join('');
+  }
+}
+
+/* ===================== R3/R5: item 上的交互（事件委托） ===================== */
+let myEmail='';
+function doWant(id){
+  const it=item(id); if(!it) return;
+  if(myWant.has(id)){ myWant.delete(id); it.waitlist--; toast('已取消'); }
+  else{ myWant.add(id); it.waitlist++; subscribed.add(id);
+    toast(it.waitlist>=it.unlockAt ? '🎉 你这票让它解锁了！上线邮件通知你' : '已登记 · 上线/解锁邮件通知你'); }
+  renderView(); renderStatus();
+}
+/* 点「我要用」=进入留资流程（首次留邮箱，之后免摩擦） */
+function onWantClick(id){
+  if(myWant.has(id) || myEmail){ doWant(id); return; }
+  const it=item(id);
+  openModal(`<h3>🙋 我要用</h3>
+    <p style="color:var(--w50);font-size:13px;margin:2px 0 12px">留个邮箱，<b style="color:#fff">${it?it.title:''}</b> 解锁 / 上线第一时间通知你（同时算你一票候补）。</p>
+    <div class="field"><label>邮箱</label><input id="wEmail" placeholder="you@company.com"></div>
+    <button class="btn coral" id="wGo" style="width:100%;margin-top:14px">举手 + 接收通知</button>
+    <p style="color:var(--w40);font-size:11px;text-align:center;margin:10px 0 0">仅用于上线通知 · demo 不真实发送</p>`);
+  $('#wGo').onclick=()=>{ const v=$('#wEmail').value.trim(); if(!v||!v.includes('@')){ toast('填个有效邮箱'); return; } myEmail=v; closeModal(); doWant(id); };
+}
+/* 紧凑节点动作（mindmap / gantt 复用） */
+function nodeActions(it){
+  if(it.stage==='merged') return `<button class="nbtn like ${liked.has(it.id)?'on':''}" data-like="${it.id}">❤</button><button class="nbtn" data-try="${it.id}">🧪 试玩</button>`;
+  const mk=marketFor(it);
+  return `<button class="nbtn want ${myWant.has(it.id)?'on':''}" data-want="${it.id}">🙋 ${it.waitlist}</button>${mk?`<button class="nbtn dice" data-predict="${mk.id}" title="赌它会不会火">🎲</button>`:''}`;
+}
+/* 价值 = mindmap 树 */
+function leafLi(it){
+  return `<li><div class="mnode lf" style="--ac:${stageColor(it.stage)}"><span class="stg ${it.stage}"><span class="d"></span></span><span class="mt">${it.title}</span><span class="nid">${it.id}</span>${nodeActions(it)}</div></li>`;
+}
+function renderMindmap(){
+  const groups={}; ITEMS.forEach(it=>{(groups[it.pos]=groups[it.pos]||[]).push(it);});
+  const posLi=([pos,list])=>`<li><div class="mnode" style="--ac:var(--w40)"><span class="meye">战略定位</span><span class="mt serif">${pos}</span></div>
+    <ul>${list.slice().sort(byStage).map(leafLi).join('')}</ul></li>`;
+  return `<ul class="mtree"><li><div class="mnode" style="--ac:#fff"><span class="mt serif">hello, world</span><span class="meye">world.cup</span></div>
+    <ul>${Object.entries(groups).map(posLi).join('')}</ul></li></ul>`;
+}
+/* 时间线 = 年份甘特：每个需求三段 Issue→PR→Merge（未到的阶段斜纹=预计） */
+const Y0=2024, Y1=2028, YEARS=[2024,2025,2026,2027], NOW=2026.5;
+const ypct=y=>((Math.max(Y0,Math.min(Y1,y))-Y0)/(Y1-Y0))*100;
+function ganttRow(it){
+  const t=it.t, segs=[];
+  segs.push({cls:'issue', a:t.issue, b:(it.stage==='issue'?NOW:t.pr), real:true});
+  if(it.stage==='issue'){
+    segs.push({cls:'pr', a:t.pr, b:t.merge, real:false});
+    segs.push({cls:'merge', a:t.merge, b:t.merge+0.2, real:false});
+  } else if(it.stage==='pr'){
+    segs.push({cls:'pr', a:t.pr, b:NOW, real:true});
+    segs.push({cls:'merge', a:t.merge, b:t.merge+0.2, real:false});
+  } else {
+    segs.push({cls:'pr', a:t.pr, b:t.merge, real:true});
+    segs.push({cls:'merge', a:t.merge, b:t.merge+0.2, real:true});
+  }
+  const bars=segs.map(s=>`<div class="seg ${s.cls}${s.real?'':' proj'}" style="left:${ypct(s.a)}%;width:${Math.max(1.5,ypct(s.b)-ypct(s.a))}%"></div>`).join('');
+  return `<div class="grow2">
+    <div class="glabel" style="margin-left:${ypct(t.issue)}%"><span class="stg ${it.stage}"><span class="d"></span></span><span>${it.title}</span><span class="nid">${it.id}</span>${nodeActions(it)}</div>
+    <div class="track">${bars}</div></div>`;
+}
+function renderGantt(){
+  const rows=ITEMS.slice().sort((a,b)=>a.t.issue-b.t.issue).map(ganttRow).join('');
+  return `<div class="gantt-hint">◷ 横轴＝年份 · 每个需求三段：<b style="color:var(--plan)">Issue</b> → <b style="color:var(--wip)">PR</b> → <b style="color:var(--win)">Merge</b>（斜纹＝预计）</div>
+    <div class="gchart"><div class="gbg">${YEARS.map(()=>'<span></span>').join('')}</div>
+    <div class="gyears">${YEARS.map(y=>`<span>${y}</span>`).join('')}</div>${rows}</div>`;
+}
+/* 场景 = 紧凑卡（一行 3 张） */
+function scenarioCard(it){
+  let body, acts;
+  if(it.stage==='merged'){
+    body=`<div class="merged-note">✅ 已上线 · ${it.prRef||it.id}</div>`;
+    acts=`<button class="nbtn like ${liked.has(it.id)?'on':''}" data-like="${it.id}">❤</button><button class="nbtn" data-try="${it.id}">🧪 试玩</button>`;
+  } else {
+    const pct=Math.min(100,Math.round(it.waitlist/it.unlockAt*100)), want=myWant.has(it.id), mk=marketFor(it);
+    body=`<div class="scbar"><div class="wantmeta">候补 ${it.waitlist}/${it.unlockAt}</div><div class="progress"><i style="width:${pct}%"></i></div></div>`;
+    acts=`<button class="wantbtn sm2 ${want?'on':''}" data-want="${it.id}">${want?'✓ 我要用':'🙋 我要用'}</button>${mk?`<button class="nbtn dice" data-predict="${mk.id}" title="赌它会不会火">🎲</button>`:''}`;
+  }
+  return `<div class="sccard liquid-glass">
+    <div class="sctop"><span class="stg ${it.stage}"><span class="d"></span>${({issue:'Issue',pr:'PR',merged:'Merged'})[it.stage]}</span><span class="nid">${it.id}</span></div>
+    <div class="sctitle">${it.title}</div>
+    ${body}
+    <div class="scacts">${acts}</div>
+  </div>`;
+}
+$('#view').addEventListener('click', e=>{
+  let b;
+  if(b=e.target.closest('[data-want]')){ onWantClick(b.dataset.want); return; }
+  if(b=e.target.closest('[data-predict]')){ openPredict(b.dataset.predict); return; }
+  if(b=e.target.closest('[data-like]')){ const id=b.dataset.like; liked.has(id)?liked.delete(id):liked.add(id); renderView(); return; }
+  if(b=e.target.closest('[data-try]')){ toast('🧪 demo：试玩跳转（原型未接）'); return; }
+  if(b=e.target.closest('[data-sub]')){ const id=b.dataset.sub; subscribed.has(id)?subscribed.delete(id):subscribed.add(id); toast(subscribed.has(id)?'已订阅 · 上线第一时间通知你':'已取消订阅'); renderView(); return; }
+  if(b=e.target.closest('[data-invite]')){ (typeof shareUnlockInvite==='function')?shareUnlockInvite(b.dataset.invite):toast('凑人解锁邀请 · R7 接入'); return; }
+  if(b=e.target.closest('[data-bet]')){ const [mid,sk]=b.dataset.bet.split('|'); openBet(mid,sk); return; }
+  if(b=e.target.closest('[data-challenge]')){ (typeof shareLongChallenge==='function')?shareLongChallenge(b.dataset.challenge):toast('对赌战书 · R7 接入'); return; }
+});
+
+/* 看多/看空下注单（复用引擎） */
+function openBet(marketId, sideKey){
+  const m=mkById(marketId); if(!m) return;
+  const s=m.sides.find(x=>x.key===sideKey), o=odds(m,sideKey), it=itemOfMarket(m), isLong=sideKey==='long';
+  let amt=Math.min(200,LEDGER.renown); const quick=[100,200,500];
+  openModal(`
+    <h3>${it?it.title:m.id} · 会不会火？</h3>
+    <p style="color:var(--w50);font-size:13px;margin:2px 0 16px">赌它的候补会不会在结算窗口内破 <b style="color:#fff">${m.hotAt}</b></p>
+    <div class="betpick">你押：<b style="color:${isLong?'var(--win)':'var(--lose)'}">${s.label}</b> · 当前赔率 <b style="color:var(--gold)">${o.toFixed(2)}×</b></div>
+    <div class="amtrow" id="amtrow">${quick.map(a=>`<button class="amtb" data-amt="${a}">${a}</button>`).join('')}<button class="amtb" data-amt="all">全下</button></div>
+    <div class="winline">押 <b id="amtShow">${amt}</b> 声望 · 预计可赢 <b id="winShow" style="color:var(--gold)">${Math.round(amt*o)}</b> 声望</div>
+    <button class="btn coral" id="confirmBet" style="width:100%;margin-top:16px">确认押注</button>
+    <p style="color:var(--w40);font-size:11px;text-align:center;margin:10px 0 0">虚拟声望 · 结算认候补数 · 不可提现</p>`);
+  const refresh=()=>{ $('#amtShow').textContent=amt; $('#winShow').textContent=Math.round(amt*o);
+    $$('#amtrow .amtb').forEach(b=>b.classList.toggle('on',(b.dataset.amt==='all'&&amt===LEDGER.renown)||b.dataset.amt===String(amt))); };
+  $('#amtrow').onclick=e=>{ const b=e.target.closest('[data-amt]'); if(!b) return; amt=b.dataset.amt==='all'?LEDGER.renown:Math.min(+b.dataset.amt,LEDGER.renown); refresh(); };
+  $('#confirmBet').onclick=()=>{ if(amt<=0){toast('声望不足');return;} const r=stake(marketId,sideKey,amt); if(!r.ok){toast(r.msg);return;} closeModal(); toast(`已押 ${fmt(amt)} 声望 · 锁定 ${r.lockedOdds.toFixed(2)}×`); renderAll(); };
+  refresh();
+}
+
+/* 🎲 看多/看空选择器（紧凑节点用） */
+function openPredict(marketId){
+  const m=mkById(marketId); if(!m) return; const it=itemOfMarket(m);
+  openModal(`
+    <h3>${it?it.title:m.id} · 会不会火？</h3>
+    <p style="color:var(--w50);font-size:13px;margin:2px 0 6px">押声望赌它的候补会不会在结算窗口内破 <b style="color:#fff">${m.hotAt}</b></p>
+    <div class="predrow">
+      <button class="bigchoice long" data-bet="${m.id}|long">看多 · 会火<b>${odds(m,'long').toFixed(2)}×</b></button>
+      <button class="bigchoice short" data-bet="${m.id}|short">看空 · 火不起来<b>${odds(m,'short').toFixed(2)}×</b></button>
+    </div>
+    <p style="color:var(--w40);font-size:11px;text-align:center;margin:14px 0 0">虚拟声望 · 结算认候补数 · 不可提现</p>`);
+}
+
+/* ===================== R4: 提个需求（开 Issue） ===================== */
+function openPropose(){
+  openModal(`
+    <h3>提个需求（开一个 Issue）</h3>
+    <p style="color:var(--w50);font-size:13px;margin:2px 0 6px">提交后进入「价值视角」的 Issue 阶段，等同行举手。攒够人就解锁。</p>
+    <div class="field"><label>一句话需求（标题）</label><input id="pTitle" placeholder="例：自动把工单同步到 Notion" maxlength="24"></div>
+    <div class="field"><label>场景</label><select id="pScene"><option>连接</option><option>稳定</option><option>生成</option><option>定制</option><option>观测</option><option>灵活</option></select></div>
+    <div class="field"><label>战略定位</label><select id="pPos"><option>world｜消息流转</option><option>hello｜界面生成</option></select></div>
+    <button class="btn coral" id="confirmProp" style="width:100%;margin-top:16px">提交（开 Issue）</button>`);
+  $('#confirmProp').onclick=()=>{ const title=$('#pTitle').value.trim(); if(!title){toast('给需求起个标题');return;} submitProposal(title,$('#pScene').value,$('#pPos').value); };
+}
+function submitProposal(title, scene, pos){
+  const id='#'+(900+(++SEQ-137));
+  ITEMS.unshift({id, pos, title, stage:'issue', scene, when:'', waitlist:1, unlockAt:100, prRef:'', t:{issue:NOW, pr:NOW+0.6, merge:NOW+1.2}});
+  myWant.add(id); buildMarkets();
+  closeModal(); view='value'; renderAll(); toast('已开 Issue · 你是第 1 个想要的 →');
+}
+$('#proposeBtn').onclick=openPropose;
+
+/* ===================== R6: 结算演示 ===================== */
+let TICKER_EVENTS=[
+  {pr:'#312', txt:'已合并 → 候补 210 破阈值，看多通吃'},
+  {pr:'#333', txt:'已合并 → 早期"我要用"者收到上线通知'},
+  {pr:'#366', txt:'候补冲上 138/150 · 看多赔率跳水'},
+];
+function renderTicker(){
+  const evs=TICKER_EVENTS.map(e=>`<span class="ev">● <span class="pr">${e.pr}</span> <b>${e.txt}</b></span>`).join('');
+  $('#ticker').innerHTML=`<div class="track">${evs}${evs}</div>`;
+}
+
+/* 快进结算：选一个有仓位的看多看空市场，模拟窗口到期 → 按候补 vs 阈值判定 */
+function fastForwardSettle(){
+  const open=MARKETS.filter(m=>m.status==='open');
+  if(!open.length){ toast('没有可结算的预测了'); return; }
+  const m=open.find(x=>POSITIONS.some(p=>p.marketId===x.id && p.status==='open')) || open[0];
+  const it=itemOfMarket(m);
+  const surge=Math.round(Math.random()*44-10); it.waitlist=Math.max(0, it.waitlist+surge);
+  const winKey = it.waitlist>=m.hotAt ? 'long' : 'short';
+  openModal(`
+    <h3 style="text-align:center">⏩ 结算窗口到期</h3>
+    <p style="text-align:center;color:var(--w50);font-size:13px;margin:2px 0 0">${it?it.title:m.id} · 会不会火</p>
+    <div id="ffstage" style="text-align:center;padding:26px 0 6px"><div class="ffspin">◌</div><div style="margin-top:12px;color:var(--w70);font-size:14px">统计候补数…</div></div>`);
+  setTimeout(()=>{
+    settle(m.id, winKey);
+    const win=m.sides.find(s=>s.key===winKey);
+    const won=POSITIONS.filter(p=>p.marketId===m.id && p.status==='won'), lost=POSITIONS.filter(p=>p.marketId===m.id && p.status==='lost');
+    const winnings=won.reduce((s,p)=>s+p.amount*p.lockedOdds,0);
+    const verdict = won.length ? `<div style="color:var(--win);font-weight:800;font-size:19px">你押中了！+${fmt(winnings)} 声望</div>`
+      : lost.length ? `<div style="color:var(--lose);font-weight:700">这把没押中（已计入战绩）</div>`
+      : `<div style="color:var(--w50)">你没押这个 —— 围观一次结算</div>`;
+    $('#ffstage').innerHTML=`
+      <div style="font-size:44px">${winKey==='long'?'🔥':'❄️'}</div>
+      <div style="margin-top:6px;font-weight:700">候补 ${it.waitlist} / 阈值 ${m.hotAt} → ${win.label}</div>
+      <div style="margin-top:14px">${verdict}</div>
+      <button class="btn coral" id="ffDone" style="width:100%;margin-top:16px">${won.length?'🎲 晒预测战绩':'知道了'}</button>`;
+    TICKER_EVENTS.unshift({pr:it?it.id:m.id, txt:`结算 → 候补 ${it.waitlist} · ${win.label}`});
+    renderTicker();
+    $('#ffDone').onclick=()=>{ closeModal(); if(won.length && typeof shareRecordCard==='function') shareRecordCard(); renderAll(); };
+    renderAll();
+  }, 1400);
+}
+$('#ffBtn').onclick=fastForwardSettle;
+
+/* 模拟 PR 合并：把一个 issue/pr 推进到 merged → 第一层兑现 + 需求先知卡 */
+function mergeAdvance(){
+  const cand=ITEMS.filter(i=>i.stage==='pr').concat(ITEMS.filter(i=>i.stage==='issue'));
+  const it=cand.find(i=>myWant.has(i.id)) || cand[0];
+  if(!it){ toast('没有可推进的需求了'); return; }
+  const wasEarly=myWant.has(it.id);
+  const mk=marketFor(it); if(mk){ settle(mk.id, it.waitlist>=mk.hotAt?'long':'short'); }
+  it.stage='merged'; it.prRef=it.id; it.when='刚刚';
+  const merge=NOW, pr=Math.min(it.t.pr, merge-0.25), issue=Math.min(it.t.issue, pr-0.25);
+  it.t={issue, pr, merge};
+  buildMarkets(); renderAll();
+  toast(`🔀 ${it.id} 已合并上线！`);
+  TICKER_EVENTS.unshift({pr:it.id, txt:'已合并 → 候补者收到上线通知'}); renderTicker();
+  if(wasEarly && typeof shareForeseerCard==='function') shareForeseerCard(it);
+}
+$('#mergeBtn').onclick=mergeAdvance;
+
+/* ===================== R7: 裂变三卡（html2canvas，复用指挥官驾照模式） ===================== */
+let CARD_NO = 137;
+function shareCard(opts){
+  const no = opts.no || ('#'+String(++CARD_NO).padStart(6,'0'));
+  openModal(`
+    <div id="sharecard" class="sharecard">
+      <span class="sc-num">world.cup ${no}</span>
+      <div class="sc-eye">${opts.eye||'WORLD.CUP'}</div>
+      ${opts.badge?`<div class="sc-badge">${opts.badge}</div>`:''}
+      <div class="sc-title serif">${opts.title}</div>
+      ${opts.sub?`<div class="sc-sub">${opts.sub}</div>`:''}
+      <div class="sc-lines">${(opts.lines||[]).map(l=>`<div class="sc-line"><span>${l[0]}</span><b>${l[1]}</b></div>`).join('')}</div>
+      ${opts.cta?`<div class="sc-cta">${opts.cta}</div>`:''}
+      <div class="sc-brand">Ezagent · world.cup · Issue, PR, Merge!</div>
+    </div>
+    <div class="sharebtns">
+      <button class="btn glass" id="scImg" style="flex:1">📸 存图</button>
+      <button class="btn gold" id="scTxt" style="flex:1">${opts.copyLabel||'🔗 复制文案'}</button>
+    </div>`, true);
+  $('#scImg').onclick=()=>{
+    if(typeof html2canvas!=='function'){ toast('截图组件未加载，可手动截屏分享'); return; }
+    toast('正在生成卡片图…');
+    html2canvas($('#sharecard'),{backgroundColor:'#0c0c14',scale:2,useCORS:true}).then(c=>{
+      const a=document.createElement('a'); a.download='world-cup-card.png'; a.href=c.toDataURL('image/png'); a.click(); toast('卡片已保存 ⬇');
+    }).catch(()=>toast('生成失败，可手动截屏分享'));
+  };
+  $('#scTxt').onclick=()=>{ navigator.clipboard?.writeText(opts.copyText||opts.title).then(()=>toast(opts.copiedToast||'文案已复制 →'),()=>toast('复制失败，长按手动复制')); };
+}
+const SITE = (typeof location!=='undefined' ? location.href.split('?')[0] : 'world.cup');
+
+/* 预测战绩卡（晒卡 / 押中后） */
+function shareRecordCard(){
+  const me=you(), tb=totalBets(me), rate=tb?Math.round(hitRate(me)*100):0;
+  shareCard({
+    eye:'我的预测战绩', badge: tb? `命中率 ${rate}%` : '新晋预言家',
+    title: (tb>=MIN_BETS && eyeRank()<=3) ? '我是 world.cup 眼光榜常客' : '我在 world.cup 押路线图',
+    lines:[['声望', fmt(me.renown)], ['战绩', `${me.hits} 胜 ${me.misses} 负`], ['我要用的需求', myWant.size+' 个'], ['眼光榜', tb>=MIN_BETS?('#'+eyeRank()):'冲榜中']],
+    cta:'来 world.cup 押你看好的功能，赌它会不会火 →',
+    copyText:`我在 Ezagent world.cup 押路线图：命中率 ${rate}%、${me.hits}胜${me.misses}负、声望 ${fmt(me.renown)}。来赌你看好的功能：${SITE}`,
+    copiedToast:'战绩文案已复制，去发群里 →'
+  });
+}
+/* 需求先知卡（早期我要用 + 上线） */
+function shareForeseerCard(it){
+  shareCard({
+    eye:'需求先知', badge:'EARLY ADOPTER',
+    title:`我早就要了「${it.title}」`,
+    sub:`现在它上线了（${it.prRef||it.id} 已合并）`,
+    lines:[['我举手得早','✅'], ['最终候补', it.waitlist+' 人'], ['状态','已上线']],
+    cta:'眼光不错？来挑下一个会火的功能 →',
+    copyText:`我早就在 Ezagent world.cup 举手要「${it.title}」，现在它上线了（${it.prRef||it.id} 已合并）。来挑下一个会火的：${SITE}`,
+    copiedToast:'先知卡文案已复制 →'
+  });
+}
+/* 凑人解锁邀请卡 */
+function shareUnlockInvite(id){
+  const it=item(id); if(!it) return; const need=Math.max(0,it.unlockAt-it.waitlist);
+  shareCard({
+    eye:'凑人解锁', badge: need>0?`还差 ${need} 人解锁`:'已解锁',
+    title:`帮我凑人解锁「${it.title}」`,
+    sub:`攒够 ${it.unlockAt} 个"我要用"，团队就评估开工`,
+    lines:[['当前候补', `${it.waitlist} / ${it.unlockAt}`], ['还差', need+' 人'], ['场景', it.scene]],
+    cta:'你也要用？点进来举个手，一起把它催出来 →',
+    copyLabel:'🔗 复制邀请',
+    copyText:`我在 Ezagent world.cup 想要「${it.title}」，还差 ${need} 人就解锁，帮我举个手：${SITE}?ref=unlock`,
+    copiedToast:'凑人邀请已复制，甩进群 →'
+  });
+}
+/* 看多对赌战书 */
+function shareLongChallenge(mid){
+  const m=mkById(mid); if(!m) return; const it=itemOfMarket(m);
+  const side = myStakeOn(mid,'short')>myStakeOn(mid,'long') ? '看空' : '看多';
+  const sideKey = side==='看多'?'long':'short';
+  shareCard({
+    eye:'对赌战书', badge:'CHALLENGE ⚔',
+    title:`我${side}「${it?it.title:m.id}」`,
+    sub:`赌它的候补${side==='看多'?'会破':'破不了'} ${m.hotAt}`,
+    lines:[['我的方向', side], ['当前赔率', odds(m,sideKey).toFixed(2)+'×'], ['标的', it?it.id:m.id]],
+    cta:'不服？来押反方向，赌战绩 →',
+    copyLabel:'🔗 复制战书',
+    copyText:`我在 Ezagent world.cup ${side}「${it?it.title:m.id}」会不会火（赌候补破 ${m.hotAt}）。赌不赌？来押反方向：${SITE}?ref=challenge`,
+    copiedToast:'对赌战书已复制，甩给对手 ⚔'
+  });
+}
+
+/* ===================== R8: 双榜 ===================== */
+function openLeaderboard(which){
+  which = which==='renown' ? 'renown' : 'eye';
+  const me=you();
+  const rows = which==='eye'
+    ? [...RIVALS, me].filter(r=>r.me || totalBets(r)>=MIN_BETS).sort((a,b)=>hitRate(b)-hitRate(a)||b.hits-a.hits)
+    : [...RIVALS, me].sort((a,b)=>b.renown-a.renown);
+  const body = rows.map((r,i)=>{
+    const metric = which==='eye'
+      ? (totalBets(r) ? `${Math.round(hitRate(r)*100)}% · ${r.hits}胜${r.misses}负` : '—')
+      : `${fmt(r.renown)} 声望`;
+    return `<div class="lbrow${r.me?' me':''}"><span class="rk">${i+1}</span><span class="nm">${r.name}${r.me?'（你）':''}</span><span class="mt2">${metric}</span></div>`;
+  }).join('');
+  openModal(`<h3>排行榜</h3>
+    <div class="lbtabs"><button class="${which==='eye'?'on':''}" data-lbt="eye">🏆 眼光榜 · 命中率</button><button class="${which==='renown'?'on':''}" data-lbt="renown">⛁ 声望榜 · 总量</button></div>
+    <div style="margin-top:10px;max-height:54vh;overflow:auto">${body}</div>
+    <p style="color:var(--w40);font-size:11px;margin-top:12px">眼光榜需 ≥${MIN_BETS} 注上榜（防刷）· 虚拟声望 · 不可提现</p>`, true);
+  $$('[data-lbt]').forEach(b=>b.onclick=()=>openLeaderboard(b.dataset.lbt));
+}
+
+/* ===================== 首屏 ===================== */
+function renderAll(){ renderStatus(); renderViewTabs(); renderView(); renderTicker(); }
+renderAll();
+</script>
+</body>
+</html>

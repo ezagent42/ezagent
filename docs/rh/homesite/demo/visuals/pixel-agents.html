@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pixel Agents · 像素粒子角色画廊</title>
+<style>
+  :root { --cream: #f7f3e8; --ink: #2b2724; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: var(--cream); overflow: hidden; }
+  body { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink); }
+  #stage { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  .hud {
+    position: fixed; left: 18px; bottom: 16px; z-index: 5;
+    font-size: 12px; letter-spacing: .04em; color: #9a9282; user-select: none;
+  }
+  .hud b { color: #6f675a; font-weight: 600; }
+  .hud kbd {
+    font: inherit; background: #ece6d6; border: 1px solid #ddd5c2;
+    border-radius: 4px; padding: 1px 5px; color: #6f675a;
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div class="hud">
+    <b>pixel agents</b> · 移动鼠标推开粒子，它们会看向你 · 按 <kbd>R</kbd> 重组 · 按 <kbd>M</kbd> 变形
+  </div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ───────────────────────────────────────────────────────────────────────
+  //  Config
+  // ───────────────────────────────────────────────────────────────────────
+  const CFG = {
+    cols: 3, rows: 3,           // gallery grid
+    grid: { w: 11, h: 14 },     // each critter is an 11×14 cell grid
+    fill: 0.66,                 // fraction of a gallery cell a critter occupies
+    gap: 0.16,                  // gap between pixels (fraction of pixel size)
+    spring: 0.060,              // pull toward home
+    damping: 0.80,              // velocity decay
+    mouseRadius: 120,           // px: repel influence radius
+    cream: "#f7f3e8",
+  };
+
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const mouse = { x: -9999, y: -9999, active: false };
+
+  // ───────────────────────────────────────────────────────────────────────
+  //  Small helpers
+  // ───────────────────────────────────────────────────────────────────────
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  // ───────────────────────────────────────────────────────────────────────
+  //  Procedural critter generation
+  //  Each critter: a silhouette (ellipse + ragged edge + optional spiky hair
+  //  or dripping feet) painted with an HSL color field (gradient + streaks).
+  //  Identity comes from 2 eye cells (+ optional mouth) drawn B/W on top.
+  // ───────────────────────────────────────────────────────────────────────
+
+  // 9 "personalities": hue/streak/shape recipes loosely echoing the reference.
+  const RECIPES = [
+    { shape: "round", hue: 250, span: 90,  sat: 62, lTop: 70, lBot: 55, streak: 1.0, morphHue:  60, mouth: false },
+    { shape: "tall",  hue: 150, span: 120, sat: 55, lTop: 78, lBot: 62, streak: 1.4, morphHue: -50, mouth: false },
+    { shape: "tall",  hue: 0,   span: 300, sat: 70, lTop: 62, lBot: 52, streak: 2.2, morphHue:  40, mouth: false },
+    { shape: "egg",   hue: 35,  span: 70,  sat: 60, lTop: 72, lBot: 50, streak: 0.8, morphHue: 180, mouth: false },
+    { shape: "round", hue: 60,  span: 110, sat: 72, lTop: 76, lBot: 64, streak: 1.2, morphHue:  90, mouth: false },
+    { shape: "ghost", hue: 230, span: 200, sat: 75, lTop: 60, lBot: 50, streak: 1.6, morphHue: -70, mouth: true  },
+    { shape: "tall",  hue: 90,  span: 140, sat: 58, lTop: 74, lBot: 58, streak: 1.1, morphHue: 120, mouth: false },
+    { shape: "round", hue: 320, span: 260, sat: 68, lTop: 64, lBot: 50, streak: 1.8, morphHue:  50, mouth: true  },
+    { shape: "tall",  hue: 175, span: 100, sat: 60, lTop: 66, lBot: 56, streak: 1.3, morphHue: -40, mouth: false },
+  ];
+
+  // Build the on/off silhouette grid for a recipe.
+  function buildSilhouette(shape) {
+    const W = CFG.grid.w, H = CFG.grid.h;
+    const cx = (W - 1) / 2;
+    // body region & radii vary by shape
+    let topPad, botPad, rx, ry, cy;
+    if (shape === "round") { topPad = 1; botPad = 1; rx = W * 0.46; ry = H * 0.42; cy = H * 0.5; }
+    else if (shape === "egg") { topPad = 1; botPad = 2; rx = W * 0.42; ry = H * 0.48; cy = H * 0.46; }
+    else if (shape === "ghost") { topPad = 1; botPad = 0; rx = W * 0.44; ry = H * 0.5;  cy = H * 0.46; }
+    else /* tall */ { topPad = 2; botPad = 1; rx = W * 0.40; ry = H * 0.52; cy = H * 0.5; }
+
+    const cells = [];
+    // per-row edge wobble so silhouettes aren't a sterile ellipse
+    const wobble = Array.from({ length: H }, () => rand(-0.9, 0.9));
+    for (let gy = 0; gy < H; gy++) {
+      for (let gx = 0; gx < W; gx++) {
+        const dx = (gx - cx) / (rx + wobble[gy] * 0.5);
+        const dy = (gy - cy) / ry;
+        let on = dx * dx + dy * dy <= 1;
+        // spiky hair: a few stray pixels poking above the top
+        if (!on && gy <= topPad && Math.random() < 0.30 && Math.abs(gx - cx) < rx * 0.8) on = true;
+        // ghost feet: ragged dripping bottom row
+        if (shape === "ghost" && gy === H - 1) on = (gx % 2 === 0) && Math.abs(gx - cx) < rx;
+        if (on) cells.push({ gx, gy });
+      }
+    }
+    return cells;
+  }
+
+  // HSL color for a body cell — vertical streaks (gx) + top→bottom gradient (gy).
+  function colorField(r, gx, gy) {
+    const W = CFG.grid.w, H = CFG.grid.h;
+    const tx = gx / (W - 1), ty = gy / (H - 1);
+    const h = r.hue + r.span * (tx * r.streak % 1) + rand(-6, 6);
+    const s = r.sat + rand(-6, 6);
+    const l = lerp(r.lTop, r.lBot, ty) + rand(-4, 4);
+    return { h, s, l };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  //  Critter — a bag of spring particles laid out on a gallery cell
+  // ───────────────────────────────────────────────────────────────────────
+  class Critter {
+    constructor(col, row, recipe, seedPhase) {
+      this.col = col; this.row = row; this.r = recipe;
+      this.phase = seedPhase;                 // de-syncs breathe/blink/morph
+      this.nextBlink = rand(1.5, 5);
+      this.blinkUntil = -1;
+      this.morphAmt = 0;                       // 0..1 toward alternate form
+      this.particles = [];
+      this.#spawn();
+    }
+
+    #spawn() {
+      const W = CFG.grid.w, H = CFG.grid.h;
+      const sil = buildSilhouette(this.r.shape);
+      const present = new Set(sil.map(c => `${c.gx},${c.gy}`));
+      const eyeRow = Math.round(H * 0.46);
+
+      // Each eye = TWO same-size pixels: one white (sclera) + one black (pupil).
+      // side 0 = left cell, side 1 = right cell; which one is the pupil is
+      // decided at draw time so the eyes can "glance" toward the cursor.
+      const eyeCells = [
+        { gx: 3, gy: eyeRow, eye: 0, side: 0 },
+        { gx: 4, gy: eyeRow, eye: 0, side: 1 },
+        { gx: 6, gy: eyeRow, eye: 1, side: 0 },
+        { gx: 7, gy: eyeRow, eye: 1, side: 1 },
+      ];
+      const special = new Map();
+      const mark = (gx, gy, info) => {
+        const key = `${gx},${gy}`;
+        special.set(key, info);
+        if (!present.has(key)) { sil.push({ gx, gy }); present.add(key); }
+      };
+      for (const e of eyeCells) mark(e.gx, e.gy, { kind: "eye", eye: e.eye, side: e.side });
+
+      // optional mouth: short dark bar two rows below the eyes (full-size pixels)
+      if (this.r.mouth) {
+        const my = eyeRow + 3;
+        for (let gx = 4; gx <= 6; gx++) mark(gx, my, { kind: "mouth" });
+      }
+
+      for (const c of sil) {
+        const sp = special.get(`${c.gx},${c.gy}`);
+        const base = colorField(this.r, c.gx, c.gy);
+        this.particles.push({
+          gx: c.gx, gy: c.gy,
+          kind: sp ? sp.kind : "body",
+          eye: sp ? sp.eye : -1, side: sp ? sp.side : -1,
+          h: base.h, s: base.s, l: base.l,
+          x: 0, y: 0, vx: 0, vy: 0,         // current pos/vel (set in layout)
+          hx: 0, hy: 0,                      // home pos (set in layout)
+          ph: rand(0, Math.PI * 2),         // shimmer phase
+        });
+      }
+    }
+
+    // Compute home positions for current canvas size; (re)scatter on demand.
+    layout(scatter) {
+      const cw = canvas.clientWidth / CFG.cols;
+      const ch = canvas.clientHeight / CFG.rows;
+      const cellCX = this.col * cw + cw / 2;
+      const cellCY = this.row * ch + ch / 2;
+      const px = Math.floor(Math.min(cw, ch) / Math.max(CFG.grid.w, CFG.grid.h) * CFG.fill);
+      this.px = px;
+      this.step = px * (1 + CFG.gap);
+      this.cx = cellCX; this.cy = cellCY;
+      const ox = cellCX - (CFG.grid.w - 1) / 2 * this.step;
+      const oy = cellCY - (CFG.grid.h - 1) / 2 * this.step;
+      for (const p of this.particles) {
+        p.hx = ox + p.gx * this.step;
+        p.hy = oy + p.gy * this.step;
+        if (scatter) {
+          const a = rand(0, Math.PI * 2), d = rand(60, 260);
+          p.x = p.hx + Math.cos(a) * d;
+          p.y = p.hy + Math.sin(a) * d;
+          p.vx = Math.cos(a) * rand(1, 4);
+          p.vy = Math.sin(a) * rand(1, 4);
+        }
+      }
+    }
+
+    scatter() {
+      for (const p of this.particles) {
+        const a = rand(0, Math.PI * 2), d = rand(40, 90);
+        p.vx += Math.cos(a) * d * 0.06;
+        p.vy += Math.sin(a) * d * 0.06;
+      }
+    }
+
+    toggleMorph() { this.morphTarget = this.morphTarget ? 0 : 1; }
+
+    update(dt, t) {
+      // breathe: whole grid gently scales around its center
+      const breathe = 1 + Math.sin(t * 1.1 + this.phase) * 0.025;
+      // morph: ease morphAmt toward its target (auto-oscillates + manual toggle)
+      const autoMorph = (Math.sin(t * 0.22 + this.phase) + 1) / 2;
+      const target = this.morphTarget != null ? this.morphTarget : autoMorph;
+      this.morphAmt += (target - this.morphAmt) * 0.04;
+      // blink scheduling
+      if (t >= this.nextBlink && this.blinkUntil < 0) {
+        this.blinkUntil = t + 0.13;
+        this.nextBlink = t + rand(2, 6);
+      }
+      if (this.blinkUntil > 0 && t > this.blinkUntil) this.blinkUntil = -1;
+
+      for (const p of this.particles) {
+        // target = home, scaled by breathe around center, plus shimmer jitter
+        const shx = Math.sin(t * 3.0 + p.ph) * this.px * 0.06;
+        const shy = Math.cos(t * 3.3 + p.ph) * this.px * 0.06;
+        const tx = this.cx + (p.hx - this.cx) * breathe + shx;
+        const ty = this.cy + (p.hy - this.cy) * breathe + shy;
+
+        // spring toward target
+        p.vx += (tx - p.x) * CFG.spring;
+        p.vy += (ty - p.y) * CFG.spring;
+
+        // mouse repulsion (your tuning function — see repelForce below)
+        if (mouse.active) {
+          const dx = p.x - mouse.x, dy = p.y - mouse.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < CFG.mouseRadius) {
+            const f = repelForce(dx, dy, dist, CFG.mouseRadius);
+            p.vx += f.fx; p.vy += f.fy;
+          }
+        }
+
+        p.vx *= CFG.damping; p.vy *= CFG.damping;
+        p.x += p.vx; p.y += p.vy;
+      }
+    }
+
+    draw(t) {
+      const half = this.px / 2;
+      const blinking = this.blinkUntil > 0;
+      // Discrete 1-pixel "look": which cell of each 2-pixel eye is the pupil.
+      // Toward the cursor when present, else a slow idle glance left/right.
+      const pupilSide = mouse.active
+        ? (mouse.x >= this.cx ? 1 : 0)
+        : (Math.sin(t * 0.6 + this.phase) > 0 ? 1 : 0);
+
+      for (const p of this.particles) {
+        if (p.kind === "body") {
+          const shimmer = Math.sin(t * 2.2 + p.ph) * 5;
+          const h = p.h + this.morphAmt * this.r.morphHue;
+          const l = clamp(p.l + shimmer + this.morphAmt * 6, 18, 92);
+          ctx.fillStyle = `hsl(${h} ${p.s}% ${l}%)`;
+        } else if (p.kind === "mouth") {
+          ctx.fillStyle = "#241f1c";
+        } else { // eye: full-size pixel — black if it's the pupil (or blinking), else white
+          ctx.fillStyle = (blinking || p.side === pupilSide) ? "#1a1714" : "#ffffff";
+        }
+        // every pixel is identical in size — uniform grid, no sub-pixels
+        ctx.fillRect(p.x - half, p.y - half, this.px, this.px);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ⬇⬇⬇  YOUR CONTRIBUTION  ⬇⬇⬇
+  //
+  //  repelForce — how hard a particle is pushed away from the cursor, and how
+  //  that push falls off with distance. This single function decides the whole
+  //  "feel" of the gallery's reaction to the mouse:
+  //
+  //    • linear falloff      → soft, gooey, lava-lamp drift
+  //    • inverse-square      → snappy, explosive shove right at the cursor
+  //    • capped/flat-top     → skittish, uniform scatter inside the radius
+  //
+  //  Inputs:  dx, dy  = vector FROM mouse TO particle (already points "away")
+  //           dist    = its length (px), guaranteed 0 < dist < radius
+  //           radius  = CFG.mouseRadius
+  //  Return:  { fx, fy } velocity impulse to ADD to the particle this frame.
+  //
+  //  TODO(you): replace the placeholder below with the falloff you like.
+  //  Start by tweaking STRENGTH and the `falloff` expression.
+  // ═══════════════════════════════════════════════════════════════════════
+  function repelForce(dx, dy, dist, radius) {
+    const STRENGTH = 6;
+    const nx = dx / dist, ny = dy / dist;          // unit direction, away from cursor
+    const falloff = 1 - dist / radius;             // 1 at cursor → 0 at edge (linear)
+    const mag = STRENGTH * falloff;
+    return { fx: nx * mag, fy: ny * mag };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  //  Boot
+  // ───────────────────────────────────────────────────────────────────────
+  const critters = [];
+  for (let i = 0; i < CFG.cols * CFG.rows; i++) {
+    const col = i % CFG.cols, row = Math.floor(i / CFG.cols);
+    critters.push(new Critter(col, row, RECIPES[i % RECIPES.length], i * 0.7));
+  }
+
+  // size the canvas to the window (crisp on retina) and re-home particles
+  function sizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  let last = performance.now() / 1000;
+  function frame(now) {
+    const t = now / 1000;
+    const dt = Math.min(t - last, 0.05); last = t;
+    ctx.fillStyle = CFG.cream;
+    ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+    for (const c of critters) { c.update(dt, t); c.draw(t); }
+    requestAnimationFrame(frame);
+  }
+
+  // ── input ──
+  window.addEventListener("pointermove", e => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true; });
+  window.addEventListener("pointerleave", () => mouse.active = false);
+  window.addEventListener("keydown", e => {
+    if (e.key === "r" || e.key === "R") critters.forEach(c => c.scatter());
+    if (e.key === "m" || e.key === "M") critters.forEach(c => c.toggleMorph());
+  });
+  window.addEventListener("resize", () => { sizeCanvas(); critters.forEach(c => c.layout(false)); });
+
+  // size canvas, lay out scattered so everyone assembles on load, then go
+  sizeCanvas();
+  critters.forEach(c => c.layout(true));
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

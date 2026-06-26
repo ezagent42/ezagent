@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自举开发流程 · 接力链 · 多角色视角</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2430; --muted:#8a93a3;
+    --line:#d7dce4; --dim:0.34; --radius:14px;
+    --shadow:0 1px 2px rgba(16,24,40,.06),0 6px 16px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",
+      "Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1240px;margin:0 auto;padding:28px 22px 80px}
+  header h1{font-size:21px;margin:0 0 4px;letter-spacing:.3px}
+  header p.sub{margin:0;color:var(--muted);font-size:13px}
+
+  /* ---- role tabs ---- */
+  .roles{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 6px}
+  .role-tab{
+    border:1.5px solid var(--line);background:var(--card);color:var(--ink);
+    padding:8px 16px;border-radius:999px;font-size:14px;cursor:pointer;
+    font-weight:600;transition:all .15s ease;display:flex;align-items:center;gap:7px;
+  }
+  .role-tab .dot{width:9px;height:9px;border-radius:50%;background:var(--rc)}
+  .role-tab:hover{border-color:var(--rc)}
+  .role-tab.active{color:#fff;background:var(--rc);border-color:var(--rc)}
+  .role-hint{margin:10px 0 2px;font-size:13px;color:var(--muted)}
+  .role-hint b{color:var(--ink)}
+
+  /* ---- chain ---- */
+  .chain-scroll{overflow-x:auto;padding:14px 2px 8px;margin-top:8px}
+  .chain{display:flex;align-items:stretch;min-width:max-content;gap:0;position:relative;padding-bottom:76px}
+
+  /* ---- 回收闭环虚线 (⑨ PR → ② 验证/运营) ---- */
+  svg.loopback{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
+  svg.loopback path{fill:none;stroke:#aeb6c2;stroke-width:2;stroke-dasharray:7 5}
+  svg.loopback text{fill:#7e8794;font-size:11px;font-weight:600}
+  svg.loopback.active path{stroke:#c92a2a}
+  svg.loopback.active text{fill:#c92a2a}
+  .node{
+    width:138px;flex:0 0 138px;background:var(--card);border:1.5px solid var(--line);
+    border-radius:var(--radius);padding:11px 10px;cursor:pointer;position:relative;
+    transition:all .18s ease;box-shadow:var(--shadow);
+  }
+  .node:hover{transform:translateY(-2px)}
+  .node .idx{
+    position:absolute;top:-10px;left:-8px;width:24px;height:24px;border-radius:50%;
+    background:var(--ink);color:#fff;font-size:13px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .node .nname{font-size:14px;font-weight:700;margin:6px 0 9px;min-height:38px}
+  .badges{display:flex;flex-wrap:wrap;gap:4px}
+  .badge{
+    font-size:10.5px;font-weight:700;color:#fff;border-radius:6px;padding:2px 6px;white-space:nowrap;
+  }
+  .me-flag{
+    position:absolute;top:9px;right:8px;font-size:10px;font-weight:800;
+    color:var(--rc);border:1.5px solid var(--rc);border-radius:6px;padding:1px 5px;
+    background:#fff;display:none;
+  }
+  /* spotlight states */
+  .node.owned{border-color:var(--rc);box-shadow:0 0 0 3px var(--rc-soft),var(--shadow)}
+  .node.owned .me-flag{display:block}
+  .node.dim{opacity:var(--dim);filter:saturate(.5)}
+  .node.selected{outline:2.5px dashed var(--ink);outline-offset:2px}
+  .node.dropped{opacity:.28;filter:grayscale(1)}
+  .node.dropped .nname{text-decoration:line-through}
+
+  /* ---- arrows ---- */
+  .arrow{
+    flex:0 0 88px;width:88px;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;cursor:pointer;position:relative;padding-top:8px;
+  }
+  .arrow .baton{
+    font-size:10.5px;color:var(--ink);background:#eef1f6;border:1px solid var(--line);
+    border-radius:999px;padding:2px 7px;margin-bottom:4px;white-space:nowrap;
+    max-width:86px;overflow:hidden;text-overflow:ellipsis;transition:all .15s;
+  }
+  .arrow .line{width:100%;height:0;border-top:2px solid var(--line);position:relative}
+  .arrow .line::after{
+    content:"";position:absolute;right:-1px;top:-5px;border:5px solid transparent;
+    border-left-color:var(--line);
+  }
+  .arrow .gate-tag{font-size:10px;color:var(--muted);margin-top:5px}
+  .arrow:hover .baton{background:#fff;border-color:var(--ink);transform:scale(1.04)}
+  .arrow:hover .line,.arrow:hover .line::after{border-top-color:var(--ink);border-left-color:var(--ink)}
+  .arrow.gate-selected .baton{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .arrow.dropped{opacity:.28;filter:grayscale(1)}
+
+  /* ---- 贯穿层 band ---- */
+  .band{
+    margin-top:18px;border:1.5px dashed var(--line);border-radius:var(--radius);
+    background:linear-gradient(0deg,#fbfcfe,#f1f4f9);padding:12px 14px;
+  }
+  .band-title{font-size:12px;color:var(--muted);font-weight:700;margin-bottom:8px;letter-spacing:.5px}
+  .band-row{display:flex;gap:10px;flex-wrap:wrap}
+  .span{
+    flex:1;min-width:180px;background:var(--card);border:1.5px solid var(--line);
+    border-radius:10px;padding:9px 12px;cursor:pointer;transition:all .15s;
+  }
+  .span:hover{transform:translateY(-1px)}
+  .span b{font-size:13px}
+  .span span{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+  .span.owned{border-color:var(--rc);box-shadow:0 0 0 3px var(--rc-soft)}
+  .span.dim{opacity:var(--dim)}
+  .span.selected{outline:2.5px dashed var(--ink);outline-offset:2px}
+
+  /* ---- drop demo ---- */
+  .demo-bar{margin-top:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .demo-btn{
+    border:0;background:var(--ink);color:#fff;font-weight:700;font-size:13.5px;
+    padding:10px 18px;border-radius:10px;cursor:pointer;transition:all .15s;
+  }
+  .demo-btn:hover{opacity:.88}
+  .demo-btn.on{background:#c92a2a}
+  .demo-caption{font-size:13px;color:#c92a2a;font-weight:600;display:none}
+  .demo-caption.show{display:block}
+  .feedback-arrow{font-size:12.5px;color:#c92a2a;font-weight:600;display:none;
+    margin-top:8px;padding:8px 12px;border:1.5px dashed #ffa8a8;border-radius:10px;background:#fff5f5}
+  .feedback-arrow.show{display:block}
+
+  /* ---- detail drawer ---- */
+  .drawer{
+    margin-top:20px;background:var(--card);border:1.5px solid var(--line);
+    border-radius:var(--radius);padding:18px 20px;min-height:120px;box-shadow:var(--shadow);
+  }
+  .drawer.empty{color:var(--muted);display:flex;align-items:center;justify-content:center;
+    font-size:13.5px;min-height:90px;background:transparent;box-shadow:none;border-style:dashed}
+  .d-head{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .d-head .d-idx{width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;
+    font-weight:700;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .d-head h3{margin:0;font-size:17px}
+  .d-head .kind{font-size:11px;font-weight:700;color:#fff;background:var(--muted);
+    border-radius:6px;padding:2px 8px}
+  .reframe{
+    background:var(--rc-soft);border:1.5px solid var(--rc);border-radius:12px;
+    padding:12px 14px;margin-bottom:14px;
+  }
+  .reframe .rf-tag{font-size:11px;font-weight:800;color:var(--rc);margin-bottom:8px;letter-spacing:.3px}
+  .rf-line{display:flex;gap:8px;margin:5px 0;font-size:13.5px;align-items:baseline}
+  .rf-line .k{flex:0 0 78px;color:var(--rc);font-weight:700}
+  .rf-line.gate .k{color:#c92a2a}
+  .meta-grid{display:grid;grid-template-columns:78px 1fr;gap:7px 14px;font-size:13.5px}
+  .meta-grid .k{color:var(--muted);font-weight:600}
+  .meta-grid .truth{color:var(--ink);font-weight:700}
+  .gate-card .gc-pass{color:#2b8a3e;font-weight:600}
+  .gate-card .gc-fail{color:#c92a2a;font-weight:600;margin-top:6px}
+  .gate-card .baton-of{font-size:12.5px;color:var(--muted);margin-bottom:10px}
+  footer{margin-top:30px;font-size:12px;color:var(--muted);line-height:1.7}
+  footer code{background:#eef1f6;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>自举开发流程 · 真相源接力链</h1>
+    <p class="sub">同一条接力链，切换角色 → 高亮「我负责的环节」，卡片换成「我接什么棒 / 我交什么棒 / 我的 gate」。点节点看卡片，点箭头看 gate。</p>
+  </header>
+
+  <div class="roles" id="roles"></div>
+  <div class="role-hint" id="roleHint"></div>
+
+  <div class="chain-scroll">
+    <div class="chain" id="chain"></div>
+  </div>
+
+  <div class="demo-bar">
+    <button class="demo-btn" id="dropBtn">▶ 模拟：某功能指标不达标 → drop 子树</button>
+    <span class="demo-caption" id="dropCaption">北极星指标实测回收后不达标（如 7 天阅读 &lt; 500）→ 砍掉该功能子树（⑥→⑦⑧⑨），反哺回 ③ 重选痛点</span>
+  </div>
+  <div class="feedback-arrow" id="feedbackArrow">↩ 北极星指标读数 反哺回 ③ 痛点 —— 指标在 ② 就定好了，实测末尾回收；开发与验证错位（这周开发、下周验证），不达标即砍子树</div>
+
+  <div class="drawer empty" id="drawer">点上面任意「环节」看它的卡片，点「箭头」看那一道 gate 的验收标准</div>
+
+  <footer>
+    单文件 demo · 数据源 = <code>07-定版-自举开发流程-10分钟.md</code> · 三机制：交接即 gate（上一棒不合格不放行）／ 测试先行（spec 卡 Gherkin = 验收 = 测试用例 = PR 过 gate 判据）／ 不达标 drop 子树。
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   形 / 内容分离：以下全是「内容」（声明式数据）。
+   下方渲染函数是「形」，只读这些对象，不写死任何文案。
+   ============================================================ */
+
+const ROLES = [
+  {key:'pm-lead', name:'产品负责人', color:'#6b46c1', soft:'#efe9fb', owns:[1,4]},
+  {key:'ops',     name:'运营',       color:'#e8590c', soft:'#fdeede', owns:[2]},
+  {key:'product', name:'产品',       color:'#1b61c9', soft:'#e6f0fc', owns:[3,5,6]},
+  {key:'design',  name:'设计',       color:'#d6336c', soft:'#fce7ef', owns:[5]},
+  {key:'dev',     name:'研发',       color:'#2b8a3e', soft:'#e6f4ea', owns:[6,7,8,9]},
+];
+const ROLE_COLOR = Object.fromEntries(ROLES.map(r=>[r.key,r.color]));
+
+// 每环节：负责角色 owners、中性卡片字段、以及交接给下一棒的「真相源棒」truth
+// 顺序调整：验证/运营 提前到第 2 棒，在此定下战略定位对应的北极星指标（实测数据末尾回收才验证）
+const NODES = [
+  {id:1, name:'战略 / 定位', owners:['pm-lead'],
+   input:'团队产品意图', output:'价值主张 · PR/FAQ · 交易公式',
+   truth:'一页定位稿', tools:'飞书 docx；Miro 根节点'},
+  {id:2, name:'验证 / 运营', owners:['ops'],
+   input:'一页定位稿（战略定位）', output:'北极星指标定义（实测数据末尾回收后才验证）',
+   truth:'北极星指标', tools:'飞书 OKR；指标采集 → 落库；drop 阈值'},
+  {id:3, name:'痛点', owners:['product'],
+   input:'北极星指标（承接战略定位）', output:'多张痛点卡 · 优先级打分',
+   truth:'排序后的痛点清单', tools:'飞书 docx/bitable；Miro / xmind 机会树'},
+  {id:4, name:'用户锚定', owners:['pm-lead'],
+   input:'排序后的痛点清单', output:'团队画像 · 零教育成本评估 · 岗位↔层映射',
+   truth:'岗位↔认领层映射表', tools:'飞书 bitable'},
+  {id:5, name:'体验主张', owners:['product','design'],
+   input:'排序后的痛点清单', output:'四条 UX 承诺 · 线框/原型',
+   truth:'主界面线框/原型', tools:'excalidraw；html：Lovable / Zeplin'},
+  {id:6, name:'功能 / 模块', owners:['product','dev'],
+   input:'主界面线框/原型', output:'模块 · 功能 spec · 用户故事 · 验收 · ICE · 价值卡 · 挂钩牌',
+   truth:'功能 spec 卡', tools:'飞书 docx；Zeplin；markmap'},
+  {id:7, name:'issue', owners:['dev'],
+   input:'功能 spec 卡', output:'issue（含范围 / 不做 / 验收用例）',
+   truth:'issue 本身', tools:'GitHub（REST / GraphQL）'},
+  {id:8, name:'测试', owners:['dev'],
+   input:'issue（携带 spec 卡 Gherkin）', output:'测试代码 · 测试结果（绿/红）',
+   truth:'对应 Gherkin 的测试套件', tools:'dev-loop：plan→code→runner；mix test / CI'},
+  {id:9, name:'PR', owners:['dev'],
+   input:'测试套件（写实现让它变绿）', output:'PR · 测试通过 · 过 gate',
+   truth:'合并后的 PR', tools:'GitHub + reviewer 过 gate 清单'},
+];
+
+// 箭头 gate：i→i+1 的验收标准（不过则打回上一棒）
+const GATES = {
+  '1-2':{pass:'价值主张明确 + PR/FAQ · 交易公式齐', fail:'打回重写一页定位稿'},
+  '2-3':{pass:'北极星指标可量化、对齐战略定位', fail:'重定北极星指标'},
+  '3-4':{pass:'痛点按优先级打分排序 + 每个痛点都能撬动北极星指标', fail:'回去补打分 / 对齐北极星'},
+  '4-5':{pass:'零教育成本评估通过 + 每个岗位都映射到认领层', fail:'重做用户锚定'},
+  '5-6':{pass:'主界面线框/原型成形 + 四条 UX 承诺落地', fail:'重做体验主张'},
+  '6-7':{pass:'功能 spec 卡的验收用例（Gherkin）写全', fail:'spec 卡没写验收 → 不许开 issue'},
+  '7-8':{pass:'issue 范围/不做明确 + 携带 spec 卡 Gherkin', fail:'补全 issue 再开测试'},
+  '8-9':{pass:'测试套件可跑且对应 Gherkin、必须全绿', fail:'测试不绿 → 不许提 PR / 不许合'},
+};
+
+// 角色 reframe：REFRAME[roleKey][nodeId] = {接, 交, gate}
+const REFRAME = {
+  'pm-lead':{
+    1:{接:'团队产品意图', 交:'一页定位稿（价值主张为主，PR/FAQ·交易公式作附件）', gate:'价值主张明确才放行'},
+    4:{接:'排序后的痛点清单', 交:'岗位↔认领层映射表', gate:'零教育成本评估通过 + 每个岗位都能映射到认领层'},
+  },
+  'ops':{
+    2:{接:'一页定位稿（战略定位）', 交:'北极星指标（这个定位对应的成功度量）', gate:'北极星指标可量化、对齐战略定位；实测数据末尾回收后对照阈值，不达标触发 drop 砍子树'},
+  },
+  'product':{
+    3:{接:'北极星指标（承接战略定位）', 交:'排序后的痛点清单（机会树）', gate:'痛点按优先级打分排序 + 每个痛点都指向北极星指标'},
+    5:{接:'排序后的痛点清单', 交:'四条 UX 承诺 + 线框/原型（与设计共担）', gate:'主界面线框/原型成形'},
+    6:{接:'主界面线框/原型', 交:'功能 spec 卡（用户故事+Gherkin+ICE+价值卡+挂钩牌，与研发共担）', gate:'每张 spec 卡验收用例写全，才放行给 issue'},
+  },
+  'design':{
+    5:{接:'排序后的痛点清单（产品给）', 交:'主界面线框/原型', gate:'四条 UX 承诺落到可点原型'},
+  },
+  'dev':{
+    6:{接:'主界面线框/原型', 交:'功能 spec 卡（与产品共担）', gate:'每条 Gherkin 都能写成测试'},
+    7:{接:'功能 spec 卡', 交:'issue（含范围 / 不做 / 验收用例）', gate:'issue 范围明确 + 携带 spec 卡 Gherkin'},
+    8:{接:'issue（携带 Gherkin）', 交:'可跑且对应 Gherkin 的测试套件', gate:'测试必须变绿才交 PR'},
+    9:{接:'测试套件（写实现让它变绿）', 交:'合并后的 PR', gate:'只动本 spec 卡范围 + reviewer 过 gate 清单逐条勾'},
+  },
+};
+
+const DROP_SUBTREE = [6,7,8,9];   // drop 演示砍掉的功能子树（功能/issue/测试/PR）
+const DROP_FEEDBACK_TO = 3;       // 反哺回 ③ 痛点
+
+/* ============================================================
+   形：渲染 + 交互引擎。只读上面的数据。
+   ============================================================ */
+let activeRole = 'pm-lead';
+let selected = null;       // {type:'node'|'gate'|'span', id}
+let dropped = false;
+
+const $ = s=>document.querySelector(s);
+
+function roleOf(key){return ROLES.find(r=>r.key===key)}
+function nodeOf(id){return NODES.find(n=>n.id===id)}
+
+// 计算每个节点的聚光灯状态：owned / normal / dim
+function nodeState(id){
+  const r = roleOf(activeRole);
+  if(r.owns.includes(id)) return 'owned';
+  // 相邻（直接上下游）= normal；否则 dim
+  const adjacent = r.owns.some(o=>Math.abs(o-id)===1);
+  return adjacent ? 'normal' : 'dim';
+}
+
+function renderRoles(){
+  const el = $('#roles'); el.innerHTML='';
+  ROLES.forEach(r=>{
+    const b=document.createElement('button');
+    b.className='role-tab'+(r.key===activeRole?' active':'');
+    b.style.setProperty('--rc', r.color);
+    b.innerHTML=`<span class="dot"></span>${r.name}`;
+    b.onclick=()=>{activeRole=r.key; selected=null; renderAll();};
+    el.appendChild(b);
+  });
+}
+
+function renderHint(){
+  const r=roleOf(activeRole);
+  const owned=r.owns.map(i=>'⑨⑧⑦⑥⑤④③②①'[9-i]).join('');
+  $('#roleHint').innerHTML=
+    `当前视角：<b style="color:${r.color}">${r.name}</b> · 高亮我负责的环节 <b>${owned}</b>；其余环节变灰但仍可点。`;
+  document.documentElement.style.setProperty('--rc', r.color);
+  document.documentElement.style.setProperty('--rc-soft', r.soft);
+}
+
+function badgeHTML(owners){
+  return owners.map(o=>{
+    const r=roleOf(o);
+    return `<span class="badge" style="background:${r.color}">${r.name}</span>`;
+  }).join('');
+}
+
+function renderChain(){
+  const chain=$('#chain'); chain.innerHTML='';
+  NODES.forEach((n,i)=>{
+    // node
+    const st=nodeState(n.id);
+    const d=document.createElement('div');
+    d.className='node '+(st==='owned'?'owned':st==='dim'?'dim':'')
+      + (selected&&selected.type==='node'&&selected.id===n.id?' selected':'')
+      + (dropped&&DROP_SUBTREE.includes(n.id)?' dropped':'');
+    d.style.setProperty('--rc', roleOf(activeRole).color);
+    d.style.setProperty('--rc-soft', roleOf(activeRole).soft);
+    d.dataset.nid=n.id;
+    d.innerHTML=`
+      <div class="idx">${'⑨⑧⑦⑥⑤④③②①'[9-n.id]}</div>
+      <div class="me-flag">我 ◀</div>
+      <div class="nname">${n.name}</div>
+      <div class="badges">${badgeHTML(n.owners)}</div>`;
+    d.onclick=()=>{selected={type:'node',id:n.id}; renderAll();};
+    chain.appendChild(d);
+
+    // arrow (between i and i+1)
+    if(i<NODES.length-1){
+      const key=`${n.id}-${n.id+1}`;
+      const a=document.createElement('div');
+      a.className='arrow'+(selected&&selected.type==='gate'&&selected.id===key?' gate-selected':'')
+        + (dropped&&DROP_SUBTREE.includes(n.id)&&DROP_SUBTREE.includes(n.id+1)?' dropped':'');
+      a.innerHTML=`
+        <div class="baton" title="交接的真相源棒">${n.truth}</div>
+        <div class="line"></div>
+        <div class="gate-tag">⚑ gate</div>`;
+      a.onclick=()=>{selected={type:'gate',id:key}; renderAll();};
+      chain.appendChild(a);
+    }
+  });
+}
+
+// 常驻回收闭环：⑨ PR 上线 → 实测指标回收 → 回 ② 验证/运营 对照北极星阈值
+const SVGNS='http://www.w3.org/2000/svg';
+function renderLoopback(){
+  const chain=$('#chain');
+  const old=chain.querySelector('svg.loopback'); if(old) old.remove();
+  const n2=chain.querySelector('[data-nid="2"]');
+  const n9=chain.querySelector('[data-nid="9"]');
+  if(!n2||!n9) return;
+  const x2=n2.offsetLeft+n2.offsetWidth/2;
+  const x9=n9.offsetLeft+n9.offsetWidth/2;
+  const yBot=n2.offsetTop+n2.offsetHeight;
+  const lane=yBot+50;
+  const svg=document.createElementNS(SVGNS,'svg');
+  svg.setAttribute('class','loopback'+(dropped?' active':''));
+  svg.setAttribute('width', chain.scrollWidth);
+  svg.setAttribute('height', lane+24);
+  const path=document.createElementNS(SVGNS,'path');
+  path.setAttribute('d', `M ${x9} ${yBot} L ${x9} ${lane} L ${x2} ${lane} L ${x2} ${yBot+2}`);
+  svg.appendChild(path);
+  const head=document.createElementNS(SVGNS,'path');   // 指回 ② 的箭头
+  head.setAttribute('d', `M ${x2-5} ${yBot+11} L ${x2} ${yBot+1} L ${x2+5} ${yBot+11}`);
+  svg.appendChild(head);
+  const t=document.createElementNS(SVGNS,'text');
+  t.setAttribute('x', (x2+x9)/2); t.setAttribute('y', lane-7);
+  t.setAttribute('text-anchor','middle');
+  t.textContent='↩ PR 上线 → 实测指标回收 → 回 ② 验证/运营 对照北极星阈值 → 不达标 drop 砍子树 → 反哺 ③ 痛点';
+  svg.appendChild(t);
+  chain.appendChild(svg);
+}
+
+function renderDrawer(){
+  const dw=$('#drawer');
+  if(!selected){
+    dw.className='drawer empty';
+    dw.textContent='点上面任意「环节」看它的卡片，点「箭头」看那一道 gate 的验收标准';
+    return;
+  }
+  dw.className='drawer';
+  const r=roleOf(activeRole);
+
+  if(selected.type==='node'){
+    const n=nodeOf(selected.id);
+    const rf = (REFRAME[activeRole]||{})[n.id];
+    const idxCh='⑨⑧⑦⑥⑤④③②①'[9-n.id];
+    let html=`<div class="d-head"><span class="d-idx">${idxCh}</span>
+      <h3>${n.name}</h3>${badgeHTML(n.owners)}</div>`;
+    if(rf){
+      html+=`<div class="reframe">
+        <div class="rf-tag">${r.name}视角 · 我在这一棒</div>
+        <div class="rf-line"><span class="k">我接什么棒</span><span>${rf.接}</span></div>
+        <div class="rf-line"><span class="k">我交什么棒</span><span>${rf.交}</span></div>
+        <div class="rf-line gate"><span class="k">我的 gate</span><span>${rf.gate}</span></div>
+      </div>`;
+    }
+    html+=`<div class="meta-grid">
+      <span class="k">输入（真相源）</span><span>${n.input}</span>
+      <span class="k">产出物</span><span>${n.output}</span>
+      <span class="k">钦定下游真相源</span><span class="truth">${n.truth}</span>
+      <span class="k">工具</span><span>${n.tools}</span>
+    </div>`;
+    dw.innerHTML=html;
+
+  }else if(selected.type==='gate'){
+    const g=GATES[selected.id];
+    const [a,b]=selected.id.split('-').map(Number);
+    const from=nodeOf(a), to=nodeOf(b);
+    dw.innerHTML=`<div class="d-head"><span class="kind">⚑ GATE</span>
+      <h3>${from.name} → ${to.name}</h3></div>
+      <div class="gate-card">
+        <div class="baton-of">交接的真相源棒：<b>${from.truth}</b></div>
+        <div class="gc-pass">✓ 验收：${g.pass}</div>
+        <div class="gc-fail">✗ 不过：${g.fail}</div>
+      </div>`;
+  }
+}
+
+function renderDrop(){
+  $('#dropBtn').classList.toggle('on', dropped);
+  $('#dropBtn').textContent = dropped
+    ? '↺ 复位（取消 drop）'
+    : '▶ 模拟：某功能指标不达标 → drop 子树';
+  $('#dropCaption').classList.toggle('show', dropped);
+  $('#feedbackArrow').classList.toggle('show', dropped);
+}
+
+function renderAll(){
+  renderRoles(); renderHint(); renderChain(); renderLoopback(); renderDrawer(); renderDrop();
+}
+
+$('#dropBtn').onclick=()=>{dropped=!dropped; renderAll();};
+window.addEventListener('resize', renderLoopback);
+
+renderAll();
+</script>
+</body>
+</html>
