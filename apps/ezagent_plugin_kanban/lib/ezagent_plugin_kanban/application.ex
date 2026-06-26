@@ -103,13 +103,13 @@ defmodule EzagentPluginKanban.Application do
     ]
   end
 
-  # config_surface/0 — the `/plugins/kanban` world nav route is DELIBERATELY NOT
-  # declared in this backend-only PR (K1–K3). The world plugin surfaces every
-  # plugin's `config_surface/0` as a clickable nav entry
-  # (`world/workspace_plugin_data.ex` list_plugins), but the world-side handler +
-  # React (`Kanban.tsx`/`KanbanCanvas.tsx` + `world/kanban_{data,actions}.ex`)
-  # are NOT on main yet — they land with the K4 world-rewire PR (read-model
-  # list-by-role + the `entity://<ws>/agent/<id>?action=kanban.<a>` dispatch
-  # target). Declaring the route now would ship a "看板" entry that 404s on click.
-  # Re-add config_surface/0 in K4 together with that handler. (Default → nil.)
+  # config_surface/0 — K4 world-rewire 已在 main（`world/kanban_{data,actions}.ex`
+  # + `Kanban.tsx` 均已落地，`/plugins/kanban` 正常渲染、不再 404）。按上一版注释的
+  # 约定「Re-add config_surface/0 in K4 together with that handler」，此处补回：
+  # world 的 list_plugins 据此把 Kanban 卡片渲染成指向 `/plugins/kanban` 的可点入口
+  # （FP5 S9 续 —— 此前 Kanban 卡显示 "no config"、无操作面入口）。
+  @impl Ezagent.Plugin
+  def config_surface do
+    %{kind: :route, path: "/plugins/kanban", label: "看板"}
+  end
 end
