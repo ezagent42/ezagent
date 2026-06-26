@@ -257,7 +257,12 @@
   # arch-cap-bump: cc-headless SDK sync_result state slice persists conversation/error/token fields (+5)
   # arch-cap-bump: #956 hello Surface.handle_set_shell persists the generated site shell — {:set, :shell} + {:set, :shell_css} (within the surface slice, cross-slice stays 0); net +1
   # arch-cap-bump: kanban-as-role — the kanban plugin's single board-write chokepoint Shared.commit/1 ({:set, :tree}); all 24 actions converge through it (cross-slice stays 0); net +1
-  set_effect_sites: 128,
+  # arch-cap-bump: py-agent (Task 1.2) — Behavior.PyAgent's new subprocess-backed
+  #   state: the last_input/result/error triple is consolidated into ONE set_last/3
+  #   helper line (3 sites, not 12), plus {:set, :timeout_ms} (configure) and
+  #   {:set, :python_phase} (handle_signal). 3 irreducible new sites (cross-slice
+  #   stays 0); net +3.
+  set_effect_sites: 131,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
