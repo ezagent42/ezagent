@@ -51,3 +51,30 @@
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/08-4agent-comprehensive`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。**2026-06-26 agent-browser 实地跑通**。聊天 mention 必须用真实键盘 autocomplete(§8.2),不能 native-setter 硬塞。回显 agent = seeded py_default(逐字)。 -->
+
+> **flavor drift + 实地修正**:人肉记录用 echo flavor(`echo:` 前缀);当前 main 退役 echo→py,`echo.py` **逐字回显(无前缀)**。**实地核实**:零配置新建的 `native`/`np`/`hello_builder` **不回显**;会回显的是 seeded **`py_default`**(py+echo.py)。故往返用 `py_default`(scenario-03 已加为成员)。payload 用可区分标记(`ping-43`)。**关键**:@mention 必须真实键盘走 autocomplete,native-setter 设 textarea 会让 mention 失效 → 发成普通文本 → 无人回(已踩坑)。
+
+**前置(自动化)**:scenario-03 已自动跑(session `e2e-test-1`);**额外把 seeded `py_default` 加为成员**(`entity://system/agent/py_default`,逐字回显的 agent)。停在该 session 会话页。
+**入口 URL**:`http://world.localhost:10042/sessions?session=<encodeURIComponent("session://system/default/e2e-test-1")>`
+**关键变量**:`ROUTING=0`(无显式路由规则)—— 决定 step1 行为。
+
+| # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | 真键入无 @ + Enter | `keyboard type` 进 `textarea[aria-label="Message"]` | `hello-noroute` | 用户气泡上屏;**且 1.5s 后无新 agent 气泡** `count [data-sender-kind=agent][data-mine=false] = 0`(ROUTING=0,无 @ 不送达) | `s04-step1-no-mention-no-reply-auto.png` |
+| 2 | 真键入 `@py` 触发并过滤候选 | `click textarea` → `keyboard type '@py'` | `@py` | `visible ul[role="listbox"]` 且仅含 `@py_default`(**实地✅**) | — |
+| 3 | click 候选(真实点击插 mention) | `click 'ul[role="listbox"] button'` | — | textarea 变 `@py_default `(**实地✅**) | — |
+| 4 | 真键入 payload + 发送 | `keyboard type ' ping-43'` → `press Enter` | ` ping-43` | py_default 回包 `visible [data-sender-kind=agent][data-mine=false]` + `text~ [data-sender-kind=agent][data-mine=false] "ping-43"`(**逐字回显,实地✅** 回包 `@py_default  ping-43`) | `s04-step4-py-reply-auto.png` ✅ |
+
+**断言映射**:
+- 「agent 收到并回」→ step4 agent 气泡含 `ping-43`(py 逐字回显;**非** `echo:` 前缀)。**2026-06-26 实地坐实**。
+- 「LV chat 显示去/回消息」→ step1 用户气泡 + step4 agent 气泡均上屏。
+- 「(设计 09)默认 always 规则使无 @ 也送达」→ **step1 断言「无 agent 气泡」即坐实 divergence**(实测 ROUTING=0 无 always 规则,与设计 09 不一致)。**这是把人肉记录里的 divergence 发现转成机器可回归的守卫**:若将来补了默认规则,step1 断言会翻(需同步更新)。
+- 「无路由消息的 DLQ 归宿」→ 非 UI 断言,留 scenario-12 审计。
+
+**清理**:无(消息进 transcript,随 session 删除一并清理)。

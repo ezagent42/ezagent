@@ -126,3 +126,26 @@ cc PTY worker 要 **>10s 才 `:ready`**(Claude Code TUI 冷启动 + trust/login 
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/05-cc-agent-roundtrip`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。**2026-06-26 agent-browser 实地验证:UI 路径下 claude-bot 不回(回归守卫成立)**。注意上方人肉记录的更正结论:cc 经 API/足够 deadline 可用,world-UI 创建/回复路径是真正该修的 DX bug;故本断言是 **UI 路径** 的回归守卫,非"cc 整体坏"。 -->
+
+**前置(自动化)**:scenario-03 已跑(session `e2e-test-1` 存在)。用 seeded cc agent **`claude-bot`** 做被测体。**UI 路径已知问题**:慢激活(~10s)> `invocation.ex` 5s 默认 deadline / ReadyGate(见上方记录),且 claude-bot 是陈旧 agent,送达后不回。
+**入口 URL**:`http://world.localhost:10042/sessions?session=<encodeURIComponent("session://system/default/e2e-test-1")>`
+> **cc 新建字段约束(2026-06-26 实地,补 UI-create DX bug 证据)**:经 UI 新建 cc(非用 claude-bot)需填 `project_cwd`,否则 `error:cwd_required_for_cc`;cwd 还须是**已存在目录**,否则 `error:{:cwd_not_a_dir, ...}`;补齐后提交 `data-last-dispatch` 回 `idle` 但 agent **未创建**(疑似 activate_timeout 回滚,印证上方"UI 5s deadline 对 cc 太短")。故 runbook 默认用 seeded claude-bot。
+
+| # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | navigate + 开邀请框 | `/sessions?session=<enc>` → `button[aria-label="Invite a member"]` `.click()` | — | `visible #world-invite-input` | — |
+| 2 | fill(**完整URI**)+ requestSubmit | `#world-invite-input` | `entity://system/agent/claude-bot` | `attr li[data-kind=agent] data-online=true`(claude-bot 加入即 online,**实地✅**) | — |
+| 3 | 真键盘 @ + autocomplete + 发送 | `keyboard type '@claude'`→`click 'ul[role=listbox] button'`→`keyboard type ' cc-ping-99'`→`press Enter` | `@claude-bot cc-ping-99` | `visible [data-mine=true]`(自己消息上屏,**实地✅**) | — |
+| 4 | wait 16–30s 等 cc 回复 | `[data-sender-kind=agent][data-mine=false]` | — | `text~ [data-sender-kind=agent] "cc-ping-99"` —— **2026-06-26 实地 🟥 FAIL**(等 16s claude-bot online 却无 reply 气泡) | `s05-step1-cc-no-reply-auto.png` ✅ |
+
+**断言映射**:
+- 「cc-agent 真实 SDK sidecar 回复(UI 路径)」→ step4 reply 气泡断言 → **2026-06-26 实地确认 FAIL**(claude-bot online 却不回);**UI-create/reply DX bug 修复后应 PASS**,此即回归守卫。
+- 「LV 渲染富文本对话」→ step3 `data-mine=true` 上屏(发送侧 PASS)+ step4 回复侧(当前 FAIL)。
+
+**清理**:无(用 seeded `claude-bot`,未建新实体)。可从 session 移除该成员还原。
