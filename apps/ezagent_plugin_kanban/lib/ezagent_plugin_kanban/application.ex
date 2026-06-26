@@ -103,13 +103,11 @@ defmodule EzagentPluginKanban.Application do
     ]
   end
 
-  # config_surface/0 — the `/plugins/kanban` world nav route is DELIBERATELY NOT
-  # declared in this backend-only PR (K1–K3). The world plugin surfaces every
-  # plugin's `config_surface/0` as a clickable nav entry
-  # (`world/workspace_plugin_data.ex` list_plugins), but the world-side handler +
-  # React (`Kanban.tsx`/`KanbanCanvas.tsx` + `world/kanban_{data,actions}.ex`)
-  # are NOT on main yet — they land with the K4 world-rewire PR (read-model
-  # list-by-role + the `entity://<ws>/agent/<id>?action=kanban.<a>` dispatch
-  # target). Declaring the route now would ship a "看板" entry that 404s on click.
-  # Re-add config_surface/0 in K4 together with that handler. (Default → nil.)
+  # config_surface/0 — `/plugins/kanban` world nav 入口（Phase 1 A）。K4(#1007) 已落地
+  # world-side handler + React（`world/kanban_{data,actions}.ex` + `Kanban.tsx` 列表态，
+  # `routes.ex:100` `path == "/plugins/kanban"`），点击不再 404，故现在声明。world
+  # `workspace_plugin_data.ex` `list_plugins` 经 `config_target/1`（认 `%{kind: :route}`）
+  # 把它渲染成 Plugins 页可点入口。
+  @impl Ezagent.Plugin
+  def config_surface, do: %{kind: :route, path: "/plugins/kanban", label: "看板"}
 end
