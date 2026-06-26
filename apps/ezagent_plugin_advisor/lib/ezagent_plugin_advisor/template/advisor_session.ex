@@ -18,6 +18,14 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   @impl Ezagent.Kind.Template
   def template_name, do: "session.advisor"
 
+  # F3 declared-capability: advisor's `instantiate/3` requires an `operator_uri`
+  # the generic "New session" picker does NOT supply, so it must be hidden from
+  # that picker (picking it would fail closed with `{:invalid_template, …}`).
+  # advisor sessions are created through their own vertical's create path which
+  # provides the operator.
+  @impl Ezagent.Kind.Template
+  def directly_creatable?, do: false
+
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
