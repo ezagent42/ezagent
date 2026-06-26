@@ -45,6 +45,27 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
     # only re-globalized the connection onto the dying test pid and clobbered
     # concurrent suites with "owner exited" errors (#92).
 
+    # Flake root cause (#108): `GC.sweep/1` is a GLOBAL table scan
+    # (`AnonBinding.list_expired/2` has NO test/session scoping — it is
+    # correctly global in production, §3.4). Each test below asserts on the
+    # GLOBAL reaped COUNT (`{:ok, 0}` / `{:ok, 1}`), which silently assumes
+    # the `socialware_anon_bindings` table contains ONLY this test's rows.
+    # Under the full concurrent umbrella another expired binding can be
+    # visible in the shared sandbox connection — and if ITS session is still
+    # live, the sweep reaps THAT row, returning a count one higher than the
+    # test expects (deterministically reproduced: a foreign live-session
+    # expired binding yields `{:ok, 1}` where the test asserts `{:ok, 0}`,
+    # anon_user_gc_test.exs:179). The honest fix is test ISOLATION, not
+    # weakening the production sweep: start each sweep test from an empty
+    # binding table so `list_expired/2` sees only this test's fixtures. The
+    # delete runs in THIS test's owned sandbox connection (the same view
+    # `list_expired/2` reads), so it removes exactly the rows that would
+    # otherwise contaminate the count.
+    setup do
+      EzagentCore.Repo.delete_all(Ezagent.Socialware.AnonBinding)
+      :ok
+    end
+
     test "reaps an abandoned anon-User (leave + delete users/binding) and is a no-op for a fresh one" do
       now = DateTime.utc_now()
       session_uri = spawn_session()
@@ -187,6 +208,60 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
                       %{reason: :leave_unconfirmed, entity_uri: e}}
 
       assert e == URI.to_string(a)
+    end
+
+    # Regression for the #108 flake root cause. `GC.sweep/1` scans the WHOLE
+    # binding table (correctly — it is a global maintenance pass). The
+    # COUNT-based assertions above silently assume the table holds only this
+    # test's rows; a coexisting expired binding whose session is still LIVE
+    # gets reaped and bumps the count. This test deterministically pins that
+    # contamination mechanism AND proves the per-describe `setup` table-clear
+    # neutralizes it: with the table reset, an UNCONFIRMED-scenario row `a`
+    # (torn-down session) plus a coexisting live-session expired row `f`
+    # yields `{:ok, 1}` (f reaped, a not) — and clearing-then-seeding-only-`a`
+    # yields the isolated `{:ok, 0}` the UNCONFIRMED test depends on.
+    test "ISOLATION: a coexisting live-session expired binding is what inflates the count (root-cause lock)" do
+      now = DateTime.utc_now()
+
+      # `a`: the UNCONFIRMED scenario — expired, session torn down → not reapable.
+      s_a = spawn_session()
+      {:ok, a_pid} = Ezagent.KindRegistry.lookup(s_a)
+      {:ok, a} = AnonUser.mint(s_a)
+      spawn_anon_kind(a)
+      join(s_a, a)
+      {:ok, _} = AnonBinding.touch(a, s_a, DateTime.add(now, -49 * 60 * 60, :second))
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          a_pid
+        )
+
+      # `f`: a FOREIGN-shaped row — expired, but its session is still LIVE
+      # (stands in for another suite's leaked/concurrent binding).
+      s_f = spawn_session()
+      {:ok, f} = AnonUser.mint(s_f)
+      spawn_anon_kind(f)
+      join(s_f, f)
+      {:ok, _} = AnonBinding.touch(f, s_f, DateTime.add(now, -49 * 60 * 60, :second))
+
+      # With BOTH rows present, the global sweep reaps the live-session row `f`
+      # (count 1) and skips the unreadable `a` — i.e. a count assertion that
+      # assumed `a` was the only expired row would see `{:ok, 1}` (the flake).
+      assert {:ok, 1} = GC.sweep(now)
+      # `f` was reaped (binding + user gone) — it is the source of the count.
+      assert AnonBinding.get(f) == nil
+      assert Ezagent.Users.get_by_uri(f) == nil
+      # `a` is untouched (unreapable), proving the count came from `f`, not `a`.
+      assert AnonBinding.get(a) != nil
+      assert Ezagent.Users.get_by_uri(a) != nil
+
+      # The fix: starting from an empty table (what the describe `setup` does
+      # before every test) and seeding ONLY `a` yields the isolated result the
+      # UNCONFIRMED test asserts — no foreign live-session row to inflate it.
+      EzagentCore.Repo.delete_all(Ezagent.Socialware.AnonBinding)
+      {:ok, _} = AnonBinding.touch(a, s_a, DateTime.add(now, -49 * 60 * 60, :second))
+      assert {:ok, 0} = GC.sweep(now)
     end
   end
 
