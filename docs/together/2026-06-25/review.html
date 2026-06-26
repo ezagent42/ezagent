@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-06-25</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .cap{background:#dcfce7;color:#166534}.plan{background:#e0e7ff;color:#3730a3}.fix{background:#fef3c7;color:#92400e}.test{background:#f3e8ff;color:#6b21a8}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .warn{color:#b45309}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-06-25 周期</h1>
+<p>数据窗口 <code>65da2c05..bbb575d5</code>（origin/main）。原始数据见 <code>stats/cycle-data.{json,md}</code>。本回顾面向全体开发者：呈现产品大局、统计团队效能、提炼改进点。</p>
+
+<div>
+  <span class="kpi"><b>38</b>合并 PR</span>
+  <span class="kpi"><b>18</b>能力交付 PR</span>
+  <span class="kpi"><b>5</b>贡献者</span>
+  <span class="kpi"><b>30.8k</b>LOC（增+删）</span>
+  <span class="kpi"><b>~35h</b>交付周期合计（去 2 陈旧分支）</span>
+</div>
+
+<div class="big">
+<b>产品大局（这周期把"agent 运行时地基"一次性补齐）：</b> 本周期主线是把"已落地但不完整"的 agent 运行时彻底地基化——
+<b>flavor+config 统一</b>（A：Entity.Agent 从存储统一解析 config/behaviors）→ <b>role-foundation RF-1..9</b>（agent = 角色×风味，行为 per-instance 加载/运行时挂卸、role 配方、native 风味、passive 隔离、list-by-role）→ <b>kanban-as-role</b>（把看板从"resource GenServer"改造成"角色×native agent"，验证地基）→ <b>py-agent P1</b>（通用脚本化 python agent 风味的起点）。同时产品面推进 <b>hello AI 生成器</b>、<b>agent console</b>、<b>Feishu 日用入口 F9</b>。一句话：<b>agent 是什么、怎么配置、怎么运行</b>这三个长期模糊的问题，这周期给出了结构化答案。
+</div>
+
+<h2>§1 昨日工作统计（按任务）</h2>
+<table>
+<tr><th>昨日任务（6-25 plan track）</th><th>昨日完成</th><th>实现 PR</th><th>开发人员</th><th>summary</th></tr>
+<tr><td><b>agent 运行时整合 A+B+C</b></td>
+<td>A：flavor+config 统一到 domain.agent（registry→domain、behaviors registry-derived、config API/schema、create-config ingest）；B：4 个 sidecar 迁 erlexec + 禁裸 Port.open AST gate；C：hello/protocol_api/world 走 LocalRuntime</td>
+<td>#976 #978 #979 #980 #992（A）· #989（B）· #977（C）</td><td>allenwoods</td>
+<td>✅ 完成。agent 配置/进程/运行时三条接缝统一</td></tr>
+
+<tr><td><b>role-foundation（地基）</b></td>
+<td>RF-1 per-instance 行为解析（keystone）/ RF-2-3 运行时 mount-detach / RF-4 roles+RoleRegistry / RF-5a role-create+持久 passive / RF-6 passive 隔离 / RF-7 list-by-role / RF-8 native 风味 / RF-9 orchestrator 收编。含 2 轮对抗评审的 spec+plan</td>
+<td>#983 #984 #987 #988 #993（设计）· #995 #998 #999 #1000 #1001 #1002 #1003 #1005（实现）</td><td>allenwoods</td>
+<td>✅ RF-1..9 全量上 main。"agent=角色×风味"地基完整</td></tr>
+
+<tr><td><b>kanban-as-role</b></td>
+<td>把 kanban 从 resource-Kind 改造成 role×native agent：recipe + native per-instance 派发 + create+passive+per-node-owner（K1-3）；world 走 list-by-role + entity://agent 派发 + 删 Kanban Kind + resource-only AST gate（K4-5），live e2e 渲染看板</td>
+<td>#986（handoff）· #1004 · #1007</td><td>jjkysy（kanban 插件原作 #964）+ allenwoods（role 改造）</td>
+<td>✅ 完成。看板成为 role-foundation 的第一个消费验证</td></tr>
+
+<tr><td><b>py-agent（地基收口）</b></td>
+<td>设计（spec 2 轮评审）+ plan（1 轮评审）；P1：脚本 config_dir 通道 + py 风味 + Behavior.PyAgent + 安全门。终态：py 为唯一 python 风味，np/echo 收成 py-role</td>
+<td>#1008（docs）· #1009（P1）</td><td>allenwoods</td>
+<td>🟡 P1 完成；P2-P4（echo→py 删插件、world e2e、np→py-role）进行中</td></tr>
+
+<tr><td><b>hello / json-render 底座</b></td>
+<td>公开预览页的 AI 页面生成器：纯 shadcn 渲染、协作白板、增量编辑</td>
+<td>#982</td><td>zhaomaota97</td>
+<td>✅ 完成（目标②底座）。⚠️ 分支早于周期，建议下次起新分支</td></tr>
+
+<tr><td><b>agent console</b></td>
+<td>world 内 agent console M1-M4（UI）+ 设计分析 + config_schema/0 callback</td>
+<td>#981（分析）· #994</td><td>gagameow</td>
+<td>🟡 M1-M4 落地；config 面板逐字段编辑 + domain.agent 接线待补（结转 6-26）</td></tr>
+
+<tr><td><b>Feishu 日用缺口 + E2E 体系</b></td>
+<td>F9：operator UI 绑定 Feishu chat→session（external mirror）；全流程人肉 E2E 执行记录体系 + cc-create bug 确认</td>
+<td>#975 · #990</td><td>zyli-developer</td>
+<td>✅ F9（#975）+ F12（@→agent mention）均完成（F12 zyli 已提交）</td></tr>
+
+<tr><td><b>修复/稳定</b></td>
+<td>dev watcher 直跑 vite 根治 :5173 孤儿端口；D-race 修复（Kind 死窗 :noproc→优雅）；3 个 CI flake de-flake</td>
+<td>#963（jjkysy）· #1006 · #997（allenwoods）</td><td>jjkysy / allenwoods</td>
+<td>✅ 多数修复；⚠️ PluginIsolation/AnonUserGC flake 未根治（见 §2）</td></tr>
+
+<tr><td><b>deploy-flow（off-plan）</b></td>
+<td>三环境晋级阶梯（nightly/beta/stable）+ CI/CD + 备份（#996）；secrets 持久家 + runner 解耦 + prod→低环境数据回流 reflow（#1010，实机跑通 stable→beta）</td>
+<td>#996 · #1010（base feat/deploy-flow，stacked）</td><td>allenwoods</td>
+<td>🟡 实机验证通过；**仍 OPEN**（#996→main 先合，#1010 retarget 后合）。off-plan</td></tr>
+</table>
+
+<h2>§2 昨日开发效能</h2>
+
+<h3>逐 PR / 任务效能与依赖</h3>
+<ul>
+<li><b>地基先行的回报</b>：role-foundation 走了"spec→2 轮对抗评审→plan→实现"，RF-1..9 实现阶段几乎零返工、顺序链式合入（每个 PR 交付周期 0.1–2.8h）。<b>对照</b>：kanban 的首次尝试（#964，见 §2 问题）因地基未建而需整体重做。<b>结论：地基/契约先行，比边做边补省一个数量级的返工。</b></li>
+<li><b>顺序耦合（改进点：解耦/合并列车）</b>：RF-1..9 + kanban + py-agent 共 14 个能力 PR 串行链式合入（分支保护要求 rebase-to-current + flake 逼 admin-merge），墙钟拉到 02:00–09:39 KST 一长串。<b>改进</b>：独立的 RF 片段本可 stacked-PR / merge-train 并行合入，减少串行墙钟。</li>
+<li><b>CI flake 拖累（改进点：根治优先）</b>：<code>PluginIsolationWorkspaceTest</code> + <code>AnonUserGCTest</code> 在全 umbrella 并发下反复偶发红，导致 #1003/#1005/#1007/#1009 等<b>已本地验证干净</b>的 PR 被 admin-merge 绕过 CI 闸。#997 的 poll 修复不足。<b>已立项 #108 根治</b>（py-agent 收口后立即做）。</li>
+<li><b>bus-factor</b>：地基集中在一人。地基补齐后，下周期可把更多产品面分给团队并行、lead 聚焦收口。</li>
+</ul>
+
+<h3>开发中暴露的问题 → 沉淀到 <code>contributing/</code></h3>
+<blockquote><b>kanban-as-role（jjkysy 主动发现）</b>：首版看板未先对齐设计就动手，把 board 当 resource GenServer 实现。<b>根本教训（不是某个具体缺口）：涉及 core 的开发要先与 lead programmer 确认设计思路、再检查设计的实现条件（依赖的地基是否就绪）。</b>做到这步，"resource 当 GenServer / role-foundation 未建 / agent 定义不清"本会在动手前被发现。<b>这类问题可能在其他提交中也存在但未被发现。</b></blockquote>
+<p>已开 <code>docs/together/contributing/</code> 台账（P0=core 先对齐设计+查实现条件；P1–P5 为具体设计事实与过程红线）。<b>每次 handoff（lead 下发 或 dev 返回）前必读</b>，避免重复踩坑。</p>
+
+<h2>§3 数据统计</h2>
+<h3>按开发者（口径：能力交付，非 PR 数排名）</h3>
+<table>
+<tr><th>开发者</th><th class="num">能力 PR</th><th class="num">总 PR</th><th class="num">LOC</th><th>交付的功能点</th></tr>
+<tr><td>allenwoods</td><td class="num">15</td><td class="num">32</td><td class="num">24,902</td><td>A+B+C 整合 · RF-1..9 地基 · kanban-as-role · py-agent P1 · D-race 修复（+ deploy-flow #996/#1010 未合）</td></tr>
+<tr><td>zhaomaota97</td><td class="num">1</td><td class="num">1</td><td class="num">2,447</td><td>hello AI 页面生成器（shadcn 渲染 + 白板 + 增量编辑）</td></tr>
+<tr><td>gagameow</td><td class="num">1</td><td class="num">2</td><td class="num">1,638</td><td>agent console M1-M4（world UI）+ 设计分析</td></tr>
+<tr><td>zyli-developer</td><td class="num">1</td><td class="num">2</td><td class="num">1,796</td><td>F9 Feishu chat→session 绑定 UI + 人肉 E2E 体系</td></tr>
+<tr><td>jjkysy</td><td class="num">1</td><td class="num">2</td><td class="num">~13.5k</td><td><b>kanban 插件原作</b>（Behavior.Kanban 24 动作 + connectors + ci/github/markmap/miro，#964）——经 kanban-as-role 改造进 main（#1004）+ watcher 孤儿端口修复 + <b>主动发现 kanban 原则问题</b></td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280"><b>注</b>：功能点 = 用户/开发者可见的能力交付单元（非 LOC/commit 数）。</p>
+
+<h3>交付节奏（按合并小时，KST）</h3>
+<table style="border:none">
+<tr style="background:none"><td style="border:none;width:90px">06-25 11:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#2563eb;width:80px"></span> 4</td></tr>
+<tr style="background:none"><td style="border:none">12:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:40px"></span> 2</td></tr>
+<tr style="background:none"><td style="border:none">15:00–16:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:60px"></span> 3</td></tr>
+<tr style="background:none"><td style="border:none">17:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:60px"></span> 3</td></tr>
+<tr style="background:none"><td style="border:none">18:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:60px"></span> 3</td></tr>
+<tr style="background:none"><td style="border:none">20:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:60px"></span> 3</td></tr>
+<tr style="background:none"><td style="border:none">22:00</td><td style="border:none"><span style="display:inline-block;height:14px;background:#60a5fa;width:40px"></span> 2</td></tr>
+<tr style="background:none"><td style="border:none">06-26 01:00–09:39</td><td style="border:none"><span style="display:inline-block;height:14px;background:#f59e0b;width:280px"></span> 14 ⟵ 地基链式合入长尾</td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280">团队能力交付集中在 6-25 白天；<b>地基（RF/kanban/py-agent）14 个 PR 链式合入挤在 6-26 凌晨长尾</b>（橙色）——即 §2 的顺序耦合问题，下周期用 stacked-PR / merge-train 改善。</p>
+
+<h3>口径说明</h3>
+<blockquote>
+<b>交付周期</b> = 单 PR 首 commit→合并（含编码+评审+空闲）；本周期 squash 流下多数 PR 交付周期较短。<b>归属</b>：按 PR 作者（含其管理的 Claude/CC agent）；kanban 插件经改造进 main，已按原作（jjkysy）更正。⚠️ #963/#982 两个分支早于本周期，LOC/交付周期含历史。
+</blockquote>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。原始数据 <code>stats/cycle-data.json</code>。模版可复用：下周期换数据即可。</p>
+</body>
+</html>

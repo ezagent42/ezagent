@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 计划 — 2026-06-26</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .gap{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .pr1{color:#047857;font-weight:600}.defer{color:#b45309;font-weight:600}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-06-26</h1>
+<div class="meta">
+<b>lead_confirmed:</b> true（2026-06-26 已确认；CURRENT_DATE 已翻篇）<br>
+<b>本周目标:</b> 团队日常使用 ezagent（目标①）；官网（目标②）继续夯实 json-render 底座。<br>
+<b>方向:</b> 地基已补齐（agent=角色×风味）→ 本日转向<b>产品完整度验证 + 上线 + agent 层集中测试</b>。
+</div>
+
+<h2>§1 本周目标功能点缺口</h2>
+<div class="gap"><b>UI 完整度</b>：hello 生成内容在 world 的内嵌渲染是否足够（关键验证：world section 能否插入<b>动态卡片</b>）；agent console <b>config 面板逐字段编辑</b> + 与 domain.agent 接线（6-25 未尽）。</div>
+<div class="gap"><b>上线可用</b>：<b>deploy flow 端到端验证</b> + 三环境（nightly/beta/stable）联通（#996/#1010 已实机跑通子环节，需整体 E2E）。</div>
+<div class="gap"><b>agent 层稳定性</b>：本周期 agent 运行时大改（A+B+C / RF-1..9 / kanban-as-role / sidecar→erlexec / py-agent）→ <b>集中回归测试</b>；CI flake 根治（#108）。</div>
+<div class="gap"><b>agent 风味收口</b>：py-agent <b>P1+P2 已合 main</b>（echo 已退役入 py、删 ezagent_plugin_echo）；<span class="defer">P3（world e2e）+ P4（np→py-role）+ #108 = 6-27 plan item</span>。</div>
+
+<h2>§2 缺口开发计划（总览）</h2>
+<p><b>本日 feature points（今日要交付的能力点）：</b></p>
+<table>
+<tr><th>#</th><th>feature point（能力点）</th><th>负责</th><th>验证点</th></tr>
+<tr><td>FP1</td><td>deploy flow 三环境（nightly/beta/stable）端到端晋级跑通、可对外日用</td><td>allenwoods</td><td>三环境晋级 E2E + 证据</td></tr>
+<tr><td>FP2</td><td>agent 配置对标原 autoservice 不回归（流程重跑 + Feishu 同步 + API 同步）</td><td>gagameow</td><td>三条 autoservice 流程各跑通（API 用 codex 作 HTTP 客户端）</td></tr>
+<tr><td>FP3</td><td>hello 生成内容在 world 内嵌渲染足够</td><td>zhaomaota97</td><td><b>world section 能插入动态卡片</b>（agent-browser 截图）</td></tr>
+<tr><td>FP4</td><td>E2E 文档体系补全（支持未来开发测试）</td><td>zyli-developer</td><td>docs/e2e/ 场景可被 agent 自动跑通</td></tr>
+<tr><td>FP5</td><td>UI 界面修复（先清单后逐条）</td><td>zyli-developer</td><td>UI 问题清单 + 逐条修复 PR（前后对比）</td></tr>
+<tr><td>FP6</td><td>dev-together skill 改进落地（current-date flag / review·plan HTML 模版 / contributing 读前置 / 数据落库）</td><td>jjkysy</td><td>skill 改完 + validate 通过 + 模版可复用</td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280">（feature-point 口径=用户/开发者可见的能力交付单元；自 6-27 起在 plan 阶段先正式约定 FP 口径再排期。）</p>
+<p>归并为三条主线（lead 给定）：</p>
+<ol>
+<li><b>ezagent UI 功能补全</b> —— 测 hello 在 world 内嵌是否足够（验证点：section 插入动态卡片）；补 agent console config 面板。</li>
+<li><b>上线环境测试 + deploy flow 验证</b> —— 三环境晋级端到端跑通，确认可对外日用。</li>
+<li><b>agent 层集中测试</b> —— 地基/kanban/sidecar/config 大改后集中回归；其中 <b>agent 配置</b>对标原 autoservice 验证。</li>
+</ol>
+
+<h2>§3 按开发者规划（详见各自 handoff）</h2>
+<p style="font-size:12px;color:#6b7280">每行末"复制开工 prompt"→ 粘进各自 agent，讨论确认后开工。</p>
+<table>
+<tr><th>开发者</th><th>本日任务（简述）</th><th>闭环/并行说明</th><th>handoff & 开工</th></tr>
+<tr><td><b>allenwoods</b></td>
+<td><span class="pr1">deploy-flow 收口 + 端到端验证</span>：合 #996→main、#1010 retarget 后合、<b>deploy flow E2E 由本人验证</b>；协调 agent 层集中回归；清理 #964/#985/#911。<span class="defer">py-agent P3-P4 + #108 → 6-27（P2 已合，记入 6-27）</span></td>
+<td><b>原则①闭环</b>：deploy-flow 的 context 在 allenwoods，故其 E2E 也归本人（不拆给 zyli）；次日 context 进 main 可迁移</td>
+<td><code>handoffs/allenwoods-deploy-finalize.md</code><br><button class="copy" data-p="【dev-together 2026-06-26 · allenwoods】
+今日任务：deploy-flow 收口 + 端到端验证 —— 合 #996→main、#1010 retarget 后合、deploy flow E2E 本人验证；协调 agent 层集中回归；清理 #964/#985/#911。py-agent P3-P4 + #108 顺延到 6-27（P2 已合 main）。
+DoD：三环境（nightly/beta/stable）晋级端到端跑通 + 证据；agent 层全量回归绿。
+开工前必读：docs/together/contributing/ + handoff docs/together/2026-06-26/handoffs/allenwoods-deploy-finalize.md。先讨论确认范围再开工；返还前 rebase 到 current main + 自测绿（precommit+check_invariants）+ 附 contributing_read_through。">复制开工 prompt</button></td></tr>
+
+<tr><td><b>gagameow</b></td>
+<td><b>agent 配置验证（对标原 autoservice）</b>：原流程重跑 + Feishu 同步 + API 同步（<b>用 codex 作 HTTP 客户端测试</b>）。验证地基大改后 agent 配置/运行时行为不回归</td>
+<td>自含闭环（agent 配置 + autoservice 流程同一人）；不依赖 py-agent（P1 已在 main）</td>
+<td><code>handoffs/gagameow-agent-config-autoservice.md</code><br><button class="copy" data-p="【dev-together 2026-06-26 · gagameow】
+今日任务：agent 配置验证，对标原 autoservice 工作 —— 原流程重跑 + Feishu 同步 + API 同步（用 codex 作 HTTP 客户端测试）。验证本周期地基大改（A+B+C/RF/kanban/sidecar）后 agent 配置与运行时行为不回归。
+DoD：autoservice 三条流程（流程重跑/Feishu/API）各跑通 + 证据；发现的回归开 issue。
+开工前必读：docs/together/contributing/ + handoff docs/together/2026-06-26/handoffs/gagameow-agent-config-autoservice.md。先讨论确认范围再开工；返还前 rebase + 自测绿 + 附 contributing_read_through。">复制开工 prompt</button></td></tr>
+
+<tr><td><b>zhaomaota97</b></td>
+<td><b>hello 在 world 内嵌验证</b>：关键验证 section 能否插入动态卡片；json-render 渲染稳定性</td>
+<td>自含闭环（前端渲染单人）</td>
+<td><code>handoffs/zhaomaota97-hello-embed.md</code><br><button class="copy" data-p="【dev-together 2026-06-26 · zhaomaota97】
+今日任务：验证 hello 生成内容在 world 的内嵌渲染是否足够 —— 关键验证点：world section 能否插入动态卡片；并稳定 json-render 渲染。
+DoD：内嵌+动态卡片在 world 正确渲染（agent-browser 截图）；不足之处列清单。
+开工前必读：docs/together/contributing/ + handoff docs/together/2026-06-26/handoffs/zhaomaota97-hello-embed.md。先讨论确认范围再开工；返还前 rebase + 自测绿 + 附 contributing_read_through。">复制开工 prompt</button></td></tr>
+
+<tr><td><b>zyli-developer</b></td>
+<td><b>E2E 文档补全</b>（支持未来开发测试，<code>docs/e2e/</code>，agent 拿 agent-browser 能照着自动跑）+ <b>UI 界面修复调整</b>（先列清单，再逐条修复）</td>
+<td>自含闭环（E2E 文档 + UI 修复同一人）</td>
+<td><code>handoffs/zyli-e2e-ui.md</code><br><button class="copy" data-p="【dev-together 2026-06-26 · zyli-developer】
+今日任务：① E2E 文档补全 docs/e2e/（沉淀场景，支持未来开发测试，agent 拿 agent-browser 能照着自动跑通）；② UI 界面修复调整 —— 先通盘列出 UI 问题清单，再逐条修复。
+DoD：docs/e2e/ 场景可被 agent 自动跑通；UI 问题清单 + 逐条修复 PR（每条有前后对比证据）。
+开工前必读：docs/together/contributing/ + handoff docs/together/2026-06-26/handoffs/zyli-e2e-ui.md。先讨论确认范围再开工；返还前 rebase + 自测绿 + 附 contributing_read_through。">复制开工 prompt</button></td></tr>
+
+<tr><td><b>jjkysy</b></td>
+<td><b>dev-together skill 改进落地</b>（按 <code>2026-06-26/dev-together-skill-improvement-plan.md</code>：current-date flag、review/plan HTML 模版、contributing 目录+读前置、数据落库 gather_stats、团队向 scrub）</td>
+<td>自含闭环（skill owner 单写者）</td>
+<td><code>handoffs/jjkysy-skill-improve.md</code><br><button class="copy" data-p="【dev-together 2026-06-26 · jjkysy】
+今日任务：落地 dev-together skill 改进，按 docs/together/2026-06-26/dev-together-skill-improvement-plan.md —— current-date flag 文件+advance 脚本、review/plan HTML 模版、contributing/ 目录+读前置 attestation、gather_stats 落库、团队向 scrub 规则。
+DoD：skill 文件改完 + validate_skill 断言通过；模版可被下个周期直接用。
+开工前必读：docs/together/contributing/ + handoff docs/together/2026-06-26/handoffs/jjkysy-skill-improve.md。先讨论确认范围再开工；返还前 rebase + 自测绿 + 附 contributing_read_through。">复制开工 prompt</button></td></tr>
+
+<tr><td><b>ruihuachen-designer</b></td>
+<td>协助 jjkysy：review/plan HTML 版式可读性设计输入（不改代码）</td>
+<td>设计输入 → jjkysy 落地</td>
+<td>（设计输入）<br><button class="copy" data-p="【dev-together 2026-06-26 · ruihuachen-designer】
+今日任务：协助 jjkysy —— 为 review/plan 的 HTML 版式做可读性设计输入（章节结构、团队同步需要哪些信息、视觉层次），作为设计稿交给 jjkysy 落进 skill 模版；不直接改代码/skill 文件。
+DoD：版式设计稿交付给 jjkysy。
+开工前必读：docs/together/contributing/。先与 jjkysy 对齐再开工。">复制开工 prompt</button></td></tr>
+</table>
+<script>
+document.querySelectorAll('button.copy').forEach(function(b){
+  b.addEventListener('click',function(){
+    navigator.clipboard.writeText(b.dataset.p).then(function(){
+      var t=b.textContent; b.textContent='已复制 ✓'; b.style.background='#bbf7d0';
+      setTimeout(function(){b.textContent=t; b.style.background='';},1500);
+    });
+  });
+});
+</script>
+
+<h2>依赖与顺序 / 并行</h2>
+<ul>
+<li><b>agent 层集中测试横切</b>：各人在自己触及 agent 运行时的面上先自测；gaga 的 autoservice 对标是其专项。</li>
+<li><b>并行（原则②）</b>：各 track 自含闭环、相互独立，可全并行；无 A 等 B 的强串行，故本日不需 mock-A/mock-B 插桩。</li>
+<li><b>上线</b>依赖 deploy flow（#996）合入；allenwoods 内部串行（合→验证）。</li>
+</ul>
+
+<h2>out-of-scope（原则③登记）</h2>
+<ul>
+<li><b>deploy-flow（#996/#1010）</b>：原为 off-plan，本日 lead 拉入正式 track（上线是近期目标，归类为"方向内、此前未排期"，非偏离）。</li>
+<li>backlog（未排）：#88 邮件入站 · #93 cap-gate config 读 · #96/#97 Protocol API 命名 / sidecar 生命周期（lead 分析后定）· #55 doc-coverage ratchet。</li>
+</ul>
+
+<h2>协作约束</h2>
+<ul>
+<li>CI 闸：进 main 的 PR 需 <code>precommit + check_invariants</code> 绿 + rebase；返还前自测绿。</li>
+<li>评审基准 = <code>origin/main</code>（禁读陈旧工作树）。</li>
+<li>handoff 前必读 <code>contributing/</code>（原则台账）。</li>
+</ul>
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。模版可复用：下日换数据/任务即可。</p>
+</body>
+</html>
