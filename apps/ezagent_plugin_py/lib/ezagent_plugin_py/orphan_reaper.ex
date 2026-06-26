@@ -1,28 +1,24 @@
-defmodule EzagentPluginNp.OrphanReaper do
+defmodule EzagentPluginPy.OrphanReaper do
   @moduledoc """
-  Sibling of `EzagentPluginCc.OrphanReaper` for the np plugin's Python
-  compute-server subprocesses.
+  Reaps stale `Ezagent.Domain.Python` subprocesses left behind by a previous
+  BEAM run (brutal kill / SIGKILL skips erlexec's cleanup).
+
+  Re-homed VERBATIM from `EzagentPluginNp.OrphanReaper` (py-agent P4 — the np
+  plugin is deleted; `np` is now a py-ROLE). py is THE python flavor, so the
+  orphan reaper for Domain.Python subprocesses lives here. The pid-file
+  namespace is the DOMAIN-owned `"python"` (flavor-neutral) — every
+  Domain.Python subprocess writes there regardless of the role that spawned it
+  (a plain py-agent OR the np py-role).
 
   See `EzagentPluginCc.OrphanReaper` for the design rationale + the
   PTY-pid-files 2026-05-26 refactor that replaced `ps`-walking with
   per-deployment pid-file enumeration.
 
-  ## Discovery
-
-  The np Template (`Ezagent.PluginNp.Template.NpAgent`) spawns its
-  Python subprocess via `Ezagent.Domain.Python` with the agent URI as
-  `spec.handle`. `Ezagent.Domain.Python.Server` writes a pid file at
-  spawn (and removes it at graceful shutdown) — the reaper enumerates
-  the np subdirectory under this deployment's pid-file tree.
-
-  ## Reaping rules
-
-  Identical shape to the cc reaper:
+  ## Reaping rules (identical to the cc reaper)
 
     * `Ezagent.Domain.Python.alive?(agent_uri)` true → leave alone.
     * OS pid dead → remove stale pid file.
-    * OS pid alive + start-time mismatch → remove stale file (PID
-      recycle).
+    * OS pid alive + start-time mismatch → remove stale file (PID recycle).
     * OS pid alive + start-time match → SIGTERM + remove file.
   """
 
@@ -31,35 +27,37 @@ defmodule EzagentPluginNp.OrphanReaper do
   alias Ezagent.Domain.Python
   alias Ezagent.Runtime.PidFile
 
-  @plugin "np"
+  # The DOMAIN-owned Domain.Python pid-file namespace (see
+  # `Ezagent.Domain.Python.Server` `@pid_namespace`). Flavor-neutral.
+  @namespace "python"
 
   @doc """
-  Walk this deployment's np pid files, identify orphans, SIGTERM each.
+  Walk this deployment's Domain.Python pid files, identify orphans, SIGTERM each.
 
-  Returns `{:ok, killed}` (count of OS processes signalled). The
-  caller continues regardless.
+  Returns `{:ok, killed}` (count of OS processes signalled). The caller
+  continues regardless.
   """
   @spec reap() :: {:ok, killed :: non_neg_integer()} | {:error, term()}
   def reap do
-    entries = PidFile.enumerate(@plugin)
+    entries = PidFile.enumerate(@namespace)
     {killed, stale} = Enum.reduce(entries, {0, 0}, &process_entry/2)
 
     cond do
       killed > 0 ->
         Logger.warning(
-          "EzagentPluginNp.OrphanReaper: SIGTERM'd #{killed} orphan python " <>
+          "EzagentPluginPy.OrphanReaper: SIGTERM'd #{killed} orphan python " <>
             "subprocess(es) from a previous BEAM run (#{stale} stale " <>
             "pid-files cleaned up alongside)"
         )
 
       stale > 0 ->
         Logger.info(
-          "EzagentPluginNp.OrphanReaper: no live orphans, cleaned #{stale} " <>
+          "EzagentPluginPy.OrphanReaper: no live orphans, cleaned #{stale} " <>
             "stale pid-file(s)"
         )
 
       true ->
-        Logger.debug("EzagentPluginNp.OrphanReaper: no np pid-files to inspect")
+        Logger.debug("EzagentPluginPy.OrphanReaper: no python pid-files to inspect")
     end
 
     {:ok, killed}
@@ -82,7 +80,7 @@ defmodule EzagentPluginNp.OrphanReaper do
 
           current_start when current_start != written_start ->
             Logger.info(
-              "EzagentPluginNp.OrphanReaper: pid=#{pid} recycled " <>
+              "EzagentPluginPy.OrphanReaper: pid=#{pid} recycled " <>
                 "(start_seconds=#{current_start} != written #{written_start}); " <>
                 "removing stale pid-file without signalling"
             )
@@ -105,7 +103,7 @@ defmodule EzagentPluginNp.OrphanReaper do
 
   defp sigterm(pid, %URI{} = uri) do
     Logger.warning(
-      "EzagentPluginNp.OrphanReaper: SIGTERM orphan python pid=#{pid} " <>
+      "EzagentPluginPy.OrphanReaper: SIGTERM orphan python pid=#{pid} " <>
         "agent_uri=#{inspect(URI.to_string(uri))}"
     )
 
@@ -115,7 +113,7 @@ defmodule EzagentPluginNp.OrphanReaper do
 
       {output, exit_code} ->
         Logger.warning(
-          "EzagentPluginNp.OrphanReaper: kill -TERM pid=#{pid} failed " <>
+          "EzagentPluginPy.OrphanReaper: kill -TERM pid=#{pid} failed " <>
             "(exit=#{exit_code}, out=#{inspect(output)})"
         )
 

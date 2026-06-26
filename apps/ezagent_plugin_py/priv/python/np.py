@@ -6,15 +6,31 @@
 # ]
 # ///
 """
-np_compute_server.py — the Python subprocess backing the np-agent
-Ezagent plugin.
+np.py — the Python subprocess backing the `np` py-ROLE (py-agent P4).
 
-Spawned by `Ezagent.PluginNp.Template.NpAgent.instantiate/3` via
-`Ezagent.Domain.Python.start_subprocess/1`. One subprocess per
-NpAgent Kind (see plugin Application moduledoc for why per-agent +
-not shared).
+Re-homed VERBATIM from `ezagent_plugin_np/priv/python/np_compute_server.py`
+(now deleted): the numpy/sympy whitelist security model below is UNCHANGED —
+`_SAFE_NAMES`, `compute`, `compute_latex`, `_to_python_number` are byte-for-byte
+the np plugin's. The ONLY addition is the `receive` entrypoint (below): the np
+flavor's chat→method heuristic (the former BEAM-side
+`Ezagent.Behavior.NpAgent.pick_method` backslash rule) moves INTO the script,
+because the `py` flavor dispatches exactly ONE JSON-RPC method, `"receive"`
+(py-agent spec §1). `np` is now `py` flavor + this script delivered via the
+role-script channel (`Role.script` → `sandbox_content` → config_dir `agent.py`).
+
+Spawned by the `py` flavor create route via
+`Ezagent.Domain.Python.start_subprocess/1`. One subprocess per py-agent Kind.
 
 ## Registered JSON-RPC methods
+
+  - `receive(params: {text, from, session}) -> {text: str} | None`
+      The py-agent wire entrypoint (py-agent spec §1). Applies the np
+      chat→compute heuristic (LaTeX iff the text contains a backslash
+      command, else numeric) IN-SCRIPT and delegates to `compute` /
+      `compute_latex` — the same whitelisted compute path the np BEAM
+      behavior used to call. Returns `{text: <formatted result>}`; a
+      parse/compute error is surfaced as the error string (the BEAM
+      Kind captures it to `last_error`, never crashes).
 
   - `compute(expr: str) -> {result: number | str}`
       Evaluate a numeric numpy expression safely. The input is parsed
@@ -223,6 +239,39 @@ def _to_python_number(value):
 @method("ping")
 def ping(_params):
     return {"ok": True}
+
+
+@method("receive")
+def receive(params):
+    """py-agent wire entrypoint (py-agent spec §1).
+
+    `np` is `py` flavor + this script. The `py` flavor dispatches a single
+    `receive` method per chat message, so the np chat→method heuristic — LaTeX
+    iff the text contains a backslash command, else numeric — runs HERE (it was
+    the former BEAM-side `Behavior.NpAgent.pick_method`). Delegates to the
+    UNCHANGED whitelisted `compute` / `compute_latex` path; the security model
+    is entirely in those functions + `_SAFE_NAMES`.
+
+    Returns `{"text": "= <result>"}` (the np reply format the e2e asserts), or a
+    `{"text": "compute error: ..."}` for a parse/compute rejection. Never raises
+    out of the handler for a bad expression — the np behavior surfaced compute
+    errors as a chat reply (not a crash); we preserve that.
+    """
+    text = params.get("text", "")
+    if not isinstance(text, str) or text == "":
+        return {"text": "compute error: empty input"}
+
+    # The former BEAM `pick_method/1`: backslash ⇒ LaTeX, else numeric.
+    method_params = {"expr": text}
+    try:
+        if "\\" in text:
+            out = compute_latex(method_params)
+        else:
+            out = compute(method_params)
+    except RpcError as e:
+        return {"text": f"compute error: {e.message}"}
+
+    return {"text": f"= {out['result']}"}
 
 
 @method("compute")

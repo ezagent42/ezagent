@@ -60,6 +60,23 @@ defmodule Ezagent.RoleTest do
       assert {:error, {:invalid_role_field, :passive, 1}} = Role.new(%{passive: 1})
     end
 
+    test "RF-5b (py-agent P4): script field — operator file content, nil/string only" do
+      # absent → nil (scriptless role, the default — every existing role)
+      assert {:ok, %{script: nil}} = Role.new(%{})
+      # explicit nil → nil
+      assert {:ok, %{script: nil}} = Role.new(%{script: nil})
+      # a string script content is carried verbatim
+      src =
+        "from ezagent_python import method, run\n@method(\"receive\")\ndef r(p): return p\nrun()"
+
+      assert {:ok, %{script: ^src}} = Role.new(%{script: src})
+      # STRING-keyed (persisted JSON/snapshot round-trip)
+      assert {:ok, %{script: ^src}} = Role.new(%{"script" => src})
+      # non-string / non-nil → fail loud (not silently coerced)
+      assert {:error, {:invalid_role_field, :script, 123}} = Role.new(%{script: 123})
+      assert {:error, {:invalid_role_field, :script, %{}}} = Role.new(%{script: %{}})
+    end
+
     test "rejects a recipe that names a FLAVOR field (must be flavor-agnostic)" do
       for flavor_field <- [:flavor, :kind, :bridge_adapter, :template_class] do
         assert {:error, {:flavor_field_in_role, ^flavor_field}} =

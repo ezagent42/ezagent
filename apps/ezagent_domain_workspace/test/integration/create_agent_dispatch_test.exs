@@ -466,32 +466,33 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
 
     @tag :integration
-    test "np flavor (dedicated Kind, NO :instance_behaviors) still direct-spawns unchanged",
+    test "native flavor (NO :instance_behaviors) still direct-spawns unchanged",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      # PR-6+7 — a flavor whose `kind` is its OWN dedicated Kind (np →
-      # Entity.NpAgent) declares no :instance_behaviors thunk, so the direct
-      # spawn OMITS :behaviors and the Kind's full declared set applies. This
-      # pins that the curl fix did not perturb the generic path for other flavors.
+      # PR-6+7 — a flavor that declares no :instance_behaviors thunk direct-spawns
+      # with :behaviors OMITTED, so the Kind's nil-capture default set applies.
+      # This pins that the curl fix did not perturb the generic direct-spawn path.
+      # (py-agent P4: was the deleted `np` dedicated-Kind flavor; re-pointed to
+      # `native`, the surviving direct-spawn flavor with the same no-thunk shape.)
       if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
            "entity" not in Ezagent.SpawnRegistry.registered_schemes() or
-           :error == Ezagent.AgentFlavorRegistry.lookup("np") do
-        IO.puts(:stderr, "SKIP: entity scheme / np flavor not registered (bootstrap incomplete)")
+           :error == Ezagent.AgentFlavorRegistry.lookup("native") do
+        IO.puts(:stderr, "SKIP: entity scheme / native flavor not registered (bootstrap incomplete)")
         :ok
       else
-        name = "np-#{System.unique_integer([:positive])}"
+        name = "native-#{System.unique_integer([:positive])}"
         expected_uri = Ezagent.URI.agent(ws_name, name)
 
         assert {:ok, %{agent_uri: agent_uri, template_name: nil}} =
                  Workspace.create_agent(
                    workspace_uri,
-                   %{flavor: "np", name: name, cwd: "", with_pty: false},
+                   %{flavor: "native", name: name, cwd: "", with_pty: false},
                    admin_ctx
                  )
 
         assert agent_uri == expected_uri
-        assert {:ok, "np"} = Ezagent.UriQuery.resolve(:flavor, agent_uri)
+        assert {:ok, "native"} = Ezagent.UriQuery.resolve(:flavor, agent_uri)
         assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
-        # np is NOT a curl agent — no :curl_agent slice pollution. (Kind.spawn
+        # native is NOT a curl agent — no :curl_agent slice pollution. (Kind.spawn
         # inside create_agent awaited :ready, so the slice set is settled.)
         assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
       end

@@ -255,24 +255,75 @@ suites green.
 > Kind (cc-pty, np, py) right as the repo consolidates onto native+role. P4
 > tears it down.
 
-- [ ] Extend `Role.Compose` `sandbox_content` with a `script`/file field +
-  `RoleStep` install to config_dir (the general RF-5b content channel) — so a
-  ROLE carries its script. Re-assert create-cap on clone/fork/mount/template-edit
-  (spec §5 / round-2 plan HIGH-2 vectors — the same gate P1's 1.5 lands for the
-  template path, extended to the role path here).
-- [ ] **Retire `Entity.PyAgent`/`Template.PyAgent`**: migrate `py` to
-  `native` + a `py` behavior layered per-instance via the role (kanban pattern);
-  the subprocess self-heals in the behavior's `activate/2` (1.1 `AgentLifecycle`).
-  Migrate py refs off the own-Kind; delete the own-Kind + Template.
-- [ ] np re-homes as a `py`-role: `np_compute_server.py` verbatim (whitelist
-  intact) → a `np` py-role; migrate np refs; delete `ezagent_plugin_np` with its
-  own parity gate. np keeps working until this lands.
-- [ ] If 1.1 deferred np's `AgentLifecycle` refactor, complete it here. **PR(s): Phase 4.**
+- [x] **DONE (item 1 — role-script DATA channel).** Extended `Role`
+  (`role.ex` — `:script` field + `ref_field` validation) + `Role.Compose`
+  `sandbox_content` (`compose.ex` — `script: role.script`) with the optional
+  operator-authored file content (the general RF-5b CONTENT channel). py's
+  create clause (`agent_create.ex` `do_create_agent("py")` + `merge_role_script/2`)
+  folds a role-carried script into the template config, so a ROLE carries its
+  script. **NOTE (scope correction):** the literal "`RoleStep` install to
+  config_dir" was NOT built — `RoleStep` runs on the DIRECT-SPAWN route, which
+  has NO config_dir allocation today (that generic install IS RF-5b / the
+  native+role work). py rides the TEMPLATE route, so the role script reaches
+  config_dir via P1's existing `Template.PyAgent.install_script/2`. The generic
+  direct-spawn config_dir install defers WITH item 3 (below).
+  Security: a role-carried script flows through the SAME `:create_agent` cap
+  chokepoint as every create (non-operator → `{:error, :unauthorized}`,
+  fail-closed); a role-script + operator-script conflict fails loud
+  (`:role_script_conflicts_with_operator_script`); `install_script/2`'s
+  `:script_immutable` blocks any post-create rewrite (template-edit/re-instantiate
+  injection); `configure`/`reset` are BEAM-side `{:set}` only. `Kind.mount` adds
+  a behavior, never the script (config_dir data), so it is not a script-injection
+  vector for py. Tests: `role_test.exs`, `compose_test.exs`, `np_role_test.exs`
+  ("security — a role-carried script rides the same cap gate").
+- [ ] **DEFERRED (item 3 — own-Kind retirement).** Retiring
+  `Entity.PyAgent`/`Template.PyAgent` to `native`+py-behavior-via-role requires
+  the DIRECT-SPAWN/`RoleStep` route to allocate a config_dir (so the script
+  installs on the native path) — i.e. the FULL RF-5b content→config_dir cascade,
+  which is a substantial standalone change touching every direct-spawn flavor +
+  the cap-mint grant path (native has the Identity slice; the own-Kind does not).
+  Deferred as scoped: np→py-role (item 2, the headline) is delivered on py's
+  existing own-Kind template route; own-Kind retirement is architectural polish
+  that does not block np re-homing. When it lands, the `np` role gains
+  `requested_caps` (py's `cap_policy` + the create clause's caller-authority
+  `mint_and_grant_caps` are ALREADY wired for that day — they mint nothing today
+  because the own-Kind cannot hold caps and the recipe is cap-free). **PR: a
+  follow-up Phase 4b.**
+- [x] **DONE (item 2 — np → py-role).** `np_compute_server.py` re-homed
+  VERBATIM as `apps/ezagent_plugin_py/priv/python/np.py` (the numpy/sympy
+  `_SAFE_NAMES` whitelist + `parse_expr`/`parse_latex` byte-identical — security
+  model unchanged); the ONLY addition is a `receive` entrypoint that moves the
+  former BEAM `Behavior.NpAgent.pick_method` chat→method heuristic IN-SCRIPT
+  (py dispatches a single `receive`). `np` declared as a py-ROLE
+  (`EzagentPluginPy.Application.roles/0` → `np_role_recipe/0`); created via
+  `Workspace.create_agent(flavor: "py", role: "np")`. `apps/ezagent_plugin_np/`
+  DELETED; all np refs migrated (`agent.ex` `"np"`→`"py"` subprocess_phase;
+  Domain.Python pidfile namespace `"np"`→`"python"`; OrphanReaper re-homed to
+  `EzagentPluginPy.OrphanReaper`; web/cli/create-task deps + comment refs).
+  **Parity gate == 0** (`git grep -il 'np_agent\|NpAgent\|ezagent_plugin_np\|
+  flavor.*"np"' apps/` → only the allowlisted retained `np` ROLE-name in 2
+  comments). numpy/sympy green end-to-end via `np_role_test.exs` uv test
+  (`2+2`→`= 4.0`, `sqrt(16)`→`4`, backslash→latex heuristic, whitelist intact).
+- [x] np's `AgentLifecycle` was already consumed by py in P1; np's own copy was
+  deleted with the plugin. **PR: Phase 4.**
 
-**P4 DoD:** a py-ROLE carries its script (sandbox_content channel); `py` runs as
-`native`+role (own-Kind retired — no 3rd per-subprocess Kind); np works as a
-py-role (numpy/sympy suite green, whitelist intact); `ezagent_plugin_np` gone;
-np parity gate == 0.
+**P4 DoD:** a py-ROLE carries its script (sandbox_content channel) ✓; np works as
+a py-role (numpy/sympy green, whitelist intact) ✓; `ezagent_plugin_np` gone ✓;
+np parity gate == 0 ✓. **`py` runs as `native`+role (own-Kind retired) —
+DEFERRED to Phase 4b** (requires full RF-5b config_dir-on-direct-spawn; see
+item 3).
+
+> **Pre-existing finding (out of scope — NOT changed).** The re-homed np
+> whitelist uses `sympy.parse_expr(expr, local_dict=_SAFE_NAMES, evaluate=True)`.
+> `parse_expr` with `evaluate=True` EVALUATES function-call nodes, so a crafted
+> `__import__('os').system('…')` expression is executed (returns `0` — verified
+> byte-identical between the deleted `np_compute_server.py` and the re-homed
+> `np.py`). This is a PRE-EXISTING characteristic of np's security model on
+> main, NOT introduced by P4 — the spec mandates re-homing the whitelist
+> VERBATIM ("do NOT weaken its security model"), and the operator-only-authorship
+> posture (§5 posture A) means only a trusted operator supplies the script. A
+> hardening pass (e.g. `parse_expr(..., evaluate=False)` + an AST node allowlist)
+> is a separate np-security task, flagged here for follow-up.
 
 ---
 

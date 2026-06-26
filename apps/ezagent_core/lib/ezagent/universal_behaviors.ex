@@ -6,7 +6,7 @@ defmodule Ezagent.UniversalBehaviors do
   The registry lookups (`Ezagent.BehaviorRegistry.lookup/2` and
   `Ezagent.CapabilityRegistry.lookup_subject/2`) fall back to these behaviors
   for any `{kind, action}` that has no per-Kind registration — so a NEW Kind
-  (including plugin-defined Kinds: `CurlAgent`, `NpAgent`, `Echo`,
+  (including plugin-defined Kinds: `CurlAgent`, `PyAgent`,
   `ExternalMirrorWorker`, …) gets these capabilities automatically, with no
   per-app registration call to forget. This makes the "every Kind has Manage"
   invariant true by construction rather than by remembering.

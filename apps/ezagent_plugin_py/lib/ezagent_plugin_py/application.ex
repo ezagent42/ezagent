@@ -100,9 +100,61 @@ defmodule EzagentPluginPy.Application do
       %{
         flavor: "py",
         kind: PyAgentKind,
-        template_class: PyAgentTemplate
+        template_class: PyAgentTemplate,
+        # RF-8 — py's fail-closed CapMint policy (py-agent P4). A py-ROLE (np)
+        # requests `:py_agent` caps in its recipe; the role-create path reads
+        # this policy from the flavor registry and mints exactly those caps.
+        cap_policy: &EzagentPluginPy.CapPolicy.for_recipe/1
       }
     ]
+  end
+
+  # py-agent P4 — `np` is a py-ROLE: `py` flavor + the re-homed `np.py` script
+  # (numpy/sympy whitelist intact) carried via the role-script channel
+  # (`Role.script` → `Role.Compose.sandbox_content.script` → config_dir
+  # `agent.py`). The plugin declares NO np Kind/Behavior — np runs `py`'s
+  # `Entity.PyAgent` + `Behavior.PyAgent`, distinguished ONLY by its script
+  # (spec §0.1 "a role's safety travels with its SCRIPT"). `Ezagent.Plugin.boot/1`
+  # registers this recipe via `RoleRegistry.register/1` at boot (declare, don't
+  # call). Created via `Workspace.create_agent(flavor: "py", role: "np")`.
+  @impl Ezagent.Plugin
+  def roles, do: [np_role_recipe()]
+
+  @doc """
+  The `np` py-role recipe — `py` flavor + the re-homed `np.py` script.
+
+  Public so the role test asserts the exact recipe without re-deriving it. The
+  script content is read from this plugin's priv dir (`priv/python/np.py`).
+
+  ## No `requested_caps` while py is an own-Kind (item-3 deferred)
+
+  A plain py-agent runs on the `Entity.PyAgent` own-Kind, which carries ONLY
+  `Behavior.PyAgent` — no `Behavior.Identity` slice — so it cannot HOLD granted
+  caps (and does not need them: the session→agent dispatch carries the sender's
+  caps, and the reply effect presents its own inline `session.send` cap, #154).
+  Granting role caps into it would fail `{:unknown_action, :grant_cap}`. So the
+  np role carries JUST the script. When P4's own-Kind retirement lands (py →
+  `native` + py-behavior-via-role, with the full Agent base set incl. Identity),
+  this recipe gains the `:py_agent` `requested_caps` and py's `cap_policy` mints
+  them — exactly the kanban-as-role pattern. py's `cap_policy` + the create
+  clause's caller-authority `mint_and_grant_caps` are already wired for that day
+  (an empty recipe mints nothing today, fail-closed).
+  """
+  @spec np_role_recipe() :: map()
+  def np_role_recipe do
+    %{
+      name: "np",
+      script: np_script()
+    }
+  end
+
+  # The re-homed np compute script (numpy/sympy whitelist intact) — read from
+  # this plugin's priv dir at recipe-build time.
+  defp np_script do
+    :ezagent_plugin_py
+    |> :code.priv_dir()
+    |> Path.join("python/np.py")
+    |> File.read!()
   end
 
   @impl Ezagent.Plugin
@@ -128,7 +180,26 @@ defmodule EzagentPluginPy.Application do
   """
   @impl Ezagent.Plugin
   def after_boot do
+    # py-agent P4 — reap stale Domain.Python subprocesses orphaned by a
+    # previous BEAM run BEFORE seeding (re-homed from the deleted np plugin).
+    # py is THE python flavor, so the Domain.Python orphan reaper lives here.
+    _ = maybe_reap_orphans()
     seed_default()
+  end
+
+  # Mix.env() resolved at compile time — works in stripped OTP releases.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
+  defp maybe_reap_orphans do
+    enabled? =
+      Application.get_env(:ezagent_plugin_py, :reap_orphans_on_boot, @default_reap_enabled?)
+
+    if enabled? do
+      EzagentPluginPy.OrphanReaper.reap()
+    else
+      {:ok, 0}
+    end
   end
 
   @doc """

@@ -33,7 +33,7 @@ defmodule Ezagent.AgentFlavorRegistry do
   The stored value — a flavor's kind + template-class wiring, plus the
   OPTIONAL per-instance behavior-set thunk (PR-6+7 curl-as-flavor) and the
   OPTIONAL CapMint cap-policy (role-foundation RF-8). The thunk is `nil` for a
-  flavor backed by its own dedicated Kind (np); it is a 0-arity fn returning
+  flavor backed by its own dedicated Kind (py); it is a 0-arity fn returning
   the flavor's behavior SUBSET for a flavor folded onto a SHARED Kind
   (`curl` → `Entity.Agent`), so the generic direct-spawn path threads
   `:behaviors` without the workspace domain knowing the flavor.
