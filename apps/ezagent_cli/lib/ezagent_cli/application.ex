@@ -47,10 +47,14 @@ defmodule EzagentCli.Application do
     # `<uri>?action=<behavior>.<action>` target and dispatches through the
     # Router with the caller's token identity/caps. Args are JSON (inline
     # `--args-json` or, for large payloads like a markmap, `--args-file`).
+    # NOTE: target option is `--target`, NOT `--uri` — the CLI shell
+    # reserves `--uri` for the caller's auth entity (Mix.Tasks.Ezagent
+    # plucks it before the facade runs), so a `--uri` here would be
+    # hijacked as the auth identity.
     EzagentCli.FacadeRegistry.register(:agent, :invoke, &agent_invoke_facade/1, %{
-      opts: [uri: :uri, action: :string, args_json: :string, args_file: :string],
+      opts: [target: :uri, action: :string, args_json: :string, args_file: :string],
       about:
-        "Dispatch <behavior>.<action> to an agent URI (JSON args via --args-json/--args-file)"
+        "Dispatch <behavior>.<action> to --target agent URI (JSON args via --args-json/--args-file)"
     })
 
     :ok
@@ -58,7 +62,7 @@ defmodule EzagentCli.Application do
 
   defp agent_invoke_facade(parsed) do
     opts = Map.get(parsed, :options, %{})
-    uri = opts[:uri]
+    uri = opts[:target]
     action_str = opts[:action]
 
     args_source =
