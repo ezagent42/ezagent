@@ -32,7 +32,11 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     :save_template_as,
     # spec-3 Phase 3: session-level, ledger-tracked re-point to a new template @hash
     :migrate_session,
-    :list_templates
+    :list_templates,
+    # kb-retrieval SPEC §5.3 option 1 — retrieve from / ingest into a kb-agent
+    # (orchestrator-catalog MCP path, bridge-token authority).
+    :kb_query,
+    :kb_ingest
   ]
 
   test "the orchestrator tools are exactly the §3.8 member/rule-set + template set" do

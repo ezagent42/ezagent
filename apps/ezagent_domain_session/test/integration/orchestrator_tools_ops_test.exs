@@ -457,7 +457,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
                 :update_template,
                 :save_template_as,
                 :migrate_session,
-                :list_templates
+                :list_templates,
+                # kb-retrieval SPEC §5.3 option 1 — kb-agent retrieve / ingest.
+                :kb_query,
+                :kb_ingest
               ])
     end
   end
