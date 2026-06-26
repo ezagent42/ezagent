@@ -190,7 +190,10 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       # A symlinked source escaping the backend root is rejected (§6.2 realpath).
       backend_dir = Path.join([Ezagent.Home.path("kb-sources"), ws_name])
       File.mkdir_p!(backend_dir)
-      outside = Path.join(System.tmp_dir!(), "kb-escape-#{System.unique_integer([:positive])}.txt")
+
+      outside =
+        Path.join(System.tmp_dir!(), "kb-escape-#{System.unique_integer([:positive])}.txt")
+
       File.write!(outside, "secret outside the backend root")
       link_name = "link-#{System.unique_integer([:positive])}"
       link_path = Path.join(backend_dir, link_name)

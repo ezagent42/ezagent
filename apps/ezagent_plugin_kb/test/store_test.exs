@@ -117,7 +117,10 @@ defmodule EzagentPluginKb.StoreTest do
 
     test "re-ingesting one source leaves OTHER sources intact", %{path: path} do
       db = open!(path)
-      assert {:ok, 1} = Store.ingest(db, "resource://ws/kb-source/a", [{0, "apple banana cherry"}])
+
+      assert {:ok, 1} =
+               Store.ingest(db, "resource://ws/kb-source/a", [{0, "apple banana cherry"}])
+
       assert {:ok, 1} = Store.ingest(db, "resource://ws/kb-source/b", [{0, "delta echo foxtrot"}])
       # re-ingest a, b must survive
       assert {:ok, 1} = Store.ingest(db, "resource://ws/kb-source/a", [{0, "apricot blueberry"}])
@@ -129,10 +132,13 @@ defmodule EzagentPluginKb.StoreTest do
   describe "SQL safety (SPEC §8.4d)" do
     test "FTS5/SQL metacharacters are treated as DATA — no error, no injection", %{path: path} do
       db = open!(path)
-      assert {:ok, 1} = Store.ingest(db, "resource://ws/kb-source/s", [{0, "harmless corpus text"}])
+
+      assert {:ok, 1} =
+               Store.ingest(db, "resource://ws/kb-source/s", [{0, "harmless corpus text"}])
 
       for evil <- [
-            ~s("), # bare quote — would break a naive MATCH string
+            # bare quote — would break a naive MATCH string
+            ~s("),
             "*",
             "AND 1=1",
             "'; DROP TABLE chunks; --",
