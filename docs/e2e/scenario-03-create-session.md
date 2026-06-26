@@ -52,3 +52,30 @@
 ## 交叉引用
 
 - 设计场景:`docs/scenarios/09-session-create-lv`(PR #408 / #419)
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。**2026-06-26 agent-browser 实地跑通**。两表单有稳定 id;native-setter 填值 + requestSubmit;结果看 data-last-dispatch。 -->
+
+**前置(自动化)**:scenario-01 + scenario-02 已自动跑(admin 已登录;`e2e-native` 已建)。
+**入口 URL**:`http://world.localhost:10042/sessions`
+**自建实体**:session `e2e-test-1`(URI `session://system/default/e2e-test-1`)。
+> **实地核实(2026-06-26)两个坑**:① New session 模板默认 `advisor` **无效** → `error:{:invalid_template, "class"=>"session.advisor"}`,**必须显式选 `#world-session-template`=`default`**;② 邀请框填**裸名** → `error:bad_member_uri`,**必须填完整 URI** `entity://system/agent/<name>`。两者均产品缺口候选(见 UI 清单)。
+
+| # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | click(展开表单) | `button` 文本 `New session`(JS `.click()`) | — | `visible form#world-session-create-form` | — |
+| 2 | fill(名,native-setter) | `#world-session-short-name` | `e2e-test-1` | — | — |
+| 3 | **select 模板(native-setter+change)** | `#world-session-template` | `default` | — | — |
+| 4 | submit `form.requestSubmit(btn)` | `form#world-session-create-form button[type=submit]` | — | **`attr #world-root data-last-dispatch=ok`**(**实地✅**;默认 advisor 会 `error:invalid_template`) | `s03-step3-session-created-auto.png` |
+| 5 | navigate 会话页 + 开邀请框 | `/sessions?session=<enc>` → `button[aria-label="Invite a member"]` `.click()` | — | `visible #world-invite-input` | — |
+| 6 | fill(成员**完整URI**)+ requestSubmit | `#world-invite-input` | `entity://system/agent/e2e-native` | **`attr li[data-kind=agent] data-online=true`** + `count [data-world-component=conversation] li[data-online] >= 2`(**实地✅**:e2e-native online + admin online) | `s03-step6-member-online-auto.png` ✅ |
+
+**断言映射**:
+- 「session spawn」→ step4 `data-last-dispatch=ok`(注:实地观察建后 URL 停 `/sessions`、非自动跳会话页,故 step5 显式导航)。
+- 「`:add_member` 后 cap 授予,成员加入即在线」→ step6 `li[data-kind=agent] data-online=true` + 计数≥2。**实地坐实 e2e-native 加入即 online**(scenario-02 创建即 ready)。
+- 「无 no_such_actor 快照竞态」→ step6 online 断言通过即竞态未复现。
+
+**清理**:删除 session `e2e-test-1`(及 scenario-02 的 `e2e-native`),或重置 DB 重 seed。

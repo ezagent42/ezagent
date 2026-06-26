@@ -52,5 +52,25 @@
 ## 交叉引用
 - 设计场景:`docs/scenarios/06-codex-agent-roundtrip`、`26-codex-bridge-uds-ws`
 
-## 交叉引用
-- 设计场景:`docs/scenarios/06-codex-agent-roundtrip`、`26-codex-bridge-uds-ws`
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。codex 是 bridge agent,激活快(~1.8s),正常往返 PASS。 -->
+
+**前置(自动化)**:scenario-03 已跑(session `zyli-test-1`)。**需先配凭据**:zyli 本机 `codex login`(`~/.codex/auth.json`+`config.toml`)→ 手工 seed 进 agent CODEX_HOME `~/.ezagent/default/codex-agents/system/zyli-codex-1/`;server 带 `HTTPS_PROXY`。**凭据未就绪 → codex 不回 → step5 断言 FAIL 属环境未就绪,非回归**(codex 无自动 seed task,见本条 DX 缺口)。
+**入口 URL**:`http://world.localhost:10042/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fzyli-test-1`
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | navigate(Identities→New Agent 建 codex,若未建) | `form#world-agent-new-form` | flavor=`codex` / name=`zyli-codex-1` / cwd=`/tmp/codex-agent-zyli` | `visible #world-agent-new-form` | `s06-step1-codex-create-auto.png` |
+| 2 | navigate(session 详情) | — | — | `visible [data-world-component=conversation]` | — |
+| 3 | click+fill(Invite zyli-codex-1) | `button[aria-label="Invite a member"]` → `#world-invite-input` | `zyli-codex-1` | `attr li[data-kind=agent] data-online=true` | — |
+| 4 | fill(消息框) | `textarea[aria-label="Message"]` | `@zyli-codex-1 你好,你是谁` | `visible [data-mine="true"]` | — |
+| 5 | click(发送)+ wait(≤15s) | `[data-world-component=conversation] button[type="submit"]` → `div[data-sender-kind="agent"][data-mine="false"]` | — | `text~ [data-sender-kind=agent] "Codex"` | `s06-step5-codex-reply-auto.png` |
+
+**断言映射**:
+- 「codex bridge 经 UDS WS 派发并回包」→ step5 reply 气泡含 "Codex"(真实 provider)。
+- 「LV 渲染对话」→ step4 `data-mine=true` + step5 reply 气泡双向上屏。
+
+**清理**:跑完删除自建 `zyli-codex-1`(若本 runbook 新建);CODEX_HOME 凭据按需保留。

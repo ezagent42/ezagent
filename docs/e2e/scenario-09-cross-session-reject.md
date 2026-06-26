@@ -51,3 +51,26 @@
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/11-cross-session-mention-rejected`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。负路径:断言非成员**无回复**(气泡不出现)+ autocomplete **不列**非成员。 -->
+
+**前置(自动化)**:scenario-08 已跑(session `zyli-test-1` 有成员 zyli-echo-1/zyli-curl-1/admin)+ 基线存在非成员 agent `echo_default`、`e2e-test`(seed 后即有,**不在**本 session)。
+**入口 URL**:`http://world.localhost:10042/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fzyli-test-1`
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | navigate | — | — | `visible [data-world-component=conversation]` | — |
+| 2 | focus+type(触发 autocomplete) | `textarea[aria-label="Message"]` | `@` | `visible ul[role="listbox"][aria-label="Mention a member"]` | `s09-step2-autocomplete-auto.png` |
+| 3 | assert(非成员不在候选) | `ul[role="listbox"] button` | — | `count ul[role="listbox"] button:has-text("echo_default") = 0`(候选只列本 session 成员) | (同步2) |
+| 4 | fill(手打非成员名)+ 发送 | `textarea[aria-label="Message"]` → `button[type="submit"]` | `@e2e-test 你好` | `visible [data-mine="true"]`(消息上屏) | `s09-step4-nonmember-sent-auto.png` |
+| 5 | wait(5s)+ assert(无新 agent 回复) | `div[data-sender-kind="agent"][data-mine="false"]` | — | `count [data-sender-kind=agent] 不增`(e2e-test 零应答) | `s09-step5-nonmember-no-reply-auto.png` |
+
+**断言映射**:
+- 「无跨 session/非成员越权投递」→ step3(autocomplete 不列非成员)+ step5(@非成员零回复)。
+- 「dispatch 被拒有显式信号(非静默)」→ **UI 层不可断言**(无 reject/DLQ marker)→ 留 scenario-12 CLI 审计(见其 runbook)。
+
+**清理**:无(未建实体;发出的消息留 transcript)。

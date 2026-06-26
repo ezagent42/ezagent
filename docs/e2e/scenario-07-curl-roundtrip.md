@@ -50,3 +50,33 @@
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/07-curl-agent-deepseek`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。**2026-06-26 agent-browser 实地跑通:真实 DeepSeek 回复**。curl 是纯 HTTP flavor,无 PTY/bridge,最适合做 agent-reply 自动回归基线。 -->
+
+**前置(自动化)**:scenario-03 已跑(session `e2e-test-1`)。**配凭据配方(2026-06-26 实地)**:
+> ① 建 curl agent **零配置**(flavor=curl,name=`e2e-curl`,直接提交即建成,跳详情页)。
+> ② **`api_url`/`model` 走默认即可**——curl_agent.ex 默认 `api_url=https://api.deepseek.com/chat/completions` + `model=deepseek-chat`(源码核实),用 DeepSeek 无需改。
+> ③ **只需配 `api_key`**:它在独立 `:api_keys` slice,走 **api-keys 页**(非 Config 通用字段)`/identities/agents/<enc>/api-keys`(comp=`agent_api_keys`):provider input 填 `deepseek`、password input 填 key、点 `Save key`。
+> ④ **key 绝不入库**:runbook/截图用占位 `<DEEPSEEK_API_KEY>`;实跑时由操作者注入(本次已实测真 key,未写入任何文件)。
+> key/url 未就绪 → 不回 → reply 断言 FAIL 属环境未就绪,非回归。
+
+**入口 URL**:`http://world.localhost:10042/sessions?session=<encodeURIComponent("session://system/default/e2e-test-1")>`
+
+| # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | 建 curl(native-setter+requestSubmit) | `/identities/agents/new` form | flavor=`curl` / name=`e2e-curl` | `url~ /identities/agents/entity%3A`(建成跳详情,**实地✅**) | — |
+| 2 | 配 api_key | `/identities/agents/<enc>/api-keys` | provider=`deepseek` / key=`<DEEPSEEK_API_KEY>` | `attr #world-root data-last-dispatch=ok`(**实地✅**) | — |
+| 3 | navigate session + Invite(完整URI) | `/sessions?session=<enc>` → `#world-invite-input` | `entity://system/agent/e2e-curl` | `attr li[data-kind=agent] data-online=true`(**实地✅**) | — |
+| 4 | 真键盘 @ + 提问 + 发送 | `keyboard type '@e2e-c'`→`click 'ul[role=listbox] button'`→`keyboard type ' 用一个词回答:水的化学式是什么'`→`press Enter` | — | `visible [data-mine=true]` | — |
+| 5 | wait ≤12s 等 DeepSeek 回复 | `[data-sender-kind=agent][data-mine=false]` | — | agent 气泡含确定性答案(**实地✅** e2e-curl 回 **`H₂O`**,真实 LLM 非 stub/echo) | `s07-step4-curl-reply-auto.png` ✅ |
+
+**断言映射**:
+- 「curl flavor 调 deepseek 并回包」→ step5 reply 气泡含正确答案 `H₂O`(真实 DeepSeek HTTP,~数秒)。**2026-06-26 实地坐实**。
+- 「LV 渲染对话」→ step4 + step5 双向上屏。
+- **回归基线价值**:curl 是纯 HTTP,稳定可复现;选确定性问答(化学式/算术)让 reply 可机器断言。
+
+**清理**:删除自建 `e2e-curl`(及其 api_key);或重置 DB 重 seed。

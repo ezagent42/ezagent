@@ -56,3 +56,28 @@
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/13-feishu-inbound-routing`、`32-feishu-mention-orchestrator-dispatch`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。**混合验证**:入站触发(在飞书群发消息)是**带外手工**(非 ezagent UI);到达 + 路由 + 出站的结果在 world UI feishu-bing 可 agent-browser 自动验。 -->
+
+**前置(自动化)**:scenario-10 已跑(feishu-bing 绑定 + 出站通)+ **Feishu sidecar WSS 已连**。入站 @ 走 **text-grep**(在飞书打字面 `@<agent名>`)。**sidecar 未连 → 入站不到达,属环境未就绪非回归。**
+**入口 URL**:`http://world.localhost:10042/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Ffeishu-bing`
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | **带外(手工)**:在飞书群 "esr-test" 发消息 | — | `@r3-echo-pty-1 你是谁,请回复` | 飞书群消息已发出(手工) | `s11-step1-feishu-inbound-manual.png` |
+| 2 | navigate(world feishu-bing 详情) | — | — | `visible [data-world-component=conversation]` | — |
+| 3 | wait+assert(入站消息到达 session) | `[data-world-component=conversation]` | — | `text~ [data-world-component=conversation] "@r3-echo-pty-1 你是谁"`(入站落 transcript) | `s11-step3-inbound-arrived-auto.png` |
+| 4 | wait+assert(text-grep 路由 → echo 回复) | `div[data-sender-kind="agent"][data-mine="false"]` | — | `text~ [data-sender-kind=agent] "echo: @r3-echo-pty-1"` | `s11-step4-routed-reply-auto.png` |
+| 5 | **带外(手工)**:回复流回飞书群 | — | — | 飞书群收到 `[session\|sender] echo: …` —— agent-browser 不可验 | `s11-step5-feishu-outbound-manual.png` |
+
+**断言映射**:
+- 「入站到达绑定 session」→ step3(world UI feishu-bing 出现入站消息)。
+- 「mention 解析 → 路由到 agent」→ step4(echo agent 回复气泡,证明 text-grep 命中)。
+- 「Feishu 用户看到 agent 回复」→ step5(**飞书侧带外**)。
+- 「`inbound_chat_lookup`/`feishu_user_bindings`/`ctx.caller`」→ DB 层,留 scenario-12 CLI 审计。
+
+**清理**:无。
