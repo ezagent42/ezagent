@@ -1,97 +1,82 @@
 defmodule EzagentPluginFeishu.SidecarOrphanReapTest do
   @moduledoc """
-  Phase 7 PR 35 invariant — the Node sidecar exits when its parent
-  Erlang Port closes, preventing orphan accumulation.
+  Phase 7 PR 35 invariant — the Node sidecar exits when its parent BEAM dies,
+  preventing orphan accumulation.
 
   ## Background
 
   `Ezagent.PluginFeishu.WsClient` spawns the Node sidecar via
-  `Port.open({:spawn_executable, node_bin}, ...)`. Erlang
-  `:spawn_executable` Ports do NOT propagate signals to the child
-  process when the BEAM VM exits — the OS reparents the Node
-  process to PID 1 and it keeps running.
+  `Port.open({:spawn_executable, node_bin}, ...)`. Erlang `:spawn_executable`
+  Ports do NOT propagate signals to the child when the BEAM exits — the OS
+  reparents the Node process to PID 1 and it keeps running. Symptom (Phase 6
+  PR 27): every phx.server restart leaks an orphan sidecar; multiple orphans
+  race for Feishu inbound events, silently stealing messages.
 
-  Symptom (observed in Phase 6 PR 27 debugging): every phx.server
-  restart leaks one orphan sidecar. Three orphans accumulated over
-  one day, all racing for Feishu inbound events, silently stealing
-  messages.
+  ## Fix — orphan reap via PARENT-PID POLL (2026-06-26, #1024)
 
-  ## Fix (PR 35)
-
-  Sidecar reads its own stdin via `process.stdin.on('end', () =>
-  process.exit())`. When the Elixir Port closes (parent dies /
-  Port.close called / VM exits), stdin sees EOF. The handler fires
-  and the sidecar exits cleanly. Universal pattern for any
-  Port-spawned subprocess sidecar.
+  The original reap used `process.stdin.on('end', …)` + `process.stdin.resume()`.
+  That was REPLACED: `process.stdin.resume()` puts Node in flowing mode and
+  STARVES the Lark SDK's internal WSS event loop, so no `im.message.receive_v1`
+  events are delivered (bisect-3, 2026-06-26). The sidecar now records its parent
+  pid at boot (`const PARENT_PID = process.ppid`) and polls every 5s; when the
+  parent dies the child is re-parented (`process.ppid !== PARENT_PID` / `=== 1`)
+  and it `process.exit(0)`s so the WsClient GenServer can respawn it.
 
   ## Test strategy
 
-  Two tests:
-
-  1. **Static check** — grep the source file for the handler. Catches
-     the most likely regression (someone refactors main.js and drops
-     the handler).
-  2. **Integration check** — spawn a real Port, close it, assert the
-     OS pid is dead within 3 seconds. Tagged `:slow` so it only runs
-     when explicitly included.
-
-  The integration check is the strongest guarantee but takes ~3s
-  per run; the static check is fast and catches the common refactor
-  regression. CI runs both via `mix test --include slow`.
+  1. **Static check** — grep main.js for the parent-PID poll (likely regression:
+     someone reintroduces `stdin.resume()` and re-breaks WSS, or drops the poll).
+     ALSO asserts the ABSENCE of `stdin.resume()` — the specific #1024 regression.
+  2. **Integration check** (`:slow`) — spawn the sidecar, close the Port so the
+     BEAM stops being its parent, assert the Node pid dies within the poll window
+     (~5s + margin) now that reap is parent-death-driven, not stdin-EOF.
   """
 
   use ExUnit.Case, async: true
 
-  @sidecar_path Path.expand(
-                  "../priv/ws_sidecar/main.js",
-                  __DIR__
-                )
+  @sidecar_path Path.expand("../priv/ws_sidecar/main.js", __DIR__)
 
-  test "sidecar main.js registers a stdin EOF handler that calls process.exit" do
+  test "sidecar main.js reaps via a parent-PID poll (NOT stdin.resume, which starves the Lark WSS loop)" do
     assert File.exists?(@sidecar_path),
            "sidecar main.js not found at #{@sidecar_path}; cannot test orphan reap"
 
     source = File.read!(@sidecar_path)
 
-    # The exact handler we expect (or a near-equivalent). We're lenient
-    # on whitespace + style but strict that BOTH the EOF event handler
-    # AND the exit call are present.
-    assert source =~ ~r/process\.stdin\.on\(\s*['"]end['"]/,
-           "main.js does not register a stdin 'end' (EOF) handler — orphan reap is broken. " <>
-             "Phase 6 PR 27 lesson: orphan sidecars steal Feishu inbound events. " <>
-             "Add: process.stdin.on('end', () => process.exit(0)); + process.stdin.resume();"
+    assert source =~ ~r/process\.ppid/,
+           "main.js does not reference process.ppid — the parent-PID orphan-reap poll is missing. " <>
+             "Phase 6 PR 27 lesson: orphan sidecars steal Feishu inbound events."
 
-    assert source =~ ~r/process\.stdin\.resume\(\)/,
-           "main.js registers an 'end' handler but doesn't call process.stdin.resume() — " <>
-             "without resume() the stream stays paused and 'end' never fires"
+    assert source =~ ~r/setInterval/,
+           "main.js has no setInterval — the 5s parent-liveness poll is missing"
 
-    # The handler body should call process.exit (otherwise the sidecar
-    # just logs and keeps running). Take a window starting at the
-    # handler registration and look for process.exit within the next
-    # ~400 chars (the handler body, including try/catch wrappers, is
-    # always well under this).
-    {pos, _len} = Regex.run(~r/process\.stdin\.on\(\s*['"]end['"]/, source, return: :index) |> hd()
+    assert source =~ ~r/process\.ppid\s*!==\s*PARENT_PID/ or source =~ ~r/process\.ppid\s*===\s*1/,
+           "main.js does not check for parent death (process.ppid changed / === 1) — reap is broken"
 
-    window = String.slice(source, pos, 400)
+    assert source =~ ~r/process\.exit/,
+           "main.js never calls process.exit — the orphan would never be reaped"
 
-    assert window =~ ~r/process\.exit/,
-           "EOF handler does not call process.exit within its body — " <>
-             "the sidecar will log on EOF but won't exit, leaving an orphan. " <>
-             "Window inspected: #{inspect(window)}"
+    # The specific regression #1024 fixed: an ACTIVE stdin.resume() call starves
+    # the Lark SDK WSS event loop (no inbound events). It must NOT come back.
+    # (The moduledoc/comments legitimately MENTION it to explain the fix, so we
+    # check only non-comment code lines.)
+    code_only =
+      source
+      |> String.split("\n")
+      |> Enum.reject(&(String.trim_leading(&1) |> String.starts_with?("//")))
+      |> Enum.join("\n")
+
+    refute code_only =~ ~r/process\.stdin\.resume\(\)/,
+           "main.js has an ACTIVE process.stdin.resume() call — this starves the Lark SDK WSS " <>
+             "loop so no im.message.receive_v1 events are delivered (bisect-3, 2026-06-26). " <>
+             "Reap must use the parent-PID poll, not stdin EOF."
   end
 
   @tag :slow
   @tag timeout: 30_000
-  test "spawned sidecar exits within 3s after Port closes (integration)" do
+  test "spawned sidecar exits within the poll window after its parent (the BEAM Port) dies (integration)" do
     node_bin = System.find_executable("node")
+    if is_nil(node_bin), do: flunk("node binary not found in PATH — cannot run integration test")
 
-    if is_nil(node_bin) do
-      flunk("node binary not found in PATH — cannot run integration test")
-    end
-
-    # Spawn the sidecar with deliberately bogus credentials.
-    # It will fail to connect, but the EOF handler is registered
-    # before the SDK initialization, so the reap behavior is testable.
     port =
       Port.open(
         {:spawn_executable, node_bin},
@@ -103,52 +88,43 @@ defmodule EzagentPluginFeishu.SidecarOrphanReapTest do
            [
              {~c"FEISHU_APP_ID", ~c"test_app_id_orphan_reap"},
              {~c"FEISHU_APP_SECRET", ~c"test_app_secret_orphan_reap"}
-           ]},
-          {:line, 65_536}
+           ]}
         ]
       )
 
-    # Get the OS pid of the Node process so we can verify it actually died.
-    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    {:os_pid, node_pid} = Port.info(port, :os_pid)
 
-    # Confirm the process is alive before we close.
-    assert os_pid_alive?(os_pid),
-           "sidecar with pid #{os_pid} died before we could test EOF reap — " <>
-             "check main.js for a fatal() that fires before stdin handler registration"
+    assert os_pid_alive?(node_pid),
+           "sidecar pid #{node_pid} died before we could test parent-death reap"
 
-    # Close the Port → Elixir closes stdin → Node sees EOF → handler fires → exit.
+    # Close the Port: the BEAM stops being the child's parent → node re-parents
+    # to PID 1 → its 5s poll detects the ppid change → process.exit(0).
     Port.close(port)
 
-    # Poll for up to 3s, asserting the pid is gone.
-    assert eventually_dead?(os_pid, 3_000),
-           "sidecar pid #{os_pid} still alive 3s after Port close — " <>
-             "orphan reap mechanism is broken (Phase 6 PR 27 regression)"
+    assert eventually_dead?(node_pid, 9_000),
+           "sidecar pid #{node_pid} still alive ~9s after its parent died — the parent-PID " <>
+             "poll (5s interval) did not reap it"
   end
 
-  defp os_pid_alive?(os_pid) do
-    case System.cmd("kill", ["-0", to_string(os_pid)], stderr_to_stdout: true) do
-      {_, 0} -> true
+  defp os_pid_alive?(pid) do
+    case System.cmd("ps", ["-p", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_out, 0} -> true
       _ -> false
     end
   end
 
-  defp eventually_dead?(os_pid, timeout_ms) do
+  defp eventually_dead?(pid, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    eventually_dead?(os_pid, deadline, 100)
+    do_eventually_dead?(pid, deadline)
   end
 
-  defp eventually_dead?(os_pid, deadline, poll_ms) do
-    if os_pid_alive?(os_pid) do
-      now = System.monotonic_time(:millisecond)
-
-      if now < deadline do
-        Process.sleep(poll_ms)
-        eventually_dead?(os_pid, deadline, poll_ms)
-      else
-        false
-      end
-    else
-      true
+  defp do_eventually_dead?(pid, deadline) do
+    cond do
+      not os_pid_alive?(pid) -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true ->
+        Process.sleep(500)
+        do_eventually_dead?(pid, deadline)
     end
   end
 end
