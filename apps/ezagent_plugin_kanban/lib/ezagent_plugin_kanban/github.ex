@@ -75,15 +75,26 @@ defmodule EzagentPluginKanban.Github do
     end
   end
 
-  @doc "读一个 PR 的状态（state/merged/head 分支）。返回 `{:ok, %{state, merged, head_ref}}`。"
+  @doc "读一个 PR 的状态（state/merged/head 分支/head sha）。返回 `{:ok, %{state, merged, head_ref, head_sha}}`。"
   @spec get_pull(String.t(), String.t(), integer()) ::
-          {:ok, %{state: String.t(), merged: boolean(), head_ref: String.t() | nil}}
+          {:ok,
+           %{
+             state: String.t(),
+             merged: boolean(),
+             head_ref: String.t() | nil,
+             head_sha: String.t() | nil
+           }}
           | {:error, term()}
   def get_pull(token, repo, number) do
     case get(token, "/repos/#{repo}/pulls/#{number}") do
       {:ok, %{"state" => s} = m} ->
         {:ok,
-         %{state: s, merged: Map.get(m, "merged", false), head_ref: get_in(m, ["head", "ref"])}}
+         %{
+           state: s,
+           merged: Map.get(m, "merged", false),
+           head_ref: get_in(m, ["head", "ref"]),
+           head_sha: get_in(m, ["head", "sha"])
+         }}
 
       {:ok, other} ->
         {:error, {:unexpected_response, other}}
@@ -92,6 +103,37 @@ defmodule EzagentPluginKanban.Github do
         err
     end
   end
+
+  @doc """
+  推一个 commit status check 到某个 sha（硬 CI 门，B2）。
+
+  `state` ∈ `success`|`failure`|`pending`|`error`（GitHub 语义）。配 branch protection 的
+  required status check（context=`ezagent/ci-gate`）后，`failure` 真能挡合并。
+  复用 `post/2`+`headers/1`；PAT 需 `repo:status`（细粒度 token 需 commit statuses: write）scope。
+  返回 `{:ok, status_url}`。
+  """
+  @spec create_commit_status(String.t(), String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def create_commit_status(token, repo, sha, state, opts \\ [])
+      when is_binary(sha) and is_binary(state) do
+    payload =
+      %{
+        state: state,
+        context: Keyword.get(opts, :context, "ezagent/ci-gate"),
+        description: String.slice(Keyword.get(opts, :description, ""), 0, 140)
+      }
+      |> maybe_put(:target_url, Keyword.get(opts, :target_url))
+
+    case post(token, "/repos/#{repo}/statuses/#{sha}", payload) do
+      {:ok, %{"state" => _} = m} -> {:ok, Map.get(m, "url")}
+      {:ok, other} -> {:error, {:unexpected_response, other}}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp maybe_put(map, _k, nil), do: map
+  defp maybe_put(map, _k, ""), do: map
+  defp maybe_put(map, k, v), do: Map.put(map, k, v)
 
   # --- :httpc helpers（对齐 miro.ex）---------------------------------------
 

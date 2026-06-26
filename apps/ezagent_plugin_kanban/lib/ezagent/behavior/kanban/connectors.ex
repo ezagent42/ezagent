@@ -69,7 +69,8 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
     end
   end
 
-  # 出站 PR 留言：把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）。
+  # 出站 PR 留言 + 硬 CI 门：把产品需求摘要 post 到 PR（软），再把 check_pr_gate verdict
+  # 推成 GitHub commit status check（硬，红挡合并）。两步都是纯出站、不改树。
   @doc false
   def push_pr(%{id: id}, ctx) do
     t = Shared.tree(ctx)
@@ -80,7 +81,10 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
          pr when is_integer(pr) <- node_pr(node),
          digest <- Ci.requirement_digest(t, id),
          {:ok, url} <- Github.post_comment(token, repo, pr, digest) do
-      {:ok, %{url: url}, []}
+      # 软留言已发；再推硬 CI status check。best-effort：拿不到 sha / 推失败 → gate_state
+      # 返回 "skipped"（不回滚已发留言、不算 push_pr 失败），调用方可见、非静默丢。
+      gate_state = push_ci_status(token, repo, pr, Ci.check_pr_gate(t, id))
+      {:ok, %{url: url, gate_state: gate_state}, []}
     else
       nil -> {:error, :node_not_found}
       :forbidden -> {:error, :forbidden}
@@ -89,6 +93,21 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
       {:error, reason} -> {:error, gh_reason(reason)}
       false -> {:error, :no_pr_registered}
       _ -> {:error, :no_pr_registered}
+    end
+  end
+
+  # 把 CI verdict 推成 GitHub commit status（硬门）。返回推上的 state 字符串，失败返回 "skipped"。
+  defp push_ci_status(token, repo, pr, verdict) do
+    with {:ok, %{head_sha: sha}} when is_binary(sha) <- Github.get_pull(token, repo, pr),
+         state <- Ci.gate_state(verdict),
+         {:ok, _} <-
+           Github.create_commit_status(token, repo, sha, state,
+             context: "ezagent/ci-gate",
+             description: "ezagent 前置判据 #{verdict.score}/#{verdict.max}"
+           ) do
+      state
+    else
+      _ -> "skipped"
     end
   end
 
@@ -221,6 +240,18 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # 绑定本看板到一个会话（B1）：之后接力动作向该会话 session.send 公告、重入路由。
+  # 任意持 cap 的成员（cap gate 收口）；合并写不动 github/miro 配置。
+  @doc false
+  def bind_session(%{session_uri: session_uri}, ctx) do
+    uri = ctx[:self_uri]
+
+    case BoardConfig.write(uri, %{session_uri: session_uri}) do
+      :ok -> {:ok, %{session_uri: BoardConfig.read(uri).session_uri}, []}
+      {:error, reason} -> {:error, reason}
     end
   end
 

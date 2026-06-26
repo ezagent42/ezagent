@@ -4,16 +4,30 @@ defmodule EzagentPluginKanban.CiTest do
   alias EzagentPluginKanban.Ci
 
   defp node(stage, status, parent, arts \\ []) do
-    %{parent_id: parent, title: to_string(stage), order: 0, stage: stage, owner: nil, status: status, artifacts: arts, metrics: []}
+    %{
+      parent_id: parent,
+      title: to_string(stage),
+      order: 0,
+      stage: stage,
+      owner: nil,
+      status: status,
+      artifacts: arts,
+      metrics: []
+    }
   end
 
   defp tree(nodes), do: %{nodes: nodes, root_id: "feat", seq: 0}
 
   test "check_pr_gate：齐全的祖先链 → 4/4 满分" do
     nodes = %{
-      "feat" => node(:feature, :done, nil, [%{tool: "inline", kind: "spec", ref: "g", content: "Given X When Y Then Z"}]),
-      "iss" => node(:issue, :done, "feat", [%{tool: "github", kind: "issue", ref: "#1", url: ""}]),
-      "tst" => node(:test, :done, "iss", [%{tool: "ci", kind: "test_suite", ref: "green", url: ""}]),
+      "feat" =>
+        node(:feature, :done, nil, [
+          %{tool: "inline", kind: "spec", ref: "g", content: "Given X When Y Then Z"}
+        ]),
+      "iss" =>
+        node(:issue, :done, "feat", [%{tool: "github", kind: "issue", ref: "#1", url: ""}]),
+      "tst" =>
+        node(:test, :done, "iss", [%{tool: "ci", kind: "test_suite", ref: "green", url: ""}]),
       "pr" => node(:pr, :doing, "tst", [%{tool: "github", kind: "pr", ref: "#2", url: ""}])
     }
 
@@ -44,11 +58,18 @@ defmodule EzagentPluginKanban.CiTest do
 
   test "requirement_digest：沿祖先链汇总产品文档 + 指标（出站到 PR 的留言）" do
     nodes = %{
-      "pos" => node(:positioning, :done, nil, [%{tool: "inline", kind: "doc", content: "让 X 用户一键完成下单"}]),
+      "pos" =>
+        node(:positioning, :done, nil, [%{tool: "inline", kind: "doc", content: "让 X 用户一键完成下单"}]),
       "feat" =>
-        Map.put(node(:feature, :done, "pos", [%{tool: "inline", kind: "spec", content: "Given 登录 When 下单 Then 成功"}]), :metrics, [
-          %{name: "周闭环数", target: "20"}
-        ]),
+        Map.put(
+          node(:feature, :done, "pos", [
+            %{tool: "inline", kind: "spec", content: "Given 登录 When 下单 Then 成功"}
+          ]),
+          :metrics,
+          [
+            %{name: "周闭环数", target: "20"}
+          ]
+        ),
       "pr" => node(:pr, :doing, "feat", [])
     }
 
@@ -58,5 +79,12 @@ defmodule EzagentPluginKanban.CiTest do
     assert d =~ "[功能卡]" and d =~ "Given 登录"
     assert d =~ "指标 周闭环数：目标 20"
     assert Ci.requirement_digest(tree(%{}), "nope") == ""
+  end
+
+  # B2 — verdict → GitHub commit status state（硬 CI 门）
+  test "gate_state：满分→success / 扣分→failure / 无判据→pending" do
+    assert Ci.gate_state(%{score: 4, max: 4}) == "success"
+    assert Ci.gate_state(%{score: 1, max: 4}) == "failure"
+    assert Ci.gate_state(%{score: 0, max: 0}) == "pending"
   end
 end

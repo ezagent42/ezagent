@@ -48,6 +48,18 @@ defmodule EzagentPluginKanban.Ci do
 
   def check_pr_gate(_tree, _id), do: %{score: 0, max: 0, criteria: [], markdown: ""}
 
+  @doc """
+  verdict → GitHub commit status state（硬 CI 门，B2）。
+
+  全部判据通过=`success`（绿，放行）；有判据未过=`failure`（红，挡合并）；
+  无判据（节点还没到 pr 棒 / 未知节点）=`pending`（中性，不挡）。
+  供 `Connectors.push_pr` 推 `create_commit_status` 用。
+  """
+  @spec gate_state(verdict()) :: String.t()
+  def gate_state(%{max: 0}), do: "pending"
+  def gate_state(%{score: s, max: m}) when s == m, do: "success"
+  def gate_state(%{score: _, max: _}), do: "failure"
+
   @stage_labels %{
     positioning: "定位",
     metric: "北极星",
