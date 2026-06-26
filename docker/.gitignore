@@ -1,0 +1,7 @@
+# Deploy secrets — durable, never commit. Self-contained so protection holds on
+# ANY branch (not dependent on the root .gitignore being merged first).
+.env
+.env.*
+!.env.channel.example
+secrets-*/
+backups/
