@@ -352,7 +352,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   # may use it per their own format).
   describe "config_dir is UNIVERSAL (Allen 2026-06-03)" do
     @curl_uri URI.new!("entity://team-alpha/agent/curl_cfg")
-    @echo_uri URI.new!("entity://team-alpha/agent/echo_cfg")
+    @py_uri URI.new!("entity://team-alpha/agent/py_cfg")
     @cc_uri URI.new!("entity://team-alpha/agent/cc_cfg")
 
     test "a non-cc (curl) flavor's template ALSO emits the universal config_dir key" do
@@ -377,16 +377,17 @@ defmodule Ezagent.Entity.AgentTemplateTest do
              "the universal key is neutral; no cc-specific name leaks into curl data"
     end
 
-    test "a non-cc (echo) flavor's template ALSO emits the universal config_dir key" do
+    test "a non-cc (py) flavor's template ALSO emits the universal config_dir key" do
       content = %{
-        flavor: "echo",
+        flavor: "py",
         project_cwd: "/tmp/e",
-        config_dir: "/tmp/echo-agent/config"
+        config_dir: "/tmp/py-agent/config",
+        script: "print('hi')"
       }
 
-      assert {:ok, data} = AgentTemplate.to_template_data(content, @echo_uri)
-      assert data["class"] == "echo.agent"
-      assert data["config_dir"] == "/tmp/echo-agent/config"
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @py_uri)
+      assert data["class"] == "py.agent"
+      assert data["config_dir"] == "/tmp/py-agent/config"
       refute Map.has_key?(data, "claude_config_dir")
     end
 

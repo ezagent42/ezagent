@@ -18,7 +18,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
-  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.Invocation
 
   setup do
     # Sandbox provided by EzagentCore.DataCase (#92).
@@ -44,14 +44,32 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
     :ok
   end
 
+  # A live, cap-gated `:call` target spawned in-test (decoupled from any
+  # boot-seeded agent): a Session Kind's `session.send`. This file gates the
+  # AUTHZ invariant (granted/denied telemetry + `:unauthorized`), NOT any
+  # reply value — so the target need only be a cap-gated `:call` action.
+  defp live_call_target do
+    short = "phase3d_#{System.unique_integer([:positive])}"
+
+    {:ok, session_uri, _meta} =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        short,
+        Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
+
+    msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: []})
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    {target, msg}
+  end
+
   test "dispatch with empty caps → {:error, :unauthorized} + :denied telemetry" do
-    # Echo plugin pre-spawns entity://system/agent/echo_default at boot; use it as the target.
-    target = URI.new!("entity://system/agent/echo_default?action=echo.say")
+    {target, msg} = live_call_target()
 
     inv = %Invocation{
       target: target,
       mode: :call,
-      args: %{msg: "should be denied"},
+      args: %{message: msg},
       ctx: %{
         caller: URI.new!("entity://team-alpha/user/nobody"),
         caps: MapSet.new(),
@@ -64,16 +82,16 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
     # :denied telemetry fired
     assert_receive {:authz_event, [:ezagent, :authz, :denied], meta}, 500
     assert meta.target == target
-    assert meta.action == :say
+    assert meta.action == :send
   end
 
   test "dispatch with admin caps → success + :granted telemetry" do
-    target = URI.new!("entity://system/agent/echo_default?action=echo.say")
+    {target, msg} = live_call_target()
 
     inv = %Invocation{
       target: target,
       mode: :call,
-      args: %{msg: "should be granted"},
+      args: %{message: msg},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
@@ -81,12 +99,10 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
       }
     }
 
-    assert {:ok, %{echo: "should be granted"}} = Invocation.dispatch(inv)
+    # Authz gate is what this file pins — the admin superset cap matches; the
+    # inner result shape is not asserted (it is NOT :unauthorized).
+    refute match?({:error, :unauthorized}, Invocation.dispatch(inv))
 
     assert_receive {:authz_event, [:ezagent, :authz, :granted], _meta}, 500
-  end
-
-  test "KindRegistry still has entity://system/agent/echo_default (sanity — dispatch path live)" do
-    assert {:ok, _pid} = KindRegistry.lookup(URI.new!("entity://system/agent/echo_default"))
   end
 end

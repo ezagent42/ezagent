@@ -39,10 +39,10 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
     # Subscribe to the sender's notification topic so we can assert.
     sender_uri = Ezagent.URI.new!("entity://system/user/test-sender-#{uniq}")
     session_uri = Ezagent.URI.new!("session://system/default/test-mention-fail-#{uniq}")
-    member_uri = Ezagent.URI.new!("entity://system/agent/echo_member-agent-#{uniq}")
-    non_member_uri = Ezagent.URI.new!("entity://system/agent/echo_non-member-agent-#{uniq}")
-    :ok = AgentFlavorAttributes.put(member_uri, "echo")
-    :ok = AgentFlavorAttributes.put(non_member_uri, "echo")
+    member_uri = Ezagent.URI.new!("entity://system/agent/py_member-agent-#{uniq}")
+    non_member_uri = Ezagent.URI.new!("entity://system/agent/py_non-member-agent-#{uniq}")
+    :ok = AgentFlavorAttributes.put(member_uri, "py")
+    :ok = AgentFlavorAttributes.put(non_member_uri, "py")
 
     on_exit(fn ->
       AgentFlavorAttributes.delete(member_uri)
@@ -73,7 +73,7 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
         id: "test-mf-#{System.unique_integer([:positive])}",
         session_uri: ctx.session,
         sender: ctx.sender,
-        body: %{"text" => "@echo_non-member-agent hi"},
+        body: %{"text" => "@py_non-member-agent hi"},
         mentions: [ctx.non_member],
         inserted_at: DateTime.utc_now()
       }
@@ -107,7 +107,7 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
         id: "test-mf-ok-#{System.unique_integer([:positive])}",
         session_uri: ctx.session,
         sender: ctx.sender,
-        body: %{"text" => "@echo_member-agent hi"},
+        body: %{"text" => "@py_member-agent hi"},
         mentions: [ctx.member],
         inserted_at: DateTime.utc_now()
       }

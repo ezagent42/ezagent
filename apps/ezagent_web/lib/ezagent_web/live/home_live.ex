@@ -142,16 +142,20 @@ defmodule EzagentWeb.HomeLive do
   defp truthy?(_), do: false
 
   # Phase 8c PR-J follow-up (Allen 2026-05-20) — wizard optionally
-  # seeds an echo agent into the new session for first-time demo.
-  # Echo's :receive action emits a chat reply (PR-J), so the user
-  # gets a working ping-pong loop out of the box.
+  # seeds the default demo agent into the new session for first-time
+  # demo. P2: this is now `py_default` (the echo.py py-agent that
+  # replaced the deleted echo default agent). Its :receive runs echo.py and
+  # emits a chat reply, so the user gets a working ping-pong loop out
+  # of the box.
   defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = Ezagent.URI.agent(:system, :echo_default)
-    # Make sure the echo Kind is live (spawn is idempotent — returns
-    # `{:error, {:already_started, _}}` if already up). Spawn happens
-    # in the echo plugin's Application.start; this is a defensive
-    # rehydrate in case the Kind was snapshot-restored stale.
-    _ = Ezagent.SpawnRegistry.spawn(echo_uri)
+    echo_uri = Ezagent.URI.agent(:system, :py_default)
+    # Make sure the default agent Kind is live. `ensure_started/1` is
+    # idempotent AND self-heals py_default's Python subprocess from the
+    # installed script (`Behavior.PyAgent.activate/2`) — the seed runs
+    # in the py plugin's `after_boot/0`; this is a defensive rehydrate
+    # in case the Kind was snapshot-restored stale (or the boot seed
+    # failed because uv was cold).
+    _ = Ezagent.LocalRuntime.ensure_started(echo_uri)
 
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 

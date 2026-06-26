@@ -137,7 +137,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp validate_flavor(flavor) when is_binary(flavor) do
     case Ezagent.AgentFlavorRegistry.list_all() do
       [] ->
-        if flavor in ~w(cc echo curl np codex py),
+        if flavor in ~w(cc curl np codex py),
           do: :ok,
           else: {:error, {:bad_flavor, flavor}}
 
@@ -171,7 +171,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     do: FlavorValidation.validate_from_for_flavor(flavor, from)
 
   # RF-5a is the DIRECT-SPAWN role path only; a role on a file-flavor (cc/codex/
-  # echo/…) FAILS LOUD (RF-5b deferred). Delegated to `RoleStep`.
+  # cc/…) FAILS LOUD (RF-5b deferred). Delegated to `RoleStep`.
   defp validate_role_for_flavor(flavor, role), do: RoleStep.validate_for_flavor(flavor, role)
 
   # Resolve the source agent's per-agent config_dir by dispatching
@@ -182,7 +182,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   #  - Returns `{:error, :source_not_found}` when the source Agent
   #    Kind isn't alive (ReadyGate :no_such_actor).
   #  - On success returns the source's `config_dir_path` (or nil if
-  #    the source has no per-agent dir — e.g. an echo agent).
+  #    the source has no per-agent dir — e.g. a curl agent).
   #
   # ORDER MATTERS — this step is in the main `with` chain BEFORE
   # `do_create_agent`. A `{:error, _}` here short-circuits BEFORE any
@@ -255,7 +255,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     end
   end
 
-  # cc / echo / codex → register a Workspace-scoped template + persist + invoke.
+  # cc / codex / py → register a Workspace-scoped template + persist + invoke.
   #
   # cc / codex are FILE-FLAVORS (their Template Class implements
   # `Ezagent.Agent.CredentialAdapter`). 2026-06-07 file-flavor-create-cascade
@@ -325,38 +325,6 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     )
   end
 
-  defp do_create_agent("echo", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      with_pty?: with_pty?,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "echo.agent." <> agent_name(agent_uri)
-
-    tmpl = %{
-      "class" => "echo.agent",
-      "agent_uri" => agent_uri_string(agent_uri),
-      "with_pty" => with_pty?,
-      "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
-    }
-
-    # echo is NOT a file-flavor (no CredentialAdapter, no config home) —
-    # nil caps/from keep it on the existing non-cascade Loader path.
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller),
-      nil,
-      nil
-    )
-  end
-
   defp do_create_agent("codex", agent_uri, session_templates, params) do
     %{
       cwd: cwd,
@@ -419,7 +387,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     )
   end
 
-  # py-agent (Task 1.4) — operator-script python flavor on echo's NON-cascade
+  # py-agent (Task 1.4) — operator-script python flavor on the NON-cascade
   # template route (NOT the direct-spawn route, which skips instantiate/drops
   # cwd — the np gap). See `PyTemplate` for the config_dir-reference shape.
   defp do_create_agent("py", agent_uri, session_templates, params) do
@@ -670,7 +638,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # Class implements `Ezagent.Agent.CredentialAdapter`) instantiates via
   # `Agent.spawn_from_template_content/5` (the #17 cascade chokepoint) so the
   # agent gets an isolated config_dir AND the #17 user-default cascade. A
-  # non-credentialled flavor (echo) keeps the existing
+  # non-credentialled flavor (curl) keeps the existing
   # `Loader.invoke_template` path. The Store write + rollback wrapper is
   # IDENTICAL for both — only the instantiate call differs (convergence, not
   # a forked spawn path).
@@ -812,7 +780,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # Instantiate the just-registered template. A FILE-FLAVOR (credentialled)
   # template routes through `Agent.spawn_from_template_content/5` (the #17
   # cascade chokepoint) so the agent gets an isolated config_dir + the #17
-  # user-default credential cascade; a non-credentialled flavor (echo) keeps
+  # user-default credential cascade; a non-credentialled flavor (curl) keeps
   # the existing `Loader.invoke_template` path.
   defp instantiate_template_now(%URI{} = workspace_uri, tmpl_name, tmpl, agent_uri, spawn_opts) do
     case Ezagent.TemplateRegistry.lookup(extract_class_name(tmpl)) do

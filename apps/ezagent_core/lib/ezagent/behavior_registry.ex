@@ -7,9 +7,9 @@ defmodule Ezagent.BehaviorRegistry do
   Registry) because the key shape is a tuple and we don't need
   process monitoring.
 
-  Owned by `EzagentCore.EtsOwner`. Phase 1 step 4 (Echo plugin
-  Application.start/2) calls `register/3` to wire `{Ezagent.Entity.Echo,
-  :say} → Ezagent.Behavior.Echo`.
+  Owned by `EzagentCore.EtsOwner`. A flavor plugin's boot wires its
+  Behaviors here — e.g. the py plugin registers
+  `{Ezagent.Entity.PyAgent, :receive} → Ezagent.Behavior.PyAgent`.
 
   ## Phase 1 scope
 

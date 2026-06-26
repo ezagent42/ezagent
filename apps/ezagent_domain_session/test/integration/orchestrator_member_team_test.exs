@@ -70,7 +70,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
         mode: :call,
         args: %{
           content: %{
-            flavor: "echo",
+            flavor: "cc",
             project_cwd: "/tmp",
             default_caps: [],
             created_by: User.admin_uri(),

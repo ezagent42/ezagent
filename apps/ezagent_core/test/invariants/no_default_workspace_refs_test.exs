@@ -100,7 +100,7 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
     #
     #   * `session://system/default/main`           ← `default` is the
     #     session template/type segment; workspace is `system`. Allowed.
-    #   * `entity://system/agent/echo_default`      ← `default` as agent NAME suffix.
+    #   * `entity://system/agent/py_default`         ← `default` as agent NAME suffix.
     #   * `template://agent/<ws>/cc-orchestrator`   ← unrelated.
     #
     # So the only stale shapes to flag are:

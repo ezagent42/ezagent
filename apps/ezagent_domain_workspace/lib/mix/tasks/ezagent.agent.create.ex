@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Agent.Create do
-  @shortdoc "Create a new Ezagent Agent (cc / echo / curl / future flavor) via unified dispatch"
+  @shortdoc "Create a new Ezagent Agent (cc / py / curl / future flavor) via unified dispatch"
   @moduledoc """
   Create a new agent via the unified `Behavior.Workspace.:create_agent`
   dispatch path (SPEC `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`).
@@ -27,14 +27,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           --cwd /Users/you/Workspace/my-project \\
           --caps 'chat.send,workspace.read'
 
-      # echo agent without PTY
-      mix ezagent.agent.create entity://agent/system/bot --flavor echo
-
-      # echo agent WITH /bin/bash -i sidecar
-      mix ezagent.agent.create entity://agent/system/shell \\
-          --flavor echo \\
-          --cwd /tmp/echo-sandbox \\
-          --with-pty
+      # py agent (operator-supplied python script; no cwd, no PTY)
+      mix ezagent.agent.create entity://agent/system/bot --flavor py
 
       # curl-flavor agent (no cwd, no PTY)
       mix ezagent.agent.create entity://agent/system/api --flavor curl
@@ -56,10 +50,10 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
   ## Flags
 
-  - `--flavor <flavor>` — required stored agent flavor (cc, echo, curl, np, or any registered flavor).
-  - `--cwd <dir>` — working directory. Required for `cc` flavor + for
-    `echo` when `--with-pty` is passed. Must exist on the host.
-  - `--with-pty` — echo opt-in for a `/bin/bash -i` PTY sidecar.
+  - `--flavor <flavor>` — required stored agent flavor (cc, py, curl, np, or any registered flavor).
+  - `--cwd <dir>` — working directory. Required for `cc` / `codex`
+    flavors. Must exist on the host.
+  - `--with-pty` — cc opt-in for a `/bin/bash -i` PTY sidecar.
   - `--from <uri>` — clone source agent's per-agent config_dir
     (the CLAUDE_CONFIG_DIR contents — credentials, settings, plugins)
     into the new agent. Only `cc` flavor; the source must be a `cc`
@@ -99,13 +93,13 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
     # Boot every flavor plugin we know about so AgentFlavorRegistry
     # populates. Without this the action body's `validate_flavor/1`
-    # only sees `cc` (chat domain's flavor) and rejects echo / curl /
+    # only sees `cc` (chat domain's flavor) and rejects py / curl /
     # np with `{:bad_flavor, _}`. Each `ensure_all_started/1` is a
     # no-op if the app is missing from this build so the task degrades
     # to whatever plugins are compiled in.
     for plugin <- [
           :ezagent_plugin_cc,
-          :ezagent_plugin_echo,
+          :ezagent_plugin_py,
           :ezagent_plugin_curl_agent,
           :ezagent_plugin_np
         ] do
@@ -139,7 +133,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           mix ezagent.agent.create <agent-uri> --flavor cc --from <source-agent-uri> --cwd /tmp/alice
 
         Agent URI: an entity agent URI built by Ezagent.URI.agent/2
-          where --flavor is one of cc, echo, curl, np (or any registered flavor)
+          where --flavor is one of cc, py, curl, np (or any registered flavor)
         """)
     end
   end

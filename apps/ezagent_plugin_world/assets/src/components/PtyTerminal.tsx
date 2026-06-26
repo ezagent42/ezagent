@@ -134,7 +134,7 @@ export function PtyTerminalSurface({state, onInput, onResize, onServerEvent}: Pr
 
 function terminalHelp(flavor: unknown) {
   if (flavor === "cc") return "The PTY process for this cc agent is not running yet."
-  if (flavor === "echo" || flavor === "curl") return `This flavor (${flavor}) does not run under a PTY.`
+  if (flavor === "py" || flavor === "curl") return `This flavor (${flavor}) does not run under a PTY.`
 
   return "This agent is not backed by a PTY server."
 }

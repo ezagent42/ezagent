@@ -17,11 +17,11 @@ if File.dir?(umbrella_lib) do
   end
 end
 
-# Echo and cc plugin startup here is test-boundary setup, not a
-# production domain dependency. Echo registers the "echo" flavor + Echo
+# py and cc plugin startup here is test-boundary setup, not a
+# production domain dependency. py registers the "py" flavor + PyAgent
 # Kind module; cc registers the "cc" Agent flavor and Template Class
 # used by orchestrator integration tests.
-for app <- [:ezagent_plugin_echo, :ezagent_plugin_cc] do
+for app <- [:ezagent_plugin_py, :ezagent_plugin_cc] do
   {:ok, _} = Application.ensure_all_started(app)
 end
 

@@ -36,9 +36,9 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
     end
 
     test "rejects wrong class" do
-      assert {:error, {:wrong_class, "echo.agent"}} =
+      assert {:error, {:wrong_class, "cc.agent"}} =
                Tmpl.validate(%{
-                 "class" => "echo.agent",
+                 "class" => "cc.agent",
                  "agent_uri" => "entity://team-alpha/agent/np_x"
                })
     end

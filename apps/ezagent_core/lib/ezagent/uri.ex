@@ -904,7 +904,7 @@ defmodule Ezagent.URI do
   key and converts the value (e.g. dotted form for action+behavior).
 
   Examples:
-  - `entity://system/agent/echo_default?action=echo.say` → `{:ok, {:echo, :say}}`
+  - `entity://system/agent/py_default?action=py.receive` → `{:ok, {:py, :receive}}`
   - `entity://team-alpha/agent/cc_demo-builder?action=session.receive` → `{:ok, {:session, :receive}}`
   - `session://demo-workspace/demo-class/main?action=session.send` → `{:ok, {:session, :send}}`
   - `entity://team-alpha/agent/cc_demo-builder` → `{:error, :missing_action}`

@@ -10,7 +10,7 @@ defmodule Ezagent.World.IdentityData do
 
   alias Ezagent.Invocation
 
-  @fallback_flavors ~w(cc echo curl)
+  @fallback_flavors ~w(cc py curl)
 
   @type route :: %{
           component: String.t(),
@@ -134,7 +134,7 @@ defmodule Ezagent.World.IdentityData do
     # Mirrors validate_cwd_for_flavor/3 in agent_create.ex:144-157 (UI hint only;
     # the authoritative check is server-side on submit / fail-closed).
     |> Map.put("cwd_required_flavors", ["cc", "codex"])
-    |> Map.put("cwd_required_with_pty_flavors", ["echo"])
+    |> Map.put("cwd_required_with_pty_flavors", [])
   end
 
   defp component_state(
@@ -307,7 +307,6 @@ defmodule Ezagent.World.IdentityData do
   @spec create_error_message(term()) :: String.t()
   def create_error_message(:cwd_required_for_cc), do: "cc 需要 project_cwd（工作目录）"
   def create_error_message(:cwd_required_for_codex), do: "codex 需要 project_cwd（工作目录）"
-  def create_error_message(:cwd_required_for_echo_with_pty), do: "echo + PTY 需要 project_cwd"
   def create_error_message({:cwd_not_a_dir, cwd}), do: "project_cwd 不是有效目录：#{cwd}"
   def create_error_message(:flavor_required), do: "请选择 flavor"
   def create_error_message(:name_required), do: "请填写 name"
@@ -624,6 +623,9 @@ defmodule Ezagent.World.IdentityData do
   defp template_field_keys_for("codex"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
   defp template_field_keys_for("codex-remote"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
   defp template_field_keys_for("curl"), do: ~w(model provider api_url system_prompt max_history)
+  # py-agent (P2): the operator script + per-call timeout are py's template data
+  # fields (`Ezagent.Template.PyAgent.config_schema/0`).
+  defp template_field_keys_for("py"), do: ~w(script timeout_ms)
   defp template_field_keys_for(_), do: []
 
   defp config_fields_for(agent_uri, flavor, sandbox_state, caller, caps) do

@@ -306,7 +306,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     uri
   end
 
-  defp seed_agent_template(n), do: write_agent_template("seed-agent-#{n}", %{flavor: "echo"})
+  defp seed_agent_template(n),
+    do: write_agent_template("seed-agent-#{n}", %{flavor: "cc", project_cwd: "/tmp"})
 
   defp seed_agent_template_no_flavor(n), do: write_agent_template("seed-bad-agent-#{n}", %{})
 

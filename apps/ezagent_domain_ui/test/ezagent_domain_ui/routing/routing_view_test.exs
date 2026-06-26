@@ -69,8 +69,8 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
           matcher: {:and, [{:in_session, "session://system/default/main"}, {:mention, "entity://team-alpha/agent/cc_demo"}]},
           matcher_repr:
             "{:and, [{:in_session, \"session://system/default/main\"}, {:mention, \"entity://team-alpha/agent/cc_demo\"}]}",
-          receivers: ["entity://team-alpha/agent/echo_default"],
-          receivers_repr: "entity://team-alpha/agent/echo_default",
+          receivers: ["entity://team-alpha/agent/py_default"],
+          receivers_repr: "entity://team-alpha/agent/py_default",
           source: "admin",
           enabled: true
         }
@@ -85,7 +85,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
       refute html =~ ~s(id="session-routing-rules-empty")
       assert html =~ ~s(id="session-routing-rule-42")
       assert html =~ "entity://team-alpha/agent/cc_demo"
-      assert html =~ "entity://team-alpha/agent/echo_default"
+      assert html =~ "entity://team-alpha/agent/py_default"
       assert html =~ "Disable"
       # Toggle button carries the row metadata.
       assert html =~ ~s(phx-click="routing_rule_toggle")
@@ -100,8 +100,8 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
           table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher: {:always},
           matcher_repr: "{:always}",
-          receivers: ["entity://team-alpha/agent/echo_default"],
-          receivers_repr: "entity://team-alpha/agent/echo_default",
+          receivers: ["entity://team-alpha/agent/py_default"],
+          receivers_repr: "entity://team-alpha/agent/py_default",
           source: "admin",
           enabled: false
         }

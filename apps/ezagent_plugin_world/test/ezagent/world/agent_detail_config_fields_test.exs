@@ -15,6 +15,23 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
   alias Ezagent.Entity.User
   alias Ezagent.World.IdentityData
 
+  # A minimal VALID ezagent_python operator script (must call run() so the
+  # subprocess stays alive — a bare `print(...)` exits at init).
+  @py_script """
+  import os, sys
+  sys.path.insert(0, os.environ["EZAGENT_PYTHON_LIB_DIR"])
+  from ezagent_python import method, run
+
+
+  @method("receive")
+  def receive(params):
+      return {"text": params.get("text", "")}
+
+
+  if __name__ == "__main__":
+      run()
+  """
+
   setup do
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
@@ -89,50 +106,84 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
     end
 
     @tag :integration
-    test "echo agent detail returns config_fields empty (no configurable fields)",
+    @tag :uv
+    test "py agent detail returns config_fields with its template fields (script/timeout_ms)",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      agent_name = "echo-cfg-#{System.unique_integer([:positive])}"
+      if System.find_executable("uv") == nil do
+        # py create provisions a real Domain.Python subprocess (uv).
+        :ok
+      else
+        agent_name = "py-cfg-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{agent_uri: agent_uri}} =
-               Workspace.create_agent(
-                 workspace_uri,
-                 %{flavor: "echo", name: agent_name, cwd: "", with_pty: false},
-                 admin_ctx
-               )
+        assert {:ok, %{agent_uri: agent_uri}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: "py",
+                     name: agent_name,
+                     cwd: "",
+                     with_pty: false,
+                     flavor_config: %{"script" => @py_script, "timeout_ms" => "10000"}
+                   },
+                   admin_ctx
+                 )
 
-      agent_uri_str = URI.to_string(agent_uri)
+        on_exit(fn ->
+          _ = Ezagent.Domain.Python.stop(agent_uri)
+          _ = Ezagent.Kind.terminate(agent_uri)
+        end)
 
-      detail_state =
-        IdentityData.state_for(
-          %{component: "agent_detail", title: "Agent detail",
-            path: "/identities/agents/#{URI.encode_www_form(agent_uri_str)}",
-            entity_uri: agent_uri},
-          %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(),
-            caller_caps: admin_ctx.caps}
-        )
+        agent_uri_str = URI.to_string(agent_uri)
 
-      config_fields = detail_state["config_fields"]
-      assert is_list(config_fields),
-             "config_fields must be a list even for echo agent (empty list expected)"
-      # echo has no template data fields; config_fields should be empty or only contain cascade fields
-      template_fields = Enum.filter(config_fields, &(&1["source"] == "template"))
-      assert template_fields == [],
-             "echo agent must have no template-sourced config_fields; got: #{inspect(template_fields)}"
+        detail_state =
+          IdentityData.state_for(
+            %{component: "agent_detail", title: "Agent detail",
+              path: "/identities/agents/#{URI.encode_www_form(agent_uri_str)}",
+              entity_uri: agent_uri},
+            %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(),
+              caller_caps: admin_ctx.caps}
+          )
+
+        config_fields = detail_state["config_fields"]
+        assert is_list(config_fields),
+               "config_fields must be a list for a py agent (got: #{inspect(config_fields)})"
+
+        # py's Template config_schema declares script + timeout_ms.
+        field_keys = Enum.map(config_fields, & &1["key"]) |> MapSet.new()
+
+        assert MapSet.subset?(MapSet.new(["script", "timeout_ms"]), field_keys),
+               "py agent config_fields must include script/timeout_ms; got: #{inspect(field_keys)}"
+      end
     end
   end
 
   describe "agent detail not-wired annotations" do
     @tag :integration
+    @tag :uv
     test "detail state surfaces not_wired list for missing capabilities",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      if System.find_executable("uv") == nil do
+        :ok
+      else
       agent_name = "notwired-#{System.unique_integer([:positive])}"
 
       assert {:ok, %{agent_uri: agent_uri}} =
                Workspace.create_agent(
                  workspace_uri,
-                 %{flavor: "echo", name: agent_name, cwd: "", with_pty: false},
+                 %{
+                   flavor: "py",
+                   name: agent_name,
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"script" => @py_script}
+                 },
                  admin_ctx
                )
+
+      on_exit(fn ->
+        _ = Ezagent.Domain.Python.stop(agent_uri)
+        _ = Ezagent.Kind.terminate(agent_uri)
+      end)
 
       detail_state =
         IdentityData.state_for(
@@ -159,6 +210,7 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
       for entry <- not_wired do
         assert is_binary(entry["reason"]),
                "not_wired entry #{inspect(entry["key"])} must have a reason string"
+      end
       end
     end
   end

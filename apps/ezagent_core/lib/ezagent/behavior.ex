@@ -19,9 +19,8 @@ defmodule Ezagent.Behavior do
   - exposes its `@interface` for adapter generation and arg validation
     (`interface/0`)
 
-  Phase 1's only Behavior is `Ezagent.Behavior.Echo` (in `ezagent_plugin_echo`,
-  arrives at step 4); the contract is defined here in `ezagent_core` so any
-  plugin can implement it.
+  A worked example is `Ezagent.Behavior.PyAgent` (in `ezagent_plugin_py`); the
+  contract is defined here in `ezagent_core` so any plugin can implement it.
 
   ## Why no macros
 

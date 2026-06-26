@@ -456,7 +456,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
 
   const cwdRequired =
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
-    (form.with_pty && (state.cwd_required_with_pty_flavors || ["echo"]).includes(form.flavor))
+    (form.with_pty && (state.cwd_required_with_pty_flavors || []).includes(form.flavor))
 
   // M4: flavor-specific schema for dynamic create fields
   const flavorSchema = (state.config_schemas || {})[form.flavor] || []

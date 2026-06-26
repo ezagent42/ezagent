@@ -157,17 +157,17 @@ defmodule EzagentDomainInstanceMessage.Application do
         :ok = ensure_system_workspace()
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
-        # Echo agent is NO LONGER seeded here. Seeding the echo agent
-        # from chat's `start/2` was a boot-order race: the resolver
-        # needs `Ezagent.AgentFlavorRegistry.lookup("echo")` to have
-        # been published by the echo plugin's `boot/1`, but
-        # `ezagent_domain_session` does not depend on `ezagent_plugin_echo`
-        # — so the seed could fire before echo's `agent_flavors/0` was
-        # registered, fail with `{:no_kind_module_for_agent, ...}`, log,
-        # and never retry → the default echo agent absent. The seed now
-        # lives in `EzagentPluginEcho.Application.after_boot/0`, which
-        # by construction runs after echo's `agent_flavors/0` is
-        # published; echo declares a dep on `ezagent_domain_session` so the
+        # agent is NO LONGER seeded here. Seeding it from chat's
+        # `start/2` was a boot-order race: the resolver needs the flavor
+        # registered via `Ezagent.AgentFlavorRegistry`, published by the
+        # flavor plugin's `boot/1`, but `ezagent_domain_session` does not
+        # depend on the flavor plugin — so the seed could fire before
+        # `agent_flavors/0` was registered, fail with
+        # `{:no_kind_module_for_agent, ...}`, log, and never retry → the
+        # default agent absent. The seed now lives in the flavor plugin's
+        # `after_boot/0` (P2: the py plugin seeds `py_default`), which by
+        # construction runs after `agent_flavors/0` is published; the
+        # plugin declares a dep on `ezagent_domain_session` so the
         # `entity://` spawn dispatcher is registered first.
 
         # PR-8 (transport #53) — the cc-orchestrator AgentTemplate seed
@@ -386,12 +386,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     end
   end
 
-  # Plugin authoring contract PR-5 codex HIGH-2 — `ensure_echo_default/0`
-  # + `do_ensure_echo_default/1` were removed from here. Seeding the
-  # default echo agent from chat's boot raced the echo plugin's
-  # `agent_flavors/0` registration (chat does not depend on
-  # ezagent_plugin_echo). The seed moved to
-  # `EzagentPluginEcho.Application.after_boot/0`.
+  # Plugin authoring contract PR-5 codex HIGH-2 — the default-agent seed
+  # was removed from here. Seeding a default agent from chat's boot raced
+  # the flavor plugin's `agent_flavors/0` registration (chat does not
+  # depend on the flavor plugin). The seed lives in the flavor plugin's
+  # `after_boot/0` — P2: `EzagentPluginPy.Application.after_boot/0` seeds
+  # the default py-agent (`py_default`), which replaced the old
+  # default agent.
 
   # Task #50 (Allen 2026-05-27) seeded a `default` SessionTemplate Kind
   # under `workspace://system`. Task #27 extends the invariant: every
@@ -847,7 +848,7 @@ defmodule EzagentDomainInstanceMessage.Application do
     case AgentModuleResolver.lookup_kind_module_for_agent(uri) do
       {:ok, kind_module} ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        # Each agent Kind (Agent / CurlAgent / Echo) declares its own
+        # Each agent Kind (Agent / CurlAgent / PyAgent) declares its own
         # supervisor/0 callback; chat plugin no longer hardcodes
         # `EzagentDomainInstanceMessage.AgentSupervisor` (CurlAgent in particular
         # has its own InstanceSupervisor under the curl_agent plugin).

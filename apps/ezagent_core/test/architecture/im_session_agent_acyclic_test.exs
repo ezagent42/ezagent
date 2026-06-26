@@ -25,7 +25,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
 
   The `in_umbrella` leaf test below proves the agent app declares no COMPILE
   dep on a plugin. But several plugin modules live in the SHARED `Ezagent.*`
-  namespace (`Ezagent.Behavior.CurlAgent`, `Ezagent.Behavior.Echo`,
+  namespace (`Ezagent.Behavior.CurlAgent`, `Ezagent.Behavior.PyAgent`,
   `Ezagent.Orchestrator.McpChannel`, …), so a bare-atom runtime reference to
   one — exactly the shape `Entity.Agent.behaviors/0` used to have for the curl
   state behavior — slips past the dep-graph test. The "agent domain has NO

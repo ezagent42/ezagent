@@ -84,19 +84,21 @@ defmodule Ezagent.Domain.AgentTest do
     end
   end
 
-  describe "lifecycle_status/1 — echo flavor (alive Kind, no PTY layer)" do
-    test "alive echo Kind returns %{phase: :alive, flavor: \"echo\", detail: %{}}" do
-      echo_uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_lifecycle-#{u()}")
-      put_flavors(%{echo_uri => "echo"})
+  describe "lifecycle_status/1 — py flavor (alive Kind, no PTY layer)" do
+    test "alive py Kind returns %{phase: :alive, flavor: \"py\", detail: %{}}" do
+      py_uri = Ezagent.URI.new!("entity://team-alpha/agent/py_lifecycle-#{u()}")
+      put_flavors(%{py_uri => "py"})
 
-      # Spawn the echo Kind via the standardized SpawnRegistry path
-      # (chat's entity:// spawn fn → spawn_agent/1 → flavor-prefix
-      # resolver lands echo Kinds in EzagentDomainInstanceMessage.AgentSupervisor).
-      {:ok, pid} = SpawnRegistry.spawn(echo_uri)
+      # Spawn the py Kind via the standardized SpawnRegistry path (chat's
+      # entity:// spawn fn → spawn_agent/1 → flavor resolver). The PyAgent Kind
+      # comes up alive WITHOUT a uv subprocess: with no installed script,
+      # `Behavior.PyAgent.activate/2` skips the subprocess re-spawn (so this
+      # stays a fast, non-uv lifecycle assertion).
+      {:ok, pid} = SpawnRegistry.spawn(py_uri)
       assert is_pid(pid) and Process.alive?(pid)
 
-      assert %{phase: :alive, flavor: "echo", detail: %{}} =
-               Agent.lifecycle_status(echo_uri)
+      assert %{phase: :alive, flavor: "py", detail: %{}} =
+               Agent.lifecycle_status(py_uri)
     end
   end
 
