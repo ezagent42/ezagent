@@ -38,6 +38,9 @@ defmodule EzagentPluginPy.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_agent, in_umbrella: true},
+      # P4b — the py `:in_process_sync` BridgeAdapter implements the
+      # `Ezagent.AgentBridge.Adapter` behaviour from this app.
+      {:ezagent_domain_agent_bridge, in_umbrella: true},
       # Outbound chat/send dispatch into the originating session uses the
       # Chat behavior (no new outbound wire).
       {:ezagent_domain_session, in_umbrella: true},
