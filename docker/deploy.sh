@@ -6,7 +6,12 @@ set -euo pipefail
 CHANNEL="${1:?usage: deploy.sh <nightly|beta|stable>}"
 cd "$(dirname "$0")/.."
 case "$CHANNEL" in nightly|beta|stable) : ;; *) echo "unknown channel $CHANNEL"; exit 2 ;; esac
-ENVFILE="docker/.env.${CHANNEL}"
+
+# secrets 持久家(main checkout),与 ephemeral checkout(runner _work)解耦:
+#   code(compose/脚本/mihomo/caddy)来自当前 checkout;secrets(.env.*)从这个绝对路径读。
+SECRETS_HOME="${EZAGENT_SECRETS_HOME:-/Users/h2oslabs/Workspace/esr-ng/docker}"
+ENVFILE="$SECRETS_HOME/.env.${CHANNEL}"
+[ -f "$ENVFILE" ] || { echo "!! 缺 $ENVFILE(secrets 持久家;设 EZAGENT_SECRETS_HOME 覆盖)"; exit 5; }
 
 # channel compose:project 名来自 compose 里的 name: ezagent-${CHANNEL};stable 加 cloudflared profile
 CH=(docker-compose --env-file "$ENVFILE" -f docker/docker-compose.yml)
@@ -14,7 +19,7 @@ CH=(docker-compose --env-file "$ENVFILE" -f docker/docker-compose.yml)
 # 容器 id 由 compose 解析(不假设 hyphen/underscore 命名格式;docker-compose v5 兼容)
 
 # 确保共享 infra(tailscale+mihomo+caddy)在跑 —— 独立 project + 独立 env(codex#1/#2)
-docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d
+docker-compose --env-file "$SECRETS_HOME/.env.infra" -f docker/docker-compose.infra.yml up -d
 
 # 部署 SHA = 当前 checkout HEAD(checkout@v4 已把对应 ref 放 HEAD;不用 origin/<ref>,advisor)
 SHA=$(git rev-parse --short HEAD)

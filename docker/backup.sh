@@ -3,8 +3,9 @@
 # codex#12:不硬编码容器/卷名,用 compose 解析(project=ezagent-<channel>)
 set -euo pipefail
 CHANNEL="${1:?usage: backup.sh <channel>}"; cd "$(dirname "$0")/.."
-set -a; . "docker/.env.${CHANNEL}"; set +a
-CH=(docker-compose --env-file "docker/.env.${CHANNEL}" -f docker/docker-compose.yml)
+SECRETS_HOME="${EZAGENT_SECRETS_HOME:-/Users/h2oslabs/Workspace/esr-ng/docker}"
+set -a; . "$SECRETS_HOME/.env.${CHANNEL}"; set +a
+CH=(docker-compose --env-file "$SECRETS_HOME/.env.${CHANNEL}" -f docker/docker-compose.yml)
 TS=$(date -u +%Y%m%dT%H%M%SZ); OUT="backups/${CHANNEL}/${TS}"; mkdir -p "$OUT"
 
 # 实际容器名/卷名由 compose 解析,不靠字符串猜(codex#12)
