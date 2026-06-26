@@ -35,7 +35,7 @@
 
 | # | 条目 | 状态 | 证据 |
 |---|---|---|---|
-| ① | 三 stack live + DoD | **met(public)** / **blocked(tailnet)** | 三 stack healthy;promotion invariant 同 image ID;6 卷;`app.ezagent.chat` 公网 302。**nightly/beta tailnet 200 + DNS-01 证书 = 待 preauth key**(见 blocker) |
+| ① | 三 stack live + DoD | **met** | 三 stack healthy;promotion invariant 同 image ID;6 卷;`app.ezagent.chat` 公网 302;**nightly/beta.ezagent.chat 经 tailnet(sidecar `100.64.0.18`)→ HTTP 302 + `tls_verify=0`(LE 证书 `CN=nightly.ezagent.chat`,DNS-01),从 clash-free tailnet client 实测**(见下) |
 | ② | deploy.sh + runner online + deploy.yml | **met** | deploy.sh nightly 跑通;runner `ezagent-mac` online;deploy.yml committed |
 | ③ | backup + data_allow_backup=false | **met** | backup 产出三件套 + 富 manifest;`orb config get data_allow_backup`=false |
 | ④ | dev-together 反映 beta/release | **met** | close.md/SKILL.md 守则 |
@@ -43,7 +43,19 @@
 | ⑥ | 待合并 PR | **met** | 见 Merge request |
 | ⑦ | return 报告 | **met** | 本文件 |
 
-## ⛔ Blocker(唯一)—— Headscale preauth key(nightly/beta tailnet 入口)
+## ✅ RESOLVED(2026-06-26)—— tailnet 入口已打通
+
+**根因 = preauth key 尾随一个多余 `-`**(两次提供的 key 都有,故 `expected 64 chars, got 65`)。
+**去掉尾随 `-` 后 sidecar 立即加入 Headscale**(`machineAuthorized=true`,restarts=0,拿到自己的 100.x = `100.64.0.18`)。
+随后:nightly/beta 的 CF A 记录改指 `100.64.0.18`;Caddy(共享 sidecar netns)用 caddy_data 卷里已签发的 LE 证书服务。
+**从 clash-free tailnet client(sidecar netns)实测**:`https://{nightly,beta}.ezagent.chat` → **HTTP 302 + `tls_verify=0`**,
+证书 `CN=nightly.ezagent.chat` / issuer Let's Encrypt。host↔sidecar `ping 100.64.0.18` 0% 丢包(tailnet 路由通)。
+
+> **host 自身 curl 仍 000/reset = host 的 clash-verge 嗅探 TLS SNI 按域名改路**(host-local 现象,非部署问题);
+> 真实 tailnet peer(无 clash)正常。验证须从 clash-free client(本次用 sidecar netns 内的 curl 容器)。
+> **sidecar IP `100.64.0.18` 由 `ts_state` 卷保号**;若清卷会换 IP,需同步更新 DNS A。
+
+<details><summary>原始诊断(保留存档)</summary>
 
 **ingress 栈已实证可用**,只差 sidecar 用一个干净 key 加入 Headscale。完整诊断:
 
@@ -70,6 +82,8 @@ runbook §3 有完整步骤。
 > ② 改用 `*.inside.h2os.cloud`(偏离 goal 的 `.ezagent.chat` 域名)。两者都不干净。
 > → **A(干净 preauth key → sidecar)是正解**:容器化 caddy 已带 CF 模块,在 sidecar 自己的 100.x:443 上
 > 服务正确域名,不碰 host :443、不动用户 caddy。**唯一待办 = 干净 key。**
+
+</details>
 
 ## Gate status
 

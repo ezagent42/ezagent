@@ -172,7 +172,8 @@ FS:解 `fs-snapshot.tar.gz` 回 `*_home` 卷。跨域一致性快照(quiesce+LSN
 
 - **`docker compose` unknown command** → 用 `docker-compose`(本机无插件子命令)。
 - **镜像拉取 Bad Gateway** → `orb config get network_proxy` 应 `http://127.0.0.1:7896`。
-- **tailscale Restarting / auth-key parse error** → preauth key 损坏,重新生成(§1)并 `docker-compose --env-file docker/.env.infra -f docker/docker-compose.infra.yml up -d tailscale`。
+- **tailscale `auth-key hash length mismatch, expected 64 got 65`** → key **尾随一个多余 `-`**(headscale 输出/粘贴常带);**去掉尾随 `-`** 即可(`KEY=${KEY%-}`)。改完 `up -d --force-recreate tailscale`,再 `--force-recreate caddy`(让 caddy 重挂新 netns)。sidecar 加入后 `tailscale ip -4` 得自己的 100.x;把 nightly/beta 的 CF A 记录改指它(`ts_state` 卷保号,清卷会换 IP)。
+- **host 自身 curl nightly/beta → 000/TLS reset,但 tailnet peer 正常** → host 的 clash-verge 嗅探 TLS SNI 按域名改路(host-local)。验证 tailnet 入口要从 **clash-free client**:`docker run --rm --network container:ezagent-infra-tailscale-1 curlimages/curl --resolve nightly.ezagent.chat:443:<sidecar-100.x> https://nightly.ezagent.chat/`(应 302 + `tls_verify=0`)。
 - **nightly/beta tailnet TCP 通但 TLS reset(从 host 自测)** → 本机有用户自有 host caddy(launchd,`~/.config/caddy/Caddyfile`)占 `*:443`,遮蔽 docker 发布。这正是用 **sidecar**(绑 sidecar 自己的 100.x:443,不碰 host :443)的原因 —— 不要把 docker caddy 绑 host `100.64.0.27:443`。验证:`lsof -nP -iTCP:443 -sTCP:LISTEN`。(替代:若想复用 host caddy,在 `~/.config/caddy/Caddyfile` 加 nightly/beta vhost 反代 `127.0.0.1:10041/10042`,DNS A 指 host 100.64.0.27。)
 - **Caddy 取不到证书** → CF token 缺 Zone:DNS:Edit;或 DNS A 记录 `proxied:true`(必须 false)。
 - **stable `app.ezagent.chat` 530** → cloudflared 没连上 / ezagent-stable 未 healthy;`docker logs ezagent-stable-cloudflared-1`。
