@@ -108,32 +108,17 @@ defmodule EzagentPluginKb.Application do
   R-3 workspace-isolation authority shared by both KB types: the URI's `<ws>`
   segment must equal the caller's authenticated scope workspace (scope comes
   from the authenticated context, NEVER from the URI).
+
+  Delegates to `FsResolver.config_dir_authority/2` — the canonical, reviewed
+  workspace-segment-match authority (it asserts `uri.<ws> == scope.workspace`,
+  the exact R-3 check KB needs). Reusing it (rather than re-deriving the
+  normalize/compare logic) keeps a single source of truth for the isolation
+  rule and avoids a forked copy.
   """
   @spec kb_authority(URI.t(), FsResolver.scope()) :: :ok | {:error, term()}
-  def kb_authority(%URI{} = uri, %{workspace: scope_ws}) do
-    with {:ok, uri_ws} <- Ezagent.URI.workspace_name(uri),
-         {:ok, scope_ws_name} <- normalize_workspace(scope_ws) do
-      if uri_ws == scope_ws_name do
-        :ok
-      else
-        {:error, {:foreign_workspace, %{uri: uri_ws, scope: scope_ws_name}}}
-      end
-    else
-      :error -> {:error, {:malformed_resource_uri, URI.to_string(uri)}}
-      {:error, _} = err -> err
-    end
+  def kb_authority(%URI{} = uri, %{workspace: _} = scope) do
+    FsResolver.config_dir_authority(uri, scope)
   end
-
-  defp normalize_workspace(ws) when is_binary(ws) and ws != "", do: {:ok, ws}
-
-  defp normalize_workspace(%URI{} = ws_uri) do
-    case Ezagent.URI.workspace_name(ws_uri) do
-      {:ok, name} -> {:ok, name}
-      :error -> {:error, {:malformed_scope_workspace, URI.to_string(ws_uri)}}
-    end
-  end
-
-  defp normalize_workspace(other), do: {:error, {:malformed_scope_workspace, other}}
 
   @impl Ezagent.Plugin
   def config_surface, do: %{kind: :route, path: "/plugins/kb", label: "Knowledge Base"}
