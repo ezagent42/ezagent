@@ -1,30 +1,35 @@
 defmodule Ezagent.Behavior.PyAgent do
   @moduledoc """
-  PyAgent Behavior — a GENERAL script-driven Python agent. Each inbound chat
-  message is handed to the agent's OPERATOR-SUPPLIED python script (installed
-  at create-time into the per-agent `config_dir` as `agent.py`) via the single
-  `"receive"` JSON-RPC method on the per-agent `Ezagent.Domain.Python`
-  subprocess; a non-nil reply is dispatched back into the originating session.
+  PyAgent Behavior (py-agent P4b) — the STATE half of the GENERAL script-driven
+  Python flavor, folded onto the UNIFIED `Ezagent.Entity.Agent` Kind (curl
+  precedent). The operator script runs via the `"receive"` JSON-RPC method on
+  the per-agent `Ezagent.Domain.Python` subprocess, but that round-trip lives in
+  the TRANSPORT half (`EzagentPluginPy.BridgeAdapter`, `:in_process_sync`). The
+  base flavor-blind `Behavior.Agent.Receive` owns `:receive` on `Entity.Agent`,
+  routes to the adapter, then re-dispatches the result to this Behavior's
+  `:py_sync_result` action.
 
-  A general script-driven Python agent (py-agent P4: the former `np` compute
-  agent retired into this as a py-ROLE — its chat→compute heuristic now lives
-  in the role's script, not in a Behavior):
+  The former `np` compute agent is a py-ROLE — its chat→compute heuristic lives
+  in the role's script, not in a Behavior.
 
-  - **one method** — `"receive"`. The script's per-message logic is
-    operator-authored (the role/operator script), not baked into the Behavior.
-  - **own cap axis** — `:py_agent` (`required_caps/0`).
-  - **script is immutable post-create** — `:configure` sets `timeout_ms`
-    ONLY (never the script); `:reset` clears `last_*`. The script file is
+  - **`:py_sync_result`** — persist the adapter's result (`last_*`) and, on a
+    non-nil reply, dispatch a `chat.send` back into the originating session. The
+    actions are py-NAMESPACED (the `{Kind, action}` map is global per Kind; curl
+    owns generic `:configure`/`:sync_result` on `Entity.Agent`).
+  - **cap axis** — `:py_sync_result` on `:agent`; `:py_reset`/`:py_configure`
+    on `:any` (substituted to the host type_name); see `required_caps/0`.
+  - **script is immutable post-create** — `:py_configure` sets `timeout_ms`
+    ONLY (never the script); `:py_reset` clears `last_*`. The script file is
     written once at create (`Template.PyAgent.instantiate/3`); see spec §5.
 
   ## The wire (spec §1)
 
       Domain.Python.call(handle, "receive", %{text, from, session}, timeout)
 
-  The script registers a `@method("receive")` handler returning a reply
-  payload (a map with a `"text"` key) or `None`/`nil` to stay silent. A
-  raising script is captured to `last_error` (durable) + logged; the BEAM
-  Kind does NOT crash.
+  runs in `BridgeAdapter`. The script registers a `@method("receive")` handler
+  returning a reply payload (a map with a `"text"` key) or `None`/`nil` to stay
+  silent. A raising script is captured to `last_error` (durable) + logged; the
+  BEAM Kind does NOT crash.
 
   ## Two-container split (Lifecycle SPEC 2026-05-29)
 
@@ -48,7 +53,9 @@ defmodule Ezagent.Behavior.PyAgent do
 
   ## Loop safety
 
-  Mirrors np/curl: ignore messages whose sender is the py-agent itself.
+  Self-reply flood protection is handled at the ROUTING layer (#98 — an Always
+  rule no longer re-triggers on the agent's own reply), shared by all flavors on
+  `Entity.Agent`; it is no longer this Behavior's concern.
   """
 
   use Ezagent.Lifecycle
