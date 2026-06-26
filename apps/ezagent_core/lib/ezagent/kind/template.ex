@@ -95,7 +95,8 @@ defmodule Ezagent.Kind.Template do
   `session_name`).
 
   Default `true`. A Class whose `instantiate/3` requires EXTRA, picker-unknown
-  arguments (e.g. `session.advisor` needs an `operator_uri`) overrides this to
+  arguments (e.g. a vertical session class that needs an `operator_uri`)
+  overrides this to
   `false` so the generic picker never offers it as a creatable option — picking
   it would otherwise fail closed with `{:error, {:invalid_template, …}}`
   (the F3 silent-create bug). Such Classes are still instantiable through their

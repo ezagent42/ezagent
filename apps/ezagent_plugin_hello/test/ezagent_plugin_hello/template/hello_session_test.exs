@@ -10,8 +10,8 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
     end
 
     test "rejects wrong class / missing fields / non-map" do
-      assert {:error, {:wrong_class, "session.advisor"}} =
-               HelloSession.validate(%{"class" => "session.advisor", "session_name" => "x"})
+      assert {:error, {:wrong_class, "session.other"}} =
+               HelloSession.validate(%{"class" => "session.other", "session_name" => "x"})
 
       assert {:error, :missing_class_field} = HelloSession.validate(%{"session_name" => "x"})
 

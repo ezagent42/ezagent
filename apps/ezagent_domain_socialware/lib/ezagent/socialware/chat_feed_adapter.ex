@@ -63,8 +63,14 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   than crashing the caller's channel process. The LIVE fail-closed chat
   membership check is the SAME predicate as P3-3 (via `ChatMembership`).
 
-  Declared as a BARE module in `EzagentPluginAdvisor.Application.adapters/0`,
-  mirroring the P3-2 customer_feed bare-module pull declaration.
+  NOTE (2026-06-26, `chore/retire-session-advisor`): this adapter was originally
+  declared as a BARE module in the retired `EzagentPluginAdvisor.Application.adapters/0`.
+  With the advisor vertical removed, NO plugin currently declares it, so its
+  `allow_chat_feed` cap subject is no longer published at boot. The live chat feed
+  does NOT depend on that registration — the channel calls `ChatFeed` directly
+  (proven by the socialware/web suites). The module is retained as the projection
+  chokepoint for any future plugin that re-declares it via the bare-module pull
+  declaration shape.
   """
   @behaviour Ezagent.ExternalMirror.Adapter
 
