@@ -620,7 +620,13 @@ defmodule EzagentPluginWorld.WorldLive do
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "templates" => session_template_names(workspace_uri),
-      "sessions" => Enum.map(sessions, &session_row/1)
+      "sessions" => Enum.map(sessions, &session_row/1),
+      # F3: explicitly clear any stale create_error — the React island merges
+      # world:state ({...current, ...next}) and never remounts, so a previously
+      # pushed create_error would otherwise linger as a phantom banner when the
+      # operator returns to a healthy sessions page (mirrors agent_new_form's
+      # nil-clear in IdentityData.put_create_error/3).
+      "create_error" => nil
     }
   end
 

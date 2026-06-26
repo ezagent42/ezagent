@@ -59,15 +59,6 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &invite_member(socket, &1, member))
   end
 
-  def handle_dispatch(socket, "session.remove_member", %{"session_uri" => sid, "member" => member})
-      when is_binary(member) do
-    with_session(socket, sid, &remove_member(socket, &1, member))
-  end
-
-  def handle_dispatch(socket, "session.delete", %{"session_uri" => sid}) do
-    with_session(socket, sid, &delete_session(socket, &1))
-  end
-
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
     create_session(socket, short_name, Map.get(args, "template_name", "default"))
@@ -457,82 +448,6 @@ defmodule Ezagent.World.ConversationActions do
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
-    end
-  end
-
-  @doc """
-  Remove a session member (F7). Routes through the orchestrator
-  `Ezagent.Orchestrator.Tools.remove_member/2` (via the session-domain facade)
-  so the spawned worker is TERMINATED and routing rows naming it are
-  pruned/repointed — NOT the bare `:session :leave`, which would orphan the
-  worker + routing. The orchestrator's cap #2 (`{:spawned_by, orchestrator}`)
-  authorizes the terminate at its chokepoint; a plain user member (no managed
-  `role_name`) is reported as not-removable rather than half-removed. On success
-  the refreshed member list is pushed to the panel.
-  """
-  @spec remove_member(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
-          {:noreply, Phoenix.LiveView.Socket.t()}
-  def remove_member(socket, %URI{} = session_uri, member_str) when is_binary(member_str) do
-    caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
-
-    case parse_member_uri(member_str) do
-      {:ok, %URI{} = member_uri} ->
-        case EzagentDomainInstanceMessage.remove_session_member(
-               session_uri,
-               member_uri,
-               caller,
-               caps
-             ) do
-          {:ok, _result} ->
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-        end
-
-      :error ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
-    end
-  end
-
-  @doc """
-  Delete (end) a session (F7) via the universal `:manage :delete` action, which
-  tears the Session Kind down through `Ezagent.Lifecycle.destroy/2` (clear
-  snapshot+marker → terminate). The Manage behaviour's `:delete` cap authorizes
-  at the dispatch chokepoint (the manage-cap the session creator was granted at
-  create). On success the operator is sent back to the sessions list.
-  """
-  @spec delete_session(Phoenix.LiveView.Socket.t(), URI.t()) ::
-          {:noreply, Phoenix.LiveView.Socket.t()}
-  def delete_session(socket, %URI{} = session_uri) do
-    caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
-    target = Ezagent.URI.with_action(session_uri, :manage, :delete)
-
-    result =
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{},
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-      })
-
-    case result do
-      # `:manage :delete` replies `{:ok, {:ok, :deleted}}` (the Manage handler
-      # returns `{:ok, {:ok, :deleted}, effects}`; dispatch unwraps one level) —
-      # same shape `agent_actions.ex` matches on agent delete.
-      {:ok, {:ok, :deleted}} ->
-        {:noreply,
-         socket
-         |> assign(:last_dispatch_status, "ok")
-         |> push_patch(to: "/sessions")}
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
-
-      other ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(other)}")}
     end
   end
 

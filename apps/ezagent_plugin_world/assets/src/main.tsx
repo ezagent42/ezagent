@@ -309,18 +309,6 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {session_uri: sessionUri, member},
                   })
                 },
-                onRemoveMember: (sessionUri, member) => {
-                  pushEvent?.("world:dispatch", {
-                    action: "session.remove_member",
-                    args: {session_uri: sessionUri, member},
-                  })
-                },
-                onDeleteSession: (sessionUri) => {
-                  pushEvent?.("world:dispatch", {
-                    action: "session.delete",
-                    args: {session_uri: sessionUri},
-                  })
-                },
                 onSessionViewSwitch: (sessionUri, view) => {
                   pushEvent?.("world:dispatch", {
                     action: "session.view.switch",
@@ -601,8 +589,6 @@ type RenderContext = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
-  onRemoveMember: (sessionUri: string, member: string) => void
-  onDeleteSession: (sessionUri: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -644,8 +630,6 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
-          onRemoveMember={context.onRemoveMember}
-          onDeleteSession={context.onDeleteSession}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}

@@ -96,30 +96,21 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec member_options(URI.t()) :: [map()]
   def member_options(%URI{} = session_uri) do
-    members = member_metas(session_uri)
-    uris = Map.keys(members)
+    presence = member_presence(session_uri)
+    uris = Map.keys(presence)
     display_map = Ezagent.EntityPresenter.display_many(uris)
 
     uris
     |> Enum.sort()
     |> Enum.map(fn uri ->
-      meta = Map.get(members, uri, %{})
-
       %{
         "uri" => uri,
         "display_name" => Map.get(display_map, uri, uri),
-        "online" => Map.get(meta, :online, false),
-        "kind" => sender_kind(uri),
-        # F7: a member is removable via the orchestrator only if it holds a
-        # managed `role_name` (orchestrator-spawned members carry one; an
-        # invited agent / plain user joined without one). The UI shows the
-        # remove button only for removable members so it never errors on click.
-        "removable" => removable_role?(Map.get(meta, :role_name))
+        "online" => Map.get(presence, uri, false),
+        "kind" => sender_kind(uri)
       }
     end)
   end
-
-  defp removable_role?(role_name), do: is_binary(role_name) and role_name != ""
 
   @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`
@@ -296,21 +287,13 @@ defmodule Ezagent.World.ConversationData do
   defp datetime_iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp datetime_iso(_), do: nil
 
-  # %{uri_string => %{online: bool, role_name: String.t() | nil}} from the
-  # session slice members map. Empty for a cold/unknown session. The meta is
-  # normalized to the two fields the members panel reads (presence + F7
-  # removability), so callers don't depend on the raw slice meta shape.
-  defp member_metas(%URI{} = session_uri) do
+  # %{uri_string => online_bool} from the session slice members map (values
+  # carry an `:online` flag). Empty for a cold/unknown session.
+  defp member_presence(%URI{} = session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         Map.new(members, fn {uri, meta} ->
-          meta = if is_map(meta), do: meta, else: %{}
-
-          {encode_uri(uri),
-           %{
-             online: Map.get(meta, :online, false) == true,
-             role_name: Map.get(meta, :role_name)
-           }}
+          {encode_uri(uri), is_map(meta) and Map.get(meta, :online, false) == true}
         end)
 
       _ ->

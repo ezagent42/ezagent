@@ -112,6 +112,16 @@ defmodule Ezagent.World.IdentityData do
     end
   end
 
+  # F2: a malformed agent URL parses `entity_uri` to nil (routes.ex
+  # `parse_entity_uri/1` returns nil for any non-entity/unparseable segment).
+  # Render the same clean not-found state rather than falling through to the
+  # catch-all (which would emit a hollow shell with no agent_uri).
+  defp component_state(%{component: "agent_detail", entity_uri: nil}, base, _ws, _caller, _caps) do
+    base
+    |> Map.put("agent_uri", nil)
+    |> Map.put("agent_not_found", true)
+  end
+
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
     flavors = list_flavors()
     default_flavor = if "cc" in flavors, do: "cc", else: List.first(flavors) || "cc"
@@ -240,6 +250,11 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("not_wired", not_wired_annotations())
     # M2-mock: config schema (A4 落地后改为 tc.config_schema())
     |> Map.put("config_schema", config_schema_for(flavor))
+    # F4: explicitly clear any stale action_error — the React island merges
+    # world:state and never remounts, so a delete-failure banner pushed onto
+    # this detail route would otherwise linger after the operator resolves the
+    # cause and returns. nil clears it via the React state merge.
+    |> Map.put("action_error", nil)
   end
 
   @doc "List entity rows for the identities and agents components."
@@ -447,31 +462,36 @@ defmodule Ezagent.World.IdentityData do
       "kind" => inspect(cap.kind),
       "behavior" => inspect(cap.behavior),
       "action" => inspect(Ezagent.Capability.action_of(cap)),
-      "instance" => cap_instance(cap.instance),
+      "instance" => instance_scope_display(cap.instance),
       "workspace_uri" => encode_uri(cap.workspace_uri),
       "granted_by" => encode_uri(cap.granted_by)
     }
   end
 
-  # F5: render the cap instance scope readably instead of dumping the raw struct.
-  # A bare `%URI{}` (e.g. `{:instance, uri}` flattened to a URI) becomes its
-  # canonical string; the scope tuples (`:any`, `{:within_workspace, uri}`,
+  # F5: render the cap-instance scope readably instead of dumping the raw struct.
+  # A bare `%URI{}` becomes its canonical string (via `encode_uri/1`, the
+  # display-only renderer); the scope tuples (`:any`, `{:within_workspace, uri}`,
   # `{:within_session, uri}`, `{:instance, uri}`) read as `tag uri` rather than
-  # `inspect/1`'s `%URI{...}` blob.
-  defp cap_instance(%URI{} = uri), do: URI.to_string(uri)
-  defp cap_instance(:any), do: "any"
+  # `inspect/1`'s `%URI{...}` blob. (Display only — the URI stays opaque; no
+  # structural parse, hence routed through `encode_uri/1`.)
+  defp instance_scope_display(%URI{} = uri), do: encode_uri(uri)
+  defp instance_scope_display(:any), do: "any"
 
-  defp cap_instance({tag, %URI{} = uri}) when is_atom(tag),
-    do: "#{tag} #{URI.to_string(uri)}"
+  defp instance_scope_display({tag, %URI{} = uri}) when is_atom(tag),
+    do: "#{tag} #{encode_uri(uri)}"
 
-  defp cap_instance(other), do: inspect(other)
+  defp instance_scope_display(other), do: inspect(other)
 
   # F2: an agent exists if it has a live process OR a persisted snapshot. A URI
   # with neither (never created, or deleted) is genuinely gone — the detail page
   # then renders a not-found state instead of a hollow shell. A registered-but-
   # cold agent still has a snapshot, so it correctly reads as existing.
+  #
+  # Liveness goes through the owner-gated `Ezagent.LocalRuntime.kind_alive?/1`
+  # (NOT a direct `KindRegistry.lookup` — the plugin-workspace-locality contract
+  # forbids plugins consulting the local registry directly).
   defp agent_exists?(%URI{} = agent_uri) do
-    match?({:ok, _pid}, Ezagent.KindRegistry.lookup(agent_uri)) or
+    Ezagent.LocalRuntime.kind_alive?(agent_uri) or
       Ezagent.Kind.StateRebuilder.snapshot_exists?(agent_uri)
   rescue
     _ -> true
