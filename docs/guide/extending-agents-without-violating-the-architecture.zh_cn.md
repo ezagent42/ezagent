@@ -49,6 +49,14 @@ principal 语义——可被 @、可 join——而被动数据 agent 恰恰*不�
 
 > 台账 **P3** 直接写了这条红线：`agent = 角色×风味`。
 
+**那什么时候才真正该新建 Kind？** 对一个 agent *类型*——基本永不；它永远是 role × flavor。
+新建 Kind 只在出现一个真正全新的**非 agent 原语**时才成立：一个被 ≥2 个不相干层级读取
+的"scope-owning"概念（P10"共享被指物需要身份"），其归属由"读什么数据"决定（P9）——
+例如一个新的 Resource/Template 形态的概念，而非"又一种 chat actor"。这是 core/domain
+决策，需 lead 签字（台账 P0）+ 不变式测试（P6）——绝不是为了承载一个人设而顺手新建。
+注意 `entity://` 的轴是近乎封闭的集合 `{user, agent}`；新增子 kind 是罕见的 parser
+allowlist 改动（`references/how-to-recipes.md` §"add a Kind"），不是 flavor。
+
 ### 原则 2 —— 平台**机制**必须与**业务**逻辑可分离
 
 **规则：** 通用平台能力（render transport、feed 编码器、dispatch 路径）是**与生产者
@@ -59,10 +67,12 @@ principal 语义——可被 @、可 join——而被动数据 agent 恰恰*不�
 **为什么机制 ≠ 业务：** 若 render 路径只有"经 salesperson"（且在 `:salesperson` cap
 之后）才能用，那下一个生产者（advisor、客服 bot、dashboard）要么重写 transport、要么
 冒充 salesperson——两者都违反 P1/P3（平行 SoT、插件作者私建小世界）。耦合还让通用能力
-无法独立测试（P12："不带这个人设、能用 `dispatch/1` 复现吗？"）。render catalog 已经
-证明了应有形态——其注释明确保留某些节点类型 *"so existing producers, **e.g. advisor**,
-render"*（`apps/ezagent_domain_socialware/assets/js/catalog.mjs:52`）：render 路径
-服务于任何产出合规树的生产者。
+无法独立测试（P12："不带这个人设、能用 `dispatch/1` 复现吗？"）。最强的当下证据是
+**#1035**（HEAD）：render-card 机制以 **transport-only** 合入，根本不命名任何生产者
+（见案例 B）。render catalog 也记录了应有的"与生产者无关"形态——其注释保留某些节点类型
+*"so existing producers, e.g. advisor, render"*
+（`apps/ezagent_domain_socialware/assets/js/catalog.mjs:52`）；注意 advisor 这条线本身
+已在 #1034 被退役，故把它当作"路径服务于任何产出合规树的生产者"的历史佐证，而非现存范例。
 
 > 这是目前唯一还没单独成为台账条目的教训，请内化：**先把机制做成独立的（transport-only），
 > 让业务 agent 去消费它。**

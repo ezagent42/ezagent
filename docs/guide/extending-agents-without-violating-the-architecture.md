@@ -57,6 +57,17 @@ behaviors into a `kanban-manager` role on the `native` flavor.
 
 > 台账 **P3** states this red line directly: `agent = 角色×风味`.
 
+**When IS a new Kind actually justified?** For an agent *type* — essentially
+never; it is always a role × flavor. A new Kind is justified only for a genuinely
+new **non-agent primitive**: a scope-owning concept that ≥2 unrelated tiers read
+(P10 "shared referent needs identity") and whose ownership is decided by "reads
+what data" (P9) — e.g. a new Resource/Template-shaped concept, not "another kind
+of chat actor". That is a core/domain decision, needs lead sign-off (台账 P0) +
+an invariant test (P6) — not something to reach for to host a persona. Note
+`entity://`'s axis is the near-closed set `{user, agent}`; adding a sub-kind is a
+rare parser-allowlist change (`references/how-to-recipes.md` §"add a Kind"), not a
+flavor.
+
 ### Principle 2 — Platform **mechanism** must be separable from **business** logic
 
 **The rule:** a generic platform capability (a render transport, a feed encoder,
@@ -72,10 +83,14 @@ salesperson" (and behind a `:salesperson` cap), then the next producer
 impersonate a salesperson — both are P1/P3 violations (parallel SoTs, plugin
 authors carving private worlds). Coupling also makes the generic capability
 untestable in isolation (P12: "can this be reproduced via `dispatch/1` without
-the persona?"). The render catalog already proves the intended shape — its
-comment explicitly keeps node types *"so existing producers, **e.g. advisor**,
-render"* (`apps/ezagent_domain_socialware/assets/js/catalog.mjs:52`): the render
-path serves whichever producer emits a conforming tree.
+the persona?"). The strongest current proof is **#1035** (HEAD): the render-card
+mechanism merged **transport-only** and names no producer at all (see worked
+example B). The render catalog also documents the intended producer-agnostic
+shape — its comment keeps node types *"so existing producers, e.g. advisor,
+render"* (`apps/ezagent_domain_socialware/assets/js/catalog.mjs:52`); note that
+the advisor vertical was itself retired in #1034, so treat this as a historical
+illustration of "the path serves whichever producer emits a conforming tree",
+not a live exemplar.
 
 > This is the one lesson not yet its own 台账 entry — internalize it: **build the
 > mechanism standalone (transport-only); let business agents consume it.**
