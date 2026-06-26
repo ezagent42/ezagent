@@ -20,8 +20,10 @@
 **后逐条修**(PR #1025,7 项,每项 before/after 证据于 `evidence/fp5-ui-fixes/`):
 1. S1-a 去开发调试文案 "Rendered by React from LiveView state."
 2. S7-a External Mirror / Admin 时间不再露裸 `~N[...]`(`inspect_timestamp`→可读)
-3. S9 Kanban H1 错显 "Sessions" + 导航高亮错位修正
-4. S9b Kanban 在 /plugins 无入口 → 补回 `config_surface/0`(K4 已 land 的预留项)
+3. S9 Kanban H1 错显 "Sessions" + 导航高亮错位修正(`kanban_data.ex` 补 title/path)
+4. ~~S9b Kanban 在 /plugins 无入口 → 补 `config_surface/0`~~ **已撤回** —— 与 jjkysy 的
+   PR #1020(kanban Phase 1)**完全重复**(同一 `config_surface`),按 world-coordination
+   归 kanban owner,入口由 #1020 提供(详见末节"并行 PR 协调")
 5. /plugins 整张卡可点进操作面(此前只有底部小链接)
 6. 左导航可收起(localStorage 持久化)
 7. S2-a Overview 独立 dashboard(KPI + 快捷入口,不再与 Sessions 雷同)
@@ -64,12 +66,24 @@
 4. **routing/caps "做不做"反复**:我初判需 lead(A),用户要先做(B),实测才确认 caps 撞 #137、
    routing 全局不可靠 → 回退走 handoff。**冲突点(#137/#990)若在 plan 阶段就标出,可省一轮往返。**
 
+## 并行 PR 协调(已自查 + 自解)
+
+按 lead 要求查了并行 PR **#1020(jjkysy,`feat/kanban-agent-e2e`,kanban Phase 1)**与本 PR 的冲突。
+`git merge-tree` 权威检测:
+
+| 文件 | 结果 | 处理 |
+|---|---|---|
+| `ezagent_plugin_kanban/application.ex` | 🔴 曾冲突 —— 双方都加**完全相同**的 `config_surface/0`(同 route/label) | ✅ **已自解**:撤掉我的 S9b(commit `85ca557e`),归 kanban owner #1020。merge-tree 复测无冲突 |
+| `world_live.ex` | ✅ 自动合并(我 overview 子句 vs #1020 @kanban_actions,不同 hunk) | 无需处理 |
+
+→ **本 PR 现与 #1020 零冲突**,两者可独立 merge,无顺序要求。
+
 ## Merge request
 
-- **请 merge `zyli/fp5-ui-fixes-0626`(PR #1025)→ main**:7 项 UI 修复 + 入口完善,纯 world 前端 +
-  少量 world 服务端读模型,additive,遵守 world-coordination(§5 已登记),与 agent-console-crud
-  零交集(未碰 `Identities.tsx` 写、`world_live.ex` 仅 additive 子句)。
-- **顺序**:无强依赖;CI 转绿即可。
+- **请 merge `zyli/fp5-ui-fixes-0626`(PR #1025)→ main**:6 项 UI 修复(撤 S9b 后)+ 入口完善,纯
+  world 前端 + 少量 world 服务端读模型,additive,遵守 world-coordination(§5 已登记),与
+  agent-console-crud 零交集、与 kanban #1020 已自解冲突。
+- **顺序**:无强依赖,与 #1020 可独立 merge;CI 转绿即可。
 - **关联**:#1019(巡检+S5 handoff)保持 open 作为审计记录;routing/caps + S5 待 Allen 接 handoff。
 
 ## 给 lead 的话
