@@ -9,7 +9,7 @@ defmodule Ezagent.BehaviorRegistry do
 
   Owned by `EzagentCore.EtsOwner`. A flavor plugin's boot wires its
   Behaviors here — e.g. the py plugin registers
-  `{Ezagent.Entity.PyAgent, :receive} → Ezagent.Behavior.PyAgent`.
+  `{Ezagent.Entity.Agent, :py_sync_result} → Ezagent.Behavior.PyAgent`.
 
   ## Phase 1 scope
 

@@ -102,9 +102,12 @@ defmodule Ezagent.Behavior.PyAgent do
   # P4b — PyAgent folded onto the UNIFIED Entity.Agent Kind. Every action is
   # py-NAMESPACED (cc-headless precedent) because the {Kind, action} → Behavior
   # map is global per Kind and curl already owns generic `:configure`/
-  # `:sync_result` on Entity.Agent. `:any` kind axis (runtime substitutes the
-  # host type_name `:agent`); the base :receive re-dispatch grants a matching
-  # `cap(:any, :any, :py_sync_result)`.
+  # `:sync_result` on Entity.Agent.
+  #   - :py_reset / :py_configure — operator actions on the `:any` kind axis
+  #     (the runtime substitutes the host type_name `:agent` at dispatch).
+  #   - :py_sync_result — the internal re-dispatch (curl model): declare it on
+  #     `:agent` to mirror curl; the base :receive re-dispatch grants a matching
+  #     `cap(:any, :any, :py_sync_result)` which authorizes it.
   @doc false
   def required_caps do
     %{

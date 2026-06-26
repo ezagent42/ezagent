@@ -147,6 +147,49 @@ defmodule Ezagent.Template.PyAgentTest do
     end
 
     @tag :uv
+    test "B1 — flavor is DURABLY resolvable from the sandbox slice (cold-restart routing)" do
+      # codex-review B1: py now routes inbound chat through AgentBridge, which
+      # resolves the agent's flavor to pick the :in_process_sync transport. The
+      # ETS AgentFlavorAttributes record is VOLATILE (lost on BEAM restart); the
+      # durable source is the :sandbox slice's template_class. Without it a
+      # workspace py agent self-heals its subprocess but silently never replies
+      # after a cold restart (delivery mis-routes to :subprocess_ws). This asserts
+      # the DURABLE path `AgentFlavorResolver.resolve_flavor_from_sandbox/1` (what
+      # cold-load uses — ETS-independent) recovers "py".
+      name = "py_flavor-#{System.unique_integer([:positive])}"
+      agent_uri_str = "entity://team-alpha/agent/#{name}"
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
+      src = script_src()
+      ref_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, "py")
+
+      tmpl = %{
+        "class" => "py.agent",
+        "agent_uri" => agent_uri_str,
+        "config_dir" => ref_dir,
+        "script" => src,
+        "timeout_ms" => 10_000
+      }
+
+      on_exit(fn ->
+        _ = Python.stop(agent_uri)
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = File.rm_rf(ref_dir)
+      end)
+
+      assert {:ok, [^agent_uri], _} =
+               Ezagent.Kind.Template.provision_and_instantiate(Tmpl, "py.agent", tmpl, @workspace_uri)
+
+      # Read the DURABLE snapshot slice (the cold-load source), NOT ETS.
+      {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(agent_uri)
+      sandbox = Ezagent.Kind.normalize_slice_view(Map.get(state, :sandbox))
+
+      assert sandbox.template_class == Ezagent.Template.PyAgent,
+             "py spawn must persist template_class into the :sandbox slice for cold-restart flavor routing"
+
+      assert {:ok, "py"} = Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(sandbox)
+    end
+
+    @tag :uv
     test "cold-restart re-spawns from the installed file (no re-write)" do
       name = "py_cold-#{System.unique_integer([:positive])}"
       agent_uri_str = "entity://team-alpha/agent/#{name}"

@@ -133,7 +133,16 @@ defmodule Ezagent.Template.PyAgent do
         # Behavior.PyAgent (the :py_sync_result / :py_reset / :py_configure
         # handlers). Without this the instance captures only the base set and
         # the re-dispatched :py_sync_result has no handler (no reply).
-        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.Behavior.PyAgent]
+        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.Behavior.PyAgent],
+        # P4b — DURABLE flavor record (cc/codex precedent). py now routes inbound
+        # chat through AgentBridge, which resolves the agent's flavor to pick the
+        # `:in_process_sync` transport. ETS `AgentFlavorAttributes` is volatile;
+        # persisting `template_class` into the `:sandbox` slice lets
+        # `AgentFlavorResolver.resolve_flavor_from_sandbox/1` recover flavor "py"
+        # after a BEAM cold restart — else a workspace py agent self-heals its
+        # subprocess but silently never replies (delivery mis-routes to
+        # :subprocess_ws). codex-review B1.
+        template_class: __MODULE__
       }
 
       case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do

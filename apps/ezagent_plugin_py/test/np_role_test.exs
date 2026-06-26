@@ -10,8 +10,8 @@ defmodule Ezagent.PluginPy.NpRoleTest do
   1. (fast, no uv) the `np` role recipe carries the np.py script verbatim, and
      the script's numpy/sympy security model is intact (the `_SAFE_NAMES`
      whitelist + `parse_expr`/`parse_latex` are byte-identical to the deleted np
-     plugin's, asserted by content). The recipe carries NO caps while py is an
-     own-Kind (item-3 deferred — see `np_role_recipe/0`).
+     plugin's, asserted by content). The recipe carries NO caps — np needs none
+     (see `np_role_recipe/0`); py now runs on the unified `Entity.Agent` Kind.
   2. (`:uv`) creating a py-agent via the REAL create path with `role: "np"`
      installs np.py into the agent's config_dir + evaluates a numpy/sympy
      expression end-to-end via the single `receive` method.
@@ -51,10 +51,11 @@ defmodule Ezagent.PluginPy.NpRoleTest do
       assert recipe.script =~ "parsed = parse_expr(expr, local_dict=_SAFE_NAMES, evaluate=True)"
       assert recipe.script =~ "parsed = parse_latex(expr)"
 
-      # While py is an own-Kind (item-3 deferred) the recipe carries NO caps —
-      # Entity.PyAgent has no Identity slice to hold them, and a py-agent does
-      # not need granted caps to function (see np_role_recipe/0 moduledoc). The
-      # cap path activates when the own-Kind retires to native+role.
+      # The np recipe carries NO caps — a py-agent does not need granted caps to
+      # function (the session→agent dispatch carries the sender's caps; the reply
+      # presents its own inline session.send cap, #154). py now runs on the
+      # unified Entity.Agent Kind (full base set incl. Identity), so a future
+      # py-role that DOES need caps can add :requested_caps (see np_role_recipe/0).
       refute Map.has_key?(recipe, :requested_caps)
     end
 
