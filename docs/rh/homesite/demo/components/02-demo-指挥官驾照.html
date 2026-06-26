@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 指挥官驾照 · Ezagent</title>
+<meta property="og:title" content="我是 黄金·多线程指挥官 — 测测你能同时指挥几个 Agent？">
+<meta property="og:description" content="AI 时代，会不会用 agent 决定你领先还是掉队。测出你的并发指挥段位，看你超过了多少人。">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Serif+SC:wght@400;600&family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+  *{box-sizing:border-box}
+  :root{
+    /* 沿用站点固定色板（官网原型-全站-暗黑玻璃.html） */
+    --cream:#fde7de; --coral:#ff677a; --blue:#0037fe; --ink:#0c0c14;
+    --line:rgba(255,255,255,.12);
+    --w70:rgba(255,255,255,.7); --w50:rgba(255,255,255,.5); --w40:rgba(255,255,255,.4);
+    --live:#79e0a8; --wip:#f5c06b; --gold:#f5c06b;
+  }
+  html,body{margin:0;background:var(--ink);color:#fff;min-height:100vh;
+    font-family:'Inter','Noto Sans SC',-apple-system,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  .serif{font-family:'Instrument Serif','Noto Serif SC',serif;font-weight:400}
+  .serif em,em.serif{font-style:italic}
+  button{font-family:inherit;cursor:pointer}
+
+  /* ===== atmosphere: 站点同款 morph 形状背景 ===== */
+  .bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+  .bg .sh{position:absolute;filter:blur(38px);opacity:.42;will-change:transform,clip-path}
+  @keyframes morph8{
+    0%,100%{clip-path:polygon(0% 0%,50% 0%,100% 0%,100% 50%,100% 100%,50% 100%,0% 100%,0% 50%)}
+    33%{clip-path:polygon(15% 0%,85% 0%,100% 15%,100% 85%,85% 100%,15% 100%,0% 85%,0% 15%)}
+    66%{clip-path:polygon(50% 0%,66% 33%,83% 66%,100% 100%,66% 100%,33% 100%,0% 100%,25% 50%)}}
+  @keyframes floaty{0%,100%{transform:translate(0,0)}50%{transform:translate(0,-26px)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .bg .a{width:46vmin;height:46vmin;left:-8vmin;top:-6vmin;background:var(--blue);animation:morph8 11s ease-in-out infinite, floaty 9s ease-in-out infinite}
+  .bg .b{width:40vmin;height:40vmin;right:-10vmin;top:18vmin;background:var(--coral);animation:morph8 13s ease-in-out infinite reverse, spin 40s linear infinite}
+  .bg .c{width:34vmin;height:34vmin;left:30vmin;bottom:-12vmin;background:var(--cream);opacity:.22;animation:morph8 15s ease-in-out infinite, floaty 12s ease-in-out infinite}
+  .grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+  /* ===== liquid glass（站点同款） ===== */
+  .glass{background:rgba(255,255,255,.012);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);
+    border:none;box-shadow:inset 0 1px 1px rgba(255,255,255,.1);position:relative;overflow:hidden}
+  .glass::before{content:'';position:absolute;inset:0;border-radius:inherit;padding:1.4px;
+    background:linear-gradient(180deg,rgba(255,255,255,.45),rgba(255,255,255,.12) 25%,rgba(255,255,255,0) 45%,rgba(255,255,255,0) 60%,rgba(255,255,255,.14) 80%,rgba(255,255,255,.45));
+    -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+
+  .stage{position:relative;z-index:5;max-width:680px;margin:0 auto;padding:clamp(28px,6vh,72px) 20px 60px;min-height:100vh;display:flex;flex-direction:column;justify-content:center}
+  .eyebrow{color:var(--w40);font-size:12px;letter-spacing:3px;text-transform:uppercase}
+  .screen{animation:fade .55s ease both}
+  @keyframes fade{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+  [hidden]{display:none!important}
+
+  /* ===== intro ===== */
+  .intro h1{font-size:clamp(40px,8.5vw,76px);line-height:1;letter-spacing:-1.5px;margin:18px 0 0}
+  .intro h1 em{color:var(--coral)}
+  .intro .sub{color:var(--w70);font-size:clamp(15px,2.4vw,18px);max-width:480px;margin:20px 0 0;line-height:1.65}
+  .intro .pills{display:flex;gap:8px;flex-wrap:wrap;margin:26px 0 0}
+  .intro .pills span{font-size:12px;color:var(--w50);border:1px solid var(--line);border-radius:999px;padding:6px 13px}
+  .cta{display:inline-flex;align-items:center;gap:10px;margin-top:34px;align-self:flex-start;
+    background:#fff;color:#000;border:0;border-radius:999px;padding:15px 28px;font-size:16px;font-weight:700;
+    transition:transform .15s, box-shadow .25s;box-shadow:0 10px 40px rgba(255,103,122,.28)}
+  .cta:hover{transform:translateY(-2px) scale(1.02);box-shadow:0 16px 54px rgba(255,103,122,.4)}
+  .cta:active{transform:scale(.97)}
+  .meta{margin-top:18px;font-size:12.5px;color:var(--w40)}
+
+  /* ===== quiz ===== */
+  .progress{display:flex;align-items:center;gap:14px;margin-bottom:34px}
+  .pbar{flex:1;height:5px;border-radius:999px;background:rgba(255,255,255,.09);overflow:hidden}
+  .pbar i{display:block;height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,var(--coral),var(--cream));transition:width .5s cubic-bezier(.4,0,.2,1)}
+  .pnum{font-size:12.5px;color:var(--w40);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .qkicker{color:var(--coral);font-size:12.5px;letter-spacing:2px;text-transform:uppercase;font-weight:600}
+  .q h2{font-size:clamp(24px,4.6vw,34px);line-height:1.2;letter-spacing:-.5px;margin:12px 0 28px}
+  .opts{display:flex;flex-direction:column;gap:12px}
+  .opt{text-align:left;border-radius:18px;padding:18px 20px;color:#fff;font-size:15.5px;line-height:1.45;
+    display:flex;align-items:flex-start;gap:14px;transition:transform .14s, background .14s}
+  .opt:hover{transform:translateX(5px);background:rgba(255,255,255,.05)}
+  .opt:active{transform:scale(.99)}
+  .opt .dot{flex:none;width:24px;height:24px;border-radius:999px;border:1.5px solid var(--w40);margin-top:1px;
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--w50);transition:.14s}
+  .opt:hover .dot{border-color:var(--coral);color:var(--coral)}
+  .opt .ot{flex:1}
+  .opt .oh{font-size:11.5px;color:var(--w40);margin-top:3px}
+  .back{background:transparent;border:0;color:var(--w40);font-size:13px;margin-top:24px;padding:6px 0}
+  .back:hover{color:#fff}
+
+  /* ===== result ===== */
+  .resultwrap{display:flex;flex-direction:column;align-items:center;text-align:center}
+  .verdict{font-size:13px;color:var(--w50);letter-spacing:1px;margin-bottom:18px}
+  .verdict b{color:#fff}
+
+  /* the shareable license card */
+  .license{width:100%;max-width:440px;border-radius:28px;padding:30px 28px 26px;position:relative;overflow:hidden;
+    background:
+      radial-gradient(120% 80% at 80% -10%, rgba(255,103,122,.5), transparent 55%),
+      radial-gradient(110% 90% at -10% 110%, rgba(0,55,254,.55), transparent 55%),
+      linear-gradient(160deg,#16161f,#0a0a11);
+    box-shadow:0 30px 80px rgba(0,0,0,.55), inset 0 1px 1px rgba(255,255,255,.14);
+    border:1px solid rgba(255,255,255,.1)}
+  .license .lgrain{position:absolute;inset:0;opacity:.06;mix-blend-mode:overlay;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n2'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n2)'/%3E%3C/svg%3E")}
+  .lic-top{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:2}
+  .lic-top .label{font-size:10.5px;letter-spacing:2.5px;text-transform:uppercase;color:var(--w50);text-align:left}
+  .lic-top .label b{display:block;color:#fff;font-size:12.5px;letter-spacing:1.5px;margin-top:3px}
+  .lic-serial{font-variant-numeric:tabular-nums;font-size:12px;color:var(--w50);text-align:right}
+  .lic-serial b{display:block;color:var(--cream);font-size:15px;letter-spacing:.5px}
+
+  /* orbit = N agents 并发可视化 */
+  .orbit{position:relative;width:200px;height:200px;margin:14px auto 6px;z-index:2}
+  .orbit .ring{position:absolute;inset:0;border-radius:999px;border:1px dashed rgba(255,255,255,.16)}
+  .orbit .ring.r2{inset:26px;border-style:dotted}
+  .orbit .core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:999px;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#fff;
+    background:radial-gradient(circle at 35% 30%, #fff6, transparent 60%), linear-gradient(140deg,var(--coral),#c63a52);
+    box-shadow:0 0 32px rgba(255,103,122,.6)}
+  .orbit .node{position:absolute;left:50%;top:50%;width:15px;height:15px;border-radius:999px;background:var(--cream);
+    box-shadow:0 0 12px rgba(253,231,222,.8);transform-origin:0 0}
+  .orbit .node.dim{background:var(--blue);opacity:.85;box-shadow:0 0 10px rgba(0,55,254,.7)}
+  @keyframes orbitspin{to{transform:rotate(360deg)}}
+  .orbit .spin{position:absolute;inset:0;animation:orbitspin 18s linear infinite}
+  .orbit .spin.rev{animation-duration:26s;animation-direction:reverse}
+
+  .lic-rank{position:relative;z-index:2;margin-top:8px}
+  .lic-rank .tier-eyebrow{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--gold)}
+  .lic-rank h3{font-size:clamp(30px,7vw,40px);line-height:1.05;letter-spacing:-.5px;margin:6px 0 0}
+  .lic-rank .agents{font-size:14px;color:var(--w70);margin-top:10px}
+  .lic-rank .agents b{color:#fff;font-size:18px;font-variant-numeric:tabular-nums}
+  .lic-pct{position:relative;z-index:2;margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.1);
+    display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .lic-pct .big{font-size:clamp(26px,6vw,34px);font-weight:800;letter-spacing:-1px;line-height:1}
+  .lic-pct .big small{font-size:13px;font-weight:500;color:var(--w50);letter-spacing:0}
+  .lic-pct .ptag{font-size:11px;color:var(--w50);text-align:right;max-width:150px}
+  .lic-line{position:relative;z-index:2;font-size:13.5px;color:var(--w70);line-height:1.55;margin-top:16px;text-align:left;font-style:italic}
+  .lic-foot{position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;margin-top:20px;font-size:11px;color:var(--w40)}
+  .lic-foot .brand{display:flex;align-items:center;gap:6px;color:var(--w70);font-weight:600;letter-spacing:.3px}
+  .lic-foot .brand svg{width:15px;height:15px}
+
+  /* result actions */
+  .actions{display:flex;flex-direction:column;gap:11px;width:100%;max-width:440px;margin-top:26px}
+  .actrow{display:flex;gap:11px}
+  .btn{flex:1;border-radius:14px;padding:14px;font-size:14.5px;font-weight:600;color:#fff;border:0;
+    display:flex;align-items:center;justify-content:center;gap:8px;transition:transform .14s, background .14s}
+  .btn:hover{transform:translateY(-2px)}.btn:active{transform:scale(.97)}
+  .btn.primary{background:#fff;color:#000}
+  .btn.coral{background:linear-gradient(135deg,var(--coral),#e0455c)}
+  .persona-tag{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--w70);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;margin-top:20px}
+  .persona-tag b{color:#fff}
+  .softcta{margin-top:26px;border-radius:20px;padding:22px;text-align:left;width:100%;max-width:440px}
+  .softcta .e{color:var(--coral);font-size:11.5px;letter-spacing:2px;text-transform:uppercase;font-weight:600}
+  .softcta h4{font-size:18px;margin:8px 0 4px;letter-spacing:-.3px}
+  .softcta p{margin:0 0 14px;color:var(--w50);font-size:13.5px;line-height:1.55}
+  .softcta .row{display:flex;gap:10px;flex-wrap:wrap}
+  .ghostbtn{border:1px solid var(--line);background:transparent;color:#fff;border-radius:999px;padding:10px 18px;font-size:13.5px;font-weight:500;transition:.14s}
+  .ghostbtn:hover{background:rgba(255,255,255,.06);border-color:transparent}
+  .retake{background:transparent;border:0;color:var(--w40);font-size:13px;margin-top:22px}
+  .retake:hover{color:#fff}
+
+  .toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);z-index:99;
+    background:#fff;color:#000;font-size:14px;font-weight:600;padding:12px 22px;border-radius:999px;
+    box-shadow:0 14px 40px rgba(0,0,0,.4);opacity:0;transition:.3s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .demo-note{position:fixed;left:14px;bottom:12px;z-index:60;font-size:11px;color:var(--w40);max-width:240px;line-height:1.4}
+  .backlink{position:fixed;top:16px;left:16px;z-index:70;display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+    padding:9px 15px;border-radius:999px;font-size:13px;font-weight:500;color:var(--w70);
+    background:rgba(255,255,255,.04);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid var(--line);transition:.15s}
+  .backlink:hover{color:#fff;background:rgba(255,255,255,.09);transform:translateX(-2px)}
+</style>
+</head>
+<body>
+<div class="bg"><span class="sh a"></span><span class="sh b"></span><span class="sh c"></span></div>
+<div class="grain"></div>
+<a class="backlink" href="../官网原型-全站-暗黑玻璃-v2.html">← 返回官网</a>
+
+<div class="stage">
+
+  <!-- ============ 1) INTRO ============ -->
+  <section class="screen intro" id="screen-intro">
+    <span class="eyebrow">Ezagent · 共建实验</span>
+    <h1 class="serif">测测你能同时<br>指挥几个 <em>Agent</em>？</h1>
+    <p class="sub">AI 时代，真正拉开差距的不是「会不会用 AI」，而是「能同时驾驭几个」。<br>5 道题，测出你的<b style="color:#fff">并发指挥段位</b>——以及，你超过了多少人。</p>
+    <div class="pills"><span>⏱ 30 秒</span><span>🎫 生成专属指挥官驾照</span><span>🏆 带全站百分位</span></div>
+    <button class="cta" id="startBtn">开始测试 →</button>
+    <p class="meta">已有 <b id="taken" style="color:var(--w70)">—</b> 人测过自己的段位</p>
+  </section>
+
+  <!-- ============ 2) QUIZ ============ -->
+  <section class="screen" id="screen-quiz" hidden>
+    <div class="progress">
+      <div class="pbar"><i id="pbar"></i></div>
+      <span class="pnum" id="pnum">1 / 5</span>
+    </div>
+    <div class="q">
+      <span class="qkicker" id="qkicker">问题</span>
+      <h2 id="qtitle"></h2>
+      <div class="opts" id="opts"></div>
+    </div>
+    <button class="back" id="backBtn" hidden>← 上一题</button>
+  </section>
+
+  <!-- ============ 3) RESULT ============ -->
+  <section class="screen resultwrap" id="screen-result" hidden>
+    <p class="verdict" id="verdict"></p>
+
+    <div class="license" id="license">
+      <div class="lgrain"></div>
+      <div class="lic-top">
+        <div class="label">AGENT 指挥官驾照<b>COMMANDER LICENSE</b></div>
+        <div class="lic-serial">编号 NO.<b id="serial">#000137</b></div>
+      </div>
+
+      <div class="orbit" id="orbit">
+        <div class="ring"></div><div class="ring r2"></div>
+        <div class="spin" id="orbitSpin1"></div>
+        <div class="spin rev" id="orbitSpin2"></div>
+        <div class="core" id="orbitCore">1</div>
+      </div>
+
+      <div class="lic-rank">
+        <div class="tier-eyebrow" id="tierEyebrow">RANK</div>
+        <h3 class="serif" id="tierName">—</h3>
+        <div class="agents">可同时稳定指挥 <b id="agentCount">1</b> 个 agent</div>
+      </div>
+
+      <div class="lic-pct">
+        <div class="big" id="pctBig">—<small>%</small></div>
+        <div class="ptag" id="pctTag"></div>
+      </div>
+
+      <p class="lic-line" id="licLine"></p>
+
+      <div class="lic-foot">
+        <span class="brand"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>ezagent.dev</span>
+        <span id="licDate"></span>
+      </div>
+    </div>
+
+    <div class="persona-tag" id="personaTag" hidden></div>
+
+    <div class="actions">
+      <div class="actrow">
+        <button class="btn primary" id="dlBtn">⬇ 保存驾照图</button>
+        <button class="btn coral" id="challengeBtn">⚔ 挑战朋友</button>
+      </div>
+      <button class="btn glass" id="copyBtn">🔗 复制战绩文案</button>
+    </div>
+
+    <div class="softcta glass">
+      <span class="e">想升段？</span>
+      <h4>你刚才卡住的地方，正是 ezagent 在解决的</h4>
+      <p>「任务静默卡住没人管」「要手动复制粘贴中转」——这些就是一个人指挥不动更多 agent 的真正瓶颈。来给我们的路线图投票，决定先做哪个。</p>
+      <div class="row">
+        <button class="ghostbtn" id="voteBtn">去给路线图投票 →</button>
+        <button class="ghostbtn" id="watchBtn">订阅进展</button>
+      </div>
+    </div>
+
+    <button class="retake" id="retakeBtn">重新测一次</button>
+  </section>
+
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="demo-note">原型 demo · 数据为本地 mock（编号/人数走 localStorage 自增）· 段位算法见源码 computeResult()</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
+<script>
+/* ============================================================
+ * 题库 —— 每个选项带 score(0–3) + 可选 persona 标记 + 可选 hook 注脚
+ * 选项里刻意埋了 ezagent 的技术价值点（如「任务静默卡住没人管」=
+ * 站点核心命题「消息没人接收默认静默丢失」，由 ReadyGate/DLQ 解决）
+ * ============================================================ */
+const QUESTIONS = [
+  { kicker:'现状', title:'你现在同时在用几个 AI 工具 / agent？',
+    options:[
+      {t:'就 1 个，主要是 ChatGPT', h:'单点问答', score:0},
+      {t:'2–3 个，各干各的', h:'多开但不协同', score:1},
+      {t:'4–6 个，手动在它们之间倒腾', h:'人肉中转', score:2},
+      {t:'7 个以上，且我让它们彼此协同接力', h:'编排级', score:3},
+    ]},
+  { kicker:'习惯', title:'一个任务交给 AI 之后，你通常会？',
+    options:[
+      {t:'盯着每一步，不敢走开', h:'全程看护', score:0},
+      {t:'时不时回来看一眼进度', h:'轮询', score:1},
+      {t:'丢给它就去干别的事', h:'放手', score:2},
+      {t:'让它自己调度别的 agent 接力完成', h:'自治编排', score:3},
+    ]},
+  { kicker:'你是谁', title:'你的活，主要长什么样？',
+    options:[
+      {t:'一个人选品+客服+物流全扛', h:'', score:1, persona:'赵全扛'},
+      {t:'带一支小客服/营销团队，想砍重复劳动', h:'', score:2, persona:'钱降本'},
+      {t:'自己接 API、搭过自动化流程', h:'', score:3, persona:'孙集成'},
+      {t:'管一个团队的整体产出，盯交付', h:'', score:2, persona:'李统筹'},
+    ]},
+  { kicker:'痛点', title:'多个 AI 任务同时跑时，最让你头疼的是？',
+    options:[
+      {t:'记不清谁在干啥、干到哪了', h:'失去全局视野', score:1},
+      {t:'要手动复制粘贴，在工具之间搬运', h:'人肉胶水', score:1},
+      {t:'经常有任务静默卡住，没人发现', h:'⚠ 这正是 ezagent 在治的事', score:2},
+      {t:'没什么头疼的，我有一套编排在管', h:'已上编排', score:3},
+    ]},
+  { kicker:'成熟度', title:'给自己的 AI 用法成熟度打个分？',
+    options:[
+      {t:'顶多问问 ChatGPT', h:'尝鲜', score:0},
+      {t:'拼过几个插件 / GPTs', h:'拼装', score:1},
+      {t:'自己接过 API 写过脚本', h:'动手派', score:2},
+      {t:'搭过多 agent 自动化编排', h:'编排派', score:3},
+    ]},
+];
+
+/* ============================================================
+ * 段位定义（形：5 档。内容可调）
+ * ============================================================ */
+const TIERS = [
+  {min:0,  eyebrow:'BRONZE',   name:'青铜 · 单线程指挥官', agents:'1',    color:'#cd9b6a'},
+  {min:4,  eyebrow:'SILVER',   name:'白银 · 双线程指挥官', agents:'2–3',  color:'#c7ced6'},
+  {min:7,  eyebrow:'GOLD',     name:'黄金 · 多线程指挥官', agents:'4–6',  color:'#f5c06b'},
+  {min:10, eyebrow:'PLATINUM', name:'铂金 · 并发调度官',   agents:'7–12', color:'#7fd9e8'},
+  {min:13, eyebrow:'LEGEND',   name:'王者 · 并发指挥官',   agents:'13+',  color:'#ff677a'},
+];
+const LINES = [
+  'AI 在你手里还是个「问答工具」——它一次只伺候你一件事。绝大多数人都卡在这里。',
+  '你已经能让两三个 AI 各管一摊，但它们还不认识彼此，搬运全靠你这双手。',
+  '你能让一队 agent 并行干活了。瓶颈不在你脑子，在工具——它们还不会自己接力。',
+  '你在「调度」而不是「操作」AI 了。少数人能到这。再往上，差的就是一套真编排。',
+  '你已经在指挥一个 agent 兵团。这正是 ezagent 想让「一个人」就能做到的事。',
+];
+const PERSONA_NOTE = {
+  '赵全扛':'像你这样什么都自己扛的人，最需要的是「开箱即跑、不用自己拼」。',
+  '钱降本':'你在算人力账——并发 agent 的价值，就是把重复劳动的人头省下来。',
+  '孙集成':'你自己搭过，所以你懂：难的从来不是单个 agent，是让它们可靠地协同。',
+  '李统筹':'你盯的是团队总产出——agent 兵团等于给每个人配了一队不知疲倦的手。',
+};
+
+/* ============================================================
+ * ★ 产品判断旋钮：把答案 → 段位 / agent 数 / 百分位 / persona
+ *   这是整个机制最该由「产品」决定的一段逻辑。当前是合理默认：
+ *   - 简单累加 score（max 15）→ 落到 TIERS 区间
+ *   - 百分位 = 把 score 拉到 8–96 区间，低分故意「只超过一小撮人」以激发不服
+ *   想调手感：改 TIERS 阈值、LINES 文案，或下面的 percentile 曲线。
+ * ============================================================ */
+function computeResult(answers){
+  let score = 0, persona = null;
+  answers.forEach((opt)=>{ score += opt.score; if(opt.persona) persona = opt.persona; });
+  const maxScore = QUESTIONS.reduce((s,q)=>s+Math.max(...q.options.map(o=>o.score)),0);
+
+  let tier = TIERS[0], idx = 0;
+  TIERS.forEach((t,i)=>{ if(score >= t.min){ tier = t; idx = i; } });
+
+  // 百分位：低分也给个「超过 X%」，但故意偏低制造攀比刺激；高分逼近顶
+  const pct = Math.max(8, Math.min(96, Math.round((score / maxScore) * 88 + 8)));
+
+  return { score, maxScore, tier, idx, persona, pct, line: LINES[idx] };
+}
+
+/* ============================================================
+ * 状态 + 流程
+ * ============================================================ */
+const state = { cur:0, answers:[] };
+const $ = s => document.querySelector(s);
+const screens = { intro:$('#screen-intro'), quiz:$('#screen-quiz'), result:$('#screen-result') };
+function show(name){ Object.entries(screens).forEach(([k,el])=>{ el.hidden = (k!==name); }); window.scrollTo(0,0); }
+
+/* localStorage mock：唯一编号 + 测过人数 */
+function nextSerial(){
+  let base = +(localStorage.getItem('ez_lic_serial') || 136);
+  base += 1; localStorage.setItem('ez_lic_serial', base); return base;
+}
+function takenCount(){
+  let n = +(localStorage.getItem('ez_taken') || 4127);
+  return n;
+}
+function bumpTaken(){
+  let n = takenCount() + 1; localStorage.setItem('ez_taken', n); return n;
+}
+$('#taken').textContent = takenCount().toLocaleString();
+
+$('#startBtn').onclick = ()=>{ state.cur=0; state.answers=[]; renderQuestion(); show('quiz'); };
+
+function renderQuestion(){
+  const q = QUESTIONS[state.cur];
+  $('#qkicker').textContent = q.kicker;
+  $('#qtitle').textContent = q.title;
+  $('#pnum').textContent = `${state.cur+1} / ${QUESTIONS.length}`;
+  $('#pbar').style.width = `${(state.cur)/QUESTIONS.length*100}%`;
+  $('#backBtn').hidden = state.cur === 0;
+
+  const wrap = $('#opts'); wrap.innerHTML = '';
+  q.options.forEach((opt,i)=>{
+    const b = document.createElement('button');
+    b.className = 'opt glass';
+    b.innerHTML = `<span class="dot">${'ABCD'[i]}</span><span class="ot">${opt.t}${opt.h?`<span class="oh">${opt.h}</span>`:''}</span>`;
+    b.onclick = ()=>choose(opt);
+    wrap.appendChild(b);
+  });
+  // re-trigger entrance anim
+  screens.quiz.classList.remove('screen'); void screens.quiz.offsetWidth; screens.quiz.classList.add('screen');
+}
+function choose(opt){
+  state.answers[state.cur] = opt;
+  if(state.cur < QUESTIONS.length - 1){ state.cur++; renderQuestion(); }
+  else finish();
+}
+$('#backBtn').onclick = ()=>{ if(state.cur>0){ state.cur--; renderQuestion(); } };
+
+/* ============================================================
+ * 渲染结果 + 那张可晒的驾照
+ * ============================================================ */
+let lastResult = null;
+function finish(){
+  const r = computeResult(state.answers);
+  lastResult = r;
+  bumpTaken();
+
+  $('#pbar').style.width = '100%';
+  $('#verdict').innerHTML = `测试完成 · 你的段位是 <b>${r.tier.name}</b>`;
+  $('#tierEyebrow').textContent = r.tier.eyebrow;
+  $('#tierEyebrow').style.color = r.tier.color;
+  $('#tierName').textContent = r.tier.name;
+  $('#agentCount').textContent = r.tier.agents;
+  $('#pctBig').innerHTML = `${r.pct}<small>%</small>`;
+  $('#pctTag').textContent = `你的并发指挥力超过了全站 ${r.pct}% 的人`;
+  $('#licLine').textContent = '「' + r.line + '」';
+  $('#serial').textContent = '#' + String(nextSerial()).padStart(6,'0');
+  $('#licDate').textContent = new Date().toLocaleDateString('zh-CN');
+
+  // persona
+  if(r.persona){
+    $('#personaTag').hidden = false;
+    $('#personaTag').innerHTML = `画像匹配：<b>${r.persona}</b> · ${PERSONA_NOTE[r.persona]||''}`;
+  } else $('#personaTag').hidden = true;
+
+  renderOrbit(r);
+  show('result');
+}
+
+/* orbit：按段位放 N 个绕圈的 agent 节点（视觉上限 12，呼应并发编排） */
+function renderOrbit(r){
+  ['#orbitSpin1','#orbitSpin2'].forEach(s=>$(s).innerHTML='');
+  const counts = {0:1,1:3,2:6,3:9,4:12}[r.idx] || 1;
+  const cx=100, cy=100;
+  for(let i=0;i<counts;i++){
+    const ring = i % 2 === 0 ? $('#orbitSpin1') : $('#orbitSpin2');
+    const radius = i % 2 === 0 ? 88 : 62;
+    const ang = (i / counts) * Math.PI * 2;
+    const n = document.createElement('span');
+    n.className = 'node' + (i%2?' dim':'');
+    n.style.left = (cx + Math.cos(ang)*radius - 7.5) + 'px';
+    n.style.top  = (cy + Math.sin(ang)*radius - 7.5) + 'px';
+    ring.appendChild(n);
+  }
+  $('#orbitCore').textContent = counts === 1 ? '1' : counts;
+}
+
+/* ============================================================
+ * 分享 / 裂变动作
+ * ============================================================ */
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2200); }
+
+$('#copyBtn').onclick = ()=>{
+  const r = lastResult; if(!r) return;
+  const txt = `我是「${r.tier.name}」，能同时指挥 ${r.tier.agents} 个 agent，超过全站 ${r.pct}% 的人 🎫\n你能指挥几个？来测：${location.href.split('?')[0]}`;
+  navigator.clipboard?.writeText(txt).then(()=>toast('战绩文案已复制，去发群里 →'), ()=>toast('复制失败，长按手动复制'));
+};
+$('#challengeBtn').onclick = ()=>{
+  const r = lastResult; if(!r) return;
+  const txt = `我刚测了「我能同时指挥几个 agent」，${r.tier.name}，超过 ${r.pct}% 的人。赌你比不过我 😏\n${location.href.split('?')[0]}?ref=challenge`;
+  navigator.clipboard?.writeText(txt).then(()=>toast('挑战链接已复制，甩给对手 ⚔'), ()=>toast('复制失败，长按手动复制'));
+};
+$('#dlBtn').onclick = ()=>{
+  if(typeof html2canvas !== 'function'){ toast('截图组件未加载，可直接手动截屏分享'); return; }
+  toast('正在生成驾照图…');
+  html2canvas($('#license'), {backgroundColor:null, scale:2, useCORS:true}).then(canvas=>{
+    const a=document.createElement('a'); a.download='我的Agent指挥官驾照.png'; a.href=canvas.toDataURL('image/png'); a.click();
+    toast('驾照图已保存 ⬇');
+  }).catch(()=>toast('生成失败，可直接手动截屏分享'));
+};
+$('#voteBtn').onclick = ()=>toast('（demo）此处跳官网路线图投票页');
+$('#watchBtn').onclick = ()=>toast('（demo）此处弹订阅留资');
+$('#retakeBtn').onclick = ()=>{ state.cur=0; state.answers=[]; show('intro'); $('#taken').textContent = takenCount().toLocaleString(); };
+</script>
+</body>
+</html>
