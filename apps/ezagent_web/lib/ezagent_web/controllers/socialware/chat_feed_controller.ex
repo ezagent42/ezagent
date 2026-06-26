@@ -302,7 +302,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
     """
     <!doctype html>
-    <html lang="en" data-theme="customer">
+    <html lang="en" data-theme="viewer">
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -310,11 +310,11 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-        <link rel="stylesheet" href="/assets/css/customer.css">
-        <script defer type="module" src="/assets/js/customer_app.js"></script>
+        <link rel="stylesheet" href="/assets/css/viewer.css">
+        <script defer type="module" src="/assets/js/viewer_app.js"></script>
       </head>
       <body class="min-h-screen bg-base-200 text-base-content antialiased">
-        <main id="socialware-customer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed"></main>
+        <main id="socialware-viewer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed"></main>
       </body>
     </html>
     """

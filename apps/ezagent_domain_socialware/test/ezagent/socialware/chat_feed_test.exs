@@ -1,6 +1,6 @@
 defmodule Ezagent.Socialware.ChatFeedTest do
   @moduledoc """
-  P4-1 — the PURE chat → `customer_tree` json-render projection.
+  P4-1 — the PURE chat → `external_tree` json-render projection.
 
   `ChatFeed.chat_tree/1` is a deterministic, side-effect-free projection of a
   chat message list into the SAME json-render shape the customer SPA renders

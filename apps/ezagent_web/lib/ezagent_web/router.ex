@@ -103,14 +103,27 @@ defmodule EzagentWeb.Router do
     get "/auth/reset/:token", PasswordResetController, :edit
     post "/auth/reset/:token", PasswordResetController, :update
 
-    get "/socialware/customer", Socialware.CustomerController, :show
+    # The external surface SPA — the agent-generated page projection. Anonymous
+    # visitors to a `public_view` session are minted a read-only anon-User and
+    # joined (modeled on ChatFeedController); a signed-in member uses their real
+    # principal. The live `Ezagent.Session.Membership.authorize/2` re-check at the
+    # channel remains the authorization (no identity-less token).
+    get "/socialware/external", Socialware.ExternalFeedController, :show
 
-    # Resource-unification P2a / OI-1 — PUBLIC external customer-feed attachment
-    # download (no RequireEntity; feed viewers have no session/caps). Authorized
-    # purely by capability: the customer-feed session token (CustomerAuth) + the
-    # signed UploadToken bound to the upload URI, with serve-time approved-only
-    # re-validation in CustomerFeed.authorized_attachment_path/4.
-    get "/socialware/customer/download", Socialware.CustomerController, :download
+    # Resource-unification P2a / OI-1 — PUBLIC external-feed attachment download
+    # (no RequireEntity; feed viewers have a minted/anon principal). Authorized
+    # by capability: the principal's ChatFeedAuth session token + the signed
+    # UploadToken bound to the upload URI, with serve-time approved-only
+    # re-validation in ExternalFeed.authorized_attachment_path/4.
+    get "/socialware/external/download", Socialware.ExternalFeedController, :download
+
+    # Back-compat 301: the legacy `/socialware/customer[/download]` paths are
+    # retired in favour of `/socialware/external[/download]`. Static analysis
+    # cannot enumerate external share-links, so a permanent redirect (preserving
+    # the query string) is the safe default for any shipped link. First-party
+    # consumers (world iframe, hello docstrings) are re-pointed in-repo.
+    get "/socialware/customer", Socialware.ExternalFeedController, :legacy_show
+    get "/socialware/customer/download", Socialware.ExternalFeedController, :legacy_download
 
     # #51 §4.1 — the CHAT external SPA. MOVED OUT of the RequireEntity scope into
     # the public `:browser` scope so an anonymous visitor can VIEW a `public_view`

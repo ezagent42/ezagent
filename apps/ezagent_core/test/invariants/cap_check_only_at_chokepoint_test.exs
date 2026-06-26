@@ -77,17 +77,10 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_curl_agent/lib/ezagent/behavior/",
         "apps/ezagent_plugin_py/lib/ezagent/behavior/",
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/",
-        # P3-2 — the socialware customer_feed `:pull` ExternalAdapter co-locates
-        # its cap-only allow-cap behavior (`CustomerFeedAdapter.Allow`, declaring
-        # `cap_subjects/0`) with the adapter, so the adapter owns its own bind
-        # cap (plugin-isolation). A precise file allowlist (not the whole app)
-        # keeps the cap shape contained.
-        "apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed_adapter.ex",
         # P4 — the chat_feed `:pull` ExternalAdapter co-locates its cap-only
         # allow-cap behavior (`ChatFeedAdapter.Allow`, declaring `cap_subjects/0`)
-        # with the adapter, exactly as P3-2's customer_feed does (plugin-isolation:
-        # the adapter owns its own bind cap). Precise file allowlist keeps the cap
-        # shape contained.
+        # with the adapter (plugin-isolation: the adapter owns its own bind cap).
+        # Precise file allowlist keeps the cap shape contained.
         "apps/ezagent_domain_socialware/lib/ezagent/socialware/chat_feed_adapter.ex"
       ]
     },

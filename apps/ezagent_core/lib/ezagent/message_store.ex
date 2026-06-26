@@ -83,7 +83,7 @@ defmodule Ezagent.MessageStore do
     # model). `routed_at` = the ROUTE-INTO-THIS-SESSION time, a FRESH timestamp at
     # write (NOT `msg.inserted_at`): the chat-feed snapshot orders on it so a
     # forwarded copy windows at its arrival here; `inserted_at` stays the CREATION
-    # time for pagination + the customer feed.
+    # time for pagination + the external feed.
     msg_with_session = Map.put(msg_with_session, :routed_at, DateTime.utc_now())
 
     # Single insert. `on_conflict: :nothing, conflict_target: :id` keeps
@@ -179,14 +179,14 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
-  Customer-visible messages whose owning socialware turn has committed.
+  External-visible messages whose owning socialware turn has committed.
 
-  This is the route-level customer query primitive for socialware. It
-  intentionally does not make raw feeds customer-safe; operator/admin
+  This is the route-level external-read query primitive for socialware. It
+  intentionally does not make raw feeds external-safe; operator/admin
   reads continue to use the full internal feeds.
   """
-  @spec committed_customer_visible(URI.t(), pos_integer()) :: [Message.t()]
-  def committed_customer_visible(%URI{} = session_uri, limit)
+  @spec committed_external_visible(URI.t(), pos_integer()) :: [Message.t()]
+  def committed_external_visible(%URI{} = session_uri, limit)
       when is_integer(limit) and limit > 0 do
     session_str = URI.to_string(session_uri)
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
@@ -198,7 +198,7 @@ defmodule Ezagent.MessageStore do
       on: s.turn_id == sm.turn_id,
       where:
         m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible and s.status == "committed" and
+          m.visibility == :external_visible and s.status == "committed" and
           s.session_uri == ^session_str and s.workspace_uri == ^workspace_str,
       order_by: [desc: m.inserted_at],
       limit: ^limit
@@ -207,18 +207,18 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
-  Customer-visible, committed messages restricted to a fixed id set (within the
-  session). Same gating as `committed_customer_visible/2` (customer_visible +
+  External-visible, committed messages restricted to a fixed id set (within the
+  session). Same gating as `committed_external_visible/2` (external_visible +
   committed settlement + session/workspace match) but selected by id rather than
   windowed by recency — so a caller replaying committed deliveries can render the
   delivered messages even when they fall outside the latest-N recency window
-  (P3-2: keeps the customer feed's render-cursor consistent with the delivery
+  (P3-2: keeps the external feed's render-cursor consistent with the delivery
   cursor). Returns `[]` for an empty id list.
   """
-  @spec committed_customer_visible_by_ids(URI.t(), [String.t()]) :: [Message.t()]
-  def committed_customer_visible_by_ids(%URI{} = _session_uri, []), do: []
+  @spec committed_external_visible_by_ids(URI.t(), [String.t()]) :: [Message.t()]
+  def committed_external_visible_by_ids(%URI{} = _session_uri, []), do: []
 
-  def committed_customer_visible_by_ids(%URI{} = session_uri, ids) when is_list(ids) do
+  def committed_external_visible_by_ids(%URI{} = session_uri, ids) when is_list(ids) do
     session_str = URI.to_string(session_uri)
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
@@ -229,7 +229,7 @@ defmodule Ezagent.MessageStore do
       on: s.turn_id == sm.turn_id,
       where:
         m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible and s.status == "committed" and
+          m.visibility == :external_visible and s.status == "committed" and
           s.session_uri == ^session_str and s.workspace_uri == ^workspace_str and
           m.id in ^ids,
       order_by: [desc: m.inserted_at]
@@ -238,10 +238,10 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
-  P4-2 — the N most-recent `:customer_visible` messages in `session_uri`,
+  P4-2 — the N most-recent `:external_visible` messages in `session_uri`,
   ASCENDING (oldest→newest). The CHAT external-SPA snapshot window: chat has NO
-  settlement model, so unlike `committed_customer_visible/2` there is no
-  settlement join — the gate is per-message `visibility == :customer_visible`
+  settlement model, so unlike `committed_external_visible/2` there is no
+  settlement join — the gate is per-message `visibility == :external_visible`
   (an `:operator_only` chat message never leaks to the external read) plus
   session + workspace scoping (defense-in-depth, mirroring the other chat
   queries).
@@ -255,7 +255,7 @@ defmodule Ezagent.MessageStore do
   ## `routed_at`, not `inserted_at`
 
   This windowed snapshot read is the ONLY chat-feed read path — there is no
-  delta cursor (the customer feed needs one; chat does not — see
+  delta cursor (the external feed needs one; chat does not — see
   `Ezagent.Socialware.ChatFeed`). It orders on `message_routings.routed_at` —
   the per-session ROUTE-INTO-THIS-SESSION time — NOT `inserted_at` (the message
   CREATION time): the cross-session relay path routes the SAME `%Message{}` with
@@ -263,7 +263,7 @@ defmodule Ezagent.MessageStore do
   message at the position it actually entered THIS session. (Without a cursor to
   strand on, any `routed_at` tie is now harmless — a tie only reorders within the
   snapshot, never drops a row.) `inserted_at` is left for the production
-  pagination + customer feed.
+  pagination + external feed.
   """
   @spec chat_visible_recent(URI.t(), pos_integer()) :: [Message.t()]
   def chat_visible_recent(%URI{} = session_uri, limit)
@@ -274,7 +274,7 @@ defmodule Ezagent.MessageStore do
     from(m in Message,
       where:
         m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible,
+          m.visibility == :external_visible,
       order_by: [desc: m.routed_at, desc: m.id],
       limit: ^limit
     )
@@ -285,10 +285,10 @@ defmodule Ezagent.MessageStore do
   @doc """
   Idempotently set visibility for a fixed message-id set.
   """
-  @spec mark_visibility([String.t()], :customer_visible | :operator_only) ::
+  @spec mark_visibility([String.t()], :external_visible | :operator_only) ::
           {:ok, non_neg_integer()}
   def mark_visibility(message_ids, visibility)
-      when is_list(message_ids) and visibility in [:customer_visible, :operator_only] do
+      when is_list(message_ids) and visibility in [:external_visible, :operator_only] do
     {count, _} =
       from(m in Message, where: m.id in ^message_ids)
       |> Repo.update_all(set: [visibility: visibility])

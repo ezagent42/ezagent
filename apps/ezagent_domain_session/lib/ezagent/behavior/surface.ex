@@ -118,14 +118,14 @@ defmodule Ezagent.Behavior.Surface do
     |> version_tree(surface)
   end
 
-  @spec customer_tree(map()) :: map() | nil
-  def customer_tree(%{approved: nil}), do: nil
+  @spec external_tree(map()) :: map() | nil
+  def external_tree(%{approved: nil}), do: nil
 
-  def customer_tree(%{approved: version} = surface) do
+  def external_tree(%{approved: version} = surface) do
     version_tree(version, surface)
   end
 
-  def customer_tree(_surface), do: nil
+  def external_tree(_surface), do: nil
 
   @doc """
   P2.5a — render a SPECIFIC version's tree, independent of the live `approved`

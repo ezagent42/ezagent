@@ -6,8 +6,8 @@ defmodule Ezagent.Socialware.Settlement do
   import Ecto.Query
 
   alias Ezagent.MessageStore
-  alias Ezagent.Session.CustomerDelivery
-  alias Ezagent.Socialware.{CustomerOutbox, SettlementMessage, SettlementRecord}
+  alias Ezagent.Session.ExternalDelivery
+  alias Ezagent.Socialware.{DeliveryOutbox, SettlementMessage, SettlementRecord}
   alias EzagentCore.Repo
 
   @visibility_flipped "visibility_flipped"
@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.Settlement do
   def flip_visibility(turn_id) when is_binary(turn_id) do
     with {:ok, settlement} <- get(turn_id),
          message_ids <- message_ids(turn_id),
-         {:ok, _count} <- MessageStore.mark_visibility(message_ids, :customer_visible) do
+         {:ok, _count} <- MessageStore.mark_visibility(message_ids, :external_visible) do
       mark_subwrite(settlement, @visibility_flipped)
     end
   end
@@ -132,8 +132,8 @@ defmodule Ezagent.Socialware.Settlement do
       if emitted? do
         Phoenix.PubSub.broadcast(
           EzagentCore.PubSub,
-          CustomerDelivery.topic(Ezagent.URI.new!(settlement.session_uri)),
-          {:customer_delivery, %{message_ids: message_ids}}
+          ExternalDelivery.topic(Ezagent.URI.new!(settlement.session_uri)),
+          {:external_delivery, %{message_ids: message_ids}}
         )
       end
 
@@ -179,24 +179,24 @@ defmodule Ezagent.Socialware.Settlement do
   defp assign_committed_seq(
          %SettlementRecord{turn_id: turn_id, session_uri: session_uri} = settlement
        ) do
-    case Repo.get_by(CustomerOutbox, turn_id: turn_id) do
+    case Repo.get_by(DeliveryOutbox, turn_id: turn_id) do
       nil ->
         :ok
 
-      %CustomerOutbox{committed_seq: seq} when is_integer(seq) ->
+      %DeliveryOutbox{committed_seq: seq} when is_integer(seq) ->
         :ok
 
-      %CustomerOutbox{} ->
+      %DeliveryOutbox{} ->
         next =
           (Repo.one(
-             from(o in CustomerOutbox,
+             from(o in DeliveryOutbox,
                where: o.session_uri == ^session_uri and not is_nil(o.committed_seq),
                select: max(o.committed_seq)
              )
            ) || 0) + 1
 
         {1, _} =
-          from(o in CustomerOutbox, where: o.turn_id == ^turn_id)
+          from(o in DeliveryOutbox, where: o.turn_id == ^turn_id)
           |> Repo.update_all(
             set: [committed_seq: next, surface_version: settlement.target_surface_version]
           )
@@ -221,7 +221,7 @@ defmodule Ezagent.Socialware.Settlement do
   @spec backfill_committed_seq!() :: :ok
   def backfill_committed_seq! do
     rows =
-      from(o in CustomerOutbox,
+      from(o in DeliveryOutbox,
         join: s in SettlementRecord,
         on: s.turn_id == o.turn_id,
         where: s.status == :committed and is_nil(o.committed_seq),
@@ -244,7 +244,7 @@ defmodule Ezagent.Socialware.Settlement do
     |> Enum.each(fn {session_uri, session_rows} ->
       start =
         Repo.one(
-          from(o in CustomerOutbox,
+          from(o in DeliveryOutbox,
             where: o.session_uri == ^session_uri and not is_nil(o.committed_seq),
             select: max(o.committed_seq)
           )
@@ -254,7 +254,7 @@ defmodule Ezagent.Socialware.Settlement do
       |> Enum.with_index(start + 1)
       |> Enum.each(fn {row, seq} ->
         {1, _} =
-          from(o in CustomerOutbox, where: o.turn_id == ^row.turn_id)
+          from(o in DeliveryOutbox, where: o.turn_id == ^row.turn_id)
           |> Repo.update_all(
             set: [committed_seq: seq, surface_version: row.target_surface_version]
           )
@@ -285,7 +285,7 @@ defmodule Ezagent.Socialware.Settlement do
 
     {inserted, _} =
       Repo.insert_all(
-        CustomerOutbox,
+        DeliveryOutbox,
         [
           %{
             turn_id: settlement.turn_id,

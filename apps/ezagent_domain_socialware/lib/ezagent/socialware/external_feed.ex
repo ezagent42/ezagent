@@ -1,4 +1,4 @@
-defmodule Ezagent.Socialware.CustomerFeed do
+defmodule Ezagent.Socialware.ExternalFeed do
   @moduledoc """
   Gated customer projection for socialware sessions.
 
@@ -9,8 +9,8 @@ defmodule Ezagent.Socialware.CustomerFeed do
   import Ecto.Query
 
   alias Ezagent.{Behavior.Surface, MessageStore}
-  alias Ezagent.Session.CustomerDelivery
-  alias Ezagent.Socialware.{CustomerAuth, CustomerOutbox}
+  alias Ezagent.Session.ExternalDelivery
+  alias Ezagent.Socialware.{CustomerAuth, DeliveryOutbox}
   alias Ezagent.URI, as: EzURI
   alias EzagentCore.Repo
 
@@ -19,11 +19,11 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
   @doc """
   Thin delegator — the canonical customer-delivery topic builder now lives in
-  `Ezagent.Session.CustomerDelivery` (instance_message). Kept so existing
-  callers of `CustomerFeed.topic/1` do not churn.
+  `Ezagent.Session.ExternalDelivery` (instance_message). Kept so existing
+  callers of `ExternalFeed.topic/1` do not churn.
   """
   @spec topic(URI.t()) :: String.t()
-  def topic(%URI{} = session_uri), do: CustomerDelivery.topic(session_uri)
+  def topic(%URI{} = session_uri), do: ExternalDelivery.topic(session_uri)
 
   @spec snapshot(URI.t(), String.t()) :: {:ok, map()} | {:error, :unauthorized}
   def snapshot(%URI{} = session_uri, token) do
@@ -31,7 +31,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
          :ok <- CustomerAuth.authorize(token, session_uri, workspace_uri) do
       {:ok,
        %{
-         messages: MessageStore.committed_customer_visible(session_uri, @history_limit),
+         messages: MessageStore.committed_external_visible(session_uri, @history_limit),
          page: customer_page(session_uri),
          shell: customer_shell(session_uri),
          shell_css: customer_shell_css(session_uri)
@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   def history(%URI{} = session_uri, token) do
     with {:ok, workspace_uri} <- workspace(session_uri),
          :ok <- CustomerAuth.authorize(token, session_uri, workspace_uri) do
-      {:ok, %{messages: MessageStore.committed_customer_visible(session_uri, @history_limit)}}
+      {:ok, %{messages: MessageStore.committed_external_visible(session_uri, @history_limit)}}
     else
       _ -> {:error, :unauthorized}
     end
@@ -107,7 +107,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   def committed_deliveries_since(%URI{} = session_uri, cursor) when is_integer(cursor) do
     session_str = URI.to_string(session_uri)
 
-    from(o in CustomerOutbox,
+    from(o in DeliveryOutbox,
       where:
         o.session_uri == ^session_str and not is_nil(o.committed_seq) and
           o.committed_seq > ^cursor,
@@ -246,7 +246,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
         extra =
           session_uri
-          |> MessageStore.committed_customer_visible_by_ids(delivery_ids)
+          |> MessageStore.committed_external_visible_by_ids(delivery_ids)
           |> Enum.reject(&MapSet.member?(base_ids, &1.id))
 
         {:ok, %{fresh | messages: base ++ extra}}
@@ -264,7 +264,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   def latest_cursor(%URI{} = session_uri) do
     session_str = URI.to_string(session_uri)
 
-    from(o in CustomerOutbox,
+    from(o in DeliveryOutbox,
       where: o.session_uri == ^session_str and not is_nil(o.committed_seq),
       select: max(o.committed_seq)
     )
@@ -291,7 +291,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   def approved_attachment?(%URI{} = session_uri, %URI{scheme: "resource"} = upload_uri) do
     if EzURI.type?(upload_uri, :uploads) do
       session_uri
-      |> MessageStore.committed_customer_visible(@approved_scan_limit)
+      |> MessageStore.committed_external_visible(@approved_scan_limit)
       |> Enum.any?(&message_attaches?(&1, upload_uri))
     else
       false
@@ -383,7 +383,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   # session URI (session://<workspace>/<template>/<name>), not the volatile
   # WorkspaceRegistry ETS cache (empty after a restart → a still-valid customer
   # token would be wrongly rejected on cold reconnect). Mirrors
-  # MessageStore.committed_customer_visible/2, which already resolves the
+  # MessageStore.committed_external_visible/2, which already resolves the
   # workspace via Ezagent.Persistence. Returns a `%URI{}` (parsed from the
   # structural string) to preserve the URI-struct contract the previous
   # WorkspaceRegistry.lookup/1 provided — `authorized_attachment_path/4` calls
@@ -422,7 +422,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   defp committed_surface_version(session_uri) do
     session_str = URI.to_string(session_uri)
 
-    from(o in CustomerOutbox,
+    from(o in DeliveryOutbox,
       where:
         o.session_uri == ^session_str and not is_nil(o.committed_seq) and
           not is_nil(o.surface_version),

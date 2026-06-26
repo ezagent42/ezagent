@@ -3,7 +3,7 @@ defmodule EzagentDomainSocialware.PageView do
   Operator SessionView for the socialware page surface.
 
   Renders the latest retained page version. Customer rendering is a later
-  React/json-render surface and follows `Ezagent.Behavior.Surface.customer_tree/1`.
+  React/json-render surface and follows `Ezagent.Behavior.Surface.external_tree/1`.
   """
 
   @behaviour Ezagent.UI.SessionView
@@ -66,7 +66,7 @@ defmodule EzagentDomainSocialware.PageView do
   def external_render(%URI{} = session_uri) do
     session_uri
     |> load_surface()
-    |> Surface.customer_tree()
+    |> Surface.external_tree()
   end
 
   def external_render(_), do: nil

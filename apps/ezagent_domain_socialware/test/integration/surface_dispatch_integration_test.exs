@@ -133,6 +133,6 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
 
     {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
     assert Ezagent.Behavior.Surface.operator_tree(surface) == page_tree
-    assert Ezagent.Behavior.Surface.customer_tree(surface) == page_tree
+    assert Ezagent.Behavior.Surface.external_tree(surface) == page_tree
   end
 end

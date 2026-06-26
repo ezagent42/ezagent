@@ -50,7 +50,7 @@ defmodule Ezagent.UI.SessionView do
 
   @doc """
   P2 (unified view contract) — does this app declare an EXTERNAL render
-  target (a `customer_tree`/json-render projection consumed by the SPA via
+  target (a `external_tree`/json-render projection consumed by the SPA via
   an ExternalAdapter), in addition to (or instead of) the internal LiveView
   `render/1`?
 
@@ -67,7 +67,7 @@ defmodule Ezagent.UI.SessionView do
 
   @doc """
   P2 — produce the EXTERNAL render for `session_uri`: the json-render tree
-  (a plain map, the `customer_tree` shape) the SPA consumes. Returns `nil`
+  (a plain map, the `external_tree` shape) the SPA consumes. Returns `nil`
   when there is nothing to render externally yet (e.g. no approved/committed
   surface version).
 
@@ -79,7 +79,7 @@ defmodule Ezagent.UI.SessionView do
   P2 NOTE: this is the per-app DECLARATION of the external render. It does
   NOT change the customer-delivery pipeline (CustomerFeed / CustomerChannel)
   — that is P2.5/P3. An implementation reuses the app's existing projection
-  (e.g. socialware delegates to `Ezagent.Behavior.Surface.customer_tree/1`).
+  (e.g. socialware delegates to `Ezagent.Behavior.Surface.external_tree/1`).
   """
   @callback external_render(session_uri :: URI.t()) :: map() | nil
 

@@ -612,7 +612,7 @@ defmodule Ezagent.Behavior.Turn do
 
   defp write_chat_message_from_ref(_ref, _turn, _ctx), do: []
 
-  defp initial_visibility(%{mode: :auto}), do: :customer_visible
+  defp initial_visibility(%{mode: :auto}), do: :external_visible
   defp initial_visibility(_turn), do: :operator_only
 
   defp next_surface_version(ctx) do

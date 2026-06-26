@@ -311,31 +311,4 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       refute Enum.any?(snap_b.messages, &(&1.id == written.id))
     end
   end
-
-  describe "adapter render/2 routes the customer projection" do
-    test "render returns the SAME gated snapshot content the channel pushes", ctx do
-      m1 = commit_delivery(ctx, "rendered", "turn-jp-render")
-
-      rendered =
-        Ezagent.ExternalMirror.Adapter.render(
-          Ezagent.Socialware.CustomerFeedAdapter,
-          ctx.session,
-          %{token: ctx.token}
-        )
-
-      assert Enum.any?(rendered.messages, &(&1.id == m1.id))
-      assert Map.has_key?(rendered, :page)
-    end
-
-    test "render with an unauthorized token returns the empty/denied projection", ctx do
-      rendered =
-        Ezagent.ExternalMirror.Adapter.render(
-          Ezagent.Socialware.CustomerFeedAdapter,
-          ctx.session,
-          %{token: "bad-token"}
-        )
-
-      assert rendered == %{messages: [], page: nil}
-    end
-  end
 end

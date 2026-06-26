@@ -165,8 +165,8 @@ function boot(root) {
   // finding 3). Both default to the customer values, so an existing
   // customer-feed page (which sets neither attribute) is byte-identical to
   // before.
-  const socketPath = root.dataset.socketPath || "/socialware_socket"
-  const topicPrefix = root.dataset.topicPrefix || "socialware:customer"
+  const socketPath = root.dataset.socketPath || "/socialware_external_socket"
+  const topicPrefix = root.dataset.topicPrefix || "socialware:external"
   // Identity token for the logged-in viewer (or "" anonymous). Drives the bar's
   // login/join/post states; the channel re-derives logged_in/member from it.
   const viewerToken = root.dataset.viewerToken || ""
@@ -762,5 +762,5 @@ function emptyPage() {
   return {type: "container", props: {layout: "stack"}, children: []}
 }
 
-const root = document.getElementById("socialware-customer-root")
+const root = document.getElementById("socialware-viewer-root")
 if (root) boot(root)

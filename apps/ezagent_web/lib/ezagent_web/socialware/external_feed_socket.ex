@@ -1,4 +1,4 @@
-defmodule EzagentWeb.Socialware.CustomerSocket do
+defmodule EzagentWeb.Socialware.ExternalFeedSocket do
   @moduledoc """
   Socket for customer-facing socialware feeds.
 
@@ -7,16 +7,16 @@ defmodule EzagentWeb.Socialware.CustomerSocket do
   """
   use Phoenix.Socket
 
-  alias Ezagent.Socialware.{ChatFeedAuth, CustomerFeed}
+  alias Ezagent.Socialware.{ChatFeedAuth, ExternalFeed}
 
-  channel "socialware:customer:*", EzagentWeb.Socialware.CustomerChannel
+  channel "socialware:external:*", EzagentWeb.Socialware.ExternalFeedChannel
 
   @impl true
   def connect(params, socket, _connect_info) do
     with {:ok, session_str} <- Map.fetch(params, "session_uri"),
          {:ok, token} <- Map.fetch(params, "token"),
          {:ok, session_uri} <- parse_session(session_str),
-         {:ok, _snapshot} <- CustomerFeed.snapshot(session_uri, token) do
+         {:ok, _snapshot} <- ExternalFeed.snapshot(session_uri, token) do
       {:ok,
        socket
        |> assign(:session_uri, session_uri)
@@ -46,7 +46,7 @@ defmodule EzagentWeb.Socialware.CustomerSocket do
   end
 
   @impl true
-  def id(socket), do: "socialware_customer:" <> URI.to_string(socket.assigns.session_uri)
+  def id(socket), do: "socialware_external:" <> URI.to_string(socket.assigns.session_uri)
 
   defp parse_session(value) when is_binary(value) do
     case Ezagent.URI.new!(value) do

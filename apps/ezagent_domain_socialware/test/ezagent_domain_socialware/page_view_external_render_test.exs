@@ -1,7 +1,7 @@
 defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   @moduledoc """
   P2 — PageView declares an external render target and produces it via the
-  SAME projection the customer feed already uses (Surface.customer_tree/1).
+  SAME projection the customer feed already uses (Surface.external_tree/1).
   Internal render (operator_tree) is unaffected.
   """
   # Spawns a real socialware-subset Entity.Session (touches KindSnapshot/Repo),
@@ -55,7 +55,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
 
   # Spawn a fresh socialware session. `Surface.create/1` seeds
   # %{versions: %{}, approved: nil, version_seq: 0}, so there is NO approved
-  # version yet — `customer_tree` returns nil.
+  # version yet — `external_tree` returns nil.
   defp spawn_session do
     uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(uri))
@@ -115,13 +115,13 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       assert PageView.external_render(uri) == nil
     end
 
-    test "returns the APPROVED version tree (== Surface.customer_tree/1)" do
+    test "returns the APPROVED version tree (== Surface.external_tree/1)" do
       page_tree = %{type: "text", props: %{text: "live page"}}
       uri = spawn_session()
       _version = approve_page(uri, page_tree)
 
       {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
-      assert PageView.external_render(uri) == Surface.customer_tree(surface)
+      assert PageView.external_render(uri) == Surface.external_tree(surface)
       assert PageView.external_render(uri) == page_tree
     end
 

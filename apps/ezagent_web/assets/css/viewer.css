@@ -1,14 +1,14 @@
-/* Socialware customer SPA stylesheet.
+/* Socialware external viewer SPA stylesheet.
 
-   The customer page (apps/ezagent_web/lib/ezagent_web/controllers/socialware/
-   customer_controller.ex) is a standalone, public, controller-rendered HTML
+   The external viewer page (apps/ezagent_web/lib/ezagent_web/controllers/socialware/
+   external_feed_controller.ex) is a standalone, public, controller-rendered HTML
    shell that boots the React app in apps/ezagent_domain_socialware/assets/js/.
    It does NOT load app.css (that's the operator LiveView surface), so this is
    its own small Tailwind v4 + daisyUI build.
 
    The `@source` directives below point Tailwind at the React SPA's JS so the
    utility classes it emits at runtime are scanned and NOT purged. The paths
-   are relative to THIS file (apps/ezagent_web/assets/css/customer.css). */
+   are relative to THIS file (apps/ezagent_web/assets/css/viewer.css). */
 
 @import "tailwindcss" source(none);
 
@@ -19,12 +19,12 @@
 @source "../../../ezagent_domain_socialware/assets/js/catalog_jsonrender.mjs";
 @source "../../../ezagent_domain_socialware/assets/js/theme_shell.mjs";
 /* @json-render/shadcn components carry Tailwind classes in their compiled dist —
-   scan it so those utilities are generated for the customer build. */
+   scan it so those utilities are generated for the viewer build. */
 @source "../node_modules/@json-render/shadcn/dist/chunk-*.mjs";
 @source "../node_modules/@json-render/shadcn/dist/index.mjs";
 @source "../../../ezagent_domain_socialware/assets/js/catalog.mjs";
-@source "../../../ezagent_domain_socialware/assets/js/customer_app.js";
-/* The customer page's root shell (<body>/<main>) Tailwind utilities live in the
+@source "../../../ezagent_domain_socialware/assets/js/viewer_app.js";
+/* The external viewer page's root shell (<body>/<main>) Tailwind utilities live in the
    controller-rendered HTML — scan the socialware controllers too, else those
    utilities (min-h-screen / px-4 / py-8 / antialiased / …) are purged from this
    bundle (codex #709 review). */
@@ -37,9 +37,9 @@
 }
 
 /* A clean light daisyUI theme inspired by the operator-side "light" theme so
-   the customer surface reads as part of the same product. */
+   the external viewer surface reads as part of the same product. */
 @plugin "../vendor/daisyui-theme" {
-  name: "customer";
+  name: "viewer";
   default: true;
   prefersdark: false;
   color-scheme: "light";
