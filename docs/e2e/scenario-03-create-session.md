@@ -62,7 +62,7 @@
 **前置(自动化)**:scenario-01 + scenario-02 已自动跑(admin 已登录;`e2e-native` 已建)。
 **入口 URL**:`http://world.localhost:10042/sessions`
 **自建实体**:session `e2e-test-1`(URI `session://system/default/e2e-test-1`)。
-> **实地核实(2026-06-26)两个坑**:① New session 模板默认 `advisor` **无效** → `error:{:invalid_template, "class"=>"session.advisor"}`,**必须显式选 `#world-session-template`=`default`**;② 邀请框填**裸名** → `error:bad_member_uri`,**必须填完整 URI** `entity://system/agent/<name>`。两者均产品缺口候选(见 UI 清单)。
+> **实地核实(2026-06-26)**:① ~~New session 模板默认 `advisor` 无效~~ — **已解决**(`chore/retire-session-advisor` 删除 advisor plugin;下拉不再有 `advisor`,默认 `default` 直接可建);② 邀请框填**裸名** → `error:bad_member_uri`,**必须填完整 URI** `entity://system/agent/<name>`(仍为产品缺口候选,见 UI 清单)。
 
 | # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
 |---|---|---|---|---|---|

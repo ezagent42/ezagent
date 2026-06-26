@@ -57,8 +57,14 @@ defmodule Ezagent.Socialware.CustomerFeedAdapter do
   (`%{messages: [], page: nil}`) rather than raising, so a stale/forged token
   yields no content rather than crashing the caller's channel process.
 
-  Declared as a BARE module in `EzagentPluginAdvisor.Application.adapters/0`
-  (the owning plugin), mirroring the P3-1 bare-module pull declaration shape.
+  NOTE (2026-06-26, `chore/retire-session-advisor`): this adapter was originally
+  declared as a BARE module in the retired `EzagentPluginAdvisor.Application.adapters/0`.
+  With the advisor vertical removed, NO plugin currently declares it, so its
+  `allow_customer_feed` cap subject is no longer published at boot. The live
+  customer feed does NOT depend on that registration — the channel calls
+  `CustomerFeed.snapshot/2` directly (proven by the socialware/web suites). The
+  module is retained as the projection chokepoint for any future plugin that
+  re-declares it via the bare-module pull declaration shape.
   """
   @behaviour Ezagent.ExternalMirror.Adapter
 

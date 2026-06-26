@@ -146,7 +146,7 @@ curl -fsS http://localhost:10042/_health     # → 200 才继续
 | **React 岛 form 提交** | `phx-update="ignore"` 岛内 form;`button.click()` 不一定触发 React onSubmit | **实地核实有效**:native-setter 填值 + 派发 `input`/`change` → `form.requestSubmit(btn)`。提交结果看 `#world-root` 的 **`data-last-dispatch`**(`ok`/`idle`=成功,`error:<reason>`=后端拒绝) |
 | **@mention 必须走 autocomplete** | **native-setter 硬塞 `@name` 文本不生成结构化 mention → 不 dispatch 到 agent(发出去成普通文本,无人回)** | **实地核实**:用 agent-browser **真实键盘** `keyboard type '@py'` → 等 `ul[role=listbox]` 过滤 → `click 'ul[role=listbox] button'` 插入 mention → `keyboard type ' payload'` → `press Enter`。**别用 native-setter 设 textarea** |
 | **邀请成员要完整 URI** | `#world-invite-input` 填裸名 `e2e-x` → `error:bad_member_uri` | 填 **完整 URI** `entity://system/agent/<name>` |
-| **session 模板默认 `advisor` 无效** | New session 不选模板 → 默认 `advisor` → `error:{:invalid_template, "class"=>"session.advisor"}` | 显式选 `#world-session-template` = **`default`**(选项:advisor/default/generic/hello) |
+| **~~session 模板默认 `advisor` 无效~~(已解决)** | ~~New session 不选模板 → 默认 `advisor` → `error:{:invalid_template, "class"=>"session.advisor"}`~~ | **已修**:`chore/retire-session-advisor` 删除 advisor plugin,下拉不再有 `advisor`,选项为 `default/generic/hello`,默认 `default` 直接可建 |
 | **py flavor 建不出(缺脚本)** | New Agent 选 `py` 提交 → `error:missing_script`(表单不提供脚本入口) | 零配置可建的 flavor:**`native`/`np`/`hello_builder`**;**但这些不回显聊天**——会回显的是 seeded `py_default`(py+echo.py)。详见各 scenario 与「产品缺口」 |
 | **session 详情入口** | 直接 `/admin/sessions/<uri>/...` → **404** | 走 Sessions 列表行 "Open" → `/sessions?session=<encoded-uri>`(URI 需 encodeURIComponent) |
 | **LiveView 异步渲染** | 立即断言 → 元素还没 mount,误判 FAIL | 每个 assert 前 **wait-for** 目标元素出现 + 适当 settle(React hydrate 比 SSR `data-*` 晚) |

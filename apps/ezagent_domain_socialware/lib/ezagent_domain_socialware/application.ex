@@ -19,11 +19,13 @@ defmodule EzagentDomainSocialware.Application do
     # Session+Turn+Surface (and `SocialwarePublisherRead`) action sets are
     # registered on the UNIFIED `Entity.Session` in
     # `EzagentDomainInstanceMessage.Application.register_session_behaviors/0`,
-    # and socialware/advisor sessions spawn that unified Kind with the
-    # socialware `:kind_base` subset (`Session.socialware_behaviors/0`; see
-    # `AdvisorSession.ensure_session/1`). They run under instance_message's
-    # `SessionSupervisor`, so this domain no longer boots a session supervisor
-    # of its own.
+    # and socialware sessions spawn that unified Kind with the socialware
+    # `:kind_base` subset (`Session.socialware_behaviors/0`). They run under
+    # instance_message's `SessionSupervisor`, so this domain no longer boots a
+    # session supervisor of its own. (The advisor demo vertical that once drove
+    # this via `AdvisorSession.ensure_session/1` was retired in
+    # `chore/retire-session-advisor`; the unified `Entity.Session` substrate it
+    # exercised is unchanged.)
     #
     # #51 §3.4 — the in-app GC sweeper for abandoned anonymous external users.
     # `init` only arms a timer (no boot-time DB work), so it is safe to supervise

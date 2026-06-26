@@ -16,14 +16,12 @@
 - **证据**:`evidence/scenario-02/s02-step3-uri-preview-auto.png`(表单)+ 实测 dispatch 串。
 - **待裁决**:是 UI 漏了脚本字段 / 模板选择,还是 py agent 本就该走"建后在详情页配脚本"两步流程?
 
-## GAP-2 · New session 默认模板 `advisor` 无效
+## GAP-2 · New session 默认模板 `advisor` 无效 — ✅ 已解决(`chore/retire-session-advisor`)
 
-- **复现**:`/sessions` → New session → 填名 → **不动模板下拉**(默认 `advisor`)→ 提交。
-- **现象**:`data-last-dispatch = "error:{:invalid_template, %{\"class\" => \"session.advisor\", ...}}"`,session 未建。
-- **对策(实测可绕)**:显式把 `#world-session-template` 选成 `default`(选项:`advisor / default / generic / hello`)→ `data-last-dispatch = "ok"`,session 建成。
-- **后果**:**操作员照默认点 New session 必失败**,且报错只在 `data-last-dispatch` 属性、UI 无明显提示。
-- **严重度**:中-高(默认路径即坏 + 错误不可见)。
-- **待裁决**:`advisor` 模板类是否漏注册?还是默认不该是 advisor?是否该把默认改为 `default` 或在无有效模板时禁用提交并提示?
+- **复现(历史)**:`/sessions` → New session → 填名 → **不动模板下拉**(默认 `advisor`)→ 提交。
+- **现象(历史)**:`data-last-dispatch = "error:{:invalid_template, %{\"class\" => \"session.advisor\", ...}}"`,session 未建。
+- **根因**:`session.advisor` 是已废弃的 advisor demo vertical 模板,无任何生产创建方,只因 advisor plugin 注册而出现在通用模板下拉。
+- **裁决与修复(2026-06-26)**:删除整个 `ezagent_plugin_advisor` plugin(详见 spec)。`session.advisor` 不再注册 → 下拉不再出现 `advisor` → 默认不再落在无效项。下拉现为 `default / generic / hello`,默认 `default` 直接可建。
 
 ## GAP-3 · 邀请成员框拒绝裸名,只接受完整 URI
 
