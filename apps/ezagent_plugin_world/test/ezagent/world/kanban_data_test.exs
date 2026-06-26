@@ -147,7 +147,14 @@ defmodule Ezagent.World.KanbanDataTest do
     skip_if_no_entity_spawn(fn ->
       _uri = spawn_board(ws, admin_ctx)
 
-      state = KanbanData.state_for(%{component: "kanban", entity_uri: nil}, ctx)
+      # route 须带 title/path:FP5 起 KanbanData 复用 route.title/route.path 渲染 H1+导航高亮,
+      # 对齐 routes.ex 的 /plugins/kanban 列表页 route 形状
+      state =
+        KanbanData.state_for(
+          %{component: "kanban", title: "看板", path: "/plugins/kanban", entity_uri: nil},
+          ctx
+        )
+
       assert state["kanban_uri"] == nil
       assert "feature" in state["stages"] and "doing" in state["statuses"]
       assert is_list(state["instances"])
