@@ -143,11 +143,14 @@ and its `resource://…/socialware-config-object/<b64(id)>` URI do not depend on
 The hot read path queries **pointers** only:
 `ConfigStore.resolve/4` (`p.key == ^key`, :151), `layer_objects_for_key/2` (:198),
 `list_keys_for_subject/1` (select `p.key`, :176), `current_user_object/2` (→ `resolve`).
-`objects.key` is read only for lineage/consistency, never on the hot cascade-resolve
-path. **⇒ Pointers are the critical migration target; objects migrate too for
-consistency (a row whose pointer says `agent.soul` but object says `advisor.behavior`
-would be confusing in audits), but the correctness-critical rewrite is the pointer rows
-(column + PK).**
+`objects.key` is not on the hot cascade-resolve path (pointer→object joins on
+`config_id` UUID, `layer_objects_for_key/2` at :198, NOT on key). **BUT** `objects.key`
+**IS load-bearing for repoint validation** (codex r1): `fetch_matching_object/1`
+(`config_store.ex:340-360`) asserts `%ConfigObject{key: ^key}` against the requested key
+and returns `{:error, {:cross_tenant_target, …}}` on mismatch. So if pointers are
+renamed to `agent.soul` but objects keep `advisor.behavior`, the **next** config-delta /
+repoint for that agent would fail validation. **⇒ BOTH tables MUST be migrated together
+(not pointers-only); the hot read path needs pointers, the next write needs objects.**
 
 ### 4.3 Immutability caveat (call out for the reviewer)
 
@@ -217,14 +220,46 @@ portability. Both are ANSI; verify against the live adapter before running.)
   needed after agents have written fresh `agent.soul` config, `down/0` would over-revert
   them — so a post-window rollback must instead be a forward-fix, not `ecto.rollback`.
 - **Idempotent:** the `WHERE key = @old` guard makes a re-run a no-op.
-- **No PK collision:** the pointer unique index `(layer, workspace_uri, subject_uri,
-  key)` already enforces one row per tuple, so rewriting the embedded-key portion of the
-  id yields a still-unique id.
+- **⚠️ COLLISION PREFLIGHT IS MANDATORY (codex r1 FIX — the index does NOT protect
+  the rename).** The earlier draft claimed the unique index `(layer, workspace_uri,
+  subject_uri, key)` prevents collisions. **That is false for this migration.** The index
+  only forbids *two rows with the same tuple*; it does NOT guarantee that, for some
+  tuple, there is no **pre-existing `agent.soul` row** alongside the `advisor.behavior`
+  row we are about to rewrite into `agent.soul`. If both exist, the `UPDATE` hits a
+  PK/unique-constraint violation and aborts. Two facts make this low-probability but the
+  migration must still defend it:
+  - §2 verified **zero** existing `agent.soul` keys in code; the only way a row pre-exists
+    is if an operator manually created one — unlikely but not impossible.
+  - The **Postgres baseline** (`apps/ezagent_core/priv/repo_pg/migrations/20260622000000_pg_baseline.exs:323-336`)
+    creates `socialware_config_pointers` with **only** a `workspace_uri` index — **no**
+    tuple unique index at all. So on PG there is not even post-migration duplicate
+    protection. (SQLite baseline DOES have the tuple unique index at
+    `20260618000500_add_socialware_config_store.exs:35-36`.)
+  - **Required preflight (add to `up/0` before the UPDATEs):** abort loudly if any tuple
+    would collide —
+    ```elixir
+    # FAIL the migration if renaming would collide a pre-existing agent.soul row.
+    %{rows: [[n]]} = repo().query!(\"\"\"
+      SELECT count(*) FROM socialware_config_pointers a
+      JOIN socialware_config_pointers b
+        ON a.layer=b.layer AND a.workspace_uri=b.workspace_uri
+       AND a.subject_uri=b.subject_uri
+       AND a.key='advisor.behavior' AND b.key='agent.soul'
+    \"\"\")
+    if n > 0, do: raise \"agent.soul rename collision: #{n} tuple(s) already hold agent.soul\"
+    ```
+    Same preflight for `socialware_config_objects` is unnecessary (its key is not part of
+    any unique key — objects are keyed by `id` UUID), but a `count` of pre-existing
+    `agent.soul` objects is a useful sanity log.
+- **No PK *format* collision:** given the preflight passes, rewriting the embedded-key
+  portion of each pointer `id` yields a still-unique id (each source tuple is unique and
+  maps to one target id).
 - **Anti-pattern guard (per the destructive-migration rule):** do **not**
   `mix ecto.migrate` this against live dev/prod data without a sandbox dry-run +
   coordination. Run first on the disposable E2E stack with a snapshot/seed, diff row
   counts before/after (`SELECT count(*) … WHERE key = …`), confirm `up` then `down`
-  round-trips to byte-identical ids.
+  round-trips to byte-identical ids, and run the collision preflight against a copy of
+  any durable data BEFORE the real run.
 
 ### 4.5 Deploy ordering (the coordination the codex review will probe)
 
