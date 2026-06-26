@@ -30,6 +30,34 @@ defmodule Ezagent.Invocation do
 
   require Logger
 
+  # Cold-activation budget for a synchronous (`:call`/`:call_stream`) dispatch
+  # landing on a target whose Kind is still running `activate/2` (post_init).
+  # Bumped from 5s because COLD HEAVY FLAVORS routinely need >5s to become
+  # ready: a cc agent launches the `claude` CLI AND its PtyServer auto-prompts
+  # scanner clicks through claude's startup dialogs before the Kind announces
+  # `:ready` — observed at ~5-20s. The old 5s budget turned a legitimate cold
+  # activation into a spurious `:error, :activate_timeout` (FP5 S5 #115). This
+  # is the RESIDUAL budget for dispatches that legitimately must reach a cold
+  # agent (chat sends, etc.) — config/caps READ surfaces no longer activate at
+  # all (`Ezagent.Agent.Config.read_cascade/4` + `Ezagent.World.IdentityData`
+  # now snapshot-read), so this budget only covers genuine cold work. The
+  # `{:error, :timeout} -> {:error, :activate_timeout}` distinct signal is
+  # preserved so a GENUINELY stuck `activate` still surfaces (let-it-crash).
+  # Overridable via `config :ezagent_core, :activate_budget_ms` (tests set it low
+  # to exercise the timeout path without blocking 20s) — see `activate_budget_ms/0`.
+  @default_activate_budget_ms 20_000
+
+  @doc """
+  Cold-activation budget (ms) for a synchronous dispatch awaiting a target's
+  `activate/2`. Defaults to #{@default_activate_budget_ms}ms; override with
+  `config :ezagent_core, :activate_budget_ms`. See the `@default_activate_budget_ms`
+  comment for WHY heavy flavors (cc) legitimately need >5s.
+  """
+  @spec activate_budget_ms() :: pos_integer()
+  def activate_budget_ms do
+    Application.get_env(:ezagent_core, :activate_budget_ms, @default_activate_budget_ms)
+  end
+
   @type mode :: :call | :cast | :call_stream | :subscribe | :introspect
 
   @type reply_target ::
@@ -178,7 +206,7 @@ defmodule Ezagent.Invocation do
         # `:not_ready`. We bound the wait so a genuinely stuck `activate`
         # surfaces a DISTINCT `:activate_timeout` signal (never the
         # silent `:not_ready`), preserving let-it-crash visibility.
-        case Ezagent.ReadyGate.await(instance_uri, 5_000) do
+        case Ezagent.ReadyGate.await(instance_uri, activate_budget_ms()) do
           :ok ->
             dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
@@ -221,7 +249,7 @@ defmodule Ezagent.Invocation do
                 dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
               m when m in [:call, :call_stream] ->
-                _ = Ezagent.ReadyGate.await(instance_uri, 5_000)
+                _ = Ezagent.ReadyGate.await(instance_uri, activate_budget_ms())
                 dispatch_with_lazy_spawn(instance_uri, mode, inv)
             end
 
