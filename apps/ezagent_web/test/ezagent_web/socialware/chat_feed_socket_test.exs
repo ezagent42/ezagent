@@ -94,7 +94,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   defp chat_leave(session, member), do: chat_dispatch(session, :leave, member)
 
   defp post_msg(session, text) do
-    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :customer_visible)
+    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
     {:ok, written} = MessageStore.write(msg, session)
     written
   end
@@ -105,7 +105,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   # exactly the event the chat_feed channel subscribes to in production. The
   # returned `msg.id` lets the assertion bind the live push to this send.
   defp chat_send(session, text) do
-    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :customer_visible)
+    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
     target = URI.new!("#{URI.to_string(session)}?action=session.send")
 
     {:ok, %{stored: true}} =

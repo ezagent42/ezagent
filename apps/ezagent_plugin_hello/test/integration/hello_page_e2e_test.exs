@@ -57,7 +57,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
     snapshot = wait_for_page(ctx.session, ctx.token)
 
-    # The anon visitor sees exactly the approved spec + the customer-visible summary.
+    # The anon visitor sees exactly the approved spec + the external-visible summary.
     assert snapshot.page == spec
     assert Enum.any?(snapshot.messages, &(text_of(&1) == "Generated your page."))
   end

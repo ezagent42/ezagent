@@ -34,7 +34,9 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, Settlement}
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "settle-recovery-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -80,12 +82,12 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     {:ok, pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
-    %{session: session, token: token, pid: pid, workspace: workspace}
+    %{session: session, caller: @owner, pid: pid, workspace: workspace}
   end
 
   test "activated/2 recovers a settled-but-pending settlement on respawn", ctx do
@@ -125,7 +127,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     assert {:ok, %{status: :pending}} = Settlement.get(turn_id)
 
     # No committed delivery yet (the deferred commit was "lost in the crash").
-    assert {:ok, snap0} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snap0} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snap0.messages == []
     assert snap0.page == nil
 
@@ -168,7 +170,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
     # The committed customer delivery now appears.
     wait_until(fn ->
-      case CustomerFeed.snapshot(ctx.session, ctx.token) do
+      case ExternalFeed.snapshot(ctx.session, ctx.caller) do
         {:ok, snap} ->
           snap.page == page_tree and
             Enum.any?(snap.messages, &message_text?(&1, "recovered answer"))

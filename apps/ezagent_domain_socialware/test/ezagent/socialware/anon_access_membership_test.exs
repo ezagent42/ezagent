@@ -107,7 +107,7 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
       Message.new(
         Ezagent.URI.entity(:team_alpha, :agent, "anon-access-bot"),
         %{text: text, attachments: []},
-        visibility: :customer_visible
+        visibility: :external_visible
       )
 
     {:ok, _} = MessageStore.write(msg, session_uri)

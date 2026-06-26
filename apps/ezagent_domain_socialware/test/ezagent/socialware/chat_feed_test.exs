@@ -6,7 +6,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
   chat message list into the SAME json-render shape the customer SPA renders
   (`%{type: "container", props: %{layout: "stack"}, children: [text nodes]}`),
   served over the SAME P3-2 Channel + SPA. Per-message visibility is applied:
-  only `:customer_visible` messages are projected (an `:operator_only` chat
+  only `:external_visible` messages are projected (an `:operator_only` chat
   message — if one ever exists — is dropped, so it never leaks to the external
   read). The membership gate (who may call at all) is enforced separately by the
   ChatMembership predicate (P4-3); this module is the pure render only.
@@ -19,7 +19,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
   @other Ezagent.URI.entity(:team_alpha, :agent, "bot")
 
   defp msg(text, opts) do
-    visibility = Keyword.get(opts, :visibility, :customer_visible)
+    visibility = Keyword.get(opts, :visibility, :external_visible)
     id = Keyword.get(opts, :id, "m-#{System.unique_integer([:positive])}")
     sender = Keyword.get(opts, :sender, @sender)
 
@@ -45,7 +45,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
              }
     end
 
-    test "each customer-visible message becomes a text node in order" do
+    test "each external-visible message becomes a text node in order" do
       messages = [msg("hello", id: "a"), msg("world", id: "b")]
 
       assert ChatFeed.chat_tree(messages) == %{
@@ -65,9 +65,9 @@ defmodule Ezagent.Socialware.ChatFeedTest do
 
     test "VISIBILITY: operator_only messages are filtered out of the projection" do
       messages = [
-        msg("public", id: "p", visibility: :customer_visible),
+        msg("public", id: "p", visibility: :external_visible),
         msg("secret", id: "s", visibility: :operator_only),
-        msg("also public", id: "q", visibility: :customer_visible)
+        msg("also public", id: "q", visibility: :external_visible)
       ]
 
       tree = ChatFeed.chat_tree(messages)
@@ -81,7 +81,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
         id: "atom",
         sender: @other,
         body: %{text: "atom-text"},
-        visibility: :customer_visible,
+        visibility: :external_visible,
         inserted_at: DateTime.utc_now()
       }
 
@@ -94,7 +94,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
         id: "nt",
         sender: @sender,
         body: %{"attachments" => []},
-        visibility: :customer_visible,
+        visibility: :external_visible,
         inserted_at: DateTime.utc_now()
       }
 

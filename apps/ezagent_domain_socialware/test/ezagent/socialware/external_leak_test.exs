@@ -1,19 +1,25 @@
-defmodule Ezagent.Socialware.CustomerLeakTest do
+defmodule Ezagent.Socialware.ExternalLeakTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Entity.Session
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, Settlement}
 
   defp session_uri do
     Ezagent.URI.session(
       :team_alpha,
       :socialware,
-      "customer-leak-#{System.unique_integer([:positive])}"
+      "external-leak-#{System.unique_integer([:positive])}"
     )
   end
 
   defp sender_uri, do: Ezagent.URI.entity(:team_alpha, :agent, "orchestrator")
+
+  # The external read is now authorized by LIVE membership (anon-user/member),
+  # not an identity-less token. A viewer reads as the session owner/member; the
+  # boundary assertions (operator_only never leaks; only committed external) are
+  # byte-equivalent — only the AUTH carrier changed from a token to a principal.
+  @owner Ezagent.URI.entity(:team_alpha, :user, "external-leak-owner")
 
   setup do
     session = session_uri()
@@ -22,16 +28,16 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
-    token = CustomerAuth.issue_token(session, workspace)
-    %{session: session, workspace: workspace, token: token}
+    %{session: session, workspace: workspace, caller: @owner}
   end
 
-  test "operator-only never reaches a CUSTOMER route; operator route still sees it", ctx do
+  test "operator-only never reaches an EXTERNAL route; operator route still sees it", ctx do
     msg =
       Message.new(sender_uri(), %{text: "draft suggestion", attachments: []},
         visibility: :operator_only
@@ -39,8 +45,8 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
 
     assert {:ok, _written} = MessageStore.write(msg, ctx.session)
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
-    assert {:ok, history} = CustomerFeed.history(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
+    assert {:ok, history} = ExternalFeed.history(ctx.session, ctx.caller)
 
     refute Enum.any?(snapshot.messages, &message_text?(&1, "draft suggestion"))
     refute Enum.any?(history.messages, &message_text?(&1, "draft suggestion"))
@@ -51,15 +57,15 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
            )
   end
 
-  test "customer route returns only committed customer-visible messages", ctx do
+  test "external route returns only committed external-visible messages", ctx do
     committed =
       Message.new(sender_uri(), %{text: "committed answer", attachments: []},
-        visibility: :customer_visible
+        visibility: :external_visible
       )
 
     uncommitted =
       Message.new(sender_uri(), %{text: "uncommitted answer", attachments: []},
-        visibility: :customer_visible
+        visibility: :external_visible
       )
 
     assert {:ok, committed} = MessageStore.write(committed, ctx.session)
@@ -77,7 +83,7 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
 
     assert {:ok, _} = Settlement.mark_committed_for_test("turn-committed")
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert Enum.any?(snapshot.messages, &message_text?(&1, "committed answer"))
     refute Enum.any?(snapshot.messages, &message_text?(&1, "uncommitted answer"))
   end

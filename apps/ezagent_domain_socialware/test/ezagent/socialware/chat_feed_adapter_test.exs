@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
       :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
       msg =
-        Message.new(@sender, %{text: "hi there", attachments: []}, visibility: :customer_visible)
+        Message.new(@sender, %{text: "hi there", attachments: []}, visibility: :external_visible)
 
       {:ok, _} = MessageStore.write(msg, session)
       %{session: session}

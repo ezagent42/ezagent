@@ -49,9 +49,9 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
     %{session: session, workspace: workspace}
   end
 
-  # Write a customer-visible chat message via the production store path.
+  # Write a external-visible chat message via the production store path.
   defp post(session, text) do
-    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :customer_visible)
+    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
     {:ok, written} = MessageStore.write(msg, session)
     written
   end
@@ -69,7 +69,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
   defp rendered_keys({:ok, %{page: page}}), do: Enum.map(page.children, & &1.key)
 
   describe "snapshot/2 — windowed snapshot-refresh read" do
-    test "renders the latest-N customer-visible messages (oldest→newest)", ctx do
+    test "renders the latest-N external-visible messages (oldest→newest)", ctx do
       post(ctx.session, "first")
       post(ctx.session, "second")
       post(ctx.session, "third")
@@ -129,7 +129,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
       relayed =
         Message.new(@sender, %{text: "relayed-from-elsewhere", attachments: []},
-          visibility: :customer_visible,
+          visibility: :external_visible,
           inserted_at: old_inserted_at
         )
 

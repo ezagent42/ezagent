@@ -1,14 +1,25 @@
-defmodule EzagentWeb.Socialware.CustomerSocketTest do
+defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
+  @moduledoc """
+  Transport + authz-boundary gate for the external surface SPA.
+
+  The external feed now authorizes reads via the LIVE `Membership` predicate (a
+  ChatFeedAuth caller-identity token → principal → owner/member check), exactly
+  as the chat feed does — there is NO identity-less session token. These tests
+  drive the REAL socket connect + channel join/advisory path with the session
+  OWNER as the viewer principal.
+  """
   use EzagentWeb.ConnCase, async: false
 
   import Phoenix.ChannelTest
 
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Entity.Session
-  alias Ezagent.Socialware.{CustomerAuth, Settlement}
-  alias EzagentWeb.Socialware.{CustomerChannel, CustomerSocket}
+  alias Ezagent.Socialware.{ChatFeedAuth, Settlement}
+  alias EzagentWeb.Socialware.{ExternalFeedChannel, ExternalFeedSocket}
 
   @endpoint EzagentWeb.Endpoint
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "external-socket-owner")
 
   setup do
     session = session_uri()
@@ -17,12 +28,15 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
-    token = CustomerAuth.issue_token(session, workspace)
+    # The viewer's caller-identity token (the auth carrier the SPA sends). The
+    # live membership re-check at the channel is the real authorization.
+    token = ChatFeedAuth.issue_token(@owner, session)
 
     %{session: session, workspace: workspace, token: token}
   end
@@ -31,27 +45,28 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     other = session_uri()
     :ok = Ezagent.WorkspaceRegistry.bind(other, Ezagent.Capability.workspace_of(other))
 
+    # A token minted for ctx.session is bound to it — it does not verify for `other`.
     assert :error =
-             CustomerSocket.connect(
+             ExternalFeedSocket.connect(
                %{"session_uri" => URI.to_string(other), "token" => ctx.token},
                %Phoenix.Socket{},
                %{}
              )
 
     assert :error =
-             CustomerSocket.connect(
+             ExternalFeedSocket.connect(
                %{"session_uri" => URI.to_string(ctx.session), "token" => "bad"},
                %Phoenix.Socket{},
                %{}
              )
   end
 
-  test "join returns only committed customer-visible snapshot", ctx do
-    {:ok, committed} = write_message(ctx.session, "committed", :customer_visible)
+  test "join returns only committed external-visible snapshot", ctx do
+    {:ok, committed} = write_message(ctx.session, "committed", :external_visible)
     {:ok, _draft} = write_message(ctx.session, "draft", :operator_only)
     commit_message(ctx, "turn-socket-snapshot", committed.id)
 
-    {:ok, reply, _socket} = join_customer(ctx)
+    {:ok, reply, _socket} = join_external(ctx)
 
     assert get_in(reply, [:snapshot, :messages]) == [
              %{
@@ -65,71 +80,54 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
   end
 
   test "history request uses the same gated query", ctx do
-    {:ok, committed} = write_message(ctx.session, "history", :customer_visible)
-    {:ok, _uncommitted} = write_message(ctx.session, "not yet", :customer_visible)
+    {:ok, committed} = write_message(ctx.session, "history", :external_visible)
+    {:ok, _uncommitted} = write_message(ctx.session, "not yet", :external_visible)
     commit_message(ctx, "turn-socket-history", committed.id)
 
-    {:ok, _reply, socket} = join_customer(ctx)
+    {:ok, _reply, socket} = join_external(ctx)
     ref = Phoenix.ChannelTest.push(socket, "history", %{})
 
     assert_reply(ref, :ok, %{messages: [%{id: id, text: "history"}]})
     assert id == committed.id
   end
 
-  test "delivery signal refetches through CustomerFeed before pushing", ctx do
-    {:ok, _reply, socket} = join_customer(ctx)
-    {:ok, committed} = write_message(ctx.session, "live", :customer_visible)
+  test "delivery signal refetches through ExternalFeed before pushing", ctx do
+    {:ok, _reply, socket} = join_external(ctx)
+    {:ok, committed} = write_message(ctx.session, "live", :external_visible)
     commit_message(ctx, "turn-socket-live", committed.id)
 
-    send(socket.channel_pid, {:customer_delivery, %{message_ids: [committed.id]}})
+    send(socket.channel_pid, {:external_delivery, %{message_ids: [committed.id]}})
 
     assert_push("snapshot", %{messages: [%{id: id, text: "live"}]})
     assert id == committed.id
   end
 
-  test "public customer page authenticates before bootstrapping SPA", %{conn: conn} = ctx do
-    path =
-      "/socialware/customer?session_uri=#{URI.encode_www_form(URI.to_string(ctx.session))}&token=#{URI.encode_www_form(ctx.token)}"
-
-    conn = get(conn, path)
-    assert html_response(conn, 200) =~ ~s(id="socialware-customer-root")
-    assert html_response(conn, 200) =~ ~s(src="/assets/js/customer_app.js")
-
-    denied =
-      get(
-        build_conn(),
-        "/socialware/customer?session_uri=#{URI.encode_www_form(URI.to_string(ctx.session))}&token=bad"
-      )
-
-    assert text_response(denied, 403) == "unauthorized"
-  end
-
-  test "customer web route modules do not use raw feed sources" do
+  test "external web route modules do not use raw feed sources" do
     web_root = Path.expand("../../../lib/ezagent_web", __DIR__)
 
     for relative <- [
-          "socialware/customer_channel.ex",
-          "socialware/customer_socket.ex",
-          "controllers/socialware/customer_controller.ex"
+          "socialware/external_feed_channel.ex",
+          "socialware/external_feed_socket.ex",
+          "controllers/socialware/external_feed_controller.ex"
         ] do
       source = File.read!(Path.join(web_root, relative))
 
       refute source =~ "MessageStore"
       refute source =~ "Publisher"
       refute source =~ "ExternalMirror"
-      assert source =~ "CustomerFeed"
+      assert source =~ "ExternalFeed"
     end
   end
 
-  defp join_customer(ctx) do
+  defp join_external(ctx) do
     @endpoint
-    |> socket("socialware_customer:#{URI.to_string(ctx.session)}", %{
+    |> socket("socialware_external:#{URI.to_string(ctx.session)}", %{
       session_uri: ctx.session,
-      token: ctx.token
+      caller: @owner
     })
     |> subscribe_and_join(
-      CustomerChannel,
-      "socialware:customer:#{URI.to_string(ctx.session)}",
+      ExternalFeedChannel,
+      "socialware:external:#{URI.to_string(ctx.session)}",
       %{}
     )
   end
@@ -158,14 +156,14 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     Ezagent.URI.session(
       :team_alpha,
       :socialware,
-      "customer-socket-#{System.unique_integer([:positive])}"
+      "external-socket-#{System.unique_integer([:positive])}"
     )
   end
 
-  describe "GET /socialware/customer/download — external bearer attachment (P2a, codex HIGH)" do
+  describe "GET /socialware/external/download — external bearer attachment (P2a, codex HIGH)" do
     setup ctx do
       home =
-        Path.join(System.tmp_dir!(), "ezagent_cust_dl_#{System.unique_integer([:positive])}")
+        Path.join(System.tmp_dir!(), "ezagent_ext_dl_#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(home)
       prior = System.get_env("EZAGENT_HOME")
@@ -184,7 +182,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     end
 
     # Store bytes via the production uploads path + attach the upload in a
-    # committed customer-visible message so it is "approved".
+    # committed external-visible message so it is "approved".
     defp store_approved_attachment(ctx, content) do
       filename = "#{Ecto.UUID.generate()}-feed.pdf"
       tmp = Path.join(System.tmp_dir!(), "tmp-#{System.unique_integer([:positive])}")
@@ -196,7 +194,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
         Message.new(
           Ezagent.URI.entity(:team_alpha, :agent, "orchestrator"),
           %{text: "see attached", attachments: [upload_uri]},
-          visibility: :customer_visible
+          visibility: :external_visible
         )
 
       {:ok, written} = MessageStore.write(msg, ctx.session)
@@ -205,22 +203,21 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     end
 
     defp dl_path(session, token, file_token) do
-      "/socialware/customer/download?session_uri=#{URI.encode_www_form(URI.to_string(session))}" <>
+      "/socialware/external/download?session_uri=#{URI.encode_www_form(URI.to_string(session))}" <>
         "&token=#{URI.encode_www_form(token)}&file_token=#{URI.encode_www_form(file_token)}"
     end
 
-    test "anonymous viewer with valid customer + file tokens downloads an approved file", ctx do
+    test "a member with valid identity + file tokens downloads an approved file", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
       file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
 
-      # No sign_in — the route is PUBLIC; authorization is purely token-based.
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
 
       assert conn.status == 200
       assert conn.resp_body == "feed-bytes"
     end
 
-    test "403 when the customer session token is forged", ctx do
+    test "403 when the caller identity token is forged", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
       file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
 
@@ -241,14 +238,47 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     end
 
     test "403 when the file token names a non-approved attachment", ctx do
-      # A token bound to an upload URI that is NOT an approved attachment in the
-      # session — minting succeeds (it's a valid uploads URI) but serve-time
-      # approval recheck denies it.
       bogus = Ezagent.URI.resource(ctx.ws_name, "uploads", "#{Ecto.UUID.generate()}-x.pdf")
       file_token = Ezagent.Uploads.DownloadToken.mint!(bogus, ttl_seconds: 60)
 
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
       assert conn.status == 403
+    end
+  end
+
+  describe "GET /socialware/external — the SPA shell" do
+    test "renders the viewer SPA shell for the session owner", %{conn: conn} = ctx do
+      # Sign in as the owner so the controller resolves a real principal (no anon
+      # mint needed) and the live membership read passes.
+      conn = Plug.Test.init_test_session(conn, %{current_entity_uri: URI.to_string(@owner)})
+
+      path = "/socialware/external?session_uri=#{URI.encode_www_form(URI.to_string(ctx.session))}"
+
+      conn = get(conn, path)
+      body = html_response(conn, 200)
+      assert body =~ ~s(id="socialware-viewer-root")
+      assert body =~ ~s(src="/assets/js/viewer_app.js")
+      assert body =~ ~s(data-topic-prefix="socialware:external")
+    end
+
+    test "missing session_uri is a 400", %{conn: conn} do
+      conn = get(conn, "/socialware/external")
+      assert text_response(conn, 400) =~ "session_uri"
+    end
+  end
+
+  describe "legacy 301 redirect" do
+    test "/socialware/customer 301-redirects to /socialware/external", %{conn: conn} = ctx do
+      qs = "session_uri=#{URI.encode_www_form(URI.to_string(ctx.session))}"
+      conn = get(conn, "/socialware/customer?" <> qs)
+      assert redirected_to(conn, 301) == "/socialware/external?" <> qs
+    end
+
+    test "/socialware/customer/download 301-redirects to /socialware/external/download", %{
+      conn: conn
+    } do
+      conn = get(conn, "/socialware/customer/download?token=x")
+      assert redirected_to(conn, 301) == "/socialware/external/download?token=x"
     end
   end
 end

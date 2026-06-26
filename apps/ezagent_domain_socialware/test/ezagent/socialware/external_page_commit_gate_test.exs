@@ -1,8 +1,8 @@
-defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
+defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
   @moduledoc """
-  P2.5a — the customer PAGE is commit-gated: it renders from the latest COMMITTED
+  P2.5a — the external PAGE is commit-gated: it renders from the latest COMMITTED
   settlement's surface version (never the live approved-but-uncommitted slice). A
-  pending settlement does not expose a page; dropping the {:customer_delivery}
+  pending settlement does not expose a page; dropping the {:external_delivery}
   wake-up still delivers via the durable snapshot; a committed page survives a
   stopped session (cold read) and a missing WorkspaceRegistry binding (cold auth).
   """
@@ -11,7 +11,9 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.CustomerFeed
+  alias Ezagent.Socialware.ExternalFeed
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "p2-5a-owner")
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "p2-5a-#{System.unique_integer([:positive])}")
@@ -56,6 +58,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: uri,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -63,13 +66,10 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     uri
   end
 
-  # Derive the workspace STRUCTURALLY (same as the production snapshot/auth path),
-  # so the token's workspace matches what CustomerFeed.workspace/1 derives — even
-  # after the volatile WorkspaceRegistry binding is dropped.
-  defp test_token(session_uri) do
-    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
-    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
-  end
+  # The external read is authorized by LIVE membership (the session owner/member),
+  # not an identity-less token. The page projection itself is auth-agnostic; only
+  # the AUTH carrier changed from a token to a principal.
+  defp test_caller(_session_uri), do: @owner
 
   # open -> dispatch -> deliver(page) -> compose; returns {turn_id, version}.
   # Does NOT settle (caller chooses approve-only vs full settle).
@@ -111,11 +111,11 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     test "after a full settle+commit, snapshot.page is the committed surface tree" do
       page_tree = %{type: "text", props: %{text: "committed page"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {turn_id, _version} = compose_page(uri, page_tree)
       settle(uri, turn_id)
 
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == page_tree
     end
   end
@@ -124,7 +124,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     test "approved-but-uncommitted page does NOT leak (no settlement at all)" do
       page_tree = %{type: "text", props: %{text: "draft page"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {_turn_id, version} = compose_page(uri, page_tree)
 
       # Approve the surface (advances the LIVE pointer) but never settle/commit.
@@ -135,7 +135,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
         surface.approved == version
       end)
 
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == nil, "approved-but-uncommitted page must NOT leak"
       assert snapshot.messages == []
     end
@@ -145,7 +145,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     test "a PENDING settlement (target version set, surface approved) does NOT expose a page" do
       page_tree = %{type: "text", props: %{text: "pending page"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(uri)
       {turn_id, version} = compose_page(uri, page_tree)
 
@@ -163,7 +163,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
 
       assert settlement.status == :pending
 
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == nil
     end
   end
@@ -172,13 +172,13 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     test "a committed page is visible via the durable snapshot even with no PubSub event" do
       page_tree = %{type: "text", props: %{text: "delivered despite lost wake-up"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {turn_id, _version} = compose_page(uri, page_tree)
       settle(uri, turn_id)
 
-      # We never subscribed to / received {:customer_delivery}; a fresh snapshot
+      # We never subscribed to / received {:external_delivery}; a fresh snapshot
       # (== reconnect) still returns the committed page from the durable record.
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == page_tree
     end
   end
@@ -187,7 +187,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     test "after the live session process is terminated, snapshot still returns the committed page" do
       page_tree = %{type: "text", props: %{text: "cold page"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {turn_id, _version} = compose_page(uri, page_tree)
       settle(uri, turn_id)
 
@@ -205,17 +205,25 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
 
       wait_until(fn -> Ezagent.KindRegistry.lookup(uri) == :error end)
 
-      # COLD path: no live process; the page is served from the durable snapshot.
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      # COLD path: the live membership auth needs a live `:session` slice, so the
+      # production ingress (ExternalFeedController) revives a cold public session
+      # from its durable snapshot via `ensure_live/1` BEFORE the read — mirror
+      # that here. The PAGE itself is then served from the durable snapshot (the
+      # committed page survives the process death), which is what this gate
+      # asserts: the page is durable across a session restart.
+      _ = Ezagent.SpawnRegistry.ensure_live(uri)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(uri) != :error end)
+
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == page_tree
     end
   end
 
   describe "cold-reconnect auth (codex rev4 MEDIUM): structural workspace, no registry binding" do
-    test "snapshot authorizes a valid token even when the WorkspaceRegistry binding is gone" do
+    test "snapshot authorizes a member even when the WorkspaceRegistry binding is gone" do
       page_tree = %{type: "text", props: %{text: "structural page"}}
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {turn_id, _version} = compose_page(uri, page_tree)
       settle(uri, turn_id)
 
@@ -224,7 +232,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
       assert Ezagent.WorkspaceRegistry.lookup(uri) == :error
 
       # Auth derives the workspace structurally -> still authorizes + returns the page.
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == page_tree
     end
   end

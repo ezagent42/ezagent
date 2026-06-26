@@ -6,7 +6,7 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
   external SPA just re-reads the latest-N window on every advisory. The single
   primitive is:
 
-    * `chat_visible_recent/2` — the N most-recent `:customer_visible` messages,
+    * `chat_visible_recent/2` — the N most-recent `:external_visible` messages,
       ASCENDING (oldest→newest), for the snapshot window.
 
   It filters per-message visibility (`:operator_only` excluded) and scopes by
@@ -39,11 +39,11 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
     %{session: session, workspace: workspace}
   end
 
-  # WRITE a customer-visible chat message. `routed_at` is captured fresh at
+  # WRITE a external-visible chat message. `routed_at` is captured fresh at
   # write, so sequential calls produce strictly-increasing route timestamps —
   # the deterministic ordering driver for the chat snapshot (NOT msg.inserted_at).
   defp write(session, text, opts \\ []) do
-    visibility = Keyword.get(opts, :visibility, :customer_visible)
+    visibility = Keyword.get(opts, :visibility, :external_visible)
 
     msg = Message.new(sender(), %{text: text, attachments: []}, visibility: visibility)
 
@@ -52,7 +52,7 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
   end
 
   describe "chat_visible_recent/2" do
-    test "returns customer-visible messages ascending by write order, bounded by limit", %{
+    test "returns external-visible messages ascending by write order, bounded by limit", %{
       session: s
     } do
       _a = write(s, "a")

@@ -3,7 +3,7 @@ defmodule Ezagent.Socialware.OutboxTest do
 
   alias Ezagent.{Invocation, Message, MessageStore}
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerFeed, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, Settlement}
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "outbox-#{System.unique_integer([:positive])}")
@@ -37,12 +37,12 @@ defmodule Ezagent.Socialware.OutboxTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session))
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, ExternalFeed.topic(session))
 
     %{session: session, workspace: workspace}
   end
 
-  test "customer delivery signal is ids-only and emitted after committed", ctx do
+  test "external delivery signal is ids-only and emitted after committed", ctx do
     assert {:ok, %{version: version}} =
              dispatch(ctx.session, :surface, :put_version, %{
                turn_id: "turn-outbox",
@@ -68,7 +68,7 @@ defmodule Ezagent.Socialware.OutboxTest do
              })
 
     assert {:ok, _settlement} = Settlement.flip_visibility("turn-outbox")
-    refute_receive {:customer_delivery, _payload}, 50
+    refute_receive {:external_delivery, _payload}, 50
 
     assert {:ok, %{approved: ^version}} =
              dispatch(ctx.session, :surface, :approve, %{version: version})
@@ -76,13 +76,13 @@ defmodule Ezagent.Socialware.OutboxTest do
     assert {:ok, %{status: :committed}} =
              dispatch(ctx.session, :surface, :commit_settlement, %{turn_id: "turn-outbox"})
 
-    assert_receive {:customer_delivery, %{message_ids: [message_id]}}, 500
+    assert_receive {:external_delivery, %{message_ids: [message_id]}}, 500
     assert message_id == msg.id
-    refute_receive {:customer_delivery, _payload}, 50
+    refute_receive {:external_delivery, _payload}, 50
 
     assert {:ok, %{status: :committed}} =
              dispatch(ctx.session, :surface, :commit_settlement, %{turn_id: "turn-outbox"})
 
-    refute_receive {:customer_delivery, _payload}, 50
+    refute_receive {:external_delivery, _payload}, 50
   end
 end
