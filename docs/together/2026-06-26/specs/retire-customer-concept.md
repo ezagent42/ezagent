@@ -21,9 +21,13 @@ older customer surface (`CustomerFeed`/`CustomerController`/`CustomerAuth`) is t
 token-authorized parallel. They are not two *features*; they are **two auth models over
 the same SPA + channel + json-render machinery**.
 
-The discriminating insight (validated against `CustomerFeed.snapshot/2`): **auth and
-projection are orthogonal**. `snapshot/2` does `authorize(token)` *then*
-`project(messages/page/shell)`. The projection needs nothing from the token. Therefore:
+The discriminating insight (validated against `CustomerFeed.snapshot/2`, `:28-38`): **auth
+and projection are orthogonal**. `snapshot/2` does `authorize(token)` *then*
+`project(messages/page/shell/shell_css)` — the projection step reads nothing from the
+token. (Scope note: this orthogonality is proven at the `snapshot/2` chokepoint; the wider
+`CustomerFeed` module also token-gates `history/2`, `chat_messages/2`, replay, and
+`authorized_attachment_path/4` — those auth steps swap to membership/anon identically, but
+the clean separation is clearest in `snapshot/2`.) Therefore:
 
 - **KEEP + RENAME (generic, load-bearing):** the **2-tier visibility class**
   (`:customer_visible`/`:operator_only`), the **page/shell/surface projection** that the
@@ -139,7 +143,7 @@ thing wearing the business noun).
 |---|---|---|
 | `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` — `CustomerFeed.{snapshot,join,replay,history,chat_messages,committed_deliveries_since,authorized_attachment_path}` | **LIVE** (hello e2e, CustomerChannel, CustomerSocket, CustomerController all call it) | **KEEP the projection + delivery logic, RENAME the module, REPLACE its `CustomerAuth.authorize` step with membership/anon-user auth.** This is the load-bearing surface-page read. |
 | `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_auth.ex` — `CustomerAuth.{issue_token,authorize}` | **LIVE** but **redundant** | **RETIRE.** The identity-less token is the parallel auth model anon-user replaces. (See §6 for the one caveat.) |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed_adapter.ex` — `CustomerFeedAdapter` + `.Allow` + `:allow_customer_feed` cap | **DORMANT** | **DELETE outright.** Per its own 2026-06-26 moduledoc: "With the advisor vertical removed, NO plugin currently declares it, so its `allow_customer_feed` cap subject is no longer published at boot. The live customer feed does NOT depend on that registration — the channel calls `CustomerFeed.snapshot/2` directly." Confirmed by §3 grep: no non-test, non-self caller. (Matches the #1034 finding.) |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed_adapter.ex` — `CustomerFeedAdapter` + `.Allow` + `:allow_customer_feed` cap | **RUNTIME-DORMANT** | **DELETE — but NOT a zero-cost delete (codex MED).** Per its own 2026-06-26 moduledoc: "With the advisor vertical removed, NO plugin currently declares it … the channel calls `CustomerFeed.snapshot/2` directly" (`:60-67`). Runtime-dormant confirmed (no non-test, non-self caller; matches #1034). **But deletion also touches:** (a) the cap-chokepoint invariant allowlist (`apps/ezagent_core/test/invariants/cap_check_only_at_chokepoint_test.exs:85` lists `customer_feed_adapter.ex`) — remove the entry; (b) `customer_feed_join_protocol_test.exs:319-337` calls the adapter's `render/2` — delete those cases; (c) `apps/ezagent_domain_socialware/mix.exs:34-38` keeps the `:ezagent_domain_external_mirror` dep explicitly **for this adapter** — re-verify whether any OTHER socialware code still needs `external_mirror` before dropping the dep. So adapter deletion is sequenced WITH its test/invariant/dep cleanup, not standalone. |
 
 ### 3.3 The customer web surface — RETIRE (fold into membership-authorized surface)
 
@@ -176,7 +180,19 @@ customer_renderer) — all **LIVE tests**; they move/rename with their subjects.
 (operator-only never leaks; only committed/approved pages serve) — they must keep passing
 under the new auth, byte-equivalent on the boundary.
 
-### 3.7 Hello demo + misc docstring residue
+### 3.7 World operator console — LIVE consumer of `/socialware/customer` (codex HIGH)
+
+`apps/ezagent_plugin_world/assets/src/components/Conversation.tsx` — `HelloPagePreview`
+(`:801`) **embeds the public customer surface in an iframe**:
+`const src = "/socialware/customer?session_uri=…"` (`:802`), rendered at `:553`/`:815`.
+**LIVE** — the world operator console depends on the `/socialware/customer` route to
+preview the rendered page. **This means the route is NOT safe to hard-cut until the world
+preview is re-pointed** at the renamed/membership-authorized surface route. (Note the
+comment at `:127`: "for now it embeds the customer surface" — it is an acknowledged interim.)
+**Disposition:** the retirement PR set MUST update `HelloPagePreview`'s `src` to the new
+surface route in lockstep with the route rename/retirement (§5.3, §7.2).
+
+### 3.8 Hello demo + misc docstring residue
 
 `apps/ezagent_plugin_hello/**` references `CustomerFeed.snapshot` (e2e test + driver
 docstrings) and `/socialware/customer`. **LIVE** (the e2e is the live socialware proof).
@@ -184,7 +200,7 @@ Update call sites + docstrings to the renamed projection. Numerous moduledoc men
 "customer" (`session_view.ex`, `plugin.ex`, `download_token.ex`, `uploads_controller.ex`,
 `check_invariants.ex`) are **RESIDUE** — update prose.
 
-### 3.8 Inventory summary
+### 3.9 Inventory summary
 
 - **DORMANT (delete outright):** `CustomerFeedAdapter` + `.Allow` + `:allow_customer_feed`.
 - **RETIRE (redundant auth / business ingress):** `CustomerAuth`, `CustomerController`
@@ -313,9 +329,19 @@ fanout concern; (i)/(ii) are the fallbacks.
 
 ### 7.1 The stored visibility value (`:customer_visible` → `:external_visible`)
 
-`message.ex` stores `visibility` as a **`:string` column** (migration
-`20260618000400`, `add :visibility, :string, null: false, default: "customer_visible"`) —
-**not** a hard Postgres enum, so the rename is a value rewrite, not a type alteration.
+`message.ex` stores `visibility` as an **`Ecto.Enum` over strings** (`message.ex:118-120`),
+backed by a plain `:string` column with **no PG enum type** in EITHER backend:
+the SQLite migration `20260618000400` (`add :visibility, :string, null: false, default:
+"customer_visible"`, `:5-7`) **and** the Postgres baseline
+`apps/ezagent_core/priv/repo_pg/migrations/20260622000000_pg_baseline.exs:45-55` (string
+default, not a PG enum). So the rename is a value rewrite, not a type alteration —
+**but the execution PR must touch the PG baseline default too**, not only `20260618000400`.
+
+**Every reader/writer of the atom (rename in one mechanical pass — codex MED):**
+`message.ex:118-120` (`values:` + `default:`); `message_store.ex:199-202`, `:231-234`,
+`:274-278`, `:288-294` (the four query/update predicates); `turn.ex:615-616`
+(`initial_visibility/1`); `settlement.ex:63-68` (`flip_visibility/1` /
+`mark_visibility(ids, :customer_visible)`).
 
 Repo policy (`ezagent-developer` SKILL: "No back-compat shims … Existing DB data is
 wiped + rebuilt on URI migrations") **permits a rebuild**. Two paths — lead picks:
@@ -342,27 +368,36 @@ predicates, `turn.ex` `initial_visibility`, `settlement.ex` — **in one mechani
   as long as server + the (renamed) bundle change together. **Verify no external/3rd-party
   consumer subscribes to `socialware:customer:`** (grep shows only first-party).
 - **Route `/socialware/customer`**: the task notes "the customer SPA's endpoint" as a
-  back-compat concern. Check for **shipped/hardcoded links** to `/socialware/customer`
-  (e.g. in seed tasks, docs handed to users, the hello demo). Grep result: references are
-  first-party (hello plugin docstrings + tests + this repo's docs). **Recommendation:**
-  hard-cut the route (no 301 shim, per no-shim policy) and update the first-party callers
-  to `/socialware/chat` (or the renamed surface route) in the same PR. If any *external*
-  share-link is known to be live, the lead must approve either a one-release 301 redirect
-  or coordinated link reissue (flag — user-assist step).
+  back-compat concern. **Repo-internal consumers verified (static grep only — cannot prove
+  absence of external links):** (1) **the world operator console embeds it in an iframe** —
+  `Conversation.tsx` `HelloPagePreview` `src = "/socialware/customer?…"` (`:802`, §3.7) —
+  a CONFIRMED first-party LIVE dependency that MUST be re-pointed before the cut; (2) hello
+  plugin docstrings + tests; (3) this repo's docs. **Recommendation:** hard-cut the route
+  (no 301 shim, per no-shim policy) and update ALL first-party callers — world's
+  `HelloPagePreview` first — to the renamed surface route in the same PR. **Static analysis
+  CANNOT prove no external/3rd-party share-link is live**; the lead must confirm there is no
+  external consumer, OR approve a one-release 301 redirect / coordinated link reissue (flag
+  — user-assist + lead decision; see OQ §10.5).
 - **JS fallbacks `customer_app.js:168–169`** (`"/socialware_socket"`,
   `"socialware:customer"`): update to the renamed socket/topic; they are only used when
   `data-*` is absent (i.e. the customer page), which is being retired/renamed anyway.
 
 ### 7.3 Deletion ordering
 
-1. Delete dormant `CustomerFeedAdapter` + cap (no caller; safe first).
-2. Rename the KEEP set (`CustomerFeed`→`ExternalFeed`, outbox, delivery, topic, atom,
-   visibility value, SPA assets) — mechanical, behavior-preserving.
+1. Delete runtime-dormant `CustomerFeedAdapter` + `.Allow` + cap **together with** its
+   invariant-allowlist entry, its adapter tests, and a re-check of the `external_mirror`
+   dep (§3.2 codex MED) — not a standalone delete.
+2. Rename the KEEP set (`CustomerFeed`→`ExternalFeed`, outbox + table, delivery, topic,
+   `:customer_delivery` atom + subscribers, visibility value across all predicate sites +
+   PG baseline, SPA assets/CSS/theme/DOM-id) — mechanical, behavior-preserving.
 3. Swap `ExternalFeed` auth from `CustomerAuth` → `Membership`/anon; migrate the
    `CustomerController`/`CustomerSocket` ingress onto the anon/membership pattern
    (modeled on `ChatFeedController`/`ChatFeedSocket`).
-4. Delete `CustomerAuth`, `CustomerController`, `CustomerSocket`, the routes, the topic.
-5. Update first-party callers/docstrings (hello plugin, moduledocs).
+4. **Re-point world's `HelloPagePreview` iframe `src`** (Conversation.tsx) onto the new
+   surface route, THEN delete `CustomerAuth`, `CustomerController`, `CustomerSocket`, the
+   `/socialware/customer[/download]` routes, and the topic. (The world re-point MUST land
+   before/with the route deletion — codex HIGH.)
+5. Update remaining first-party callers/docstrings (hello plugin, moduledocs).
 6. Add the `elimination_test` gate (§8.3).
 
 Steps 1–2 and 3–4 can each be a PR; codex-review each (memory `feedback_codex_review_every_pr`).
@@ -456,6 +491,29 @@ on any reintroduction (`feedback_run_check_invariants_gate`).
    stored `customer_visible` value?
 4. **One socket or two (§5.4):** keep `ExternalFeedChannel` + `ChatFeedChannel` separate
    (recommended, lower risk) or unify into one surface channel?
-5. **Route hard-cut (§7.2):** any *external* live link to `/socialware/customer` that
-   needs a transitional 301, or is a clean cut + first-party link update acceptable?
+5. **Route hard-cut (§7.2):** the world console iframe (`HelloPagePreview`) is a confirmed
+   first-party consumer (re-pointed in-PR). Beyond that — any *external* live link to
+   `/socialware/customer` that needs a transitional 301, or is a clean cut acceptable?
+   (Static analysis cannot answer this; lead confirmation required.)
+
+---
+
+## 11. Codex adversarial-review verdict (2026-06-26)
+
+`codex exec` static-only review (no mix/compile/tests). **Verdict: APPROVE-WITH-CHANGES.**
+All findings were verified against `origin/main` and folded into this SPEC:
+
+| # | Sev | Finding | Folded into |
+|---|---|---|---|
+| 1 | **HIGH** | SPEC missed a LIVE first-party `/socialware/customer` consumer: world `Conversation.tsx` `HelloPagePreview` embeds it in an iframe (`:802`). Route not safe to cut until re-pointed. | §3.7, §5.3, §7.2, ordering step 4, OQ 5 |
+| 2 | MED | `CustomerFeedAdapter` delete is not zero-cost: touches cap-invariant allowlist (`:85`), adapter tests, and the `external_mirror` mix dep. | §3.2, ordering step 1 |
+| 3 | MED | Route/topic back-compat cannot be proven safe by static grep (no proof of absent external links). | §7.2 (reworded "repo-internal only verified") |
+| 4 | LOW | Visibility rename storage-safe, but migration inventory incomplete — also the PG baseline default + all four `message_store` predicates + `turn`/`settlement`. | §7.1 (predicate list + PG baseline) |
+| 5 | LOW | Orthogonality claim correct but scope it to `snapshot/2` (wider module also token-gates other fns). | §0 (scope note) |
+| 6 | LOW | Anon-user mapping complete only with the identity-less-read caveat kept prominent (do not dilute §6). | §6 unchanged (already prominent) |
+
+The verdict confirms the central thesis (auth/projection orthogonality → full retirement
+with renamed projection), the live/dormant classification, and the anon-user mapping
+completeness; the changes are inventory/ordering completeness and back-compat honesty, not
+a redesign.
 ```
