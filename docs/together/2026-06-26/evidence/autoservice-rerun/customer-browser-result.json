@@ -1,0 +1,10 @@
+[
+  {
+    "scenario": "customer_ui_ws_send",
+    "status": "PASS",
+    "detail": {
+      "url": "http://127.0.0.1:5175/tenant/cinnox/chat",
+      "body_head": "Merchant Storefront\n中文\nEN\nTHIS MONTH ONLY · 20% OFF FIRST MONTH\nWelcome\n\n24/7 AI customer service — efficient and reliable.\n\nPlan A\nBasic, for individuals\n¥99 / mo\nPlan B\nHOT\nPro, on sale this month\n¥299 / mo\nEnterprise\n50+ seats · On-prem deploy\nContact us\nC\nCINNOX Support\nUsually replies within 30s · 09:00 – 24:00 today\nToday · 16:40\nC\nCINNOX Support\nAI\n\n您好😊 欢迎咨询 CINNOX/M800 智能客服，请问有什么可以帮到您？\n\nHi 😊 Welcome to CINNOX/M800 AI assistant. How can I help you today?\n\nI\nMe\n\n你好，我想了解 CINNOX Professional 套餐\n\nC\nCINNOX Support\nAI\n\n方便问下您是已经在使用 CINNOX 产品，还是第一次了解咨询呢？\n\nPress Enter to send · Shift+Enter for newline\npowered by\nOneSyn · autoservice"
+    }
+  }
+]

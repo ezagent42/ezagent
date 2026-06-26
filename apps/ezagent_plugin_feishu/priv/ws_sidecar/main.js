@@ -129,12 +129,24 @@ process.on('SIGTERM', () => {
 // handlers stay as primary signal paths; this is a belt-and-suspenders
 // safety net for the case where the parent dies without sending a
 // signal.
-process.stdin.on('end', () => {
-    emit({ type: 'disconnected', reason: 'stdin_eof' });
-    try { wsClient.close({ force: true }); } catch (_) {}
-    process.exit(0);
-});
-process.stdin.resume(); // ensure stdin is in flowing mode so 'end' fires
+// Phase 7 PR 35 — orphan reap via parent PID check (replaces stdin EOF).
+//
+// `process.stdin.resume()` conflicts with the Lark SDK's internal WSS event
+// loop — in flowing mode, Node.js starves WebSocket message processing and no
+// `im.message.receive_v1` events are delivered (bisect-3 confirmed, 2026-06-26).
+//
+// Instead, check every 5s whether the parent (Elixir BEAM) is still alive. When
+// the parent dies, this child is re-parented to PID 1 (or a subreaper); we
+// detect that and exit cleanly so the WsClient GenServer can respawn us.
+const PARENT_PID = process.ppid;
+const orphanCheck = setInterval(() => {
+    if (process.ppid !== PARENT_PID || process.ppid === 1) {
+        emit({ type: 'disconnected', reason: 'parent_exited' });
+        try { wsClient.close({ force: true }); } catch (_) {}
+        clearInterval(orphanCheck);
+        process.exit(0);
+    }
+}, 5_000);
 
 // Keep the process alive (the SDK manages its own WS loop).
 setInterval(() => {}, 60_000);
