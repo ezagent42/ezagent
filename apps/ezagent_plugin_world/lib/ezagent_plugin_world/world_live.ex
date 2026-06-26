@@ -642,8 +642,8 @@ defmodule EzagentPluginWorld.WorldLive do
     # and the `hello` class itself was missing.
     # F3: offer only Classes that are DIRECTLY creatable from this generic
     # picker (the picker supplies only the universal `session_name` arg). A
-    # Class whose `instantiate/3` requires extra args — e.g. `session.advisor`
-    # needs an `operator_uri` — declares `directly_creatable?/0 => false` and is
+    # Class whose `instantiate/3` requires extra args — e.g. a vertical session
+    # class needing an `operator_uri` — declares `directly_creatable?/0 => false` and is
     # filtered out here, so it can't become the dropdown default and fail closed
     # with `{:invalid_template, …}` on create.
     classes =
