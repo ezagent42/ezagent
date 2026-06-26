@@ -344,11 +344,11 @@ defmodule Ezagent.Kind.Runtime do
   #    caller's identity slice via `Kind.get_slice/2` (no re-entry into
   #    `Invocation.dispatch/1`, breaks the self-list-caps recursion).
   #
-  # Backward-compat: `ctx.caps` plumbing is preserved (PR-CC-2c deletes
-  # the field). When `ctx.caps` is populated AND contains a matching
-  # cap, that's an acceptable grant too — used by tests + bootstrap
-  # paths that pre-date the slice-backed flow. The dual check is a
-  # short-lived bridge; PR-CC-2c removes the ctx.caps branch.
+  # `ctx.caps` is a PERMANENT authz route (the "PR-CC-2c removes it" plan
+  # was WITHDRAWN — caps-cleanup-v1 §5.3 r2 HIGH-3). #154 made it the
+  # carrier for INLINE self-authority caps (no slice home; a self-dispatch
+  # reading its own slice would deadlock — see perf note below). ctx.caps =
+  # caps PRESENTED with the call; holds_cap? = caps held in the slice. OR'd.
   defp authz_check(kind_module, behavior_module, action, target, ctx) do
     cap_exempt? = action in Ezagent.Behavior.cap_exempt_actions_of(behavior_module)
 
