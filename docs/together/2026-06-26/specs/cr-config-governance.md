@@ -238,6 +238,16 @@ Manage-cap gated (§6). Steps:
    emit the deferred `sandbox.write_path` self-dispatch that re-materializes the
    resolved soul into the config_dir via `Sandbox.ConfigDir`. **No new
    materialization.**
+   > **Implementation note (codex rev-3, verified):** `sandbox_write_effects/3` is
+   > `defp` and **no-ops without a `:sandbox` sibling + a `cascade_resolution`**
+   > (`config_evolve.ex` ~L541-600). So `ConfigGovernance.publish_cr` MUST run as a
+   > genuine agent action ctx (it declares `reads_siblings([:sandbox, :identity])`,
+   > §7) — and either (a) `ConfigGovernance` lives on the agent Kind right beside
+   > `ConfigEvolve` and inlines the same effect builder, or (b) the effect builder
+   > is factored into a small shared/public helper both behaviors call. Recommended
+   > (a) — they are siblings on the same Kind, so the private helper is in-module
+   > reach; no public API widening. The pointer flip alone (`put_pointer/1`) does
+   > NOT trigger materialization — the effect emission is mandatory.
 6. The CR is terminal-`published`; the active-CR unique index frees up. Append-only
    objects stay (rollback needs the prior ones).
 
