@@ -24,6 +24,19 @@ step "0 preflight"
 command -v agent-browser >/dev/null || { c_r "agent-browser 不在 PATH"; exit 2; }
 curl -fsS -m4 "$BASE_URL/_health" 2>/dev/null | grep -q ok && pass "server health 200" || { fail "server 未起($BASE_URL/_health)"; summary; exit 2; }
 
+# PG env(11/12 用):未设则从监听 server 进程的 /proc environ 取
+if [[ -z "${POSTGRES_DB:-}" ]]; then
+  SRVPID="$(ss -ltnp 2>/dev/null | grep ':10042' | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
+  if [[ -n "${SRVPID:-}" && -r "/proc/$SRVPID/environ" ]]; then
+    eval "$(tr '\0' '\n' < "/proc/$SRVPID/environ" | grep -E '^POSTGRES_' | sed 's/^/export /')"
+    [[ -n "${POSTGRES_DB:-}" ]] && info "PG env 取自 server 进程 $SRVPID"
+  fi
+fi
+# python3.12 + pg8000(11/12 的 PG 访问):缺则那两条 SKIP
+PY="$(command -v python3.12 || true)"
+HAVE_PG=0
+if [[ -n "$PY" ]] && "$PY" -c "import pg8000" 2>/dev/null && [[ -n "${POSTGRES_DB:-}" ]]; then HAVE_PG=1; fi
+
 trap 'ab_close' EXIT
 
 # ---------- helpers ----------
@@ -121,6 +134,54 @@ else
   ab_mention_send "e2e-c" "用一个词回答:水的化学式是什么"
   assert_agent_reply "H" "e2e-curl 真实 DeepSeek 回复(含 H₂O)" 15
   ab_shot "$EVID_DIR/scenario-07/s07-auto-run-$RUN_ID.png"
+fi
+
+# ---------- 08 @mention 门控(需 2 个 replier:py_default + e2e-curl,故需 key)----------
+step "08 @mention 门控(只回被 @ 者)"
+if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
+  skip "08 门控 — 需 2 个能回的 agent(py_default + e2e-curl),后者需 DEEPSEEK_API_KEY"
+else
+  open_session
+  # 发 @py_default 唯一标记;统计该轮新增 agent 气泡数:门控成立=只 py 回(逐字标记)
+  GMARK="gate-$RUN_ID"
+  before=$(ab_eval "(()=>document.querySelectorAll('[data-sender-kind=agent][data-mine=false]').length)()")
+  ab_mention_send "py" "$GMARK"
+  ab_wait 8000
+  after=$(ab_eval "(()=>document.querySelectorAll('[data-sender-kind=agent][data-mine=false]').length)()")
+  pyok=$(ab_eval "(()=>Array.from(document.querySelectorAll('[data-sender-kind=agent][data-mine=false]')).some(b=>b.textContent.includes('$GMARK')))()")
+  delta=$(( ${after:-0} - ${before:-0} ))
+  if [[ "$pyok" == "true" && "$delta" -eq 1 ]]; then
+    pass "门控:@py_default 仅 py 回(逐字 $GMARK),新增气泡=1(e2e-curl 未越权)"
+  else
+    fail "门控异常(py回=$pyok,本轮新增 agent 气泡=$delta,期望 1)"
+  fi
+fi
+
+# ---------- 11 feishu 入站(合成 webhook 注入,免真飞书/真用户)----------
+step "11 feishu 入站(POST /api/feishu/webhook 合成注入)"
+# 端点活性:URL verification challenge
+CH=$(curl -s -m6 -X POST "$BASE_URL/api/feishu/webhook" -H 'content-type: application/json' -d '{"type":"url_verification","challenge":"e2e_'"$RUN_ID"'"}')
+[[ "$CH" == *"e2e_$RUN_ID"* ]] && pass "webhook 端点活性(challenge 回显)" || fail "webhook challenge 未回显($CH)"
+if [[ $HAVE_PG -eq 1 ]]; then
+  CHAT="oc_e2e_$RUN_ID"
+  "$PY" ./feishu_setup.py "$SESS_URI" "ou_e2e_$RUN_ID" "$CHAT" "entity://system/user/admin" >/dev/null 2>&1 \
+    && info "已建合成绑定(open_id+chat→$SESS)" || skip "11 绑定建立失败"
+  FMARK="f9inbound-$RUN_ID"
+  BODY='{"schema":"2.0","header":{"event_id":"e2e_'"$RUN_ID"'","event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_e2e_'"$RUN_ID"'"},"sender_type":"user"},"message":{"chat_id":"'"$CHAT"'","message_id":"om_'"$RUN_ID"'","chat_type":"group","message_type":"text","content":"{\"text\":\"@py_default '"$FMARK"'\"}"}}}'
+  HC=$(curl -s -m6 -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/feishu/webhook" -H 'content-type: application/json' -d "$BODY")
+  [[ "$HC" == "200" ]] && info "合成入站事件已 POST(HTTP 200)" || fail "webhook 事件 POST 非 200($HC)"
+  open_session
+  assert_agent_reply "$FMARK" "feishu 入站经路由 → py_default 在会话回显 $FMARK(完整入站链)" 15
+else
+  skip "11 完整路由 — 需 python3.12+pg8000+PG env 建绑定(端点活性已验)"
+fi
+
+# ---------- 12 dispatch 审计(CLI/PG,非 agent-browser)----------
+step "12 dispatch 审计 (CLI)"
+if [[ $HAVE_PG -eq 1 ]]; then
+  if "$PY" ./audit.py 120; then pass "审计:dispatch 轨迹 granted 可追溯(详见上)"; else fail "审计断言未过(见上)"; fi
+else
+  skip "12 审计 — 需 python3.12+pg8000+PG env"
 fi
 
 summary
