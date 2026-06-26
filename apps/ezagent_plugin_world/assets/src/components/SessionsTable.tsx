@@ -52,7 +52,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
           <h2 id="sessions-title" className="text-lg font-semibold text-foreground">
             Session activity
           </h2>
-          <p className="text-sm text-muted-foreground">Rendered by React from LiveView state.</p>
+          <p className="text-sm text-muted-foreground">本工作区的会话列表 —— 状态、外部镜像与快捷入口。</p>
         </div>
         <Button
           type="button"

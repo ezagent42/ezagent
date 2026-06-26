@@ -339,8 +339,19 @@ defmodule Ezagent.World.AdminData do
   defp shape_orchestrator_status(other), do: jsonable(other)
 
   defp inspect_timestamp(row, field_name) do
-    Map.update(row, field_name, nil, &inspect/1)
+    Map.update(row, field_name, nil, &format_timestamp/1)
   end
+
+  # 时间戳转人类可读串（截到秒），避免把 Elixir `~N[...]` sigil 直接展示给操作员。
+  defp format_timestamp(%NaiveDateTime{} = dt),
+    do: dt |> NaiveDateTime.truncate(:second) |> NaiveDateTime.to_string()
+
+  defp format_timestamp(%DateTime{} = dt),
+    do: dt |> DateTime.truncate(:second) |> DateTime.to_string()
+
+  defp format_timestamp(nil), do: nil
+  defp format_timestamp(value) when is_binary(value), do: value
+  defp format_timestamp(other), do: inspect(other)
 
   defp uri_scheme(uri_str) do
     case parse_uri(uri_str) do

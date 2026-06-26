@@ -78,6 +78,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 | Agent Console CRUD (#84) | claude (`feat/agent-console-crud`) | identities/agents Delete + Create-hardening: `Identities.tsx` (agent components), `main.tsx` (renderer wiring), `world_live.ex` (`agents.delete` clause + helpers), `identity_data.ex` (additive); bound-gate via `EzagentDomainInstanceMessage.agent_live_sessions/1` | in-flight |
 | hello (Phase 0, #81) | TBD | none in world (isolated plugin) | handoff merged |
 | F9 external-mirror bind UI | zyli (`feat/product-gaps-f9-f12`) | `Admin.tsx` (ExternalMirror surface only — additive bind form + unbind col), `admin_actions.ex` (external_mirror.bind/unbind handlers), `admin_data.ex` (promote `external_mirror_bindings_for/1` public), `world_live.ex` (`@admin_actions` whitelist) | in-flight — no `styles.css`, no shared-surface conflict (agent-console-crud owns `Identities.tsx`, not `Admin.tsx`) |
+| FP5 UI 巡检纯 UI 修复 | zyli (`zyli/fp5-ui-fixes-0626`) | `SessionsTable.tsx`(S1-a 文案,非他人 owned)、`admin_data.ex`(S7-a `inspect_timestamp` 时间格式化,zyli F9 已 own)。**无 `styles.css`、无 `world_live.ex`、无 `Identities.tsx`** | in-flight — 局部最小改,与 agent-console-crud(`Identities.tsx`/`world_live.ex`)零交集 |
 
 ## 6. The checklist every world-touching handoff must include
 
