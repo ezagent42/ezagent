@@ -12,7 +12,7 @@
 
 > **🤖 两层结构(2026-06-26 加)**:每条 `scenario-NN.md` 现含**两节** —— 前半是上面说的**人肉执行记录**(历史真相);末尾 `## 自动化运行(agent-browser runbook)` 是**机器可重放层**:一个拿 agent-browser 的 agent 不靠人、照着确定性步骤+断言自动跑通。
 > **要自动跑 E2E,先读 [`guide.md` §8](./guide.md#8-自动化运行约定agent-browser-runbook)**(干净 seed 入口 + world UI 交互坑 + 断言谓词),再照各 scenario 的 runbook 节执行。
-> **已 agent-browser 实地验证(2026-06-26)**:scenario-01(登录)、02(创建 agent)、03(建 session+加成员)、04(py 往返逐字回显)整链跑通;05(cc 回归守卫:claude-bot online 却 16s 不回,**预期 FAIL 确认**);**07(curl/DeepSeek 往返:配 api_key 后 @e2e-curl 真实回 `H₂O`,PASS)**。证据 `evidence/*/-auto.png`。验证中发现 4 个产品缺口见 [`notes/2026-06-26-product-gaps.md`](./notes/2026-06-26-product-gaps.md)。06(codex 需凭据)、10/11(需 sidecar)、12(DB/CLI)本轮未 live 验。
+> **已 agent-browser 实地验证(2026-06-26)**:scenario-01(登录)、02(创建 agent)、03(建 session+加成员)、04(py 往返逐字回显)整链跑通;05(cc 回归守卫:claude-bot online 却 16s 不回,**预期 FAIL 确认**);**07(curl/DeepSeek 往返:配 api_key 后 @e2e-curl 真实回 `H₂O`,PASS)**。证据 `evidence/*/-auto.png`。验证中发现 5 个产品缺口见 [`notes/2026-06-26-product-gaps.md`](./notes/2026-06-26-product-gaps.md)。**06(codex)**:已建成 + bridge 连上 + 跑 turn,但 OpenAI **SSE 流经本地代理 Reconnecting 5/5 → 空回复**(环境/网络阻塞,非 runbook;server 原缺 proxy 已修)。10/11(需 feishu sidecar)、12(DB/CLI)本轮未 live 验。
 > ⚠️ **flavor drift**:人肉记录(2026-06-25)用已退役的 `echo` flavor;当前 main 用 `py`(逐字回显,无 `echo:` 前缀)。runbook 跟随当前 main,人肉记录保留为历史。
 
 ---

@@ -56,21 +56,28 @@
 
 ## 自动化运行(agent-browser runbook)
 
-<!-- 规范见 guide.md §8。codex 是 bridge agent,激活快(~1.8s),正常往返 PASS。 -->
+<!-- 规范见 guide.md §8。**2026-06-26 agent-browser 实地推进:已建成 + bridge 连上,但回复被 OpenAI SSE 流经代理反复重连卡住(环境)**。 -->
 
-**前置(自动化)**:scenario-03 已跑(session `zyli-test-1`)。**需先配凭据**:zyli 本机 `codex login`(`~/.codex/auth.json`+`config.toml`)→ 手工 seed 进 agent CODEX_HOME `~/.ezagent/default/codex-agents/system/zyli-codex-1/`;server 带 `HTTPS_PROXY`。**凭据未就绪 → codex 不回 → step5 断言 FAIL 属环境未就绪,非回归**(codex 无自动 seed task,见本条 DX 缺口)。
-**入口 URL**:`http://world.localhost:10042/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fzyli-test-1`
+**前置(自动化)**:scenario-03 已跑(session `e2e-test-1`)。codex 凭据:`~/.codex/auth.json`+`config.toml`(zyli 本机 `codex login`,**已在**);codex 默认走 `~/.codex`(`CODEX_HOME` 不设即可)。**server 必须带正确 proxy**:OpenAI 在本网需经代理。
+> **2026-06-26 实地诊断(关键)**:
+> ① **建 codex 需 `project_cwd`**(已存在目录),否则 `error:cwd_required_for_codex`(同 cc,见 GAP-4);补 cwd 后建成(`data-last-dispatch=idle` 但建成,需去 `/identities/agents` 确认)。
+> ② **proxy 是真卡点**:运行中 server 原本**无 `HTTP(S)_PROXY`**(只有 `no_proxy`)→ codex 连不上 OpenAI 静默不回。**重启 server 加 `HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:7890`(注意 http:// scheme,曾见 https:// typo)后** codex bridge **能连上并跑 turn**。
+> ③ **残留环境阻塞**:proxy 修好后,codex app-server 仍报 `Reconnecting 1/5…5/5`(OpenAI **SSE responseStream 经本地代理反复重连**)→ `turn/completed` 但 `{'text': ''}` 空 → `not sending empty codex reply`。**= OpenAI 流式 over 代理不稳(环境/网络),非代码/runbook bug**。curl(DeepSeek 直连免代理)能回正印证是 OpenAI-over-代理专属问题。
+> **结论**:runbook 步骤本身正确;06 的 PASS 取决于**稳定的 OpenAI 代理通道**。当前环境下断言预期 ⏳(连得上、跑了 turn、但流式拿不到内容)。
 
-| # | 动作 | 定位 | 输入 | 断言 | evidence |
+**入口 URL**:`http://world.localhost:10042/sessions?session=<encodeURIComponent("session://system/default/e2e-test-1")>`
+
+| # | 动作 | 定位 / 方法 | 输入 | 断言 | evidence |
 |---|---|---|---|---|---|
-| 1 | navigate(Identities→New Agent 建 codex,若未建) | `form#world-agent-new-form` | flavor=`codex` / name=`zyli-codex-1` / cwd=`/tmp/codex-agent-zyli` | `visible #world-agent-new-form` | `s06-step1-codex-create-auto.png` |
-| 2 | navigate(session 详情) | — | — | `visible [data-world-component=conversation]` | — |
-| 3 | click+fill(Invite zyli-codex-1) | `button[aria-label="Invite a member"]` → `#world-invite-input` | `zyli-codex-1` | `attr li[data-kind=agent] data-online=true` | — |
-| 4 | fill(消息框) | `textarea[aria-label="Message"]` | `@zyli-codex-1 你好,你是谁` | `visible [data-mine="true"]` | — |
-| 5 | click(发送)+ wait(≤15s) | `[data-world-component=conversation] button[type="submit"]` → `div[data-sender-kind="agent"][data-mine="false"]` | — | `text~ [data-sender-kind=agent] "Codex"` | `s06-step5-codex-reply-auto.png` |
+| 1 | 建 codex(native-setter,**必填 cwd**) | `/identities/agents/new` form:flavor=`codex` / name=`e2e-codex` / cwd=已存在目录 | — | 去 `/identities/agents` 确认含 `entity://system/agent/e2e-codex`(**实地✅建成**) | — |
+| 2 | navigate session + Invite(完整URI) | `#world-invite-input` | `entity://system/agent/e2e-codex` | `attr li[data-kind=agent] data-online=true`(**实地✅ online**) | — |
+| 3 | 真键盘 @ + 提问 + 发送 | `keyboard type '@e2e-co'`→`click 'ul[role=listbox] button'`→`keyboard type ' 用一个词回答:1+1等于几'`→`press Enter` | — | `visible [data-mine=true]`(**实地✅**) | — |
+| 4 | wait ≤30s 等 codex 回复 | `[data-sender-kind=agent][data-mine=false]` | — | agent 气泡含确定性答案 —— **当前环境 ⏳ 无回复**(bridge 连上但 SSE 流 Reconnecting 5/5 → 空 turn);**proxy 通道稳定后应转 PASS** | `s06-step4-codex-reply-auto.png` |
 
 **断言映射**:
-- 「codex bridge 经 UDS WS 派发并回包」→ step5 reply 气泡含 "Codex"(真实 provider)。
-- 「LV 渲染对话」→ step4 `data-mine=true` + step5 reply 气泡双向上屏。
+- 「codex bridge 经 UDS WS 派发并回包」→ step4;**2026-06-26 实地:派发✅ + bridge 连上✅ + turn 跑了✅,但 OpenAI SSE 流不稳 → 空回复**。环境阻塞,非 runbook/代码问题。
+- 「LV 渲染对话」→ step3 `data-mine=true` 上屏✅。
 
-**清理**:跑完删除自建 `zyli-codex-1`(若本 runbook 新建);CODEX_HOME 凭据按需保留。
+**清理**:删除自建 `e2e-codex`(受 GAP-5 死锁,需先解 session 绑定);临时 cwd 目录可删。
+
+> **运维建议(非 UI 缺口)**:dev server 启动应固定带 `HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:7890`(本轮重启已加);并排查 OpenAI SSE 经 clash/7890 代理的流式稳定性(`responseStream` Reconnecting)。
