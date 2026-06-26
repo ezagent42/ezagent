@@ -92,6 +92,7 @@ defmodule Ezagent.PluginPy.SecurityTest do
 
       # No subprocess, no agent for the (would-be) URI.
       agent_uri = URI.new!("entity://#{Ezagent.URI.name!(workspace_uri)}/agent/#{name}")
+
       refute Python.alive?(agent_uri),
              "no Domain.Python subprocess may exist after a denied create"
     end

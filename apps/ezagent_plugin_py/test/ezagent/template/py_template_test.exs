@@ -138,6 +138,7 @@ defmodule Ezagent.Template.PyAgentTest do
 
       # The subprocess is LIVE + answers the operator's receive handler.
       assert Python.alive?(agent_uri)
+
       assert {:ok, %{"text" => "echo:hello"}} =
                Python.call(agent_uri, "receive", %{"text" => "hello"}, 10_000)
     end
@@ -164,7 +165,12 @@ defmodule Ezagent.Template.PyAgentTest do
       end)
 
       assert {:ok, [^agent_uri], %{fresh?: true}} =
-               Ezagent.Kind.Template.provision_and_instantiate(Tmpl, "py.agent", tmpl, @workspace_uri)
+               Ezagent.Kind.Template.provision_and_instantiate(
+                 Tmpl,
+                 "py.agent",
+                 tmpl,
+                 @workspace_uri
+               )
 
       assert Python.alive?(agent_uri)
 
