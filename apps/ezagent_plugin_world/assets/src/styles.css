@@ -7,6 +7,12 @@
  */
 @import "tailwindcss";
 
+/* Generate the utility classes the @json-render/shadcn components emit at runtime
+ * (bg-card / rounded-xl / p-4 / gap-2 …) — they live in the package dist, which
+ * Tailwind v4 does not scan by default, so without this the json-render chat
+ * bubbles render unstyled. They resolve against world's own design tokens below. */
+@source "../node_modules/@json-render/shadcn/dist";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
