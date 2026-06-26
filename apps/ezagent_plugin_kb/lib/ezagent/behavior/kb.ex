@@ -152,7 +152,8 @@ defmodule Ezagent.Behavior.Kb do
   defp store_uri_for(self_uri) do
     with {:ok, ws} <- Ezagent.URI.workspace_name(self_uri),
          {:ok, agent} <- Ezagent.URI.name(self_uri) do
-      {:ok, Ezagent.URI.new!("resource://#{ws}/kb-store/#{agent}")}
+      # Typed builder (NOT a raw `resource://` string — the UriQuery scan gate).
+      {:ok, Ezagent.URI.resource(ws, "kb-store", agent)}
     else
       _ -> {:error, {:bad_self_uri, URI.to_string(self_uri)}}
     end
