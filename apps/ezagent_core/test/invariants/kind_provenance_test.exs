@@ -87,6 +87,7 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
       EzagentDomainInstanceMessage.AgentTemplateSupervisor,
       EzagentDomainInstanceMessage.SessionTemplateSupervisor,
       EzagentPluginCurlAgent.InstanceSupervisor,
+      EzagentPluginPy.InstanceSupervisor,
       # PR-EM-2: ExternalMirrorWorker Kinds spawn under a two-tier
       # topology (SPEC §6.3) — RootSupervisor's direct children are
       # PerBindingSupervisors (`:supervisor`-typed); the actual
