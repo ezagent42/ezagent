@@ -123,8 +123,10 @@ export type IdentitiesState = {
   workspace_uri?: string | null
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
+  script_required_flavors?: string[]
   create_error?: string
   action_error?: string
+  agent_not_found?: boolean
   cascade?: CascadeState
   config_error?: string
 }
@@ -255,6 +257,10 @@ function AgentsTable({state}: {state: IdentitiesState}) {
           {state.action_error}
         </p>
       )}
+      {/* F1: flavor filter — the agents table now offers the same All/Users/Agents
+          + per-flavor chips the identities directory does, so an operator can
+          narrow by flavor without hand-editing the URL. */}
+      <FilterBar active={state.filter || "agents"} flavors={state.agent_flavors || []} />
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-agents-table">
           <thead className={theadClass}>
@@ -339,6 +345,24 @@ function EntityCaps({state}: {state: IdentitiesState}) {
 
 function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAgent?: (agentUri: string) => void}) {
   const [confirming, setConfirming] = React.useState(false)
+
+  // F2: a deleted / never-existed agent renders a clean not-found state instead
+  // of a hollow shell of "—"/"unknown" rows.
+  if (state.agent_not_found) {
+    return (
+      <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
+        <SectionHeader eyebrow="Agent" title="Agent detail" />
+        <code className={uriClass}>{state.agent_uri}</code>
+        <EmptyState label="该 agent 不存在（可能已被删除）。" />
+        <div>
+          <a className="text-primary hover:underline" href="/identities/agents">
+            ← 返回 agent 列表
+          </a>
+        </div>
+      </section>
+    )
+  }
+
   const status = (state.agent_status || {}) as Record<string, unknown>
   const grantedCaps = Array.isArray(state.granted_caps) ? state.granted_caps : []
   const rows: Array<[string, string]> = [
@@ -357,6 +381,14 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
     <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
       <code className={uriClass}>{state.agent_uri}</code>
+      {/* F4: a delete failure (e.g. agent still bound to a live session) now
+          surfaces ON the detail page where the Delete button lives, instead of
+          being dropped on the list route the user already navigated away from. */}
+      {state.action_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.action_error}
+        </p>
+      )}
       <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {rows.map(([label, value]) => (
           <div className="flex justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" key={label}>
@@ -458,6 +490,11 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
     (form.with_pty && (state.cwd_required_with_pty_flavors || []).includes(form.flavor))
 
+  // F6: py requires a `script` config field. Mark it `*` and block Create when
+  // empty, so the operator never submits and hits the raw `:missing_script` error.
+  const scriptRequired = (state.script_required_flavors || []).includes(form.flavor)
+  const scriptMissing = scriptRequired && !(form.configFields["script"] || "").trim()
+
   // M4: flavor-specific schema for dynamic create fields
   const flavorSchema = (state.config_schemas || {})[form.flavor] || []
 
@@ -517,6 +554,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                 <label className={fieldLabel} key={f.key}>
                   <span className="font-mono text-xs">
                     {f.label || f.key}
+                    {scriptRequired && f.key === "script" && <span className="text-destructive"> *</span>}
                     {f.help && <span className="text-[10px] text-muted-foreground ml-1">({f.help})</span>}
                   </span>
                   {f.type === "enum" && f.options ? (
@@ -566,7 +604,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
         </label>
         <div className="flex items-center justify-between gap-3 sm:col-span-2">
           <code className={codeClass}>{preview}</code>
-          <Button type="submit" disabled={!form.name || (cwdRequired && !form.cwd) || capsInvalid}>
+          <Button type="submit" disabled={!form.name || (cwdRequired && !form.cwd) || scriptMissing || capsInvalid}>
             <Plus aria-hidden="true" />
             Create
           </Button>

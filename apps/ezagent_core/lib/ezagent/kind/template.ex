@@ -88,6 +88,24 @@ defmodule Ezagent.Kind.Template do
               | {:ok, [URI.t()], instantiate_meta()}
               | {:error, term()}
 
+  @doc """
+  Declares whether this Template Class can be instantiated directly from the
+  generic "New session" picker — i.e. whether `instantiate/3` succeeds given
+  ONLY the universal create args the generic picker supplies (`class` +
+  `session_name`).
+
+  Default `true`. A Class whose `instantiate/3` requires EXTRA, picker-unknown
+  arguments (e.g. `session.advisor` needs an `operator_uri`) overrides this to
+  `false` so the generic picker never offers it as a creatable option — picking
+  it would otherwise fail closed with `{:error, {:invalid_template, …}}`
+  (the F3 silent-create bug). Such Classes are still instantiable through their
+  own vertical's create path that supplies the extra args.
+
+  Optional callback — a Class that omits it is treated as directly creatable
+  (`directly_creatable?/1` below applies the default).
+  """
+  @callback directly_creatable?() :: boolean()
+
   # --- flavor-specific template_data fields (SPEC 2026-06-01 approach B) -
   #
   # `Ezagent.Entity.AgentTemplate.to_template_data/2` builds the universal
@@ -280,11 +298,29 @@ defmodule Ezagent.Kind.Template do
     template_data_extra: 1,
     config_schema: 0,
     config_dir_namespace: 0,
+    directly_creatable?: 0,
     list_extensions: 1,
     toggle_extension: 3,
     destroy_config_dir: 2,
     ensure_subprocess_alive: 2
   ]
+
+  @doc """
+  Resolve whether `class_module` is directly creatable from the generic
+  session picker (the F3 declared-capability seam). Prefers the optional
+  `directly_creatable?/0` callback; defaults to `true` when the Class omits it.
+
+  Used by the world plugin's "New session" picker to offer only Classes whose
+  `instantiate/3` succeeds with the universal create args.
+  """
+  @spec directly_creatable?(module()) :: boolean()
+  def directly_creatable?(class_module) when is_atom(class_module) do
+    if function_exported?(class_module, :directly_creatable?, 0) do
+      class_module.directly_creatable?()
+    else
+      true
+    end
+  end
 
   @doc """
   Resolve the config_dir path namespace for a Template Class.

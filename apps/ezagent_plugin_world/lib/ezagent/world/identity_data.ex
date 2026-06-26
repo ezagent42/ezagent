@@ -68,7 +68,13 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp component_state(%{component: "agents_table"}, base, workspace_uri, _caller, _caps) do
-    Map.put(base, "agents", list_entities(workspace_uri, "agents"))
+    agents = list_entities(workspace_uri, "agents")
+
+    base
+    |> Map.put("agents", agents)
+    # F1: the flavor filter chips need the distinct flavors present, same source
+    # the identities directory uses (`agent_flavors/1`).
+    |> Map.put("agent_flavors", agent_flavors(agents))
   end
 
   defp component_state(
@@ -90,33 +96,30 @@ defmodule Ezagent.World.IdentityData do
          _workspace,
          caller,
          caps
-       ) do
-    # One sandbox read serves both config_dir + project_cwd so the detail page
-    # reads the executor config the agent was actually spawned with (not a
-    # re-derivation that could drift). `respawn_template_data` carries the
-    # template content the cascade built the agent from — `project_cwd` /
-    # source-template live there when the agent came from a registered template;
-    # a direct-spawn (curl/np) agent has neither, so both render nil ("—").
-    sandbox = agent_sandbox_state(agent_uri, caller, caps)
+       )
+       when not is_nil(agent_uri) do
+    # F2: guard non-existent agents (e.g. after a delete) — without this the
+    # detail page rendered a hollow shell of "—"/"unknown" rows for a URI with
+    # no live process AND no snapshot. Mirror `agent_config`'s `:agent_not_found`
+    # contract: signal `agent_not_found` so the React detail surfaces a clean
+    # not-found empty state instead of a misleading shell.
+    if agent_exists?(agent_uri) do
+      agent_detail_state(base, agent_uri, caller, caps)
+    else
+      base
+      |> Map.put("agent_uri", encode_uri(agent_uri))
+      |> Map.put("agent_not_found", true)
+    end
+  end
 
-    agent_uri_str = encode_uri(agent_uri)
-    flavor = flavor_for("agent", agent_uri)
-
+  # F2: a malformed agent URL parses `entity_uri` to nil (routes.ex
+  # `parse_entity_uri/1` returns nil for any non-entity/unparseable segment).
+  # Render the same clean not-found state rather than falling through to the
+  # catch-all (which would emit a hollow shell with no agent_uri).
+  defp component_state(%{component: "agent_detail", entity_uri: nil}, base, _ws, _caller, _caps) do
     base
-    |> Map.put("agent_uri", agent_uri_str)
-    |> Map.put("agent_status", agent_status(agent_uri))
-    |> Map.put("flavor", flavor)
-    |> Map.put("bridge", bridge_entry(agent_uri))
-    |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
-    |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
-    |> Map.put("config_dir", sandbox_config_dir(sandbox))
-    |> Map.put("source_template", sandbox_source_template(sandbox))
-    |> Map.put("config_path", config_path("agent", agent_uri_str))
-    # M1: per-flavor config fields from template data + config cascade
-    |> Map.put("config_fields", config_fields_for(agent_uri, flavor, sandbox, caller, caps))
-    |> Map.put("not_wired", not_wired_annotations())
-    # M2-mock: config schema (A4 落地后改为 tc.config_schema())
-    |> Map.put("config_schema", config_schema_for(flavor))
+    |> Map.put("agent_uri", nil)
+    |> Map.put("agent_not_found", true)
   end
 
   defp component_state(%{component: "agent_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -135,6 +138,10 @@ defmodule Ezagent.World.IdentityData do
     # the authoritative check is server-side on submit / fail-closed).
     |> Map.put("cwd_required_flavors", ["cc", "codex"])
     |> Map.put("cwd_required_with_pty_flavors", [])
+    # F6: py's Template Class `validate/1` requires a `script` config field; mark
+    # it required in the create form (the `*` + Create-button gate) so the
+    # operator can't submit without it and hit the raw `:missing_script` error.
+    |> Map.put("script_required_flavors", ["py"])
   end
 
   defp component_state(
@@ -191,6 +198,7 @@ defmodule Ezagent.World.IdentityData do
     case Ezagent.Agent.Config.read_cascade(agent_uri, caller, caps) do
       {:ok, cascade} ->
         flavor = flavor_for("agent", agent_uri)
+
         base
         |> Map.put("agent_uri", encode_uri(agent_uri))
         |> Map.put("cascade", jsonable(cascade))
@@ -213,6 +221,41 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp component_state(_route, base, _workspace, _caller, _caps), do: base
+
+  # F2: the full agent-detail payload, built only once existence is confirmed.
+  defp agent_detail_state(base, agent_uri, caller, caps) do
+    # One sandbox read serves both config_dir + project_cwd so the detail page
+    # reads the executor config the agent was actually spawned with (not a
+    # re-derivation that could drift). `respawn_template_data` carries the
+    # template content the cascade built the agent from — `project_cwd` /
+    # source-template live there when the agent came from a registered template;
+    # a direct-spawn (curl/np) agent has neither, so both render nil ("—").
+    sandbox = agent_sandbox_state(agent_uri, caller, caps)
+
+    agent_uri_str = encode_uri(agent_uri)
+    flavor = flavor_for("agent", agent_uri)
+
+    base
+    |> Map.put("agent_uri", agent_uri_str)
+    |> Map.put("agent_status", agent_status(agent_uri))
+    |> Map.put("flavor", flavor)
+    |> Map.put("bridge", bridge_entry(agent_uri))
+    |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
+    |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
+    |> Map.put("config_dir", sandbox_config_dir(sandbox))
+    |> Map.put("source_template", sandbox_source_template(sandbox))
+    |> Map.put("config_path", config_path("agent", agent_uri_str))
+    # M1: per-flavor config fields from template data + config cascade
+    |> Map.put("config_fields", config_fields_for(agent_uri, flavor, sandbox, caller, caps))
+    |> Map.put("not_wired", not_wired_annotations())
+    # M2-mock: config schema (A4 落地后改为 tc.config_schema())
+    |> Map.put("config_schema", config_schema_for(flavor))
+    # F4: explicitly clear any stale action_error — the React island merges
+    # world:state and never remounts, so a delete-failure banner pushed onto
+    # this detail route would otherwise linger after the operator resolves the
+    # cause and returns. nil clears it via the React state merge.
+    |> Map.put("action_error", nil)
+  end
 
   @doc "List entity rows for the identities and agents components."
   @spec list_entities(URI.t() | nil, String.t()) :: [map()]
@@ -310,6 +353,10 @@ defmodule Ezagent.World.IdentityData do
   def create_error_message({:cwd_not_a_dir, cwd}), do: "project_cwd 不是有效目录：#{cwd}"
   def create_error_message(:flavor_required), do: "请选择 flavor"
   def create_error_message(:name_required), do: "请填写 name"
+  # F6: py's Template Class `validate/1` rejects a create with no operator
+  # script. Surface a friendly hint instead of the raw `创建失败：:missing_script`.
+  def create_error_message(:missing_script),
+    do: "py 需要 script（在 py configuration 里填入 agent.py 脚本）"
 
   def create_error_message({:bad_name, name}),
     do: "name 不合法（字母数字开头，仅 字母/数字/-/_）：#{name}"
@@ -415,11 +462,42 @@ defmodule Ezagent.World.IdentityData do
       "kind" => inspect(cap.kind),
       "behavior" => inspect(cap.behavior),
       "action" => inspect(Ezagent.Capability.action_of(cap)),
-      "instance" => inspect(cap.instance),
+      "instance" => instance_scope_display(cap.instance),
       "workspace_uri" => encode_uri(cap.workspace_uri),
       "granted_by" => encode_uri(cap.granted_by)
     }
   end
+
+  # F5: render the cap-instance scope readably instead of dumping the raw struct.
+  # A bare `%URI{}` becomes its canonical string (via `encode_uri/1`, the
+  # display-only renderer); the scope tuples (`:any`, `{:within_workspace, uri}`,
+  # `{:within_session, uri}`, `{:instance, uri}`) read as `tag uri` rather than
+  # `inspect/1`'s `%URI{...}` blob. (Display only — the URI stays opaque; no
+  # structural parse, hence routed through `encode_uri/1`.)
+  defp instance_scope_display(%URI{} = uri), do: encode_uri(uri)
+  defp instance_scope_display(:any), do: "any"
+
+  defp instance_scope_display({tag, %URI{} = uri}) when is_atom(tag),
+    do: "#{tag} #{encode_uri(uri)}"
+
+  defp instance_scope_display(other), do: inspect(other)
+
+  # F2: an agent exists if it has a live process OR a persisted snapshot. A URI
+  # with neither (never created, or deleted) is genuinely gone — the detail page
+  # then renders a not-found state instead of a hollow shell. A registered-but-
+  # cold agent still has a snapshot, so it correctly reads as existing.
+  #
+  # Liveness goes through the owner-gated `Ezagent.LocalRuntime.kind_alive?/1`
+  # (NOT a direct `KindRegistry.lookup` — the plugin-workspace-locality contract
+  # forbids plugins consulting the local registry directly).
+  defp agent_exists?(%URI{} = agent_uri) do
+    Ezagent.LocalRuntime.kind_alive?(agent_uri) or
+      Ezagent.Kind.StateRebuilder.snapshot_exists?(agent_uri)
+  rescue
+    _ -> true
+  end
+
+  defp agent_exists?(_), do: false
 
   defp agent_status(%URI{} = agent_uri) do
     agent_uri
@@ -680,7 +758,9 @@ defmodule Ezagent.World.IdentityData do
         else
           []
         end
-      :error -> []
+
+      :error ->
+        []
     end
   rescue
     _ -> []
@@ -714,10 +794,20 @@ defmodule Ezagent.World.IdentityData do
   # Derived from each Template Class's template_data_extra/1.
   # cc/cc-headless: appends operator_settings_path/operator_mcp_config_path/api_key_helper/role/credential_source
   # codex/codex-remote: appends bridge_ws_url/codex_path
-  defp template_field_keys_for("cc"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
-  defp template_field_keys_for("cc-headless"), do: ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
-  defp template_field_keys_for("codex"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
-  defp template_field_keys_for("codex-remote"), do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
+  defp template_field_keys_for("cc"),
+    do:
+      ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
+
+  defp template_field_keys_for("cc-headless"),
+    do:
+      ~w(model effort permission_mode allowed_tools disallowed_tools mcp_servers system_prompt operator_settings_path operator_mcp_config_path api_key_helper role credential_source)
+
+  defp template_field_keys_for("codex"),
+    do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
+
+  defp template_field_keys_for("codex-remote"),
+    do: ~w(model approval_policy sandbox bridge_ws_url codex_path)
+
   defp template_field_keys_for("curl"), do: ~w(model provider api_url system_prompt max_history)
   # py-agent (P2): the operator script + per-call timeout are py's template data
   # fields (`Ezagent.Template.PyAgent.config_schema/0`).
@@ -726,7 +816,9 @@ defmodule Ezagent.World.IdentityData do
 
   defp config_fields_for(agent_uri, flavor, sandbox_state, caller, caps) do
     respawn =
-      (sandbox_state && (Map.get(sandbox_state, :respawn_template_data) || Map.get(sandbox_state, "respawn_template_data"))) ||
+      (sandbox_state &&
+         (Map.get(sandbox_state, :respawn_template_data) ||
+            Map.get(sandbox_state, "respawn_template_data"))) ||
         %{}
 
     # Template data fields (storage B) — always emit known keys per flavor
@@ -752,9 +844,12 @@ defmodule Ezagent.World.IdentityData do
   defp read_soul_field(agent_uri, caller, caps) do
     if Code.ensure_loaded?(Ezagent.Agent.Config) do
       case Ezagent.Agent.Config.read_key(agent_uri, "advisor.behavior", caller, caps) do
-        {:ok, %{effective_body: %{"soul_md" => soul_md}}} when is_binary(soul_md) and soul_md != "" ->
+        {:ok, %{effective_body: %{"soul_md" => soul_md}}}
+        when is_binary(soul_md) and soul_md != "" ->
           [%{"key" => "soul_md", "value" => soul_md, "source" => "cascade"}]
-        _ -> []
+
+        _ ->
+          []
       end
     else
       []

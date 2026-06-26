@@ -208,13 +208,13 @@ defmodule Ezagent.World.ConversationActions do
 
     cond do
       short_name == "" ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:short_name_required")}
+        {:noreply, push_session_create_error(socket, :short_name_required)}
 
       template_name == "" ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:template_required")}
+        {:noreply, push_session_create_error(socket, :template_required)}
 
       not match?(%URI{scheme: "workspace"}, workspace_uri) ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace")}
+        {:noreply, push_session_create_error(socket, :invalid_workspace)}
 
       true ->
         case create_session_result(
@@ -231,10 +231,35 @@ defmodule Ezagent.World.ConversationActions do
              |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:noreply, push_session_create_error(socket, reason)}
         end
     end
   end
+
+  # No silent drop (Invariant #9): surface a session-create failure on the
+  # sessions table via the SAME `world:state` channel the route renders from
+  # (the React `SessionsTable` reads `state.create_error` and shows a banner).
+  # F3: before this, a create error only set the `data-last-dispatch` attribute
+  # and the operator saw nothing. The success path push_patch-remounts with
+  # fresh server state, which carries no `create_error`, so the banner clears.
+  defp push_session_create_error(socket, reason) do
+    socket
+    |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+    |> push_event("world:state", %{"create_error" => session_create_error_message(reason)})
+  end
+
+  @doc false
+  @spec session_create_error_message(term()) :: String.t()
+  def session_create_error_message(:short_name_required), do: "请填写会话名称"
+  def session_create_error_message(:template_required), do: "请选择会话模板"
+  def session_create_error_message(:invalid_workspace), do: "无效的工作区"
+
+  def session_create_error_message({:invalid_template, _}),
+    do: "该模板不能从这里直接创建（缺少额外参数）——请改选 default 或该模板自己的入口"
+
+  def session_create_error_message(:unauthorized), do: "没有创建会话的权限"
+  def session_create_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
+  def session_create_error_message(reason), do: "创建会话失败：#{reason(reason)}"
 
   @doc false
   @spec create_session_result(

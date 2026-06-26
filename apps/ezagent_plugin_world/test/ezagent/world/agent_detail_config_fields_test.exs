@@ -71,22 +71,31 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
 
       detail_state =
         IdentityData.state_for(
-          %{component: "agent_detail", title: "Agent detail",
+          %{
+            component: "agent_detail",
+            title: "Agent detail",
             path: "/identities/agents/#{URI.encode_www_form(agent_uri_str)}",
-            entity_uri: agent_uri},
-          %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(),
-            caller_caps: admin_ctx.caps}
+            entity_uri: agent_uri
+          },
+          %{
+            workspace_uri: workspace_uri,
+            caller_uri: User.admin_uri(),
+            caller_caps: admin_ctx.caps
+          }
         )
 
       # M1: config_fields must be present
       config_fields = detail_state["config_fields"]
+
       assert is_list(config_fields),
              "config_fields must be a list in agent_detail state (got: #{inspect(config_fields)})"
+
       refute config_fields == [],
              "config_fields must not be empty for a created curl agent"
 
       # Verify known curl fields appear (values may be null for direct-spawn)
       field_keys = Enum.map(config_fields, & &1["key"]) |> MapSet.new()
+
       assert MapSet.subset?(MapSet.new(["model", "provider", "api_url"]), field_keys),
              "curl agent config_fields must include model/provider/api_url; got: #{inspect(field_keys)}"
 
@@ -94,14 +103,32 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
       for field <- config_fields do
         assert is_binary(field["key"]), "config_field key must be a string"
         assert Map.has_key?(field, "value"), "config_field must have value key"
+
         assert field["source"] in ["template", "cascade", "runtime"],
                "config_field source must be template|cascade|runtime; got: #{inspect(field["source"])}"
       end
 
       # Direct-spawn curl agents have no respawn_template_data, so values are nil
       template_fields = Enum.filter(config_fields, &(&1["source"] == "template"))
+
       for field <- template_fields do
         assert field["key"] != nil, "template field key must be present even for direct-spawn"
+      end
+
+      # F5: the cap rows' `instance` must be a readable string, never a raw
+      # `%URI{...}` / struct dump (`inspect(cap.instance)`).
+      granted_caps = detail_state["granted_caps"]
+
+      if is_list(granted_caps) do
+        for cap <- granted_caps do
+          instance = cap["instance"]
+
+          assert is_binary(instance),
+                 "cap instance must render as a string, got: #{inspect(instance)}"
+
+          refute instance =~ "%URI{", "cap instance must not dump a raw URI struct: #{instance}"
+          refute instance =~ "%Ezagent", "cap instance must not dump a raw struct: #{instance}"
+        end
       end
     end
 
@@ -137,14 +164,21 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
 
         detail_state =
           IdentityData.state_for(
-            %{component: "agent_detail", title: "Agent detail",
+            %{
+              component: "agent_detail",
+              title: "Agent detail",
               path: "/identities/agents/#{URI.encode_www_form(agent_uri_str)}",
-              entity_uri: agent_uri},
-            %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(),
-              caller_caps: admin_ctx.caps}
+              entity_uri: agent_uri
+            },
+            %{
+              workspace_uri: workspace_uri,
+              caller_uri: User.admin_uri(),
+              caller_caps: admin_ctx.caps
+            }
           )
 
         config_fields = detail_state["config_fields"]
+
         assert is_list(config_fields),
                "config_fields must be a list for a py agent (got: #{inspect(config_fields)})"
 
@@ -165,52 +199,59 @@ defmodule Ezagent.World.AgentDetailConfigFieldsTest do
       if System.find_executable("uv") == nil do
         :ok
       else
-      agent_name = "notwired-#{System.unique_integer([:positive])}"
+        agent_name = "notwired-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{agent_uri: agent_uri}} =
-               Workspace.create_agent(
-                 workspace_uri,
-                 %{
-                   flavor: "py",
-                   name: agent_name,
-                   cwd: "",
-                   with_pty: false,
-                   flavor_config: %{"script" => @py_script}
-                 },
-                 admin_ctx
-               )
+        assert {:ok, %{agent_uri: agent_uri}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: "py",
+                     name: agent_name,
+                     cwd: "",
+                     with_pty: false,
+                     flavor_config: %{"script" => @py_script}
+                   },
+                   admin_ctx
+                 )
 
-      on_exit(fn ->
-        _ = Ezagent.Domain.Python.stop(agent_uri)
-        _ = Ezagent.Kind.terminate(agent_uri)
-      end)
+        on_exit(fn ->
+          _ = Ezagent.Domain.Python.stop(agent_uri)
+          _ = Ezagent.Kind.terminate(agent_uri)
+        end)
 
-      detail_state =
-        IdentityData.state_for(
-          %{component: "agent_detail", title: "Agent detail",
-            path: "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
-            entity_uri: agent_uri},
-          %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(),
-            caller_caps: admin_ctx.caps}
-        )
+        detail_state =
+          IdentityData.state_for(
+            %{
+              component: "agent_detail",
+              title: "Agent detail",
+              path: "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
+              entity_uri: agent_uri
+            },
+            %{
+              workspace_uri: workspace_uri,
+              caller_uri: User.admin_uri(),
+              caller_caps: admin_ctx.caps
+            }
+          )
 
-      # M1: not_wired must be present
-      not_wired = detail_state["not_wired"]
-      assert is_list(not_wired),
-             "not_wired must be a list in agent_detail state (got: #{inspect(not_wired)})"
+        # M1: not_wired must be present
+        not_wired = detail_state["not_wired"]
 
-      # Must include the standard set of missing capabilities
-      not_wired_keys = Enum.map(not_wired, & &1["key"]) |> MapSet.new()
-      expected = MapSet.new(["skills", "tools", "kb", "lifecycle_detail", "settings_mgmt"])
+        assert is_list(not_wired),
+               "not_wired must be a list in agent_detail state (got: #{inspect(not_wired)})"
 
-      assert MapSet.subset?(expected, not_wired_keys),
-             "not_wired must include skills/tools/kb/lifecycle_detail/settings_mgmt; got: #{inspect(not_wired_keys)}"
+        # Must include the standard set of missing capabilities
+        not_wired_keys = Enum.map(not_wired, & &1["key"]) |> MapSet.new()
+        expected = MapSet.new(["skills", "tools", "kb", "lifecycle_detail", "settings_mgmt"])
 
-      # Each entry must have a reason
-      for entry <- not_wired do
-        assert is_binary(entry["reason"]),
-               "not_wired entry #{inspect(entry["key"])} must have a reason string"
-      end
+        assert MapSet.subset?(expected, not_wired_keys),
+               "not_wired must include skills/tools/kb/lifecycle_detail/settings_mgmt; got: #{inspect(not_wired_keys)}"
+
+        # Each entry must have a reason
+        for entry <- not_wired do
+          assert is_binary(entry["reason"]),
+                 "not_wired entry #{inspect(entry["key"])} must have a reason string"
+        end
       end
     end
   end

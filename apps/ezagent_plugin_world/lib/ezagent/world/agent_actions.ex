@@ -61,10 +61,11 @@ defmodule Ezagent.World.AgentActions do
     caps_str = params |> Map.get("caps", "") |> to_string() |> String.trim()
     with_pty? = Map.get(params, "with_pty") in [true, "true", "on"]
     # M4: extra flavor-specific config fields from the create form
-    config_fields = case Map.get(params, "config_fields") do
-      fields when is_map(fields) -> fields
-      _ -> %{}
-    end
+    config_fields =
+      case Map.get(params, "config_fields") do
+        fields when is_map(fields) -> fields
+        _ -> %{}
+      end
 
     with %URI{scheme: "workspace"} <- workspace_uri,
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, caller),
@@ -138,23 +139,30 @@ defmodule Ezagent.World.AgentActions do
        |> push_navigate(to: "/identities/agents")}
     else
       {:ok, sessions} when is_list(sessions) ->
-        {:noreply, push_agent_action_error(socket, {:agent_bound_to_live_session, sessions})}
+        {:noreply,
+         push_agent_action_error(socket, agent_uri_str, {:agent_bound_to_live_session, sessions})}
 
       :error ->
-        {:noreply, push_agent_action_error(socket, :invalid_agent_uri)}
+        {:noreply, push_agent_action_error(socket, agent_uri_str, :invalid_agent_uri)}
 
       {:error, reason} ->
-        {:noreply, push_agent_action_error(socket, reason)}
+        {:noreply, push_agent_action_error(socket, agent_uri_str, reason)}
     end
   end
 
   defp dispatch_agent_delete(socket, _),
-    do: {:noreply, push_agent_action_error(socket, :invalid_agent)}
+    do: {:noreply, push_agent_action_error(socket, nil, :invalid_agent)}
 
-  # No silent drop: rebuild the agents-list state with an operator-facing error
-  # via the SAME `world:state` channel the route uses (mirrors push_agent_create_error).
-  defp push_agent_action_error(socket, reason) do
-    route = Ezagent.World.Routes.route_for(%{}, "/identities/agents")
+  # No silent drop: rebuild the route state with an operator-facing error via the
+  # SAME `world:state` channel the route uses (mirrors push_agent_create_error).
+  #
+  # F4: the delete button lives on the agent DETAIL page, so a delete error must
+  # land on the detail route the operator is actually viewing — rebuilding the
+  # agents-LIST route put the banner in a component the user had navigated away
+  # from (invisible). Rebuild the detail route when we have a valid agent URI;
+  # fall back to the list route only when the URI itself is unparseable.
+  defp push_agent_action_error(socket, agent_uri_str, reason) do
+    route = action_error_route(agent_uri_str)
     layout = socket.assigns.world_state["layout"]
     state = state_for_route(route, socket, layout)
     state = Map.put(state, "action_error", action_error_message(reason))
@@ -165,6 +173,19 @@ defmodule Ezagent.World.AgentActions do
     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
     |> push_event("world:state", state)
   end
+
+  defp action_error_route(agent_uri_str) when is_binary(agent_uri_str) do
+    case parse_agent_uri(agent_uri_str) do
+      {:ok, _agent_uri} ->
+        encoded = URI.encode_www_form(agent_uri_str)
+        Ezagent.World.Routes.route_for(%{"uri" => encoded}, "/identities/agents/#{encoded}")
+
+      :error ->
+        Ezagent.World.Routes.route_for(%{}, "/identities/agents")
+    end
+  end
+
+  defp action_error_route(_), do: Ezagent.World.Routes.route_for(%{}, "/identities/agents")
 
   defp action_error_message({:agent_bound_to_live_session, sessions}) when is_list(sessions),
     do:

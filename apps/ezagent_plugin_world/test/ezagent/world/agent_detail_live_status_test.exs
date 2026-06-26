@@ -78,7 +78,11 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
             path: "/identities/agents/#{URI.encode_www_form(agent_uri_str)}",
             entity_uri: agent_uri
           },
-          %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(), caller_caps: admin_ctx.caps}
+          %{
+            workspace_uri: workspace_uri,
+            caller_uri: User.admin_uri(),
+            caller_caps: admin_ctx.caps
+          }
         )
 
       agent_status = detail_state["agent_status"]
@@ -112,10 +116,12 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
     end
 
     @tag :integration
-    test "not-found agent: list omits it, detail agent_status.phase is 'not_found' (not 'unknown')",
+    test "not-found agent: list omits it, detail renders a clean not-found (F2), not a shell",
          %{workspace_uri: _workspace_uri, admin_ctx: _admin_ctx} do
-      # A URI that was never registered — detail must return :not_found (jsonable → "not_found"),
-      # NOT "unknown" (which would mean the jsonable conversion silently failed).
+      # A URI that was never registered (no live process AND no snapshot) — F2:
+      # the detail builder signals `agent_not_found` so the React detail renders
+      # a not-found empty state instead of a hollow shell of "—"/"unknown" rows
+      # (which is what a `agent_status.phase == "not_found"` shell used to be).
       ghost_uri = Ezagent.URI.agent("acme", "ghost-agent-never-registered")
 
       detail_state =
@@ -129,21 +135,11 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
           %{workspace_uri: nil, caller_uri: nil, caller_caps: MapSet.new()}
         )
 
-      agent_status = detail_state["agent_status"]
-
-      assert is_map(agent_status),
-             "agent_status must be a map even for not-found agents (was: #{inspect(agent_status)})"
-
-      phase = Map.get(agent_status, "phase")
-
-      assert is_binary(phase),
-             "agent_status[\"phase\"] must be a string (was: #{inspect(phase)})"
-
-      # For a not-found agent, Domain.Agent.lifecycle_status returns %{phase: :not_found, ...}
-      # which jsonable/1 must convert to %{"phase" => "not_found", ...}
-      # NOT "unknown" (which would mean the conversion itself broke).
-      assert phase == "not_found",
-             "expected 'not_found' for a ghost agent, got: #{inspect(phase)}"
+      assert detail_state["agent_not_found"] == true
+      assert detail_state["agent_uri"] == URI.to_string(ghost_uri)
+      # No hollow shell: the status/caps fields are not emitted for a ghost.
+      refute Map.has_key?(detail_state, "agent_status")
+      refute Map.has_key?(detail_state, "granted_caps")
     end
   end
 end
