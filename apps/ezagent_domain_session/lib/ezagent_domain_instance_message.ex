@@ -16,6 +16,9 @@ defmodule EzagentDomainInstanceMessage do
   @doc "Re-materialize a session's orchestrator agent with an explicit `workspace_uri` (for when the binding is unavailable). Delegates to `SessionCreator`."
   defdelegate repair_orchestrator(session_uri, workspace_uri), to: SessionCreator
 
+  @doc "Remove a session member (by URI) via the orchestrator (terminate worker + prune routing). Delegates to `SessionCreator`."
+  defdelegate remove_session_member(session_uri, member_uri, caller, caps), to: SessionCreator
+
   @doc "Tear down a partially-created session + its orchestrator (the create rollback inverse). Delegates to `SessionCreator`."
   defdelegate rollback_session(session_uri, orchestrator_uri), to: SessionCreator
 

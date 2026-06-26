@@ -244,6 +244,66 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   def repair_orchestrator(%URI{scheme: "session"}, nil),
     do: {:error, :repair_requires_workspace}
 
+  @doc """
+  Remove a session member identified by its `member_uri`, routing through the
+  orchestrator `Ezagent.Orchestrator.Tools.remove_member/2` so the spawned
+  worker is TERMINATED and routing rows naming it are pruned/repointed (NOT the
+  bare `:session :leave`, which only drops the roster entry and orphans the
+  worker + routing).
+
+  F7: the world console members panel carries member URIs; the orchestrator
+  tool is keyed by `role_name`, so this resolves `member_uri → role_name` off
+  the live session roster first. A member with NO `role_name` facet (e.g. a
+  plain user who joined without a managed role) is NOT orchestrator-managed and
+  cannot be torn down through this path — it returns `{:error, :member_not_managed}`
+  rather than silently falling back to `:leave` (which would orphan nothing for
+  a user but would diverge from the documented terminate-and-prune contract).
+  """
+  @spec remove_session_member(URI.t(), URI.t(), URI.t(), term()) ::
+          {:ok, term()} | {:error, term()}
+  def remove_session_member(
+        %URI{scheme: "session"} = session_uri,
+        %URI{} = member_uri,
+        %URI{} = caller,
+        caps
+      ) do
+    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
+
+    case role_name_for_member(members, member_uri) do
+      nil ->
+        {:error, :member_not_managed}
+
+      role_name when is_binary(role_name) ->
+        workspace_uri =
+          case Ezagent.Capability.workspace_of(session_uri) do
+            %URI{} = ws -> ws
+            :any -> nil
+          end
+
+        Ezagent.Orchestrator.Tools.remove_member(role_name,
+          caller: caller,
+          caps: caps,
+          workspace_uri: workspace_uri,
+          session_uri: session_uri
+        )
+    end
+  end
+
+  # Reverse of `Tools.member_uri_for_role/2` — the member's `:role_name` facet,
+  # or nil when the roster has no such member or it carries no role_name.
+  defp role_name_for_member(members, %URI{} = member_uri) when is_map(members) do
+    member_key = URI.to_string(member_uri)
+
+    Enum.find_value(members, nil, fn
+      {%URI{} = uri, %{role_name: role_name}}
+      when is_binary(role_name) and role_name != "" ->
+        if URI.to_string(uri) == member_key, do: role_name, else: nil
+
+      _ ->
+        nil
+    end)
+  end
+
   defp do_repair_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri) do
     template_name = Ezagent.URI.type!(session_uri)
 

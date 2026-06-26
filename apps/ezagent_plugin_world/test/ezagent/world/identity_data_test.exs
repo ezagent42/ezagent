@@ -18,13 +18,11 @@ defmodule Ezagent.World.IdentityDataTest do
     refute "curl" in state["cwd_required_flavors"]
   end
 
-  test "agent_detail state includes granted caps + executor fields (labeled, not raw dump)" do
-    # No app/registries are started in this plugin's unit test harness, so we
-    # exercise the REAL builder (real Invocation.dispatch + sandbox_read paths)
-    # against a well-formed agent URI. The builder's graceful-degrade branches
-    # produce the documented shapes: `granted_caps` is a list (or an error map
-    # when dispatch can't reach a live Kind), and `project_cwd`/`config_dir`/
-    # `source_template` are always present (value may be nil = "direct-spawn").
+  test "agent_detail state of a non-existent agent is a clean not-found, not a shell (F2)" do
+    # No app/registries are started in this plugin's unit test harness, so this
+    # probe agent has NO live process AND NO snapshot — i.e. it does not exist.
+    # F2: the builder must signal `agent_not_found` (so the React detail renders
+    # a not-found empty state) instead of a hollow shell of "—"/"unknown" rows.
     agent_uri = Ezagent.URI.agent("acme", "cc-detail-probe")
 
     state =
@@ -38,19 +36,11 @@ defmodule Ezagent.World.IdentityDataTest do
         %{workspace_uri: nil, caller_uri: nil, caller_caps: MapSet.new()}
       )
 
-    # granted_caps is the real CapBAC list shape (or a graceful error map when
-    # the target Kind isn't live in this bare harness) — never a raw JSON dump.
-    assert is_list(state["granted_caps"]) or is_map(state["granted_caps"])
-
-    # The three executor/config fields are always present (nil renders as
-    # "—" / "direct-spawn" in the UI).
-    assert Map.has_key?(state, "project_cwd")
-    assert Map.has_key?(state, "config_dir")
-    assert Map.has_key?(state, "source_template")
-
-    # Labeled fields the React detail page reads.
-    assert Map.has_key?(state, "agent_uri")
-    assert Map.has_key?(state, "agent_status")
+    assert state["agent_not_found"] == true
+    assert state["agent_uri"] == URI.to_string(agent_uri)
+    # The hollow-shell fields are NOT emitted for a non-existent agent.
+    refute Map.has_key?(state, "granted_caps")
+    refute Map.has_key?(state, "project_cwd")
   end
 
   test "create_error_message maps backend reasons to operator-facing text" do
@@ -79,5 +69,41 @@ defmodule Ezagent.World.IdentityDataTest do
              "授予 caps 失败"
 
     assert is_binary(Ezagent.World.IdentityData.create_error_message({:weird, :tuple}))
+  end
+
+  test "create_error_message gives py's :missing_script a friendly hint, not a raw atom (F6)" do
+    msg = Ezagent.World.IdentityData.create_error_message(:missing_script)
+    assert is_binary(msg) and msg != ""
+    # No raw `:missing_script` atom leaking to the operator.
+    refute msg =~ "missing_script"
+    assert msg =~ "script"
+  end
+
+  test "agent_new_form marks py as a script-required flavor (F6)" do
+    ws = Ezagent.URI.workspace("acme")
+
+    state =
+      Ezagent.World.IdentityData.state_for(
+        %{component: "agent_new_form", title: "New agent", path: "/identities/agents/new"},
+        %{workspace_uri: ws, caller_uri: nil, caller_caps: MapSet.new()}
+      )
+
+    assert "py" in state["script_required_flavors"]
+  end
+
+  test "agents_table state carries agent_flavors for the flavor filter (F1)" do
+    ws = Ezagent.URI.workspace("acme")
+
+    state =
+      Ezagent.World.IdentityData.state_for(
+        %{component: "agents_table", title: "Agents", path: "/identities/agents"},
+        %{workspace_uri: ws, caller_uri: nil, caller_caps: MapSet.new()}
+      )
+
+    # The flavor filter chips read `agent_flavors`; without it the AgentsTable
+    # FilterBar would render only the static All/Users/Agents chips.
+    assert Map.has_key?(state, "agent_flavors")
+    assert is_list(state["agent_flavors"])
+    assert is_list(state["agents"])
   end
 end

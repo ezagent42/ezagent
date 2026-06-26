@@ -634,9 +634,16 @@ defmodule EzagentPluginWorld.WorldLive do
     # the `session.<name>` class (workspace `resolve_session_class/1`). Without
     # this the dropdown only listed per-session template INSTANCES ("hello-77")
     # and the `hello` class itself was missing.
+    # F3: offer only Classes that are DIRECTLY creatable from this generic
+    # picker (the picker supplies only the universal `session_name` arg). A
+    # Class whose `instantiate/3` requires extra args — e.g. `session.advisor`
+    # needs an `operator_uri` — declares `directly_creatable?/0 => false` and is
+    # filtered out here, so it can't become the dropdown default and fail closed
+    # with `{:invalid_template, …}` on create.
     classes =
       Ezagent.TemplateRegistry.registered_template_names()
       |> Enum.filter(&String.starts_with?(&1, "session."))
+      |> Enum.filter(&class_directly_creatable?/1)
       |> Enum.map(&String.replace_prefix(&1, "session.", ""))
 
     instances =
@@ -645,15 +652,32 @@ defmodule EzagentPluginWorld.WorldLive do
       |> Ezagent.World.WorkspacePluginData.session_template_rows()
       |> Enum.map(&Map.get(&1, "name"))
 
-    (["default" | classes] ++ instances)
-    |> Enum.reject(&(&1 in [nil, ""]))
-    |> Enum.uniq()
-    |> Enum.sort()
+    # "default" is ALWAYS the first (selected) option — the React picker takes
+    # `templates[0]` as its default, so the always-creatable bootstrap class
+    # must lead regardless of how the other names sort.
+    other =
+      (classes ++ instances)
+      |> Enum.reject(&(&1 in [nil, "", "default"]))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    ["default" | other]
   rescue
     _ -> ["default"]
   end
 
   defp session_template_names(_), do: ["default"]
+
+  # F3: a registered `session.<name>` Class is offered by the generic picker
+  # only when its Template Class declares itself directly creatable (default
+  # true; advisor overrides false). An unregistered name conservatively passes
+  # (it's a non-class instance name handled elsewhere).
+  defp class_directly_creatable?(class_name) do
+    case Ezagent.TemplateRegistry.lookup(class_name) do
+      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
+      :error -> true
+    end
+  end
 
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))

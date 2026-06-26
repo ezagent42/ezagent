@@ -16,4 +16,26 @@ defmodule Ezagent.World.ConversationActionsTest do
                fn _workspace_uri, _params, _ctx -> exit({:timeout, self()}) end
              )
   end
+
+  # F3: every session-create failure must map to a non-empty operator-facing
+  # message (so the sessions table shows a banner instead of silently dropping).
+  describe "session_create_error_message/1 (F3 no-silent-drop)" do
+    test "named reasons get friendly messages" do
+      for reason <- [:short_name_required, :template_required, :invalid_workspace, :unauthorized] do
+        msg = ConversationActions.session_create_error_message(reason)
+        assert is_binary(msg) and msg != ""
+      end
+    end
+
+    test "the F3 wrong-template default failure ({:invalid_template, _}) is explained" do
+      msg = ConversationActions.session_create_error_message({:invalid_template, %{}})
+      assert is_binary(msg) and msg != ""
+      refute msg =~ "invalid_template"
+    end
+
+    test "an unknown reason still produces a non-empty message (never a silent drop)" do
+      msg = ConversationActions.session_create_error_message(:some_unmapped_reason)
+      assert is_binary(msg) and msg != ""
+    end
+  end
 end
