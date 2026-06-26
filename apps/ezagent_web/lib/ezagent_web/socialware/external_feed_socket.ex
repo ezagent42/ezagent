@@ -1,13 +1,17 @@
 defmodule EzagentWeb.Socialware.ExternalFeedSocket do
   @moduledoc """
-  Socket for customer-facing socialware feeds.
+  Socket for the external socialware surface feed.
 
-  The socket authenticates a session-binding token before any channel can
-  subscribe. Customer clients never join raw session feeds.
+  Authenticates a signed caller-identity token (`ChatFeedAuth`) before any
+  channel can subscribe, recovering a TRUSTED caller `%URI{}` (a minted read-only
+  anon-User or a signed-in member). The actual read authorization (is this caller
+  an owner/member of the session?) is the LIVE `Membership` check the channel +
+  `ExternalFeed` run on every read — the token only proves the SERVER minted it
+  for that caller on that session. External clients never join raw session feeds.
   """
   use Phoenix.Socket
 
-  alias Ezagent.Socialware.{ChatFeedAuth, ExternalFeed}
+  alias Ezagent.Socialware.ChatFeedAuth
 
   channel "socialware:external:*", EzagentWeb.Socialware.ExternalFeedChannel
 
@@ -16,32 +20,13 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocket do
     with {:ok, session_str} <- Map.fetch(params, "session_uri"),
          {:ok, token} <- Map.fetch(params, "token"),
          {:ok, session_uri} <- parse_session(session_str),
-         {:ok, _snapshot} <- ExternalFeed.snapshot(session_uri, token) do
+         {:ok, caller} <- ChatFeedAuth.verify(token, session_uri) do
       {:ok,
        socket
        |> assign(:session_uri, session_uri)
-       |> assign(:token, token)
-       |> assign(:viewer_principal, viewer_principal(params, session_uri))}
+       |> assign(:caller, caller)}
     else
       _ -> :error
-    end
-  end
-
-  # The OPTIONAL logged-in viewer identity (or nil for anonymous). The customer
-  # `token` (CustomerAuth) only proves session+ws access; `viewer_token`
-  # (ChatFeedAuth) proves WHO is viewing — used by the channel for join/post. A
-  # missing/invalid viewer_token degrades to anonymous read-only, NEVER an error
-  # (an anonymous visitor must still get the read-only page).
-  defp viewer_principal(params, session_uri) do
-    case Map.get(params, "viewer_token") do
-      token when is_binary(token) and token != "" ->
-        case ChatFeedAuth.verify(token, session_uri) do
-          {:ok, %URI{} = principal} -> principal
-          _ -> nil
-        end
-
-      _ ->
-        nil
     end
   end
 

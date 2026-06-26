@@ -159,26 +159,24 @@ function selectionPrefix(sel) {
 
 function boot(root) {
   const sessionUri = root.dataset.sessionUri
+  // The caller-identity token (ChatFeedAuth) for the viewer — a minted read-only
+  // anon-User or a signed-in member. It is BOTH the read identity and the
+  // join/post actor; the channel verifies it to a principal and re-checks live
+  // membership on every read. There is no separate identity-less session token.
   const token = root.dataset.token
   // The socket PATH and channel topic PREFIX are read from the mount element so
-  // the SAME SPA serves both the customer feed and the chat feed (P4 codex
-  // finding 3). Both default to the customer values, so an existing
-  // customer-feed page (which sets neither attribute) is byte-identical to
-  // before.
+  // the SAME SPA serves both the external surface feed and the chat feed (P4
+  // codex finding 3). Both default to the external-surface values.
   const socketPath = root.dataset.socketPath || "/socialware_external_socket"
   const topicPrefix = root.dataset.topicPrefix || "socialware:external"
-  // Identity token for the logged-in viewer (or "" anonymous). Drives the bar's
-  // login/join/post states; the channel re-derives logged_in/member from it.
-  const viewerToken = root.dataset.viewerToken || ""
   const reactRoot = createRoot(root)
 
   reactRoot.render(
-    React.createElement(CustomerApp, {
+    React.createElement(ViewerApp, {
       sessionUri,
       token,
       socketPath,
       topicPrefix,
-      viewerToken,
     })
   )
 }
@@ -194,7 +192,7 @@ const IS_EMBEDDED = (() => {
   }
 })()
 
-function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) {
+function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
   // Debug: highlight which parts of the page are json-render (vs the HTML frame).
@@ -213,7 +211,7 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
   }, [jrHighlight])
 
   useEffect(() => {
-    const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token, viewer_token: viewerToken}})
+    const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
     socket.connect()
 
     const channel = socket.channel(`${topicPrefix}:${sessionUri}`, {})
@@ -259,7 +257,7 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix, viewerToken}) 
       channel.leave()
       socket.disconnect()
     }
-  }, [sessionUri, token, socketPath, topicPrefix, viewerToken])
+  }, [sessionUri, token, socketPath, topicPrefix])
 
   // Element-picking mode: hover outlines the element under the cursor; a click
   // captures it as `selected` and exits. Capture-phase listeners so a click
