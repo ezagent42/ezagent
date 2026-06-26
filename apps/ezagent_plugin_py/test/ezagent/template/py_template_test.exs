@@ -8,7 +8,10 @@ defmodule Ezagent.Template.PyAgentTest do
   unit (`install_script/2`) and pure validate/0.
   """
 
-  use ExUnit.Case, async: false
+  # P4b — py spawns the UNIFIED Entity.Agent Kind, whose init reads the snapshot
+  # store (DB). The provision_and_instantiate tests spawn a real Kind.Server, so
+  # they need the DataCase shared sandbox (the old own-Kind init did no DB read).
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Template.PyAgent, as: Tmpl
   alias Ezagent.Domain.Python
