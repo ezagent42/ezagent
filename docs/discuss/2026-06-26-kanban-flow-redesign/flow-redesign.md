@@ -1,232 +1,119 @@
-# 产品开发协作流程重设计（dev-together × kanban × ezagent）
+# 真相源 — kanban 支持的团队开发流程（flow redesign）
 
-> 日期：2026-06-26
-> 范围：把三件东西接成一条流水线——9 阶段产品接力链（positioning→…→pr）、dev-together 的每日 8 命令节奏、ezagent 上的 live kanban board（kanban-as-role agent）。
-> 立场：本文给"真正应该的流程"，每一步落到"谁做 / 读什么 / 产什么 / 用 kanban 哪个动作 / 用 dev-together 哪个命令"，并指出现状缺口和最小修复。所有论断带 file:line。
-
----
-
-## 0. 一句话结论
-
-现状是**三套各转各的轮子**：
-
-1. **9 阶段接力链**是产品语义（一条"真相源接力"，每个箭头一道 gate），权威源 `docs/discuss/df-prd/07-定版-自举开发流程-10分钟.md`；
-2. **dev-together** 是纯开发节奏胶水，只围着 `team.md` 花名册转，**对产品 board 零感知**（`grep -rl kanban .claude/skills/dev-together` = 空，见 `.claude/skills/dev-together/SKILL.md:36-43` 的委托链里没有 kanban）；
-3. **kanban 插件**有 25 个动作、能把 board 当 live 真相源跑（`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex:42`），但**和 dev-together 之间没有任何代码/文件级接线**——kanban-off/on 两个 skill 是 dev-together 的 fork，各自重写了全部 8 个命令，靠各自描述里单向 reference dev-together 挂接。
-
-**真正应该的样子**：一条流水线、两根轴。
-
-- **产品轴**（空间）= 一块 live kanban board（一个产品一块，URI `resource://<ws>/kanban/<name>`，跨天持久，存在 Kind snapshot 里，见 `kanban-on-ezagent/SKILL.md:57-66`）。它同时是**活源**（plan 读它）和**回写汇**（dive/handoff/return/close 写它）。9 阶段接力链就是这块 board 的节点树。
-- **时间轴**（节奏）= `docs/together/<date>/` 每日日志 + dev-together 8 命令（`kanban-on-ezagent/SKILL.md:68-77`）。
-
-把两根轴用 **board node id** 这个字段缝起来：dev-together 每个 plan 任务 / return / stack 条目都必填它指向的 board 节点，节奏的每一步都顺手 dispatch 一个 `kanban.*` 动作回写产品轴。**产品状态和开发节奏从此是一个闭环，不是两条不相干的轨。**
+> 日期 2026-06-26（重写为真相源，supersedes 本文旧版）｜ 配套 SPEC：`docs/discuss/2026-06-26-kanban-team-flow-spec.md`。
+> 本文**详细说明 kanban 支持的开发流程**，是流程的单一真相源。所有论断带 file:line（skill-1 核实）。
+> ⚠️ 现有零碎提交（2 skill + B1/B2 github 修改）保留待整理，**非本文设计依据**（见 SPEC 顶部声明）。
 
 ---
 
-## 1. 两根轴的职责切分（别混）
+## 0. 定位
 
-| | 产品轴（kanban board） | 时间轴（dev-together） |
-|---|---|---|
-| 是什么 | 一块 live Kind，9 阶段节点树 | `docs/together/<date>/` 每日文件夹 |
-| 单位 | 一个产品一块，跨天持久 | 一天一个文件夹 |
-| 真相源 | **产品状态的唯一真相源**（每个节点的 stage/owner/status/artifacts/metrics） | 当天**开发动作的流水账**（plan/returns/stack/review） |
-| 谁读谁写 | 只能经 dispatch 读写（`Ezagent.Invocation.dispatch/1`） | 文件读写 |
-| 推进节律 | **节点级、按完成推进**——一个节点在一棒里待几天正常，活干完才进下一棒（不是"一天一棒"，`kanban-on-ezagent/SKILL.md:51-55`） | **天级 PDCA**——每天一轮 plan→…→review |
-
-关键：**board 每天都在动**（活跃节点上记进度），但**节点只在该棒工作 done 才晋级**。这条"daily-progress-not-per-stage"是把多天功能跟每日节奏对齐的核心（`kanban-on-ezagent/SKILL.md:51-55`、`kanban-off-ezagent/SKILL.md:31-35`）。
+一块 kanban board = 一个 agent（role `kanban-manager`×flavor `native`，`application.ex:64/76`），9 阶段节点树存它 snapshot 的 `:kanban` slice。board 既是**产品真相源**又是**调度器**。dev-together 是开发节奏；两者用 **`board_node_id`** 缝成一条流水线，**全程在 chat 发生**，每个角色（人/agent）的每步顺手 dispatch `kanban.*` 回写 board。
 
 ---
 
-## 2. 9 阶段接力链 = board 的节点树（产品语义）
+## 1. 两轴 + 9 阶段链
 
-链是 `positioning→metric→pain→anchor→ux→feature→issue→test→pr`（`kanban-on-ezagent/SKILL.md:8`，stage 枚举见 `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/ci.ex:63-73`）。
-
-每个箭头 = **一次真相源交接 = 一道 gate**：下游只认上游"钦定的那一件唯一真相源"，上游没过自己的验收，下游不放行（`07-定版-自举开发流程-10分钟.md` §核心设计意图 2-3）。
-
-| # | 阶段 | 谁做（角色） | 读什么（上游真相源） | 产什么 | **钦定给下游的唯一真相源** | board 动作 | gate（不过不放行） |
-|---|---|---|---|---|---|---|---|
-| 1 | positioning 定位 | 产品负责人 | 团队产品意图 | 价值主张·PR/FAQ·交易公式 | **一页定位稿** | `add_node`(根, stage=:positioning) + `attach_artifact` | 定位稿成形 |
-| 2 | metric 验证/运营 | 运营 | 一页定位稿 | 北极星指标定义 + drop 阈值 | **北极星指标** | `add_node`(stage=:metric) + `set_metric` | 指标+阈值已定（先定度量后收数据） |
-| 3 | pain 痛点 | 产品 | 北极星指标 | 多张痛点卡 + 优先级 | **排序后痛点清单**（每痛点指向北极星） | `add_node`×N(stage=:pain) + `attach_artifact` | 痛点都挂得上北极星 |
-| 4 | anchor 用户锚定 | 产品负责人 | 痛点清单 | 画像·零教育成本评估·岗位↔层映射 | **岗位↔认领层映射表** | `add_node`(stage=:anchor) + `attach_artifact` | 映射表决定谁认领后续 |
-| 5 | ux 体验主张 | 产品 + 设计 | 痛点清单 | 四条 UX 承诺·线框/原型 | **主界面线框/原型** | `add_node`(stage=:ux) + `attach_artifact` | 线框成形 |
-| 6 | feature 功能/模块 | 产品 + 研发 | 线框/原型 | 模块·spec 卡·用户故事·**Gherkin 验收**·ICE·价值卡 | **功能 spec 卡** | `add_node`(stage=:feature) + `attach_artifact`(content 含 Gherkin) | **Gherkin 验收写全**，否则不许开 issue（`ci.ex:34` `has_gherkin?`） |
-| 7 | issue | 研发 | 功能 spec 卡 | issue（含范围/不做/验收用例） | **issue 本身** | `add_node`(stage=:issue) + `sync_github`(`connectors.ex:31` 建 issue+回挂) | issue 挂上 kind="issue" 产物（`ci.ex:35`） |
-| 8 | test 测试 | 研发 | issue（携带 spec 卡 Gherkin） | 测试代码 + 绿/红，用例=Gherkin不另写 | **可跑且对应 Gherkin 的测试套件（必绿）** | `add_node`(stage=:test) + `attach_artifact`(kind="test_suite", ref="green") | 测试套件挂 kind="test_suite" 且 ref="green"（`ci.ex:36` `test_green?`） |
-| 9 | pr | 研发 | 测试套件（写实现让它变绿） | PR·测试通过·过 gate | **合并后的 PR**（上线→实测回收→回 ②对北极星阈值） | `add_node`(stage=:pr) + `register_pr` + `push_pr`(软留言+硬 CI 门) + `sync_prs` | **4 条判据全绿**（`ci.ex:28-37`），`gate_state`→GitHub commit status 挡合并（`ci.ex:58`、`github.ex:117`） |
-
-角色映射（`07-demo` `ROLES`）：产品负责人[1,4]、运营[2]、产品[3,5,6]、设计[5]、研发[6,7,8,9]；共担：⑤产品+设计、⑥产品+研发。
-
-**回收闭环 ⑨→②**：PR 上线→实测指标回收→回 ② 对北极星阈值→窗口内不达标 → `drop_subtree`（`kanban.ex:130`→`:384`，砍 ⑥→⑦⑧⑨ 子树并追一条到 `tree.drops`）→反哺 ③ 重选痛点。开发与验证错位（这周开发、下周验证）。
-
-**为什么强制"钦定唯一真相源"**：①定位、②验证、⑥功能这种环节天然产出一堆，必须钦定一件为唯一真相源、其余降级成附件，否则下游无所适从（`07-定版` §关键决策）。这正好对应 board 上每个节点钦定一个主 artifact。
+- **产品轴（空间）= board**：9 阶段固定接力链 `positioning→metric→pain→anchor→ux→feature→issue→test→pr`（`kanban.ex:38`），节点级按完成晋级（一节点可跨多天，`set_stage` 收口相邻校验 `stage_fits?`）。
+- **时间轴（节奏）= dev-together**：`docs/together/<date>/` 每日文件夹 + 8 命令（plan/handoff/dive/return/push/close/review/init）。
+- **缝合键 `board_node_id`**：dev-together 每个 task/return/PR 必填它指向的节点；节奏每步 dispatch 一个 `kanban.*`。
 
 ---
 
-## 3. dev-together 8 命令 × 9 阶段：真正的接线
+## 2. 完整开发流程（每阶段：谁 · dev-together 命令 · kanban 动作 · 产物 · chat）
 
-dev-together 8 命令本身**不变**（命令词表已 grill 锁死，`dev-together-skill-improvement-plan.md:19`：所有新增都是脚本/flag/目录，绝不加新命令）。改的是：**每个命令多读/多写 board 一次**，且 plan/return/stack 的台账多一个必填字段 `board_node_id`。
+> ABCD 驱动场景：A 认领到「功能」交文档 → 派活 B/C(agent) → 开发提交 PR → 自动 CI → A 合 → 自动 done → D 评北极星。A/D 人、B/C agent，全在 chat。
 
-下面是**一天**里 8 命令怎么和 9 阶段 board 缝在一起（命令定义见 `.claude/skills/dev-together/SKILL.md:112-121`，融合点见 `kanban-on-ezagent/SKILL.md:119-149`）：
-
-### init（任何人）
-- 现状：`scripts/install_hooks.sh` + `new_day.sh` → 产 `docs/together/<date>/{handoffs,returns}/ + plan.md + stack.md`（`dev-together/commands/init.md:6-12`）。
-- **加**：确保 live board Kind 存在——dispatch 一次 `get_tree`（`kanban.ex:138`→`:558`），ReadyGate 会自动 spawn（`kanban-on-ezagent/SKILL.md:125`）。
-- 产物：当天空文件夹骨架 + 确认 board 在线。
-
-### plan（lead）
-- 现状：只读 `team.md` 花名册（过滤 `role: human-dev`）+ 每人 `latest_return` + `weekly-goals.md`，**不读任何 board**（`dev-together/commands/plan.md:9-31`、`SKILL.md:63-84`）。**这是最大缺口**。
-- **改**：先 dispatch `get_tree` 快照 board 的**活跃节点优先、ready 节点其次**（`kanban-on-ezagent/SKILL.md:126`），形成"今天推哪些节点"的协调视图——**不是中心派活**，派活是去中心化接力。
-- **台账新字段**：`plan.md` 每个任务必填 `board_node_id`（来自 get_tree），外加现有的 owner/branch/scope/required-reading/DoD/deadline。无此字段 = 空 plan = 这天没开始（沿用 `kanban-on-ezagent/SKILL.md:135-137` 的 No-empty-plan + dev-together `SKILL.md:88-91`）。
-- 产物：`plan.md`（团队向三段式：①本周目标功能点缺口 ②缺口开发计划总览 ③按开发者指向各 handoff，`dev-together-skill-improvement-plan.md:9-13` D 条）。
-
-### handoff（node-owner，**不再是 lead 中心派**）
-- 现状：lead 读 assignee 的 `team.md` row + handoff 模板，写 `handoffs/<task>.md`（`dev-together/commands/handoff.md:8-36`），含 clarify-first 分流（research vs build）。
-- **改**：handoff = **接力下一棒**——节点 owner 完成第 N 棒后，dispatch `add_node` 建第 N+1 棒节点（`kanban.ex:42`→`:299`，子 stage 必须 ≥ 父 stage，`kanban.ex:352-355` 单调闸），handoff spec 从该节点的 artifact/metric 派生（`kanban-on-ezagent/SKILL.md:127`），留着 claimable。这是**去中心化接力**，不是从中心下发。
-- clarify-first 保留：第 6 棒（feature）若 spec/可行性/DoD 未知，先发 research handoff 产出 DoD+slices，再发 build handoff（`dev-together/SKILL.md:133-147`）——DoD 往往要研究完才写得出。
-- 产物：`handoffs/<task>.md`（自包含 spec + 贴好的 dev prompt）+ board 上新建的下一棒节点。
-
-### dive（contributor，**人或 agent**）
-- 现状：读 handoff + required reading，从 main 切 per-task 分支，在分支写代码（`dive.md:9-19`）。
-- **改**：先 dispatch `claim_node`（`kanban.ex:82`→`:483`，owner=caller、status→claimed）+ `set_status doing`（`kanban.ex:98`→`:510`），再切分支干活（`kanban-on-ezagent/SKILL.md:128`）。
-- **on-ezagent 超能力**：因为每次 mutation 都带 `ctx.caller`，节点 owner 可以是 **agent entity URI**，Behavior 只查 `caller == node.owner` 或 admin（`kanban.ex:715` `owner_or_admin?`、`shared.ex` / `kanban_actions.ex:321-327`），**不区分人和 agent**。所以接力链可以（部分或全部）跑在 agent 上（`kanban-on-ezagent/SKILL.md:100-108`）。
-- 产物：per-task 分支 + 节点 status=doing。
-
-### return（contributor）
-- 现状：机器闸——要求 PR CI（precommit + check_invariants）green + rebase on main（`dev-together/commands/return.md:6-9`、`SKILL.md:148-151`）；逐行 DoD 对账；写 `returns/<task>.md`（含 returned_at/deadline_status/method-friction）。
-- **改**：把进度 dispatch 回节点——`set_status`/`attach_artifact`/`set_metric`（`kanban-on-ezagent/SKILL.md:129`）。第 8 棒挂 `kind="test_suite", ref="green"` 的测试产物；第 7 棒挂 `kind="issue"` 产物——**这些正是第 9 棒 CI gate 的判据数据**（`ci.ex:35-36`）。
-- **台账新字段**：`returns/<task>.md` 记 `board_node_id` + 这次 dispatch 了什么进度（`kanban-on-ezagent/SKILL.md:138-139`）。
-- 产物：`returns/<task>.md` + board 节点状态/产物前移。
-
-### push（lead）
-- 现状：读 `returns/*`，算依赖/合并序/冲突，写 `stack.md`，**只分析不合并**（`dev-together/commands/push.md:6-16`）。
-- **改**：排序时每个 return 映射到它的 board 节点 id（`kanban-on-ezagent/SKILL.md:130`）。对账要覆盖每个 return：stacked / superseded / late / out-of-scope / blocked（`SKILL.md:140-141`）。
-- 产物：`stack.md`（有序合并栈 + returned-vs-stacked 对账，每行带 board_node_id）。
-
-### close（**仅 lead，唯一进 main 的路径**）
-- 现状：读 `stack.md` + 校 gates，委托 `superpowers:finishing-a-development-branch` + PR closure loop，回写 `stack.md`（`dev-together/commands/close.md:6-22`）。
-- **改**：合 main 后 dispatch 推进节点——`set_status done`/`set_stage`（推进到下一棒）/`attach_artifact` + `sync_github`（`kanban-on-ezagent/SKILL.md:131`）。第 9 棒 close 时 `register_pr`+`push_pr` 把 requirement_digest 软留言到 PR + `gate_state` 推成 commit status 硬门（`connectors.ex:75`、`ci.ex:58`）。
-- **Close PR state**：合并后每个相关 PR 要么 merged 要么显式 closed/subsumed，节点反映结果（`sync_github`/`sync_prs` 保持 GitHub 侧诚实，`kanban-on-ezagent/SKILL.md:142-144`）。
-- 产物：main 上的合并 SHA + board 节点晋级 + GitHub 同步。
-
-### review（lead）
-- 现状：读 `stack.md` + 各 return 的 method-friction，写 `review.md`（retro+stats+method-deltas），**唯一写者**回写 `team.md` 的 `current_track`/`latest_return`（`dev-together/commands/review.md:5-27`、`SKILL.md:74`）。
-- **改**：dispatch `get_tree` 把 **live board 对账到 main + stack**，修漂移（dispatch 纠正），刷投影 `export_markmap`/`sync_miro`（`kanban-on-ezagent/SKILL.md:132`、`148-149`）。
-- 6-26 升级：review 是**数据驱动 HTML**——`gather_stats.sh`→`stats/cycle-data.json`→渲染三章节（①昨日工作统计 ②昨日开发效能含 dev-time=最早commit→merge ③数据统计聚焦 feature-points），见 `dev-together-skill-improvement-plan.md:9-13` B 条。review 写的是**对昨天 cycle 的回顾**（"2026-06-25 review.html" 落在 6-26 目录）。
-- 产物：`review.html`（团队向，scrub 掉内部讨论）+ 回写 team.md + board 对账修漂移。
+| 阶段 | 谁 | dev-together 命令 | kanban 动作 | 自动挂载的产物 |
+|---|---|---|---|---|
+| 定位→功能 建链 | A | `plan`（读周目标+花名册+**board get_tree**） | `add_node`×N + `set_stage` | 各阶段文档（见 §3 artifact） + `plan.md` 挂板级 |
+| 派活 | A | `handoff`（从 issue 节点 content 生成） | `claim_node`（owner=worker） | `handoffs/<task>.md` **自动挂 issue 节点**（§4） |
+| 认领开发 | B/C(agent) | `dive`（读 handoff） | `claim_node`+`set_status doing` | 任务分支 |
+| 提交 | B/C | `return` | `register_pr`（自动，见 github 入站） | `returns/<task>.md` **自动挂该节点** + PR artifact |
+| CI 硬门 | 系统 | — | `push_pr`（verdict→commit status） | GitHub status check |
+| 合并 | A | `push`/`close`（lead 合 main） | `sync_prs`→`set_status done`（自动） | `stack.md` 挂 PR 棒 |
+| 评估 | D | `review` | `set_metric`/`drop_subtree` | `review.md` 挂 close/上线棒 |
 
 ---
 
-## 4. 关键缺口与必须的修复（不补，流水线就断在这几处）
+## 3. Artifact 模型（Challenge 1 解法）
 
-### 缺口 A —— register_pr 是整条自动 CI 链的人工断点（最痛）
-**断在哪**：`register_pr(%{id, pr})` 的 `pr` 是**调用方手填**的字符串（`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban/connectors.ex:116`），`to_pr_number/1`（`connectors.ex:331`）解析 "#42" 拼 URL 挂 kind="pr" 产物。没有任何代码自动发现 PR 号——`github.ex` 只有出站，moduledoc 明写"无 inbound webhook"（`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/github.ex:9`）。
+**现有 artifact 已足够用**：`%{tool, kind, ref, url, content}`（`shared.ex:122`，content inline ≤64KB）。挂载经 `attach_artifact`（小内容）/ `attach_upload`（上传文件）。
 
-**堵死的三件事**（全卡在这一步之后）：
-- `push_pr` 经 `node_pr/1`（`connectors.ex:316`）抠 PR 号，没登记就返回 `:no_pr_registered`（`connectors.ex:94`）→ 软留言 + 硬 CI 门全发不出；
-- `sync_prs` 经 `advance_merged_prs`（`connectors.ex:341`）靠 `node_pr` 找已登记 PR，未登记节点直接跳过 → merged→done 自动推进不发生；
-- B1 接力：`register_pr` 是 `@relay_actions` 之一（`kanban.ex:702`），登记成功才 fire `[kanban:pr_registered]` 唤醒下一个（CI）agent。
+**核心原则：artifact 必须"读得到"——上线后、别人、别的机器上的 agent/CI 都能读。所以 raw 本地文件路径不是合法 artifact**（只在生成它的那台机器上有，部署/换人/换 agent 就死）。按**可读性保证从强到弱**排，只用前三种：
 
-**对称缺口**：Miro 侧有非破坏入站（`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro/sync.ex:166` `detect_inbound/2` + `miro_sync.ex` GenServer 轮询→dispatch add_node），**GitHub 侧完全没有**。
+| # | 形态 | url/content | 谁能读 | 上线/redeploy 后 |
+|---|---|---|---|---|
+| 1 | **repo 路径**（存证后，能力 G） | `url`=仓库内路径 | 任何有 repo 权限的人/agent/CI | ✅ git 里，最强 |
+| 2 | **inline content**（≤64KB） | `content` 直接进快照 | 任何能访问 board 的（真相源自带） | ✅ 在 DB 快照里 |
+| 3 | **上传文件**（`attach_upload`） | `url`=ezagent uploads URI，签发下载 href（`kanban_actions.ex:261`） | 任何 ezagent 服务覆盖到的 | ⚠️ 绑部署的 uploads 存储，存储不备份会丢 |
+| ~~4~~ | ~~raw 本地文件链接~~ | ~~`file://…`~~ | **只有那台机器** | ❌ **不用** |
+| 5 | **外部链接**（飞书/figma） | `url`=外链 | 取决于外部权限 | ⚠️ 弱（死链/权限墙），**必须镜像进仓库**（仓库里留含链接的占位 md，做到"仓库能查到"） |
 
-**修复**：给 `github.ex` 补一条 inbound——webhook（监听 pull_request 事件）或轮询 `list PRs` 按 head_ref/分支名自动匹配节点 → 自动 `register_pr`。这一条补上，硬 CI 门 + 自动合并推进 + B1 接力唤醒同时通，**且接力链才能真正无人值守跑在 agent 上**（否则每次都要人肉看 PR 号手工 dispatch）。
+**保留的便利工具（不动）**：**Excalidraw** 内嵌编辑器（`ExcalidrawModal.tsx`）= UX/线框棒的画图工具，画完把 scene elements 序列化成 JSON 存进 `artifact.content`（inline，`kind="excalidraw"`，`Kanban.tsx:496`/`:390` 渲染回显）——正好走 inline content（2）这条"读得到"的路，**artifact 收敛不影响它**。同理任何"画完/填完 → 序列化成 ≤64KB JSON/文本进 content"的便利工具都自然兼容。
 
-> 这条修复让第 9 棒 close 不再需要人插一脚，是"全自动开发"（kanban-manager agent 驱动）的前置。
+**"怎么保证读到" = 优先级 1→2→3**：
+- 文本/spec/Gherkin/线框 JSON（小，含 Excalidraw 场景）→ **inline**（2）。
+- 要版本化、要 CI/别的 agent 读、要上线后还在 → **commit 进仓库**（1，能力 G）= 最强保证。
+- 二进制/大文件 → `attach_upload` 进 uploads 库（3），url 是 ezagent 管理的 uploads URI（**不是本地路径**），ezagent 服务在哪都能签 href 读；要长期存证再 commit 进仓库。
+- 外链（5）只当便利，**真相必须镜像进仓库**。
 
-### 缺口 B —— dev-together 台账没有 board_node 字段
-dev-together 的 plan completeness gate（`dev-together/commands/plan.md:32-46`）和 return 元数据块（`return.md:33-44`）**没有 board_node 字段**。即使有 board，dev-together 产物也回指不到节点。
-**修复**：把 `board_node_id` 下沉成 plan/return/stack 的**可选台账列**（有 board 时必填，无 board 时省略）——这样一套 dev-together 既能跑纯开发（无 board），又能跑产品流水线（有 board），不必 fork 出两个 kanban skill。
+**结论：废弃 `attach_code_file`（sha/path→github blob，`connectors.ex:152`）**——它是"把文件钉在某 commit sha 的 blob"窄特例，有了仓库存证（1）就用稳定 repo 路径，不需要 sha 钉死的 blob。**Phase 5 删该动作 + 移出白名单**（连带 register_pr 手填被 github 入站取代，SPEC 能力 D）。
 
-### 缺口 C —— dev-together 不指向 kanban（单向接线）
-两 kanban skill reference 了 dev-together（`kanban-off-ezagent/SKILL.md:22-29`、`kanban-on-ezagent/SKILL.md:44-49`），但 **dev-together 委托链里没有 kanban**（`dev-together/SKILL.md:36-43`）。接线只活在 kanban 一侧的描述文字里。
-**修复**：在 dev-together SKILL 委托链/路由处加一句指针——"若存在产品 board（`docs/board.md` 或 `resource://…/kanban/…`），用 kanban-off/on-ezagent 取代本 skill 的 plan/review 读写"。
-
-### 缺口 D —— handoff-standard 三份拷贝
-`handoff-standard.md` 在 dev-together 和两 kanban skill 各存一份（复制非引用）。dev-together 改标准不会传导到 kanban。
-**修复**：抽成单一来源（dev-together 持有，kanban 两 skill 引用）。
-
-### 缺口 E —— 三套 skill 是 fork，不是组合
-kanban-off/on **各自重写了全部 8 命令**，而非"dev-together 若有 board 就切换读写源"。维护三份会持续漂移。
-**修复方向**（更大、需 Allen 拍板）：让 kanban-on/off 只覆写 plan/handoff/return/close/review 里"碰 board"的那几个动作，其余继承 dev-together。短期可先靠缺口 B/C/D 把接线做实，长期收敛成"一套节奏 + board 适配层"。
+> 即：artifact 形态 = inline content / repo 路径 / uploads URI 三条「读得到」的路；raw 本地链接和 sha/pr blob 下线，外链必须镜像进仓库。
 
 ---
 
-## 5. 每阶段产物清单（落到文件/动作）
+## 4. dev-together 自动产物 → 阶段映射 + 自动挂载（Challenge 2 解法）
 
-**产品轴产物**（都活在 board 节点的 artifacts 里，经 `attach_artifact` dispatch，`kanban.ex:106`→`:531`）：
-| 阶段 | 产物文件/工具 | 钦定真相源（节点主 artifact） |
-|---|---|---|
-| 1 定位 | 飞书 docx / Miro 根节点 | 一页定位稿 |
-| 2 验证 | 飞书 OKR + 指标采集落库 | 北极星指标 + drop 阈值（`set_metric`，`kanban.ex:122`→`:544`） |
-| 3 痛点 | 飞书 bitable / Miro 机会树 | 排序后痛点清单 |
-| 4 锚定 | 飞书 bitable | 岗位↔认领层映射表 |
-| 5 体验 | excalidraw / Lovable / Zeplin | 主界面线框/原型 |
-| 6 功能 | 飞书 docx / markmap（spec 卡模板 06·G-r） | 功能 spec 卡（含 Gherkin） |
-| 7 issue | GitHub（`sync_github`→建 issue+回挂） | issue（kind="issue" 产物） |
-| 8 测试 | dev-loop: test-plan-generator→test-code-writer→test-runner；mix test | 测试套件（kind="test_suite", ref="green"） |
-| 9 PR | GitHub + reviewer 过 gate 清单 | 合并后 PR（commit status=success） |
+dev-together 命令**自动运行产生的文档**（`docs/together/<date>/`）按**两类**自动挂载，**不靠人手贴**：
 
-**时间轴产物**（每天，`docs/together/<date>/`，见 `dev-together/SKILL.md:51-59`）：
-- `plan.md` / `plan.html`（lead，三段式团队向，每任务带 board_node_id）
-- `handoffs/<task>.md`（lead/node-owner，自包含 spec）
-- `returns/<task>.md`（dev，带 returned_at/deadline_status/board_node_id/dispatch 进度）
-- `stack.md`（lead，有序合并栈，每行 board_node_id）
-- `review.html`（lead，数据驱动三章节，读 `stats/cycle-data.json`，scrub 内部讨论）
+### 4a. 节点级产物（产品轴）—— 挂到具体 9 阶段节点
+某个节点的交付物，挂那个节点：
 
-**跨 cycle 持久产物**（6-26 新增，`dev-together-skill-improvement-plan.md:9-13` C/E 条）：
-- `docs/together/team.md`（花名册，row identity=github_username）
-- `docs/together/CURRENT_DATE`（日界 flag，lead↔lead-agent 讨论决定翻日，不是机器时间；4 前置全满足才 `advance_cycle_date.sh` 翻篇）
-- `docs/together/contributing/`（跨 cycle 台账，累积原则违例/潜在问题/流程摩擦；handoff 下发和返还前**必读**，用 `contributing_read_through` attestation 字段做机械闸）
-- `docs/together/<ISO-week>/weekly-goals.md`（周目标，每日 track 往上对齐）
+| 产物 | 来源(file:line) | 挂哪个节点 | 怎么自动挂 |
+|---|---|---|---|
+| `handoffs/<task>.md` | `handoff.md:33/36` | 该 task 的 **issue 节点**（handoff=节点 spec） | handoff 跑完按 `board_node_id` dispatch `attach_artifact`(kind=handoff) |
+| `returns/<task>.md` | `return.md:25/72` | 该 task 的**节点**（return=交付物） | return 跑完 dispatch `attach_artifact`(kind=return) + `register_pr` |
+| 节点交付物（spec/Gherkin/Excalidraw 线框/PR） | — | 对应阶段节点 | `attach_artifact`（inline/upload/repo，见 §3） |
 
----
+### 4b. 板级时间线产物（时间轴）—— 挂到板级时间线通道，**不挂单个产品节点**
+**日/周总结、plan、review、stack** 这类**跨多节点、总结一天/一周**的产物，挂在单个 9 阶段节点上不合理（它不是某节点的交付物）。它们挂在**板级"时间线"通道**（按 `<date>`/`<week>` 键）：
 
-## 6. CI gate 机制（第 8→9 棒的硬闸，已实现）
+| 产物 | 来源(file:line) | 性质 | 挂哪 |
+|---|---|---|---|
+| **日/周总结 HTML**（你最初给我看的两个） | dev-together 日/周总结能力 | 跨节点的日/周复盘 | **板级时间线**，键=`<date>`/`<ISO-week>` |
+| `plan.md` | `plan.md:29` | 当日计划（跨节点） | 板级时间线，键=`<date>` |
+| `stack.md` | `push.md:34` | 当日合并顺序（跨节点） | 板级时间线，键=`<date>` |
+| `review.md` | `review.md` | 当日复盘（跨节点） | 板级时间线，键=`<date>`；指标回写仍 `set_metric`/`drop_subtree` 到具体节点 |
 
-第 9 棒不是软提醒，是真能挡合并的硬门，已在代码里：
+> **板级时间线 = 一个新的板级字段**（与现有板级 `:drops` 同构——tree 是 `%{nodes, root_id, seq, drops}`，`shared.ex:22`，再加一个 `:timeline`/`:summaries`，按日期/周存 `{kind, url/content, date}`）。这是要补的小能力（进 SPEC §6，记为能力 **T**）。前端在看板页开一个"时间线/日周总结"侧栏渲染它，**不污染 9 阶段画布**。
 
-- 判据（`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/ci.ex:22` `check_pr_gate/2`，纯函数沿祖先链算 4 条）：
-  1. `upstream_done`——链上各棒 done（`ci.ex:30-33`）
-  2. `gherkin`——feature 节点 artifact content 含 Gherkin（`ci.ex:34` `has_gherkin?`）
-  3. `issue`——issue 节点挂 kind="issue" 产物（`ci.ex:35`）
-  4. `test_green`——test 节点挂 kind="test_suite" 且 ref="green"（`ci.ex:36`）
-- `gate_state/1`（`ci.ex:58-61`）：全过=`success`（绿放行）/ 有未过=`failure`（红挡合并）/ max=0=`pending`（中性）。
-- 推到 GitHub：`connectors.ex:100` `push_ci_status/4` → `github.ex:117` `create_commit_status` POST `/repos/{repo}/statuses/{sha}`，context=`ezagent/ci-gate`。配上 branch protection 的 required status check（context=`ezagent/ci-gate`），failure 真能挡合并。
-- 软留言：`requirement_digest/2`（`ci.ex:83`）沿祖先链把每棒文档+指标拼成"本 PR 产品上下文" markdown，`push_pr` post 到 PR（`connectors.ex:75`）——确定性汇总，非 LLM。
+**两类的真相源都同时落 `docs/together/<date>/`（随 PR 进仓库 = 仓库存证）**；看板这边：节点级挂节点、板级挂时间线通道。
 
-**含义**：测试用例不另写，就是第 6 棒 spec 卡的 Gherkin（一物三用=验收标准=测试用例=PR 过 gate 判据，`07-定版` §核心设计意图 3）。测试不绿，第 9 棒 commit status 就是 failure，PR 合不进——"green tests, broken product" 和"自称 done"都过不了。
+**机制**：dev-together 命令（off 文件版 / on dispatch 版）每步**多做一个挂载 dispatch**（节点级→`attach_artifact`+`board_node_id`；板级→新的板级时间线 attach）。这要求：
+- dev-together 台账（plan/return）加 `board_node_id` 字段（SPEC 缺口 B，`kanban-skills-replan.md` 落实）；
+- on 版命令产出文档后自动 dispatch attach；off 版写文件后由人/脚本 attach。
+
+> 即：**dev-together 自动跑 + 自动挂**——产物落 `docs/together/` 文件夹（随 PR 进仓库 = 仓库存证）**同时**挂到对应阶段节点（= 看板存证）。两份存证，一次产出。
 
 ---
 
-## 7. 落地顺序（最小可执行）
+## 5. 仓库存证（artifact 随 PR 进仓库）
 
-按"先接线、后自动化"排：
-
-1. **缺口 B**（台账加 `board_node_id` 列）——纯 skill 文档改，dev-together plan/return/stack 模板加可选字段。**当天就能做，无代码。**
-2. **缺口 C+D**（dev-together 委托链加 kanban 指针 + handoff-standard 抽单一来源）——纯 skill 文档改。
-3. **缺口 A**（github.ex 补 inbound 自动 register_pr）——**有代码**，是去掉人工断点的关键。建议 webhook 优先、轮询兜底（对称 Miro 的 `detect_inbound` 已有先例）。这条做完，第 9 棒 close 可无人值守，接力链可整段跑在 agent 上。
-4. **验证 e2e**：起一块 live board，从 positioning 一路 dispatch 到 pr，观察 CI gate 由 failure→success、PR 自动 register、sync_prs 自动 merged→done、B1 relay 自动唤醒下一棒 agent。每个有意义步骤留浏览器/真渠道截图（个人规矩：拒单元 stub 当 e2e）。
-5. **缺口 E**（收敛三 fork 为一套节奏+适配层）——较大重构，需 Allen 拍板，放最后。
+每节点 artifact 除挂看板外，**同时落 `docs/together/<date>/<board-node>/` 并随该节点的 PR 进仓库**（SPEC 能力 G）：
+- 上传的文件 → 存进仓库目录，artifact `url` 指仓库路径；
+- 外链 → artifact `url` 存链接（仓库里留一个含链接的 md 占位，做到"仓库里能查到"）。
+- 多仓库（SPEC §5，默认节点级 repo）：artifact 进它所属节点的 repo。
 
 ---
 
-## 8. 待 Allen 拍板的开放问题
+## 6. 与 SPEC 的关系 + 要建的能力
 
-1. **feature-point 口径**未正式定义（6-26 已用 FP1–FP6 编号但单位未定，约定自 6-27 起在 plan 阶段先约定再排期，`plan.html:45`、`dev-together-skill-improvement-plan.md` 开放问题①）。FP 口径直接决定 board 上 feature 节点的粒度。
-2. **缺口 E 的收敛形态**：三 fork 合一 vs 维持双子 skill？影响长期维护成本。
-3. **缺口 A 的 inbound 形态**：webhook（要公网回调）vs 轮询（无需回调但有延迟）——选型影响部署。
-4. **agent 作为节点 owner 的编排契约**：kanban-manager agent 怎么经 session-orchestrator 路由到 `kanban.*` dispatch，目前是 grounding placeholder（`kanban-on-ezagent/SKILL.md:110-117`，references/agent-orchestration.md 标"待编排 grounding 补全"）。
-5. **痛点真相源"导图 vs 库"分歧**（`07-定版` §待补，待与 sy 当面对齐）。
+本文是**流程真相源**；要把它跑起来需 SPEC §6 的能力（按 Phase）：
+- Phase 1：config_surface(A) + bind_session(B) — UI 接线。
+- Phase 2：sync_prs 定时器(C) + GitHub 入站(D) + CI 硬门(CI) — 自动 CI 闭环，**自动 register_pr 取代手填**。
+- Phase 3：worker agent 接力(E) + 仓库存证(G) + dev-together 自动挂载(§4) — chat 全自动。
+- Phase 5：统一整理——**删 `attach_code_file`**（§3）、reconcile B1/B2 + 2 skill、收敛文档。
 
----
-
-## 附：本文核实过的事实（带 file:line）
-
-- dev-together 8 命令定义：`.claude/skills/dev-together/SKILL.md:112-121`；委托链无 kanban：`:36-43`；台账规则：`:86-105`；机器返回闸：`:148-151`。
-- kanban-on 融合原则（board 既是 work-source 又是 sink）：`.claude/skills/kanban-on-ezagent/SKILL.md:44-49`；8 命令融合表：`:119-149`；agent 可当 owner：`:100-108`。
-- 9 阶段链 stage 枚举：`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/ci.ex:63-73`；CI 4 判据：`:22-37`；gate_state：`:58-61`；requirement_digest：`:83`。
-- register_pr 人工断点：`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban/connectors.ex:116`；github 无 inbound：`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/github.ex:9`；create_commit_status：`:117`。
-- B1 relay actions：`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex:702`；claim/owner 闸：`:483`/`:715`。
-- Miro 有 inbound（对称缺口）：`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro/sync.ex:166`。
-- 产品语义权威源：`docs/discuss/df-prd/07-定版-自举开发流程-10分钟.md` + `07-demo-接力链-多角色视角.html`。
-- 6-26 流程升级（CURRENT_DATE/HTML/contributing/scrub/三段式 plan）：`docs/together/2026-06-26/dev-together-skill-improvement-plan.md:9-19`。
+**变更摘要（相对旧设计）**：① artifact 收敛成 attach_artifact 一条路、sha/pr blob 下线；② dev-together 自动产物按 §4 映射自动挂阶段节点；③ register_pr 手填被 github 入站自动化取代。
