@@ -44,6 +44,7 @@ type MemberRow = {
   display_name?: string | null
   online?: boolean
   kind?: string | null
+  removable?: boolean
 }
 
 type RoutingRule = {
@@ -86,6 +87,8 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onRemoveMember: (sessionUri: string, member: string) => void
+  onDeleteSession: (sessionUri: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -108,6 +111,8 @@ export function Conversation({
   onLoadOlder,
   onMarkDisplayed,
   onInvite,
+  onRemoveMember,
+  onDeleteSession,
   onPtyInput,
   onPtyResize,
   onServerEvent,
@@ -557,10 +562,30 @@ export function Conversation({
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
             <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)} aria-label="Invite a member">
-            <UserPlus aria-hidden="true" />
-            Invite
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)} aria-label="Invite a member">
+              <UserPlus aria-hidden="true" />
+              Invite
+            </Button>
+            {/* F7: end (delete) the whole session via the universal manage.delete
+                action — tears the Session Kind down and returns to the list. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              onClick={() => {
+                if (!sessionUri) return
+                if (window.confirm("结束并删除该对话？此操作不可撤销。")) {
+                  onDeleteSession(sessionUri)
+                }
+              }}
+              aria-label="End and delete this session"
+              data-world-delete-session
+            >
+              <X aria-hidden="true" />
+              End session
+            </Button>
+          </div>
         </div>
         {inviteOpen && (
           <form
@@ -635,6 +660,29 @@ export function Conversation({
                 {member.kind === "agent" && (
                   <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
                     <TerminalSquare aria-hidden="true" />
+                  </Button>
+                )}
+                {/* F7: remove a managed member — routes through the orchestrator
+                    so the worker is terminated and routing pruned. Shown only
+                    for members that hold a managed `role_name` (`removable`);
+                    an invited agent / plain user has no managed role to tear
+                    down, so it gets no button (it would always error). */}
+                {member.removable && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => {
+                      if (!sessionUri) return
+                      if (window.confirm(`从对话中移除 ${member.display_name || member.uri}？将终止该 agent 进程并清理其路由。`)) {
+                        onRemoveMember(sessionUri, member.uri)
+                      }
+                    }}
+                    aria-label={`Remove member ${member.display_name || member.uri}`}
+                    data-world-remove-member={member.uri}
+                  >
+                    <X aria-hidden="true" />
                   </Button>
                 )}
               </li>
