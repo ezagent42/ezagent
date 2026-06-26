@@ -540,20 +540,67 @@ defmodule Ezagent.World.IdentityData do
     err -> %{"config_dir_path" => nil, "extensions" => [], "error" => inspect(err)}
   end
 
+  # Read the agent's sandbox state for the DETAIL / extension panels WITHOUT
+  # activating the agent. The previous implementation dispatched
+  # `:sandbox/:read` (mode `:call`), which lazy-spawns / force-activates a cold
+  # agent — the SAME FP5 S5 `:activate_timeout` bug (#115) the caps panel hit
+  # (codex MEDIUM-2): a cold cc agent needs >5s to launch claude, blowing the
+  # ReadyGate budget so the detail page (config_dir / project_cwd /
+  # source_template) AND the extension list errored. This is a READ of persisted
+  # state, so it reads the durable `:sandbox` slice via the OWNER's
+  # non-activating reader `Ezagent.Behavior.Sandbox.read_persisted_state/1`
+  # (live registry read first — no spawn — then persisted-snapshot fallback for
+  # a cold agent).
+  #
+  # The caller authorization the `:sandbox/:read` dispatch enforced is
+  # PRESERVED: the `:read` action gate is a PURE cap check (runtime.ex step 5.5
+  # — `:sandbox` has NO data_owner/self disjunct, unlike `identity.list_caps`),
+  # so the caller's `caller_caps` must satisfy the SAME needed-cap the dispatch
+  # built (`cap(:agent, Ezagent.Behavior.Sandbox, :read)` with the instance /
+  # workspace substituted in per runtime.ex:423-477), authorized via the
+  # sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2`. An
+  # unauthorized caller still gets `{:error, :unauthorized}`.
   defp sandbox_read(agent_uri, caller_uri, caller_caps) do
-    target = Ezagent.URI.with_action(agent_uri, :sandbox, :read)
+    case authorize_sandbox_read(agent_uri, caller_uri, caller_caps) do
+      :ok ->
+        case Ezagent.Behavior.Sandbox.read_persisted_state(agent_uri) do
+          state when is_map(state) -> {:ok, state}
+          _ -> {:error, :not_found}
+        end
 
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: {:caller_inbox, self()}}
-         }) do
-      {:ok, result} when is_map(result) -> {:ok, result}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_sandbox_read, other}}
+      {:error, _} = err ->
+        err
     end
   end
+
+  # Preserve the `:sandbox/:read` dispatch gate (step 5.5) without dispatching.
+  # The needed-cap mirrors `Ezagent.Behavior.Sandbox.required_caps` `read:
+  # cap(:agent, __MODULE__, :read)` with the runtime substitution the dispatch
+  # path applies (kind `:agent` is declared concretely; action → :read; instance
+  # → agent instance; workspace → agent workspace). Authorization runs through
+  # the sanctioned chokepoint owner `Ezagent.Identity.caps_authorize?/2` (the
+  # cap-check is not hand-rolled in this plugin facade). There is NO self-read
+  # branch — unlike `identity.list_caps`, the `:sandbox/:read` runtime gate has
+  # no data_owner/self disjunct, so adding one here would WIDEN access beyond the
+  # dispatch path.
+  defp authorize_sandbox_read(%URI{} = agent_uri, _caller_uri, caller_caps) do
+    needed = %{
+      kind: :agent,
+      behavior: Ezagent.Behavior.Sandbox,
+      action: :read,
+      instance: Ezagent.URI.instance(agent_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
+    }
+
+    if Ezagent.Identity.caps_authorize?(caller_caps, needed) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  defp authorize_sandbox_read(_agent_uri, _caller_uri, _caller_caps),
+    do: {:error, :invalid_entity}
 
   # Read the agent's sandbox state through the SAME dispatch path
   # `list_extensions/3` uses (`:sandbox/:read`). Returns the raw result map
