@@ -46,7 +46,13 @@ ezagent 在一台 Mac(**OrbStack**)上的生产部署:`nightly → beta → stab
 - **Time Machine**:OrbStack `data_allow_backup: false`(默认,已核)→ 8TB `data.img` 已排除,无需 `tmutil`。
   ezagent 状态靠 §6 逻辑备份 → `./backups/`(TM `[Included]`)。
 
-### secrets(全部 gitignored,放主 checkout `docker/`)
+### secrets 持久家(durable home,与 runner ephemeral checkout 解耦)
+secrets 放**主 checkout** `/Users/h2oslabs/Workspace/esr-ng/docker/`(worktree 清掉不丢)。`deploy.sh`/`backup.sh`
+从 `EZAGENT_SECRETS_HOME`(默认该路径)**绝对路径**读 `.env.*`,**code(compose/脚本)仍从当前 checkout** ——
+所以 runner 在自己的 `_work` checkout 跑也能拿到持久 secrets;`.env.<channel>` 的 `SECRETS_DIR` 也用绝对路径。
+保护:`docker/.gitignore`(自包含,任何分支)+ 仓库 `.git/info/exclude`(即时、跨 worktree)。
+
+### secrets 清单(全部 gitignored)
 - `docker/.env.infra`：`JMS_SUBSCRIPTION_URL`(JustMySocks 订阅,可从 clash-verge `profiles.yaml` 取)、
   `CF_API_TOKEN`(`docker/secrets-prod/cf_api_token`,需 Zone:DNS:Edit)、`TS_AUTHKEY`(见下)。
 - `docker/.env.<channel>` + `docker/secrets-<channel>/ezagent.env`(`EZAGENT_COOKIE` == `RELEASE_COOKIE`,同值)。
@@ -165,6 +171,22 @@ docker/backup.sh <channel>   # → backups/<channel>/<ts>/{db.sql.gz, fs-snapsho
 
 恢复(各域独立):`gzip -dc db.sql.gz | docker exec -i <pg_ctr> psql -U ezagent -d ezagent_<channel>`;
 FS:解 `fs-snapshot.tar.gz` 回 `*_home` 卷。跨域一致性快照(quiesce+LSN)留后续迭代。
+
+---
+
+## 6.1 数据回流(reflow:prod→beta/nightly,测迁移)
+
+把 **stable 数据单向回流**到低环境,验证(低环境的更新代码的)迁移能否成功跑过 prod 数据;
+**prod 真实凭据永不落到低环境**(回流后用目标环境自己的 credentials 盖回)。
+
+```bash
+docker/reflow.sh <beta|nightly>     # source 固定 stable;拒绝 stable 作 target(单向)
+```
+- **DB**:保存目标 11 张凭据表(data-only)→ stable 全量覆盖目标 DB → 目标 `Release.migrate()` → `DELETE`+`session_replication_role=replica` 盖回目标凭据(不 `TRUNCATE CASCADE`,避免误删 FK 依赖的非凭据表如 `email_thread_state`)。
+- **agent-FS**:stable `*_home` 覆盖目标 → 盖回目标的 `default/credentials` 子树。
+- 凭据表/FS 路径可用 `EZAGENT_CRED_TABLES` / `EZAGENT_CRED_FS_PATH` 覆盖。
+- 实测 stable→beta:stable 非凭据数据回流 ✓、beta 自己的 API key 存活 ✓、迁移后 healthy ✓。
+- ⚠️ 会**覆盖目标环境全部数据**(beta/nightly 是测试环境,符合预期);定时回流可挂 launchd。
 
 ---
 
