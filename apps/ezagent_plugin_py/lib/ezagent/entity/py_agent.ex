@@ -41,8 +41,10 @@ defmodule Ezagent.Entity.PyAgent do
   attach(Ezagent.Behavior.PyAgent)
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
+  @doc false
   def behaviors, do: [Ezagent.Behavior.PyAgent]
 
   # Kind.Server still reads persistence/0; keep the legacy callback.
+  @doc false
   def persistence, do: :ephemeral
 end

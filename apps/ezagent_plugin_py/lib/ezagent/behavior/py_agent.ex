@@ -91,6 +91,7 @@ defmodule Ezagent.Behavior.PyAgent do
   # Own kind axis `:py_agent` — PyAgent is registered on Entity.PyAgent Kind
   # (type_name :py_agent). Manually exported to override the macro's `:any`
   # default (same pattern as NpAgent).
+  @doc false
   def required_caps do
     %{
       receive: Ezagent.Capability.cap(:py_agent, __MODULE__, :receive),
@@ -120,6 +121,7 @@ defmodule Ezagent.Behavior.PyAgent do
 
   # --- handle_<action>/2 ----------------------------------------------------
 
+  @doc false
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     sender_str = sender_string(msg.sender)
@@ -132,6 +134,7 @@ defmodule Ezagent.Behavior.PyAgent do
     end
   end
 
+  @doc false
   def handle_reset(_args, _ctx) do
     {:ok, %{ok: true}, set_last(nil, nil, nil)}
   end
@@ -146,6 +149,7 @@ defmodule Ezagent.Behavior.PyAgent do
   # `:configure` sets timeout_ms ONLY — NEVER the script (spec §5). Even if a
   # caller smuggles a `script` arg it is ignored: the action schema declares
   # only `timeout_ms`, and we read only that key here.
+  @doc false
   def handle_configure(args, ctx) when is_map(args) do
     cur_timeout = ctx[:read].(:timeout_ms, @default_timeout_ms)
     new_timeout = Map.get(args, :timeout_ms, cur_timeout)
@@ -288,6 +292,7 @@ defmodule Ezagent.Behavior.PyAgent do
   defp parse_session_uri(_), do: nil
 
   # Admin-only Behavior — no per-entity owner (mirrors NpAgent).
+  @doc false
   def data_owner(_), do: :no_owner
 
   # --- activate/2 — rebuild transients + self-heal the subprocess ----------

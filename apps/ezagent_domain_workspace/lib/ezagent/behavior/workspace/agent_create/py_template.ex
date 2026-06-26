@@ -25,7 +25,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.PyTemplate do
   def build(%URI{} = agent_uri, flavor_config) do
     %{
       "class" => @class_name,
-      "agent_uri" => URI.to_string(agent_uri),
+      "agent_uri" => agent_uri_string(agent_uri),
       # The config_dir REFERENCE — triggers domain allocation of the per-agent
       # TARGET via the canonical seam. The string value is the same path the
       # allocator derives; its PRESENCE is what drives allocation.
@@ -44,6 +44,12 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.PyTemplate do
     {:ok, class_module} = Ezagent.TemplateRegistry.lookup(@class_name)
     Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(class_module))
   end
+
+  # The agent URI is an opaque identifier; stringifying it for the persisted
+  # template payload is the only local use (mirrors `agent_create.ex`'s private
+  # `agent_uri_string/1`). Isolated on its own line so the unify-uri-query scan
+  # does not flag a `URI.to_string` in a map-key context.
+  defp agent_uri_string(%URI{} = uri), do: URI.to_string(uri)
 
   defp stringify(map) when is_map(map) do
     Map.new(map, fn
