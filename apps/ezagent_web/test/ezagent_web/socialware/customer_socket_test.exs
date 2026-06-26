@@ -54,7 +54,13 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     {:ok, reply, _socket} = join_customer(ctx)
 
     assert get_in(reply, [:snapshot, :messages]) == [
-             %{id: committed.id, text: "committed", sender: URI.to_string(committed.sender)}
+             %{
+               id: committed.id,
+               text: "committed",
+               sender: URI.to_string(committed.sender),
+               render: nil,
+               render_css: nil
+             }
            ]
   end
 
