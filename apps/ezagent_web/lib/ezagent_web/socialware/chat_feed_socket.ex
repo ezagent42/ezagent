@@ -1,7 +1,7 @@
 defmodule EzagentWeb.Socialware.ChatFeedSocket do
   @moduledoc """
   P4 — socket for the CHAT external SPA view. The chat analogue of
-  `EzagentWeb.Socialware.CustomerSocket` (P3-2): it authenticates a signed
+  `EzagentWeb.Socialware.ExternalFeedSocket` (P3-2): it authenticates a signed
   caller-identity token (`ChatFeedAuth`) before any channel can subscribe,
   recovering a TRUSTED caller `%URI{}`. The actual read authorization (is this
   caller an owner/member of the chat session?) is the LIVE `ChatMembership`

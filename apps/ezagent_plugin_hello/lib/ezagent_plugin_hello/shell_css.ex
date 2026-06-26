@@ -15,7 +15,7 @@ defmodule EzagentPluginHello.ShellCss do
   require Logger
 
   # The customer surface theme tokens (mirrors apps/ezagent_web/assets/css/
-  # customer.css). Declared as @theme so Tailwind emits `bg-primary`, `text-base-
+  # viewer.css). Declared as @theme so Tailwind emits `bg-primary`, `text-base-
   # content`, `from-accent`, … from them without the daisyUI plugin.
   @theme """
   @theme {

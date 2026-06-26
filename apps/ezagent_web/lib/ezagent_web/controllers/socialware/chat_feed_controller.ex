@@ -295,7 +295,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
     |> halt()
   end
 
-  # The SPA shell — the shared customer_app.js pointed at the chat socket + topic.
+  # The SPA shell — the shared viewer_app.js pointed at the chat socket + topic.
   defp page(session_uri, token) do
     session = session_uri |> uri_to_string() |> escape()
     token = escape(token)

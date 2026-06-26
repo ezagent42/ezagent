@@ -15,9 +15,9 @@
    emit at runtime is generated (invisible to the build-time source scan). */
 @source "../node_modules/@json-render/shadcn/dist";
 
-/* shadcn semantic design tokens — mirrored from the customer surface
-   (apps/ezagent_web/assets/css/customer.css @theme) so the operator preview and
-   the public /socialware/customer page share ONE palette. Tailwind v4 maps
+/* shadcn semantic design tokens — mirrored from the external viewer surface
+   (apps/ezagent_web/assets/css/viewer.css @theme) so the operator preview and
+   the public /socialware/external page share ONE palette. Tailwind v4 maps
    `bg-<name>` → `var(--color-<name>)`, so these drive the shadcn components. */
 @theme {
   --color-background: oklch(99% 0 0);

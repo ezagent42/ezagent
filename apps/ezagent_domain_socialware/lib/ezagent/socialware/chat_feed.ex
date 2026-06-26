@@ -2,7 +2,7 @@ defmodule Ezagent.Socialware.ChatFeed do
   @moduledoc """
   P4 — a CHAT session's external SPA view, served over the SAME `:pull`
   adapter + Phoenix-channel + json-render SPA machinery P3-2 built for the
-  socialware customer feed (`CustomerFeed`), but projecting the **chat message
+  socialware customer feed (`ExternalFeed`), but projecting the **chat message
   slice** with a **windowed snapshot-refresh** read model.
 
   ## Why snapshot-refresh (NOT a delta cursor)
@@ -32,13 +32,13 @@ defmodule Ezagent.Socialware.ChatFeed do
   ALWAYS the current latest-N; older history is a separate paging concern (out
   of scope here).
 
-  ## What is the SAME as `CustomerFeed` (reused)
+  ## What is the SAME as `ExternalFeed` (reused)
 
     * the `:pull` adapter shape (`ChatFeedAdapter` — a bare-module `render/2` +
-      cap-only `.Allow`, mirroring `CustomerFeedAdapter`);
+      cap-only `.Allow`, mirroring the retired customer-feed adapter);
     * the json-render output shape (`%{type: "container", ...}` — `chat_tree/1`
       mirrors `Surface.external_tree` over chat messages);
-    * the SPA (`customer_app.js` / `catalog_render.mjs`) + Channel framework.
+    * the SPA (`viewer_app.js` / `catalog_render.mjs`) + Channel framework.
 
   ## What is DIFFERENT (the only P4-specific code)
 

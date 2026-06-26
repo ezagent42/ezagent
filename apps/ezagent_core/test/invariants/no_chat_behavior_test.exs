@@ -19,8 +19,8 @@ defmodule Ezagent.Invariants.NoChatBehaviorTest do
     * `chat_id` — Feishu/Slack's identifier for an external conversation (an
       external API field on `external_mirror_bindings` / `feishu_*` bindings /
       `InboundChatLookup`). Renaming it would break the integration.
-    * Customer-facing "chat"/"chat feed" terminology in the customer SPA /
-      `customer_feed` / `chat_feed*` (product-facing words shown to end users).
+    * Customer-facing "chat"/"chat feed" terminology in the external viewer SPA /
+      `chat_feed*` (product-facing words shown to end users).
     * `system://chat-router` / `chat-reply` — named system-principal URIs (a
       separate persisted-identifier concept, like `chat_id`; not the `:chat`
       behavior/action/slice).
@@ -102,7 +102,7 @@ defmodule Ezagent.Invariants.NoChatBehaviorTest do
            #{format_violations(violations)}
 
            Rename to the `session` spelling named in the guidance. If a match is
-           genuinely the EXTERNAL-IM `chat_id` / customer-feed / `chat-router`
+           genuinely the EXTERNAL-IM `chat_id` / `chat-router`
            vocabulary (NOT our behavior), the regex is too broad — tighten it,
            don't allowlist the boundary.
            """

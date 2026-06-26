@@ -29,15 +29,15 @@ defmodule EzagentWeb.UploadsController do
   cannot be served to a foreign mount, and a token naming a non-uploads resource
   type is rejected by `Ezagent.Uploads`.
 
-  ### External customer-feed downloads live ELSEWHERE (codex P2 round-1 HIGH)
+  ### External feed downloads live ELSEWHERE (codex P2 round-1 HIGH)
 
-  The **external** customer-feed (#601/#603, viewers with NO session/caps) is
-  served by the PUBLIC `GET /socialware/customer/download` route on
-  `EzagentWeb.Socialware.CustomerController`, NOT this authenticated route —
+  The **external** feed (#601/#603, viewers reading as a minted anon/member) is
+  served by the PUBLIC `GET /socialware/external/download` route on
+  `EzagentWeb.Socialware.ExternalFeedController`, NOT this authenticated route —
   because a feed viewer would be bounced by `RequireEntity` here. That path
-  authorizes purely by capability (customer-feed session token + signed
+  authorizes by capability (the viewer's ChatFeedAuth session token + signed
   `DownloadToken`) and re-validates approved-only visibility at serve time via
-  `Ezagent.Socialware.CustomerFeed.authorized_attachment_path/4`.
+  `Ezagent.Socialware.ExternalFeed.authorized_attachment_path/4`.
 
   ## No auth-widening — serve-time participant re-check (codex P2-revision HIGH)
 

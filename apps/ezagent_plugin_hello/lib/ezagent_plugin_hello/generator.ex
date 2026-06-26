@@ -425,7 +425,7 @@ defmodule EzagentPluginHello.Generator do
       {:ok, _turn} = ok ->
         # No HTML shell, and NO per-session Tailwind compile: the spec's classNames
         # are SEMANTIC HOOKS (not utilities), and shadcn's own utility classes ship
-        # from the build-time customer.css scan. The per-session CSS is ONLY the
+        # from the build-time viewer.css scan. The per-session CSS is ONLY the
         # sanitized AI theme — a plain-CSS stylesheet that restyles the shadcn DOM.
         # nil theme ⇒ an edit ⇒ leave the existing stored theme untouched.
         if theme, do: TurnDriver.set_shell(session_uri, builder, "", theme)

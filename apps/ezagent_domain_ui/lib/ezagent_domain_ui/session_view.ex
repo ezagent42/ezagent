@@ -77,7 +77,7 @@ defmodule Ezagent.UI.SessionView do
   target is a serializable map rendered by the SPA / an ExternalAdapter).
 
   P2 NOTE: this is the per-app DECLARATION of the external render. It does
-  NOT change the customer-delivery pipeline (CustomerFeed / CustomerChannel)
+  NOT change the customer-delivery pipeline (ExternalFeed / ExternalFeedChannel)
   — that is P2.5/P3. An implementation reuses the app's existing projection
   (e.g. socialware delegates to `Ezagent.Behavior.Surface.external_tree/1`).
   """
