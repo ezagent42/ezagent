@@ -33,13 +33,46 @@ type AdminState = {
   workspace_uri?: string | null
 }
 
-export function AdminSurface({
-  state,
-  onAction = () => undefined,
-}: {
-  state: AdminState
-  onAction?: (action: string, args: Record<string, unknown>) => void
-}) {
+// Admin 区子页导航（FP5 入口审计）：此前这些子页在 UI 里无任何可见入口,只能靠
+// ⌘K 命令面板或直接敲 URL 到达。在每个 admin 面顶部挂一行子导航,当前页高亮。
+const ADMIN_NAV: Array<{component: string; label: string; href: string}> = [
+  {component: "dashboard", label: "Dashboard", href: "/admin"},
+  {component: "observability", label: "Observability", href: "/admin/logs"},
+  {component: "entity_registry", label: "Registry", href: "/admin/registry"},
+  {component: "snapshots", label: "Snapshots", href: "/admin/snapshots"},
+  {component: "templates", label: "Templates", href: "/admin/templates"},
+  {component: "caps_admin", label: "Capabilities", href: "/admin/caps"},
+  {component: "authz_audit", label: "Authz Audit", href: "/admin/audit/authz"},
+  {component: "settings", label: "Settings", href: "/admin/settings"},
+  {component: "routing", label: "Routing", href: "/admin/routing"},
+]
+
+function AdminNav({current}: {current?: string}) {
+  const active = current || "dashboard"
+  return (
+    <nav className="flex flex-wrap gap-1.5" aria-label="Admin sections">
+      {ADMIN_NAV.map((item) => {
+        const isActive = active === item.component
+        return (
+          <a
+            key={item.component}
+            href={item.href}
+            aria-current={isActive ? "page" : undefined}
+            className={
+              isActive
+                ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
+                : "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            }
+          >
+            {item.label}
+          </a>
+        )
+      })}
+    </nav>
+  )
+}
+
+function adminBody(state: AdminState, onAction: (action: string, args: Record<string, unknown>) => void) {
   switch (state.component) {
     case "observability":
       return <Observability state={state} />
@@ -57,11 +90,30 @@ export function AdminSurface({
       return <SettingsPanel state={state} onAction={onAction} />
     case "routing":
       return <RoutingPanel state={state} />
-    case "external_mirror":
-      return <ExternalMirror state={state} onAction={onAction} />
     default:
       return <Dashboard state={state} />
   }
+}
+
+export function AdminSurface({
+  state,
+  onAction = () => undefined,
+}: {
+  state: AdminState
+  onAction?: (action: string, args: Record<string, unknown>) => void
+}) {
+  // external_mirror 是 session 级子页（/admin/sessions/:id/external_mirror,经 Sessions
+  // 表进入,有自己的 breadcrumb),不属顶层 admin 区 → 不挂 admin 子导航。
+  if (state.component === "external_mirror") {
+    return <ExternalMirror state={state} onAction={onAction} />
+  }
+
+  return (
+    <div className="space-y-4">
+      <AdminNav current={state.component} />
+      {adminBody(state, onAction)}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
