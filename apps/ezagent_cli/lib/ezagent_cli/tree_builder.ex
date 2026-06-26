@@ -111,11 +111,15 @@ defmodule EzagentCli.TreeBuilder do
          required: true
        ]}
 
-    # Schema args as options
+    # Schema args as options. `{:option, _}`-typed args are optional
+    # (the Behavior handler defaults them); bare-typed args are required.
+    # Forcing required: true on every arg made optional args mandatory
+    # (and a required :boolean flag can't express `false`).
     arg_options =
       args_spec
       |> Enum.map(fn {arg_name, arg_type} ->
-        Coercion.to_option(arg_name, arg_type, required: true)
+        required = not match?({:option, _}, arg_type)
+        Coercion.to_option(arg_name, arg_type, required: required)
       end)
 
     # --cast flag if both :call and :cast are supported
@@ -151,14 +155,12 @@ defmodule EzagentCli.TreeBuilder do
     # action subcommand uniformly — Optimus rejects conditional-by-
     # scheme options at the spec level.
     instance_class_opt =
-      {:instance_class,
-       [long: "instance-class", value_name: "CLASS", parser: :string]}
+      {:instance_class, [long: "instance-class", value_name: "CLASS", parser: :string]}
 
     [
       name: to_string(action),
       about: action_about(behavior_module, action),
-      options:
-        [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
+      options: [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
       flags: cast_flag ++ json_flag
     ]
   end
@@ -181,7 +183,8 @@ defmodule EzagentCli.TreeBuilder do
     args_keyword =
       Map.get(spec, :args, [])
       |> Enum.map(fn {name, type} ->
-        {name, [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
+        {name,
+         [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
       end)
 
     opts_keyword =

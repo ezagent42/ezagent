@@ -34,7 +34,13 @@ defmodule EzagentCli.Dispatch do
         # by `build_target_uri/6` for bare-name promotion (SPEC #366);
         # it is NOT an action arg.
         reserved = MapSet.new([type_name, :as, :deadline_ms, :instance_class])
-        action_args = Map.drop(options, MapSet.to_list(reserved))
+        # Optimus includes un-supplied optional options as `nil`; drop them
+        # so the Behavior handler's own arg defaults (`Map.get(args, k, d)`)
+        # apply instead of receiving a spurious `nil` it would reject.
+        action_args =
+          options
+          |> Map.drop(MapSet.to_list(reserved))
+          |> Map.reject(fn {_k, v} -> is_nil(v) end)
 
         # Determine mode
         mode =
