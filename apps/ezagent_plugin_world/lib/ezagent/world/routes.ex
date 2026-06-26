@@ -28,6 +28,11 @@ defmodule Ezagent.World.Routes do
               session_uri: session_uri
             }
 
+          nil when path == "/" ->
+            # FP5 S2-a:Overview 落地页是独立 dashboard(KPI 概览 + 快捷入口),
+            # 不再与 /sessions 雷同复用 sessions_table。
+            %{component: "overview", title: "Overview", path: path}
+
           nil ->
             %{component: "sessions_table", title: "Sessions", path: path}
         end

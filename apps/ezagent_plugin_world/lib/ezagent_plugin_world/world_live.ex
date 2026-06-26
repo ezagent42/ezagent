@@ -544,6 +544,20 @@ defmodule EzagentPluginWorld.WorldLive do
     |> put_command_palette(socket)
   end
 
+  # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData
+  # （overview 不属 :admin group,故单独子句;nav 高亮仍走 path="/" → Overview）。
+  defp state_for_route(%{component: "overview"} = route, socket, layout) do
+    route
+    |> Ezagent.World.AdminData.state_for(%{
+      workspace_uri: socket.assigns.current_workspace_uri,
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+    })
+    |> Map.put("layout", layout)
+    |> put_can_manage_layout(route.component, socket)
+    |> put_command_palette(socket)
+  end
+
   defp state_for_route(%{group: :admin} = route, socket, layout) do
     route
     |> Ezagent.World.AdminData.state_for(%{

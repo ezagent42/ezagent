@@ -33,17 +33,15 @@ defmodule Ezagent.World.AdminData do
   end
 
   defp component_state(%{component: "dashboard"}, base, _workspace_uri, _caller_uri) do
-    kinds = Ezagent.KindRegistry.list_all()
-
     base
-    |> Map.put("kpis", %{
-      "kinds" => length(kinds),
-      "sessions" => count_scheme(kinds, "session"),
-      "workspaces" => count_scheme(kinds, "workspace"),
-      "entities" => count_scheme(kinds, "entity"),
-      "agents" => count_entity_type(kinds, "agent")
-    })
+    |> Map.put("kpis", kpis())
     |> Map.put("cc_orchestrator_status", cc_orchestrator_status())
+  end
+
+  # Overview 操作员落地页（FP5 S2-a）：复用 dashboard 的 KPI 概览,前端再叠快捷入口。
+  # 不带 orchestrator 明细 —— 那是 Admin Dashboard 的职责,Overview 只做轻量总览 + 导航。
+  defp component_state(%{component: "overview"}, base, _workspace_uri, _caller_uri) do
+    Map.put(base, "kpis", kpis())
   end
 
   defp component_state(%{component: "observability"}, base, workspace_uri, _caller_uri) do
@@ -129,6 +127,19 @@ defmodule Ezagent.World.AdminData do
   end
 
   defp default_test_recipient(_), do: ""
+
+  # KPI 概览,dashboard 与 overview 共用（FP5 S2-a）。
+  defp kpis do
+    kinds = Ezagent.KindRegistry.list_all()
+
+    %{
+      "kinds" => length(kinds),
+      "sessions" => count_scheme(kinds, "session"),
+      "workspaces" => count_scheme(kinds, "workspace"),
+      "entities" => count_scheme(kinds, "entity"),
+      "agents" => count_entity_type(kinds, "agent")
+    }
+  end
 
   defp count_scheme(kinds, scheme) do
     Enum.count(kinds, fn {uri_str, _pid} ->
