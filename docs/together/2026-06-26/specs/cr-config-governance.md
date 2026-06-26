@@ -1,710 +1,441 @@
-# SPEC — CR (change-request) config governance
+# SPEC — CR (change-request) config governance (MINIMAL)
 
-> **Design doc, NOT implementation.** An **EXTENSION** of the shipped `ConfigStore`
-> primitives, not a rebuild. The hard parts — immutable objects, atomic
-> object+pointer writes, idempotency, repoint-based rollback, soul projection —
-> **already ship and are REUSED verbatim.** This SPEC adds only the *governance
-> workflow* (draft aggregation → review gate → publish ceremony → rollback) that
-> sits ON TOP of them.
+> **Design doc, NOT implementation.** A thin **EXTENSION** of the shipped
+> `ConfigStore` + sandbox-materialization primitives — **not a rebuild, and
+> deliberately minimal.** The hard parts (immutable objects, atomic
+> object+pointer write, repoint-based rollback, soul projection, sandbox
+> config_dir materialization on publish) ALL ALREADY SHIP and are REUSED. This
+> SPEC adds only: **draft aggregation** (stage N objects with no pointer) +
+> **publish** (flip the pointer, which fires the existing sandbox materialization)
+> + **rollback** (existing repoint). Preview is a plain `render_soul/1` diff —
+> **no lint, no review pipeline, no two-person rule.**
 >
-> Status: **rev 2 — codex adversarial-review folded in** → lead decision. Skills
-> loaded: `ezagent-developer`, `ezagent-socialware`. All code citations verified
-> against `origin/main` (`4a7a7bed`).
+> Status: **rev 3 — minimal form per lead simplification (2026-06-26)** → codex
+> re-review → implement. Skills loaded: `ezagent-developer`, `ezagent-socialware`.
+> All code citations verified against `origin/main` (`4a7a7bed`).
 
 ---
 
-## rev 2 — codex review corrections (verified against origin/main)
+## rev 3 — what the lead cut (and why this is now minimal)
 
-A static-only codex adversarial review (2026-06-26) found several real,
-code-anchored defects in rev 1. They are folded in below; recording them here so
-the lead sees what changed and why. **All confirmed against the cited code.**
+The lead's directive: cut complexity hard — *"较为复杂的核验功能目前都不应该上"*
+(no complex validation features ship now). Versus rev 2:
 
-1. **`put_pointer/1` is NOT a `source_turn_id` no-op (HIGH — corrected).** rev 1
-   claimed re-running publish is idempotent "via shared `source_turn_id`."
-   **Wrong.** `put_pointer/1` upserts on the pointer **id** (`conflict_target:
-   :id`) and on conflict *recomputes* `previous_config_id` from the current
-   pointer and replaces `[:config_id, :previous_config_id, :pointed_by,
-   :source_turn_id, :updated_at]` (`config_store.ex` `put_pointer/1`). So a
-   second publish would set `previous_config_id` to the staged object **itself**,
-   corrupting the rollback breadcrumb. **Fix:** publish idempotency is enforced at
-   the **CR-status layer** — `confirm_cr` is only legal from `review`; once
-   `published`, a re-`confirm` is a status-rejected no-op **before any
-   `put_pointer` call**. The shared `source_turn_id` is provenance/audit only, NOT
-   the idempotency mechanism. (§4.3 rewritten.)
-2. **Rollback needs an explicit CR column, not the pointer breadcrumb (HIGH —
-   corrected).** Because `put_pointer/1` overwrites `previous_config_id` on the
-   next flip, rolling back off the *pointer's* `previous_config_id` is unsafe. The
-   CR must **persist the prior object id per item at publish time**. Added
-   `published_prev_object_id` to `ConfigChangeItem` (§3.2). This is acknowledged
-   **new CR-owned state** — but rollback still *executes* via the REUSED
-   `repoint_config`/`put_pointer` aimed at that recorded id (no new repoint
-   mechanism, §4.5).
-3. **Publish must call `fetch_matching_object/1`, not raw `put_pointer/1` (HIGH —
-   corrected).** `put_pointer/1` only checks the object **exists**; the scoped
-   guard is `fetch_matching_object/1` (validates workspace+subject+key), which
-   `repoint_config` already calls before `put_pointer` (`config_evolve.ex`).
-   Publish now calls `fetch_matching_object/1` per item inside the transaction
-   (§4.3) so a bad/tampered CR row cannot cross-bind a subject/key to a foreign
-   object.
-4. **Cap action-axis mismatch (HIGH — corrected).** The runtime **overwrites the
-   needed-cap action with the dispatched action** (`runtime.ex`
-   `resolve_required_cap`). So a cap declared `cap(:agent, ConfigGovernance,
-   :publish_cr)` will NOT authorize an action *named* `confirm_cr`. Either the
-   publish action **is named `:publish_cr`**, or the held cap uses `action: :any`
-   over a scope-bounded instance. **Fix:** the publish-class actions are named
-   `:publish_cr` and `:rollback_cr` *and the declared cap action equals the
-   dispatched action* (the `ConfigEvolve` pattern: declared action == dispatched
-   action, see its `required_caps/0` note). The stage/manage caps are declared
-   with `behavior: Ezagent.Behavior.Manage, action: :any` (exactly as
-   `ConfigEvolve.required_caps/0` does) — **not** `behavior: ConfigEvolve`. (§6
-   table corrected.)
-5. **`cr-stage:` fence must be enforced at EVERY config-write entry point (HIGH —
-   corrected).** The console facade `apply_delta` accepts a **caller-supplied
-   `turn_id`** (`agent/config.ex`); a manage-cap caller could pass
-   `turn_id: "cr-stage:…"` and make `ConfigEvolve` early-return without writing.
-   **Fix:** `cr-stage:`/`cr-publish:` are **reserved prefixes** rejected at every
-   non-CR config-write entry (`apply_config_delta`/`repoint_config` validation +
-   the `Agent.Config` facade). The fence is now a *guarded* namespace, not a
-   convention. (§4.2.1 + §6.)
-6. **Workspace-subject CRs conflict with CE-1 (MED — scoped out of v1).** CE-1
-   requires `subject_uri == self_uri`, which only holds for **agent-subject** CRs
-   dispatched to that agent. Workspace-layer CRs need a different
-   authority/behavior story. **v1 is agent-subject ONLY** (Q5 resolved: agent-only
-   first); the schema keeps `subject_uri` general but v1 rejects non-agent
-   subjects.
-7. **Two-person review is policy, not just a distinct cap (MED — noted).** A
-   distinct `publish_cr` cap default-granted to manage-cap holders permits
-   self-approval. If the lead wants a true two-person rule, add a
-   `published_by != opened_by` policy check (§6, Q4 expanded).
+- **DROPPED — the two-person rule** (the old OQ-6 `published_by != opened_by`).
+  Gone entirely, not even an optional flag. The cap is the agent's **manage cap**,
+  the same one `apply_config_delta` uses today. Whoever may edit config may publish
+  a CR. (Re-add a reviewer-separation cap later only if a real need appears.)
+- **DROPPED — the lint gate + elaborate review pipeline** (rev 2 §5.1 / the
+  `review` status / `request_review` transition / a separate reviewer authority).
+  No structural lint, no `review` state. The lifecycle is just `open → published`
+  (+ `rejected`, `rolled_back`).
+- **DROPPED — any new preview/sandbox system.** The lead recalled the existing
+  mechanism correctly: `Ezagent.Sandbox.ConfigDir` + config-evolve's **deferred
+  `sandbox.write_path` self-dispatch** already materialize an agent's resolved
+  config (soul → `CLAUDE.md`) into its config_dir on every pointer move. CR
+  publish **reuses that** — it does not build a preview sandbox. "Preview" before
+  publish is a plain in-memory `render_soul/1` diff (no materialization, no checks).
+- **KEPT minimal-new:** draft aggregation (the CR envelope + items) and ONE
+  rollback column (`published_prev_object_id`). That is the entire new surface.
 
-The rev-1 body below is retained with these corrections applied inline.
+What survives from rev 2's codex review (still load-bearing **correctness**, kept
+because they are *bugs*, not *features* — they do not add a "complex verification
+feature"):
+- publish idempotency is the **CR-status gate** (`open`→`published` is one-way),
+  NOT `source_turn_id` (`put_pointer/1` is a pointer-id upsert that overwrites
+  `previous_config_id`, so it is not a same-turn no-op);
+- rollback reads the **durable `published_prev_object_id`** column, not the live
+  pointer breadcrumb (which the publish flip overwrote);
+- publish validates the staged object's scope via the existing
+  `fetch_matching_object/1` (the same one-line guard `repoint_config` already
+  uses) — REUSE, not a new lint feature;
+- the cap declares `action == dispatched action` (runtime overwrites needed-action
+  with the dispatched action);
+- the `cr-stage:`/`cr-publish:` `source_turn_id` prefixes are reserved + rejected
+  at non-CR write entry points (so a staged object never spoofs a settled-turn
+  idempotency marker).
 
 ---
 
-## 0. The one-sentence framing
+## 1. What ALREADY exists (verified on origin/main — REUSED, not rebuilt)
 
-Today a config delta is applied **one-at-a-time, immediately, by the agent to
-itself** (`ConfigEvolve.apply_config_delta` → `ConfigStore.write_and_point`).
-There is no way to **stage N deltas, review them together, and publish them as
-one reviewed unit** — and no human-facing review gate before they go live. A
-**change request (CR)** is exactly that staging+review envelope. It does **not**
-introduce a new storage model for config; it *defers and batches* the existing
-`write_and_point` / `put_pointer` operations and gates them behind a review +
-explicit confirm.
-
----
-
-## 1. What ALREADY exists (verified on origin/main — the storage half is built)
-
-This is the load-bearing section. The SPEC's whole premise is that these are
-**reused, not re-created.**
-
-### 1.1 Immutable object + mutable pointer (`config_store.ex`)
-- **`ConfigObject`** (`socialware/config_object.ex`) — append-only, immutable row
-  `(id, workspace_uri, subject_uri, key, body, created_by, source_turn_id)`.
-  Moduledoc: *"Objects are append-only. Rollback and update semantics are
-  represented by repointing `ConfigPointer`, never by mutating this row."*
-  Partial unique index `socialware_config_objects_unique_source_turn` enforces
-  **one object per `source_turn_id`** (idempotency at the DB).
-- **`ConfigPointer`** (`socialware/config_pointer.ex`) — the **mutable cascade
-  layer value**: `(id = layer|ws|subject|key, layer, config_id,
-  previous_config_id, pointed_by, source_turn_id)`. Three layers:
-  `workspace | user | session` (`validate_inclusion`). `previous_config_id`
-  retains the prior object id — **this is the rollback breadcrumb, already there.**
-- **`write_and_point/1`** — the ONE public durable-write path. A single
-  `Ecto.Multi`: `Multi.insert(:object) |> Multi.run(:pointer, put_pointer)` in
-  one `Repo.transaction`. Atomic ⇒ **no orphan object** ⇒ "object exists ⟺
-  applied" invariant holds. (The object-only insert was deliberately REMOVED —
-  PR-7 comment in `config_store.ex`.)
-- **`put_pointer/1`** — repoint a layer to an *existing* object id, returning
-  `previous_config_id`. `Repo.insert(on_conflict: {:replace, [...]},
-  conflict_target: :id)` ⇒ an idempotent upsert keyed on the pointer id.
-- **`resolve/4`**, **`layer_objects_for_key/2`**, **`list_keys_for_subject/1`**,
-  **`current_user_object/2`**, **`fetch_object/1`**, **`fetch_matching_object/1`**
-  (the cross-tenant guard for repoint), **`merge_delta/5`** — the full read +
-  scope-validation surface the review/diff/publish steps consume.
-- **Idempotency markers** — **`applied_for_turn?/1`** and **`object_for_turn/1`**
-  (object-existence-keyed, superseded-turn-safe). The CR publish ceremony reuses
-  `source_turn_id` for the SAME purpose.
+### 1.1 Immutable object + mutable pointer (`socialware/config_store.ex`)
+- **`ConfigObject`** — append-only immutable `(id, workspace_uri, subject_uri,
+  key, body, created_by, source_turn_id)`. Moduledoc: *"Objects are append-only.
+  Rollback and update semantics are represented by repointing `ConfigPointer`,
+  never by mutating this row."* Partial unique index on `source_turn_id`.
+- **`ConfigPointer`** — the mutable cascade-layer value `(id =
+  layer|ws|subject|key, …, config_id, previous_config_id, pointed_by,
+  source_turn_id)`; layers `workspace|user|session`.
+- **`write_and_point/1`** — atomic `Multi`: insert object + advance pointer in one
+  `Repo.transaction` (no orphan object).
+- **`put_pointer/1`** — repoint a layer to an EXISTING object id; returns
+  `previous_config_id`. Upserts on the pointer **id** (`conflict_target: :id`),
+  replacing `[:config_id, :previous_config_id, :pointed_by, :source_turn_id,
+  :updated_at]` on conflict. **NOT a `source_turn_id` no-op** — re-flipping
+  rewrites the breadcrumb (drives §4.3/§4.5).
+- **`resolve/4`**, **`fetch_object/1`**, **`fetch_matching_object/1`** (the
+  workspace+subject+key scope guard), **`merge_delta/5`**, **`object_for_turn/1`**,
+  **`applied_for_turn?/1`** — the reads CR consumes.
 
 ### 1.2 Agent-owned evolution (`behavior/config_evolve.ex`)
-- `apply_config_delta` (step 1: durable object+pointer write, `source_turn_id`
-  idempotent, manage-cap gated), `repoint_config` (rollback/advance — validates
-  `config_id` via `fetch_matching_object/1`, then `put_pointer`), `read_cascade`
-  (manage-cap-gated cascade read), `reconcile_cascade` (boot self-heal).
-- **CE-1 self-binding** (`assert_subject_self/2`): an agent may only ever apply
-  config to ITSELF. The dispatch is gated by the TARGET agent's manage-cap; the
-  handler re-binds `subject_uri`/`workspace_uri` to `self_uri`. **This invariant
-  is inherited by CR publish unchanged** (see §6).
-- The **deferred sandbox `write_path` self-dispatch** (step 2) that refreshes the
-  on-disk cascade cache after a pointer move. CR publish emits the **same** step-2
-  effect — it does not bypass it.
+- `apply_config_delta` (durable object+pointer write, manage-cap gated,
+  `source_turn_id` idempotent), `repoint_config` (rollback/advance — validates the
+  target object via `fetch_matching_object/1`, then `put_pointer`).
+- **CE-1 self-binding** (`assert_subject_self/2`): an agent applies config to
+  ITSELF only; the handler re-binds `subject_uri`/`workspace_uri` to `self_uri`.
+- **The deferred `sandbox.write_path` self-dispatch** (`sandbox_write_effects/3`):
+  after a pointer move it emits `{:dispatch_after_commit, Cmd(self, :write_path,
+  rtd)}` that refreshes the on-disk cascade cache. **This is the materialization
+  CR publish reuses.**
 
-### 1.3 Materialization (`config_projection.ex`)
-- `object_uri/2` gives an immutable object a stable `resource://<ws>/socialware-
-  config-object/<b64(id)>` URI (workspace-segment is cap-checked authority,
-  re-asserted in `resolve_config_dir/1`).
-- `render_soul/1` is **deterministic** (keys sorted; `soul_md` verbatim) — *"two
-  materializations of the same object yield byte-identical files."* **The review
-  DIFF (§5) reuses `render_soul/1` to render the proposed vs released soul** so the
-  human reviews the *actual projected CLAUDE.md*, not a raw map.
+### 1.3 Sandbox config_dir materialization (`core/sandbox/config_dir.ex`)
+- `Ezagent.Sandbox.ConfigDir` — the single authority for the per-agent config_dir
+  TARGET path (`path/2`, `allocate/2`) via the hardened `Resource.FsResolver`.
+  The `sandbox.write_path` step writes the resolved soul (`CLAUDE.md`) into this
+  dir. CR publish triggers this **unchanged** by emitting the same step-2 effect.
 
-### 1.4 Console facade (`agent/config.ex`)
-- `Ezagent.Agent.Config` already exposes `read_cascade/4`, `read_key/5`,
-  `apply_delta/4`, `delete_path/4`, `repoint/4` to UI/domain, each routing through
-  the **manage-cap gate via `Invocation.dispatch`** (never reading `ConfigStore`
-  directly for the gated paths). **The CR console surface extends THIS facade** —
-  it is the established boundary world already calls.
+### 1.4 Projection + console facade
+- `ConfigProjection.render_soul/1` — **deterministic** soul render (keys sorted;
+  `soul_md` verbatim). The CR preview diff uses it.
+- `Ezagent.Agent.Config` — the manage-cap-gated facade (`read_cascade/4`,
+  `apply_delta/4`, `repoint/4`) world already calls; CR extends it.
 
-> **What is therefore NOT in this SPEC:** any new version-history table, any new
-> immutability mechanism, any new atomic-write path, any new idempotency scheme,
-> any new rollback mechanism. Those are §1 and are REUSED. See the explicit
-> reuse-vs-new ledger in §9.
+> **NOT in this SPEC:** any new version-history table, immutability mechanism,
+> atomic-write path, rollback mechanism, preview/sandbox system, lint engine, or
+> reviewer authority. Those are §1 (reused) or explicitly cut (rev 3).
 
 ---
 
 ## 2. The gap CR closes
 
-| Capability | Today | With CR |
-|---|---|---|
-| Stage many deltas before they go live | ✗ each `apply_config_delta` is immediate | ✓ accumulate N deltas under one open CR |
-| Review the *combined* effect before publish | ✗ | ✓ lint + sandbox-vs-released diff + explicit confirm |
-| One reviewed publish unit | ✗ N independent writes | ✓ one publish ceremony flips the pointer(s) atomically/idempotently |
-| Reject a staged change wholesale | ✗ (already written) | ✓ reject an open CR — nothing was ever pointed-to |
-| Roll back a published CR | ✓ `repoint_config` per-pointer (manual) | ✓ same `repoint_config`, surfaced as a CR action over the recorded prior pointers |
-| Auto-proposed config changes ("dream") | ✗ | ✓ (optional sub-phase) a Dream becomes a CR source |
+Today config deltas apply **one-at-a-time, immediately**. CR lets you **stage N
+deltas, eyeball a plain diff, then publish them as one unit** (or reject the whole
+draft before anything goes live; or roll back after).
 
-The decisive new property: **the period between "I want to change config" and
-"config is live" becomes a reviewable, rejectable, single-confirm transaction.**
+| | Today | With CR |
+|---|---|---|
+| Stage many deltas before live | ✗ each apply is immediate | ✓ accumulate under one open CR |
+| See the proposed soul before publish | ✗ | ✓ plain `render_soul/1` diff (no checks) |
+| Publish as one unit | ✗ | ✓ flip pointer(s); fires existing sandbox materialization |
+| Reject a draft wholesale | ✗ | ✓ nothing was ever pointed-to |
+| Roll back a published CR | ✓ manual per-pointer repoint | ✓ same repoint, surfaced as a CR action |
 
 ---
 
-## 3. Data model (NEW — the only new schemas)
+## 3. Data model (the ONLY new state)
 
-Two new tables in **`domain.identity`** (same app/domain as `ConfigStore`, so no
-cross-domain dependency; the CR references `ConfigObject`/`ConfigPointer` rows
-that live in the same domain). Both per-tenant ⇒ **`workspace_uri NOT NULL`**
-(invariant #14).
+Two tables in **`domain.identity`** (beside `ConfigStore`). Per-tenant ⇒
+`workspace_uri NOT NULL` (invariant #14).
 
-### 3.1 `ConfigChangeRequest` (the envelope)
+### 3.1 `ConfigChangeRequest` (the draft envelope)
 ```
 socialware_config_change_requests
   id                : string  (UUID, pk)
-  workspace_uri     : string  NOT NULL          # invariant #14
-  subject_uri       : string  NOT NULL          # the agent (or workspace) being changed
-  status            : string  NOT NULL          # open | review | published | rejected | rolled_back
-  opened_by         : string  NOT NULL          # entity URI (accountable; mirrors granted_by discipline)
-  reviewed_by       : string                    # entity URI, set at confirm
-  published_by      : string                    # entity URI, set at publish
-  published_turn_id : string                    # the source_turn_id stamped on ALL objects published by this CR (idempotency)
-  title             : string
-  note              : string
+  workspace_uri     : string  NOT NULL
+  subject_uri       : string  NOT NULL    # the AGENT being changed (agent-subject only, v1)
+  status            : string  NOT NULL    # open | published | rejected | rolled_back
+  opened_by         : string  NOT NULL    # entity URI (accountable)
+  published_by      : string              # entity URI, set at publish
+  published_turn_id : string              # cr-publish:<id> stamped on flipped pointers (provenance/audit only)
+  title / note      : string
   inserted_at / updated_at
 ```
-- **One active (open/review) CR per `(workspace_uri, subject_uri)`** — a partial
-  unique index `WHERE status IN ('open','review')`. Rationale: two concurrent open
-  CRs against the same subject would race on the same pointers at publish. A CR is
-  "the active change set for this subject." (Published/rejected/rolled_back CRs are
-  historical and unconstrained.)
-- `subject_uri` is the cascade subject — for the agent-config case it is the
-  agent URI (the CE-1 self-binding subject). For a workspace-layer change it is a
-  workspace URI. The cap model (§6) keys off it.
+- **Status set is 4 values** (no `review` state — rev 3 cut the review pipeline).
+- **One active (`open`) CR per `(workspace_uri, subject_uri)`** — partial unique
+  index `WHERE status = 'open'`. Two concurrent open CRs would race the same
+  pointers at publish.
 
-### 3.2 `ConfigChangeItem` (a staged delta, references a ConfigObject)
+### 3.2 `ConfigChangeItem` (a staged delta → references a ConfigObject)
 ```
 socialware_config_change_items
   id                : string  (UUID, pk)
-  change_request_id : string  NOT NULL  (fk → change_requests.id)
+  change_request_id : string  NOT NULL  (fk)
   workspace_uri     : string  NOT NULL
-  layer             : string  NOT NULL  # workspace|user|session (same allow-list as ConfigPointer)
+  layer             : string  NOT NULL  # workspace|user|session
   key               : string  NOT NULL  # cascade key, e.g. advisor.behavior
-  staged_object_id  : string  NOT NULL  # → ConfigObject.id : the immutable, ALREADY-WRITTEN proposed object
-  base_object_id    : string            # → ConfigObject.id : the object currently pointed-to at draft time (the diff base / expected-current guard)
-  published_prev_object_id : string     # → ConfigObject.id : the object this slot pointed at IMMEDIATELY BEFORE publish (rev-2 #2). Recorded at publish from put_pointer's returned previous_config_id. The DURABLE rollback target — NOT read from the live pointer (which put_pointer overwrites on the next flip).
+  staged_object_id  : string  NOT NULL  # → ConfigObject.id : the immutable, ALREADY-WRITTEN proposed object (no pointer aimed at it yet)
+  base_object_id    : string            # → ConfigObject.id : the object the slot pointed at when staged (diff base + drift guard)
+  published_prev_object_id : string     # → ConfigObject.id : the object the slot pointed at IMMEDIATELY BEFORE publish (the durable rollback target; recorded at publish from put_pointer's returned previous_config_id — NOT read from the live pointer later, which the next flip overwrites)
   inserted_at / updated_at
 ```
-- **Unique `(change_request_id, layer, key)`** — at most one staged item per
-  cascade slot per CR (a later edit to the same slot replaces the item's
-  `staged_object_id`, pointing at a newer immutable object — never mutates one).
-- **`staged_object_id` references a REAL `ConfigObject` that is written
-  immediately at stage time** via the existing path (see §4.2). This is the key
-  reuse: **staging does NOT invent a "draft body" column — it writes a normal
-  immutable object and simply does not point any layer at it yet.** The object is
-  inert until publish flips the pointer. (Append-only objects with no pointer are
-  the natural representation of "proposed but not live" — and `object_for_turn`
-  /`applied_for_turn?` are unaffected because they key on `source_turn_id`, which
-  for staged objects is the CR's own scheme, see §4.3.)
-- **`base_object_id`** is the optimistic-concurrency / diff anchor: the object the
-  layer pointed at when the item was staged. At publish, if the live pointer has
-  moved off `base_object_id` (someone else changed config underneath the CR), the
-  publish fails loud with a conflict (§4.4) — never silently clobbers.
-
-> **Why an immediate immutable object at stage time, not a deferred body:**
-> writing the object up-front means (a) the review DIFF renders the *real*
-> projected soul from a real object via `render_soul/1`/`ConfigProjection`, not a
-> speculative merge; (b) publish is a pure pointer flip (`put_pointer`) — the
-> already-built atomic/idempotent operation — with **no object write in the
-> ceremony**, so the ceremony cannot half-write. This is the cleanest reuse of the
-> "object-keyed pointer" design the projection moduledoc calls out as *what makes
-> apply naturally atomic.*
+- **Unique `(change_request_id, layer, key)`** — one staged item per slot per CR;
+  re-staging the same slot replaces `staged_object_id` (points at a newer immutable
+  object — never mutates one).
+- **`staged_object_id` is a REAL `ConfigObject` written at stage time**, with NO
+  pointer aimed at it (inert until publish). This is the key reuse: staging does
+  not invent a "draft body" column — it writes a normal immutable object that no
+  layer resolves to yet.
 
 ---
 
-## 4. Lifecycle
+## 4. Lifecycle (minimal)
 
 ```
-        open ──stage/unstage items──▶ open
-          │                              │
-          │ request-review              │ (edits return it to open if in review)
-          ▼                              │
-        review ──confirm(reviewer)──────▶ published
-          │                                  │
-          │ reject                           │ rollback (repoint prior)
-          ▼                                  ▼
-        rejected                         rolled_back
+   open ──stage/unstage items──▶ open
+     │                              │
+     │ reject                       │ publish (manage-cap; flips pointer + fires sandbox materialization)
+     ▼                              ▼
+   rejected                     published ──rollback (existing repoint)──▶ rolled_back
 ```
 
-### 4.1 `open` — create the CR
-A manage-cap holder opens a CR for `(subject_uri)`. Fails if an active CR
-already exists for that subject (the partial unique index). No config side effect.
+### 4.1 `open_cr`
+A manage-cap holder opens a CR for an agent `subject_uri`. Fails if an `open` CR
+already exists for that subject (partial unique index). No config side effect.
+**v1 rejects a non-agent `subject_uri`** (CE-1 self-binding requires an agent
+handler; workspace-subject CRs are a follow-up).
 
-### 4.2 stage / unstage items (CR stays `open`)
-**Stage = write an immutable `ConfigObject` now, record a `ConfigChangeItem`
-pointing at it, point NO layer.** Reuse:
-- body computation: `ConfigStore.merge_delta/5` (patch) or an explicit
-  `replace_body` — **identical to `ConfigEvolve.do_apply_config_delta`'s body
-  step.**
-- object write: a **new thin entry point** `ConfigStore.write_object_staged/1`
-  that does `Multi.insert(ConfigObject.changeset(...))` **without** the pointer
-  step. (See §4.2.1 — this is the ONE genuinely new ConfigStore function, and it
-  is a deliberate, narrow re-opening of the object-only insert that PR-7 closed,
-  fenced so it cannot create the orphan-class bug.)
-- `base_object_id` = current `resolve/4` object id for that `(layer, subject,
-  key)` (`:none` ⇒ nil, a fresh slot).
+### 4.2 `stage_item` / `unstage_item` (CR stays `open`)
+**Stage = write an immutable `ConfigObject` now, record a `ConfigChangeItem`, point
+NO layer.** Reuse:
+- body = `ConfigStore.merge_delta/5` (patch) or an explicit `replace_body` —
+  identical to `ConfigEvolve.do_apply_config_delta`'s body step.
+- object write = a new thin `ConfigStore.write_object_staged/1`:
+  `Multi.insert(ConfigObject.changeset(...))` **without** the pointer step (§4.2.1).
+- `base_object_id` = current `resolve/4` object id for the slot (`:none` ⇒ nil).
 
-Unstaging deletes the `ConfigChangeItem`. The orphan `ConfigObject` it referenced
-is simply left append-only and unreferenced (objects are never deleted — same as
-a superseded object today).
+`unstage_item` deletes the `ConfigChangeItem`; the orphan `ConfigObject` is left
+append-only and unreferenced (same as a superseded object today).
 
-#### 4.2.1 The orphan-object concern, addressed head-on
-PR-7 removed the public object-only insert *because* it let a caller create an
-object with no pointer, breaking "object existence ⟺ applied" that
-`applied_for_turn?/1` relies on. **Re-introducing a staged object IS an
-object-with-no-pointer.** This SPEC keeps the invariant sound by **scoping
-staged objects out of the idempotency namespace**:
-- Staged objects carry `source_turn_id = "cr-stage:<cr_id>:<item_id>"` (a CR-owned
-  scheme), **NEVER a real settled `turn_id`**. So `applied_for_turn?(turn_id)` /
-  `object_for_turn(turn_id)` for a *real* turn are unaffected — a staged object's
-  `source_turn_id` never collides with a turn's.
-- The "object existence ⟺ applied" invariant is specifically about **settled-turn
-  deltas** (the `ConfigEvolve` recovery path). Staged objects are not part of that
-  path; they become "applied" only when the CR publish points a layer at them
-  under the CR's *publish* turn id (§4.3). Until then they are deliberately inert.
-- `write_object_staged/1` is **not** a general re-opening of object-only insert: it
-  requires a `cr-stage:` `source_turn_id` prefix (rejected otherwise), so it
-  cannot be used to forge a settled-turn orphan.
-- **rev-2 #5 — the fence is GUARDED, not a convention.** Because the console
-  facade `apply_delta` accepts a **caller-supplied `turn_id`**
-  (`agent/config.ex`), a manage-cap caller could otherwise pass
-  `turn_id: "cr-stage:…"` and make `ConfigEvolve.handle_apply_config_delta`
-  early-return (via `object_for_turn`) without writing/pointing. So the reserved
-  prefixes `cr-stage:` and `cr-publish:` are **rejected at every NON-CR config
-  write entry point**: `ConfigEvolve.apply_config_delta`/`repoint_config`
-  validation AND the `Agent.Config` facade. Only the CR governance path may mint
-  them.
+#### 4.2.1 Orphan-object invariant (kept sound, no new feature)
+PR-7 removed the public object-only insert because an object with no pointer would
+break "object existence ⟺ applied" (used by `applied_for_turn?/1` /
+`object_for_turn/1`). Staged objects ARE objects with no pointer, so:
+- staged objects carry `source_turn_id = "cr-stage:<cr_id>:<item_id>"` (a CR-owned
+  namespace) — **never a real settled `turn_id`** — so a turn's idempotency lookup
+  is unaffected;
+- `write_object_staged/1` **requires** a `cr-stage:` prefix (rejected otherwise);
+- the reserved prefixes `cr-stage:`/`cr-publish:` are **rejected at every non-CR
+  config-write entry** — `ConfigEvolve.apply_config_delta`/`repoint_config`
+  validation AND the `Agent.Config` facade (which accepts a caller-supplied
+  `turn_id`, `agent/config.ex`) — so a caller cannot pass a `cr-stage:` turn_id to
+  the normal path and spoof an early-return.
 
-> **OPEN QUESTION Q1 (lead):** is the `cr-stage:` `source_turn_id` namespace
-> fence sufficient, or does the lead prefer staged objects carry no
-> `source_turn_id` at all (NULL) — which would require relaxing
-> `ConfigObject`'s `validate_required(:source_turn_id)` and the partial unique
-> index semantics? The fence keeps the existing NOT-NULL + unique index intact,
-> which is why it is the recommended option.
+This is a one-time prefix guard, not a "complex verification feature."
 
-### 4.3 publish ceremony (CR `review` → `published`)
-After an explicit reviewer confirm (§5), publish. **`confirm_cr` is legal ONLY
-from `review` status** — the FIRST step is a status check + transition that, once
-`published`, makes any re-`confirm` a status-rejected no-op BEFORE any pointer
-write. **This CR-status gate — NOT `source_turn_id` — is the publish idempotency
-mechanism** (rev-2 #1: `put_pointer/1` upserts on pointer id and OVERWRITES
-`previous_config_id`/`source_turn_id` on conflict, so it is *not* a same-turn
-no-op).
-1. Mint ONE `published_turn_id = "cr-publish:<cr_id>"` for the whole CR, stamped
-   as the `source_turn_id` on every flipped pointer — **provenance/audit only**
-   (which CR published this pointer), not the idempotency key.
-2. For each `ConfigChangeItem`, in ONE `Ecto.Multi` (see §4.3.1):
-   - **base-drift guard** — `resolve/4` must still resolve to `base_object_id`
-     (§4.4), else abort the whole transaction.
-   - **scope guard (rev-2 #3)** — `ConfigStore.fetch_matching_object/1` with
-     `{config_id: staged_object_id, workspace_uri, subject_uri, key}` to validate
-     the staged object belongs to THIS subject/key (NOT raw `put_pointer/1`, which
-     only checks existence) — exactly as `repoint_config` does before its flip.
-   - **flip** — `ConfigStore.put_pointer/1` with `{layer, workspace_uri,
-     subject_uri, key, config_id: staged_object_id, actor_uri: published_by,
-     source_turn_id: published_turn_id}`. **`put_pointer` returns
-     `previous_config_id`** — captured per item.
-3. Flip `status → published`, set `published_by`, `published_turn_id`, and write
-   each item's returned `previous_config_id` into its **`published_prev_object_id`
-   column** (rev-2 #2 — the DURABLE rollback target; NOT read from the live
-   pointer later, which would be overwritten by the next flip).
-4. Emit the **existing** deferred `sandbox.write_path` self-dispatch (the step-2
-   cascade-cache refresh) — exactly as `ConfigEvolve` does after a pointer move,
-   so the on-disk soul is refreshed. (Mechanism: publish is dispatched to the
-   agent so it runs inside the agent's own handler with `ctx.siblings[:sandbox]`,
-   and reuses `sandbox_write_effects/3` — see §6/§7.)
-5. "Recycle": the CR is now terminal-`published`; the active-CR unique index frees
-   up so a new CR can be opened for the subject. No object/pointer cleanup — append
-   -only objects stay; superseded objects remain for rollback (same as today).
+### 4.3 `publish_cr` (CR `open` → `published`)
+Manage-cap gated (§6). Steps:
+1. **Status gate FIRST** — `publish_cr` is legal only from `open`; the transition to
+   `published` is the publish **idempotency mechanism** (a second publish on a
+   `published` CR is rejected BEFORE any pointer write). `source_turn_id` is NOT the
+   idempotency key (`put_pointer/1` overwrites on conflict).
+2. Mint `published_turn_id = "cr-publish:<cr_id>"` (provenance only).
+3. For each `ConfigChangeItem`, in ONE `Ecto.Multi` (§4.3.1):
+   - **drift guard** — `resolve/4` must still resolve to `base_object_id` (§4.4),
+     else abort the whole transaction;
+   - **scope guard (REUSE)** — `ConfigStore.fetch_matching_object/1` with
+     `{config_id: staged_object_id, workspace_uri, subject_uri, key}` — the same
+     guard `repoint_config` already calls — so a bad/tampered CR row cannot
+     cross-bind a subject/key to a foreign object;
+   - **flip** — `ConfigStore.put_pointer/1` (`config_id: staged_object_id`,
+     `source_turn_id: published_turn_id`); capture the returned
+     `previous_config_id`.
+4. Set `status → published`, `published_by`, `published_turn_id`, and write each
+   item's returned `previous_config_id` into `published_prev_object_id`.
+5. **Fire the EXISTING sandbox materialization** — publish is dispatched TO the
+   subject agent (so it runs in the agent's own handler with
+   `ctx.siblings[:sandbox]`), reusing `ConfigEvolve`'s `sandbox_write_effects/3` to
+   emit the deferred `sandbox.write_path` self-dispatch that re-materializes the
+   resolved soul into the config_dir via `Sandbox.ConfigDir`. **No new
+   materialization.**
+6. The CR is terminal-`published`; the active-CR unique index frees up. Append-only
+   objects stay (rollback needs the prior ones).
 
-#### 4.3.1 Atomicity decision (the sharp edge)
-A CR can stage items across **multiple `(layer, key)` slots** ⇒ multiple
-pointers. Two options:
-- **(A) one `Repo.transaction` wrapping all `put_pointer` calls** — all-or-nothing
-  across pointers. Clean, but `put_pointer` is currently called standalone; CR
-  publish would wrap N of them in a `Multi`. **Recommended.** Each `put_pointer`
-  is already a single upsert, so composing them in one Multi is mechanical and
-  preserves per-item `previous_config_id` capture.
-- (B) per-pointer idempotent flips (no outer transaction), relying on the shared
-  `published_turn_id` to make a crashed/partial publish *resumable* (re-run
-  flips the not-yet-flipped pointers; already-flipped ones are `on_conflict`
-  no-ops). Weaker atomicity, stronger crash-resumability.
+#### 4.3.1 Atomicity
+A CR may stage items across multiple `(layer, key)` slots ⇒ multiple pointers.
+Wrap all per-item guard+flip in **one `Repo.transaction`** (all-or-nothing). Each
+`put_pointer` is a single upsert, so composing N in one `Multi` is mechanical and
+lets per-item `previous_config_id` capture happen in the same transaction.
 
-> **OPEN QUESTION Q2 (lead):** A (atomic, all-pointers-in-one-Multi) vs B
-> (resumable via shared `source_turn_id`)? A matches the "one reviewed publish
-> unit" mental model best; B matches `ConfigEvolve`'s existing
-> idempotent-resume philosophy. Recommended: **A**, since the per-item
-> `previous_config_id` capture wants a single transaction anyway, and resumability
-> is less important when publish is a fast pure-pointer flip.
+### 4.4 base-drift conflict
+Before flipping a slot, assert `resolve/4` still resolves to the item's
+`base_object_id`. If config moved underneath the CR since staging, abort with
+`{:error, {:cr_base_drift, item}}`. Reuses `resolve/4`; no new read. (No silent
+clobber.)
 
-### 4.4 base-drift conflict (concurrency safety)
-Before flipping each pointer, assert the live pointer still resolves to the item's
-`base_object_id` (via `resolve/4`). If it has moved (config changed underneath the
-CR since staging), abort the whole publish with `{:error, {:cr_base_drift, item}}`
-— the reviewer must re-review against the new base. Reuses `resolve/4`; no new
-read. (Per the let-it-crash / no-silent-clobber principle.)
-
-### 4.5 rollback (CR `published` → `rolled_back`)
+### 4.5 `rollback_cr` (CR `published` → `rolled_back`)
 **REUSES the existing repoint — no new repoint mechanism.** For each published
-item, dispatch the **existing** `ConfigEvolve.repoint_config` with
-`config_id = published_prev_object_id` (the durable column recorded at publish,
-rev-2 #2 — NOT the live pointer's `previous_config_id`, which the publish flip
-overwrote). `repoint_config` already:
-- validates the prior object exists + is in scope (`fetch_matching_object/1`),
-- advances the pointer back (`put_pointer`, returning the now-current id),
-- emits the step-2 sandbox refresh.
+item, dispatch the existing `ConfigEvolve.repoint_config` with
+`config_id = published_prev_object_id` (the durable column from §4.3.4 — NOT the
+live pointer's `previous_config_id`, which the publish flip overwrote).
+`repoint_config` already validates the prior object (`fetch_matching_object/1`),
+advances the pointer back (`put_pointer`), and emits the step-2 sandbox refresh.
+CR → `rolled_back`. This is exactly the design `ConfigStore`'s moduledoc states:
+*"Rollback is the same repoint operation aimed at a prior retained object."*
 
-The CR row flips to `rolled_back`. **Rollback is literally "publish the prior
-objects"** — the SAME pointer-flip operation aimed backward, which is exactly the
-design `ConfigStore`'s moduledoc states: *"Rollback is the same repoint operation
-aimed at a prior retained object."* If `previous_config_id` is nil (the slot was
-fresh at publish), rollback for that item is "no prior pointer" — Q3.
-
-> **OPEN QUESTION Q3 (lead):** for a CR item whose slot had NO prior object
-> (`previous_config_id == nil`, a brand-new key), rollback cannot "repoint to
-> prior." Options: (a) leave the new pointer in place (partial rollback, logged);
-> (b) delete the pointer row entirely (a new operation — `ConfigStore` has no
-> pointer-delete today; would be genuinely new). Recommended: **(a)** to avoid
-> adding a pointer-delete primitive (keeps "no new mechanism"); document the
-> partial-rollback semantics.
+If `published_prev_object_id` is nil (the slot was a brand-new key at publish),
+that item's rollback leaves the new pointer in place (partial rollback, logged) —
+avoids adding a pointer-delete primitive (Q2).
 
 ---
 
-## 5. Review gate (lint + sandbox-vs-released DIFF + explicit confirm)
+## 5. Preview (plain diff — NO lint, NO checks)
 
-The review step is **pure reads over existing data + a deterministic projection
-diff** — no new persistence.
-
-### 5.1 lint
-Per-item structural checks reusing the existing validators:
-- `ConfigStore.normalize_layer/1`, `validate_key/1`, `normalize_uri/2` (the
-  #607 round-5 upfront chokepoint already used by `ConfigEvolve`).
-- body shape: each `staged_object_id` resolves (`fetch_object/1`) and its body is
-  a map (so `render_soul/1` won't crash).
-- base-drift pre-check (§4.4) surfaced as a lint warning at review time (not just
-  at publish), so the reviewer sees "base moved" before confirming.
-
-### 5.2 the DIFF (the heart of the gate)
-For each item compute **released-vs-proposed** entirely from existing reads:
-- **released** body = `ConfigStore.resolve(layer, ws, subject, key)` →
-  `object.body` (the currently-pointed object), or `%{}` if `:none`.
+The only pre-publish surface, deliberately trivial:
 - **proposed** body = `ConfigStore.fetch_object(staged_object_id).body`.
-- **rendered diff** = `ConfigProjection.render_soul(released)` vs
-  `render_soul(proposed)` — a text diff of the **actual projected CLAUDE.md
-  (soul)**, plus a structural map diff of the bodies. `render_soul/1` is
-  deterministic, so the diff is stable and reproducible.
-- **effective-cascade diff** (optional, richer): reuse the
-  `ConfigEvolve.handle_read_cascade` `effective_body/1` merge (workspace→user→
-  session) to show the *effective* config before/after, not just the single
-  layer. This is the same merge the console read already exposes, so the review UI
-  and the live read agree.
+- **current** body = `ConfigStore.resolve(layer, ws, subject, key).body` (or `%{}`).
+- **rendered diff** = `ConfigProjection.render_soul(current)` vs
+  `render_soul(proposed)` — a text diff of the projected `CLAUDE.md`, plus a raw
+  map diff. `render_soul/1` is deterministic so the diff is stable.
 
-No new diff storage — the diff is computed on demand from `ConfigObject` bodies +
-`render_soul/1`. Two reviewers opening the same CR see byte-identical diffs.
-
-### 5.3 explicit confirm (the chokepoint)
-`request_review` moves `open → review`. `confirm` moves `review → published`
-(triggering §4.3) and is the **single human gate**: it requires the review cap
-(§6) and records `reviewed_by`. `reject` moves `review → rejected` (or
-`open → rejected`) — no config side effect ever happened, so reject is free.
-
-> Editing items while in `review` returns the CR to `open` (the diff the reviewer
-> approved must match what publishes — a staged-set change invalidates the
-> review). Enforced by the lifecycle transition table, not by trusting the caller.
+That is the whole preview. **No structural lint, no validation gate, no `review`
+status, no reviewer.** The diff is computed on demand from existing reads; nothing
+is persisted or materialized.
 
 ---
 
-## 6. Cap model (who can open / review / publish — the chokepoint)
+## 6. Cap model
 
-CR governance introduces a **three-role separation** mapped onto the existing
-CapBAC machinery (`references/capbac.md` §1; Decision #154 — every `granted_by` a
-real entity). The principle: **publish must be gated on a cap distinct from
-"can edit config," so the reviewer is a real chokepoint, not the same authority
-that stages.**
+**The cap is the agent's manage cap** (lead-confirmed) — the SAME cap
+`ConfigEvolve.required_caps/0` declares for `apply_config_delta`:
+`cap(:agent, Ezagent.Behavior.Manage, :any)`. A held `Manage :any` cap matches any
+dispatched action (the runtime overwrites the needed-cap action with the dispatched
+action). **Whoever may edit config may open / stage / publish / reject / rollback a
+CR.** No separate publish or reviewer cap (rev 3 cut the two-person rule).
 
-> **rev-2 #4 — action-axis correctness.** The runtime **overwrites the needed-cap
-> action with the DISPATCHED action** (`runtime.ex` `resolve_required_cap`). So
-> the **declared cap action must equal the dispatched action name** (the
-> `ConfigEvolve.required_caps/0` rule). The manage/stage caps therefore declare
-> `behavior: Ezagent.Behavior.Manage, action: :any` (a held `Manage :any` cap
-> matches any dispatched action) — exactly as `ConfigEvolve.required_caps/0` does
-> — **NOT** `behavior: ConfigEvolve, action: :apply_config_delta`. The publish cap
-> declares `behavior: ConfigGovernance, action: :publish_cr` and the **dispatched
-> action is named `:publish_cr`** (likewise `:rollback_cr`).
+Enforcement is the **standard dispatch step-5.5 gate**, not a facade `if`-check: CR
+actions are a new `Ezagent.Behavior.ConfigGovernance` Lifecycle behavior on the
+agent Kind (sibling to `ConfigEvolve`), so `required_caps/0` + the runtime gate
+authorize them — mirroring how `ConfigEvolve.read_cascade` was routed through
+dispatch *"so the gate is structural, not a hand-rolled facade check."*
 
-| CR action (dispatched name) | Required cap (declared in `required_caps/0`) | Rationale |
-|---|---|---|
-| `open_cr` / `stage_item` / `unstage_item` | `cap(:agent, Ezagent.Behavior.Manage, :any)` over the subject — **the existing manage-cap** (a held `Manage :any` matches any dispatched action) | staging writes inert objects only; whoever may edit config may stage. SAME cap shape as `ConfigEvolve.required_caps/0`. |
-| `request_review` | manage-cap (same as stage) | a procedural move, no side effect |
-| `publish_cr` (the confirm/publish action) | **a NEW distinct cap** `cap(:agent, Ezagent.Behavior.ConfigGovernance, :publish_cr)` over the subject (declared action == dispatched action) | THE chokepoint — separates "propose" from "approve." |
-| `reject_cr` | publish-cap OR manage-cap | reviewer rejects, or opener withdraws |
-| `rollback_cr` | `cap(:agent, ConfigGovernance, :rollback_cr)` (or `publish_cr` if a single approver cap is preferred) | only an approver may revert a published CR |
-
-### 6.1 Where the cap is enforced — REUSE the dispatch gate, do not hand-roll
-CR governance actions are **Behavior actions on the subject agent** (a new
-`Ezagent.Behavior.ConfigGovernance` Lifecycle behavior mounted on the agent Kind,
-sibling to `ConfigEvolve`), so authorization is the **standard dispatch step-5.5
-cap check** (`runtime.ex`), NOT a facade `if`-check. This mirrors exactly how
-`ConfigEvolve.read_cascade` was deliberately routed through dispatch *"so the gate
-is structural, not a hand-rolled facade check"* (its moduledoc). The console
-facade (§8) dispatches; the gate runs in the runtime.
-
-### 6.2 CE-1 self-binding inherited
-Publish dispatches to the subject agent and runs in its own handler; like
-`ConfigEvolve`, it **re-binds `subject_uri`/`workspace_uri` to `self_uri`**
-(`assert_subject_self/2`) before any `put_pointer`. A caller managing agent A
-cannot publish a CR whose pointers target agent B even if the CR row claims B —
-the self-bind rejects it. The CR's `subject_uri` is validated == the dispatched-to
-agent at publish.
-
-### 6.3 granter discipline
-The new `publish_cr` cap is granted via the existing `Ezagent.Identity.Grant`
-chokepoint. It is **concrete-scoped** (`kind: :agent, behavior: ConfigGovernance,
-action: :publish_cr, instance: <agent or scope-tuple>`), so it is rule-eligible
-(`rule_cap_bounded?`) — e.g. a workspace policy "workspace admins may publish CRs
-for agents in their workspace" mints it under `{:rule, "ws_admin_publish", admin}`
-with `granted_by = admin`. No new system principal.
-
-> **OPEN QUESTION Q4 (lead):** is `publish_cr` a brand-new Behavior+cap
-> (`ConfigGovernance`), or should publish reuse the manage-cap with the *human
-> confirm* being the only gate (i.e. governance is procedural, not a separate
-> authority)? A distinct cap gives a real two-person-rule chokepoint; reusing
-> manage-cap is simpler but means "anyone who can edit can also self-approve."
-> Recommended: **distinct cap**, defaulting (for backward compat / single-operator
-> workspaces) to *also granted to manage-cap holders* so existing flows don't
-> regress, while leaving room for a real separated reviewer.
+**CE-1 self-binding inherited:** publish/rollback dispatch to the subject agent and
+re-bind `subject_uri`/`workspace_uri` to `self_uri` before any `put_pointer` — a
+caller managing agent A cannot publish a CR whose pointers target agent B.
 
 ---
 
-## 7. Where it lives + reuse map (three-tier)
+## 7. Where it lives + reuse map
 
-All in **`domain.identity`** (where `ConfigStore` + `ConfigEvolve` live):
-- `Ezagent.Socialware.{ConfigChangeRequest, ConfigChangeItem}` — new Ecto schemas
-  (§3), beside `ConfigObject`/`ConfigPointer`.
+All in **`domain.identity`** (where `ConfigStore`/`ConfigEvolve` live), except
+`Sandbox.ConfigDir` (core, reused):
+- `Ezagent.Socialware.{ConfigChangeRequest, ConfigChangeItem}` — new schemas (§3).
 - `Ezagent.Socialware.ConfigChangeStore` — new thin module: open/stage/unstage/
-  transition/list/diff query helpers. **Delegates every config read/write to
-  `ConfigStore`** (`write_object_staged/1`, `put_pointer/1`, `resolve/4`,
-  `fetch_object/1`, `merge_delta/5`). Owns ONLY the CR/item rows.
-- `Ezagent.Behavior.ConfigGovernance` — new `use Ezagent.Lifecycle` Behavior on
-  the agent Kind (sibling to `ConfigEvolve`); actions: `open_cr`, `stage_item`,
-  `unstage_item`, `request_review`, `confirm_cr` (publish), `reject_cr`,
-  `rollback_cr`, `review_diff` (read). Each `put_pointer`/`repoint` it performs is
-  the EXISTING `ConfigStore`/`ConfigEvolve` operation; it emits the EXISTING
-  step-2 sandbox refresh. Declares `reads_siblings([:sandbox, :identity])` exactly
-  as `ConfigEvolve` does.
-- `Ezagent.Agent.Config` (existing facade) — extended with CR methods
-  (`open_change_request/4`, `stage/4`, `review/4`, `publish/4`, `rollback/4`),
-  each dispatching the corresponding `config_governance.<action>` — the same
-  dispatch pattern its existing methods use.
+  transition/list/diff helpers; **delegates every config read/write to
+  `ConfigStore`** (`write_object_staged/1`, `fetch_matching_object/1`,
+  `put_pointer/1`, `resolve/4`, `fetch_object/1`, `merge_delta/5`). Owns only the
+  CR/item rows.
+- `Ezagent.Behavior.ConfigGovernance` — new `use Ezagent.Lifecycle` behavior on the
+  agent Kind; actions `open_cr`, `stage_item`, `unstage_item`, `publish_cr`,
+  `reject_cr`, `rollback_cr`, `preview_cr` (read). `reads_siblings([:sandbox,
+  :identity])` exactly as `ConfigEvolve`. Reuses `sandbox_write_effects/3`.
+- `Ezagent.Agent.Config` (existing facade) — extended with CR methods that dispatch
+  the corresponding `config_governance.<action>`.
 - `ConfigStore.write_object_staged/1` — the ONE new `ConfigStore` function (§4.2.1).
 
----
-
-## 8. Console surface (which reads the review UI consumes)
-
-The world review UI is **read-only over existing reads + one confirm dispatch**:
-- **CR list / detail**: new `ConfigChangeStore` queries (CR rows + items) — these
-  are the only genuinely new reads, and they are over the new CR tables only.
-- **Per-item diff panel**: consumes `Agent.Config.review/4` → dispatches
-  `config_governance.review_diff` → returns, per item, `{released_body,
-  proposed_body, released_soul, proposed_soul, effective_before, effective_after}`
-  computed via §5.2 (all from `ConfigStore.resolve/4` + `fetch_object/1` +
-  `render_soul/1` + the `effective_body` merge). The UI renders a text diff of the
-  souls + a structural body diff — **no new data, the same projection the live
-  agent reads.**
-- **Confirm button** → `Agent.Config.publish/4` → `config_governance.confirm_cr`
-  (publish-cap gated). **Reject** / **Rollback** are sibling dispatches.
-- Reuses the existing cascade read (`read_cascade`) for the "current live config"
-  column so the review UI and runtime never diverge.
-
-No new wire contract beyond the CR list/detail/diff shapes; the diff shape is a
-superset of what `read_cascade` already returns per key.
+| Concern | Status |
+|---|---|
+| Immutable object / mutable pointer / atomic write / pointer flip | **REUSED** (`ConfigObject`, `ConfigPointer`, `write_and_point`, `put_pointer`) |
+| Rollback execution | **REUSED** (`repoint_config`) |
+| Sandbox config_dir materialization on publish | **REUSED** (`sandbox.write_path` step-2 + `Sandbox.ConfigDir`) |
+| Scope guard at publish | **REUSED** (`fetch_matching_object/1`) |
+| Soul render / preview diff | **REUSED** (`render_soul/1`) |
+| Cascade read / facade | **REUSED / EXTENDED** (`Agent.Config`) |
+| Self-binding, manage-cap gate | **REUSED** (`assert_subject_self/2`, `required_caps/0`) |
+| Draft envelope + staged items | **NEW** (`ConfigChangeRequest`, `ConfigChangeItem`) |
+| Durable rollback target | **NEW** (`published_prev_object_id` column) |
+| Object-only staged insert (fenced) | **NEW** (`write_object_staged/1`, `cr-stage:` only) |
+| Governance behavior | **NEW** (`Ezagent.Behavior.ConfigGovernance`) |
+| Lint gate / review pipeline / reviewer cap / two-person rule | **CUT (rev 3)** |
+| Preview/sandbox system | **CUT — reuse existing materialization** |
 
 ---
 
-## 9. Reused vs new — the explicit ledger
+## 8. Console surface
 
-| Concern | Status | Where |
-|---|---|---|
-| Immutable config object | **REUSED** | `ConfigObject` |
-| Mutable cascade pointer | **REUSED** | `ConfigPointer` |
-| Atomic object+pointer write | **REUSED** | `write_and_point/1` (used at stage for the object via `write_object_staged`; publish reuses `put_pointer`) |
-| Pointer flip / repoint | **REUSED** | `put_pointer/1` |
-| **Rollback (execution)** | **REUSED — NOT a new repoint mechanism** | `repoint_config` → `put_pointer(config_id: published_prev_object_id)` |
-| Rollback TARGET (durable prior id) | **NEW (rev-2 #2)** | `ConfigChangeItem.published_prev_object_id` — because `put_pointer` overwrites the live pointer's `previous_config_id` on the next flip |
-| **Publish idempotency** | **NEW (CR-status gate, rev-2 #1)** | `confirm_cr` legal only from `review`; `put_pointer` is NOT a `source_turn_id` no-op. `source_turn_id = cr-publish:<id>` is provenance only |
-| Object-existence idempotency markers | **REUSED + namespace-FENCED** | `object_for_turn`/`applied_for_turn?` unaffected by `cr-stage:` objects; fence guarded at all write entries (rev-2 #5) |
-| Publish scope guard | **REUSED** | `fetch_matching_object/1` per item (rev-2 #3) |
-| Cross-tenant target guard | **REUSED** | `fetch_matching_object/1` |
-| Soul projection / diff render | **REUSED** | `ConfigProjection.render_soul/1`, `object_uri/2` |
-| Cascade read / effective merge | **REUSED** | `ConfigStore.resolve/4`, `layer_objects_for_key/2`, `ConfigEvolve.effective_body` shape |
-| Self-binding (subject == self) | **REUSED** | `assert_subject_self/2` pattern |
-| Manage-cap dispatch gate | **REUSED** | `required_caps/0` + step-5.5 |
-| Step-2 sandbox cache refresh | **REUSED** | `sandbox_write_effects/3` |
-| Console facade boundary | **EXTENDED** | `Ezagent.Agent.Config` |
-| CR envelope + staged items | **NEW** | `ConfigChangeRequest`, `ConfigChangeItem` |
-| Object-only staged insert | **NEW (narrow, fenced)** | `ConfigStore.write_object_staged/1` (`cr-stage:` `source_turn_id` only) |
-| Governance behavior + lifecycle | **NEW** | `Ezagent.Behavior.ConfigGovernance` |
-| Publish cap | **NEW** | `cap(:agent, ConfigGovernance, :publish_cr)` |
-| Review diff query | **NEW (pure read)** | `ConfigChangeStore` / `review_diff` action |
+Read-only over existing reads + the CR tables, plus one publish dispatch:
+- **CR list / detail** — new `ConfigChangeStore` queries (CR rows + items); the only
+  new reads, over the new tables only.
+- **Preview panel** — `Agent.Config.preview/4` → `config_governance.preview_cr` →
+  per item `{current_body, proposed_body, current_soul, proposed_soul}` (§5); the
+  UI renders a plain text/map diff. No new data; same projection the live agent
+  reads.
+- **Publish / Reject / Rollback** — sibling `Agent.Config` dispatches (manage-cap
+  gated).
+- Existing `read_cascade` supplies the "current live config" column.
 
 ---
 
-## 10. Test plan
+## 9. Test plan
 
-Unit + invariant-style, matching the repo's "a test that fails when the
-architectural goal is unmet" gate philosophy.
-
-1. **Stage writes an inert object** — after `stage_item`, a `ConfigObject` exists
-   (`fetch_object`) but `resolve/4` for the slot is unchanged (no pointer moved).
+1. **Stage writes an inert object** — after `stage_item`, `fetch_object` finds the
+   object but `resolve/4` for the slot is unchanged (no pointer moved).
 2. **Idempotency namespace fence** — a staged object's `source_turn_id` is
-   `cr-stage:…`; `applied_for_turn?(real_turn_id)` and `object_for_turn(real_turn
-   _id)` are unaffected by staging (the PR-7 invariant regression guard).
-3. **Publish flips pointers atomically** — after `confirm_cr`, every item's slot
-   `resolve/4`s to its `staged_object_id`; each item records the prior
-   `previous_config_id`. (Option-A: a forced mid-publish failure leaves NO pointer
-   moved.)
-4. **Publish idempotency is STATUS-gated** (rev-2 #1) — re-running publish on an
-   already-`published` CR is rejected BEFORE any `put_pointer` call (status guard),
-   and crucially does NOT corrupt `published_prev_object_id` (asserts the rollback
-   breadcrumb is unchanged after a duplicate publish attempt).
-4b. **Reserved-prefix fence** (rev-2 #5) — `Agent.Config.apply_delta` /
-   `ConfigEvolve.apply_config_delta` with a caller-supplied
-   `turn_id: "cr-stage:…"` or `"cr-publish:…"` is rejected (not silently no-op'd).
-4c. **Publish scope guard** (rev-2 #3) — a CR item whose `staged_object_id` names
-   an object from a different subject/key is rejected at publish via
-   `fetch_matching_object/1` (cross-bind prevented), nothing flipped.
-5. **Base-drift conflict** — change the live config underneath an open CR, then
-   publish ⇒ `{:error, {:cr_base_drift, _}}`; nothing flipped.
-6. **Rollback = repoint prior** — publish a CR, then `rollback_cr`; every slot
-   `resolve/4`s back to its `published_prev_object_id` object; CR `rolled_back`.
-   Assert it goes through `repoint_config` (no new repoint mechanism).
-7. **Cap chokepoint + action-axis** (rev-2 #4) — a caller with manage-cap but
-   WITHOUT `publish_cr` can `stage`/`open` but gets `:unauthorized` on the
-   `publish_cr` action; assert the manage cap is declared `Manage :any` (matches
-   any dispatched action) and the publish cap action name == dispatched action
-   `:publish_cr`. A caller with neither gets `:unauthorized` on `open_cr`.
-8. **CE-1 self-binding inherited** — a CR row whose `subject_uri` ≠ dispatched-to
-   agent is rejected at publish (`assert_subject_self`).
-9. **One active CR per subject** — opening a second CR for a subject with an
-   open/review CR fails the partial unique index.
-10. **Reject is free** — `reject_cr` from `open`/`review` leaves `resolve/4`
-    unchanged (no config side effect ever).
-11. **Diff determinism** — `review_diff` for the same CR is byte-identical across
-    calls (reuses deterministic `render_soul/1`).
-12. **Sandbox refresh on publish** — `confirm_cr` emits the step-2
+   `cr-stage:…`; `applied_for_turn?(real_turn_id)`/`object_for_turn(real_turn_id)`
+   are unaffected (the PR-7 invariant guard).
+3. **Reserved-prefix guard** — `Agent.Config.apply_delta` /
+   `ConfigEvolve.apply_config_delta` with a caller-supplied `turn_id: "cr-stage:…"`
+   / `"cr-publish:…"` is rejected (not silently no-op'd).
+4. **Publish flips pointers atomically** — after `publish_cr`, every slot
+   `resolve/4`s to its `staged_object_id`; each item records
+   `published_prev_object_id`. A forced mid-publish failure leaves NO pointer moved.
+5. **Publish idempotency is STATUS-gated** — re-`publish_cr` on a `published` CR is
+   rejected before any `put_pointer` call; `published_prev_object_id` is unchanged
+   (rollback breadcrumb not corrupted).
+6. **Publish scope guard** — a CR item whose `staged_object_id` belongs to another
+   subject/key is rejected via `fetch_matching_object/1`; nothing flipped.
+7. **Base-drift conflict** — change live config under an open CR, then publish ⇒
+   `{:error, {:cr_base_drift, _}}`; nothing flipped.
+8. **Rollback = repoint prior** — publish then `rollback_cr`; every slot
+   `resolve/4`s back to its `published_prev_object_id` object via `repoint_config`;
+   CR `rolled_back`.
+9. **Cap = manage cap** — a caller without the agent's manage cap gets
+   `:unauthorized` on `open_cr`/`publish_cr`; a manage-cap holder can do all CR
+   actions (no separate publish cap).
+10. **CE-1 self-binding** — a CR row whose `subject_uri` ≠ dispatched-to agent is
+    rejected at publish.
+11. **One active CR per subject** — opening a second `open` CR for a subject fails
+    the partial unique index.
+12. **Reject is free** — `reject_cr` from `open` leaves `resolve/4` unchanged.
+13. **Sandbox materialization on publish** — `publish_cr` emits the step-2
     `sandbox.write_path` self-dispatch (reuse, not bypass).
-13. **Edit-in-review invalidation** — staging into a `review` CR returns it to
-    `open` (the approved diff can't drift from what publishes).
+14. **Preview is a pure read** — `preview_cr` changes nothing; the soul diff is
+    byte-identical across calls (deterministic `render_soul/1`).
+15. **v1 agent-subject only** — `open_cr` with a non-agent `subject_uri` is
+    rejected.
 
 ---
 
-## 11. Optional later sub-phase — Dream auto-proposal as a CR source (MARK OPTIONAL)
+## 10. Optional later sub-phase — Dream auto-proposal as a CR source (OPTIONAL)
 
-> Not in the initial scope. Recorded so the data model doesn't foreclose it.
+> Not in scope now. Recorded so the model doesn't foreclose it.
 
-A "Dream" (an agent-generated self-improvement proposal) becomes **just another CR
-source**: the dream process opens a CR (`opened_by = the agent itself` or a
-designated dreamer principal) and stages items the same way a human would. The
-review gate is then the human-in-the-loop check on machine-proposed config. No new
-data model — `opened_by` simply records the dreamer entity, and the same
-review/publish/reject/rollback lifecycle applies. The only addition would be a
+A "Dream" (agent self-improvement proposal) becomes **just another CR source**: it
+opens a CR and stages items like a human. The manage-cap gate already covers it
+(the dreamer needs only the manage cap). The only future addition would be a
 `source` discriminator (`human | dream`) on `ConfigChangeRequest` for UI filtering.
-The cap model already covers it: the dreamer needs only the stage (manage) cap;
-publishing a dream-CR still requires the separate `publish_cr` cap — so a machine
-can propose but a human (or a cap-holding reviewer) must approve.
+No new data model.
 
 ---
 
-## 12. Risks
+## 11. Acceptance (/goal — to set after review)
 
-- **R1 — orphan-object invariant.** The whole staging model re-opens object-with-
-  no-pointer. Mitigated by the `cr-stage:` `source_turn_id` namespace fence
-  (§4.2.1) + `write_object_staged/1` rejecting non-`cr-stage:` turn ids. **This is
-  the #1 codex-review surface** (does it truly not regress PR-7's invariant?).
-- **R2 — multi-pointer publish atomicity** (§4.3.1, Q2) — A vs B.
-- **R3 — base drift** — handled (§4.4) but adds a read per item at publish.
-- **R4 — cap-model default** (Q4) — distinct `publish_cr` vs manage-cap reuse;
-  must not regress single-operator flows.
-- **R5 — nil-prior rollback** (Q3) — partial rollback vs new pointer-delete
-  primitive.
-
----
-
-## 13. Acceptance (/goal — to set after review)
-
-- A CR aggregates N config deltas under one envelope per subject; staging writes
-  inert immutable objects (no pointer moved) — proven by test 1+2.
-- Review computes a deterministic sandbox-vs-released soul diff from existing reads
-  + `render_soul/1` — test 11.
-- Publish flips the pointer(s) via `put_pointer` (atomic/idempotent via the
-  existing Multi + `source_turn_id`), emits the existing sandbox refresh, and
-  records prior pointers — tests 3,4,12.
-- Rollback reuses `repoint_config`/`put_pointer` aimed at `previous_config_id` —
-  **no new version-history mechanism** — test 6.
-- Publish is gated on a cap distinct from stage (the chokepoint) — test 7.
-- Zero regression to the PR-7 "object existence ⟺ applied" invariant — test 2.
+- A CR aggregates N config deltas under one envelope per agent; staging writes
+  inert immutable objects (no pointer moved) — tests 1+2.
+- Preview is a plain deterministic `render_soul/1` diff from existing reads (no
+  lint, no checks) — test 14.
+- Publish flips the pointer(s) via `put_pointer` (atomic via one Multi; idempotent
+  via the CR-status gate), validates scope via `fetch_matching_object/1`, records
+  `published_prev_object_id`, and **fires the existing `sandbox.write_path`
+  materialization** — tests 4,5,6,13.
+- Rollback reuses `repoint_config` aimed at `published_prev_object_id` — **no new
+  repoint mechanism** — test 8.
+- Cap is the agent's manage cap; no two-person rule, no separate reviewer — test 9.
+- Zero regression to the PR-7 "object existence ⟺ applied" invariant — tests 2+3.
 - full `mix test` 0 failures + CI green (incl. `check_invariants`).
 
 ---
 
-## Open questions for the lead (consolidated)
+## Open questions for the lead
 
 - **Q1** — `cr-stage:` `source_turn_id` namespace fence vs NULL `source_turn_id`
-  for staged objects (§4.2.1). Recommended: the fence (keeps NOT-NULL + index).
-- **Q2** — publish atomicity: single Multi (A) vs resumable-via-`source_turn_id`
-  (B) (§4.3.1). Recommended: A.
-- **Q3** — rollback of a nil-prior (brand-new-key) item: leave pointer (a) vs add
-  a pointer-delete primitive (b) (§4.5). Recommended: a.
-- **Q4** — `publish_cr` distinct cap vs manage-cap reuse with human-confirm as the
-  only gate (§6, Q4). Recommended: distinct cap, also-granted-to-manage by default
-  for back-compat.
-- **Q5 — RESOLVED (rev-2 #6): agent-subject ONLY in v1.** Workspace-layer CRs
-  conflict with CE-1's `subject_uri == self_uri` self-binding (publish dispatches
-  to the subject agent; a workspace has no such agent handler). The schema keeps
-  `subject_uri` general, but v1 rejects non-agent subjects. Workspace-layer CRs are
-  a follow-up needing a distinct authority/behavior story. (Lead may re-open.)
-- **Q6 (new, rev-2 #7)** — true two-person rule? A distinct `publish_cr` cap that
-  is default-also-granted to manage holders permits **self-approval**. If the lead
-  wants enforced separation, add a `published_by != opened_by` policy check at
-  `publish_cr`. Recommended: ship the distinct cap now; make the
-  `published_by != opened_by` check a config flag (off by default for
-  single-operator workspaces).
+  for staged objects (§4.2.1). Recommended: the fence (keeps `ConfigObject`'s
+  NOT-NULL + unique index intact).
+- **Q2** — rollback of a nil-prior (brand-new-key) item: leave pointer in place,
+  logged (a) vs add a pointer-delete primitive (b) (§4.5). Recommended: a (no new
+  primitive).
+- **Q3** — publish atomicity scope: per-CR single transaction (recommended, §4.3.1)
+  — confirm acceptable that a multi-slot publish is all-or-nothing.
+
+(Resolved by the lead in rev 3: cap = manage cap; agent-subject only; no two-person
+rule; no lint/review pipeline; reuse existing sandbox materialization.)
