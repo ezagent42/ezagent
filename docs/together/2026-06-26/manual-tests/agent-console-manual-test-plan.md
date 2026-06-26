@@ -159,6 +159,7 @@
 | **F4** | ⑥.3 / 详情页删占用中的 agent | **bound-session 禁删后端生效(agent 没被删),但从详情页点删除→确认后 UI 无任何反馈**:确认框收起、什么都没发生。禁删原因 banner("正在 N 个对话中…")被 push 到 agents-list 路由,详情页看不到。 | 详情页就地显示禁删原因 | **Bug/UX(静默)** | **中-高** | 浏览器实测;console 见 delete→`EntityPresenter.display(session://…/qa-session-1)` |
 | F5 | ③查看 / `/…/caps` Entity Caps | `instance` 列直接 dump 原始 Elixir 结构 `%URI{scheme: "entity", userinfo: nil, host: "system", path: "/agent/qa-browser-1", …}`,而不是干净的 `entity://system/agent/qa-browser-1` | 渲染规范 URI 字符串 | Bug(显示) | 低/cosmetic | 浏览器实测 caps 页 |
 | F6 | ①创建 / py flavor | py 必填 Python script,但表单**没标 `*`、Create 不禁用**,只有提交后服务端报 `:missing_script`;且该错误是**裸 atom**(其他 create 错误都翻译成中文了) | 标必填+客户端拦截;错误翻译成友好文案 | Bug(校验+文案) | 中 | 浏览器实测;空 script→`创建失败: :missing_script` |
+| **F7** | ④/⑥ 会话成员管理 | **会话页无 remove-member / 删除会话 控件** → F4 的"先移出再删除"无法照做,被占用 agent 在 UI 上**删不掉** | 补成员移除 + 会话删除/归档 | **Bug/Gap** | **中-高** | 浏览器实测;`read_page` 无移除控件 |
 
 ---
 

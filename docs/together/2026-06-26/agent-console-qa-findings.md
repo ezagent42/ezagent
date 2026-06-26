@@ -29,6 +29,12 @@
 - **问题:** 该禁删 banner 被 push 到 **agents-list 路由**的 `action_error`,而用户是在**详情页**触发的 → 看不到。等于静默。
 - **建议:** 详情页就地渲染禁删原因 banner("该 agent 正在 N 个对话中(…),先移出再删除")。
 
+## F7 —【中-高】无 UI 移除会话成员 / 删除会话 → 占用中的 agent 根本删不掉(放大 F4)
+
+- **现象:** 会话对话页**没有** remove-member / kick / end-session / delete-session 任何控件(只有 Invite a member / Open terminal / Restart orchestrator / routing 规则)。
+- **影响:** F4 的禁删提示是"先从这些对话移出再删除",但 **UI 上没有"移出"入口** → 一旦 agent 被加进任意 live session,就**无法再通过 UI 删除**(也无法删除/关闭会话本身)。本次清理 `qa-browser-1`/`qa-session-1` 即卡在此。
+- **建议:** 补成员移除(从 session `:leave`/踢出)+ 会话删除/归档入口。
+
 ## F6 —【中】py flavor:必填 script 未在前端标注/拦截 + 错误是裸 atom
 
 - **现象:** 建 py agent 不填 Python script → Create 不禁用(script 无 `*`)→ 提交后报 **`创建失败: :missing_script`**(裸 atom,其他 create 错误都翻译成中文)。填了 script 能建成功。
