@@ -18,14 +18,19 @@ defmodule EzagentPluginPy.Application do
 
   ## What this plugin declares
 
-  - `behaviors/0` — `{Ezagent.Entity.PyAgent, :receive | :reset | :configure}`
-    → `Ezagent.Behavior.PyAgent`.
+  - `behaviors/0` — `{Ezagent.Entity.Agent, :py_sync_result | :py_reset |
+    :py_configure}` → `Ezagent.Behavior.PyAgent` (P4b: py folded onto the
+    UNIFIED `Entity.Agent` Kind; actions are py-namespaced to coexist with the
+    other flavors' behaviors on the shared Kind).
   - `template_classes/0` — the `py.agent` Template Class.
-  - `agent_flavors/0` — flavor `"py"` → `{Ezagent.Entity.PyAgent,
-    Ezagent.Template.PyAgent}`.
+  - `agent_flavors/0` — flavor `"py"` → `{Ezagent.Entity.Agent,
+    Ezagent.Template.PyAgent}` with `instance_behaviors` (base Agent set +
+    `Behavior.PyAgent`) and `bridge_adapter` (`EzagentPluginPy.BridgeAdapter`,
+    the `:in_process_sync` transport that runs the script).
   - `config_surface/0` — `:flavor` surface.
-  - `children/0` — `EzagentPluginPy.InstanceSupervisor`, the
-    `DynamicSupervisor` parenting PyAgent Kind processes.
+  - `children/0` — `EzagentPluginPy.InstanceSupervisor`, a `DynamicSupervisor`
+    retained for symmetry (py instances now spawn under the unified Agent Kind's
+    supervisor; this stays empty, curl precedent).
 
   ## Per-agent Python subprocess (NOT shared)
 
@@ -62,7 +67,7 @@ defmodule EzagentPluginPy.Application do
 
   alias Ezagent.Behavior.PyAgent, as: PyAgentBehavior
   alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
-  alias Ezagent.Entity.PyAgent, as: PyAgentKind
+  alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Template.PyAgent, as: PyAgentTemplate
 
   # --- OTP Application -------------------------------------------------
@@ -87,7 +92,7 @@ defmodule EzagentPluginPy.Application do
   @impl Ezagent.Plugin
   def behaviors do
     for action <- PyAgentBehavior.actions() do
-      {PyAgentKind, action, PyAgentBehavior}
+      {AgentKind, action, PyAgentBehavior}
     end
   end
 
@@ -99,7 +104,9 @@ defmodule EzagentPluginPy.Application do
     [
       %{
         flavor: "py",
-        kind: PyAgentKind,
+        kind: AgentKind,
+        instance_behaviors: fn -> AgentKind.base_behaviors() ++ [PyAgentBehavior] end,
+        bridge_adapter: EzagentPluginPy.BridgeAdapter,
         template_class: PyAgentTemplate,
         # RF-8 — py's fail-closed CapMint policy (py-agent P4). A py-ROLE (np)
         # requests `:py_agent` caps in its recipe; the role-create path reads
@@ -112,9 +119,10 @@ defmodule EzagentPluginPy.Application do
   # py-agent P4 — `np` is a py-ROLE: `py` flavor + the re-homed `np.py` script
   # (numpy/sympy whitelist intact) carried via the role-script channel
   # (`Role.script` → `Role.Compose.sandbox_content.script` → config_dir
-  # `agent.py`). The plugin declares NO np Kind/Behavior — np runs `py`'s
-  # `Entity.PyAgent` + `Behavior.PyAgent`, distinguished ONLY by its script
-  # (spec §0.1 "a role's safety travels with its SCRIPT"). `Ezagent.Plugin.boot/1`
+  # `agent.py`). The plugin declares NO np Kind/Behavior — np runs the `py`
+  # flavor on the UNIFIED `Entity.Agent` Kind + `Behavior.PyAgent`, distinguished
+  # ONLY by its script (spec §0.1 "a role's safety travels with its SCRIPT").
+  # `Ezagent.Plugin.boot/1`
   # registers this recipe via `RoleRegistry.register/1` at boot (declare, don't
   # call). Created via `Workspace.create_agent(flavor: "py", role: "np")`.
   @impl Ezagent.Plugin
@@ -126,19 +134,16 @@ defmodule EzagentPluginPy.Application do
   Public so the role test asserts the exact recipe without re-deriving it. The
   script content is read from this plugin's priv dir (`priv/python/np.py`).
 
-  ## No `requested_caps` while py is an own-Kind (item-3 deferred)
+  ## No `requested_caps` — np needs no granted caps
 
-  A plain py-agent runs on the `Entity.PyAgent` own-Kind, which carries ONLY
-  `Behavior.PyAgent` — no `Behavior.Identity` slice — so it cannot HOLD granted
-  caps (and does not need them: the session→agent dispatch carries the sender's
-  caps, and the reply effect presents its own inline `session.send` cap, #154).
-  Granting role caps into it would fail `{:unknown_action, :grant_cap}`. So the
-  np role carries JUST the script. When P4's own-Kind retirement lands (py →
-  `native` + py-behavior-via-role, with the full Agent base set incl. Identity),
-  this recipe gains the `:py_agent` `requested_caps` and py's `cap_policy` mints
-  them — exactly the kanban-as-role pattern. py's `cap_policy` + the create
-  clause's caller-authority `mint_and_grant_caps` are already wired for that day
-  (an empty recipe mints nothing today, fail-closed).
+  P4b folded py onto the unified `Entity.Agent` Kind, which carries the full
+  Agent base set incl. `Behavior.Identity` — so a py-agent CAN now hold granted
+  caps (the own-Kind `{:unknown_action, :grant_cap}` blocker is gone). np simply
+  does not NEED any: the session→agent dispatch carries the sender's caps, and
+  the reply effect presents its own inline `session.send` cap (#154). So the np
+  role carries JUST the script (an empty recipe mints nothing, fail-closed). A
+  future py-role that needs caps adds `:requested_caps` and py's `cap_policy`
+  mints them — exactly the kanban-as-role pattern, now fully wired.
   """
   @spec np_role_recipe() :: map()
   def np_role_recipe do

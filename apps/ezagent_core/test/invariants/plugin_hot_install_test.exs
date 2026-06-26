@@ -67,16 +67,16 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   describe "declared Behaviors are reachable in BehaviorRegistry (no restart)" do
     test "the py plugin's :receive + :configure Behaviors resolve through BehaviorRegistry" do
       # `EzagentPluginPy.Application.behaviors/0` declares
-      # `{Ezagent.Entity.PyAgent, :receive|:reset|:configure} →
+      # `{Ezagent.Entity.Agent, :receive|:reset|:configure} →
       # Ezagent.Behavior.PyAgent`. After `Ezagent.Plugin.boot/1` these MUST
       # be resolvable via `BehaviorRegistry.lookup/2` — that IS "reachable
       # without restart".
       assert {:ok, Ezagent.Behavior.PyAgent} =
-               BehaviorRegistry.lookup(Ezagent.Entity.PyAgent, :receive),
+               BehaviorRegistry.lookup(Ezagent.Entity.Agent, :py_sync_result),
              "the plugin's declared :receive Behavior must be in BehaviorRegistry"
 
       assert {:ok, Ezagent.Behavior.PyAgent} =
-               BehaviorRegistry.lookup(Ezagent.Entity.PyAgent, :configure),
+               BehaviorRegistry.lookup(Ezagent.Entity.Agent, :py_configure),
              "the plugin's declared :configure Behavior must be in BehaviorRegistry"
     end
   end
@@ -96,8 +96,8 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
   describe "declared agent flavors are reachable in AgentFlavorRegistry (no restart)" do
     test "the py plugin's `py` flavor resolves through AgentFlavorRegistry" do
       # `agent_flavors/0` declares flavor `"py"` →
-      # `{Ezagent.Entity.PyAgent, Ezagent.Template.PyAgent}`.
-      assert {:ok, %{kind: Ezagent.Entity.PyAgent, template_class: tc}} =
+      # `{Ezagent.Entity.Agent, Ezagent.Template.PyAgent}`.
+      assert {:ok, %{kind: Ezagent.Entity.Agent, template_class: tc}} =
                AgentFlavorRegistry.lookup("py"),
              "the plugin's declared `py` flavor must be in AgentFlavorRegistry"
 

@@ -1,30 +1,35 @@
 defmodule Ezagent.Behavior.PyAgent do
   @moduledoc """
-  PyAgent Behavior — a GENERAL script-driven Python agent. Each inbound chat
-  message is handed to the agent's OPERATOR-SUPPLIED python script (installed
-  at create-time into the per-agent `config_dir` as `agent.py`) via the single
-  `"receive"` JSON-RPC method on the per-agent `Ezagent.Domain.Python`
-  subprocess; a non-nil reply is dispatched back into the originating session.
+  PyAgent Behavior (py-agent P4b) — the STATE half of the GENERAL script-driven
+  Python flavor, folded onto the UNIFIED `Ezagent.Entity.Agent` Kind (curl
+  precedent). The operator script runs via the `"receive"` JSON-RPC method on
+  the per-agent `Ezagent.Domain.Python` subprocess, but that round-trip lives in
+  the TRANSPORT half (`EzagentPluginPy.BridgeAdapter`, `:in_process_sync`). The
+  base flavor-blind `Behavior.Agent.Receive` owns `:receive` on `Entity.Agent`,
+  routes to the adapter, then re-dispatches the result to this Behavior's
+  `:py_sync_result` action.
 
-  A general script-driven Python agent (py-agent P4: the former `np` compute
-  agent retired into this as a py-ROLE — its chat→compute heuristic now lives
-  in the role's script, not in a Behavior):
+  The former `np` compute agent is a py-ROLE — its chat→compute heuristic lives
+  in the role's script, not in a Behavior.
 
-  - **one method** — `"receive"`. The script's per-message logic is
-    operator-authored (the role/operator script), not baked into the Behavior.
-  - **own cap axis** — `:py_agent` (`required_caps/0`).
-  - **script is immutable post-create** — `:configure` sets `timeout_ms`
-    ONLY (never the script); `:reset` clears `last_*`. The script file is
+  - **`:py_sync_result`** — persist the adapter's result (`last_*`) and, on a
+    non-nil reply, dispatch a `chat.send` back into the originating session. The
+    actions are py-NAMESPACED (the `{Kind, action}` map is global per Kind; curl
+    owns generic `:configure`/`:sync_result` on `Entity.Agent`).
+  - **cap axis** — `:py_sync_result` on `:agent`; `:py_reset`/`:py_configure`
+    on `:any` (substituted to the host type_name); see `required_caps/0`.
+  - **script is immutable post-create** — `:py_configure` sets `timeout_ms`
+    ONLY (never the script); `:py_reset` clears `last_*`. The script file is
     written once at create (`Template.PyAgent.instantiate/3`); see spec §5.
 
   ## The wire (spec §1)
 
       Domain.Python.call(handle, "receive", %{text, from, session}, timeout)
 
-  The script registers a `@method("receive")` handler returning a reply
-  payload (a map with a `"text"` key) or `None`/`nil` to stay silent. A
-  raising script is captured to `last_error` (durable) + logged; the BEAM
-  Kind does NOT crash.
+  runs in `BridgeAdapter`. The script registers a `@method("receive")` handler
+  returning a reply payload (a map with a `"text"` key) or `None`/`nil` to stay
+  silent. A raising script is captured to `last_error` (durable) + logged; the
+  BEAM Kind does NOT crash.
 
   ## Two-container split (Lifecycle SPEC 2026-05-29)
 
@@ -48,7 +53,9 @@ defmodule Ezagent.Behavior.PyAgent do
 
   ## Loop safety
 
-  Mirrors np/curl: ignore messages whose sender is the py-agent itself.
+  Self-reply flood protection is handled at the ROUTING layer (#98 — an Always
+  rule no longer re-triggers on the agent's own reply), shared by all flavors on
+  `Entity.Agent`; it is no longer this Behavior's concern.
   """
 
   use Ezagent.Lifecycle
@@ -56,48 +63,57 @@ defmodule Ezagent.Behavior.PyAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias Ezagent.Domain.Python
   alias Ezagent.Domain.Python.AgentLifecycle
 
   @default_timeout_ms 10_000
 
-  action(:receive,
-    args: %{message: :map},
+  action(:py_sync_result,
+    # `result` is the adapter's `{:ok, %{text}} | {:ok, :silent} | {:error, term}`
+    # tuple this handler pattern-matches itself, hence `:term`. `source_session`
+    # is the originating session URI. `in_msg_id` rides through undeclared (read
+    # via Map.get in the handler, curl precedent).
+    args: %{result: :term, source_session: {:option, :uri}, user_text: :string},
     returns: %{ok: :boolean, error: :atom},
-    caps: [:receive],
+    caps: [:py_sync_result],
     modes: [:cast],
     description:
-      "Hand the inbound text to the operator script's receive() handler and " <>
-        "reply with its returned payload"
+      "Persist the py :in_process_sync bridge_adapter result (the operator " <>
+        "script's receive() output) and reply it into the originating session"
   )
 
-  action(:reset,
+  action(:py_reset,
     args: %{},
     returns: %{ok: :boolean},
-    caps: [:reset],
+    caps: [:py_reset],
     modes: [:call],
     description: "Clear the agent's last_input / last_result / last_error"
   )
 
-  action(:configure,
+  action(:py_configure,
     args: %{timeout_ms: :integer},
     returns: %{ok: :boolean},
-    caps: [:configure],
+    caps: [:py_configure],
     modes: [:call],
     description:
       "Update the agent's per-call timeout (ms). NEVER mutates the script " <>
         "(immutable post-create, spec §5)"
   )
 
-  # Own kind axis `:py_agent` — PyAgent is registered on Entity.PyAgent Kind
-  # (type_name :py_agent). Manually exported to override the macro's `:any`
-  # default (the per-subprocess-agent pattern).
+  # P4b — PyAgent folded onto the UNIFIED Entity.Agent Kind. Every action is
+  # py-NAMESPACED (cc-headless precedent) because the {Kind, action} → Behavior
+  # map is global per Kind and curl already owns generic `:configure`/
+  # `:sync_result` on Entity.Agent.
+  #   - :py_reset / :py_configure — operator actions on the `:any` kind axis
+  #     (the runtime substitutes the host type_name `:agent` at dispatch).
+  #   - :py_sync_result — the internal re-dispatch (curl model): declare it on
+  #     `:agent` to mirror curl; the base :receive re-dispatch grants a matching
+  #     `cap(:any, :any, :py_sync_result)` which authorizes it.
   @doc false
   def required_caps do
     %{
-      receive: Ezagent.Capability.cap(:py_agent, __MODULE__, :receive),
-      reset: Ezagent.Capability.cap(:py_agent, __MODULE__, :reset),
-      configure: Ezagent.Capability.cap(:py_agent, __MODULE__, :configure)
+      py_reset: Ezagent.Capability.cap(:any, __MODULE__, :py_reset),
+      py_configure: Ezagent.Capability.cap(:any, __MODULE__, :py_configure),
+      py_sync_result: Ezagent.Capability.cap(:agent, __MODULE__, :py_sync_result)
     }
   end
 
@@ -122,21 +138,42 @@ defmodule Ezagent.Behavior.PyAgent do
 
   # --- handle_<action>/2 ----------------------------------------------------
 
+  # P4b — :py_sync_result is re-dispatched by the base flavor-blind
+  # `Behavior.Agent.Receive` after the py `:in_process_sync` bridge_adapter ran
+  # the script (curl precedent). `result` is the adapter's return; this STATE
+  # half persists `last_*` + replies into the originating session.
   @doc false
-  def handle_receive(%{message: %Message{} = msg}, ctx) do
+  def handle_py_sync_result(%{result: result} = args, ctx) do
     self_uri = Map.get(ctx, :self_uri)
-    sender_str = sender_string(msg.sender)
-    self_uri_str = if is_struct(self_uri, URI), do: URI.to_string(self_uri), else: ""
+    source_session = Map.get(args, :source_session)
+    user_text = Map.get(args, :user_text, "")
+    in_msg_id = Map.get(args, :in_msg_id)
 
-    if sender_str == self_uri_str do
-      {:ok, %{ok: true, ignored: :self_message}, []}
-    else
-      do_receive_effects(msg, ctx)
+    case result do
+      {:ok, :silent} ->
+        {:ok, %{ok: true}, set_last(user_text, nil, nil)}
+
+      {:ok, %{text: reply}} when is_binary(reply) ->
+        effects =
+          set_last(user_text, reply, nil) ++
+            maybe_reply_effect(source_session, self_uri, reply, in_msg_id)
+
+        {:ok, %{ok: true}, effects}
+
+      {:error, reason} ->
+        if is_struct(self_uri, URI) do
+          Logger.warning(
+            "PyAgent #{URI.to_string(self_uri)} receive failed " <>
+              "input=#{inspect(user_text)} reason=#{inspect(reason)}"
+          )
+        end
+
+        {:ok, %{ok: false, error: error_kind(reason)}, set_last(user_text, nil, reason)}
     end
   end
 
   @doc false
-  def handle_reset(_args, _ctx) do
+  def handle_py_reset(_args, _ctx) do
     {:ok, %{ok: true}, set_last(nil, nil, nil)}
   end
 
@@ -151,83 +188,13 @@ defmodule Ezagent.Behavior.PyAgent do
   # caller smuggles a `script` arg it is ignored: the action schema declares
   # only `timeout_ms`, and we read only that key here.
   @doc false
-  def handle_configure(args, ctx) when is_map(args) do
+  def handle_py_configure(args, ctx) when is_map(args) do
     cur_timeout = ctx[:read].(:timeout_ms, @default_timeout_ms)
     new_timeout = Map.get(args, :timeout_ms, cur_timeout)
     {:ok, %{ok: true}, [{:set, :timeout_ms, new_timeout}]}
   end
 
   # --- internals ------------------------------------------------------------
-
-  defp do_receive_effects(%Message{} = msg, ctx) do
-    text = extract_text(msg.body)
-    source_session_uri = ctx[:caller]
-    self_uri = Map.get(ctx, :self_uri)
-    python_handle = ctx[:read].(:python_handle, self_uri)
-    timeout_ms = ctx[:read].(:timeout_ms, @default_timeout_ms)
-
-    params = %{
-      "text" => text,
-      "from" => sender_string(msg.sender),
-      "session" => session_string(source_session_uri)
-    }
-
-    case run_receive(python_handle, timeout_ms, params) do
-      {:ok, :silent} ->
-        {:ok, %{ok: true}, set_last(text, nil, nil)}
-
-      {:ok, reply_text} ->
-        effects =
-          set_last(text, reply_text, nil) ++
-            maybe_reply_effect(source_session_uri, self_uri, reply_text, msg)
-
-        {:ok, %{ok: true}, effects}
-
-      {:error, reason} ->
-        if is_struct(self_uri, URI) do
-          Logger.warning(
-            "PyAgent #{URI.to_string(self_uri)} receive failed " <>
-              "input=#{inspect(text)} reason=#{inspect(reason)}"
-          )
-        end
-
-        {:ok, %{ok: false, error: error_kind(reason)}, set_last(text, nil, reason)}
-    end
-  end
-
-  # Call the operator script's `receive` handler. A raising handler surfaces
-  # as a structured JSON-RPC error from Domain.Python (-32603 / RpcError),
-  # captured to last_error — the BEAM Kind never crashes.
-  defp run_receive(handle, timeout, params) do
-    case Python.call(handle, "receive", params, timeout) do
-      {:ok, nil} ->
-        {:ok, :silent}
-
-      {:ok, %{"text" => t}} when is_binary(t) ->
-        {:ok, t}
-
-      {:ok, other} ->
-        {:error, {:bad_python_result, other}}
-
-      {:error, %{"code" => code, "message" => message}} ->
-        {:error, {:python_error, code, message}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp extract_text(%{text: t}) when is_binary(t), do: t
-  defp extract_text(%{"text" => t}) when is_binary(t), do: t
-  defp extract_text(_), do: ""
-
-  defp sender_string(%URI{} = u), do: URI.to_string(u)
-  defp sender_string(s) when is_binary(s), do: s
-  defp sender_string(_), do: ""
-
-  defp session_string(%URI{} = u), do: URI.to_string(u)
-  defp session_string(s) when is_binary(s), do: s
-  defp session_string(_), do: ""
 
   defp error_kind({:python_error, _, _}), do: :python_error
   defp error_kind({:bad_python_result, _}), do: :bad_python_result
@@ -238,18 +205,18 @@ defmodule Ezagent.Behavior.PyAgent do
   # Build a single `{:dispatch, %Cmd{}}` chat.send reply effect. Mirrors
   # the per-subprocess agent: the agent presents its OWN inline narrow `session.send` cap on
   # the concrete reply session (#154 — no `system://chat-reply` wildcard).
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
         reply_msg =
-          Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
+          Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
 
         target = Ezagent.URI.with_action(session, :session, :send)
 

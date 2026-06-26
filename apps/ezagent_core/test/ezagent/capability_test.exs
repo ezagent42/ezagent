@@ -221,20 +221,22 @@ defmodule Ezagent.CapabilityTest do
 
   describe "cap_for_action/3 (Phase 3d + Phase 9 PR-3 workspace)" do
     test "entity URI → workspace from entity_workspace_uri/1" do
-      # The py plugin pre-registers BehaviorRegistry at boot
-      target = URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
+      # The py plugin pre-registers BehaviorRegistry at boot (P4b: py folded onto
+      # the unified Entity.Agent Kind; its py-namespaced :py_configure resolves).
+      target = URI.new!("entity://team-alpha/agent/py_default?action=py.py_configure")
 
-      n = Capability.cap_for_action(Ezagent.Entity.PyAgent, :receive, target)
+      n = Capability.cap_for_action(Ezagent.Entity.Agent, :py_configure, target)
 
-      assert n.kind == :py_agent
+      # `:any` kind axis is substituted with the host Kind's type_name (`:agent`).
+      assert n.kind == :agent
       assert n.behavior == Ezagent.Behavior.PyAgent
       assert n.instance == URI.new!("entity://team-alpha/agent/py_default")
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
     test "unknown action returns :unknown behavior" do
-      target = URI.new!("entity://team-alpha/agent/py_default?action=py.receive")
-      n = Capability.cap_for_action(Ezagent.Entity.PyAgent, :nonexistent_action, target)
+      target = URI.new!("entity://team-alpha/agent/py_default?action=py.py_configure")
+      n = Capability.cap_for_action(Ezagent.Entity.Agent, :nonexistent_action, target)
       assert n.behavior == :unknown
     end
 
