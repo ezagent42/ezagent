@@ -114,6 +114,10 @@ defmodule EzagentWeb.MixProject do
       # modules load). The world UI wiring (read-model list-by-role + the
       # entity://agent dispatch target) lands in the K4 follow-up.
       {:ezagent_plugin_kanban, in_umbrella: true},
+      # kb-as-role — declared so the kb plugin's OTP app boots (its roles/0
+      # registers the `kb` recipe + resource_types/0 registers the kb-store /
+      # kb-source FsResolver types; Behavior.Kb loads per-instance via RF-1).
+      {:ezagent_plugin_kb, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
