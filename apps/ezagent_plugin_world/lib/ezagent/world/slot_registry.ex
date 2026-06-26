@@ -39,6 +39,8 @@ defmodule Ezagent.World.SlotRegistry do
   # `main.tsx`'s renderer map and `WorldLive.route_for/2`.
   @families %{
     sessions: {:world_live, [{"sessions_table", "Sessions"}]},
+    # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData。
+    overview: {Ezagent.World.AdminData, [{"overview", "Overview"}]},
     conversation: {Ezagent.World.ConversationData, [{"conversation", "Conversation"}]},
     pty: {:world_live, [{"pty_terminal", "Terminal"}]},
     layout_editor: {:layout, [{"layout_editor", "Layout"}]},

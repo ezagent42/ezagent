@@ -1,5 +1,5 @@
 import React from "react"
-import {BadgeCheck, Boxes, Cable, Layers, Pencil, Plug, Save, Trash2, UserRound, X} from "lucide-react"
+import {BadgeCheck, Boxes, Cable, ChevronRight, Layers, Pencil, Plug, Save, Trash2, UserRound, X} from "lucide-react"
 
 import {Button, EmptyState, Input, Stat} from "./ui/primitives"
 
@@ -244,22 +244,46 @@ function Plugins({state}: {state: WorkspacePluginState}) {
     <section className={surfaceClass} data-world-component="plugins">
       <Header eyebrow="Plugins" title="Installed plugins" icon={<Plug className="h-4 w-4" />} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {rows.map((plugin) => (
-          <article className="space-y-2 rounded-md border border-border bg-background p-3" key={String(plugin.slug || plugin.name)}>
-            <div className="font-semibold text-foreground">{String(plugin.name || plugin.slug)}</div>
-            <p className="text-sm text-muted-foreground">{String(plugin.description || "")}</p>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <code className={codeClass}>{String(plugin.version || "dev")}</code>
-              {plugin.config_path ? (
-                <a className="text-primary hover:underline" href={String(plugin.config_path)}>
-                  {String(plugin.config_label || "Configure")}
-                </a>
-              ) : (
-                <span>no config</span>
-              )}
-            </div>
-          </article>
-        ))}
+        {rows.map((plugin) => {
+          // FP5：有 config_surface 的插件，整张卡可点进入其面（此前只有底部小链接，
+          // 大量卡看着像死的）。无操作面的保持纯信息卡（不可点、淡显）。
+          const href = plugin.config_path ? String(plugin.config_path) : null
+          const key = String(plugin.slug || plugin.name)
+          const body = (
+            <>
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold text-foreground">{String(plugin.name || plugin.slug)}</div>
+                {href && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+              </div>
+              <p className="text-sm text-muted-foreground">{String(plugin.description || "")}</p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code className={codeClass}>{String(plugin.version || "dev")}</code>
+                {href ? (
+                  <span className="text-primary">{String(plugin.config_label || "Configure")}</span>
+                ) : (
+                  <span>no config</span>
+                )}
+              </div>
+            </>
+          )
+
+          return href ? (
+            <a
+              key={key}
+              href={href}
+              className="block space-y-2 rounded-md border border-border bg-background p-3 transition hover:border-primary/50 hover:bg-muted/40"
+            >
+              {body}
+            </a>
+          ) : (
+            <article
+              key={key}
+              className="space-y-2 rounded-md border border-border bg-background p-3 opacity-75"
+            >
+              {body}
+            </article>
+          )
+        })}
         {rows.length === 0 && <EmptyState label="No plugins registered." />}
       </div>
     </section>

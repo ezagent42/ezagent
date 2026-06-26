@@ -60,3 +60,26 @@
 
 - 设计场景:`docs/scenarios/02-password-login-admin`、`01-magic-link-login`
 - 操作指引:`docs/guide/login-and-registration.zh_cn.md`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。登录页是服务端渲染纯 HTML(非 React 岛),原生 submit 不被吞,无需 form.submit() 绕过。 -->
+
+**前置(自动化)**:干净 seed 后即可(本条是全流程第一条,无前置 scenario)。world seed admin = `admin@ezagent.chat` / `worlddev`。
+**入口 URL**:`http://world.localhost:10042/login`
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | navigate | — | — | `visible #email` | `s01-step1-login-form-auto.png` |
+| 2 | fill | `#email` | `admin@ezagent.chat` | — | — |
+| 3 | fill | `#password` | `worlddev` | — | — |
+| 4 | click | `button[type="submit"]` | — | `url~ /sessions` | `s01-step4-login-success-auto.png` |
+| 5 | wait | `[data-world-component=sessions_table]` | — | `visible [data-world-component=sessions_table]` | (同步4) |
+
+**断言映射**:
+- 「LV 重定向到主面板,session 认证为 admin」→ step4 `url~ /sessions` + step5 `visible [data-world-component=sessions_table]`(Sessions 列表是 admin 主面板)。
+- 「写一行 `invocations` `action=:password_login`」→ 非 UI 断言,留 scenario-12 审计(自动化暂不覆盖 DB 层)。
+
+**清理**:无(只读登录,未建实体)。

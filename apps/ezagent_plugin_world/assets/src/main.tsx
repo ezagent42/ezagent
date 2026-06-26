@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, ChevronDown, ChevronRight, LogOut, Moon, Sun, User} from "lucide-react"
+import {ArrowLeft, Boxes, ChevronDown, ChevronRight, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -9,6 +9,7 @@ import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
 import {Kanban} from "./components/Kanban"
+import {Overview} from "./components/Overview"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
@@ -101,6 +102,27 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
 
+  // 左侧导航收起状态。LiveView 导航会重挂 React 岛,故持久化到 localStorage
+  // 以跨页面保持(否则每次切页又弹开)。
+  const [navCollapsed, setNavCollapsed] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem("world:nav-collapsed") === "1"
+    } catch {
+      return false
+    }
+  })
+  const toggleNav = React.useCallback(() => {
+    setNavCollapsed((collapsed) => {
+      const next = !collapsed
+      try {
+        localStorage.setItem("world:nav-collapsed", next ? "1" : "0")
+      } catch {
+        // localStorage 不可用(隐私模式等)时仅内存态,可接受
+      }
+      return next
+    })
+  }, [])
+
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
@@ -121,22 +143,48 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
   if (components.length > 0 || state.component === "sessions_table") {
     return (
       <div className="flex min-h-screen bg-background text-foreground">
-        <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4" aria-label="World navigation">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
-          <nav className="flex flex-col gap-0.5">
-            {NAV_ITEMS.map(([label, href]) => (
-              <a className={navClass(state.path, href)} href={href} key={href}>
-                {label}
-              </a>
-            ))}
-          </nav>
-        </aside>
+        {!navCollapsed && (
+          <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4" aria-label="World navigation">
+            <div className="flex items-center justify-between">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
+              <button
+                type="button"
+                onClick={toggleNav}
+                aria-label="收起菜单"
+                title="收起菜单"
+                className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <nav className="flex flex-col gap-0.5">
+              {NAV_ITEMS.map(([label, href]) => (
+                <a className={navClass(state.path, href)} href={href} key={href}>
+                  {label}
+                </a>
+              ))}
+            </nav>
+          </aside>
+        )}
 
         <main className="min-w-0 flex-1 p-6">
           <header className="mb-5 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
-              <h1 className="mt-1 text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
+            <div className="flex min-w-0 items-center gap-3">
+              {navCollapsed && (
+                <button
+                  type="button"
+                  onClick={toggleNav}
+                  aria-label="展开菜单"
+                  title="展开菜单"
+                  className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                >
+                  <PanelLeft className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
+              <div className="min-w-0">
+                <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
+                <h1 className="mt-1 text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <a
@@ -599,6 +647,9 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
         />
       )
 
+    case "overview":
+      return <Overview key={component.id} state={context.state} />
+
     case "admin":
       return <AdminSurface key={component.id} state={{...context.state, component: component.type}} onAction={context.onAdminAction} />
 
@@ -659,6 +710,8 @@ function navClass(path: string | undefined, href: string) {
 
 function pageTitle(component: string | undefined) {
   switch (component) {
+    case "overview":
+      return "Overview"
     case "conversation":
       return "Conversation"
     case "identities":

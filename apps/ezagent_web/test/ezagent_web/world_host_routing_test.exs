@@ -59,11 +59,11 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     {:ok, view, html} = live(conn, "/")
 
+    # FP5 S2-a:根落地页改为独立 Overview dashboard(不再复用 sessions_table);
+    # sessions_table + 布局管理移到 /sessions(见下方 layout manage 用例)。
     assert html =~ ~s(id="world-root")
     assert has_element?(view, "#world-root[phx-hook='WorldRenderer'][phx-update='ignore']")
-    assert has_element?(view, "#world-root[data-world-component='sessions_table']")
-    assert html =~ URI.to_string(world_session_uri())
-    assert html =~ "layout_editor"
+    assert has_element?(view, "#world-root[data-world-component='overview']")
   end
 
   test "world sessions_table dispatch joins through Invocation.dispatch", %{conn: conn} do
@@ -282,7 +282,8 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    {:ok, view, _html} = live(conn, "/")
+    # FP5 S2-a:布局管理面是 sessions_table,现位于 /sessions(根改为 Overview)
+    {:ok, view, _html} = live(conn, "/sessions")
 
     html =
       view
@@ -303,7 +304,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
              |> Map.fetch!("components")
              |> Enum.map(& &1["type"])
 
-    {:ok, _view, html} = live(conn, "/")
+    {:ok, _view, html} = live(conn, "/sessions")
     assert html =~ "sessions_table"
     assert html =~ "layout_editor"
   end
@@ -323,7 +324,8 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    {:ok, _view, html} = live(conn, "/")
+    # FP5 S2-a:布局管理 affordance 在 sessions_table(/sessions),根改为 Overview
+    {:ok, _view, html} = live(conn, "/sessions")
 
     assert html =~ ~s(&quot;can_manage_layout&quot;:true)
   end

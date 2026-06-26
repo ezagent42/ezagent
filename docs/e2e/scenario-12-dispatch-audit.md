@@ -51,6 +51,45 @@
 - 设计场景:`docs/scenarios/28-dispatch-audit`
 - 不变式:P14(dispatch 唯一路径)、**P22(DLQ-on-zero-match — 本场触发待裁决)**
 
-## 交叉引用
-- 设计场景:`docs/scenarios/28-dispatch-audit`
-- 不变式:P14(dispatch 唯一路径)、P22(可靠性原语在 core)
+---
+
+## 自动化运行(CLI runbook —— 非 agent-browser)
+
+<!-- 规范见 guide.md §8。本条是 **DB/审计层** 收口,**不适用 agent-browser**;改为确定性 `mix run --no-start` 查询(psql 不在 PATH,PG 在 Windows 宿主)。断言改为对查询输出的 grep 谓词。 -->
+
+**前置(自动化)**:scenario-01~09(或 04/07/08/09)已自动跑完(transcript + invocations 已落 PG `ezagent_pg_compat_dev`)。**入口**:CLI,非浏览器。
+
+确定性查询(`mix run --no-start` 只启 `:ecto_sql`/`:postgrex`/Repo,不 boot 主树):
+
+```bash
+# 查 zyli-test-1 相关 invocations,逐条对 04/07/08/09
+mix run --no-start -e '
+  import Ecto.Query
+  rows = Ezagent.Repo.all(from i in "invocations",
+    where: like(i.target_uri, "%zyli-test-1%") or like(i.action, "%receive%"),
+    select: %{action: i.action, target: i.target_uri, status: i.status})
+  IO.inspect(rows, limit: :infinity)
+' 2>&1 | tee /tmp/s12-invocations-audit.txt
+
+# 查是否存在 dlq/dead-letter/telemetry/dispatch/audit 持久化表
+mix run --no-start -e '
+  IO.inspect(Ezagent.Repo.all(from t in "pg_tables",
+    where: like(t.tablename, "%dlq%") or like(t.tablename, "%dead%")
+        or like(t.tablename, "%telemetry%"), select: t.tablename))
+' 2>&1 | tee -a /tmp/s12-invocations-audit.txt
+```
+
+| # | 动作 | 输入/查询 | 断言(对输出 grep) | evidence |
+|---|---|---|---|---|
+| 1 | 查 echo/curl 往返链 | invocations where target~zyli-test-1 | `grep "agent.receive" … granted` 对每个被 @ 的 echo/curl 各一行;`send→receive→send` 全 `granted` | `s12-invocations-audit.txt` |
+| 2 | 查 mention 单播 | 同上 | 被 `@echo` 时**仅** echo 有 `agent.receive`、`@curl` 时仅 curl 有(grep 计数=1) | (同上) |
+| 3 | 查非成员零投递 | 同上 | `grep "echo_default\|e2e-test" 的 agent.receive` → **0 行** | (同上) |
+| 4 | 查零匹配 DLQ/telemetry | pg_tables + unroutable/reject invocations | `grep "dlq\|dead\|telemetry\|unroutable\|reject"` → **0 行**(= P22 待裁决:零匹配无信号) | (同上) |
+
+**断言映射**:
+- 「每个 agent 往返各有 invocation 行」→ step1。
+- 「mention 路由命中=单播」→ step2(回填 scenario-08 dispatch 层缺口)。
+- 「非成员 @ 不越权投递」→ step3(回填 scenario-09)。
+- 「无静默失败(零匹配有 DLQ/telemetry)」→ step4 **预期 0 行命中** = 当前**有缺口**(P22 待 Allen 裁决,不在自动化里定性,只如实记录 0 命中)。
+
+**清理**:删除临时 `/tmp/s12-invocations-audit.txt`(或归档进 evidence)。

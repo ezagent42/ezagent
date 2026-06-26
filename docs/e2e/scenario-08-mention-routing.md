@@ -48,3 +48,29 @@
 
 ## 交叉引用
 - 设计场景:`docs/scenarios/10-mention-gated-routing`、`22-routing-crud`
+
+---
+
+## 自动化运行(agent-browser runbook)
+
+<!-- 规范见 guide.md §8。门控核心断言:发 @A,只有 A 回、B 沉默。需 session 内 ≥2 个能工作的 agent 做对照。 -->
+
+> **flavor drift**:人肉记录用 echo flavor(回包 `echo: ` 前缀);当前 main 退役 echo → py(逐字回显,见 scenario-02/04)。runbook 跟随当前 main:py agent 逐字回显。
+
+**前置(自动化)**:scenario-03/04 已自动跑;session `e2e-test-1` 内有**两个能工作的 agent 成员**做对照。
+- 免凭据变体(**推荐自动化默认**):加两个 py agent(`e2e-py` + `e2e-py-2`),纯靠 py 逐字回显对照验门控(不依赖外网/凭据)。
+- 跨 flavor 变体(对齐人肉记录的 echo/curl 对照):`e2e-py`(py)+ `e2e-curl`(curl/deepseek)。**curl 需先配 api_url+key,否则不回 → 断言 FAIL 属环境未就绪非门控失效**。
+**入口 URL**:`http://world.localhost:10042/sessions?session=<encodeURIComponent("session://system/default/e2e-test-1")>`
+**关键变量**:`ROUTING=0` —— 门控来自 @mention 直接寻址(无规则 = 默认只送被 @ 者),非显式 mention 规则。
+
+| # | 动作 | 定位 | 输入 | 断言 | evidence |
+|---|---|---|---|---|---|
+| 1 | @ 第一个 agent + submit | `textarea[aria-label="Message"]`(`@`→listbox→点 `@e2e-py`,补文本)+ `form.submit()` | `@e2e-py gate-a` | 只有 py 回:`text~ [data-sender-kind=agent][data-mine=false] "gate-a"`(逐字)且**该轮 agent 气泡仅 1 个新增**(py-2/curl 未回) | `s08-step1-gate-first-auto.png` |
+| 2 | @ 第二个 agent + submit | `textarea[aria-label="Message"]`(`@`→listbox→点 `@e2e-py-2` 或 `@e2e-curl`)+ `form.submit()` | `@e2e-py-2 gate-b` | 只有第二个 agent 回(py-2 逐字回 `gate-b` / curl 回 DeepSeek 文本);第一个 py **本轮未新增气泡** | `s08-step2-gate-second-auto.png` |
+
+**断言映射**:
+- 「只有被 @ 成员收到 dispatch / 回复」→ step1/step2 各自「仅被 @ 者新增气泡」(用可区分标记 `gate-a`/`gate-b` 定位)。
+- 「未被 @ 成员无越权回复」→ step1 py-2/curl 沉默、step2 py 沉默(气泡计数不变)。
+- 「未被 @ 成员无 dispatch(分发面单播)」→ UI 只暴露 `data-msg-id` 无 per-recipient delivered marker → **UI 层不可断言**,留 scenario-12 审计(查 `invocations` 无对应 `agent.receive`)。
+
+**清理**:无(随 session 删除清理);若建了 `e2e-py-2`/`e2e-curl` 一并删。

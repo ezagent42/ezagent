@@ -33,13 +33,46 @@ type AdminState = {
   workspace_uri?: string | null
 }
 
-export function AdminSurface({
-  state,
-  onAction = () => undefined,
-}: {
-  state: AdminState
-  onAction?: (action: string, args: Record<string, unknown>) => void
-}) {
+// Admin 区子页导航（FP5 入口审计）：此前这些子页在 UI 里无任何可见入口,只能靠
+// ⌘K 命令面板或直接敲 URL 到达。在每个 admin 面顶部挂一行子导航,当前页高亮。
+const ADMIN_NAV: Array<{component: string; label: string; href: string}> = [
+  {component: "dashboard", label: "Dashboard", href: "/admin"},
+  {component: "observability", label: "Observability", href: "/admin/logs"},
+  {component: "entity_registry", label: "Registry", href: "/admin/registry"},
+  {component: "snapshots", label: "Snapshots", href: "/admin/snapshots"},
+  {component: "templates", label: "Templates", href: "/admin/templates"},
+  {component: "caps_admin", label: "Capabilities", href: "/admin/caps"},
+  {component: "authz_audit", label: "Authz Audit", href: "/admin/audit/authz"},
+  {component: "settings", label: "Settings", href: "/admin/settings"},
+  {component: "routing", label: "Routing", href: "/admin/routing"},
+]
+
+function AdminNav({current}: {current?: string}) {
+  const active = current || "dashboard"
+  return (
+    <nav className="flex flex-wrap gap-1.5" aria-label="Admin sections">
+      {ADMIN_NAV.map((item) => {
+        const isActive = active === item.component
+        return (
+          <a
+            key={item.component}
+            href={item.href}
+            aria-current={isActive ? "page" : undefined}
+            className={
+              isActive
+                ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
+                : "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            }
+          >
+            {item.label}
+          </a>
+        )
+      })}
+    </nav>
+  )
+}
+
+function adminBody(state: AdminState, onAction: (action: string, args: Record<string, unknown>) => void) {
   switch (state.component) {
     case "observability":
       return <Observability state={state} />
@@ -57,11 +90,30 @@ export function AdminSurface({
       return <SettingsPanel state={state} onAction={onAction} />
     case "routing":
       return <RoutingPanel state={state} />
-    case "external_mirror":
-      return <ExternalMirror state={state} onAction={onAction} />
     default:
       return <Dashboard state={state} />
   }
+}
+
+export function AdminSurface({
+  state,
+  onAction = () => undefined,
+}: {
+  state: AdminState
+  onAction?: (action: string, args: Record<string, unknown>) => void
+}) {
+  // external_mirror 是 session 级子页（/admin/sessions/:id/external_mirror,经 Sessions
+  // 表进入,有自己的 breadcrumb),不属顶层 admin 区 → 不挂 admin 子导航。
+  if (state.component === "external_mirror") {
+    return <ExternalMirror state={state} onAction={onAction} />
+  }
+
+  return (
+    <div className="space-y-4">
+      <AdminNav current={state.component} />
+      {adminBody(state, onAction)}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +130,31 @@ const tdClass = "px-3 py-2 align-top"
 const rowClass = "hover:bg-muted/30"
 const monoCell = "font-mono text-xs text-foreground"
 const mutedMono = "font-mono text-xs text-muted-foreground"
+
+// FP5 入口完善：admin 各表的 URI 此前是死文本。把 entity/session/workspace URI 映射到
+// world 内对应详情面,让操作员能从 Registry/Snapshots/Audit 等直接点进去下钻。
+// 无对应面的 URI(如 system://、template:// 等)返回 null → 保持纯文本(不假装可点)。
+function worldPathForUri(uri: unknown): string | null {
+  if (typeof uri !== "string" || uri === "") return null
+  if (/^entity:\/\/[^/]+\/agent\//.test(uri)) return `/identities/agents/${encodeURIComponent(uri)}`
+  if (/^entity:\/\/[^/]+\/user\//.test(uri)) return `/identities/users/${encodeURIComponent(uri)}/caps`
+  if (uri.startsWith("session://")) return `/sessions?session=${encodeURIComponent(uri)}`
+  const ws = uri.match(/^workspace:\/\/(.+)$/)
+  if (ws) return `/workspaces/${encodeURIComponent(ws[1])}`
+  return null
+}
+
+function UriCell({uri, muted = false}: {uri: unknown; muted?: boolean}) {
+  const text = s(uri)
+  const href = worldPathForUri(uri)
+  const cls = muted ? mutedMono : monoCell
+  if (!href) return <code className={cls}>{text}</code>
+  return (
+    <a href={href} className={`${cls} underline decoration-dotted underline-offset-2 hover:text-primary hover:decoration-solid`} title={`打开 ${text}`}>
+      {text}
+    </a>
+  )
+}
 
 function Surface({component, children}: {component: string; children: React.ReactNode}) {
   return (
@@ -255,7 +332,7 @@ function EntityRegistry({state}: {state: AdminState}) {
         rows={state.entities || []}
         empty="No registered kinds."
         columns={[
-          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "URI", cell: (row) => <UriCell uri={row.uri} />},
           {header: "Scheme", cell: (row) => <Badge tone="info">{s(row.scheme)}</Badge>},
           {header: "Status", cell: (row) => <AliveBadge alive={row.alive} />},
           {header: "PID", cell: (row) => <code className={mutedMono}>{s(row.pid)}</code>},
@@ -273,10 +350,10 @@ function Snapshots({state}: {state: AdminState}) {
         rows={state.snapshots || []}
         empty="No snapshots."
         columns={[
-          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "URI", cell: (row) => <UriCell uri={row.uri} />},
           {header: "Kind", cell: (row) => s(row.kind_type)},
           {header: "Version", cell: (row) => <Badge tone="default">{s(row.version)}</Badge>},
-          {header: "Workspace", cell: (row) => <code className={mutedMono}>{s(row.workspace_uri)}</code>},
+          {header: "Workspace", cell: (row) => <UriCell uri={row.workspace_uri} muted />},
           {header: "Updated", cell: (row) => <span className={mutedMono}>{s(row.updated_at)}</span>},
         ]}
       />
@@ -292,7 +369,7 @@ function Templates({state}: {state: AdminState}) {
         rows={state.templates || []}
         empty="No templates registered."
         columns={[
-          {header: "URI", cell: (row) => <code className={monoCell}>{s(row.uri)}</code>},
+          {header: "URI", cell: (row) => <UriCell uri={row.uri} />},
           {header: "Status", cell: (row) => <AliveBadge alive={row.alive} />},
         ]}
       />
@@ -315,7 +392,7 @@ function AuditTable({rows}: {rows: DataRow[]}) {
       rows={rows}
       empty="No invocations recorded."
       columns={[
-        {header: "Target", cell: (row) => <code className={monoCell}>{s(row.target)}</code>},
+        {header: "Target", cell: (row) => <UriCell uri={row.target} />},
         {header: "Action", cell: (row) => s(row.action)},
         {header: "Authz", cell: (row) => <AuthzBadge authz={row.authz} />},
         {header: "Duration", cell: (row) => <span className="tabular-nums">{row.duration_us != null ? `${row.duration_us} µs` : "—"}</span>},
@@ -611,9 +688,9 @@ function ExternalMirrorTable({rows, onUnbind}: {rows: DataRow[]; onUnbind?: (row
       columns={[
         {header: "Adapter", cell: (row) => <Badge tone="info">{s(row.adapter_id)}</Badge>},
         {header: "Target", cell: (row) => <code className={monoCell}>{s(row.target_id)}</code>},
-        {header: "Workspace", cell: (row) => <code className={mutedMono}>{s(row.workspace_uri)}</code>},
+        {header: "Workspace", cell: (row) => <UriCell uri={row.workspace_uri} muted />},
         ...(rows.some((row) => "session_uri" in row)
-          ? [{header: "Session", cell: (row: DataRow) => <code className={mutedMono}>{s(row.session_uri)}</code>}]
+          ? [{header: "Session", cell: (row: DataRow) => <UriCell uri={row.session_uri} muted />}]
           : []),
         {header: "Bound", cell: (row) => <span className={mutedMono}>{s(row.bound_at)}</span>},
         ...(onUnbind
