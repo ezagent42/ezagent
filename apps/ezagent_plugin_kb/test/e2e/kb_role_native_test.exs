@@ -225,7 +225,53 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
 
       # The store URI on the snapshot is identity-derived (never caller input).
       assert {:ok, slice} = Ezagent.Kind.get_slice(agent_uri, :kb)
-      assert slice.store_uri == URI.new!("resource://#{ws_name}/kb-store/#{name}")
+      assert slice.store_uri == Ezagent.URI.resource(ws_name, "kb-store", name)
+    end)
+  end
+
+  @tag :integration
+  test "MCP tools (SPEC §8.7): kb_query / kb_ingest dispatch with caller caps",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+    skip_if_no_entity_spawn(fn ->
+      name = "kb-#{System.unique_integer([:positive])}"
+      {:ok, _agent_uri} = create_kb_agent(workspace_uri, ws_name, name, admin_ctx)
+
+      source_name = "doc-#{System.unique_integer([:positive])}"
+      _src = write_source(ws_name, source_name, "mcp retrieval over indexed documents works")
+      source_uri = "resource://#{ws_name}/kb-source/#{source_name}"
+
+      # An "orchestrator" holding kb caps (the bridge-token path reconstructs
+      # the orchestrator's caps; here we pass them directly to the Tools fn).
+      orch = URI.new!("entity://#{ws_name}/agent/orchestrator")
+
+      caps =
+        MapSet.new([
+          Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :query),
+          Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :ingest)
+        ])
+
+      opts = [caller: orch, caps: caps, workspace_uri: workspace_uri]
+
+      # kb_ingest MCP tool → dispatches kb.ingest into the named kb-agent.
+      assert {:ok, %{chunks: _}} =
+               Ezagent.Orchestrator.Tools.kb_ingest(name, source_uri, opts)
+
+      # kb_query MCP tool → dispatches kb.query, returns hits with provenance.
+      assert {:ok, %{hits: [hit | _]}} =
+               Ezagent.Orchestrator.Tools.kb_query(name, "indexed documents", 5, opts)
+
+      assert hit.text =~ "indexed"
+
+      # An orchestrator WITHOUT the kb.ingest cap is denied (fail-closed).
+      read_only = [
+        caller: orch,
+        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :query)]),
+        workspace_uri: workspace_uri
+      ]
+
+      assert {:error, :unauthorized} =
+               Ezagent.Orchestrator.Tools.kb_ingest(name, source_uri, read_only),
+             "an orchestrator without kb.ingest must be denied (option-1 caps gate)"
     end)
   end
 
