@@ -103,6 +103,24 @@ document the old name as-was — annotate, don't rewrite history.)
 - `.txt` hit = a captured SQL-log artifact (test output), not a source writer.
 - No seed/fixture/`.json`/`.yaml` writer mints `advisor.behavior` at provision time
   (incl. the `<username>-default` cc-agent seed — it carries no fixed config key).
+- **Frontend / React console reads the key dynamically, NOT a hardcoded JS literal**
+  (verified): the unfiltered grep found ZERO `.js/.mjs/.ts/.tsx` occurrence of
+  `advisor.behavior`. The agent-config console renders whatever `default_key` /
+  `keys[]` the backend cascade response returns (see the
+  `agent-config-frontend-contract.md` shape — `default_key` is server-supplied), so
+  no client code changes with the rename.
+
+### 3.5 Two constants stay separate by design (not a missed dedup)
+
+`config.ex:13 @default_key` and `config_evolve.ex:87 @default_cascade_key` are two
+copies of the same string in two different apps. They are **intentionally not
+collapsed to one source** because `ezagent_domain_identity` (config_evolve) must not
+take a compile dep on `ezagent_domain_agent` (config) — that would invert the domain
+layering. Both flip together in the rename PR, and the §3.2 test suite asserts the key
+in BOTH apps, so a one-sided flip is caught by tests. Recommendation #3 (point
+`identity_data.ex:754` at `Config.default_key/0`) is safe because `ezagent_plugin_world`
+already depends on `ezagent_domain_agent`; the cross-app constant duplication is only
+between agent↔identity.
 
 ---
 
@@ -191,6 +209,13 @@ portability. Both are ANSI; verify against the live adapter before running.)
 
 **Safety properties:**
 - **Non-destructive:** only `UPDATE`s; no row is dropped. `down/0` is the exact inverse.
+- **`down/0` limitation (state it, not a bug):** `down/0` renames *every* `agent.soul`
+  row back to `advisor.behavior`, including any created legitimately AFTER the rename
+  ships — it cannot distinguish migrated rows from new ones. This is acceptable only as
+  the inverse of the coordinated one-shot (§4.5 strategy 1): a rollback happens inside
+  the same maintenance window before new `agent.soul` rows exist. If a rollback is ever
+  needed after agents have written fresh `agent.soul` config, `down/0` would over-revert
+  them — so a post-window rollback must instead be a forward-fix, not `ecto.rollback`.
 - **Idempotent:** the `WHERE key = @old` guard makes a re-run a no-op.
 - **No PK collision:** the pointer unique index `(layer, workspace_uri, subject_uri,
   key)` already enforces one row per tuple, so rewriting the embedded-key portion of the
