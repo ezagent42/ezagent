@@ -757,6 +757,42 @@ defmodule EzagentWeb.WorldConversationTest do
              Ezagent.World.ConversationData.message_row(plain_msg)["attachments"]
   end
 
+  test "render-card mechanism: a message body carrying a render tree surfaces it on the wire (producer-free)" do
+    # Borrows the json-render card shape from #1023 (Card > Table) but spawns NO
+    # producer/agent — it just constructs a message whose body HAS a render tree
+    # and asserts the transport carries `render`/`render_css` through to the wire.
+    render_tree = %{
+      "type" => "Card",
+      "props" => %{"title" => "Order summary"},
+      "children" => [
+        %{
+          "type" => "Table",
+          "props" => %{
+            "columns" => ["Item", "Qty"],
+            "rows" => [["Widget", 2], ["Gadget", 5]]
+          }
+        }
+      ]
+    }
+
+    msg =
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{
+        text: "here is the data",
+        render: render_tree,
+        render_css: "table{font-size:12px}"
+      })
+
+    row = Ezagent.World.ConversationData.message_row(msg)
+    assert row["render"] == render_tree
+    assert row["render_css"] == "table{font-size:12px}"
+
+    # A message with NO render body surfaces nil (plain text path) — the default.
+    plain = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "plain"})
+    plain_row = Ezagent.World.ConversationData.message_row(plain)
+    assert plain_row["render"] == nil
+    assert plain_row["render_css"] == nil
+  end
+
   test "PR-5: profile.display_name.save updates the current entity profile", %{conn: conn} do
     {:ok, view, _html} = live(admin_conn(conn), "/profile")
     name = "World Admin #{System.unique_integer([:positive])}"
