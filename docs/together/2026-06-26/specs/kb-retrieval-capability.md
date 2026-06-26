@@ -45,9 +45,14 @@ agent's Kind snapshot, NOT ezagent's Postgres).
 | **MVP — `kb` (keyword)** | sqlite **FTS5** (core sqlite, no extension) | keyword / lexical | **none** | **none** | one hex dep (`exqlite`) |
 | **Upgrade — `vec-kb` (semantic)** | **sqlite-vec** extension, SAME file | vector / semantic | **embedding API** (local optional) | none (native) *or* py at this tier only | sqlite-vec C extension |
 
-The isolation win is the whole point: the sqlite file is **wholly plugin-owned**,
-with **zero rows in ezagent's Postgres** and **zero ezagent migrations** — copy
-`kb.sqlite` and you have moved/backed-up/inspected the entire KB.
+The isolation win is the whole point: the **KB corpus + index bytes** are
+**wholly plugin-owned in the sqlite file — NO corpus/index rows in ezagent's
+Postgres, NO ezagent migration touches them.** (Precise scope, codex-corrected:
+the kb-agent's lightweight ACTOR METADATA — its Kind snapshot: config + the
+`kb-store` URI + `last_*` observability — still lives in ezagent's snapshots like
+any agent. What is isolated is the *retrieval corpus*, which is the data the
+constraint is about.) Copy `kb.sqlite` (with its `-wal`/checkpoint, §4.3) and you
+have moved/backed-up/inspected the entire corpus.
 
 ---
 
@@ -124,11 +129,18 @@ Reuse, don't rebuild:
 6. **`passive`-actor isolation (RF-6)** — the gates that make a data actor
    non-chat. KB is passive.
 
-> **One new dependency.** The MVP adds `exqlite` (or `ecto_sqlite3` for the Ecto
-> surface) — a small, well-maintained hex package. This is native's only real
-> cost, and it is far lighter than the py path's subprocess + uv-install +
-> bindings. ezagent's own DB stays Postgres; the sqlite dep is used ONLY for the
-> isolated KB stores.
+> **One new dependency — and it is PRIOR ART here, not greenfield tooling.**
+> The MVP adds `exqlite` (the low-level sqlite driver; used directly, NOT a 2nd
+> Ecto repo — see §3.6). Code-verified: ezagent **used to run on
+> `ecto_sqlite3`/`exqlite`** before migrating to PostgreSQL — the deps were
+> dropped from `mix.exs` but the prior usage is all over the moduledocs
+> (`dlq.ex`, `message.ex`, `snapshot.ex` `Exqlite.Error`, `home/migration.ex`),
+> and `mix ezagent.home.adopt_db` literally says "SQLite DB adoption is retired;
+> Ezagent now uses PostgreSQL Repo config." So re-introducing `exqlite` for the
+> isolated KB stores is **re-treading a known, removed path** (low risk,
+> familiar to the codebase), not adopting unfamiliar tooling — and it is far
+> lighter than the py path's subprocess + uv-install + bindings. ezagent's own DB
+> stays Postgres; `exqlite` is used ONLY for the isolated per-KB sqlite files.
 
 ---
 
@@ -290,15 +302,28 @@ dispatch + CapBAC. **What the MVP must NEWLY build:**
 
 | New artifact | Tier | ~Size | Why |
 |---|---|---|---|
-| `exqlite` (or `ecto_sqlite3`) hex dep | dep | one dep | open the separate sqlite files (NOT for ezagent's PG DB) |
+| `exqlite` hex dep (driver, NOT a 2nd Ecto repo) | dep | one dep | open the per-KB sqlite files directly (NOT for ezagent's PG DB; see note below) |
 | `Behavior.Kb` (`:query` / `:ingest`) + sqlite open/FTS5 SQL | plugin Elixir | thin | two cap-distinct dispatch actions over the per-KB file |
 | `kb` role recipe + `roles/0` registration | plugin Elixir | tiny | recipe = `[Behavior.Kb]`, passive, requested caps |
 | `native` CapMint policy entry for the kb caps | plugin Elixir | tiny | fail-closed grant of `kb.query`/`kb.ingest` (RF-8) |
 | `kb-store` + `kb-source` FsResolver types (plugin `resource_types/0`) | plugin decl | tiny | the store file path + the source doc path, slug-prefixed |
 | kb MCP tool | cc/plugin Elixir | small | the MCP catalog is orchestrator-shaped — NEW work (§5.3) |
 | FTS5 schema bootstrap (create the virtual table on first open) | plugin Elixir | tiny | `CREATE VIRTUAL TABLE … USING fts5(...)` if absent |
+| **DB-agnostic-guard exception** | invariant/test | tiny | `database_agnostic_guard_test.exs` flags direct `Exqlite`/runtime sqlite as review-worthy — the plan MUST add a sanctioned, scoped exception for `plugin_kb`'s file driver (codex-found; else CI red) |
 
 Pure Elixir + one hex dep, no Python, no ezagent-schema change.
+
+> **`exqlite` direct, NOT a second `Ecto.Repo` — why.** ezagent already runs one
+> `Ecto.Repo` (Postgres). A single `Ecto.Repo` binds ONE database at config/boot
+> time, but KB has **one sqlite file PER kb-agent** — a fundamentally
+> multi-database, per-instance shape an `Ecto.Repo` does not fit. So
+> `Behavior.Kb` uses **`exqlite` directly** (open a connection to *this* agent's
+> file path, run prepared statements), NOT a `kb`-scoped `Ecto.Repo`.
+> Consequence: only `exqlite` (the low-level driver) is needed, not
+> `ecto_sqlite3`; the two-adapter concern ("Postgres + sqlite Ecto repos in one
+> app") does not arise because there is no second Ecto repo — just a driver used
+> per-file. (FTS5 SQL is hand-written + parameterized, §4.5/§6 — Ecto's query DSL
+> buys little for an FTS5 `MATCH` and cannot model per-file connections anyway.)
 
 ---
 
@@ -328,11 +353,28 @@ provided it is a real new-style Behavior.
 
 ### 4.2 The store — a SEPARATE, PORTABLE per-KB sqlite file
 
-- **Where:** `resource://<ws>/kb-store/<agent>` → resolved by a `kb-store`
-  FsResolver type to `<Home>/kb-stores/<ws>/<agent>/kb.sqlite`. One sqlite file
-  per kb-agent. Tenant-scoped (the `<ws>` segment + R-3 authority).
-- **Why this satisfies the constraint:** the file is wholly plugin-owned —
-  **nothing in ezagent's Postgres, no ezagent migration touches it.** Backup =
+- **Where (path shape codex-corrected against FsResolver).** `FsResolver`
+  resolves `resource://<ws>/<type>/<name>` to exactly
+  `Home.path(backend_component) / <ws> / <name>` and **rejects any separator in a
+  URI segment** (R-2), so `<name>` cannot itself be `<agent>/kb.sqlite`. Two
+  valid shapes; the SPEC picks **(a)**:
+  - **(a) — resolved path is the per-KB DIRECTORY; `Behavior.Kb` appends the
+    filename.** `resource://<ws>/kb-store/<agent>` →
+    `<Home>/kb-stores/<ws>/<agent>/` (backend `kb-stores`, name `<agent>`); the
+    Behavior opens `<resolved>/kb.sqlite` (+ `-wal`/`-shm`). This keeps room for
+    sidecar files (the WAL, a future vec index) in one per-KB dir. **Behavior.Kb
+    creates the dir if absent** (FsResolver authorizes the path; it does not
+    mkdir).
+  - (b) — name = the file: `resource://<ws>/kb-store/<agent>.sqlite` →
+    `<Home>/kb-stores/<ws>/<agent>.sqlite`. Simpler but no room for WAL sidecars
+    in a clean per-KB dir.
+  One sqlite store per kb-agent; tenant-scoped (the `<ws>` segment + R-3
+  authority). (The `name` here is derived from the kb-agent's own URI instance,
+  never caller input — §6.)
+- **Why this satisfies the constraint:** the corpus + index bytes are wholly in
+  the sqlite file — **no corpus/index rows in ezagent's Postgres, no ezagent
+  migration touches them** (the kb-agent's snapshot metadata is a separate,
+  lightweight concern, §4.3). Backup =
   copy the file; move a KB = move the file; inspect = open it with any sqlite
   tool outside the app. Independent accessibility + migratability, by
   construction.
@@ -342,11 +384,49 @@ provided it is a real new-style Behavior.
   exact FsResolver pattern KB already needs for sources.
 - **Schema (inside the sqlite file):** an FTS5 virtual table, e.g.
   `CREATE VIRTUAL TABLE chunks USING fts5(text, source_uri UNINDEXED,
-  chunk_index UNINDEXED, tokenize='…')` (tokenizer = §9.4 decision). FTS5
-  maintains the inverted index automatically on INSERT.
+  chunk_index UNINDEXED, tokenize='…')` (tokenizer = §4.2.2 + §9.4 decision).
+  FTS5 maintains the inverted index automatically on INSERT. **Schema bootstrap
+  + versioning:** on first open `Behavior.Kb` runs `CREATE VIRTUAL TABLE … IF
+  NOT EXISTS` and stamps a `user_version` (sqlite PRAGMA) so a future tokenizer/
+  schema change is detectable (re-index path, deferred §7).
 - **No ezagent tenancy columns needed inside the file** — the file IS the
   tenant boundary (one file per kb-agent in a workspace-scoped path). `source_uri`
   is stored for provenance, not isolation.
+
+#### 4.2.1 sqlite operational policy (codex must-fix #3 — pin it in the plan)
+
+- **WAL + portability tension (load-bearing).** Recommend **WAL mode** for
+  read-during-write, BUT WAL means the live DB spans `kb.sqlite` + `kb.sqlite-wal`
+  + `-shm`, so a naive single-file copy can miss un-checkpointed writes. Two
+  reconciliations (the plan picks): (i) **checkpoint before any
+  export/backup** (`PRAGMA wal_checkpoint(TRUNCATE)`) so the main file is
+  self-contained, OR (ii) use the **sqlite Online Backup API** (`exqlite`
+  exposes it) for a consistent copy. The portability *claim* (§4.3, test §8.9)
+  must go through a checkpoint-or-backup step, not a raw `cp` of an active WAL
+  DB. (Alternatively `journal_mode=DELETE` for true single-file simplicity at
+  the cost of concurrent-read-during-write — acceptable given KB writes are
+  serialized; the plan decides WAL-vs-DELETE.)
+- **`busy_timeout`** set on open (e.g. 5s) so an external reader / a transient
+  lock does not error a query.
+- **Single-writer assumption stated.** Within one kb-agent, all `:query`/
+  `:ingest` actions run through the agent's Kind `GenServer` mailbox
+  (`kind/server.ex`) — serialized by construction, so there is no in-app write
+  contention. The `busy_timeout` + WAL policy covers **out-of-band** access
+  (an external reader opening the portable file, or an accidental direct open)
+  — those are outside the mailbox, which is exactly why an explicit policy is
+  needed (codex). Cross-KB = separate files, no shared lock.
+
+#### 4.2.2 FTS5 query grammar (codex must-fix #4 — escaping ≠ parameterization)
+
+Binding the `MATCH` operand as a parameter prevents SQL *string* injection, but
+**FTS5 `MATCH` has its OWN query grammar** (`"`, `*`, `NEAR`, `AND/OR/NOT`,
+column filters) — raw user input with those metacharacters is a *malformed FTS5
+query*, not an injection but an error/surprise. So `:query` MUST **normalize**
+user input before MATCH: either wrap each user term as a quoted FTS5 string
+(`"term"`) to treat input as literal phrase tokens, or use a deliberate
+parse-to-FTS5 step. The MVP recommendation: treat the query as a bag of quoted
+terms (literal, safe, predictable) unless the plan wants exposed FTS5 operators.
+Test §8.4d asserts metacharacter input returns lexical matches, never an error.
 
 ### 4.3 Persistence + portability (the constraint, satisfied)
 
@@ -355,10 +435,11 @@ restart with no in-memory rebuild. `Behavior.Kb` opens the file as a **transient
 connection** in `activate/2` (re-opened on every start: fresh spawn / supervisor
 restart / cold-load — the two-container Lifecycle model), then runs SQL per
 action. No "reopen the index" hole (sqlite IS the file). The agent's Kind
-snapshot persists only lightweight config (chunk size, default `k`, the
-`kb-store` URI) + `last_*` observability — never the corpus. **The portability
-requirement is the headline property to prove** (test §8.9: copy the file, open
-it standalone, the corpus is intact + queryable).
+snapshot persists only lightweight ACTOR METADATA (chunk size, default `k`, the
+`kb-store` URI) + `last_*` observability — never the corpus (so the corpus is
+isolated; the metadata is normal agent state, §3.5 precise scope). **The
+portability requirement is the headline property to prove** (test §8.9: checkpoint
+(§4.2.1) → copy the file → open it standalone → corpus intact + queryable).
 
 ### 4.4 Ingest path (source docs via `resource://` + FsResolver)
 
@@ -437,7 +518,10 @@ distinction — the one security property that must hold even at MVP.
 **For the LLM-agent consumer (the primary RAG use case): the kb MCP tool**, so
 the model decides *when* to retrieve via a typed tool. **Agent-to-agent dispatch
 is the universal back end** the MCP tool dispatches `kb.query` *through*; non-LLM
-callers use dispatch directly. Both gate `kb.query` / `kb.ingest` via CapBAC.
+callers use dispatch directly. **Dispatch-direct always gates on the caller's own
+`kb.query`/`kb.ingest` caps via CapBAC.** The MCP path's authority model
+(bridge-token vs caller-caps) is NOT yet fixed — it depends on which §5.3 option
+is chosen, and the SPEC does NOT claim both. That is a must-decide (§5.3, §9.6).
 
 ### 5.3 The MCP surface is NEW WORK — and the existing one is orchestrator-shaped
 
@@ -459,7 +543,7 @@ caps. So the plan must pick ONE:
 **The cap-threading model is the load-bearing decision** (option 1 = bridge-token
 / orchestrator authority; option 2/3 = caller's own caps). Recommend **option 1
 for the MVP** (smallest path to RAG-over-MCP) with option 2 as the clean
-follow-up — **plan decision, confirm with the lead** (§9.7). Dispatch-direct
+follow-up — **plan decision, confirm with the lead** (§9.6). Dispatch-direct
 (§5.1) is always available to in-BEAM callers gating on their own caps.
 
 ### 5.4 Result schema (define the minimum now)
@@ -563,10 +647,14 @@ The acceptance gate must *fail* if the architectural claims are unmet:
 8. **No Python / no ezagent-PG entanglement / no new Kind/domain.** Arch/grep
    gate: MVP adds no Python subprocess, NO rows/tables in ezagent's Postgres for
    KB data, no new Kind, no new domain.
-9. **PORTABILITY (the constraint, headline).** After ingest, COPY the
-   `kb.sqlite` file out, open it with a standalone sqlite tool (or a second
-   process), and assert the corpus + FTS5 index are intact + queryable WITHOUT
-   the ezagent app — proving the KB is an independent, portable artifact.
+9. **PORTABILITY (the constraint, headline).** After ingest, **checkpoint**
+   (`PRAGMA wal_checkpoint(TRUNCATE)`) or use the backup API (§4.2.1), COPY the
+   `kb.sqlite` out, open it with a standalone sqlite tool (or a second process),
+   and assert the corpus + FTS5 index are intact + queryable WITHOUT the ezagent
+   app — proving the KB is an independent, portable artifact. (A second variant
+   copies an ACTIVE WAL DB without checkpoint and asserts the
+   checkpoint/backup path is what makes the copy complete — guarding the
+   WAL-portability caveat.)
 
 Live e2e (agent-browser sign-off): create a kb-agent, ingest a doc via CLI/UI,
 query, screenshot the retrieved result.
@@ -584,11 +672,12 @@ query, screenshot the retrieved result.
    the SAME sqlite file (keeps vectors portable + isolated). pgvector/chromadb/
    faiss are OFF the table (pgvector violates the isolation constraint).
    Confirm.
-3. **Native Elixir vs py for the store.** Recommendation: **native (`exqlite`)
-   for the FTS5 MVP** (lightest; the constraint is about the file, not the
-   language); **re-decide native-vs-py at vec-kb promotion** (py's sqlite-vec
-   bindings are the one real advantage, and that tier is deferred). Accept one
-   hex dep (`exqlite`/`ecto_sqlite3`)? Or do you want py from the start to keep
+3. **Native Elixir vs py for the store.** Recommendation: **native, `exqlite`
+   used DIRECTLY (not a 2nd Ecto repo — one file per KB doesn't fit a single
+   bound repo) for the FTS5 MVP** (lightest; the constraint is about the file,
+   not the language); **re-decide native-vs-py at vec-kb promotion** (py's
+   sqlite-vec bindings are the one real advantage, and that tier is deferred).
+   Accept the one `exqlite` driver dep? Or do you want py from the start to keep
    one toolchain for the eventual sqlite-vec?
 4. **FTS5 tokenizer — flag: bilingual content (MVP-relevant, NOT a harmless
    defer).** FTS5's default `unicode61` tokenizer does NOT segment Chinese (no
@@ -650,4 +739,34 @@ DEFER: domain_kb、source-mgmt(many)、re-index、governance、hybrid/re-rank。
 
 ### Codex adversarial-review (rev 3, 2026-06-26)
 
-_(populated after the codex run — see report)_
+Reviewed by `codex exec` (gpt-5.5, high reasoning, static read of rev 3 against
+the cited source). **Verdict: accept-with-changes.** Per-question: Q2 (native
+Elixir / `exqlite`) **SOUND**, Q6 (sqlite-vec same-file upgrade) **SOUND**, Q1
+(isolation) / Q3 (lifecycle) / Q4 (store addressing) / Q5 (action+MCP) / Q7
+(tokenizer) WEAK with concrete fixes. Codex independently confirmed: the live
+Repo is Postgres; native flavor exists as a no-engine role host; RF-1 admits
+undeclared recipe-loaded behaviors; `?action=kb.query` parses to action `:query`;
+the MCP server is orchestrator/bridge-token-shaped (no caller-caps across the
+hop); per-agent dispatch is serialized by the Kind GenServer mailbox; and ezagent
+**used to run on sqlite (`ecto_sqlite3`/`exqlite`)** before Postgres (so re-adding
+`exqlite` is prior art).
+
+All 5 must-fix items folded into this revision:
+
+| Codex must-fix | Where addressed |
+|---|---|
+| 1. "zero rows in Postgres" overclaim → corpus-bytes-only; actor metadata stays in snapshots | §0, §3.5, §4.2, **§4.3** (precise scope) |
+| 2. `kb-store` path shape vs FsResolver (`backend/ws/name`, no separators in a segment) | **§4.2** (resolved path = per-KB DIR, append `kb.sqlite`; or `<agent>.sqlite`) |
+| 3. sqlite operational policy (WAL/busy_timeout/checkpoint/copy) | new **§4.2.1** + §4.3 + test §8.9 |
+| 4. FTS5 tokenizer + query-grammar escaping (MATCH grammar ≠ parameterization) | new **§4.2.2** + §9.4 + test §8.4d |
+| 5. MCP authority model: bridge-token vs caller-caps (can't claim both) | **§5.2** (de-claimed) + §5.3 (3 options, pick one) + §9.6 |
+| (bonus) DB-agnostic-guard treats direct `Exqlite` as review-worthy | §3.6 delta row (sanctioned scoped exception required) |
+
+Also carried forward from rev-2's review (store-independent): the action-namespace
+correction (`kb.query` → action `:query`) and RF-1 no-declaration (both
+code-confirmed again in rev-3's review). Residual items are genuine lead/plan
+decisions (§9): FTS5-only-vs-vec, native-vs-py-at-promotion, tokenizer
+(`trigram` recommended), store-addressing shape, MCP authority option, /goal gate.
+No finding contradicts the core rev-3 placement — codex agreed the separate
+portable sqlite store is the right isolation answer and native Elixir is the
+right MVP build.
