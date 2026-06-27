@@ -17,7 +17,7 @@ defmodule Ezagent.Socialware.ConfigProjectionTest do
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection}
   alias EzagentCore.Repo
 
-  @key "advisor.behavior"
+  @key "agent.soul"
 
   # PR-7 — `ConfigStore.write_config/1` (the public object-only insert) was
   # removed so the only public durable-write path is the atomic

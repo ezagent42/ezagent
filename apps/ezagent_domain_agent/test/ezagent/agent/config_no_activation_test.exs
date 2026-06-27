@@ -21,7 +21,7 @@ defmodule Ezagent.Agent.ConfigNoActivationTest do
   alias Ezagent.CreatorGrant
   alias Ezagent.Socialware.ConfigStore
 
-  @default_key "advisor.behavior"
+  @default_key "agent.soul"
 
   setup do
     name = "cold-#{System.unique_integer([:positive])}"

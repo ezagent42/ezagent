@@ -7,7 +7,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
   alias EzagentCore.Repo
 
-  @default_key "advisor.behavior"
+  @default_key "agent.soul"
 
   setup do
     name = "ac-#{System.unique_integer([:positive])}"

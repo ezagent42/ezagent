@@ -105,7 +105,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       result =
         Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           patch: %{"tone" => "decisive"}
         })
 
@@ -113,7 +113,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
              "apply_delta with manage-cap must succeed; got: #{inspect(result)}"
 
       # Re-read via facade (not an in-form echo) — the patched value must be durable.
-      body = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       assert is_map(body),
              "user-layer body must be a map after apply_delta; got: #{inspect(body)}"
@@ -132,13 +132,13 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
 
       # First confirm the key starts empty.
-      body_before = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_before = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       # Attempt the update without caps.
       result =
         Config.apply_delta(agent_uri, admin_ctx.caller, MapSet.new(), %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           patch: %{"tone" => "assertive"}
         })
 
@@ -151,7 +151,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
              "cap-denial must be :unauthorized or :cross_workspace_denied; got: #{inspect(reason)}"
 
       # Value must be unchanged.
-      body_after = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_after = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       assert body_before == body_after,
              "value must be unchanged after cap-denied update; before=#{inspect(body_before)}, after=#{inspect(body_after)}"
@@ -170,12 +170,12 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       assert {:ok, _} =
                Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
-                 key: "advisor.behavior",
+                 key: "agent.soul",
                  patch: %{"to_delete" => "yes"}
                })
 
       # Confirm it was written.
-      body_before = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_before = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       assert is_map(body_before) and Map.has_key?(body_before, "to_delete"),
              "setup: to_delete field must exist before delete_path; body: #{inspect(body_before)}"
@@ -184,7 +184,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       result =
         Config.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           path: ["to_delete"]
         })
 
@@ -192,7 +192,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
              "delete_path with manage-cap must succeed; got: #{inspect(result)}"
 
       # Re-read — field must be gone.
-      body_after = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_after = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       refute is_map(body_after) and Map.has_key?(body_after, "to_delete"),
              "to_delete field must be gone after delete_path; body: #{inspect(body_after)}"
@@ -213,11 +213,11 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       assert {:ok, _} =
                Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
-                 key: "advisor.behavior",
+                 key: "agent.soul",
                  patch: %{"cap_denial_probe" => "present"}
                })
 
-      body_before = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_before = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       assert is_map(body_before) and Map.has_key?(body_before, "cap_denial_probe"),
              "setup: cap_denial_probe field must exist for the cap-denial test; body: #{inspect(body_before)}"
@@ -226,7 +226,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       result =
         Config.delete_path(agent_uri, admin_ctx.caller, MapSet.new(), %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           path: ["cap_denial_probe"]
         })
 
@@ -243,7 +243,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       assert reason in [:unauthorized, :cross_workspace_denied],
              "cap-denial on an existing field must be :unauthorized or :cross_workspace_denied; got: #{inspect(reason)}"
 
-      body_after = user_layer_body(agent_uri, "advisor.behavior", admin_ctx)
+      body_after = user_layer_body(agent_uri, "agent.soul", admin_ctx)
 
       assert is_map(body_after) and Map.has_key?(body_after, "cap_denial_probe"),
              "field must still exist after cap-denied delete_path; body_after: #{inspect(body_after)}"
@@ -261,7 +261,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       result =
         Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           patch: "not-a-map"
         })
 
@@ -283,7 +283,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       assert {:ok, _} =
                Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
-                 key: "advisor.behavior",
+                 key: "agent.soul",
                  patch: %{"some_field" => "value"}
                })
 
@@ -291,7 +291,7 @@ defmodule Ezagent.World.AgentConfigDispatchTest do
       result =
         Config.delete_path(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
           layer: "user",
-          key: "advisor.behavior",
+          key: "agent.soul",
           path: ["nonexistent_field"]
         })
 
