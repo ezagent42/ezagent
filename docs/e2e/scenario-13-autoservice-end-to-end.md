@@ -26,7 +26,7 @@
 
 | Tier | 含义 | 当前可跑性 |
 |---|---|---|
-| **Tier 1** | 核心、近期——大体现可建:customer 到达 surface → 与 agent 聊 → agent **查 KB** 作答 → **操作员**在 console 看/管该 session | **部分可跑**(KB 已合,但缺"会话 agent 暴露 kb_query + 已 ingest 内容的 kb-agent"的 seed 接线;另撞 GAP-1/4/5)。runbook 已填,断言可判。 |
+| **Tier 1** | 核心、近期——大体现可建:customer 到达 surface → 与 agent 聊 → agent **查 KB** 作答 → **操作员**在 console 看/管该 session | **大体可跑(2026-06-27)**:seed 已补(open-q#2 关闭);**retrieval soul + 路由 + public_view 门 + 持久化审计行**确定性/live 证绿;**余 answer 层**(cc 工具循环回复)+ cc-orchestrator 经 session-create 物化 = GAP。 |
 | **Tier 2** | 操作员经 **CR 治理**改 agent config → 批准 → 生效 | **in-impl**(ConfigStore 原语已在,CR workflow 在建)。pass-criteria 已定义,runbook deferred。 |
 | **Tier 3** | **计费**记用量;live surface 的 **WS 冻结契约**;**语音** ASR/TTS | **deferred**(计费 not-started;WS 契约 spec'd-partial;语音 spec'd-only)。pass-criteria 已定义,runbook deferred。 |
 
@@ -80,8 +80,11 @@
 4. **S4**:操作员在 world console 看到该 session、成员在线、transcript 含上面的往返。
 
 **Tier 1 当前不能直接判 🟩 的诚实结论**:
-- KB 引擎(query/ingest/FTS5/cap 隔离)+ orchestrator `kb_query` 工具 **已合**(#1036,有 `kb_role_native_test.exs`),但**缺**把"一个跑工具循环的会话 agent + 一个已 ingest 内容的 kb-agent + 一条默认路由规则 + public_view"接成一条**可经 chat surface 跑通**的 **seed/wiring**。S3 因此是 **spec'd, partially buildable**,不是"今天就过"。
-- **S3 的 flavor 阻塞**(核心):能调 `kb_query` 的只有走工具循环的 flavor = **cc-flavor orchestrator agent**(经 orchestrator MCP bridge)。但 cc **UI-create 坏**(GAP-4)、**PTY 往返 FAIL**(scenario-05);curl/DeepSeek 虽 🟩 但**无工具循环、做不了 S3**;py_default 是 echo 调不了工具。→ Tier 1 灵魂步骤目前卡在 cc 的已知 bug 上。
+
+> **⚠️ 2026-06-27 更新(本节为合 seed 前的历史判断,部分已被超越)**:下方 ①(seed/wiring 缺)与 ③(撞 S2a 路由)**已由本 PR 关闭**——见上「2026-06-27 接线落地」+ 实测表 + 「遗留 / bug」。仍成立的是 ②(S3 flavor):**但更精确的观测**是 cc-orchestrator **根本不是一个 `create_agent` 角色**(`{:role_unsupported_for_flavor, "cc"}`),须经 session-create orchestrator-template 路径物化;answer 层仍需 live cc。retrieval soul + 路由 + 持久化审计行**已确定性/live 证绿**。
+
+- ~~缺 seed/wiring~~ **已补**:KB 引擎(query/ingest/FTS5/cap 隔离)+ orchestrator `kb_query` 工具 **已合**(#1036),本 PR 补齐把"会话 agent + 已 ingest kb-agent + 默认路由规则 + public_view"接成一条可重放链的 **seed**(`scripts/autoservice_tier1_seed.exs`)。S3 **retrieval 层**已确定性可绿。
+- **S3 的 flavor 阻塞**(仍成立,已精化):能调 `kb_query` 的只有走工具循环的 **cc-flavor orchestrator agent**。**更精确**:cc-orchestrator 不是 `create_agent` 角色(`{:role_unsupported_for_flavor, "cc"}`),须经 session-create orchestrator-template 路径物化;且其 **live 回复**仍背 cc PTY 路径(`#505`/OAuth)。curl/DeepSeek 无工具循环做不了 S3;py_default 是 echo。→ **answer 层**仍卡 cc(见「遗留」)。
 - **撞 S2a 路由**:新建 session 默认 ROUTING=0(scenario-04 发现),裸消息不送达 → 必须 seed `always→agent` 规则,否则 customer 不打 @ 没人回。
 - **撞 GAP-1**(New Agent UI 建不出可对话 agent,`py` 缺脚本入口)→ 建 AutoService agent 的前置目前要么走 seeded agent、要么 CLI/seed,不能纯 UI。
 - **撞 GAP-5**(无 session/成员 teardown)→ 反复跑会累积 customer session,只能 `mix ezagent.db.reset` 清。
@@ -192,7 +195,7 @@ pass-criteria 见上「Tier 3 PASS 意味着」(S8 计费对账;S9 WS `server_he
 ## 给 lead 的 open questions
 
 1. **本场景落点**:已放 `docs/e2e/scenario-13-...`(执行/harness 层,因 §8 断言+runbook 机制在此目录)。任务原文提到 `docs/e2e/scenarios/`(不存在)——是否要新建该子目录?或本条另在**设计层** `docs/scenarios/36-autoservice-end-to-end/` 也立一份(设计层讲"应该怎样/失败模式")?当前判断:harness 归 e2e/13,设计 rationale 留 v3 参照,不重复。
-2. **Tier 1 S3 接线缺口**:是否同意补一条 `e2e-autoservice` seed(kb-agent + 固定语料 ingest + 会话 agent 绑 kb_query + public_view session),把 S3 从"spec'd/partially buildable"变成确定性可绿?这是 Tier 1 真正能判 🟩 的唯一缺口。
+2. ✅ **【已做】Tier 1 S3 接线缺口**:已补 `scripts/autoservice_tier1_seed.exs` seed(kb-agent + 固定语料 `ZEPHYR-7731` ingest + AutoService agent 绑 kb_query + public_view session + 会话作用域 `always→agent` 路由)+ 确定性回归 `autoservice_tier1_seed_test.exs`。S3 **retrieval 层**已确定性可绿(+ live 持久化审计行)。**余下需 lead 定**:answer 层(cc 工具循环回复)+ 经 session-create 物化 cc-orchestrator,是否各立独立 task?
 3. **GAP-1/4/5 优先级**:Tier 1 的干净可重复执行被这三个 UI 缺口卡(建可对话 agent / cc UI-create / session teardown)。是否在 AutoService Tier 1 验收前先清这三条?
 4. **supersede + 合并**:确认 `autoservice-v3-reference.md` 作为**能力附录保留**(不被本场景取代)。它目前**只在未合分支 `origin/docs/autoservice-v3-reference`**——是否把该分支并入 main(这样本文的 `../futures/...` 互链才解析,且可在其顶部加回链)?
 5. **Tier 边界**:Tier 1 是否就锁定为「KB 答问 + 操作员可见」?CR(Tier 2)与计费/WS/语音(Tier 3)的分层是否照 v3§3 的近期 A/B、中期 C、后期 D/E 对齐(本表已如此映射)?

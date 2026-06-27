@@ -19,8 +19,11 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
     * **S3 retrieval soul (deterministic half)** — `kb.query` against the seeded
       kb-agent, carrying the orchestrator's seeded `kb.query` cap, returns the
       `ZEPHYR-7731` fact that is ONLY in the ingested corpus (excludes the model
-      prior), AND an audited `query` `granted` invocation row is written on the
-      dispatch path.
+      prior). Audit corroboration here is the `[:ezagent,:authz,:granted]`
+      telemetry SIGNAL (the source the audit writer persists) — NOT the
+      persisted `invocations` row, because `Audit.Writer` is disabled in `:test`.
+      The persisted-row proof (scenario-12 step-5) is a live-stack concern,
+      captured in `evidence/scenario-13/`.
 
   What this test does NOT prove (the reported GAP, by design): the ANSWER-level
   soul — a live `claude` cc-orchestrator weaving the fact into a CHAT REPLY
