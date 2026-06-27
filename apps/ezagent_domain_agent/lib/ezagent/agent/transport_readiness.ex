@@ -5,9 +5,31 @@ defmodule Ezagent.Agent.TransportReadiness do
   A bridge-backed agent's Kind process being alive is not enough to receive
   routed messages. The transport bridge must join first. This module keeps that
   readiness requirement generic and keyed by `agent_uri`.
+
+  ## Two transport-join signals (both satisfy readiness)
+
+  An agent is "transport-joined" when EITHER:
+
+  1. `Ezagent.Agent.LiveJoinRegistry.joined?/1` is true — the orchestrator MCP
+     bridge (`orch:bridge:<uri>`) joined end-to-end. Marked ONLY by
+     `Ezagent.Orchestrator.McpChannel` (orchestrator agents).
+  2. `Ezagent.AgentBridge.Registry` holds a LIVE binding — the agent's chat
+     transport bridge (`agent_bridge:<flavor>:<uri>` / `cc:bridge:<uri>`) joined
+     end-to-end (PTY up → `claude` up → `esr-bridge` MCP connected → channel
+     joined → bound). This is the readiness signal for a REGULAR (non-orchestrator)
+     cc agent, whose `esr-bridge` MCP joins the chat channel, NOT `orch:bridge:`.
+
+  Before this second source existed (#505), `require_transport_join` armed the
+  gate for EVERY cc agent but only the orchestrator path ever marked a join — so
+  a cold-activated REGULAR cc agent's ReadyGate flip deferred until the timeout
+  and then `mark_failed`, even though its PTY/`claude`/bridge came up fine and
+  bound in `AgentBridge.Registry`. Resolving on the actual bridge-bind event
+  makes readiness fire on a real signal (not a timer), eliminating the race
+  rather than widening a window.
   """
 
   alias Ezagent.Agent.LiveJoinRegistry
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
   @table :ezagent_agent_transport_readiness
   @default_timeout_ms 5_000
@@ -56,7 +78,7 @@ defmodule Ezagent.Agent.TransportReadiness do
       agent_uri == nil ->
         :ready
 
-      LiveJoinRegistry.joined?(agent_uri) ->
+      transport_joined?(agent_uri) ->
         :ready
 
       true ->
@@ -93,7 +115,7 @@ defmodule Ezagent.Agent.TransportReadiness do
   end
 
   defp await_join(agent_uri, deadline) do
-    if LiveJoinRegistry.joined?(agent_uri) do
+    if transport_joined?(agent_uri) do
       mark_ready(agent_uri)
     else
       now = System.monotonic_time(:millisecond)
@@ -110,6 +132,22 @@ defmodule Ezagent.Agent.TransportReadiness do
 
   defp mark_ready(agent_uri) do
     :ok = Ezagent.ReadyGate.mark_ready(agent_uri)
+  end
+
+  # An agent's transport is joined when EITHER the orchestrator MCP bridge has
+  # marked a live-join (LiveJoinRegistry, orchestrator agents) OR the agent's
+  # chat transport bridge holds a LIVE binding in AgentBridge.Registry (the
+  # regular cc/bridge path — #505). The alive check guards against a stale row
+  # from a dead channel incarnation satisfying readiness before unbind runs.
+  defp transport_joined?(%URI{} = agent_uri) do
+    LiveJoinRegistry.joined?(agent_uri) or bridge_bound?(agent_uri)
+  end
+
+  defp bridge_bound?(%URI{} = agent_uri) do
+    case BridgeRegistry.lookup(agent_uri) do
+      {:ok, pid} -> Process.alive?(pid)
+      :error -> false
+    end
   end
 
   defp normalize_uri(%URI{} = uri), do: uri
