@@ -28,6 +28,19 @@ defmodule Ezagent.Behavior.Session.Membership do
   def do_join(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
     members = ctx[:read].(:members, %{})
 
+    # recipe-responsibility-split (2026-06-27, OQ-1) — `role_name` (the session
+    # RESPONSIBILITY, axis B) is taken ONLY from the explicit join `facets` here;
+    # it is NEVER derived from the member's agent RECIPE (axis A — the agent's
+    # build-spec / `Ezagent.Role`, mirrored to `Ezagent.AgentRoleAttributes`).
+    # DO NOT add a `role_name = Map.get(facets, :role_name) || recipe_name(...)`
+    # default: that would re-create the very recipe⇄responsibility coupling the
+    # split removed (a member with no declared responsibility silently inheriting
+    # its recipe name as a routing label). A join that omits `:role_name` leaves
+    # the member with NO `role_name` — `put_member_facets/2` skips the nil facet,
+    # and the lazy instance-name path falls back to the source-TEMPLATE path
+    # segment (`TemplateTeam.spawned_member_instance_name/4`), never the recipe.
+    # The independence is locked by `recipe_responsibility_lockin_test.exs`.
+    #
     # team-routing-unification §3.1 (spec §8 decision #2) — `role_name` is
     # UNIQUE PER SESSION. Reject a join that would assign a role_name already
     # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
