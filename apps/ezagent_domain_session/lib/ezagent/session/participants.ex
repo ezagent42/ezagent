@@ -17,9 +17,11 @@ defmodule Ezagent.Session.Participants do
   caller clears the chokepoint; the handler's identity gate then confirms
   `caller == participant`.
 
-  PR-A SCOPE: the non-spawned (user / invited-agent) removal is live; a spawned
-  worker returns `{:error, :spawned_participant_teardown_pending_pr_b}` (the
-  cap-model teardown change is PR-B).
+  Removal is isomorphic over participant type (F7 PR-A + PR-B): user / invited-
+  agent removal is membership-only (`torn_down: :membership_only`); a worker the
+  session SPAWNED is reaped (config-dir GC + termination + lineage forget) under
+  the owner's `{:spawned_by, owner_uri}` teardown cap (`torn_down: :worker`, the
+  PR-B cap-model change).
   """
 
   alias Ezagent.Behavior.Session.Membership
@@ -28,10 +30,10 @@ defmodule Ezagent.Session.Participants do
   @typedoc "Caller dispatch context: the acting entity + its caps."
   @type ctx :: %{required(:caller) => URI.t(), optional(:caps) => Enumerable.t()}
 
-  @typedoc "Result of a successful non-spawned participant removal."
+  @typedoc "Result of a successful participant removal (membership-only or worker reap)."
   @type removal :: %{
           status: :removed,
-          torn_down: :membership_only,
+          torn_down: :membership_only | :worker,
           deleted_rules: non_neg_integer(),
           repointed_rules: non_neg_integer()
         }
@@ -45,7 +47,7 @@ defmodule Ezagent.Session.Participants do
   cap added here. The handler then identity-gates owner / self / admin.
 
   Returns the `removal/0` map, `:already_removed`, or `{:error, reason}`
-  (`:unauthorized`, `:spawned_participant_teardown_pending_pr_b`, …).
+  (`:unauthorized`, `{:worker_teardown_failed, _}`, …).
   """
   @spec remove_participant(URI.t(), URI.t(), ctx()) ::
           {:ok, removal() | :already_removed} | {:error, term()}

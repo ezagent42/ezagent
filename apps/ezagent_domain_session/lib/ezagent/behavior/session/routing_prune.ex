@@ -93,6 +93,27 @@ defmodule Ezagent.Behavior.Session.RoutingPrune do
   end
 
   @doc """
+  Force-delete ALL routing rows `created_by` this session (F7 PR-B, SPEC §4.1
+  step 4 — the delete-session cascade prune). Unlike `prune_routing_rules_for/2`
+  (which repoints rules that keep other receivers), the whole session is going
+  away, so every rule it created is dropped outright. Mirrors the
+  `SessionCreator.Rollback.delete_session_rule_rows/1` primitive. Best-effort:
+  reloads the registry and returns `:ok`.
+  """
+  @spec prune_all_for_session(URI.t()) :: :ok | {:error, term()}
+  def prune_all_for_session(%URI{} = session_uri) do
+    table = EzagentDomainInstanceMessage.Routing.MentionRouting
+    session_str = URI.to_string(session_uri)
+
+    table
+    |> Ezagent.Routing.RuleStore.list()
+    |> Enum.filter(fn row -> row.created_by == session_str end)
+    |> Enum.each(fn row -> Ezagent.Routing.RuleStore.delete(row.id, force: true) end)
+
+    reload_registry(table)
+  end
+
+  @doc """
   Reload the routing rule registry from the rule store after a mutation.
   """
   @spec reload_registry(module()) :: :ok | {:error, term()}

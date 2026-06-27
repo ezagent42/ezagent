@@ -558,6 +558,15 @@ defmodule EzagentDomainInstanceMessage.Application do
       case orchestrator_template_uri do
         %URI{} = uri ->
           [
+            # recipe-responsibility-split (2026-06-27, §1.3 conflation point #3) —
+            # `role_name` (session RESPONSIBILITY, axis B) and the orchestrator
+            # RECIPE (`source_template_uri`, axis A) are TWO INDEPENDENT fields
+            # that happen to coincide on the literal "orchestrator" by SEED
+            # CONVENTION ONLY. Nothing derives one from the other: change this
+            # `role_name` to "lead" and the recipe pointed at by
+            # `source_template_uri` is untouched — only the routing label moves.
+            # Keep them decoupled (recipe_responsibility_lockin_test.exs §T3); do
+            # not introduce code that forces `role_name` == the recipe name.
             %{
               role_name: "orchestrator",
               source_template_uri: uri,
