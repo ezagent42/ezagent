@@ -6,6 +6,12 @@
 (branch `docs/unify-comms-spec`; codex review verdict SOUND-WITH-FIXES, fixes folded).
 **Skills:** `ezagent-developer` + `ezagent-socialware` + `elixir-phoenix-helper`.
 **Read against:** `origin/main` (37b71aae) and `origin/refactor/retire-customer` (post-#1037 external surface).
+**Base branch for BOTH PRs:** `main`. **VERIFIED:** #1037 is MERGED to main —
+`ExternalFeed` EXISTS on main, `CustomerFeed` is GONE, both `chat_feed_channel`
+and `external_feed_channel` are present on main. So PR-2's delegation to
+`ExternalFeed.snapshot/2|join/3|replay/3` is valid against `main` (the SPEC §2
+two-column "main vs retire" framing describes the pre/post-#1037 HISTORY, not
+main-vs-branch).
 
 ---
 
@@ -176,15 +182,23 @@ old chat/external channels still live and unchanged.
   - existing `:push`/`:request_scoped` accept/reject cases UNCHANGED (regression).
 - **Steps:** red → extend `kind_specific_required(:pull)` + conditional raise → green → commit.
 
-### Task 1.3 — New test fixtures for the two disciplines
+### Task 1.3 — New test fixtures for the two disciplines (note the cross-app split)
 - **Modify:** `apps/ezagent_domain_external_mirror/test/support/test_adapters.ex`
-- **Produces:** `TestSupport.SnapshotPullAdapter` (`:pull` + `:snapshot_refresh` +
-  `:read_only`, `render_authorized/2`, `live_topics/1`) and
+  for the REGISTRY tests (Task 1.2, same app).
+- **CROSS-APP CAVEAT:** in an umbrella each app compiles its OWN `test/support`
+  under that app's `elixirc_paths`; `ezagent_web`'s test env does NOT compile
+  `Ezagent.ExternalMirror.TestSupport.*`. So the CHANNEL test (Task 1.6, in
+  `ezagent_web`) CANNOT see the external_mirror fixtures. **Define the channel-test
+  discipline fixtures separately in `apps/ezagent_web/test/support/`** (e.g.
+  `EzagentWeb.TestSupport.SnapshotPullAdapter` / `.CursorPullAdapter`).
+- **Produces (external_mirror, for 1.2):** `TestSupport.SnapshotPullAdapter` (`:pull`
+  + `:snapshot_refresh` + `:read_only`, `render_authorized/2`, `live_topics/1`) and
   `TestSupport.CursorPullAdapter` (`:pull` + `:cursor_replay` + `:participatory`,
-  `join_with_cursor/2`, `replay/3`, `live_topics/1`) — pure, no session refs;
-  these drive the channel tests in Task 1.6 and the registry tests in 1.2.
-- **Test:** consumed by 1.2 + 1.6 (fixtures themselves need no standalone test).
-- **Steps:** add fixtures alongside the migration in 1.4 (same commit acceptable).
+  `join_with_cursor/2`, `replay/3`, `live_topics/1`) — pure, no session refs.
+  **Produces (ezagent_web, for 1.6):** the analogous two fixtures in
+  `ezagent_web/test/support`.
+- **Test:** consumed by 1.2 (external_mirror fixtures) + 1.6 (web fixtures).
+- **Steps:** add fixtures (external_mirror set alongside the 1.4 migration; web set with 1.6).
 
 ### Task 1.4 — Migrate the existing `PullAdapter` fixture to the new contract
 - **Modify:** `apps/ezagent_domain_external_mirror/test/support/test_adapters.ex`
@@ -223,8 +237,10 @@ old chat/external channels still live and unchanged.
   `handle_in/3` gated by `participation_profile`: `:read_only` → `"post"` replies
   `{:error, %{reason: "read_only"}}`; `:participatory` → `"join"`/`"post"`/`"history"`
   bodies LIFTED VERBATIM from retire-branch `external_feed_channel.ex`.
-- **Test (`session_feed_channel_test.exs`, new):** drive with `SnapshotPullAdapter`
-  + `CursorPullAdapter` fixtures via `Phoenix.ChannelTest`:
+- **Test (`session_feed_channel_test.exs`, new):** drive with the `ezagent_web`-local
+  `SnapshotPullAdapter` + `CursorPullAdapter` fixtures (Task 1.3 cross-app caveat —
+  do NOT reach for the external_mirror fixtures; they don't compile here) via
+  `Phoenix.ChannelTest`:
   - snapshot-refresh join stores NO cursor; advisory re-reads (push `"snapshot"`).
   - cursor-replay join stores cursor; advisory replays from cursor (idempotent — re-delivered row not skipped).
   - live revocation (`render_authorized`/`replay` returns `{:error, :unauthorized}`) → push `"unauthorized"` + channel stops (C3).
@@ -243,7 +259,9 @@ old chat/external channels still live and unchanged.
 - **Test (`session_feed_socket_test.exs`, new):** `connect/3` resolves a signed-in
   caller and an anon caller into assigns; bad token → `:error`.
 - **NOT done here:** no `socket "/…"` line added to `endpoint.ex` yet (additive;
-  routing flips in PR-2 Task 2.4). The socket is exercised only by its unit test.
+  in PR-2 Task 2.4 the legacy sockets are repointed at `SessionFeedChannel` and an
+  optional generic `/socialware_feed_socket` may be added). The socket is exercised
+  only by its unit test in PR-1.
 - **Steps:** red → implement → green → commit.
 
 ### Task 1.8 — PR-1 gate + open PR (no merge)
@@ -304,29 +322,39 @@ arch gates + elimination test green.
   `Ezagent.Entity.Session`.
 - **Steps:** red → wire `adapters/0` declaration → green → commit.
 
-### Task 2.4 — Cutover: route the generic socket; flip controllers/sockets to the new topic family
-- **Modify:** `apps/ezagent_web/lib/ezagent_web/endpoint.ex` — add
-  `socket "/socialware_feed_socket", SessionFeedSocket`. Update the SPA/controller
-  surfaces so chat + external clients connect on `socialware:feed:chat_feed:<uri>`
-  / `socialware:feed:external_feed:<uri>`. Per SPEC §11-OQ2, keep the two legacy
-  topic strings (`socialware:chat_feed:*` / `socialware:external:*`) as **thin
-  aliases** that resolve to the generic channel for one release (clients churn-free),
-  OR migrate the JS clients — lead's call; default to legacy aliases.
-- **Test:** an end-to-end channel test (real adapters via the registry) — chat join
-  re-reads on a session event; external join replays on `{:external_delivery}`;
-  participation `post`/`join` on external works through the generic channel.
-- **Steps:** red → wire socket + routes/aliases → green → commit.
+### Task 2.4 — Cutover via the LEGACY-ALIAS path (ONE path — no JS change)
+**Decision (NOT lead's-call mid-run): take the legacy-topic-alias path** (SPEC
+§11-OQ2 recommendation; smallest blast radius, no production-client churn, stays
+in PR-1+2 scope, needs NO AnonIngress). Do NOT migrate the JS clients in this unit.
+- **Modify:** `apps/ezagent_web/lib/ezagent_web/socialware/chat_feed_socket.ex` and
+  `external_feed_socket.ex` — repoint their `channel` macro at `SessionFeedChannel`
+  (KEEP each socket's existing `connect/3` caller-resolution + the existing endpoint
+  `socket "/socialware_chat_socket"` / `"/socialware_external_socket"` lines, so
+  existing JS connects unchanged). Optionally also add
+  `socket "/socialware_feed_socket", SessionFeedSocket` for new generic clients,
+  but the legacy sockets staying live is what keeps clients churn-free.
+- **Modify:** `SessionFeedChannel` to parse BOTH topic shapes →
+  `"socialware:feed:<adapter_id>:<uri>"` (generic) AND the legacy
+  `"socialware:chat_feed:<uri>"` → fixed `adapter_id "chat_feed"` /
+  `"socialware:external:<uri>"` → fixed `adapter_id "external_feed"`. This is real
+  parsing code (a join-topic matcher), not a config "alias". E1 bans `*FeedChannel`
+  MODULES, not `*FeedSocket` — keeping the sockets satisfies E1.
+- **Test:** end-to-end channel test (real adapters via the registry) using BOTH the
+  generic topic AND each legacy topic — chat join re-reads on a session event;
+  external join replays on `{:external_delivery}`; participation `post`/`join` on
+  external works through the generic channel.
+- **Steps:** red → repoint sockets + add legacy-topic parsing to `SessionFeedChannel` → green → commit.
 
-### Task 2.5 — DELETE the two old channels (now superseded)
+### Task 2.5 — DELETE only the two old channel MODULES (sockets stay)
 - **Delete:** `apps/ezagent_web/lib/ezagent_web/socialware/chat_feed_channel.ex`
-  and `external_feed_channel.ex` (and their channel routes in the old sockets, if
-  the old sockets are retired — but DO NOT delete `chat_feed_socket.ex` /
-  `external_feed_socket.ex` caller-resolution wholesale if AnonIngress (PR-3) still
-  needs it; if the generic socket fully replaces them, retire the channel routes
-  only and leave the connect logic for PR-3 to factor — minimize blast radius).
-- **Test:** the old channel test files are deleted/replaced; full suite green proves
-  no caller still references the deleted channels.
-- **Steps:** delete → run suite → green → commit.
+  and `external_feed_channel.ex` (their `handle_in`/`handle_info` bodies already
+  lifted into `SessionFeedChannel` in PR-1 Task 1.6). **KEEP**
+  `chat_feed_socket.ex` / `external_feed_socket.ex` (now pointing at
+  `SessionFeedChannel`, per Task 2.4) — their `connect/3` is PR-3's AnonIngress
+  factoring target; do not touch it here (minimize blast radius / sprawl boundary).
+- **Test:** old channel test files deleted/replaced; full suite green proves no
+  caller references the deleted channel modules.
+- **Steps:** delete the two channel modules → run suite → green → commit.
 
 ### Task 2.6 — Scoped elimination gate (E1 + E2 + E5 + disciplines) — the completion test
 - **Create:** `apps/ezagent_core/test/architecture/comms_substrate_elimination_test.exs`
