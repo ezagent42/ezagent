@@ -34,14 +34,15 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   is a no-op. Returns `:ok` or `{:error, reason}` (corrupt existing file / write
   failure).
   """
-  @spec ensure(String.t() | nil) :: :ok | {:error, term()}
-  def ensure(nil), do: :ok
+  @spec ensure(String.t() | nil, keyword()) :: :ok | {:error, term()}
+  def ensure(config_dir, opts \\ [])
+  def ensure(nil, _opts), do: :ok
 
-  def ensure(config_dir) when is_binary(config_dir) do
+  def ensure(config_dir, opts) when is_binary(config_dir) do
     path = Path.join(config_dir, @claude_json_relpath)
 
     with {:ok, existing} <- read_existing(path),
-         merged = merge_onboarding(existing),
+         merged = merge_onboarding(existing, Keyword.get(opts, :project_cwd)),
          :ok <- write_private(path, Jason.encode!(merged, pretty: true)) do
       :ok
     end
@@ -51,9 +52,16 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   # PtyServer scanner is the fallback). Logs + emits telemetry on failure so the
   # degraded state is observable, but returns `:ok` so the `with` chain proceeds.
   @doc false
-  @spec try_ensure(String.t() | nil, URI.t()) :: :ok
-  def try_ensure(config_dir, %URI{} = agent_uri) do
-    case ensure(config_dir) do
+  @spec try_ensure(String.t() | nil, URI.t(), keyword()) :: :ok
+  def try_ensure(config_dir, %URI{} = agent_uri, opts \\ []) do
+    result =
+      try do
+        ensure(config_dir, opts)
+      rescue
+        e -> {:error, {:exception, Exception.message(e)}}
+      end
+
+    case result do
       :ok ->
         :ok
 
@@ -93,12 +101,48 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   end
 
   # Set the onboarding-completion marker; only default the theme when ABSENT so an
-  # operator/agent-chosen theme is preserved.
-  defp merge_onboarding(existing) when is_map(existing) do
+  # operator/agent-chosen theme is preserved. When a `project_cwd` is supplied,
+  # ALSO pre-set the PROJECT-scoped trust gates under `projects.<cwd>` so the
+  # headless cc PTY never stalls at claude 2.x's per-project startup dialogs
+  # (#505) — these are SEPARATE from onboarding and from
+  # `--dangerously-skip-permissions`, and a headless PTY cannot answer them:
+  #   * `hasTrustDialogAccepted`            — "Do you trust this folder?"
+  #   * `hasClaudeMdExternalIncludesApproved` — "Allow external CLAUDE.md imports?"
+  #   * `hasCompletedProjectOnboarding`     — per-project first-run flow
+  #   * `enableAllProjectMcpServers`        — "New MCP server found" trust prompt
+  # The PtyServer auto-prompt scanner remains the fallback for any prompt a config
+  # key does not suppress (e.g. the bypass-permissions acceptance). Pre-setting is
+  # deterministic (no scan / no TUI-text fragility) — the task's preferred fix (a).
+  defp merge_onboarding(existing, project_cwd) when is_map(existing) do
     existing
     |> Map.put("hasCompletedOnboarding", true)
     |> Map.put_new("theme", @default_theme)
+    |> maybe_put_project_trust(project_cwd)
   end
+
+  defp maybe_put_project_trust(map, project_cwd)
+       when is_binary(project_cwd) and project_cwd != "" do
+    key = Path.expand(project_cwd)
+    # Defensive: a hand-edited `.claude.json` could carry a non-object `projects`
+    # or project entry. Treat any non-map as absent rather than letting `Map.get`
+    # raise out of the best-effort spawn path (codex review).
+    projects = as_map(Map.get(map, "projects"))
+    project = as_map(Map.get(projects, key))
+
+    project =
+      project
+      |> Map.put("hasTrustDialogAccepted", true)
+      |> Map.put("hasClaudeMdExternalIncludesApproved", true)
+      |> Map.put("hasCompletedProjectOnboarding", true)
+      |> Map.put("enableAllProjectMcpServers", true)
+
+    Map.put(map, "projects", Map.put(projects, key, project))
+  end
+
+  defp maybe_put_project_trust(map, _), do: map
+
+  defp as_map(m) when is_map(m), do: m
+  defp as_map(_), do: %{}
 
   # Write through a private temp (chmod 0600 BEFORE content) then atomic rename, so
   # the file is never group/world-readable even briefly. (Same pattern as

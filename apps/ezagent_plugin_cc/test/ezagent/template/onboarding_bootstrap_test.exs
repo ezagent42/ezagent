@@ -81,4 +81,65 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrapTest do
     # low 9 bits = 0o600
     assert band(mode, 0o777) == 0o600
   end
+
+  # #505 — pre-set the PROJECT-scoped trust gates so a headless cc PTY never
+  # stalls at claude 2.x's per-project startup dialogs (trust folder / external
+  # CLAUDE.md imports / new MCP server). Keyed by the agent's cwd.
+  test "project_cwd pre-sets the project-scoped trust + import + mcp approval keys", %{dir: dir} do
+    cwd = "/private/tmp/some-agent-cwd"
+    assert OnboardingBootstrap.ensure(dir, project_cwd: cwd) == :ok
+
+    json = read_claude_json(dir)
+    project = json["projects"][Path.expand(cwd)]
+
+    assert project["hasTrustDialogAccepted"] == true
+    assert project["hasClaudeMdExternalIncludesApproved"] == true
+    assert project["hasCompletedProjectOnboarding"] == true
+    assert project["enableAllProjectMcpServers"] == true
+    # top-level onboarding marker still set.
+    assert json["hasCompletedOnboarding"] == true
+  end
+
+  test "project_cwd merges into an existing project entry without clobbering it", %{dir: dir} do
+    cwd = "/private/tmp/agent-cwd2"
+
+    existing = %{"projects" => %{Path.expand(cwd) => %{"allowedTools" => ["Bash"]}}}
+    File.write!(Path.join(dir, ".claude.json"), Jason.encode!(existing))
+
+    assert OnboardingBootstrap.ensure(dir, project_cwd: cwd) == :ok
+
+    project = read_claude_json(dir)["projects"][Path.expand(cwd)]
+    assert project["allowedTools"] == ["Bash"]
+    assert project["hasClaudeMdExternalIncludesApproved"] == true
+  end
+
+  test "a non-object projects key does not crash the best-effort path", %{dir: dir} do
+    # Hand-edited / corrupt .claude.json with a non-object "projects" must not
+    # raise out of the best-effort spawn path (codex review).
+    File.write!(Path.join(dir, ".claude.json"), Jason.encode!(%{"projects" => "oops"}))
+
+    assert OnboardingBootstrap.ensure(dir, project_cwd: "/private/tmp/x") == :ok
+    json = read_claude_json(dir)
+    assert json["projects"][Path.expand("/private/tmp/x")]["hasClaudeMdExternalIncludesApproved"] ==
+             true
+  end
+
+  test "try_ensure rescues an unexpected error and returns :ok (scanner is the fallback)", %{
+    dir: dir
+  } do
+    uri = Ezagent.URI.new!("entity://system/agent/onb-#{System.unique_integer([:positive])}")
+    # A corrupt existing file makes ensure/2 return {:error, _}; try_ensure swallows it.
+    File.write!(Path.join(dir, ".claude.json"), "{ not json")
+    assert OnboardingBootstrap.try_ensure(dir, uri, project_cwd: "/tmp/y") == :ok
+  end
+
+  test "no project_cwd leaves projects untouched (backward compatible)", %{dir: dir} do
+    existing = %{"projects" => %{"/some/cwd" => %{"allowedTools" => []}}}
+    File.write!(Path.join(dir, ".claude.json"), Jason.encode!(existing))
+
+    assert OnboardingBootstrap.ensure(dir) == :ok
+
+    json = read_claude_json(dir)
+    assert json["projects"] == %{"/some/cwd" => %{"allowedTools" => []}}
+  end
 end

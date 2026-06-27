@@ -102,7 +102,33 @@ defmodule Ezagent.Domain.Pty.AutoPrompts do
         # breaking a literal "Loading development channels" match. The
         # option-1 label is rendered atomically and is specific enough to
         # this exact dialog to avoid false positives.
-        match: ["development channels", "I am using this for local development"],
+        # Live #505: the WARNING prose fragments run-to-run ("development channels"
+        # -> "developme t channel"), so anchor ONLY on the atomic option-1 label,
+        # which is specific enough to this exact dialog. (Sending "1\r" selects it
+        # regardless of highlight.)
+        match: ["I am using this for local development"],
+        send: "1\r",
+        fired?: false
+      },
+      %{
+        name: :claude_md_external_imports_dialog,
+        # claude 2.x asks "Allow external CLAUDE.md file imports?" the first time a
+        # project's CLAUDE.md `@imports` a file OUTSIDE the cwd (e.g. a user-global
+        # `~/.claude/RTK.md`). A headless PTY cannot answer it, so the spawn hangs
+        # here BEFORE the esr-bridge MCP connects (observed live on claude 2.x,
+        # #505, 2026-06-27 — the dialog AFTER the MCP-trust prompt). The agent's
+        # own CLAUDE.md / skills depend on those imports, so option 1 ("Yes, allow
+        # external imports") is correct. Send the EXPLICIT "1\r" (number-select,
+        # like dev_channels/trust_folder) rather than bare Enter so we select
+        # option 1 regardless of the current highlight. Match the header + the
+        # option-1 label (avoiding redraw-fragmented prose).
+        # NOTE both the HEADER prose AND option 2 are redraw-fragmented run to run
+        # ("external" -> "ext nal", "disable" -> "d sable"), so they are unusable.
+        # Option 1's label was observed rendered atomically; it is specific enough
+        # to this exact dialog on its own. (This auto-prompt is a FALLBACK — the
+        # primary fix is OnboardingBootstrap pre-setting the project-scoped
+        # `hasClaudeMdExternalIncludesApproved` so the dialog never appears.)
+        match: ["Yes, allow external imports"],
         send: "1\r",
         fired?: false
       },

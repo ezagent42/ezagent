@@ -1,0 +1,65 @@
+LIVE cc ReadyGate cold-activation proof — #505
+Server: fresh disposable stack, node ezagent_ccpty@127.0.0.1, PORT=10055,
+isolated PG db ezagent_ccpty505, EZAGENT_BRIDGE_WS_URL=ws://127.0.0.1:10055/agent_bridge/websocket.
+
+Replicates the EXACT production cold-activation readiness sequence on the LIVE node:
+  Ezagent.Agent.TransportReadiness.require_transport_join/2   (spawn.ex:412, runs in Kind post_init)
+  -> Ezagent.Kind.ReadyTransition.drain_then_mark_ready/2     (kind/server.ex:376, after post_init)
+     -> external_gate -> defer_ready? -> {:defer,30000} -> await_transport_or_fail Task
+  -> Ezagent.AgentBridge.Registry.bind/3                      (channel.ex:138, what claude's esr-bridge join calls)
+A REGULAR cc agent does NOT mark LiveJoinRegistry (only orchestrators do).
+Pre-fix: with no LiveJoinRegistry mark this await timed out at 30s -> mark_failed.
+
+=== 5 runs ===
+run 1: armed=not_ready defer={:defer, 30000} ready_transition=:deferred
+       while_waiting=not_ready (live_joined_before=false)
+       --> bind bridge --> flip_to_ready_after=11ms  final=ready
+       (bridge_bound=true  live_join_registry_used=false)
+run 2: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 3: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 4: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 5: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+
+Result: reliable across 5/5 runs. The gate resolves on the REAL bridge-bind event
+(11ms = one 10ms await poll), NOT on a widened timer, and NOT via the
+orchestrator-only LiveJoinRegistry. This is the fix in commit 7b7c07b1.
+
+================================================================================
+REAL-CLAUDE END-TO-END (disposable stack, real `claude` 2.x, OAuth via proxy)
+================================================================================
+Server: node ezagent_ccpty@127.0.0.1, PORT=10055, isolated PG db ezagent_ccpty505,
+EZAGENT_BRIDGE_WS_URL=ws://127.0.0.1:10055/agent_bridge/websocket, ALL fixes loaded.
+
+Each run: CcAgent.Spawn.spawn_for_local_pty (the real grant-gated cc spawn) ->
+claude PTY launches -> clears ALL startup dialogs (theme/onboarding/trust/
+external-CLAUDE.md-imports/new-MCP via pre-set project config keys; bypass-perms
++ dev-channels via the whitespace-tolerant auto-prompt scanner) -> claude's
+esr-bridge MCP connects to the WS endpoint -> AgentBridge.Registry binds the
+channel -> TransportReadinessListener flips ReadyGate to :ready (FRESH-spawn
+ordering — the Kind announced :ready before the gate was armed, so the bind event,
+not an await Task, carries readiness).
+
+  run A: entity://system/agent/ccrt-903   -> bridge bound + ReadyGate=ready in 4004ms
+  run B: entity://system/agent/ccm-55810  -> bridge bound + ReadyGate=ready in 2005ms
+  run C: entity://system/agent/ccm-61186  -> bridge bound + ReadyGate=ready in 1503ms
+  run D: entity://system/agent/ccm-82690  -> bridge bound + ReadyGate=ready in 1003ms
+
+Result: 4/4 cold cc agents reliably reach :ready within budget (1-4s, well under
+the 20s activate budget / 30s transport timeout). Before the fixes, the same cold
+cc agent (a) hung at the MCP-trust / external-imports / dev-channels dialogs so the
+bridge never connected, and (b) even once bound, never reached :ready because the
+TransportReadiness gate only resolved on the orchestrator-only LiveJoinRegistry.
+
+LIVE rehydrate (cold Kind restart): fresh spawn -> :ready; Kind.terminate ->
+re-activate via LocalRuntime.ensure_started_detailed -> :ready in 251ms (the
+transport bridge survives a quick Kind restart, so it stays ready — robust). The
+non-trivial :not_ready -> :ready rehydrate transition is isolated by the 5-run
+deterministic gate proof above (real TransportReadiness/ReadyTransition/ReadyGate/
+AgentBridge.Registry modules in production order) + the unit tests.
+
+claude server-log confirmation (real run): "JOINED agent_bridge:cc:entity://...",
+"Claude Code v2.1.195 Opus 4.8 (1M context) · Claude Max", "Channels (experimental)
+messages from server:esr-bridge inject directly in this session" — claude fully
+boots + authenticates + the bridge joins. (The LLM reply round-trip is existing cc
+functionality covered by cc_agent_admin_reply_e2e_test; not re-exercised here — the
+test account was at 88% weekly limit.)
