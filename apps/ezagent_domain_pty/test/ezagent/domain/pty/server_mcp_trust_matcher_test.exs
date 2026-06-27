@@ -71,4 +71,19 @@ defmodule Ezagent.Domain.Pty.Server.McpTrustMatcherTest do
            ":claude_md_external_imports_dialog must match the live dialog so the " <>
              "headless cc PTY auto-confirms external CLAUDE.md imports (#505)"
   end
+
+  test "external-imports matcher tolerates run-to-run fragmentation of option 2" do
+    # Real-run variant where option 2's "disable" fragmented to "d sable" — the
+    # rule must still fire (it anchors only on the atomic option-1 label).
+    fragmented =
+      "Allow ext nal CLAUDE.md f le impor s?  ... " <>
+        "❯   1.  Yes, allow external imports     2.  No, d sable external imports"
+
+    match =
+      AutoPrompts.default()
+      |> Enum.find(fn p -> p.name == :claude_md_external_imports_dialog end)
+      |> Map.fetch!(:match)
+
+    assert Server.matches?(match, fragmented)
+  end
 end

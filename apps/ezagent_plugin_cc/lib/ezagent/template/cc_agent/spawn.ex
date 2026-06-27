@@ -393,7 +393,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     # PtyServer `:theme_dialog` / `:login_method_dialog` auto-prompts remain the
     # fallback; best-effort (never tears the agent down — see try_ensure/2).
     config_home = resolve_config_home(agent_uri, tmpl)
-    _ = Ezagent.PluginCc.Template.OnboardingBootstrap.try_ensure(config_home, agent_uri)
+
+    _ =
+      Ezagent.PluginCc.Template.OnboardingBootstrap.try_ensure(config_home, agent_uri,
+        project_cwd: cwd
+      )
 
     with {:ok, params} <-
            Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(

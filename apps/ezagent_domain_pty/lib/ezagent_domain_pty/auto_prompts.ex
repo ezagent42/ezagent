@@ -118,10 +118,13 @@ defmodule Ezagent.Domain.Pty.AutoPrompts do
         # like dev_channels/trust_folder) rather than bare Enter so we select
         # option 1 regardless of the current highlight. Match the header + the
         # option-1 label (avoiding redraw-fragmented prose).
-        # NOTE the HEADER prose is redraw-fragmented ("external" -> "ext nal",
-        # "file" -> "f le"), so it is unusable; the two option labels are rendered
-        # atomically and together are specific to this exact dialog.
-        match: ["Yes, allow external imports", "No, disable external imports"],
+        # NOTE both the HEADER prose AND option 2 are redraw-fragmented run to run
+        # ("external" -> "ext nal", "disable" -> "d sable"), so they are unusable.
+        # Option 1's label was observed rendered atomically; it is specific enough
+        # to this exact dialog on its own. (This auto-prompt is a FALLBACK — the
+        # primary fix is OnboardingBootstrap pre-setting the project-scoped
+        # `hasClaudeMdExternalIncludesApproved` so the dialog never appears.)
+        match: ["Yes, allow external imports"],
         send: "1\r",
         fired?: false
       },
