@@ -80,9 +80,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # the line anchors hold, only the app-dir path prefix changed.
     # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
     # anchors lower; the spawn-fresh ownership boundary is unchanged.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 248},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 287},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 289},
+    # CR-governance (SPEC 2026-06-26 rev 3) — shifted +6 by adding
+    # `Ezagent.Behavior.ConfigGovernance` (+ its comment block) to
+    # `Agent.base_behaviors/0`, the same kind of insertion config-evolve made.
+    # SAME sanctioned `spawn_fresh/4` call site + `@spec` + `def`, six lines
+    # lower; the spawn-fresh ownership boundary is unchanged.
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 254},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 293},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 295},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
