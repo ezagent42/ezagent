@@ -117,6 +117,20 @@ defmodule Ezagent.ExternalMirror.Adapter do
   @type adapter_kind :: :push | :pull | :request_scoped
 
   @typedoc """
+  Live-delivery discipline for a `:pull` adapter.
+
+  `:snapshot_refresh` re-reads the current projection on every advisory.
+  `:cursor_replay` stores a lower-bound cursor in the caller-owned transport and
+  replays committed rows from that cursor.
+  """
+  @type delivery_discipline :: :snapshot_refresh | :cursor_replay
+
+  @typedoc """
+  Participation affordance exposed by a `:pull` adapter's live transport.
+  """
+  @type participation_profile :: :read_only | :participatory
+
+  @typedoc """
   Per-adapter cap subject shape returned from `cap_subject/0`. The
   `behavior_module` is a marker Behavior (typically cap-only) that
   authorizes a user to bind THIS adapter on a session (Cap 2 in
@@ -273,6 +287,58 @@ defmodule Ezagent.ExternalMirror.Adapter do
   """
   @callback render(session_uri :: URI.t(), ctx :: map()) :: map()
 
+  @doc """
+  Live-delivery discipline for this `:pull` adapter.
+
+  Optional with a back-compat default of `:snapshot_refresh`, resolved via
+  `delivery_discipline_of/1`.
+  """
+  @callback delivery_discipline() :: delivery_discipline()
+
+  @doc """
+  Result-bearing render used by live `:snapshot_refresh` transports.
+
+  The historical `render/2` callback returns a bare map for on-demand callers.
+  Live transport needs to distinguish a successful read from live revocation, so
+  snapshot-refresh adapters implement this callback and return
+  `{:error, :unauthorized}` when the caller no longer has access.
+  """
+  @callback render_authorized(session_uri :: URI.t(), caller :: URI.t()) ::
+              {:ok, map()} | {:error, :unauthorized | term()}
+
+  @doc """
+  PubSub advisory topic(s) the caller-owned transport subscribes to before the
+  first content read.
+  """
+  @callback live_topics(session_uri :: URI.t()) :: [String.t()]
+
+  @doc """
+  Cursor-replay join protocol.
+
+  Implemented only by `:cursor_replay` pull adapters. Captures the lower-bound
+  cursor before the content read, returns the rendered snapshot and the cursor
+  that the transport should store.
+  """
+  @callback join_with_cursor(session_uri :: URI.t(), caller :: URI.t()) ::
+              {:ok, %{snapshot: map(), cursor: integer()}} | {:error, term()}
+
+  @doc """
+  Cursor-replay advisory protocol.
+
+  Implemented only by `:cursor_replay` pull adapters. Replays committed deltas
+  since `cursor` and returns the refreshed snapshot plus the new cursor.
+  """
+  @callback replay(session_uri :: URI.t(), caller :: URI.t(), cursor :: integer()) ::
+              {:ok, %{snapshot: map(), cursor: integer()}} | {:error, term()}
+
+  @doc """
+  Participation affordance exposed by the live transport.
+
+  Optional with a back-compat default of `:read_only`, resolved via
+  `participation_profile_of/1`.
+  """
+  @callback participation_profile() :: participation_profile()
+
   # `@optional_callbacks` here means "the COMPILER won't warn if absent".
   # Push-required callbacks (`binding_module/0`, `target_ownership_check/2`,
   # `event_to_payload/1`) live here so a `:pull` adapter can omit them
@@ -282,6 +348,12 @@ defmodule Ezagent.ExternalMirror.Adapter do
     target_ownership_check_timeout: 0,
     adapter_kind: 0,
     render: 2,
+    delivery_discipline: 0,
+    render_authorized: 2,
+    live_topics: 1,
+    join_with_cursor: 2,
+    replay: 3,
+    participation_profile: 0,
     binding_module: 0,
     target_ownership_check: 2,
     event_to_payload: 1
@@ -304,6 +376,34 @@ defmodule Ezagent.ExternalMirror.Adapter do
       adapter_module.adapter_kind()
     else
       :push
+    end
+  end
+
+  @doc """
+  Resolve an adapter module's live-delivery discipline with the back-compat
+  default of `:snapshot_refresh`.
+  """
+  @spec delivery_discipline_of(module()) :: delivery_discipline()
+  def delivery_discipline_of(adapter_module) when is_atom(adapter_module) do
+    if Code.ensure_loaded?(adapter_module) and
+         function_exported?(adapter_module, :delivery_discipline, 0) do
+      adapter_module.delivery_discipline()
+    else
+      :snapshot_refresh
+    end
+  end
+
+  @doc """
+  Resolve an adapter module's participation profile with the back-compat default
+  of `:read_only`.
+  """
+  @spec participation_profile_of(module()) :: participation_profile()
+  def participation_profile_of(adapter_module) when is_atom(adapter_module) do
+    if Code.ensure_loaded?(adapter_module) and
+         function_exported?(adapter_module, :participation_profile, 0) do
+      adapter_module.participation_profile()
+    else
+      :read_only
     end
   end
 

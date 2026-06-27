@@ -10,9 +10,9 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
   minted a read-only **anon-User** (cookie-bound), joined to the session, and
   given that anon's `ChatFeedAuth` token. The token is NOT the authorization —
   the live `Ezagent.Session.Membership.authorize/2` read (`ExternalFeed`,
-  `ExternalFeedChannel`) re-checks on every read, so an ex-member's view clears.
+  `SessionFeedChannel`) re-checks on every read, so an ex-member's view clears.
 
-  Live updates flow through `ExternalFeedSocket` / `ExternalFeedChannel`, which
+  Live updates flow through `ExternalFeedSocket` / `SessionFeedChannel`, which
   recover the SAME principal from the token and repeat the live membership check.
   """
   use EzagentWeb, :controller

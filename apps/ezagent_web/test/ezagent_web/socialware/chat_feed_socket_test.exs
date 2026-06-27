@@ -25,7 +25,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   alias Ezagent.{Invocation, Message, MessageStore}
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.ChatFeedAuth
-  alias EzagentWeb.Socialware.{ChatFeedChannel, ChatFeedSocket}
+  alias EzagentWeb.Socialware.{ChatFeedSocket, SessionFeedChannel}
 
   @endpoint EzagentWeb.Endpoint
 
@@ -123,19 +123,16 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     msg
   end
 
-  defp join_as(session, caller) do
+  defp join_as(session, caller, topic \\ nil) do
     token = ChatFeedAuth.issue_token(caller, session)
+    topic = topic || "socialware:chat_feed:#{URI.to_string(session)}"
 
     @endpoint
     |> socket("socialware_chat_feed:#{URI.to_string(session)}", %{
       session_uri: session,
       caller: caller
     })
-    |> subscribe_and_join(
-      ChatFeedChannel,
-      "socialware:chat_feed:#{URI.to_string(session)}",
-      %{token: token}
-    )
+    |> subscribe_and_join(SessionFeedChannel, topic, %{token: token})
   end
 
   describe "connect — caller-identity token (P4-3)" do
@@ -192,6 +189,14 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       _m = post_msg(ctx.session, "hello member")
       assert {:ok, reply, _socket} = join_as(ctx.session, ctx.member)
       assert "hello member" in (reply.snapshot.page.children |> Enum.map(& &1.props.text))
+    end
+
+    test "registered chat adapter works on the generic feed topic", ctx do
+      _m = post_msg(ctx.session, "hello generic chat")
+      topic = "socialware:feed:chat_feed:#{URI.to_string(ctx.session)}"
+
+      assert {:ok, reply, _socket} = join_as(ctx.session, @owner, topic)
+      assert "hello generic chat" in (reply.snapshot.page.children |> Enum.map(& &1.props.text))
     end
 
     test "NON-MEMBER cannot join (denied)", ctx do

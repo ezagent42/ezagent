@@ -28,6 +28,10 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
     refute function_exported?(ChatFeedAdapter, :target_ownership_check, 2)
     refute function_exported?(ChatFeedAdapter, :event_to_payload, 1)
     assert function_exported?(ChatFeedAdapter, :render, 2)
+    assert function_exported?(ChatFeedAdapter, :render_authorized, 2)
+    assert function_exported?(ChatFeedAdapter, :live_topics, 1)
+    assert ChatFeedAdapter.delivery_discipline() == :snapshot_refresh
+    assert ChatFeedAdapter.participation_profile() == :read_only
     assert function_exported?(ChatFeedAdapter, :cap_subject, 0)
   end
 
@@ -93,6 +97,22 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
                messages: [],
                page: %{type: "container", props: %{layout: "stack"}, children: []}
              }
+    end
+
+    test "render_authorized returns ok for a member and unauthorized for a non-member", %{
+      session: session
+    } do
+      assert {:ok, snapshot} = ChatFeedAdapter.render_authorized(session, @owner)
+      assert Enum.any?(snapshot.messages, &(message_text(&1) == "hi there"))
+
+      stranger = Ezagent.URI.entity(:team_alpha, :user, "cfa-stranger-authorized")
+      assert {:error, :unauthorized} = ChatFeedAdapter.render_authorized(session, stranger)
+    end
+
+    test "live_topics returns the session events topic", %{session: session} do
+      assert ChatFeedAdapter.live_topics(session) == [
+               Ezagent.Behavior.Session.Delivery.session_events_topic(session)
+             ]
     end
 
     test "render with a nil/malformed caller returns the empty/denied projection", %{

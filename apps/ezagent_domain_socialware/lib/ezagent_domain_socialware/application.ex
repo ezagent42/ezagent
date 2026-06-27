@@ -12,6 +12,9 @@ defmodule EzagentDomainSocialware.Application do
 
   use Application
 
+  alias Ezagent.ExternalMirror.AdapterRegistry
+  alias Ezagent.Socialware.{ChatFeedAdapter, ExternalFeedAdapter}
+
   @impl true
   def start(_type, _args) do
     # P5-1b/P5-3 (socialware substrate collapse) — `register_behaviors/0` is
@@ -35,6 +38,24 @@ defmodule EzagentDomainSocialware.Application do
       Ezagent.Socialware.AnonUser.Sweeper
     ]
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+    case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
+      {:ok, sup_pid} ->
+        :ok = register_adapters()
+        {:ok, sup_pid}
+
+      other ->
+        other
+    end
+  end
+
+  defp register_adapters do
+    for adapter <- [ChatFeedAdapter, ExternalFeedAdapter] do
+      case AdapterRegistry.register(adapter) do
+        :ok -> :ok
+        {:ok, :already_present} -> :ok
+      end
+    end
+
+    :ok
   end
 end

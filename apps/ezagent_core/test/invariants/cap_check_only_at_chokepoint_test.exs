@@ -81,7 +81,8 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # allow-cap behavior (`ChatFeedAdapter.Allow`, declaring `cap_subjects/0`)
         # with the adapter (plugin-isolation: the adapter owns its own bind cap).
         # Precise file allowlist keeps the cap shape contained.
-        "apps/ezagent_domain_socialware/lib/ezagent/socialware/chat_feed_adapter.ex"
+        "apps/ezagent_domain_socialware/lib/ezagent/socialware/chat_feed_adapter.ex",
+        "apps/ezagent_domain_socialware/lib/ezagent/socialware/external_feed_adapter.ex"
       ]
     },
     %{

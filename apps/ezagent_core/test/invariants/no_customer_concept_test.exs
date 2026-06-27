@@ -39,8 +39,8 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
       regex: ~r/\bCustomer(Feed|Auth|Channel|Socket|Controller|Outbox|Delivery|FeedAdapter)\b/,
       allowlist: [],
       guidance:
-        "Use the External*/Delivery* family (ExternalFeed, ExternalFeedChannel/Socket/" <>
-          "Controller, DeliveryOutbox, ExternalDelivery) — the customer modules were retired."
+        "Use the External*/Delivery* family (ExternalFeed, ExternalFeedSocket/" <>
+          "Controller, SessionFeedChannel, DeliveryOutbox, ExternalDelivery) — the customer modules were retired."
     },
     %{
       name:
