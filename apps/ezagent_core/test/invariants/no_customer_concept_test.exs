@@ -34,16 +34,17 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
   # allowlist of files that may legitimately match, and failure guidance.
   @rules [
     %{
-      name: "a Customer* business-concept module (Feed/Auth/Channel/Socket/Controller/Outbox/Delivery/Adapter)",
-      regex:
-        ~r/\bCustomer(Feed|Auth|Channel|Socket|Controller|Outbox|Delivery|FeedAdapter)\b/,
+      name:
+        "a Customer* business-concept module (Feed/Auth/Channel/Socket/Controller/Outbox/Delivery/Adapter)",
+      regex: ~r/\bCustomer(Feed|Auth|Channel|Socket|Controller|Outbox|Delivery|FeedAdapter)\b/,
       allowlist: [],
       guidance:
         "Use the External*/Delivery* family (ExternalFeed, ExternalFeedChannel/Socket/" <>
           "Controller, DeliveryOutbox, ExternalDelivery) — the customer modules were retired."
     },
     %{
-      name: "a :customer_* business-concept atom (:customer_visible / :customer_delivery / :allow_customer_feed)",
+      name:
+        "a :customer_* business-concept atom (:customer_visible / :customer_delivery / :allow_customer_feed)",
       regex: ~r/:customer_(visible|delivery|feed|outbox)\b|:allow_customer_feed\b/,
       allowlist: [],
       guidance:
@@ -66,11 +67,11 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
         "Use /socialware/external — the route was renamed (a 301 in router.ex covers old links)."
     },
     %{
-      name: "the retired customer SPA assets (customer_app.js / customer.css / data-theme=customer / socialware-customer-root)",
+      name:
+        "the retired customer SPA assets (customer_app.js / customer.css / data-theme=customer / socialware-customer-root)",
       regex: ~r/customer_app\.js|customer\.css|data-theme="customer"|socialware-customer-root/,
       allowlist: [],
-      guidance:
-        "Use viewer_app.js / viewer.css / data-theme=\"viewer\" / socialware-viewer-root."
+      guidance: "Use viewer_app.js / viewer.css / data-theme=\"viewer\" / socialware-viewer-root."
     }
   ]
 
