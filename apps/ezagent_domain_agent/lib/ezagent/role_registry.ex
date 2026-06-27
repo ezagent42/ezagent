@@ -1,4 +1,4 @@
-defmodule Ezagent.RoleRegistry do
+defmodule Ezagent.Agent.RoleRegistry do
   @moduledoc """
   RoleRegistry — `role name → recipe`, resolved **read-through over ConfigStore**
   (role-as-data, SPEC `docs/together/2026-06-27/specs/role-as-data-cr-governance.md`

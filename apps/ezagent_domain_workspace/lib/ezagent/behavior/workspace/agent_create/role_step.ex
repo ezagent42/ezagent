@@ -6,7 +6,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   > FLAVOR.** (Allen 2026-06-14)
 
   When a create requests a `role` (name) on a DIRECT-SPAWN flavor (native / curl
-  / np), this module resolves the role recipe (`Ezagent.RoleRegistry`), composes
+  / np), this module resolves the role recipe (`Ezagent.Agent.RoleRegistry`), composes
   it with the flavor's per-instance behavior set (`Ezagent.Role.Compose`), mints
   the recipe's authorized caps fail-closed (`Ezagent.Role.CapMint` × the flavor's
   CapMint policy from `Ezagent.AgentFlavorRegistry` — the RF-8 seam) and grants
@@ -207,7 +207,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   end
 
   defp lookup_role_recipe(role_name) do
-    case Ezagent.RoleRegistry.lookup(role_name) do
+    case Ezagent.Agent.RoleRegistry.lookup(role_name) do
       {:ok, recipe} -> {:ok, recipe}
       :error -> {:error, {:unknown_role, role_name}}
     end

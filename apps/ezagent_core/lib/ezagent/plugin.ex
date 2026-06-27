@@ -212,7 +212,7 @@ defmodule Ezagent.Plugin do
   @callback agent_flavors() :: [agent_flavor_decl()]
 
   # Built-in role recipes (role-foundation RF-4) — recipe MAPs registered in
-  # `Ezagent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
+  # `Ezagent.Agent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
   @callback roles() :: [map()]
 
   @doc """
@@ -480,7 +480,7 @@ defmodule Ezagent.Plugin do
     # role-as-data (SPEC §4) — `roles/0` is the SEED SOURCE only. Each recipe is
     # seeded as a ConfigObject (`config://<system_ws>/role/<name>`, key "role")
     # via the `Ezagent.Plugin.RoleSeedHook` seam — the role store
-    # (`Ezagent.RoleRegistry` read-through over `ConfigStore`) lives downstream in
+    # (`Ezagent.Agent.RoleRegistry` read-through over `ConfigStore`) lives downstream in
     # `ezagent_domain_agent`, so core dispatches through the hook (no-op until
     # domain_agent registers its impl; every role-declaring plugin compile-deps
     # domain_agent, so the impl is always registered first). `RoleRegistry.lookup/2`

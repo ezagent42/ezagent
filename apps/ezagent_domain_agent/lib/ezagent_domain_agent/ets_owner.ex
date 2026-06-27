@@ -14,13 +14,13 @@ defmodule EzagentDomainAgent.EtsOwner do
     {Ezagent.AgentFlavorAttributes, :set},
     {Ezagent.AgentPassiveAttributes, :set},
     {Ezagent.AgentRoleAttributes, :set},
-    # role-as-data (SPEC §3): `Ezagent.RoleRegistry`'s read-through ETS CACHE
+    # role-as-data (SPEC §3): `Ezagent.Agent.RoleRegistry`'s read-through ETS CACHE
     # (keyed `{ws, name}` → `%Ezagent.Role{}`). Relocated from
     # `EzagentCore.EtsOwner` with the registry itself (the registry now resolves
     # over `Ezagent.Socialware.ConfigStore`, so it lives in domain_agent which
     # deps identity — keeping core free of identity). ETS is a lazy cache, NOT
     # the authority; ConfigStore is.
-    {Ezagent.RoleRegistry, :set}
+    {Ezagent.Agent.RoleRegistry, :set}
   ]
 
   def start_link(_opts) do
