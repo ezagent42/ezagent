@@ -30,9 +30,7 @@ defmodule Mix.Tasks.Ezagent.Session.ListParticipants do
 
         members = Ezagent.Session.Participants.list_participants(session_uri)
 
-        Mix.shell().info(
-          "participants of #{URI.to_string(session_uri)} (#{length(members)}):"
-        )
+        Mix.shell().info("participants of #{URI.to_string(session_uri)} (#{length(members)}):")
 
         Enum.each(members, fn uri -> Mix.shell().info("  - #{URI.to_string(uri)}") end)
 

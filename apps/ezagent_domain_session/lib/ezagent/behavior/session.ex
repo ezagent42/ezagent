@@ -161,16 +161,18 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
-  # F7 PR-A — the ISOMORPHIC participant-removal primitive (SPEC §3; handler body
-  # in `Behavior.Session.Membership`). Owner-gated + admin-superset; self-leave
-  # (§3.3) via a JIT self-scoped cap. PR-A: non-spawned (user / invited agent)
-  # membership-only leave is LIVE; spawned-worker teardown is a PR-B stub.
+  # F7 PR-A — ISOMORPHIC participant-removal (body+doc in Membership, SPEC §3).
   action(:remove_participant,
     args: %{participant: :uri},
-    returns: %{status: :atom, torn_down: :atom, deleted_rules: :integer, repointed_rules: :integer},
+    returns: %{
+      status: :atom,
+      torn_down: :atom,
+      deleted_rules: :integer,
+      repointed_rules: :integer
+    },
     caps: [:remove_participant],
     modes: [:call],
-    description: "Remove a participant (user / invited-agent) — isomorphic owner-gated entry (F7 PR-A)"
+    description: "Remove a participant (user / invited-agent) — owner-gated (F7 PR-A)"
   )
 
   # LV→world parity PR-2b — upload authorization chokepoint. The world composer
@@ -700,13 +702,11 @@ defmodule Ezagent.Behavior.Session do
     Members.role_name_to_uri(members, role_name)
   end
 
-  # --- :leave ------------------------------------------------------------
-
+  # --- :leave / :remove_participant (F7 PR-A) — bodies in Membership -------
   def handle_leave(%{member: %URI{} = member_uri}, ctx) do
     {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
   end
 
-  # --- :remove_participant (F7 PR-A) — delegator; body+doc in Membership ---
   def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do
     Membership.handle_remove_participant(participant_uri, ctx)
   end

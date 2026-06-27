@@ -165,7 +165,8 @@ defmodule Ezagent.Behavior.Session.Membership do
     # `repoint/3` is idempotent, so the orchestrator's re-run after an abort is safe.
     case repoint_read_markers(session_uri, from_uri, to_uri) do
       :ok ->
-        members_after_join = effect_value(join_effects, :set, :members, ctx[:read].(:members, %{}))
+        members_after_join =
+          effect_value(join_effects, :set, :members, ctx[:read].(:members, %{}))
 
         monitors_after_join =
           effect_value(
