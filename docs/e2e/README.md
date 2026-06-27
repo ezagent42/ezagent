@@ -67,6 +67,18 @@
 
 ---
 
+## 产品验收 harness(非黄金路径——独立类别)
+
+> 01-12 是**单次人肉执行流水账**(过去式)。下面是**前瞻型分层验收场景**:把一个**产品**的"端到端能跑通"定义成一个分层 scenario,既是 E2E harness 也是该产品的 roadmap tracker。**不进上面的黄金路径表**(它不是顺序前置链的一环)。
+
+| # | 记录文件 | 标题 | 类型 | 状态 |
+|---|---|---|---|---|
+| 13 | [scenario-13-autoservice-end-to-end.md](./scenario-13-autoservice-end-to-end.md) | AutoService 端到端(分层验收) | 前瞻型分层 harness + roadmap tracker | ⬜ Tier 1 部分可跑;T2/T3 deferred |
+
+- **能力附录**:`docs/futures/autoservice-v3-reference.md`(代码级扫描 + lead 决策的"为什么")——与本 scenario 互链、不互相取代(scenario=what passes,附录=why)。⚠️ 该附录当前**仅在未合分支 `origin/docs/autoservice-v3-reference`**,待并入 main 后互链才解析。
+
+---
+
 ## 目录布局
 
 ```
