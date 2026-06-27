@@ -428,9 +428,42 @@ isomorphism extends to surfaces, not just participant types.
 
 ---
 
-## 7a. Codex adversarial-review verdict
+## 7a. Codex adversarial-review verdict (static-only, 2026-06-27, v2 model)
 
-*(Filled in after the §8 codex run — see the bottom of this file.)*
+Codex reviewed the session-ownership model against cited source (read-only).
+**All six questions clean; no unflagged miss.**
+
+1. **#154-clean — YES.** Teardown cap is `granted_by: owner`; the grant path
+   validates entity granters (`identity/grant.ex:191-198`). `{:spawned_by, %URI{}}`
+   is scope-bounded → grant-legal incl. `:any` action, concrete `:destroy`
+   strictly narrower (`behavior/identity.ex:520-539, :557-563`).
+2. **Owner cap reaches the worker via existing lineage — YES, no re-parenting.**
+   `Tools.spawn_member` passes `caller=orchestrator` → records `worker →
+   orchestrator` (`template_spawn.ex:739-742`, `spawn_obligations.ex:19-22`);
+   orchestrator records `orchestrator → owner` (`orchestrator.ex:199-202`);
+   `spawned_in_lineage?` walks parents transitively (`agent_lineage.ex:141-154`).
+3. **Cap #2 NOT regressed — YES (additive).** Keeping `worker → orchestrator`
+   preserves cap #2 via the same transitive matcher (`match.ex:136-138`); current
+   regenerate/remove still dispatch `Sandbox.destroy` under cap #2
+   (`tools/member_template.ex:385-399`, `tools.ex:482-498`).
+4. **Dead-orchestrator claim holds — YES.** `AgentLineage` is SQLite SoT + ETS
+   cache (`agent_lineage.ex:31-43, :100-114, :173-194`); `spawned_in_lineage?`
+   walks lineage rows, NOT live orchestrator identity/caps. No
+   `Identity.list_caps_for` on a live Kind needed.
+5. **Isomorphism real — YES as design.** One `remove_participant` + one
+   provenance-branched teardown hook; `session.leave` emits `{:member_left}`
+   (`behavior/session.ex:693-712`). Codex flagged (matching this spec's §5.4(1)):
+   current `Tools.remove_member` terminates/prunes BEFORE leave — the spec's
+   leave-FIRST ordering (§3.2) is the corrective obligation, not yet implemented.
+6. **No unflagged miss.** The owner cap reaching the orchestrator itself (via
+   `orchestrator → owner`) is intended + relied on for delete; the cross-session
+   reach is the explicitly-flagged OQ-2 blast radius. Both are acknowledged, not
+   missed.
+
+Net: the cap-model change is verified #154-clean, reaches orchestrator-spawned
+workers without cap #2, does not regress cap #2, and works for a dead
+orchestrator. The isomorphism + leave-first ordering are spec obligations the
+implementation must honor.
 
 ---
 
