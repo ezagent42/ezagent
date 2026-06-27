@@ -13,7 +13,7 @@ defmodule EzagentPluginKanban.MiroLiveTest do
   alias EzagentPluginKanban.Miro
   alias EzagentPluginKanban.Miro.Sync
   alias Ezagent.Workspace
-  alias Ezagent.{AgentFlavorRegistry, RoleRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Agent.RoleRegistry}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   # kanban-as-role：board = 一个 kanban-manager agent（K5 删了 resource Kanban Kind）。
@@ -48,7 +48,7 @@ defmodule EzagentPluginKanban.MiroLiveTest do
         cap_policy: &cap_policy/1
       })
 
-    :ok = RoleRegistry.register(KanbanApp.kanban_manager_recipe())
+    {:ok, _} = RoleRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     admin_ctx = %{
       caller: Ezagent.Entity.User.admin_uri(),

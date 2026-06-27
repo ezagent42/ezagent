@@ -17,7 +17,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   This is a **code recipe** (design §2.1 endorses code-seeded built-in roles).
   RF-9 brings it onto the unified path: the cc plugin's `roles/0` callback
   (`EzagentPluginCc.Application.roles/0`) returns this `recipe/0`, and
-  `Ezagent.Plugin.boot/1` Phase 2 registers it in `Ezagent.RoleRegistry` by
+  `Ezagent.Plugin.boot/1` Phase 2 registers it in `Ezagent.Agent.RoleRegistry` by
   `name/0` ("orchestrator") — a first-class named role like any other.
   `OrchestratorBootstrap.resolve_orchestrator_role/0` then looks it up BY NAME
   in that registry (the same indirection RF-5a uses), instead of re-deriving it
@@ -57,7 +57,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   names no flavor field.
 
   Carries a `:name` ("orchestrator") so the cc plugin's `roles/0` callback (RF-4)
-  registers it as a first-class named role in `Ezagent.RoleRegistry`, looked up
+  registers it as a first-class named role in `Ezagent.Agent.RoleRegistry`, looked up
   by `OrchestratorBootstrap.resolve_orchestrator_role/0` at agent-spawn time
   (RF-9 — the orchestrator joins the unified `roles/0` + `Role.Compose` path).
   """

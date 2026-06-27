@@ -37,13 +37,12 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.RoutingRegistry, :set},
     {Ezagent.SpawnRegistry, :set},
     {Ezagent.TemplateRegistry, :set},
-    # role-foundation RF-4: RoleRegistry — `role name` (string) → validated
-    # `%Ezagent.Role{}` recipe. Populated at plugin boot from `roles/0` via
-    # `Ezagent.Plugin.boot/1` (direct `RoleRegistry.register/1` — no hook, since
-    # both the registry and `boot/1` are core, unlike the downstream flavor
-    # registry). `Ezagent.Role`/`Role.Compose`/`Role.CapMint` are core too, so
-    # the table lives here next to them.
-    {Ezagent.RoleRegistry, :set},
+    # role-as-data (SPEC §3): `Ezagent.Agent.RoleRegistry`'s ETS cache moved to
+    # `EzagentDomainAgent.EtsOwner`. The registry now resolves read-through over
+    # `Ezagent.Socialware.ConfigStore` (an `ezagent_domain_identity` concern), so
+    # it relocated from `ezagent_core` to `ezagent_domain_agent` (which deps
+    # identity) to keep core free of any identity/ConfigStore reference — the
+    # umbrella no-core→identity invariant. The table is owned there too.
     # Phase 7 PR 31 (IMPL-7-1): session→workspace back-edge for
     # Ezagent.Behavior.Session.invoke(:send) to plumb workspace_uri into
     # Resolver. See WorkspaceRegistry moduledoc.

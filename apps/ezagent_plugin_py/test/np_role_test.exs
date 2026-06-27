@@ -59,9 +59,18 @@ defmodule Ezagent.PluginPy.NpRoleTest do
       refute Map.has_key?(recipe, :requested_caps)
     end
 
-    test "the recipe is registered in RoleRegistry under \"np\"" do
-      # boot registered it; lookup resolves the validated %Role{}.
-      assert {:ok, %Ezagent.Role{name: "np", script: script}} = Ezagent.RoleRegistry.lookup("np")
+    test "the np role seeds + resolves read-through under \"np\" (script preserved)" do
+      # role-as-data: boot SEEDS the recipe into ConfigStore; lookup resolves it
+      # read-through. (Boot's DB seed is :test-skipped, so seed explicitly here in
+      # the DataCase sandbox.) np is a BUILT-IN, so its `script` is allowed (the
+      # trusted code path); flush the cache to prove the resolve-from-ConfigStore.
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      assert {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+      :ok = Ezagent.Agent.RoleRegistry.flush_cache()
+
+      assert {:ok, %Ezagent.Role{name: "np", script: script}} =
+               Ezagent.Agent.RoleRegistry.lookup("np")
+
       assert is_binary(script) and script =~ "_SAFE_NAMES"
     end
   end
@@ -73,6 +82,12 @@ defmodule Ezagent.PluginPy.NpRoleTest do
           {:skip, "uv not on PATH"}
 
         _ ->
+          # role-as-data: boot's DB seed is :test-skipped, so seed the np role
+          # into ConfigStore here so the create path's read-through lookup resolves.
+          {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+          {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+          Ezagent.Agent.RoleRegistry.flush_cache()
+
           ws_name = "np-role-#{System.unique_integer([:positive])}"
           {:ok, _ws_pid} = Workspace.create(ws_name, %{})
           workspace_uri = URI.new!("workspace://#{ws_name}")
@@ -178,6 +193,12 @@ defmodule Ezagent.PluginPy.NpRoleTest do
 
   describe "security — a role-carried script rides the same cap gate (spec §5)" do
     setup do
+      # role-as-data: seed the np role into ConfigStore (boot's DB seed is
+      # :test-skipped) so the create path's read-through lookup resolves "np".
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+      Ezagent.Agent.RoleRegistry.flush_cache()
+
       ws_name = "np-role-sec-#{System.unique_integer([:positive])}"
       {:ok, _ws_pid} = Workspace.create(ws_name, %{})
       {:ok, workspace_uri: URI.new!("workspace://#{ws_name}"), ws_name: ws_name}

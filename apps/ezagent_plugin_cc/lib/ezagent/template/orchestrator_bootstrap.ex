@@ -14,7 +14,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   the filesystem install:
 
   - `resolve_orchestrator_role/0` — look the orchestrator role recipe up BY NAME
-    in `Ezagent.RoleRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
+    in `Ezagent.Agent.RoleRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
     and compose it → `sandbox_content` (`%{skills, plugins, prompt}`). The
     registry IS the re-point seam: a later PR swaps the lookup source to the
     persisted `template://system/role/orchestrator` Template without touching the
@@ -74,7 +74,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   (`%{skills, plugins, prompt}`) via the unified `roles/0` + `Ezagent.Role.Compose`
   path (RF-9).
 
-  The recipe is looked up BY NAME in `Ezagent.RoleRegistry` (populated at cc
+  The recipe is looked up BY NAME in `Ezagent.Agent.RoleRegistry` (populated at cc
   plugin boot from `roles/0`) — NOT re-derived from `OrchestratorRole.compose/0`.
   This routes the orchestrator through the SAME registry indirection RF-5a uses,
   and is the documented re-point seam for the future persisted
@@ -95,7 +95,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   """
   @spec resolve_orchestrator_role() :: {:ok, map()} | {:error, term()}
   def resolve_orchestrator_role do
-    case Ezagent.RoleRegistry.lookup(OrchestratorRole.name()) do
+    case Ezagent.Agent.RoleRegistry.lookup(OrchestratorRole.name()) do
       {:ok, %Ezagent.Role{} = role} ->
         %{sandbox_content: sandbox_content} =
           Ezagent.Role.Compose.materialize(role, %{flavor_behaviors: []})

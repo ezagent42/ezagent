@@ -103,6 +103,128 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
+  Role-as-data seed primitive (SPEC §4.1/§4.2) — atomically write an immutable
+  `ConfigObject` AND point its layer IFF no pointer yet exists for the object's
+  `(layer, workspace, subject, key)`.
+
+  This is the seed-once-if-no-pointer primitive built-in role seeding needs. It
+  is NOT `write_and_point/1`: that one's `put_pointer/1` UPSERTS
+  (`on_conflict: {:replace, ...}`) and would CLOBBER a tenant's published
+  override on every reboot. Here the pointer existence is checked + the
+  object/pointer inserted in ONE `Repo.transaction`, with the pointer insert
+  using `on_conflict: :nothing` so a concurrent seed (or a tenant publish racing
+  a boot) that already created the pointer leaves it untouched and rolls back
+  this transaction's object insert (no orphan object).
+
+  Idempotency + override-safety:
+    * no pointer → object + pointer written → `{:ok, :seeded}`.
+    * pointer exists, SAME `body` → no-op → `{:ok, :exists}` (re-seed is safe).
+    * pointer exists, DIFFERENT `body` → `{:error, collision_tag}` (the moved
+      two-plugins-one-name boot-collision guard; `collision_tag` is the
+      caller-supplied loud error term).
+
+  `attrs` requires `:layer, :workspace_uri, :subject_uri, :key, :body,
+  :actor_uri, :source_turn_id` (same shape as `write_and_point/1`) plus a
+  `:collision_tag` term returned on a divergent-body collision.
+  """
+  @spec seed_object_if_no_pointer(map()) ::
+          {:ok, :seeded | :exists} | {:error, term()}
+  def seed_object_if_no_pointer(attrs) when is_map(attrs) do
+    do_seed_if_no_pointer(attrs, _retry? = true)
+  end
+
+  defp do_seed_if_no_pointer(attrs, retry?) do
+    collision_tag = Map.fetch!(attrs, :collision_tag)
+    pointer_id = pointer_id_for(attrs)
+
+    Multi.new()
+    |> Multi.run(:existing, fn repo, _changes ->
+      {:ok, repo.get(ConfigPointer, pointer_id)}
+    end)
+    |> Multi.run(:seed, fn repo, %{existing: existing} ->
+      seed_branch(repo, existing, attrs, collision_tag)
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{seed: result}} ->
+        {:ok, result}
+
+      # A concurrent seed won the pointer-insert race: this txn's object insert
+      # was rolled back (no orphan) and the WINNER's pointer is now durable. Do
+      # NOT blindly report `:exists` — the winner may have written a DIFFERENT
+      # body (the two-plugins-one-name collision under concurrency). Re-run ONCE:
+      # the pointer now exists, so the serial existing-pointer branch runs the
+      # full body/source_turn_id comparison and returns the correct `:exists` /
+      # `collision_tag`. Bounded to a single retry (the pointer is durable now).
+      {:error, :seed, :seed_lost_race, _changes} when retry? ->
+        do_seed_if_no_pointer(attrs, false)
+
+      {:error, :seed, :seed_lost_race, _changes} ->
+        {:ok, :exists}
+
+      {:error, _step, reason, _changes} ->
+        {:error, reason}
+    end
+  end
+
+  # No pointer yet → insert the immutable object, then insert the pointer with
+  # `on_conflict: :nothing` (a concurrent seed that won the race leaves the
+  # existing pointer untouched and this txn's object is rolled back below).
+  defp seed_branch(repo, nil, attrs, _collision_tag) do
+    object_attrs = object_attrs(attrs)
+
+    with {:ok, object} <- repo.insert(ConfigObject.changeset(object_attrs)),
+         pointer_attrs = pointer_attrs(Map.put(attrs, :config_id, object.id)),
+         {:ok, pointer} <-
+           repo.insert(ConfigPointer.changeset(pointer_attrs),
+             on_conflict: :nothing,
+             conflict_target: :id
+           ) do
+      # `on_conflict: :nothing` returns a struct with a nil primary key when the
+      # row already existed (a racing seed won) — roll back so we leave no orphan
+      # object and report the existing pointer as authoritative.
+      if is_nil(pointer.id) do
+        {:error, :seed_lost_race}
+      else
+        {:ok, :seeded}
+      end
+    end
+  end
+
+  # Pointer already exists — three cases, distinguished by the pointed object's
+  # body + `source_turn_id` (the seed's `source_turn_id` is DETERMINISTIC for a
+  # given (ws, subject), so a SECOND seed of the same slot reproduces it, while a
+  # CR-publish / repoint OVERRIDE carries a different one):
+  #
+  #   1. body == seed body                       → `:exists` (idempotent re-seed).
+  #   2. body differs, SAME seed source_turn_id  → `collision_tag` (two plugins
+  #      claimed the same seed slot with different bodies — fail loud).
+  #   3. body differs, DIFFERENT source_turn_id  → `:exists` (a user/CR OVERRIDE
+  #      owns the pointer — DO NOT clobber it; the override survives the re-seed).
+  #
+  # This makes the seed BOTH idempotent AND override-safe while still catching the
+  # genuine two-plugins-one-name collision (SPEC §4.2).
+  defp seed_branch(repo, %ConfigPointer{config_id: config_id}, attrs, collision_tag) do
+    pointed = repo.get!(ConfigObject, config_id)
+    seed_body = attrs |> Map.fetch!(:body) |> stringify_keys()
+    seed_turn = Map.fetch!(attrs, :source_turn_id)
+
+    cond do
+      pointed.body == seed_body -> {:ok, :exists}
+      pointed.source_turn_id == seed_turn -> {:error, collision_tag}
+      true -> {:ok, :exists}
+    end
+  end
+
+  defp pointer_id_for(attrs) do
+    layer = attrs |> Map.fetch!(:layer) |> normalize_layer!()
+    workspace_uri = attrs |> Map.fetch!(:workspace_uri) |> uri_string!()
+    subject_uri = attrs |> Map.fetch!(:subject_uri) |> uri_string!()
+    key = Map.fetch!(attrs, :key)
+    ConfigPointer.id(layer, workspace_uri, subject_uri, key)
+  end
+
+  @doc """
   The reserved CR `source_turn_id` prefixes (`cr-stage:`, `cr-publish:`).
   """
   @spec reserved_turn_prefixes() :: [String.t()]

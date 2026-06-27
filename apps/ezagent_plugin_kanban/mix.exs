@@ -38,11 +38,17 @@ defmodule EzagentPluginKanban.MixProject do
       {:jason, "~> 1.2"},
       # kanban-as-role (K2/K3) integration tests: the role × native create path
       # lives in the workspace/agent/session domains. plugin → domain is the
-      # allowed dependency arrow (mirrors ezagent_plugin_cc). TEST-ONLY — the
-      # plugin's lib/ never references the domains (it only declares the recipe +
-      # behaviors; the framework wires them at boot).
+      # allowed dependency arrow (mirrors ezagent_plugin_cc). The plugin's lib/
+      # never references the domains (it only declares the recipe + behaviors; the
+      # framework wires them at boot).
       {:ezagent_domain_workspace, in_umbrella: true, only: :test},
-      {:ezagent_domain_agent, in_umbrella: true, only: :test},
+      # role-as-data (SPEC §4): domain_agent is now a PROD dep, not test-only —
+      # `roles/0` is seeded at boot via `Ezagent.Plugin.RoleSeedHook`, whose impl
+      # `Ezagent.Agent.RoleSeedHook` is registered by domain_agent's `start/2`.
+      # The prod dep makes OTP start domain_agent BEFORE this plugin, so the hook
+      # is registered before this plugin's `Ezagent.Plugin.boot/1` seeds its role
+      # (the seam is no-op if unregistered — the dep removes that race).
+      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true, only: :test}
     ]
   end

@@ -8,12 +8,14 @@ defmodule Ezagent.Orchestrator.OrchestratorRoleTest do
   rather than a hardcoded cc skill/prompt. These tests pin that the recipe is a
   well-formed Role and that it carries the orchestrator skill + persona.
   """
-  use ExUnit.Case, async: true
+  # role-as-data: the read-through lookup test seeds into ConfigStore (DB), so the
+  # suite needs the DataCase sandbox. The pure recipe/persona tests ignore it.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Orchestrator.CcOrchestratorSeed
   alias Ezagent.Orchestrator.OrchestratorRole
   alias Ezagent.Role
-  alias Ezagent.RoleRegistry
+  alias Ezagent.Agent.RoleRegistry
 
   describe "recipe/0 — a well-formed flavor-agnostic Role" do
     test "Role.new/1 accepts the recipe (no flavor field, valid shape)" do
@@ -47,16 +49,19 @@ defmodule Ezagent.Orchestrator.OrchestratorRoleTest do
     end
   end
 
-  describe "roles/0 + RoleRegistry — registered as a first-class named role (RF-9)" do
+  describe "roles/0 + RoleRegistry — seeded as a first-class named role (RF-9 / role-as-data §4)" do
     test "the cc plugin's roles/0 declares the orchestrator recipe" do
       assert OrchestratorRole.recipe() in EzagentPluginCc.Application.roles()
     end
 
-    test "RoleRegistry.lookup(\"orchestrator\") returns the recipe end-to-end" do
-      # Drive the real `roles/0` → `RoleRegistry.register/1` wiring: starting the
-      # cc plugin application runs `boot/1` Phase 2, which registers every
-      # `roles/0` recipe by name. (Idempotent if the suite already started it.)
-      {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
+    test "RoleRegistry.lookup(\"orchestrator\") returns the recipe end-to-end (read-through)" do
+      # role-as-data: boot SEEDS each roles/0 recipe into ConfigStore; lookup
+      # resolves read-through. Boot's DB seed is :test-skipped, so seed the recipe
+      # explicitly here in the DataCase sandbox, then flush the cache to prove the
+      # lookup resolves from ConfigStore (not a surviving ETS write).
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      assert {:ok, _} = RoleRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+      :ok = RoleRegistry.flush_cache()
 
       assert {:ok, %Role{name: "orchestrator"} = role} =
                RoleRegistry.lookup(OrchestratorRole.name())

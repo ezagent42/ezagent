@@ -13,16 +13,19 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     * BLOCKER-2 — `passive: true` flows through `Role.new/1` onto `%Role{}`.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Role
-  alias Ezagent.{RoleRegistry, Behavior.Kanban}
+  alias Ezagent.{Agent.RoleRegistry, Behavior.Kanban}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @recipe_name "kanban-manager"
 
   setup do
-    {:ok, _} = Application.ensure_all_started(:ezagent_core)
+    # role-as-data: the read-through registry lives in domain_agent (ETS cache +
+    # ConfigStore resolution); ensure it is up. DataCase checks out the DB sandbox
+    # the seed/lookup use.
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     :ok
   end
 
@@ -31,14 +34,18 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
            "roles/0 must publish the kanban-manager recipe (RF-4 boot registration)"
   end
 
-  test "RF-4 boot registration — roles/0 → RoleRegistry.register → lookup round-trip" do
-    # This is EXACTLY what `Ezagent.Plugin.publish/1` does at boot
-    # (plugin.ex: `Enum.each(plugin_module.roles(), &RoleRegistry.register/1)`).
-    # Proves the "register at boot" half of RF-4: after the publish loop runs,
-    # `RoleRegistry.lookup("kanban-manager")` returns the validated recipe.
-    # register/1 is idempotent for an identical recipe (same name + same %Role{}
-    # → :ok), so this is safe whether or not the plugin's boot already ran it.
-    Enum.each(KanbanApp.roles(), fn recipe -> :ok = RoleRegistry.register(recipe) end)
+  test "role-as-data — roles/0 → seed_role_if_absent → read-through lookup round-trip" do
+    # role-as-data (SPEC §4): boot SEEDS each roles/0 recipe as a ConfigObject;
+    # `lookup` resolves read-through over ConfigStore. This drives that path
+    # directly: seed the recipe, flush the ETS cache (proving the next lookup
+    # resolves from ConfigStore, not a surviving cache write), then look it up.
+    # seed_role_if_absent is idempotent for an identical recipe ({:ok, :seeded |
+    # :exists}), so this is safe whether or not boot already seeded it.
+    Enum.each(KanbanApp.roles(), fn recipe ->
+      assert {:ok, _} = RoleRegistry.seed_role_if_absent(recipe)
+    end)
+
+    :ok = RoleRegistry.flush_cache()
 
     assert {:ok, %Role{name: @recipe_name, behaviors: [Kanban], passive: true}} =
              RoleRegistry.lookup(@recipe_name)

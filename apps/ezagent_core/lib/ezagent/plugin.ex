@@ -212,7 +212,7 @@ defmodule Ezagent.Plugin do
   @callback agent_flavors() :: [agent_flavor_decl()]
 
   # Built-in role recipes (role-foundation RF-4) — recipe MAPs registered in
-  # `Ezagent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
+  # `Ezagent.Agent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
   @callback roles() :: [map()]
 
   @doc """
@@ -477,11 +477,11 @@ defmodule Ezagent.Plugin do
       :ok = maybe_register_bridge_adapter(decl)
     end)
 
-    # role-foundation RF-4 — `RoleRegistry`/`Role` are core so `boot/1` calls
-    # `register/1` DIRECTLY (it validates via `Role.new/1`) — no publish hook.
-    Enum.each(plugin_module.roles(), fn recipe ->
-      :ok = Ezagent.RoleRegistry.register(recipe)
-    end)
+    # role-as-data (SPEC §4) — `roles/0` is the SEED SOURCE; dispatch each recipe
+    # through the `Ezagent.Plugin.RoleSeedHook` seam (impl in ezagent_domain_agent,
+    # which owns the read-through role store; no-op until registered). Keeps core
+    # free of the registry/ConfigStore. See `Ezagent.Plugin.RoleSeedHook`.
+    :ok = Ezagent.Plugin.RoleSeedHook.seed_roles(plugin_module, plugin_module.roles())
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
