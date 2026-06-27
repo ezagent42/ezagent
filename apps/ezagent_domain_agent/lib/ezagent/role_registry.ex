@@ -314,7 +314,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   # ConfigStore stringifies KEYS; behavior VALUES must be strings too so they
   # round-trip and `Role.new/1` decodes them back to loaded modules.
   defp recipe_body(recipe) do
-    behaviors = get(recipe, :behaviors, [])
+    behaviors = Map.get(recipe, :behaviors) || Map.get(recipe, "behaviors") || []
     Map.put(recipe, :behaviors, Enum.map(behaviors, &behavior_string/1))
   end
 
@@ -334,13 +334,6 @@ defmodule Ezagent.Agent.RoleRegistry do
         raise ArgumentError,
               "RoleRegistry: a role recipe MUST carry a non-empty :name to be keyed; " <>
                 "got #{inspect(other)}."
-    end
-  end
-
-  defp get(recipe, atom_key, default) do
-    case Map.fetch(recipe, atom_key) do
-      {:ok, value} -> value
-      :error -> Map.get(recipe, Atom.to_string(atom_key), default)
     end
   end
 

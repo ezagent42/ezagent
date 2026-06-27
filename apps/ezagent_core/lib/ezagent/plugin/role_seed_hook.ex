@@ -40,6 +40,27 @@ defmodule Ezagent.Plugin.RoleSeedHook do
     invoke_hooks(:seed_role, [recipe])
   end
 
+  @doc """
+  Seed every recipe in `recipes` (a plugin's `roles/0`) through the hook,
+  raising loud (`ArgumentError`) on the first `{:error, _}` — the boot contract
+  `Ezagent.Plugin.boot/1` uses. A divergent-body collision (two plugins, same
+  role name) surfaces here.
+  """
+  @spec seed_roles(module(), [map()]) :: :ok
+  def seed_roles(plugin_module, recipes) when is_atom(plugin_module) and is_list(recipes) do
+    Enum.each(recipes, fn recipe ->
+      case seed_role(recipe) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise ArgumentError,
+                "#{inspect(plugin_module)}: RoleSeedHook rejected a roles/0 recipe — " <>
+                  "#{inspect(reason)}."
+      end
+    end)
+  end
+
   defp invoke_hooks(function, args) do
     Enum.reduce_while(hooks(), :ok, fn module, :ok ->
       case invoke(module, function, args) do

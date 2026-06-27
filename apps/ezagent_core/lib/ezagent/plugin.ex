@@ -477,28 +477,11 @@ defmodule Ezagent.Plugin do
       :ok = maybe_register_bridge_adapter(decl)
     end)
 
-    # role-as-data (SPEC §4) — `roles/0` is the SEED SOURCE only. Each recipe is
-    # seeded as a ConfigObject (`config://<system_ws>/role/<name>`, key "role")
-    # via the `Ezagent.Plugin.RoleSeedHook` seam — the role store
-    # (`Ezagent.Agent.RoleRegistry` read-through over `ConfigStore`) lives downstream in
-    # `ezagent_domain_agent`, so core dispatches through the hook (no-op until
-    # domain_agent registers its impl; every role-declaring plugin compile-deps
-    # domain_agent, so the impl is always registered first). `RoleRegistry.lookup/2`
-    # then resolves read-through from ConfigStore (ETS is a lazy cache, NOT
-    # populated here — a `roles/0`-derived ETS entry as runtime authority is what
-    # the elimination criterion §7.2 forbids). The `:test` skip + the divergent-
-    # body collision guard live in the hook IMPLEMENTATION.
-    Enum.each(plugin_module.roles(), fn recipe ->
-      case Ezagent.Plugin.RoleSeedHook.seed_role(recipe) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          raise ArgumentError,
-                "#{inspect(plugin_module)}: RoleSeedHook.seed_role/1 rejected a roles/0 " <>
-                  "recipe — #{inspect(reason)}."
-      end
-    end)
+    # role-as-data (SPEC §4) — `roles/0` is the SEED SOURCE; dispatch each recipe
+    # through the `Ezagent.Plugin.RoleSeedHook` seam (impl in ezagent_domain_agent,
+    # which owns the read-through role store; no-op until registered). Keeps core
+    # free of the registry/ConfigStore. See `Ezagent.Plugin.RoleSeedHook`.
+    :ok = Ezagent.Plugin.RoleSeedHook.seed_roles(plugin_module, plugin_module.roles())
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
