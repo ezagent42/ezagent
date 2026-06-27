@@ -34,6 +34,25 @@ ab_eval(){ # 返回 JS 值;agent-browser 把字符串 JSON 化(带引号)→ 去
 ab_shot(){ agent-browser screenshot "$1" >/dev/null 2>&1; }
 ab_close(){ agent-browser close --all >/dev/null 2>&1; }
 
+# --- 浏览器获取模式(dev vs 容器内部署)---
+# 默认(dev/host):未设 E2E_BROWSER_CDP → 后续 `agent-browser open` 自起本机 Chrome(沿用旧路径)。
+# 容器内(deploy):设了 E2E_BROWSER_CDP → 这里 `connect` 一次贴到 chromium sidecar;之后所有
+# ab_open/ab_click/ab_eval/ab_shot 复用这条已连接的 CDP 会话(connect 会话经守护进程 +
+# unix socket 跨多次 CLI 调用持久化,2026-06-27 实测验证)。注意 URL 的 `?` 前需带 `/`
+# (browserless v2 对 `ws://chromium:3000?token=` 返回 400,正确形式是 `ws://chromium:3000/?token=`)。
+ab_connect_bootstrap(){
+  [ -n "${E2E_BROWSER_CDP:-}" ] || return 0      # dev/host:不连远端,留给 open 自起本机 Chrome
+  local i
+  for i in 1 2 3 4 5 6; do                        # sidecar 可能仍在预热 → 重试
+    if agent-browser connect "$E2E_BROWSER_CDP" >/dev/null 2>&1; then
+      info "agent-browser connected to CDP sidecar"; return 0
+    fi
+    sleep 3
+  done
+  c_r "agent-browser connect 失败:$E2E_BROWSER_CDP"; return 1
+}
+ab_connect_bootstrap || true
+
 # React 受控字段填值(native-setter + 派发事件)。val 不可含单引号(URI/名都安全)。
 ab_fill_react(){ # selector value
   ab_eval "(()=>{const el=document.querySelector('$1');if(!el)return 'ERR:no-el';const p=el.tagName==='SELECT'?window.HTMLSelectElement.prototype:window.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(el,'$2');el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));return 'OK';})()"
