@@ -69,7 +69,15 @@ RUN mix local.hex --force && mix local.rebar --force
 COPY . .
 # Resilient deps fetch: the proxy to hex.pm is flaky under concurrency — serialize +
 # longer timeout + retry so a transient tarball timeout doesn't fail the whole build.
-RUN ok=0; for i in 1 2 3 4 5; do \
+#
+# Unset SET-BUT-EMPTY proxy vars first: the ARG/ENV above bake HTTP_PROXY="" when no
+# proxy is passed (the host has direct egress via clash TUN). elixir_make's precompiled-NIF
+# downloader treats the empty string as truthy, does URI.parse("") -> host: nil, then
+# String.to_charlist(nil) crashes (FunctionClauseError) and `mix compile` of :exqlite fails.
+# Unsetting only when empty keeps a REAL build-arg proxy intact (deps.get/NIF still use it).
+RUN if [ -z "${HTTP_PROXY:-}" ]; then unset HTTP_PROXY http_proxy; fi; \
+    if [ -z "${HTTPS_PROXY:-}" ]; then unset HTTPS_PROXY https_proxy; fi; \
+    ok=0; for i in 1 2 3 4 5; do \
       HEX_HTTP_CONCURRENCY=1 HEX_HTTP_TIMEOUT=180 mix deps.get && { ok=1; break; } || { echo "deps.get retry $i"; sleep 8; }; \
     done; \
     [ "$ok" = 1 ] || { echo "deps.get failed after 5 retries"; exit 1; }; \
