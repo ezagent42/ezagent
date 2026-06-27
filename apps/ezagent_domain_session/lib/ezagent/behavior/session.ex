@@ -161,6 +161,20 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
+  # F7 PR-A — ISOMORPHIC participant-removal (body+doc in Membership, SPEC §3).
+  action(:remove_participant,
+    args: %{participant: :uri},
+    returns: %{
+      status: :atom,
+      torn_down: :atom,
+      deleted_rules: :integer,
+      repointed_rules: :integer
+    },
+    caps: [:remove_participant],
+    modes: [:call],
+    description: "Remove a participant (user / invited-agent) — owner-gated (F7 PR-A)"
+  )
+
   # LV→world parity PR-2b — upload authorization chokepoint. The world composer
   # is a React island under `phx-update="ignore"`, so it cannot use the LiveView
   # uploader (`live_file_input`/`consume_uploaded_entries`); uploads arrive over
@@ -688,28 +702,13 @@ defmodule Ezagent.Behavior.Session do
     Members.role_name_to_uri(members, role_name)
   end
 
-  # --- :leave ------------------------------------------------------------
-
+  # --- :leave / :remove_participant (F7 PR-A) — bodies in Membership -------
   def handle_leave(%{member: %URI{} = member_uri}, ctx) do
-    members = ctx[:read].(:members, %{})
-    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-    last_seen = ctx[:read].(:last_seen, %{})
+    {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
+  end
 
-    {ref_to_remove, new_monitors} = Delivery.pop_monitor_ref(monitors, member_uri)
-
-    if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
-
-    new_members = Map.delete(members, member_uri)
-    new_last_seen = Map.delete(last_seen, member_uri)
-
-    {:ok, %{},
-     [
-       {:set, :members, new_members},
-       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
-       {:set_transient, :monitors, new_monitors},
-       {:set, :last_seen, new_last_seen}
-     ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+  def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do
+    Membership.handle_remove_participant(participant_uri, ctx)
   end
 
   # --- :attach -----------------------------------------------------------

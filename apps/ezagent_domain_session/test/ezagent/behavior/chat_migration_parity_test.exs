@@ -85,12 +85,14 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added. PR-2 (im/session/
       # agent decomposition §OQ-4) — :receive removed (→ user.receive /
       # agent.receive). anon-user PR-2 — :merge_member added for login takeover.
+      # F7 PR-A — :remove_participant added (isomorphic participant removal).
       assert Enum.sort(SessionBehavior.__action_names__()) ==
                [
                  :attach,
                  :join,
                  :leave,
                  :merge_member,
+                 :remove_participant,
                  :send,
                  :set_legends,
                  :set_prompt_templates,

@@ -44,11 +44,14 @@ defmodule Ezagent.Behavior.ChatTest do
       # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is no
       # longer a Session action — it split into `user.receive` /
       # `agent.receive` (their own Behaviors, on their own Kinds).
+      # F7 PR-A — `:remove_participant` joins as the isomorphic participant-
+      # removal primitive (declared right after `:leave`).
       assert SessionBehavior.actions() ==
                [
                  :send,
                  :join,
                  :leave,
+                 :remove_participant,
                  :attach,
                  :merge_member,
                  :set_working_copy,
@@ -141,12 +144,14 @@ defmodule Ezagent.Behavior.ChatTest do
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
       # PR-2 (im/session/agent decomposition §OQ-4) — :receive removed
       # (now `user.receive` / `agent.receive`).
+      # F7 PR-A — :remove_participant added (isomorphic participant removal).
       assert keys ==
                [
                  :attach,
                  :join,
                  :leave,
                  :merge_member,
+                 :remove_participant,
                  :send,
                  :set_legends,
                  :set_prompt_templates,

@@ -309,6 +309,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {session_uri: sessionUri, member},
                   })
                 },
+                onRemoveParticipant: (sessionUri, participant) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.remove_participant",
+                    args: {session_uri: sessionUri, participant},
+                  })
+                },
                 onSessionViewSwitch: (sessionUri, view) => {
                   pushEvent?.("world:dispatch", {
                     action: "session.view.switch",
@@ -589,6 +595,7 @@ type RenderContext = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -630,6 +637,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
+          onRemoveParticipant={context.onRemoveParticipant}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}

@@ -92,6 +92,59 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     store_session_orchestrator_uri(session_uri, planned)
   end
 
+  @doc """
+  Grant the session OWNER, at create, the membership authority to remove a
+  participant from this session (F7 PR-A, SPEC §2.1 / §3.5).
+
+  The cap is `session/Session/:remove_participant/<session_uri>` —
+  `granted_by: owner_uri` (the session owner is the #154-clean granter, same
+  play as `grant_owner_orchestrator_admin_cap/3`). Concrete instance + concrete
+  action → `IdentityAdmin.rule_cap_bounded?/1` is true, so the grant is
+  authorized via the `{:rule, …}` branch (Decision #154). Idempotent: a logical
+  re-grant on the same session is skipped.
+
+  This is the ENTRY gate on the unified `session.remove_participant` action. It
+  is the ONLY new cap PR-A grants — the worker-teardown cap (the
+  `{:spawned_by, owner_uri}` cap-model change, SPEC §2.2) is PR-B and is NOT
+  granted here.
+  """
+  @spec grant_owner_remove_participant_cap(URI.t(), URI.t(), URI.t()) ::
+          :ok | {:error, term()}
+  def grant_owner_remove_participant_cap(
+        %URI{} = session_uri,
+        %URI{} = owner_uri,
+        %URI{} = workspace_uri
+      ) do
+    want = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.Session,
+      action: :remove_participant,
+      instance: session_uri,
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    current =
+      EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri)
+
+    if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
+      :ok
+    else
+      result =
+        Ezagent.Identity.Grant.grant_cap(
+          owner_uri,
+          want,
+          {:rule, :session_participation, owner_uri}
+        )
+
+      case result do
+        :ok -> :ok
+        {:error, reason} -> {:error, {:remove_participant_cap_grant_failed, reason}}
+      end
+    end
+  end
+
   def grant_owner_orchestrator_admin_cap(
         %URI{} = session_uri,
         %URI{} = owner_uri,

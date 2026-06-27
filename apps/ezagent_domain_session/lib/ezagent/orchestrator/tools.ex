@@ -733,92 +733,21 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # === routing rule prune (KEPT — round-4 atomic-repoint primitive) ======
-
-  # Drop the member URI from every routing rule's receiver set inside ONE
-  # `Repo.transaction`. Rules left with zero receivers are force-deleted
-  # (routing LOST — `Logger.warning`ed); rules with other receivers are
-  # repointed. Returns `{:ok, %{deleted_rules, repointed_rules}}`. (todo #9
-  # observability — the loss reaches the caller + the log.)
+  # === routing rule prune (F7 PR-A: extracted to shared module) ===========
   #
-  # B2 (codex BLOCKER) — SCOPED to THIS session's rules (`created_by ==
-  # session_uri`, the B1/PR-7 stamp). Pre-fix it pruned EVERY rule whose
-  # receivers named the member string, so a member with a same-named URI
-  # referenced by ANOTHER session's rule-set could be deleted/mutated out
-  # from under that session.
-  defp prune_routing_rules_for(%URI{} = session_uri, %URI{} = member_uri) do
-    table = EzagentDomainInstanceMessage.Routing.MentionRouting
-    member_str = URI.to_string(member_uri)
-    session_str = URI.to_string(session_uri)
-
-    txn =
-      EzagentCore.Repo.transaction(fn ->
-        rules = Ezagent.Routing.RuleStore.list(table)
-
-        rules
-        |> Enum.filter(fn rule ->
-          rule.created_by == session_str and member_str in (rule.receivers || [])
-        end)
-        |> Enum.reduce_while({[], 0}, fn rule, {deleted_meta, repointed} ->
-          remaining =
-            (rule.receivers || [])
-            |> Enum.reject(fn r -> r == member_str end)
-            |> Enum.uniq()
-
-          {result, acc} =
-            if remaining == [] do
-              {Ezagent.Routing.RuleStore.delete(rule.id, force: true),
-               {[{rule.id, Map.get(rule, :matcher_data, :unknown)} | deleted_meta], repointed}}
-            else
-              {Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled),
-               {deleted_meta, repointed + 1}}
-            end
-
-          case result do
-            :ok -> {:cont, acc}
-            {:error, reason} -> EzagentCore.Repo.rollback({:prune_failed, reason})
-          end
-        end)
-      end)
-
-    case txn do
-      {:ok, {deleted_meta, repointed}} ->
-        case reload_registry(table) do
-          :ok ->
-            Enum.each(deleted_meta, fn {id, matcher} ->
-              Logger.warning(
-                "remove_member routing GC: force-deleted routing rule " <>
-                  "id=#{inspect(id)} matcher=#{inspect(matcher)} " <>
-                  "because removing member #{member_str} left it with ZERO receivers. " <>
-                  "Routing to this rule is LOST — re-adding the member does NOT restore it."
-              )
-            end)
-
-            {:ok, %{deleted_rules: length(deleted_meta), repointed_rules: repointed}}
-
-          {:error, _} = err ->
-            err
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  rescue
-    e -> {:error, {:prune_failed, e}}
-  catch
-    kind, reason -> {:error, {:prune_failed, {kind, reason}}}
-  end
+  # The atomic session-scoped prune primitive MOVED to
+  # `Ezagent.Behavior.Session.RoutingPrune` so the isomorphic
+  # `Behavior.Session.remove_participant` (F7 PR-A) and this orchestrator
+  # `remove_member` path share ONE implementation (no fork — cross-op
+  # consistency). These thin delegators preserve the existing internal call
+  # sites + the PR-3S public `reload_registry/1` (used by
+  # `Tools.MemberTemplate.repoint_routing_rules/3`).
+  defp prune_routing_rules_for(%URI{} = session_uri, %URI{} = member_uri),
+    do: Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(session_uri, member_uri)
 
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.repoint_routing_rules/3`.
   @doc false
-  def reload_registry(table) do
-    Ezagent.Routing.RuleStore.load_into_registry(table)
-    :ok
-  rescue
-    e -> {:error, {:registry_reload_failed, e}}
-  catch
-    _, reason -> {:error, {:registry_reload_failed, reason}}
-  end
+  defdelegate reload_registry(table), to: Ezagent.Behavior.Session.RoutingPrune
 
   @doc "Snapshot the live session as a new version of the current parent SessionTemplate."
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
