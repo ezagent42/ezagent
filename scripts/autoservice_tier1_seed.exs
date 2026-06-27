@@ -247,14 +247,14 @@ defmodule Ezagent.AutoService.Tier1Seed do
         EzagentPluginKb.Application.resource_types()
       )
 
-    _ = Ezagent.RoleRegistry.register(EzagentPluginKb.Application.kb_recipe())
+    _ = Ezagent.Agent.RoleRegistry.seed_role_if_absent(EzagentPluginKb.Application.kb_recipe())
 
     # Minimal AutoService role — requests the kb.query cap so the agent holds it.
     # Only registered for a NON-"orchestrator" role (the real orchestrator recipe
     # is owned by session/cc boot; don't shadow it).
     if autosvc_role != "orchestrator" do
       _ =
-        Ezagent.RoleRegistry.register(%{
+        Ezagent.Agent.RoleRegistry.seed_role_if_absent(%{
           name: autosvc_role,
           passive: false,
           behaviors: [],
