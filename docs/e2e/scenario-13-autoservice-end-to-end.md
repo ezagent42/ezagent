@@ -102,18 +102,27 @@
 
 ## 实测结果 vs 预期(分次回填)
 
+> **2026-06-27 接线落地**:scenario-13 open-question #2 的 seed 缺口已补。
+> seed = `scripts/autoservice_tier1_seed.exs`(纯模块 `Ezagent.AutoService.Tier1Seed`)
+> + 在线 serve-seed `scripts/autoservice_tier1_serve_seed.exs`(recipe §2 in-node)。
+> 确定性回归 = `apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`
+> (复用**同一** seed 模块,20/20 kb 测试绿)。下表「实测」分两层标注:
+> **retrieval/routing 层**(确定性、CI 可判)vs **answer 层**(需 live cc 工具循环 = 余留 GAP)。
+
 | Step | 预期 | 实测 | 一致? |
 |---|---|---|---|
-| S1 | 匿名进 public_view chat,被 join | <回填> | — |
-| S2a | session 有默认 always→agent 路由规则 | <回填> | — |
-| S2b | customer 裸消息送达 → agent 回一条 | <回填> | — |
-| S3 | 答案含 KB 命中片段 + 审计 kb:query | <回填> | — |
-| S4 | 操作员 console 看到 session+成员+transcript | <回填> | — |
+| S1 | 匿名进 public_view chat,被 join | seed 置 `public_view: true`(`ensure_public_view_session`);live 浏览器落地见 §证据 | 🟢(live 回填) |
+| S2a | session 有默认 always→agent 路由规则 | seed 写一条**会话作用域** `in_session→<agent>` 规则;测试证**裸消息**(无 @)解析到 agent + **跨会话不命中**(规则非全局) | 🟢 确定性 |
+| S2b | customer 裸消息送达 → agent 回一条 | **routing 层**:裸消息经 Resolver 解析到 AutoService agent(S2a 证)。**answer 层**(agent 真回一条):需 live cc 工具循环 → 见 GAP | 🟡 routing🟢 / answer=GAP |
+| S3 | 答案含 KB 命中片段 + 审计 kb:query | **retrieval soul**(确定性):`kb.query` 携 orchestrator 已 seed 的 cap 命中**仅在语料里**的 fact `ZEPHYR-7731`(排除模型先验)+ `[:ezagent,:authz,:granted]` telemetry(审计写入源)+ 无 cap 反控被拒。**answer soul**(LLM 把 fact 织进聊天回复):需 live cc → 见 GAP | 🟡 retrieval🟢 / answer=GAP |
+| S4 | 操作员 console 看到 session+成员+transcript | live 浏览器见 §证据 | 🟢(live 回填) |
 | S5-S10 | (deferred:对应 tier 立项后回填) | — | — |
 
 ## 遗留 / bug
 
-- **Tier 1 接线缺口**(见上 DoD):缺 seeded「会话 agent 暴露 kb_query + 已 ingest kb-agent」链 → S3 暂不可直接判绿。建议补一条 `e2e-autoservice` seed(kb-agent + ingest 一份固定语料 + 会话 agent 绑定),把 S3 变成确定性可重放。
+- ✅ **Tier 1 接线缺口已补**(原 open-question #2):`scripts/autoservice_tier1_seed.exs` 把 kb-agent(+ ingest 固定语料 `ZEPHYR-7731`)+ AutoService orchestrator agent(绑 kb_query cap)+ public_view session + 会话作用域 `always→agent` 路由 接成一条可重放链;`autoservice_tier1_seed_test.exs` 确定性证 S2a/S2b(routing)+ S3(retrieval+审计)。
+- 🟥 **S3/S2b answer 层余留 GAP(cc 工具循环)**:能调 `kb_query` 的只有走工具循环的 **cc-flavor orchestrator**;cc 的 **live 回复**仍背 scenario-05 的 PTY 往返已知阻塞(`#505` 已修 `--dangerously-skip-permissions`;OAuth 过期→401 仍会静音)。**注:GAP-4 是 *UI*-create;本 seed 走 `create_agent` CLI/seed 路径(场景明示允许),create 不受 GAP-4 阻塞——只有 *agent 真回一条* 这一步受 cc 门控。** answer 层需在 live disposable stack 验证或报告观测到的阻塞。
+- ⚠️ **cap 来源差异(诚实声明)**:确定性测试把 `orchestrator_kb_caps/0` 直接传给 `kb_query`(seed 声明的 cap),**未**回读 created agent 实际持有的 cap;live 路径的 orchestrator kb 授权来自 **bridge-token 重建(kb-retrieval SPEC §5.3 option 1)**,而非 agent 自身 role recipe。「重建后的 caps 是否含 `kb.query`」是 live S3 最可能的失败点,须在 live 节点独立探测(不依赖 PTY)。
 - **GAP-1 / GAP-4 / GAP-5**(`notes/2026-06-26-product-gaps.md`):分别阻塞"UI 建可对话 agent"、"cc UI-create"、"session teardown",均影响 Tier 1 的干净可重复执行。
 - **错误可见性**(product-gaps 备注):后端 reject 只落 `data-last-dispatch`,无 toast/inline——customer/操作员看不到为什么,Tier 1/2 的失败模式取证要靠 `data-*` 而非 UI 文案。
 
