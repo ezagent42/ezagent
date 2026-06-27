@@ -102,7 +102,11 @@ defmodule Ezagent.Domain.Pty.AutoPrompts do
         # breaking a literal "Loading development channels" match. The
         # option-1 label is rendered atomically and is specific enough to
         # this exact dialog to avoid false positives.
-        match: ["development channels", "I am using this for local development"],
+        # Live #505: the WARNING prose fragments run-to-run ("development channels"
+        # -> "developme t channel"), so anchor ONLY on the atomic option-1 label,
+        # which is specific enough to this exact dialog. (Sending "1\r" selects it
+        # regardless of highlight.)
+        match: ["I am using this for local development"],
         send: "1\r",
         fired?: false
       },

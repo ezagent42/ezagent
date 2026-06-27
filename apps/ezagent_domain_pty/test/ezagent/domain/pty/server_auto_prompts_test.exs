@@ -170,6 +170,16 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
     assert p.send == "1\r"
   end
 
+  # Live #505: on a real run the WARNING prose fragmented WORD-INTERNALLY
+  # ("development channels" -> "developme t channel"), which a prose-anchored
+  # match would miss. The option-1 label stays atomic, so the rule must still fire.
+  test ":dev_channels_dialog fires when the warning prose fragments word-internally" do
+    p = spec(:dev_channels_dialog)
+    live = "Lo ding developme t channel  --dangerously-load-development-channels ... " <>
+             "Channels: server:esr-bridge  ❯   1.  I am using this for local development   2.  Exit"
+    assert PtyServer.matches?(p.match, live)
+  end
+
   test "regression: a literal \"Loading development channels\" match would MISS this buffer" do
     # Why :dev_channels_dialog anchors on the menu-option label, not the
     # banner prose: the animated banner strips to "L ading…", so the old
