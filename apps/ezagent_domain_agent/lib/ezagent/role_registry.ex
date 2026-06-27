@@ -84,7 +84,8 @@ defmodule Ezagent.Agent.RoleRegistry do
   @spec role_subject_uri(String.t(), String.t()) :: String.t()
   def role_subject_uri(workspace_uri, name)
       when is_binary(workspace_uri) and is_binary(name) and name != "" do
-    "config://#{workspace_host(workspace_uri)}/role/#{name}"
+    workspace = workspace_uri |> Ezagent.URI.new!() |> Ezagent.URI.workspace_name!()
+    "config://#{workspace}/role/#{name}"
   end
 
   @doc """
@@ -339,13 +340,4 @@ defmodule Ezagent.Agent.RoleRegistry do
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri
-
-  # The "host" segment of a workspace URI — `workspace://system` → "system".
-  defp workspace_host(workspace_uri) do
-    case Ezagent.URI.new!(workspace_uri) do
-      %URI{host: host} when is_binary(host) and host != "" -> host
-      %URI{path: "/" <> rest} -> rest
-      _ -> workspace_uri
-    end
-  end
 end
