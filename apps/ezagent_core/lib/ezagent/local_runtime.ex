@@ -69,4 +69,19 @@ defmodule Ezagent.LocalRuntime do
   @spec ensure_started_detailed(URI.t()) ::
           {:ok, :started | :already_started, pid()} | {:error, term()}
   def ensure_started_detailed(%URI{} = uri), do: SpawnRegistry.spawn_detailed(uri)
+
+  @doc """
+  Owner-gated ensure-live: return the live Kind for `uri`, rehydrating it from
+  durable state if it is cold but was genuinely created before. Delegates to the
+  already-owner-gated `SpawnRegistry.ensure_live/1` (whose `spawn/1` carries the
+  gate), so a non-owner runtime returns the gate error instead of materialising a
+  foreign Kind locally — and a never-created URI returns `{:error, :not_created}`
+  rather than a spurious fresh spawn.
+
+  This is the sanctioned facade for the LLM Protocol API plug's session-liveness
+  check (#99): it previously called `SpawnRegistry.ensure_live/1` directly, which
+  the `plugin_workspace_locality_contract_test` forbids for `apps/ezagent_plugin_*`.
+  """
+  @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
+  def ensure_live(%URI{} = uri), do: SpawnRegistry.ensure_live(uri)
 end

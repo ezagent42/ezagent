@@ -198,8 +198,8 @@ defmodule EzagentWeb.Router do
   # north star ("beyond webhook route registration").
   forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
 
-  # P0 protocol-api: OpenAI-compatible inbound endpoint.
-  forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenaiChatPlug
+  # LLM Protocol API: OpenAI-compatible inbound endpoint.
+  forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug
 
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.

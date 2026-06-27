@@ -1,4 +1,4 @@
-defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
+defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlugIntegrationTest do
   use EzagentCore.DataCase, async: true
   alias Ezagent.ProtocolApi.ApiKeyStore
   alias EzagentCore.Repo
@@ -6,7 +6,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
   describe "POST /v1/chat/completions" do
     test "returns 401 when no Bearer token" do
       body = Jason.encode!(%{"messages" => [%{"role" => "user", "content" => "hi"}]})
-      conn = conn(body) |> EzagentPluginProtocolApi.OpenaiChatPlug.call([])
+      conn = conn(body) |> EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug.call([])
 
       assert conn.status == 401
       resp = Jason.decode!(conn.resp_body)
@@ -32,7 +32,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
 
       conn =
         conn(body, "pk_#{key_id}_s1")
-        |> EzagentPluginProtocolApi.OpenaiChatPlug.call([])
+        |> EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug.call([])
 
       assert conn.status == 202
       resp = Jason.decode!(conn.resp_body)
@@ -62,7 +62,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
 
       conn =
         conn(body, "pk_#{key_id}_wrong")
-        |> EzagentPluginProtocolApi.OpenaiChatPlug.call([])
+        |> EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug.call([])
 
       assert conn.status == 400
       resp = Jason.decode!(conn.resp_body)
@@ -73,7 +73,7 @@ defmodule EzagentPluginProtocolApi.OpenaiChatPlugIntegrationTest do
   test "returns 400 for GET without request id" do
       conn =
         Plug.Test.conn(:get, "/v1/chat/completions")
-        |> EzagentPluginProtocolApi.OpenaiChatPlug.call([])
+        |> EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug.call([])
 
       assert conn.status == 405
       resp = Jason.decode!(conn.resp_body)

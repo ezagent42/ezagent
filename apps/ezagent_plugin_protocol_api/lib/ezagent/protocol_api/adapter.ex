@@ -1,11 +1,10 @@
 defmodule Ezagent.ProtocolApi.Adapter do
   @moduledoc """
-  Protocol API ExternalAdapter — `:request_scoped` (handoff §2.4).
+  LLM Protocol API ExternalAdapter — `:request_scoped` (handoff §2.4).
 
-  The binding is REQUEST-SCOPED: lives for one HTTP request. No Worker is spawned; OpenaiChatPlug owns the transport.
-  
-  
-  
+  The binding is REQUEST-SCOPED: lives for one HTTP request. No Worker is
+  spawned; `EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug` owns the
+  transport.
   """
 
   @behaviour Ezagent.ExternalMirror.Adapter
@@ -14,10 +13,10 @@ defmodule Ezagent.ProtocolApi.Adapter do
   def adapter_id, do: "protocol_api"
 
   @impl true
-  def display_name, do: "Protocol API"
+  def display_name, do: "LLM Protocol API"
 
   @impl true
-  def description, do: "OpenAI/Anthropic-compatible inbound HTTP API."
+  def description, do: "Inbound OpenAI/Anthropic-compatible API for calling ezagent agents."
 
   @impl true
   def cap_subject do
