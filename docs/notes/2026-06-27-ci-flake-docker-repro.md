@@ -7,6 +7,21 @@
 `precommit + check_invariants` recurring reds — Sandbox shared-mode revert +
 spawn-readiness races, **green on darwin, red on the ubuntu runner**).
 
+**Provenance / reproducibility (verify-able):**
+
+- **Initial capture (2/2 below):** image built from worktree at commit `86453a9b`
+  (the branch base before a 1-commit rebase onto `origin/main` `37b71aae`). That rebase
+  delta only **removed `config_governance`** code/tests in the **identity** app
+  (~1000 lines incl. a 645-line identity test) — a different app from the
+  **session**-app flakes reproduced here, so it does not touch the reproduced suites.
+  *Orthogonal caveat:* that first image happened to resolve **pnpm 11.9.0** (a corepack
+  pinning bug, since fixed → pnpm **10.33.0** to match CI). pnpm only builds JS assets
+  (which compiled fine); it has **no bearing** on the Elixir Sandbox/scheduler timing
+  that drives the flake. The flake-relevant pins — **Elixir 1.19.5 / OTP 28 / postgres 16
+  / cpuset+scheduler count** — were correct in both images.
+- **Confirmation:** re-run on the **shipped** image (rebased source + pnpm 10.33.0,
+  i.e. exactly what `make ci.docker.build` produces) — see "Confirmation run" below.
+
 ## TL;DR — the key result
 
 The diagnosis recorded an honest caveat: seed **979933** failed on the ubuntu CI runner
@@ -83,6 +98,13 @@ called out so they are not over-claimed:
 `PluginIsolationWorkspaceTest` (app `ezagent_domain_workspace`) was **GREEN this
 iteration** (179/0) — consistent with the diagnosis that the named suites flake
 *intermittently*; on this seed/timing the session-app suites fired instead.
+
+## Confirmation run (shipped image: rebased source + pnpm 10.33.0)
+
+<!-- CONFIRM-RESULT -->
+_Result pending — re-run of seed 979933 on the exact image `make ci.docker.build`
+produces, to confirm the flake reproduces independent of the initial-capture provenance
+caveats above._
 
 ## Reproduce it yourself
 
