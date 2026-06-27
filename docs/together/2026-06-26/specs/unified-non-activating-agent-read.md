@@ -399,9 +399,11 @@ not the view.)
   sprayed across plugins).
 - **Lifecycle gate** (`ezagent.check_invariants.lifecycle`): the reader does no engine-internal
   calls inside a Behavior handler — it is a plain domain facade, not a Behavior. Untouched.
-- **NEW — `no_surface_read_dispatch` arch-gate (the anti-recurrence gate; full design §11).** Two new
-  probes added to `CapCheckOnlyAtChokepointTest`'s `@probes` list, scanning the presentation/surface
-  dirs only: **p14** greps for a raw dispatch of the read pairs `(:identity, :list_caps)` /
+- **NEW — `no_surface_read_dispatch` arch-gate (the anti-recurrence gate; full design §11).** A new
+  dedicated invariant test module `NoSurfaceReadDispatchTest` (copies the
+  `CapCheckOnlyAtChokepointTest` probe machinery but owns its own assertion message — §11.1) with two
+  probes, scanning the presentation/surface dirs only: **p14** greps for a raw dispatch of the read
+  pairs `(:identity, :list_caps)` /
   `(:sandbox, :read)`, and **p15** greps for a direct call to the dispatching read FACADE
   `Ezagent.Agent.Config.read_cascade(` (the config read enters via a facade, not a surface-local
   `with_action` — codex adversarial-review finding, §11.5). Together they FAIL if a surface re-reads
@@ -459,7 +461,7 @@ spawned), assert `KindRegistry.lookup == :error` **before AND after** the read.
    global p3 probe allowlists the whole session dir and therefore can't enforce this for the new
    reader (§7 caveat). Guarantees the reader routes the match through `caps_authorize?`.
 10. **Anti-recurrence regression-lock (the gate — §11). Green ONLY after migration.** The new p14 +
-    p15 probes (added to `CapCheckOnlyAtChokepointTest.@probes`) scan the surface dirs
+    p15 probes (in the dedicated `NoSurfaceReadDispatchTest` module, §11.1) scan the surface dirs
     (`apps/ezagent_plugin_world/lib/`, `apps/ezagent_web/lib/`, the operator-CLI
     `apps/*/lib/mix/tasks/`) and assert **zero** surface occurrences of: (p14) a raw dispatch of
     `(:identity, :list_caps)` or `(:sandbox, :read)`, and (p15) a direct call to the dispatching
@@ -588,12 +590,41 @@ removed. Consolidation is a one-time cleanup; without a gate it decays. This sec
 
 ### 11.1 The gate, concretely
 
-**Name:** `no_surface_read_dispatch`. **Form:** a new probe **p14** appended to the existing
-`EzagentCore.Invariants.CapCheckOnlyAtChokepointTest.@probes` list
-(`apps/ezagent_core/test/invariants/cap_check_only_at_chokepoint_test.exs`). It reuses that suite's
-proven `%{id, desc, pattern, allowlist}` machinery and its source-tree scan (no runtime BEAM needed),
-so it slots into `mix ezagent.check_invariants` with zero new infrastructure — exactly mirroring how
-`no_flavor_refs_in_core` / p1–p13 already work.
+> **⚠ Provenance of the file:line citations below (read before verifying against the tree).** The
+> exact line numbers in §11 (`identity_data.ex:191` config facade, `:345`
+> `:identity/:list_caps`, `:495` `:sandbox/:read`) are true against **this SPEC branch's base tree**
+> (`docs/unified-agent-read-spec`), which is where the codex review (§11.5) read them. They are **NOT
+> 1:1 against `origin/main`**: verified 2026-06-26, on `origin/main`
+> `apps/ezagent_plugin_world/lib/ezagent/world/identity_data.ex` has ALREADY migrated the caps read
+> off dispatch to `Ezagent.Identity.read_entity_caps/1` + `caps_authorize?/2` (its
+> `list_entity_caps/3` comment at `:392-405` says "the previous implementation dispatched
+> `identity.list_caps`") — so main has **no** `:identity/:list_caps` surface dispatch in that file,
+> and the config facade call sits at `:198` (not `:191`). Mirror of the §0 ⚠ branch-provenance
+> callout. **Consequence for the gate (does NOT change its design):** the gate forbids *future*
+> re-introduction regardless of which read is currently migrated; but the §11 "fails today at
+> 191/345/495" and §0's "sandbox still dispatches on both branches" describe the SPEC's base tree,
+> not necessarily main. **At implementation time the surface read sites MUST be re-enumerated against
+> the actual merge target** (`grep -nE ':identity, :list_caps|:sandbox, :read|Config\.read_cascade\('
+> over the `@surface_globs`) and the migration (§9) applied to whatever the target tree contains —
+> the gate then locks the cleaned state. (The sandbox read on `fix/cc-folder-trust` was also already
+> converted to `Behavior.Sandbox.read_persisted_state/1`, not a live dispatch — §0's "still
+> dispatches on both branches" is the stale-base claim this caveat corrects; the gate's p14
+> `:sandbox/:read` entry still guards re-introduction either way.)
+
+**Name:** `no_surface_read_dispatch`. **Form:** a new **dedicated invariant test module**
+`EzagentCore.Invariants.NoSurfaceReadDispatchTest`
+(`apps/ezagent_core/test/invariants/no_surface_read_dispatch_test.exs`) that **copies the proven
+`@probes` / `allowed_path?` machinery** of `CapCheckOnlyAtChokepointTest` (same
+`%{id, desc, pattern, allowlist}` shape, same source-tree scan, no runtime BEAM) but owns its **own
+moduledoc + its own assertion message**. A dedicated module (rather than appending p14/p15 to
+`CapCheckOnlyAtChokepointTest.@probes`) is the correct mirror because that suite has ONE shared
+assertion emitting `"G2 leakage — cap-check shape detected outside the dispatch chokepoint…"` — a
+read-dispatch violation is **not** a cap-check-shape leak, so appended probes would emit the wrong
+(semantically misleading) message. The dedicated module lets the gate emit the exact
+`no_surface_read_dispatch` message below, and it still runs under the same `mix
+ezagent.check_invariants` aggregate (add it to the aggregate's module list exactly as the other
+invariant tests are wired). Probe IDs stay `:p14`/`:p15` for cross-reference continuity with this
+SPEC.
 
 **Forbidden surface read-paths — there are TWO syntactic forms a surface read takes, and the gate
 must cover BOTH** (this is the gap codex caught in adversarial review — see §11.5):
@@ -786,14 +817,19 @@ The gate distinguishes a **read-class** dispatch from a **write/action** dispatc
 
 ### 11.3 Why this fits the established gate machinery (not a bespoke mechanism)
 
-- Same suite, same `@probes` shape, same scan-the-source-tree-without-the-BEAM approach as
-  `cap_check_only_at_chokepoint` p1–p13 and `no_flavor_refs_in_core`. A contributor who has seen any
-  existing probe reads p14/p15 with zero new concepts.
-- Runs inside the existing `mix ezagent.check_invariants` aggregate gate (already in §8.8 + CI), so
-  no new CI wiring.
-- The only extension to the suite is the per-probe `surface_only: true` directory scoping (so p14/p15
-  scan surfaces, not the whole umbrella) — a small, reusable addition that future surface-only probes
-  can reuse.
+- Same `%{id, desc, pattern, allowlist}` probe shape + `allowed_path?` scan +
+  scan-the-source-tree-without-the-BEAM approach as `cap_check_only_at_chokepoint` p1–p13 and
+  `no_flavor_refs_in_core` — copied verbatim into the dedicated `NoSurfaceReadDispatchTest` module
+  (§11.1). A contributor who has seen any existing probe reads p14/p15 with zero new concepts. The
+  dedicated module (not appended probes) is itself the faithful mirror: each invariant test already
+  owns its own moduledoc + assertion message; this gate does too, instead of borrowing
+  `CapCheckOnlyAtChokepointTest`'s semantically-wrong "G2 leakage" message.
+- Runs inside the existing `mix ezagent.check_invariants` aggregate gate (add the module to its test
+  list as the other invariant tests are wired — §8.8 + CI), so no new CI wiring beyond the one-line
+  registration.
+- The only new mechanism is the per-probe `surface_only: true` directory scoping (so p14/p15 scan
+  surfaces, not the whole umbrella) — a small, reusable addition that future surface-only probes can
+  reuse.
 
 ### 11.4 Limitations (honest scope, do not overclaim)
 
