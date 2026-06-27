@@ -186,7 +186,16 @@
   #   → base cc/codex agent), intentionally duplicating the delegating bodies across
   #   flavor files. 29→32.
   # arch-cap-bump: cc-headless SDK behavior mirrors curl sync-result helper shape pending shared helper extraction (+8)
-  cross_file_duplicate_fn_groups: 40,
+  # arch-cap-bump: +8 retire-customer SPEC §5.3/§5.4 — the external surface
+  #   ingress (ExternalFeedController/Socket) now takes the SAME anon-user
+  #   lifecycle as the chat surface (mint/reuse anon → join → cookie → token),
+  #   so its helpers (resolve_caller/resolve_anonymous/reuse_or_mint/mint_fresh/
+  #   join_anon/render_spa/read_valid_cookie/put_anon_cookie/show + Socket.connect)
+  #   are byte-identical to ChatFeedController/ChatFeedSocket. SPEC §5.4 chose two
+  #   PARALLEL surfaces and §9 names touching ChatFeed* a non-goal, so extracting a
+  #   shared EzagentWeb.Socialware.AnonIngress is a deferred follow-up (touches
+  #   ChatFeed*), not done in this PR. 40→48.
+  cross_file_duplicate_fn_groups: 48,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

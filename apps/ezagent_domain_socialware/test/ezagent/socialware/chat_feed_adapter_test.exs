@@ -49,6 +49,12 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
 
   describe "render/2 routes the chat projection (caller-gated)" do
     setup do
+      # `Adapter.render/3` gates on `function_exported?(ChatFeedAdapter, :render, 2)`,
+      # which is `false` for a module whose BEAM is not yet LOADED — a run-order
+      # flake (the module is only `alias`ed, not necessarily loaded, when this
+      # describe runs first). Force-load it so the export check is deterministic.
+      Code.ensure_loaded!(ChatFeedAdapter)
+
       session =
         Ezagent.URI.session(:team_alpha, :default, "cfa-#{System.unique_integer([:positive])}")
 
