@@ -266,6 +266,12 @@ defmodule Ezagent.ExternalMirror.TestSupport.PullAdapter do
   def adapter_kind, do: :pull
 
   @impl true
+  def delivery_discipline, do: :snapshot_refresh
+
+  @impl true
+  def participation_profile, do: :read_only
+
+  @impl true
   def cap_subject do
     %{
       behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
@@ -279,6 +285,183 @@ defmodule Ezagent.ExternalMirror.TestSupport.PullAdapter do
     # not trip the UriQuery source-scan gate (fixture, not a real projection).
     %{kind: "pull-render"}
   end
+
+  @impl true
+  def render_authorized(%URI{} = _session_uri, %URI{} = _caller) do
+    {:ok, %{kind: "pull-render"}}
+  end
+
+  @impl true
+  def live_topics(%URI{} = _session_uri), do: ["pull:test"]
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.SnapshotPullAdapter do
+  @moduledoc "Strict `:snapshot_refresh` pull fixture for registry discipline tests."
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "snapshot_pull_em"
+
+  @impl true
+  def display_name, do: "Snapshot Pull EM Adapter"
+
+  @impl true
+  def description, do: "Test-only snapshot-refresh pull adapter."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def delivery_discipline, do: :snapshot_refresh
+
+  @impl true
+  def participation_profile, do: :read_only
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
+      description: "Test-only snapshot pull cap."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = _session_uri, _ctx), do: %{kind: "snapshot-render"}
+
+  @impl true
+  def render_authorized(%URI{} = _session_uri, %URI{} = _caller),
+    do: {:ok, %{kind: "snapshot-render"}}
+
+  @impl true
+  def live_topics(%URI{} = _session_uri), do: ["snapshot:test"]
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.CursorPullAdapter do
+  @moduledoc "Strict `:cursor_replay` pull fixture for registry discipline tests."
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "cursor_pull_em"
+
+  @impl true
+  def display_name, do: "Cursor Pull EM Adapter"
+
+  @impl true
+  def description, do: "Test-only cursor-replay pull adapter."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def delivery_discipline, do: :cursor_replay
+
+  @impl true
+  def participation_profile, do: :participatory
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
+      description: "Test-only cursor pull cap."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = _session_uri, _ctx), do: %{kind: "cursor-render"}
+
+  @impl true
+  def live_topics(%URI{} = _session_uri), do: ["cursor:test"]
+
+  @impl true
+  def join_with_cursor(%URI{} = _session_uri, %URI{} = _caller),
+    do: {:ok, %{snapshot: %{kind: "cursor-render"}, cursor: 0}}
+
+  @impl true
+  def replay(%URI{} = _session_uri, %URI{} = _caller, cursor) when is_integer(cursor),
+    do: {:ok, %{snapshot: %{kind: "cursor-replay"}, cursor: cursor + 1}}
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.SnapshotPullAdapterWithCursor do
+  @moduledoc "Invalid snapshot-refresh fixture that declares cursor callbacks."
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "snapshot_with_cursor_em"
+
+  @impl true
+  def display_name, do: "Snapshot Pull With Cursor"
+
+  @impl true
+  def description, do: "Invalid snapshot-refresh pull adapter."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def delivery_discipline, do: :snapshot_refresh
+
+  @impl true
+  def participation_profile, do: :read_only
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
+      description: "Test-only invalid snapshot pull cap."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = _session_uri, _ctx), do: %{kind: "invalid-snapshot-render"}
+
+  @impl true
+  def render_authorized(%URI{} = _session_uri, %URI{} = _caller),
+    do: {:ok, %{kind: "invalid-snapshot-render"}}
+
+  @impl true
+  def live_topics(%URI{} = _session_uri), do: ["invalid-snapshot:test"]
+
+  @impl true
+  def join_with_cursor(%URI{} = _session_uri, %URI{} = _caller),
+    do: {:ok, %{snapshot: %{}, cursor: 0}}
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.PullAdapterMissingLiveTopics do
+  @moduledoc "Invalid pull fixture missing live_topics/1."
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "pull_missing_live_topics_em"
+
+  @impl true
+  def display_name, do: "Pull Missing Live Topics"
+
+  @impl true
+  def description, do: "Invalid pull adapter missing live_topics/1."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def delivery_discipline, do: :snapshot_refresh
+
+  @impl true
+  def participation_profile, do: :read_only
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
+      description: "Test-only missing live topics cap."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = _session_uri, _ctx), do: %{kind: "missing-live-topics-render"}
+
+  @impl true
+  def render_authorized(%URI{} = _session_uri, %URI{} = _caller),
+    do: {:ok, %{kind: "missing-live-topics-render"}}
 end
 
 defmodule Ezagent.ExternalMirror.TestSupport.PushAdapterMissingBinding do

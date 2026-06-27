@@ -13,7 +13,7 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocket do
 
   alias Ezagent.Socialware.ChatFeedAuth
 
-  channel "socialware:external:*", EzagentWeb.Socialware.ExternalFeedChannel
+  channel "socialware:external:*", EzagentWeb.Socialware.SessionFeedChannel
 
   @impl true
   def connect(params, socket, _connect_info) do

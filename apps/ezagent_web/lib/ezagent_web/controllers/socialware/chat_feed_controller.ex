@@ -50,7 +50,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
      cookie is set so the next visit reuses this identity.
   4. Either path mints `ChatFeedAuth.issue_token(caller_uri, session_uri)` and embeds
      it in the SPA shell. The token is NOT the authorization — the live membership
-     read (`ChatFeed`, `ChatFeedChannel`) re-checks on every join/replay, so an
+     read (`ChatFeed`, `SessionFeedChannel`) re-checks on every join/replay, so an
      ex-member's view clears.
 
   Read authority is UNCHANGED: the anon-User reads because it is a real session

@@ -94,18 +94,25 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       # PR-EM-1 + PR-EM-2 + P3-1. `target_ownership_check_timeout` was
       # already optional; P3-1 adds `adapter_kind/0` (optional, default
       # `:push`) and `render/2` (optional at the behaviour level, required
-      # only for `:pull` — enforced in the registry). Optionality is
-      # asserted separately below.
+      # only for `:pull` — enforced in the registry). The live pull-feed
+      # extension adds abstract delivery callbacks only; concrete session reads
+      # remain in adapter implementations. Optionality is asserted separately.
       expected =
         [
           adapter_id: 0,
           adapter_kind: 0,
           binding_module: 0,
           cap_subject: 0,
+          delivery_discipline: 0,
           description: 0,
           display_name: 0,
           event_to_payload: 1,
+          join_with_cursor: 2,
+          live_topics: 1,
+          participation_profile: 0,
           render: 2,
+          render_authorized: 2,
+          replay: 3,
           target_ownership_check: 2,
           target_ownership_check_timeout: 0
         ]
@@ -119,7 +126,7 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       assert :target_ownership_check_timeout in Keyword.keys(optional)
     end
 
-    test "P3-1: adapter_kind/0 + render/2 are optional at the behaviour level" do
+    test "P3-1: adapter_kind/0 + render/2 and live pull callbacks are optional at the behaviour level" do
       # Compiler-level optionality so a :pull adapter can omit the push
       # transport callbacks (and a :push adapter can omit render/2)
       # without a warning. The per-kind REQUIRED set is enforced at
@@ -130,6 +137,12 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
 
       assert :adapter_kind in optional
       assert :render in optional
+      assert :delivery_discipline in optional
+      assert :participation_profile in optional
+      assert :render_authorized in optional
+      assert :live_topics in optional
+      assert :join_with_cursor in optional
+      assert :replay in optional
     end
 
     test "P3-1: the push transport callbacks are compiler-optional (per-kind, runtime-enforced)" do

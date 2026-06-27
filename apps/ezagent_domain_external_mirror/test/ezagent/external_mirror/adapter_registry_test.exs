@@ -18,10 +18,14 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
   alias Ezagent.ExternalMirror.{Adapter, AdapterRegistry, WorkerRegistry}
 
   alias Ezagent.ExternalMirror.TestSupport.{
+    CursorPullAdapter,
     MockAdapter,
     OtherAdapter,
     PullAdapter,
-    PushAdapterMissingBinding
+    PullAdapterMissingLiveTopics,
+    PushAdapterMissingBinding,
+    SnapshotPullAdapter,
+    SnapshotPullAdapterWithCursor
   }
 
   alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
@@ -164,9 +168,11 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
                  Ezagent.ExternalMirror.TestSupport.MockBinding
                )
 
-      assert_raise ArgumentError, ~r/BindingRegistry row already binds|no transport binding/, fn ->
-        AdapterRegistry.register(PullAdapter)
-      end
+      assert_raise ArgumentError,
+                   ~r/BindingRegistry row already binds|no transport binding/,
+                   fn ->
+                     AdapterRegistry.register(PullAdapter)
+                   end
 
       assert :error = AdapterRegistry.lookup("pull_em")
     end
@@ -217,6 +223,41 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
         end
 
       assert err.message =~ "binding_module/0"
+    end
+
+    test "accepts a :cursor_replay pull adapter with replay callbacks" do
+      assert Adapter.delivery_discipline_of(CursorPullAdapter) == :cursor_replay
+      assert Adapter.participation_profile_of(CursorPullAdapter) == :participatory
+      assert :ok = AdapterRegistry.register(CursorPullAdapter)
+      assert {:ok, CursorPullAdapter} = AdapterRegistry.lookup("cursor_pull_em")
+    end
+
+    test "accepts a :snapshot_refresh pull adapter with result-bearing render and no cursor callbacks" do
+      assert Adapter.delivery_discipline_of(SnapshotPullAdapter) == :snapshot_refresh
+      assert Adapter.participation_profile_of(SnapshotPullAdapter) == :read_only
+      refute function_exported?(SnapshotPullAdapter, :join_with_cursor, 2)
+      refute function_exported?(SnapshotPullAdapter, :replay, 3)
+      assert :ok = AdapterRegistry.register(SnapshotPullAdapter)
+      assert {:ok, SnapshotPullAdapter} = AdapterRegistry.lookup("snapshot_pull_em")
+    end
+
+    test "rejects a :snapshot_refresh pull adapter that declares cursor callbacks" do
+      err =
+        assert_raise ArgumentError, fn ->
+          AdapterRegistry.register(SnapshotPullAdapterWithCursor)
+        end
+
+      assert err.message =~ "snapshot_refresh"
+      assert err.message =~ "join_with_cursor/2"
+    end
+
+    test "rejects a pull adapter missing live_topics/1" do
+      err =
+        assert_raise ArgumentError, fn ->
+          AdapterRegistry.register(PullAdapterMissingLiveTopics)
+        end
+
+      assert err.message =~ "live_topics/1"
     end
   end
 end

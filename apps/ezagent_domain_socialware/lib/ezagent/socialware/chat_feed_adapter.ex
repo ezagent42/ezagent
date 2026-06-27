@@ -74,6 +74,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   """
   @behaviour Ezagent.ExternalMirror.Adapter
 
+  alias Ezagent.Behavior.Session.Delivery
   alias Ezagent.Socialware.ChatFeed
 
   @adapter_id "chat_feed"
@@ -97,6 +98,12 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   def adapter_kind, do: :pull
 
   @impl true
+  def delivery_discipline, do: :snapshot_refresh
+
+  @impl true
+  def participation_profile, do: :read_only
+
+  @impl true
   def cap_subject do
     %{
       behavior_module: Ezagent.Socialware.ChatFeedAdapter.Allow,
@@ -112,5 +119,15 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
       {:ok, snapshot} -> snapshot
       {:error, _} -> @empty_projection
     end
+  end
+
+  @impl true
+  def render_authorized(%URI{} = session_uri, %URI{} = caller) do
+    ChatFeed.snapshot(session_uri, caller)
+  end
+
+  @impl true
+  def live_topics(%URI{} = session_uri) do
+    [Delivery.session_events_topic(session_uri)]
   end
 end

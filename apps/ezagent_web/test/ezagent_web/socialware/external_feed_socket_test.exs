@@ -15,7 +15,7 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{ChatFeedAuth, Settlement}
-  alias EzagentWeb.Socialware.{ExternalFeedChannel, ExternalFeedSocket}
+  alias EzagentWeb.Socialware.{ExternalFeedSocket, SessionFeedChannel}
 
   @endpoint EzagentWeb.Endpoint
 
@@ -79,6 +79,24 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
            ]
   end
 
+  test "registered external adapter works on the generic feed topic", ctx do
+    {:ok, committed} = write_message(ctx.session, "generic external", :external_visible)
+    commit_message(ctx, "turn-socket-generic", committed.id)
+
+    topic = "socialware:feed:external_feed:#{URI.to_string(ctx.session)}"
+    {:ok, reply, _socket} = join_external(ctx, topic)
+
+    assert get_in(reply, [:snapshot, :messages]) == [
+             %{
+               id: committed.id,
+               text: "generic external",
+               sender: URI.to_string(committed.sender),
+               render: nil,
+               render_css: nil
+             }
+           ]
+  end
+
   test "history request uses the same gated query", ctx do
     {:ok, committed} = write_message(ctx.session, "history", :external_visible)
     {:ok, _uncommitted} = write_message(ctx.session, "not yet", :external_visible)
@@ -106,7 +124,7 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
     web_root = Path.expand("../../../lib/ezagent_web", __DIR__)
 
     for relative <- [
-          "socialware/external_feed_channel.ex",
+          "socialware/session_feed_channel.ex",
           "socialware/external_feed_socket.ex",
           "controllers/socialware/external_feed_controller.ex"
         ] do
@@ -114,22 +132,19 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
       refute source =~ "MessageStore"
       refute source =~ "Publisher"
-      refute source =~ "ExternalMirror"
       assert source =~ "ExternalFeed"
     end
   end
 
-  defp join_external(ctx) do
+  defp join_external(ctx, topic \\ nil) do
+    topic = topic || "socialware:external:#{URI.to_string(ctx.session)}"
+
     @endpoint
     |> socket("socialware_external:#{URI.to_string(ctx.session)}", %{
       session_uri: ctx.session,
       caller: @owner
     })
-    |> subscribe_and_join(
-      ExternalFeedChannel,
-      "socialware:external:#{URI.to_string(ctx.session)}",
-      %{}
-    )
+    |> subscribe_and_join(SessionFeedChannel, topic, %{})
   end
 
   defp write_message(session, text, visibility) do

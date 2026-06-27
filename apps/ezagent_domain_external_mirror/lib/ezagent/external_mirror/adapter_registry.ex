@@ -149,62 +149,6 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     end
   end
 
-  # codex r2 MEDIUM fix: Elixir's `@behaviour` enforces callback
-  # presence as a compiler WARNING, not a runtime guarantee. A
-  # plugin could ship a module with `@behaviour Adapter`,
-  # `adapter_id/0`, and `binding_module/0` but no `display_name/0`
-  # or `description/0` — register/1 would accept it, then
-  # `list_adapters/0` would crash with UndefinedFunctionError when
-  # the facade enumerates.
-  #
-  # Verify every PR-EM-1 required callback exports at the expected
-  # arity BEFORE inserting. (PR-EM-2's added callbacks get checked
-  # then.)
-  defp assert_required_callbacks!(adapter_module) do
-    # PR-EM-2 expands the required-callback set per SPEC §2.2. P3-1 splits
-    # the required set by the adapter KIND axis (`Adapter.kind_of/1`):
-    #
-    # - `:push` (the default) keeps the full PR-EM-2 contract —
-    #   `binding_module/0`, `cap_subject/0`, `target_ownership_check/2`,
-    #   `event_to_payload/1` (a push adapter still has a paired Binding +
-    #   Worker). A push adapter missing any of these is rejected exactly
-    #   as before — push registration is byte-identical.
-    #
-    # - `:pull` (the socialware customer feed, P3-2) has NO per-binding
-    #   external transport, so it MUST NOT be required to declare
-    #   `binding_module/0` / `target_ownership_check/2` / `event_to_payload/1`.
-    #   It requires `render/2` (the on-demand json render) + `cap_subject/0`.
-    #
-    # Both kinds share the PR-EM-1 id/name/description trio.
-    required =
-      [
-        adapter_id: 0,
-        display_name: 0,
-        description: 0,
-        cap_subject: 0
-      ] ++ kind_specific_required(Ezagent.ExternalMirror.Adapter.kind_of(adapter_module))
-
-    missing =
-      Enum.reject(required, fn {fun, arity} ->
-        function_exported?(adapter_module, fun, arity)
-      end)
-
-    unless missing == [] do
-      missing_str =
-        missing
-        |> Enum.map(fn {f, a} -> "#{f}/#{a}" end)
-        |> Enum.join(", ")
-
-      raise ArgumentError,
-            "AdapterRegistry: #{inspect(adapter_module)} declares " <>
-              "@behaviour Ezagent.ExternalMirror.Adapter but does not " <>
-              "implement: #{missing_str}. Elixir behaviours surface " <>
-              "missing callbacks as compiler warnings — the registry " <>
-              "checks at insert time so `list_adapters/0` can never crash " <>
-              "(codex r2 MEDIUM)."
-    end
-  end
-
   # P3-1 — the required callbacks that differ by adapter KIND.
   # `:push` keeps the full PR-EM-2 transport contract; `:pull` requires
   # only `render/2` (no binding / ownership-check / event-to-payload).
@@ -228,8 +172,97 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   end
 
   defp kind_specific_required(:pull) do
-    [render: 2]
+    [
+      render: 2,
+      live_topics: 1,
+      participation_profile: 0
+    ]
   end
+
+  defp assert_required_callbacks!(adapter_module) do
+    # PR-EM-2 expands the required-callback set per SPEC §2.2. P3-1 splits
+    # the required set by the adapter KIND axis (`Adapter.kind_of/1`):
+    #
+    # - `:push` (the default) keeps the full PR-EM-2 contract —
+    #   `binding_module/0`, `cap_subject/0`, `target_ownership_check/2`,
+    #   `event_to_payload/1` (a push adapter still has a paired Binding +
+    #   Worker). A push adapter missing any of these is rejected exactly
+    #   as before — push registration is byte-identical.
+    #
+    # - `:pull` (the socialware customer feed, P3-2) has NO per-binding
+    #   external transport, so it MUST NOT be required to declare
+    #   `binding_module/0` / `target_ownership_check/2` / `event_to_payload/1`.
+    #   It requires `render/2`, live topics, participation profile, and the
+    #   discipline-specific live read/replay callbacks.
+    #
+    # Both kinds share the PR-EM-1 id/name/description trio.
+    kind = Ezagent.ExternalMirror.Adapter.kind_of(adapter_module)
+
+    required =
+      [
+        adapter_id: 0,
+        display_name: 0,
+        description: 0,
+        cap_subject: 0
+      ] ++ kind_specific_required(kind) ++ live_discipline_required(adapter_module, kind)
+
+    missing =
+      Enum.reject(required, fn {fun, arity} ->
+        function_exported?(adapter_module, fun, arity)
+      end)
+
+    unless missing == [] do
+      missing_str =
+        missing
+        |> Enum.map(fn {f, a} -> "#{f}/#{a}" end)
+        |> Enum.join(", ")
+
+      raise ArgumentError,
+            "AdapterRegistry: #{inspect(adapter_module)} declares " <>
+              "@behaviour Ezagent.ExternalMirror.Adapter but does not " <>
+              "implement: #{missing_str}. Elixir behaviours surface " <>
+              "missing callbacks as compiler warnings — the registry " <>
+              "checks at insert time so `list_adapters/0` can never crash " <>
+              "(codex r2 MEDIUM)."
+    end
+
+    assert_pull_discipline_exclusions!(adapter_module, kind)
+  end
+
+  defp live_discipline_required(adapter_module, :pull) do
+    case Ezagent.ExternalMirror.Adapter.delivery_discipline_of(adapter_module) do
+      :snapshot_refresh -> [render_authorized: 2]
+      :cursor_replay -> [join_with_cursor: 2, replay: 3]
+    end
+  end
+
+  defp live_discipline_required(_adapter_module, _kind), do: []
+
+  defp assert_pull_discipline_exclusions!(adapter_module, :pull) do
+    case Ezagent.ExternalMirror.Adapter.delivery_discipline_of(adapter_module) do
+      :snapshot_refresh ->
+        forbidden =
+          [{:join_with_cursor, 2}, {:replay, 3}]
+          |> Enum.filter(fn {fun, arity} -> function_exported?(adapter_module, fun, arity) end)
+
+        unless forbidden == [] do
+          forbidden_str =
+            forbidden
+            |> Enum.map(fn {fun, arity} -> "#{fun}/#{arity}" end)
+            |> Enum.join(", ")
+
+          raise ArgumentError,
+                "AdapterRegistry: :snapshot_refresh pull adapter " <>
+                  "#{inspect(adapter_module)} must not declare cursor callbacks: " <>
+                  forbidden_str
+        end
+
+      :cursor_replay ->
+        :ok
+    end
+  end
+
+  defp assert_pull_discipline_exclusions!(_adapter_module, _kind), do: :ok
 
   # P3-1 (codex r3 HIGH) — close the binding-FIRST ordering of the
   # "a `:pull` adapter NEVER has a BindingRegistry row" invariant. If a binding
