@@ -107,70 +107,76 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
-    slice_state = Ezagent.Kind.Snapshot.load_or_init(uri, kind_module, args)
+    # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
+    # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
+    # instead of an uncaught init crash, symmetric with the WRITE
+    # (`persist_initial_snapshot/3`). let-it-crash, no fresh-state fallback.
+    case Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args) do
+      {:error, reason} ->
+        {:stop, {:snapshot_load_failed, reason}}
 
-    # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
-    # declaration order. `post_init/2` is OPTIONAL — Behaviors that
-    # don't export it (or return `:ok`) contribute nothing to the
-    # queue. The actual handle_continue/3 calls run AFTER
-    # :announce_ready (see handle_continue/2 below).
-    post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
+      {:ok, slice_state} ->
+        # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
+        # declaration order. `post_init/2` is OPTIONAL — Behaviors that
+        # don't export it (or return `:ok`) contribute nothing to the
+        # queue. The handle_continue/3 calls run AFTER :announce_ready.
+        post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
 
-    state = %{
-      kind: kind_module,
-      uri: uri,
-      state: slice_state,
-      post_init_queue: post_init_queue,
-      # #533 5a (§3.10.3) — the authenticated creator, threaded as a
-      # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
-      # or when no creator is supplied. PR-5c reads this to grant the
-      # manage-cap to the right principal.
-      created_by: Map.get(args, :created_by),
-      # Set in the put_new branch below from the Lifecycle create-vs-activate
-      # signal (read BEFORE persist sets the marker).
-      create_freshness: :unknown
-    }
+        state = %{
+          kind: kind_module,
+          uri: uri,
+          state: slice_state,
+          post_init_queue: post_init_queue,
+          # #533 5a (§3.10.3) — the authenticated creator, threaded as a
+          # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
+          # or when no creator is supplied. PR-5c reads this to grant the
+          # manage-cap to the right principal.
+          created_by: Map.get(args, :created_by),
+          # Set in the put_new branch below from the Lifecycle create-vs-activate
+          # signal (read BEFORE persist sets the marker).
+          create_freshness: :unknown
+        }
 
-    case Ezagent.KindRegistry.put_new(uri_str, self()) do
-      :ok ->
-        :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
-
-        # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
-        # create-vs-activate decision BEFORE persist_initial_snapshot sets
-        # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
-        # (the single Lifecycle-owned signal), NOT a snapshot/save return,
-        # so the create/activate concept has one definition and can't drift.
-        # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
-        # slice shape: on cold restart the rehydrated slice can lack
-        # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
-        # as :unknown instead of :existed (codex review P2). Non-Lifecycle
-        # Kinds have no create/activate distinction → :unknown.
-        state =
-          if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
-            freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
-            %{state | create_freshness: freshness}
-          else
-            state
-          end
-
-        case persist_initial_snapshot(uri, kind_module, slice_state) do
+        case Ezagent.KindRegistry.put_new(uri_str, self()) do
           :ok ->
-            schedule_periodic_snapshot(kind_module)
-            {:ok, state, {:continue, :announce_ready}}
+            :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
 
-          {:error, reason} ->
-            # Issue #342 (Allen 2026-05-25 — let-it-crash). Initial
-            # persistence is a durability promise: a Kind whose row
-            # never landed must NOT report ":ok" to its spawner. The
-            # earlier `Ezagent.KindRegistry.put_new/1` registration is
-            # auto-cleaned by `Registry` on process exit, so returning
-            # `{:stop, ...}` is enough — no manual deletion needed.
-            {:stop, {:persistence_failed, reason}}
+            # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
+            # create-vs-activate decision BEFORE persist_initial_snapshot sets
+            # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
+            # (the single Lifecycle-owned signal), NOT a snapshot/save return,
+            # so the create/activate concept has one definition and can't drift.
+            # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
+            # slice shape: on cold restart the rehydrated slice can lack
+            # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
+            # as :unknown instead of :existed (codex review P2). Non-Lifecycle
+            # Kinds have no create/activate distinction → :unknown.
+            state =
+              if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
+                freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+                %{state | create_freshness: freshness}
+              else
+                state
+              end
+
+            case persist_initial_snapshot(uri, kind_module, slice_state) do
+              :ok ->
+                schedule_periodic_snapshot(kind_module)
+                {:ok, state, {:continue, :announce_ready}}
+
+              {:error, reason} ->
+                # Issue #342 (Allen 2026-05-25 — let-it-crash). Initial
+                # persistence is a durability promise: a Kind whose row never
+                # landed must NOT report ":ok" to its spawner. The earlier
+                # `KindRegistry.put_new/1` registration is auto-cleaned by
+                # `Registry` on process exit, so `{:stop, ...}` is enough.
+                {:stop, {:persistence_failed, reason}}
+            end
+
+          {:error, {:already_registered, _other_pid}} ->
+            # Let-it-crash — duplicate spawn is a bug at the caller layer.
+            {:stop, {:already_registered, uri_str}}
         end
-
-      {:error, {:already_registered, _other_pid}} ->
-        # Let-it-crash — duplicate spawn is a bug at the caller layer.
-        {:stop, {:already_registered, uri_str}}
     end
   end
 

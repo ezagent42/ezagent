@@ -115,8 +115,22 @@ defmodule Ezagent.Agent.Config do
   def read_key(agent_uri, key, caller, caps, opts \\ []) when is_binary(key) do
     opts = put_opt(opts, :keys, [key])
 
-    with {:ok, %{keys: [state]}} <- read_cascade(agent_uri, caller, caps, opts) do
-      {:ok, state}
+    # `build_cascade/2` ALWAYS appends the `@default_cascade_key`
+    # ("agent.soul") to the resolved key set (so the full-cascade
+    # `read_config` view always carries the soul key). That means a
+    # single-key read whose `key` is NOT the default gets back TWO
+    # key-states, and the old `%{keys: [state]}` one-element match
+    # silently failed — returning the WHOLE cascade map (no
+    # `:effective_body`) to the caller. Select the requested key out of
+    # the cascade explicitly instead of assuming arity-1. (#108: this is
+    # the deterministic AgentReadTest `KeyError :effective_body`
+    # regression — the #943 default-append + #1039 single-key reader
+    # were each green alone but red merged.)
+    with {:ok, %{keys: states}} <- read_cascade(agent_uri, caller, caps, opts) do
+      case Enum.find(states, &(&1.key == key)) do
+        %{} = state -> {:ok, state}
+        nil -> {:error, :not_found}
+      end
     end
   end
 

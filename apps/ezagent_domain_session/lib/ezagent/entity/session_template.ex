@@ -367,10 +367,48 @@ defmodule Ezagent.Entity.SessionTemplate do
         hash = compute_version_hash(content)
         uri = build_uri(name, hash, workspace: workspace_segment)
 
-        with {:ok, _pid} <- ensure_kind_alive(uri),
-             {:ok, _result} <- dispatch_write(uri, content, ctx) do
+        with {:ok, _result} <- ensure_alive_and_write(uri, content, ctx) do
           {:ok, uri}
         end
+    end
+  end
+
+  # #108 — spawn-readiness / dead-target race. `ensure_kind_alive/1` returns
+  # `{:ok, pid}` (a freshly-spawned Kind, or an already-alive boot-seeded one),
+  # but the subsequent `template.write` dispatch can still land in a teardown
+  # window and come back `:no_such_actor`:
+  #
+  #   * the boot-seeded SessionTemplate Kind crashed MID-dispatch (its own DB
+  #     write hit a sandbox connection whose owner churned) → `:dead_target` →
+  #     `:no_such_actor`; or
+  #   * the Registry has not yet reaped a just-terminated pid, so the dispatch
+  #     observes a stale `:ready` gate over a dead pid.
+  #
+  # Both are transient and self-heal: the Registry reaps the dead pid, then the
+  # next `ensure_kind_alive` either lazy-respawns from the now-persisted
+  # snapshot or starts a fresh Kind whose init re-registers + marks ready, and
+  # the dispatch path's own `ReadyGate.await` covers the not-ready tail. So
+  # retry the ensure+dispatch pair a bounded number of times on `:no_such_actor`
+  # ONLY (every other error propagates immediately). `dispatch_write` is
+  # `:no_such_actor`-idempotent: that error is a PRE-delivery failure (the write
+  # never ran), so a retry cannot double-apply. After the budget is exhausted we
+  # return the same `{:error, :no_such_actor}` the caller saw before — no
+  # masking, just resilience. This is the chokepoint for seed / fork / create /
+  # save_template_as, so all share the hardening.
+  @write_retries 8
+  @write_retry_delay_ms 25
+
+  defp ensure_alive_and_write(uri, content, ctx, attempts_left \\ @write_retries) do
+    with {:ok, _pid} <- ensure_kind_alive(uri),
+         {:ok, result} <- dispatch_write(uri, content, ctx) do
+      {:ok, result}
+    else
+      {:error, :no_such_actor} when attempts_left > 0 ->
+        Process.sleep(@write_retry_delay_ms)
+        ensure_alive_and_write(uri, content, ctx, attempts_left - 1)
+
+      {:error, _} = err ->
+        err
     end
   end
 
