@@ -180,17 +180,28 @@ defmodule Ezagent.Socialware.ConfigStore do
     end
   end
 
-  # Pointer already exists → idempotent no-op IF the pointed object's body equals
-  # the seed body (same built-in re-seeded, or an override of identical content);
-  # a DIFFERENT body under the same name is the two-plugins-one-name collision.
+  # Pointer already exists — three cases, distinguished by the pointed object's
+  # body + `source_turn_id` (the seed's `source_turn_id` is DETERMINISTIC for a
+  # given (ws, subject), so a SECOND seed of the same slot reproduces it, while a
+  # CR-publish / repoint OVERRIDE carries a different one):
+  #
+  #   1. body == seed body                       → `:exists` (idempotent re-seed).
+  #   2. body differs, SAME seed source_turn_id  → `collision_tag` (two plugins
+  #      claimed the same seed slot with different bodies — fail loud).
+  #   3. body differs, DIFFERENT source_turn_id  → `:exists` (a user/CR OVERRIDE
+  #      owns the pointer — DO NOT clobber it; the override survives the re-seed).
+  #
+  # This makes the seed BOTH idempotent AND override-safe while still catching the
+  # genuine two-plugins-one-name collision (SPEC §4.2).
   defp seed_branch(repo, %ConfigPointer{config_id: config_id}, attrs, collision_tag) do
     pointed = repo.get!(ConfigObject, config_id)
     seed_body = attrs |> Map.fetch!(:body) |> stringify_keys()
+    seed_turn = Map.fetch!(attrs, :source_turn_id)
 
-    if pointed.body == seed_body do
-      {:ok, :exists}
-    else
-      {:error, collision_tag}
+    cond do
+      pointed.body == seed_body -> {:ok, :exists}
+      pointed.source_turn_id == seed_turn -> {:error, collision_tag}
+      true -> {:ok, :exists}
     end
   end
 
