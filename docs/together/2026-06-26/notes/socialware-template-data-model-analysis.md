@@ -24,7 +24,7 @@ concrete customer-facing vertical, and the per-instance binding is the session's
 |---|---|---|
 | **1. socialware = a TEMPLATE** (a fillable schema defining the app) | **MATCH** for behaviors/team/routing/persona/visibility; **PARTIAL** — "views" are not template data | `Ezagent.Entity.SessionTemplate` Kind, `behaviors: [Identity, Template]` (`apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex:156`); content schema = `name, description, members, prompt_templates, legends, orchestrator_template_uri, routing_rules, default_workspace_uri, parent_template_uri, public_view` (`@config_atom_keys` `:761`); `public_view` is the defining socialware flag (`apps/ezagent_domain_socialware/lib/ezagent/socialware/public_view.ex:38`). Views are NOT in the template — they are global code registrations (see below). |
 | **2. real socialware = DATA from filling the template, in `EZAGENT_HOME`** | **MATCH** on "it is data"; **DIVERGE** on "in `EZAGENT_HOME`" | The definition is genuinely DATA: content-addressed `compute_version_hash/1` (`session_template.ex:191`), immutable/versioned URIs `template://session/<ws>/<name>@<hash>` (`build_uri/3` `:222`), forkable (`fork/3` `:520`, `create/3` `:609`, `persist_version_as_system/2` `:345`), portable. **BUT** it persists to **PostgreSQL** (`kind_snapshots` table via `{:snapshot, :on_change}` `:159` → `Ezagent.SnapshotStore`), and `EzagentCore.Repo` is Postgres whose own moduledoc says `EZAGENT_HOME` holds **credentials/agent-config/logs, NOT the application tables** (`apps/ezagent_core/lib/ezagent_core/repo.ex:1-13`). So the data lives in the app DB, not in `EZAGENT_HOME`. |
-| **3. running socialware = session + a hello bound to it** | **MATCH** (terminology nuance) | A running instance = a live `Ezagent.Entity.Session` spawned with `socialware_behaviors/0` = `[Session, Turn, Surface, Publisher.SessionImpl]` (`apps/ezagent_domain_session/lib/ezagent/entity/session.ex:87`), bound to a template *version* via `template_working_copy.session_template_uri` (set by `ConfigActions.system_set_working_copy/2`, read by `PublicView` `public_view.ex:79-83`). The "hello" customer face = the session's `Behavior.Surface` slice (`apps/ezagent_domain_session/lib/ezagent/behavior/surface.ex` — customers read the `:approved` version, `:6`), produced by a joined `HelloBuilder` member, exposed at the **session-keyed** route `/socialware/chat?session_uri=…` (`apps/ezagent_web/lib/ezagent_web/controllers/socialware/chat_feed_controller.ex:76`, gated by `PublicView.public_view?/1` `:108`). |
+| **3. running socialware = session + a hello bound to it** | **MATCH** (terminology nuance) | A running instance = a live `Ezagent.Entity.Session` spawned with `socialware_behaviors/0` = `[Session, Turn, Surface, Publisher.SessionImpl]` (`apps/ezagent_domain_session/lib/ezagent/entity/session.ex:87`), bound to a template *version* via `template_working_copy.session_template_uri` (set by `ConfigActions.system_set_working_copy/2`, read by `PublicView` `public_view.ex:79-83`). The "hello" customer face = the session's `Behavior.Surface` slice, exposed at the **session-keyed external route** `/socialware/external?session_uri=…` (`Socialware.ExternalFeedController`, `apps/ezagent_web/lib/ezagent_web/router.ex:118`; legacy `/socialware/customer` 301-redirects to it). The page is rendered from the **latest COMMITTED surface version** (`ExternalFeed.external_page/1`, `apps/ezagent_domain_socialware/lib/ezagent/socialware/external_feed.ex:424-461`), NOT the live `:approved` pointer. `/socialware/chat` (`ChatFeedController`, `router.ex:137`) is a *separate* public surface serving the chat-message feed, not the page. Both are session-keyed and gated by `PublicView.public_view?/1`. |
 
 ---
 
@@ -109,11 +109,18 @@ an explicit `public_view: true` (`public_view.ex:38-49`).
 
 The **session↔hello (external surface) binding** is *not* a route table or a global registration — it
 is **the session's own `Behavior.Surface` slice**. The builder generates a json-render tree stored as
-a Surface version on the session; customers read the `:approved` version
-(`apps/ezagent_domain_session/lib/ezagent/behavior/surface.ex:6`). The external page is served by the
-**session-keyed** route `/socialware/chat?session_uri=<session://…>` (`chat_feed_controller.ex:76`),
-gated by `public_view?/1` (`:108`). So the hello page is the external surface of **a specific
-session**, not a global page — exactly the lead's claim.
+a Surface version on the session. The external page is served by the **session-keyed** route
+`/socialware/external?session_uri=<session://…>` (`Socialware.ExternalFeedController`,
+`apps/ezagent_web/lib/ezagent_web/router.ex:118`; legacy `/socialware/customer` 301s to it), and the
+page is rendered from the **latest COMMITTED surface version**, not the live `:approved` pointer —
+`ExternalFeed.external_page/1` deliberately reads the committed settlement's `target_surface_version`
+(`apps/ezagent_domain_socialware/lib/ezagent/socialware/external_feed.ex:424-461`) so an
+approved-but-uncommitted page never leaks (P2.5a). Access is gated by `PublicView.public_view?/1`. So
+the hello page is the external surface of **a specific session**, not a global page — exactly the
+lead's claim. (`/socialware/chat`, `ChatFeedController` `router.ex:137`, is a separate session-keyed
+public surface — the chat-message feed `chat_tree(messages)` — not the page; the 2026-06-22 skill /
+`App.ensure_app` docstrings that point an anon at `/socialware/chat` for "the page" predate this
+chat↔external split.)
 
 **Terminology nuance to keep honest:**
 - "hello" is **one** concrete customer-facing vertical (an AI page-builder demo), not the generic
@@ -174,9 +181,10 @@ conversation**, not a declarative authoring surface — an agent-driven loop, no
 
 - **No "New socialware app" affordance** that picks a vertical/template-class + flips `public_view` in
   one step (hello relies on the generic `session.create` seam; no dedicated UI button).
-- **No customer-surface preview in world** — the customer pages (`/socialware/chat`,
-  `/socialware/customer`) are a **separate** `ezagent_web` + `ezagent_domain_socialware` stack on the
-  default host; world owns only the operator/author console (per `ezagent-socialware` skill §Future).
+- **No customer-surface preview in world** — the external/customer page (`/socialware/external`, with
+  `/socialware/customer` 301→it) and the chat feed (`/socialware/chat`) are a **separate**
+  `ezagent_web` + `ezagent_domain_socialware` stack on the default host; world owns only the
+  operator/author console (per `ezagent-socialware` skill §Future).
 - **No auto-`"current"` tag on author-save** — neither `create/3` nor `persist_version_as_system/2`
   publishes the `"current"` tag, so name-based "New session" adopt-on-create is nondeterministic once a
   second version of a name exists (skill gotcha #3).
@@ -208,6 +216,23 @@ a per-session Surface. Where it **isn't** the lead's model: the definition data 
 tool that fills the full template** — the rich definition is produced by an agent-driven in-session
 loop, not a "socialware editor". Closing the authoring gap is the S+M work above; making the customer
 face first-class in the author console is the L.
+
+---
+
+## Codex adversarial-review (static-only, gpt-5.5)
+
+Overall: **PARTIALLY ACCURATE → corrected.** Codex confirmed clauses 1 and 2 code-accurate
+(SessionTemplate `behaviors`/`persistence`, `public_view` in `@config_atom_keys`, `public_view?/1`
+following `template_working_copy.session_template_uri`; definition-data in PostgreSQL not
+`EZAGENT_HOME`; definition=data vs vertical=code). It found **one factual error in clause 3**, now
+fixed in this doc: the agent-generated page is served at **`/socialware/external`**
+(`ExternalFeedController`), not `/socialware/chat` (which serves chat messages,
+`chat_tree(messages)`), and the page renders from the **committed** surface version
+(`external_feed.ex:424-461`), **not** the live `:approved` pointer (P2.5a, to avoid leaking an
+approved-but-uncommitted page). The chat↔external split post-dates the 2026-06-22 skill docstrings.
+Codex also noted hello `PageView.applies_to?/1` filters on `:hello` type **and** a readable `:surface`
+slice (not type alone) — a refinement, not a contradiction of the "global/type-level registration"
+verdict.
 
 ---
 
