@@ -202,18 +202,30 @@ responsive.
 - **Intermediate `tool_call` / `tool_result` messages are EPHEMERAL runner
   scratch** — held in the runner's memory for the loop's duration only. They are
   *not* persisted. Only **the user turn + the final assistant answer** persist
-  to the flavor's conversation slice (the same `:sync_result`-style append curl
-  uses today). This keeps the durable model identical to a single-shot exchange
-  and pre-empts "where does the tool-call transcript live?" (answer: nowhere
-  durable; it is reconstructed per turn).
-- **The `:sync_result` ordering limitation is INHERITED, not fixed here.** The
-  final-answer persist is still a separate dispatch (`receive.ex` documents the
-  single-slice-commit blocker). Async delivery does not dodge it: two concurrent
-  turns to the same agent can still build on a stale conversation snapshot. This
-  SPEC **declares the fix out of scope** and points at the existing remedy —
-  option 1 in `receive.ex`'s moduledoc (flavor-selected `:receive` behavior
-  bound on the flavor's own slice), tracked as a follow-up. The shared loop adds
-  no *new* ordering hazard beyond the documented curl one. (Open question OQ-4.)
+  to the flavor's conversation slice. This keeps the durable model identical to a
+  single-shot exchange and pre-empts "where does the tool-call transcript live?"
+  (answer: nowhere durable; it is reconstructed per turn).
+- **The durable commit path EXISTS — it is the flavor's own `:sync_result`
+  action, not `session.send` (codex high-2).** The shared-loop flavor is a
+  curl-family flavor: it owns a state slice + a `:sync_result` action exactly
+  like `Ezagent.Behavior.CurlAgent.handle_sync_result/2`
+  (`apps/ezagent_domain_agent/lib/ezagent/behavior/curl_agent.ex`), which
+  atomically appends BOTH the user turn and the (final) assistant turn into its
+  OWN slice via `{:set, :conversation, …}` and emits the `session.send` reply in
+  the *same* commit. So when the runner finishes, it re-dispatches the final
+  result to **the flavor's own `:sync_result`** (the flavor owns that slice, so
+  the single-slice-commit model is satisfied — no cross-slice write). `session.send`
+  is the reply, NOT the persistence. **Phase 1 ships this commit path** (it is
+  reused, not new); it does NOT ship only a reply with deferred persistence.
+- **What is genuinely INHERITED is the cross-turn ORDERING race, scoped
+  narrowly.** The final-result `:sync_result` re-dispatch is a post-commit
+  `:cast` at the back of the agent's mailbox (`receive.ex` "KNOWN LIMITATION"),
+  so two concurrent turns to the same agent can build on a stale snapshot. This
+  is the curl-flavor's existing documented edge — the shared loop adds **no new
+  ordering hazard beyond it**. The remedy (option 1 in `receive.ex`'s moduledoc —
+  flavor-selected `:receive` bound on the flavor slice) is deferred to Phase 3.
+  (Open question OQ-4.) Note the distinction codex drew: *the commit path is
+  present in Phase 1; only the concurrent-turn ordering fix is deferred.*
 
 ### 2.5 Tool execution from the loop — the authority path (cited)
 
@@ -233,12 +245,26 @@ orchestrator must HOLD the `kb.query` cap (flavor-blind, fail-closed) — exactl
 as the non-cc test flavor does in
 `apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`.
 
-**This reuses the SAME executor door cc uses** (the reframe note's prescription:
-"reuse `TokenStore.mint` + call `SessionManager.run_tool` directly — no MCP
-server needed if the flavor isn't MCP-native"). We do **not** add a second
-authority entry to the executor (OQ-1). The tool-name → executor binding is
-declared in the shared catalog (§5.4), so non-orchestrator tools can be added
-later without changing the loop.
+**Authority — UNRESOLVED, two candidate doors (codex high-1, see OQ-1).** The
+reframe note's prescription is to *reuse* the existing door: mint/hold the
+orchestrator's bridge token (`TokenStore.mint/1`) and call
+`SessionManager.run_tool` (the `agent_contract_g4` shape). **Codex flags a real
+threat-model objection:** `TokenStore.verify_token/2` exists precisely so the
+secret *never leaves the module* — co-resident BEAM code that could read/hold a
+token could forge tool calls. The bridge token is an *external connection
+credential*; minting one inside the in-node session-domain loop turns it into a
+*reusable internal capability* and widens who can present it — and this is the
+authorization boundary for **all** orchestrator tools, not just `kb_query`.
+
+This SPEC does **not** silently pick reuse. It records the tension and leans
+toward codex's safer resolution: a **dedicated trusted in-node executor entry**
+on `SessionManager` that accepts a *verified* orchestrator URI / caller context
+(the runner is itself session-domain code, so it can be a trusted caller without
+a forgeable secret), runs the SAME structural + CapBAC checks (steps 1–3), and
+is covered by **negative tests proving an arbitrary co-resident caller cannot
+forge tool execution**. Crucially this is *still one logical executor* (Layer A,
+`run_tool_op`) with one CapBAC gate — it is a second *authenticated entry*, not a
+second authorizer. Final call is the lead's (OQ-1).
 
 ---
 
@@ -357,9 +383,18 @@ defstruct [...existing...,
   (list-of-strings, like `skills`). NOT a flavor field.
 - `loop_policy` — loop BOUNDS only: `max_steps` (int), `on_tool_error`
   (`:surface | :abort`), `parallel_tool_calls?` (bool), `on_overflow`
-  (`:final_best_effort | :error`). All flavor-agnostic (they describe the
-  agent's behavior, expressible against any loop runtime; a native cc loop maps
-  `max_steps` to the CLI's max-turns). `nil` ⇒ engine defaults.
+  (`:final_best_effort | :error`). `nil` ⇒ engine defaults.
+  **Scope of authority (codex medium-2):** `loop_policy` is **authoritative for
+  `loop_locality: :shared`** (the shared runner enforces every bound directly).
+  For `:native` flavors it is **advisory/best-effort** — the runtime maps what it
+  can (`max_steps` → the cc CLI's max-turns) and documents the rest as
+  non-binding, because a native subprocess loop is not under ezagent's
+  step-level control. The field is still *structurally* flavor-agnostic (it names
+  no flavor; `Role.new/1` accepts it), but its *enforcement guarantee* differs by
+  loop_locality — and this SPEC states that explicitly rather than implying
+  uniform bounds. A recipe author MUST treat shared-loop bounds as hard and
+  native-loop bounds as soft. (See OQ-5; if hard native bounds are required, that
+  is per-native enforcement work with its own tests, out of scope here.)
 
 `OrchestratorRole.recipe/0` gains `tools: ToolCatalog tool names`,
 `loop_policy: %{max_steps: 8, ...}` — so the orchestrator role declares its
@@ -442,14 +477,25 @@ already implies.
    its `SessionManager.run_tool` binding (defer the full 12-tool lift to
    Phase 3).
 4. Implement `Ezagent.Session.CompletionLoop` (the §2 loop, async delivery, max
-   2–3 steps) in the session domain.
+   2–3 steps) in the session domain, **plus the resolved-OQ-1 executor entry**
+   (the dedicated trusted in-node `SessionManager` entry + its forgery negative
+   test) — the loop's tool execution is not "TBD," it ships with its authority
+   door decided.
 5. Implement a **tool-use DeepSeek/curl flavor adapter** (`loop_locality:
    :shared`) implementing `get_completion/1`: add `tools` + `tool_calls` to the
    single-shot `ApiClient` and parse them (the reframe note's "unimplemented,
-   not blocked" gap). Recipe: `tools: ["kb_query"]`, `loop_policy: %{max_steps: 3}`.
-6. Wire it as the AutoService orchestrator flavor; mint its bridge token; drive
-   the loop → `SessionManager.run_tool(…, "kb_query", …)` → weave the hit →
-   `session.send`.
+   not blocked" gap). The flavor's STATE behavior owns its conversation slice +
+   a `:sync_result` action (the durable commit path, §2.4) — modelled on
+   `Behavior.CurlAgent`.
+6. **Update the PRODUCTION recipe, not an ad-hoc one (codex medium-1):** add
+   `tools: ["kb_query"]` + `loop_policy: %{max_steps: 3}` to
+   `Ezagent.Orchestrator.OrchestratorRole.recipe/0` itself, so the completion
+   gate exercises the real `RoleRegistry`→`OrchestratorBootstrap` orchestrator
+   path — not a synthetic recipe. (The recipe stays flavor-agnostic; only the
+   chosen flavor's `loop_locality` is `:shared`.)
+7. Wire the DeepSeek flavor as the AutoService orchestrator flavor; drive the
+   loop → trusted executor entry → `kb_query` → re-dispatch the final result to
+   the flavor's `:sync_result` (durable append) → `session.send` reply.
 
 **Phase-1 completion gate (the invariant test):** the AutoService Tier-1
 **ANSWER soul** — which `autoservice_tier1_seed_test.exs` + the reframe note
@@ -462,11 +508,14 @@ architectural-goal test — it fails if the loop is not recipe-driven). This
 closes the exact "minimal real gap" the reframe note identified, on a non-cc
 flavor, with `#505` (cc-PTY) dropped out entirely.
 
-**Phase 2 — generalize the catalog + recipe.** Lift the full 12-tool catalog to
-the shared module; re-point cc's `McpServer.ToolCatalog` at it (no behavior
-change for cc); add `tools`/`loop_policy` to `OrchestratorRole.recipe/0`; add
-the §7 cross-renderer invariant test (cc-MCP tool-set == shared-loop tool-set
-for the same recipe).
+**Phase 2 — generalize the catalog + bind cc to it.** Lift the full 12-tool
+catalog to the shared module; re-point cc's `McpServer.ToolCatalog` at it (no
+behavior change for cc — same schemas, now sourced from the shared catalog
+filtered by the recipe's `tools`); add the §7 cross-renderer invariant test
+(cc-MCP tool-set == shared-loop tool-set for the same recipe). (The
+`OrchestratorRole.recipe/0` `tools`/`loop_policy` fields landed in Phase 1 so the
+Phase 1 gate exercised the real recipe; Phase 2 widens `tools` from `["kb_query"]`
+to the full set.)
 
 **Phase 3 — harden + broaden.** Decide curl single-shot's fate (degenerate
 0-tool shared loop vs keep `:in_process_sync` with opt-in upgrade); address the
@@ -480,11 +529,16 @@ cc is **never migrated**. Its only touch is Phase 2's catalog re-point.
 
 ## 8. Open questions for the lead
 
-- **OQ-1 (executor authority).** The shared loop mints/holds the orchestrator's
-  bridge token and calls `SessionManager.run_tool` (the `agent_contract_g4`
-  shape). Acceptable to reuse the bridge-token ceremony in-node, or should
-  SessionManager grow a trusted in-node entry? **Recommend reuse** — don't add a
-  second authority door to the executor (one gate, audited, CapBAC unchanged).
+- **OQ-1 (executor authority) — the sharpest open question (codex high-1).**
+  Two doors: (a) *reuse* — the shared loop mints/holds the orchestrator bridge
+  token and calls `SessionManager.run_tool` (`agent_contract_g4` shape, the
+  reframe note's prescription); (b) *trusted in-node entry* — a new
+  `SessionManager` entry taking a verified caller context, no forgeable secret
+  held by the loop. Codex argues (a) expands the forgery surface (the whole point
+  of `TokenStore.verify_token/2` is that the secret never leaves the module).
+  **This SPEC now leans (b)** — same single CapBAC gate, but no in-node token
+  custody, with negative forgery tests as the acceptance bar. Lead to confirm (b)
+  vs (a) before Phase 1 handoff. (§2.5.)
 - **OQ-2 (loop_locality home).** Declare `loop_locality` on the `Adapter`
   behaviour (alongside `transport_class`), or on the `AgentFlavorRegistry`? The
   handoff note flags `AgentFlavorRegistry` semantics as discuss-first. Recommend
@@ -497,9 +551,11 @@ cc is **never migrated**. Its only touch is Phase 2's catalog re-point.
   acceptable for the agentic loop (Phase 1–2), with the flavor-selected
   `:receive` fix deferred to Phase 3? (Production single-user turns are
   naturally serialized; the window is concurrent senders to one agent.)
-- **OQ-5 (loop_policy bounds on native).** `max_steps` maps to the cc CLI's
-  max-turns imperfectly. Is best-effort mapping fine, or should `loop_policy` be
-  documented as authoritative only for `:shared` and advisory for `:native`?
+- **OQ-5 (loop_policy bounds on native) — RESOLVED in §5 per codex medium-2,
+  confirm with lead.** `loop_policy` is authoritative for `:shared`, advisory for
+  `:native` (best-effort `max_steps`→max-turns mapping). If the lead requires
+  *hard* native bounds (cost ceilings enforced on cc/codex), that is per-native
+  enforcement work with its own tests — call it out now so it is not assumed.
 
 ---
 
@@ -510,3 +566,30 @@ cc is **never migrated**. Its only touch is Phase 2's catalog re-point.
 - Not building streaming / token-by-token output.
 - Not fixing the `:sync_result` ordering limitation in Phase 1–2 (Phase 3).
 - Not adding new flavors beyond the one DeepSeek tool-use proof flavor (Phase 1).
+
+---
+
+## 10. Codex adversarial review (static, against `origin/main`)
+
+**Verdict: needs-attention → addressed.** Codex endorsed the core split
+(shared-loop / completion-primitive, the cc native-loop reconciliation, the
+loop_locality ⟂ transport_class axis) and raised four findings — all folded in:
+
+- **[high-1] Bridge-token reuse expands the forgery surface.** Folded: §2.5 +
+  OQ-1 no longer "recommend reuse"; they now lean toward a dedicated trusted
+  in-node `SessionManager` entry (no token custody by the loop) with forgery
+  negative tests, and flag the final call to the lead.
+- **[high-2] Async loop had no defined durable persistence path.** Folded: §2.4
+  makes explicit that the durable commit is the flavor's OWN `:sync_result`
+  action on its own slice (modelled on `Behavior.CurlAgent`) — shipped in Phase
+  1, not deferred. Only the cross-turn *ordering* race is inherited/deferred.
+- **[medium-1] Phase 1 "recipe-driven AutoService proof" deferred the real
+  `OrchestratorRole.recipe/0` tools to Phase 2.** Folded: Phase 1 step 6 now
+  updates the production recipe so the gate exercises the real
+  `RoleRegistry`→`OrchestratorBootstrap` path; Phase 2 only widens the tool-set.
+- **[medium-2] `loop_policy` not truly flavor-agnostic for native loops.**
+  Folded: §5 scopes it authoritative for `:shared`, advisory for `:native`,
+  stated explicitly; OQ-5 resolved.
+
+Residual (lead to decide, not blockers): OQ-1 door choice (a vs b), OQ-4
+concurrency deferral acceptance, OQ-5 hard-vs-soft native bounds.
