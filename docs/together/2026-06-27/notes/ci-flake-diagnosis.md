@@ -27,12 +27,17 @@ There is **one** root cause with three symptoms, plus one independent latent bug
    mode reverts to :manual if its owner terminates)`. This is all over the #1037 log.
 
 2. **Symptom — `PluginIsolationWorkspaceTest` (the 2 hard failures in #1037):**
-   `Ezagent.Workspace.Loader.load_all/0` **catches `DBConnection.OwnershipError` and
-   returns `[]`** (`loader.ex:406-416`). When the pool has reverted, the workspace the
-   test just created via `Workspace.create/2` is invisible to `load_all` →
-   `load_all_until_present: workspace "invariant-…" never appeared in Loader results
-   with children`. The 50-retry hardening (#734) does **not** help: the revert persists
-   until a *new* shared owner is installed, so every retry sees the same `[]`.
+   the workspace the test created via `Workspace.create/2` appears in `Loader.load_all/0`
+   but with **empty children**, so `load_all_until_present: workspace "invariant-…"
+   never appeared in Loader results with children` flunks. The firing path (confirmed by
+   grepping the #1037 log — see §1.2) is **`instantiate_via_dispatch/1`**: the Loader
+   dispatches `:instantiate` to the workspace's Kind, which spawns/queries under a
+   **global supervisor — outside the test's `$callers` chain** — so on the reverted pool
+   it produces no live children. The 50-retry hardening (#734) does **not** help: the
+   revert persists until a *new* shared owner is installed, so every retry sees the same
+   empty children. (The `load_all/0` rescue that masks `OwnershipError` as `[]`
+   (`loader.ex:406-416`) is a *second*, currently-dormant path — see §1.2 — that should
+   be unmasked in `:test` defensively, but it is NOT what fired in #1037.)
 
 3. **Symptom — `FsResolverTest` / `DefaultSessionTemplateSeedTest` / `AnonUserGCTest`:**
    same shared-mode-revert class, plus per-suite global-singleton churn (FsResolver
@@ -49,15 +54,22 @@ There is **one** root cause with three symptoms, plus one independent latent bug
    failure if/when the callback is enforced. Fix it in the same pass.
 
 **Fix priority (by leverage):**
-1. **Stop `Loader.load_all/0` from masking `OwnershipError` as `[]`** in `:test`, AND
-   make `EzagentCore.DataCase` re-establish shared mode deterministically so the revert
-   can't happen mid-suite (extend the existing `start_owner_stable!` to also *hold* the
-   share). This kills symptoms #2 + most of #3 at the source.
+1. **Allow the dispatched/spawned Kinds onto the test's sandbox owner** so the Loader's
+   `:instantiate` dispatch (and the seed tests' spawned Session/Agent Kinds) never query
+   on a reverted/foreign connection — AND make `EzagentCore.DataCase` re-establish shared
+   mode deterministically so it can't revert mid-suite (extend `start_owner_stable!` to
+   *hold* the share across owner `:DOWN`s). This is the path that actually fired in #1037
+   (§1.2) and kills symptom #2 + most of #3 at the source. **Defensive companion:** stop
+   `Loader.load_all/0` masking `OwnershipError` as `[]` in `:test` so the dormant path
+   (a) can never silently swallow a broken connection.
 2. **Per-suite isolation of the global singletons** that get killed/mutated
    (FsResolver `Registry`, SpawnRegistry) so a concurrent reader never sees a
    dead/empty table.
 3. **Pre-push gate**: a one-line alias that runs *exactly* what CI runs against a
-   private partitioned DB, so a red branch is caught before it is pushed.
+   private partitioned DB — a *catch-net*, not the cure. Because the flake is a timing
+   race (the same seed is red on the ubuntu runner but green on macOS — see §3), a green
+   local run does NOT guarantee a green CI run until fixes 1-2 land. The cure is fix
+   1-2; the gate reduces blind pushes and makes admin-merge a conscious, verified choice.
 
 **One-line pre-push command devs should run** (see §5):
 
@@ -131,35 +143,46 @@ apps/ezagent_domain_workspace/test/integration/plugin_isolation_workspace_test.e
 load_all_until_present: workspace "invariant-183778" never appeared in Loader results with children
 ```
 
-Mechanism, step by step:
+**Which path fires (disambiguated against the #1037 log):**
+`gh run view 28272814108 --log | grep -c "DB unavailable"` → **0**. So the `load_all/0`
+rescue (path a, below) did **not** fire in #1037. The failure is **path (b)** — empty
+children from the `:instantiate` dispatch.
+
+Mechanism, step by step (path b — the one that fired):
 
 1. The test calls `Workspace.create(name, %{members: [probe_uri]})` (persists a row in
    the shared DB on the test's checked-out connection) then drives
    `Ezagent.Workspace.Loader.load_all/0`.
-2. `load_all/0` does `Workspace.Store.list_all() |> Enum.map(&load_one/1)` wrapped in:
-
-   ```elixir
-   rescue
-     e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-       Logger.warning("…DB unavailable at boot…"); []
-   ```
-
-   (`loader.ex:406-416`).
-3. If the pool has reverted to `:manual` (a prior workspace-app non-async test's owner
-   terminated), `list_all/0` raises `OwnershipError` → **caught → `[]`** → the just-created
-   workspace is **absent from the results entirely**.
-4. Even when `list_all` succeeds, `load_one/1` → `instantiate_via_dispatch/1` dispatches
-   `:instantiate` to the workspace's own Kind, which reads the DB **outside the test's
-   `$callers`** (`Router.dispatch` → globally-supervised Kind). If *that* hits the reverted
-   pool, the dispatch returns no children → `{name, []}` → present but **children empty**.
-5. The retry helper `load_all_until_present/1` (50× / ~1 s, added in #734) requires the
+2. `load_all/0` does `Workspace.Store.list_all() |> Enum.map(&load_one/1)`. `list_all/0`
+   runs in the test's `$callers` chain and **succeeds** — the workspace row is found.
+3. `load_one/1` → `instantiate_via_dispatch/1` dispatches `:instantiate` to the
+   workspace's own Kind via `Router.dispatch` (`loader.ex:441+`). That Kind is
+   **globally supervised** — its DB reads/child-spawns run **outside the test's
+   `$callers`**. When the shared pool has reverted to `:manual` (a prior workspace-app
+   non-async test's owner terminated), those reads raise `OwnershipError`, the dispatch
+   yields no live children → `{name, []}` — **present but children empty**.
+4. The retry helper `load_all_until_present/1` (50× / ~1 s, added in #734) requires the
    workspace present **with non-empty children**. Since the revert persists until a *new*
    shared owner is installed (which won't happen mid-test), all 50 retries see the same
-   `[]` → `flunk("never appeared … with children")`.
+   empty children → `flunk("never appeared … with children")`.
 
 This is why "retry the read" did not fix it (contributing
 `feedback_question_the_problem_when_fix_keeps_failing`): the read is correct; the
-**connection is gone**. The fix must address ownership, not retry count.
+**connection the dispatched Kind needs is gone**. The fix must `Sandbox.allow/3` the
+spawned Kind onto the test owner (or hold shared mode stably), not bump retry count.
+
+**Path (a) — the dormant `OwnershipError`-as-`[]` mask** (`loader.ex:406-416`):
+
+```elixir
+rescue
+  e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+    Logger.warning("…DB unavailable at boot…"); []
+```
+
+If `list_all/0` itself ever raises on a reverted pool, this catch returns `[]` and the
+workspace is **absent entirely**. It did NOT fire in #1037 (grep = 0) but it is a latent
+trap: it would convert a broken connection into a silent empty result with a misleading
+"never appeared" message. Unmask it in `:test` defensively (Fix 1 companion).
 
 ### 1.3 `FsResolverTest` — global-singleton kill/restart races
 
@@ -280,11 +303,20 @@ mix test --seed 979933 --max-cases 8
   in the umbrella context isn't faithful (it drops `:umbrella_only`); keep it in the full
   run and grep `--log-failed`-style for `never appeared … with children`.
 
-> **Local reproduction status (this run):** reproduced via a worktree off `origin/main`
-> with `MIX_TEST_PARTITION=flakerepro`, `POSTGRES_PORT=55432`, `mix test --seed 979933
-> --max-cases 8`. The standalone single-app run produced the cross-tier `*.app`
-> missing-dep failures (expected, not the flake); the full-umbrella run reproduces the
-> OwnershipError-class instability. <!-- §3-RESULT -->
+> **Local reproduction status (this run) — important honest caveat:** a single
+> full-umbrella run (worktree off `origin/main`, `MIX_TEST_PARTITION=flakerepro`,
+> `POSTGRES_PORT=55432`, `mix test --seed 979933 --max-cases 8`) came back **GREEN** —
+> the workspace app reported `178 tests, 0 failures` for the **same seed (979933)** that
+> failed with 2 failures on CI. This does NOT disprove the diagnosis; it **confirms the
+> flake is a timing race, not seed-determined**: the identical seed is red on the
+> ubuntu-latest runner (more owner-teardown churn under `max_cases:8`, no DB partition)
+> and green on this macOS box. The diagnosis rests on **primary CI evidence** (#1037
+> `--log-failed`: 2 PluginIsolation failures + the saturation of `OwnershipError`
+> warnings) plus the code mechanism — not on a local red. To raise local hit-rate, run
+> the seed sweep below repeatedly; a single green local run is NOT proof a branch is CI-safe.
+> (The earlier standalone single-app run's 14 failures were the cross-tier `*.app`
+> missing-dep class — a DIFFERENT failure from the flake — and are not cited as repro
+> evidence.) <!-- §3-RESULT -->
 
 ---
 
@@ -293,19 +325,22 @@ mix test --seed 979933 --max-cases 8
 Ordered by leverage. None of these is "retry / bump timeout" (that class already failed —
 see #734).
 
-### Fix 1 (highest leverage) — kill the OwnershipError-as-`[]` mask + stabilise shared mode
+### Fix 1 (highest leverage) — allow spawned Kinds onto the owner + stabilise shared mode
 
-1. **`Loader.load_all/0` must not swallow `OwnershipError` into `[]` in `:test`.**
+1. **Allow the Loader's dispatched/spawned Kinds onto the test's sandbox owner** (the path
+   that fired in #1037, §1.2). `instantiate_via_dispatch/1` spawns globally-supervised
+   Kinds whose DB reads run outside the test's `$callers`. The test must `Sandbox.allow/3`
+   each spawned Kind onto its owner (or run the Loader so the spawned Kinds inherit via a
+   stable shared mode), so the `:instantiate` dispatch never queries on a reverted/foreign
+   connection. The seed tests (§1.4) need the same for their spawned Session/Agent Kinds.
+
+2. **Defensive: `Loader.load_all/0` must not swallow `OwnershipError` into `[]` in `:test`.**
    In production the catch is defensible (a boot-time DB-unavailable shouldn't crash the
    umbrella). In `:test` it converts a *broken connection* into a *silent empty result*
-   that then flunks a downstream assertion with a misleading message. Either:
-   - gate the rescue out of `:test` (let it raise, so the real cause is visible and the
-     test can checkout/allow correctly), or
-   - keep the rescue but have the test drive the Loader **inside its own checked-out
-     connection** with the workspace Kinds explicitly `Sandbox.allow/3`'d, so the read
-     can never run on a reverted pool.
+   with a misleading "never appeared" message. Gate the rescue out of `:test` (let it
+   raise so the real cause is visible). It did not fire in #1037, but it is a latent trap.
 
-2. **Make `EzagentCore.DataCase` re-establish shared mode so it can't revert mid-suite.**
+3. **Make `EzagentCore.DataCase` re-establish shared mode so it can't revert mid-suite.**
    `start_owner_stable!` already retries *into* shared mode; the residual gap is that the
    share is *lost* when a prior owner dies. Hold the share for the whole test (the
    harness already notes the cold-restart tests block in `wait_until` across the window —
@@ -315,7 +350,8 @@ see #734).
    `allow_live_kinds/1` already does this for Kinds alive at setup; extend to Kinds the
    test spawns).
 
-This pair removes the engine behind §1.2, §1.4, §1.5 and most §1.6.
+Together (allow spawned Kinds + stable shared mode + unmask the dormant rescue) these
+remove the engine behind §1.2, §1.4, §1.5 and most §1.6.
 
 ### Fix 2 — per-suite isolation of the killed/mutated singletons
 
