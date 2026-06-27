@@ -102,9 +102,18 @@ iteration** (179/0) — consistent with the diagnosis that the named suites flak
 ## Confirmation run (shipped image: rebased source + pnpm 10.33.0)
 
 <!-- CONFIRM-RESULT -->
-_Result pending — re-run of seed 979933 on the exact image `make ci.docker.build`
-produces, to confirm the flake reproduces independent of the initial-capture provenance
-caveats above._
+**Confirmed — reproduced on iter 1, seed 979933**, on the shipped image (rebased source
++ pnpm 10.33.0, built via `make ci.docker.build`; same `make ci.repro.amplify` knobs:
+cpuset 0-1, 2 schedulers, max_cases 8). `ezagent_domain_session` failed `3` of `699`
+with the **same named targets** as the initial capture:
+
+- **`Ezagent.Domain.AgentReadTest`** `agent_read_test.exs:109` — `(KeyError) key :effective_body`
+- **`DefaultSessionTemplateSeedTest`** `default_session_template_seed_test.exs:57` — `{:error, :no_such_actor}`
+- `repair_orchestrator_test.exs:21` — same `:no_such_actor` spawn-readiness class
+
+So the flake reproduces on the **exact harness a user gets** — independent of the
+initial-capture provenance caveats. (`ezagent_plugin_feishu` `SidecarOrphanReapTest` again
+showed its 1 CPU-timing-artifact failure, as noted above.)
 
 ## Reproduce it yourself
 
