@@ -65,7 +65,16 @@ RUN mix local.hex --force && mix local.rebar --force
 #     fetch+compile once; the runtime then re-uses a NAMED-VOLUME /app for repeated runs. ---
 COPY . .
 # Resilient deps fetch: the proxy to hex.pm is flaky under concurrency.
-RUN ok=0; for i in 1 2 3 4 5; do \
+# Unset SET-BUT-EMPTY proxy vars first (same fix as Dockerfile.dev #1061): the ARG/ENV
+# above bake HTTP_PROXY="" when no proxy build-arg is passed (host has direct egress via
+# clash TUN). Mix download tasks treat "" as a truthy proxy and crash in URI.parse("")
+# -> String.to_charlist(nil) (FunctionClauseError). Guard EACH var independently so a real
+# build-arg proxy in any casing is preserved. RUN-local unset doesn't persist across layers,
+# so it is repeated on the `mix compile` RUN below (which builds the elixir_make NIFs).
+RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
+      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
+    done; \
+    ok=0; for i in 1 2 3 4 5; do \
       HEX_HTTP_CONCURRENCY=1 HEX_HTTP_TIMEOUT=180 mix deps.get && { ok=1; break; } || { echo "deps.get retry $i"; sleep 8; }; \
     done; \
     [ "$ok" = 1 ] || { echo "deps.get failed after 5 retries"; exit 1; }
@@ -77,7 +86,13 @@ RUN ok=0; for i in 1 2 3 4 5; do \
 RUN pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
     && pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
     && pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile --config.strictDepBuilds=false
-RUN mix compile
+# CI compiles deps + project in one `mix compile` (no separate deps.compile); this is where
+# the elixir_make precompiled NIFs (exqlite/bcrypt_elixir/lazy_html) build, so the empty-proxy
+# crash site lives here. Repeat the per-variable unset guard (RUN-local, doesn't carry over).
+RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
+      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
+    done; \
+    mix compile
 
 # Clear the build-time proxy from the FINAL image — postgres/localhost go direct.
 ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
