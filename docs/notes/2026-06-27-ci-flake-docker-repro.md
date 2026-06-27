@@ -17,12 +17,15 @@ cannot.
 
 ```
 make ci.repro   (CPUSET=0-1  SCHEDULERS=2  MAX_CASES=8  RESET_DB_EACH=0  full umbrella)
-iter 1  seed=979933  →  FLAKE REPRODUCED
+iter 1  seed=979933  →  FLAKE REPRODUCED   (AgentReadTest + DefaultSessionTemplateSeedTest, fresh DB)
+iter 2  seed=979933  →  FLAKE REPRODUCED   (same two named suites)
 ```
 
-Iteration 1 runs against a **freshly created DB** (the runner creates the DB once before
-the loop), so these are **not** dirty-cross-run artifacts — they are faithful to CI's
-fresh-postgres-per-job.
+**Hit-rate: 2/2 on seed 979933** (the diagnosis's known-red CI seed). Iteration 1 runs
+against a **freshly created DB** (the runner creates the DB once before the loop, and iter
+1 is its first consumer), so iter 1 is **not** a dirty-cross-run artifact — it is faithful
+to CI's fresh-postgres-per-job. Iter 2 (reused DB) reproducing the *same* suites shows the
+race is robust, not accumulation-dependent.
 
 ## The reproduced failures (iteration 1, seed 979933)
 
@@ -52,6 +55,19 @@ Ezagent.Kind.StateRebuilder.snapshot_exists?: snapshot lookup raised …
 > These caught `OwnershipError` warnings appear on macOS too — they evidence the
 > *mechanism*, not the *failure*. The discriminating proof is the **uncaught** failures
 > in the table above (real assertion flunks), which macOS did not produce for seed 979933.
+
+Iter 2 also surfaced the **canonical §1.1 mechanism in uncaught form** — a
+globally-supervised Kind querying the DB in `init/1` on the reverted pool:
+
+```
+Ezagent.AgentBridge.Channel: failed to ensure Agent Kind for entity://team-alpha/agent/… :
+  %DBConnection.OwnershipError{… mode :manual …}
+    Ezagent.Kind.Snapshot.fetch_snapshot/2  (kind/snapshot.ex:230)
+    Ezagent.Kind.Server.init/1              (kind/server.ex:110)
+```
+
+This is exactly the `Kind.Server.init → Snapshot.fetch_snapshot` revert-path the diagnosis
+names as the engine behind the seed/read flakes — reproduced here, off the runner.
 
 ## What is NOT clean repro (honest caveats)
 
