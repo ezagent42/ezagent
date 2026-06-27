@@ -94,6 +94,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
+  alias Ezagent.Orchestrator.Tools.Kb
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Migration
   alias Ezagent.Orchestrator.Tools.Participants
@@ -670,7 +671,8 @@ defmodule Ezagent.Orchestrator.Tools do
          :ok <- Ezagent.Routing.PromptTemplate.validate(template) do
       merged = Map.put(read_prompt_templates(session_uri), name, template)
 
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_prompt_templates")
+      target =
+        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_prompt_templates")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -835,6 +837,15 @@ defmodule Ezagent.Orchestrator.Tools do
           {:ok, %{agent_templates: [URI.t()], session_templates: [URI.t()]}}
           | {:error, term()}
   defdelegate list_templates(name_filter \\ nil, opts \\ []), to: Templates
+
+  @doc "Retrieve top-k chunks from a kb-agent (kb-retrieval SPEC §5.3 option 1)."
+  @spec kb_query(String.t(), String.t(), pos_integer(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  defdelegate kb_query(kb_agent, query, k, opts \\ []), to: Kb
+
+  @doc "Ingest one source document into a kb-agent (kb-retrieval SPEC §5.3 option 1)."
+  @spec kb_ingest(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  defdelegate kb_ingest(kb_agent, source_uri, opts \\ []), to: Kb
 
   # === generic invoke ====================================================
 

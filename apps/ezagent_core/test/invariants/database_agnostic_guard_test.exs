@@ -30,7 +30,16 @@ defmodule EzagentCore.Invariants.DatabaseAgnosticGuardTest do
     "/lib/ezagent/persistence/database_diagnostics.ex",
     "/lib/ezagent/persistence/transient_retry.ex",
     "/lib/mix/tasks/ezagent.home.backup.ex",
-    "/lib/mix/tasks/ezagent.home.restore.ex"
+    "/lib/mix/tasks/ezagent.home.restore.ex",
+    # KB retrieval capability (SPEC kb-retrieval-capability §3.6, §4) — the
+    # `kb` plugin intentionally uses `Exqlite` DIRECTLY (NOT via Ecto) for the
+    # SEPARATE, PORTABLE per-KB sqlite stores. This is the OPPOSITE of an
+    # adapter-portability leak: ezagent's OWN DB stays Postgres, and the KB
+    # corpus is deliberately ISOLATED into standalone sqlite files that exqlite
+    # opens per-file (one sqlite DB per kb-agent does not fit a single bound
+    # Ecto.Repo). The direct-Exqlite + FTS5 PRAGMA usage is the sanctioned,
+    # reviewed boundary — scoped to this plugin's lib only.
+    "/apps/ezagent_plugin_kb/lib/"
   ]
 
   @sqlite_string_patterns [

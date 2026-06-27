@@ -468,6 +468,23 @@ defmodule Ezagent.Session.SessionManager do
     Tools.list_templates(arg_optional_string(args, "name_filter"), opts)
   end
 
+  # kb-retrieval SPEC §5.3 option 1 — retrieve / ingest against a kb-agent
+  # named within the orchestrator's workspace (the orchestrator's reconstructed
+  # caps in `opts` authorize the kb.query / kb.ingest dispatch, fail-closed).
+  defp run_tool_op(:kb_query, args, opts) do
+    with {:ok, kb_agent} <- arg_string(args, "kb_agent"),
+         {:ok, query} <- arg_string(args, "query") do
+      Tools.kb_query(kb_agent, query, arg_optional_integer(args, "k", 5), opts)
+    end
+  end
+
+  defp run_tool_op(:kb_ingest, args, opts) do
+    with {:ok, kb_agent} <- arg_string(args, "kb_agent"),
+         {:ok, source_uri} <- arg_string(args, "source_uri") do
+      Tools.kb_ingest(kb_agent, source_uri, opts)
+    end
+  end
+
   # --- tool-name normalization ------------------------------------------
 
   @doc "The orchestrator tool names (atoms) — delegates to `Tools`."
