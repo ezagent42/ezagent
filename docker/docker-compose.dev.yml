@@ -103,7 +103,11 @@ services:
     restart: unless-stopped
     profiles: [e2e]
     environment:
-      TOKEN: ${BROWSERLESS_TOKEN:?set BROWSERLESS_TOKEN in docker/.env}
+      # `:-` (not `:?`): avoid wedging a plain non-e2e `up` on compose versions that
+      # interpolate every service's vars at load time regardless of profile (codex
+      # r-review #1). Empty token = tokenless browserless, but the sidecar is still
+      # internal-only + unpublished → no exposure. Set BROWSERLESS_TOKEN in docker/.env.
+      TOKEN: ${BROWSERLESS_TOKEN:-}
       HOST: "0.0.0.0"
       PORT: "3000"
       CONCURRENT: "2"

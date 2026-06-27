@@ -90,7 +90,13 @@ services:
     restart: unless-stopped
     profiles: [e2e]
     environment:
-      TOKEN: ${BROWSERLESS_TOKEN:?set BROWSERLESS_TOKEN in docker/.env}
+      # `:-` (not `:?`): some compose versions interpolate ALL services' vars at
+      # file-load time regardless of the active profile, so a `:?` here would wedge a
+      # plain non-e2e `up` when the token is unset (codex r-review #1). Empty token =
+      # browserless runs tokenless, but the sidecar is still internal-only + unpublished,
+      # so there is no exposure. The runbook's connect bootstrap fails loudly if the
+      # token mismatches. Set BROWSERLESS_TOKEN in docker/.env for e2e runs.
+      TOKEN: ${BROWSERLESS_TOKEN:-}
       HOST: "0.0.0.0"        # bind so the ezagent sibling can reach it on the net
       PORT: "3000"
       CONCURRENT: "2"
