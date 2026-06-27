@@ -95,17 +95,33 @@ defmodule Ezagent.AutoService.Tier1Seed do
     kb_agent = Keyword.get(opts, :kb_agent, "kb-tier1")
     autosvc_agent = Keyword.get(opts, :autoservice_agent, "autoservice")
     autosvc_flavor = Keyword.get(opts, :autoservice_flavor, "cc")
+    # AutoService agent role: "orchestrator" on the live node threads the
+    # orchestrator MCP bridge so a live claude exposes kb_query. The test passes
+    # a minimal role it registers itself (the orchestrator role recipe is a
+    # session/cc-boot concern, not present in the isolated kb test).
+    autosvc_role = Keyword.get(opts, :autoservice_role, "orchestrator")
+    # kb-agent flavor: `native` on the live node (kb = role `kb` × flavor
+    # `native`, per EzagentPluginKb.Application). The test passes its own
+    # registered flavor.
+    kb_flavor = Keyword.get(opts, :kb_flavor, "native")
     session_short = Keyword.get(opts, :session, "tier1")
     admin_ctx = Keyword.get(opts, :admin_ctx, admin_ctx())
 
     workspace_uri = EzUri.new!("workspace://#{ws}")
 
-    with :ok <- maybe_register_recipes(opts, autosvc_flavor),
+    with :ok <- maybe_register_recipes(opts, autosvc_flavor, kb_flavor, autosvc_role),
          :ok <- ensure_workspace(ws),
-         {:ok, kb_uri} <- ensure_kb_agent(workspace_uri, ws, kb_agent, admin_ctx),
-         {:ok, _chunks} <- ingest_corpus(kb_uri, ws, kb_agent, admin_ctx),
+         {:ok, kb_uri} <- ensure_kb_agent(workspace_uri, ws, kb_agent, kb_flavor, admin_ctx),
+         {:ok, _chunks} <- ingest_corpus(kb_uri, ws, admin_ctx),
          {:ok, autosvc_uri} <-
-           ensure_autoservice_agent(workspace_uri, ws, autosvc_agent, autosvc_flavor, admin_ctx),
+           ensure_autoservice_agent(
+             workspace_uri,
+             ws,
+             autosvc_agent,
+             autosvc_flavor,
+             autosvc_role,
+             admin_ctx
+           ),
          {:ok, session_uri} <- ensure_public_view_session(ws, session_short),
          :ok <- join_member(session_uri, autosvc_uri, :agent),
          {:ok, rule_id} <- ensure_always_to_agent_rule(session_uri, autosvc_uri) do
@@ -145,22 +161,29 @@ defmodule Ezagent.AutoService.Tier1Seed do
     MapSet.new([Capability.cap(:agent, Ezagent.Behavior.Kb, :query)])
   end
 
-  # The kb recipe + a generic AutoService flavor. On the live node these are
+  # The kb recipe + kb flavor + AutoService flavor. On the live node these are
   # registered at boot, so this is opt-in (`:register_recipes`).
-  defp maybe_register_recipes(opts, autosvc_flavor) do
+  defp maybe_register_recipes(opts, autosvc_flavor, kb_flavor, autosvc_role) do
     if Keyword.get(opts, :register_recipes, false) do
-      register_recipes(autosvc_flavor)
+      register_recipes(autosvc_flavor, kb_flavor, autosvc_role)
     else
       :ok
     end
   end
 
   @doc """
-  Register the kb role recipe + the AutoService agent flavor (idempotent).
-  Only needed when the seed runs OUTSIDE a fully-booted node (the test).
+  Register the kb role recipe + the kb/AutoService flavors + a minimal
+  AutoService role recipe (idempotent). Only needed when the seed runs OUTSIDE a
+  fully-booted node (the test); the live node registered all of these at boot.
+
+  The minimal AutoService role recipe REQUESTS the `kb.query` cap so the created
+  AutoService agent genuinely holds it via CapMint (advisor: the cap must be
+  seeded, not hand-built). On the live node the orchestrator's kb authority
+  comes from the session/orchestrator caps machinery (kb-retrieval SPEC §5.3
+  option 1) instead.
   """
-  def register_recipes(autosvc_flavor) do
-    kb_app = Ezagent.AgentFlavorRegistry
+  def register_recipes(autosvc_flavor, kb_flavor, autosvc_role) do
+    reg = Ezagent.AgentFlavorRegistry
 
     # kb resource types (kb-store / kb-source) for FsResolver — mirror the
     # kb_role_native_test setup.
@@ -171,15 +194,33 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
     _ = Ezagent.RoleRegistry.register(EzagentPluginKb.Application.kb_recipe())
 
-    # A permissive cap policy for the AutoService flavor (test only): every
-    # requested cap is granted, mirroring the kb test's cap_policy/1.
-    _ =
-      kb_app.register(%{
-        flavor: autosvc_flavor,
-        kind: Ezagent.Entity.Agent,
-        template_class: nil,
-        cap_policy: fn _requested -> fn _needed -> true end end
-      })
+    # Minimal AutoService role — requests the kb.query cap so the agent holds it.
+    # Only registered for a NON-"orchestrator" role (the real orchestrator recipe
+    # is owned by session/cc boot; don't shadow it).
+    if autosvc_role != "orchestrator" do
+      _ =
+        Ezagent.RoleRegistry.register(%{
+          name: autosvc_role,
+          passive: false,
+          behaviors: [],
+          requested_caps: [%{behavior: Ezagent.Behavior.Kb, action: :query}]
+        })
+    end
+
+    # Permissive cap policies (test only): every requested cap granted, mirroring
+    # the kb test's cap_policy/1 — fail-closed CapMint is exercised elsewhere
+    # (kb_role_native_test §8.3); here we are wiring the chain, not re-testing it.
+    grant_all = fn _requested -> fn _needed -> true end end
+
+    for flavor <- Enum.uniq([kb_flavor, autosvc_flavor]) do
+      _ =
+        reg.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: nil,
+          cap_policy: grant_all
+        })
+    end
 
     :ok
   end
@@ -209,7 +250,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     _ -> false
   end
 
-  defp ensure_kb_agent(workspace_uri, ws, name, admin_ctx) do
+  defp ensure_kb_agent(workspace_uri, ws, name, kb_flavor, admin_ctx) do
     uri = EzUri.agent(ws, name)
 
     case Ezagent.KindRegistry.lookup(uri) do
@@ -219,7 +260,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
       :error ->
         case Workspace.create_agent(
                workspace_uri,
-               %{flavor: kb_flavor(), name: name, role: "kb", cwd: "", with_pty: false},
+               %{flavor: kb_flavor, name: name, role: "kb", cwd: "", with_pty: false},
                admin_ctx
              ) do
           {:ok, %{agent_uri: ^uri}} -> {:ok, uri}
@@ -229,12 +270,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
   end
 
-  # The kb-agent flavor. The boot-registered native kb flavor name may vary by
-  # environment; the test registers "kb" via the recipe. Use the recipe's role
-  # name as the flavor when a dedicated flavor is not configured.
-  defp kb_flavor, do: Application.get_env(:ezagent_plugin_kb, :flavor, "kb")
-
-  defp ingest_corpus(kb_uri, ws, kb_agent, admin_ctx) do
+  defp ingest_corpus(kb_uri, ws, admin_ctx) do
     source_name = "tier1-corpus"
     dir = Path.join([Ezagent.Home.path("kb-sources"), ws])
     File.mkdir_p!(dir)
@@ -267,7 +303,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
   end
 
-  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, admin_ctx) do
+  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, admin_ctx) do
     uri = EzUri.agent(ws, name)
 
     case Ezagent.KindRegistry.lookup(uri) do
@@ -279,7 +315,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
         # a live claude exposes the 7-tool surface incl. kb_query.
         case Workspace.create_agent(
                workspace_uri,
-               %{flavor: flavor, name: name, role: "orchestrator", cwd: "", with_pty: false},
+               %{flavor: flavor, name: name, role: role, cwd: "", with_pty: false},
                admin_ctx
              ) do
           {:ok, %{agent_uri: got}} -> {:ok, got}
@@ -306,6 +342,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
          }) do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
+      {:error, {:already_registered, _}} -> :ok
     end
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
