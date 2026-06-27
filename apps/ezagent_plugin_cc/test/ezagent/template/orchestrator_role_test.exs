@@ -22,13 +22,28 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
   filesystem helper — unit-testable in a tmp dir.
   """
 
-  use ExUnit.Case, async: false
+  # role-as-data (#1048): `bootstrap/2`/`try_role_bootstrap/3` resolve the
+  # orchestrator role recipe read-through over `ConfigStore` (via
+  # `RoleRegistry.lookup/1`), so the suite needs the Ecto sandbox checked out for
+  # the test process. The pure-FS / helper tests ignore it. (Boot's DB role seed
+  # is skipped in `:test`; we seed explicitly in `setup` inside the sandbox.)
+  use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Orchestrator.OrchestratorRole
   alias Ezagent.PluginCc.Template.CcAgent
 
   @hint CcAgent.orchestrator_hint_line()
 
   setup do
+    # role-as-data: seed the orchestrator role into the test's sandbox so the
+    # bootstrap's `resolve_orchestrator_role/0` read-through resolves it. Flush
+    # the ETS cache first so a prior test's cached entry can't mask the
+    # ConfigStore-sourced path (ETS is process-global; the sandbox is per-test).
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+    :ok = Ezagent.Agent.RoleRegistry.flush_cache()
+    {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+
+
     # Stage a fake umbrella-root skill source in a temp dir so the
     # test doesn't depend on the real `.claude/skills/...` (which a
     # CI build might not ship). Override the
