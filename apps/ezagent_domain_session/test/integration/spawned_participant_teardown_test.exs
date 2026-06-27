@@ -45,7 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   # A live Agent Kind hosting Sandbox, with a config_dir wired to a stub
   # Template Class that broadcasts on `destroy_config_dir/2` so the test can
   # observe the FS GC fire.
-  defp spawn_worker(config_dir) do
+  defp spawn_worker(config_dir, template_class \\ __MODULE__.GcStubClass) do
     uri = Ezagent.URI.new!("entity://system/agent/worker-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
@@ -54,7 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       Invocation.dispatch(%Invocation{
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.write_path"),
         mode: :call,
-        args: %{config_dir_path: config_dir, template_class: __MODULE__.GcStubClass},
+        args: %{config_dir_path: config_dir, template_class: template_class},
         ctx: %{
           caller: User.admin_uri(),
           caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
@@ -185,6 +185,32 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       refute worker in Participants.list_participants(session_uri)
       # (f) {:member_left} convergence broadcast fired for the spawned worker.
       assert_receive {:session_membership_change, ^session_uri, {:member_left, ^worker}}, 2_000
+    end
+
+    test "config_dir cleanup FAILURE still drops the member (worker reaped → no zombie; codex Q4 follow-up)" do
+      # Sandbox.handle_destroy rescues a raising destroy_config_dir and returns
+      # {destroyed: true, cleanup: {:error, _}} — the worker process IS reaped but
+      # the FS dir leaked. The membership teardown MUST still proceed (member
+      # dropped + {:member_left}), NOT abort into a zombie referencing a dead
+      # worker. The reap returns :worker; the leak is logged out-of-band.
+      session_uri = Session.default_uri()
+      owner = User.admin_uri()
+      config_dir = "/tmp/f7b-cleanupfail-#{uniq()}"
+
+      worker = spawn_worker(config_dir, __MODULE__.RaisingGcStubClass)
+      :ok = AgentLineage.record(worker, owner)
+      join_spawned(session_uri, worker)
+
+      assert worker in Participants.list_participants(session_uri)
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "esr:session_membership:changes")
+
+      assert {:ok, %{status: :removed, torn_down: :worker}} =
+               Participants.remove_participant(session_uri, worker, op_ctx(owner, session_uri))
+
+      assert :gone = wait_until_gone(worker)
+      refute worker in Participants.list_participants(session_uri)
+      assert_receive {:session_membership_change, ^session_uri, {:member_left, ^worker}}, 2_000
+      assert :error == AgentLineage.lookup(worker)
     end
   end
 
@@ -366,6 +392,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       )
 
       :ok
+    end
+  end
+
+  # Stub whose FS cleanup RAISES — Sandbox.handle_destroy rescues it and returns
+  # {destroyed: true, cleanup: {:error, _}} (worker still terminates).
+  defmodule RaisingGcStubClass do
+    def destroy_config_dir(%URI{} = _agent_uri, _config_dir) do
+      raise RuntimeError, "simulated config_dir FS cleanup failure"
     end
   end
 end

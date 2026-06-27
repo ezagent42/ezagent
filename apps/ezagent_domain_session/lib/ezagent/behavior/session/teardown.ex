@@ -201,8 +201,22 @@ defmodule Ezagent.Behavior.Session.Teardown do
 
   defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: :ok}}), do: :ok
 
-  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: {:error, reason}}}),
-    do: {:error, {:terminated_with_cleanup_failure, reason}}
+  # `destroyed: true` means the worker PROCESS is IRREVERSIBLY terminating
+  # (Sandbox always schedules termination), even when the plugin config_dir FS
+  # cleanup FAILED. The worker is gone, so the membership teardown MUST still
+  # proceed — returning an error here would abort the leave and leave a zombie
+  # member referencing a dead worker with no {:member_left} (codex Q4 follow-up /
+  # SPEC §7 'Silent orphan'). The FS leak is logged by Sandbox (slice preserved
+  # for retry) + here for out-of-band cleanup; it does NOT block membership drop.
+  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: {:error, reason}}}) do
+    Logger.warning(
+      "Session.Teardown: worker reaped (process terminating) but its config_dir " <>
+        "cleanup FAILED (#{inspect(reason)}) — FS dir leaked, slice preserved for " <>
+        "out-of-band retry; membership teardown proceeds (no zombie)."
+    )
+
+    :ok
+  end
 
   defp interpret_destroy_result({:ok, %{destroyed: true}}), do: :ok
   defp interpret_destroy_result({:ok, {:ok, :terminated}}), do: :ok
@@ -228,7 +242,8 @@ defmodule Ezagent.Behavior.Session.Teardown do
     :ok
   end
 
-  defp handle_reap_error(_worker_uri, reason, :strict), do: {:error, {:worker_teardown_failed, reason}}
+  defp handle_reap_error(_worker_uri, reason, :strict),
+    do: {:error, {:worker_teardown_failed, reason}}
 
   defp safe(fun) do
     fun.()
