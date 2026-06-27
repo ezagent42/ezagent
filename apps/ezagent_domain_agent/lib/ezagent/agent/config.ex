@@ -10,11 +10,23 @@ defmodule Ezagent.Agent.Config do
   alias Ezagent.{Invocation, Socialware.ConfigStore}
   alias Ezagent.Behavior.ConfigEvolve
 
-  @default_key "advisor.behavior"
+  @default_key "agent.soul"
   @layer_order ~w(workspace user session)
   @editable_layer "user"
 
   @type principal_caps :: MapSet.t() | [term()]
+
+  @doc """
+  The default config-cascade key under which every agent's behavior/persona
+  config is stored. Its body's `soul_md` field projects to the agent's soul
+  file (`CLAUDE.md`) via `Ezagent.Socialware.ConfigProjection.render_soul/1`.
+
+  Exposed as the single canonical source so out-of-app readers (e.g. the world
+  console) reference this fn rather than re-hardcoding the literal — killing the
+  drift trap where an inlined copy silently points at a stale key.
+  """
+  @spec default_key() :: String.t()
+  def default_key, do: @default_key
 
   @doc """
   Reads the editable config cascade for an agent.
@@ -37,7 +49,7 @@ defmodule Ezagent.Agent.Config do
   the SAME way step-5.5 does, via `Ezagent.Identity.caps_authorize?/2`.
 
   The returned shape is stable for empty agents: it always includes the default
-  `advisor.behavior` key plus any dynamic keys currently present in
+  `agent.soul` key plus any dynamic keys currently present in
   `ConfigPointer` rows for the agent.
   """
   @spec read_cascade(

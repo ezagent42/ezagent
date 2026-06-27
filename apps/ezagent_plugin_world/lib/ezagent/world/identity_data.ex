@@ -843,7 +843,10 @@ defmodule Ezagent.World.IdentityData do
 
   defp read_soul_field(agent_uri, caller, caps) do
     if Code.ensure_loaded?(Ezagent.Agent.Config) do
-      case Ezagent.Agent.Config.read_key(agent_uri, "advisor.behavior", caller, caps) do
+      # Canonical default key (NOT a re-hardcoded literal) — no drift from @default_key.
+      key = Ezagent.Agent.Config.default_key()
+
+      case Ezagent.Agent.Config.read_key(agent_uri, key, caller, caps) do
         {:ok, %{effective_body: %{"soul_md" => soul_md}}}
         when is_binary(soul_md) and soul_md != "" ->
           [%{"key" => "soul_md", "value" => soul_md, "source" => "cascade"}]
