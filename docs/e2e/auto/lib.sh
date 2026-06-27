@@ -34,6 +34,39 @@ ab_eval(){ # 返回 JS 值;agent-browser 把字符串 JSON 化(带引号)→ 去
 ab_shot(){ agent-browser screenshot "$1" >/dev/null 2>&1; }
 ab_close(){ agent-browser close --all >/dev/null 2>&1; }
 
+# --- 浏览器获取模式(dev/host vs 容器内部署)---
+# HOST(dev,默认):宿主上跑 run.sh 时 E2E_BROWSER_CDP 未设(compose 的 env 不会传到宿主)
+#   → 后续 `agent-browser open` 自起本机 Chrome(沿用旧路径,完全不变)。
+# 容器内(deploy):ezagent 容器把 E2E_BROWSER_CDP 设到 sidecar → 这里 `connect` 一次,之后
+#   所有 ab_open/ab_click/ab_eval/ab_shot 复用这条已连接的 CDP 会话(connect 经守护进程 +
+#   unix socket 跨多次独立 CLI 调用持久化,2026-06-27 实测验证)。镜像里**没有本机 Chrome**
+#   (Chrome 只在 sidecar),所以容器内没有 open-本机 的回退路径:CDP 设了却连不上 = 配置错
+#   (多半是没带 --profile e2e 起 chromium,或 token 不符),必须**硬失败**而非 fail-open
+#   到注定失败的 `agent-browser open`(codex r-review #2/#3 / let-it-crash)。
+# URL 的 `?` 前需带 `/`(browserless v2 对 `ws://h:3000?token=` 返回 400;正确是 `ws://h:3000/?token=`)。
+ab_connect_bootstrap(){
+  [ -n "${E2E_BROWSER_CDP:-}" ] || return 0      # HOST/dev:不连远端,留给 open 自起本机 Chrome
+  # 关键坑(2026-06-27 实测):compose 用 `${ESR_PROXY:-}` 给容器注入了**空字符串**的
+  # HTTP_PROXY/HTTPS_PROXY 等。agent-browser 的 CDP 客户端把空串当成非法 proxy → connect
+  # 直接放弃远端、回退去起本机 Chrome("Chrome not found")。把**值为空**的 proxy 变量
+  # unset 掉(只删空的,真有代理时不动),connect 才能正常贴到 sidecar。函数内 unset 会作用到
+  # source 它的 run.sh 外层 shell,后续所有 ab_*(独立进程)都继承这份干净环境。
+  local v
+  for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy; do
+    if [ -n "${!v+x}" ] && [ -z "${!v}" ]; then unset "$v"; fi
+  done
+  local i
+  for i in 1 2 3 4 5 6; do                        # sidecar 可能仍在预热 → 重试
+    if agent-browser connect "$E2E_BROWSER_CDP" >/dev/null 2>&1; then
+      info "agent-browser connected to CDP sidecar"; return 0
+    fi
+    sleep 3
+  done
+  c_r "agent-browser connect 失败:$E2E_BROWSER_CDP — 容器内 E2E 需 --profile e2e 起 chromium sidecar(且 BROWSERLESS_TOKEN 一致)"
+  exit 1                                           # 硬失败:容器内无本机 Chrome 可回退
+}
+ab_connect_bootstrap
+
 # React 受控字段填值(native-setter + 派发事件)。val 不可含单引号(URI/名都安全)。
 ab_fill_react(){ # selector value
   ab_eval "(()=>{const el=document.querySelector('$1');if(!el)return 'ERR:no-el';const p=el.tagName==='SELECT'?window.HTMLSelectElement.prototype:window.HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(el,'$2');el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input',{bubbles:true}));return 'OK';})()"

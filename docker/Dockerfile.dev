@@ -32,6 +32,25 @@ RUN npm i -g @anthropic-ai/claude-code@2.1.162 @openai/codex@0.137.0
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
+# --- agent-browser CLI: the CDP *client* only — NO Chrome in this image. ---
+# The browser is the `chromium` sidecar (browserless) on the E2E stacks; in-container
+# we always `agent-browser connect ws://chromium:3000/?token=…`, never `open` a local
+# Chrome. So we install ONLY the prebuilt binary from the pinned GitHub release and
+# deliberately do NOT run `agent-browser install` (which would pull a full Chrome).
+# Pinned to the host's working version for reproducibility across the build-once ladder.
+# Arch-aware: bookworm is glibc → agent-browser-linux-{x64,arm64}. (See spec §3.1 / OQ-1.)
+ARG AGENT_BROWSER_VERSION=0.26.0
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) AB_ARCH=x64 ;; \
+      arm64) AB_ARCH=arm64 ;; \
+      *) echo "unsupported arch for agent-browser: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/agent-browser \
+      "https://github.com/vercel-labs/agent-browser/releases/download/v${AGENT_BROWSER_VERSION}/agent-browser-linux-${AB_ARCH}"; \
+    chmod +x /usr/local/bin/agent-browser; \
+    agent-browser --version
+
 # Create the non-root runtime user EARLY + set HOME, so COMPILE-TIME `~` expansions
 # (e.g. `@default_dir Path.expand("~/.ezagent")` in McpConfigWriter) bake a path the
 # runtime ezagent user can write — otherwise they freeze as `/root/.ezagent` (built as root)

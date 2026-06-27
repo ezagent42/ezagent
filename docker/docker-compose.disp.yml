@@ -4,7 +4,13 @@
 # Build+run (host has direct net; no proxy needed in this environment):
 #   docker compose -f docker/docker-compose.disp.yml build
 #   docker compose -f docker/docker-compose.disp.yml up -d
-# Standardizes the previously-manual `ezagent-disp` setup. See docs/guide/dockerized-e2e.md.
+# In-container E2E browser loop (cc drives the app from INSIDE the container via a
+# headless-chromium sidecar) — add the `e2e` profile to bring up the `chromium`
+# sidecar; the dev-mode host-driven path (host `agent-browser open`) needs nothing here:
+#   docker compose -f docker/docker-compose.disp.yml --profile e2e up -d
+#   (set BROWSERLESS_TOKEN in docker/.env — gitignored — before that.)
+# Standardizes the previously-manual `ezagent-disp` setup. See docs/guide/dockerized-e2e.md
+# and docs/together/2026-06-27/specs/container-e2e-browser.md.
 services:
   ezagent:
     build:
@@ -33,8 +39,25 @@ services:
       HTTPS_PROXY: ${ESR_PROXY:-}
       http_proxy: ${ESR_PROXY:-}
       https_proxy: ${ESR_PROXY:-}
-      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
-      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      # chromium,ezagent MUST bypass any proxy so the CDP ws:// and the in-container
+      # app navigation go direct (a proxied ws:// to the sidecar would fail).
+      NO_PROXY: "chromium,ezagent,localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "chromium,ezagent,localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      # --- in-container E2E browser (only active when the runbook runs; inert otherwise) ---
+      # Generic CDP connect (spec default). NOTE the trailing slash before `?` —
+      # browserless v2 rejects `ws://chromium:3000?token=` with HTTP 400; the working
+      # form is `ws://chromium:3000/?token=` (verified empirically, spec OQ-4).
+      E2E_BROWSER_CDP: "ws://chromium:3000/?token=${BROWSERLESS_TOKEN:-}"
+      # The internal app origin the sidecar navigates to (compose service name + port).
+      BASE_URL: "http://ezagent:10042"
+      # Write evidence onto the persistent /data volume (survives container recreate),
+      # NOT the container-local /app/docs/e2e/auto/evidence default.
+      EVID_DIR: "/data/e2e-evidence"
+      # check_origin allowlist for the in-container origin. INERT under MIX_ENV=dev
+      # (config/runtime.exs only reads this when config_env()==:prod; this stack runs
+      # `mix phx.server` in :dev where config/dev.exs sets check_origin:false). Kept
+      # SPEC-faithful + forward-compatible for any future prod-mode profiled smoke.
+      EZAGENT_EXTRA_CHECK_ORIGINS: "http://ezagent:10042"
     volumes:
       - dispm_home:/data
       - ./secrets:/secrets:ro
@@ -42,12 +65,61 @@ services:
       - dispm_cred_codex:/cred/codex
       - dispm_layers:/layers
       - ./entrypoint.sh:/app/docker/entrypoint.sh:ro
+    # `default` MUST be listed explicitly: adding any `networks:` key drops a service
+    # from the implicit default network, which would cut ezagent off from LLM/Feishu
+    # egress. `e2e_browser` is the internal-only net it shares with the sidecar.
+    networks:
+      - default
+      - e2e_browser
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
       interval: 10s
       timeout: 5s
       retries: 18
       start_period: 30s
+
+  # Headless-chromium sidecar (browserless v2) — the CDP browser the in-container
+  # agent-browser drives. Profile-gated so a plain `up` never starts it; bring it up
+  # with `--profile e2e`. NO `ports:` (never published to host/LAN), on an
+  # `internal: true` network (no internet egress from the browser), token-authed.
+  # No hard depends_on from ezagent → the runbook connects lazily (with retry), so a
+  # non-e2e bringup is unaffected. See spec §2/§3/§4.
+  chromium:
+    image: ghcr.io/browserless/chromium:v2.38.1   # pinned; matched Chrome+CDP bundled
+    container_name: ezagent-disp-chromium
+    restart: unless-stopped
+    profiles: [e2e]
+    environment:
+      # `:-` (not `:?`): some compose versions interpolate ALL services' vars at
+      # file-load time regardless of the active profile, so a `:?` here would wedge a
+      # plain non-e2e `up` when the token is unset (codex r-review #1). Empty token =
+      # browserless runs tokenless, but the sidecar is still internal-only + unpublished,
+      # so there is no exposure. The runbook's connect bootstrap fails loudly if the
+      # token mismatches. Set BROWSERLESS_TOKEN in docker/.env for e2e runs.
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+      HOST: "0.0.0.0"        # bind so the ezagent sibling can reach it on the net
+      PORT: "3000"
+      CONCURRENT: "2"
+      TIMEOUT: "120000"
+      HEALTH: "true"
+    networks:
+      - e2e_browser          # internal-only: shares the net with ezagent, NO egress
+    # browserless v2 has no route at `/` (404); the health/version endpoint is
+    # `/json/version?token=…` (verified — spec OQ-4). curl ships in the image.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://127.0.0.1:3000/json/version?token=$${TOKEN}\" >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+networks:
+  # The implicit default network (LLM/Feishu egress) — declared so ezagent can list it.
+  default:
+  # Internal-only network shared by ezagent + chromium. `internal: true` = no NAT to
+  # the internet, so the browser cannot reach anything but the app under test.
+  e2e_browser:
+    internal: true
 
 volumes:
   dispm_home:

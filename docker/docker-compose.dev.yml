@@ -5,6 +5,12 @@
 #   run:    ESR_PROXY=http://host.docker.internal:7897 \
 #             docker compose -f docker/docker-compose.dev.yml up -d
 # Reachable at http://100.64.0.27:10042 (Tailscale) — see docker/README.md.
+# In-container E2E browser loop: add the `e2e` profile to bring up the headless
+# `chromium` sidecar (cc drives the app from INSIDE the container). The dev-mode
+# host-driven path (host `agent-browser open`) needs nothing here.
+#   docker compose -f docker/docker-compose.dev.yml --profile e2e up -d
+#   (set BROWSERLESS_TOKEN in docker/.env — gitignored — first.)
+# See docs/together/2026-06-27/specs/container-e2e-browser.md.
 services:
   ezagent:
     build:
@@ -36,8 +42,25 @@ services:
       HTTPS_PROXY: ${ESR_PROXY:-}
       http_proxy: ${ESR_PROXY:-}
       https_proxy: ${ESR_PROXY:-}
-      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
-      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      # chromium,ezagent bypass the proxy: the CDP ws:// + in-container app nav go direct.
+      NO_PROXY: "chromium,ezagent,localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "chromium,ezagent,localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      # --- in-container E2E browser (active only when the runbook runs; inert otherwise) ---
+      # Generic CDP connect. NOTE the trailing slash before `?` — browserless v2 rejects
+      # `ws://chromium:3000?token=` (HTTP 400); working form is `ws://chromium:3000/?token=`
+      # (verified empirically, spec OQ-4).
+      E2E_BROWSER_CDP: "ws://chromium:3000/?token=${BROWSERLESS_TOKEN:-}"
+      BASE_URL: "http://ezagent:10042"          # internal app origin the sidecar navigates to
+      EVID_DIR: "/data/e2e-evidence"            # persistent /data volume (survives recreate)
+      # INERT under MIX_ENV=dev (runtime.exs reads this only when config_env()==:prod; this
+      # stack runs `mix phx.server` in :dev where dev.exs sets check_origin:false). Kept
+      # SPEC-faithful + forward-compatible for any future prod-mode profiled smoke.
+      EZAGENT_EXTRA_CHECK_ORIGINS: "http://ezagent:10042"
+    # `default` listed explicitly: adding `networks:` would otherwise drop ezagent from
+    # the implicit default net (cutting LLM/Feishu egress + the cloudflared→ezagent path).
+    networks:
+      - default
+      - e2e_browser
     volumes:
       - ezagent_home:/data                  # the swappable $EZAGENT_HOME (E2E layers restore here)
       - ./secrets:/secrets:ro           # static secrets: feishu.yaml (+ cred seeds)
@@ -70,6 +93,42 @@ services:
     depends_on:
       ezagent:
         condition: service_healthy
+
+  # Headless-chromium sidecar (browserless v2). Profile-gated (`--profile e2e`) so a
+  # plain `up` never starts it. NO `ports:` (never published), on an `internal: true`
+  # network (no internet egress from the browser), token-authed. No hard depends_on
+  # from ezagent — the runbook connects lazily. See spec §2/§3/§4.
+  chromium:
+    image: ghcr.io/browserless/chromium:v2.38.1   # pinned; matched Chrome+CDP bundled
+    restart: unless-stopped
+    profiles: [e2e]
+    environment:
+      # `:-` (not `:?`): avoid wedging a plain non-e2e `up` on compose versions that
+      # interpolate every service's vars at load time regardless of profile (codex
+      # r-review #1). Empty token = tokenless browserless, but the sidecar is still
+      # internal-only + unpublished → no exposure. Set BROWSERLESS_TOKEN in docker/.env.
+      TOKEN: ${BROWSERLESS_TOKEN:-}
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      CONCURRENT: "2"
+      TIMEOUT: "120000"
+      HEALTH: "true"
+    networks:
+      - e2e_browser
+    # browserless v2 has no `/` route (404); health/version is `/json/version?token=…`.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS \"http://127.0.0.1:3000/json/version?token=$${TOKEN}\" >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+networks:
+  # Implicit default net (LLM/Feishu egress + cloudflared) — declared so ezagent lists it.
+  default:
+  # Internal-only net shared by ezagent + chromium: `internal: true` = no internet NAT.
+  e2e_browser:
+    internal: true
 
 volumes:
   ezagent_home:
