@@ -113,6 +113,26 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrapTest do
     assert project["hasClaudeMdExternalIncludesApproved"] == true
   end
 
+  test "a non-object projects key does not crash the best-effort path", %{dir: dir} do
+    # Hand-edited / corrupt .claude.json with a non-object "projects" must not
+    # raise out of the best-effort spawn path (codex review).
+    File.write!(Path.join(dir, ".claude.json"), Jason.encode!(%{"projects" => "oops"}))
+
+    assert OnboardingBootstrap.ensure(dir, project_cwd: "/private/tmp/x") == :ok
+    json = read_claude_json(dir)
+    assert json["projects"][Path.expand("/private/tmp/x")]["hasClaudeMdExternalIncludesApproved"] ==
+             true
+  end
+
+  test "try_ensure rescues an unexpected error and returns :ok (scanner is the fallback)", %{
+    dir: dir
+  } do
+    uri = Ezagent.URI.new!("entity://system/agent/onb-#{System.unique_integer([:positive])}")
+    # A corrupt existing file makes ensure/2 return {:error, _}; try_ensure swallows it.
+    File.write!(Path.join(dir, ".claude.json"), "{ not json")
+    assert OnboardingBootstrap.try_ensure(dir, uri, project_cwd: "/tmp/y") == :ok
+  end
+
   test "no project_cwd leaves projects untouched (backward compatible)", %{dir: dir} do
     existing = %{"projects" => %{"/some/cwd" => %{"allowedTools" => []}}}
     File.write!(Path.join(dir, ".claude.json"), Jason.encode!(existing))

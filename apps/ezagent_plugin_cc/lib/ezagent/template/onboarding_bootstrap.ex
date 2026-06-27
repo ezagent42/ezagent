@@ -54,7 +54,14 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   @doc false
   @spec try_ensure(String.t() | nil, URI.t(), keyword()) :: :ok
   def try_ensure(config_dir, %URI{} = agent_uri, opts \\ []) do
-    case ensure(config_dir, opts) do
+    result =
+      try do
+        ensure(config_dir, opts)
+      rescue
+        e -> {:error, {:exception, Exception.message(e)}}
+      end
+
+    case result do
       :ok ->
         :ok
 
@@ -116,8 +123,11 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   defp maybe_put_project_trust(map, project_cwd)
        when is_binary(project_cwd) and project_cwd != "" do
     key = Path.expand(project_cwd)
-    projects = Map.get(map, "projects", %{})
-    project = Map.get(projects, key, %{})
+    # Defensive: a hand-edited `.claude.json` could carry a non-object `projects`
+    # or project entry. Treat any non-map as absent rather than letting `Map.get`
+    # raise out of the best-effort spawn path (codex review).
+    projects = as_map(Map.get(map, "projects"))
+    project = as_map(Map.get(projects, key))
 
     project =
       project
@@ -130,6 +140,9 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   end
 
   defp maybe_put_project_trust(map, _), do: map
+
+  defp as_map(m) when is_map(m), do: m
+  defp as_map(_), do: %{}
 
   # Write through a private temp (chmod 0600 BEFORE content) then atomic rename, so
   # the file is never group/world-readable even briefly. (Same pattern as

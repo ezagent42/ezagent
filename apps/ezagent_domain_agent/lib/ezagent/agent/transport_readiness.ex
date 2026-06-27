@@ -89,7 +89,20 @@ defmodule Ezagent.Agent.TransportReadiness do
     init()
 
     if armed?(agent_uri) and Ezagent.ReadyGate.status(agent_uri) == :not_ready do
-      :ok = Ezagent.ReadyGate.mark_ready(agent_uri)
+      # Route through the CANONICAL completion path (`drain_pending_then_mark_ready`)
+      # rather than a bare `mark_ready`, so any `:cast` buffered to `PendingDelivery`
+      # while the gate sat `:not_ready` is FLUSHED to the live Kind — preserving the
+      # not-ready→ready invariant (codex review). The drain casts buffered
+      # invocations to the Kind pid, so we need it; if the Kind is not in the
+      # registry (already gone), fall back to a bare mark (best-effort).
+      case Ezagent.KindRegistry.lookup(agent_uri) do
+        {:ok, pid} when is_pid(pid) ->
+          _ = Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(URI.to_string(agent_uri), pid)
+          :ok
+
+        _ ->
+          :ok = Ezagent.ReadyGate.mark_ready(agent_uri)
+      end
     end
 
     :ok
