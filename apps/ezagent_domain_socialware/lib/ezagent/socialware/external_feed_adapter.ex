@@ -103,4 +103,9 @@ defmodule Ezagent.Socialware.ExternalFeedAdapter do
   def replay(%URI{} = session_uri, %URI{} = caller, cursor) when is_integer(cursor) do
     ExternalFeed.replay(session_uri, caller, cursor)
   end
+
+  @impl true
+  def history(%URI{} = session_uri, %URI{} = caller) do
+    ExternalFeed.history(session_uri, caller)
+  end
 end

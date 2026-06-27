@@ -150,3 +150,64 @@ defmodule EzagentWeb.TestSupport.CursorPullAdapter do
     %{messages: [], page: %{type: "container", props: %{label: label}, children: []}}
   end
 end
+
+defmodule EzagentWeb.TestSupport.ParticipatoryPullAdapter do
+  @moduledoc false
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  alias EzagentWeb.TestSupport.SessionFeedAdapterState, as: State
+
+  @impl true
+  def adapter_id, do: "web_participatory"
+
+  @impl true
+  def display_name, do: "Web Participatory Fixture"
+
+  @impl true
+  def description, do: "Participatory fixture for SessionFeedChannel tests."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def delivery_discipline, do: :cursor_replay
+
+  @impl true
+  def participation_profile, do: :participatory
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.Socialware.ChatFeedAdapter.Allow,
+      description: "Fixture cap subject."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = _session_uri, _ctx), do: snapshot("render")
+
+  @impl true
+  def live_topics(%URI{} = session_uri), do: [topic(session_uri)]
+
+  @impl true
+  def join_with_cursor(%URI{} = _session_uri, %URI{} = _caller) do
+    {:ok, %{snapshot: snapshot("join"), cursor: 0}}
+  end
+
+  @impl true
+  def replay(%URI{} = _session_uri, %URI{} = _caller, cursor) when is_integer(cursor) do
+    {:ok, %{snapshot: snapshot("replay-from-#{cursor}"), cursor: cursor + 1}}
+  end
+
+  @impl true
+  def post(%URI{} = session_uri, %URI{} = caller, text) when is_binary(text) do
+    State.put({__MODULE__, :last_post}, {session_uri, caller, text})
+    :ok
+  end
+
+  defp topic(session_uri), do: "web_participatory:" <> URI.to_string(session_uri)
+
+  defp snapshot(label) do
+    %{messages: [], page: %{type: "container", props: %{label: label}, children: []}}
+  end
+end

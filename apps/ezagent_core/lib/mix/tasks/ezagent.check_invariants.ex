@@ -44,6 +44,8 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   """
   use Mix.Task
 
+  @repo_root Path.expand("../../../../..", __DIR__)
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.check_invariants — Phase 1 step 3 active")
@@ -57,7 +59,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         check_invariant_6(),
         check_invariant_7(),
         check_invariant_9(),
-        check_invariant_10()
+        check_invariant_10(),
+        check_comms_participation_profile_gate(),
+        check_web_external_mirror_ioc_gate()
       ]
       |> Enum.reject(&match?(:ok, &1))
 
@@ -339,5 +343,96 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
     else
       {:error, 4, output}
     end
+  end
+
+  # Comms MED Gate 1 (2026-06-26): SessionFeedChannel write handlers must route
+  # by the adapter-declared participation profile, not by the historical
+  # `adapter_id == "external_feed"` special case. The behavioral ChannelTest proves
+  # the side effect; this source gate keeps the tripwire under
+  # `mix ezagent.check_invariants`.
+  defp check_comms_participation_profile_gate do
+    path =
+      Path.join(
+        @repo_root,
+        "apps/ezagent_web/lib/ezagent_web/socialware/session_feed_channel.ex"
+      )
+
+    source = File.read!(path)
+
+    offenders =
+      for event <- ["post", "join", "history"],
+          Regex.match?(
+            ~r/def\s+handle_in\("#{event}"[\s\S]{0,240}adapter_id:\s*"external_feed"/,
+            source
+          ) do
+        event
+      end
+
+    if offenders == [] do
+      Mix.shell().info("  ✓ comms MED Gate 1 participation writes use participation_profile")
+      :ok
+    else
+      {:error, "comms-med-1",
+       "SessionFeedChannel write handler(s) still branch on adapter_id == \"external_feed\": " <>
+         Enum.join(offenders, ", ") <>
+         ". Route participatory writes by participation_profile/0 instead."}
+    end
+  end
+
+  # Comms MED Gate 2 (2026-06-26): web may use the sanctioned ExternalMirror IoC
+  # seam (module values + apply/3), but must not add a compile-time dependency on
+  # ExternalMirror modules. Existing undeclared_umbrella_dep_test catches
+  # fully-qualified hard refs, but intentionally does not resolve aliases; this
+  # minimal pin closes that alias gap for ezagent_web/lib.
+  defp check_web_external_mirror_ioc_gate do
+    offenders =
+      @repo_root
+      |> Path.join("apps/ezagent_web/lib/**/*.ex")
+      |> Path.wildcard()
+      |> Enum.flat_map(fn path ->
+        path
+        |> parse_file()
+        |> external_mirror_aliases(path)
+      end)
+
+    if offenders == [] do
+      Mix.shell().info("  ✓ comms MED Gate 2 web→external_mirror uses IoC seam only")
+      :ok
+    else
+      {:error, "comms-med-2",
+       "ezagent_web/lib directly references Ezagent.ExternalMirror modules. Use the " <>
+         "sanctioned Module.concat/apply IoC seam instead. Offenders:\n" <>
+         Enum.join(offenders, "\n")}
+    end
+  end
+
+  defp parse_file(path) do
+    path
+    |> File.read!()
+    |> Code.string_to_quoted!(
+      file: path,
+      warn_on_unnecessary_quotes: false,
+      emit_warnings: false
+    )
+  rescue
+    e -> Mix.raise("AST parse failed for #{path}: #{Exception.message(e)}")
+  end
+
+  defp external_mirror_aliases(ast, path) do
+    {_ast, refs} =
+      Macro.prewalk(ast, [], fn
+        {:__aliases__, meta, [:Ezagent, :ExternalMirror | rest]} = node, refs ->
+          line = meta[:line] || 1
+          rel = Path.relative_to(path, @repo_root)
+          module = Module.concat([Ezagent, ExternalMirror | rest])
+          {node, ["  #{rel}:#{line} #{inspect(module)}" | refs]}
+
+        node, refs ->
+          {node, refs}
+      end)
+
+    refs
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 end
