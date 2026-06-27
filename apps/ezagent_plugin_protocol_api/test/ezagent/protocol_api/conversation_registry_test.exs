@@ -6,7 +6,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistryTest do
 
   Single-node the workspace owner gate is a no-op, so `resolve/3` must still
   start a live session. This is the runnable complement to the (pre-existing,
-  `@tag :skip`) full-plug `openai_chat_plug_integration_test`, which additionally
+  `@tag :skip`) full-plug `chat_completions_plug_integration_test`, which additionally
   needs a seeded echo agent + a multi-second activation wait.
   """
   use EzagentCore.DataCase, async: false

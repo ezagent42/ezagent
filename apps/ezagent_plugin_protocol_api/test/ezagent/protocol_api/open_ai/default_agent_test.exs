@@ -1,10 +1,10 @@
-defmodule EzagentPluginProtocolApi.OpenaiDefaultAgentTest do
+defmodule EzagentPluginProtocolApi.OpenAI.DefaultAgentTest do
   @moduledoc """
   P2 — the OpenAI `/v1/chat/completions` DEFAULT-agent path points at
   `py_default` (the echo.py py-agent that replaces the deleted echo default agent).
 
   This asserts the code that CHANGED in P2: a request whose API key carries no
-  `target_agent` falls back to `OpenaiChatPlug.default_agent_uri/0`, which must
+  `target_agent` falls back to `ChatCompletionsPlug.default_agent_uri/0`, which must
   now resolve to `entity://system/agent/py_default`, and the plug's default
   flavor-registration re-points to the `py` flavor (NOT `echo`).
 
@@ -17,16 +17,16 @@ defmodule EzagentPluginProtocolApi.OpenaiDefaultAgentTest do
 
   use ExUnit.Case, async: true
 
-  alias EzagentPluginProtocolApi.OpenaiChatPlug
+  alias EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug
 
   test "default_agent_uri/0 resolves to py_default (was the echo default)" do
-    assert URI.to_string(OpenaiChatPlug.default_agent_uri()) ==
+    assert URI.to_string(ChatCompletionsPlug.default_agent_uri()) ==
              "entity://system/agent/py_default"
   end
 
   test "default-agent flavor re-registration targets the py flavor (was echo)" do
     # The plug auto-registers the default agent's flavor attribute so the
     # AgentModuleResolver can find its Kind module. It must register `py`.
-    assert OpenaiChatPlug.default_agent_flavor() == "py"
+    assert ChatCompletionsPlug.default_agent_flavor() == "py"
   end
 end
