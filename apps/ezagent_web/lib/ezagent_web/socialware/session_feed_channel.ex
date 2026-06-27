@@ -39,42 +39,24 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   end
 
   @impl true
-  def handle_in("post", params, %{assigns: %{adapter_id: "external_feed"}} = socket) do
-    handle_external_post(params, socket)
-  end
-
-  def handle_in("post", _params, socket) do
+  def handle_in("post", params, socket) do
     case socket.assigns.participation_profile do
       :read_only -> {:reply, {:error, %{reason: "read_only"}}, socket}
-      :participatory -> {:reply, :ok, socket}
+      :participatory -> handle_participatory_post(params, socket)
     end
-  end
-
-  def handle_in("join", _params, %{assigns: %{adapter_id: "external_feed"}} = socket) do
-    handle_external_join(socket)
   end
 
   def handle_in("join", _params, socket) do
     case socket.assigns.participation_profile do
       :read_only -> {:reply, {:error, %{reason: "read_only"}}, socket}
-      :participatory -> {:reply, :ok, socket}
-    end
-  end
-
-  def handle_in("history", _params, %{assigns: %{adapter_id: "external_feed"}} = socket) do
-    case ExternalFeed.history(socket.assigns.session_uri, socket.assigns.caller) do
-      {:ok, %{messages: messages}} ->
-        {:reply, {:ok, %{messages: FeedEncoding.encode_messages(messages)}}, socket}
-
-      {:error, :unauthorized} ->
-        {:reply, {:error, %{reason: "unauthorized"}}, socket}
+      :participatory -> handle_participatory_join(socket)
     end
   end
 
   def handle_in("history", _params, socket) do
     case socket.assigns.participation_profile do
       :read_only -> {:reply, {:error, %{reason: "read_only"}}, socket}
-      :participatory -> {:reply, {:ok, %{messages: []}}, socket}
+      :participatory -> handle_participatory_history(socket)
     end
   end
 
@@ -212,14 +194,15 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     Map.update(snapshot, :messages, [], &FeedEncoding.encode_messages/1)
   end
 
-  defp handle_external_join(socket) do
+  defp handle_participatory_join(socket) do
     session_uri = socket.assigns.session_uri
 
     case signed_in_principal(socket) do
       %URI{} = principal ->
         _ = Ezagent.Entity.spawn_principal(principal)
 
-        with :ok <-
+        with :ok <- maybe_adapter_join(socket.assigns.adapter, session_uri, principal),
+             :ok <-
                Membership.provision_invited_join_authority(
                  session_uri,
                  principal,
@@ -244,13 +227,20 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
-  defp handle_external_post(%{"text" => text}, socket) when is_binary(text) do
+  defp handle_participatory_post(%{"text" => text}, socket) when is_binary(text) do
     trimmed = String.trim(text)
 
     case signed_in_principal(socket) do
       %URI{} = principal when trimmed != "" ->
-        dispatch_post(socket.assigns.session_uri, principal, trimmed)
-        {:reply, :ok, socket}
+        case maybe_adapter_post(
+               socket.assigns.adapter,
+               socket.assigns.session_uri,
+               principal,
+               trimmed
+             ) do
+          :ok -> {:reply, :ok, socket}
+          {:error, reason} -> {:reply, {:error, %{reason: reason_name(reason)}}, socket}
+        end
 
       %URI{} ->
         {:reply, {:error, %{reason: "empty"}}, socket}
@@ -260,8 +250,47 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
-  defp handle_external_post(_params, socket),
+  defp handle_participatory_post(_params, socket),
     do: {:reply, {:error, %{reason: "bad_args"}}, socket}
+
+  defp handle_participatory_history(socket) do
+    case maybe_adapter_history(
+           socket.assigns.adapter,
+           socket.assigns.session_uri,
+           socket.assigns.caller
+         ) do
+      {:ok, %{messages: messages}} ->
+        {:reply, {:ok, %{messages: FeedEncoding.encode_messages(messages)}}, socket}
+
+      {:error, :unauthorized} ->
+        {:reply, {:error, %{reason: "unauthorized"}}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, %{reason: reason_name(reason)}}, socket}
+    end
+  end
+
+  defp maybe_adapter_join(adapter, session_uri, principal) do
+    if function_exported?(adapter, :join, 2),
+      do: adapter.join(session_uri, principal),
+      else: :ok
+  end
+
+  defp maybe_adapter_post(adapter, session_uri, principal, text) do
+    if function_exported?(adapter, :post, 3),
+      do: adapter.post(session_uri, principal, text),
+      else: dispatch_post(session_uri, principal, text)
+  end
+
+  defp maybe_adapter_history(adapter, session_uri, caller) do
+    if function_exported?(adapter, :history, 2),
+      do: adapter.history(session_uri, caller),
+      else: {:ok, %{messages: []}}
+  end
+
+  defp reason_name(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp reason_name(reason) when is_binary(reason), do: reason
+  defp reason_name(_reason), do: "failed"
 
   defp full_chat(socket) do
     case ExternalFeed.chat_messages(socket.assigns.session_uri, socket.assigns.caller) do

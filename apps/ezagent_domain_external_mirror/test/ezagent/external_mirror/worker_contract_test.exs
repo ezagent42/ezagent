@@ -107,9 +107,12 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
           description: 0,
           display_name: 0,
           event_to_payload: 1,
+          history: 2,
+          join: 2,
           join_with_cursor: 2,
           live_topics: 1,
           participation_profile: 0,
+          post: 3,
           render: 2,
           render_authorized: 2,
           replay: 3,
@@ -143,6 +146,9 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       assert :live_topics in optional
       assert :join_with_cursor in optional
       assert :replay in optional
+      assert :post in optional
+      assert :join in optional
+      assert :history in optional
     end
 
     test "P3-1: the push transport callbacks are compiler-optional (per-kind, runtime-enforced)" do

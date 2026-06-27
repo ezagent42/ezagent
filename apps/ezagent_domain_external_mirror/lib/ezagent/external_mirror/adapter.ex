@@ -339,6 +339,27 @@ defmodule Ezagent.ExternalMirror.Adapter do
   """
   @callback participation_profile() :: participation_profile()
 
+  @doc """
+  Optional live-transport post handler for participatory `:pull` adapters.
+
+  The caller-owned channel invokes this when exported. Adapters that do not need
+  adapter-specific participation handling omit it and let the channel use its
+  generic session-dispatch fallback.
+  """
+  @callback post(session_uri :: URI.t(), caller :: URI.t(), text :: String.t()) ::
+              :ok | {:error, term()}
+
+  @doc """
+  Optional live-transport join handler for participatory `:pull` adapters.
+  """
+  @callback join(session_uri :: URI.t(), caller :: URI.t()) :: :ok | {:error, term()}
+
+  @doc """
+  Optional live-transport history handler for participatory `:pull` adapters.
+  """
+  @callback history(session_uri :: URI.t(), caller :: URI.t()) ::
+              {:ok, %{messages: list()}} | {:error, term()}
+
   # `@optional_callbacks` here means "the COMPILER won't warn if absent".
   # Push-required callbacks (`binding_module/0`, `target_ownership_check/2`,
   # `event_to_payload/1`) live here so a `:pull` adapter can omit them
@@ -354,6 +375,9 @@ defmodule Ezagent.ExternalMirror.Adapter do
     join_with_cursor: 2,
     replay: 3,
     participation_profile: 0,
+    post: 3,
+    join: 2,
+    history: 2,
     binding_module: 0,
     target_ownership_check: 2,
     event_to_payload: 1

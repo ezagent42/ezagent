@@ -5,7 +5,13 @@ defmodule EzagentWeb.Socialware.SessionFeedChannelTest do
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
   alias EzagentWeb.Socialware.SessionFeedChannel
-  alias EzagentWeb.TestSupport.{CursorPullAdapter, SessionFeedAdapterState, SnapshotPullAdapter}
+
+  alias EzagentWeb.TestSupport.{
+    CursorPullAdapter,
+    ParticipatoryPullAdapter,
+    SessionFeedAdapterState,
+    SnapshotPullAdapter
+  }
 
   @endpoint EzagentWeb.Endpoint
   @session Ezagent.URI.session(:team_alpha, :default, "session-feed-channel")
@@ -20,6 +26,7 @@ defmodule EzagentWeb.Socialware.SessionFeedChannelTest do
 
     :ok = AdapterRegistry.register(SnapshotPullAdapter)
     :ok = AdapterRegistry.register(CursorPullAdapter)
+    :ok = AdapterRegistry.register(ParticipatoryPullAdapter)
 
     on_exit(fn ->
       :ets.delete_all_objects(AdapterRegistry.table())
@@ -76,9 +83,12 @@ defmodule EzagentWeb.Socialware.SessionFeedChannelTest do
     ref = Phoenix.ChannelTest.push(snapshot_socket, "post", %{"text" => "hello"})
     assert_reply(ref, :error, %{reason: "read_only"})
 
-    assert {:ok, _reply, cursor_socket} = join_feed("web_cursor")
-    ref = Phoenix.ChannelTest.push(cursor_socket, "post", %{"text" => "hello"})
+    assert {:ok, _reply, participatory_socket} = join_feed("web_participatory")
+    ref = Phoenix.ChannelTest.push(participatory_socket, "post", %{"text" => "hello"})
     assert_reply(ref, :ok)
+
+    assert SessionFeedAdapterState.get({ParticipatoryPullAdapter, :last_post}) ==
+             {@session, @caller, "hello"}
   end
 
   defp join_feed(adapter_id) do
