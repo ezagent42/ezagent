@@ -172,22 +172,24 @@ defmodule Ezagent.Behavior.Session.Teardown do
 
   defp has_spawn_facet?(_), do: false
 
-  # Dispatch `sandbox.destroy` on the worker under the OWNER's caps (which carry
-  # the `{:spawned_by, owner_uri}` teardown cap). Mirrors the result handling of
-  # the orchestrator's `Tools.terminate_worker/3` (already-gone is idempotent
-  # `:ok`). A `%URI{}`-less owner (ownerless junk session) cannot supply caps →
-  # `{:error, :no_owner}` (best-effort falls back; strict surfaces).
+  # Dispatch `sandbox.destroy` on the worker AS the OWNER. The dispatch authz
+  # chokepoint (`Kind.Runtime` step 5.5 `granted_via_holds_cap?`) resolves the
+  # owner's SLICE caps itself — including the `{:spawned_by, owner_uri}` teardown
+  # cap — so this domain module does NOT read caps (cap-check only at the
+  # chokepoint; `feedback`/CapCheckOnlyAtChokepoint p6). An owner without the
+  # teardown cap → step 5.5 denies → `{:error, :unauthorized}` (strict fails
+  # closed; best-effort falls back). Mirrors the result handling of the
+  # orchestrator's `Tools.terminate_worker/3` (already-gone is idempotent `:ok`).
+  # A `%URI{}`-less owner (ownerless junk session) → `{:error, :no_owner}`.
   defp owner_destroy_dispatch(%URI{} = worker_uri, %URI{} = owner_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
-
     result =
       Invocation.dispatch(%Invocation{
-        target: target,
+        target: Ezagent.URI.with_action(worker_uri, :sandbox, :destroy),
         mode: :call,
         args: %{},
         ctx: %{
           caller: owner_uri,
-          caps: Ezagent.Identity.list_caps_for(owner_uri),
+          caps: MapSet.new(),
           reply: {:caller_inbox, self()}
         }
       })
@@ -216,7 +218,7 @@ defmodule Ezagent.Behavior.Session.Teardown do
   # Strict reaps surface the error (fail-closed authorization).
   defp handle_reap_error(%URI{} = worker_uri, reason, :best_effort) do
     Logger.warning(
-      "Session.Teardown.cascade: owner-cap reap of #{URI.to_string(worker_uri)} failed " <>
+      "Session.Teardown.cascade: owner-authority reap of #{inspect(worker_uri)} failed " <>
         "(#{inspect(reason)}) — falling back to VM-internal Lifecycle.destroy (junk/" <>
         "ownerless/dead-orchestrator safety net, SPEC §2.4)."
     )
