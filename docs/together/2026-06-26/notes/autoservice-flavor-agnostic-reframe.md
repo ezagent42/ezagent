@@ -34,10 +34,10 @@ session-domain code, not cc code:
 - `Ezagent.Orchestrator.Tools.kb_query/4`
   (`apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex:774-777`)
   delegates to `Ezagent.Orchestrator.Tools.Kb`
-  (`apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/kb.ex`), which
-  `Invocation.dispatch`es `kb.query` to a `kb`×`native` agent in the
-  orchestrator's workspace (`tools/kb.ex:941-953`). No flavor anywhere in this
-  path.
+  (`apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/kb.ex`), whose
+  `dispatch_kb/4` (`tools/kb.ex:40`) `Invocation.dispatch`es `kb.query` to a
+  `kb`×`native` agent in the orchestrator's workspace, carrying only
+  `caller`/`caps`/`workspace_uri` opts. No flavor anywhere in this path.
 - The per-orchestrator *executor* is `Ezagent.Session.SessionManager`
   (`apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex`) — a
   plain GenServer in the **session domain**. Its moduledoc is explicit: it is an
@@ -70,9 +70,19 @@ exactly three things: serve `tools/list` schemas
 (`McpServer.ToolCatalog.tool_schemas/0`,
 `apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server/tool_catalog.ex:8`),
 decode a `tools/call` and forward `{:run_tool, tool, arguments, bridge_token}`
-to the session-domain `SessionManager` *by URI* (no compile dependency — cc
-deps `ezagent_domain_session` only `:test`), and encode the result. The bridge
-token it forwards is the orchestrator's *connection credential*, not caps.
+to the session-domain `SessionManager` *by URI* (via the Registry `:via` tuple,
+not an `alias`), and encode the result. The bridge token it forwards is the
+orchestrator's *connection credential*, not caps.
+
+> **Correction (codex review).** `mcp_server.ex`'s moduledoc claims cc deps
+> `ezagent_domain_session` *only `:test`*, framing the URI-via-Registry hop as
+> avoiding a *compile* dependency. That moduledoc is **stale**: the actual
+> `apps/ezagent_plugin_cc/mix.exs:75` declares `{:ezagent_domain_session,
+> in_umbrella: true}` — a **prod** dependency (the comment at `mix.exs:63-65`
+> records the earlier `only: :test` was wrong). This does not weaken the thesis:
+> the executor is shared session-domain code regardless, and a non-cc flavor can
+> reuse it *without cc at all* (the `agent_contract_g4` pattern, §2). It only
+> means the "clean cc↔session compile decoupling" is aspirational, not current.
 
 ### Layer C — the *tool-loop* itself (the flavor runtime)
 
@@ -192,7 +202,7 @@ require:
 | Current assumption | Reality | Reframe |
 |---|---|---|
 | "The AutoService agent must be a *cc*-orchestrator." | `orchestrator` is a role-as-data recipe naming no flavor; the role composes against any flavor (`OrchestratorRole` moduledoc + `Role.ComposeTest`). | Use the `orchestrator` ROLE on **any tool-loop-capable flavor**. |
-| "Only cc can call `kb_query` because only cc reaches the tool-loop." | The *executor* (`Tools.kb_query` / `run_tool_op` / `SessionManager`) is shared-domain, bridge-token-authed, proven green under a non-cc flavor. Only the *loop runtime* (Layer C) is cc-only. | Any flavor that runs a loop + can reach `SessionManager.run_tool` (or the MCP bridge) calls `kb_query`. |
+| "Only cc can call `kb_query` because only cc reaches the tool-loop." | The *executor* (`Tools.kb_query` / `run_tool_op` / `SessionManager`) is shared-domain, bridge-token-authed, proven green under a non-cc flavor. Only the *loop runtime* (Layer C) is cc-only. | Any flavor that runs a loop + can reach `SessionManager.run_tool` (or the MCP bridge) **and whose orchestrator holds the `kb.query` cap** calls `kb_query`. |
 | "The orchestrator tools are cc MCP tools." | They are *exposed over MCP by cc* for transport convenience; the tools themselves are domain code with a second non-LLM front door (the world Console; see the agent-console handoff `docs/superpowers/handoffs/2026-06-22-agent-console-in-world-handoff.md` — "two front doors: the cc bridge and the world Console"). | Tools are flavor-agnostic; MCP is one transport, not the contract. |
 | "`#505` (cc-PTY) blocks Tier-1." | `#505` is a **cc-flavor-specific** answer-soul blocker (PTY/startup/OAuth). | It matters **only if cc is the chosen tool-loop flavor**. Pick another loop-capable flavor and `#505` drops out entirely (see §4). |
 
@@ -265,11 +275,36 @@ constraint.** It only matters on path (1).
   `kb_query` green. What it'd take for another flavor: a tool-loop + a transport
   to the executor + schema/persona delivery + a materialization path — all
   cc-plugin-located, none in the shared layer; "unimplemented," not "blocked."
+  (CapBAC still applies orthogonally: the orchestrator must *hold* the
+  `kb.query` cap — fail-closed for a capless caller — but that gate is
+  flavor-blind, granted to the orchestrator agent's identity, exactly as the
+  seed does for the non-cc test flavor.)
 - **The reframe holds:** drop "must be cc-orchestrator"; use the `orchestrator`
   ROLE on any tool-loop-capable flavor.
 - **Minimal real gap:** one tool-loop that weaves the KB hit into a chat reply.
   Retrieval/role/routing/executor already exist. **#505 (cc-PTY) is on the
   critical path *only if cc is the chosen flavor*** — pick another loop-capable
   flavor and it drops out.
+
+---
+
+## Codex adversarial review (static-only, against `origin/main`)
+
+**Verdict: sound-with-caveats. No hidden cc dependency found** that blocks a
+non-cc flavor from running `SessionManager.run_tool(…, "kb_query", …)` once it
+has a loop, a bridge token, a working-copy orchestrator binding, and the
+`kb.query` cap. Codex independently confirmed: the executor is flavor-blind
+(`tools.ex:770` → `tools/kb.ex:40`; `session_manager.ex:287`/`474`), the session
+lifecycle (not cc) spawns it (`application.ex:757` → `session_manager.ex:173`),
+the cc MCP server is zero-authority transport (`mcp_server.ex:345`), curl is
+single-shot with no tools loop (`api_client.ex:47`/`86`), and the proof is an
+honestly-labeled composition (`agent_contract_g4.ex:188`; seed test `:63`/`:192`,
+capless-deny `:203`). Three findings, all folded into this doc:
+1. mis-cited `tools/kb.ex:941-953` (dump-offset artifact; real line `:40`) —
+   **fixed**;
+2. the `only: :test` compile-decoupling claim is stale — `mix.exs:75` declares a
+   prod `in_umbrella` dep — **corrected inline** (§1 Layer B);
+3. `kb_query` additionally requires the held `kb.query` cap (CapBAC, flavor-blind)
+   — **made explicit** (§3 table + summary).
 </content>
 </invoke>
