@@ -139,6 +139,11 @@ defmodule EzagentWeb.MixProject do
         # with React 19 at runtime (and excalidraw itself declares ^19 support); the conflict is a
         # stale upstream transitive peer declaration we cannot align from our own package.json.
         "cmd --cd ../ezagent_plugin_world/assets npm install --legacy-peer-deps",
+        # hello React island: same single-file ES-module pattern as world (vite lib build
+        # -> ezagent_web/priv/static/assets/hello/main.js, served to the HelloRenderer hook).
+        # No --legacy-peer-deps: hello has no excalidraw, so its @json-render/react@0.19.0
+        # peer (react ^19.2.3) is satisfied cleanly by hello's own react ^19.2.3.
+        "cmd --cd ../ezagent_plugin_hello/assets npm install",
         "tailwind.install --if-missing",
         "esbuild.install --if-missing"
       ],
@@ -146,12 +151,14 @@ defmodule EzagentWeb.MixProject do
         "tailwind ezagent_web",
         "tailwind ezagent_web_viewer",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
+        "cmd --cd ../ezagent_plugin_hello/assets npm run build",
         "esbuild ezagent_web"
       ],
       "assets.deploy": [
         "tailwind ezagent_web --minify",
         "tailwind ezagent_web_viewer --minify",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
+        "cmd --cd ../ezagent_plugin_hello/assets npm run build",
         "esbuild ezagent_web --minify",
         "phx.digest"
       ]
