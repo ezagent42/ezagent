@@ -107,6 +107,25 @@ defmodule Ezagent.Domain.Pty.AutoPrompts do
         fired?: false
       },
       %{
+        name: :claude_md_external_imports_dialog,
+        # claude 2.x asks "Allow external CLAUDE.md file imports?" the first time a
+        # project's CLAUDE.md `@imports` a file OUTSIDE the cwd (e.g. a user-global
+        # `~/.claude/RTK.md`). A headless PTY cannot answer it, so the spawn hangs
+        # here BEFORE the esr-bridge MCP connects (observed live on claude 2.x,
+        # #505, 2026-06-27 — the dialog AFTER the MCP-trust prompt). The agent's
+        # own CLAUDE.md / skills depend on those imports, so option 1 ("Yes, allow
+        # external imports") is correct. Send the EXPLICIT "1\r" (number-select,
+        # like dev_channels/trust_folder) rather than bare Enter so we select
+        # option 1 regardless of the current highlight. Match the header + the
+        # option-1 label (avoiding redraw-fragmented prose).
+        # NOTE the HEADER prose is redraw-fragmented ("external" -> "ext nal",
+        # "file" -> "f le"), so it is unusable; the two option labels are rendered
+        # atomically and together are specific to this exact dialog.
+        match: ["Yes, allow external imports", "No, disable external imports"],
+        send: "1\r",
+        fired?: false
+      },
+      %{
         name: :trust_folder_dialog,
         match: ["Is this a project you", "trust this folder"],
         send: "1\r",

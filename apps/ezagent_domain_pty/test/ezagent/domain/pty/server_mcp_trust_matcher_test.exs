@@ -53,4 +53,22 @@ defmodule Ezagent.Domain.Pty.Server.McpTrustMatcherTest do
   test "matches? does not fire on unrelated prose" do
     refute Server.matches?(mcp_trust_match(), "just some normal claude output line")
   end
+
+  # Real captured buffer of a live claude parked at:
+  #   "Allow external CLAUDE.md file imports? ... ❯ 1. Yes, allow external imports"
+  # (the dialog AFTER MCP-trust, when the project CLAUDE.md @imports ~/.claude/RTK.md).
+  @live_external_imports_buffer_b64 "G1syRBtbNUING1syQxtbMTBBG1szODs1OzIyMG0bWzFtQWxsb3cgZXh0G1sxNEduYWwbWzE4R0NMQVVERS5tZCBmG1szMEdsZSBpbXBvchtbMzlHcz8bWzIybRtbMzltG1tLDRtbMkMbWzJCVGhpcyBwG1sxMEdvamVjdCdzIENMQVVERS5tZCBpbXBvcnRzIGZpbGUbWzQyR291dHNpZGUgdGhlIGN1cnJlbnQgd29ya2luZyBkaXJlY3RvcnkuIE5ldmVyIGFsbG93G1s5M0d0aGlzIGZvciB0aBtbMTA1R3JkLXBhcnR5G1tLDRtbMkMbWzFCcmVwb3NpdG9yaWVzLhtbSw0bWzJDG1syQhtbMzg7NTsyNDZtRXh0ZXJuYWwgaW1wb3J0czobWzM5bRtbSw0bWzJDG1sxQhtbMzg7NTsyNDZtICAvVXNlcnMvaDJvc2xhYnMvLmNsYXVkZS9SVEsubWQbWzM2RxtbMzltG1tLDRtbNEMbWzFCG1tLDRtbMkMbWzFCG1szODs1OzI0Nm1JbXBvcnRhbnQ6IE9ubHkgdXNlIENsYXVkZSBDb2RlIHdpdGggZmlsZXMgeW91IHRydXN0LiBBY2Nlc3NpbmcgdW50cnVzdGVkIGZpbGVzIG1heSBwb3NlIHNlY3VyaXR5IHJpc2tzIA0bWzJDG1sxQhtdODtpZD16YXhtZGE7aHR0cHM6Ly9jb2RlLmNsYXVkZS5jb20vZG9jcy9lbi9zZWN1cml0eQdodHRwczovL2NvZGUuY2xhdWRlLmNvbS9kb2NzL2VuL3NlY3VyaXR5G104OzsHIBtbMzltDQ0KDQ0KG1szRxtbMzg7NTsxNTNt4p2vG1s1RxtbMzg7NTsyNDZtMS4bWzhHG1szODs1OzE1M21ZZXMsG1sxM0dhbGxvdxtbMTlHZXh0ZXJuYWwbWzI4R2ltcG9ydHMbWzM5bQ0NChtbNUcbWzM4OzU7MjQ2bTIuG1s4RxtbMzltTm8sG1sxMkdkaXNhYmxlG1syMEdleHRlcm5hbBtbMjlHaW1wb3J0cw0NCg0NChtbM0cbWzM4OzU7MjQ2bRtbM21FbnRlchtbOUd0bxtbMTJHY29uZmlybRtbMjBHwrcbWzIyR0VzYxtbMjZHdG8bWzI5R2NhbmNlbBtbMjNtG1szOW0NDQobWzJDG1s0QQ=="
+
+  test "the :claude_md_external_imports_dialog rule fires on the real captured buffer" do
+    stripped = @live_external_imports_buffer_b64 |> Base.decode64!() |> AnsiStrip.strip()
+
+    match =
+      AutoPrompts.default()
+      |> Enum.find(fn p -> p.name == :claude_md_external_imports_dialog end)
+      |> Map.fetch!(:match)
+
+    assert Server.matches?(match, stripped),
+           ":claude_md_external_imports_dialog must match the live dialog so the " <>
+             "headless cc PTY auto-confirms external CLAUDE.md imports (#505)"
+  end
 end
