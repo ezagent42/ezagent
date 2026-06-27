@@ -1,6 +1,10 @@
 # SPEC — Roles as DATA in config + CR governance over role-config (UNIFIED)
 
-> **Design doc, NOT implementation.** Skills loaded: `ezagent-developer`,
+> **Design doc, NOT implementation.** Status: **rev 2** — codex adversarial
+> review applied (factual fixes: role subject is a `config://` string not an
+> `entity://` principal; write attr `:actor_uri`; atomic seed; full `lookup/1`
+> migration surface incl. OrchestratorBootstrap; static elimination gate). See
+> §11 for the review record. Skills loaded: `ezagent-developer`,
 > `ezagent-socialware`. All code citations verified against `origin/main`
 > (`3f68b502`). Worktree off `origin/main`; branch `docs/role-as-data-cr-spec`.
 >
@@ -119,10 +123,10 @@ A role's recipe is the map `Ezagent.Role.new/1` already consumes
 | ConfigObject column | Role value |
 |---|---|
 | `workspace_uri` | the role's owning workspace (system-ws for a built-in seed; tenant-ws for a fork — §4) |
-| `subject_uri` | **the role's OWN URI** (`entity://role/<ws>/<name>`) — see §2.2 |
+| `subject_uri` | **the role's OWN subject string** `config://<ws>/role/<name>` — see §2.2 (a ConfigStore subject string, NOT an `entity://` principal — codex review) |
 | `key` | the fixed literal `"role"` (one role-recipe slice per role subject) |
 | `body` | the **whole recipe map** — `%{name, passive, skills, plugins, prompt, script, behaviors, requested_caps, session_template}` |
-| `created_by` | the authoring entity (the workspace granter at seed; the caller at runtime author) |
+| `created_by` | populated from `write_and_point/1`'s **`:actor_uri`** attr (`config_store.ex` L388-395 maps `:actor_uri → created_by`) — the workspace granter at seed; the caller at runtime author. **NOTE (codex): the write attr is `:actor_uri`, NOT `:created_by`.** |
 | `source_turn_id` | `cr-stage:<cr_id>:<item_id>` while staged; `cr-publish:<cr_id>` once published; `role-seed:<ws>:<name>` at boot seed |
 
 **`body.behaviors` is stored as module-name STRINGS** (e.g.
@@ -146,14 +150,29 @@ subject's config layer.** It is resolved by making **the role its own config
 subject**:
 
 ```
-subject_uri = entity://role/<workspace>/<name>     # the role IS the subject
+subject_uri = config://<workspace>/role/<name>     # the role IS the subject
 key         = "role"                               # fixed
 ```
 
+> **Codex correction (verified).** The subject is a **ConfigStore subject
+> STRING**, NOT an `Ezagent.URI.entity/3` principal. `entity/3` encodes
+> workspace-FIRST `entity://<workspace>/<type>/<name>` AND rejects any type not
+> in `user|agent|worker` (`uri.ex` L385-400) — so a role is neither
+> `config://<ws>/role/<name>` (puts "role" in the workspace slot) nor
+> `entity://<ws>/role/<name>` (rejected — "role" is not a principal type).
+> `ConfigStore.resolve/4` / `fetch_matching_object/1` **string-match** whatever
+> subject they are handed (`config_store.ex` L340-352); they never construct it
+> via `entity/3`. The role subject is therefore a dedicated **`config://`
+> subject string** the store keeps opaquely (workspace-first to match the
+> `entity://` convention, but NOT a principal URI). Alternative: whitelist a new
+> `role` type in `entity/3`; the `config://` string avoids touching the
+> principal-URI validator — **recommended**, see OQ-3.
+
 This is not a hack — it is the honest model. A role is a first-class addressable
-config object; it deserves its own subject URI exactly as an agent has one. The
-role is **not** crammed into another subject's `(subject_uri, key)` slot — it owns
-its slot. Confirmed against the two scope-bearing reads:
+config object; it deserves its own subject string exactly as an agent's config
+subject is its agent URI. The role is **not** crammed into another subject's
+`(subject_uri, key)` slot — it owns its slot. Confirmed against the two
+scope-bearing reads:
 - `resolve/4` takes `(layer, ws, subject, key)` — all four supplied → resolves.
 - `fetch_matching_object/1` matches `{config_id, workspace_uri, subject_uri, key}`
   exactly (`config_store.ex` L340-352) — the publish scope guard works unchanged:
@@ -172,7 +191,7 @@ unique index (cr-spec §3.1) + concurrent role edits:
 The role is **workspace-scoped + forkable** (lead's requirement) via the
 `workspace_uri` axis + the §3 lookup fallback: a tenant "forks" a built-in by
 copying its object body into the tenant workspace under
-`entity://role/<tenant-ws>/<name>` and pointing it.
+`config://<tenant-ws>/role/<name>` and pointing it.
 
 ### 2.3 Layer
 
@@ -195,10 +214,10 @@ invalidate-on-publish cache.**
 lookup(name) within caller workspace ws:
   1. ETS hit for (ws, name) AND not marked stale → return cached %Role{}
   2. else resolve from ConfigStore:
-       a. obj = ConfigStore.resolve("workspace", ws, entity://role/<ws>/<name>, "role")
+       a. obj = ConfigStore.resolve("workspace", ws, config://<ws>/role/<name>, "role")
        b. if :none → fall back to (system_ws, name):
             ConfigStore.resolve("workspace", system_ws,
-                                entity://role/<system_ws>/<name>, "role")
+                                config://<system_ws>/role/<name>, "role")
        c. if still :none → :error
        d. {:ok, role} = Ezagent.Role.new(obj.body)   # existing validation boundary
        e. cache (ws,name)→role in ETS; return {:ok, role}
@@ -251,16 +270,25 @@ consumer changes. Today `boot/1` does
 for each recipe in plugin.roles():
   name = recipe.name
   ws   = system_workspace_uri          # canonical system ws (one place, all built-ins)
-  subj = entity://role/<system_ws>/<name>
-  if ConfigStore.resolve("workspace", ws, subj, "role") == :none:
-      ConfigStore.write_and_point(%{
-        layer: "workspace", workspace_uri: ws, subject_uri: subj, key: "role",
-        body: recipe (with behaviors as module-name strings),
-        created_by: system_workspace_granter,
-        source_turn_id: "role-seed:#{ws}:#{name}"
-      })
-  # else: a published override exists → DO NOTHING (idempotent + override-safe)
+  subj = config://<system_ws>/role/<name>
+  ConfigStore.seed_role_if_absent(%{                  # NEW atomic primitive — see §4.2
+    layer: "workspace", workspace_uri: ws, subject_uri: subj, key: "role",
+    body: recipe (with behaviors as module-name strings),
+    actor_uri: system_workspace_granter,             # → ConfigObject.created_by (codex)
+    source_turn_id: "role-seed:#{ws}:#{name}"
+  })
+  # seed_role_if_absent: writes object + points ONLY IF no pointer exists for this
+  #   (ws, subject, "role"); a published override → DO NOTHING (idempotent +
+  #   override-safe). MUST be a single transaction (NOT a check-then-write race).
 ```
+
+> **Codex correction (verified):** the write attr is **`:actor_uri`** (mapped to
+> `ConfigObject.created_by` at `config_store.ex` L388-395), NOT `:created_by`.
+> And the seed-once guard must be ATOMIC: `put_pointer/1` upserts with
+> `on_conflict: {:replace, [...]}` (`config_store.ex` L75-83), so a plain
+> `resolve == :none` check **followed by** `write_and_point` is a check-then-act
+> race (two boots, or a tenant publish interleaving a boot, could double-write or
+> clobber). §4.2 specifies the atomic form.
 
 ### 4.2 Idempotency + override-safety (the trap the advisor flagged)
 
@@ -273,8 +301,18 @@ for the role's `(ws, subject, "role")`.
 - Reboot after a published override of that built-in: pointer exists (aimed at
   the override object) → **no-op**. The override survives the restart.
 
-This is **both idempotent AND override-safe** with one `resolve == :none` check —
-no version compare, no upsert. Note the structural reason this works without a
+This is **both idempotent AND override-safe**. **The check must be ATOMIC**
+(codex): because `put_pointer/1` upserts (`on_conflict: {:replace, ...}`,
+`config_store.ex` L75-83), a `resolve == :none` read followed by a separate
+`write_and_point` is a check-then-act race. The new `seed_role_if_absent/1`
+primitive does the existence check + object insert + pointer insert in **one
+`Repo.transaction`**, with the pointer insert using `on_conflict: :nothing`
+(NOT `{:replace,...}`) on `conflict_target: :id` — so a concurrent seed (or a
+tenant publish racing a boot) that already created the pointer leaves it
+untouched, and the transaction's object insert is rolled back. This is the only
+new `ConfigStore` write primitive beyond cr-spec's `write_object_staged/1`; it
+reuses `ConfigObject.changeset` + `ConfigPointer.changeset` (no new schema).
+Note the structural reason this works without a
 cascade fallback: the cascade layers are only `workspace|user|session` — there is
 **no "system/default" layer below `workspace`** to lean on for precedence. So we
 do NOT model built-ins as a lower cascade layer; we model them as a seeded
@@ -313,7 +351,7 @@ reviewer cap, for the *scriptless* case. (The script case is the one exception �
 
 | Step | Role-config behavior (delta from cr-spec) |
 |---|---|
-| `open_cr` | open for `subject_uri = entity://role/<ws>/<name>`; one-open-per-subject index now means one open CR **per role** (§2.2). Authoring cap, not manage cap. |
+| `open_cr` | open for `subject_uri = config://<ws>/role/<name>`; one-open-per-subject index now means one open CR **per role** (§2.2). Authoring cap, not manage cap. |
 | `stage_item` | write inert `ConfigObject` (the proposed recipe body) with `source_turn_id = cr-stage:…`, point no layer. Body validated via `Role.new/1` at stage time (fail-loud on a malformed recipe — same boundary, §2.1). Layer fixed `"workspace"`, key fixed `"role"`. |
 | `preview_cr` | plain diff: `render_role(current_body)` vs `render_role(proposed_body)` — the role analog of `render_soul/1`. No lint, no checks (rev 3). A trivial deterministic render of `name/persona/skills/plugins/behaviors/caps/script-present?`. |
 | `publish_cr` | **identical core**: status-gate → drift guard (`resolve/4` == base) → scope guard (`fetch_matching_object/1`) → atomic `put_pointer` flip → record `published_prev_object_id`. **Differs only in step 5:** fire `role_registry.invalidate(ws, name)` (NOT `sandbox.write_path`) — dispatched to the Workspace Kind. |
@@ -427,20 +465,31 @@ under rev-3). Resolve via OQ-1 before opening the script field to runtime author
 
 1. **Add the ConfigStore role subject + read-through `lookup/1`** (§3) with the
    `(caller-ws → system-ws)` fallback. ETS becomes an invalidate-on-publish
-   cache.
+   cache. **This is the largest single change (codex's flagged biggest risk):
+   it is NOT a small swap.** `lookup/1` is name-keyed ETS-only today, has no
+   workspace argument, and `RoleStep` calls it with `role_name` only
+   (`role_registry.ex` L86-90, `role_step.ex` L209-213). The change touches:
+   the cache key (`name` → `(ws, name)`), the call signature (a `ws` arg
+   threaded from the caller), the cross-ws fallback semantics, cache
+   invalidation, AND boot seeding. Both runtime consumers must be migrated:
+   `RoleStep.resolve/2` (`role_step.ex` L209) **and**
+   `OrchestratorBootstrap.resolve_orchestrator_role/0`
+   (`orchestrator_bootstrap.ex` L96-107, which `lookup`s the orchestrator role
+   and installs its content into a `config_dir`). Plan this as its own PR.
 2. **Change `boot/1`'s `roles/0` consumer** from `RoleRegistry.register/1` (ETS
-   insert) to the **seed-once-if-no-pointer** ConfigStore seed (§4). `roles/0`
-   itself and every plugin's `*_role_recipe/0` are **unchanged** — they remain
-   the *declaration* the seed consumes.
-3. **Add `Ezagent.Behavior.RoleGovernance`** (Workspace Kind) + the
-   `:author_role` cap (§5) — the runtime authoring path. Agent-config
-   `ConfigGovernance` is untouched.
+   insert) to the **atomic seed-once-if-no-pointer** ConfigStore seed (§4).
+   `roles/0` itself and every plugin's `*_role_recipe/0` are **unchanged** — they
+   remain the *declaration* the seed consumes.
+3. **Add `Ezagent.Behavior.RoleGovernance`** (Workspace Kind) + the new
+   `:author_role` workspace cap (§5) — the runtime authoring path. Agent-config
+   `ConfigGovernance` is untouched. (`workspace.ex` L335-358 has
+   `add_template`/`remove_template` but **no `author_role` today** — it is new.)
 4. **Console authoring surface** (CRUD over role-CRs) — out of this SPEC's scope;
    hosts on the agent-console CRUD work (`docs/together/2026-06-24/`).
 
 No behavior of an *instantiating* caller changes at any step (the chokepoint is
 source-agnostic, §6.1) — `create_agent`/`RoleStep` consume `lookup/1` exactly as
-today.
+today (only `lookup/1`'s internal resolution + its `ws` arg change).
 
 ### 7.2 Elimination criterion (the completion gate)
 
@@ -452,17 +501,29 @@ role from `roles/0` or from a `roles/0`-derived ETS entry as *authority* — eve
 `lookup/1` resolves from ConfigStore (ETS is a cache *of* the ConfigStore
 resolution, not an independent code-recipe store).
 
-**Invariant test (fails when the goal is unmet):**
+**Invariant test (fails when the goal is unmet) — TWO parts (codex: the
+ETS-flush alone is game-able, since a future `lookup/1` could silently
+repopulate ETS from `roles/0`; pair it with a static gate):**
+
+*Runtime gate:*
 - After boot, **every** built-in (orchestrator, kanban-manager, np, kb, …) is
   resolvable via `ConfigStore.resolve("workspace", system_ws,
-  entity://role/<system_ws>/<name>, "role")` (proves the seed wrote config, not
+  config://<system_ws>/role/<name>, "role")` (proves the seed wrote config, not
   just ETS).
-- With the ETS cache **flushed**, `RoleRegistry.lookup(name)` STILL returns the
-  built-in `%Role{}` (proves lookup resolves from ConfigStore, not from a
+- With the ETS cache **flushed**, `RoleRegistry.lookup(ws, name)` STILL returns
+  the built-in `%Role{}` (proves lookup resolves from ConfigStore, not from a
   surviving `roles/0` ETS write — i.e. no code-recipe authority remains).
 - A built-in's recipe edited via a published role-CR is what `lookup/1` returns
   after a simulated reboot (proves seed-once override-safety + ConfigStore is the
   authority).
+
+*Static gate (closes the "repopulate-from-`roles/0`-on-lookup" game, codex):*
+- A `check_invariants`-style source scan asserting that the **runtime lookup
+  path** (`RoleRegistry.lookup/*` + anything it calls) never references
+  `plugin.roles()` nor any `*_role_recipe/0` module — `roles/0` and the recipe
+  modules may be referenced **only** from the boot seed path. This is what makes
+  "`roles/0` = seed source only" a structural gate rather than a convention the
+  ETS-flush test could be tricked past.
 
 The code-recipe (`*_role_recipe/0`) remains *as a seed input only* — that is the
 acceptable residual (lead refinement point 2: built-ins ship behaviors as code +
@@ -475,7 +536,7 @@ of the seed declaration.
 ## 8. Test plan (delta over cr-config-governance §9; that suite is reused for the shared core)
 
 1. **Role is its own subject** — a seeded built-in resolves at
-   `(system_ws, entity://role/<system_ws>/<name>, "role")`; `fetch_matching_object/1`
+   `(system_ws, config://<system_ws>/role/<name>, "role")`; `fetch_matching_object/1`
    matches it; a foreign subject/key does not.
 2. **lookup read-through** — flush ETS; `lookup(name)` resolves from ConfigStore
    and rehydrates via `Role.new/1` (behaviors as strings → loaded modules).
@@ -556,10 +617,18 @@ of the seed declaration.
   canonical system-workspace URI to seed built-ins under, and that the
   `(caller-ws → system-ws)` fallback (rather than a new cascade "default" layer)
   is the intended forkability mechanism.
-- **OQ-3** — the role subject URI scheme `entity://role/<ws>/<name>` — confirm
-  this is the desired addressable form (no `role://` scheme exists today; reusing
-  `entity://` with a `role/` segment avoids a new scheme + dispatcher, invariant
-  8). The fixed `key = "role"` per role subject is assumed.
+- **OQ-3** — the role subject string form `config://<ws>/role/<name>` (a
+  ConfigStore subject string, NOT an `entity://` principal — see §2.2 codex
+  correction). `entity/3` rejects non-`user|agent|worker` types and is
+  workspace-first (`uri.ex` L385-400), so `entity://` cannot carry a role
+  subject without whitelisting a new `role` type. **Recommend the `config://`
+  subject string** (no change to the principal-URI validator; ConfigStore
+  string-matches it). Confirm this vs whitelisting `role` in `entity/3`. The
+  fixed `key = "role"` per role subject is assumed. (Note: ConfigStore does NOT
+  enforce that the subject's embedded workspace matches `workspace_uri` — it
+  string-matches both independently, `config_store.ex` L340-352. RoleGovernance
+  self-binding (§5/OQ-4) must assert they agree so a CR cannot bind a role
+  subject of ws-A under ws-B.)
 - **OQ-4** — `RoleGovernance` on the **Workspace Kind** as the dispatch/
   self-binding target for role-CRs (the role-subject analog of the agent's
   CE-1 self-binding). Confirm the Workspace Kind is where role-authoring caps +
@@ -569,3 +638,31 @@ of the seed declaration.
   tenant fork of `orchestrator` shadows the built-in **for that tenant only**"
   (the natural fallback behavior) the desired semantics? (Recommend the latter —
   it IS forkability.)
+
+---
+
+## 11. Codex adversarial-review record (2026-06-27, static-only, gpt-5.5)
+
+> Verdict: **RISKY → SOUND after the corrections below (all applied in this
+> rev).** The role-as-ConfigObject + cr-as-role MODEL is sound to proceed; the
+> first-pass SPEC had concrete factual bugs against `origin/main`, now fixed.
+
+Per-question verdicts (codex's, with the resulting SPEC change):
+
+| Q | Codex verdict | Resolution in this rev |
+|---|---|---|
+| 1 role-as-ConfigObject | **FLAWED** — `entity://role/<ws>/<name>` is wrong (`entity/3` is workspace-first + rejects non-principal types, `uri.ex` L385-400); `write_and_point` takes `:actor_uri` not `:created_by` | FIXED — subject is a `config://<ws>/role/<name>` ConfigStore subject string (§2.2); write attr corrected to `:actor_uri` (§2.1, §4.1) |
+| 2 scoping | **RISKY** — "role is its own subject" is a real move (store keys by subject string), but the reversed URI distorted ws identity + store doesn't enforce subject-ws == workspace_uri | FIXED URI + added the self-binding ws-consistency requirement (§2.2, OQ-3, OQ-4) |
+| 3 seed | **RISKY** — "no default layer below workspace" reasoning correct; but `resolve==:none`-then-write is a race (`put_pointer` upserts) | FIXED — atomic `seed_role_if_absent/1` (one txn, pointer insert `on_conflict: :nothing`), §4.1/§4.2 |
+| 4 script gate | **SOUND** — script correctly the one executable vector (`Compose` carries `role.script` → `sandbox_content.script`); OQ-1 is a real blocker, not over-cautious | kept; OQ-1 stands |
+| 5 unify / read-through | **RISKY** — three couplings real; SPEC understated the registry/API surgery (no `(ws,name)` cache today, no `author_role` cap, **second consumer `OrchestratorBootstrap`**) | FIXED — §7.1 now calls out the full lookup surgery + the OrchestratorBootstrap consumer + `author_role` is new |
+| 6 #154 source-agnostic | **SOUND** — RoleStep never learns recipe origin; axes-rejected, behaviors-loaded, granter=caller all hold IF the new path always rehydrates via `Role.new/1` | kept (the rehydrate-via-`Role.new/1` condition is explicit in §2.1/§3) |
+| 7 elimination | **RISKY** — ETS-flush test alone is game-able (lookup could repopulate from `roles/0`); needs a static gate | FIXED — §7.2 adds the static source-scan gate (runtime lookup never references `roles/0`/recipe modules) |
+
+**Net:** the unification thesis (subject-type-parametric CR core) and the
+security spine (source-agnostic chokepoint) survived review intact. The fixes
+were factual/mechanical (URI form, write attr, atomic seed) plus surfacing the
+true size of the `lookup/1` migration (codex's "single biggest risk": treating
+the read-through as a small swap — it changes cache key, signature, fallback,
+invalidation, boot seeding, AND the orchestrator-bootstrap consumer; planned as
+its own PR in §7.1).
