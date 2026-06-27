@@ -208,31 +208,42 @@ defmodule Ezagent.Behavior.RemoveParticipantTest do
     end
   end
 
-  describe "spawned-agent worker teardown — PR-B stub" do
-    test "a spawned participant (carries :source_template_uri) is NOT torn down here" do
-      session = session_uri("spawned")
+  describe "provenance gate (F7 PR-B, SPEC §3.2 / §7) — facet AND lineage" do
+    test "facet present but NOT in the owner's lineage → membership_only (never reaped)" do
+      # SECURITY gate: a member carrying a `:source_template_uri` facet but NOT
+      # in the owner's spawn lineage (an invited agent that happens to carry one,
+      # or any agent the session did not spawn) is membership-only — the session
+      # must NEVER terminate an agent it did not spawn. No `AgentLineage.record`
+      # was done here, so `spawned_in_lineage?/2` is false → the worker-reap
+      # branch is skipped — provable via a direct handler invoke (no live worker).
+      session = session_uri("facet-no-lineage")
       bind_to_default(session)
       owner = user_uri("owner")
       worker = agent_uri("worker")
 
-      # Spawned-into-session worker: member meta carries the spawn-source facet.
       tmpl = Ezagent.URI.new!("template://team-alpha/agent/some-role")
 
       slice =
         slice_with_user(owner, worker, %{online: true, source_template_uri: tmpl})
 
-      result =
-        Invoker.invoke(
-          SessionBehavior,
-          :remove_participant,
-          slice,
-          %{participant: worker},
-          ctx(session, owner)
-        )
+      assert {:ok, new_slice, result, effects} =
+               Invoker.invoke_with_effects(
+                 SessionBehavior,
+                 :remove_participant,
+                 slice,
+                 %{participant: worker},
+                 ctx(session, owner)
+               )
 
-      # PR-A explicitly does NOT implement spawned-worker teardown — it returns a
-      # clearly-marked not-implemented error and does NOT half-tear-down.
-      assert {:error, :spawned_participant_teardown_pending_pr_b} = result
+      refute Map.has_key?(new_slice.members, worker)
+      assert result.torn_down == :membership_only
+
+      # No worker reap dispatched (the reap is an imperative dispatch, never a
+      # returned effect; absence of any teardown effect confirms membership-only).
+      refute Enum.any?(effects, fn
+               {:dispatch, _} -> true
+               _ -> false
+             end)
     end
   end
 end
