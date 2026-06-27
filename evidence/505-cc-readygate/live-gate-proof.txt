@@ -1,0 +1,25 @@
+LIVE cc ReadyGate cold-activation proof — #505
+Server: fresh disposable stack, node ezagent_ccpty@127.0.0.1, PORT=10055,
+isolated PG db ezagent_ccpty505, EZAGENT_BRIDGE_WS_URL=ws://127.0.0.1:10055/agent_bridge/websocket.
+
+Replicates the EXACT production cold-activation readiness sequence on the LIVE node:
+  Ezagent.Agent.TransportReadiness.require_transport_join/2   (spawn.ex:412, runs in Kind post_init)
+  -> Ezagent.Kind.ReadyTransition.drain_then_mark_ready/2     (kind/server.ex:376, after post_init)
+     -> external_gate -> defer_ready? -> {:defer,30000} -> await_transport_or_fail Task
+  -> Ezagent.AgentBridge.Registry.bind/3                      (channel.ex:138, what claude's esr-bridge join calls)
+A REGULAR cc agent does NOT mark LiveJoinRegistry (only orchestrators do).
+Pre-fix: with no LiveJoinRegistry mark this await timed out at 30s -> mark_failed.
+
+=== 5 runs ===
+run 1: armed=not_ready defer={:defer, 30000} ready_transition=:deferred
+       while_waiting=not_ready (live_joined_before=false)
+       --> bind bridge --> flip_to_ready_after=11ms  final=ready
+       (bridge_bound=true  live_join_registry_used=false)
+run 2: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 3: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 4: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+run 5: ... flip_to_ready_after=11ms  final=ready  (live_join_registry_used=false)
+
+Result: reliable across 5/5 runs. The gate resolves on the REAL bridge-bind event
+(11ms = one 10ms await poll), NOT on a widened timer, and NOT via the
+orchestrator-only LiveJoinRegistry. This is the fix in commit 7b7c07b1.
