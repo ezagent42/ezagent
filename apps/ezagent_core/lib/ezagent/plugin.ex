@@ -479,15 +479,26 @@ defmodule Ezagent.Plugin do
 
     # role-as-data (SPEC §4) — `roles/0` is the SEED SOURCE only. Each recipe is
     # seeded as a ConfigObject (`config://<system_ws>/role/<name>`, key "role")
-    # via the atomic seed-once-if-no-pointer primitive; `RoleRegistry.lookup/2`
+    # via the `Ezagent.Plugin.RoleSeedHook` seam — the role store
+    # (`Ezagent.RoleRegistry` read-through over `ConfigStore`) lives downstream in
+    # `ezagent_domain_agent`, so core dispatches through the hook (no-op until
+    # domain_agent registers its impl; every role-declaring plugin compile-deps
+    # domain_agent, so the impl is always registered first). `RoleRegistry.lookup/2`
     # then resolves read-through from ConfigStore (ETS is a lazy cache, NOT
     # populated here — a `roles/0`-derived ETS entry as runtime authority is what
-    # the elimination criterion §7.2 forbids).
-    #
-    # The seed is a boot-time DB write, so — like the identity admin/smtp seeds —
-    # it is SKIPPED in `:test`, where tests seed explicitly inside their Ecto
-    # sandbox. A divergent-body collision (two plugins, same name) fails loud.
-    seed_plugin_roles(plugin_module)
+    # the elimination criterion §7.2 forbids). The `:test` skip + the divergent-
+    # body collision guard live in the hook IMPLEMENTATION.
+    Enum.each(plugin_module.roles(), fn recipe ->
+      case Ezagent.Plugin.RoleSeedHook.seed_role(recipe) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise ArgumentError,
+                "#{inspect(plugin_module)}: RoleSeedHook.seed_role/1 rejected a roles/0 " <>
+                  "recipe — #{inspect(reason)}."
+      end
+    end)
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
@@ -1002,35 +1013,5 @@ defmodule Ezagent.Plugin do
             "%{kind: :route, path: String.t(), label: String.t()}, " <>
             "%{kind: :flavor, flavor: String.t(), label: String.t()}, or nil " <>
             "(SPEC §6.1)."
-  end
-
-  # role-as-data (SPEC §4) — seed each `roles/0` recipe into ConfigStore. Skipped
-  # in `:test` (boot-time DB write contends with the per-test Ecto sandbox; tests
-  # seed explicitly via `RoleRegistry.seed_role_if_absent/1` inside their checked-
-  # out connection — the SAME `test_env?` discipline as the identity admin/smtp
-  # seeds). A divergent-body collision (two plugins claiming one role name with
-  # different bodies) fails LOUD — the moved boot-collision guard.
-  defp seed_plugin_roles(plugin_module) do
-    if test_env?() do
-      :ok
-    else
-      Enum.each(plugin_module.roles(), fn recipe ->
-        case Ezagent.RoleRegistry.seed_role_if_absent(recipe) do
-          {:ok, _seeded_or_exists} ->
-            :ok
-
-          {:error, reason} ->
-            raise ArgumentError,
-                  "#{inspect(plugin_module)}: RoleRegistry.seed_role_if_absent/1 rejected a " <>
-                    "roles/0 recipe — #{inspect(reason)}."
-        end
-      end)
-    end
-  end
-
-  defp test_env? do
-    Code.ensure_loaded?(Mix) and Mix.env() == :test
-  rescue
-    _ -> false
   end
 end
