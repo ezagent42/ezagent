@@ -65,6 +65,29 @@ defmodule Ezagent.Kind.Snapshot do
     end
   end
 
+  @doc """
+  `load_or_init/3` wrapped so the synchronous snapshot READ (a `Repo.one`
+  via `fetch_snapshot/2`) is as resilient as the WRITE (`save_now/4`).
+
+  Returns `{:ok, slice_state}` or `{:error, reason}`. #108: a
+  globally-supervised Kind whose spawn lands AFTER the ExUnit sandbox owner
+  exited queries a pool reverted to `:manual` → `DBConnection.OwnershipError`
+  (raised) or a linked-connection death (`:exit`). `save_now/4` already catches
+  BOTH at its boundary; mirror that here so `Kind.Server.init/1` can return a
+  clean `{:stop, ...}` instead of an uncaught init crash. NO fresh-state
+  fallback (that would risk the blocker-#2 cold-restart wipe) — the caller
+  let-it-crashes.
+  """
+  @spec safe_load_or_init(URI.t() | String.t(), module(), map()) ::
+          {:ok, %{atom() => map()}} | {:error, term()}
+  def safe_load_or_init(uri, kind_module, args) do
+    {:ok, load_or_init(uri, kind_module, args)}
+  rescue
+    e -> {:error, e}
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
+
   defp load_with_fallback(uri, kind_module, args) do
     uri_str = uri_to_str(uri)
 
