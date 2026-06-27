@@ -259,6 +259,15 @@ live.** A *scriptless* data-role (skills + prompt + behaviors + caps — the
 salesperson-persona / card-creator long tail) is far less dangerous: its only
 residual risk is the admin-instantiation cap case (§4.1).
 
+### 4.3.1 The remaining two fields (not injection vectors)
+For completeness, the struct's other two fields are NOT injection vectors:
+`passive` is a boundary-validated boolean (`Role.new/1`) controlling whether the
+agent is a chat principal — a data-role's `passive` is its *own* property
+(contained by the existing RF-6 passive/mention/`:join`/receive gates), it cannot
+reach into other agents' sessions, so a mis-set is a visibility/routing concern,
+not an escalation. `session_template` is an existing-ref (like skills/plugins) —
+a selection concern, no new executable content.
+
 ### 4.4 The gating design that falls out
 
 | Role payload | Authoring allowed as data? | Gate |
