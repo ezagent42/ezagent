@@ -1,6 +1,10 @@
 defmodule EzagentPluginProtocolApi.Application do
   @moduledoc """
-  Protocol API plugin — exposes OpenAI/Anthropic-compatible inbound HTTP APIs.
+  LLM Protocol API plugin — exposes OpenAI/Anthropic-compatible inbound HTTP APIs.
+
+  Display name: **LLM Protocol API** (gaga's #96 evaluation). The OTP app and
+  slug stay `ezagent_plugin_protocol_api` / `protocol_api` — only the
+  human-facing name and module taxonomy change.
 
   ## Plugin contract
 
@@ -22,8 +26,9 @@ defmodule EzagentPluginProtocolApi.Application do
   def plugin_info do
     %{
       slug: "protocol_api",
-      name: "Protocol API",
-      description: "OpenAI/Anthropic-compatible inbound HTTP API. Phase 0: /v1/chat/completions.",
+      name: "LLM Protocol API",
+      description:
+        "Inbound OpenAI/Anthropic-compatible API for calling ezagent agents. Implemented: OpenAI /v1/chat/completions.",
       version: "0.1.0"
     }
   end
