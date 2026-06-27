@@ -162,6 +162,144 @@ defmodule Ezagent.Behavior.ConfigGovernanceTest do
              ConfigStore.resolve(:user, workspace, agent, @cascade_key)
   end
 
+  # ---- §4.3.1 multi-slot publish (the headline feature: N deltas, one unit) -
+
+  test "publish_cr flips MULTIPLE staged slots in one unit; both resolve + record prev", ctx do
+    %{agent: agent, workspace: workspace} = ctx
+    manager = grant_manage_cap(agent, workspace)
+
+    # Establish a prior object on the second key so its published_prev is non-nil.
+    {:ok, %{config_id: prior_b}} =
+      Ezagent.Agent.Config.apply_delta(agent, manager.uri, manager.caps, %{
+        key: "behavior.b",
+        patch: %{"v" => 1}
+      })
+
+    {:ok, %{cr_id: cr_id}} = dispatch(agent, :open_cr, %{}, manager)
+
+    {:ok, %{staged_object_id: oid_a}} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: @cascade_key, patch: %{"tone" => "bold"}},
+        manager
+      )
+
+    {:ok, %{staged_object_id: oid_b}} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: "behavior.b", patch: %{"v" => 2}},
+        manager
+      )
+
+    assert oid_a != oid_b
+
+    assert {:ok, %{status: "published"}} =
+             dispatch(agent, :publish_cr, %{change_request_id: cr_id}, manager)
+
+    # BOTH slots flipped to their staged objects (one-unit publish).
+    assert {:ok, %ConfigObject{id: ^oid_a}} =
+             ConfigStore.resolve(:user, workspace, agent, @cascade_key)
+
+    assert {:ok, %ConfigObject{id: ^oid_b}} =
+             ConfigStore.resolve(:user, workspace, agent, "behavior.b")
+
+    # Both items recorded published_prev_object_id (key A had none → nil; key B
+    # had a prior → prior_b).
+    items = Ezagent.Socialware.ConfigChangeStore.items(cr_id)
+    prevs = Map.new(items, &{&1.key, &1.published_prev_object_id})
+    assert prevs[@cascade_key] == nil
+    assert prevs["behavior.b"] == prior_b
+  end
+
+  test "multi-slot publish is all-or-nothing: if the 2nd slot drifts, the 1st is NOT flipped",
+       ctx do
+    %{agent: agent, workspace: workspace} = ctx
+    manager = grant_manage_cap(agent, workspace)
+
+    {:ok, %{cr_id: cr_id}} = dispatch(agent, :open_cr, %{}, manager)
+
+    {:ok, %{staged_object_id: _oid_a}} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: @cascade_key, patch: %{"tone" => "bold"}},
+        manager
+      )
+
+    {:ok, %{staged_object_id: _oid_b}} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: "behavior.b", patch: %{"v" => 1}},
+        manager
+      )
+
+    # Drift ONLY the second slot's base AFTER staging (apply to behavior.b).
+    {:ok, _} =
+      Ezagent.Agent.Config.apply_delta(agent, manager.uri, manager.caps, %{
+        key: "behavior.b",
+        patch: %{"v" => 99}
+      })
+
+    assert {:error, {:cr_base_drift, _}} =
+             dispatch(agent, :publish_cr, %{change_request_id: cr_id}, manager)
+
+    # The FIRST slot (key A) must NOT have been flipped — the whole Multi rolled
+    # back (cross-item atomicity, §4.3.1).
+    assert :none = ConfigStore.resolve(:user, workspace, agent, @cascade_key)
+  end
+
+  # ---- §4.5 multi-slot rollback (reuses ConfigEvolve.repoint_config) --------
+
+  test "rollback_cr reverts EVERY published slot to its prior object", ctx do
+    %{agent: agent, workspace: workspace} = ctx
+    manager = grant_manage_cap(agent, workspace)
+
+    {:ok, %{config_id: prior_a}} =
+      Ezagent.Agent.Config.apply_delta(agent, manager.uri, manager.caps, %{
+        key: @cascade_key,
+        patch: %{"x" => 1}
+      })
+
+    {:ok, %{config_id: prior_b}} =
+      Ezagent.Agent.Config.apply_delta(agent, manager.uri, manager.caps, %{
+        key: "behavior.b",
+        patch: %{"y" => 1}
+      })
+
+    {:ok, %{cr_id: cr_id}} = dispatch(agent, :open_cr, %{}, manager)
+
+    {:ok, _} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: @cascade_key, patch: %{"x" => 2}},
+        manager
+      )
+
+    {:ok, _} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, key: "behavior.b", patch: %{"y" => 2}},
+        manager
+      )
+
+    {:ok, %{status: "published"}} =
+      dispatch(agent, :publish_cr, %{change_request_id: cr_id}, manager)
+
+    assert {:ok, %{status: "rolled_back"}} =
+             dispatch(agent, :rollback_cr, %{change_request_id: cr_id}, manager)
+
+    assert {:ok, %ConfigObject{id: ^prior_a}} =
+             ConfigStore.resolve(:user, workspace, agent, @cascade_key)
+
+    assert {:ok, %ConfigObject{id: ^prior_b}} =
+             ConfigStore.resolve(:user, workspace, agent, "behavior.b")
+  end
+
   # ---- §9.5 publish idempotency is STATUS-gated ----------------------------
 
   test "re-publish on a published CR is rejected (status gate), no second flip", ctx do

@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
   use Ezagent.Lifecycle
 
   alias Ezagent.Behavior.ConfigEvolve
-  alias Ezagent.Socialware.{ConfigChangeStore, ConfigProjection, ConfigStore}
+  alias Ezagent.Socialware.{ConfigChangeStore, ConfigProjection}
 
   # Read the agent's OWN Sandbox + Identity siblings — IDENTICAL to ConfigEvolve.
   # `:sandbox` so publish/rollback can compute the deferred materialization
@@ -235,13 +235,22 @@ defmodule Ezagent.Behavior.ConfigGovernance do
     end
   end
 
-  # rollback REUSES the existing repoint — for each published item, repoint the
-  # slot to its durable `published_prev_object_id` (NOT the live pointer's
-  # previous_config_id, which the publish flip overwrote). We do the repoints
-  # in-handler via ConfigStore.put_pointer (the agent IS the subject, already
-  # self-bound) and emit ONE materialization effect. A nil-prior item leaves the
-  # new pointer in place (partial rollback; SPEC §4.5 Q2 — no pointer-delete
-  # primitive).
+  # rollback REUSES the existing repoint VERBATIM (SPEC §4.5) — for each
+  # published item, dispatch the EXISTING `ConfigEvolve.handle_repoint_config/2`
+  # aimed at the durable `published_prev_object_id` (NOT the live pointer's
+  # previous_config_id, which the publish flip overwrote). That handler already
+  # self-binds the subject (CE-1), validates the prior object
+  # (`fetch_matching_object/1`), advances the pointer (`put_pointer`), AND emits
+  # the step-2 sandbox refresh — so we reuse the whole repoint mechanism (no new
+  # repoint, no duplicated scope guard, no separate materialization). A nil-prior
+  # item (brand-new key at publish) leaves the new pointer in place (partial
+  # rollback; SPEC §4.5 Q2 — no pointer-delete primitive).
+  #
+  # NOTE (atomicity): unlike publish (one Multi), rollback is N sequential
+  # repoints AFTER the status flip commits. A mid-loop failure leaves the CR
+  # `rolled_back` with pointers half-reverted; the status gate then blocks a
+  # naive re-run. Acceptable for v1 (repoint is the same idempotent put_pointer
+  # upsert the manual per-pointer rollback always was); flagged for follow-up.
   @doc false
   @spec handle_rollback_cr(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_rollback_cr(args, ctx) do
@@ -249,9 +258,8 @@ defmodule Ezagent.Behavior.ConfigGovernance do
 
     with {:ok, cr} <- fetch_self_cr_status(args, ctx, "published"),
          {:ok, %{cr: rolled_back, items: items}} <- ConfigChangeStore.mark_rolled_back(cr_id),
-         :ok <- repoint_prior(cr, items, ctx) do
-      {:ok, %{cr_id: rolled_back.id, status: rolled_back.status},
-       sandbox_effects_for_items(ctx, cr.subject_uri, items)}
+         {:ok, effects} <- repoint_prior(cr, items, ctx) do
+      {:ok, %{cr_id: rolled_back.id, status: rolled_back.status}, effects}
     end
   end
 
@@ -290,36 +298,42 @@ defmodule Ezagent.Behavior.ConfigGovernance do
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(other), do: other
 
-  # ---- rollback repoints (reuse the existing put_pointer) ------------------
+  # ---- rollback repoints (reuse ConfigEvolve.handle_repoint_config/2) -------
 
+  # For each published item with a non-nil prior, call the EXISTING
+  # `ConfigEvolve.handle_repoint_config/2` in-process with the SAME action ctx
+  # (the agent IS the subject; that handler self-binds + scope-guards + flips +
+  # emits the step-2 sandbox refresh). Aggregate every item's emitted effects.
+  # A nil-prior item is skipped (SPEC §4.5 Q2). Returns `{:ok, effects}` or the
+  # first `{:error, _}` (aborts the remaining repoints).
   defp repoint_prior(cr, items, ctx) do
-    Enum.reduce_while(items, :ok, fn item, :ok ->
+    Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->
       case item.published_prev_object_id do
         nil ->
-          # nil-prior (brand-new key at publish) — leave the new pointer in
-          # place (SPEC §4.5 Q2; logged, no pointer-delete primitive).
-          {:cont, :ok}
+          {:cont, {:ok, acc}}
 
         prior_id ->
-          attrs = %{
-            layer: item.layer,
-            workspace_uri: cr.workspace_uri,
-            subject_uri: cr.subject_uri,
+          repoint_args = %{
+            layer: layer_atom(item.layer),
+            workspace_uri: cr_workspace_uri(cr),
+            subject_uri: ctx.self_uri,
             key: item.key,
-            config_id: prior_id,
-            actor_uri: uri_string(ctx.self_uri),
-            source_turn_id: "cr-rollback:#{cr.id}"
+            config_id: prior_id
           }
 
-          with {:ok, _object} <- ConfigStore.fetch_matching_object(attrs),
-               {:ok, _} <- ConfigStore.put_pointer(attrs) do
-            {:cont, :ok}
-          else
+          case ConfigEvolve.handle_repoint_config(repoint_args, ctx) do
+            {:ok, _reply, effects} -> {:cont, {:ok, acc ++ effects}}
             {:error, _} = error -> {:halt, error}
           end
       end
     end)
   end
+
+  defp cr_workspace_uri(cr), do: Ezagent.URI.new!(cr.workspace_uri)
+
+  defp layer_atom("workspace"), do: :workspace
+  defp layer_atom("user"), do: :user
+  defp layer_atom("session"), do: :session
 
   # ---- materialization effect (reuse ConfigEvolve's public seam) -----------
 
