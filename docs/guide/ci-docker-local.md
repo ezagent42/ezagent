@@ -108,6 +108,21 @@ if `make ci.repro` is green, escalate to `make ci.repro.amplify`, then tighten `
 to `0` (single core) and repeat the known-red seed. On a true linux host this same
 harness reproduces the race directly.
 
+## Proven reproduction (2026-06-27)
+
+This harness **did** reproduce the macOS-impossible flake. On the **first** `make ci.repro`
+iteration (cpuset 0-1, 2 schedulers, `max_cases 8`, **seed 979933** — the seed the
+diagnosis records as *green on macOS, red on the runner*), the `ezagent_domain_session`
+app failed with the named target flakes on a freshly-created DB:
+
+- **`Ezagent.Domain.AgentReadTest`** — `(KeyError) key :effective_body not found` (cold-read race)
+- **`DefaultSessionTemplateSeedTest`** — `(MatchError) {:error, :no_such_actor}` from
+  `seed_default_session_template_now/1` (spawn-readiness race)
+- `SessionCreateOrchestratorDecoupleTest` — same `:no_such_actor` class
+
+Full evidence + honest caveats (which failures are constraint artifacts vs the real
+race): [`docs/notes/2026-06-27-ci-flake-docker-repro.md`](../notes/2026-06-27-ci-flake-docker-repro.md).
+
 ## Deploy parity
 
 `docker/Dockerfile.ci` shares its base (`hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm`)
