@@ -132,7 +132,13 @@ defmodule EzagentWeb.MixProject do
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       "assets.setup": [
         "cmd --cd assets npm install",
-        "cmd --cd ../ezagent_plugin_world/assets npm install",
+        # world React deps: --legacy-peer-deps is required, not a shortcut. @excalidraw/excalidraw
+        # hard-pins @radix-ui/react-tabs@1.0.2 whose peer range is "^16.8 || ^17.0 || ^18.0" (no
+        # React 19), which caps react at 18 under npm's strict peer resolution and collides with
+        # @json-render/react@0.19.0's required react@^19.2.3 -> ERESOLVE. The old radix-tabs works
+        # with React 19 at runtime (and excalidraw itself declares ^19 support); the conflict is a
+        # stale upstream transitive peer declaration we cannot align from our own package.json.
+        "cmd --cd ../ezagent_plugin_world/assets npm install --legacy-peer-deps",
         "tailwind.install --if-missing",
         "esbuild.install --if-missing"
       ],
