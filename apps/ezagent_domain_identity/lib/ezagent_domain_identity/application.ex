@@ -52,7 +52,8 @@ defmodule EzagentDomainIdentity.Application do
     WorkspaceUserAdmin,
     WorkspaceSharedCredentialSource,
     CredentialGrant,
-    ConfigEvolve
+    ConfigEvolve,
+    ConfigGovernance
   }
 
   alias Ezagent.Behavior.UserDefaultCredentialSource
@@ -493,6 +494,15 @@ defmodule EzagentDomainIdentity.Application do
     # (manage-cap gated) + reconcile_cascade (self-cap, boot self-heal).
     for action <- ConfigEvolve.actions() do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, ConfigEvolve)
+    end
+
+    # Minimal CR (change-request) config governance (SPEC docs/together/
+    # 2026-06-26 rev 3) — a Lifecycle sibling to ConfigEvolve on the Agent Kind.
+    # Same cross-domain registration pattern. Registers open_cr / stage_item /
+    # unstage_item / preview_cr / publish_cr / reject_cr / rollback_cr, all
+    # gated by the agent's manage-cap (publish REUSES the manage cap, OQ-4).
+    for action <- ConfigGovernance.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, ConfigGovernance)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
