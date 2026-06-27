@@ -120,4 +120,58 @@ defmodule Ezagent.Agent.TransportReadinessTest do
     assert {:error, :timeout} = TransportReadiness.await_transport_or_fail(uri)
     assert Ezagent.ReadyGate.status(uri) == :failed
   end
+
+  # #505 FRESH-spawn ordering — the Kind announced :ready BEFORE the gate was
+  # armed (spawn_for_local_pty starts the Kind, then require_transport_join sets
+  # :not_ready), so NO await Task is parked. The bridge-bind EVENT must still flip
+  # the gate. (`on_transport_joined/1` is what TransportReadinessListener calls.)
+  test "on_transport_joined flips an armed :not_ready gate to :ready", %{uri: uri} do
+    :ok = TransportReadiness.require_transport_join(uri, timeout_ms: 30_000)
+    :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+    # No await Task running — mirrors the fresh-spawn ordering.
+    assert Ezagent.ReadyGate.status(uri) == :not_ready
+
+    :ok = TransportReadiness.on_transport_joined(uri)
+    assert Ezagent.ReadyGate.status(uri) == :ready
+  end
+
+  test "on_transport_joined is a no-op for an agent with no armed gate", %{uri: uri} do
+    # No require_transport_join -> not a transport-gated agent.
+    :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+    :ok = TransportReadiness.on_transport_joined(uri)
+    # Untouched (the listener must not mark arbitrary agents ready).
+    assert Ezagent.ReadyGate.status(uri) == :not_ready
+  end
+
+  # End-to-end: the live TransportReadinessListener (running in the app tree)
+  # observes the real AgentBridge connect broadcast and flips the gate, even with
+  # no await Task and no LiveJoinRegistry mark.
+  test "TransportReadinessListener flips the gate on the real bridge-connect broadcast",
+       %{uri: uri} do
+    :ok = TransportReadiness.require_transport_join(uri, timeout_ms: 30_000)
+    :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+
+    bridge = spawn(fn -> Process.sleep(:infinity) end)
+    on_exit(fn ->
+      if Process.alive?(bridge), do: Process.exit(bridge, :kill)
+      BridgeRegistry.unbind(uri)
+    end)
+
+    # bind/3 broadcasts {:agent_bridge_connected, uri, info} on Registry.topic().
+    :ok = BridgeRegistry.bind(uri, bridge, %{bridge_flavor: "cc"})
+
+    # The listener reacts asynchronously; poll briefly.
+    assert eventually(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
+  end
 end

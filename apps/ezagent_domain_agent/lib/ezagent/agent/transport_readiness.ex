@@ -68,6 +68,37 @@ defmodule Ezagent.Agent.TransportReadiness do
     :ok
   end
 
+  @doc """
+  React to a live transport-join event for `agent_uri` (an AgentBridge bind /
+  orchestrator MCP join).
+
+  If a transport-join gate is ARMED for this agent and its ReadyGate is still
+  `:not_ready`, flip it to `:ready` now — the transport is live. This covers the
+  ordering where the Kind announced `:ready` BEFORE the gate was armed (the
+  FRESH-spawn / create path in `CcAgent.Spawn.spawn_for_local_pty`, where the
+  Agent Kind is started first and `require_transport_join` runs AFTER the announce
+  — so no `await_transport_or_fail` Task exists to observe the later bind). The
+  rehydrate/activate path is covered by `await_transport_or_fail/1`; this is the
+  event-driven complement so BOTH orderings reach `:ready` on the real bind.
+
+  No-op when the agent has no armed gate (non-bridge-backed agents) or is already
+  past `:not_ready`. Driven by `Ezagent.Agent.TransportReadinessListener`.
+  """
+  @spec on_transport_joined(URI.t()) :: :ok
+  def on_transport_joined(%URI{} = agent_uri) do
+    init()
+
+    if armed?(agent_uri) and Ezagent.ReadyGate.status(agent_uri) == :not_ready do
+      :ok = Ezagent.ReadyGate.mark_ready(agent_uri)
+    end
+
+    :ok
+  end
+
+  defp armed?(%URI{} = agent_uri) do
+    :ets.lookup(@table, URI.to_string(agent_uri)) != []
+  end
+
   @doc false
   @spec defer_ready?(URI.t() | String.t()) :: :ready | {:defer, pos_integer()}
   def defer_ready?(uri) do

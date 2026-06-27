@@ -772,13 +772,26 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc false
+  # Match needle(s) against the ANSI-stripped PTY buffer. Whitespace is
+  # NORMALISED (runs of whitespace -> a single space) on BOTH sides before the
+  # substring test: `Ezagent.AnsiStrip.strip/1` emits a SPACE for every CSI
+  # escape it removes, so a TUI line such as `❯\e[39m \e[38;5;246m1.` strips to
+  # "❯   1." (multiple spaces). Without normalisation an exact-spacing match
+  # string ("❯ 1. Use this MCP server") NEVER matches the live dialog — the cause
+  # of the #505 live finding where the `:mcp_trust_dialog` scanner silently never
+  # fired, so claude's esr-bridge MCP was never approved and the transport bridge
+  # never JOINed. Normalisation does NOT bridge whitespace the TUI redraw injected
+  # INSIDE a word (e.g. "serv r"), so match strings must still avoid redraw-split
+  # words (see `Ezagent.PtyServer.AutoPrompts` notes).
   def matches?(needle, stripped) when is_binary(needle),
-    do: String.contains?(stripped, needle)
+    do: String.contains?(normalize_ws(stripped), normalize_ws(needle))
 
   def matches?(needles, stripped) when is_list(needles),
-    do: Enum.all?(needles, &String.contains?(stripped, &1))
+    do: Enum.all?(needles, &matches?(&1, stripped))
 
   def matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
+
+  defp normalize_ws(s) when is_binary(s), do: String.replace(s, ~r/\s+/u, " ")
 
   defp fire_prompt(prompt, state) do
     Logger.info(

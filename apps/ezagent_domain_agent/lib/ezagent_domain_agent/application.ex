@@ -32,7 +32,11 @@ defmodule EzagentDomainAgent.Application do
       # AgentTemplate Kind DynamicSupervisor — 0 children at boot; templates
       # materialize on admin create or snapshot restore. Frozen name (D1a).
       {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.AgentTemplateSupervisor, strategy: :one_for_one}
+       name: EzagentDomainInstanceMessage.AgentTemplateSupervisor, strategy: :one_for_one},
+      # #505 — carries AgentBridge connect events into TransportReadiness so a
+      # bridge-backed agent's ReadyGate flips to :ready on the real bind even when
+      # the bind lands AFTER the Kind's ready announce (fresh-spawn ordering).
+      Ezagent.Agent.TransportReadinessListener
     ]
 
     result =
