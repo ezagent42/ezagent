@@ -65,6 +65,8 @@ Seven notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 
 - [V1 stress-test results (2026-05-22)](v1-stress-test-results-2026-05-22.md) — **[zh]** measured answers to the agents-per-session / max-sessions / max-users questions at a Raspberry-Pi (`+S 4:4`, ~4 GB) resource profile; which bottleneck bit first.
 
+- [CI flake reproduced on ubuntu-docker (2026-06-27)](2026-06-27-ci-flake-docker-repro.md) — the `make ci.repro` harness reproduced the macOS-impossible CI flakes (`AgentReadTest`, `DefaultSessionTemplateSeedTest`) on the FIRST iteration at seed 979933 (green on darwin, red on the runner); validates `ci-flake-diagnosis.md`.
+
 ## Archive
 
 - [ARCHITECTURE_GRILL_v0.3.md](archive/ARCHITECTURE_GRILL_v0.3.md) — 2026-05-14 v0.3-era architecture review; historical artifact, superseded by the current `../../ARCHITECTURE.md`.
