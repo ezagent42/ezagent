@@ -486,8 +486,9 @@ spawned), assert `KindRegistry.lookup == :error` **before AND after** the read.
     matched by p14/p15; (b) the **`:list_api_keys`** surface dispatch (sensitive, data_owner/admin-
     gated, excluded per §5) is not matched (p14 keys on `:list_caps`, not `:list_*`); (c) a WRITE
     dispatch `with_action(uri, :pty, :write)` is not matched; and (d) the config MUTATION facade
-    calls (`Agent.Config.apply_patch(` / `delete_path(` / `repoint(`) are not matched by p15 (which
-    keys on `read_cascade` only) — those legitimately dispatch writes. Together these pin the
+    calls (`Agent.Config.apply_delta(` / `delete_path(` / `repoint(` — verified names, surface call
+    sites `agent_actions.ex:202/:225/:248`) are not matched by p15 (which keys on `read_cascade`
+    only) — those legitimately dispatch writes. Together these pin the
     classification: the gate forbids EXACTLY the three consolidated cap-gated reads, nothing wider.
 
 ---
