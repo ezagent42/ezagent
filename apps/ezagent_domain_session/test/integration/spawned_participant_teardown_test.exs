@@ -181,6 +181,50 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
     end
   end
 
+  describe "THE CRUX (SPEC §2.2) — non-admin owner cap reaps via TRANSITIVE lineage" do
+    test "a non-admin owner's {:spawned_by, owner} cap reaps an orchestrator-spawned worker (two-hop, no admin, no cap #2)" do
+      # This is the load-bearing end-to-end proof: the granted teardown cap (NOT
+      # an admin wildcard) authorizes the reap, and it reaches the worker through
+      # the FULL durable chain `worker → orchestrator → owner` (NOT a one-hop
+      # shortcut). If the transitive walk or the cap instance/workspace match
+      # were wrong, this fails while the admin/one-hop tests still pass.
+      config_dir = "/tmp/f7b-crux-#{uniq()}"
+
+      # Non-admin confirmed user owner (no genesis wildcard short-circuit).
+      owner = URI.new!("entity://system/user/crux-owner-#{uniq()}")
+      {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
+
+      # The ONLY authority granted: the create-time {:spawned_by, owner} teardown
+      # cap (granted_by: owner). No cap #2, no admin.
+      assert :ok = Materializer.grant_owner_participant_teardown_cap(owner, @workspace_uri)
+
+      worker = spawn_worker(config_dir)
+
+      # TWO HOPS: orchestrator is NOT live (it crashed / never mattered) — only
+      # the durable lineage rows exist. worker → orchestrator → owner.
+      orchestrator = URI.new!("entity://system/agent/crux-orch-#{uniq()}")
+      :ok = AgentLineage.record(orchestrator, owner)
+      :ok = AgentLineage.record(worker, orchestrator)
+
+      # Sanity: the transitive walk reaches the owner (the property the cap
+      # match relies on); one hop (worker→orchestrator) does NOT reach owner.
+      assert AgentLineage.spawned_in_lineage?(worker, owner)
+
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:f7b_gc:#{URI.to_string(worker)}")
+
+      # Strict reap, AS the non-admin owner: step-5.5 resolves the owner's
+      # {:spawned_by, owner} cap, which matches the worker via the transitive
+      # lineage walk — authorized WITHOUT admin and WITHOUT the orchestrator's
+      # cap #2 (which is moot — the orchestrator isn't even live).
+      assert :ok = Teardown.reap_spawned_worker(worker, owner, :strict)
+
+      assert_receive {:gc_called, ^worker, ^config_dir}, 2_000
+      assert :gone = wait_until_gone(worker)
+      assert :error == AgentLineage.lookup(worker)
+    end
+  end
+
   describe "owner WITHOUT the teardown cap is DENIED (strict, fail-closed)" do
     test "a spawned worker survives when the owner lacks the destroy cap" do
       config_dir = "/tmp/f7b-denied-#{uniq()}"
@@ -246,9 +290,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:f7b_gc:#{URI.to_string(w_a)}")
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:f7b_gc:#{URI.to_string(w_b)}")
 
-      # Delete via the framework primitive `manage.delete` rides — i.e. the
-      # generic Lifecycle.destroy/2, which fires Session.destroy/2 → cascade.
-      # (Every delete path cascades, not just the UI handler.)
+      # Delete via the generic Lifecycle.destroy/2 — the SAME primitive bare
+      # `manage.delete` rides: `Manage.handle_delete` → `schedule_delete` →
+      # `Ezagent.Lifecycle.destroy(self_uri, :manage_delete)` (manage.ex:87-119,
+      # code-verified), which fires Session.destroy/2 → cascade_teardown. So
+      # EVERY delete path cascades (not just the UI handler).
       :ok = Ezagent.Lifecycle.destroy(session_uri, :delete)
 
       assert_receive {:gc_called, ^w_a, ^cfg_a}, 2_000
