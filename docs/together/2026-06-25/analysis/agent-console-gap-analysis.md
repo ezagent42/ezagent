@@ -63,7 +63,7 @@ IdentityData (identity_data.ex, 692行)
 | 维度 | 存储 A：Config Cascade | 存储 B：Template Data |
 |---|---|---|
 | **存储位置** | `ConfigStore` 表（`ConfigObject` + `ConfigPointer`） | Kind 快照的 `respawn_template_data` 字段（Sandbox slice） |
-| **key** | `"advisor.behavior"`（默认）+ 任意 key | 无 key——整个 template 是一个 map |
+| **key** | `"agent.soul"`（默认）+ 任意 key | 无 key——整个 template 是一个 map |
 | **写入时间** | **运行时**（console `AgentConfigEditor` → `agents.config.update`） | **创建时**（`create_agent` → template instantiate → Kind snapshot） |
 | **读取路径** | `AgentConfig.read_cascade/4` → dispatch → `ConfigEvolve.handle_read_cascade/2` | sandbox read（`Invocation.dispatch → :sandbox/:read`） |
 | **消费端** | `ConfigProjection.render_soul/1` → 写入 `CLAUDE.md` → cc agent 启动时加载 | `sdk_sidecar_params/2` → 传给 Python SDK worker 环境变量 |
@@ -116,10 +116,10 @@ IdentityData (identity_data.ex, 692行)
   cascade: {
     agent_uri: string,
     workspace_uri: string,
-    default_key: "advisor.behavior",
+    default_key: "agent.soul",
     layer_order: ["workspace", "user", "session"],
     keys: [{
-      key: string,                   // 如 "advisor.behavior"
+      key: string,                   // 如 "agent.soul"
       effective_body: Record<string, unknown>,  // 合并后的配置 body
       editable: boolean,
       editable_layer: "user",
@@ -139,7 +139,7 @@ IdentityData (identity_data.ex, 692行)
 | 缺口 | 说明 |
 |---|---|
 | **详情页缺 template data 字段** | `respawn_template_data` 里有 model/effort/permission_mode/system_prompt/allowed_tools/disallowed_tools/mcp_servers，但 `IdentityData.state_for(:agent_detail)` 只解了 project_cwd/config_dir/source_template，其他字段没有放入 state |
-| **详情页缺 config cascade soul** | `advisor.behavior` body 里的 `soul_md` 没有在详情页展示 |
+| **详情页缺 config cascade soul** | `agent.soul` body 里的 `soul_md` 没有在详情页展示 |
 | **详情页缺 sections/skills/KB** | 这些概念的 UI/管理面在 main 不存在。domain 层有 `Ezagent.Role` 结构体（`skills`/`plugins`/`prompt`/`behaviors`/`requested_caps`）和 `AgentTemplate.desired_skills`/`desired_caps` 字段，但缺少 operator 可视化管理面（见 §5-6） |
 | **Config 面板缺结构化编辑** | 当前是通用 kv 编辑器，没有按字段类型选择 widget（见 §3.3） |
 
@@ -178,7 +178,7 @@ IdentityData (identity_data.ex, 692行)
 
 | 字段 | 数据在哪 | 状态 |
 |---|---|---|
-| **soul / soul_md** | 存储 A：config cascade `advisor.behavior.body.soul_md` | ⚠️ `IdentityData` 没读 config cascade |
+| **soul / soul_md** | 存储 A：config cascade `agent.soul.body.soul_md` | ⚠️ `IdentityData` 没读 config cascade |
 | **model** | 存储 B：`respawn_template_data.model` | ⚠️ sandbox read 返回了，`IdentityData` 没解 |
 | **effort** | 存储 B：`respawn_template_data.effort` | ⚠️ 同上 |
 | **permission_mode** | 存储 B：`respawn_template_data.permission_mode` | ⚠️ 同上 |
@@ -573,7 +573,7 @@ defp config_fields_for(agent_uri, flavor, sandbox_state) do
   end
   
   # 从 config cascade 读 soul_md
-  soul = case AgentConfig.read_key(uri, "advisor.behavior", caller, caps) do
+  soul = case AgentConfig.read_key(uri, "agent.soul", caller, caps) do
     {:ok, %{effective_body: %{"soul_md" => md}}} -> [%{key: "soul_md", value: md, source: "cascade"}]
     _ -> []
   end

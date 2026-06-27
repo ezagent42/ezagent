@@ -56,7 +56,7 @@ The backend branch does not implement UI wiring, but these names are the propose
 ## Defaults
 
 - `layer`: `"user"`
-- `key`: `"advisor.behavior"`
+- `key`: `"agent.soul"`
 - `turn_id`: optional from frontend. If omitted, backend generates `console:<uuid>`.
 
 Supported layers:
@@ -84,7 +84,7 @@ Optional:
 {
   "action": "agents.config.read",
   "agent_uri": "entity://team_alpha/agent/demo",
-  "keys": ["advisor.behavior"]
+  "keys": ["agent.soul"]
 }
 ```
 
@@ -95,13 +95,13 @@ There is no fixed agent config schema registry on current `main`.
 Config keys are dynamic: they exist when a `ConfigPointer` exists for the agent/layer/key tuple. The only built-in/default key in the current config-evolve path is:
 
 ```json
-"advisor.behavior"
+"agent.soul"
 ```
 
 Therefore V1 defines "full config" as:
 
 - every distinct config `key` currently present in `ConfigPointer` for this agent across supported layers;
-- plus the default key `advisor.behavior`, even if no pointer exists yet.
+- plus the default key `agent.soul`, even if no pointer exists yet.
 
 The backend exposes this through one `read_cascade` call. Frontend should not need to call `list_keys` and then batch `resolve` per key.
 
@@ -116,11 +116,11 @@ Success:
   "ok": true,
   "agent_uri": "entity://team_alpha/agent/demo",
   "workspace_uri": "workspace://team_alpha",
-  "default_key": "advisor.behavior",
+  "default_key": "agent.soul",
   "layer_order": ["workspace", "user", "session"],
   "keys": [
     {
-      "key": "advisor.behavior",
+      "key": "agent.soul",
       "effective_body": {
         "tone": "decisive",
         "soul_md": "# Agent soul"
@@ -155,11 +155,11 @@ Empty config still returns stable shape:
   "ok": true,
   "agent_uri": "entity://team_alpha/agent/demo",
   "workspace_uri": "workspace://team_alpha",
-  "default_key": "advisor.behavior",
+  "default_key": "agent.soul",
   "layer_order": ["workspace", "user", "session"],
   "keys": [
     {
-      "key": "advisor.behavior",
+      "key": "agent.soul",
       "effective_body": {},
       "editable": true,
       "editable_layer": "user",
@@ -182,7 +182,7 @@ Action:
   "action": "agents.config.update",
   "agent_uri": "entity://team_alpha/agent/demo",
   "layer": "user",
-  "key": "advisor.behavior",
+  "key": "agent.soul",
   "patch": {
     "tone": "decisive"
   },
@@ -206,7 +206,7 @@ Action:
   "action": "agents.config.delete_path",
   "agent_uri": "entity://team_alpha/agent/demo",
   "layer": "user",
-  "key": "advisor.behavior",
+  "key": "agent.soul",
   "path": ["tone"],
   "turn_id": "console:optional-client-generated-id"
 }
@@ -248,7 +248,7 @@ Action:
   "action": "agents.config.repoint",
   "agent_uri": "entity://team_alpha/agent/demo",
   "layer": "user",
-  "key": "advisor.behavior",
+  "key": "agent.soul",
   "config_id": "8c70d2bf-6f12-44b5-a778-1e11a8ed5c1b"
 }
 ```
@@ -299,7 +299,7 @@ Success:
   "ok": true,
   "agent_uri": "entity://team_alpha/agent/demo",
   "layer": "user",
-  "key": "advisor.behavior",
+  "key": "agent.soul",
   "config_id": "new-config-id",
   "previous_config_id": "old-config-id",
   "cascade": {
@@ -346,7 +346,7 @@ Initial error codes:
 
 ## Frontend Questions To Confirm
 
-1. Is the V1 definition of "full config" acceptable: all existing pointer keys plus default `advisor.behavior`, with no fixed schema registry yet?
+1. Is the V1 definition of "full config" acceptable: all existing pointer keys plus default `agent.soul`, with no fixed schema registry yet?
 2. Will the editor be full JSON editing, key/value editing, or path-based field editing?
 3. Is field/path delete enough for v1, with whole-key delete deferred?
 4. After mutation, should backend include refreshed cascade, or should frontend call read again?
