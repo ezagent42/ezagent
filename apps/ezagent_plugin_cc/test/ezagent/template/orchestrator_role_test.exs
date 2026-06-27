@@ -43,6 +43,12 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     :ok = Ezagent.Agent.RoleRegistry.flush_cache()
     {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(OrchestratorRole.recipe())
 
+    # ETS is process-global but the seeded ConfigStore row is rolled back with
+    # the per-test sandbox. Flush on exit too so a role cached by this test's
+    # `lookup/1` cannot leak into a later module that asserts an unseeded miss
+    # without its own flush (hermetic fixture).
+    on_exit(fn -> Ezagent.Agent.RoleRegistry.flush_cache() end)
+
 
     # Stage a fake umbrella-root skill source in a temp dir so the
     # test doesn't depend on the real `.claude/skills/...` (which a
