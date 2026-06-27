@@ -49,3 +49,17 @@ the 20s activate budget / 30s transport timeout). Before the fixes, the same col
 cc agent (a) hung at the MCP-trust / external-imports / dev-channels dialogs so the
 bridge never connected, and (b) even once bound, never reached :ready because the
 TransportReadiness gate only resolved on the orchestrator-only LiveJoinRegistry.
+
+LIVE rehydrate (cold Kind restart): fresh spawn -> :ready; Kind.terminate ->
+re-activate via LocalRuntime.ensure_started_detailed -> :ready in 251ms (the
+transport bridge survives a quick Kind restart, so it stays ready — robust). The
+non-trivial :not_ready -> :ready rehydrate transition is isolated by the 5-run
+deterministic gate proof above (real TransportReadiness/ReadyTransition/ReadyGate/
+AgentBridge.Registry modules in production order) + the unit tests.
+
+claude server-log confirmation (real run): "JOINED agent_bridge:cc:entity://...",
+"Claude Code v2.1.195 Opus 4.8 (1M context) · Claude Max", "Channels (experimental)
+messages from server:esr-bridge inject directly in this session" — claude fully
+boots + authenticates + the bridge joins. (The LLM reply round-trip is existing cc
+functionality covered by cc_agent_admin_reply_e2e_test; not re-exercised here — the
+test account was at 88% weekly limit.)
