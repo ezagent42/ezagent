@@ -414,14 +414,43 @@ defmodule Ezagent.Workspace.Loader do
         Workspace.Store.list_all() |> Enum.map(&load_one/1)
       rescue
         e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-          Logger.warning(
-            "Workspace.Loader.load_all: DB unavailable at boot (#{inspect(e.__struct__)}); " <>
-              "skipping — plugin re-runs or per-test setup will pick up Workspaces"
-          )
+          # #108 — in PRODUCTION a boot-time DB-unavailable shouldn't crash the
+          # whole umbrella (a plugin's later `load_all/0` or per-test setup picks
+          # the Workspaces up), so we log and return []. But in `:test` this
+          # rescue is a LATENT TRAP: it converts a genuinely broken sandbox
+          # connection (the recurring CI flake's root class) into a SILENT empty
+          # result, which then surfaces downstream as the misleading
+          # "workspace never appeared with children" assertion in
+          # PluginIsolationWorkspaceTest. Multiple distinct silent-`[]` paths
+          # (this rescue, the reverted-sandbox dispatch, the unsealed
+          # flavor-registry gate) collapse into the same indistinguishable
+          # symptom. Unmask in `:test` so a broken connection FAILS LOUD and
+          # names its own cause instead of masquerading as a flake.
+          # (Verified safe: this rescue does NOT fire in the full umbrella —
+          # `grep -c "DB unavailable at boot"` over a complete run is 0 — so
+          # unmasking changes nothing for green suites; it only converts a future
+          # silent swallow into a diagnosable error.)
+          if test_env?() do
+            reraise(e, __STACKTRACE__)
+          else
+            Logger.warning(
+              "Workspace.Loader.load_all: DB unavailable at boot (#{inspect(e.__struct__)}); " <>
+                "skipping — plugin re-runs or per-test setup will pick up Workspaces"
+            )
 
-          []
+            []
+          end
       end
     end
+  end
+
+  # #108 — match the established carve-out convention
+  # (`EzagentDomainInstanceMessage.Application.test_env?/0`): only `:test`
+  # unmasks the OwnershipError/ConnectionError rescue above.
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
   end
 
   defp agent_flavor_registry_unsealed? do
