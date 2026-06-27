@@ -26,7 +26,7 @@
 
 | Tier | 含义 | 当前可跑性 |
 |---|---|---|
-| **Tier 1** | 核心、近期——大体现可建:customer 到达 surface → 与 agent 聊 → agent **查 KB** 作答 → **操作员**在 console 看/管该 session | **部分可跑**(KB 已合,但缺"会话 agent 暴露 kb_query + 已 ingest 内容的 kb-agent"的 seed 接线;另撞 GAP-1/4/5)。runbook 已填,断言可判。 |
+| **Tier 1** | 核心、近期——大体现可建:customer 到达 surface → 与 agent 聊 → agent **查 KB** 作答 → **操作员**在 console 看/管该 session | **大体可跑(2026-06-27)**:seed 已补(open-q#2 关闭);**retrieval soul + 路由 + public_view 门 + 持久化审计行**确定性/live 证绿;**余 answer 层**(cc 工具循环回复)+ cc-orchestrator 经 session-create 物化 = GAP。 |
 | **Tier 2** | 操作员经 **CR 治理**改 agent config → 批准 → 生效 | **in-impl**(ConfigStore 原语已在,CR workflow 在建)。pass-criteria 已定义,runbook deferred。 |
 | **Tier 3** | **计费**记用量;live surface 的 **WS 冻结契约**;**语音** ASR/TTS | **deferred**(计费 not-started;WS 契约 spec'd-partial;语音 spec'd-only)。pass-criteria 已定义,runbook deferred。 |
 
@@ -80,8 +80,11 @@
 4. **S4**:操作员在 world console 看到该 session、成员在线、transcript 含上面的往返。
 
 **Tier 1 当前不能直接判 🟩 的诚实结论**:
-- KB 引擎(query/ingest/FTS5/cap 隔离)+ orchestrator `kb_query` 工具 **已合**(#1036,有 `kb_role_native_test.exs`),但**缺**把"一个跑工具循环的会话 agent + 一个已 ingest 内容的 kb-agent + 一条默认路由规则 + public_view"接成一条**可经 chat surface 跑通**的 **seed/wiring**。S3 因此是 **spec'd, partially buildable**,不是"今天就过"。
-- **S3 的 flavor 阻塞**(核心):能调 `kb_query` 的只有走工具循环的 flavor = **cc-flavor orchestrator agent**(经 orchestrator MCP bridge)。但 cc **UI-create 坏**(GAP-4)、**PTY 往返 FAIL**(scenario-05);curl/DeepSeek 虽 🟩 但**无工具循环、做不了 S3**;py_default 是 echo 调不了工具。→ Tier 1 灵魂步骤目前卡在 cc 的已知 bug 上。
+
+> **⚠️ 2026-06-27 更新(本节为合 seed 前的历史判断,部分已被超越)**:下方 ①(seed/wiring 缺)与 ③(撞 S2a 路由)**已由本 PR 关闭**——见上「2026-06-27 接线落地」+ 实测表 + 「遗留 / bug」。仍成立的是 ②(S3 flavor):**但更精确的观测**是 cc-orchestrator **根本不是一个 `create_agent` 角色**(`{:role_unsupported_for_flavor, "cc"}`),须经 session-create orchestrator-template 路径物化;answer 层仍需 live cc。retrieval soul + 路由 + 持久化审计行**已确定性/live 证绿**。
+
+- ~~缺 seed/wiring~~ **已补**:KB 引擎(query/ingest/FTS5/cap 隔离)+ orchestrator `kb_query` 工具 **已合**(#1036),本 PR 补齐把"会话 agent + 已 ingest kb-agent + 默认路由规则 + public_view"接成一条可重放链的 **seed**(`scripts/autoservice_tier1_seed.exs`)。S3 **retrieval 层**已确定性可绿。
+- **S3 的 flavor 阻塞**(仍成立,已精化):能调 `kb_query` 的只有走工具循环的 **cc-flavor orchestrator agent**。**更精确**:cc-orchestrator 不是 `create_agent` 角色(`{:role_unsupported_for_flavor, "cc"}`),须经 session-create orchestrator-template 路径物化;且其 **live 回复**仍背 cc PTY 路径(`#505`/OAuth)。curl/DeepSeek 无工具循环做不了 S3;py_default 是 echo。→ **answer 层**仍卡 cc(见「遗留」)。
 - **撞 S2a 路由**:新建 session 默认 ROUTING=0(scenario-04 发现),裸消息不送达 → 必须 seed `always→agent` 规则,否则 customer 不打 @ 没人回。
 - **撞 GAP-1**(New Agent UI 建不出可对话 agent,`py` 缺脚本入口)→ 建 AutoService agent 的前置目前要么走 seeded agent、要么 CLI/seed,不能纯 UI。
 - **撞 GAP-5**(无 session/成员 teardown)→ 反复跑会累积 customer session,只能 `mix ezagent.db.reset` 清。
@@ -102,18 +105,28 @@
 
 ## 实测结果 vs 预期(分次回填)
 
+> **2026-06-27 接线落地**:scenario-13 open-question #2 的 seed 缺口已补。
+> seed = `scripts/autoservice_tier1_seed.exs`(纯模块 `Ezagent.AutoService.Tier1Seed`)
+> + 在线 serve-seed `scripts/autoservice_tier1_serve_seed.exs`(recipe §2 in-node)。
+> 确定性回归 = `apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`
+> (复用**同一** seed 模块,20/20 kb 测试绿)。下表「实测」分两层标注:
+> **retrieval/routing 层**(确定性、CI 可判)vs **answer 层**(需 live cc 工具循环 = 余留 GAP)。
+
 | Step | 预期 | 实测 | 一致? |
 |---|---|---|---|
-| S1 | 匿名进 public_view chat,被 join | <回填> | — |
-| S2a | session 有默认 always→agent 路由规则 | <回填> | — |
-| S2b | customer 裸消息送达 → agent 回一条 | <回填> | — |
-| S3 | 答案含 KB 命中片段 + 审计 kb:query | <回填> | — |
-| S4 | 操作员 console 看到 session+成员+transcript | <回填> | — |
+| S1 | 匿名进 public_view chat,被 join | **live 服务端门已证**:phx.server(session live in-node)`GET /socialware/chat?session_uri=<seeded>` → **HTTP 200**(匿名放行);对照非 public session → **302**(门有区分力)。SPA bundle 404(前端已迁 Vite,recipe `customer_app.js` 过时;需 `pnpm install`+`assets.build` 才整页渲染——前端构建前置,非 seed 缺口) | 🟢 服务端门 / SPA 渲染待 web stack |
+| S2a | session 有默认 always→agent 路由规则 | seed 写一条**会话作用域** `in_session→<agent>` 规则(live id=2);测试证**裸消息**(无 @)解析到 agent + **跨会话不命中**(规则非全局) | 🟢 确定性+live |
+| S2b | customer 裸消息送达 → agent 回一条 | **routing 层**:裸消息经 Resolver 解析到 AutoService agent(S2a 证)。**answer 层**(agent 真回一条):需 live cc 工具循环 → 见 GAP | 🟡 routing🟢 / answer=GAP |
+| S3 | 答案含 KB 命中片段 + 审计 kb:query | **retrieval soul**(确定性+live):`kb.query` 命中**仅在语料里**的 fact `ZEPHYR-7731`(排除模型先验)+ **live 持久化审计行**(`invocations`:`action=query`/`authz=granted`,target `…/agent/kb-tier1?action=kb.query`,scenario-12 step-5)+ 无 cap 反控被拒。**answer soul**(LLM 把 fact 织进聊天回复):需 live cc → 见 GAP | 🟡 retrieval🟢 / answer=GAP |
+| S4 | 操作员 console 看到 session+成员+transcript | session 已 live 创建(DB 可见);world-LV 可视化(成员在线+transcript)需 web/vite stack + admin 登录,随 S1 整页渲染一并待补 | 🟢 session 已建 / LV 可视化待 web stack |
 | S5-S10 | (deferred:对应 tier 立项后回填) | — | — |
 
 ## 遗留 / bug
 
-- **Tier 1 接线缺口**(见上 DoD):缺 seeded「会话 agent 暴露 kb_query + 已 ingest kb-agent」链 → S3 暂不可直接判绿。建议补一条 `e2e-autoservice` seed(kb-agent + ingest 一份固定语料 + 会话 agent 绑定),把 S3 变成确定性可重放。
+- ✅ **Tier 1 接线缺口已补**(原 open-question #2):`scripts/autoservice_tier1_seed.exs` 把 kb-agent(+ ingest 固定语料 `ZEPHYR-7731`)+ AutoService orchestrator agent(绑 kb_query cap)+ public_view session + 会话作用域 `always→agent` 路由 接成一条可重放链;`autoservice_tier1_seed_test.exs` 确定性证 S2a/S2b(routing)+ S3(retrieval+审计)。
+- 🟥 **cc-orchestrator agent 不是 `create_agent` 角色(新观测,精确)**:`Workspace.create_agent(flavor: "cc", role: "orchestrator")` 返回 `{:error, {:role_unsupported_for_flavor, "cc"}}`。cc-flavor orchestrator 由 **session-create orchestrator-template 路径**物化(`EzagentDomainInstanceMessage.SessionCreator` + cc-orchestrator `AgentTemplate` = `cc_orchestrator_seed.ex` + `orchestrator_bootstrap.ex`,session 侧 delegate caps),**不**经 `create_agent`。⚠️ 这比"GAP-4 cc UI-create 坏"更精确:cc-orchestrator 根本不是一个 create_agent 角色。seed 因此把 cc agent 步骤标 `{:blocked, …}` 且**非致命**——kb + route + public_view 链照常 wire(S1/S2a/S3-retrieval/S4 live 可跑)。**Follow-up(独立 task):** 加一个走 SessionCreator orchestrator 路径物化 AutoService agent 的 seed 变体。
+- 🟥 **S3/S2b answer 层余留 GAP(cc 工具循环)**:即便上一条解决,answer soul(live `claude` cc-orchestrator 经 orchestrator MCP `kb_query` 把 fact 织进**聊天回复**)仍背 cc PTY/startup 路径(`#505` 已修 `--dangerously-skip-permissions`;OAuth 过期→401 仍会静音)。须在 disposable stack + 有效 claude auth 上验证。
+- ✅ **cap 来源缺口已结构性关闭**(原本是 live S3 最可能的失败点):live orchestrator 的 kb 授权由 `SessionManager.load_orchestrator_caps/1` = `Ezagent.Identity.list_caps_for/1` 从 **orchestrator agent 自身 identity slice** 重建(kb-retrieval SPEC §5.3 option 1)。seed 因此用 `Ezagent.Identity.grant_cap/3` 把 `kb.query` cap **写进 AutoService agent 的 identity slice**(grant by admin),正落在 live 路径读取的位置。确定性测试**回读** `Identity.list_caps_for(agent)` 断言其持有 `kb.query`、并用**回读到的 caps**(而非手填集合)跑 `kb_query` —— 证明 seed 的 grant 落点 == live 取用点;另以无 cap principal 反控被拒。**此前若不 grant,seeded cc-orchestrator 的 delegated caps 仅是编排工具,`kb.query` 会在 dispatch chokepoint fail-closed 拒绝。**
 - **GAP-1 / GAP-4 / GAP-5**(`notes/2026-06-26-product-gaps.md`):分别阻塞"UI 建可对话 agent"、"cc UI-create"、"session teardown",均影响 Tier 1 的干净可重复执行。
 - **错误可见性**(product-gaps 备注):后端 reject 只落 `data-last-dispatch`,无 toast/inline——customer/操作员看不到为什么,Tier 1/2 的失败模式取证要靠 `data-*` 而非 UI 文案。
 
@@ -182,7 +195,7 @@ pass-criteria 见上「Tier 3 PASS 意味着」(S8 计费对账;S9 WS `server_he
 ## 给 lead 的 open questions
 
 1. **本场景落点**:已放 `docs/e2e/scenario-13-...`(执行/harness 层,因 §8 断言+runbook 机制在此目录)。任务原文提到 `docs/e2e/scenarios/`(不存在)——是否要新建该子目录?或本条另在**设计层** `docs/scenarios/36-autoservice-end-to-end/` 也立一份(设计层讲"应该怎样/失败模式")?当前判断:harness 归 e2e/13,设计 rationale 留 v3 参照,不重复。
-2. **Tier 1 S3 接线缺口**:是否同意补一条 `e2e-autoservice` seed(kb-agent + 固定语料 ingest + 会话 agent 绑 kb_query + public_view session),把 S3 从"spec'd/partially buildable"变成确定性可绿?这是 Tier 1 真正能判 🟩 的唯一缺口。
+2. ✅ **【已做】Tier 1 S3 接线缺口**:已补 `scripts/autoservice_tier1_seed.exs` seed(kb-agent + 固定语料 `ZEPHYR-7731` ingest + AutoService agent 绑 kb_query + public_view session + 会话作用域 `always→agent` 路由)+ 确定性回归 `autoservice_tier1_seed_test.exs`。S3 **retrieval 层**已确定性可绿(+ live 持久化审计行)。**余下需 lead 定**:answer 层(cc 工具循环回复)+ 经 session-create 物化 cc-orchestrator,是否各立独立 task?
 3. **GAP-1/4/5 优先级**:Tier 1 的干净可重复执行被这三个 UI 缺口卡(建可对话 agent / cc UI-create / session teardown)。是否在 AutoService Tier 1 验收前先清这三条?
 4. **supersede + 合并**:确认 `autoservice-v3-reference.md` 作为**能力附录保留**(不被本场景取代)。它目前**只在未合分支 `origin/docs/autoservice-v3-reference`**——是否把该分支并入 main(这样本文的 `../futures/...` 互链才解析,且可在其顶部加回链)?
 5. **Tier 边界**:Tier 1 是否就锁定为「KB 答问 + 操作员可见」?CR(Tier 2)与计费/WS/语音(Tier 3)的分层是否照 v3§3 的近期 A/B、中期 C、后期 D/E 对齐(本表已如此映射)?
