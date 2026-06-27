@@ -103,7 +103,13 @@ defmodule Ezagent.Entity.Agent do
       # confused-deputy. Registered (CapabilityRegistry) in
       # EzagentDomainIdentity.Application, like the other identity-domain
       # behaviors that live on the Agent Kind.
-      Ezagent.Behavior.ConfigEvolve
+      Ezagent.Behavior.ConfigEvolve,
+      # Minimal CR (change-request) config governance (SPEC
+      # docs/together/2026-06-26 rev 3) — a Lifecycle sibling to ConfigEvolve
+      # on the Agent Kind. stage → preview → publish → rollback over the SAME
+      # ConfigStore + sandbox-materialization primitives. Registered in
+      # EzagentDomainIdentity.Application alongside ConfigEvolve.
+      Ezagent.Behavior.ConfigGovernance
     ]
 
   defp registry_instance_behaviors do

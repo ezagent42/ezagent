@@ -91,6 +91,10 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     # --- identity domain: config evolution mutates config under the agent's own authority ---
     {"apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex", :identity} =>
       "ConfigEvolve reads sibling :identity caps to evolve config under the agent's own authority",
+    # --- identity domain: CR governance fires the SAME materialization as ConfigEvolve ---
+    {"apps/ezagent_domain_identity/lib/ezagent/behavior/config_governance.ex", :identity} =>
+      "ConfigGovernance (CR publish/rollback) reads sibling :identity caps to carry the agent's OWN " <>
+        "caps on the reused sandbox.write_path materialization effect — identical to ConfigEvolve",
     # --- curl template: credential provisioning surface ---
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex", :api_keys} =>
       "curl Template Class copies a source agent's :api_keys at provisioning (cap-gated create flow)",

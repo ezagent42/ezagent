@@ -14,6 +14,22 @@ defmodule Ezagent.Socialware.ConfigStore do
 
   @layers ~w(workspace user session)
 
+  # CR-governance reserved `source_turn_id` prefixes. A staged ConfigObject
+  # carries `cr-stage:<cr_id>:<item_id>` (a CR-owned namespace, NEVER a real
+  # settled `turn_id`), and a CR publish stamps `cr-publish:<cr_id>` on the
+  # flipped pointers. These are reserved so:
+  #   * a staged object's idempotency lookup (`applied_for_turn?`/
+  #     `object_for_turn`) can never collide with a real turn's marker; and
+  #   * a caller cannot pass a `cr-stage:`/`cr-publish:` turn_id to the NORMAL
+  #     write/repoint path (`apply_config_delta`/`Agent.Config`) and spoof a
+  #     same-turn idempotency early-return / settled-turn provenance.
+  # The fence: `write_object_staged/1` REQUIRES a `cr-stage:` prefix, and every
+  # NON-CR write/repoint entry point REJECTS both prefixes (see
+  # `reserved_turn_prefix?/1`).
+  @cr_stage_prefix "cr-stage:"
+  @cr_publish_prefix "cr-publish:"
+  @reserved_turn_prefixes [@cr_stage_prefix, @cr_publish_prefix]
+
   @type write_result :: %{
           required(:config_id) => String.t(),
           required(:object) => ConfigObject.t(),
@@ -55,6 +71,58 @@ defmodule Ezagent.Socialware.ConfigStore do
         {:error, reason}
     end
   end
+
+  @doc """
+  CR-governance — write an INERT immutable `ConfigObject` (object only, NO
+  pointer) for a staged change-request item (SPEC §4.2.1).
+
+  PR-7 removed the public object-only insert because an orphan object (object
+  with no pointer) would break the "object existence ⟺ applied" invariant
+  (`applied_for_turn?/1`, `object_for_turn/1`). A staged object IS an object
+  with no pointer — so this path is FENCED: it REQUIRES a `cr-stage:` prefixed
+  `source_turn_id` (a CR-owned namespace that can never be a real settled turn),
+  rejecting anything else loud. That keeps the PR-7 invariant sound: a staged
+  object's `source_turn_id` never collides with a real turn's idempotency
+  marker, so `applied_for_turn?(real_turn)` is unaffected.
+
+  Returns `{:ok, ConfigObject.t()}` or `{:error, term()}`.
+  """
+  @spec write_object_staged(map()) :: {:ok, ConfigObject.t()} | {:error, term()}
+  def write_object_staged(attrs) when is_map(attrs) do
+    attrs = object_attrs(attrs)
+
+    case Map.fetch!(attrs, :source_turn_id) do
+      @cr_stage_prefix <> _rest ->
+        attrs
+        |> ConfigObject.changeset()
+        |> Repo.insert()
+
+      other ->
+        {:error, {:not_cr_stage_turn_id, %{got: other, required_prefix: @cr_stage_prefix}}}
+    end
+  end
+
+  @doc """
+  The reserved CR `source_turn_id` prefixes (`cr-stage:`, `cr-publish:`).
+  """
+  @spec reserved_turn_prefixes() :: [String.t()]
+  def reserved_turn_prefixes, do: @reserved_turn_prefixes
+
+  @doc """
+  True if `turn_id` carries a RESERVED CR prefix (`cr-stage:`/`cr-publish:`).
+
+  Every NON-CR config-write/repoint entry that accepts a caller-supplied
+  `turn_id` (`ConfigEvolve.apply_config_delta`, the `Agent.Config` facade)
+  calls this and REJECTS a reserved prefix BEFORE any side effect / idempotency
+  early-return — so a caller cannot pass a `cr-stage:` turn_id to the normal
+  path and spoof an early-return / settled-turn marker.
+  """
+  @spec reserved_turn_prefix?(term()) :: boolean()
+  def reserved_turn_prefix?(turn_id) when is_binary(turn_id) do
+    Enum.any?(@reserved_turn_prefixes, &String.starts_with?(turn_id, &1))
+  end
+
+  def reserved_turn_prefix?(_), do: false
 
   @spec put_pointer(map()) ::
           {:ok, %{pointer: ConfigPointer.t(), previous_config_id: String.t() | nil}}

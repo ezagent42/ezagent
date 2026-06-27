@@ -239,6 +239,19 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # stamped on the ConfigObject (`source_turn_id`).
   @spec handle_apply_config_delta(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_apply_config_delta(%{turn_id: turn_id} = args, ctx) do
+    # RESERVED-PREFIX GUARD — `cr-stage:`/`cr-publish:` are CR-owned
+    # `source_turn_id` namespaces. Reject a caller-supplied reserved turn_id on
+    # the NORMAL apply path BEFORE the `object_for_turn` idempotency early-return,
+    # so a caller cannot spoof a same-turn no-op with a `cr-stage:` marker
+    # (SPEC §4.2.1). Loud, not a silent no-op.
+    if ConfigStore.reserved_turn_prefix?(turn_id) do
+      {:error, {:reserved_turn_id_prefix, turn_id}}
+    else
+      do_handle_apply_config_delta(args, turn_id, ctx)
+    end
+  end
+
+  defp do_handle_apply_config_delta(args, turn_id, ctx) do
     with raw_attrs <- attrs_from_args(args, turn_id, ctx),
          {:ok, attrs} <- validate_and_normalize(raw_attrs),
          # CE-1 — the agent applies config to ITSELF only. The dispatch is
@@ -553,6 +566,29 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       _ ->
         []
     end
+  end
+
+  @doc """
+  CR-governance reuse seam — emit the deferred `sandbox.write_path` self-dispatch
+  that re-materializes the agent's resolved soul into its config_dir, projecting
+  the CURRENT durable pointer for `(subject_uri, key)`.
+
+  `ConfigGovernance.publish_cr` lives on the SAME Agent Kind but is a DIFFERENT
+  module, so it cannot reach this behavior's `defp` effect builder. This is the
+  ONE public seam it calls — AFTER the publish Multi has flipped the pointer(s),
+  so `current_user_object/2` resolves to the just-published object and the
+  emitted effect materializes the published config (SPEC §4.3.5 "fire the
+  EXISTING sandbox materialization — no new materialization"). It carries the
+  agent's OWN caps (`:identity` sibling), exactly like the apply/repoint paths.
+
+  Expects `ctx` to be a genuine agent ACTION ctx (declares
+  `reads_siblings([:sandbox, :identity])`); a no-op (empty effect list) if the
+  agent has no sandbox / no cascade cache / no current pointer for the slot.
+  """
+  @spec sandbox_refresh_effects(map(), %{subject_uri: URI.t() | String.t(), key: String.t()}) ::
+          [term()]
+  def sandbox_refresh_effects(ctx, %{subject_uri: subject_uri, key: key}) do
+    sandbox_refresh_current_pointer(ctx, %{subject_uri: subject_uri, key: key})
   end
 
   # PR-7 — idempotent-path sandbox refresh. A redelivered turn (current OR

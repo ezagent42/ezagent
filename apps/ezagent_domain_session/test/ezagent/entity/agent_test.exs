@@ -24,6 +24,10 @@ defmodule Ezagent.Entity.AgentTest do
       # the agent mutates its OWN config under its own authority (the #607
       # confused-deputy dissolved; the old session-side ConfigUpdate is gone).
       #
+      # Minimal CR governance (SPEC 2026-06-26 rev 3) — ConfigGovernance added
+      # as a Lifecycle sibling to ConfigEvolve: stage → preview → publish →
+      # rollback over the SAME ConfigStore primitives, manage-cap gated.
+      #
       # PR-6 and cc-headless SDK sidecar — `behaviors/0` is the declared
       # SUPERSET: the BASE set plus flavor-specific state behaviors. These are
       # active only on instances that capture the matching explicit
@@ -33,7 +37,8 @@ defmodule Ezagent.Entity.AgentTest do
         Ezagent.Behavior.Sandbox,
         Ezagent.Behavior.ApiKeys,
         Ezagent.Behavior.CredentialGrant,
-        Ezagent.Behavior.ConfigEvolve
+        Ezagent.Behavior.ConfigEvolve,
+        Ezagent.Behavior.ConfigGovernance
       ]
 
       assert Agent.base_behaviors() == base

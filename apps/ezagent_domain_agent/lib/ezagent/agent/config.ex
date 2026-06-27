@@ -208,11 +208,12 @@ defmodule Ezagent.Agent.Config do
   defp apply_args(agent_uri, attrs) do
     with {:ok, layer} <- layer(attrs),
          {:ok, key} <- key(attrs),
+         {:ok, turn_id} <- turn_id(attrs),
          {:ok, patch} <- patch_or_replacement(attrs),
          %URI{} = workspace_uri <- Ezagent.URI.workspace_of(agent_uri) do
       args =
         %{
-          turn_id: field(attrs, :turn_id) || console_turn_id(),
+          turn_id: turn_id,
           layer: layer_atom(layer),
           workspace_uri: workspace_uri,
           subject_uri: agent_uri,
@@ -342,6 +343,26 @@ defmodule Ezagent.Agent.Config do
   end
 
   defp key(attrs), do: required_string(attrs, :key, @default_key, :invalid_key)
+
+  # RESERVED-PREFIX GUARD — the facade accepts a caller-supplied `turn_id`. The
+  # `cr-stage:`/`cr-publish:` prefixes are CR-owned `source_turn_id` namespaces;
+  # reject them on the NORMAL apply/delete path so a caller cannot route a CR
+  # marker through the non-CR facade and spoof an idempotency early-return /
+  # settled-turn provenance (SPEC §4.2.1). A `nil` turn_id mints a console one.
+  defp turn_id(attrs) do
+    case field(attrs, :turn_id) do
+      nil ->
+        {:ok, console_turn_id()}
+
+      turn_id when is_binary(turn_id) ->
+        if ConfigStore.reserved_turn_prefix?(turn_id),
+          do: {:error, {:reserved_turn_id_prefix, turn_id}},
+          else: {:ok, turn_id}
+
+      _ ->
+        {:error, :invalid_turn_id}
+    end
+  end
 
   defp path(attrs) do
     case field(attrs, :path) do
