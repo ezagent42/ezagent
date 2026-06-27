@@ -229,7 +229,15 @@ alternative for non-orchestrated members (a plain invited user/agent has no
      Do NOT terminate the entity (an invited human's User Kind is not ours to
      destroy). Prune routing rows that named it (scoped `created_by ==
      session_uri`), same as the worker path.
-4. Return `{:ok, %{status: :removed, deleted_rules:, repointed_rules:}}` /
+4. **Forget lineage for a terminated worker.** `Tools.remove_member` /
+   `terminate_worker` does NOT call `Ezagent.AgentLineage.forget/1` today, so a
+   removed worker leaves a stale `agent_uri → spawned_by` row. The
+   delete-cascade already forgets lineage (§4.2 step 6); the remove-member path
+   must do the same after a successful worker terminate, so a re-add at the same
+   member URI starts clean (mirrors `rollback.ex compensate_spawned_members/1`,
+   which forgets lineage per torn-down member). The plain-invited-member branch
+   has no lineage row to forget. *(Codex Q5 — addressed.)*
+5. Return `{:ok, %{status: :removed, deleted_rules:, repointed_rules:}}` /
    `{:ok, :already_removed}` / `{:error, reason}` — the `Tools.remove_member`
    contract, surfaced to the operator UI.
 
@@ -449,6 +457,41 @@ the dispatch chokepoint decide. This matches the existing `send_message` /
   - bridge-token entry still works unchanged (no regression to `run_tool`).
 
 ---
+
+## 7a. Codex adversarial-review verdict (static-only, 2026-06-27)
+
+Codex reviewed this spec against the cited source (read-only, no compile/test).
+Verdict on the four security questions:
+
+1. **#154-clean — YES.** Cap #2 today is delegated to the *orchestrator identity*
+   as `instance: {:spawned_by, orchestrator_uri}`, `granted_by: owner_uri`
+   (`apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex:127-151`)
+   — NOT to the operator. The proposed `:remove_member` cap matches the
+   owner-rooted `OrchestratorAdmin` precedent
+   (`materializer.ex:95-128`, granted via `Identity.Grant.grant_cap/3`). The
+   `grant_owner_session_member_admin_cap` grant does not exist yet (this spec
+   adds it).
+2. **Bridge-token bypass — NO.** `run_tool/4` verifies the bridge token before
+   anything else (`session_manager.ex:287-309`); the operator path is a separate
+   cap-gated dispatch entry, not a forwarded `run_tool` call.
+3. **Cascade reaches workers — confirmed the gap + the fix.** Current
+   `destroy/2` only stops the SessionManager (`behavior/session.ex:939-950`);
+   `sandbox.destroy` (not bare `lifecycle.terminate`) is the config-dir GC path
+   (`tools.ex:491-499` → `sandbox.ex:415-462`; `terminable.ex:144-173` only kills
+   the process). The cascade-in-`destroy/2` requirement (§4.1) is load-bearing —
+   codex independently flagged that a UI-only cascade lets bare `manage.delete`
+   orphan (`manage.ex:87-120` schedules `Lifecycle.destroy/2` generically).
+4. **Dead orchestrator — YES.** `Identity.list_caps_for/1` returns
+   `MapSet.new()` for a dead Kind (`identity.ex:25-31`); the `Lifecycle.destroy/2`
+   fallback is a legitimate internal teardown (rollback already uses it,
+   `rollback.ex:47-65`).
+5. **Remaining gap — lineage GC on remove-member.** Folded into §3.2 step 4:
+   `Tools.remove_member` does not `AgentLineage.forget/1`, so remove-member must
+   forget lineage after a successful worker terminate (parity with the delete
+   cascade + `rollback.ex:87-93`).
+
+No cap leak, privilege escalation, or unaddressed silent-orphan path was found
+beyond the (now-folded) lineage-GC gap.
 
 ## 8. Open questions
 
