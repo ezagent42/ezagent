@@ -26,6 +26,12 @@ kanban 暴露的具体症状（resource 当 GenServer、role-foundation 未建�
 ### P3 · agent = 角色×风味（P0 的一个设计事实）
 agent = **角色（role，决定内容）× 风味（flavor，决定形式）**，行为 per-instance 加载，状态归 behavior 的 slice（本周期 role-foundation 已落地）。新建/改造 agent 按此模型。
 
+> 展开版操作指南（动手前清单 + 两个案例 + "机制 ≠ 业务"原则）已并入
+> **`ezagent-developer` skill**（权威出处）：`.claude/skills/ezagent-developer/SKILL.md`
+> §"Extending agents without violating the architecture" +
+> `references/extending-agents.md`。中文摘要：
+> `docs/guide/extending-agents-without-violating-the-architecture.zh_cn.md`。
+
 ## 过程红线
 
 ### P4 · 评审/分析的基准 = origin/main

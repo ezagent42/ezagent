@@ -36,6 +36,7 @@ For every task:
 7. For UI/frontend work, load **`references/ui-contract.md`** — 3-layer architecture + nested shell + DO/DON'T lists.
 8. **Before ANY code that grants / revokes / checks / declares a capability, read `references/capbac.md`.** CapBAC is the most pitfall-prone area in the repo (granter≠caller, `ctx.caps` is the authorizer, the `Ezagent.Identity.Grant` chokepoint + tag decision tree, `rule_cap_bounded?`, the system-principal Catalog, Decision #154). The §9 pitfalls list is the set of mistakes that have actually shipped.
 9. Cross-reference **`references/pointer-index.md`** for the durable record (Decision Log, forensic notes, SPEC, current-state snapshot).
+10. **Adding a new agent type, or a render/feed/transport capability? Run the §"Extending agents without violating the architecture" pre-flight checklist below** (depth in `references/extending-agents.md`) — it catches the two violations that pass tests but break the architecture.
 
 For larger changes, also load `docs/phase-specs/phase7/SPEC.md` and `docs/phase-specs/phase7/VERIFICATION.md` directly — they have the V1-V5 acceptance criteria the system was built against, and `docs/notes/uri-design.md` §5 — the URI SPEC v2/v3 normative spec.
 
@@ -55,6 +56,7 @@ ezagent-developer/
     ├── slice-and-snapshot.md         ← Behavior slice + Kind snapshot model + recurring bug class (ENGINE-internal now)
     ├── lifecycle.md                  ← post-2026-05-29 Lifecycle API: the SOLE developer surface (use Ezagent.Lifecycle + two-container state + hooks + §11 naming)
     ├── new-contract.md               ← the INTERNAL engine (R/B/K) the Lifecycle macro compiles down to (use Ezagent.Behavior + action/3 + effects)
+    ├── extending-agents.md           ← new agent type = role × flavor (never own Kind); mechanism ≠ business — worked examples + levers (checklist inline in SKILL.md)
     └── pointer-index.md              ← durable record + current state
 ```
 
@@ -80,6 +82,42 @@ The references are organized so you only load the file relevant to your current 
 | "§11 naming (NP-1/2/3) / why was it renamed?" | `references/lifecycle.md` §"naming principles" |
 | "How do I grant/revoke/check a capability? Which authority do I use?" | **`references/capbac.md`** (READ before any grant/cap code — the 3 roles, the `Ezagent.Identity.Grant` chokepoint + tag decision tree, `rule_cap_bounded?`, default_caps, the gates, the pitfalls) |
 | "What's a system principal / why is this `granted_by` wrong / Decision #154?" | `references/capbac.md` §1/§7 |
+| "I'm adding a new agent type / coupling a mechanism to a business persona — is this OK?" | §"Extending agents…" below (checklist) + `references/extending-agents.md` (worked examples) |
+
+## Extending agents without violating the architecture
+
+Two recent PRs were complete, working, and well-tested — yet had to be re-shaped
+because they crossed two architectural lines that "tests pass" never catches (P6).
+Run this **pre-flight checklist BEFORE writing code** for any agent / feed /
+render task; any "yes" in the STOP column means re-align with the lead (台账 P0)
+first. Worked examples + the concrete levers (which docs/skills, the SPEC→codex-
+review→implement gate) are in `references/extending-agents.md`.
+
+| Check | If yes → |
+|---|---|
+| **1. Adding a new `Ezagent.Entity.*` Kind** (e.g. `Entity.Salesperson`) for an agent type? | **STOP.** An agent type is a **role × flavor** on the unified `Entity.Agent`, not a new Kind (see Principle 1). |
+| **2. Bundling business logic into a platform path** — a generic mechanism (render/feed/transport/dispatch) gated by, or routed through, a specific business persona/producer/cap (`:salesperson`)? | **STOP.** Separate the generic **mechanism** from the **producer** that consumes it (see Principle 2). |
+| **3. Does a generic mechanism for this already exist?** `git grep -n "render\|json-render\|feed_encoding\|RoleRegistry\|agent_flavors" -- apps/` | If yes → consume it, don't fork a parallel one (台账 P2). |
+| **4. Does this make a plugin author learn one MORE concept, or one FEWER?** (P8) | One more → reject. New Kind = one more; role-on-existing-flavor = one fewer. |
+
+**Principle 1 — a new agent type is a role × flavor, never its own Kind.** `agent
+= role (what it does) × flavor (how it executes — cc/codex/py/curl/native, all
+hosted by the unified `Ezagent.Entity.Agent`)`. Register a **role recipe** via the
+`roles/0` plugin callback (behaviors loaded per-instance, role-foundation #54); do
+NOT write an `Entity.<Type>` module. Own-Kind-per-type was retired in P4b
+(`Entity.PyAgent` → unified `Entity.Agent`); it breaks P1/P24/P9 and grants
+unwanted chat-principal semantics. Canonical fix: kanban-as-role (`kanban-manager`
+recipe on the `native` flavor). A new Kind is justified ONLY for a genuinely new
+**non-agent primitive** (P9/P10 + lead sign-off), never for an agent type.
+
+**Principle 2 — platform mechanism must be separable from business logic.** A
+generic capability (render transport, feed encoder, dispatch path) is
+producer-agnostic — any agent produces into it, it names no persona and is NOT
+gated by a business-specific cap. The business agent is a fixture/role that
+*consumes* it. Coupling forces the next producer to re-implement or impersonate
+(P1/P3) and makes the mechanism untestable in isolation (P12). The render-card
+path shipped transport-only in #1035 (`feed_encoding.ex` reads `body["render"]` for
+every message — no `:salesperson` cap).
 
 ## Key invariants at a glance (full list in references/architecture-invariants.md)
 
