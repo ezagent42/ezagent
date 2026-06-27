@@ -152,6 +152,19 @@ the `Adapter` behaviour, gated as optional-with-default so existing adapters
 @callback delivery_discipline() :: delivery_discipline()
 
 @doc """
+:snapshot_refresh result-bearing render. The EXISTING `render/2` returns a bare
+`map()` (P3-2 on-demand render); the live re-authorize-on-read path (§4.1) needs
+to distinguish a denied/ex-member read from a rendered one. This callback returns
+`{:ok, snapshot}` on grant and `{:error, :unauthorized}` on live revocation so the
+generic channel can fail-closed (push "unauthorized" + stop). (`:cursor_replay`
+adapters use `join_with_cursor/2` + `replay/3`, which already carry this shape.)
+NOTE: the bare `render/2` is RETAINED for back-compat callers; this is the
+result-bearing variant the live channel calls.
+"""
+@callback render_authorized(session_uri :: URI.t(), caller :: URI.t()) ::
+            {:ok, map()} | {:error, :unauthorized | term()}
+
+@doc """
 Advisory topic(s) the caller's transport subscribes to on join, BEFORE the first
 read (subscribe-first invariant). Returns one or more PubSub topic strings.
 """
@@ -173,16 +186,17 @@ cursor. (chat / :snapshot_refresh adapters do not implement this.)
 @callback participation_profile() :: participation_profile()
 
 @optional_callbacks [
-  delivery_discipline: 0, live_topics: 1,
+  delivery_discipline: 0, render_authorized: 2, live_topics: 1,
   join_with_cursor: 2, replay: 3, participation_profile: 0
 ]
 ```
 
 `AdapterRegistry.assert_required_callbacks!/1` gains a `:pull`-specific rule: if
 `delivery_discipline/0` resolves to `:cursor_replay`, then `join_with_cursor/2`
-+ `replay/3` are REQUIRED; for `:snapshot_refresh` they MUST be absent (the
-existing kind-branching machinery — `kind_specific_required/1` — is extended,
-not rewritten). `live_topics/1` + `participation_profile/0` are required for all
++ `replay/3` are REQUIRED; for `:snapshot_refresh` `render_authorized/2` is
+REQUIRED and `join_with_cursor/2` + `replay/3` MUST be absent (the existing
+kind-branching machinery — `kind_specific_required/1` — is extended, not
+rewritten). `live_topics/1` + `participation_profile/0` are required for all
 `:pull` adapters (with `kind_of`-style back-compat defaults
 `:snapshot_refresh` / `:read_only` resolved via `function_exported?/3` so a
 not-yet-migrated adapter still boots).
@@ -213,8 +227,13 @@ non-negotiable and lifted into the generic channel.
 
 **Advisory-only.** Every PubSub message on a subscribed topic is treated as a
 WAKE-UP, never as the payload. The channel re-derives state from the committed
-store. Losing an advisory cannot lose a message — the next advisory / reconnect
-re-derives. (Self-healing — verbatim from both moduledocs.)
+store. The guarantee is **no committed-state loss, not guaranteed-immediate
+push** (codex MED-3): losing an advisory cannot strand committed state — the next
+advisory / reconnect re-derives and catches it — but a lost FINAL advisory delays
+the live push until the next advisory or reconnect (a latency window, not a data
+loss). This is the correct guarantee for both disciplines (chat self-heals to
+current latest-N; external's replay re-includes any missed committed delivery).
+(Self-healing — verbatim from both moduledocs.)
 
 **Re-authorize-on-read.** Every read/replay re-runs the LIVE, fail-closed
 membership check (`Ezagent.Session.Membership.authorize/2`). A member who LEFT
@@ -227,11 +246,11 @@ not just the read). Lifted from chat's `refresh_snapshot/1`.
 ```
 join(session_uri, caller):
   subscribe(adapter.live_topics(session_uri))          # subscribe-first
-  {:ok, snapshot} = ExternalMirror.render(adapter, session_uri, %{caller: caller})
+  {:ok, snapshot} = adapter.render_authorized(session_uri, caller)
   reply {:ok, %{snapshot: encode(snapshot)}}            # NO cursor stored in assigns
 
 handle_info(_advisory, socket):                          # ANY event on the topic
-  case ExternalMirror.render(adapter, session_uri, caller) ...
+  case adapter.render_authorized(session_uri, caller) do  # result-bearing (§3.2)
     {:ok, snapshot} -> push("snapshot", encode(snapshot))   # re-read CURRENT latest-N
     {:error, :unauthorized} -> push("unauthorized"); stop   # live revocation
 ```
@@ -564,6 +583,41 @@ its socialware reuse — N1).
    PR-1..3 — at the cost of the E3/elimination gate scoping world out until then.
    Recommendation: scope the gate to "channels" first (E1–E2,E4 green at PR-3),
    add E3-for-world at PR-4.
+
+---
+
+## 12. Codex adversarial-review verdict
+
+**Verdict: SOUND-WITH-FIXES.** Static review (no build) against the real source.
+Dispositions:
+
+- **HIGH §3.2/§4 — `render/2` result shape.** The existing `Adapter.render/3`
+  returns a bare `map()`; the snapshot-refresh re-authorize path pattern-matches
+  `{:ok,_}`/`{:error,:unauthorized}`. **FIXED in-SPEC**: added a result-bearing
+  `render_authorized/2` callback (`{:ok, map()} | {:error, :unauthorized | term()}`),
+  required for `:snapshot_refresh`; the live channel calls it; bare `render/2`
+  retained for back-compat (§3.2, §4.2).
+- **MED §3.2/§8 — abstract-only callbacks.** Confirms the dep split is legal only
+  if the behaviour references no session/socialware types. **Already stated**;
+  reinforced by the explicit legality check in §3.2/§8 (signatures use only
+  `URI.t()`/`integer()`/`map()`/atoms). Implementation note for PR-1: forbid
+  session/socialware aliases in the behaviour module (a grep gate).
+- **MED §4 — advisory-loss overclaim.** "Losing an advisory cannot lose a
+  message" overstated live latency. **FIXED in-SPEC** (§4.1): reworded to
+  "no committed-state loss, not guaranteed-immediate push" — a lost final advisory
+  is a latency window, not data loss.
+- **LOW §5 — collapse preserves all axes.** Confirms discipline + participation
+  are separate axes (no loss). Adopt as PR-3 enforcement: registry asserts a
+  `:participatory` adapter exports its participation handlers (added to §5.1
+  intent via `participation_profile/0`).
+- **LOW §7 — AnonIngress placement justified.** Adopt the refinement: split the
+  resolve contract for Conn (controller) vs Socket (`connect`) so one helper does
+  not pretend to return a `conn` for socket connects (PR-3 detail).
+- **LOW §9 — OQ5 coherent only with the carve-out.** Confirms the "contract axis,
+  not transport axis" wording is load-bearing; §9.1/§9.2 already use it.
+
+No finding was UNSOUND; two (HIGH, MED-advisory) were folded into the SPEC text
+above; the rest are confirmations or PR-level implementation notes.
 
 ---
 
