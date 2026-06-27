@@ -131,9 +131,23 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
       fact = Ezagent.AutoService.Tier1Seed.kb_fact_token()
       probe = Ezagent.AutoService.Tier1Seed.kb_probe_query()
 
+      # Read back the caps the AGENT ACTUALLY HOLDS in its identity slice — the
+      # SAME source the live orchestrator reads
+      # (SessionManager.load_orchestrator_caps → Identity.list_caps_for). Using
+      # these (not a hand-supplied set) proves the seed's grant lands where the
+      # live path looks (closes the cap circularity; matches the live S3 cap
+      # source).
+      held = Ezagent.Identity.list_caps_for(autosvc_uri)
+
+      assert Enum.any?(held, fn c ->
+               Map.get(c, :behavior) == Ezagent.Behavior.Kb and Map.get(c, :action) == :query
+             end),
+             "the seeded AutoService agent must HOLD kb.query in its identity slice " <>
+               "(the live orchestrator's cap source). Held: #{inspect(MapSet.to_list(held))}"
+
       opts = [
         caller: autosvc_uri,
-        caps: seed.orchestrator_caps,
+        caps: held,
         workspace_uri: seed.workspace_uri
       ]
 
@@ -176,17 +190,22 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
                      "expected an authz :granted telemetry event (the audit invocation source) " <>
                        "for the kb-agent's kb.query dispatch"
 
-      # ── Negative control: a query-only caller WITHOUT the cap is denied — pins
-      # the retrieval to the seeded cap, not an open door. ───────────────────
+      # ── Negative control: a DIFFERENT caller that holds NO caps (and supplies
+      # none) is denied — pins the retrieval to the seeded cap, not an open door.
+      # (The AutoService agent itself now HOLDS kb.query in its identity slice,
+      # so it would pass even with an empty ctx cap set — hence a fresh capless
+      # principal.) ──────────────────────────────────────────────────────────
+      nobody = EzUri.new!("entity://#{ws}/user/nobody")
+
       no_cap_opts = [
-        caller: autosvc_uri,
+        caller: nobody,
         caps: MapSet.new([]),
         workspace_uri: seed.workspace_uri
       ]
 
       assert {:error, :unauthorized} =
                Ezagent.Orchestrator.Tools.kb_query(seed.kb_agent_name, probe, 5, no_cap_opts),
-             "kb.query without the seeded cap must be refused (the cap is load-bearing)"
+             "kb.query from a capless principal must be refused (the cap is load-bearing)"
     end)
   end
 

@@ -122,6 +122,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
              autosvc_role,
              admin_ctx
            ),
+         :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
          {:ok, session_uri} <- ensure_public_view_session(ws, session_short),
          :ok <- join_member(session_uri, autosvc_uri, :agent),
          {:ok, rule_id} <- ensure_always_to_agent_rule(session_uri, autosvc_uri) do
@@ -321,6 +322,28 @@ defmodule Ezagent.AutoService.Tier1Seed do
           {:ok, %{agent_uri: got}} -> {:ok, got}
           {:error, reason} -> {:error, {:autoservice_agent_create_failed, reason}}
         end
+    end
+  end
+
+  # Grant the AutoService orchestrator the `kb.query` cap INTO ITS OWN identity
+  # slice — the exact source the live orchestrator reads
+  # (`SessionManager.load_orchestrator_caps/1` = `Identity.list_caps_for/1`,
+  # which reconstructs the orchestrator's delegated caps session-side). Without
+  # this grant, a seeded cc-orchestrator's delegated caps are the orchestration
+  # tools only; `kb.query` would DENY at the dispatch chokepoint (fail-closed) —
+  # the live-S3 cap gap. Granted by admin; query-only (the orchestrator never
+  # ingests at runtime). Idempotent (grant_cap upserts the cap).
+  @doc false
+  def grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx) do
+    cap = Capability.cap(:agent, Ezagent.Behavior.Kb, :query, :any, workspace_uri)
+
+    case Ezagent.Identity.grant_cap(autosvc_uri, cap, admin_ctx.caller) do
+      :ok ->
+        Logger.info("autosvc-seed: granted kb.query to #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:grant_kb_query_failed, reason}}
     end
   end
 
