@@ -7,15 +7,16 @@ defmodule EzagentCore.Invariants.NoSurfaceReadDispatchDetectorTest do
   over-match), independent of migration state. Without this, a broken regex would
   let the regression-lock pass vacuously.
 
-  Tests run the actual `@probes` patterns (read via `NoSurfaceReadDispatchTest.probes/0`)
-  against synthetic fixture strings — no source tree, no BEAM.
+  Tests run the actual probe patterns (read via the shared
+  `NoSurfaceReadDispatchProbes` support module — single source of truth) against
+  synthetic fixture strings — no source tree, no BEAM.
   """
 
   use ExUnit.Case, async: true
 
-  alias EzagentCore.Invariants.NoSurfaceReadDispatchTest
+  alias EzagentCore.Invariants.NoSurfaceReadDispatchProbes, as: Probes
 
-  defp probe(id), do: Enum.find(NoSurfaceReadDispatchTest.probes(), &(&1.id == id))
+  defp probe(id), do: Enum.find(Probes.probes(), &(&1.id == id))
   defp p14, do: probe(:p14).pattern
   defp p15, do: probe(:p15).pattern
 
@@ -24,7 +25,11 @@ defmodule EzagentCore.Invariants.NoSurfaceReadDispatchDetectorTest do
   test "p14 MATCHES the raw-dispatch recurrence forms (caps + sandbox)" do
     assert Regex.match?(p14(), ~s|with_action(uri, :sandbox, :read)|)
     assert Regex.match?(p14(), ~s|with_action(uri, :identity, :list_caps)|)
-    assert Regex.match?(p14(), ~s|Invocation.dispatch(with_action(agent_uri, :sandbox, :read), ctx)|)
+
+    assert Regex.match?(
+             p14(),
+             ~s|Invocation.dispatch(with_action(agent_uri, :sandbox, :read), ctx)|
+           )
   end
 
   test "p15 MATCHES the dispatching read-facade call (fully-qualified AND bare-alias)" do
@@ -74,7 +79,9 @@ defmodule EzagentCore.Invariants.NoSurfaceReadDispatchDetectorTest do
     ]
 
     for mutation <- mutations do
-      refute Regex.match?(p15(), mutation), "config WRITE facade must not be forbidden: #{mutation}"
+      refute Regex.match?(p15(), mutation),
+             "config WRITE facade must not be forbidden: #{mutation}"
+
       refute Regex.match?(p14(), mutation)
     end
   end

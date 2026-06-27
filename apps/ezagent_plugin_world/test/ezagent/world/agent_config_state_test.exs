@@ -158,8 +158,23 @@ defmodule Ezagent.World.AgentConfigStateTest do
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
 
-      # Use a different caller (still admin URI but empty caps — no manage-cap).
-      no_cap_caller = User.admin_uri()
+      # A GENUINE no-cap caller: a non-admin user with no inline caps AND no
+      # persisted slice/snapshot caps, so it fails BOTH authz routes (§3.2):
+      #   route 1 (inline ctx.caps) — empty
+      #   route 2 (the caller's slice/snapshot caps) — none seeded
+      # NOTE: the previous proxy `User.admin_uri()` + empty inline caps is no
+      # longer "no-cap" — the unified two-route reader (Domain.Agent.read_config)
+      # now authorizes via route 2 from the admin's persisted genesis cap, which
+      # is the SAME authority the live `config_evolve.read_cascade` dispatch
+      # always had (its slice route). The #1028 route-1-only per-site reader was
+      # the outlier that wrongly denied the admin; this test encoded that outlier.
+      no_cap_caller =
+        Ezagent.URI.entity(
+          Ezagent.URI.workspace_name!(workspace_uri),
+          :user,
+          "stranger-#{System.unique_integer([:positive])}"
+        )
+
       no_caps = MapSet.new()
 
       state = build_config_state(agent_uri, no_cap_caller, no_caps, workspace_uri)
