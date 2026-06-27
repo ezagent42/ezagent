@@ -31,10 +31,18 @@ defmodule EzagentCore.Invariants.NoAdvisorBehaviorLiteralTest do
   @sanctioned "apps/ezagent_domain_identity/lib/ezagent/socialware/config_key_rename.ex"
 
   test "no production lib code references the literal \"advisor.behavior\"" do
+    # Anchor at the repo root, NOT the CWD: under umbrella `mix test` the CWD is
+    # the child-app dir, so a CWD-relative glob would resolve to nothing and the
+    # gate would be vacuous (always pass). Mirrors the sibling invariant tests
+    # (no_chat_behavior_test, agent_create_single_path_test).
+    repo_root = Path.expand("../../../..", __DIR__)
+
     offenders =
-      Path.wildcard("apps/*/lib/**/*.ex")
-      |> Enum.reject(&String.ends_with?(&1, @sanctioned))
-      |> Enum.filter(fn path -> File.read!(path) =~ "advisor.behavior" end)
+      Path.join(repo_root, "apps/*/lib/**/*.ex")
+      |> Path.wildcard()
+      |> Enum.map(&Path.relative_to(&1, repo_root))
+      |> Enum.reject(&(&1 == @sanctioned))
+      |> Enum.filter(fn rel -> File.read!(Path.join(repo_root, rel)) =~ "advisor.behavior" end)
 
     assert offenders == [],
            "config-key rename leak — these files still reference the old " <>
@@ -44,13 +52,9 @@ defmodule EzagentCore.Invariants.NoAdvisorBehaviorLiteralTest do
              "Ezagent.Agent.Config.default_key/0 (never re-hardcode the string)."
   end
 
-  test "Ezagent.Agent.Config.default_key/0 is the canonical agent.soul source" do
-    Code.ensure_loaded?(Ezagent.Agent.Config)
-
-    assert function_exported?(Ezagent.Agent.Config, :default_key, 0),
-           "the canonical default-key accessor must exist so out-of-app readers " <>
-             "reference it instead of re-hardcoding the literal"
-
-    assert Ezagent.Agent.Config.default_key() == "agent.soul"
-  end
+  # The canonical-accessor assertion (`Config.default_key/0 == "agent.soul"`)
+  # lives in `ezagent_domain_agent`'s config_crud_test, where the module is
+  # loaded — `ezagent_core` does not depend on `ezagent_domain_agent`, so a
+  # `function_exported?` check here would be a loading-order flake (false when
+  # the agent app's beams are not loaded in a core-standalone test run).
 end
