@@ -22,7 +22,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
   alias Ezagent.Entity.{Agent, User}
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
 
-  @cascade_key "advisor.behavior"
+  @cascade_key "agent.soul"
 
   setup do
     name = "ce-#{System.unique_integer([:positive])}"

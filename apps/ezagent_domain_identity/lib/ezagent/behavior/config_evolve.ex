@@ -84,7 +84,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   # The cascade key the user layer is stored under. The delta carries its own
   # `key`; reconciliation needs a default to read the current pointer.
-  @default_cascade_key "advisor.behavior"
+  @default_cascade_key "agent.soul"
 
   @ce_reconcile_signal :ezagent_ce_reconcile
 
@@ -125,7 +125,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # READ — the cap-gated config cascade read. Symmetric with the writes: the
   # console facade (`Ezagent.Agent.Config`) must NOT read `ConfigStore` directly
   # (an authorization asymmetry — anyone could read any agent's
-  # `advisor.behavior` / soul_md). Routing the read through dispatch gates it on
+  # `agent.soul` / soul_md). Routing the read through dispatch gates it on
   # the SAME agent manage-cap the writes use (step-5.5 enforcement, on the
   # caller's real caps, instance substituted to THIS agent), so the gate is
   # structural, not a hand-rolled facade check.

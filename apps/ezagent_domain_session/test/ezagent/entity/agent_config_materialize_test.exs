@@ -31,7 +31,7 @@ defmodule Ezagent.Entity.AgentConfigMaterializeTest do
   alias Ezagent.Entity.User
   alias Ezagent.Socialware.{ConfigProjection, ConfigStore}
 
-  @key "advisor.behavior"
+  @key "agent.soul"
 
   defp agent_uri do
     Ezagent.URI.entity(

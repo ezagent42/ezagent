@@ -7,7 +7,15 @@ defmodule Ezagent.Agent.ConfigCrudTest do
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
   alias EzagentCore.Repo
 
-  @default_key "advisor.behavior"
+  @default_key "agent.soul"
+
+  test "default_key/0 is the canonical agent.soul accessor (out-of-app readers use it)" do
+    # The single canonical source so out-of-app readers (e.g. the world console
+    # via identity_data.ex) reference this fn rather than re-hardcoding the
+    # literal — the drift trap the rename killed.
+    assert Config.default_key() == @default_key
+    assert Config.default_key() == "agent.soul"
+  end
 
   setup do
     name = "ac-#{System.unique_integer([:positive])}"

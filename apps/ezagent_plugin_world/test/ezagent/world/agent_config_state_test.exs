@@ -79,7 +79,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
 
   describe "agent_config state — manage-cap caller" do
     @tag :integration
-    test "state has 'cascade' with 'keys' including 'advisor.behavior'",
+    test "state has 'cascade' with 'keys' including 'agent.soul'",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
 
@@ -97,11 +97,11 @@ defmodule Ezagent.World.AgentConfigStateTest do
       assert is_list(state["cascade"]["keys"]),
              "cascade must have a 'keys' list; got: #{inspect(state["cascade"]["keys"])}"
 
-      # The default key 'advisor.behavior' must always be present.
+      # The default key 'agent.soul' must always be present.
       key_names = Enum.map(state["cascade"]["keys"], & &1["key"])
 
-      assert "advisor.behavior" in key_names,
-             "cascade 'keys' must include 'advisor.behavior'; got keys: #{inspect(key_names)}"
+      assert "agent.soul" in key_names,
+             "cascade 'keys' must include 'agent.soul'; got keys: #{inspect(key_names)}"
 
       # The state must carry the agent_uri string.
       assert is_binary(state["agent_uri"]),
@@ -117,7 +117,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
       assert {:ok, _} =
                Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
                  layer: "user",
-                 key: "advisor.behavior",
+                 key: "agent.soul",
                  patch: %{"tone" => "decisive"}
                })
 
@@ -131,22 +131,22 @@ defmodule Ezagent.World.AgentConfigStateTest do
       cascade = state["cascade"]
       assert is_map(cascade)
 
-      advisor_key =
+      soul_key =
         cascade["keys"]
-        |> Enum.find(&(&1["key"] == "advisor.behavior"))
+        |> Enum.find(&(&1["key"] == "agent.soul"))
 
-      assert advisor_key != nil,
-             "advisor.behavior key missing from cascade after patch"
+      assert soul_key != nil,
+             "agent.soul key missing from cascade after patch"
 
       # The effective body (user layer) must contain the patched field.
       # Check both top-level effective_body and within the user layer entry.
-      effective_body = advisor_key["effective_body"]
-      user_layer_body = get_in(advisor_key, ["layers", "user", "body"])
+      effective_body = soul_key["effective_body"]
+      user_layer_body = get_in(soul_key, ["layers", "user", "body"])
 
       assert (is_map(effective_body) and effective_body["tone"] == "decisive") or
                (is_map(user_layer_body) and user_layer_body["tone"] == "decisive"),
              "patched tone='decisive' must appear in effective_body or user layer; " <>
-               "advisor_key: #{inspect(advisor_key)}"
+               "soul_key: #{inspect(soul_key)}"
     end
   end
 

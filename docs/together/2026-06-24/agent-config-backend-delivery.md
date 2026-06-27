@@ -8,13 +8,13 @@
 
 - `Ezagent.AgentConfig.read_cascade/2`
   - Reads all editable config keys for one agent.
-  - V1 key universe is all dynamic `ConfigPointer` keys for the agent plus default `advisor.behavior`.
+  - V1 key universe is all dynamic `ConfigPointer` keys for the agent plus default `agent.soul`.
   - Returns effective body, per-layer body, source config id, previous config id, source turn id, object URI, and updated timestamp.
 - `Ezagent.AgentConfig.read_key/3`
   - Reads one config key with the same cascade shape.
 - `Ezagent.AgentConfig.apply_delta/4`
   - Writes a shallow patch through `ConfigEvolve.apply_config_delta`.
-  - Defaults to layer `user`, key `advisor.behavior`, and generated `console:<uuid>` turn id.
+  - Defaults to layer `user`, key `agent.soul`, and generated `console:<uuid>` turn id.
   - Keeps existing manage-cap and subject-self gates.
 - `Ezagent.AgentConfig.delete_path/4`
   - Deletes one JSON field path from a selected layer/key body.
@@ -47,7 +47,7 @@ docs/together/2026-06-24/agent-config-frontend-contract.md
 
 Important v1 decisions:
 
-- "Full config" is dynamic pointer keys plus `advisor.behavior`; there is no fixed schema registry on current `main`.
+- "Full config" is dynamic pointer keys plus `agent.soul`; there is no fixed schema registry on current `main`.
 - `nil`/`null` is a value, not delete.
 - Field delete uses `delete_path`; whole-key pointer clearing is deferred.
 - Mutations return config ids; frontend should call read again to refresh cascade.

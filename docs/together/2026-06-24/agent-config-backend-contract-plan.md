@@ -30,7 +30,7 @@ The existing config backend is versioned and pointer-based:
   - `apply_config_delta` writes a new object and advances the pointer.
   - `repoint_config` advances the pointer to an existing in-scope object.
   - Both require the target agent's manage-cap.
-  - Defaults to user layer and key `advisor.behavior`.
+  - Defaults to user layer and key `agent.soul`.
   - Binds `subject_uri` and `workspace_uri` to the receiving agent to prevent cross-agent confused-deputy writes.
 
 - `Ezagent.Socialware.ConfigProjection`
@@ -77,7 +77,7 @@ Recommended attrs:
 ```elixir
 %{
   layer: :user | :workspace | :session,
-  key: "advisor.behavior",
+  key: "agent.soul",
   patch: %{},
   path: ["tone"],
   turn_id: "console:<uuid>"
@@ -91,7 +91,7 @@ Rules:
 - No production mutation should call `ConfigStore.write_and_point/1` directly from the facade.
 - `turn_id` should be caller-supplied for idempotency when available; otherwise generate a `console:<uuid>` id.
 - Default layer remains `:user`.
-- Default key remains `advisor.behavior`.
+- Default key remains `agent.soul`.
 
 ## Read Shape
 
@@ -102,10 +102,10 @@ Rules:
  %{
    agent_uri: "entity://team_alpha/agent/demo",
    workspace_uri: "workspace://team_alpha",
-   default_key: "advisor.behavior",
+   default_key: "agent.soul",
    keys: [
      %{
-       key: "advisor.behavior",
+       key: "agent.soul",
        effective_body: %{},
        layers: %{
          workspace: nil,
@@ -147,7 +147,7 @@ Higher layers override lower layers with a shallow merge for the first implement
 
 Example:
 
-Current `advisor.behavior` user body:
+Current `agent.soul` user body:
 
 ```elixir
 %{"tone" => "decisive", "soul_md" => "# persona"}
@@ -158,7 +158,7 @@ Delete:
 ```elixir
 Ezagent.AgentConfig.delete_path(agent, caller, caps, %{
   layer: :user,
-  key: "advisor.behavior",
+  key: "agent.soul",
   path: ["tone"],
   turn_id: "console:delete-tone"
 })
@@ -209,7 +209,7 @@ Add domain tests under:
 Required cases:
 
 - `read_cascade/2` returns a stable empty shape for an agent with no config pointer.
-- `apply_delta/5` creates a new user-layer `advisor.behavior` object through dispatch.
+- `apply_delta/5` creates a new user-layer `agent.soul` object through dispatch.
 - `apply_delta/5` updates an existing key and preserves previous fields under current merge semantics.
 - `delete_path/5` removes a field and persists a new object.
 - `delete_path/5` does not physically delete old config objects.
@@ -240,7 +240,7 @@ Proposed frontend assumptions:
 - No physical config object deletion.
 - No new cap model.
 - No direct DB mutation path for production console writes.
-- No promise that every arbitrary config key has runtime semantics. The storage layer can read/write arbitrary keys, but current runtime consumption is primarily `advisor.behavior` projected into `CLAUDE.md`.
+- No promise that every arbitrary config key has runtime semantics. The storage layer can read/write arbitrary keys, but current runtime consumption is primarily `agent.soul` projected into `CLAUDE.md`.
 
 ## Implementation Order
 

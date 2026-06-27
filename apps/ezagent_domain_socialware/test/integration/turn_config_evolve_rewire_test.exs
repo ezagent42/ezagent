@@ -30,7 +30,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Socialware.ConfigStore
 
-  @cascade_key "advisor.behavior"
+  @cascade_key "agent.soul"
 
   # PR-甲-2 (#154): `User.default_caps/1` is now `[]` (the broad
   # `cap(:session,:any,:any)` baseline that used to silently authorize the
