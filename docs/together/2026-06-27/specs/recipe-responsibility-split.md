@@ -138,10 +138,16 @@ are the same literal hand-threaded across both axes; (4) is a misnamed variable.
 
 **Non-findings (verified, so the SPEC stays honest):**
 - No `role_name` default derives from the recipe (fallback grep ∅).
-- No production branch confers authority/tools from `role_name == "orchestrator"`
-  (authority = `{:within_session,S}` cap; tools/skills = recipe via
-  `source_template_uri`). The lone non-team agent join sets no recipe-derived
-  `role_name` at all.
+- No production **authority/tool grant** is keyed off `role_name` (authority =
+  `{:within_session,S}` cap; tools/skills = recipe via `source_template_uri`).
+  **Precision (codex LOW):** B-side `role_name` *is* read in several prod paths —
+  route-time resolve (`route_provisioner.ex:10`), member selection for
+  remove/update (`tools.ex:413`, `member_template.ex:137`), URI→role snapshot
+  mapping (`templates.ex:309`), the `:role` UriQuery resolver
+  (`uri_query_resolvers.ex:272`) — but every one is **routing / selection /
+  display**, never an authority or tool conferral. The decouple-safety claim is
+  "no read confers authority/tools", not "few reads exist". The lone non-team
+  agent join sets no recipe-derived `role_name` at all.
 
 ---
 
@@ -160,9 +166,21 @@ contract:
 - **T1 — recipe ≠ role_name is admissible.** Spawn/join a member from a source
   AgentTemplate whose recipe/flavor is `cc-coder` (or `cc-orchestrator`) with
   join facet `role_name: "reviewer"`; assert the member's `meta.role_name ==
-  "reviewer"` AND the agent's sandbox `:role` (via `AgentRoleResolver` /
-  `AgentRoleAttributes`) is unchanged by the join. (Generalises the existing G4
-  `role_name: "worker"` case into an explicit named invariant.)
+  "reviewer"` AND that the join did NOT alter the agent's A-side recipe identity.
+  (Generalises the existing G4 `role_name: "worker"` case into an explicit named
+  invariant.)
+  - **Codex MED — assert the RIGHT A representation per spawn path.** There are
+    TWO A-side representations and the test must target the one its spawn path
+    actually writes: a **direct role-create** writes the RF-7 sandbox `:role`
+    marker (`role_step.ex:126` `spawn_marker_args/1`, read by
+    `AgentRoleResolver`/`AgentRoleAttributes`); a **cc-template spawn** carries
+    `:role` as cc template DATA that gates bootstrap (`cc_agent.ex:251`,
+    `orchestrator_bootstrap.ex:62`) — `sandbox.write_path` does NOT write the
+    marker from template data (`sandbox.ex:494`; the sandbox `role` comes from
+    spawn args `sandbox.ex:222`). So for a template-spawned member assert the cc
+    template `:role` / bootstrap outcome; for a direct-create agent assert the
+    sandbox marker. Do not assert `AgentRoleResolver` over a template-spawned
+    member and expect the recipe name — that would test the wrong A surface.
 - **T2 — a recipe-less principal holds a role_name.** A `entity://…/user/…`
   member joins with `role_name: "reviewer"` and resolves via
   `Members.role_name_to_uri/2` — proving B is cross-principal and recipe-free.
@@ -226,10 +244,22 @@ flight. **Fold the A-rename INTO that move** so it lands once, not twice:
 | `Ezagent.AgentRoleResolver` | **`Ezagent.AgentRecipeResolver`** | list-by-recipe / per-URI recipe |
 | sandbox slice key `:role` | **`:recipe`** | the durable SoT field (coordinate with role-as-data SPEC, which is converting this to a `config://…/role/<name>` read — adopt `recipe` naming there too) |
 | `role_step.ex` var `role_name = Map.get(params, :role)` | **`recipe_name = Map.get(params, :recipe)`** | the cross-stream variable — the token fix |
-| `EZAGENT_ROLE` / `EZAGENT_AGENT_ROLE` env | keep for now (external contract) OR alias `EZAGENT_RECIPE` | flag as follow-up; touches the cc PTY contract |
+| cc template content key `"role"` | **`"recipe"`** | `cc_agent.ex:247,251` (carries A into cc template data) |
+| cc bootstrap gate on `"role"` | gate on **`"recipe"`** | `orchestrator_bootstrap.ex:51,62,196` (installs the recipe skill/CLAUDE.md hint) |
+| `spawn_plan.ex` A-side role → env | source from `recipe` | `spawn_plan.ex:135` (sets the env from the A-side recipe) |
+| `EZAGENT_ROLE` / `EZAGENT_AGENT_ROLE` env | **explicit carve-out** (external contract) OR alias `EZAGENT_RECIPE` | OQ-4; touches the cc PTY/bridge contract |
 
 `orchestrator_role.ex` becomes `orchestrator_recipe.ex` with `@recipe_name
 "orchestrator"`; `cc_orchestrator_seed.ex:430` writes `recipe: "orchestrator"`.
+
+> **Codex MED — the split is only real if the cc-side `"role"` is included.**
+> The original table renamed the core/domain A symbols but left cc template
+> content `"role"` + the bootstrap gates + `EZAGENT_ROLE` as A-side load-bearing
+> names — which would leave "role" still materially driving A-side bootstrap.
+> The four cc rows above close that gap. The ONLY deliberate residue is the
+> `EZAGENT_*ROLE` **env var name**, which is an external process/bridge contract;
+> it is **explicitly carved out** here (renaming it is OQ-4, sequenced as a
+> follow-up because it crosses the PTY boundary), NOT left ambiguous.
 
 ### 3.2 B-side — keep, optionally clarify
 
@@ -290,15 +320,27 @@ Steps 1 and 3 are independent of the in-flight branch; step 2 is gated on it.
 
 ---
 
-## 6. Codex adversarial-review record
+## 6. Codex adversarial-review record (2026-06-27, static-only, gpt-5.x)
 
-> _(to be appended after `/codex:adversarial-review` against the committed
-> artifact — questions posed: (a) is the conflation correctly located, i.e. is
-> the "no structural forcing" claim right or did the review miss a path that
-> reads `role_name` to confer behaviour? (b) is the decouple minimal +
-> back-compat-safe, given §2.2 declines the default the task assumed exists? (c)
-> does the §3 vocab split actually reduce confusion, or does keeping `role_name`
-> for B leave "role" still spanning both axes?)_
+> **Verdict: needs-attention.** Codex **AFFIRMED the load-bearing thesis** — the
+> conflation is correctly located, there is **no structural path deriving
+> `role_name` from recipe/flavor** (verified: joins store only explicit facets;
+> `session.ex:616`, `members.ex:40`, `template_team.ex:40`; the no-role fallback
+> is instance-name only, `template_team.ex:131`), and the decouple is
+> back-compat-safe (`role_name` already independently settable at every join
+> site). It raised **three sharpenings (two MED, one LOW), all applied in this
+> rev** — none flips the thesis.
+
+| # | Codex finding | Sev | Resolution in this rev |
+|---|---|---|---|
+| 1 | **T1 may test the wrong A surface.** cc-template `:role` (template data, gates bootstrap) ≠ the RF-7 sandbox `:role` marker (written by direct-create `RoleStep`, read by `AgentRoleResolver`); `sandbox.write_path` does not write the marker from template data. Asserting `AgentRoleResolver` over a template-spawned member tests the wrong representation. | MED, valid | §2.1 T1 amended: assert the A representation the chosen spawn path actually writes (template-spawn → cc template `:role`/bootstrap; direct-create → sandbox marker). |
+| 2 | **"only `role_name` reads" overstated.** Several prod paths DO read `role_name` (route resolve, member select for remove/update, snapshot URI→role, UriQuery) — but all are routing/selection/display, none confer authority/tools. | LOW, valid | §1.3 non-finding reworded: the claim is "no read confers authority/tools", not "few reads exist"; the four read sites cited. |
+| 3 | **Vocab split incomplete.** Renaming core/domain A symbols but leaving cc template content `"role"` + bootstrap gates + `EZAGENT_ROLE` keeps "role" materially driving A-side bootstrap. | MED, valid | §3.1 table extended with the four cc-side A names (`cc_agent.ex:247,251`, `orchestrator_bootstrap.ex:51,62,196`, `spawn_plan.ex:135`); `EZAGENT_*ROLE` env explicitly carved out as an external contract (OQ-4), not left ambiguous. |
+
+**Net:** thesis intact (two concepts under one word; already-separate fields; no
+forcing; lean decouple = lock-in tests + scoped rename). The fixes tighten the
+test design (which A surface), the precision of the reads claim, and the
+completeness of the rename (include cc-side `"role"`).
 
 ---
 
