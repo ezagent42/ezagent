@@ -40,11 +40,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# --- pnpm 10.33.0 via corepack (CI uses `corepack enable && corepack prepare pnpm@10.33.0`).
-#     Node 25 from nodesource no longer bundles corepack, so install it first via npm. ---
-RUN npm install -g corepack \
-    && corepack enable \
-    && corepack prepare pnpm@10.33.0 --activate
+# --- pnpm 10.33.0 (CI's pinned version: `corepack prepare pnpm@10.33.0`). We install it
+#     DIRECTLY via npm rather than corepack: on Node 25 the npm-installed corepack shim
+#     resolved to pnpm 11.x — whose `strictDepBuilds=true` default ERRORS on ignored build
+#     scripts (es5-ext) — which would NOT mirror CI's 10.33.0 (where the un-flagged
+#     `pnpm install` in `mix ci.local` is green). A direct pin is deterministic + verified. ---
+RUN npm install -g pnpm@10.33.0 \
+    && { [ "$(pnpm --version)" = "10.33.0" ] || { echo "pnpm pin FAILED: $(pnpm --version) != 10.33.0"; exit 1; }; }
 
 # Create the NON-ROOT runtime user EARLY + set HOME, BEFORE any compile-time `~`
 # expansion bakes a path (same reason as Dockerfile.dev). erlexec's exec-port REFUSES
