@@ -221,6 +221,37 @@ defmodule Ezagent.Agent.RoleRegistry do
     end
   end
 
+  @doc """
+  Validate a USER-AUTHORED (data-role) recipe — the SCRIPTLESS guard (OQ-1
+  option (b), SPEC §5.3/§6.3).
+
+  `script` is the ONE code-injection vector a role carries: it is operator-
+  authored file content written into a py-agent's `config_dir` and bounded only
+  by the execution sandbox, NOT by CapBAC. So a runtime/user-authored data-role
+  (the CR path) may NOT introduce a `script` — this rejects a non-empty `script`
+  fail-loud (`{:error, {:script_not_allowed_in_data_role, name}}`). A built-in /
+  operator-seeded role MAY carry a `script` as trusted CODE — it flows through
+  `seed_role_if_absent/2` (which uses `validate_recipe/1`, NOT this guard).
+
+  This is the enforcement PRIMITIVE the next-phase `Ezagent.Behavior.RoleGovernance`
+  calls at `stage_item` so a script-carrying role-CR is rejected at the authoring
+  boundary, BEFORE any inert object is staged. It also runs the full `Role.new/1`
+  validation (flavor-field reject, cap-axis reject, behaviors-must-be-loaded), so
+  every non-script invariant a built-in recipe satisfies a data-role must too.
+
+  Returns `{:ok, %Role{}}` or `{:error, term()}`.
+  """
+  @spec validate_data_role_recipe(map()) :: {:ok, Role.t()} | {:error, term()}
+  def validate_data_role_recipe(recipe) when is_map(recipe) do
+    with {:ok, %Role{script: script} = role} <- validate_recipe(recipe) do
+      if is_binary(script) and script != "" do
+        {:error, {:script_not_allowed_in_data_role, recipe_name(recipe)}}
+      else
+        {:ok, role}
+      end
+    end
+  end
+
   defp validate_recipe(recipe) do
     case Role.new(recipe) do
       {:ok, role} ->
