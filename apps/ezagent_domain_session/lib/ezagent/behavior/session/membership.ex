@@ -613,36 +613,86 @@ defmodule Ezagent.Behavior.Session.Membership do
     session_uri = ctx[:self_uri]
     owner_uri = ctx[:read].(:owner_uri, nil)
 
-    # Step 3 — compute the leave effects FIRST (emits {:member_left} →
-    # convergence) but DEFER the demonitor (codex PR-A LOW). Then reap the
-    # spawned worker (`:strict` — fail-closed on a missing teardown cap, BEFORE
-    # the irreversible routing prune), then prune routing.
+    # Compute the leave effects FIRST (carry the {:member_left} broadcast →
+    # convergence) but DEFER the demonitor to apply-time (codex PR-A LOW).
     {leave_ref, leave} = leave_effects_with_ref(participant_uri, ctx)
 
-    with {:ok, torn_down} <-
-           Ezagent.Behavior.Session.Teardown.teardown_participant_resources(
-             participant_uri,
-             participant_meta,
-             owner_uri,
-             :strict
-           ),
-         {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} <-
-           Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
-             session_uri,
-             participant_uri
-           ) do
-      # Teardown + prune both succeeded → demonitor the stale ref at apply-time
-      # (the membership `{:set}` effects below commit with this), so any earlier
-      # failure left membership + monitor intact.
-      if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+    # The worker reap (`:strict`) is the AUTHORITY GATE and the only irreversible
+    # step. Run it BEFORE the routing prune so a missing teardown cap fails
+    # CLOSED with ZERO mutation (the "owner without destroy cap denied" case).
+    case Ezagent.Behavior.Session.Teardown.teardown_participant_resources(
+           participant_uri,
+           participant_meta,
+           owner_uri,
+           :strict
+         ) do
+      {:error, _} = err ->
+        # Fail-closed before anything irreversible/committed — no membership
+        # mutation, member keeps its monitor.
+        err
 
-      {:ok,
-       %{
-         status: :removed,
-         torn_down: torn_down,
-         deleted_rules: deleted,
-         repointed_rules: repointed
-       }, leave}
+      {:ok, :worker} ->
+        # The worker is now IRREVERSIBLY reaped (config-dir GC'd, lineage
+        # forgotten, process terminating). The member MUST be dropped now — a
+        # later routing-prune failure must NOT abort the leave, else a zombie
+        # member would reference a dead worker with no {:member_left} broadcast
+        # (codex Q4 / SPEC §7 "Silent orphan"). So the prune is BEST-EFFORT once
+        # the reap has happened.
+        {deleted, repointed} = prune_after_irreversible_reap(session_uri, participant_uri)
+        if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+
+        {:ok,
+         %{
+           status: :removed,
+           torn_down: :worker,
+           deleted_rules: deleted,
+           repointed_rules: repointed
+         }, leave}
+
+      {:ok, :membership_only} ->
+        # Nothing irreversible happened → the prune is fail-closed/atomic: the
+        # member drops ONLY if the prune commits (PR-A behavior preserved).
+        case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+               session_uri,
+               participant_uri
+             ) do
+          {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
+            if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+
+            {:ok,
+             %{
+               status: :removed,
+               torn_down: :membership_only,
+               deleted_rules: deleted,
+               repointed_rules: repointed
+             }, leave}
+
+          {:error, _reason} = err ->
+            err
+        end
+    end
+  end
+
+  # Routing prune AFTER an irreversible worker reap (codex Q4). The member is
+  # being dropped regardless, so a prune failure is logged + swallowed (stale
+  # rows for a now-dead member are harmless and get cleaned out-of-band) rather
+  # than aborting the leave into a zombie-member orphan.
+  defp prune_after_irreversible_reap(%URI{} = session_uri, %URI{} = participant_uri) do
+    case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+           session_uri,
+           participant_uri
+         ) do
+      {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
+        {deleted, repointed}
+
+      {:error, reason} ->
+        Logger.warning(
+          "remove_participant: routing prune FAILED after the worker reap for " <>
+            "#{inspect(participant_uri)}: #{inspect(reason)} — member dropped anyway " <>
+            "(no zombie); stale routing rows left for out-of-band cleanup."
+        )
+
+        {0, 0}
     end
   end
 

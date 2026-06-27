@@ -105,8 +105,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
   defp wait_until_gone(uri, tries \\ 60) do
     cond do
-      tries == 0 -> :still_alive
-      KindRegistry.lookup(uri) == :error -> :gone
+      tries == 0 ->
+        :still_alive
+
+      KindRegistry.lookup(uri) == :error ->
+        :gone
+
       true ->
         Process.sleep(10)
         wait_until_gone(uri, tries - 1)
@@ -158,10 +162,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       assert {:ok, owner} == AgentLineage.lookup(worker)
       assert session_rule_ids(session_uri) != []
 
-      Phoenix.PubSub.subscribe(
-        EzagentCore.PubSub,
-        "test:f7b_gc:#{URI.to_string(worker)}"
-      )
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:f7b_gc:#{URI.to_string(worker)}")
+      # The membership-changes convergence topic — proves the reaped spawned
+      # worker ALSO emits {:member_left} (no silent orphan even on the spawned
+      # path; codex Q4 / SPEC §7).
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "esr:session_membership:changes")
 
       # Remove via the SHARED entry the CLI + UI both call. admin == main owner
       # AND holds the create-time teardown cap, so the reap is authorized.
@@ -178,6 +183,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       assert :error == AgentLineage.lookup(worker)
       # (e) membership dropped.
       refute worker in Participants.list_participants(session_uri)
+      # (f) {:member_left} convergence broadcast fired for the spawned worker.
+      assert_receive {:session_membership_change, ^session_uri, {:member_left, ^worker}}, 2_000
     end
   end
 
@@ -331,7 +338,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
             false
         end)
 
-      assert teardown_cap, "owner must hold the {:spawned_by, owner} Sandbox :destroy teardown cap"
+      assert teardown_cap,
+             "owner must hold the {:spawned_by, owner} Sandbox :destroy teardown cap"
 
       # #154-clean: granted_by is the OWNER (the lineage root) — NOT a forged
       # {:spawned_by, orchestrator} cap minted for an operator.
