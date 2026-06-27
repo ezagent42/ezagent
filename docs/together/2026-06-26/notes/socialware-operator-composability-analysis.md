@@ -276,7 +276,8 @@ Files (≈15–18):
   unchanged; existing `"operator_only"` rows need a **data migration**)
 - `apps/ezagent_core/test/invariants/no_customer_concept_test.exs` (extend to
   forbid `:operator_only` too — make it `no_customer_concept` **and**
-  `no_operator_visibility`), plus ~6 test files.
+  `no_operator_visibility`), plus ~6–9 test files (codex counted 9 source/test
+  files carrying the `operator_only` string).
 
 **Risk: M.** It is a persisted enum value → a one-shot data migration
 (`UPDATE messages SET visibility='internal' WHERE visibility='operator_only'`)
@@ -357,6 +358,16 @@ gap. C3 is cosmetic and should be deferred (YAGNI; it is already composed).
 `exists` = first-class; `partial` = reachable but indirect/awkward or scope-
 mismatched; `missing` = no surface.
 
+> **CLI note (codex correction):** `mix ezagent <kind> <action>` is a **generic**
+> dispatcher (`apps/ezagent_cli/lib/mix/tasks/ezagent.ex` → `EzagentCli.TreeBuilder`
+> auto-builds subcommands from `BehaviorRegistry.list_all/0`). So **any registered
+> behavior action is CLI-dispatchable** without a bespoke task — including the Turn
+> `:claim`/`:settle`, Surface `:approve`, and Routing `:add_rule` verbs (Turn/Surface
+> are registered on Session, `session_behavior_registration.ex:121-133`). The table's
+> CLI column therefore reads `generic` where only this raw dispatch exists (no
+> ergonomic/bespoke task), and `missing` only where the capability is a plain
+> function, not a registered action (e.g. `MessageStore.mark_visibility/2`).
+
 | Capability | Code API | CLI (`mix ezagent …`) | UI (world / SPA) |
 |---|---|---|---|
 | **Author public_view app** (define the app) | exists — `SessionTemplate.create/3`, `persist_version_as_system/2` | exists — `ezagent.workspace.add_template <ws> <name> --json` | exists — world *Session templates* panel ("Public socialware app" checkbox) |
@@ -364,19 +375,21 @@ mismatched; `missing` = no surface.
 | **Edit / re-point a session** (migrate to new template version) | exists — `Orchestrator.Tools.Migration.migrate_session/2`; `ConfigActions.system_set_working_copy/2` | partial — `ezagent.session.migrate_slice` (slice migration, not template re-point) | partial — `session.orchestrator.restart`; no general "migrate session" action |
 | **Define a recipe / role** | exists — `Ezagent.Role`, `Agent.RoleRegistry`, `AgentTemplate` | partial — `ezagent.agent.create` (uses a role); no `role`-define task (no `template://…/role` spawn branch yet) | partial — template panel authors agent/session templates; no dedicated role editor |
 | **Define a responsibility** (member `role_name`) | exists — `Tools.add_managed_member/4`, `Membership.do_join` | partial — `ezagent.workspace.add_member` is a **workspace** member, not a session-member `role_name`; session add only via invite | partial — `session.invite` (joins a member; `role_name` not first-class in the form) |
-| **Set routing rules** | exists — `Tools.define_rule_set_rule`, `define_legend`, `define_prompt_template` | **missing** — no `mix ezagent` routing task | exists — `session.routing.add` / `session.routing.toggle` (world Conversation) |
-| **Set message visibility** (curate / hold / release) | exists — `MessageStore.mark_visibility/2`; auto via `Settlement.flip_visibility`/`hold_visibility` | **missing** | **missing** — no manual operator "hold/approve message" control; only automatic via settlement |
-| **Human takeover / approve** (`:claim` / `:settle` / `:approve`) | exists — Turn `:claim`/`:settle`, Surface `:approve` verbs | **missing** | **missing** — world Conversation has no claim/approve/settle action |
+| **Set routing rules** | exists — `Tools.define_rule_set_rule`, `define_legend`, `define_prompt_template`; `Routing` `:add_rule`/enable/disable/delete verbs | generic — `mix ezagent <kind> :add_rule` (no bespoke routing task) | exists — `session.routing.add` / `session.routing.toggle` (world Conversation) |
+| **Set message visibility** (curate / hold / release) | exists — `MessageStore.mark_visibility/2`; auto via `Settlement.flip_visibility`/`hold_visibility` | **missing** — plain function, not a registered behavior action | **missing** — no manual operator "hold/approve message" control; only automatic via settlement |
+| **Human takeover / approve** (`:claim` / `:settle` / `:approve`) | exists — Turn `:claim`/`:settle`, Surface `:approve` verbs | generic — `mix ezagent session :claim/:settle/:approve` (registered actions; no bespoke task) | **missing** — world Conversation has no claim/approve/settle action |
 | **Assign / remove members & roles** | exists — `add_managed_member`, `remove_member`, `remove_participant` (F7) | partial — `ezagent.session.list_participants` / `remove_participant` exist; **no session add-participant task** | exists — `session.invite` / remove (world) |
 
 **The standout gap:** the **human-takeover / approve / manual-curate** flow — the
-very heart of the autoservice "operator" scenario — exists **only as behavior
-verbs**. There is **no CLI and no UI** to `:claim` a turn, `:approve`/`:settle`,
-or manually flip a message's visibility. The world Conversation surface shows the
-unfiltered read but cannot *act* on the takeover loop. So today the "operator"
-can *watch* (read) and *talk* (`chat.send` + `@mention`/routing), but cannot
-*take over* through any product surface — the takeover is reachable only by raw
-dispatch. (Routing-rule authoring also has no CLI, only code + world UI.)
+very heart of the autoservice "operator" scenario — has **no product surface**.
+The `:claim`/`:settle`/`:approve` verbs are reachable only by the *generic*
+`mix ezagent session <action>` raw dispatch (or code); there is **no world UI**
+control and **no ergonomic/bespoke task**, and manual message-visibility flipping
+(`mark_visibility`) is not a registered action so it has no CLI at all. The world
+Conversation surface shows the unfiltered read but cannot *act* on the takeover
+loop. So today the "operator" can *watch* (read) and *talk* (`chat.send` +
+`@mention`/routing), but to *take over* must drop to raw CLI dispatch — there is
+no productized takeover surface.
 
 This gap *reinforces* the §4 recommendation: when this loop is surfaced (UI/CLI),
 that is the natural moment to name the `"supervisor"` responsibility (Phase 3),
@@ -386,7 +399,21 @@ since the surface needs a stable handle to gate on.
 
 ## 6. Codex adversarial-review verdict
 
-> *(filled in below after the review run; see the commit appending it.)*
+Static-only review (gpt-5-codex) against `origin/main`. **Overall: OVERCLAIM** —
+"structurally right about 'operator' being mostly composed from generic reads,
+visibility, and behavior verbs," with two code-accuracy fixes (both applied above).
+
+| # | Codex verdict | Disposition |
+|---|---|---|
+| 1 — baked-vs-composed | **OVERCLAIM** — verified auto-publish default (`message.ex:118-120`, `turn.ex:243-247,615-616`), unfiltered membership-gated read (`conversation_data.ex:183-186`, `message_store.ex:141-151`), generic takeover caps (`turn.ex:49-63`, `surface.ex:20-24`). Flag: name leak is **broader** than `:operator_only` — also `Surface.operator_tree/1` (`surface.ex:114-119`) and `PageView` "Operator SessionView" (`page_view.ex:1-6,38-43`). | **Already in note** (§1c, §2/C3 name the same two leaks); tightened so the one-liner is not read as "only the atom." |
+| 2 — decomposition | **SOUND** — confirmed per-message visibility persisted+mutable, the serve-time revocation lever (`external_feed.ex:284-305`), settlement flip/hold, and the two external read disciplines (chat visibility-only vs external visibility+committed). | No change. |
+| 3 — blast radius | **SOUND, minor corrections** — scope/risk realistic; 15 source/test files carry `operator_only`; SQLite + PG-baseline migrations + invariant confirmed. Test touch points ~9 not ~6. (Codex also flagged a wrong `settlement.ex` path — **false positive**: the note's §3 path `apps/ezagent_domain_session/.../settlement.ex` is correct.) | **Fixed** the test count (~6–9). |
+| 4 — interface inventory | **ERROR** — world-UI absence accurate, but "NO CLI" is wrong: `mix ezagent <kind> <action>` is generic (auto-built from `BehaviorRegistry`), so `:claim`/`:settle`/`:approve` and routing `:add_rule` **are** CLI-dispatchable. | **Fixed** — §5 table + standout-gap now read `generic` (raw dispatch, no bespoke task) and `missing` only for the non-action `mark_visibility`. |
+
+The core verdict (composed, with a name leak + one policy + a missing takeover
+*product* surface) survives review unchanged; the corrections sharpen the
+name-leak breadth and the CLI reachability, neither of which alters the
+recommendation.
 
 ---
 
