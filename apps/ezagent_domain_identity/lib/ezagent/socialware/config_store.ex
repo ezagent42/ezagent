@@ -206,7 +206,16 @@ defmodule Ezagent.Socialware.ConfigStore do
   # genuine two-plugins-one-name collision (SPEC §4.2).
   defp seed_branch(repo, %ConfigPointer{config_id: config_id}, attrs, collision_tag) do
     pointed = repo.get!(ConfigObject, config_id)
-    seed_body = attrs |> Map.fetch!(:body) |> stringify_keys()
+    # `pointed.body` is the WRITTEN body after a full JSON round-trip (the `:map`
+    # field dumps via Jason on insert and loads as a string-keyed/-valued map).
+    # `stringify_keys/1` only stringifies KEYS — scalar atom VALUES (e.g. a role
+    # recipe's `requested_caps` `%{behavior: Mod, action: :read}`) stay atoms — so
+    # the two diverged on every reboot and tripped the collision guard
+    # (`{:role_seed_collision, _}`), breaking BEAM restart against a seeded DB.
+    # Normalize the seed body through the SAME JSON round-trip so the comparison
+    # is representation-agnostic; a genuinely different body still differs (the
+    # collision guard below is preserved).
+    seed_body = attrs |> Map.fetch!(:body) |> stringify_keys() |> json_normalize()
     seed_turn = Map.fetch!(attrs, :source_turn_id)
 
     cond do
@@ -617,6 +626,13 @@ defmodule Ezagent.Socialware.ConfigStore do
 
   defp uri_string!(other),
     do: raise(ArgumentError, "expected URI or URI string, got: #{inspect(other)}")
+
+  # Round-trip a string-keyed body through Jason so atom VALUES become the same
+  # strings Ecto's `:map` field stores them as on insert — making the seed-body
+  # comparison in `seed_branch/4` representation-agnostic (atom vs JSON string).
+  defp json_normalize(map) when is_map(map) do
+    map |> Jason.encode!() |> Jason.decode!()
+  end
 
   defp stringify_keys(map) when is_map(map) do
     Map.new(map, fn {key, value} -> {string_key!(key), stringify_value(value)} end)
