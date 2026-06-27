@@ -126,6 +126,33 @@ defmodule EzagentCore.Umbrella.MixProject do
         "deps.unlock --unused",
         "format",
         "test"
+      ],
+      # #108 — `mix ci.local` mirrors the CI `precommit + check_invariants` job
+      # (`.github/workflows/ci.yml`) END-TO-END against a PRIVATE partitioned
+      # test DB, so a dev can pre-push-verify the EXACT gate CI runs instead of a
+      # single-app `mix test` (which silently excludes `:umbrella_only`
+      # cross-tier suites and never hits the full-umbrella concurrency where the
+      # recurring flake surfaces). Run it as:
+      #
+      #     MIX_ENV=test MIX_TEST_PARTITION=$USER mix ci.local
+      #
+      # `MIX_TEST_PARTITION=$USER` → private DB `ezagent_pg_compat_test$USER`;
+      # two devs run concurrently and nobody touches the shared dev DB.
+      #
+      # Step ORDER mirrors CI and is load-bearing: `pnpm install` populates
+      # node_modules BEFORE `precommit`'s `mix compile`, because the assets
+      # esbuild build (triggered during the web app's `mix test`) must resolve
+      # react/zod — without it the run dies with `Could not resolve "react"`, a
+      # NON-test failure that otherwise masquerades as a green-with-EXIT=1 run.
+      "ci.local": [
+        "deps.get",
+        "cmd --cd apps/ezagent_web/assets pnpm install --no-frozen-lockfile",
+        "cmd --cd apps/ezagent_plugin_world/assets pnpm install --no-frozen-lockfile",
+        "cmd --cd apps/ezagent_plugin_hello/assets pnpm install --no-frozen-lockfile",
+        "ecto.create --quiet",
+        "ecto.migrate --quiet",
+        "precommit",
+        "ezagent.check_invariants"
       ]
     ]
   end

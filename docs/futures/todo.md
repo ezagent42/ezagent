@@ -14,6 +14,55 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### CI flake determinism (#108, fix/ci-flake-determinism 2026-06-27)
+
+- **`mix ci.local` is the pre-push gate** — mirrors the CI `precommit +
+  check_invariants` job end-to-end against a private partitioned DB. Run
+  `MIX_TEST_PARTITION=$USER mix ci.local` before pushing (documented in
+  CONTRIBUTING "Pre-push" section). Root-cause diagnosis:
+  `docs/together/2026-06-27/notes/ci-flake-diagnosis.md`.
+- **What landed** — (1) `Loader.load_all/0` no longer swallows
+  `DBConnection.OwnershipError`/`ConnectionError` into a silent `[]` in `:test`
+  (it re-raises, so a broken sandbox connection names its own cause instead of
+  masquerading as "workspace never appeared with children"); (2) `ProbeBehavior`
+  `required_caps/0` parity (was a compile-warning-only contract drift); (3) the
+  `ci.local` alias + docs; (4) the corrupted shared `ezagent_pg_compat_test` was
+  rebuilt (operational).
+- **STILL OPEN — central acceptance criterion NOT met** — the task's bar was
+  "seed/GC suites DETERMINISTICALLY green". In final verification on this branch
+  (`MIX_TEST_PARTITION=ciflake mix test --seed 979933 --max-cases 8`),
+  `DefaultSessionTemplateSeedTest` flaked: its `setup` raised `{:error,
+  :no_such_actor}` from `seed_default_session_template_now/0` — a SPAWN-READINESS
+  race (the seeded Session/Agent Kind not registered when queried), a DISTINCT
+  class from the sandbox-revert root cause this change set targets. No causal path
+  from this change set (the unmask never fired — `DB unavailable at boot` = 0 and
+  no loader reraise in the log; the test-only ProbeBehavior is structurally
+  isolated from the session app; the workspace app was 179/0 WITH `required_caps`
+  in the same run). FOLLOW-UP needed, scoped to seed-setup spawn-readiness (e.g.
+  await Kind `:ready` before the seed assertion / allow the spawned Kinds onto the
+  test owner). Lead to triage.
+- **Residual / not-darwin-reproducible** — the underlying sandbox-revert timing
+  race (Sandbox shared-mode under the FULL ubuntu umbrella at `max_cases: 8`) is
+  GREEN on macOS / RED on the runner (diagnosis §3), so it is not locally
+  reproducible and not provably "fixed" from a dev box. The unmask converts the
+  whole *class* of silent-`[]` paths into a loud, diagnosable failure — the
+  durable lever, NOT a cure. If the flake recurs on CI, the unmasked error now
+  names the exact failing query/Kind. (The DataCase "stabilize shared mode" fix
+  the diagnosis proposed was deliberately NOT shipped: a probe proved `Sandbox.allow/3`
+  is a no-op under active shared mode and the revert cannot hit an `async: false`
+  test mid-body, so it would be theater.)
+- **NOT done (deliberately, evidence-backed)** — (a) FsResolver `Registry`
+  kill/restart isolation: audited — no `async: true` test in the `ezagent_core`
+  BEAM reaches `Ezagent.Resource.FsResolver.resolve` (directly or via
+  `ConfigDir.path` / `Uploads`) during the kill window, so the contracted
+  private-Registry machinery was NOT added (would be speculative). (b) The
+  contracted "on_exit unregister the probe scheme" was prototyped then REMOVED:
+  pristine main carries the leaked `probe` scheme and is 242/0 green, so the
+  leak is benign; scrubbing the scheme (but not the still-alive probe Kind in
+  `KindRegistry`) made `ezagent_web`'s `DemoSmokeTest`/`AutoDerive` raise
+  `URI scheme "probe" not registered` — a NEW deterministic failure. YAGNI:
+  the cleanup fixed a non-problem and introduced a real one.
+
 ### Cross-workspace session join (2026-06-25 research, NOT yet implemented)
 - **Cross-workspace join for logged-in users** — research in `docs/together/2026-06-25/research/cross-workspace-join.md`. Blocker = `do_workspace_isolation_check` (runtime.ex:664) derives caller's ws from the caller URI → `:cross_workspace_denied`; the anon→login takeover shares the same gap. **Recommended: M2** (mint a guest principal in the session's workspace linked to the home account; generalizes the existing anon mint/binding/merge — isolation-preserving, multi-host-safe). Lead decisions pending: write-participation policy gate; guest history inheritance; whether takeover's cross-ws failure is accepted vs a bug; scope into hello vs a socialware-identity epic. hello (#982) stands on the same-workspace assumption for now.
 

@@ -52,6 +52,17 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     @impl true
     def cap_subjects, do: [{:ping, "test fixture"}]
 
+    # #108 — required-callback parity with the live `Ezagent.Behavior` contract
+    # (`required_caps/0` is NOT in `@optional_callbacks`). The keys-equal-actions
+    # invariant (`keys(required_caps) ∪ cap_exempt_actions == actions`) requires
+    # the single `:ping` action to carry a cap declaration. Previously omitted —
+    # a compile-warning-only contract drift; declared now so the fixture matches
+    # the production contract and the warning stops masking signal.
+    @impl true
+    def required_caps do
+      %{ping: Ezagent.Capability.cap(:probe, __MODULE__, :ping)}
+    end
+
     @impl true
     def state_slice, do: :probe
 
