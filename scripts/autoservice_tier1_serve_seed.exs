@@ -27,7 +27,7 @@ case Ezagent.AutoService.Tier1Seed.seed([]) do
     === AutoService Tier-1 seed complete ===
     workspace        : #{URI.to_string(seed.workspace_uri)}
     kb-agent         : #{URI.to_string(seed.kb_agent_uri)}  (fact: #{Ezagent.AutoService.Tier1Seed.kb_fact_token()})
-    AutoService agent: #{URI.to_string(seed.autoservice_agent_uri)}
+    AutoService agent: #{URI.to_string(seed.autoservice_agent_uri)}  (status: #{inspect(seed.autoservice_agent_status)})
     session          : #{URI.to_string(seed.session_uri)}
     route            : always(in_session)→AutoService-agent  id=#{inspect(seed.rule_id)}
 

@@ -111,17 +111,18 @@
 
 | Step | 预期 | 实测 | 一致? |
 |---|---|---|---|
-| S1 | 匿名进 public_view chat,被 join | seed 置 `public_view: true`(`ensure_public_view_session`);live 浏览器落地见 §证据 | 🟢(live 回填) |
-| S2a | session 有默认 always→agent 路由规则 | seed 写一条**会话作用域** `in_session→<agent>` 规则;测试证**裸消息**(无 @)解析到 agent + **跨会话不命中**(规则非全局) | 🟢 确定性 |
+| S1 | 匿名进 public_view chat,被 join | **live 服务端门已证**:phx.server(session live in-node)`GET /socialware/chat?session_uri=<seeded>` → **HTTP 200**(匿名放行);对照非 public session → **302**(门有区分力)。SPA bundle 404(前端已迁 Vite,recipe `customer_app.js` 过时;需 `pnpm install`+`assets.build` 才整页渲染——前端构建前置,非 seed 缺口) | 🟢 服务端门 / SPA 渲染待 web stack |
+| S2a | session 有默认 always→agent 路由规则 | seed 写一条**会话作用域** `in_session→<agent>` 规则(live id=2);测试证**裸消息**(无 @)解析到 agent + **跨会话不命中**(规则非全局) | 🟢 确定性+live |
 | S2b | customer 裸消息送达 → agent 回一条 | **routing 层**:裸消息经 Resolver 解析到 AutoService agent(S2a 证)。**answer 层**(agent 真回一条):需 live cc 工具循环 → 见 GAP | 🟡 routing🟢 / answer=GAP |
-| S3 | 答案含 KB 命中片段 + 审计 kb:query | **retrieval soul**(确定性):`kb.query` 携 orchestrator 已 seed 的 cap 命中**仅在语料里**的 fact `ZEPHYR-7731`(排除模型先验)+ `[:ezagent,:authz,:granted]` telemetry(审计写入源)+ 无 cap 反控被拒。**answer soul**(LLM 把 fact 织进聊天回复):需 live cc → 见 GAP | 🟡 retrieval🟢 / answer=GAP |
-| S4 | 操作员 console 看到 session+成员+transcript | live 浏览器见 §证据 | 🟢(live 回填) |
+| S3 | 答案含 KB 命中片段 + 审计 kb:query | **retrieval soul**(确定性+live):`kb.query` 命中**仅在语料里**的 fact `ZEPHYR-7731`(排除模型先验)+ **live 持久化审计行**(`invocations`:`action=query`/`authz=granted`,target `…/agent/kb-tier1?action=kb.query`,scenario-12 step-5)+ 无 cap 反控被拒。**answer soul**(LLM 把 fact 织进聊天回复):需 live cc → 见 GAP | 🟡 retrieval🟢 / answer=GAP |
+| S4 | 操作员 console 看到 session+成员+transcript | session 已 live 创建(DB 可见);world-LV 可视化(成员在线+transcript)需 web/vite stack + admin 登录,随 S1 整页渲染一并待补 | 🟢 session 已建 / LV 可视化待 web stack |
 | S5-S10 | (deferred:对应 tier 立项后回填) | — | — |
 
 ## 遗留 / bug
 
 - ✅ **Tier 1 接线缺口已补**(原 open-question #2):`scripts/autoservice_tier1_seed.exs` 把 kb-agent(+ ingest 固定语料 `ZEPHYR-7731`)+ AutoService orchestrator agent(绑 kb_query cap)+ public_view session + 会话作用域 `always→agent` 路由 接成一条可重放链;`autoservice_tier1_seed_test.exs` 确定性证 S2a/S2b(routing)+ S3(retrieval+审计)。
-- 🟥 **S3/S2b answer 层余留 GAP(cc 工具循环)**:能调 `kb_query` 的只有走工具循环的 **cc-flavor orchestrator**;cc 的 **live 回复**仍背 scenario-05 的 PTY 往返已知阻塞(`#505` 已修 `--dangerously-skip-permissions`;OAuth 过期→401 仍会静音)。**注:GAP-4 是 *UI*-create;本 seed 走 `create_agent` CLI/seed 路径(场景明示允许),create 不受 GAP-4 阻塞——只有 *agent 真回一条* 这一步受 cc 门控。** answer 层需在 live disposable stack 验证或报告观测到的阻塞。
+- 🟥 **cc-orchestrator agent 不是 `create_agent` 角色(新观测,精确)**:`Workspace.create_agent(flavor: "cc", role: "orchestrator")` 返回 `{:error, {:role_unsupported_for_flavor, "cc"}}`。cc-flavor orchestrator 由 **session-create orchestrator-template 路径**物化(`EzagentDomainInstanceMessage.SessionCreator` + cc-orchestrator `AgentTemplate` = `cc_orchestrator_seed.ex` + `orchestrator_bootstrap.ex`,session 侧 delegate caps),**不**经 `create_agent`。⚠️ 这比"GAP-4 cc UI-create 坏"更精确:cc-orchestrator 根本不是一个 create_agent 角色。seed 因此把 cc agent 步骤标 `{:blocked, …}` 且**非致命**——kb + route + public_view 链照常 wire(S1/S2a/S3-retrieval/S4 live 可跑)。**Follow-up(独立 task):** 加一个走 SessionCreator orchestrator 路径物化 AutoService agent 的 seed 变体。
+- 🟥 **S3/S2b answer 层余留 GAP(cc 工具循环)**:即便上一条解决,answer soul(live `claude` cc-orchestrator 经 orchestrator MCP `kb_query` 把 fact 织进**聊天回复**)仍背 cc PTY/startup 路径(`#505` 已修 `--dangerously-skip-permissions`;OAuth 过期→401 仍会静音)。须在 disposable stack + 有效 claude auth 上验证。
 - ✅ **cap 来源缺口已结构性关闭**(原本是 live S3 最可能的失败点):live orchestrator 的 kb 授权由 `SessionManager.load_orchestrator_caps/1` = `Ezagent.Identity.list_caps_for/1` 从 **orchestrator agent 自身 identity slice** 重建(kb-retrieval SPEC §5.3 option 1)。seed 因此用 `Ezagent.Identity.grant_cap/3` 把 `kb.query` cap **写进 AutoService agent 的 identity slice**(grant by admin),正落在 live 路径读取的位置。确定性测试**回读** `Identity.list_caps_for(agent)` 断言其持有 `kb.query`、并用**回读到的 caps**(而非手填集合)跑 `kb_query` —— 证明 seed 的 grant 落点 == live 取用点;另以无 cap principal 反控被拒。**此前若不 grant,seeded cc-orchestrator 的 delegated caps 仅是编排工具,`kb.query` 会在 dispatch chokepoint fail-closed 拒绝。**
 - **GAP-1 / GAP-4 / GAP-5**(`notes/2026-06-26-product-gaps.md`):分别阻塞"UI 建可对话 agent"、"cc UI-create"、"session teardown",均影响 Tier 1 的干净可重复执行。
 - **错误可见性**(product-gaps 备注):后端 reject 只落 `data-last-dispatch`,无 toast/inline——customer/操作员看不到为什么,Tier 1/2 的失败模式取证要靠 `data-*` 而非 UI 文案。

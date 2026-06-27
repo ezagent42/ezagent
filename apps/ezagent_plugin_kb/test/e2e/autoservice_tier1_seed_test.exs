@@ -69,6 +69,13 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
       session_uri = seed.session_uri
       autosvc_uri = seed.autoservice_agent_uri
 
+      # The generic test flavor IS create_agent-supported (unlike live cc), so
+      # the AutoService agent is created + granted + joined. (On a live node the
+      # cc-orchestrator path reports {:blocked, :role_unsupported_for_flavor}.)
+      assert seed.autoservice_agent_status == :created,
+             "expected the (non-cc) AutoService agent to be created; got " <>
+               inspect(seed.autoservice_agent_status)
+
       # ── public_view (S1) — assert only if socialware is loadable in this dep
       # set; otherwise it is covered by the live browser run (the seed always
       # sets the public_view template content). ──────────────────────────────

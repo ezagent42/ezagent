@@ -69,6 +69,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
           kb_agent_uri: URI.t(),
           kb_agent_name: String.t(),
           autoservice_agent_uri: URI.t(),
+          autoservice_agent_status: :created | {:blocked, term()},
           session_uri: URI.t(),
           rule_id: integer() | nil,
           orchestrator_caps: MapSet.t()
@@ -100,6 +101,11 @@ defmodule Ezagent.AutoService.Tier1Seed do
     # a minimal role it registers itself (the orchestrator role recipe is a
     # session/cc-boot concern, not present in the isolated kb test).
     autosvc_role = Keyword.get(opts, :autoservice_role, "orchestrator")
+    # cc flavor REQUIRES a non-empty cwd (the agent's project working dir) —
+    # create returns {:error, :cwd_required_for_cc} otherwise. Default to a
+    # per-agent dir under the ezagent home. Non-cc test flavors ignore cwd.
+    autosvc_cwd =
+      Keyword.get(opts, :autoservice_cwd, default_autoservice_cwd(ws, autosvc_agent))
     # kb-agent flavor: `native` on the live node (kb = role `kb` × flavor
     # `native`, per EzagentPluginKb.Application). The test passes its own
     # registered flavor.
@@ -108,25 +114,37 @@ defmodule Ezagent.AutoService.Tier1Seed do
     admin_ctx = Keyword.get(opts, :admin_ctx, admin_ctx())
 
     workspace_uri = EzUri.new!("workspace://#{ws}")
+    # The AutoService agent URI is DETERMINISTIC — computed up front so the
+    # public_view session + the always→agent routing rule can be wired
+    # regardless of whether the cc-orchestrator agent itself is creatable
+    # (the live cc create path is blocked — see ensure_autoservice_agent).
+    autosvc_uri = EzUri.agent(ws, autosvc_agent)
 
+    # Order matters: kb-agent + corpus + public_view session + routing rule
+    # come FIRST so S1 (anon landing) / S2a (route) / S3 (retrieval) / S4
+    # (operator sees the session) are live-runnable. The AutoService AGENT is
+    # created LAST and BEST-EFFORT: a cc-flavor orchestrator is NOT a
+    # `create_agent` role (`{:role_unsupported_for_flavor, "cc"}`) — it is
+    # materialized via the session-create orchestrator-template path. So a cc
+    # failure is REPORTED as `autoservice_agent_status`, not a silent degrade,
+    # and does not block the rest of the chain.
     with :ok <- maybe_register_recipes(opts, autosvc_flavor, kb_flavor, autosvc_role),
          :ok <- ensure_workspace(ws),
          {:ok, kb_uri} <- ensure_kb_agent(workspace_uri, ws, kb_agent, kb_flavor, admin_ctx),
          {:ok, _chunks} <- ingest_corpus(kb_uri, ws, admin_ctx),
-         {:ok, autosvc_uri} <-
-           ensure_autoservice_agent(
-             workspace_uri,
-             ws,
-             autosvc_agent,
-             autosvc_flavor,
-             autosvc_role,
-             admin_ctx
-           ),
-         :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
          {:ok, session_uri} <- ensure_public_view_session(ws, session_short),
-         :ok <- join_member(session_uri, autosvc_uri, :agent),
          {:ok, rule_id} <- ensure_always_to_agent_rule(session_uri, autosvc_uri) do
-      caps = orchestrator_kb_caps()
+      autosvc_status =
+        wire_autoservice_agent(
+          workspace_uri,
+          ws,
+          autosvc_agent,
+          autosvc_flavor,
+          autosvc_role,
+          autosvc_cwd,
+          session_uri,
+          admin_ctx
+        )
 
       {:ok,
        %{
@@ -134,10 +152,46 @@ defmodule Ezagent.AutoService.Tier1Seed do
          kb_agent_uri: kb_uri,
          kb_agent_name: kb_agent,
          autoservice_agent_uri: autosvc_uri,
+         autoservice_agent_status: autosvc_status,
          session_uri: session_uri,
          rule_id: rule_id,
-         orchestrator_caps: caps
+         orchestrator_caps: orchestrator_kb_caps()
        }}
+    end
+  end
+
+  # Best-effort: create the AutoService agent, and (if created) grant it
+  # kb.query + join it to the session. Returns `:created` or
+  # `{:blocked, reason}` — the cc-orchestrator live create path is blocked
+  # (`{:role_unsupported_for_flavor, "cc"}`); the deterministic chain (kb +
+  # route + public_view) is already wired before this runs.
+  defp wire_autoservice_agent(
+         workspace_uri,
+         ws,
+         name,
+         flavor,
+         role,
+         cwd,
+         session_uri,
+         admin_ctx
+       ) do
+    case ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, admin_ctx) do
+      {:ok, autosvc_uri} ->
+        with :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
+             :ok <- join_member(session_uri, autosvc_uri, :agent) do
+          :created
+        else
+          {:error, reason} -> {:blocked, reason}
+        end
+
+      {:error, reason} ->
+        Logger.warning(
+          "autosvc-seed: AutoService AGENT not created (#{inspect(reason)}) — the " <>
+            "kb + route + public_view chain is wired; a cc-flavor orchestrator must be " <>
+            "materialized via the session-create orchestrator-template path."
+        )
+
+        {:blocked, reason}
     end
   end
 
@@ -304,7 +358,13 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
   end
 
-  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, admin_ctx) do
+  defp default_autoservice_cwd(ws, name) do
+    Path.join([Ezagent.Home.path("agents"), ws, name])
+  rescue
+    _ -> Path.join([System.tmp_dir!(), "autosvc-agents", ws, name])
+  end
+
+  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, admin_ctx) do
     uri = EzUri.agent(ws, name)
 
     case Ezagent.KindRegistry.lookup(uri) do
@@ -313,10 +373,13 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
       :error ->
         # role "orchestrator" threads the orchestrator MCP bridge (cc flavor) so
-        # a live claude exposes the 7-tool surface incl. kb_query.
+        # a live claude exposes the 7-tool surface incl. kb_query. cc requires a
+        # non-empty cwd (project working dir); ensure it exists on disk.
+        _ = if cwd != "", do: File.mkdir_p(cwd)
+
         case Workspace.create_agent(
                workspace_uri,
-               %{flavor: flavor, name: name, role: role, cwd: "", with_pty: false},
+               %{flavor: flavor, name: name, role: role, cwd: cwd, with_pty: false},
                admin_ctx
              ) do
           {:ok, %{agent_uri: got}} -> {:ok, got}
