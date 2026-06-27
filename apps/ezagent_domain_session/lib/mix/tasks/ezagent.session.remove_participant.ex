@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
         case Ezagent.Session.Participants.remove_participant(
                session_uri,
                participant_uri,
-               caller_uri
+               operator_ctx(caller_uri, session_uri)
              ) do
           {:ok, :already_removed} ->
             Mix.shell().info(
@@ -76,6 +76,30 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
       nil -> Ezagent.Entity.User.admin_uri()
       s -> parse_uri!(s, "caller")
     end
+  end
+
+  # Operator ctx (in-VM operator trust §10.5; same pattern as
+  # `mix ezagent.agent.create`'s `operator_admin_ctx`): an INLINE
+  # `cap(:session, Session, :remove_participant, <session>)` granted_by the
+  # caller, so the dispatch clears the chokepoint. The real authorization is the
+  # handler's identity gate (owner / self-leave / admin) keyed on `caller` — a
+  # `--as <stranger>` clears the chokepoint via this inline cap but is then
+  # DENIED `:unauthorized` by the handler. Resolving the caller's persisted caps
+  # here (a list-caps read) would trip cap_check_only_at_chokepoint p6.
+  defp operator_ctx(%URI{} = caller_uri, %URI{} = session_uri) do
+    cap = %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.Behavior.Session,
+        :remove_participant,
+        Ezagent.URI.instance(session_uri),
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+      | granted_by: caller_uri,
+        granted_at: DateTime.utc_now()
+    }
+
+    %{caller: caller_uri, caps: [cap]}
   end
 
   defp parse_uri!(s, label) do

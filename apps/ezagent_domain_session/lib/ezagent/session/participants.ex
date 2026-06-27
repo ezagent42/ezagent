@@ -5,13 +5,17 @@ defmodule Ezagent.Session.Participants do
   ONE dispatch path shared by the CLI (`mix ezagent.session.remove_participant`
   / `.list_participants`) and the world UI conversation surface — the
   "CLI/UI 同源派生" convention (Allen 2026-05-25). Both surfaces call
-  `remove_participant/2` / `list_participants/1`; neither re-implements the
+  `remove_participant/3` / `list_participants/1`; neither re-implements the
   authorization or the dispatch.
 
-  `remove_participant/2` dispatches the isomorphic `session.remove_participant`
-  action (`Ezagent.Behavior.Session`) under the CALLER's real caps (CapBAC at
-  the chokepoint). For a self-leave (`caller == participant`) it first provisions
-  the JIT self-leave authority (SPEC §3.3) so the caller clears the chokepoint.
+  `remove_participant/3` dispatches the isomorphic `session.remove_participant`
+  action (`Ezagent.Behavior.Session`) under the CALLER's ctx (`%{caller, caps}`),
+  authorized at the chokepoint by `ctx.caps`. The surfaces own ctx CONSTRUCTION
+  (the UI passes its live caps; the CLI builds an operator cap) — this module
+  does NO persisted-caps read (cap_check_only_at_chokepoint p6). For a self-leave
+  (`caller == participant`) it adds the inline self-scoped cap (SPEC §3.3) so the
+  caller clears the chokepoint; the handler's identity gate then confirms
+  `caller == participant`.
 
   PR-A SCOPE: the non-spawned (user / invited-agent) removal is live; a spawned
   worker returns `{:error, :spawned_participant_teardown_pending_pr_b}` (the
@@ -20,6 +24,9 @@ defmodule Ezagent.Session.Participants do
 
   alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
+
+  @typedoc "Caller dispatch context: the acting entity + its caps."
+  @type ctx :: %{required(:caller) => URI.t(), optional(:caps) => Enumerable.t()}
 
   @typedoc "Result of a successful non-spawned participant removal."
   @type removal :: %{
@@ -30,32 +37,40 @@ defmodule Ezagent.Session.Participants do
         }
 
   @doc """
-  Remove `participant_uri` from `session_uri` on behalf of `caller_uri`.
+  Remove `participant_uri` from `session_uri` on behalf of `ctx.caller`,
+  authorized by `ctx.caps` at the dispatch chokepoint.
 
-  The caller's caps are resolved via `Ezagent.Identity.list_caps_for/1` (the same
-  authority the operator holds everywhere). The owner holds the create-time
-  `:remove_participant` cap; a self-leaver gets a JIT self-scoped cap first.
+  The owner holds the create-time `:remove_participant` cap; an admin holds the
+  wildcard; a self-leaver (`caller == participant`) gets an inline self-scoped
+  cap added here. The handler then identity-gates owner / self / admin.
 
   Returns the `removal/0` map, `:already_removed`, or `{:error, reason}`
   (`:unauthorized`, `:spawned_participant_teardown_pending_pr_b`, …).
   """
-  @spec remove_participant(URI.t(), URI.t(), URI.t()) ::
+  @spec remove_participant(URI.t(), URI.t(), ctx()) ::
           {:ok, removal() | :already_removed} | {:error, term()}
-  def remove_participant(%URI{} = session_uri, %URI{} = participant_uri, %URI{} = caller_uri) do
-    # Self-leave (§3.3): mint the JIT self-scoped cap so a participant who holds
-    # only the participation tier clears the dispatch chokepoint.
-    if caller_uri == participant_uri do
-      _ = Membership.provision_self_leave_authority(session_uri, caller_uri)
-    end
+  def remove_participant(
+        %URI{} = session_uri,
+        %URI{} = participant_uri,
+        %{caller: %URI{} = caller} = ctx
+      ) do
+    caps = ctx |> Map.get(:caps, []) |> to_cap_set()
 
-    caps = Ezagent.Identity.list_caps_for(caller_uri)
+    # Self-leave (§3.3): a participant may always remove ITSELF — add the inline
+    # self-scoped cap so the dispatch clears the chokepoint even when the caller
+    # holds only the participation tier. (No-op for owner/admin callers, whose
+    # passed caps already authorize.)
+    caps =
+      if caller == participant_uri,
+        do: MapSet.put(caps, Membership.self_remove_participant_cap(session_uri, caller)),
+        else: caps
 
     result =
       Invocation.dispatch(%Invocation{
         target: Ezagent.URI.with_action(session_uri, :session, :remove_participant),
         mode: :call,
         args: %{participant: participant_uri},
-        ctx: %{caller: caller_uri, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
       })
 
     case result do
@@ -76,4 +91,8 @@ defmodule Ezagent.Session.Participants do
   def list_participants(%URI{} = session_uri) do
     Ezagent.Entity.Session.session_member_uris(session_uri)
   end
+
+  defp to_cap_set(%MapSet{} = caps), do: caps
+  defp to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
+  defp to_cap_set(_), do: MapSet.new()
 end

@@ -47,6 +47,25 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     def handle_cast(_msg, state), do: {:noreply, state}
   end
 
+  # Operator ctx mirroring the CLI's `operator_ctx/2`: caller + an inline
+  # `:remove_participant` cap so the dispatch clears the chokepoint. The handler's
+  # identity gate (owner / self / admin) is the real authorization keyed on caller.
+  defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
+    cap = %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.Behavior.Session,
+        :remove_participant,
+        Ezagent.URI.instance(session_uri),
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+      | granted_by: caller,
+        granted_at: DateTime.utc_now()
+    }
+
+    %{caller: caller, caps: [cap]}
+  end
+
   defp join_member(session_uri, member_uri) do
     :ok =
       Invocation.dispatch(%Invocation{
@@ -122,7 +141,11 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     # Remove via the SHARED domain entry the CLI + UI both call. The admin is the
     # session owner here, so it's authorized at the chokepoint.
     assert {:ok, %{status: :removed, torn_down: :membership_only}} =
-             Participants.remove_participant(session_uri, member_uri, User.admin_uri())
+             Participants.remove_participant(
+               session_uri,
+               member_uri,
+               op_ctx(User.admin_uri(), session_uri)
+             )
 
     # (1) Convergence signal: the {:member_left} membership broadcast fired
     #     (drives a live UI refresh — leave-FIRST §5.4).
@@ -148,7 +171,11 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     # Through the SHARED entry (real dispatch + InterfaceValidator), the admin
     # owner removing a non-member is an idempotent no-op.
     assert {:ok, :already_removed} =
-             Participants.remove_participant(session_uri, not_a_member, User.admin_uri())
+             Participants.remove_participant(
+               session_uri,
+               not_a_member,
+               op_ctx(User.admin_uri(), session_uri)
+             )
   end
 
   test "self-leave through the shared entry works without the owner cap" do
@@ -162,13 +189,17 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     stranger = invited_user_member(session_uri, "stranger")
 
     assert {:error, :unauthorized} =
-             Participants.remove_participant(session_uri, member_uri, stranger)
+             Participants.remove_participant(
+               session_uri,
+               member_uri,
+               op_ctx(stranger, session_uri)
+             )
 
     # ... yet caller == participant (self-leave) is authorized: the shared entry
     # provisions the JIT self-leave authority so the dispatch clears the
     # chokepoint and the handler's `caller == participant` gate passes (§3.3).
     assert {:ok, %{status: :removed}} =
-             Participants.remove_participant(session_uri, member_uri, member_uri)
+             Participants.remove_participant(session_uri, member_uri, %{caller: member_uri})
 
     refute member_uri in Participants.list_participants(session_uri)
   end

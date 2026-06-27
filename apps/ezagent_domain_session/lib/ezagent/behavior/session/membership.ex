@@ -564,11 +564,13 @@ defmodule Ezagent.Behavior.Session.Membership do
     end
   end
 
-  # Owner-gate (§3.3): owner OR self-leave OR bootstrap admin. Fail-closed.
+  # Owner-gate (§3.3): owner OR self-leave OR admin. Fail-closed. The admin check
+  # goes through the canonical `Ezagent.Identity.admin?/1`, not a hand-written
+  # equality against the admin principal (cap_check_only_at_chokepoint probe p13).
   defp remove_participant_authorized?(%URI{} = caller, %URI{} = participant_uri, owner_uri) do
     caller == participant_uri or
       (match?(%URI{}, owner_uri) and caller == owner_uri) or
-      caller == Ezagent.Entity.User.admin_uri()
+      Ezagent.Identity.admin?(caller)
   end
 
   defp remove_participant_authorized?(_caller, _participant, _owner), do: false
@@ -619,61 +621,31 @@ defmodule Ezagent.Behavior.Session.Membership do
   end
 
   @doc """
-  Provision SELF-LEAVE authority (F7 PR-A, SPEC §3.3): mint a self-scoped
-  `cap(:session, Session, :remove_participant, <session_uri>)` for `member_uri`,
+  Build the inline SELF-LEAVE cap (F7 PR-A, SPEC §3.3): a self-scoped
+  `cap(:session, Session, :remove_participant, <session_uri>)` with
   `granted_by: member_uri` (genuine self-authority per capbac.md §7 — a member
-  may always remove ITSELF). The front-ends call this before dispatching
-  `session.remove_participant` with `participant == caller`, so a self-leaver
-  (who otherwise holds only the `:leave`/`:send` participation tier) clears the
-  dispatch chokepoint; the handler's identity gate then confirms
-  `caller == participant`.
+  may always remove ITSELF).
 
-  Best-effort + idempotent: skips if the member already holds an authorizing
-  cap (e.g. the owner's `:remove_participant` cap, or admin's wildcard). Returns
-  `:ok`; a failed grant degrades to a chokepoint denial (fail-closed).
+  The front-ends add this to the dispatch `ctx.caps` when `participant == caller`
+  so a self-leaver (who otherwise holds only the `:leave`/`:send` participation
+  tier) clears the dispatch chokepoint; the handler's identity gate then confirms
+  `caller == participant`. It is an INLINE ctx cap (the same ctx-construction
+  pattern the operator CLIs + materializer use) — NOT a persisted grant, so the
+  entry needs no `Identity.list_caps_for` read (cap_check_only_at_chokepoint p6).
   """
-  @spec provision_self_leave_authority(URI.t(), URI.t()) :: :ok
-  def provision_self_leave_authority(%URI{} = session_uri, %URI{} = member_uri) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-
-    if already_authorized?(
-         Ezagent.Identity.list_caps_for(member_uri),
-         Ezagent.Behavior.Session,
-         :remove_participant,
-         session_uri,
-         workspace_uri
-       ) do
-      :ok
-    else
-      cap =
-        Ezagent.Capability.cap(
-          :session,
-          Ezagent.Behavior.Session,
-          :remove_participant,
-          session_uri,
-          workspace_uri
-        )
-
-      case Ezagent.Identity.Grant.grant_cap_via_router(
-             member_uri,
-             cap,
-             {:rule, :session_participation, member_uri},
-             :sync
-           ) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "Session.Membership.provision_self_leave_authority: self-leave-cap grant " <>
-              "failed for member=#{URI.to_string(member_uri)} on session=" <>
-              "#{URI.to_string(session_uri)}: #{inspect(reason)} (best-effort; " <>
-              "self-leave fails closed at the chokepoint)."
-          )
-
-          :ok
-      end
-    end
+  @spec self_remove_participant_cap(URI.t(), URI.t()) :: Ezagent.Capability.t()
+  def self_remove_participant_cap(%URI{} = session_uri, %URI{} = member_uri) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.Behavior.Session,
+        :remove_participant,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+      | granted_by: member_uri,
+        granted_at: DateTime.utc_now()
+    }
   end
 
   defp do_grant_join_cap(session_uri, joiner_uri, granter, workspace_uri) do

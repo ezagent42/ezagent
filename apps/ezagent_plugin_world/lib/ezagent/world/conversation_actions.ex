@@ -479,13 +479,14 @@ defmodule Ezagent.World.ConversationActions do
   def remove_participant(socket, %URI{} = session_uri, participant_str)
       when is_binary(participant_str) do
     caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
         case Ezagent.Session.Participants.remove_participant(
                session_uri,
                participant_uri,
-               caller
+               %{caller: caller, caps: caps}
              ) do
           {:ok, _result} ->
             {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
