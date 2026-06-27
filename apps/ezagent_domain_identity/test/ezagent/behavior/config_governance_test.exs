@@ -498,6 +498,65 @@ defmodule Ezagent.Behavior.ConfigGovernanceTest do
            "publish_cr never materialized user_layer_uri to #{want}; got #{inspect(sandbox_user_layer_uri(agent))}"
   end
 
+  # ---- LOW-1: non-user-layer materialization (pins the user-layer-only seam)
+  #
+  # Every other CR test stages at the :user layer. This pins the behavior for a
+  # NON-user layer (:workspace). Two distinct seams behave differently by layer:
+  #
+  #   1. The POINTER FLIP is layer-correct — `flip_item` passes `layer:
+  #      item.layer` to `put_pointer`, so the :workspace slot resolves to the
+  #      staged object after publish.
+  #   2. The SANDBOX MATERIALIZATION is USER-LAYER-ONLY — the reuse seam
+  #      (`ConfigEvolve.sandbox_refresh_effects` → `ConfigStore.current_user_object`,
+  #      which calls `resolve(:user, ...)`) reads the USER cascade layer
+  #      regardless of the published item's layer. With no user-layer pointer for
+  #      the key, that read is `:none`, the effect list is empty, and the sandbox
+  #      cache's `user_layer_uri` is left UNCHANGED — a pure workspace-layer
+  #      publish does NOT project into the sandbox cascade cache.
+  #
+  # This is the intended v1 behavior (the sandbox mirrors only the user cascade
+  # layer); asserted explicitly here so the seam's layer scope is PINNED, not
+  # silently wrong.
+  test "publish_cr at the :workspace layer flips the workspace pointer but does NOT materialize the sandbox (user-layer-only seam)",
+       ctx do
+    %{agent: agent, workspace: workspace} = ctx
+    seed_sandbox_cascade(agent, workspace)
+    baseline_user_layer = sandbox_user_layer_uri(agent)
+    manager = grant_manage_cap(agent, workspace)
+    {:ok, %{cr_id: cr_id}} = dispatch(agent, :open_cr, %{}, manager)
+
+    {:ok, %{staged_object_id: oid}} =
+      dispatch(
+        agent,
+        :stage_item,
+        %{change_request_id: cr_id, layer: :workspace, patch: %{"tone" => "bold"}},
+        manager
+      )
+
+    assert {:ok, %{status: "published"}} =
+             dispatch(agent, :publish_cr, %{change_request_id: cr_id}, manager)
+
+    # (1) Pointer flip IS layer-correct: the :workspace slot resolves to the
+    # staged object.
+    assert {:ok, %ConfigObject{id: ^oid}} =
+             ConfigStore.resolve(:workspace, workspace, agent, @cascade_key)
+
+    # The :user layer was never touched (no user-layer object for this key).
+    assert :none = ConfigStore.resolve(:user, workspace, agent, @cascade_key)
+
+    # (2) Materialization is USER-LAYER-ONLY: no user-layer pointer ⇒ the seam
+    # emits no sandbox.write_path, so the cache's user_layer_uri stays at its
+    # seed. Sleep to give any (erroneous) async write_path effect time to land —
+    # the assertion would catch a regression where a workspace publish starts
+    # projecting into the sandbox cache.
+    Process.sleep(100)
+    assert sandbox_user_layer_uri(agent) == baseline_user_layer
+
+    # And the baseline is the seeded user-layer uri (NOT the workspace-staged
+    # object), proving the workspace publish did not overwrite it.
+    assert baseline_user_layer == URI.to_string(User.admin_uri())
+  end
+
   # ---- §9.14 preview is a pure, deterministic read -------------------------
 
   test "preview_cr changes nothing and is byte-identical across calls", ctx do

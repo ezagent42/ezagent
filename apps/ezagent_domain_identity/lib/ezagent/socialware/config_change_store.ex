@@ -206,6 +206,22 @@ defmodule Ezagent.Socialware.ConfigChangeStore do
   `published_turn_id`.
 
   Returns `{:ok, %{cr: cr, items: [item], published_turn_id: id}}`.
+
+  ## Two-layer publish idempotency (MED-1 defense-in-depth)
+
+  The `open → published` one-way transition is enforced at TWO layers, so a
+  double-publish is impossible regardless of how the store is called:
+
+    1. **Pre-check (`require_open/1`)** — outside the transaction. Catches the
+       ordinary SEQUENTIAL re-publish (a second publish on a `published` CR)
+       and returns `{:error, {:cr_status, ...}}` before any work.
+    2. **In-`Multi` guard (`WHERE status = 'open'`)** — the FIRST Multi step is
+       an `update_all` that flips status only WHERE it is still `open`, asserting
+       exactly one row matched (`{:error, :not_open}` otherwise). This `UPDATE`
+       takes the CR row lock BEFORE any pointer write, so two CONCURRENT
+       publishes serialize on that row — the loser matches zero rows and aborts
+       the whole Multi (its pointer flips roll back). This closes the publish
+       TOCTOU even if two publishes ever interleave off the per-agent actor.
   """
   @spec publish(map()) :: {:ok, map()} | {:error, term()}
   def publish(attrs) when is_map(attrs) do
@@ -213,29 +229,49 @@ defmodule Ezagent.Socialware.ConfigChangeStore do
     published_by = uri_string!(Map.fetch!(attrs, :published_by))
     pointed_by = published_by
 
-    # STATUS GATE FIRST — `open → published` is the publish idempotency
-    # mechanism (a second publish is rejected before any pointer write).
+    # STATUS GATE FIRST (pre-check) — `open → published` is the publish
+    # idempotency mechanism (a second publish is rejected before any pointer
+    # write). The in-Multi WHERE-guard below is the concurrent defense-in-depth.
     with {:ok, cr} <- require_open(cr_id) do
       published_turn_id = "#{@cr_publish_prefix}#{cr.id}"
       items = items(cr_id)
+      now = DateTime.utc_now()
 
-      flip_step =
-        Multi.run(Multi.new(), :flip, fn _repo, _ ->
-          flip_items(items, cr, published_turn_id, pointed_by)
-        end)
+      # Step 1: gate-and-flip status WHERE it is still `open`, asserting exactly
+      # one row updated. This `UPDATE` locks the CR row before any pointer work,
+      # so a concurrent publish that already committed `published` matches 0 rows
+      # here and aborts the whole Multi (rolling back its own flips). The updated
+      # struct is rebuilt from the in-hand `cr` (no extra read / no `returning`).
+      Multi.new()
+      |> Multi.update_all(
+        :cr_update,
+        from(c in ConfigChangeRequest, where: c.id == ^cr.id and c.status == "open"),
+        set: [
+          status: "published",
+          published_by: published_by,
+          published_turn_id: published_turn_id,
+          updated_at: now
+        ]
+      )
+      |> Multi.run(:cr, fn _repo, %{cr_update: {count, _}} ->
+        case count do
+          1 ->
+            {:ok,
+             %{
+               cr
+               | status: "published",
+                 published_by: published_by,
+                 published_turn_id: published_turn_id,
+                 updated_at: now
+             }}
 
-      cr_step =
-        Multi.update(
-          flip_step,
-          :cr,
-          ConfigChangeRequest.status_changeset(cr, %{
-            status: "published",
-            published_by: published_by,
-            published_turn_id: published_turn_id
-          })
-        )
-
-      cr_step
+          _ ->
+            {:error, :not_open}
+        end
+      end)
+      |> Multi.run(:flip, fn _repo, _ ->
+        flip_items(items, cr, published_turn_id, pointed_by)
+      end)
       |> Repo.transaction()
       |> case do
         {:ok, %{cr: updated_cr, flip: published_items}} ->
