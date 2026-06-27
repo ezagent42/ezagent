@@ -94,6 +94,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
+  alias Ezagent.Orchestrator.Tools.Kb
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Migration
   alias Ezagent.Orchestrator.Tools.Participants
@@ -670,7 +671,8 @@ defmodule Ezagent.Orchestrator.Tools do
          :ok <- Ezagent.Routing.PromptTemplate.validate(template) do
       merged = Map.put(read_prompt_templates(session_uri), name, template)
 
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_prompt_templates")
+      target =
+        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_prompt_templates")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -836,6 +838,15 @@ defmodule Ezagent.Orchestrator.Tools do
           | {:error, term()}
   defdelegate list_templates(name_filter \\ nil, opts \\ []), to: Templates
 
+  @doc "Retrieve top-k chunks from a kb-agent (kb-retrieval SPEC §5.3 option 1)."
+  @spec kb_query(String.t(), String.t(), pos_integer(), keyword()) ::
+          {:ok, term()} | {:error, term()}
+  defdelegate kb_query(kb_agent, query, k, opts \\ []), to: Kb
+
+  @doc "Ingest one source document into a kb-agent (kb-retrieval SPEC §5.3 option 1)."
+  @spec kb_ingest(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
+  defdelegate kb_ingest(kb_agent, source_uri, opts \\ []), to: Kb
+
   # === generic invoke ====================================================
 
   @doc """
@@ -952,70 +963,5 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc false
   def member_uri_for_role(%URI{} = session_uri, role_name) when is_binary(role_name) do
     Session.role_name_to_uri(read_members(session_uri), role_name)
-  end
-
-  # === KB tools (kb-retrieval SPEC §5.3 option 1 — bridge-token authority) ====
-  #
-  # The orchestrator-catalog path: the kb tool dispatches `kb.query` / `kb.ingest`
-  # into a `kb`×native agent in the orchestrator's OWN workspace, carrying the
-  # ORCHESTRATOR's reconstructed caps (option 1 — bridge-token / orchestrator
-  # authority; the caller-caps model is the deferred option 2, §9.6). The target
-  # kb-agent is named (`kb_agent`) within the orchestrator's workspace — never an
-  # arbitrary cross-workspace URI (dispatch enforces same-workspace).
-
-  @doc """
-  `kb.query` MCP tool — retrieve top-k chunks from a `kb`-agent in the
-  orchestrator's workspace. Required `opts`: `:caller`, `:caps`,
-  `:workspace_uri`.
-  """
-  @spec kb_query(String.t(), String.t(), pos_integer(), keyword()) ::
-          {:ok, term()} | {:error, term()}
-  def kb_query(kb_agent, query, k, opts \\ [])
-      when is_binary(kb_agent) and is_binary(query) and is_integer(k) and k > 0 do
-    with {:ok, caller} <- require_opt(opts, :caller),
-         {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
-         {:ok, agent_uri} <- kb_agent_uri(workspace_uri, kb_agent) do
-      target = Ezagent.URI.with_action(agent_uri, :kb, :query)
-
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{query: query, k: k},
-        ctx: ctx(caller, caps)
-      })
-    end
-  end
-
-  @doc """
-  `kb.ingest` MCP tool — ingest one source document into a `kb`-agent in the
-  orchestrator's workspace. Required `opts`: `:caller`, `:caps`,
-  `:workspace_uri`.
-  """
-  @spec kb_ingest(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  def kb_ingest(kb_agent, source_uri, opts \\ [])
-      when is_binary(kb_agent) and is_binary(source_uri) do
-    with {:ok, caller} <- require_opt(opts, :caller),
-         {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
-         {:ok, agent_uri} <- kb_agent_uri(workspace_uri, kb_agent) do
-      target = Ezagent.URI.with_action(agent_uri, :kb, :ingest)
-
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{source_uri: source_uri},
-        ctx: ctx(caller, caps)
-      })
-    end
-  end
-
-  # Build the kb-agent URI in the orchestrator's OWN workspace (never a
-  # caller-named cross-workspace target — dispatch also enforces same-workspace).
-  defp kb_agent_uri(%URI{} = workspace_uri, kb_agent) do
-    ws = Ezagent.URI.workspace_name!(workspace_uri)
-    {:ok, Ezagent.URI.agent(ws, kb_agent)}
-  rescue
-    _ -> {:error, {:invalid_kb_agent, kb_agent}}
   end
 end

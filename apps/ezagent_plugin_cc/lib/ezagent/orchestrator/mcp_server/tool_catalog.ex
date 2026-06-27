@@ -260,9 +260,9 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
         "name" => "kb_ingest",
         "description" =>
           "Ingest one source document into a knowledge-base agent (a `kb`-role " <>
-            "agent in your workspace). The source is referenced by a " <>
-            "resource:// URI; re-ingesting the same source replaces its chunks. " <>
-            "Requires the kb.ingest capability (distinct from kb.query).",
+            "agent in your workspace). The source is referenced by a resource " <>
+            "URI in the `resource` scheme; re-ingesting the same source replaces " <>
+            "its chunks. Requires the kb.ingest capability (distinct from kb.query).",
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
@@ -273,7 +273,8 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
             "source_uri" => %{
               "type" => "string",
               "description" =>
-                "resource://<ws>/kb-source/<name> URI of the document to ingest."
+                "A resource-scheme URI of the form " <>
+                  "resource:[//]<ws>/kb-source/<name> pointing at the document to ingest."
             }
           },
           "required" => ["kb_agent", "source_uri"]
