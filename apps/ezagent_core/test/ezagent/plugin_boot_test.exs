@@ -191,13 +191,16 @@ defmodule Ezagent.Plugin.BootTest do
       Supervisor.stop(sup_pid)
     end
 
-    test "registers each declared role recipe by name in RoleRegistry (RF-4)" do
+    # role-as-data (SPEC §4): boot is the SEED SOURCE — each `roles/0` recipe is
+    # dispatched through the `Ezagent.Plugin.RoleSeedHook` seam (the role store
+    # lives downstream in ezagent_domain_agent, so core only dispatches). This
+    # asserts the core contract: boot forwards every declared recipe to the seam.
+    test "dispatches each declared role recipe through the RoleSeedHook seam (RF-4 / role-as-data §4)" do
       role_name = "boot-role-#{System.unique_integer([:positive])}"
 
-      on_exit(fn -> :ets.delete(Ezagent.RoleRegistry.table(), role_name) end)
-
-      # An unknown role name is absent before boot.
-      assert :error == Ezagent.RoleRegistry.lookup(role_name)
+      :ok = Ezagent.Plugin.RoleSeedHook.register(Ezagent.TestSupport.RoleSeedHookProbe)
+      :ok = Ezagent.TestSupport.RoleSeedHookProbe.attach(self())
+      on_exit(fn -> Ezagent.TestSupport.RoleSeedHookProbe.detach() end)
 
       Process.put({:role_name, __MODULE__}, role_name)
 
@@ -223,12 +226,9 @@ defmodule Ezagent.Plugin.BootTest do
 
       assert {:ok, sup_pid} = Ezagent.Plugin.boot(RolePublishingPlugin)
 
-      # The plugin's role is registered + looked up by name → a validated Role.
-      assert {:ok, %Ezagent.Role{name: ^role_name, skills: ["some-skill"], prompt: "be helpful"}} =
-               Ezagent.RoleRegistry.lookup(role_name)
-
-      # An unknown name still misses.
-      assert :error == Ezagent.RoleRegistry.lookup("no-such-role-#{role_name}")
+      # The plugin's role recipe reached the seed seam verbatim.
+      assert_received {:seed_role,
+                       %{name: ^role_name, skills: ["some-skill"], prompt: "be helpful"}}
 
       Supervisor.stop(sup_pid)
     end

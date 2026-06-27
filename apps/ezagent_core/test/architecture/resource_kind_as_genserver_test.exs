@@ -69,7 +69,7 @@ defmodule EzagentCore.Architecture.ResourceKindAsGenserverTest do
       source = """
       defmodule SomeApp do
         def boot do
-          Ezagent.RoleRegistry.register(%{name: "kanban-manager"})
+          Ezagent.AgentFlavorRegistry.register(%{flavor: "kanban-manager"})
           Registry.register(MyRegistry, :key, :value)
         end
       end
