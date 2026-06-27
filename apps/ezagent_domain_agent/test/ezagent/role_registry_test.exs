@@ -68,6 +68,31 @@ defmodule Ezagent.Agent.RoleRegistryTest do
     assert role == expected
   end
 
+  test "read-through parity: requested_caps round-trip to ATOM values (== in-memory recipe)",
+       %{name: name, system_ws: ws} do
+    # A recipe with a behavior + a requested cap on it. The in-memory %Role{}
+    # (what the old compiled lookup returned) carries atom-valued caps. The
+    # seeded role MUST rehydrate to the SAME atom-valued shape (not JSON strings)
+    # so a built-in and a user role instantiate identically (SPEC §10).
+    recipe = %{
+      name: name,
+      behaviors: [Ezagent.Behavior.Terminable],
+      requested_caps: [%{behavior: Ezagent.Behavior.Terminable, action: :terminate}]
+    }
+
+    {:ok, in_memory} = Ezagent.Role.new(recipe)
+
+    {:ok, :seeded} = RoleRegistry.seed_role_if_absent(recipe)
+    :ok = RoleRegistry.flush_cache()
+
+    assert {:ok, rehydrated} = RoleRegistry.lookup(ws, name)
+    # Byte-identical to the in-memory recipe — caps carry MODULE + ATOM values.
+    assert rehydrated == in_memory
+
+    assert [%{behavior: Ezagent.Behavior.Terminable, action: :terminate}] =
+             rehydrated.requested_caps
+  end
+
   test "behaviors round-trip through ConfigStore (atom → string → loaded module)",
        %{name: name, system_ws: ws} do
     {:ok, :seeded} =

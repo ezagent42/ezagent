@@ -126,6 +126,7 @@ defmodule Ezagent.Agent.RoleRegistry do
       {:ok, object} ->
         case Role.new(object.body) do
           {:ok, %Role{} = role} ->
+            role = canonicalize_cap_values(role)
             :ets.insert(@table, {{ws, name}, role})
             {:ok, role}
 
@@ -137,6 +138,52 @@ defmodule Ezagent.Agent.RoleRegistry do
         :error
     end
   end
+
+  # READ-THROUGH PARITY (SPEC §10 byte-identical invariant). `Role.new/1`
+  # atomizes cap KEYS but deliberately leaves cap VALUES uncanonicalized
+  # (deferring behavior-string→module / action-string→atom to `Role.CapMint`).
+  # That is fine for an IN-MEMORY recipe (values arrive as atoms), but a recipe
+  # READ BACK from ConfigStore round-trips its `requested_caps` values through
+  # JSON → they return as STRINGS. To make a SEEDED role byte-identical to the
+  # same recipe held in memory (so a built-in and a user role instantiate
+  # identically — the core role-as-data invariant), canonicalize the cap VALUES
+  # here at the rehydrate boundary, exactly as `Role.CapMint` does (idempotent:
+  # CapMint re-canonicalizing an already-atom value is a no-op). Mirrors how
+  # `behaviors` are decoded back to modules on rehydrate.
+  defp canonicalize_cap_values(%Role{requested_caps: caps} = role) do
+    %{role | requested_caps: Enum.map(caps, &canon_cap_values/1)}
+  end
+
+  defp canon_cap_values(cap) when is_map(cap) do
+    cap
+    |> maybe_canon(:behavior, &canon_module/1)
+    |> maybe_canon(:action, &canon_atom/1)
+  end
+
+  defp maybe_canon(cap, key, fun) do
+    case Map.fetch(cap, key) do
+      {:ok, value} -> Map.put(cap, key, fun.(value))
+      :error -> cap
+    end
+  end
+
+  # string module-name → existing module atom (no atom-table growth); an
+  # unresolved string is LEFT as-is so the downstream chokepoint rejects it.
+  defp canon_module(s) when is_binary(s) do
+    String.to_existing_atom(if String.starts_with?(s, "Elixir."), do: s, else: "Elixir." <> s)
+  rescue
+    ArgumentError -> s
+  end
+
+  defp canon_module(v), do: v
+
+  defp canon_atom(s) when is_binary(s) do
+    String.to_existing_atom(s)
+  rescue
+    ArgumentError -> s
+  end
+
+  defp canon_atom(v), do: v
 
   # Caller-ws read, then the system-ws fallback (the ONE cross-ws wrinkle, §3).
   defp resolve_object(ws, name) do

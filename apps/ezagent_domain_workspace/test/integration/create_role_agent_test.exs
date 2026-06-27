@@ -24,7 +24,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Workspace.RoleTestBehavior
-  alias Ezagent.{AgentFlavorRegistry, AgentPassiveAttributes, RoleRegistry, UriQuery}
+  alias Ezagent.{AgentFlavorRegistry, AgentPassiveAttributes, Agent.RoleRegistry, UriQuery}
 
   @flavor "rf5a-native"
   @role_name "rf5a-test-role"
@@ -60,13 +60,15 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
 
     # Register a role recipe: one UNDECLARED behavior + one requested cap on it +
     # passive: true.
-    :ok =
-      RoleRegistry.register(%{
+    {:ok, _} =
+      RoleRegistry.seed_role_if_absent(%{
         name: @role_name,
         passive: true,
         behaviors: [RoleTestBehavior],
         requested_caps: [%{behavior: RoleTestBehavior, action: :ping}]
       })
+
+    RoleRegistry.flush_cache()
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

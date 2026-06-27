@@ -61,7 +61,7 @@ defmodule Ezagent.PluginPy.NpRoleTest do
 
     test "the recipe is registered in RoleRegistry under \"np\"" do
       # boot registered it; lookup resolves the validated %Role{}.
-      assert {:ok, %Ezagent.Role{name: "np", script: script}} = Ezagent.RoleRegistry.lookup("np")
+      assert {:ok, %Ezagent.Role{name: "np", script: script}} = Ezagent.Agent.RoleRegistry.lookup("np")
       assert is_binary(script) and script =~ "_SAFE_NAMES"
     end
   end

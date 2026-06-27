@@ -21,7 +21,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.{AgentFlavorRegistry, RoleRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Agent.RoleRegistry}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "k2-native"
@@ -55,7 +55,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
       })
 
     # The REAL kanban-manager recipe (K1) — registered so the create path wires it.
-    :ok = RoleRegistry.register(KanbanApp.kanban_manager_recipe())
+    {:ok, _} = RoleRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     {:ok, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

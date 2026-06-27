@@ -116,7 +116,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # cc plugin's `roles/0` populates it at boot). Register it explicitly here
       # so the unit test exercises the real registry-sourced path rather than a
       # bespoke compose.
-      :ok = Ezagent.RoleRegistry.register(OrchestratorRole.recipe())
+      :ok = Ezagent.Agent.RoleRegistry.register(OrchestratorRole.recipe())
 
       assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_role()
       assert "ezagent-session-orchestrator" in sandbox_content.skills
@@ -132,14 +132,14 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # by removing the entry, asserting the fail-closed result, then RESTORING
       # it (other suites depend on the boot-registered role).
       name = OrchestratorRole.name()
-      had_entry? = match?({:ok, _}, Ezagent.RoleRegistry.lookup(name))
-      :ets.delete(Ezagent.RoleRegistry.table(), name)
+      had_entry? = match?({:ok, _}, Ezagent.Agent.RoleRegistry.lookup(name))
+      :ets.delete(Ezagent.Agent.RoleRegistry.table(), name)
 
       try do
         assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
                  Bootstrap.resolve_orchestrator_role()
       after
-        if had_entry?, do: :ok = Ezagent.RoleRegistry.register(OrchestratorRole.recipe())
+        if had_entry?, do: :ok = Ezagent.Agent.RoleRegistry.register(OrchestratorRole.recipe())
       end
     end
   end

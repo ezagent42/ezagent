@@ -19,7 +19,7 @@ defmodule Ezagent.World.KanbanDataTest do
 
   alias Ezagent.World.KanbanData
   alias Ezagent.Workspace
-  alias Ezagent.{AgentFlavorRegistry, RoleRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Agent.RoleRegistry}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "world-kanban-native"
@@ -50,7 +50,7 @@ defmodule Ezagent.World.KanbanDataTest do
         cap_policy: &cap_policy/1
       })
 
-    :ok = RoleRegistry.register(KanbanApp.kanban_manager_recipe())
+    {:ok, _} = RoleRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     caller = Ezagent.Entity.User.admin_uri()
     caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])

@@ -13,7 +13,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRoleTest do
   alias Ezagent.Orchestrator.CcOrchestratorSeed
   alias Ezagent.Orchestrator.OrchestratorRole
   alias Ezagent.Role
-  alias Ezagent.RoleRegistry
+  alias Ezagent.Agent.RoleRegistry
 
   describe "recipe/0 — a well-formed flavor-agnostic Role" do
     test "Role.new/1 accepts the recipe (no flavor field, valid shape)" do
