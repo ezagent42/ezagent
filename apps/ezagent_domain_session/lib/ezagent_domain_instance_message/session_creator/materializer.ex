@@ -145,6 +145,72 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     end
   end
 
+  @doc """
+  Grant the session OWNER, at create, the participant-TEARDOWN authority (F7
+  PR-B, SPEC §2.2 / §3.5 — the cap-model change).
+
+  Grants two owner-self-rooted, scope-bounded caps:
+
+      cap(:agent, Ezagent.Behavior.Sandbox,    :destroy,   {:spawned_by, owner_uri}, ws)
+      cap(:agent, Ezagent.Behavior.Terminable, :terminate, {:spawned_by, owner_uri}, ws)
+
+  Both `granted_by: owner_uri` — the owner IS the lineage root, so this is
+  self-rooted and #154-clean (no forged/unowned cap). `{:spawned_by, %URI{}}` is
+  scope-bounded → `IdentityAdmin.rule_cap_bounded?/1` is true → authorized via
+  the `{:rule, …}` branch, the SAME legality class as the orchestrator's cap #2.
+
+  ## Why this is the lever (SPEC §2.2)
+
+  The durable lineage chain is `worker → orchestrator → owner` (the orchestrator
+  spawns the worker; the owner spawns the orchestrator). `spawned_in_lineage?`
+  walks it transitively, so this owner cap authorizes `sandbox.destroy` on EVERY
+  worker spawned into ANY of the owner's sessions WITHOUT the orchestrator's cap
+  #2 and WITHOUT re-parenting the lineage (which would break cap #2 + credential
+  `validate_source_owner`). The lineage table is durable, so the reap works even
+  when the orchestrator has crashed (the F7 headline bug).
+
+  The instance is `{:spawned_by, owner_uri}` (NOT session-scoped), so this is
+  the SAME cap for every session of this owner — granted once per owner; the
+  re-grant on the owner's second session is a logical-equality no-op (idempotent
+  via `Session.cap_equal_ignoring_metadata?/2`).
+  """
+  @spec grant_owner_participant_teardown_cap(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_owner_participant_teardown_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
+    wants =
+      for {behavior, action} <- [
+            {Ezagent.Behavior.Sandbox, :destroy},
+            {Ezagent.Behavior.Terminable, :terminate}
+          ] do
+        %Ezagent.Capability{
+          kind: :agent,
+          behavior: behavior,
+          action: action,
+          instance: {:spawned_by, owner_uri},
+          workspace_uri: workspace_uri,
+          granted_by: owner_uri,
+          granted_at: nil
+        }
+      end
+
+    current =
+      EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri)
+
+    Enum.reduce_while(wants, :ok, fn want, :ok ->
+      if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
+        {:cont, :ok}
+      else
+        case Ezagent.Identity.Grant.grant_cap(
+               owner_uri,
+               want,
+               {:rule, :session_participation, owner_uri}
+             ) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {:participant_teardown_cap_grant_failed, reason}}}
+        end
+      end
+    end)
+  end
+
   def grant_owner_orchestrator_admin_cap(
         %URI{} = session_uri,
         %URI{} = owner_uri,

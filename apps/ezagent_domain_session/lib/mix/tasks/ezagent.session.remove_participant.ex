@@ -20,9 +20,10 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
     The session OWNER (or the participant itself, for self-leave) is authorized;
     a non-owner non-participant caller is denied.
 
-  PR-A SCOPE: removing a USER or an INVITED (non-spawned) agent works. Removing a
-  worker the session SPAWNED returns `:spawned_participant_teardown_pending_pr_b`
-  (the worker-teardown cap-model change is PR-B). Exits non-zero on error.
+  Isomorphic over participant type (F7 PR-A + PR-B): removing a USER or an
+  INVITED (non-spawned) agent is membership-only; removing a worker the session
+  SPAWNED reaps it (config-dir GC + termination + lineage forget) under the
+  owner's teardown cap. Exits non-zero on error.
   """
   use Mix.Task
 

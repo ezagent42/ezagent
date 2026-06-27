@@ -525,6 +525,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                effective_owner,
                workspace_uri
              ),
+           # F7 PR-B — grant the owner the participant-TEARDOWN authority (the
+           # `{:spawned_by, owner_uri}` cap-model change, SPEC §2.2) so the
+           # session can reap workers it spawned WITHOUT the orchestrator's cap
+           # #2 (durable lineage; dead-orchestrator-safe). `granted_by: owner`,
+           # #154-clean. Idempotent — the same owner-scoped cap across sessions.
+           :ok <-
+             Materializer.grant_owner_participant_teardown_cap(
+               effective_owner,
+               workspace_uri
+             ),
            :ok <-
              materialize_template_team(
                session_uri,

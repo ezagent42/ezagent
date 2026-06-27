@@ -499,13 +499,41 @@ defmodule Ezagent.Behavior.Session.Membership do
   The membership-removal effect list, shared by `:leave` and the
   `:remove_participant` primitive (F7 PR-A §3.2 step 3). Drops `member_uri` +
   its monitor + last_seen and emits the `{:member_left}` broadcast — the
-  surface-agnostic convergence signal (§5.4). Demonitors as a side effect (the
-  live ref is dead once the member is gone). Factored out so
+  surface-agnostic convergence signal (§5.4). Factored out so
   `remove_participant` runs the SAME leave (leave-FIRST, then teardown) and the
   `{:member_left}` broadcast always fires.
+
+  The `:leave` path has NO fallible follow-up step, so it demonitors the stale
+  ref immediately. The `:remove_participant` path uses `leave_effects_with_ref/2`
+  instead so it can defer the demonitor to apply-time, AFTER the fallible
+  prune/teardown succeeds (F7 PR-B / codex PR-A LOW — see that function).
   """
   @spec leave_effects(URI.t(), map()) :: [term()]
   def leave_effects(%URI{} = member_uri, ctx) do
+    {ref_to_remove, effects} = leave_effects_with_ref(member_uri, ctx)
+    if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
+    effects
+  end
+
+  @doc """
+  Like `leave_effects/2` but returns `{stale_monitor_ref | nil, effects}` and
+  does NOT demonitor — the caller decides WHEN to `Process.demonitor` (codex
+  PR-A LOW, F7 PR-B step 4).
+
+  ## Why the split
+
+  `Process.demonitor(ref, [:flush])` is an irreversible side-effect. The old
+  `leave_effects/2` ran it EAGERLY during effect-COMPUTATION, before
+  `remove_participant`'s fallible routing-prune / worker-teardown. On a prune or
+  teardown FAILURE the handler returns `{:error, _}` and the membership `{:set}`
+  effects are DISCARDED — so the member kept its membership but had ALREADY lost
+  its monitor (a silently un-monitored live member). Moving the demonitor to
+  apply-time (the caller invokes it only after prune+teardown succeed, just
+  before returning `{:ok, …}`) keeps the member fully monitored on any failure
+  path — membership + monitor commit or roll back together.
+  """
+  @spec leave_effects_with_ref(URI.t(), map()) :: {reference() | nil, [term()]}
+  def leave_effects_with_ref(%URI{} = member_uri, ctx) do
     members = ctx[:read].(:members, %{})
     # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
     monitors = (ctx[:transients] || %{})[:monitors] || %{}
@@ -513,17 +541,18 @@ defmodule Ezagent.Behavior.Session.Membership do
 
     {ref_to_remove, new_monitors} = Delivery.pop_monitor_ref(monitors, member_uri)
 
-    if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
-
     new_members = Map.delete(members, member_uri)
     new_last_seen = Map.delete(last_seen, member_uri)
 
-    [
-      {:set, :members, new_members},
-      # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
-      {:set_transient, :monitors, new_monitors},
-      {:set, :last_seen, new_last_seen}
-    ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})
+    effects =
+      [
+        {:set, :members, new_members},
+        # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
+        {:set_transient, :monitors, new_monitors},
+        {:set, :last_seen, new_last_seen}
+      ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})
+
+    {ref_to_remove, effects}
   end
 
   @doc """
@@ -536,12 +565,16 @@ defmodule Ezagent.Behavior.Session.Membership do
      `{:error, :unauthorized}` before any mutation (fail-closed) — defense-in-depth
      on the dispatch chokepoint's `:remove_participant` cap.
   2. **Provenance branch (§3.2, NOT user-vs-agent).** A participant SPAWNED INTO
-     this session carries a `:source_template_uri` facet → spawned worker → the
-     PR-B stub `{:error, :spawned_participant_teardown_pending_pr_b}` WITHOUT any
-     mutation (no half-done teardown). Facet absent → user / invited agent →
-     membership-only (LIVE).
-  3. **Leave-FIRST (§5.4).** `leave_effects/2` (emits `{:member_left}` →
-     convergence) THEN prune routing (shared `RoutingPrune`, session-scoped).
+     this session (carries a `:source_template_uri` facet AND is in the owner's
+     spawn lineage) → reap its worker (config-dir GC + scheduled termination)
+     under the OWNER's `{:spawned_by, owner_uri}` teardown cap, then forget its
+     lineage (`Teardown.teardown_participant_resources/4`, `:strict`). Facet
+     absent / not-in-lineage → user / invited agent → membership-only.
+  3. **Leave-FIRST + atomic (§5.4 / F7 PR-B).** Compute the leave effects (NO
+     eager demonitor), reap the worker (`:strict` — a missing teardown cap FAILS
+     CLOSED before anything irreversible), prune routing (shared `RoutingPrune`,
+     session-scoped), THEN demonitor at apply-time and return — so a teardown or
+     prune failure leaves membership + monitor intact (codex PR-A LOW fix).
 
   Returns `{:ok, map, effects}` / `{:ok, :already_removed, []}` / `{:error, _}`.
   """
@@ -577,46 +610,39 @@ defmodule Ezagent.Behavior.Session.Membership do
 
   defp do_remove_participant(%URI{} = participant_uri, participant_meta, ctx)
        when is_map(participant_meta) do
-    if spawned_into_session?(participant_meta) do
-      # §3.2 — spawned-worker teardown is the PR-B cap-model change. Return a
-      # clearly-marked not-implemented error WITHOUT any membership mutation
-      # (no half-done teardown).
-      {:error, :spawned_participant_teardown_pending_pr_b}
-    else
-      session_uri = ctx[:self_uri]
+    session_uri = ctx[:self_uri]
+    owner_uri = ctx[:read].(:owner_uri, nil)
 
-      # Step 3 — leave FIRST (emits {:member_left} → convergence), THEN prune.
-      leave = leave_effects(participant_uri, ctx)
+    # Step 3 — compute the leave effects FIRST (emits {:member_left} →
+    # convergence) but DEFER the demonitor (codex PR-A LOW). Then reap the
+    # spawned worker (`:strict` — fail-closed on a missing teardown cap, BEFORE
+    # the irreversible routing prune), then prune routing.
+    {leave_ref, leave} = leave_effects_with_ref(participant_uri, ctx)
 
-      case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+    with {:ok, torn_down} <-
+           Ezagent.Behavior.Session.Teardown.teardown_participant_resources(
+             participant_uri,
+             participant_meta,
+             owner_uri,
+             :strict
+           ),
+         {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} <-
+           Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
              session_uri,
              participant_uri
            ) do
-        {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
-          {:ok,
-           %{
-             status: :removed,
-             torn_down: :membership_only,
-             deleted_rules: deleted,
-             repointed_rules: repointed
-           }, leave}
+      # Teardown + prune both succeeded → demonitor the stale ref at apply-time
+      # (the membership `{:set}` effects below commit with this), so any earlier
+      # failure left membership + monitor intact.
+      if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
-        {:error, _reason} = err ->
-          # Prune failure FAILS removal atomically — no membership mutation is
-          # applied (the effects are discarded with the error return).
-          err
-      end
-    end
-  end
-
-  # §3.2 provenance discriminator — was this participant SPAWNED INTO this
-  # session? A spawned/managed worker carries the `:source_template_uri` spawn
-  # facet (set at join). Invited agents + users have no such facet.
-  defp spawned_into_session?(participant_meta) when is_map(participant_meta) do
-    case Map.get(participant_meta, :source_template_uri) do
-      %URI{} -> true
-      uri when is_binary(uri) and uri != "" -> true
-      _ -> false
+      {:ok,
+       %{
+         status: :removed,
+         torn_down: torn_down,
+         deleted_rules: deleted,
+         repointed_rules: repointed
+       }, leave}
     end
   end
 
