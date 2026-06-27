@@ -88,6 +88,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # be resolved from ws B.
     {Ezagent.Socialware.ConfigObject, "socialware_config_objects"},
     {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"},
+    # CR (change-request) config governance (SPEC 2026-06-26 rev 3) — both
+    # carry workspace_uri NOT NULL (invariant #14).
+    {Ezagent.Socialware.ConfigChangeRequest, "socialware_config_change_requests"},
+    {Ezagent.Socialware.ConfigChangeItem, "socialware_config_change_items"},
     # #82/#896 protocol_api — an inbound API key authorizes an external caller to
     # reach a specific agent in a specific workspace (`workspace_uri` NOT NULL).
     # Per-tenant by definition: a key minted for ws A must never grant access to
