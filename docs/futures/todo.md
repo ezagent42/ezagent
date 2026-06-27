@@ -41,10 +41,19 @@
   in the same run). FOLLOW-UP needed, scoped to seed-setup spawn-readiness (e.g.
   await Kind `:ready` before the seed assertion / allow the spawned Kinds onto the
   test owner). Lead to triage.
+- **Local ubuntu-CI repro harness (chore/ci-docker-local 2026-06-27)** — closes the
+  "not-darwin-reproducible" gap below: `make ci.docker` boots the *same* linux/OTP/
+  postgres-16 env CI uses in a CPU-constrained container, and `make ci.repro` hunts the
+  ubuntu-only timing race that `mix ci.local` is green on. Files:
+  `docker/Dockerfile.ci`, `docker/docker-compose.ci.yml`, `docker/ci-runner.sh`,
+  `Makefile`; guide: `docs/guide/ci-docker-local.md`. The deeper flake *fix* (Sandbox
+  shared-mode stabilisation / seed spawn-readiness) is the separate follow-up above;
+  this harness is the place to reproduce + verify it off-runner.
 - **Residual / not-darwin-reproducible** — the underlying sandbox-revert timing
   race (Sandbox shared-mode under the FULL ubuntu umbrella at `max_cases: 8`) is
   GREEN on macOS / RED on the runner (diagnosis §3), so it is not locally
-  reproducible and not provably "fixed" from a dev box. The unmask converts the
+  reproducible on bare macOS and not provably "fixed" from a dev box — **use the
+  `make ci.repro` ubuntu-docker harness above to surface it locally.** The unmask converts the
   whole *class* of silent-`[]` paths into a loud, diagnosable failure — the
   durable lever, NOT a cure. If the flake recurs on CI, the unmasked error now
   names the exact failing query/Kind. (The DataCase "stabilize shared mode" fix

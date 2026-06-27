@@ -9,6 +9,7 @@ section is the discoverable home for reusable operating procedures.)
 | guide | what |
 |-------|------|
 | [Dockerized E2E (disposable stack)](docs/guide/dockerized-e2e.md) | spin a clean isolated docker stack + run E2E (never hand-patch dev/prod) |
+| [Local ubuntu-CI harness](docs/guide/ci-docker-local.md) | `make ci.docker` — run the **ubuntu CI env locally** to reproduce the ubuntu-only timing flakes (macOS can't) + a deploy-parity smoke |
 | [World plugin E2E seed + dev server](docs/guide/world-e2e-seed.md) | seed a session with joined members on an isolated home, then visually verify the world conversation surface with agent-browser |
 
 > Add new operational how-tos under `docs/guide/<topic>.md` and index them here.
@@ -53,3 +54,8 @@ conscious, verified choice rather than a blind push. (It is a catch-net, not a
 cure: the recurring CI flake is a timing race — green on macOS, red on the
 ubuntu runner — so a green local run does not *guarantee* green CI; see
 `docs/together/2026-06-27/notes/ci-flake-diagnosis.md`.)
+
+**To actually reproduce (not just gate) the ubuntu-only flake on a Mac**, use the
+**local ubuntu-CI docker harness** — `make ci.docker` runs the *same* CI chain in a
+CPU-constrained linux container, and `make ci.repro` hunts the timing race that
+`mix ci.local` is green on. See [`docs/guide/ci-docker-local.md`](docs/guide/ci-docker-local.md).

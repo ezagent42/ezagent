@@ -1,0 +1,68 @@
+# Local-ubuntu-CI harness — reproduce the ubuntu-only CI flakes on a linux container,
+# which macOS cannot do (the race is timing-sensitive to scheduler/core count + the
+# ubuntu runner's owner-teardown churn). See docs/guide/ci-docker-local.md.
+#
+# Usage (or just `make ci.docker` / `make ci.repro` from the repo root):
+#   docker compose -f docker/docker-compose.ci.yml build
+#   docker compose -f docker/docker-compose.ci.yml run --rm ci gate     # mirror CI once
+#   docker compose -f docker/docker-compose.ci.yml run --rm ci repro    # hunt the flake
+#   docker compose -f docker/docker-compose.ci.yml down -v              # teardown
+
+services:
+  postgres:
+    # EXACTLY CI's service image (.github/workflows/ci.yml services.postgres = postgres:16).
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      POSTGRES_DB: postgres
+    healthcheck:
+      # mirror CI's health-cmd
+      test: ["CMD-SHELL", "pg_isready -U ezagent_pg_compat"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      # keep PG data in RAM — faster + nothing to clean up; this is a disposable CI DB.
+      - /var/lib/postgresql/data
+
+  ci:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ci
+      args:
+        # proxy reaches the host's clash via host.docker.internal (override on the CLI:
+        #   DOCKER_BUILD_PROXY=http://host.docker.internal:7897 docker compose ... build)
+        HTTP_PROXY: "${DOCKER_BUILD_PROXY:-}"
+        HTTPS_PROXY: "${DOCKER_BUILD_PROXY:-}"
+    image: ezagent-ci-local:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      MIX_ENV: test
+      # NO MIX_TEST_PARTITION — mirror CI (one shared DB across all umbrella child BEAMs).
+      # repro-hunt knobs (override on the CLI):
+      SCHEDULERS: "${SCHEDULERS:-4}"
+      MAX_CASES: "${MAX_CASES:-8}"
+      SEEDS: "${SEEDS:-}"
+      RESET_DB_EACH: "${RESET_DB_EACH:-0}"
+    # --- THE CORE CONSTRAINT (the flake engine) ---
+    # cpuset = AFFINITY (BEAM sees N cores -> starts N schedulers). `--cpus` quota does
+    # NOT do this (nproc still reports all host cores). CI's ubuntu-latest is ~4 vCPU
+    # (its max_cases:8 == ExUnit default schedulers_online*2). Mirror = 4; amplify the
+    # race = 2 (fewer cores + oversubscribed max_cases -> more owner-teardown interleave).
+    # Override per run:  CPUSET=0-1 SCHEDULERS=2 docker compose ... run --rm ci repro
+    cpuset: "${CPUSET:-0-3}"
+    # NO bind-mount of /app: the source + fetched deps + compiled `_build` are baked into
+    # the IMAGE at /app (docker/Dockerfile.ci). Running off the image keeps everything on
+    # the container's own overlay fs — NOT a mac virtiofs bind-mount, whose latency would
+    # perturb the very scheduler/owner timing the repro depends on. Within one
+    # `run --rm ci repro` the seed-sweep iterations reuse the same `_build`; rebuild the
+    # image to pick up source changes. (Logs are emitted to /app/tmp inside the container;
+    # use `... run ci repro | tee` on the host to keep them, or `cp` from a kept container.)
+    init: true
