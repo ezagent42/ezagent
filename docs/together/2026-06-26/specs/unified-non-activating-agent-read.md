@@ -399,6 +399,19 @@ not the view.)
   sprayed across plugins).
 - **Lifecycle gate** (`ezagent.check_invariants.lifecycle`): the reader does no engine-internal
   calls inside a Behavior handler — it is a plain domain facade, not a Behavior. Untouched.
+- **NEW — `no_surface_read_dispatch` arch-gate (the anti-recurrence gate; full design §11).** A new
+  probe added to `CapCheckOnlyAtChokepointTest`'s `@probes` list (p14): it greps the
+  presentation/surface dirs for a dispatch of any of the **three consolidated read-class
+  `(behavior, action)` pairs** — `(:config_evolve, :read_cascade)`, `(:identity, :list_caps)`,
+  `(:sandbox, :read)` — and FAILS if any is found. This makes "a future surface re-introduces an
+  ad-hoc activate-on-read" structurally un-reintroducible: the consolidation §4 is a one-time
+  cleanup, this gate is the regression-lock that keeps it cleaned. **It is the LAST step of the
+  unified-read implementation** — see §9 (it can only go green once all three reads are already
+  migrated onto `Domain.Agent.read_*`). Mirrors the established `cap_check_only_at_chokepoint` probe
+  machinery exactly (same `%{id, desc, pattern, allowlist}` shape, same surface-dir scan, same
+  failure-message format). Does NOT forbid WRITE/action dispatch from surfaces (those legitimately
+  activate) and does NOT touch the live PTY-buffer read (no persisted slice, never dispatched) — see
+  §11.2 for the read-vs-write classification and the explicit carve-outs.
 
 ---
 
@@ -442,6 +455,36 @@ spawned), assert `KindRegistry.lookup == :error` **before AND after** the read.
    asserting the `domain.agent.ex` source has zero `Capability.matches?` occurrences — because the
    global p3 probe allowlists the whole session dir and therefore can't enforce this for the new
    reader (§7 caveat). Guarantees the reader routes the match through `caps_authorize?`.
+10. **Anti-recurrence regression-lock (the gate — §11). Green ONLY after migration.** The new p14
+    probe (added to `CapCheckOnlyAtChokepointTest.@probes`) scans the surface dirs
+    (`apps/ezagent_plugin_world/lib/`, `apps/ezagent_web/lib/`, the operator-CLI
+    `apps/*/lib/mix/tasks/`) and asserts **zero** occurrences of a dispatch of any of the three
+    consolidated read pairs `(:config_evolve, :read_cascade)`, `(:identity, :list_caps)`,
+    `(:sandbox, :read)`. This is the test that **fails today** (the `World.IdentityData` sandbox
+    read site dispatches `:sandbox/:read`) and only turns green once §9 step 3 has pointed every
+    surface read at `Domain.Agent.read_*`. It is therefore wired in as the **LAST** migration step
+    (§9 step 5) — landing the probe before the reads are migrated would red-bar CI immediately. It
+    is the durable proof that a FUTURE surface cannot re-add an activate-on-read: anyone who writes
+    `Invocation.dispatch(with_action(uri, :sandbox, :read), …)` (or either of the other two pairs)
+    in a surface file breaks p14.
+11. **Anti-recurrence POSITIVE control (the gate fires — green TODAY, no migration needed).** A unit
+    test that proves the p14 regex is not a vacuous/no-op pattern: construct a synthetic surface-file
+    fixture string containing `Ezagent.URI.with_action(uri, :sandbox, :read)` at a fake surface path
+    and assert p14's pattern **matches** it (and, symmetrically, that a WRITE dispatch
+    `with_action(uri, :pty, :write)` and the deliberately-kept-dispatchable
+    `with_action(uri, :identity, :list_api_keys)` read do **NOT** match). Without this, a broken
+    regex would let test 10 pass vacuously. Tests 10 (regression-lock) and 11 (positive control)
+    are kept **distinct** on purpose: 10 proves the tree is clean *after* migration; 11 proves the
+    detector actually detects, *before* (and independent of) migration.
+12. **Negative carve-out assertions (read-vs-write classification defensible, not asserted).** Two
+    explicit assertions that the gate does NOT false-positive on the two reads the SPEC intentionally
+    leaves live/dispatchable at the surface (§5 + §11.2): (a) the live **PTY-buffer** read path
+    (`Domain.Pty.Server.snapshot_buffer/1` / `World.IdentityData.pty_initial_buffer/1`) — which is a
+    direct function call, not a dispatch, and uses no read-class action atom — is not flagged; and
+    (b) the **`:list_api_keys`** surface dispatch (sensitive, data_owner/admin-gated, deliberately
+    excluded from the unified reader per §5) is not flagged. Together with test 11's write-dispatch
+    non-match, these pin the classification: the gate forbids EXACTLY the three consolidated
+    cap-gated read pairs, nothing wider.
 
 ---
 
@@ -453,8 +496,18 @@ spawned), assert `KindRegistry.lookup == :error` **before AND after** the read.
 2. Land the non-activating sandbox-slice reader at the sandbox owner facade; wire `read_sandbox/2`
    to it. Delete `World.IdentityData.sandbox_read/3` (the dispatch).
 3. Point `World.IdentityData` (config/caps/sandbox/extensions) at `Domain.Agent.read_*`; delete its
-   inline authz + read bodies; keep its render helpers.
+   inline authz + read bodies; keep its render helpers. **After this step, NO surface file dispatches
+   any of the three read pairs** — this is the precondition for step 5.
 4. Run the full invariant suite (§8.8) before any merge (memory `feedback_run_check_invariants_gate`).
+5. **LAST — land the `no_surface_read_dispatch` arch-gate (p14, §11) + its positive-control and
+   carve-out tests (§8.10–8.12).** The probe MUST be the final step, not the first. **Migration
+   reality:** p14 is a regression-lock that asserts *zero* forbidden read-dispatches in the surface
+   dirs — so it can only be added once steps 1–3 have ALREADY migrated all three reads onto
+   `Domain.Agent.read_*`. Adding the probe before the reads are migrated would red-bar CI on the very
+   sandbox dispatch (`:sandbox/:read`) this SPEC is removing. The gate does not *drive* the
+   migration; it *seals* it. (The positive-control test §8.11 and carve-out tests §8.12 are
+   independent of migration state and could land earlier, but ship them with the probe as one unit so
+   the gate arrives proven.)
 
 No back-compat shim: the per-site readers either become the owning slice facade (config/caps,
 unchanged) or are deleted (sandbox dispatch). Per `feedback_let_it_crash_no_workarounds`, the old
@@ -496,3 +549,196 @@ dispatch path is removed, not kept alongside.
   unified reader makes one call and the two-route logic lives once, next to `caps_authorize?`, in
   `ezagent_domain_identity`. Minor; affects only the seam shape, not the semantics. Lead's call on
   whether to add the helper now or inline in `Domain.Agent`.
+- **OQ-7 — surface-dir registry for the `no_surface_read_dispatch` gate (§11).** p14's scanned set
+  (`ezagent_plugin_world/lib`, `ezagent_web/lib`, `apps/*/lib/mix/tasks/`) is a hand-listed allowlist
+  of *where presentation lives*. When a NEW surface app is added (a second web app, a new console
+  plugin, an admin LV app), its `lib/` must be added to p14 or the gate silently stops covering it.
+  Confirm the lead is OK with this one-line maintenance obligation, or wants a stronger "any app
+  tagged `:surface` in mix config is scanned" auto-discovery (heavier; deferred unless asked). Flagged
+  per `feedback_flag_user_assist_steps` so it isn't a silent landmine.
+
+---
+
+## 11. The anti-recurrence arch-gate — `no_surface_read_dispatch` (lead-requested)
+
+### 11.0 Why this section exists (the gap the gate closes)
+
+§§1–9 PROVE the new reader is non-activating and CONSOLIDATE the three current per-site reads. They
+do **not** FORBID a *future* surface from re-introducing an ad-hoc activate-on-read — e.g. someone
+adds a new world/console/web LiveView next month and writes
+`Invocation.dispatch(with_action(uri, :sandbox, :read), …)` straight from the presentation layer
+because it's the first pattern they find, re-creating exactly the FP5/§0 activation bug this work
+removed. Consolidation is a one-time cleanup; without a gate it decays. This section adds the
+**regression-lock** that makes activate-on-read **structurally un-reintroducible** at the surface.
+
+### 11.1 The gate, concretely
+
+**Name:** `no_surface_read_dispatch`. **Form:** a new probe **p14** appended to the existing
+`EzagentCore.Invariants.CapCheckOnlyAtChokepointTest.@probes` list
+(`apps/ezagent_core/test/invariants/cap_check_only_at_chokepoint_test.exs`). It reuses that suite's
+proven `%{id, desc, pattern, allowlist}` machinery and its source-tree scan (no runtime BEAM needed),
+so it slots into `mix ezagent.check_invariants` with zero new infrastructure — exactly mirroring how
+`no_flavor_refs_in_core` / p1–p13 already work.
+
+**Forbidden dispatches (the THREE consolidated read pairs, and ONLY these):**
+
+| dispatch pair (`with_action(uri, <behavior>, <action>)`) | the unified reader that replaces it |
+|----------------------------------------------------------|-------------------------------------|
+| `(:config_evolve, :read_cascade)` | `Ezagent.Domain.Agent.read_config/3` |
+| `(:identity, :list_caps)`         | `Ezagent.Domain.Agent.read_caps/2`  |
+| `(:sandbox, :read)`               | `Ezagent.Domain.Agent.read_sandbox/2` |
+
+These are the dispatch **action atoms** verified at the chokepoint (config dispatches as the
+`:config_evolve` behavior / `:read_cascade` action — `apps/ezagent_domain_agent/lib/ezagent/agent/config.ex`
+docstring + `authorize_read_cascade` `action: :read_cascade`; caps as `:identity`/`:list_caps` —
+`apps/ezagent_domain_identity/lib/ezagent/identity.ex:45`
+`with_action(user_uri, :identity, :list_caps)`; sandbox as `:sandbox`/`:read` — the runtime gate
+`cap(:agent, Sandbox, :read)`). The gate keys on the **dispatch atom**, not the cap behavior (config's
+cap behavior is `Manage`, but it is *dispatched* as `:config_evolve` — match the dispatch).
+
+> **Decision D5 — key on the exact (behavior, action) PAIRS, not a read-verb heuristic.** A broad
+> `~r/list_|read_|get_/` regex is rejected: it would false-positive on (a) `(:identity,
+> :list_api_keys)` — a READ the SPEC **deliberately keeps dispatchable** from the surface (sensitive,
+> data_owner/admin-gated, excluded from the unified reader, §5) — and (b) `(:kanban, :get_tree)` /
+> other legitimate surface reads. Keying on exactly the three pairs the unified reader consolidates
+> makes **gate-scope == reader-scope**: the gate forbids precisely what the reader replaces, no more.
+
+**Scanned dirs (the presentation/surface layer):**
+
+```
+apps/ezagent_plugin_world/lib/    # world detail page + actions (the #1028 sites)
+apps/ezagent_web/lib/             # web controllers + LiveViews + socialware surfaces
+apps/*/lib/mix/tasks/             # operator CLI / "console" (mix ezagent <verb>)
+```
+
+The operator-CLI tasks (`apps/*/lib/mix/tasks/`) are the "console" surface named in the brief. They
+legitimately dispatch operator **WRITES** (`mix ezagent.* → Invocation.dispatch → authz`, the
+sanctioned path per the skill) — so the gate forbids them ONLY the three READ pairs, never all
+dispatch.
+
+**Allowlist (deliberately minimal — defensive, not load-bearing):**
+
+```elixir
+allowlist: [
+  # Domain.Agent IS the sanctioned reader. By construction (D2 — authorize-then-DELEGATE)
+  # it never dispatches a read; it calls Agent.Config / Identity.read_entity_caps / the
+  # sandbox-slice reader directly. So it would not match the pattern even unlisted. Listed
+  # for clarity so a reviewer sees the one sanctioned home and isn't surprised if a future
+  # delegation comment mentions an action atom.
+  "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"
+]
+```
+
+Note the scan is **already scoped to the surface dirs** (it does not walk all `apps/*/lib`), and
+`Domain.Agent` lives in `ezagent_domain_session` — **outside** the scanned set — so the allowlist
+entry is belt-and-suspenders, not the thing that makes the gate correct. Domain-internal dispatch of
+`(:identity, :list_caps)` — e.g. `identity.ex:45`, a self-read INSIDE `ezagent_domain_identity` — is
+likewise outside the scanned surface dirs and needs no allowlist entry.
+
+**Pattern (one regex per forbidden pair, OR'd):**
+
+```elixir
+%{
+  id: :p14,
+  desc:
+    "surface/presentation layer dispatching a CONSOLIDATED READ-class action to an agent " <>
+      "(re-introducing activate-on-read). All agent config/caps/sandbox/status reads MUST go " <>
+      "through Ezagent.Domain.Agent.read_* (non-activating). Forbidden pairs: " <>
+      "(:config_evolve,:read_cascade) (:identity,:list_caps) (:sandbox,:read). WRITE/action " <>
+      "dispatch is NOT forbidden (it legitimately activates); the live PTY-buffer read is a " <>
+      "direct call, not a dispatch, and is NOT covered. See SPEC §11.",
+  # Matches `with_action(<anything>, :<behavior>, :<action>)` for the three read pairs.
+  # `with_action/3` is THE builder every surface dispatch uses to set the action atom, so
+  # keying on it (rather than on `Invocation.dispatch`, whose target is built separately)
+  # catches the read-action construction precisely.
+  pattern:
+    ~r/with_action\([^,]+,\s*:config_evolve,\s*:read_cascade\)|with_action\([^,]+,\s*:identity,\s*:list_caps\)|with_action\([^,]+,\s*:sandbox,\s*:read\)/,
+  # surface-only scan — see surface_files/0 below; allowlist as above.
+  allowlist: ["apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"]
+}
+```
+
+Because p14 needs a **narrower file set** than p1–p13's global `apps/*/lib/**/*.ex`, the scan
+restricts its `all_files` to the surface dirs for this probe (a `surface_files?/1` guard, or a
+per-probe `dirs:` field added to the probe map — the latter is the cleaner extension and is the
+recommended shape). Either keeps p1–p13 global and scopes only p14.
+
+**Exact failure message (mirrors the suite's existing format):**
+
+```
+no_surface_read_dispatch — a presentation/surface layer is dispatching a consolidated
+READ-class action to an agent, which ACTIVATES a cold agent (FP5/#115). Agent
+config/caps/sandbox/status reads MUST go through the non-activating
+Ezagent.Domain.Agent.read_* interface, not Invocation.dispatch.
+
+  [p14] <desc>
+        @ apps/ezagent_plugin_world/lib/ezagent/world/identity_data.ex
+        pattern: ~r/with_action\(..., :sandbox, :read\) | .../
+
+Replace the dispatch with Ezagent.Domain.Agent.read_{config,caps,sandbox}/N
+(authorize-then-delegate, non-activating). WRITE/action dispatch is fine; live PTY-buffer
+reads are direct calls, not dispatches, and are unaffected.
+See SPEC docs/together/2026-06-26/specs/unified-non-activating-agent-read.md §11.
+```
+
+### 11.2 Read-vs-write classification + the carve-outs (no false positives)
+
+The gate distinguishes a **read-class** dispatch from a **write/action** dispatch by the *exact
+(behavior, action) pair*, not by a verb heuristic. This is sound because:
+
+- **Write/action dispatches are NOT forbidden** — they legitimately activate the target (you cannot
+  send a message, join a session, delete an agent, write a PTY key, or revoke a credential grant
+  without a live Kind). The surface keeps dispatching `(:session, :send)`, `(:session, :join)`,
+  `(:manage, :delete)`, `(:pty, :write)`, `(:credential_grant, :revoke_credential_grant)`,
+  `(:kanban, :sync_miro)`, `(:workspace, :add_template)`, `(:identity, :put_api_key)` etc.
+  unchanged. None of these match p14's three-pair pattern.
+
+- **Carve-out A — the live PTY buffer read is structurally outside the gate.** The terminal
+  scrollback (`Ezagent.Domain.Pty.Server.snapshot_buffer/1`,
+  `World.IdentityData.pty_initial_buffer/1`) is a **direct function call** to the running PTY server
+  — it is NOT an `Invocation.dispatch`, has **no read-class action atom**, and goes through no
+  `with_action(_, _, :read)`. So p14 (which matches only the `with_action` read-pair construction)
+  **cannot** flag it. This is the right outcome: the PTY buffer is genuinely live (meaningless for a
+  cold agent, §5), is deliberately NOT in the unified reader, and forcing it behind a
+  "non-activating read" would be wrong. The gate carves it out *by construction* (it isn't a
+  dispatch of a forbidden pair), and §8.12(a) asserts this explicitly so it can't regress into a
+  false positive.
+
+- **Carve-out B — `(:identity, :list_api_keys)` stays dispatchable.** This is a persisted-slice READ
+  that the SPEC **intentionally excludes** from the unified reader (§5: sensitive +
+  data_owner/admin-gated, not cap-gated). It must keep dispatching from the surface
+  (`world_live.ex` / `identity_data.ex`). Because p14 keys on `:list_caps` (not `:list_*`), the
+  `:list_api_keys` dispatch does **not** match. §8.12(b) asserts this non-match so a future
+  tightening of the regex toward a verb heuristic would break the test and be caught.
+
+> **Decision D6 — the gate's scope is exactly the cap-gated, durable, unified-reader-eligible reads
+> (Decision D4's set).** A dispatch is forbidden at the surface iff it is one of the three pairs the
+> unified reader provides a non-activating replacement for. Persisted-but-not-cap-gated
+> (`:list_api_keys`) and live-only (PTY buffer) reads are out of the gate precisely because they are
+> out of the reader (§5) — gate-scope tracks reader-scope, the same boundary, enforced once.
+
+### 11.3 Why this fits the established gate machinery (not a bespoke mechanism)
+
+- Same suite, same `@probes` shape, same scan-the-source-tree-without-the-BEAM approach as
+  `cap_check_only_at_chokepoint` p1–p13 and `no_flavor_refs_in_core`. A contributor who has seen any
+  existing probe reads p14 with zero new concepts.
+- Runs inside the existing `mix ezagent.check_invariants` aggregate gate (already in §8.8 + CI), so
+  no new CI wiring.
+- The only extension to the suite is per-probe directory scoping (so p14 scans surfaces, not the
+  whole umbrella) — a small, reusable addition that future surface-only probes can reuse.
+
+### 11.4 Limitations (honest scope, do not overclaim)
+
+- **Static source grep, not a type/dataflow gate.** p14 catches the canonical
+  `with_action(uri, :sandbox, :read)` construction (the form every surface dispatch in the repo
+  uses today, verified §11.1). A sufficiently obfuscated dispatch — building the action atom
+  dynamically (`with_action(uri, beh, act)` with `act` computed at runtime), or constructing the
+  `%Invocation{}` target by hand without `with_action` — would evade it, exactly as p3's
+  `Capability.matches?` grep can be evaded by aliasing. This is the accepted ceiling of the grep-gate
+  class repo-wide; the §8.11 positive control proves the gate catches the *real, idiomatic* pattern,
+  which is what re-introduction actually looks like (someone copies an existing read dispatch). If a
+  dynamic-atom evasion is ever observed, the contract (per the suite's own moduledoc) is to add a
+  probe + amend this SPEC — the same regression-lock discipline as the existing p1–p13.
+- **Surface-dir list is an allowlist of *where* presentation lives** — if a NEW surface app is added
+  (a second web app, a new console plugin), its `lib/` dir must be added to p14's scanned set. This
+  is a one-line maintenance obligation, flagged here so it isn't forgotten (OQ-7).
