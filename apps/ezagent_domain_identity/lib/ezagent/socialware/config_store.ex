@@ -103,6 +103,106 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
+  Role-as-data seed primitive (SPEC §4.1/§4.2) — atomically write an immutable
+  `ConfigObject` AND point its layer IFF no pointer yet exists for the object's
+  `(layer, workspace, subject, key)`.
+
+  This is the seed-once-if-no-pointer primitive built-in role seeding needs. It
+  is NOT `write_and_point/1`: that one's `put_pointer/1` UPSERTS
+  (`on_conflict: {:replace, ...}`) and would CLOBBER a tenant's published
+  override on every reboot. Here the pointer existence is checked + the
+  object/pointer inserted in ONE `Repo.transaction`, with the pointer insert
+  using `on_conflict: :nothing` so a concurrent seed (or a tenant publish racing
+  a boot) that already created the pointer leaves it untouched and rolls back
+  this transaction's object insert (no orphan object).
+
+  Idempotency + override-safety:
+    * no pointer → object + pointer written → `{:ok, :seeded}`.
+    * pointer exists, SAME `body` → no-op → `{:ok, :exists}` (re-seed is safe).
+    * pointer exists, DIFFERENT `body` → `{:error, collision_tag}` (the moved
+      two-plugins-one-name boot-collision guard; `collision_tag` is the
+      caller-supplied loud error term).
+
+  `attrs` requires `:layer, :workspace_uri, :subject_uri, :key, :body,
+  :actor_uri, :source_turn_id` (same shape as `write_and_point/1`) plus a
+  `:collision_tag` term returned on a divergent-body collision.
+  """
+  @spec seed_object_if_no_pointer(map()) ::
+          {:ok, :seeded | :exists} | {:error, term()}
+  def seed_object_if_no_pointer(attrs) when is_map(attrs) do
+    collision_tag = Map.fetch!(attrs, :collision_tag)
+    pointer_id = pointer_id_for(attrs)
+
+    Multi.new()
+    |> Multi.run(:existing, fn repo, _changes ->
+      {:ok, repo.get(ConfigPointer, pointer_id)}
+    end)
+    |> Multi.run(:seed, fn repo, %{existing: existing} ->
+      seed_branch(repo, existing, attrs, collision_tag)
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{seed: result}} ->
+        {:ok, result}
+
+      # A concurrent seed won the pointer race: the object insert was rolled
+      # back (no orphan), and the existing pointer is authoritative → idempotent
+      # success, NOT an error.
+      {:error, :seed, :seed_lost_race, _changes} ->
+        {:ok, :exists}
+
+      {:error, _step, reason, _changes} ->
+        {:error, reason}
+    end
+  end
+
+  # No pointer yet → insert the immutable object, then insert the pointer with
+  # `on_conflict: :nothing` (a concurrent seed that won the race leaves the
+  # existing pointer untouched and this txn's object is rolled back below).
+  defp seed_branch(repo, nil, attrs, _collision_tag) do
+    object_attrs = object_attrs(attrs)
+
+    with {:ok, object} <- repo.insert(ConfigObject.changeset(object_attrs)),
+         pointer_attrs = pointer_attrs(Map.put(attrs, :config_id, object.id)),
+         {:ok, pointer} <-
+           repo.insert(ConfigPointer.changeset(pointer_attrs),
+             on_conflict: :nothing,
+             conflict_target: :id
+           ) do
+      # `on_conflict: :nothing` returns a struct with a nil primary key when the
+      # row already existed (a racing seed won) — roll back so we leave no orphan
+      # object and report the existing pointer as authoritative.
+      if is_nil(pointer.id) do
+        {:error, :seed_lost_race}
+      else
+        {:ok, :seeded}
+      end
+    end
+  end
+
+  # Pointer already exists → idempotent no-op IF the pointed object's body equals
+  # the seed body (same built-in re-seeded, or an override of identical content);
+  # a DIFFERENT body under the same name is the two-plugins-one-name collision.
+  defp seed_branch(repo, %ConfigPointer{config_id: config_id}, attrs, collision_tag) do
+    pointed = repo.get!(ConfigObject, config_id)
+    seed_body = attrs |> Map.fetch!(:body) |> stringify_keys()
+
+    if pointed.body == seed_body do
+      {:ok, :exists}
+    else
+      {:error, collision_tag}
+    end
+  end
+
+  defp pointer_id_for(attrs) do
+    layer = attrs |> Map.fetch!(:layer) |> normalize_layer!()
+    workspace_uri = attrs |> Map.fetch!(:workspace_uri) |> uri_string!()
+    subject_uri = attrs |> Map.fetch!(:subject_uri) |> uri_string!()
+    key = Map.fetch!(attrs, :key)
+    ConfigPointer.id(layer, workspace_uri, subject_uri, key)
+  end
+
+  @doc """
   The reserved CR `source_turn_id` prefixes (`cr-stage:`, `cr-publish:`).
   """
   @spec reserved_turn_prefixes() :: [String.t()]
