@@ -130,6 +130,10 @@ defmodule Ezagent.Socialware.ConfigStore do
   @spec seed_object_if_no_pointer(map()) ::
           {:ok, :seeded | :exists} | {:error, term()}
   def seed_object_if_no_pointer(attrs) when is_map(attrs) do
+    do_seed_if_no_pointer(attrs, _retry? = true)
+  end
+
+  defp do_seed_if_no_pointer(attrs, retry?) do
     collision_tag = Map.fetch!(attrs, :collision_tag)
     pointer_id = pointer_id_for(attrs)
 
@@ -145,9 +149,16 @@ defmodule Ezagent.Socialware.ConfigStore do
       {:ok, %{seed: result}} ->
         {:ok, result}
 
-      # A concurrent seed won the pointer race: the object insert was rolled
-      # back (no orphan), and the existing pointer is authoritative → idempotent
-      # success, NOT an error.
+      # A concurrent seed won the pointer-insert race: this txn's object insert
+      # was rolled back (no orphan) and the WINNER's pointer is now durable. Do
+      # NOT blindly report `:exists` — the winner may have written a DIFFERENT
+      # body (the two-plugins-one-name collision under concurrency). Re-run ONCE:
+      # the pointer now exists, so the serial existing-pointer branch runs the
+      # full body/source_turn_id comparison and returns the correct `:exists` /
+      # `collision_tag`. Bounded to a single retry (the pointer is durable now).
+      {:error, :seed, :seed_lost_race, _changes} when retry? ->
+        do_seed_if_no_pointer(attrs, false)
+
       {:error, :seed, :seed_lost_race, _changes} ->
         {:ok, :exists}
 
