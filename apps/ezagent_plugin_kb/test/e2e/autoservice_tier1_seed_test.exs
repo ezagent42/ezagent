@@ -103,6 +103,29 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
              "a BARE (un-@-mentioned) customer message must route to the AutoService " <>
                "agent via the seeded always→agent rule (S2a/S2b). Got: #{inspect(recipient_strs)}"
 
+      # Session-scope negative: the rule is `in_session(this)`, NOT a global
+      # `always`. A bare message in a DIFFERENT session must NOT route to the
+      # AutoService agent — otherwise the rule would hijack every session's
+      # un-mentioned traffic (codex S2a adversarial probe).
+      other_session = EzUri.new!("session://#{ws}/default/some-other")
+
+      other_msg =
+        %{
+          Ezagent.Message.new(customer, %{text: "unrelated chatter"}, mentions: [])
+          | session_uri: other_session,
+            workspace_uri: "workspace://#{ws}"
+        }
+
+      other_recipients =
+        Resolver.resolve(other_msg, other_session, [autosvc_uri, customer],
+          workspace_uri: EzUri.workspace_of(other_session)
+        )
+        |> Enum.map(&URI.to_string/1)
+
+      refute URI.to_string(autosvc_uri) in other_recipients,
+             "the always→agent rule must be SESSION-SCOPED — a bare message in another " <>
+               "session must NOT reach the AutoService agent. Got: #{inspect(other_recipients)}"
+
       # ── S3 retrieval soul: kb.query carrying the orchestrator's SEEDED cap
       # returns the KB-only fact (ZEPHYR-7731). ──────────────────────────────
       fact = Ezagent.AutoService.Tier1Seed.kb_fact_token()
