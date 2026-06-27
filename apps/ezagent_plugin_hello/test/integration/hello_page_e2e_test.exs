@@ -5,16 +5,21 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
       App.ensure_app (public_view session + joined builder member)
         → TurnDriver.drive(session, spec)            # the page chokepoint
         → Behavior.Surface.put_version + approve     # via turn.compose/settle
-        → CustomerFeed.snapshot(session, anon token) # what the anon visitor sees
+        → ExternalFeed.snapshot(session, anon)       # what the anon visitor sees
 
   This proves the same path a real generation takes, with a fixed catalog spec
   standing in for the LLM output (the LLM round-trip is exercised separately; the
   spec it must emit is catalog-validated in `EzagentPluginHello.SpecTest`).
+
+  The viewer is a real minted read-only **anon-User** joined to the public_view
+  session — the production ingress (#51 §4.1, what `ExternalFeedController` does
+  for an anonymous visitor) — and the read is authorized by LIVE membership, not
+  an identity-less token.
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
+  alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
   setup do
@@ -22,12 +27,37 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
     {:ok, session_uri, builder_uri} = App.ensure_app(ws, "main")
-    token = CustomerAuth.issue_token(session_uri, Ezagent.Capability.workspace_of(session_uri))
+    anon = mint_and_join_anon(session_uri)
 
-    %{session: session_uri, builder: builder_uri, token: token}
+    %{session: session_uri, builder: builder_uri, caller: anon}
   end
 
-  test "an anonymous customer sees the catalog page the builder lands via Surface", ctx do
+  # The production anonymous ingress (ExternalFeedController.mint_fresh): mint a
+  # read-only anon-User for the public_view session, bring its Kind live, join it,
+  # and mount the read-only participation tier — so the LIVE membership read
+  # authorizes it.
+  defp mint_and_join_anon(session_uri) do
+    {:ok, anon_uri} = AnonUser.mint_for_public_session(session_uri)
+    :ok = Ezagent.Entity.spawn_principal(anon_uri)
+    {:ok, _row} = AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now())
+
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: anon_uri},
+        ctx: %{caller: anon_uri, reply: :ignore}
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    _ = Ezagent.Behavior.Session.Membership.mount_participation_caps(session_uri, anon_uri)
+    anon_uri
+  end
+
+  test "an anonymous viewer sees the catalog page the builder lands via Surface", ctx do
     spec = %{
       "type" => "Stack",
       "props" => %{"direction" => "vertical", "title" => "Hello E2E"},
@@ -48,16 +78,16 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     # The spec is catalog-constrained (the safety property the renderer relies on).
     assert {:ok, ^spec} = Spec.validate(spec)
 
-    # Before any turn: the customer surface has no approved page.
-    assert {:ok, before} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    # Before any turn: the external surface has no approved page.
+    assert {:ok, before} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert before.page == nil
 
     # Drive one turn to land the page (the only way a page is born).
     assert {:ok, _turn_id} = TurnDriver.drive(ctx.session, spec, "Generated your page.")
 
-    snapshot = wait_for_page(ctx.session, ctx.token)
+    snapshot = wait_for_page(ctx.session, ctx.caller)
 
-    # The anon visitor sees exactly the approved spec + the customer-visible summary.
+    # The anon visitor sees exactly the approved spec + the external-visible summary.
     assert snapshot.page == spec
     assert Enum.any?(snapshot.messages, &(text_of(&1) == "Generated your page."))
   end
@@ -84,19 +114,19 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   # --- helpers ---------------------------------------------------------------
 
-  defp wait_for_page(session, token, attempts \\ 150)
+  defp wait_for_page(session, caller, attempts \\ 150)
 
-  defp wait_for_page(_session, _token, 0),
-    do: flunk("customer snapshot never exposed an approved page")
+  defp wait_for_page(_session, _caller, 0),
+    do: flunk("external snapshot never exposed an approved page")
 
-  defp wait_for_page(session, token, attempts) do
-    case CustomerFeed.snapshot(session, token) do
+  defp wait_for_page(session, caller, attempts) do
+    case ExternalFeed.snapshot(session, caller) do
       {:ok, %{page: page} = snapshot} when not is_nil(page) ->
         snapshot
 
       _ ->
         Process.sleep(20)
-        wait_for_page(session, token, attempts - 1)
+        wait_for_page(session, caller, attempts - 1)
     end
   end
 

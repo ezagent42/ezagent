@@ -10,7 +10,7 @@ defmodule EzagentPluginHello.TurnDriver do
 
   `compose` routes the `kind: :page` ref into `Surface.put_version(turn_id, spec)`
   and the `kind: :chat` ref into a customer-visible message; `settle` advances the
-  approved pointer + commits the settlement, so `CustomerFeed.snapshot/2` then
+  approved pointer + commits the settlement, so `ExternalFeed.snapshot/2` then
   returns the page to the anonymous visitor.
 
   These are sequential `:call` dispatches, so this runs in a caller process that

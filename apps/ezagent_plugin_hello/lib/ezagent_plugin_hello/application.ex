@@ -6,7 +6,7 @@ defmodule EzagentPluginHello.Application do
   structured `@json-render` spec, constrained by a Zod component catalog), the
   page is **born only via `Behavior.Surface.put_version/2`** (driven by
   `Behavior.Turn`), and **anonymous external visitors view it** through the
-  socialware substrate (`public_view` SessionTemplate → `CustomerFeed` →
+  socialware substrate (`public_view` SessionTemplate → `ExternalFeed` →
   `/socialware/chat`). It is the modern re-implementation of the retired `loom`
   experiment, built fresh on `main`. See
   `docs/superpowers/handoffs/2026-06-22-loom-to-hello-migration-claude-to-dev-handoff.md`.
@@ -150,17 +150,17 @@ defmodule EzagentPluginHello.Application do
   end
 
   # Log both anon view URLs:
-  #   * /socialware/customer — the token-based CustomerFeed (what the handoff
-  #     names + the integration test proves); a token is embedded so it opens
-  #     with no login/membership.
+  #   * /socialware/external — the membership-authorized ExternalFeed (what the
+  #     integration test proves); an anonymous visitor is minted a read-only
+  #     anon-User and joined, so it opens with no login.
   #   * /socialware/chat — the chat-feed surface (anon self-serve via membership).
   defp log_ready(session_uri) do
     s = URI.to_string(session_uri)
 
     Logger.info("""
-    hello demo seed ready — open as an anonymous visitor (public_view, no login,
-    no token — the CustomerFeed renders the approved generated page):
-      /socialware/customer?session_uri=#{s}
+    hello demo seed ready — open as an anonymous visitor (public_view, no login —
+    a read-only anon-User is minted + joined; the ExternalFeed renders the approved generated page):
+      /socialware/external?session_uri=#{s}
     """)
   end
 

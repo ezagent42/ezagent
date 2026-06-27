@@ -3,7 +3,9 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
 
   alias Ezagent.{Invocation, Message, MessageStore}
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, Settlement}
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "settle-crash-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -39,13 +41,13 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
 
-    %{session: session, workspace: workspace, token: token}
+    %{session: session, workspace: workspace, caller: @owner}
   end
 
   test "customer never sees chat without its page, or an uncommitted turn", ctx do
@@ -76,7 +78,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
 
     assert {:ok, _settlement} = Settlement.flip_visibility("turn-crash")
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []
     assert snapshot.page == nil
 
@@ -86,7 +88,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
     assert {:ok, %{status: :committed}} =
              dispatch(ctx.session, :surface, :commit_settlement, %{turn_id: "turn-crash"})
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert Enum.any?(snapshot.messages, &message_text?(&1, "answer bubble"))
     assert snapshot.page == page_tree
   end
@@ -103,7 +105,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
 
     msg =
       Message.new(sender_uri(), %{text: "late answer", attachments: []},
-        visibility: :customer_visible
+        visibility: :external_visible
       )
 
     assert {:ok, msg} = MessageStore.write(msg, ctx.session)

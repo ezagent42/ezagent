@@ -2,7 +2,7 @@ defmodule Ezagent.Socialware.ChatFeed do
   @moduledoc """
   P4 — a CHAT session's external SPA view, served over the SAME `:pull`
   adapter + Phoenix-channel + json-render SPA machinery P3-2 built for the
-  socialware customer feed (`CustomerFeed`), but projecting the **chat message
+  socialware customer feed (`ExternalFeed`), but projecting the **chat message
   slice** with a **windowed snapshot-refresh** read model.
 
   ## Why snapshot-refresh (NOT a delta cursor)
@@ -32,13 +32,13 @@ defmodule Ezagent.Socialware.ChatFeed do
   ALWAYS the current latest-N; older history is a separate paging concern (out
   of scope here).
 
-  ## What is the SAME as `CustomerFeed` (reused)
+  ## What is the SAME as `ExternalFeed` (reused)
 
     * the `:pull` adapter shape (`ChatFeedAdapter` — a bare-module `render/2` +
-      cap-only `.Allow`, mirroring `CustomerFeedAdapter`);
+      cap-only `.Allow`, mirroring the retired customer-feed adapter);
     * the json-render output shape (`%{type: "container", ...}` — `chat_tree/1`
-      mirrors `Surface.customer_tree` over chat messages);
-    * the SPA (`customer_app.js` / `catalog_render.mjs`) + Channel framework.
+      mirrors `Surface.external_tree` over chat messages);
+    * the SPA (`viewer_app.js` / `catalog_render.mjs`) + Channel framework.
 
   ## What is DIFFERENT (the only P4-specific code)
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Socialware.ChatFeed do
       predicate P3-3 specified, via the shared `Ezagent.Session.Membership`
       so the chat_feed authz and `SocialwarePublisherRead` stay byte-equivalent
       on the security boundary;
-    * per-message visibility — only `:customer_visible` messages are projected
+    * per-message visibility — only `:external_visible` messages are projected
       (an `:operator_only` chat message is dropped from the external read).
   """
 
@@ -59,12 +59,12 @@ defmodule Ezagent.Socialware.ChatFeed do
 
   @history_limit 200
 
-  # ----- P4-1: the PURE chat → customer_tree projection ----------------------
+  # ----- P4-1: the PURE chat → external_tree projection ----------------------
 
   @doc """
-  Project a list of chat `%Message{}`s into the json-render `customer_tree`
+  Project a list of chat `%Message{}`s into the json-render `external_tree`
   shape the customer SPA renders: a `stack` container whose children are one
-  `text` node per `:customer_visible` message (in input order). `:operator_only`
+  `text` node per `:external_visible` message (in input order). `:operator_only`
   messages are filtered out (per-message visibility — they never leak to the
   external read). Pure + deterministic.
   """
@@ -72,14 +72,14 @@ defmodule Ezagent.Socialware.ChatFeed do
   def chat_tree(messages) when is_list(messages) do
     children =
       messages
-      |> Enum.filter(&customer_visible?/1)
+      |> Enum.filter(&external_visible?/1)
       |> Enum.map(&text_node/1)
 
     %{type: "container", props: %{layout: "stack"}, children: children}
   end
 
-  defp customer_visible?(%{visibility: :operator_only}), do: false
-  defp customer_visible?(_message), do: true
+  defp external_visible?(%{visibility: :operator_only}), do: false
+  defp external_visible?(_message), do: true
 
   defp text_node(message) do
     %{type: "text", key: message.id, props: %{text: message_text(message)}}
@@ -104,7 +104,7 @@ defmodule Ezagent.Socialware.ChatFeed do
   @doc """
   The gated chat snapshot for `caller` (an owner/member of `session_uri`'s live
   `:chat` slice). Returns `{:ok, %{messages, page}}` where `messages` is the
-  recency window of `:customer_visible` chat messages (ascending) and `page` is
+  recency window of `:external_visible` chat messages (ascending) and `page` is
   the `chat_tree/1` json-render projection of them. `{:error, :unauthorized}`
   fail-closed on a non-member / nil / malformed caller (the LIVE chat membership
   check — the SAME predicate as P3-3, via `ChatMembership`).

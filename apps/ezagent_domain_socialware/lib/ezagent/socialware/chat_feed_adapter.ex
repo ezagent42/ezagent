@@ -3,7 +3,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapter.Allow do
   Cap-only Allow Behavior for the P4 `:pull` chat-feed adapter
   (`adapter_id: "chat_feed"`).
 
-  Mirrors `CustomerFeedAdapter.Allow` (the P3-2 pull `*.Allow` shape,
+  Mirrors the retired customer-feed adapter `*.Allow` (the P3-2 pull `*.Allow` shape,
   `dispatchable?/0 == false`): a `:pull` adapter still declares a `cap_subject/0`
   so the per-adapter authorization cap (`allow_chat_feed`) exists on
   `Ezagent.Entity.Session`. The behavior is never dispatched — it is the Check-2
@@ -42,7 +42,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   @moduledoc """
   P4 — a CHAT session's external SPA view as a registered `:pull`
   `Ezagent.ExternalMirror.Adapter` (`adapter_id: "chat_feed"`), the SECOND pull
-  adapter alongside `CustomerFeedAdapter`. It shares the P3-2 SPA + Phoenix
+  pull adapter. It shares the P3-2 SPA + Phoenix
   channel + json-render shape; only the SOURCE (the chat `inserted_at` cursor —
   chat has no settlement model) and the AUTHORITY (chat membership, not a
   customer token) differ.
@@ -56,7 +56,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
 
   `render/2` is the stateless projection chokepoint: it returns the gated chat
   snapshot (`%{messages, page}`) via `ChatFeed.snapshot/2` — the chat-message
-  projection in the SAME `customer_tree` json-render shape. `ctx` carries the
+  projection in the SAME `external_tree` json-render shape. `ctx` carries the
   caller's identity `%URI{}` under `:caller`; a non-member / nil / malformed /
   crafted caller renders the empty/denied projection (`%{messages: [], page:
   empty container}`) rather than raising, so a stranger yields no content rather

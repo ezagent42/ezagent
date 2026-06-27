@@ -1,9 +1,11 @@
-defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
+defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, MessageStore}
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
+  alias Ezagent.Socialware.{ExternalFeed}
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "turn-feed-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -49,17 +51,17 @@ defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session))
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, ExternalFeed.topic(session))
 
-    %{session: session, token: token}
+    %{session: session, caller: @owner}
   end
 
-  test "turn.settle commits customer-visible chat and approved page together", ctx do
+  test "turn.settle commits external-visible chat and approved page together", ctx do
     page_tree = %{type: "text", props: %{text: "settled page"}}
 
     assert {:ok, %{turn_id: turn_id}} =
@@ -79,15 +81,15 @@ defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
       Map.has_key?(surface.versions, version)
     end)
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []
     assert snapshot.page == nil
 
     assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
 
-    assert_receive {:customer_delivery, %{message_ids: [^message_id]}}, 500
+    assert_receive {:external_delivery, %{message_ids: [^message_id]}}, 500
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert Enum.any?(snapshot.messages, &message_text?(&1, "settled answer"))
     assert snapshot.page == page_tree
   end
@@ -116,15 +118,15 @@ defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
     assert {:ok, loaded} = MessageStore.by_id(message_id)
     assert loaded.visibility == :operator_only
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []
     assert snapshot.page == nil
 
     assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
 
-    assert_receive {:customer_delivery, %{message_ids: [^message_id]}}, 500
+    assert_receive {:external_delivery, %{message_ids: [^message_id]}}, 500
 
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert Enum.any?(snapshot.messages, &message_text?(&1, "draft answer"))
     assert snapshot.page == page_tree
   end

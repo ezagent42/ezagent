@@ -56,7 +56,7 @@ config :esbuild,
   version: "0.25.4",
   ezagent_web: [
     args:
-      ~w(js/app.js js/customer_app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
+      ~w(js/app.js js/viewer_app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../apps/ezagent_web/assets", __DIR__),
     env: %{
       "NODE_PATH" => [
@@ -77,14 +77,14 @@ config :tailwind,
     ),
     cd: Path.expand("../apps/ezagent_web", __DIR__)
   ],
-  # Standalone stylesheet for the socialware customer SPA. It is a public,
+  # Standalone stylesheet for the socialware external viewer SPA. It is a public,
   # controller-rendered page (not a LiveView surface) so it does not load
   # app.css — it gets its own small Tailwind v4 + daisyUI build whose
   # @source directives scan the React SPA's JS for the classes it emits.
-  ezagent_web_customer: [
+  ezagent_web_viewer: [
     args: ~w(
-      --input=assets/css/customer.css
-      --output=priv/static/assets/css/customer.css
+      --input=assets/css/viewer.css
+      --output=priv/static/assets/css/viewer.css
     ),
     cd: Path.expand("../apps/ezagent_web", __DIR__)
   ]

@@ -29,7 +29,9 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
 
   alias Ezagent.{Invocation, MessageStore}
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, CustomerOutbox, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, DeliveryOutbox, Settlement}
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "parent-rollback-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -75,18 +77,18 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session))
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, ExternalFeed.topic(session))
 
     on_exit(fn ->
       Application.delete_env(:ezagent_core, :p2_5c_force_commit_failure_uris)
     end)
 
-    %{session: session, token: token}
+    %{session: session, caller: @owner}
   end
 
   test "a forced parent-commit failure on turn.settle leaks NO committed delivery", ctx do
@@ -110,7 +112,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     end)
 
     # No delivery yet (pre-settle).
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []
     assert snapshot.page == nil
 
@@ -128,7 +130,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
 
     # The orphan delivery must NOT appear. Give the (incorrectly-running)
     # deferred dispatch a window to leak if the gate were broken.
-    refute_receive {:customer_delivery, _}, 300
+    refute_receive {:external_delivery, _}, 300
 
     # (1) Settlement is NOT committed — either no record, or still :pending
     #     (prepare_settlement created the :pending record BEFORE the parent
@@ -140,19 +142,19 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
 
     # (2) The customer outbox has no committed delivery for this turn.
     outbox =
-      EzagentCore.Repo.get_by(CustomerOutbox, turn_id: turn_id) ||
-        EzagentCore.Repo.get_by(CustomerOutbox, session_uri: URI.to_string(ctx.session))
+      EzagentCore.Repo.get_by(DeliveryOutbox, turn_id: turn_id) ||
+        EzagentCore.Repo.get_by(DeliveryOutbox, session_uri: URI.to_string(ctx.session))
 
     case outbox do
       nil -> :ok
       row -> assert is_nil(row.committed_seq)
     end
 
-    # (3) No committed customer-visible messages for the session.
-    assert MessageStore.committed_customer_visible(ctx.session, 50) == []
+    # (3) No committed external-visible messages for the session.
+    assert MessageStore.committed_external_visible(ctx.session, 50) == []
 
     # (4) The customer feed exposes neither the page nor the messages.
-    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []
     assert snapshot.page == nil
   end

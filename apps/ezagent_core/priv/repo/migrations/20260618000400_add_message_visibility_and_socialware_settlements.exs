@@ -3,7 +3,7 @@ defmodule EzagentCore.Repo.Migrations.AddMessageVisibilityAndSocialwareSettlemen
 
   def change do
     alter table(:messages) do
-      add :visibility, :string, null: false, default: "customer_visible"
+      add :visibility, :string, null: false, default: "external_visible"
     end
 
     create index(:messages, [:visibility], name: :messages_visibility_index)
@@ -46,7 +46,7 @@ defmodule EzagentCore.Repo.Migrations.AddMessageVisibilityAndSocialwareSettlemen
              name: :socialware_settlement_messages_message_id_index
            )
 
-    create table(:socialware_customer_outbox, primary_key: false) do
+    create table(:socialware_delivery_outbox, primary_key: false) do
       add :turn_id,
           references(:socialware_settlements,
             column: :turn_id,

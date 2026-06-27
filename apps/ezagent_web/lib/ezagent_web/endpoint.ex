@@ -49,11 +49,11 @@ defmodule EzagentWeb.Endpoint do
     websocket: [check_origin: false],
     longpoll: false
 
-  socket "/socialware_socket", EzagentWeb.Socialware.CustomerSocket,
+  socket "/socialware_external_socket", EzagentWeb.Socialware.ExternalFeedSocket,
     websocket: [check_origin: false],
     longpoll: false
 
-  # P4 — the CHAT external SPA socket (chat analogue of the customer socket;
+  # P4 — the CHAT external SPA socket (chat analogue of the external surface socket;
   # caller-identity token → live chat-membership-gated chat_feed projection).
   socket "/socialware_chat_socket", EzagentWeb.Socialware.ChatFeedSocket,
     websocket: [check_origin: false],

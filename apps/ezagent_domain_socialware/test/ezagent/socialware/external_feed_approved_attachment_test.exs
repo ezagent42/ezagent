@@ -1,11 +1,11 @@
-defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
+defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
   @moduledoc """
-  Resource-unification P2a / OI-1 — the external customer-feed approved-only
+  Resource-unification P2a / OI-1 — the external-feed approved-only
   download gate + serve-time re-validation.
 
-  A feed viewer has no session/caps, so the ONLY authority for serving an
+  A feed viewer reads as a read-only member, so the authority for serving an
   attachment is "is this attachment part of an APPROVED (committed,
-  customer_visible) message in this session?". `CustomerFeed.approved_attachment?/2`
+  external_visible) message in this session?". `ExternalFeed.approved_attachment?/2`
   is that gate; `mint_approved_token/3` mints a signed token ONLY when it passes;
   and because the gate is re-checked at serve time, flipping the message back to
   `operator_only` revokes an already-minted token (a lever beyond TTL).
@@ -14,7 +14,7 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
 
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Entity.Session
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
+  alias Ezagent.Socialware.{ExternalFeed, Settlement}
   alias Ezagent.URI, as: EzURI
 
   defp session_uri do
@@ -27,6 +27,8 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
 
   defp sender_uri, do: Ezagent.URI.entity(:team_alpha, :agent, "orchestrator")
 
+  @owner Ezagent.URI.entity(:team_alpha, :user, "approved-att-owner")
+
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
@@ -34,12 +36,12 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
-    %{session: session, workspace: workspace, token: token}
+    %{session: session, workspace: workspace, caller: @owner}
   end
 
   defp upload_uri(ws_name, name), do: EzURI.resource(ws_name, "uploads", name)
@@ -67,13 +69,13 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
     written
   end
 
-  test "approved_attachment? is TRUE for a committed customer-visible attachment", ctx do
+  test "approved_attachment? is TRUE for a committed external-visible attachment", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     upload = upload_uri(ws_name, "uuid-approved.pdf")
 
-    _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+    _ = commit_message_with_attachment(ctx, upload, :external_visible)
 
-    assert CustomerFeed.approved_attachment?(ctx.session, upload)
+    assert ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
   test "approved_attachment? is FALSE for an operator-only (not-approved) attachment", ctx do
@@ -82,18 +84,18 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
 
     _ = commit_message_with_attachment(ctx, upload, :operator_only)
 
-    refute CustomerFeed.approved_attachment?(ctx.session, upload)
+    refute ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
   test "approved_attachment? is FALSE for an attachment not in this session", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
-    refute CustomerFeed.approved_attachment?(ctx.session, upload_uri(ws_name, "never.pdf"))
+    refute ExternalFeed.approved_attachment?(ctx.session, upload_uri(ws_name, "never.pdf"))
   end
 
   test "approved_attachment? is FALSE for a non-uploads resource URI", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
 
-    refute CustomerFeed.approved_attachment?(
+    refute ExternalFeed.approved_attachment?(
              ctx.session,
              EzURI.resource(ws_name, :avatar, "x.png")
            )
@@ -104,27 +106,27 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
     approved = upload_uri(ws_name, "uuid-ok.pdf")
     not_approved = upload_uri(ws_name, "uuid-no.pdf")
 
-    _ = commit_message_with_attachment(ctx, approved, :customer_visible)
+    _ = commit_message_with_attachment(ctx, approved, :external_visible)
 
     mint = fn uri -> "tok:" <> EzURI.stable_key(uri) end
 
-    assert {:ok, "tok:" <> _} = CustomerFeed.mint_approved_token(ctx.session, approved, mint)
+    assert {:ok, "tok:" <> _} = ExternalFeed.mint_approved_token(ctx.session, approved, mint)
 
     assert {:error, :not_approved} =
-             CustomerFeed.mint_approved_token(ctx.session, not_approved, mint)
+             ExternalFeed.mint_approved_token(ctx.session, not_approved, mint)
   end
 
   test "serve-time re-validation: flipping to operator_only revokes approval", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     upload = upload_uri(ws_name, "uuid-revoke.pdf")
 
-    written = commit_message_with_attachment(ctx, upload, :customer_visible)
-    assert CustomerFeed.approved_attachment?(ctx.session, upload)
+    written = commit_message_with_attachment(ctx, upload, :external_visible)
+    assert ExternalFeed.approved_attachment?(ctx.session, upload)
 
     # Operator flips visibility back — an already-minted token must stop working
     # because the serve-time check now returns false.
     {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
-    refute CustomerFeed.approved_attachment?(ctx.session, upload)
+    refute ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
   describe "authorized_attachment_path/4 (external bearer path, codex HIGH)" do
@@ -136,15 +138,15 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
       {:ok, "/fake/#{ws}/" <> Ezagent.URI.name!(uri)}
     end
 
-    test "valid customer token + approved attachment resolves under the session ws", ctx do
+    test "a member + approved attachment resolves under the session ws", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-ok.pdf")
-      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+      _ = commit_message_with_attachment(ctx, upload, :external_visible)
 
       assert {:ok, path} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 ctx.token,
+                 ctx.caller,
                  upload,
                  &fake_resolve/2
                )
@@ -152,29 +154,29 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
       assert path == "/fake/#{ws_name}/uuid-ok.pdf"
     end
 
-    test "an invalid / forged customer token is unauthorized", ctx do
+    test "an invalid / forged caller is unauthorized", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-ok.pdf")
-      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+      _ = commit_message_with_attachment(ctx, upload, :external_visible)
 
       assert {:error, :unauthorized} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 "forged-token",
+                 "forged-caller",
                  upload,
                  &fake_resolve/2
                )
     end
 
-    test "a not-approved attachment is unauthorized even with a valid customer token", ctx do
+    test "a not-approved attachment is unauthorized even for a member", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-secret.pdf")
       _ = commit_message_with_attachment(ctx, upload, :operator_only)
 
       assert {:error, :unauthorized} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 ctx.token,
+                 ctx.caller,
                  upload,
                  &fake_resolve/2
                )
@@ -183,12 +185,12 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
     test "serve-time revocation: flipping to operator_only denies a previously-OK path", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-revoke.pdf")
-      written = commit_message_with_attachment(ctx, upload, :customer_visible)
+      written = commit_message_with_attachment(ctx, upload, :external_visible)
 
       assert {:ok, _} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 ctx.token,
+                 ctx.caller,
                  upload,
                  &fake_resolve/2
                )
@@ -196,9 +198,9 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
       {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
 
       assert {:error, :unauthorized} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 ctx.token,
+                 ctx.caller,
                  upload,
                  &fake_resolve/2
                )
@@ -208,22 +210,19 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
          ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-cold.pdf")
-      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
-
-      # Token signed with the STRUCTURAL workspace (what the cold path derives).
-      structural_ws = Ezagent.Persistence.workspace_uri_for!(ctx.session)
-      token = CustomerAuth.issue_token(ctx.session, structural_ws)
+      _ = commit_message_with_attachment(ctx, upload, :external_visible)
 
       # Drop the volatile registry binding (== restart with empty ETS).
       :ok = Ezagent.WorkspaceRegistry.unbind(ctx.session)
       assert Ezagent.WorkspaceRegistry.lookup(ctx.session) == :error
 
       # workspace/1 must yield a %URI{} that EzURI.workspace_name/1 accepts (no
-      # FunctionClauseError) AND auth must pass on the structurally-derived ws.
+      # FunctionClauseError) AND auth (live membership) must pass while the
+      # workspace is derived STRUCTURALLY (not from the dropped registry binding).
       assert {:ok, path} =
-               CustomerFeed.authorized_attachment_path(
+               ExternalFeed.authorized_attachment_path(
                  ctx.session,
-                 token,
+                 ctx.caller,
                  upload,
                  &fake_resolve/2
                )

@@ -24,7 +24,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedHello do
      Session bound to it, and a joined `HelloBuilder` member.
   3. `TurnDriver.drive/3` — opens → composes (`%{kind: :page, tree: Spec.seed()}`)
      → settles, so the seed page is born via `Surface.put_version` and approved.
-  4. Prints the anonymous customer URL to open.
+  4. Prints the anonymous viewer URL to open.
 
   Re-running is safe (`ensure_app` is idempotent; a new turn re-approves the
   seed page).

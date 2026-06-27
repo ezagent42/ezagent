@@ -138,13 +138,13 @@ defmodule EzagentWeb.MixProject do
       ],
       "assets.build": [
         "tailwind ezagent_web",
-        "tailwind ezagent_web_customer",
+        "tailwind ezagent_web_viewer",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
         "esbuild ezagent_web"
       ],
       "assets.deploy": [
         "tailwind ezagent_web --minify",
-        "tailwind ezagent_web_customer --minify",
+        "tailwind ezagent_web_viewer --minify",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
         "esbuild ezagent_web --minify",
         "phx.digest"

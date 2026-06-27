@@ -15,9 +15,9 @@ defmodule Ezagent.Socialware.SettlementRecord do
   likewise only read there). `subwrites_done` records the three commit sub-steps
   applied so far (visibility-flip, pointer-advance, outbox-emit) for idempotent
   retry; `committed_ready?/1` requires all three before the status flips.
-  `Ezagent.Socialware.CustomerOutbox` mirrors only `target_surface_version` (as
+  `Ezagent.Socialware.DeliveryOutbox` mirrors only `target_surface_version` (as
   its `surface_version`); the `committed_seq` delivery cursor is assigned and
-  owned by CustomerOutbox itself at the commit boundary (`assign_committed_seq/1`,
+  owned by DeliveryOutbox itself at the commit boundary (`assign_committed_seq/1`,
   max-per-session + 1) — this table has no `committed_seq`.
   """
   use Ecto.Schema

@@ -20,7 +20,7 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
   # algorithm of `Ezagent.Socialware.Settlement.backfill_committed_seq!/0` (kept
   # as a unit-tested runtime helper) but is frozen here.
   def up do
-    alter table(:socialware_customer_outbox) do
+    alter table(:socialware_delivery_outbox) do
       add :surface_version, :integer
       add :committed_seq, :integer
     end
@@ -31,8 +31,8 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
     # A per-session unique index — a backstop against a committed_seq collision
     # (per-session commits are serialized by the single session GenServer, so a
     # collision would be a real bug → fail loudly, not corrupt).
-    create unique_index(:socialware_customer_outbox, [:session_uri, :committed_seq],
-             name: :socialware_customer_outbox_session_committed_seq_index
+    create unique_index(:socialware_delivery_outbox, [:session_uri, :committed_seq],
+             name: :socialware_delivery_outbox_session_committed_seq_index
            )
   end
 
@@ -44,7 +44,7 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
     repo = repo()
 
     rows =
-      from(o in "socialware_customer_outbox",
+      from(o in "socialware_delivery_outbox",
         join: s in "socialware_settlements",
         on: s.turn_id == o.turn_id,
         where: s.status == "committed" and is_nil(o.committed_seq),
@@ -67,7 +67,7 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
     |> Enum.each(fn {session_uri, session_rows} ->
       start =
         repo.one(
-          from(o in "socialware_customer_outbox",
+          from(o in "socialware_delivery_outbox",
             where: o.session_uri == ^session_uri and not is_nil(o.committed_seq),
             select: max(o.committed_seq)
           )
@@ -76,18 +76,18 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
       session_rows
       |> Enum.with_index(start + 1)
       |> Enum.each(fn {row, seq} ->
-        from(o in "socialware_customer_outbox", where: o.turn_id == ^row.turn_id)
+        from(o in "socialware_delivery_outbox", where: o.turn_id == ^row.turn_id)
         |> repo.update_all(set: [committed_seq: seq, surface_version: row.tsv])
       end)
     end)
   end
 
   def down do
-    drop index(:socialware_customer_outbox, [:session_uri, :committed_seq],
-           name: :socialware_customer_outbox_session_committed_seq_index
+    drop index(:socialware_delivery_outbox, [:session_uri, :committed_seq],
+           name: :socialware_delivery_outbox_session_committed_seq_index
          )
 
-    alter table(:socialware_customer_outbox) do
+    alter table(:socialware_delivery_outbox) do
       remove :committed_seq
       remove :surface_version
     end

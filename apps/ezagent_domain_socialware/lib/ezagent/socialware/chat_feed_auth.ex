@@ -2,9 +2,8 @@ defmodule Ezagent.Socialware.ChatFeedAuth do
   @moduledoc """
   P4 — caller-identity tokens for the chat-feed external SPA.
 
-  Unlike `CustomerAuth` (which binds a customer to a socialware session with NO
-  identity — the customer is anonymous-but-token-bound), a chat session's
-  external viewers are its MEMBERS, so the chat-feed token carries the caller's
+  A socialware session's external viewers are its MEMBERS (real signed-in users
+  or minted read-only anon-Users), so the feed token carries the caller's
   **identity** (`entity://...` URI), signed by the server. The channel verifies
   the token to recover a TRUSTED caller `%URI{}`, then the LIVE chat membership
   predicate (`ChatMembership`, the SAME one as P3-3) decides whether that caller

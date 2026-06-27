@@ -51,7 +51,7 @@ defmodule EzagentCore.Repo.Migrations.PgBaseline do
       add :body, :map, null: false
       add :ref_id, :string
       add :inserted_at, :utc_datetime_usec, null: false
-      add :visibility, :string, null: false, default: "customer_visible"
+      add :visibility, :string, null: false, default: "external_visible"
       add :routed_at, :utc_datetime_usec
     end
 
@@ -287,7 +287,7 @@ defmodule EzagentCore.Repo.Migrations.PgBaseline do
 
     create index(:socialware_settlement_messages, [:workspace_uri])
 
-    create table(:socialware_customer_outbox, primary_key: false) do
+    create table(:socialware_delivery_outbox, primary_key: false) do
       add :turn_id, :string, primary_key: true
       add :session_uri, :string, null: false
       add :workspace_uri, :string, null: false
@@ -297,8 +297,8 @@ defmodule EzagentCore.Repo.Migrations.PgBaseline do
       add :emitted_at, :utc_datetime_usec
     end
 
-    create index(:socialware_customer_outbox, [:workspace_uri])
-    create index(:socialware_customer_outbox, [:session_uri, :committed_seq])
+    create index(:socialware_delivery_outbox, [:workspace_uri])
+    create index(:socialware_delivery_outbox, [:session_uri, :committed_seq])
 
     create table(:socialware_config_objects, primary_key: false) do
       add :id, :string, primary_key: true

@@ -6,7 +6,7 @@ defmodule Ezagent.Uploads.DownloadToken do
   S3-presigned-URL style: a MAC-signed bearer token that encodes the **full
   ws-scoped** `resource://<ws>/uploads/<name>` URI plus its issue time and TTL.
   It is the SOLE authorization carrier for the `GET /uploads/download?token=`
-  internal route, the public `GET /socialware/customer/download` feed route, and
+  internal route, the public `GET /socialware/external/download` feed route, and
   the internal operator download links — replacing the retired
   participation-based `/files/:filename` route (no back-compat shim).
 
@@ -33,7 +33,7 @@ defmodule Ezagent.Uploads.DownloadToken do
       a generic file reader for config-dir / other registered FsResolver types.
     * **minted only after authorization** — this module does NOT itself authorize;
       every caller (the internal controller mint endpoint, the LiveView render
-      after its in-workspace mount cap-check, the customer-feed approved-only
+      after its in-workspace mount cap-check, the external-feed approved-only
       gate) MUST authorize before calling `mint!/2`. This module is a pure signer.
     * **verify NEVER uses `:infinity`** — `verify/1` enforces the per-token TTL
       against the embedded `issued_at`, under a finite 24h outer `Phoenix.Token`

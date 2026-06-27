@@ -124,7 +124,7 @@ export function Conversation({
   const activeView = state.active_view === "pty" ? "pty" : "chat"
   // TEMPORARY (hello operator view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
-  // for now it embeds the customer surface. See HelloPagePreview below.
+  // for now it embeds the external surface. See HelloPagePreview below.
   const isHelloSession = sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
@@ -792,14 +792,14 @@ function kindLabel(kind: string, mine: boolean) {
 }
 
 // TEMPORARY operator preview of a hello session's rendered page. Embeds the
-// public `/socialware/customer` surface (the working renderer) in an iframe,
+// public `/socialware/external` surface (the working renderer) in an iframe,
 // rather than the native @json-render island. The proper home for this is world
 // surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
 // until then this is a clearly-labelled stopgap so an operator can see the page
 // without leaving the console. Hello sessions are `public_view`, so the customer
 // URL renders with no token/login.
 function HelloPagePreview({sessionUri}: {sessionUri: string}) {
-  const src = `/socialware/customer?session_uri=${encodeURIComponent(sessionUri)}`
+  const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <a

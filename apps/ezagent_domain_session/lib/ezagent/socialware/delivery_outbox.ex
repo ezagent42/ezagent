@@ -1,6 +1,6 @@
-defmodule Ezagent.Socialware.CustomerOutbox do
+defmodule Ezagent.Socialware.DeliveryOutbox do
   @moduledoc """
-  Durable per-turn delivery rows for socialware customer-facing output.
+  Durable per-turn delivery rows for socialware external-facing output.
 
   One row per settled turn (`turn_id` PK) holds the `message_ids` to deliver plus,
   since P2.5b, the COMMIT-ORDER metadata that makes a delivery committed-visible
@@ -19,7 +19,7 @@ defmodule Ezagent.Socialware.CustomerOutbox do
 
   @primary_key {:turn_id, :string, []}
 
-  schema "socialware_customer_outbox" do
+  schema "socialware_delivery_outbox" do
     field(:session_uri, :string)
     field(:workspace_uri, :string)
     field(:message_ids, {:array, :string}, default: [])

@@ -1,6 +1,6 @@
-defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
+defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
   @moduledoc """
-  P2.5b — the customer-delivery outbox is a durable, cursor-addressable source.
+  P2.5b — the external-delivery outbox is a durable, cursor-addressable source.
   committed_seq is assigned at the commit boundary in commit order (per session),
   so replay never skips an out-of-order-committed row; pending rows are invisible;
   the page follows commit order (rollback-correct, tie-correct).
@@ -12,8 +12,10 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Socialware.{CustomerFeed, CustomerOutbox, SettlementRecord}
+  alias Ezagent.Socialware.{DeliveryOutbox, ExternalFeed, SettlementRecord}
   alias EzagentCore.Repo
+
+  @owner Ezagent.URI.entity(:team_alpha, :user, "delivery-cursor-owner")
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "p2-5b-#{System.unique_integer([:positive])}")
@@ -57,6 +59,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: uri,
+        owner_uri: @owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -64,10 +67,9 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
     uri
   end
 
-  defp test_token(session_uri) do
-    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
-    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
-  end
+  # The external read is authorized by LIVE membership (the session owner), not
+  # an identity-less token. The delivery-cursor projection is auth-agnostic.
+  defp test_caller(_session_uri), do: @owner
 
   # full turn -> committed delivery; returns turn_id.
   defp run_turn(uri, page_tree) do
@@ -91,7 +93,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
     {:ok, %{status: :settled}} = dispatch(uri, :turn, :settle, %{turn_id: turn_id})
 
     wait_until(fn ->
-      case Repo.get_by(CustomerOutbox, turn_id: turn_id) do
+      case Repo.get_by(DeliveryOutbox, turn_id: turn_id) do
         %{committed_seq: seq} when is_integer(seq) -> true
         _ -> false
       end
@@ -105,7 +107,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       uri = spawn_session()
       turn_id = run_turn(uri, %{type: "text", props: %{text: "p1"}})
 
-      row = Repo.get_by(CustomerOutbox, turn_id: turn_id)
+      row = Repo.get_by(DeliveryOutbox, turn_id: turn_id)
       assert row.committed_seq == 1
       assert row.surface_version == 1
     end
@@ -115,8 +117,8 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
-      assert Repo.get_by(CustomerOutbox, turn_id: t1).committed_seq == 1
-      assert Repo.get_by(CustomerOutbox, turn_id: t2).committed_seq == 2
+      assert Repo.get_by(DeliveryOutbox, turn_id: t1).committed_seq == 1
+      assert Repo.get_by(DeliveryOutbox, turn_id: t2).committed_seq == 2
     end
   end
 
@@ -126,20 +128,20 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
-      all = CustomerFeed.committed_deliveries_since(uri, 0)
+      all = ExternalFeed.committed_deliveries_since(uri, 0)
       assert Enum.map(all, & &1.turn_id) == [t1, t2]
       assert Enum.map(all, & &1.cursor) == [1, 2]
       assert List.last(all).surface_version == 2
 
-      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 1), & &1.turn_id) == [t2]
-      assert CustomerFeed.committed_deliveries_since(uri, 2) == []
+      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 1), & &1.turn_id) == [t2]
+      assert ExternalFeed.committed_deliveries_since(uri, 2) == []
     end
 
     test "latest_cursor/1 is the max committed_seq (0 when none)" do
       uri = spawn_session()
-      assert CustomerFeed.latest_cursor(uri) == 0
+      assert ExternalFeed.latest_cursor(uri) == 0
       _ = run_turn(uri, %{type: "text", props: %{text: "p1"}})
-      assert CustomerFeed.latest_cursor(uri) == 1
+      assert ExternalFeed.latest_cursor(uri) == 1
     end
   end
 
@@ -149,7 +151,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(uri)
 
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
-      assert Repo.get_by(CustomerOutbox, turn_id: t1).committed_seq == 1
+      assert Repo.get_by(DeliveryOutbox, turn_id: t1).committed_seq == 1
 
       pending_turn = "#{URI.to_string(uri)}#turn-pending"
 
@@ -163,7 +165,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
         })
 
       {:ok, _} =
-        Repo.insert(%CustomerOutbox{
+        Repo.insert(%DeliveryOutbox{
           turn_id: pending_turn,
           session_uri: URI.to_string(uri),
           workspace_uri: URI.to_string(workspace_uri),
@@ -173,18 +175,18 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
           emitted_at: DateTime.utc_now()
         })
 
-      assert Repo.get_by(CustomerOutbox, turn_id: pending_turn).committed_seq == nil
-      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1]
+      assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == nil
+      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1]
 
       t3 = run_turn(uri, %{type: "text", props: %{text: "p3"}})
-      assert Repo.get_by(CustomerOutbox, turn_id: t3).committed_seq == 2
+      assert Repo.get_by(DeliveryOutbox, turn_id: t3).committed_seq == 2
 
       # mark_committed_for_test now does the full commit (status + seq + surface_version).
       {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(pending_turn)
 
-      assert Repo.get_by(CustomerOutbox, turn_id: pending_turn).committed_seq == 3
+      assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == 3
 
-      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [
+      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [
                pending_turn
              ]
     end
@@ -206,7 +208,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
         })
 
       {:ok, _} =
-        Repo.insert(%CustomerOutbox{
+        Repo.insert(%DeliveryOutbox{
           turn_id: turn_id,
           session_uri: URI.to_string(uri),
           workspace_uri: URI.to_string(workspace_uri),
@@ -218,11 +220,11 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
 
       {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(turn_id)
 
-      row = Repo.get_by(CustomerOutbox, turn_id: turn_id)
+      row = Repo.get_by(DeliveryOutbox, turn_id: turn_id)
       assert row.committed_seq == 1
       assert row.surface_version == 7
 
-      [d] = CustomerFeed.committed_deliveries_since(uri, 0)
+      [d] = ExternalFeed.committed_deliveries_since(uri, 0)
       assert d.surface_version == 7
     end
   end
@@ -230,7 +232,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
   describe "re-commit is a full no-op (codex rev1 HIGH-2): page does not roll back" do
     test "re-committing an older turn after a newer one preserves committed_at + latest page" do
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
@@ -241,10 +243,10 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
 
       {:ok, s1_after} = Ezagent.Socialware.Settlement.get(t1)
       assert s1_after.committed_at == s1_before.committed_at
-      assert Repo.get_by(CustomerOutbox, turn_id: t1).committed_seq == 1
+      assert Repo.get_by(DeliveryOutbox, turn_id: t1).committed_seq == 1
 
-      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1, t2]
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1, t2]
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p2"}}
     end
   end
@@ -252,7 +254,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
   describe "committed_at tie: page follows committed_seq, not lexicographic turn_id (codex rev2 HIGH)" do
     test "two latest deliveries sharing committed_at -> page is the max-committed_seq version" do
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
 
       turn_ids = for n <- 1..10, do: run_turn(uri, %{type: "text", props: %{text: "p#{n}"}})
       t9 = Enum.at(turn_ids, 8)
@@ -263,26 +265,26 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       from(s in SettlementRecord, where: s.turn_id in ^[t9, t10])
       |> Repo.update_all(set: [committed_at: s10.committed_at])
 
-      assert Repo.get_by(CustomerOutbox, turn_id: t9).committed_seq == 9
-      assert Repo.get_by(CustomerOutbox, turn_id: t10).committed_seq == 10
+      assert Repo.get_by(DeliveryOutbox, turn_id: t9).committed_seq == 9
+      assert Repo.get_by(DeliveryOutbox, turn_id: t10).committed_seq == 10
 
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p10"}}
 
-      assert List.last(CustomerFeed.committed_deliveries_since(uri, 0)).turn_id == t10
+      assert List.last(ExternalFeed.committed_deliveries_since(uri, 0)).turn_id == t10
     end
   end
 
   describe "rollback to an older retained version (codex rev4 HIGH): page follows commit order, not max(version)" do
     test "commit v2, then commit a rollback to v1 -> page is v1 (commit-order, not the max version)" do
       uri = spawn_session()
-      token = test_token(uri)
+      caller = test_caller(uri)
       {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(uri)
 
       _t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       _t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
-      {:ok, snap2} = CustomerFeed.snapshot(uri, token)
+      {:ok, snap2} = ExternalFeed.snapshot(uri, caller)
       assert snap2.page == %{type: "text", props: %{text: "p2"}}
 
       rollback_turn = "#{URI.to_string(uri)}#turn-rollback"
@@ -297,7 +299,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
         })
 
       {:ok, _} =
-        Repo.insert(%CustomerOutbox{
+        Repo.insert(%DeliveryOutbox{
           turn_id: rollback_turn,
           session_uri: URI.to_string(uri),
           workspace_uri: URI.to_string(workspace_uri),
@@ -309,8 +311,8 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
 
       {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(rollback_turn)
 
-      assert Repo.get_by(CustomerOutbox, turn_id: rollback_turn).committed_seq == 3
-      {:ok, snap1} = CustomerFeed.snapshot(uri, token)
+      assert Repo.get_by(DeliveryOutbox, turn_id: rollback_turn).committed_seq == 3
+      {:ok, snap1} = ExternalFeed.snapshot(uri, caller)
       assert snap1.page == %{type: "text", props: %{text: "p1"}}
     end
   end
@@ -340,7 +342,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
         |> Repo.update_all(set: [status: :committed, committed_at: now])
 
         {:ok, _} =
-          Repo.insert(%CustomerOutbox{
+          Repo.insert(%DeliveryOutbox{
             turn_id: turn_id,
             session_uri: URI.to_string(uri),
             workspace_uri: URI.to_string(workspace_uri),
@@ -356,10 +358,10 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       t9 = "#{URI.to_string(uri)}#turn-9"
       t10 = "#{URI.to_string(uri)}#turn-10"
 
-      assert Repo.get_by(CustomerOutbox, turn_id: t9).committed_seq <
-               Repo.get_by(CustomerOutbox, turn_id: t10).committed_seq
+      assert Repo.get_by(DeliveryOutbox, turn_id: t9).committed_seq <
+               Repo.get_by(DeliveryOutbox, turn_id: t10).committed_seq
 
-      assert Repo.get_by(CustomerOutbox, turn_id: t10).surface_version == 2
+      assert Repo.get_by(DeliveryOutbox, turn_id: t10).surface_version == 2
     end
   end
 end

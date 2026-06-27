@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.HelloBuilder do
   generation: `EzagentPluginHello.Generator` calls the LLM with the page-gen
   prompt, extracts + validates the `@json-render` spec, and drives the session's
   `Behavior.Turn` to land it in `Behavior.Surface` (the chokepoint — see
-  `EzagentPluginHello.TurnDriver`). The visitor then sees it via `CustomerFeed`.
+  `EzagentPluginHello.TurnDriver`). The visitor then sees it via `ExternalFeed`.
 
   ## Phase 0 transport note (deviation from the curl-flavor plan, documented)
 

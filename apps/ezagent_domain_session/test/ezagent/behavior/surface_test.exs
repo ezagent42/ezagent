@@ -103,7 +103,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
       )
 
     assert Surface.operator_tree(surface) == tree2
-    assert Surface.customer_tree(surface) == tree1
+    assert Surface.external_tree(surface) == tree1
   end
 
   describe "tree_for_version/2" do

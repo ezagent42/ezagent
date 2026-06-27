@@ -2,7 +2,7 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
   @moduledoc """
   P4 — authenticated transport for a CHAT session's external SPA view, the
   CALLER-owned Phoenix channel that serves the `:pull` `chat_feed`
-  `ExternalAdapter`. The chat analogue of `EzagentWeb.Socialware.CustomerChannel`
+  `ExternalAdapter`. The chat analogue of `EzagentWeb.Socialware.ExternalFeedChannel`
   (P3-2), but with a **windowed snapshot-refresh** read model instead of the
   customer feed's delta cursor: every read returns the CURRENT latest-N chat
   snapshot, gated by LIVE chat membership (`ChatFeed`), NOT a customer token.

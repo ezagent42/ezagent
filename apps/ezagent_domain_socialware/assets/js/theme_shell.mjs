@@ -6,8 +6,8 @@
 // that drops into <Slot/>. "Change the look" = swap theme / tweak tokens (curated),
 // never arbitrary AI code on a public page.
 //
-// React.createElement (no JSX) so it bundles under the customer SPA's esbuild.
-// Tailwind scans this file (customer.css @source) → every literal class is built.
+// React.createElement (no JSX) so it bundles under the viewer SPA's esbuild.
+// Tailwind scans this file (viewer.css @source) → every literal class is built.
 import React from "react"
 
 const h = React.createElement
