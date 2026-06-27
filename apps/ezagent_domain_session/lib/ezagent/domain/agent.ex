@@ -116,8 +116,9 @@ defmodule Ezagent.Domain.Agent do
   # so the de-activation machinery is DRY at one site per slice and every
   # sensitive slice read stays at its allowlisted owner. Domain.Agent adds the
   # UNIFORM two-route authz preflight; it adds NO raw slice access and NEVER
-  # hand-rolls `Capability.matches?` (the match runs through the sanctioned
-  # chokepoint owner `Ezagent.Identity.caps_authorize?/2` — SPEC §3.1).
+  # hand-rolls the cap-shape match — that runs through the sanctioned chokepoint
+  # owner `Ezagent.Identity.caps_authorize?/2` (SPEC §3.1). The §8.9 module-
+  # scoped test asserts this source carries zero hand-rolled match calls.
   #
   # The two authz routes (SPEC §3.2, Decision D3) are BOTH permanent and OR'd
   # exactly as the live dispatch step-5.5 does:
@@ -223,8 +224,8 @@ defmodule Ezagent.Domain.Agent do
   #
   # route 1 (inline ctx.caps) OR route 2 (caller's slice/snapshot caps), both
   # matched through the sanctioned chokepoint owner `caps_authorize?/2`. The new
-  # module NEVER calls `Capability.matches?` (the §8.9 module-scoped test pins
-  # this; the global p3 probe allowlists the whole session dir so it cannot).
+  # module NEVER calls the cap-shape match directly (the §8.9 module-scoped test
+  # pins this; the global p3 probe allowlists the whole session dir so it cannot).
   defp authorized?(needed, ctx) do
     inline = Map.get(ctx, :caps, [])
 
