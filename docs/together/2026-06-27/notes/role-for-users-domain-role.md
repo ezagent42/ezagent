@@ -54,10 +54,14 @@
 5. **Recommended home: NOT a new `domain.role`.**
    - The **agent recipe (A) stays in `domain.agent`** (the in-flight relocation),
      converging on the role-as-data ConfigObject (`config://<ws>/role/<name>`).
-   - The **responsibility concept (B2) belongs in `domain_workspace`** (+ a small
-     approval/quorum Behavior), built on the EXISTING primitives: membership,
-     identity caps (#154), and routing rules. Workspace already owns
-     workspace-membership and role-authoring caps.
+   - The **responsibility concept (B2) splits across EXISTING apps** (corrected
+     after codex caught a dep-cycle): durable principal→responsibility
+     **assignment → `domain_workspace`** (where role caps already live); the
+     **approval/quorum/arbiter workflow → `domain_session`** (the only app with
+     message replies + membership; it already deps on workspace, so hosting the
+     workflow in workspace would CYCLE). Built on existing primitives: membership,
+     identity caps, routing — plus a new assignment↔cap lifecycle and an
+     assignment-gated routing boundary.
    - A dedicated `domain.role` does **not** earn its existence today (YAGNI). The
      revisit trigger: if B2's principal→responsibility assignment outgrows a
      workspace facet (cross-workspace responsibilities, a role lifecycle of its
@@ -194,28 +198,55 @@ one (assignment) needs new state; one (quorum/arbiter) needs a new Behavior.
 
 ### 3.2 "Route a confirmation to them, collect verdicts"
 
-- **Route:** generalize `{:role, name}` receiver expansion from single-resolve to
-  **fan-out over all holders** (return `[uri]`, not one). Approvals are messages;
-  this rides the existing routing/delivery seam (incl. the per-recipient prompt
-  template from team-routing-unification §3.4, so each holder gets a rendered
-  "please approve X" message). No new transport.
+- **Route — NOT a simple fan-out tweak (codex HIGH, valid).** `{:role, name}`
+  would be generalized from single-resolve to **fan-out over all holders** (return
+  `[uri]`, not one). But this **crosses a trust boundary** the routing code treats
+  as security-critical: the resolver applies a hard membership filter to
+  `$session_users`/`$mentions`, whereas `{:role, name}` passes its resolver result
+  straight through, and **session delivery mints a narrow `:receive` cap per
+  recipient it is handed** (`Delivery`). A naïve workspace-wide fan-out would then
+  either (a) be unable to reach holders outside the current session, or (b) hand
+  non-session / stale / cross-scope principals to delivery and mint `:receive`
+  caps for them — a tenant-isolation hole. So B2 routing **must define its own
+  receiver trust boundary**: a same-workspace check + *assignment* validation (the
+  recipient genuinely holds the responsibility **now**) before delivery, with
+  session-local vs cross-session delivery decided explicitly, plus tests proving
+  delivery cannot mint `:receive` caps for unassigned/out-of-scope principals.
+  This is **new gated machinery**, not a one-line `expand_receiver` change.
 - **Collect verdicts:** **NEW** — there is no primitive that gathers N replies and
   evaluates a quorum. This is an **approval Behavior** (a workflow) holding
   request state `{cr/subject, required_role, holders, verdicts, policy}` and a
-  reply-context binding so a holder's verdict maps back to the request. It is a
-  Behavior on the Session/Workspace Kind, **not** a new domain or Kind.
+  reply-context binding so a holder's verdict maps back to the request. Because it
+  needs **session message replies + session membership/routing context**, it
+  belongs on the **Session Kind** (`domain_session`) — NOT the Workspace Kind; the
+  dep-DAG forces this (§4.2). Not a new domain or Kind.
 
 ### 3.3 "Approval authority"
 
-This is **caps (#154)**, not new machinery. "May this principal authorize a merge"
-= a held capability in the principal's identity slice
-(`cap(:..., :approve)` / a workspace-level review cap), gated by the standard
-dispatch step-5.5 authz check. Critically, **#154 already requires every cap to
-trace to a real entity granter** (`granted_by` must be `%URI{scheme: "entity"}`;
-`granted_by_entity?/1`) — so a role-holder's approval authority is already an
-accountable, owned cap. **"Approval authority" needs NO new concept** — it is a
-named cap (or cap-bundle) on the principal, which the identity slice already
-stores for both users and agents.
+This is **caps**, not new machinery — but with two refinements codex correctly
+flagged.
+
+- **The accountable-granter guarantee comes from the GRANT PATH, not the runtime
+  predicate (codex MED, corrected).** `Capability.granted_by_entity?/1` is a
+  **narrow no-`system://` backstop** (`capability.ex:319-320`: it rejects only
+  `granted_by: %URI{scheme: "system"}` and returns `true` for everything else). The
+  real "every cap traces to a real entity" invariant (#154) is enforced at the
+  **grant chokepoint** `Ezagent.Identity.Grant.prepare/4`, which overwrites
+  `granted_by` and validates it is `%URI{scheme: "entity"}`, else
+  `{:error, {:granter_not_entity, …}}`. So B2's approval caps are accountable
+  **iff they are minted through `Identity.Grant`** — that is the invariant B2 must
+  use, not the runtime predicate alone.
+- **Caps are NOT bundled by role today — the assignment↔cap lifecycle is NEW
+  (codex MED, valid).** Identity caps are a flat `MapSet` keyed by capability
+  identity; grant/revoke dedup by cap identity, **not** by role assignment. So
+  assigning `reviewer` does **not** auto-grant an `approve` cap, and *un*assigning
+  it does **not** auto-revoke one. B2 must therefore own an explicit
+  **assignment↔cap binding** (grant the bundle on assign, revoke on unassign) **or**
+  a hard invariant that **verdict acceptance re-checks current assignment AND
+  current cap atomically** (so a stale or unauthorized holder's verdict is
+  rejected). "Approval authority needs no new concept" was too strong: the *cap
+  primitive* is reused (held in the identity slice, cross-principal), but the
+  **role→cap lifecycle** is new state B2 must specify.
 
 ### 3.4 "Escalate to an arbiter role on conflict"
 
@@ -231,17 +262,21 @@ stores for both users and agents.
 |---|---|---|
 | principals in sessions/workspaces | session/workspace **Membership** (`{URI, meta}`, user+agent) | none for membership; B2 wants a *workspace-scoped, many-holder* assignment table — **new** |
 | name a responsibility on a principal | membership `:role_name` facet (B1) | unique-per-session, single-holder — **must relax for B2** |
-| approval authority | **CapBAC / #154** held caps in identity slice (user+agent) | none — caps already cross-principal + accountable |
-| route an approval to role-holders | routing `{:role, name}` + `role_resolver` (B1) | single-resolve — **generalize to fan-out** |
-| collect verdicts / quorum / arbiter | — | **new approval Behavior** (workflow + reply-context) |
+| approval authority | **CapBAC** held caps in identity slice (user+agent), accountable via `Identity.Grant` | cap primitive reused; **role→cap lifecycle binding is new** (caps are flat, not role-bundled) |
+| route an approval to role-holders | routing `{:role, name}` + `role_resolver` (B1) | single-resolve **and bypasses the membership trust boundary** — fan-out needs a NEW gated receiver boundary (§3.2) |
+| collect verdicts / quorum / arbiter | — | **new approval Behavior** on the Session Kind (workflow + reply-context) |
 | transport to a holder | agent↔session call / user delivery render | none (reused) |
 
 **Is "role" partly already a cap-bundle on Membership?** *Partly yes for B2:* a
-member already (a) is a principal in a session/workspace and (b) can hold caps in
-its identity slice and (c) can carry a `role_name`. B2 = **(name) + (held caps)
-+ (many-holder, workspace-scoped assignment) + (quorum Behavior)**. The first
-three are assemblies of existing parts; only the assignment table and the quorum
-Behavior are genuinely new.
+member already (a) is a principal in a session/workspace, (b) can hold caps in its
+identity slice, and (c) can carry a `role_name`. But B2 is **more** than
+cap-bundles-on-Membership: it adds (i) a **many-holder, workspace-scoped
+assignment** (today's caps/`role_name` don't model "N principals share
+responsibility R"), (ii) an **assignment↔cap lifecycle** (caps are flat, not
+auto-bundled per role — §3.3), (iii) a **gated fan-out receiver boundary**
+(§3.2), and (iv) a **quorum/arbiter Behavior** with verdict state. So B2 is NOT
+"just cap-bundles on Membership", but it also does NOT need a new app — the new
+state is an assignment binding + a Behavior, hosted in existing apps (§4).
 
 ---
 
@@ -259,41 +294,59 @@ Behavior are genuinely new.
   `domain.agent`** — that would (a) wrongly couple a cross-principal concept to the
   agent app and (b) re-entangle the very thing the de-core move is separating.
 
-### 4.2 Why `domain_workspace`, not a new `domain.role`
+### 4.2 The home: SPLIT across existing apps (corrected per codex HIGH on the dep-DAG)
 
-The role-as-data spec already places **role-authoring caps (`:author_role`) and
-`RoleGovernance` on the Workspace Kind** — because *the Workspace already owns
-workspace-membership and the role caps* (siblings to the shipped
-`:add_template`/`:remove_template` workspace caps). B2's assignment table +
-approval-routing rules are workspace-scoped governance of *who holds what
-responsibility in this workspace* — the same Kind's concern. So:
+> **Correction (codex HIGH, verified):** the actual umbrella deps run
+> **`ezagent_domain_session` → `ezagent_domain_workspace`** (session's `mix.exs`
+> lists `ezagent_domain_workspace`; workspace's `mix.exs` lists only `core`,
+> `domain_agent`, `domain_identity` — it does **NOT** depend on session). So the
+> draft's "put the approval/quorum Behavior in `domain_workspace`" would create a
+> **cycle**: the quorum workflow needs session replies + session
+> membership/routing, which only `domain_session` has. The home must be **split**.
 
-- **B2 assignment + approval/quorum Behavior → `domain_workspace`** (Workspace
-  Kind), reading identity caps (#154) and emitting routing rules. The quorum
-  Behavior can sit on the Session Kind if the approval is session-scoped; the
-  *assignment* is workspace-scoped.
+- **Durable principal→responsibility assignment → `domain_workspace`** (Workspace
+  Kind). It is workspace-scoped governance of *who holds responsibility R in this
+  workspace*, a sibling to the role-authoring caps the role-as-data spec already
+  puts there (`:author_role`, next to the shipped `:add_template`/
+  `:remove_template`). A new **`:assign_role`** workspace cap gates assignment.
+  Workspace already deps on identity (#154 caps) — no new edge.
+- **Session-scoped approval/quorum/arbiter Behavior → `domain_session`** (Session
+  Kind). It needs message replies, membership, routing context, and verdict state
+  — all of which live in or below `domain_session`, which **already** deps on
+  `domain_workspace` + `domain_identity` + `core` routing. So it READS the
+  workspace assignment (allowed by the existing session→workspace edge) and uses
+  session routing/delivery. No new edge, no cycle.
+- **Fan-out receiver boundary → `ezagent_core` routing** (the `{:role, name}`
+  expansion), but gated by the assignment validation described in §3.2.
 - **No new `ezagent_domain_role` app.** A new app would need deps on identity +
   membership + caps + routing and would pull the recipe-role too (forcing the
-  homonym back together). It buys nothing over a workspace facet + a Behavior.
+  homonym back together). The split across the two existing Kinds (workspace owns
+  the assignment, session owns the workflow) respects the real dep direction and
+  buys nothing less than a new app would, with no extra surface.
 
 **When `domain.role` WOULD earn existence (revisit trigger):** if
 principal→responsibility assignment grows a real lifecycle of its own —
 cross-workspace responsibilities, responsibilities as first-class addressable
-objects with their own governance distinct from the workspace, or a need to
-assign responsibilities to principals that are not workspace members. Until then,
-it is YAGNI; the workspace facet is the honest model.
+objects with their own governance, or assigning responsibilities to principals
+that are not workspace members. Until then, it is YAGNI; the workspace-assignment
++ session-workflow split is the honest model.
 
-### 4.3 Dep-DAG implication summary
+### 4.3 Dep-DAG implication summary (corrected)
 
 ```
-domain.agent        ──> (recipe-role A: ConfigStore subject, Agent Kind)        [in-flight]
-domain_workspace    ──> (B2 assignment + :author_role/:assign_role caps
-                          + approval/quorum Behavior)
-                          deps: domain_identity (caps #154), membership, ezagent_core routing
-ezagent_core/routing──> {:role, name} fan-out expansion (generalize single→many)
+ACTUAL umbrella edges (verified): domain_session ──> domain_workspace ──> domain_identity, core
+                                  domain_workspace ──> domain_agent
+
+domain.agent      : recipe-role A (ConfigStore subject, Agent Kind)            [in-flight]
+domain_workspace  : B2 durable assignment + :assign_role cap   (reads domain_identity caps)
+domain_session    : B2 approval/quorum/arbiter Behavior        (reads workspace assignment,
+                                                                 uses session routing/delivery)
+core/routing      : {:role, name} fan-out + assignment-gated receiver boundary
 ```
 
-No cycle; no new app; the recipe and the responsibility stay in separate apps,
+The split places the assignment where workspace already owns role caps and the
+workflow where session already owns replies/membership — **no new edge, no
+cycle, no new app**; recipe (A) and responsibility (B2) stay in separate apps,
 matching their separate concepts.
 
 ---
@@ -308,9 +361,10 @@ step**, because B2 never touches the recipe registry.
    it also gains a ConfigStore read-through per the role-as-data CR spec). This is
    *concept A* and is correct on its own merits (registry next to the Agent Kind
    that consumes it; de-core).
-2. **Do NOT rename or re-home anything for B2 yet.** B2 is additive: a new
-   workspace-scoped assignment + an approval Behavior + a routing fan-out tweak.
-   It reuses identity caps and membership unchanged.
+2. **Do NOT rename or re-home anything for B2 yet.** B2 is additive: a
+   workspace-scoped assignment (`domain_workspace`) + a session-scoped approval
+   Behavior (`domain_session`) + an assignment-gated routing fan-out
+   (`core/routing`). It reuses identity caps and membership unchanged.
 3. **Disambiguate the vocabulary** (cheap, high-value): in docs and any new code,
    call A the **agent recipe / role-recipe** and reserve the bare word **role**
    (or "responsibility") for B. The two `role`s under one word is the root of the
@@ -322,10 +376,10 @@ step**, because B2 never touches the recipe registry.
    independently shippable and gated by existing caps.
 
 **Nothing in the relocation needs to be undone for B2.** If a `domain.role` were
-ever warranted (§4.2 trigger), B2's workspace-resident assignment + Behavior would
-be the thing that lifts out — and it would lift out of `domain_workspace`, never
-out of `domain.agent`. So even the pessimistic future does not make the agent
-move wasted.
+ever warranted (§4.2 trigger), what lifts out is B2's assignment (from
+`domain_workspace`) + workflow (from `domain_session`) — never anything from
+`domain.agent`. So even the pessimistic future does not make the agent move
+wasted.
 
 ---
 
@@ -338,15 +392,20 @@ move wasted.
    a principal holds" unifier fits B2 (and half-exists as the identity-slice caps)
    but mis-describes A's build-time `requested_caps`. Keep them separate (§1.3).
 3. **Approval/confirmation/arbitration routing:** route via `{:role, name}`
-   (generalized to fan-out) over a new workspace-scoped many-holder assignment;
-   approval authority = #154 held caps; verdict-collection + arbiter escalation =
-   a new approval/quorum Behavior (recursion for escalation). Reuses membership,
-   caps, routing, transport; new state = the assignment table + the Behavior's
-   request state (§3).
-4. **`domain.role` vs `domain.agent`:** recipe-role (A) stays in `domain.agent`;
-   responsibility (B2) belongs in `domain_workspace` (where role caps + membership
-   already live), not a new app. `domain.role` is YAGNI until B2 outgrows a
-   workspace facet (§4).
+   fan-out — but **behind a new assignment-gated receiver trust boundary** (a
+   naïve fan-out would mint `:receive` caps for out-of-scope principals, §3.2);
+   approval authority = caps held in the identity slice, accountable **iff minted
+   through `Identity.Grant`**, plus a **new role→cap assignment lifecycle** (caps
+   are flat, not auto-bundled, §3.3); verdict-collection + arbiter escalation = a
+   new approval/quorum Behavior on the Session Kind (recursion for escalation).
+   New state = the workspace assignment + the role→cap binding + the Behavior's
+   verdict state (§3).
+4. **`domain.role` vs `domain.agent`:** recipe-role (A) stays in `domain.agent`.
+   Responsibility (B2) **splits across existing apps** (codex-corrected): durable
+   assignment → `domain_workspace` (where role caps live); the approval/quorum
+   workflow → `domain_session` (the only app with replies/membership, and which
+   already deps on workspace — putting it in workspace would CYCLE). **No new app.**
+   `domain.role` is YAGNI until B2 outgrows a workspace facet (§4).
 5. **Migration:** the relocation is a clean stepping-stone; B2 is additive and
    never touches the recipe registry; disambiguate the vocabulary now (§5).
 
@@ -392,6 +451,26 @@ move wasted.
 
 ---
 
-## 9. Codex adversarial-review record
+## 9. Codex adversarial-review record (2026-06-27, static-only, gpt-5.x)
 
-_(appended after review — see §9 below for verdict and resolutions.)_
+> **Verdict: needs-attention.** Codex AFFIRMED the load-bearing conclusions — the
+> A/B (recipe vs responsibility-label) split is correct, and it did not contest
+> "no `domain.role`" or "recipe stays in `domain.agent`". It found the *B2 design
+> overclaimed* in four places (two factual, two under-specified). All four are
+> **applied in this rev** (they sharpen B2's design and the home; they do not flip
+> the verdict).
+
+| # | Codex finding | Verdict | Resolution in this rev |
+|---|---|---|---|
+| 1 | **Role fan-out skips the delivery trust boundary** — `{:role,name}` bypasses the membership filter that `$session_users`/`$mentions` get, and delivery mints a `:receive` cap per recipient; a workspace-wide fan-out could mint receive caps for out-of-scope/stale principals (tenant-isolation hole). | HIGH, valid | §3.2 rewritten: B2 routing must define an **assignment-gated receiver trust boundary** (same-ws + current-assignment check, session-local vs cross-session decided explicitly, tests proving no receive-cap leak). No longer called a "simple fan-out tweak". |
+| 2 | **Workspace home conflicts with the actual dep direction** — `domain_session → domain_workspace` (verified in both `mix.exs`). A quorum/arbiter Behavior needs session replies/membership, so hosting it in `domain_workspace` would **cycle**. | HIGH, valid (verified) | §4.2/§4.3 corrected to a **split**: durable assignment → `domain_workspace`; the approval/quorum workflow → `domain_session` (already deps on workspace). DAG redrawn against real edges; "no cycle" now holds. Still **no new app**. |
+| 3 | **Approval authority under-modeled as standalone caps** — identity caps are a flat `MapSet` keyed by cap identity; un-assigning a role would not revoke the cap, assigning would not grant it; verdicts could route to stale/absent authority. | MED, valid | §3.3 + §3.5 add the **assignment↔cap lifecycle** as new state (grant-on-assign/revoke-on-unassign, or atomic re-check of assignment+cap at verdict time). "Needs no new concept" softened. |
+| 4 | **#154 `granted_by` claim too strong** — `granted_by_entity?/1` only rejects `system://` (verified `capability.ex:319-320`); the entity-granter invariant is enforced at `Identity.Grant.prepare/4`, not the runtime predicate. | MED, valid (verified) | §3.3 corrected: accountability comes from the **`Identity.Grant` path**; the runtime predicate is a narrow no-`system://` backstop. B2 approval caps must be minted via that path. |
+
+**Net:** the thesis (two concepts under one word; recipe ≠ responsibility; no
+`domain.role`; relocation is a clean stepping-stone) survived review intact. The
+fixes were (a) two verified factual corrections (the dep-DAG direction and the
+`granted_by_entity?` scope) and (b) two B2-design tightenings (the fan-out trust
+boundary and the role→cap lifecycle) — making B2 a more honest "new
+assignment-binding + gated routing + session workflow", still assembled from
+existing primitives in existing apps.
