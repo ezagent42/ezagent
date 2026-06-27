@@ -46,6 +46,15 @@ ab_close(){ agent-browser close --all >/dev/null 2>&1; }
 # URL 的 `?` 前需带 `/`(browserless v2 对 `ws://h:3000?token=` 返回 400;正确是 `ws://h:3000/?token=`)。
 ab_connect_bootstrap(){
   [ -n "${E2E_BROWSER_CDP:-}" ] || return 0      # HOST/dev:不连远端,留给 open 自起本机 Chrome
+  # 关键坑(2026-06-27 实测):compose 用 `${ESR_PROXY:-}` 给容器注入了**空字符串**的
+  # HTTP_PROXY/HTTPS_PROXY 等。agent-browser 的 CDP 客户端把空串当成非法 proxy → connect
+  # 直接放弃远端、回退去起本机 Chrome("Chrome not found")。把**值为空**的 proxy 变量
+  # unset 掉(只删空的,真有代理时不动),connect 才能正常贴到 sidecar。函数内 unset 会作用到
+  # source 它的 run.sh 外层 shell,后续所有 ab_*(独立进程)都继承这份干净环境。
+  local v
+  for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy; do
+    if [ -n "${!v+x}" ] && [ -z "${!v}" ]; then unset "$v"; fi
+  done
   local i
   for i in 1 2 3 4 5 6; do                        # sidecar 可能仍在预热 → 重试
     if agent-browser connect "$E2E_BROWSER_CDP" >/dev/null 2>&1; then
