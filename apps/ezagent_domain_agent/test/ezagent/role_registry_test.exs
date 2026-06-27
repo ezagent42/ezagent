@@ -139,6 +139,38 @@ defmodule Ezagent.Agent.RoleRegistryTest do
     assert 1 == count_objects(role_subject(ws, name))
   end
 
+  test "re-seeding a recipe WITH atom-valued requested_caps is idempotent (cold-restart)",
+       %{name: name, system_ws: ws} do
+    # Regression for the role-seed cold-restart collision: a recipe carrying
+    # `requested_caps` (atom MODULE + atom action VALUES, e.g. the orchestrator
+    # role) JSON-serializes those values to strings on WRITE, but the re-seed's
+    # comparison only stringified KEYS — so `pointed.body != seed_body` and a
+    # plain BEAM reboot against a seeded DB raised `{:role_seed_collision, _}`,
+    # breaking boot of every plugin that declares such a role (cc/orchestrator).
+    # The existing idempotency test above uses a capless recipe, so it never
+    # exercised this path. Asserts the 2nd seed is a no-op, NOT a collision.
+    recipe = %{
+      name: name,
+      prompt: "p",
+      behaviors: [Ezagent.Behavior.Template],
+      requested_caps: [
+        %{behavior: Ezagent.Behavior.Template, action: :read},
+        %{behavior: Ezagent.Behavior.Template, action: :write}
+      ]
+    }
+
+    assert {:ok, :seeded} = RoleRegistry.seed_role_if_absent(recipe)
+    {:ok, %ConfigObject{id: first_id}} = resolve_role_object(ws, name)
+
+    # The reboot path: identical recipe, same deterministic seed source_turn_id.
+    # Pre-fix this returned {:error, {:role_seed_collision, name}}.
+    assert {:ok, :exists} = RoleRegistry.seed_role_if_absent(recipe)
+
+    {:ok, %ConfigObject{id: second_id}} = resolve_role_object(ws, name)
+    assert first_id == second_id
+    assert 1 == count_objects(role_subject(ws, name))
+  end
+
   # ---- §8.5 seed override-safety (a published edit survives a re-seed) -------
 
   test "re-seed does NOT clobber a published override of the built-in",
