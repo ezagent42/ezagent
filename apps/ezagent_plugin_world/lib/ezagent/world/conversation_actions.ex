@@ -59,6 +59,15 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &invite_member(socket, &1, member))
   end
 
+  def handle_dispatch(
+        socket,
+        "session.remove_participant",
+        %{"session_uri" => sid, "participant" => participant}
+      )
+      when is_binary(participant) do
+    with_session(socket, sid, &remove_participant(socket, &1, participant))
+  end
+
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
     create_session(socket, short_name, Map.get(args, "template_name", "default"))
@@ -440,6 +449,45 @@ defmodule Ezagent.World.ConversationActions do
         case result do
           r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
             _ = Membership.mount_participation_caps(session_uri, member_uri)
+            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
+    end
+  end
+
+  @doc """
+  Remove a participant (user / invited agent) from the in-view session (F7 PR-A,
+  the QA-pulled remove control re-instated). Dispatches the isomorphic
+  `session.remove_participant` action via the SAME domain entry the CLI uses
+  (`Ezagent.Session.Participants.remove_participant/3`), so CLI and UI share one
+  path. On success the refreshed member list is pushed; removal also fires the
+  `{:member_left}` broadcast that other open views converge on (world_live's
+  membership handler refreshes their panels). A malformed URI or an unauthorized
+  remove degrades to an error status (the panel keeps the member).
+
+  Owner-gated: the session owner (or the participant itself, for self-leave) is
+  authorized; a non-owner non-participant viewer is denied. Removing a
+  session-SPAWNED worker returns the PR-B stub error.
+  """
+  @spec remove_participant(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def remove_participant(socket, %URI{} = session_uri, participant_str)
+      when is_binary(participant_str) do
+    caller = socket.assigns.current_entity_uri
+
+    case parse_member_uri(participant_str) do
+      {:ok, %URI{} = participant_uri} ->
+        case Ezagent.Session.Participants.remove_participant(
+               session_uri,
+               participant_uri,
+               caller
+             ) do
+          {:ok, _result} ->
             {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
           {:error, reason} ->

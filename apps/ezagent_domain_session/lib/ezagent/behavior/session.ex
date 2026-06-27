@@ -161,6 +161,41 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
+  # F7 PR-A — `session.remove_participant`: the ISOMORPHIC participant-removal
+  # primitive (SPEC `docs/together/2026-06-27/specs/f7-operator-remove-delete-
+  # session.md` §3). Generic over participant TYPE — removing a user, an
+  # invited agent, or a spawned worker is the SAME action, gated by the SAME
+  # session authority, through the SAME interface. The ONLY difference is the
+  # per-provenance teardown side-effect (§3.2 step 4).
+  #
+  # Entry cap: `cap(:session, Session, :remove_participant, <session_uri>)` —
+  # owner-rooted (granted at create, `granted_by: owner`, #154-clean) +
+  # admin-superset. A plain member does NOT hold it (default_caps == [] per
+  # #154; members hold only :send/:leave/:attach), so a non-owner is DENIED at
+  # the chokepoint. Self-leave (§3.3) is authorized by the handler's identity
+  # gate (`caller == participant`) — the front-ends mint a JIT self-scoped
+  # `:remove_participant` cap so a self-leaver clears the chokepoint too.
+  #
+  # PR-A SCOPE: the NON-spawned branch is LIVE (user + invited agent →
+  # membership-only leave). The spawned-agent worker-teardown branch returns a
+  # clearly-marked PR-B stub WITHOUT any partial teardown (the cap-model change
+  # — the `{:spawned_by, owner_uri}` teardown cap — is PR-B).
+  action(:remove_participant,
+    args: %{participant: :uri},
+    returns: %{
+      status: :atom,
+      torn_down: :atom,
+      deleted_rules: :integer,
+      repointed_rules: :integer
+    },
+    caps: [:remove_participant],
+    modes: [:call],
+    description:
+      "Remove a participant (user / invited-agent / spawned-worker) from the " <>
+        "session — the isomorphic, owner-gated lifecycle entry (F7 PR-A: " <>
+        "non-spawned participants live; spawned-worker teardown is PR-B)"
+  )
+
   # LV→world parity PR-2b — upload authorization chokepoint. The world composer
   # is a React island under `phx-update="ignore"`, so it cannot use the LiveView
   # uploader (`live_file_input`/`consume_uploaded_entries`); uploads arrive over
@@ -691,25 +726,27 @@ defmodule Ezagent.Behavior.Session do
   # --- :leave ------------------------------------------------------------
 
   def handle_leave(%{member: %URI{} = member_uri}, ctx) do
-    members = ctx[:read].(:members, %{})
-    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-    last_seen = ctx[:read].(:last_seen, %{})
+    {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
+  end
 
-    {ref_to_remove, new_monitors} = Delivery.pop_monitor_ref(monitors, member_uri)
+  # --- :remove_participant (F7 PR-A — isomorphic removal) ----------------
 
-    if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
+  @doc """
+  `handle_remove_participant/2` — the isomorphic participant-removal handler
+  (F7 PR-A, SPEC §3.2 / §3.3). Thin delegator to
+  `Ezagent.Behavior.Session.Membership.handle_remove_participant/2` (the body
+  lives there to keep this module under the gt_1000 LOC arch gate).
 
-    new_members = Map.delete(members, member_uri)
-    new_last_seen = Map.delete(last_seen, member_uri)
-
-    {:ok, %{},
-     [
-       {:set, :members, new_members},
-       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
-       {:set_transient, :monitors, new_monitors},
-       {:set, :last_seen, new_last_seen}
-     ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+  The handler runs inside the Session Kind process and: owner-gates (owner OR
+  self-leave OR admin, §3.3); branches on PROVENANCE (a `:source_template_uri`
+  facet → spawned worker → PR-B stub, no mutation; else user / invited agent →
+  membership-only); and on the live branch runs `leave` FIRST (the
+  `{:member_left}` convergence broadcast, §5.4) THEN the session-scoped routing
+  prune. Returns `{:ok, %{status: :removed, torn_down: :membership_only,
+  deleted_rules:, repointed_rules:}}` / `{:ok, :already_removed}` / `{:error, …}`.
+  """
+  def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do
+    Membership.handle_remove_participant(participant_uri, ctx)
   end
 
   # --- :attach -----------------------------------------------------------

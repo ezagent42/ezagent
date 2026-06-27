@@ -494,6 +494,187 @@ defmodule Ezagent.Behavior.Session.Membership do
     end
   end
 
+  @doc """
+  The membership-removal effect list, shared by `:leave` and the
+  `:remove_participant` primitive (F7 PR-A §3.2 step 3). Drops `member_uri` +
+  its monitor + last_seen and emits the `{:member_left}` broadcast — the
+  surface-agnostic convergence signal (§5.4). Demonitors as a side effect (the
+  live ref is dead once the member is gone). Factored out so
+  `remove_participant` runs the SAME leave (leave-FIRST, then teardown) and the
+  `{:member_left}` broadcast always fires.
+  """
+  @spec leave_effects(URI.t(), map()) :: [term()]
+  def leave_effects(%URI{} = member_uri, ctx) do
+    members = ctx[:read].(:members, %{})
+    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
+    monitors = (ctx[:transients] || %{})[:monitors] || %{}
+    last_seen = ctx[:read].(:last_seen, %{})
+
+    {ref_to_remove, new_monitors} = Delivery.pop_monitor_ref(monitors, member_uri)
+
+    if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
+
+    new_members = Map.delete(members, member_uri)
+    new_last_seen = Map.delete(last_seen, member_uri)
+
+    [
+      {:set, :members, new_members},
+      # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
+      {:set_transient, :monitors, new_monitors},
+      {:set, :last_seen, new_last_seen}
+    ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})
+  end
+
+  @doc """
+  The isomorphic `remove_participant` handler body (F7 PR-A, SPEC §3.2 / §3.3).
+  Extracted from `Behavior.Session` (gt_1000 LOC gate). Runs inside the Session
+  Kind process (members slice readable via `ctx`).
+
+  1. **Owner-gate (§3.3, load-bearing).** Authorize when `caller == owner_uri` OR
+     `caller == participant` (self-leave) OR the bootstrap admin. Else
+     `{:error, :unauthorized}` before any mutation (fail-closed) — defense-in-depth
+     on the dispatch chokepoint's `:remove_participant` cap.
+  2. **Provenance branch (§3.2, NOT user-vs-agent).** A participant SPAWNED INTO
+     this session carries a `:source_template_uri` facet → spawned worker → the
+     PR-B stub `{:error, :spawned_participant_teardown_pending_pr_b}` WITHOUT any
+     mutation (no half-done teardown). Facet absent → user / invited agent →
+     membership-only (LIVE).
+  3. **Leave-FIRST (§5.4).** `leave_effects/2` (emits `{:member_left}` →
+     convergence) THEN prune routing (shared `RoutingPrune`, session-scoped).
+
+  Returns `{:ok, map, effects}` / `{:ok, :already_removed, []}` / `{:error, _}`.
+  """
+  @spec handle_remove_participant(URI.t(), map()) ::
+          {:ok, map(), [term()]} | {:ok, :already_removed, []} | {:error, term()}
+  def handle_remove_participant(%URI{} = participant_uri, ctx) do
+    members = ctx[:read].(:members, %{})
+    owner_uri = ctx[:read].(:owner_uri, nil)
+    caller = ctx[:caller]
+
+    cond do
+      not remove_participant_authorized?(caller, participant_uri, owner_uri) ->
+        {:error, :unauthorized}
+
+      not Map.has_key?(members, participant_uri) ->
+        {:ok, :already_removed, []}
+
+      true ->
+        do_remove_participant(participant_uri, Map.get(members, participant_uri, %{}), ctx)
+    end
+  end
+
+  # Owner-gate (§3.3): owner OR self-leave OR bootstrap admin. Fail-closed.
+  defp remove_participant_authorized?(%URI{} = caller, %URI{} = participant_uri, owner_uri) do
+    caller == participant_uri or
+      (match?(%URI{}, owner_uri) and caller == owner_uri) or
+      caller == Ezagent.Entity.User.admin_uri()
+  end
+
+  defp remove_participant_authorized?(_caller, _participant, _owner), do: false
+
+  defp do_remove_participant(%URI{} = participant_uri, participant_meta, ctx)
+       when is_map(participant_meta) do
+    if spawned_into_session?(participant_meta) do
+      # §3.2 — spawned-worker teardown is the PR-B cap-model change. Return a
+      # clearly-marked not-implemented error WITHOUT any membership mutation
+      # (no half-done teardown).
+      {:error, :spawned_participant_teardown_pending_pr_b}
+    else
+      session_uri = ctx[:self_uri]
+
+      # Step 3 — leave FIRST (emits {:member_left} → convergence), THEN prune.
+      leave = leave_effects(participant_uri, ctx)
+
+      case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+             session_uri,
+             participant_uri
+           ) do
+        {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
+          {:ok,
+           %{
+             status: :removed,
+             torn_down: :membership_only,
+             deleted_rules: deleted,
+             repointed_rules: repointed
+           }, leave}
+
+        {:error, _reason} = err ->
+          # Prune failure FAILS removal atomically — no membership mutation is
+          # applied (the effects are discarded with the error return).
+          err
+      end
+    end
+  end
+
+  # §3.2 provenance discriminator — was this participant SPAWNED INTO this
+  # session? A spawned/managed worker carries the `:source_template_uri` spawn
+  # facet (set at join). Invited agents + users have no such facet.
+  defp spawned_into_session?(participant_meta) when is_map(participant_meta) do
+    case Map.get(participant_meta, :source_template_uri) do
+      %URI{} -> true
+      uri when is_binary(uri) and uri != "" -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Provision SELF-LEAVE authority (F7 PR-A, SPEC §3.3): mint a self-scoped
+  `cap(:session, Session, :remove_participant, <session_uri>)` for `member_uri`,
+  `granted_by: member_uri` (genuine self-authority per capbac.md §7 — a member
+  may always remove ITSELF). The front-ends call this before dispatching
+  `session.remove_participant` with `participant == caller`, so a self-leaver
+  (who otherwise holds only the `:leave`/`:send` participation tier) clears the
+  dispatch chokepoint; the handler's identity gate then confirms
+  `caller == participant`.
+
+  Best-effort + idempotent: skips if the member already holds an authorizing
+  cap (e.g. the owner's `:remove_participant` cap, or admin's wildcard). Returns
+  `:ok`; a failed grant degrades to a chokepoint denial (fail-closed).
+  """
+  @spec provision_self_leave_authority(URI.t(), URI.t()) :: :ok
+  def provision_self_leave_authority(%URI{} = session_uri, %URI{} = member_uri) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    if already_authorized?(
+         Ezagent.Identity.list_caps_for(member_uri),
+         Ezagent.Behavior.Session,
+         :remove_participant,
+         session_uri,
+         workspace_uri
+       ) do
+      :ok
+    else
+      cap =
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.Behavior.Session,
+          :remove_participant,
+          session_uri,
+          workspace_uri
+        )
+
+      case Ezagent.Identity.Grant.grant_cap_via_router(
+             member_uri,
+             cap,
+             {:rule, :session_participation, member_uri},
+             :sync
+           ) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Session.Membership.provision_self_leave_authority: self-leave-cap grant " <>
+              "failed for member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)}: #{inspect(reason)} (best-effort; " <>
+              "self-leave fails closed at the chokepoint)."
+          )
+
+          :ok
+      end
+    end
+  end
+
   defp do_grant_join_cap(session_uri, joiner_uri, granter, workspace_uri) do
     cap =
       Ezagent.Capability.cap(

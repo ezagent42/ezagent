@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserPlus, X} from "lucide-react"
+import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserMinus, UserPlus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
@@ -91,6 +91,7 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -105,6 +106,7 @@ export function Conversation({
   state,
   onAddRoutingRule,
   onOpenPty,
+  onRemoveParticipant,
   onRestartOrchestrator,
   onSend,
   onSwitch,
@@ -649,6 +651,20 @@ export function Conversation({
                     <TerminalSquare aria-hidden="true" />
                   </Button>
                 )}
+                {/* F7 PR-A — re-instate the per-member remove control (the QA-pulled
+                    one). Cap-gated server-side: only the session owner (or the
+                    member itself) is authorized; an unauthorized click degrades to
+                    an error status and the member stays. */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
+                  aria-label={`Remove ${member.display_name || member.uri}`}
+                  title="Remove from session"
+                >
+                  <UserMinus aria-hidden="true" />
+                </Button>
               </li>
             ))
           )}

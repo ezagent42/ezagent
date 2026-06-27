@@ -514,6 +514,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                template_content
              ),
            :ok <- Materializer.join_session_members(session_uri, [effective_owner]),
+           # F7 PR-A — grant the owner the session-membership authority to remove
+           # a participant (the entry gate on `session.remove_participant`). On
+           # the COMMON finalize path so EVERY session's owner gets it (user
+           # removal applies to non-orchestrator sessions too). `granted_by:
+           # owner`, #154-clean. Idempotent.
+           :ok <-
+             Materializer.grant_owner_remove_participant_cap(
+               session_uri,
+               effective_owner,
+               workspace_uri
+             ),
            :ok <-
              materialize_template_team(
                session_uri,
