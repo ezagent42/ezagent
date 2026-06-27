@@ -71,10 +71,11 @@ COPY . .
 # longer timeout + retry so a transient tarball timeout doesn't fail the whole build.
 #
 # Unset SET-BUT-EMPTY proxy vars first: the ARG/ENV above bake HTTP_PROXY="" when no
-# proxy is passed (the host has direct egress via clash TUN). elixir_make's precompiled-NIF
-# downloader treats the empty string as truthy, does URI.parse("") -> host: nil, then
-# String.to_charlist(nil) crashes (FunctionClauseError) and `mix compile` of :exqlite fails.
-# Unsetting only when empty keeps a REAL build-arg proxy intact (deps.get/NIF still use it).
+# proxy is passed (the host has direct egress via clash TUN). Several mix download tasks
+# treat the empty string as a truthy proxy, do URI.parse("") -> host: nil, then crash in
+# String.to_charlist(nil) (FunctionClauseError): elixir_make's precompiled-NIF downloader
+# here (fails `mix compile` of :exqlite) and Esbuild.NpmRegistry in the assets RUN below.
+# Unsetting only when empty keeps a REAL build-arg proxy intact (downloads still use it).
 RUN if [ -z "${HTTP_PROXY:-}" ]; then unset HTTP_PROXY http_proxy; fi; \
     if [ -z "${HTTPS_PROXY:-}" ]; then unset HTTPS_PROXY https_proxy; fi; \
     ok=0; for i in 1 2 3 4 5; do \
@@ -83,7 +84,12 @@ RUN if [ -z "${HTTP_PROXY:-}" ]; then unset HTTP_PROXY http_proxy; fi; \
     [ "$ok" = 1 ] || { echo "deps.get failed after 5 retries"; exit 1; }; \
     mix compile
 # dev assets: install the standalone esbuild/tailwind binaries + precompile.
-RUN cd apps/ezagent_web && mix assets.setup && mix assets.build
+# Same empty-proxy guard as the compile RUN: `mix esbuild.install` (Esbuild.NpmRegistry)
+# crashes on the baked HTTPS_PROXY="" exactly like elixir_make. Per-RUN because Docker ENV
+# persists across layers but a RUN-local unset does not carry to the next RUN.
+RUN if [ -z "${HTTP_PROXY:-}" ]; then unset HTTP_PROXY http_proxy; fi; \
+    if [ -z "${HTTPS_PROXY:-}" ]; then unset HTTPS_PROXY https_proxy; fi; \
+    cd apps/ezagent_web && mix assets.setup && mix assets.build
 # feishu WS sidecar node deps (the real-Feishu inbound path needs @larksuiteoapi/node-sdk;
 # .dockerignore strips the host node_modules so we install fresh for linux).
 RUN cd apps/ezagent_plugin_feishu/priv/ws_sidecar && npm install --omit=dev
