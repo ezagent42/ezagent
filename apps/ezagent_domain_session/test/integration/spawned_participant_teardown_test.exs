@@ -25,7 +25,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   alias Ezagent.Session.Participants
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
 
-  @workspace_uri URI.new!("workspace://team-alpha")
+  # The `main` session lives in workspace://system; a worker spawned INTO a
+  # session shares that session's workspace, so reaping it (session -> worker) is
+  # same-workspace (step-5.6 isolation passes). Tests use the system workspace to
+  # mirror that production topology.
+  @workspace_uri URI.new!("workspace://system")
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -42,7 +46,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   # Template Class that broadcasts on `destroy_config_dir/2` so the test can
   # observe the FS GC fire.
   defp spawn_worker(config_dir) do
-    uri = Ezagent.URI.new!("entity://team-alpha/agent/worker-#{uniq()}")
+    uri = Ezagent.URI.new!("entity://system/agent/worker-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
 
@@ -64,7 +68,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   # Join `worker` into `session` carrying the `:source_template_uri` spawn facet
   # (the provenance marker a managed member gets at spawn) under admin authority.
   defp join_spawned(session_uri, worker_uri) do
-    tmpl = Ezagent.URI.new!("template://team-alpha/agent/worker-role")
+    tmpl = Ezagent.URI.new!("template://system/agent/worker-role")
 
     :ok =
       Invocation.dispatch(%Invocation{
