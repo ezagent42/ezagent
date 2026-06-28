@@ -73,7 +73,7 @@ defmodule Ezagent.Socialware.Settlement do
   def hold_visibility(turn_id) when is_binary(turn_id) do
     case get(turn_id) do
       {:ok, _settlement} ->
-        MessageStore.mark_visibility(message_ids(turn_id), :operator_only)
+        MessageStore.mark_visibility(message_ids(turn_id), :internal)
 
       :error ->
         :error

@@ -56,8 +56,8 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
     written
   end
 
-  defp post_operator_only(session, text) do
-    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :operator_only)
+  defp post_internal(session, text) do
+    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :internal)
     {:ok, written} = MessageStore.write(msg, session)
     written
   end
@@ -78,9 +78,9 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
       assert rendered_texts(snap) == ["first", "second", "third"]
     end
 
-    test "operator_only messages never leak into the snapshot", ctx do
+    test "internal messages never leak into the snapshot", ctx do
       post(ctx.session, "public")
-      post_operator_only(ctx.session, "secret")
+      post_internal(ctx.session, "secret")
       post(ctx.session, "also public")
 
       {:ok, snap} = ChatFeed.snapshot(ctx.session, @owner)

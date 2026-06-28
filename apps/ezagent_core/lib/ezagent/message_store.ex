@@ -242,7 +242,7 @@ defmodule Ezagent.MessageStore do
   ASCENDING (oldest→newest). The CHAT external-SPA snapshot window: chat has NO
   settlement model, so unlike `committed_external_visible/2` there is no
   settlement join — the gate is per-message `visibility == :external_visible`
-  (an `:operator_only` chat message never leaks to the external read) plus
+  (an `:internal` chat message never leaks to the external read) plus
   session + workspace scoping (defense-in-depth, mirroring the other chat
   queries).
 
@@ -285,10 +285,10 @@ defmodule Ezagent.MessageStore do
   @doc """
   Idempotently set visibility for a fixed message-id set.
   """
-  @spec mark_visibility([String.t()], :external_visible | :operator_only) ::
+  @spec mark_visibility([String.t()], :external_visible | :internal) ::
           {:ok, non_neg_integer()}
   def mark_visibility(message_ids, visibility)
-      when is_list(message_ids) and visibility in [:external_visible, :operator_only] do
+      when is_list(message_ids) and visibility in [:external_visible, :internal] do
     {count, _} =
       from(m in Message, where: m.id in ^message_ids)
       |> Repo.update_all(set: [visibility: visibility])

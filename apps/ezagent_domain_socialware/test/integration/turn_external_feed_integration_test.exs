@@ -116,7 +116,7 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
              })
 
     assert {:ok, loaded} = MessageStore.by_id(message_id)
-    assert loaded.visibility == :operator_only
+    assert loaded.visibility == :internal
 
     assert {:ok, snapshot} = ExternalFeed.snapshot(ctx.session, ctx.caller)
     assert snapshot.messages == []

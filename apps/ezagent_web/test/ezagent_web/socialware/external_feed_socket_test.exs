@@ -63,7 +63,7 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
   test "join returns only committed external-visible snapshot", ctx do
     {:ok, committed} = write_message(ctx.session, "committed", :external_visible)
-    {:ok, _draft} = write_message(ctx.session, "draft", :operator_only)
+    {:ok, _draft} = write_message(ctx.session, "draft", :internal)
     commit_message(ctx, "turn-socket-snapshot", committed.id)
 
     {:ok, reply, _socket} = join_external(ctx)
@@ -248,7 +248,7 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
       assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 200
 
       # Operator flips visibility back — the already-minted token must stop working.
-      {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
+      {:ok, _} = MessageStore.mark_visibility([written.id], :internal)
       assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 403
     end
 
