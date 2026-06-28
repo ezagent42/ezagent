@@ -93,6 +93,17 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     # data; they do not own Agent runtime behavior.
     "apps/ezagent_core/lib/ezagent/agent/credential_adapter.ex",
     "apps/ezagent_core/lib/ezagent/agent/credential_slice_adapter.ex",
+    # Agent.Recipe (+ Compose + CapMint) — the flavor-agnostic sandbox-content
+    # RECIPE struct + its context-free composition + fail-closed cap minting
+    # (task #54; symbol rename #127: Ezagent.Role → Ezagent.Agent.Recipe). This
+    # is the core validation boundary over opaque recipe facts; it does not own
+    # Agent runtime behavior. "Agent" names the namespace the rename landed on
+    # (mirrors Agent.Materializer / AgentManifest); it is allowlisted, not
+    # silently renamed, per the §11 Phase B audit rule (a rename touches call
+    # sites + snapshot slice keys).
+    "apps/ezagent_core/lib/ezagent/agent/recipe.ex",
+    "apps/ezagent_core/lib/ezagent/agent/recipe/compose.ex",
+    "apps/ezagent_core/lib/ezagent/agent/recipe/cap_mint.ex",
     # WorkspaceSharedSource — core credential source row schema for
     # workspace-scoped sharing; this is data vocabulary, not Workspace
     # behavior ownership.
