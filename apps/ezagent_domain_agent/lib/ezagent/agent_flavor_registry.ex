@@ -42,7 +42,7 @@ defmodule Ezagent.AgentFlavorRegistry do
   a 1-arity fn `(recipe.requested_caps -> (needed_cap -> boolean()))` — the
   flavor's fail-closed CapMint policy FACTORY. The role-driven create path
   (RF-5a) reads it here and passes `cap_policy.(recipe.requested_caps)` to
-  `Ezagent.Role.CapMint.mint/3`, so the workspace domain selects the flavor's
+  `Ezagent.Agent.Recipe.CapMint.mint/3`, so the workspace domain selects the flavor's
   cap policy from data WITHOUT depending on the flavor plugin (the same seam as
   `instance_behaviors`).
   """

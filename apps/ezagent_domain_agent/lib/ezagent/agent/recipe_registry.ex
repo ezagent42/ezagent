@@ -1,10 +1,10 @@
-defmodule Ezagent.Agent.RoleRegistry do
+defmodule Ezagent.Agent.RecipeRegistry do
   @moduledoc """
-  RoleRegistry — `role name → recipe`, resolved **read-through over ConfigStore**
+  RecipeRegistry — `role name → recipe`, resolved **read-through over ConfigStore**
   (role-as-data, SPEC `docs/together/2026-06-27/specs/role-as-data-cr-governance.md`
   §3/§4).
 
-  A **role** is a flavor-agnostic sandbox-content recipe (see `Ezagent.Role`)
+  A **role** is a flavor-agnostic sandbox-content recipe (see `Ezagent.Agent.Recipe`)
   stored UNIFORMLY as a `ConfigObject`: `subject_uri = config://<ws>/role/<name>`,
   `key = "role"`, `body =` the recipe map. A built-in role is **not** a special
   code recipe — it is the SAME data shape as a user-authored role; only the
@@ -13,7 +13,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   ## Read-through (ETS = cache, NOT authority — §3)
 
   `lookup/2` resolves from `Ezagent.Socialware.ConfigStore` (the durable
-  authority), rehydrating via `Ezagent.Role.new/1` (the validation boundary), and
+  authority), rehydrating via `Ezagent.Agent.Recipe.new/1` (the validation boundary), and
   caches the result in ETS keyed by `(ws, name)`. ETS is an
   invalidate-on-publish cache: the ONLY writer is `lookup/2` itself (lazy fill).
   **Boot does NOT populate ETS** — a `roles/0`-derived ETS entry as runtime
@@ -21,14 +21,14 @@ defmodule Ezagent.Agent.RoleRegistry do
 
   Resolution (within caller workspace `ws`):
 
-    1. ETS hit for `(ws, name)` → return cached `%Role{}`.
+    1. ETS hit for `(ws, name)` → return cached `%Recipe{}`.
     2. else `ConfigStore.resolve("workspace", ws, config://<ws>/role/<name>, "role")`.
     3. if `:none` → fall back to `(system_ws, name)` (the cross-ws fallback that
        delivers "workspace-scoped + forkable": a tenant sees the system built-in
        until it forks its own; §3 OQ-2). This fallback lives HERE, not in
        `ConfigStore.resolve/4` (a single-tuple read).
     4. if still `:none` → `:error`.
-    5. `{:ok, role} = Role.new(obj.body)`; cache `(ws, name) → role`; return.
+    5. `{:ok, role} = Recipe.new(obj.body)`; cache `(ws, name) → role`; return.
 
   ## Seeding (§4)
 
@@ -47,7 +47,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   immutability is now the append-only ConfigObject + re-point.
   """
 
-  alias Ezagent.Role
+  alias Ezagent.Agent.Recipe
   alias Ezagent.Socialware.ConfigStore
 
   @table :ezagent_role_registry
@@ -89,7 +89,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   end
 
   @doc """
-  Look up the validated `%Ezagent.Role{}` for a role name in the SYSTEM
+  Look up the validated `%Ezagent.Agent.Recipe{}` for a role name in the SYSTEM
   workspace (the built-in scope).
 
   Back-compat single-arg form: the pre-role-as-data callers
@@ -97,22 +97,22 @@ defmodule Ezagent.Agent.RoleRegistry do
   resolves against the system workspace. New callers that carry a tenant
   workspace should use `lookup/2`.
   """
-  @spec lookup(name :: String.t()) :: {:ok, Role.t()} | :error
+  @spec lookup(name :: String.t()) :: {:ok, Recipe.t()} | :error
   def lookup(name) when is_binary(name), do: lookup(system_workspace_uri(), name)
 
   @doc """
-  Read-through lookup of the validated `%Ezagent.Role{}` for `(workspace, name)`.
+  Read-through lookup of the validated `%Ezagent.Agent.Recipe{}` for `(workspace, name)`.
 
   Returns `{:ok, role}` or `:error`. See the module doc for the resolution order
   (ETS cache → caller-ws ConfigStore → system-ws fallback → rehydrate).
   """
   @spec lookup(workspace_uri :: String.t() | URI.t(), name :: String.t()) ::
-          {:ok, Role.t()} | :error
+          {:ok, Recipe.t()} | :error
   def lookup(workspace_uri, name) when is_binary(name) do
     ws = uri_string(workspace_uri)
 
     case :ets.lookup(@table, {ws, name}) do
-      [{{^ws, ^name}, %Role{} = role}] ->
+      [{{^ws, ^name}, %Recipe{} = role}] ->
         {:ok, role}
 
       [] ->
@@ -121,12 +121,12 @@ defmodule Ezagent.Agent.RoleRegistry do
   end
 
   # Resolve from ConfigStore (caller ws → system-ws fallback), rehydrate via
-  # Role.new/1, cache under (ws, name). This is the ONLY ETS writer.
+  # Recipe.new/1, cache under (ws, name). This is the ONLY ETS writer.
   defp resolve_through(ws, name) do
     case resolve_object(ws, name) do
       {:ok, object} ->
-        case Role.new(object.body) do
-          {:ok, %Role{} = role} ->
+        case Recipe.new(object.body) do
+          {:ok, %Recipe{} = role} ->
             role = canonicalize_cap_values(role)
             :ets.insert(@table, {{ws, name}, role})
             {:ok, role}
@@ -140,18 +140,18 @@ defmodule Ezagent.Agent.RoleRegistry do
     end
   end
 
-  # READ-THROUGH PARITY (SPEC §10 byte-identical invariant). `Role.new/1`
+  # READ-THROUGH PARITY (SPEC §10 byte-identical invariant). `Recipe.new/1`
   # atomizes cap KEYS but deliberately leaves cap VALUES uncanonicalized
-  # (deferring behavior-string→module / action-string→atom to `Role.CapMint`).
+  # (deferring behavior-string→module / action-string→atom to `Recipe.CapMint`).
   # That is fine for an IN-MEMORY recipe (values arrive as atoms), but a recipe
   # READ BACK from ConfigStore round-trips its `requested_caps` values through
   # JSON → they return as STRINGS. To make a SEEDED role byte-identical to the
   # same recipe held in memory (so a built-in and a user role instantiate
   # identically — the core role-as-data invariant), canonicalize the cap VALUES
-  # here at the rehydrate boundary, exactly as `Role.CapMint` does (idempotent:
+  # here at the rehydrate boundary, exactly as `Recipe.CapMint` does (idempotent:
   # CapMint re-canonicalizing an already-atom value is a no-op). Mirrors how
   # `behaviors` are decoded back to modules on rehydrate.
-  defp canonicalize_cap_values(%Role{requested_caps: caps} = role) do
+  defp canonicalize_cap_values(%Recipe{requested_caps: caps} = role) do
     %{role | requested_caps: Enum.map(caps, &canon_cap_values/1)}
   end
 
@@ -208,7 +208,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   end
 
   @doc """
-  Invalidate the cached `%Role{}` for `(workspace, name)` — the seam a future
+  Invalidate the cached `%Recipe{}` for `(workspace, name)` — the seam a future
   role-CR publish/rollback emits so the next `lookup/2` re-resolves from
   ConfigStore. Idempotent (deleting an absent key is a no-op).
   """
@@ -241,16 +241,16 @@ defmodule Ezagent.Agent.RoleRegistry do
   - Two plugins, same name, DIFFERENT body in the system ws → `{:error,
     {:role_seed_collision, name}}` (loud, the moved boot-collision guard).
 
-  Validates the recipe through `Role.new/1` (fail-loud on a malformed/flavor-
+  Validates the recipe through `Recipe.new/1` (fail-loud on a malformed/flavor-
   carrying recipe) BEFORE any write. The recipe `body` is stored with `behaviors`
-  as module-name STRINGS (JSON-safe; `Role.new/1` round-trips them on rehydrate).
+  as module-name STRINGS (JSON-safe; `Recipe.new/1` round-trips them on rehydrate).
   """
   @spec seed_role_if_absent(recipe :: map(), opts :: keyword()) ::
           {:ok, :seeded | :exists} | {:error, term()}
   def seed_role_if_absent(recipe, opts \\ []) when is_map(recipe) do
     name = recipe_name(recipe)
 
-    with {:ok, %Role{}} <- validate_recipe(recipe) do
+    with {:ok, %Recipe{}} <- validate_recipe(recipe) do
       ws = system_workspace_uri()
       subject = role_subject_uri(ws, name)
       actor = Keyword.get(opts, :actor_uri, default_seed_actor())
@@ -283,15 +283,15 @@ defmodule Ezagent.Agent.RoleRegistry do
 
   This is the enforcement PRIMITIVE the next-phase `Ezagent.Behavior.RoleGovernance`
   calls at `stage_item` so a script-carrying role-CR is rejected at the authoring
-  boundary, BEFORE any inert object is staged. It also runs the full `Role.new/1`
+  boundary, BEFORE any inert object is staged. It also runs the full `Recipe.new/1`
   validation (flavor-field reject, cap-axis reject, behaviors-must-be-loaded), so
   every non-script invariant a built-in recipe satisfies a data-role must too.
 
-  Returns `{:ok, %Role{}}` or `{:error, term()}`.
+  Returns `{:ok, %Recipe{}}` or `{:error, term()}`.
   """
-  @spec validate_data_role_recipe(map()) :: {:ok, Role.t()} | {:error, term()}
+  @spec validate_data_role_recipe(map()) :: {:ok, Recipe.t()} | {:error, term()}
   def validate_data_role_recipe(recipe) when is_map(recipe) do
-    with {:ok, %Role{script: script} = role} <- validate_recipe(recipe) do
+    with {:ok, %Recipe{script: script} = role} <- validate_recipe(recipe) do
       if is_binary(script) and script != "" do
         {:error, {:script_not_allowed_in_data_role, recipe_name(recipe)}}
       else
@@ -301,7 +301,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   end
 
   defp validate_recipe(recipe) do
-    case Role.new(recipe) do
+    case Recipe.new(recipe) do
       {:ok, role} ->
         {:ok, role}
 
@@ -313,7 +313,7 @@ defmodule Ezagent.Agent.RoleRegistry do
   # The recipe body to persist: the recipe map, but with `behaviors` rendered as
   # module-name STRINGS (the JSON-safe form; atoms are not JSON map values).
   # ConfigStore stringifies KEYS; behavior VALUES must be strings too so they
-  # round-trip and `Role.new/1` decodes them back to loaded modules.
+  # round-trip and `Recipe.new/1` decodes them back to loaded modules.
   defp recipe_body(recipe) do
     behaviors = Map.get(recipe, :behaviors) || Map.get(recipe, "behaviors") || []
     Map.put(recipe, :behaviors, Enum.map(behaviors, &behavior_string/1))
@@ -333,7 +333,7 @@ defmodule Ezagent.Agent.RoleRegistry do
 
       other ->
         raise ArgumentError,
-              "RoleRegistry: a role recipe MUST carry a non-empty :name to be keyed; " <>
+              "RecipeRegistry: a role recipe MUST carry a non-empty :name to be keyed; " <>
                 "got #{inspect(other)}."
     end
   end

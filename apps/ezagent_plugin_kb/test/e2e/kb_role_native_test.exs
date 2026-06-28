@@ -23,7 +23,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.{AgentFlavorRegistry, Agent.RoleRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry}
   alias EzagentPluginKb.Application, as: KbApp
 
   @flavor "kb-native-test"
@@ -63,7 +63,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
         cap_policy: &cap_policy/1
       })
 
-    {:ok, _} = RoleRegistry.seed_role_if_absent(KbApp.kb_recipe())
+    {:ok, _} = RecipeRegistry.seed_role_if_absent(KbApp.kb_recipe())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

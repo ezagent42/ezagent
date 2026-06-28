@@ -24,7 +24,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
 
   # role-as-data (#1048): `bootstrap/2`/`try_role_bootstrap/3` resolve the
   # orchestrator role recipe read-through over `ConfigStore` (via
-  # `RoleRegistry.lookup/1`), so the suite needs the Ecto sandbox checked out for
+  # `RecipeRegistry.lookup/1`), so the suite needs the Ecto sandbox checked out for
   # the test process. The pure-FS / helper tests ignore it. (Boot's DB role seed
   # is skipped in `:test`; we seed explicitly in `setup` inside the sandbox.)
   use EzagentCore.DataCase, async: false
@@ -40,14 +40,14 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     # the ETS cache first so a prior test's cached entry can't mask the
     # ConfigStore-sourced path (ETS is process-global; the sandbox is per-test).
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-    :ok = Ezagent.Agent.RoleRegistry.flush_cache()
-    {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+    :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+    {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
 
     # ETS is process-global but the seeded ConfigStore row is rolled back with
     # the per-test sandbox. Flush on exit too so a role cached by this test's
     # `lookup/1` cannot leak into a later module that asserts an unseeded miss
     # without its own flush (hermetic fixture).
-    on_exit(fn -> Ezagent.Agent.RoleRegistry.flush_cache() end)
+    on_exit(fn -> Ezagent.Agent.RecipeRegistry.flush_cache() end)
 
 
     # Stage a fake umbrella-root skill source in a temp dir so the

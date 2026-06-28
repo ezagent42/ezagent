@@ -11,7 +11,7 @@ defmodule EzagentPluginNative.CapPolicy do
 
   ## What this is
 
-  `Ezagent.Role.CapMint.mint/3` takes an INJECTED policy predicate — a
+  `Ezagent.Agent.Recipe.CapMint.mint/3` takes an INJECTED policy predicate — a
   `(needed_cap_map -> boolean())` it runs fail-closed (kept ONLY on a strict
   `true`; a non-`true` return OR a raise drops the cap). CapMint is the
   flavor-neutral minting MECHANISM; the per-flavor POLICY is data passed in.
@@ -21,14 +21,14 @@ defmodule EzagentPluginNative.CapPolicy do
   ## Fail-closed default (stated)
 
   `for_recipe/1` closes over the recipe's `requested_caps` — the authorized
-  `{behavior, action}` cap-templates already validated by `Ezagent.Role.new/1`.
+  `{behavior, action}` cap-templates already validated by `Ezagent.Agent.Recipe.new/1`.
   The returned predicate returns `true` for a needed-cap whose
   `{behavior, action}` is one of those recipe pairs, and **`false` for
   everything else**. There is no implicit grant: a cap the recipe did not
   request is rejected, and an empty recipe grants nothing. The recipe is the
   whole allow-list.
 
-  Caps are still `{behavior, action}` cap-templates (Role.new rejects a recipe
+  Caps are still `{behavior, action}` cap-templates (Recipe.new rejects a recipe
   carrying materialization axes — `kind`/`instance`/`workspace_uri`/
   `granted_by` — so a native role cannot smuggle a concrete/foreign scope in).
   CapMint injects those axes; this policy only adjudicates the
@@ -60,7 +60,7 @@ defmodule EzagentPluginNative.CapPolicy do
   Build the `native` per-recipe fail-closed CapMint policy predicate.
 
   `requested_caps` are the recipe's authorized cap-templates (atom-keyed
-  `%{behavior:, action:}` after `Ezagent.Role.new/1`). Returns a
+  `%{behavior:, action:}` after `Ezagent.Agent.Recipe.new/1`). Returns a
   `(needed_cap_map -> boolean())` that grants a needed-cap iff its
   `{behavior, action}` matches one the recipe requested; everything else is
   rejected (fail-closed default). String-keyed / string-valued recipe entries

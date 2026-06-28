@@ -157,7 +157,7 @@ defmodule Ezagent.Kind.BehaviorSet do
         # that declares nothing flavor/role-specific). A declared-but-scoped-out
         # behavior stays excluded (it is not in `requested`) → P1 subset-denial
         # holds. `real_behavior?/1` is the trust check that replaces "∩ declared"
-        # (Role.new/1 validates recipe behaviors are real Behaviors); authz still
+        # (Recipe.new/1 validates recipe behaviors are real Behaviors); authz still
         # gates every action, so presence in the set grants NO privilege.
         {:ok, list} when is_list(list) ->
           requested = MapSet.new(list)
@@ -236,7 +236,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   end
 
   # RF-1 trust check: a module is admissible into an instance's behavior set iff
-  # it is a loaded, validated real Behavior (same predicate `Ezagent.Role` uses
+  # it is a loaded, validated real Behavior (same predicate `Ezagent.Agent.Recipe` uses
   # at recipe-validation time). This REPLACES the prior "∩ behaviors_of" gate for
   # undeclared recipe-loaded behaviors; declared behaviors are unaffected. authz
   # (`required_caps()` + caller caps) remains the independent privilege gate.

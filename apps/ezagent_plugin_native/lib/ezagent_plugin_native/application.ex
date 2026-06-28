@@ -44,7 +44,7 @@ defmodule EzagentPluginNative.Application do
 
   ## CapMint cap-policy (RF-8)
 
-  `Ezagent.Role.CapMint.mint/3` takes an INJECTED, fail-closed policy
+  `Ezagent.Agent.Recipe.CapMint.mint/3` takes an INJECTED, fail-closed policy
   predicate; CapMint is the flavor-neutral minting mechanism, the per-flavor
   policy is data. native's policy is declared on the flavor decl as
   `:cap_policy` (`&EzagentPluginNative.CapPolicy.for_recipe/1`) and lives in
@@ -95,7 +95,7 @@ defmodule EzagentPluginNative.Application do
         template_class: NativeTemplate,
         # RF-8 — native's fail-closed CapMint policy. RF-5a reads this from
         # the flavor registry and passes `cap_policy.(recipe.requested_caps)`
-        # to `Ezagent.Role.CapMint.mint/3`. Grants exactly the recipe's
+        # to `Ezagent.Agent.Recipe.CapMint.mint/3`. Grants exactly the recipe's
         # requested caps; rejects everything else.
         cap_policy: &EzagentPluginNative.CapPolicy.for_recipe/1
       }

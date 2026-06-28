@@ -1,8 +1,8 @@
-defmodule Ezagent.Role.CapMintTest do
+defmodule Ezagent.Agent.Recipe.CapMintTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Capability
-  alias Ezagent.Role.CapMint
+  alias Ezagent.Agent.Recipe.CapMint
 
   # Task #54 §2.3.1 — the fail-closed cap authorization + minting, done WITH the
   # full agent materialization context (kind/instance/workspace/granter) that a

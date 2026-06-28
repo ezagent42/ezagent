@@ -212,7 +212,7 @@ defmodule Ezagent.Plugin do
   @callback agent_flavors() :: [agent_flavor_decl()]
 
   # Built-in role recipes (role-foundation RF-4) — recipe MAPs registered in
-  # `Ezagent.Agent.RoleRegistry` by name at boot. See that module + `Ezagent.Role`.
+  # `Ezagent.Agent.RecipeRegistry` by name at boot. See that module + `Ezagent.Agent.Recipe`.
   @callback roles() :: [map()]
 
   @doc """

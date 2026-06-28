@@ -4,7 +4,7 @@ defmodule Ezagent.Plugin.RoleSeedHook do
   (role-as-data, SPEC §4).
 
   Core owns the plugin contract and collects `roles/0` declarations, but the
-  role store (`Ezagent.Agent.RoleRegistry` read-through over
+  role store (`Ezagent.Agent.RecipeRegistry` read-through over
   `Ezagent.Socialware.ConfigStore`) is an `ezagent_domain_agent` concern — it
   cannot live in core (core has no umbrella deps; ConfigStore is in
   `ezagent_domain_identity`). So, exactly like `Ezagent.Plugin.FlavorPublishHook`,

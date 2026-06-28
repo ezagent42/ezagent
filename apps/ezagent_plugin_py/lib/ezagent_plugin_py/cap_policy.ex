@@ -6,7 +6,7 @@ defmodule EzagentPluginPy.CapPolicy do
   `np`) is `py` flavor + an operator script + a set of requested caps. RF-5a's
   create wiring reads this flavor's `:cap_policy` from
   `Ezagent.AgentFlavorRegistry` and passes
-  `cap_policy.(recipe.requested_caps)` to `Ezagent.Role.CapMint.mint/3` when a
+  `cap_policy.(recipe.requested_caps)` to `Ezagent.Agent.Recipe.CapMint.mint/3` when a
   py-agent is created WITH a role.
 
   Same fail-closed shape as `EzagentPluginNative.CapPolicy`: **grant exactly the
@@ -20,7 +20,7 @@ defmodule EzagentPluginPy.CapPolicy do
   Build the `py` per-recipe fail-closed CapMint policy predicate.
 
   `requested_caps` are the role recipe's authorized cap-templates (atom-keyed
-  `%{behavior:, action:}` after `Ezagent.Role.new/1`). Returns a
+  `%{behavior:, action:}` after `Ezagent.Agent.Recipe.new/1`). Returns a
   `(needed_cap_map -> boolean())` that grants a needed-cap iff its
   `{behavior, action}` matches one the recipe requested; everything else is
   rejected (fail-closed default).

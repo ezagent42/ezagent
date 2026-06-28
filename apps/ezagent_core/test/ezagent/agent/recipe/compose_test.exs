@@ -1,8 +1,8 @@
-defmodule Ezagent.Role.ComposeTest do
+defmodule Ezagent.Agent.Recipe.ComposeTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Role
-  alias Ezagent.Role.Compose
+  alias Ezagent.Agent.Recipe
+  alias Ezagent.Agent.Recipe.Compose
 
   # Task #54 PR-1 §2.3 — the context-free half of materialization: the role
   # FILLS the sandbox (skills/plugins/prompt) and contributes behaviors; the
@@ -17,7 +17,7 @@ defmodule Ezagent.Role.ComposeTest do
 
   defp role do
     {:ok, role} =
-      Role.new(%{
+      Recipe.new(%{
         skills: ["orchestrator"],
         plugins: ["np"],
         prompt: "persona",
@@ -55,7 +55,7 @@ defmodule Ezagent.Role.ComposeTest do
       src =
         "from ezagent_python import method, run\n@method(\"receive\")\ndef r(p): return p\nrun()"
 
-      {:ok, py_role} = Role.new(%{name: "np", script: src})
+      {:ok, py_role} = Recipe.new(%{name: "np", script: src})
 
       out = Compose.materialize(py_role, %{flavor_behaviors: []})
 
@@ -63,7 +63,7 @@ defmodule Ezagent.Role.ComposeTest do
       # create route installs into the agent's config_dir (py → agent.py).
       assert out.sandbox_content.script == src
       # A scriptless role yields script: nil (every existing role).
-      {:ok, plain} = Role.new(%{name: "x"})
+      {:ok, plain} = Recipe.new(%{name: "x"})
       assert Compose.materialize(plain, %{flavor_behaviors: []}).sandbox_content.script == nil
     end
 
@@ -79,7 +79,7 @@ defmodule Ezagent.Role.ComposeTest do
 
       # a passive (non-principal data-actor) role carries passive: true through so
       # the create step (RF-5a) can record it as the stored agent attribute.
-      {:ok, passive_role} = Role.new(%{skills: ["kanban"], passive: true})
+      {:ok, passive_role} = Recipe.new(%{skills: ["kanban"], passive: true})
       assert %{passive: true} = Compose.materialize(passive_role, %{flavor_behaviors: []})
     end
   end

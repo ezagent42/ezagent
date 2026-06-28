@@ -120,8 +120,8 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # explicitly here in the DataCase sandbox + flush the cache so the test
       # exercises the real ConfigStore-sourced path.
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-      :ok = Ezagent.Agent.RoleRegistry.flush_cache()
-      assert {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+      assert {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
 
       assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_role()
       assert "ezagent-session-orchestrator" in sandbox_content.skills
@@ -137,7 +137,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # cached entry cannot mask the miss, then drive the fail-closed branch.
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
       name = OrchestratorRole.name()
-      :ok = Ezagent.Agent.RoleRegistry.flush_cache()
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
       assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
                Bootstrap.resolve_orchestrator_role()

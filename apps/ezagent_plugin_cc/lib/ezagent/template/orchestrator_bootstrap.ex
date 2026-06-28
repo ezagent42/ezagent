@@ -4,7 +4,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   This is the cc-flavor *loader* for the orchestrator role: it takes the
   flavor-agnostic role recipe (`Ezagent.Orchestrator.OrchestratorRole`, composed
-  via the `Ezagent.Role` core primitives) and writes its sandbox **content** into
+  via the `Ezagent.Agent.Recipe` core primitives) and writes its sandbox **content** into
   whatever `config_dir` the cc flavor allocated — flavor-blind by construction, so
   the same role would compose against a future `codex`/`curl` flavor.
 
@@ -14,7 +14,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   the filesystem install:
 
   - `resolve_orchestrator_role/0` — look the orchestrator role recipe up BY NAME
-    in `Ezagent.Agent.RoleRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
+    in `Ezagent.Agent.RecipeRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
     and compose it → `sandbox_content` (`%{skills, plugins, prompt}`). The
     registry IS the re-point seam: a later PR swaps the lookup source to the
     persisted `template://system/role/orchestrator` Template without touching the
@@ -71,10 +71,10 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   @doc """
   Compose the orchestrator role recipe into its `sandbox_content`
-  (`%{skills, plugins, prompt}`) via the unified `roles/0` + `Ezagent.Role.Compose`
+  (`%{skills, plugins, prompt}`) via the unified `roles/0` + `Ezagent.Agent.Recipe.Compose`
   path (RF-9).
 
-  The recipe is looked up BY NAME in `Ezagent.Agent.RoleRegistry` (populated at cc
+  The recipe is looked up BY NAME in `Ezagent.Agent.RecipeRegistry` (populated at cc
   plugin boot from `roles/0`) — NOT re-derived from `OrchestratorRole.compose/0`.
   This routes the orchestrator through the SAME registry indirection RF-5a uses,
   and is the documented re-point seam for the future persisted
@@ -95,10 +95,10 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   """
   @spec resolve_orchestrator_role() :: {:ok, map()} | {:error, term()}
   def resolve_orchestrator_role do
-    case Ezagent.Agent.RoleRegistry.lookup(OrchestratorRole.name()) do
-      {:ok, %Ezagent.Role{} = role} ->
+    case Ezagent.Agent.RecipeRegistry.lookup(OrchestratorRole.name()) do
+      {:ok, %Ezagent.Agent.Recipe{} = role} ->
         %{sandbox_content: sandbox_content} =
-          Ezagent.Role.Compose.materialize(role, %{flavor_behaviors: []})
+          Ezagent.Agent.Recipe.Compose.materialize(role, %{flavor_behaviors: []})
 
         {:ok, sandbox_content}
 

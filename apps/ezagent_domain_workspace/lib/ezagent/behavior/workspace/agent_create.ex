@@ -43,8 +43,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         cwd: cwd,
         with_pty?: with_pty?,
         # RF-5a — the OPTIONAL role NAME. Present → the direct-spawn path
-        # resolves its recipe (RoleRegistry) + composes it with the flavor
-        # (Role.Compose) into the spawn `:behaviors` + minted caps + the
+        # resolves its recipe (RecipeRegistry) + composes it with the flavor
+        # (Recipe.Compose) into the spawn `:behaviors` + minted caps + the
         # durable `passive` marker. Absent (nil) → every existing create path
         # is byte-identical (the strict no-op gate).
         role: role,
@@ -395,8 +395,8 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # py — the script-driven Python flavor. A py-agent is created either with an
   # operator-supplied `flavor_config["script"]` (the direct create form) OR with
   # a ROLE that CARRIES the script (py-agent P4 RF-5b — `np` = `py` flavor +
-  # the np role's `np.py` script). The role-script channel (`Role.script` →
-  # `Role.Compose.sandbox_content.script`) is folded into the template config
+  # the np role's `np.py` script). The role-script channel (`Recipe.script` →
+  # `Recipe.Compose.sandbox_content.script`) is folded into the template config
   # HERE, so P1's existing config_dir install + `:script_immutable` injection
   # gate carries it — py rides the TEMPLATE route (NOT the direct-spawn RoleStep
   # route, which has no config_dir allocation; that generic install is the

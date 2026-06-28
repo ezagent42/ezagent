@@ -18,7 +18,7 @@ defmodule EzagentPluginKanban.Application do
   ## 怎么起活
 
   看板经 `entity://<ws>/agent/<id>` 寻址（agent 的 URI）。`roles/0` 在 boot 经
-  `RoleRegistry.register/1` 登记 `kanban-manager` recipe；create 走 RF-5a role-create
+  `RecipeRegistry.register/1` 登记 `kanban-manager` recipe；create 走 RF-5a role-create
   路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），24 个 kanban
   behaviors 经 RF-1 在通用 `Entity.Agent` 宿主上 per-instance 加载。dispatch 到没 live 的
   agent 经 `SpawnRegistry.spawn` 从快照 rehydrate 起活（world 读模型在 dispatch 前
@@ -49,15 +49,15 @@ defmodule EzagentPluginKanban.Application do
 
   # kanban-as-role (K1, RF-4)：看板 = 一个 agent，role `kanban-manager` × flavor
   # `native`。本 `roles/0` code-seed 该 role recipe，`Ezagent.Plugin.boot/1` 经
-  # `RoleRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
+  # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
   #   * `behaviors: [Ezagent.Behavior.Kanban]` —— **仅** Kanban。`Connectors`
   #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 24 个动作（含 9 个
   #     连接器动作）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、薄转发给
   #     `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
   #   * `requested_caps` = 每个动作一个 **cap-template map** `%{behavior:, action:}`
-  #     —— 不是裸 atom（`Role.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
-  #     materialization 轴，由 `Role.CapMint` 按 flavor 注入 = `:agent`）。
+  #     —— 不是裸 atom（`Recipe.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
+  #     materialization 轴，由 `Recipe.CapMint` 按 flavor 注入 = `:agent`）。
   #   * `passive: true` —— 看板是**被动数据 actor**：不可被 @ / 不可 `:join` / 不收
   #     chat（RF-6 三闸），只在直接 `kanban.<action>` dispatch 上动作。
   @impl Ezagent.Plugin

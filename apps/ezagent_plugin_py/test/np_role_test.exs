@@ -4,7 +4,7 @@ defmodule Ezagent.PluginPy.NpRoleTest do
 
   np is no longer its own flavor/plugin: it is the `py` flavor + the re-homed
   `np.py` script (numpy/sympy whitelist intact), carried via the role-script
-  channel (`Role.script` → `Role.Compose.sandbox_content.script` → config_dir
+  channel (`Recipe.script` → `Recipe.Compose.sandbox_content.script` → config_dir
   `agent.py`). This test proves:
 
   1. (fast, no uv) the `np` role recipe carries the np.py script verbatim, and
@@ -65,11 +65,11 @@ defmodule Ezagent.PluginPy.NpRoleTest do
       # the DataCase sandbox.) np is a BUILT-IN, so its `script` is allowed (the
       # trusted code path); flush the cache to prove the resolve-from-ConfigStore.
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-      assert {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
-      :ok = Ezagent.Agent.RoleRegistry.flush_cache()
+      assert {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
-      assert {:ok, %Ezagent.Role{name: "np", script: script}} =
-               Ezagent.Agent.RoleRegistry.lookup("np")
+      assert {:ok, %Ezagent.Agent.Recipe{name: "np", script: script}} =
+               Ezagent.Agent.RecipeRegistry.lookup("np")
 
       assert is_binary(script) and script =~ "_SAFE_NAMES"
     end
@@ -85,8 +85,8 @@ defmodule Ezagent.PluginPy.NpRoleTest do
           # role-as-data: boot's DB seed is :test-skipped, so seed the np role
           # into ConfigStore here so the create path's read-through lookup resolves.
           {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-          {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
-          Ezagent.Agent.RoleRegistry.flush_cache()
+          {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+          Ezagent.Agent.RecipeRegistry.flush_cache()
 
           ws_name = "np-role-#{System.unique_integer([:positive])}"
           {:ok, _ws_pid} = Workspace.create(ws_name, %{})
@@ -196,8 +196,8 @@ defmodule Ezagent.PluginPy.NpRoleTest do
       # role-as-data: seed the np role into ConfigStore (boot's DB seed is
       # :test-skipped) so the create path's read-through lookup resolves "np".
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-      {:ok, _} = Ezagent.Agent.RoleRegistry.seed_role_if_absent(PyApp.np_role_recipe())
-      Ezagent.Agent.RoleRegistry.flush_cache()
+      {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(PyApp.np_role_recipe())
+      Ezagent.Agent.RecipeRegistry.flush_cache()
 
       ws_name = "np-role-sec-#{System.unique_integer([:positive])}"
       {:ok, _ws_pid} = Workspace.create(ws_name, %{})

@@ -2,7 +2,7 @@ defmodule EzagentPluginNative.CapPolicyTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Capability
-  alias Ezagent.Role.CapMint
+  alias Ezagent.Agent.Recipe.CapMint
   alias EzagentPluginNative.CapPolicy
 
   # Role-foundation RF-8 — native's CapMint cap-policy. native grants exactly
