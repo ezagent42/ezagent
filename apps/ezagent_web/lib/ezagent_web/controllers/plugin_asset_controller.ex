@@ -15,7 +15,7 @@ defmodule EzagentWeb.PluginAssetController do
 
   alias Ezagent.PluginAssetRegistry
 
-  def show(conn, %{"slug" => slug, path: path_parts}) do
+  def show(conn, %{"slug" => slug, "path" => path_parts}) do
     route = Enum.join(path_parts, "/")
 
     case PluginAssetRegistry.lookup(slug, route) do
