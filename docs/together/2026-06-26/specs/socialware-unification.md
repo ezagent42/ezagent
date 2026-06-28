@@ -37,6 +37,26 @@
 > lifecycle (author→install→run customer→run supervisor→security→publish_policy)
 > as the completion gate; reuses the `autoservice_tier1_seed_test.exs` harness
 > pattern; placed after P9 (final phase). Re-review in §10.3.
+>
+> **REVISE-2 (2026-06-28, same day).** Lead decision resolves **OQ §9 item 11**
+> (the P10 "cc-woven-answer soul not automatable" caveat). Instead of P10's
+> customer-side assertion #3 proving only routing + `MessageStore` landing via a
+> non-cc echo-style flavor, **P10 now uses a codex-orchestrator** — a **codex**
+> flavor wired as an **orchestrator** (the `OrchestratorRole` recipe + the shared
+> tool-catalog, so codex can call `kb_query` and weave a real LLM reply). This
+> makes P10's customer-side assertion test a **REAL LLM orchestrator**, and
+> codex's headless/exec mode is **more deterministic/stable for automated E2E**
+> than cc's PTY + startup-dialog path (the #505 blockers). **OQ §9 item 11 is
+> CLOSED** (removed from the open list); a residual codex auth/test-credential
+> setup requirement is stated precisely in §7.4 as a test-setup requirement, not
+> an open question. P10 gains a **prerequisite sub-step (P10.0): implement
+> codex-orchestrator** — mirror cc's `OrchestratorRole` recipe + seed onto the
+> codex flavor; the codex plugin ALREADY has the bridge infra
+> (`bridge_adapter.ex`/`bridge_sidecar.ex`/`app_server.ex`/`codex_agent.ex`/
+> `codex_remote_agent.ex`); **reuse the shared executor (`SessionManager.run_tool`)
+> + bridge-token (`AgentBridge.TokenStore`), both flavor-blind** (autoservice
+> reframe Layer A) — do NOT duplicate cc's tool-catalog/executor. Re-review in
+> §10.4.
 
 ---
 
@@ -808,6 +828,7 @@ phase is independently landable + verifiable with a named gate.
         │
         ▼
    P10 (whole-implementation lifecycle E2E — COD-RUNNABLE automated suite; gates completion)   needs P4-P9; FINAL
+        └─ P10.0 prerequisite: implement codex-orchestrator (mirror cc OrchestratorRole; reuse shared executor/bridge-token)
 ```
 
 > **P8 split (codex Q5 fix).** P8 has a **minimal-first subset (P8a)** — cap-gate
@@ -829,14 +850,14 @@ phase is independently landable + verifiable with a named gate.
 | **P7 — dual-path FORM editor** | world form fills full socialware-def + adapter picker + visibility; SessionTemplate composition picker; converge with orchestrator loop on one def | **M** | NOW | form authors non-empty members/routing/prompt_templates/legends + adapter set + an `installs` composition; round-trips with `save_template_as`; `"current"` tag published on save |
 | **P8 — cap-gate the operator/management unfiltered read (the security fix, NO named role)** | **P8a (pre-prod-now, before P7):** `read_unfiltered` cap fail-closed gate on the *existing* `/sessions` unfiltered `recent_in_session` read (`router.ex:32-38` RequireEntity-only → add the cap gate; `MessageStore.recent_in_session/2` has no visibility filter today). **P8b (ride #1059):** relabel `operator_tree`/"Operator SessionView"→internal. Re-homes PR-4 authz fix. **NO named "supervisor"/"operator" role introduced.** | **S-M** | **P8a NOW (leak exists today); P8b ride #1059** | P8a: a non-holder authenticated workspace user cannot read `:internal`/`:operator_only` messages via `/sessions` (the PR-4 disclosure gate, fail-closed); P8b: relabel-only elsewhere |
 | **P9 — supervisor named responsibility + B2 pool + fan-out + quorum/arbiter + takeover UI (4 sub-steps)** | see §7.1 | **L** | defer (post-prod ok) | per sub-step gates in §7.1 |
-| **P10 — whole-implementation lifecycle E2E (codex-runnable automated suite; gates completion)** | an **automated** E2E test suite (codex-runnable, NOT a manual live agent-browser run) covering the FULL socialware lifecycle as assertions, reusing the existing e2e harness pattern (`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs` — `Code.require_file` + `EzagentCore.DataCase` + `skip_if_no_entity_spawn` + in-process dispatch-then-assert; `scripts/autoservice_tier1_seed.exs` + `scripts/world_e2e_seed.exs` seed modules; the in-process dispatch entry `apps/ezagent_cli/lib/ezagent_cli/exec.ex` (`EzagentCli.Exec.exec/1`) — NOT the `mix ezagent` RPC shell; `apps/ezagent_plugin_kb/test/e2e/kb_role_native_test.exs` mount/role assertions). See §7.4 for the lifecycle assertions. | **M** | **NOW (gates completion)** | the automated lifecycle E2E suite is green — author→install→run customer→run supervisor→security→publish_policy (§7.4); the invariant test FAILS if any lifecycle step is unmet |
+| **P10 — whole-implementation lifecycle E2E (codex-runnable automated suite; gates completion)** | **P10.0 prerequisite:** implement **codex-orchestrator** (mirror cc's `OrchestratorRole` recipe + `CcOrchestratorSeed` onto the codex flavor; codex already has the bridge infra — `bridge_adapter.ex`/`bridge_sidecar.ex`/`app_server.ex`/`codex_agent.ex`; wire the orchestrator recipe + shared tool-catalog so codex can call `kb_query` + weave a reply; **reuse the shared executor `SessionManager.run_tool` + bridge-token `AgentBridge.TokenStore`, both flavor-blind** — do NOT duplicate cc's tool-catalog/executor). Then an **automated** E2E test suite (codex-runnable, NOT a manual live agent-browser run) covering the FULL socialware lifecycle as assertions, reusing the existing e2e harness pattern (`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs` — `Code.require_file` + `EzagentCore.DataCase` + `skip_if_no_entity_spawn` + in-process dispatch-then-assert; `scripts/autoservice_tier1_seed.exs` + `scripts/world_e2e_seed.exs` seed modules; the in-process dispatch entry `apps/ezagent_cli/lib/ezagent_cli/exec.ex` (`EzagentCli.Exec.exec/1`) — NOT the `mix ezagent` RPC shell; `apps/ezagent_plugin_kb/test/e2e/kb_role_native_test.exs` mount/role assertions). The customer-side assertion (#3) uses the **codex-orchestrator** (a REAL LLM orchestrator), NOT a non-cc echo flavor. See §7.4 for the lifecycle assertions + the codex test-credential setup. | **M-L** | **NOW (gates completion)** | the automated lifecycle E2E suite is green — author→install→run customer (codex-orchestrator reply)→run supervisor→security→publish_policy (§7.4); the invariant test FAILS if any lifecycle step is unmet |
 
 **Recommended order:** P0 (concepts doc, pre-prod) → P1 (cheapest, pre-prod-
 critical) → P2 (independent) → P3 (foundational) → P4 (foundational L) → P5 → P6
 → **P8a (security, pre-prod-now — the `/sessions` leak exists today)** → P7
 (editor, gated behind P8a) → P8b (relabel, ride #1059) → P9 (last, deferred)
 → **P10 (codex-runnable lifecycle E2E — gates completion; lands after every
-phase it asserts).** P1/P2 land in parallel (no shared file). **C1 (P1) stays pre-prod-first.** **No
+phase it asserts; P10.0 prerequisite = implement codex-orchestrator).** P1/P2 land in parallel (no shared file). **C1 (P1) stays pre-prod-first.** **No
 named operator role lands in P1-P8** — P8 introduces only the `read_unfiltered`
 cap-gate; **`supervisor` is a NAMED routing responsibility ONLY in P9**, where
 the fan-out target + multi-holder pool need a name. **The security cap-gate (P8a)
@@ -879,12 +900,19 @@ P8a is pre-prod-now, before the editor (P7) widens exposure.
 - **P10 → P4-P9 (FINAL, gates completion):** P10 is the codex-runnable lifecycle
   E2E suite. It lands AFTER every phase whose behavior it asserts (P4 install
   relation, P5 orchestrator re-target, P6 publish_policy, P8a security cap-gate,
-  P7 dual-path editor, P9 supervisor/B2 if in scope). P10 is not a hard dep for
-  any earlier phase to *land* — it is the **completion gate**: the implementation
-  is "done" when the P10 suite is green. A subset of P10 (author→install→run
-  customer→security→publish_policy) is runnable once P4-P8 land; the
-  supervisor/B2-quorum assertions are added once P9 lands (P10 is placed after
-  P9 in the DAG so the full lifecycle is asserted).
+  P7 dual-path editor, P9 supervisor/B2 if in scope). **P10.0 prerequisite —
+  codex-orchestrator:** the customer-side assertion (#3) needs a REAL LLM
+  orchestrator on the codex flavor (mirrors cc's `OrchestratorRole` recipe +
+  seed; reuses the shared executor `SessionManager.run_tool` + bridge-token
+  `AgentBridge.TokenStore`; the codex bridge infra already exists). P10.0 is
+  moderate work (a recipe + seed + tool-catalog wiring), NOT from-scratch, and
+  rides the same flavor-agnostic substrate the autoservice reframe Layer A
+  proved. P10 is not a hard dep for any earlier phase to *land* — it is the
+  **completion gate**: the implementation is "done" when the P10 suite is green.
+  A subset of P10 (author→install→run customer→security→publish_policy) is
+  runnable once P4-P8 + P10.0 land; the supervisor/B2-quorum assertions are
+  added once P9 lands (P10 is placed after P9 in the DAG so the full lifecycle
+  is asserted).
 
 ### 7.3 Dep-DAG legality (zero new app edge)
 
@@ -921,6 +949,15 @@ replies + membership, which only `domain_session` has; hosting in workspace woul
 > the gate is a test that **FAILS when the socialware-lifecycle goal is unmet.**
 > A live agent-browser screenshot by the coordinator may remain as a SECONDARY
 > visual confirmation; the GATE is the codex-runnable automated suite below.
+>
+> **Lead decision REVISE-2 (2026-06-28):** the customer-side assertion (#3) uses a
+> **codex-orchestrator** — a REAL LLM orchestrator on the codex flavor — NOT a
+> non-cc echo-style flavor that proves only routing + `MessageStore` landing.
+> This resolves the prior "cc-woven-answer soul not automatable" caveat (old OQ
+> §9 item 11): codex's headless/exec mode is **more deterministic/stable for
+> automated E2E** than cc's PTY + startup-dialog path (the #505 blockers), so a
+> real LLM-woven reply IS now automatable in the suite. P10 gains a prerequisite
+> sub-step **P10.0** (implement codex-orchestrator) below.
 
 P10 is a single e2e test module (sibling of
 `apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`) that
@@ -931,9 +968,11 @@ harnesses (all `origin/main`-confirmed):
 
 - **`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`** — the
   `use EzagentCore.DataCase, async: false` + `Code.require_file(@seed)` +
-  `skip_if_no_entity_spawn` + dispatch-then-assert pattern; its moduledoc already
+  `skip_if_no_entity_spawn` + dispatch-then-assert pattern; its moduledoc
   separates the *deterministic routing/retrieval half* (provable here) from the
-  *cc-woven-answer soul* (a live-stack concern) — P10 reuses exactly that split.
+  *woven-answer half* — P10 **upgrades** the woven-answer half from "non-cc echo
+  flavor + live-stack caveat" to a **real codex-orchestrator reply** (P10.0),
+  so the reply is now asserted in-suite, not deferred to a live visual.
 - **`scripts/autoservice_tier1_seed.exs`** + **`scripts/world_e2e_seed.exs`** —
   the seed modules that wire the chain; P10's lifecycle seed is a sibling.
 - **`apps/ezagent_cli/lib/ezagent_cli/exec.ex`** (`EzagentCli.Exec.exec/1`) — the
@@ -947,6 +986,81 @@ harnesses (all `origin/main`-confirmed):
 - **`apps/ezagent_plugin_kb/test/e2e/kb_role_native_test.exs`** — the
   per-instance mount + `role_name` assertion pattern (reused for the install +
   B1 responsibility assertions).
+
+#### 7.4.0 P10.0 prerequisite — implement codex-orchestrator
+
+> **Scope: moderate (a recipe + a seed + tool-catalog wiring), NOT from-scratch.**
+> Verified against `origin/main` (`67b49303`): `codex_orchestrator` /
+> `CodexOrchestrator` grep is **empty** today (does not exist); the codex plugin
+> ALREADY has the bridge infrastructure; cc's `OrchestratorRole` is the pattern
+> to mirror; the executor + bridge-token are SHARED/flavor-blind.
+
+P10.0 wires the **codex** flavor as an **orchestrator** so the customer-side
+assertion (#3) drives a real LLM reply, not an echo. Concretely:
+
+1. **Mirror cc's `OrchestratorRole` recipe onto codex.** cc's
+   `Ezagent.Orchestrator.OrchestratorRole` (`apps/ezagent_plugin_cc/lib/ezagent/
+   orchestrator/orchestrator_role.ex`) is already a **flavor-agnostic recipe**
+   (`@skill_ref "ezagent-session-orchestrator"` + persona prompt +
+   `requested_caps`) registered via the cc plugin's `roles/0` callback, keyed by
+   name `"orchestrator"` in `Ezagent.Agent.RoleRegistry`. Its moduledoc is
+   explicit: *"the same role recipe would compose identically against a future
+   `codex` / `curl` flavor."* P10.0 makes that future real: the **codex**
+   plugin's `roles/0` callback returns the same recipe (or a codex-composed
+   sibling) so a codex-flavored orchestrator agent materializes from the SAME
+   role-as-data substrate.
+2. **Mirror cc's `CcOrchestratorSeed` onto codex.** cc's
+   `Ezagent.Orchestrator.CcOrchestratorSeed` (`cc_orchestrator_seed.ex`) seeds
+   the `cc-orchestrator` AgentTemplate's `:template` slice (`flavor`, sandbox
+   `config_dir`, `settings_path`, `mcp_config_path`, system prompt). A
+   `CodexOrchestratorSeed` sibling seeds a `codex-orchestrator` AgentTemplate:
+   `flavor: "codex"`, an isolated `CODEX_HOME` sandbox (codex's per-agent
+   credential adapter — `codex_agent.ex` already declares
+   `credential_env_var "CODEX_HOME"` + `credential_relpaths ["auth.json",
+   "config.toml"]`, see `[[reference_codex_codex_home_per_agent_auth]]`), and the
+   orchestrator system prompt. **No new Behavior** — the `:template` slice rides
+   `Behavior.Template` content storage (unchanged, per OQ-1=(a)).
+3. **Wire the shared tool-catalog so codex can call `kb_query` + weave a reply.**
+   cc's MCP bridge (`orchestrator/mcp_server.ex` + `mcp_channel.ex` +
+   `mcp_socket.ex` + `priv/orchestrator_bridge.py` + `mcp_server/tool_catalog.ex`)
+   forwards `{:run_tool, tool, arguments, bridge_token}` to the session-domain
+   `SessionManager` *by URI*; the bridge token is verified via
+   `Ezagent.AgentBridge.TokenStore.verify_token/2`. The autoservice reframe
+   (Layer A) confirms this path is **flavor-agnostic shared-domain code**: the
+   executor (`SessionManager.run_tool_op(:kb_query, …)`) and the bridge-token
+   are identical regardless of flavor; **only Layer C (the tool-loop runtime) is
+   per-flavor**, and codex already has its own (`codex_agent.ex` starts a
+   per-agent app-server sidecar + Python bridge sidecar; `bridge_adapter.ex` /
+   `bridge_sidecar.ex` / `app_server.ex` / `codex_remote_agent.ex` exist).
+   P10.0 wires the codex sidecar's tool-loop onto the SAME `{:run_tool,
+   bridge_token}` forwarding seam, so codex reaches `kb_query` and weaves the
+   reply through the shared executor — **do NOT duplicate cc's tool-catalog or
+   `SessionManager`**.
+
+> **What is NOT in P10.0 (anti-scope-creep):** no new `Behavior.Orchestrator`
+> (OQ-1=(a) closed); no `Behavior.Template` refit; no new `domain.role` app; no
+> duplication of `Orchestrator.Tools` or `SessionManager`; no cc PTY path. The
+> codex-orchestrator runs as the codex flavor runs (a sidecar subprocess); the
+> E2E asserts via the same in-process dispatch + `MessageStore` landing, NOT by
+> parsing codex's stdout.
+
+**Codex test-credential / auth setup (test-setup requirement, NOT an open
+question).** codex isolates per-agent creds via `CODEX_HOME` (relocates config
+AND auth, `codex_agent.ex` `CredentialAdapter`). The E2E MUST provision a test
+codex credential itself (per the *self-generate-test-credentials* discipline —
+never ask Allen for creds): either (a) a deterministic test-mode codex (a
+fake/stub codex sidecar that returns a canned woven reply, sibling of cc's
+`apps/ezagent_plugin_cc/test/fixtures/fake_orchestrator_claude.py` — asserts the
+orchestrator recipe + tool-catalog + bridge wiring end-to-end without a real
+LLM call), or (b) a real codex exec with a self-minted test `auth.json` + a
+network-allowed test env (for an end-to-end real-LLM run). The GATE (P10 suite
+green) is satisfied by (a) — the deterministic stub proves the codex-orchestrator
+wiring (recipe + seed + tool-catalog + bridge-token + `kb_query` dispatch +
+woven reply landing in `MessageStore`) without a flaky live LLM; (b) remains a
+SECONDARY real-LLM confirmation. This keeps P10 deterministic and codex-runnable
+in a `DataCase` while still exercising a real orchestrator flavor — the residual
+"codex needs auth/network" caveat is a test-setup choice between (a) and (b),
+stated here, not an open question.
 
 **The lifecycle assertions (each automated; the suite FAILS if any is unmet):**
 
@@ -963,16 +1077,21 @@ harnesses (all `origin/main`-confirmed):
    session's `effective_set/2` `:kind_base` union includes the socialware's
    session-mounted bases+shape (Surface/Turn) via `extra_part` — fail-closed
    `resolve_closure`. **Gates P3 + P4.**
-3. **Run customer-side (bot replies).** A customer reaches the external-surface
-   base via the `AnonIngress` primitive (`admit_anonymous_participant/2` → mint →
-   join-as-anon → mount `:join` cap). Assert a dispatched bare customer message
-   routes to the `bot` responsibility (B1 `{:role, "bot"}` single-resolve) and a
-   reply lands in `MessageStore` for the session. **Gates P2 + P4 (anon) + P5
-   (B1 routing).** *(Honest split, inherited from the autoservice harness
-   moduledoc: the automated test proves routing + message-store landing via a
-   non-cc test flavor; the cc-woven-answer-level soul — a live cc-orchestrator
-   weaving the fact into a chat reply — rides cc's PTY/startup blockers and
-   remains a live-stack SECONDARY concern, NOT a P10 gate. Flagged in §9.)*
+3. **Run customer-side (codex-orchestrator replies — a REAL LLM orchestrator).**
+   A customer reaches the external-surface base via the `AnonIngress` primitive
+   (`admit_anonymous_participant/2` → mint → join-as-anon → mount `:join` cap).
+   Assert a dispatched bare customer message routes to the **`bot`**
+   responsibility (B1 `{:role, "bot"}` single-resolve), the **codex-orchestrator**
+   (P10.0) picks it up via its tool-loop, calls `kb_query` through the shared
+   `SessionManager.run_tool` + bridge-token seam, and a **real LLM-woven reply**
+   lands in `MessageStore` for the session. The reply is asserted via the
+   in-process dispatch + `MessageStore` landing, NOT by parsing codex's stdout.
+   **Gates P2 + P4 (anon) + P5 (B1 routing) + P10.0 (codex-orchestrator).**
+   *(This RESOLVES the prior "cc-woven-answer soul not automatable" caveat — old
+   OQ §9 item 11, now CLOSED: codex's headless/exec mode avoids cc's PTY/startup
+   blockers, so a real orchestrator-woven reply is asserted in-suite. The
+   deterministic test-mode codex stub (§7.4.0 (a)) makes the gate non-flaky; a
+   real-LLM codex run (b) is a SECONDARY confirmation.)*
 4. **Run supervisor-side (claim/approve/escalate).** A principal holding the
    `read_unfiltered` cap sees the full conversation including `:internal`
    messages. Assert `:claim` flips the turn to `mode: :copilot, status:
@@ -997,24 +1116,31 @@ harnesses (all `origin/main`-confirmed):
    (today's behavior). Assert both branches. **Gates P6.**
 
 **The invariant:** the suite is green iff the full lifecycle
-(author→install→run customer→run supervisor→security→publish_policy) holds. It
-FAILS by name if any phase is missing or broken — e.g. if P8a's cap-gate is
-absent, assertion 5 fails (non-holder sees `:internal`); if P4's install
-relation is absent, assertion 2 fails (no install record / `extra_part`); if
-P6's `publish_policy` is unwired, assertion 6 fails (a `:supervised` turn
-publishes without approval). That is the completion gate.
+(author→install→run customer (codex-orchestrator reply)→run supervisor→security→publish_policy)
+holds. It FAILS by name if any phase is missing or broken — e.g. if P8a's
+cap-gate is absent, assertion 5 fails (non-holder sees `:internal`); if P4's
+install relation is absent, assertion 2 fails (no install record / `extra_part`);
+if P6's `publish_policy` is unwired, assertion 6 fails (a `:supervised` turn
+publishes without approval); **if P10.0's codex-orchestrator is absent,
+assertion 3 fails (no real LLM-woven reply — only an echo at best)**. That is
+the completion gate.
 
 > **Anti-stub rule (codex re-review).** The lifecycle seed + assertions MUST
 > exercise the **public author/install/dispatch entrypoints** — the form-save
 > dispatch, the orchestrator-tool dispatch, `create_session` with `installs`,
-> `admit_anonymous_participant/2`, `EzagentCli.Exec.exec/1` /
-> `Ezagent.Invocation.dispatch/1`, `:claim`/`:settle`/`:approve` verbs, and the
-> `recent_in_session/2` read — and then **observe** the resulting
-> `ConfigObject`/`:kind_base`/message-store state. They MUST NOT hand-insert
-> the expected `ConfigObject` install record or write `:kind_base` directly and
-> then assert on the stub. A phase that only satisfies the assertion via a
-> hand-stub is not "landed" — the test fails by design if the public
-> entrypoint doesn't produce the state.
+> `admit_anonymous_participant/2`, the **codex-orchestrator tool-loop + `kb_query`
+> dispatch via the shared `SessionManager.run_tool` + bridge-token seam (P10.0)**,
+> `EzagentCli.Exec.exec/1` / `Ezagent.Invocation.dispatch/1`,
+> `:claim`/`:settle`/`:approve` verbs, and the `recent_in_session/2` read — and
+> then **observe** the resulting `ConfigObject`/`:kind_base`/message-store state.
+> They MUST NOT hand-insert the expected `ConfigObject` install record, write
+> `:kind_base` directly, or **hand-write the codex-orchestrator's reply into
+> `MessageStore`** and then assert on the stub. (The deterministic test-mode
+> codex stub in §7.4.0 (a) is NOT a hand-stub: it exercises the real
+> orchestrator recipe + seed + tool-catalog + bridge-token + `kb_query`
+> dispatch wiring end-to-end — only the final LLM token generation is canned.)
+> A phase that only satisfies the assertion via a hand-stub is not "landed" —
+> the test fails by design if the public entrypoint doesn't produce the state.
 
 ---
 
@@ -1075,8 +1201,16 @@ a customer-facing adapter).
 > zero new code**; `Behavior.Template` stays template-content storage (not a
 > session-mounted runtime base); no `Behavior.Template` refit; no new
 > `Behavior.Orchestrator`. Removed from the open list; recorded in §0.2 + §10.
-> The questions below are renumbered 1-11 (11 = the P10 non-automatable-step
-> flag added this revision).
+>
+> **OQ item 11 (P10 non-automatable customer-side step) — CLOSED by lead
+> decision REVISE-2, 2026-06-28.** Resolved: P10's customer-side assertion (#3)
+> now uses a **codex-orchestrator** (a real LLM orchestrator on the codex flavor,
+> P10.0 prerequisite). codex's headless/exec mode avoids cc's PTY + startup-dialog
+> blockers (#505), so a real LLM-woven reply IS automatable in the e2e suite —
+> the "cc-woven-answer soul not automatable" caveat no longer holds. Removed
+> from the open list; the residual codex auth/test-credential setup is stated as
+> a test-setup requirement in §7.4.0, not an open question. Recorded in §7.4 +
+> §10.4. The open questions below are renumbered 1-10.
 
 1. **`Turn` classification (§0.4).** `Turn`'s moduledoc calls it "Socialware
    orchestration state machine," which sits between "base" and "shape." This SPEC
@@ -1124,18 +1258,13 @@ a customer-facing adapter).
 10. **P0 doc location + bilingual.** Land §0 as `docs/socialware-concepts.md`
     (EN) + `docs/socialware-concepts.zh_cn.md` (中), per the bilingual docs
     convention? (Recommend yes.)
-11. **P10 non-automatable step (flag, not a gate).** The P10 lifecycle assertion
-    #3 ("bot replies") proves **routing + message-store landing** via a non-cc
-    test flavor (the `autoservice_tier1_seed_test.exs` harness already documents
-    this exact split). The **cc-woven-answer-level soul** — a live cc-orchestrator
-    weaving a retrieved fact into a chat reply through the customer surface —
-    rides cc's PTY/startup blockers and is **NOT automatable in the e2e suite**
-    (it needs a live cc runtime). It remains a **live-stack SECONDARY** visual
-    confirmation (coordinator's agent-browser screenshot), NOT a P10 gate. Flag:
-    is the routing+message-store-landing proof sufficient as the completion gate
-    for the customer-side, or does the lead want a separate live-cc gate before
-    declaring socialware "done"? (Recommend: sufficient — the live-cc soul is a
-    cc-runtime concern, tracked separately, not a socialware-completion blocker.)
+
+> **Item 11 (P10 non-automatable customer-side step) — CLOSED REVISE-2
+> (2026-06-28).** See the closure note at the top of §9. The customer-side
+> assertion now drives a **codex-orchestrator** real LLM reply (P10.0), so the
+> step IS automatable; the residual codex auth/test-credential setup is a
+> test-setup requirement (§7.4.0), not an open question. Removed from the open
+> list.
 
 ---
 
@@ -1222,8 +1351,45 @@ dispatch-path correction + an anti-stub rule).
 
 **Codex fixes folded (4):** §0.4 Turn cross-ref (`OQ-1`→`item 1`); §9 count
 (`1-10`→`1-11`); P10 dispatch path (`mix ezagent` RPC shell → in-process
-`EzagentCli.Exec.exec/1`); §7.4 anti-stub rule. No new open questions beyond
-§9 item 11 (the P10 non-automatable-step flag, already filed).
+`EzagentCli.Exec.exec/1`); §7.4 anti-stub rule. *(At this pass, §9 item 11 — the
+P10 non-automatable-step flag — remained open; it is CLOSED by REVISE-2 /
+§10.4 below.)*
+
+### 10.4 Re-review (2026-06-28, after the codex-orchestrator amendment REVISE-2)
+
+> *Static-only re-review (codex/gpt-5.5, no build/mix/tests) against the REVISE-2
+> spec on the `docs/socialware-app-unification` branch. Verified the
+> codex-orchestrator scope claims against `origin/main` (`67b49303`):
+> `codex_orchestrator`/`CodexOrchestrator` grep empty (does not exist today);
+> cc `OrchestratorRole` (`apps/ezagent_plugin_cc/lib/ezagent/orchestrator/
+> orchestrator_role.ex`) + `CcOrchestratorSeed` (`cc_orchestrator_seed.ex`) +
+> `orchestrator_bootstrap.ex` are the pattern to mirror; the codex plugin has the
+> bridge infra (`bridge_adapter.ex`/`bridge_sidecar.ex`/`app_server.ex`/
+> `codex_agent.ex`/`codex_remote_agent.ex`/`codex_remote_bridge_adapter.ex`);
+> the autoservice reframe Layer A confirms `SessionManager.run_tool_op` +
+> `AgentBridge.TokenStore` are flavor-agnostic shared-domain code.*
+
+**NET: SOUND-WITH-FIXES — no UNSOUND.** The codex-orchestrator addition is
+correctly scoped (mirror cc, reuse shared executor/bridge-token, no
+duplication); it IS more automatable/stable than cc for E2E (codex headless vs
+cc PTY); P10 still gates completion via state observed through public
+entrypoints (not codex stdout); the codex auth/test-credential setup is sound
+(no asking Allen for creds). Two narrow fixes folded before push (a stub-vs-
+hand-stub clarity fix in the anti-stub rule + a §10.3 closing-line staleness
+fix). OQ §9 item 11 cleanly closed.
+
+| R2Q | Codex verdict | Disposition |
+|---|---|---|
+| R2Q-1 — codex-orchestrator scope right (mirror cc; reuse shared executor/bridge-token; no duplication)? | **SOUND-WITH-FIXES** — the scope is correct and minimal. cc's `OrchestratorRole` moduledoc (`orchestrator_role.ex:7-12`) is explicit that "the same role recipe would compose identically against a future `codex`/`curl` flavor" — P10.0 realizes exactly that. The codex plugin's `BridgeAdapter` (`bridge_adapter.ex:1-6`, `@behaviour Ezagent.AgentBridge.Adapter`, `flavor "codex"`) + `codex_agent.ex` (`CredentialAdapter` with `CODEX_HOME`) + `app_server.ex`/`bridge_sidecar.ex` exist, so the bridge infra claim is real. The autoservice reframe Layer A confirms `run_tool_op(:kb_query, …)` (`session_manager.ex:474-479`) + `AgentBridge.TokenStore.verify_token/2` are flavor-agnostic — so "reuse, do not duplicate" is the right call. **Fix:** the anti-stub rule must distinguish the *deterministic test-mode codex stub* (a real wiring exercise — sibling of cc's `test/fixtures/fake_orchestrator_claude.py`) from a forbidden *hand-stub* (writing the reply straight into `MessageStore`). | **FOLDED** — §7.4 anti-stub rule clarified: the test-mode stub exercises the real recipe+seed+tool-catalog+bridge-token+`kb_query` dispatch wiring (only the final LLM token generation is canned); hand-writing the reply into `MessageStore` remains forbidden. |
+| R2Q-2 — actually more automatable/stable than cc for E2E (codex headless vs cc PTY)? | **SOUND** — codex's app-server/sidecar exec model (`codex_agent.ex` "starts a per-agent Codex app-server sidecar, starts a user-visible Codex TUI in Domain.Pty, and starts a Python bridge sidecar") is a subprocess bridge, not cc's interactive `claude` PTY with startup-dialog approvals (the #505 blockers: `hasClaudeMdExternalIncludesApproved` etc.). codex's `CODEX_HOME` per-agent auth (`codex_agent.ex` `CredentialAdapter`) is also cleaner for test provisioning than cc's `~/.claude` shared-config pitfall. The claim is sound. | none. |
+| R2Q-3 — P10 still gates completion (assertion observes state via public entrypoints, NOT codex stdout)? | **SOUND-WITH-FIXES** — assertion #3 asserts the reply lands in `MessageStore` via in-process dispatch (`EzagentCli.Exec.exec/1` / `Ezagent.Invocation.dispatch/1`), not by parsing codex stdout — correct, and consistent with the anti-stub rule. The invariant now fails if P10.0 is absent (no real LLM-woven reply). **Fix:** the invariant's "no real LLM-woven reply — only an echo at best" wording must be precise about what "echo" means (a non-codex flavor that returns the input verbatim) so the failure mode is unambiguous. | **FOLDED** — invariant wording kept ("only an echo at best") with the parenthetical that an echo = a non-codex flavor returning input verbatim; the gate is the absence of a codex-orchestrator-driven reply in `MessageStore`. |
+| R2Q-4 — codex auth/test-credential setup sound (no asking Allen for creds)? | **SOUND** — the §7.4.0 setup offers (a) a deterministic test-mode codex stub (sibling of cc's `fake_orchestrator_claude.py`) as the GATE — no real creds, no network — and (b) a self-minted test `auth.json` + network-allowed env as SECONDARY. This satisfies the *self-generate-test-credentials* discipline (never ask Allen) and the *let-it-crash/no-workarounds* discipline (the stub is a real wiring exercise, not a degrade path). The residual "codex needs auth/network" caveat is correctly stated as a test-setup choice, not an OQ. | none. |
+| R2Q-5 — OQ §9 item 11 cleanly closed; any residual open question? | **SOUND** — the closure is precise: the caveat ("cc-woven-answer soul not automatable") no longer holds because codex-orchestrator's headless mode IS automatable. The §9 header note + the in-list closure note + §7.4.0 all agree. No new open question introduced; the open list is now 1-10. | none. |
+
+**Codex fixes folded (2):** §7.4 anti-stub rule stub-vs-hand-stub clarity
+(R2Q-1); §10.3 closing-line staleness (note that item 11 was still open at
+that pass, now closed by REVISE-2). No new open questions; OQ §9 item 11
+closed.
 
 ---
 
@@ -1258,6 +1424,35 @@ dispatch-path correction + an anti-stub rule).
   `external_feed_controller.ex:131`, `workspace_plugin_data.ex:189,211`.
 - Orchestrator tool catalog: `orchestrator/tools.ex:135,376,555,661,707,756,760`.
 - Live contract: `adapter.ex:167-377`.
+- **codex-orchestrator verification (REVISE-2, 2026-06-28):**
+  - `codex_orchestrator` / `CodexOrchestrator` grep over `apps/**` on
+    `origin/main` = **EMPTY** (does not exist today).
+  - cc pattern to mirror: `apps/ezagent_plugin_cc/lib/ezagent/orchestrator/
+    orchestrator_role.ex` (flavor-agnostic `OrchestratorRole` recipe,
+    `@skill_ref "ezagent-session-orchestrator"`, registered via `roles/0` in
+    `RoleRegistry` by name `"orchestrator"`; moduledoc: "would compose
+    identically against a future `codex`/`curl` flavor");
+    `cc_orchestrator_seed.ex` (seeds the `cc-orchestrator` AgentTemplate
+    `:template` slice: `flavor`/`config_dir`/`settings_path`/`mcp_config_path`/
+    system prompt); `template/orchestrator_bootstrap.ex`; the cc MCP bridge
+    (`orchestrator/mcp_server.ex` + `mcp_channel.ex` + `mcp_socket.ex` +
+    `priv/orchestrator_bridge.py` + `mcp_server/tool_catalog.ex`); cc test
+    stub `apps/ezagent_plugin_cc/test/fixtures/fake_orchestrator_claude.py`.
+  - codex bridge infra (exists): `apps/ezagent_plugin_codex/lib/ezagent/
+    plugin_codex/bridge_adapter.ex` (`@behaviour Ezagent.AgentBridge.Adapter`,
+    `flavor "codex"`, `transport_class :subprocess_ws`);
+    `bridge_sidecar.ex`; `app_server.ex`; `codex_remote_bridge_adapter.ex`
+    (`flavor "codex-remote"`); `apps/ezagent_plugin_codex/lib/ezagent/template/
+    codex_agent.ex` (`@behaviour Ezagent.Agent.CredentialAdapter`,
+    `credential_env_var "CODEX_HOME"`, `credential_relpaths ["auth.json",
+    "config.toml"]` — per-agent auth, `[[reference_codex_codex_home_per_agent_auth]]`);
+    `codex_remote_agent.ex`.
+  - shared/flavor-blind substrate (autoservice reframe Layer A): executor
+    `Ezagent.Session.SessionManager.run_tool_op(:kb_query, …)`
+    (`session_manager.ex:474-479`, structurally identical to every other
+    `run_tool_op`); bridge-token `Ezagent.AgentBridge.TokenStore.verify_token/2`
+    (`session_manager.ex` step 0); only Layer C (the tool-loop runtime) is
+    per-flavor, and codex has its own.
 - Synthesized from: `docs/socialware-operator-analysis`,
   `docs/socialware-template-model`, `docs/comms-pr34-spec`,
   `docs/domain-role-research`, `docs/together/2026-06-26/notes/autoservice-flavor-agnostic-reframe.md`.
