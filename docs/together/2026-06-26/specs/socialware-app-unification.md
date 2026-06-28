@@ -349,22 +349,25 @@ stop at B1 (C3); a multi-operator autosvc desk needs B2.
 This is the autosvc human-takeover loop the interface inventory (operator analysis
 §5) flagged has **NO product surface** today — the `:claim`/`:settle`/`:approve`
 verbs are reachable only via raw `mix ezagent` dispatch. The loop **reuses the
-existing generic verbs** (operator analysis §1e — already generic; "the human" is a
-param, not a baked role) and expresses escalation as routing-by-responsibility:
+existing generic verbs for the takeover steps** (operator analysis §1e — already
+generic; "the human" is a param, not a baked role) and **adds the B2 machinery for
+the pool/quorum/arbiter steps** (codex Q2: the fan-out, verdict-collection, and
+arbiter are NOT existing verbs — they are the §2.7.4 new machinery). Marked
+[REUSE]/[B2-NEW] per step:
 
 1. **bot escalates** → a routing rule `{from: bot, on: <signal>} -> {:role,
-   "supervisor"}` delivers to the **B2 pool** (fan-out across all current
-   supervisors).
+   "supervisor"}` delivers to the **B2 pool**. **[B2-NEW]** — the multi-holder
+   fan-out + assignment gate (§2.7.4); B1's `{:role,name}` resolves to one URI only.
 2. **a human supervisor claims** → dispatches `:claim` on the `Turn`
    (`turn.ex:49`, `handle_claim(%{by: by})` records the claimer as `owner` —
    `:320`); the turn → `mode: :copilot, status: :awaiting_human` and its output is
-   **held `:internal`** (C1) until released.
+   **held `:internal`** (C1) until released. **[REUSE]** — existing generic verb.
 3. **release** → `:settle` (flip the held messages to `:external_visible`) or
-   `:approve` (advance the surface page pointer).
+   `:approve` (advance the surface page pointer). **[REUSE]** — existing generic verbs.
 4. **conflicting verdicts** → the **B2 approval/quorum Behavior** (§2.7.4) collects
    verdicts from pool holders under `quorum_policy`; on conflict it **escalates to
    `{:role, "arbiter"}`** — recursion over the *same* fan-out + collect machinery,
-   one level up.
+   one level up. **[B2-NEW]** — the verdict-collection + arbiter Behavior.
 
 So "operator takeover" is fully composed from: per-message visibility (the hold/
 release lever, kept), the generic `:claim`/`:settle`/`:approve` verbs (kept), and
@@ -385,23 +388,35 @@ session**. That forces a **split** (workspace-hosting the workflow would cycle):
   with message replies + membership + routing; it already deps workspace, so it
   *reads* the assignment over the existing session→workspace edge). **No new
   edge, no cycle.**
-- **Assignment-gated fan-out receiver boundary → `core/routing`** (`{:role,name}`
-  → `[uri]`). **This is NOT a one-line `expand_receiver` change** — a naïve
-  workspace-wide fan-out would hand out-of-scope/stale principals to delivery,
-  which mints a narrow `:receive` cap per recipient → a tenant-isolation hole
-  (research §3.2, codex HIGH). B2 routing must add a **same-workspace +
-  current-assignment validation** before delivery, with a test proving delivery
-  cannot mint `:receive` caps for unassigned/out-of-scope principals.
-- **Assignment↔cap lifecycle is NEW state** — identity caps are a flat `MapSet`,
-  not role-bundled; assigning `supervisor` does **not** auto-grant `approve`, and
-  unassigning does **not** auto-revoke it (research §3.3, codex MED). B2 must own
-  an explicit **grant-on-assign / revoke-on-unassign** binding **or** atomically
-  re-check assignment+cap at verdict-acceptance time (so a stale holder's verdict
-  is rejected).
-- **Accountability:** B2 approval caps are accountable **iff minted via
-  `Ezagent.Identity.Grant.prepare/4`** (which enforces `granted_by ==
-  %URI{scheme:"entity"}`) — *not* via the runtime `granted_by_entity?/1` predicate,
-  which only rejects `system://` (research §3.3/Q4, codex MED, `capability.ex:319`).
+- **Assignment-gated fan-out — `{:role,name}` expansion is a `core/routing` SEAM,
+  but the multi-holder resolution + validation is INJECTED from session/workspace
+  (codex Q3 fix).** `ezagent_core` has **no umbrella deps** and `Routing.Resolver`
+  is pure over message/session/members (`resolver.ex` moduledoc) — so core **must
+  not** hard-ref a workspace assignment. Today B1 already injects the resolver:
+  `Session` wires `role_resolver` → `RouteProvisioner`/`Members.role_name_to_uri/2`
+  (`session.ex:514,519`). B2 reuses that exact seam: session injects a
+  **multi-holder resolver** (`{:role,name}` → `[uri]` over the workspace
+  assignment) **plus a validation predicate**, keeping core a pure callback site.
+  **This is NOT a one-line `expand_receiver` change** — a naïve workspace-wide
+  fan-out would hand out-of-scope/stale principals to `Delivery`, which mints a
+  narrow `:receive` cap per recipient (`delivery.ex:169,259`) → a tenant-isolation
+  hole, because role resolution bypasses the `valid_member?` filter that
+  `$mentions`/`$session_users` get (`resolver.ex:373,402`). So the injected
+  resolver must enforce **same-workspace + current-assignment** before delivery,
+  with a test proving delivery cannot mint `:receive` caps for unassigned/
+  out-of-scope principals (research §3.2, codex HIGH).
+- **Assignment↔cap lifecycle is NEW state** — identity caps are a flat `MapSet`
+  keyed by cap identity, not role-bundled (`identity.ex:55,409,421`); assigning
+  `supervisor` does **not** auto-grant `approve`, and unassigning does **not**
+  auto-revoke it (research §3.3, codex MED). B2 must own an explicit
+  **grant-on-assign / revoke-on-unassign** binding **or** atomically re-check
+  assignment+cap at verdict-acceptance time (so a stale holder's verdict is
+  rejected).
+- **Accountability:** B2 approval caps are accountable **iff minted via the
+  `Ezagent.Identity.Grant` grant path** (which overwrites `granted_by` and requires
+  `entity://`, `grant.ex:175,191-198`) — *not* via the runtime `granted_by_entity?/1`
+  predicate, which only rejects `system://` (`capability.ex:319`). (The enforcing
+  `prepare/4` is private — B2 mints through the public grant API, not it directly.)
 - **No new `domain.role` app** (YAGNI; research §4) — the workspace-assignment +
   session-workflow split respects the real edges and buys nothing less than a new
   app would. **socialware needs no new edge:** it only *names* responsibilities as
@@ -655,7 +670,7 @@ forced and legal:
 |---|---|---|---|
 | principal→responsibility **assignment** + `:assign_role` cap | `domain_workspace` | `domain_identity` caps (↓, already dep) | **No** |
 | approval/quorum/arbiter **Behavior** | `domain_session` | workspace assignment (via existing session→workspace edge), session routing/membership | **No** |
-| assignment-gated **fan-out boundary** | `core/routing` | the assignment (validated), `Delivery` | **No** |
+| assignment-gated **fan-out boundary** | `core/routing` **seam** + **session-injected resolver** | core stays pure (`{:role,name}` callback); the multi-holder resolver + validation is injected from session/workspace, mirroring the existing `role_resolver` (`session.ex:514,519`) | **No** (core has no umbrella deps — codex Q3) |
 | takeover **product surface** | the editor (`ezagent_plugin_world`) | workspace assignment (world already deps workspace), session verbs | **No** |
 
 **Why the workflow is in session, not workspace:** the quorum Behavior needs
@@ -711,9 +726,27 @@ folded (the §2.3 parity table), everything else confirmed.
 | 3 — phasing safe (P1 enum rename + dep-DAG)? | **SOUND-WITH-FIXES** — `Message.visibility` is an `Ecto.Enum` with `:operator_only` (`message.ex:73-74,118-120`); writers/readers cited (`turn.ex:463,616`, `message_store.ex:288-291`). Note: the migration defines only a string column + default, **no DB enum constraint** (`…20260618000400…:6-9`, `pg_baseline.exs:54`) — so the rename is even cheaper, but "pre-prod" safety rests on there being no prod data. Dep-DAG **confirmed**: socialware deps identity/session/external_mirror (`socialware/mix.exs:31-39`); identity does NOT dep socialware (`identity/mix.exs:34-38`); external_mirror deps only core/identity (`external_mirror/mix.exs:59-70`) → socialware is the only legal host. | Folded the "pre-prod = no prod data; the column has no enum constraint so it's a data UPDATE not a type change" clarification into §6/§7. |
 | 4 — AnonIngress fold + PR-4 supersede safe? | **SOUND-WITH-FIXES** — anon ingress is already socialware-owned (`anon_user.ex:118-131`) with duplicate web-shim logic in both controllers (`chat_feed_controller.ex:144-154`, `external_feed_controller.ex:162-167`); folds cleanly. Superseding PR-4 is safe **only if C3 is not deferred past any operator unfiltered read** — the spec states exactly this (§5.2, §7.1) and confirmed world reads raw `recent_in_session` (`conversation_data.ex:183-187`) under `RequireEntity` (`router.ex:154-155`), unlike the `:external_visible`-filtered query (`message_store.ex:171-178` vs `:274-278`). | No change — the C3-gates-PR4 condition is already the §5.2 + §7 P6 contract. |
 
-**Net:** the core model survives review. The single substantive correction (Q2,
-parity-table completeness) is folded; Q1/Q3/Q4 are sound with clarifications
-incorporated. No finding was UNSOUND.
+**Net (pass 1 — core model):** the core model survives review. The single
+substantive correction (Q2, parity-table completeness) is folded; Q1/Q3/Q4 are
+sound with clarifications incorporated. No finding was UNSOUND.
+
+### 9.1 Second pass — the responsibility layer (§2.7, B1/B2)
+
+A separate codex pass (gpt-5.5, static) reviewed the newly-added responsibility
+layer + its phasing + the B2 dep-DAG. **Overall: SOUND, three fixes folded.**
+
+| Q | Codex verdict | Disposition |
+|---|---|---|
+| 1 — B1-vs-B2 distinction accurate? | **SOUND** — B1 is single-holder (`role_name_conflict/3`, `members.ex:64,71,82`) + single-resolve (`expand_receiver` → `[uri]`/`[]`, `resolver.ex:435,451`); it genuinely blocks a same-session multi-supervisor pool. | No change. |
+| 2 — takeover loop composed from generic verbs, no operator Kind/role/cap? | **SOUND-WITH-FIXES** — `:claim`/`:settle`/`:approve` are generic, `handle_claim` records `by` as owner (`turn.ex:49,57,315,320`, `surface.ex:20,90`); no operator special needed. **Fix:** the fan-out/quorum/arbiter are NOT existing verbs — they are the admitted B2 new machinery. | **FIXED** — §2.7.3 now marks each step [REUSE] vs [B2-NEW]. |
+| 3 — B2 dep-DAG split correct, cycle-free, zero new edge? | **SOUND-WITH-FIXES** — split confirmed (`session→workspace`, workspace not→session, socialware not→workspace, world has both; `*/mix.exs`). **Fix:** the `core/routing reaches assignment` row was too literal — `ezagent_core` has **no umbrella deps** and `Resolver` is pure; to stay zero-edge the assignment lookup/validation must be **injected** from session/workspace (mirroring B1's `role_resolver`, `session.ex:514,519`), with core only the `{:role,name}` seam. | **FIXED** — §2.7.4 fan-out bullet + §7.2 table row rewritten to the injected-resolver seam. |
+| 4 — B2 new-state items honest? | **SOUND-WITH-FIXES** — Delivery really mints `:receive` per recipient (`delivery.ex:169,259`) and role resolution bypasses the `valid_member?` filter (`resolver.ex:373,402`) → the assignment-gated fan-out is a real trust boundary; caps are flat `MapSet` not role-bundled (`identity.ex:55,409,421`); accountability is in `Identity.Grant` (`grant.ex:175,191-198`) vs the `granted_by_entity?/1` `system://`-only backstop (`capability.ex:319`). **Fix:** `prepare/4` is private — say "via the `Identity.Grant` grant path", not the private fn. | **FIXED** — §2.7.4 accountability bullet reworded. |
+
+No NEW redundant concept was found in §2.7 — it stays on existing primitives
+(membership, routing seam, identity caps, the takeover verbs) plus the admitted B2
+new state; no hidden domain/Kind/registry. **Net:** the responsibility 收口 is
+sound; all three fixes are wording/placement corrections that sharpen the
+zero-new-edge claim, none flips a verdict.
 
 ---
 
