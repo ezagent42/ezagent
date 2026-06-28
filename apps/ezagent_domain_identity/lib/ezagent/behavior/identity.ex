@@ -642,7 +642,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
           #     scoped to THIS target instance (it manages the instance).
           #
           # The manager branch is delegation-bounded (codex P1): `grant_cap`
-          # does NOT inherit `Role.CapMint`'s delegation policy (that policy
+          # does NOT inherit `Recipe.CapMint`'s delegation policy (that policy
           # is not on this runtime path), so a manager added to the authorizer
           # without a held-cap check could grant arbitrary concrete-action
           # caps it does not hold (escalation). For the manager case ONLY we

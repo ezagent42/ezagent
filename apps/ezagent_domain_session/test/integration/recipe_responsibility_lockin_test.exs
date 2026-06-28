@@ -4,7 +4,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   §2.1, tests T1–T3 + the no-default guard).
 
   The SPEC's load-bearing finding: agent **recipe** (axis A — what an agent is
-  built from: `Ezagent.Role` / `Ezagent.AgentRoleAttributes` / the cc-template
+  built from: `Ezagent.Agent.Recipe` / `Ezagent.AgentRoleAttributes` / the cc-template
   `:role` / the `source_template_uri` recipe-origin facet) and session
   **responsibility** (axis B — membership `meta.role_name` + `{:role, name}`
   routing) are ALREADY separate fields with NO structural forcing of
@@ -25,7 +25,8 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
 
   No production change rides this PR except the two no-default doc-comments
   (`membership.ex` do_join + `application.ex` seed). The symbol rename
-  `Ezagent.Role`/`RoleRegistry` → `Recipe*` is a DEFERRED next-phase task.
+  `Ezagent.Role`/`RoleRegistry` → `Ezagent.Agent.Recipe`/`RecipeRegistry` was
+  applied in #127 (this rename lands the A-axis struct/module on `Recipe*`).
   """
 
   use EzagentCore.DataCase, async: false

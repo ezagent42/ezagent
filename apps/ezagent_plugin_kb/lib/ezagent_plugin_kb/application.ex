@@ -56,7 +56,7 @@ defmodule EzagentPluginKb.Application do
     * `behaviors: [Ezagent.Behavior.Kb]` — the sqlite/FTS5 state half
       (actions `:query` + `:ingest`).
     * `requested_caps` = one `%{behavior:, action:}` cap-template per action —
-      NOT a bare atom (`Role.new/1` rejects non-maps), NOT carrying a `kind`
+      NOT a bare atom (`Recipe.new/1` rejects non-maps), NOT carrying a `kind`
       axis (kind is materialization, injected by CapMint per flavor = `:agent`).
       The native CapMint policy grants exactly these (fail-closed, RF-8).
     * `passive: true` — a passive DATA actor (RF-6 three gates): not

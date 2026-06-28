@@ -118,12 +118,12 @@ defmodule EzagentPluginPy.Application do
 
   # py-agent P4 — `np` is a py-ROLE: `py` flavor + the re-homed `np.py` script
   # (numpy/sympy whitelist intact) carried via the role-script channel
-  # (`Role.script` → `Role.Compose.sandbox_content.script` → config_dir
+  # (`Recipe.script` → `Recipe.Compose.sandbox_content.script` → config_dir
   # `agent.py`). The plugin declares NO np Kind/Behavior — np runs the `py`
   # flavor on the UNIFIED `Entity.Agent` Kind + `Behavior.PyAgent`, distinguished
   # ONLY by its script (spec §0.1 "a role's safety travels with its SCRIPT").
   # `Ezagent.Plugin.boot/1`
-  # registers this recipe via `RoleRegistry.register/1` at boot (declare, don't
+  # registers this recipe via `RecipeRegistry.register/1` at boot (declare, don't
   # call). Created via `Workspace.create_agent(flavor: "py", role: "np")`.
   @impl Ezagent.Plugin
   def roles, do: [np_role_recipe()]

@@ -13,7 +13,7 @@ defmodule Ezagent.AgentPassiveAttributes do
   parsing the URI.
 
   RF-5a wires the create step to `put/2` this from the materialized role's
-  `passive` field (`Ezagent.Role.Compose`). Until then, tests `put/2` directly.
+  `passive` field (`Ezagent.Agent.Recipe.Compose`). Until then, tests `put/2` directly.
   The default is `false` (principal actor) — a missing entry is NOT passive, so
   every existing agent keeps its principal semantics by construction.
 

@@ -3,20 +3,20 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   K1 acceptance — the `kanban-manager` role recipe + `roles/0` registration
   (RF-4), the kanban-as-role gate.
 
-  The single combined gate (`Role.new(recipe)` succeeds with the discriminating
+  The single combined gate (`Recipe.new(recipe)` succeeds with the discriminating
   fields) catches the three plan-folded review corrections at once:
 
     * BLOCKER-1 — `behaviors: [Ezagent.Behavior.Kanban]` ONLY (NOT `Connectors`,
       which is not a Behavior); all 24 actions resolve through `Behavior.Kanban`.
     * HIGH-1   — `requested_caps` are cap-template MAPS `%{behavior:, action:}`,
-      not bare atoms (`Role.new/1` `canon_cap` rejects non-maps).
-    * BLOCKER-2 — `passive: true` flows through `Role.new/1` onto `%Role{}`.
+      not bare atoms (`Recipe.new/1` `canon_cap` rejects non-maps).
+    * BLOCKER-2 — `passive: true` flows through `Recipe.new/1` onto `%Recipe{}`.
   """
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Role
-  alias Ezagent.{Agent.RoleRegistry, Behavior.Kanban}
+  alias Ezagent.Agent.Recipe
+  alias Ezagent.{Agent.RecipeRegistry, Behavior.Kanban}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @recipe_name "kanban-manager"
@@ -42,19 +42,19 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     # seed_role_if_absent is idempotent for an identical recipe ({:ok, :seeded |
     # :exists}), so this is safe whether or not boot already seeded it.
     Enum.each(KanbanApp.roles(), fn recipe ->
-      assert {:ok, _} = RoleRegistry.seed_role_if_absent(recipe)
+      assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
     end)
 
-    :ok = RoleRegistry.flush_cache()
+    :ok = RecipeRegistry.flush_cache()
 
-    assert {:ok, %Role{name: @recipe_name, behaviors: [Kanban], passive: true}} =
-             RoleRegistry.lookup(@recipe_name)
+    assert {:ok, %Recipe{name: @recipe_name, behaviors: [Kanban], passive: true}} =
+             RecipeRegistry.lookup(@recipe_name)
   end
 
-  test "Role.new/1 accepts the recipe with the discriminating fields (K1 combined gate)" do
+  test "Recipe.new/1 accepts the recipe with the discriminating fields (K1 combined gate)" do
     recipe = KanbanApp.kanban_manager_recipe()
 
-    assert {:ok, %Role{} = role} = Role.new(recipe)
+    assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
 
     # BLOCKER-1: behaviors is EXACTLY [Behavior.Kanban] — Connectors is not a
     # Behavior and must NOT appear; the 24 actions all resolve through Kanban.
@@ -90,6 +90,6 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
       requested_caps: [:add_node]
     }
 
-    assert {:error, {:invalid_role_field, :requested_caps, :add_node}} = Role.new(bad)
+    assert {:error, {:invalid_role_field, :requested_caps, :add_node}} = Recipe.new(bad)
   end
 end

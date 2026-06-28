@@ -26,7 +26,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.{AgentFlavorRegistry, AgentPassiveAttributes, Agent.RoleRegistry, UriQuery}
+  alias Ezagent.{AgentFlavorRegistry, AgentPassiveAttributes, Agent.RecipeRegistry, UriQuery}
   alias Ezagent.{Message, RoutingRegistry}
   alias Ezagent.Routing.{Matcher, Resolver}
   alias EzagentPluginKanban.Application, as: KanbanApp
@@ -58,7 +58,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
         cap_policy: &cap_policy/1
       })
 
-    {:ok, _} = RoleRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
+    {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

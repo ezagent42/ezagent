@@ -6,9 +6,9 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   > FLAVOR.** (Allen 2026-06-14)
 
   When a create requests a `role` (name) on a DIRECT-SPAWN flavor (native / curl
-  / np), this module resolves the role recipe (`Ezagent.Agent.RoleRegistry`), composes
-  it with the flavor's per-instance behavior set (`Ezagent.Role.Compose`), mints
-  the recipe's authorized caps fail-closed (`Ezagent.Role.CapMint` × the flavor's
+  / np), this module resolves the role recipe (`Ezagent.Agent.RecipeRegistry`), composes
+  it with the flavor's per-instance behavior set (`Ezagent.Agent.Recipe.Compose`), mints
+  the recipe's authorized caps fail-closed (`Ezagent.Agent.Recipe.CapMint` × the flavor's
   CapMint policy from `Ezagent.AgentFlavorRegistry` — the RF-8 seam) and grants
   them at the workspace granter ctx (`Ezagent.Workspace.grant_initial_caps`, NOT
   the agent's own lifecycle), and records the durable `passive` (non-principal)
@@ -29,7 +29,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   admin/genesis creator holds everything and always succeeds.
   """
 
-  alias Ezagent.Role
+  alias Ezagent.Agent.Recipe
 
   # File-flavors whose create route is the template/cascade path (NOT
   # direct-spawn); a role on these is RF-5b (deferred) → rejected fail-loud.
@@ -85,7 +85,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   cc/codex) is deferred — those flavors never reach this direct-spawn route.
   """
   @spec resolve(String.t() | nil, String.t()) ::
-          {:ok, Role.Compose.materialized() | nil}
+          {:ok, Recipe.Compose.materialized() | nil}
           | {:error, {:unknown_role, String.t()} | {:unknown_flavor_for_role, String.t()}}
   def resolve(nil, _flavor), do: {:ok, nil}
 
@@ -93,7 +93,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
     with {:ok, recipe} <- lookup_role_recipe(role_name),
          {:ok, decl} <- lookup_flavor_decl(flavor) do
       flavor_behaviors = flavor_behavior_set(decl)
-      {:ok, Role.Compose.materialize(recipe, %{flavor_behaviors: flavor_behaviors})}
+      {:ok, Recipe.Compose.materialize(recipe, %{flavor_behaviors: flavor_behaviors})}
     end
   end
 
@@ -160,7 +160,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   Mint the role recipe's authorized caps fail-closed and grant them at the
   workspace granter ctx.
 
-  CapMint (`Ezagent.Role.CapMint.mint/3`) runs the recipe's `requested_caps`
+  CapMint (`Ezagent.Agent.Recipe.CapMint.mint/3`) runs the recipe's `requested_caps`
   through the FLAVOR's cap-policy from the registry (the RF-8 seam) — a flavor
   with no `:cap_policy` mints NOTHING (fail-closed, never a default grant). The
   minted caps are granted into the agent via
@@ -181,7 +181,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
       case Map.get(decl, :cap_policy) do
         policy when is_function(policy, 1) ->
           minted =
-            Ezagent.Role.CapMint.mint(
+            Ezagent.Agent.Recipe.CapMint.mint(
               recipe.requested_caps,
               %{
                 # The cap `kind` axis is the ATOM `:agent` — it must match how the
@@ -207,7 +207,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   end
 
   defp lookup_role_recipe(role_name) do
-    case Ezagent.Agent.RoleRegistry.lookup(role_name) do
+    case Ezagent.Agent.RecipeRegistry.lookup(role_name) do
       {:ok, recipe} -> {:ok, recipe}
       :error -> {:error, {:unknown_role, role_name}}
     end
@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   # The flavor's COMPLETE per-instance behavior set (rev2-review HIGH-1): the
   # flavor's `:instance_behaviors` thunk when present (curl), else the Kind's
   # nil-capture default (native → the base Agent set: Identity/Sandbox/ApiKeys/
-  # …). Role.Compose UNIONs role ++ this, and that union OVERRIDES the host's
+  # …). Recipe.Compose UNIONs role ++ this, and that union OVERRIDES the host's
   # thunk-sourced `:behaviors` — so the role's behaviors AND the flavor base both
   # reach `:kind_base` (without the base, no `:sandbox` slice to store
   # `passive`/config_dir, no `:identity` slice to grant caps into — the agent

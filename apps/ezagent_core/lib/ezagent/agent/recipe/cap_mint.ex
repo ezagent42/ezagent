@@ -1,9 +1,9 @@
-defmodule Ezagent.Role.CapMint do
+defmodule Ezagent.Agent.Recipe.CapMint do
   @moduledoc """
   Fail-closed cap authorization + minting for role materialization (task #54
   §2.3.1).
 
-  This is the cap half of materialization that `Ezagent.Role.Compose`
+  This is the cap half of materialization that `Ezagent.Agent.Recipe.Compose`
   deliberately does NOT do, because it needs the full agent context a
   context-free composer lacks. Given a role's `requested_caps` (the authorized
   REQUEST templates carrying `behavior`/`action`) and the agent's

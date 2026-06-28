@@ -1,24 +1,25 @@
-defmodule Ezagent.Role do
+defmodule Ezagent.Agent.Recipe do
   @moduledoc """
-  Role — the **flavor-agnostic sandbox-content recipe** (task #54).
+  Recipe — the **flavor-agnostic sandbox-content recipe** (task #54; symbol
+  rename #127: `Ezagent.Role` → `Ezagent.Agent.Recipe`).
 
-  > **The CONTENTS of the sandbox are the ROLE; HOW the sandbox is loaded is
+  > **The CONTENTS of the sandbox are the RECIPE; HOW the sandbox is loaded is
   > the FLAVOR.** (Allen 2026-06-14)
 
-  A Role is the content of a forkable `template://<ws>/role/<name>` Template
+  A Recipe is the content of a forkable `template://<ws>/role/<name>` Template
   subtype: what fills an agent's `config_dir` sandbox — skills, plugins, a
   system-prompt persona, an optional operator-authored `script` (the RF-5b
   content→config_dir channel — py-agent P4: a py-role carries its python script
   here), the behavior subset it runs, the caps it **requests**, and a
   **reference** to a session-template. It is composed with a *flavor*
   (the domain-agent flavor loader — `config_dir` env + kind + bridge)
-  at materialization (`Ezagent.Role.Compose`).
+  at materialization (`Ezagent.Agent.Recipe.Compose`).
 
   ## Flavor-agnostic by construction
 
-  None of a Role's fields may name a flavor (`:flavor`, `:kind`,
+  None of a Recipe's fields may name a flavor (`:flavor`, `:kind`,
   `:bridge_adapter`, `:template_class`). Encoding a flavor here re-entangles
-  role with flavor — the whole point of #54 is that the SAME role composes
+  recipe with flavor — the whole point of #54 is that the SAME recipe composes
   across cc/codex/curl with identical contents. `new/1` rejects such a recipe.
 
   ## Caps are REQUESTED, not granted (§2.3.1)
@@ -27,15 +28,15 @@ defmodule Ezagent.Role do
   fail-closed authorization (`requested ∩ flavor/tenant policy`) — a requested
   cap the flavor/runtime/tenant does not permit is REJECTED, never copied. The
   field name encodes that semantics; the grant is the authorization step, not a
-  copy. See `Ezagent.Role.Compose`.
+  copy. See `Ezagent.Agent.Recipe.Compose`.
   """
 
   @flavor_fields [:flavor, :kind, :bridge_adapter, :template_class]
 
-  # Materialization/provenance axes a role recipe cap MUST NOT carry — a Role is
+  # Materialization/provenance axes a recipe cap MUST NOT carry — a Recipe is
   # workspace-agnostic, so these are injected at materialization (kind/instance/
   # workspace) or stamped at grant (granted_by/_at). Rejecting them stops an
-  # operator-authored role from SMUGGLING a concrete/foreign workspace/instance
+  # operator-authored recipe from SMUGGLING a concrete/foreign workspace/instance
   # into a cap (a CapBAC hole). Fail LOUD, not silent-strip.
   @cap_materialization_axes [:kind, :instance, :workspace_uri, :granted_by, :granted_at]
 
@@ -70,12 +71,12 @@ defmodule Ezagent.Role do
         }
 
   @doc """
-  Build a `%Role{}` from a recipe map (the `template://…/role/…` content).
+  Build a `%Recipe{}` from a recipe map (the `template://…/role/…` content).
 
   Absent fields default empty/`nil` (`skills`/`plugins`/`behaviors`/
   `requested_caps` → `[]`; `prompt`/`session_template` → `nil`). Returns
   `{:error, {:flavor_field_in_role, key}}` if the recipe names a flavor field
-  (`#{inspect(@flavor_fields)}`) — a Role MUST be flavor-agnostic so the same
+  (`#{inspect(@flavor_fields)}`) — a Recipe MUST be flavor-agnostic so the same
   recipe composes identically across flavors.
   """
   @spec new(map()) ::
@@ -110,7 +111,7 @@ defmodule Ezagent.Role do
   end
 
   # Shape-validate the recipe at the boundary so `Compose` can assume a
-  # well-formed `%Role{}`: the four collection fields are lists,
+  # well-formed `%Recipe{}`: the four collection fields are lists,
   # `requested_caps` entries are cap-template MAPS (so the fail-closed policy
   # predicate never receives a non-cap term), and `prompt`/`session_template`
   # are `nil` or a string/URI ref.

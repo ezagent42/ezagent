@@ -23,7 +23,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Workspace.RoleTestBehavior
-  alias Ezagent.{AgentFlavorRegistry, AgentRoleAttributes, AgentRoleResolver, Agent.RoleRegistry, UriQuery}
+  alias Ezagent.{AgentFlavorRegistry, AgentRoleAttributes, AgentRoleResolver, Agent.RecipeRegistry, UriQuery}
 
   @flavor "rf7-native"
   @role_a "rf7-role-a"
@@ -57,7 +57,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
     # role A is passive (kanban-manager class — proves a DORMANT passive role
     # still enumerates); role B is a plain principal role.
     {:ok, _} =
-      RoleRegistry.seed_role_if_absent(%{
+      RecipeRegistry.seed_role_if_absent(%{
         name: @role_a,
         passive: true,
         behaviors: [RoleTestBehavior],
@@ -65,14 +65,14 @@ defmodule Ezagent.Integration.ListByRoleTest do
       })
 
     {:ok, _} =
-      RoleRegistry.seed_role_if_absent(%{
+      RecipeRegistry.seed_role_if_absent(%{
         name: @role_b,
         passive: false,
         behaviors: [RoleTestBehavior],
         requested_caps: [%{behavior: RoleTestBehavior, action: :ping}]
       })
 
-    RoleRegistry.flush_cache()
+    RecipeRegistry.flush_cache()
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

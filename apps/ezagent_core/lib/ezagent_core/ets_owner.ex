@@ -37,7 +37,7 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.RoutingRegistry, :set},
     {Ezagent.SpawnRegistry, :set},
     {Ezagent.TemplateRegistry, :set},
-    # role-as-data (SPEC §3): `Ezagent.Agent.RoleRegistry`'s ETS cache moved to
+    # role-as-data (SPEC §3): `Ezagent.Agent.RecipeRegistry`'s ETS cache moved to
     # `EzagentDomainAgent.EtsOwner`. The registry now resolves read-through over
     # `Ezagent.Socialware.ConfigStore` (an `ezagent_domain_identity` concern), so
     # it relocated from `ezagent_core` to `ezagent_domain_agent` (which deps
