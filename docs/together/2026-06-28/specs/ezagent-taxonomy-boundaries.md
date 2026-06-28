@@ -67,11 +67,19 @@ the conversation *mechanism*), tool catalogs (`Orchestrator.Tools`), adapter
 plumbing, Template Classes. Each plugin is a separate OTP app compiled into the
 release.
 
-**Cannot hold:** business semantics. `Behavior.Kanban` is the generic
-board/task *mechanism* (nodes/stages/claims/status) — the *specific* board
-definition (which columns a "sales pipeline" has) is layer-2 data, not layer-1
-code. A plugin may ship **seed definitions** (layer-2 data) alongside its code,
-but the code itself stays generic.
+**Cannot hold:** business semantics. `Behavior.Kanban` is *intended* as the
+generic board/task *mechanism* (nodes/stages/claims/status) — the *specific*
+board definition (which columns a "sales pipeline" has) is layer-2 data, not
+layer-1 code. A plugin may ship **seed definitions** (layer-2 data) alongside
+its code, but the code itself stays generic. **Known current violation (flagged
+by codex):** the landed `Behavior.Kanban` is NOT yet purely generic — it
+hardcodes a 9-stage product chain at `apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex:37-38`
+(`@stages [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr]`)
++ validates that chain at `:415-443`, and the world UI duplicates `@stages` at
+`apps/ezagent_plugin_world/lib/ezagent/world/kanban_data.ex:33`. The target is
+to move stage/CI labels to layer-2 definition data; today they are layer-1
+code, so kanban is a **partial leak** (anti-pattern 4.1 is "Kind-fixed" but the
+plugin still carries business semantics in code).
 
 **Current state:** plugins are compile-time umbrella apps (`apps/ezagent_plugin_*`
 in `mix.exs`). There is no upload-and-install concept yet — see §2 (Q1).
@@ -131,7 +139,7 @@ stores ONLY a `resource://<ws>/uploads/<name>` URI ref + a MAC-signed
 resource://<ws>/uploads/<name> ... their bytes live at Home.path(\"uploads\")/
 <ws>/<name>"`) + `apps/ezagent_core/lib/ezagent/uploads/download_token.ex:3-7`
 (`"S3-presigned-URL style: a MAC-signed bearer token"`). Consumers mint a token
-for the stored URI, never for bytes (`conversation_data.ex:259`).
+for the stored URI, never for bytes (`conversation_data.ex:341`).
 
 ### 0.4 Layer 4 — EZAGENT_HOME files (host-side runtime files)
 
@@ -295,17 +303,24 @@ A decision flowchart. Walk it top-down; the first match wins.
      It is NOT a new concept and must NOT enter layer 1 or the schema.
 ```
 
-**Ambiguity guard.** If a thing could land in two layers, the higher-numbered
-layer loses to the lower — prefer data (layer 2) over code (layer 1), and
-prefer a URI ref (layer 3) over inline bytes. The one exception is the blob
-sub-rule (rule 1), which always beats rule 2: a blob is never "runtime state
-inline in Postgres," it is "bytes in layer 4 + URI ref in layer 3."
+**Ambiguity guard.** A compound deliverable decomposes first: code, seed
+definition, running instance, and bytes are **separate artifacts** each with
+their own layer home. A plugin package is layer-1 code + layer-2 seed
+definitions; a fixture is a layer-2 seed + a layer-3 running instance; a blob
+is layer-4 bytes + a layer-3 URI ref. "Every artifact has exactly one home"
+applies to each **atomic** artifact after decomposition — not to the compound
+deliverable as a whole. Within an atomic artifact: for reusable/business
+semantics, choose layer 2 (data) over layer 1 (code); for mutable per-instance
+values, choose layer 3 (slice) over layer 2 (definition); for blob bytes, rule
+1 always splits bytes to layer 4 and the URI/token to layer 3 (never inline in
+Postgres).
 
-**Unambiguous landing.** Every artifact has exactly one home. The two
-historically-ambiguous cases are settled: (a) a kanban board definition (which
-columns) is layer-2 data, not layer-1 code — the mechanism (`Behavior.Kanban`)
-is layer-1, the instance task list is layer-3; (b) a persona/prompt is layer-2
-recipe data, not layer-1 code.
+**Unambiguous landing.** The two historically-ambiguous cases are settled:
+(a) a kanban board definition (which stages/columns) is layer-2 data, not
+layer-1 code — the mechanism (`Behavior.Kanban`) is layer-1, the instance task
+list is layer-3; (b) a persona/prompt is layer-2 recipe data, not layer-1
+code. (Note: the *landed* `Behavior.Kanban` currently hardcodes stages in
+layer-1 code — §4.1 partial leak — but the target model is layer-2 data.)
 
 ---
 
@@ -314,18 +329,27 @@ recipe data, not layer-1 code.
 Each anti-pattern is verified against current code with a verdict:
 **FIXED** / **VIOLATED** / **RISK** / **NOT-PRESENT**.
 
-### 4.1 Kanban-as-new-Kind — **FIXED**
+### 4.1 Kanban-as-new-Kind — **FIXED (Kind); PARTIAL LEAK (business semantics in code)**
 
 **Claim:** kanban is NOT a standalone Kind; it is a `Behavior` mounted on a
 generic `Entity.Agent` via a role recipe.
 
-**Verified:** `Ezagent.Behavior.Kanban` is a Behavior at
+**Verified (Kind-fixed):** `Ezagent.Behavior.Kanban` is a Behavior at
 `apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex`. It is mounted via
 a role recipe: `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/application.ex:78`
 — `behaviors: [Ezagent.Behavior.Kanban]`, `:77` `passive: true`, `:64`
 `def roles, do: [kanban_manager_recipe()]`. There is **no**
 `defmodule Ezagent.Entity.Kanban` (grep empty). The standalone Kanban Kind
-(K5) was deleted; kanban rides the generic Agent host. **FIXED.**
+(K5) was deleted; kanban rides the generic Agent host. **FIXED (Kind axis).**
+
+**Partial leak (codex finding):** the landed `Behavior.Kanban` is NOT purely
+generic mechanism — it hardcodes a 9-stage product-development chain
+(`@stages [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr]`,
+`kanban.ex:37-38`) + a `stage_fits?` ordering validator (`:415-443`), and the
+world UI duplicates `@stages` (`kanban_data.ex:33`). These stage names are
+business semantics that belong in layer-2 definition data, not layer-1 code.
+**Verdict: FIXED for the Kind axis; PARTIAL LEAK for the business-semantics-in-
+code axis.** The target (move stages to layer-2 data) is open; see §5 red line 2.
 
 ### 4.2 hello → salesperson (business role in the Surface base) — **NOT-PRESENT**
 
@@ -343,12 +367,13 @@ base; it carries no salesperson/customer-service business role. **NOT-PRESENT
 **Claim:** autoservice is a fixture/seed, not business-logic code.
 
 **Verified:** there is **no** `defmodule.*Autoservice` in `apps/` (grep empty).
-`autoservice_tier1_seed.exs` is a pure-module seed script (self-described:
-"a PURE MODULE (no top-level side effects) so it can be loaded by BOTH the
-live in-node serve-seed AND the deterministic regression test"). On `main`,
+`autoservice_tier1_seed.exs` is a pure-module seed script at
+`scripts/autoservice_tier1_seed.exs:36` (self-described at `:8-15`: "a PURE
+MODULE (no top-level side effects) so it can be loaded by BOTH the live
+in-node serve-seed AND the deterministic regression test"). On `main`,
 autoservice is **data** — a `soul_md` markdown body projected verbatim by the
 generic `Ezagent.Socialware.ConfigProjection.render_soul/1`
-(`apps/ezagent_domain_identity/lib/ezagent/socialware/config_projection.ex:218-219`:
+(`apps/ezagent_domain_identity/lib/ezagent/socialware/config_projection.ex:217-221`:
 "An autoservice cinnox soul is one authored markdown document; emit it verbatim
 as CLAUDE.md"). autoservice adds no new concept and no business-logic module.
 **FIXED.**
@@ -357,8 +382,19 @@ as CLAUDE.md"). autoservice adds no new concept and no business-logic module.
 
 **Claim:** core has NO business words.
 
-**Verified:** `grep` over `apps/ezagent_core/lib/` for `kanban`, `board`,
-`sales`, `autoservice` → **zero hits** (clean). But:
+**Verified:** `grep` over `apps/ezagent_core/lib/` **production modules** for
+`kanban`, `board`, `sales`, `autoservice` → the words DO appear in
+**comment-level references** (not business-logic code): e.g.
+`apps/ezagent_core/lib/ezagent/plugin/role_seed_hook.ex:16` ("Every plugin that
+declares `roles/0` (cc, py, kanban, kb)…"), `apps/ezagent_core/lib/ezagent/agent/recipe.ex:137`,
+`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:57-58` (kanban-manager class
+mention), `apps/ezagent_core/lib/mix/tasks/ezagent.arch.scan.ex:335-340`. There
+are **no** `defmodule`-level business concepts in core (no `Ezagent.Kanban`,
+no `Ezagent.Sales`), but the comment-level mentions are real and need either an
+allowlist or a cleanup. The visibility type itself was renamed:
+`:external_visible | :internal` (`message.ex:20,39,73,118-120`), so
+`:customer_visible`/`:operator_only` are gone from code (migration
+`20260628001000_rename_operator_only_visibility_to_internal.exs`).
 
 - `socialware` appears in core — as the **substrate name** (table names like
   `socialware_settlement_messages`, `message_store.ex:195`; comments in
@@ -367,19 +403,20 @@ as CLAUDE.md"). autoservice adds no new concept and no business-logic module.
   `Ezagent.Socialware.*` modules live in `domain_socialware`/`domain_identity`,
   not core (no `defmodule Ezagent.Socialware` in core — grep empty).
 - `customer` appears in core **only in comments now** (`customer feed`,
-  `customer-delivery`) — the visibility type was renamed to
-  `:external_visible | :internal` (`message.ex:20,39,73,119`), so
-  `:customer_visible` is gone from code. The remaining comment-level mentions
-  are descriptive, not a business concept.
+  `customer-delivery`).
 
 **Verdict: RISK.** The SPEC's literal claim ("no business words in core") is
-too strong. The **refined red line** (§5): core may name the **substrate**
-(`socialware` as the architectural primitive whose tables/registry it hosts)
-but may NOT name **business-app concepts** (salesperson, customer-service-flow,
-specific board configs, autoservice). The NP-2 layer-vocabulary lint (§6)
-already enforces module-NAME hygiene; the residual risk is comment/table-name
-level, not code-level. Recommend scrubbing the lingering `customer` comments in
-core to `external`/`audience` for consistency with the visibility rename.
+too strong — comment-level `kanban` mentions exist. The **refined red line**
+(§5): core production modules may not OWN business-app concepts (no
+`defmodule Ezagent.Kanban`, no sales/customer-service logic), but
+comment-level references naming downstream plugins (e.g. "kanban plugin
+declares roles/0") are legitimate cross-layer documentation and need an
+allowlist, not a ban. The NP-2 layer-vocabulary lint (§6) already enforces
+module-NAME hygiene; the residual risk is comment/table-name level, not
+code-level. Recommend scrubbing the lingering `customer` comments in core to
+`external`/`audience` for consistency with the visibility rename, and adding
+the comment-level `kanban` mentions to the NP-2 allowlist (or a separate
+content-grep allowlist per §6.1).
 
 ### 4.5 Blob inline in Postgres — **FIXED (code); STALE-DOC (ARCHITECTURE §10.5)**
 
@@ -482,31 +519,45 @@ fail NP-2.
 - Add business-app words to `@layer_vocab_words`: `Kanban`, `Board`, `Task`
   (kanban-task sense), `Sales`, `Customer`, `Autoservice`. (Currently absent —
   the lint would not flag a hypothetical `Ezagent.SalesPipeline` module in
-  core.)
-- Add a **content-level** grep gate (NP-2 is name-level only) that fails if
+  core.) This extends the **module-name** lint only.
+- Add a **content-level** grep gate (NP-2 is name-level only — verified:
+`@layer_vocab_words` scans `defmodule` names, not source lines) that fails if
   `apps/ezagent_core/lib/**/*.ex` source contains business-app words
-  (`salesperson`, `customer_service`, `autoservice`, `kanban`, `board_config`)
-  outside an allowlist of substrate-naming comments. This catches the lingering
-  `customer` comments (§4.4) the name-level lint misses.
+  (`salesperson`, `customer_service`, `autoservice`, `board_config`) outside a
+  **comment allowlist**. The allowlist is required because current core has
+  legitimate comment-level references to downstream plugins (e.g. "kanban
+  plugin declares roles/0" in `role_seed_hook.ex:16`, the `kanban-manager`
+  class in `sandbox.ex:57-58` — see §4.4). This catches the lingering `customer`
+  comments (§4.4) the name-level lint misses.
 
 ### 6.2 New-Kind gate (catch anti-pattern 4.1 regression)
 
-A gate that fails if a new `defmodule Ezagent.Entity.<X>` Kind is added outside
-the sanctioned domain apps (`domain_session`, `domain_agent`, `domain_identity`,
-`domain_workspace`, `domain_socialware`, `domain_external_mirror`) without an
-accompanying invariant test justifying why the concept cannot ride a generic
-host. Kanban riding `Entity.Agent` is the precedent; a new `Entity.Kanban`
-would fail this gate.
+A gate that fails if a new `defmodule Ezagent.Entity.<X>` (or
+`Ezagent.Resource.<X>`) Kind is added outside the sanctioned domain apps
+(`domain_session`, `domain_agent`, `domain_identity`, `domain_workspace`,
+`domain_socialware`, `domain_external_mirror`) without an accompanying
+invariant test justifying why the concept cannot ride a generic host. Kanban
+riding `Entity.Agent` is the precedent; a new `Entity.Kanban` would fail this
+gate. **Note (codex):** the existing resource-kind gate in
+`ezagent.arch.scan.ex:335-352` catches `resource_kinds/0` +
+`ResourceKindRegistry.register`, NOT a plain `defmodule Ezagent.Entity.Kanban`
+— so the new gate needs an explicit `defmodule Ezagent.Entity.<X>` predicate;
+the existing resource-kind gate alone is insufficient.
 
 ### 6.3 Blob-inline gate (catch anti-pattern 4.5 regression)
 
 A gate that fails if any Ecto migration in `apps/**/priv/repo/migrations/`
-introduces a `:binary`/`BLOB` column intended to hold attachment bytes, or if
-an `attachments`/`uploads` table has a `data`/`bytes` column. The landed
-`uploads` store has no such column (bytes are on disk); this gate makes the
-red line structural. Also: assert `Ezagent.Uploads` is the sole upload chokepoint
-(grep for `File.read!`/`File.write!` of attachment bytes outside `uploads.ex`
-+ `fs_resolver.ex`).
+introduces a `:binary`/`BLOB` column on an `attachments`/`uploads` table
+intended to hold attachment bytes (column named `data`/`bytes`/`blob`/`content`).
+**Scope note (codex):** the gate must NOT ban all `:binary` columns — legitimate
+binary columns exist (`state_binary` in
+`20260519000000_phase4_kind_snapshot_binary.exs:7-11`, token hashes in
+`20260531000000_magic_link_tokens.exs:7-16`). Scope to attachment/upload tables
++ content-bearing column names only. The landed `uploads` store has no such
+column (bytes are on disk); this gate makes the red line structural. Also:
+assert `Ezagent.Uploads` is the sole upload chokepoint (grep for
+`File.read!`/`File.write!` of attachment bytes outside `uploads.ex` +
+`fs_resolver.ex`).
 
 ### 6.4 Plugin-package manifest gate (future, contingent on §2)
 
@@ -537,11 +588,18 @@ Decision Log ends at #154 with no entry for the carrier-layer model.
 `Shape`, `Install`.
 
 **Terms (§2) STALE:**
-- The `Behavior` entry references the old `Ezagent.Role` vocabulary in
-  Decision #153 prose; the rename to `Ezagent.Agent.Recipe` (#1071) is not
-  reflected. Add a `Recipe` entry and cross-reference.
 - No entry mentions that `:customer_visible`/`:operator_only` was renamed to
-  `:external_visible | :internal` (the `Message` entry should note this).
+  `:external_visible | :internal` (the `Message` entry should note this;
+  verified: `apps/ezagent_core/lib/ezagent/message.ex:20,118-120`).
+- No `Recipe` entry — the rename `Ezagent.Role → Ezagent.Agent.Recipe` (#1071)
+  is not reflected. (Note: codex grep found no `Ezagent.Role` reference inside
+  the GLOSSARY `Behavior` entry itself — the prior draft's "references old
+  `Ezagent.Role` vocabulary" claim was inaccurate and is removed.)
+
+**Decision Log (§1) STALE:**
+- The Decision table reaches #154 (`GLOSSARY.md:165`) but the footer/status
+  metadata still says `#87` (`GLOSSARY.md:1151-1152`) — the footer is stale and
+  must be updated when new decisions land.
 
 **Disambiguation (§3) MISSING — propose adding:**
 - `base` (Ezagent capability substrate vs Elixir/Behaviour callback vs OO base-class).
@@ -609,18 +667,27 @@ land the rewrites referencing this SPEC.
 
 ## 8. Codex adversarial-review verdict
 
-> *Placeholder — to be filled by the codex/gpt-5.5 static adversarial review
-> run after this SPEC is pushed to `docs/ezagent-taxonomy`. The review
-> questions:*
+> *Static-only review (codex/gpt-5.5, no build/mix/tests) against the SPEC on
+> the `docs/ezagent-taxonomy` branch. Verified all claims against the worktree
+> at `3d3b98d` (off `origin/main` `c37f2008`).*
 
-| Q | Question |
-|---|---|
-| 1 | Is the 4-layer taxonomy sound + code-accurate (esp. the anti-pattern verifications in §4)? |
-| 2 | Is the judgment rule (§3) unambiguous — no artifact that could ambiguously land in two layers? |
-| 3 | Is the glossary-alignment (§7.1) correct — does the glossary exist, and are the real deltas accurately enumerated? |
-| 4 | Is the arch-doc-staleness inventory (§7.2/§7.3) real — are the cited arch docs actually found, and is the staleness accurately described (esp. ARCH §10.5 inline-BLOB)? |
-| 5 | Are the red lines (§5) enforceable — would the §6 arch-gate ideas actually catch the §4 anti-patterns? |
+**NET: SOUND-WITH-FIXES — no UNSOUND overall.** The carrier taxonomy is
+directionally sound and most staleness claims are real. One §3 internal
+contradiction (Q2 UNSOUND) rewritten; §4.1/§4.4/§6 overclaims about how clean
+current code is / how much existing gates cover corrected. All 8 fixes folded
+before push.
 
-*Review verdict + folded fixes to be appended here before final push, per the
-lead's `feedback_codex_review_every_pr` discipline. The SPEC does NOT merge
-until §8 records a SOUND (or SOUND-WITH-FIXES, all folded) verdict.*
+| Q | Codex verdict | Disposition |
+|---|---|---|
+| 1 — 4-layer taxonomy + §4 anti-patterns code-accurate? | **SOUND-WITH-FIXES** — 4.1 Kind-fixed verified BUT landed `Behavior.Kanban` hardcodes 9-stage product chain (`kanban.ex:37-38,415-443` + `kanban_data.ex:33`); 4.3 wording (seed at `scripts/autoservice_tier1_seed.exs:36`, pure module `:8-15`); 4.4 "kanban/board/sales/autoservice empty" false for core comments (`role_seed_hook.ex:16`, `recipe.ex:137`, `sandbox.ex:57-58`, `arch.scan.ex:335-340`); 4.5/4.6/4.7 accurate. | **FOLDED** — §0.1 + §4.1 (partial-leak caveat), §4.3 (precise seed path), §4.4 (comment-level mentions + allowlist recommendation). |
+| 2 — §3 judgment rule unambiguous? | **UNSOUND** — internal contradiction: "first match wins" vs "higher-numbered loses to lower" vs example "prefer layer 2 over layer 1"; "every artifact has exactly one home" contradicts "plugin ships layer-1 code + layer-2 seeds." | **FOLDED** — §3 ambiguity guard rewritten: decompose compound deliverables first; each atomic artifact has one home; choose data over code, slice over definition, split blob bytes from URI. |
+| 3 — glossary-alignment correct? | **SOUND-WITH-FIXES** — GLOSSARY exists; missing terms verified; Decision table reaches #154 (`:165`) BUT footer/status stale says #87 (`:1151-1152`); the SPEC's "Behavior entry references old `Ezagent.Role`" claim is NOT supported by grep — removed. | **FOLDED** — §7.1 removed the inaccurate `Ezagent.Role`-in-Behavior-entry claim; added footer #87 staleness. |
+| 4 — arch-doc-staleness inventory real? | **SOUND** — ARCH §10.5 inline-BLOB verified (`ARCHITECTURE.md:1897-1912`, `data BLOB` column); landed code = disk + URI + token (verified); three-tier ref stale on `ezagent_domain_chat` (`:28`) + `ezagent_plugin_liveview` (`:32,48`); current apps in `mix.exs:30-31,44`. | none. |
+| 5 — red lines enforceable? | **SOUND-WITH-FIXES** — NP-2 is module-name only (verified `lifecycle.ex:64-69,310-338`); content grep needs allowlists; existing resource-kind gate (`arch.scan.ex:335-352`) catches `resource_kinds/0`/`ResourceKindRegistry.register`, NOT plain `defmodule Ezagent.Entity.Kanban`; blob-binary gate must NOT ban all `:binary` (legitimate `state_binary` `20260519000000_phase4_kind_snapshot_binary.exs:7-11` + token hashes `20260531000000_magic_link_tokens.exs:7-16`). | **FOLDED** — §6.1 (NP-2 name-only + allowlist), §6.2 (explicit defmodule predicate), §6.3 (scope to attachment/upload tables + content column names). |
+
+**Codex fixes folded (8):** §0.1 + §4.1 partial-leak caveat (kanban hardcoded
+stages); §4.3 precise seed path; §4.4 comment-level mentions + allowlist; §3
+ambiguity guard rewrite (decompose-first); §7.1 removed inaccurate
+`Ezagent.Role`-in-Behavior claim + added footer #87 staleness; §6.1 NP-2
+name-only + allowlist; §6.2 explicit defmodule predicate; §6.3 scope binary
+gate to attachment/upload tables. No new open questions.
