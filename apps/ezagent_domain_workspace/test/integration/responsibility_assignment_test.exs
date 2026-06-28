@@ -64,6 +64,15 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     needed_approve =
       Capability.cap(:session, Ezagent.Behavior.Surface, :approve, session_uri, workspace_uri)
 
+    needed_commit =
+      Capability.cap(
+        :session,
+        Ezagent.Behavior.Surface,
+        :commit_settlement,
+        session_uri,
+        workspace_uri
+      )
+
     needed_verdict =
       Capability.cap(
         :session,
@@ -79,6 +88,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     assert has_cap?(caps, needed_claim)
     assert has_cap?(caps, needed_settle)
     assert has_cap?(caps, needed_approve)
+    assert has_cap?(caps, needed_commit)
     assert has_cap?(caps, needed_verdict)
   end
 

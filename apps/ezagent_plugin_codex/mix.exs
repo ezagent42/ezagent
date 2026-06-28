@@ -32,6 +32,7 @@ defmodule EzagentPluginCodex.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_agent, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},

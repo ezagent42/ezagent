@@ -101,6 +101,8 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
   end
 
   defp write_template_slice(%URI{} = uri, sandbox) do
+    admin_uri = Ezagent.URI.user(:system, :admin)
+
     content = %{
       name: @template_name,
       description:
@@ -125,7 +127,7 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
            mode: :call,
            args: %{content: content},
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
+             caller: admin_uri,
              caps:
                MapSet.new([
                  %Ezagent.Capability{
@@ -136,7 +138,7 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
                      Ezagent.URI.instance(target),
                      Ezagent.Capability.workspace_of(target)
                    )
-                   | granted_by: Ezagent.Entity.User.admin_uri(),
+                   | granted_by: admin_uri,
                      granted_at: DateTime.utc_now()
                  }
                ]),

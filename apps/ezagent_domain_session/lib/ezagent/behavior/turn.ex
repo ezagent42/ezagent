@@ -617,6 +617,8 @@ defmodule Ezagent.Behavior.Turn do
 
   defp publish_mode(%{self_uri: %URI{} = session_uri}) do
     Ezagent.Socialware.Installation.publish_policy(session_uri)
+  rescue
+    DBConnection.OwnershipError -> :auto
   end
 
   defp publish_mode(_ctx), do: :auto

@@ -231,7 +231,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         {:ok, :exists}
 
       nil ->
-        with {:ok, receivers} <-
+        with {:ok, matcher} <- normalize_rule_matcher(matcher),
+             {:ok, receivers} <-
                resolve_rule_receivers(
                  Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
                  declared_roles
@@ -257,6 +258,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         end
     end
   end
+
+  defp normalize_rule_matcher(matcher) when is_tuple(matcher), do: {:ok, matcher}
+
+  defp normalize_rule_matcher(matcher_json) when is_map(matcher_json) do
+    Ezagent.Routing.Matcher.from_json(matcher_json)
+  end
+
+  defp normalize_rule_matcher(other), do: {:error, {:invalid_rule_matcher, other}}
 
   defp delete_rule_rows(ids) when is_list(ids) do
     Enum.each(ids, fn id ->

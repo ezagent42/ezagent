@@ -125,6 +125,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignment do
       cap(:session, Ezagent.Behavior.Turn, :claim, workspace_uri),
       cap(:session, Ezagent.Behavior.Turn, :settle, workspace_uri),
       cap(:session, Ezagent.Behavior.Surface, :approve, workspace_uri),
+      cap(:session, Ezagent.Behavior.Surface, :commit_settlement, workspace_uri),
       cap(:session, Ezagent.Behavior.SupervisorApproval, :submit_verdict, workspace_uri)
     ]
   end

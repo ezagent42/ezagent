@@ -50,7 +50,10 @@ defmodule EzagentPluginKb.MixProject do
       # domain_agent BEFORE this plugin, so the hook is registered before this
       # plugin seeds its role (the seam is no-op if unregistered).
       {:ezagent_domain_agent, in_umbrella: true},
-      {:ezagent_domain_session, in_umbrella: true, only: :test}
+      {:ezagent_domain_session, in_umbrella: true, only: :test},
+      {:ezagent_domain_agent_bridge, in_umbrella: true, only: :test},
+      {:ezagent_plugin_codex, in_umbrella: true, only: :test},
+      {:ezagent_plugin_world, in_umbrella: true, only: :test}
     ]
   end
 end

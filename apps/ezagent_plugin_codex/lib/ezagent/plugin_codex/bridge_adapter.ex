@@ -150,14 +150,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
 
   defp call_session_manager(%URI{} = orchestrator_uri, tool, arguments, token)
        when is_binary(token) do
-    key = URI.to_string(orchestrator_uri)
-
-    case Registry.lookup(Ezagent.Session.SessionManagerRegistry, key) do
-      [{pid, _}] -> GenServer.call(pid, {:run_tool, tool, arguments, token}, :infinity)
-      [] -> {:error, :session_manager_unavailable}
-    end
-  rescue
-    ArgumentError -> {:error, :session_manager_unavailable}
+    Ezagent.Session.SessionManager.run_tool(orchestrator_uri, tool, arguments, token)
   end
 
   defp call_session_manager(_orchestrator_uri, _tool, _arguments, _token),

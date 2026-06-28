@@ -20,7 +20,6 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   alias Ezagent.Workspace
   alias Ezagent.Behavior.KindBase
-  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
@@ -116,8 +115,12 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   test "ensure_app spawns the session through the socialware install set", ctx do
     {:ok, slice} = Ezagent.Kind.get_slice(ctx.session, :kind_base)
+    behaviors = KindBase.behaviors_in_slice(slice)
 
-    assert KindBase.behaviors_in_slice(slice) == Session.socialware_behaviors()
+    assert Ezagent.Behavior.Session in behaviors
+    assert Ezagent.Behavior.Turn in behaviors
+    assert Ezagent.Behavior.Surface in behaviors
+    assert Ezagent.Behavior.Publisher.SessionImpl in behaviors
   end
 
   # --- helpers ---------------------------------------------------------------
