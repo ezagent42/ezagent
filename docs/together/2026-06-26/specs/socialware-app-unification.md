@@ -60,8 +60,12 @@ the app's behaviors in the session's `:kind_base` union — **replaces the impli
 `public_view: true` boolean** as the "this is a socialware app" identity. **Both
 fan-out cases are first-class:** (a) one socialware-app → **many adapters**
 (Feishu user-a + Slack user-b) = the `adapters` list; (b) one session → **many
-installed apps** (socialware + kanban, even two socialware instances) = many
-install records + a `:kind_base` behavior **union**. The operator residue
+*distinct* installed apps** (socialware + kanban) = many install records + a
+`:kind_base` behavior **union**. (Two instances of the *same* behavior-owning app —
+e.g. two socialware desks — on **one** session is NOT free: `Turn` owns the
+singleton `:turns` slice and `Surface` the singleton `:surface`, so it needs
+app-scoped slice/action routing — a real limitation, scoped out as OQ-11, §2.5b.)
+The operator residue
 de-bakes unchanged (C1 `:operator_only`→`:internal`; C2 publish default →
 app-def `visibility-policy`; C3 a `supervisor` **responsibility**, named only in
 P7). AnonIngress (comms PR-3) folds as the customer's entry to the web adapter;
@@ -203,8 +207,16 @@ as a `ConfigObject` and resolved by `RoleRegistry` read-through over `ConfigStor
 (`role_registry.ex:3-29`, key `"role"`). A built-in role is **the same data shape**
 as a user-authored one.
 
-A **socialware app-definition is the same substrate, addressed `template://<ws>/
-app/<name>`**, with two fields a role recipe lacks:
+A **socialware app-definition rides the same `ConfigStore`/`ConfigObject`
+substrate** (the substrate `RoleRegistry` is built on), addressed `template://<ws>/
+app/<name>`. **Precision (codex Q1/Q7):** it does **not** reuse `RoleRegistry`
+verbatim — that resolver is role-specific, fixed to key `"role"`
+(`role_registry.ex:55-68`); the app-def resolves through a **sibling resolver
+keyed `"app"`** over the same `ConfigStore`. Nor is it a `%Role{}` — that struct
+has no `adapters`/`visibility_policy` (`role.ex:46-54`); the app-def is a **sibling
+struct** of the role recipe. What is reused is the **mechanism** (config-as-data
+`ConfigObject` + `ConfigStore` cascade + mount + `CapMint`), not the role-specific
+shell. The two fields a role recipe lacks:
 
 ```
 template://<ws>/app/<name>                  # installable app-definition (config-as-data; ConfigObject, key "app")
@@ -263,9 +275,10 @@ every `public_view` read/write on `origin/main` mapped to its new home:
 | 7 | `workspace_plugin_actions.ex:334` — world toggle writes `public_view` | (a)+(b) authored | the form (§4) authors/installs the app-def (web adapter w/ anon) |
 | 8 | `chat_feed_controller.ex:108` + `external_feed_controller.ex:131` — the two public controllers call `public_view?/1` as ingress gate | (b) per-route anon gate | re-point to (2); in P2 these collapse into the `AnonIngress` shim (§5.1) — the re-point is in ONE chokepoint |
 | 9 | `workspace_plugin_data.ex:189,211,256-258` — world read-model `public_view?/1` (renders the badge) | (a) identity, for display | reads the **install record** (is a socialware app installed on the template/session?) |
+| 10 | `WorkspacePlugin.tsx:190-198` (React) — the form payload still **sends `public_view`** | (a)+(b) authored at the UI | the form sends an **install + adapter** payload (which app-def, web_anon_access) — the toggle becomes "install socialware-app w/ anon web feed" (codex Q4 fix) |
 
-Every site → **identity = install record** (rows 1, 6, 7, 9) **or** **anon-gate =
-app-def `web_anon_access`** (rows 2, 3, 5, 8); row 4 (granter) unchanged. (Non-prod
+Every site → **identity = install record** (rows 1, 6, 7, 9, 10) **or** **anon-gate
+= app-def `web_anon_access`** (rows 2, 3, 5, 8, +10); row 4 (granter) unchanged. (Non-prod
 sites — test fixtures, `router.ex` comments, `autoservice_tier1_seed.exs`,
 `hello_session.ex` doc — track the same two homes.) **The anon ingress (§5.1) must
 wire its gate to the app-def `web_anon_access`, NOT to the install marker** —
@@ -289,14 +302,27 @@ is served on demand (`render_authorized/2`, `live_topics/1`, `delivery_disciplin
 Feishu-user-a AND Slack-user-b"* = two `:push` entries in `adapters`, each with its
 recipient in `config`. Nothing in the model caps the count.
 
-**(b) one session → many installed plugin-apps** (socialware + kanban, even two
-socialware instances). Each install is its own record (§2.4) keyed by app-ref, and
-the session's `:kind_base` is the **union** of all installed apps' behaviors
-(mount is additive; `effective_set` returns the union). Two socialware instances =
-two install records with distinct app-refs (e.g. `app/helpdesk` + `app/sales`),
-each with its own adapters + visibility-policy + members. Closure
+**(b) one session → many *distinct* installed plugin-apps** (socialware + kanban).
+Each install is its own record (§2.4) keyed by app-ref, and the session's
+`:kind_base` is the **union** of all installed apps' behaviors (mount is additive,
+`mount_detach.ex:120-134`; `effective_set` returns the union). Closure
 (`resolve_closure`) is checked over the union at each mount, so an app that
-requires a sibling read it doesn't bring is rejected at install — fail-closed.
+requires a sibling read it doesn't bring is rejected at install — fail-closed. A
+socialware-app (Turn/Surface) + a kanban-member install compose cleanly because
+their slices (`:turns`/`:surface` vs `:kanban`) don't collide.
+
+> **The one limit (codex Q5 HIGH; OQ-11): two instances of the *same*
+> behavior-owning app on ONE session is NOT first-class today.** A Behavior owns a
+> **singleton** state slice per Kind instance (`behavior.ex:91-97,267-274`): `Turn`
+> owns `:turns` (`turn.ex:3-11`), `Surface` owns `:surface` (`surface.ex:3-10`).
+> So a `:kind_base` *union* cannot hold two independent `Turn`/`Surface` states —
+> installing `app/helpdesk` and `app/sales` (both socialware) onto one session
+> would have them **share** one `:turns`/`:surface`. Supporting two same-type
+> instances requires **app-scoped slice keys + app-scoped action routing** (route
+> `turn.*` to the right install's slice) — genuinely new mechanism, **scoped OUT**
+> of this SPEC (OQ-11). The model supports *distinct* apps per session (the real
+> near-term need: socialware + kanban) without it; two-of-the-same is a future
+> generalization, not claimed done.
 
 ### 2.6 Symmetry with kanban — be precise about what's reused vs new
 
@@ -514,7 +540,9 @@ primitives. The takeover loop adds no concept only socialware could use.
 | `Ezagent.Entity.Session` host Kind + `:kind_base` per-instance set | **REUSE** | #46 collapse landed; the multi-app host |
 | `effective_set/2` admitting undeclared behaviors (`behavior_set.ex:167-172`) | **REUSE** | the declaration-free install gate; kanban proves it |
 | `Ezagent.Kind.mount/3` / `detach/2` (runtime per-instance install) | **REUSE** | RF-1/RF-3 landed; the install action |
-| `Ezagent.Role` recipe + `RoleRegistry` + `ConfigStore`/`ConfigObject` (#1048) | **REUSE** | the config-as-data app-def substrate (kanban runs on it) |
+| `ConfigStore`/`ConfigObject` config-as-data substrate (#1048) | **REUSE** | the app-def storage/resolve mechanism (kanban's recipes run on it); `RoleRegistry` itself is NOT reused (role-fixed key `"role"`) — a sibling `"app"` resolver is NEW (below) |
+| `Ezagent.Role` recipe struct/shape | **REUSE (as template)** | the app-def is a **sibling struct** (Role lacks `adapters`/`visibility_policy`) |
+| **sibling app-resolver** (ConfigStore key `"app"`) | **NEW (thin)** | resolves `template://<ws>/app/<name>`; mirrors `RoleRegistry` but is not it |
 | `Role.CapMint` (fail-closed `requested ∩ policy`) | **REUSE** | mints the app-def's `requested_caps` |
 | `passive` flag + mention/join/receive gates (RF-6) | **REUSE** | passive app members |
 | `Ezagent.ExternalMirror.Adapter` (`:push`/`:pull`) + `SessionFeedChannel` (#1047) | **REUSE** | the `adapters` list / fan-out (a) |
@@ -670,7 +698,7 @@ phase is independently landable + verifiable.
 
 | Phase | What | Blast | Pre-prod? | Independent gate (verifiable) |
 |---|---|---|---|---|
-| **P0 — composition field** | `installs: [...]` on SessionTemplate; `create_session` reads it to thread the `:kind_base` set, replacing the hardcoded `chat_behaviors`/`socialware_behaviors` at `session_creator.ex:338,430` + `hello/app.ex:35` | **M** | **NOW** (call-site choice today) | a session created from a template whose `installs` names a socialware-typed app boots with Turn/Surface in its `:kind_base` **via data, not a call-site branch**; a chat template boots without them; full `mix test` 0 failures |
+| **P0 — composition field (self-contained)** | `installs: [...]` on SessionTemplate; `create_session` reads it to thread the `:kind_base` set, replacing the hardcoded `chat_behaviors`/`socialware_behaviors` at `session_creator.ex:330-338,424-430` + `hello/app.ex:29-35`. **To land WITHOUT depending on P3a (codex Q6 fix): ship a TEMPORARY built-in app catalog** — a code-level `app-ref → behavior-set` map seeding two refs (`"chat"`→`chat_behaviors`, `"socialware"`→`socialware_behaviors`). P3a then **replaces the catalog** with the ConfigStore-backed app-def resolver (the catalog is the migration seam, deleted in P3a). | **M** | **NOW** (call-site choice today) | a session created from a template whose `installs` names `"socialware"` boots with Turn/Surface in its `:kind_base` **via data + the built-in catalog, not a call-site branch**; a `"chat"` template boots without them; full `mix test` 0 failures — **no dependency on P3a** |
 | **P1 — C1** | rename `:operator_only`→`:internal` + data-migrate + invariant | **M** | **NOW (persisted enum)** | extend `no_customer_concept_test` to forbid `:operator_only`; full `mix test` 0 failures |
 | **P2 — PR-3** | `admit_anonymous_participant` primitive + `AnonIngress` shim; collapse +8 dup groups | **M** | any time | the +8 `cross_file_duplicate_fn_groups` collapse to one primitive + one shim; INV-1/2/2a tests; #1060 Gate 2 green |
 | **P3a — app-def + install relation** | `template://<ws>/app/<name>` app-def (config-as-data sibling of role recipe); per-install `ConfigObject` record; split `public_view` per §2.4 | **L** | NOW | a gate that **no `public_view` boolean is read** anywhere; identity resolves via the install record, anon-gate via app-def `web_anon_access`; an app installed onto a session mounts its behaviors via `effective_set` `extra_part`; hello rewired |
@@ -699,9 +727,11 @@ name.
 
 ### 7.4 Cross-phase couplings
 
-- **P0 → P3a:** the install relation (P3a) is the typed form of P0's composition
-  entries; P0 ships the field + data-driven selection, P3a gives the entries a
-  first-class app-def + per-install record.
+- **P0 → P3a (NOT a hard dep — codex Q6 fix):** P0 lands self-contained on a
+  **temporary built-in app catalog** (`app-ref → behavior-set`), so it needs no
+  app-def records. P3a then **replaces** the catalog with the ConfigStore-backed
+  app-def resolver + per-install record (the catalog is the deletion seam). P0 is
+  thus independently landable + verifiable before P3a exists.
 - **P2 → P3a (anon gate):** PR-3 reads the anon gate. If P2 first, it reads
   `public_view?/1` and re-points to `web_anon_access` when P3a lands (one resolver
   swap inside the single primitive). If P3a first, P2 wires straight to it.
@@ -750,10 +780,12 @@ replies + membership, which only `domain_session` has; hosting in workspace woul
   `effective_set`'s `extra_part` (`behavior_set.ex:167-172`) is what makes it
   declaration-free. This SPEC adds **no new install mechanism** — it applies the
   mount path to the Session host.
-- **role-as-data (#1048) + kanban-as-role.** The app-def IS config-as-data — same
-  `Ezagent.Role`-shaped recipe stored as a `ConfigObject` via `RoleRegistry`/
-  `ConfigStore`, the exact substrate kanban runs on. The app-def adds only
-  `adapters` + `visibility_policy`. **Kanban is the precedent, precisely scoped
+- **role-as-data (#1048) + kanban-as-role.** The app-def IS config-as-data — a
+  `Role`-shaped **sibling** recipe stored as a `ConfigObject` via the
+  **`ConfigStore`** cascade (resolved by a sibling `"app"`-keyed resolver, **not**
+  `RoleRegistry`'s role-fixed `"role"` key — §2.3), the exact substrate kanban's
+  recipes run on. The app-def adds only `adapters` + `visibility_policy`. **Kanban
+  is the precedent, precisely scoped
   (§2.6):** per-app substrate reused; session-as-multi-app-host + install relation
   new.
 - **recipe/responsibility split (#1059) + domain-role research (B1/B2).** Both
@@ -773,10 +805,11 @@ replies + membership, which only `domain_session` has; hosting in workspace woul
 
 ## 9. Codex adversarial-review verdict
 
-> *Model-rewrite codex pass appended at §9.3 after running it. Prior revisions'
-> two passes (core model; responsibility layer) are preserved below as §9.1-§9.2 —
-> their findings (the §2.4 parity-table completeness, the injected-resolver seam,
-> the accountability wording, the C3-gates-PR4 condition) carry forward unchanged.*
+> *The model-rewrite codex pass is at §9.3 (run 2026-06-28, all five fixes folded).
+> Prior revisions' two passes (core model; responsibility layer) are preserved
+> below as §9.1-§9.2 — their findings (the §2.4 parity-table completeness, the
+> injected-resolver seam, the accountability wording, the C3-gates-PR4 condition)
+> carry forward unchanged.*
 
 ### 9.1 Prior pass 1 — core model (gpt-5.5, static, vs `origin/main`)
 
@@ -801,11 +834,25 @@ SOUND-WITH-FIXES — the `core/routing reaches assignment` row corrected to the
 
 ### 9.3 Model-rewrite pass — the decoupled model
 
-> Appended after the model-rewrite codex pass (see the report). Scope: is the
-> decouple a real simplification or a new layer? Does kanban already do this — are
-> we reinventing? Does the install relation cleanly replace `public_view`? Are both
-> fan-out cases supported? Is the re-derived phasing safe + each phase landable?
-> Any new concept that should reuse an existing one?
+Static-only review (codex, no build/mix/tests) against `origin/main`, reading the
+rewritten spec + every cited source. **NET: SOUND-WITH-FIXES — no UNSOUND
+finding; the load-bearing claim holds. Five fixes folded (one HIGH).**
+
+| Q | Codex verdict | Disposition |
+|---|---|---|
+| 1 — real simplification or new layer? | **SOUND-WITH-FIXES** — substrate real (`effective_set` undeclared-admit `behavior_set.ex:167-172`; mount rewrites `:kind_base` `kind.ex`; `ConfigObject` shape `config_object.ex:16-20`). Fix: don't say app-def "reuses `RoleRegistry`" unqualified — it is role-fixed to key `"role"` (`role_registry.ex:55-68`) and `%Role{}` lacks `adapters`/`visibility_policy` (`role.ex:46-54`). | **FIXED** — §2.3 precision note + §3 split into "ConfigStore substrate REUSE" vs "sibling `app` resolver NEW" + §8 reworded. |
+| 2 — kanban precedent accurate, not reinventing? | **SOUND** — kanban is `roles/0` recipe (`application.ex:63-64`) mounted on `Entity.Agent` whose base declares no Kanban (`agent.ex:80-84,94-113`); §2.6 split (substrate REUSE; session-host + install relation NEW) is right. | No change. |
+| 3 — **load-bearing: undeclared-behavior mount?** | **SOUND** — `effective_set` = `declared_part ++ extra_part`, `extra_part = not declared && real_behavior?` (`behavior_set.ex:222-232`); dispatch still runs `authz_check` (`runtime.ex:157-162`) so membership ≠ privilege. | No change — the reframe's core claim holds. |
+| 4 — install relation replaces public_view cleanly? | **SOUND-WITH-FIXES** — backend parity complete; **missed one production frontend write** (`WorkspacePlugin.tsx:190-198` still sends `public_view`). | **FIXED** — §2.4 row 10 added. |
+| 5 — both fan-out cases supported? | **SOUND-WITH-FIXES, HIGH** — adapter fan-out (a) sound (`adapter.ex:112-117` push/pull); union (b) sound for *distinct* apps (additive mount `mount_detach.ex:120-134`). **But "two socialware instances" is overclaimed** — `Turn` owns singleton `:turns` (`turn.ex:3-11`), `Surface` `:surface` (`surface.ex:3-10`); a union can't host two independent instances without app-scoped slice/routing. | **FIXED** — §0 + §2.5b reworded to *distinct* apps; two-of-same scoped OUT as OQ-11 (needs app-scoped state). |
+| 6 — phasing safe + each phase landable? | **SOUND-WITH-FIXES** — hardcoding + C1 pre-prod rationale confirmed. **But P0 as written ships `installs` before P3a's app-def records exist** → not independently landable. | **FIXED** — P0 now lands on a TEMPORARY built-in `app-ref → behavior-set` catalog (deleted in P3a); §7 P0 row + §7.4 coupling rewritten; P0→P3a is no longer a hard dep. |
+| 7 — any new concept that should reuse? hidden scheme/registry? | **SOUND-WITH-FIXES** — `%Role{}` genuinely can't carry the delta; **no `socialware://` on main** (six schemes `entity session template resource workspace system`, `plugin.ex:88,263-268`) — the rewrite correctly avoids it. Fix: specify app lookup as ConfigStore-backed shared-recipe resolution, not a hidden new registry. | **FIXED** — §2.3 + §3 name the sibling `"app"` ConfigStore resolver explicitly (no new Kind/scheme/AppRegistry). |
+
+**Net:** the decouple is a real simplification (substrate reused, no new
+scheme/Kind, fewer concepts than the prior revision), kanban is correctly cited as
+precedent not reinvention, the install relation cleanly replaces `public_view`, and
+the phasing is landable. The one HIGH (two-same-app instances) is a genuine
+mechanism limit, now scoped out honestly rather than overclaimed.
 
 ---
 
@@ -854,6 +901,13 @@ SOUND-WITH-FIXES — the `core/routing reaches assignment` row corrected to the
     (unanimous/majority/any-one/N-of-M); is `arbiter` a tiebreaker or required
     final approver? And adopt "agent recipe" for axis A / "responsibility" for axis
     B in the app-def + editor labels, retiring the `role` homonym? (Recommend yes.)
+11. **Two instances of the SAME behavior-owning app on one session (codex Q5
+    HIGH).** Supporting e.g. two socialware desks on one session needs app-scoped
+    slice keys + app-scoped action routing (Behaviors own singleton slices today —
+    `Turn`/`:turns`, `Surface`/`:surface`). This SPEC scopes it OUT (distinct apps
+    per session — socialware + kanban — is the near-term need and works without it).
+    Confirm two-of-the-same is not near-term; if it is, it is a separate
+    core/routing work item (not part of this 收口). (Recommend: out of scope.)
 
 ---
 
