@@ -79,12 +79,12 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
              "expected the (non-cc) AutoService agent to be created; got " <>
                inspect(seed.autoservice_agent_status)
 
-      # ── public_view (S1) — assert only if socialware is loadable in this dep
+      # ── web anonymous access (S1) — assert only if socialware is loadable in this dep
       # set; otherwise it is covered by the live browser run (the seed always
-      # sets the public_view template content). ──────────────────────────────
+      # installs a socialware definition with web_anon_access). ──────────────
       if Code.ensure_loaded?(Ezagent.Socialware.PublicView) do
-        assert Ezagent.Socialware.PublicView.public_view?(session_uri),
-               "the seeded session must be public_view (S1 anon landing precondition)"
+        assert Ezagent.Socialware.PublicView.web_anon_access?(session_uri),
+               "the seeded session must allow anonymous web access (S1 anon landing precondition)"
       end
 
       # ── S2a/S2b: a BARE customer message (no @mention) resolves to the
@@ -196,7 +196,8 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
              "the KB answer must contain the fact only present in the ingested corpus " <>
                "(#{fact}) — proving retrieval, not model prior. Hits: #{inspect(hits)}"
 
-      assert_receive {:authz_granted_kb_query, _meta}, 1000,
+      assert_receive {:authz_granted_kb_query, _meta},
+                     1000,
                      "expected an authz :granted telemetry event (the audit invocation source) " <>
                        "for the kb-agent's kb.query dispatch"
 

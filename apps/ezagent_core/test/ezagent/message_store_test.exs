@@ -91,19 +91,19 @@ defmodule Ezagent.MessageStoreTest do
       assert written.body["attachments"] == []
     end
 
-    test "defaults visibility to customer_visible and round-trips operator_only" do
+    test "defaults visibility to customer_visible and round-trips internal" do
       default_msg = Message.new(@admin, %{text: "default visible", attachments: []})
       {:ok, default_written} = MessageStore.write(default_msg, @session_a)
       assert default_written.visibility == :external_visible
 
       draft =
-        Message.new(@bot, %{text: "operator draft", attachments: []}, visibility: :operator_only)
+        Message.new(@bot, %{text: "operator draft", attachments: []}, visibility: :internal)
 
       {:ok, draft_written} = MessageStore.write(draft, @session_a)
-      assert draft_written.visibility == :operator_only
+      assert draft_written.visibility == :internal
 
       assert {:ok, loaded} = MessageStore.by_id(draft.id)
-      assert loaded.visibility == :operator_only
+      assert loaded.visibility == :internal
     end
   end
 

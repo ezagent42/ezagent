@@ -5,6 +5,7 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   alias Ezagent.Entity.Session, as: SessionEntity
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Resolver, RuleStore}
+  alias Ezagent.Socialware.{DefinitionEditor, Installation}
 
   @spec migrate_session(URI.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def migrate_session(target_session_template_uri, opts \\ [])
@@ -12,26 +13,38 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   def migrate_session(%URI{} = target_session_template_uri, opts) do
     with {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
-         {:ok, _caller_uri} <- Tools.require_opt(opts, :caller),
+         {:ok, caller_uri} <- Tools.require_opt(opts, :caller),
          {:ok, caps} <- Tools.require_opt(opts, :caps),
          :ok <- Tools.preflight_within_session_cap(caps, session_uri),
          :ok <- preflight_session_template_cap(caps, workspace_uri),
          {:ok, target_content} <- read_target_template(target_session_template_uri),
-         {:ok, plan} <- changed_member_plan(session_uri, target_content),
+         {:ok, target_config} <-
+           DefinitionEditor.config_for_template(target_content, workspace_uri),
+         {:ok, plan} <- changed_member_plan(session_uri, target_config),
          :ok <- ensure_ledger(session_uri, target_session_template_uri, plan),
          :ok <- run_member_plan(session_uri, target_session_template_uri, plan, opts),
-         :ok <- replace_session_rule_sets(session_uri, workspace_uri, target_content),
-         :ok <- install_prompt_templates(session_uri, target_content),
-         :ok <- install_legends(session_uri, target_content),
+         :ok <- replace_session_rule_sets(session_uri, workspace_uri, target_config),
+         :ok <- install_prompt_templates(session_uri, target_config),
+         :ok <- install_legends(session_uri, target_config),
+         :ok <-
+           Installation.repoint_template_installs(
+             session_uri,
+             workspace_uri,
+             target_content,
+             caller_uri
+           ),
          :ok <- finalize_pin(session_uri, target_session_template_uri) do
-      {:ok, %{session_template_uri: target_session_template_uri, migrated_members: Map.keys(plan)}}
+      {:ok,
+       %{session_template_uri: target_session_template_uri, migrated_members: Map.keys(plan)}}
     end
   end
 
   def migrate_session(_target, _opts), do: {:error, :invalid_target_session_template_uri}
 
   defp read_target_template(%URI{} = target_uri) do
-    with true <- Ezagent.URI.type?(target_uri, :session) || {:error, {:not_a_session_template_uri, target_uri}},
+    with true <-
+           Ezagent.URI.type?(target_uri, :session) ||
+             {:error, {:not_a_session_template_uri, target_uri}},
          {:ok, _pid} <- SessionEntity.ensure_template_alive(target_uri),
          {:ok, content} when is_map(content) <- SessionEntity.read_template_content(target_uri) do
       {:ok, content}
@@ -202,7 +215,12 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
     end)
   end
 
-  defp install_target_rule_sets(table, %URI{} = session_uri, %URI{} = workspace_uri, target_content) do
+  defp install_target_rule_sets(
+         table,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         target_content
+       ) do
     role_to_uri = role_to_uri_map(session_uri)
 
     target_content

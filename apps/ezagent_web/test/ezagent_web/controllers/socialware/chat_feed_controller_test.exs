@@ -24,7 +24,7 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
 
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
-  alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeedAuth}
+  alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeedAuth, DefinitionRegistry, Installation}
   alias EzagentWeb.Socialware.AnonCookie
 
   @endpoint EzagentWeb.Endpoint
@@ -45,21 +45,24 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
 
   defp u, do: System.unique_integer([:positive])
 
-  # A bare Session Kind in team-alpha whose working copy points at `template_uri`
-  # (the materializing Template the PublicView resolver reads). Mirrors the
-  # anon_public_view_test fixture but in team-alpha so the workspace exists.
-  defp session_for_template(template_uri) do
-    # Use the hyphenated workspace string ("team-alpha") so the session's workspace
-    # segment matches the Template's persisted workspace EXACTLY. (The atom form
-    # `Ezagent.URI.session(:team_alpha, ...)` yields host "team_alpha" with an
-    # underscore, which would NOT match the "team-alpha" template workspace and would
-    # fail-close `PublicView.validate_template_uri/2`.)
+  defp session_for_content(content, template_uri) do
     uri = Ezagent.URI.new!("session://team-alpha/default/cfc-#{u()}")
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.socialware_behaviors()})
+    {:ok, behaviors} =
+      Installation.behavior_set_for_template(content, Ezagent.URI.workspace("team-alpha"))
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: behaviors})
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+
+    :ok =
+      Installation.install_template_installs(
+        uri,
+        Ezagent.URI.workspace("team-alpha"),
+        content,
+        Ezagent.Entity.User.admin_uri()
+      )
+
     {:ok, _} = ConfigActions.system_set_working_copy(uri, %{session_template_uri: template_uri})
 
     on_exit(fn -> terminate(uri) end)
@@ -67,20 +70,34 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
   end
 
   defp public_session do
-    {:ok, tmpl} =
-      SessionTemplate.persist_version_as_system(
-        %{name: "cfc-pub-#{u()}", public_view: true},
-        "team-alpha"
-      )
+    content = public_content("cfc-pub-#{u()}", true)
+    {:ok, tmpl} = SessionTemplate.persist_version_as_system(content, "team-alpha")
 
-    session_for_template(tmpl)
+    session_for_content(content, tmpl)
   end
 
   defp private_session do
-    {:ok, tmpl} =
-      SessionTemplate.persist_version_as_system(%{name: "cfc-priv-#{u()}"}, "team-alpha")
+    content = public_content("cfc-priv-#{u()}", false)
+    {:ok, tmpl} = SessionTemplate.persist_version_as_system(content, "team-alpha")
 
-    session_for_template(tmpl)
+    session_for_content(content, tmpl)
+  end
+
+  defp public_content(name, web_anon_access) do
+    definition_name = "#{name}-def"
+
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(
+        %{
+          name: definition_name,
+          bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+          shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+          visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
+        },
+        workspace_uri: Ezagent.URI.workspace("team-alpha")
+      )
+
+    %{name: name, installs: [definition_name]}
   end
 
   defp terminate(uri) do

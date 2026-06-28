@@ -50,6 +50,9 @@ defmodule EzagentPluginCodex.Application do
   end
 
   @impl Ezagent.Plugin
+  def roles, do: [Ezagent.Orchestrator.OrchestratorRole.recipe()]
+
+  @impl Ezagent.Plugin
   def config_surface do
     %{kind: :flavor, flavor: "codex", label: "Codex Agents"}
   end
@@ -81,6 +84,7 @@ defmodule EzagentPluginCodex.Application do
   def after_boot do
     _ = maybe_reap_codex_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
+    :ok = Ezagent.Orchestrator.CodexOrchestratorSeed.seed()
     :ok
   end
 

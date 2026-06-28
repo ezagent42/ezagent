@@ -2,7 +2,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   @moduledoc """
   P2 — PageView declares an external render target and produces it via the
   SAME projection the customer feed already uses (Surface.external_tree/1).
-  Internal render (operator_tree) is unaffected.
+  Internal render (internal_tree) is unaffected.
   """
   # Spawns a real socialware-subset Entity.Session (touches KindSnapshot/Repo),
   # so this MUST use the Repo-sandbox case and run non-async (codex P2 review).

@@ -199,10 +199,10 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
              }
     end
 
-    test "defaults to empty codex_info + [\"reply\"] tools (the codex default tool set)" do
+    test "defaults to empty codex_info + codex default tool set" do
       assert BridgeAdapter.join_info(%{}, %Phoenix.Socket{}) == %{
                codex_info: %{},
-               tools: ["reply"]
+               tools: ["reply", "run_tool"]
              }
     end
   end

@@ -9,7 +9,7 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
     * `chat_visible_recent/2` — the N most-recent `:external_visible` messages,
       ASCENDING (oldest→newest), for the snapshot window.
 
-  It filters per-message visibility (`:operator_only` excluded) and scopes by
+  It filters per-message visibility (`:internal` excluded) and scopes by
   session + workspace (defense-in-depth, mirroring the existing chat queries),
   ordered by `routed_at` (the per-session ROUTE-INTO-THIS-SESSION time) so a
   cross-session-relayed message windows at its arrival position here.
@@ -66,9 +66,9 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
       assert s |> MessageStore.chat_visible_recent(2) |> Enum.map(&text(&1)) == ["b", "c"]
     end
 
-    test "excludes operator_only messages", %{session: s} do
+    test "excludes internal messages", %{session: s} do
       write(s, "public")
-      write(s, "secret", visibility: :operator_only)
+      write(s, "secret", visibility: :internal)
 
       assert s |> MessageStore.chat_visible_recent(10) |> Enum.map(&text(&1)) == ["public"]
     end

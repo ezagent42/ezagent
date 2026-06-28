@@ -3,10 +3,10 @@ defmodule EzagentPluginHello.Template.HelloSession do
   `session.hello` Template Class (Phase 2 — the "factory" seam).
 
   Makes a hello app **creatable through the substrate's generic Tier-3 session
-  create path** — the same path world's operator console uses (`session.create`
+  create path** — the same path world's internal console uses (`session.create`
   → the registered Template Class's `instantiate/3`). World needs NO edit: it
   creates any registered session type generically; declaring this class (via the
-  plugin's `template_classes/0`) is what lets the operator spin up a hello app.
+  plugin's `template_classes/0`) is what lets the internal reader spin up a hello app.
 
   `instantiate/3` delegates to `EzagentPluginHello.App.ensure_app/2` — the same
   in-code flow Phase 0/1 already use (a `public_view` SessionTemplate + a live

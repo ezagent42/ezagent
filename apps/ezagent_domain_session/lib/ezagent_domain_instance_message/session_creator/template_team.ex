@@ -2,6 +2,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   @moduledoc false
 
   alias Ezagent.Entity.Session
+  alias Ezagent.Socialware.DefinitionEditor
 
   @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
   def materialize_template_team(
@@ -11,18 +12,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         template_content
       )
       when is_map(template_content) do
-    declared_roles = declared_role_names(template_content)
+    with {:ok, socialware_config} <-
+           DefinitionEditor.config_for_template(template_content, workspace_uri) do
+      declared_roles = declared_role_names(socialware_config)
 
-    with :ok <- install_template_prompt_templates(session_uri, template_content),
-         :ok <- install_template_legends(session_uri, template_content),
-         {:ok, _rule_ids} <-
-           install_template_rule_sets(
-             session_uri,
-             workspace_uri,
-             template_content,
-             declared_roles
-           ) do
-      :ok
+      with :ok <- install_template_prompt_templates(session_uri, socialware_config),
+           :ok <- install_template_legends(session_uri, socialware_config),
+           {:ok, _rule_ids} <-
+             install_template_rule_sets(
+               session_uri,
+               workspace_uri,
+               socialware_config,
+               declared_roles
+             ) do
+        :ok
+      end
     end
   end
 
@@ -227,7 +231,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         {:ok, :exists}
 
       nil ->
-        with {:ok, receivers} <-
+        with {:ok, matcher} <- normalize_rule_matcher(matcher),
+             {:ok, receivers} <-
                resolve_rule_receivers(
                  Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
                  declared_roles
@@ -253,6 +258,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         end
     end
   end
+
+  defp normalize_rule_matcher(matcher) when is_tuple(matcher), do: {:ok, matcher}
+
+  defp normalize_rule_matcher(matcher_json) when is_map(matcher_json) do
+    Ezagent.Routing.Matcher.from_json(matcher_json)
+  end
+
+  defp normalize_rule_matcher(other), do: {:error, {:invalid_rule_matcher, other}}
 
   defp delete_rule_rows(ids) when is_list(ids) do
     Enum.each(ids, fn id ->

@@ -97,6 +97,17 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     # workspace-scoped sharing; this is data vocabulary, not Workspace
     # behavior ownership.
     "apps/ezagent_core/lib/ezagent/credential/workspace_shared_source.ex",
+    # AgentManifest — core declarative data schema used to compile an agent body
+    # into template content across flavors. It validates opaque author/executor
+    # facts; it does not own Agent runtime behavior.
+    "apps/ezagent_core/lib/ezagent/agent_manifest.ex",
+    "apps/ezagent_core/lib/ezagent/agent_manifest/tools.ex",
+    # WorkspaceOwnerGate / WorkspacePlacement — locality infrastructure over
+    # workspace URIs. They decide runtime ownership for dispatch/spawn/session
+    # chokepoints, not Workspace domain behavior.
+    "apps/ezagent_core/lib/ezagent/workspace_owner_gate.ex",
+    "apps/ezagent_core/lib/ezagent/workspace_placement.ex",
+    "apps/ezagent_core/lib/ezagent/workspace_placement/local_resolver.ex",
     # Session.SliceMigration + its mix task — one-shot chat→session snapshot
     # slice-key cutover (Allen 2026-06-12). Operates on core `kind_snapshots`
     # rows (same layer as `KindBaseBackfill`); "Session" names the SLICE KEY

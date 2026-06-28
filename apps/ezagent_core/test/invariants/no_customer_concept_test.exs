@@ -123,6 +123,33 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
     assert :external_visible in values, ":external_visible must be the external-read value"
   end
 
+  test "the internal visibility value uses the new spelling" do
+    apps_root = Path.expand("../../../..", __DIR__)
+    retired = "operator" <> "_only"
+    values = Ecto.Enum.values(Ezagent.Message, :visibility)
+
+    refute Enum.any?(values, &(Atom.to_string(&1) == retired)),
+           "#{retired} must be retired from the enum"
+    assert :internal in values, ":internal must be the internal-read value"
+
+    offenders =
+      apps_root
+      |> list_code_and_test_files()
+      |> Enum.filter(fn rel_path ->
+        Path.join(apps_root, rel_path)
+        |> File.read!()
+        |> String.contains?(retired)
+      end)
+
+    assert offenders == [],
+           """
+           The retired visibility spelling `#{retired}` reappeared in code or
+           tests. Use `internal` for the all-info/internal projection.
+
+           #{Enum.map_join(offenders, "\n", &"  #{&1}")}
+           """
+  end
+
   defp format_violations(violations) do
     violations
     |> Enum.group_by(fn {rule, _} -> rule.name end, fn {rule, rel} -> {rel, rule.guidance} end)
@@ -156,6 +183,18 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
       assets = Path.join([apps_root, "apps", app, "assets"])
 
       source_files(lib, apps_root) ++ asset_files(assets, apps_root)
+    end)
+  end
+
+  defp list_code_and_test_files(apps_root) do
+    apps_root
+    |> Path.join("apps")
+    |> File.ls!()
+    |> Enum.flat_map(fn app ->
+      app_root = Path.join([apps_root, "apps", app])
+
+      [Path.join(app_root, "lib"), Path.join(app_root, "test")]
+      |> Enum.flat_map(&source_files(&1, apps_root))
     end)
   end
 

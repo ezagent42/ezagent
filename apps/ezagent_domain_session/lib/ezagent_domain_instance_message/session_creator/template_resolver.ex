@@ -4,6 +4,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
   alias Ezagent.Entity.Session
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.KindRegistry
+  alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
 
   # PR-9 A2 (2026-06-14): `resolve_template_class/1` RELOCATED to
@@ -115,6 +116,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
       _ ->
         nil
+    end
+  end
+
+  @spec orchestrator_template_uri_of(map(), URI.t() | String.t()) :: URI.t() | nil
+  def orchestrator_template_uri_of(template_content, workspace_uri)
+      when is_map(template_content) do
+    case DefinitionEditor.orchestrator_template_uri_for_template(template_content, workspace_uri) do
+      {:ok, %URI{} = uri} -> uri
+      _ -> orchestrator_template_uri_of(template_content)
     end
   end
 

@@ -177,7 +177,9 @@ function SessionTemplatePanel({
 }) {
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
-  const [publicView, setPublicView] = React.useState(false)
+  const [webAnonAccess, setWebAnonAccess] = React.useState(false)
+  const socialwareName = `${name.trim() || "socialware"}-app`
+  const publishPolicy = webAnonAccess ? "supervised" : "auto"
 
   return (
     <section className={subsectionClass} data-world-component="workspace-templates">
@@ -193,7 +195,49 @@ function SessionTemplatePanel({
             template: {
               name,
               description,
-              public_view: publicView,
+              installs: [socialwareName],
+              socialware: {
+                name: socialwareName,
+                bases: ["Ezagent.Behavior.Session", "Ezagent.Behavior.Publisher.SessionImpl"],
+                shape: ["Ezagent.Behavior.Turn", "Ezagent.Behavior.Surface"],
+                members: [
+                  {
+                    uri: "entity://system/agent/bot",
+                    role_name: "bot",
+                    in_session_template: true,
+                  },
+                ],
+                routing_rules: [
+                  {
+                    matcher: {type: "always"},
+                    receivers: ["bot"],
+                    rule_set: "default",
+                    position: 0,
+                    prompt_template_ref: "answer",
+                  },
+                ],
+                prompt_templates: {
+                  answer: "Answer from the socialware knowledge and session context.",
+                },
+                legends: {
+                  default: {
+                    member_set: ["bot"],
+                    bound_rule_set: "default",
+                    fold: false,
+                  },
+                },
+                adapters: [
+                  {
+                    adapter_id: "web_feed",
+                    role: webAnonAccess ? "customer" : "internal",
+                    config: {},
+                  },
+                ],
+                visibility_policy: {
+                  publish_policy: publishPolicy,
+                  web_anon_access: webAnonAccess,
+                },
+              },
             },
           })
         }}
@@ -218,10 +262,10 @@ function SessionTemplatePanel({
         </label>
         <label className="flex items-center gap-2 text-sm text-foreground">
           <input
-            id="world-session-template-public-view"
+            id="world-session-template-web-anon-access"
             type="checkbox"
-            checked={publicView}
-            onChange={(event) => setPublicView(event.target.checked)}
+            checked={webAnonAccess}
+            onChange={(event) => setWebAnonAccess(event.target.checked)}
           />
           <span>Public socialware app</span>
         </label>

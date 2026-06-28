@@ -52,6 +52,8 @@ defmodule Ezagent.Behavior.Workspace do
   - `:list_members` — `{:ok, %{members: [URI]}, []}`
   - `:add_member` — args `%{member: URI}` → `{:set, :members, MapSet}` + grant-cap dispatch
   - `:remove_member` — args `%{member: URI}` → `{:set, :members, MapSet}`
+  - `:assign_role` / `:unassign_role` — cap-gated workspace responsibility
+    holder validation; durable assignment + cap binding live in the facade.
   - `:list_templates` — `{:ok, %{templates: map()}, []}`
   - `:add_template` — args `%{name: String, template: map}` → `{:set, :session_templates, map}`
   - `:remove_template` — args `%{name: String}` → `{:set, :session_templates, map}`
@@ -191,6 +193,22 @@ defmodule Ezagent.Behavior.Workspace do
     caps: [:remove_member],
     modes: [:cast, :call],
     description: "remove a user URI from this workspace's member set"
+  )
+
+  action(:assign_role,
+    args: %{responsibility: :string, holder: :uri},
+    returns: %{},
+    caps: [:assign_role],
+    modes: [:call],
+    description: "assign a principal to a workspace responsibility"
+  )
+
+  action(:unassign_role,
+    args: %{responsibility: :string, holder: :uri},
+    returns: %{},
+    caps: [:unassign_role],
+    modes: [:call],
+    description: "remove a principal from a workspace responsibility"
   )
 
   action(:list_templates,
@@ -337,6 +355,8 @@ defmodule Ezagent.Behavior.Workspace do
       list_members: Ezagent.Capability.cap(:workspace, __MODULE__, :list_members),
       add_member: Ezagent.Capability.cap(:workspace, __MODULE__, :add_member),
       remove_member: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_member),
+      assign_role: Ezagent.Capability.cap(:workspace, __MODULE__, :assign_role),
+      unassign_role: Ezagent.Capability.cap(:workspace, __MODULE__, :unassign_role),
       list_templates: Ezagent.Capability.cap(:workspace, __MODULE__, :list_templates),
       add_template: Ezagent.Capability.cap(:workspace, __MODULE__, :add_template),
       remove_template: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_template),
@@ -423,6 +443,28 @@ defmodule Ezagent.Behavior.Workspace do
         revoke_member_create_session_cap_effects(workspace_uri, uri)
 
     {:ok, %{}, effects}
+  end
+
+  @doc "Validate a workspace responsibility assignment. The facade persists it and binds caps after this cap-gated action succeeds."
+  def handle_assign_role(%{responsibility: responsibility, holder: %URI{} = holder}, ctx)
+      when is_binary(responsibility) do
+    with :ok <- validate_responsibility_name(responsibility),
+         :ok <- Members.validate_member_prefix(holder, Map.get(ctx, :self_uri)) do
+      {:ok, %{}, []}
+    end
+  end
+
+  @doc "Validate a workspace responsibility unassignment. The facade removes durable state and revokes bundled caps after this cap-gated action succeeds."
+  def handle_unassign_role(%{responsibility: responsibility, holder: %URI{} = holder}, ctx)
+      when is_binary(responsibility) do
+    with :ok <- validate_responsibility_name(responsibility),
+         :ok <- Members.validate_member_prefix(holder, Map.get(ctx, :self_uri)) do
+      {:ok, %{}, []}
+    end
+  end
+
+  defp validate_responsibility_name(name) when is_binary(name) do
+    if String.trim(name) == "", do: {:error, :empty_responsibility}, else: :ok
   end
 
   # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned cleanup

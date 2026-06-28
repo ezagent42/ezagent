@@ -143,7 +143,7 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # Human-visible note on HOW the page was built this turn — so the operator can
+  # Human-visible note on HOW the page was built this turn — so the internal reader can
   # tell at a glance whether the edit was a cheap incremental patch (and WHICH
   # nodes it touched) or a full rebuild.
   defp mode_narration({:patch, ops}) do
@@ -381,9 +381,9 @@ defmodule EzagentPluginHello.Generator do
   end
 
   # Land the page (page-only turn — NO turn-chat) then announce completion via a
-  # `say` (:session :send). Turn-composed chat does NOT push to the operator
+  # `say` (:session :send). Turn-composed chat does NOT push to the internal
   # LiveView in real time (it only appears on refresh); :session :send DOES. So
-  # the RESULT goes through say to guarantee the operator sees completion live.
+  # the RESULT goes through say to guarantee the internal reader sees completion live.
   # The LLM user message. On a FIRST generation (no current page) it is just the
   # user's request. On a FOLLOW-UP EDIT we hand the model the CURRENT spec and ask
   # it to apply ONLY the requested change, preserving everything else — the page
@@ -648,7 +648,7 @@ defmodule EzagentPluginHello.Generator do
 
   # Console log of the @json-render data that ACTUALLY drives the page — the
   # validated spec landed on the Surface. This is the "what changed the page"
-  # record (title + node count + full JSON tree) the operator asked to see.
+  # record (title + node count + full JSON tree) the internal reader asked to see.
   defp log_spec(%URI{} = session_uri, spec) do
     {title, nodes} = describe_spec(spec)
 

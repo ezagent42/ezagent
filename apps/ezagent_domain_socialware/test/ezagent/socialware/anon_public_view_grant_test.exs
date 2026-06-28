@@ -31,7 +31,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.{Capability, KindRegistry}
-  alias Ezagent.Socialware.{AnonUser, ChatFeed}
+  alias Ezagent.Socialware.{AnonUser, ChatFeed, DefinitionRegistry, Installation}
 
   # NOTE: spawned Session / User Kinds run in their own processes — `use
   # EzagentCore.DataCase, async: false` already shares the sandbox via a
@@ -44,33 +44,53 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
   @workspace "team-alpha"
   @owner_default Ezagent.URI.new!("entity://team-alpha/user/pv-owner")
 
-  # A live session in `team-alpha` whose materializing Template declares
-  # `public_view` per `flag`, optionally with an `owner_uri`. The session +
-  # template share the SAME workspace STRING (`PublicView.validate_template_uri`
-  # requires same-workspace, by string equality — `:team_alpha` (underscore) ≠
-  # `"team-alpha"` (hyphen) would fail closed).
+  # A live session in `team-alpha` with a socialware install whose definition
+  # declares `web_anon_access` per `flag`, optionally with an `owner_uri`.
   defp public_session(flag, owner_uri \\ @owner_default) do
     u = System.unique_integer([:positive])
+    name = "pv-grant-def-#{u}"
 
-    {:ok, tmpl_uri} =
-      SessionTemplate.persist_version_as_system(
-        %{name: "pv-grant-tmpl-#{u}", public_view: flag},
-        @workspace
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(definition(name, flag),
+        workspace_uri: Ezagent.URI.workspace(@workspace)
       )
+
+    content = %{name: "pv-grant-tmpl-#{u}", installs: [name]}
+    {:ok, tmpl_uri} = SessionTemplate.persist_version_as_system(content, @workspace)
 
     session_uri = Ezagent.URI.new!("session://#{@workspace}/default/pv-grant-#{u}")
 
-    spawn_opts = %{uri: session_uri, behaviors: Session.socialware_behaviors()}
+    {:ok, behaviors} =
+      Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
+
+    spawn_opts = %{uri: session_uri, behaviors: behaviors}
     spawn_opts = if owner_uri, do: Map.put(spawn_opts, :owner_uri, owner_uri), else: spawn_opts
 
     {:ok, _pid} = Ezagent.Kind.spawn(Session, spawn_opts)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+
+    :ok =
+      Installation.install_template_installs(
+        session_uri,
+        Ezagent.URI.workspace(@workspace),
+        content,
+        owner_uri || User.admin_uri()
+      )
 
     {:ok, _} =
       ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl_uri})
 
     on_exit(fn -> terminate(Session, session_uri) end)
     session_uri
+  end
+
+  defp definition(name, web_anon_access) do
+    %{
+      name: name,
+      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
+    }
   end
 
   defp spawn_anon_kind(anon_uri) do

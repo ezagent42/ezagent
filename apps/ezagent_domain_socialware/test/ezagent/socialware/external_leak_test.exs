@@ -17,7 +17,7 @@ defmodule Ezagent.Socialware.ExternalLeakTest do
 
   # The external read is now authorized by LIVE membership (anon-user/member),
   # not an identity-less token. A viewer reads as the session owner/member; the
-  # boundary assertions (operator_only never leaks; only committed external) are
+  # boundary assertions (internal never leaks; only committed external) are
   # byte-equivalent — only the AUTH carrier changed from a token to a principal.
   @owner Ezagent.URI.entity(:team_alpha, :user, "external-leak-owner")
 
@@ -37,10 +37,10 @@ defmodule Ezagent.Socialware.ExternalLeakTest do
     %{session: session, workspace: workspace, caller: @owner}
   end
 
-  test "operator-only never reaches an EXTERNAL route; operator route still sees it", ctx do
+  test "internal content never reaches an external route; internal route still sees it", ctx do
     msg =
       Message.new(sender_uri(), %{text: "draft suggestion", attachments: []},
-        visibility: :operator_only
+        visibility: :internal
       )
 
     assert {:ok, _written} = MessageStore.write(msg, ctx.session)

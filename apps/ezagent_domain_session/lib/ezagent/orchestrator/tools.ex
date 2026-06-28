@@ -94,6 +94,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
+  alias Ezagent.Orchestrator.Tools.DefinitionSync
   alias Ezagent.Orchestrator.Tools.Kb
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Migration
@@ -169,7 +170,10 @@ defmodule Ezagent.Orchestrator.Tools do
 
       case join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          {:ok, member_uri}
+          with :ok <-
+                 DefinitionSync.member(session_uri, workspace_uri, caller, member_uri, facets) do
+            {:ok, member_uri}
+          end
 
         {:error, reason} ->
           # spawn-succeeds / join-fails: tear down the worker WE just
@@ -587,9 +591,24 @@ defmodule Ezagent.Orchestrator.Tools do
              },
              ctx: ctx(caller, caps)
            }) do
-        {:ok, %{id: id}} -> {:ok, %{id: id}}
-        {:error, _} = err -> err
-        other -> {:error, {:unexpected_add_rule_result, other}}
+        {:ok, %{id: id}} ->
+          with :ok <-
+                 DefinitionSync.rule(
+                   session_uri,
+                   workspace_uri,
+                   caller,
+                   matcher_json,
+                   receiver_role_name,
+                   add_opts
+                 ) do
+            {:ok, %{id: id}}
+          end
+
+        {:error, _} = err ->
+          err
+
+        other ->
+          {:error, {:unexpected_add_rule_result, other}}
       end
     end
   end
@@ -680,9 +699,16 @@ defmodule Ezagent.Orchestrator.Tools do
              args: %{prompt_templates: merged},
              ctx: ctx(caller, caps)
            }) do
-        {:ok, %{prompt_templates: _} = ok} -> {:ok, ok}
-        {:error, _} = err -> err
-        other -> {:error, {:unexpected_set_prompt_templates_result, other}}
+        {:ok, %{prompt_templates: _} = ok} ->
+          with :ok <- DefinitionSync.prompt_template(session_uri, caller, name, template) do
+            {:ok, ok}
+          end
+
+        {:error, _} = err ->
+          err
+
+        other ->
+          {:error, {:unexpected_set_prompt_templates_result, other}}
       end
     end
   end
@@ -726,9 +752,24 @@ defmodule Ezagent.Orchestrator.Tools do
              args: %{legends: merged},
              ctx: ctx(caller, caps)
            }) do
-        {:ok, %{legends: _} = ok} -> {:ok, ok}
-        {:error, _} = err -> err
-        other -> {:error, {:unexpected_set_legends_result, other}}
+        {:ok, %{legends: _} = ok} ->
+          with :ok <-
+                 DefinitionSync.legend(
+                   session_uri,
+                   caller,
+                   legend_name,
+                   member_role_names,
+                   bound_rule_set,
+                   fold
+                 ) do
+            {:ok, ok}
+          end
+
+        {:error, _} = err ->
+          err
+
+        other ->
+          {:error, {:unexpected_set_legends_result, other}}
       end
     end
   end

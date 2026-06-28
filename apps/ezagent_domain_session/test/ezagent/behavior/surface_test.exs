@@ -77,7 +77,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
              Invoker.invoke_with_effects(Surface, :approve, surface, %{version: 99}, ctx())
   end
 
-  test "operator reads latest while customer reads approved version" do
+  test "internal tree reads latest while external tree reads approved version" do
     tree1 = %{type: "text", props: %{text: "approved"}}
     tree2 = %{type: "text", props: %{text: "draft"}}
 
@@ -102,7 +102,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
         ctx()
       )
 
-    assert Surface.operator_tree(surface) == tree2
+    assert Surface.internal_tree(surface) == tree2
     assert Surface.external_tree(surface) == tree1
   end
 

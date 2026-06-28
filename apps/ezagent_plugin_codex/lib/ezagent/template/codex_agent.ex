@@ -66,7 +66,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     %{
       "model" => Ezagent.Kind.Template.content_field(content, :model),
       "approval_policy" => Ezagent.Kind.Template.content_field(content, :approval_policy),
-      "sandbox" => Ezagent.Kind.Template.content_field(content, :sandbox)
+      "sandbox" => Ezagent.Kind.Template.content_field(content, :sandbox),
+      "role" => Ezagent.Kind.Template.content_field(content, :role)
     }
     |> maybe_put_binary(content, :bridge_ws_url, "bridge_ws_url")
     |> maybe_put_binary(content, :codex_path, "codex_path")

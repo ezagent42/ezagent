@@ -740,6 +740,7 @@ defmodule EzagentPluginWorld.WorldLive do
     session_uri
     |> Ezagent.World.ConversationData.state_for(%{
       caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
       workspace_uri: socket.assigns.current_workspace_uri,
       sessions: sessions
     })

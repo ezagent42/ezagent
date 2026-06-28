@@ -33,7 +33,7 @@ const SKELETON_PAGE = {
 }
 
 // Print the @json-render page data that actually drives the rendered page to the
-// browser DevTools (F12) console — the "useful generated data" an operator wants
+// browser DevTools (F12) console — the "useful generated data" an internal reader wants
 // to inspect. Logs the title, a per-type component count, and the full tree.
 let prevHelloPage = null
 let prevHelloPageJson = null
@@ -183,7 +183,7 @@ function boot(root) {
 
 // The page chrome (input bar + json-render highlight) shows ONLY on the
 // standalone public preview, NOT when the page is EMBEDDED as an iframe inside the
-// world operator console (the operator just wants to SEE the rendered page there).
+// world internal console (the reader just wants to SEE the rendered page there).
 const IS_EMBEDDED = (() => {
   try {
     return window.self !== window.top

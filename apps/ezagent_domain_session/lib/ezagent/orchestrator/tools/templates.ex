@@ -5,6 +5,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Entity.SessionTemplate
+  alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
 
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
@@ -17,6 +18,8 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          :ok <- check_template_write_cap(caps, workspace_uri),
          :ok <- check_parent_alive(parent_uri),
          {:ok, parent_name} <- extract_template_name(parent_uri),
+         {:ok, _definition, _object} <-
+           DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri),
          {:ok, slice} <- build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri) do
       content =
         slice
@@ -48,7 +51,12 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          {:ok, caller_uri} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
          :ok <- check_template_write_cap(caps, workspace_uri),
-         {:ok, slice} <- build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri) do
+         {:ok, _definition, _object} <-
+           DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri,
+             name: new_name
+           ),
+         {:ok, slice} <-
+           build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri, new_name) do
       content =
         slice
         |> Map.put(:name, new_name)
@@ -115,7 +123,13 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   defp publish_current(%URI{} = workspace_uri, template_name, %URI{} = template_uri, caller_uri)
        when is_binary(template_name) do
-    TemplateTags.put(workspace_uri, template_name, "current", template_hash!(template_uri), caller_uri)
+    TemplateTags.put(
+      workspace_uri,
+      template_name,
+      "current",
+      template_hash!(template_uri),
+      caller_uri
+    )
   end
 
   defp template_hash!(%URI{} = uri) do
@@ -289,89 +303,38 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          %URI{} = session_uri,
          %URI{} = workspace_uri,
          %URI{} = _caller_uri,
-         parent_uri
+         parent_uri,
+         install_ref \\ nil
        ) do
     slice = read_chat_slice(session_uri)
 
-    orchestrator_template_uri =
-      Map.get(slice, :orchestrator_template_uri) ||
-        get_in(slice, [:template_working_copy, :orchestrator_template_uri]) ||
-        Ezagent.URI.template(:system, :agent, "cc-orchestrator")
-
-    members = Map.get(slice, :members, %{})
-
-    template_members =
-      members
-      |> Enum.filter(fn {_uri, meta} -> Map.get(meta, :in_session_template) == true end)
-      |> Enum.map(fn {uri, meta} ->
-        %{
-          uri: uri,
-          role_name: Map.get(meta, :role_name),
-          in_session_template: true,
-          source_template_uri: Map.get(meta, :source_template_uri)
-        }
-      end)
-      |> Enum.sort_by(&inspect/1)
-
     content = %{
       description: Map.get(slice, :description, ""),
-      members: template_members,
-      prompt_templates: Map.get(slice, :prompt_templates, %{}),
-      legends: Map.get(slice, :legends, %{}),
-      routing_rules: session_rule_set_rules(session_uri, workspace_uri),
-      orchestrator_template_uri: orchestrator_template_uri,
       default_workspace_uri: workspace_uri,
-      parent_template_uri: parent_uri
+      parent_template_uri: parent_uri,
+      installs:
+        session_uri
+        |> Ezagent.Entity.Session.read_template_working_copy()
+        |> Map.get(:session_template_uri)
+        |> template_installs_or_default(install_ref)
     }
 
     {:ok, content}
   end
 
-  defp session_rule_set_rules(%URI{} = session_uri, %URI{} = _workspace_uri) do
-    table = EzagentDomainInstanceMessage.Routing.MentionRouting
-    session_str = URI.to_string(session_uri)
-    uri_to_role = uri_to_role_map(session_uri)
+  defp template_installs_or_default(_template_uri, install_ref)
+       when is_binary(install_ref) and install_ref != "",
+       do: [install_ref]
 
-    table
-    |> safe_rule_list()
-    |> Enum.filter(fn r -> r.created_by == session_str and not is_nil(r.rule_set) end)
-    |> Enum.flat_map(fn r ->
-      case Ezagent.Routing.Matcher.from_json(r.matcher_data) do
-        {:ok, matcher} ->
-          [
-            %{
-              matcher: matcher,
-              receivers:
-                Enum.map(r.receivers || [], fn rec -> Map.get(uri_to_role, rec, rec) end),
-              rule_set: r.rule_set,
-              position: r.position,
-              prompt_template_ref: r.prompt_template_ref
-            }
-          ]
-
-        _ ->
-          []
-      end
-    end)
-    |> Enum.sort_by(fn r -> {r.rule_set, r.position} end)
+  defp template_installs_or_default(%URI{} = template_uri, _install_ref) do
+    with {:ok, _pid} <- Ezagent.Entity.Session.ensure_template_alive(template_uri),
+         {:ok, content} <- Ezagent.Entity.Session.read_template_content(template_uri) do
+      Ezagent.Socialware.Installation.installs_from_template(content)
+    else
+      _ -> Ezagent.Socialware.Installation.default_installs()
+    end
   end
 
-  defp uri_to_role_map(%URI{} = session_uri) do
-    read_chat_slice(session_uri)
-    |> Map.get(:members, %{})
-    |> Enum.flat_map(fn
-      {%URI{} = uri, %{role_name: role}} when is_binary(role) ->
-        [{Ezagent.URI.stable_key(uri), role}]
-
-      _ ->
-        []
-    end)
-    |> Map.new()
-  end
-
-  defp safe_rule_list(table) do
-    Ezagent.Routing.RuleStore.list(table)
-  rescue
-    _ -> []
-  end
+  defp template_installs_or_default(_template_uri, _install_ref),
+    do: Ezagent.Socialware.Installation.default_installs()
 end

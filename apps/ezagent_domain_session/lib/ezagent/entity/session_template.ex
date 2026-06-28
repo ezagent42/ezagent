@@ -47,6 +47,10 @@ defmodule Ezagent.Entity.SessionTemplate do
         members:                    [map()],
         # `prompt_templates` — the named template map (§3.4): name => template str.
         prompt_templates:           %{optional(String.t()) => String.t()},
+        # `installs` — product/runtime install refs consumed by
+        # `Ezagent.Session.InstallCatalog` during materialization.
+        # P3 built-ins: "chat" and "socialware"; absent preserves "chat".
+        installs:                   [String.t()],
         # `legends` — the §3.6 legend defs: name => %{member_set, bound_rule_set, fold}.
         legends:                    %{optional(String.t()) => map()},
         # `nil` for a PLAIN (orchestrator-less) template — the create flow
@@ -754,14 +758,13 @@ defmodule Ezagent.Entity.SessionTemplate do
   # content key (PR-8 removes the slot tools). Dropping it here means a
   # caller-supplied (string-keyed) `agent_slots` no longer atom-coerces into
   # the persisted content — it is not a template content field.
-  # `public_view` (issue #51, spec §3.5 / OQ-6) — a SessionTemplate-level flag
-  # marking a materialized session anonymously viewable. A content key so a
-  # JSON-boundary (string-keyed) `"public_view"` atom-coerces into persisted
-  # content; `Ezagent.Socialware.PublicView.public_view?/1` reads it back.
+  # `installs` — the P3/P4 socialware composition field. Public anonymous web
+  # access is no longer a SessionTemplate boolean; it is read from the installed
+  # socialware definition's visibility policy.
   @config_atom_keys ~w(name description members prompt_templates legends
                        orchestrator_template_uri routing_rules
                        default_workspace_uri parent_template_uri
-                       version_tag created_by created_at public_view)a
+                       version_tag created_by created_at installs)a
   defp normalize_config_keys(config) do
     Map.new(config, fn
       {k, v} when is_atom(k) ->

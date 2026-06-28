@@ -1,7 +1,7 @@
 defmodule EzagentWeb.Socialware.ChatFeedController do
   @moduledoc """
   Entrypoint for the CHAT external SPA — reachable by an AUTHENTICATED member OR,
-  for a `public_view` session, by an ANONYMOUS visitor (issue #51 §4.1).
+  for a session with an installed web-anonymous socialware, by an ANONYMOUS visitor.
 
   ## Two caller kinds (the route is NO LONGER behind `RequireEntity`)
 
@@ -16,17 +16,17 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
       but assign-or-nil instead of bounce). That principal gets a `ChatFeedAuth` token
       bound to it, exactly as before. No anon identity is minted for a signed-in user.
 
-    * **Anonymous** — no `current_entity_uri`. The page is served ONLY if the
-      session's Template declares `public_view: true`
-      (`Ezagent.Socialware.PublicView.public_view?/1`); a private session bounces to
-      `/login` (preserving the pre-#51 anon-bounce). For a public session the
-      controller mints / reuses a read-only anon-User
+    * **Anonymous** — no `current_entity_uri`. The page is served ONLY if an
+      installed socialware definition declares `web_anon_access: true`
+      (`Ezagent.Socialware.PublicView.web_anon_access?/1`); a private session
+      bounces to `/login` (preserving the pre-#51 anon-bounce). For a public
+      session the controller mints / reuses a read-only anon-User
       (`Ezagent.Socialware.AnonUser`), joins it to the session, drops a signed
       `socialware_anon` cookie, and issues the anon's `ChatFeedAuth` token.
 
   ## The anonymous flow (§4.1, fail-closed)
 
-  1. `PublicView.public_view?/1` gate — a NON-public session never mints an anon and
+  1. `PublicView.web_anon_access?/1` gate — a NON-public session never mints an anon and
      never becomes anon-accessible; it bounces to `/login` (security property #4).
   2. **Returning visitor** — read the signed `socialware_anon` cookie
      (`AnonCookie.verify/2`). The cookie is the integrity-checked handle: verify →
@@ -61,10 +61,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   """
   use EzagentWeb, :controller
 
-  require Logger
-
-  alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeedAuth, PublicView}
-  alias EzagentWeb.Socialware.AnonCookie
+  alias EzagentWeb.Socialware.AnonIngress
 
   @doc """
   Render the chat external SPA shell for `?session_uri=<session://...>`.
@@ -82,193 +79,22 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   def show(conn, _params), do: bad_request(conn, "missing session_uri")
 
-  # --- caller resolution -------------------------------------------------
-
   defp resolve_caller(conn, session_uri) do
-    case optional_current_entity(conn) do
-      %URI{} = principal_uri ->
-        # Signed-in member — unchanged behaviour, no anon identity.
-        render_spa(conn, session_uri, principal_uri)
-
-      nil ->
-        resolve_anonymous(conn, session_uri)
+    case AnonIngress.resolve_caller(conn, session_uri) do
+      {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri)
+      {:error, _reason} -> bounce(conn)
     end
-  end
-
-  defp resolve_anonymous(conn, session_uri) do
-    # Cold-link revival (mirrors customer_controller): rehydrate a cold public
-    # session from its snapshot so the `public_view?/1` gate sees a live slice
-    # instead of bouncing a still-public-but-cold link to /login. ensure_live only
-    # wakes a session that HAS a snapshot; access stays gated by public_view?
-    # below (a revived non-public session still bounces).
-    _ = Ezagent.SpawnRegistry.ensure_live(session_uri)
-
-    # Public-view gate FIRST — a non-public session never mints an anon and never
-    # becomes anon-accessible. Bounce exactly as the pre-#51 RequireEntity did.
-    if PublicView.public_view?(session_uri) do
-      case reuse_or_mint(conn, session_uri) do
-        {:ok, conn, anon_uri} -> render_spa(conn, session_uri, anon_uri)
-        {:error, _reason} -> bounce(conn)
-      end
-    else
-      bounce(conn)
-    end
-  end
-
-  # Returning visitor (valid cookie) → reuse; tampered/missing/reaping → mint fresh.
-  defp reuse_or_mint(conn, session_uri) do
-    case read_valid_cookie(conn, session_uri) do
-      {:ok, anon_uri} ->
-        case AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now()) do
-          {:ok, _row} ->
-            # Ensure the Kind is live (demand-spawn) so the live channel read works
-            # and a returning visitor whose Kind was GC-terminated still reads.
-            :ok = Ezagent.Entity.spawn_principal(anon_uri)
-            {:ok, conn, anon_uri}
-
-          {:error, {:reaping, _}} ->
-            # The binding is being torn down by the GC sweeper — do NOT resurrect
-            # it; mint a fresh anon identity (design §4.1a).
-            mint_fresh(conn, session_uri)
-
-          {:error, _reason} ->
-            # Mismatch / write lost / non-anon — fail closed by minting fresh.
-            mint_fresh(conn, session_uri)
-        end
-
-      :error ->
-        mint_fresh(conn, session_uri)
-    end
-  end
-
-  defp mint_fresh(conn, session_uri) do
-    # `mint_for_public_session/1` re-checks `public_view?` and mints the anon
-    # holding ITS OWN narrow `session.join` cap (granted_by the session owner —
-    # Decision #154, no `system://` principal). `spawn_principal` then hydrates
-    # that cap from caps_json into the live `:caps` slice BEFORE the join, so the
-    # anon joins under its own authority.
-    with {:ok, anon_uri} <- AnonUser.mint_for_public_session(session_uri),
-         :ok <- Ezagent.Entity.spawn_principal(anon_uri),
-         {:ok, _row} <- AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now()),
-         :ok <- join_anon(session_uri, anon_uri),
-         {:ok, cookie_value} <- AnonCookie.sign(anon_uri, session_uri) do
-      {:ok, put_anon_cookie(conn, cookie_value), anon_uri}
-    else
-      other ->
-        Logger.warning(
-          "ChatFeedController: anon mint/join failed for " <>
-            "#{URI.to_string(session_uri)}: #{inspect(other)}"
-        )
-
-        {:error, other}
-    end
-  end
-
-  # `session.join` dispatched AS THE ANON ITSELF — no `system://` principal. The
-  # anon was minted (`AnonUser.mint_for_public_session/1`) holding exactly one
-  # `cap(:session, Behavior.Session, :join, instance: <session>)` whose
-  # `granted_by` is the session owner (Decision #154). Step 5.5
-  # (`granted_via_holds_cap?`) reads that cap from the anon's own `:caps` slice,
-  # so the anon is a self-sufficient caller. `:call` so membership is committed
-  # before we render the SPA (the live channel re-reads it on connect).
-  defp join_anon(session_uri, anon_uri) do
-    target = Ezagent.URI.with_action(session_uri, :session, :join)
-
-    result =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :call,
-        args: %{member: anon_uri},
-        ctx: %{
-          caller: anon_uri,
-          reply: :ignore
-        }
-      })
-
-    case result do
-      :ok -> mount_anon_participation(session_uri, anon_uri)
-      {:ok, _} -> mount_anon_participation(session_uri, anon_uri)
-      {:error, _} = err -> err
-    end
-  end
-
-  # #154 PR-甲-2 §A — mount the per-class participation tier on the anon AFTER a
-  # successful join (caller-side; the helper resolves `Users.confirmed?` from the
-  # DB and grants the UNCONFIRMED tier — `Publisher.SessionImpl.:subscribe_from`,
-  # read-only, no `:send`). Best-effort: a failed mount degrades the anon to
-  # "observe via membership", it does not break the page. Returns `:ok` so the
-  # `with` chain in `mint_fresh/2` continues to cookie + render.
-  defp mount_anon_participation(%URI{} = session_uri, %URI{} = anon_uri) do
-    _ =
-      Ezagent.Behavior.Session.Membership.mount_participation_caps(
-        session_uri,
-        anon_uri
-      )
-
-    :ok
   end
 
   # --- the SPA shell -----------------------------------------------------
 
   defp render_spa(conn, session_uri, caller_uri) do
-    token = ChatFeedAuth.issue_token(caller_uri, session_uri)
+    token = Ezagent.Socialware.ChatFeedAuth.issue_token(caller_uri, session_uri)
 
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(200, page(session_uri, token))
   end
-
-  # --- cookie + optional-auth helpers ------------------------------------
-
-  # Recover a signed-in principal from the `:browser` session WITHOUT bouncing — the
-  # public route has no RequireEntity to populate `assigns.current_entity_uri`, so we
-  # validate the cookie here exactly as RequireEntity does (entity scheme + user/agent
-  # type) but return the URI or nil instead of redirecting.
-  defp optional_current_entity(conn) do
-    case get_session(conn, :current_entity_uri) do
-      uri_str when is_binary(uri_str) ->
-        try do
-          case Ezagent.URI.new!(uri_str) do
-            %URI{} = uri ->
-              if Ezagent.URI.scheme?(uri, :entity) and
-                   match?({:ok, kind} when kind in ["user", "agent"], Ezagent.URI.type(uri)) do
-                uri
-              else
-                nil
-              end
-
-            _ ->
-              nil
-          end
-        rescue
-          ArgumentError -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp read_valid_cookie(conn, session_uri) do
-    conn = fetch_cookies(conn)
-
-    case Map.get(conn.cookies, AnonCookie.cookie_name()) do
-      value when is_binary(value) -> AnonCookie.verify(value, session_uri)
-      _ -> :error
-    end
-  end
-
-  defp put_anon_cookie(conn, value) do
-    put_resp_cookie(conn, AnonCookie.cookie_name(), value,
-      http_only: true,
-      secure: secure_cookie?(conn),
-      same_site: "Lax"
-    )
-  end
-
-  # Secure flag follows the connection scheme so the cookie works over plain HTTP in
-  # dev/test (where `conn.scheme == :http`) but is Secure in production HTTPS.
-  defp secure_cookie?(conn), do: conn.scheme == :https
 
   # --- parsing + responses -----------------------------------------------
 

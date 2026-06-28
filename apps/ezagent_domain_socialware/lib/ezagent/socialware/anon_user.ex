@@ -117,7 +117,7 @@ defmodule Ezagent.Socialware.AnonUser do
   """
   @spec mint_for_public_session(URI.t()) :: {:ok, URI.t()} | {:error, term()}
   def mint_for_public_session(%URI{scheme: "session"} = session_uri) do
-    if Ezagent.Socialware.PublicView.public_view?(session_uri) do
+    if Ezagent.Socialware.PublicView.web_anon_access?(session_uri) do
       with {:ok, workspace_name} <- workspace_name(session_uri) do
         anon_uri = Ezagent.URI.entity(workspace_name, :user, anon_name())
 

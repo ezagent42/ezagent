@@ -126,10 +126,11 @@ defmodule EzagentWeb.Router do
     get "/socialware/customer/download", Socialware.ExternalFeedController, :legacy_download
 
     # #51 §4.1 — the CHAT external SPA. MOVED OUT of the RequireEntity scope into
-    # the public `:browser` scope so an anonymous visitor can VIEW a `public_view`
-    # session. The controller resolves the caller itself: a still-signed-in member
+    # the public `:browser` scope so an anonymous visitor can view a session with
+    # web-anonymous socialware installed. The controller resolves the caller itself:
+    # a still-signed-in member
     # (recovered via `optional_current_entity/1`) gets a token for that principal;
-    # an anonymous visitor to a `Ezagent.Socialware.PublicView.public_view?/1`
+    # an anonymous visitor to a `Ezagent.Socialware.PublicView.web_anon_access?/1`
     # session is minted a read-only anon-User (cookie-bound) and joined; an
     # anonymous visitor to a PRIVATE session bounces to /login (the gate is the
     # public-view check, NOT a plug). The live ChatMembership re-check at the

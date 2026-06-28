@@ -25,7 +25,7 @@ defmodule EzagentPluginHello.Application do
 
   Only `plugin_info/0` is declared so far — a minimal, compilable, gate-passing
   plugin shell. The builder agent (`template_classes/0` + `agent_flavors/0`), the
-  operator `PageView` registration, and the Turn/Surface generation wiring land
+  internal `PageView` registration, and the Turn/Surface generation wiring land
   in the following Phase-0 steps (0.2–0.5). Every other `Ezagent.Plugin`
   callback keeps its `use`-macro default (`[]` / `nil` / `:ok`).
   """
@@ -38,7 +38,7 @@ defmodule EzagentPluginHello.Application do
   @impl Application
   def start(_type, _args) do
     result = Ezagent.Plugin.boot(__MODULE__)
-    # Register the operator @json-render page view (un-degrades the console's
+    # Register the internal @json-render page view (un-degrades the console's
     # render of a hello session). The registry is init'd by ezagent_domain_ui,
     # which boots before this plugin (a declared dep).
     _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
@@ -47,7 +47,7 @@ defmodule EzagentPluginHello.Application do
 
   # Phase 2 — register the `session.hello` Template Class so a hello app is
   # creatable through the substrate's generic Tier-3 create path (the one world's
-  # operator console drives via `session.create`). No world edit — world creates
+  # internal console drives via `session.create`). No world edit — world creates
   # any registered session type generically.
   @impl Ezagent.Plugin
   def template_classes, do: [EzagentPluginHello.Template.HelloSession]

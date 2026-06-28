@@ -275,6 +275,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     test "rejects entity URI with trailing slash" do
       workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+
       member_uri = %URI{
         scheme: "entity",
         host: "user",
@@ -516,7 +517,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 12 actions" do
+    test "actions/0 lists all 14 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
       # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
@@ -528,10 +529,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # member-management ones is an escalation surface).
       # Task #55 round-2 codex HIGH-2 added `:remove_cross_prefix_members`
       # as the 12th — dispatch-owned cleanup of legacy violators.
+      # Socialware P9 added `:assign_role` / `:unassign_role` for durable
+      # workspace responsibility holder assignment.
       assert WB.actions() == [
                :list_members,
                :add_member,
                :remove_member,
+               :assign_role,
+               :unassign_role,
                :list_templates,
                :add_template,
                :remove_template,

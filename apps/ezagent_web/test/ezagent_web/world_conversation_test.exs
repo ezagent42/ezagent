@@ -953,7 +953,10 @@ defmodule EzagentWeb.WorldConversationTest do
     end
   end
 
-  test "world template save persists public_view and created sessions are public", %{conn: conn} do
+  test "world template save persists installs and created sessions allow web anon access", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
     template_name = "world-public-#{System.unique_integer([:positive])}"
     session_name = "world-public-session-#{System.unique_integer([:positive])}"
 
@@ -967,7 +970,7 @@ defmodule EzagentWeb.WorldConversationTest do
         "template" => %{
           "name" => template_name,
           "description" => "Public socialware template",
-          "public_view" => true
+          "installs" => ["socialware"]
         }
       }
     })
@@ -976,7 +979,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
     assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
-    assert Map.get(content, :public_view) == true
+    assert Map.get(content, :installs) == ["socialware"]
 
     view
     |> element("#world-root")
@@ -989,7 +992,102 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     assert_patch(view, "/sessions?session=#{encoded}")
-    assert Ezagent.Socialware.PublicView.public_view?(session_uri)
+    assert Ezagent.Socialware.PublicView.web_anon_access?(session_uri)
+  end
+
+  test "P7: world form authors a complete socialware definition and publishes current", %{
+    conn: conn
+  } do
+    template_name = "world-author-#{System.unique_integer([:positive])}"
+    socialware_name = "#{template_name}-app"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/workspaces/system")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "workspace.template.save",
+      "args" => %{
+        "template" => %{
+          "name" => template_name,
+          "description" => "Full socialware authoring",
+          "socialware" => %{
+            "name" => socialware_name,
+            "bases" => [
+              "Ezagent.Behavior.Session",
+              "Ezagent.Behavior.Publisher.SessionImpl"
+            ],
+            "shape" => [
+              "Ezagent.Behavior.Turn",
+              "Ezagent.Behavior.Surface"
+            ],
+            "members" => [
+              %{
+                "uri" => "entity://system/agent/bot",
+                "role_name" => "bot",
+                "in_session_template" => true
+              }
+            ],
+            "routing_rules" => [
+              %{
+                "matcher" => %{"type" => "always"},
+                "receivers" => ["bot"],
+                "rule_set" => "default",
+                "position" => 0,
+                "prompt_template_ref" => "answer"
+              }
+            ],
+            "prompt_templates" => %{"answer" => "Use the KB context."},
+            "legends" => %{
+              "support" => %{
+                "member_set" => ["bot"],
+                "bound_rule_set" => "default",
+                "fold" => false
+              }
+            },
+            "adapters" => [
+              %{"adapter_id" => "web_feed", "role" => "customer", "config" => %{}}
+            ],
+            "visibility_policy" => %{
+              "publish_policy" => "supervised",
+              "web_anon_access" => true
+            }
+          }
+        }
+      }
+    })
+
+    assert_push_event(view, "world:state", %{
+      "template_notice" => "template_saved",
+      "last_socialware_ref" => ^socialware_name
+    })
+
+    assert {:ok, definition, _object} =
+             Ezagent.Socialware.DefinitionRegistry.lookup(
+               Ezagent.URI.workspace(:system),
+               socialware_name
+             )
+
+    assert [%{"role_name" => "bot"}] = definition.members
+    assert [%{"adapter_id" => "web_feed"}] = definition.adapters
+    assert definition.prompt_templates == %{"answer" => "Use the KB context."}
+    assert Map.has_key?(definition.legends, "support")
+    assert definition.visibility_policy == %{publish_policy: :supervised, web_anon_access: true}
+
+    assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
+    assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+    assert Map.get(content, :installs) == [socialware_name]
+    refute Map.has_key?(content, :members)
+    refute Map.has_key?(content, :routing_rules)
+
+    expected_hash = template_hash(template_uri)
+
+    assert {:ok, ^expected_hash} =
+             Ezagent.TemplateTags.resolve(
+               Ezagent.URI.workspace(:system),
+               template_name,
+               "current"
+             )
   end
 
   # --- helpers ----------------------------------------------------------
@@ -1005,6 +1103,13 @@ defmodule EzagentWeb.WorldConversationTest do
       if String.starts_with?(uri_str, prefix), do: Ezagent.URI.new!(uri_str)
     end) ||
       flunk("expected live SessionTemplate with prefix #{prefix}")
+  end
+
+  defp template_hash(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.name!()
+    |> String.split("@", parts: 2)
+    |> List.last()
   end
 
   defp world_state(view) do

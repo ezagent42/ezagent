@@ -54,7 +54,13 @@ defmodule Ezagent.World.WorkspacePluginData do
     Map.put(base, "plugins", list_plugins())
   end
 
-  defp component_state(%{component: "profile"}, base, _workspace_uri, %URI{} = caller_uri, caller_caps) do
+  defp component_state(
+         %{component: "profile"},
+         base,
+         _workspace_uri,
+         %URI{} = caller_uri,
+         caller_caps
+       ) do
     # Every world route is behind `live_session :world_require_entity`
     # (`LiveAuth.:require_entity` redirects+halts a nil entity), so the profile
     # caller is ALWAYS a real authenticated entity. Let it crash on the
@@ -186,7 +192,7 @@ defmodule Ezagent.World.WorkspacePluginData do
         "source" => "workspace_template",
         "class" => template_class(template),
         "members_count" => template_member_count(template),
-        "public_view" => public_view?(template),
+        "web_anon_access" => web_anon_access?(template),
         "status" => template_status(template),
         "body" => jsonable(template)
       }
@@ -208,7 +214,7 @@ defmodule Ezagent.World.WorkspacePluginData do
             "alive" => is_pid(pid) and Process.alive?(pid),
             "description" => template_description(content),
             "members_count" => template_member_count(content),
-            "public_view" => public_view?(content),
+            "web_anon_access" => web_anon_access?(content),
             "status" => "session_template",
             "body" => jsonable(content)
           }
@@ -242,8 +248,12 @@ defmodule Ezagent.World.WorkspacePluginData do
     |> List.first()
   end
 
-  defp template_description(%{description: description}) when is_binary(description), do: description
-  defp template_description(%{"description" => description}) when is_binary(description), do: description
+  defp template_description(%{description: description}) when is_binary(description),
+    do: description
+
+  defp template_description(%{"description" => description}) when is_binary(description),
+    do: description
+
   defp template_description(_), do: nil
 
   defp template_class(%{"class" => class}) when is_binary(class), do: class
@@ -253,9 +263,34 @@ defmodule Ezagent.World.WorkspacePluginData do
   defp template_member_count(%{members: members}) when is_list(members), do: length(members)
   defp template_member_count(_), do: 0
 
-  defp public_view?(%{public_view: true}), do: true
-  defp public_view?(%{"public_view" => true}), do: true
-  defp public_view?(_), do: false
+  defp web_anon_access?(content) when is_map(content) do
+    content
+    |> installs()
+    |> Enum.any?(&socialware_web_anon_access?/1)
+  end
+
+  defp web_anon_access?(_), do: false
+
+  defp installs(content) do
+    case Map.get(content, :installs) || Map.get(content, "installs") do
+      installs when is_list(installs) -> installs
+      _ -> []
+    end
+  end
+
+  defp socialware_web_anon_access?(ref) when is_binary(ref) do
+    case Ezagent.Socialware.DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), ref) do
+      {:ok, definition, _object} ->
+        definition.visibility_policy.web_anon_access == true
+
+      :error ->
+        false
+    end
+  end
+
+  defp socialware_web_anon_access?(%{"ref" => ref}), do: socialware_web_anon_access?(ref)
+  defp socialware_web_anon_access?(%{ref: ref}), do: socialware_web_anon_access?(ref)
+  defp socialware_web_anon_access?(_), do: false
 
   defp template_status(%{"class" => class}) when is_binary(class) do
     case Ezagent.TemplateRegistry.lookup(class) do

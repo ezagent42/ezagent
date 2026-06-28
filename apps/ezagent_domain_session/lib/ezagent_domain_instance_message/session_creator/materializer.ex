@@ -3,6 +3,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
 
   alias Ezagent.Invocation
   alias Ezagent.Entity.Session
+  alias Ezagent.Socialware.DefinitionEditor
 
   # Write `orchestrator_template_uri` + `session_template_uri` to the
   # session's durable working copy before the orchestrator can join.
@@ -37,7 +38,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       prior
       |> Map.drop([:orchestrator_template_uri, :orchestrator_uri])
       |> Map.put(:session_template_uri, session_template_uri)
-      |> Map.put(:member_declarations, template_members_of(template_content))
+      |> Map.put(
+        :member_declarations,
+        member_declarations(template_content, session_template_uri)
+      )
 
     case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
@@ -339,10 +343,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     end)
   end
 
-  defp template_members_of(content) when is_map(content) do
-    case Map.get(content, :members) || Map.get(content, "members") do
-      list when is_list(list) -> list
-      _ -> []
+  defp member_declarations(content, %URI{} = session_template_uri) when is_map(content) do
+    workspace_uri = Ezagent.URI.workspace_of(session_template_uri)
+
+    case DefinitionEditor.member_declarations_for_template(content, workspace_uri) do
+      {:ok, members} -> members
+      {:error, _} -> []
     end
   end
 end

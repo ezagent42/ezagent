@@ -12,8 +12,8 @@ defmodule Ezagent.AgentBridge.Socket do
 
   alias Ezagent.AgentBridge.TokenStore
 
-  channel "agent_bridge:*", Ezagent.AgentBridge.Channel
-  channel "cc:bridge:*", Ezagent.AgentBridge.Channel
+  channel("agent_bridge:*", Ezagent.AgentBridge.Channel)
+  channel("cc:bridge:*", Ezagent.AgentBridge.Channel)
 
   @impl true
   def connect(params, socket, _connect_info) do
@@ -24,12 +24,7 @@ defmodule Ezagent.AgentBridge.Socket do
          {:ok, token} <- Map.fetch(params, "token"),
          {:ok, agent_uri} <- safe_parse_uri(agent_uri_str),
          :ok <- verify_token(agent_uri, token) do
-      socket =
-        socket
-        |> assign(:agent_uri, agent_uri)
-        |> assign(:authed_at, DateTime.utc_now())
-
-      {:ok, socket}
+      {:ok, assign_authenticated_bridge(socket, agent_uri, token)}
     else
       _ -> :error
     end
@@ -37,6 +32,13 @@ defmodule Ezagent.AgentBridge.Socket do
 
   @impl true
   def id(socket), do: "agent_bridge:" <> URI.to_string(socket.assigns.agent_uri)
+
+  defp assign_authenticated_bridge(socket, agent_uri, token) do
+    socket
+    |> assign(:agent_uri, agent_uri)
+    |> assign(:bridge_token, token)
+    |> assign(:authed_at, DateTime.utc_now())
+  end
 
   defp safe_parse_uri(s) when is_binary(s) do
     {:ok, Ezagent.URI.new!(s)}

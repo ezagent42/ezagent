@@ -40,6 +40,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
 
   alias Ezagent.KindRegistry
+  alias Ezagent.Socialware.{DefinitionEditor, Installation}
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
@@ -327,45 +328,46 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # half-start the SPEC forbids. A COMPLETE session is returned
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
-    case Ezagent.Kind.spawn(Session, %{
-           uri: session_uri,
-           owner_uri: effective_owner,
-           # P5-0b: explicit chat behavior set → non-nil :kind_base (scoped
-           # guard). P5-1b: `Session.behaviors/0` is now the UNION, so this
-           # passes `chat_behaviors/0` (the chat subset) — selects
-           # {Session, Publisher, ExternalMirror}, excludes Turn/Surface so the
-           # P1 per-instance gate denies them on chat instances.
-           behaviors: Session.chat_behaviors()
-         }) do
-      {:ok, _pid} ->
-        finalize_fresh_session(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+    with {:ok, behaviors} <-
+           Installation.behavior_set_for_template(template_content, workspace_uri) do
+      case Ezagent.Kind.spawn(Session, %{
+             uri: session_uri,
+             owner_uri: effective_owner,
+             # P4 socialware-unification: the SessionTemplate's `installs`
+             # field resolves through ConfigStore-backed socialware definitions
+             # and selects the explicit per-instance behavior set.
+             behaviors: behaviors
+           }) do
+        {:ok, _pid} ->
+          finalize_fresh_session(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, {:already_started, _pid}} ->
-        verify_or_recreate(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+        {:error, {:already_started, _pid}} ->
+          verify_or_recreate(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, {:already_registered, _}} ->
-        verify_or_recreate(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+        {:error, {:already_registered, _}} ->
+          verify_or_recreate(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -381,7 +383,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          template_content
        ) do
     if session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
-      {:ok, session_uri, %{}}
+      case Installation.install_template_installs(
+             session_uri,
+             workspace_uri,
+             template_content,
+             effective_owner
+           ) do
+        :ok -> {:ok, session_uri, %{}}
+        {:error, reason} -> {:error, reason}
+      end
     else
       Logger.warning(
         "EzagentDomainInstanceMessage.SessionCreator.create_session: existing session=" <>
@@ -421,25 +431,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    case Ezagent.Kind.spawn(Session, %{
-           uri: session_uri,
-           owner_uri: effective_owner,
-           # P5-0b: explicit chat behavior set on the recreate-after-rollback
-           # path too → non-nil :kind_base. P5-1b: now the chat SUBSET of the
-           # union (`chat_behaviors/0`), not the union itself.
-           behaviors: Session.chat_behaviors()
-         }) do
-      {:ok, _pid} ->
-        finalize_fresh_session(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+    with {:ok, behaviors} <-
+           Installation.behavior_set_for_template(template_content, workspace_uri) do
+      case Ezagent.Kind.spawn(Session, %{
+             uri: session_uri,
+             owner_uri: effective_owner,
+             behaviors: behaviors
+           }) do
+        {:ok, _pid} ->
+          finalize_fresh_session(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, reason} ->
-        {:error, {:recreate_after_incomplete_failed, reason}}
+        {:error, reason} ->
+          {:error, {:recreate_after_incomplete_failed, reason}}
+      end
     end
   end
 
@@ -449,7 +459,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # provisioned lazily by routing and are NOT part of create completeness.
   defp session_complete?(
          %URI{} = session_uri,
-         %URI{} = _workspace_uri,
+         %URI{} = workspace_uri,
          %URI{} = owner_uri,
          template_content
        ) do
@@ -458,9 +468,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     wc = Session.read_template_working_copy(session_uri)
 
     declarations =
-      case Map.get(template_content, :members) || Map.get(template_content, "members") do
-        list when is_list(list) -> Enum.filter(list, &template_member_declaration?/1)
-        _ -> []
+      case DefinitionEditor.member_declarations_for_template(template_content, workspace_uri) do
+        {:ok, list} -> Enum.filter(list, &template_member_declaration?/1)
+        {:error, _} -> []
       end
 
     bound? and owner_member? and
@@ -534,6 +544,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
              Materializer.grant_owner_participant_teardown_cap(
                effective_owner,
                workspace_uri
+             ),
+           :ok <-
+             Installation.install_template_installs(
+               session_uri,
+               workspace_uri,
+               template_content,
+               effective_owner
              ),
            :ok <-
              materialize_template_team(

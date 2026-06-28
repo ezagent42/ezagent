@@ -51,7 +51,7 @@ defmodule Ezagent.Socialware.ChatFeed do
       so the chat_feed authz and `SocialwarePublisherRead` stay byte-equivalent
       on the security boundary;
     * per-message visibility — only `:external_visible` messages are projected
-      (an `:operator_only` chat message is dropped from the external read).
+      (an `:internal` chat message is dropped from the external read).
   """
 
   alias Ezagent.MessageStore
@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.ChatFeed do
   @doc """
   Project a list of chat `%Message{}`s into the json-render `external_tree`
   shape the customer SPA renders: a `stack` container whose children are one
-  `text` node per `:external_visible` message (in input order). `:operator_only`
+  `text` node per `:external_visible` message (in input order). `:internal`
   messages are filtered out (per-message visibility — they never leak to the
   external read). Pure + deterministic.
   """
@@ -78,7 +78,7 @@ defmodule Ezagent.Socialware.ChatFeed do
     %{type: "container", props: %{layout: "stack"}, children: children}
   end
 
-  defp external_visible?(%{visibility: :operator_only}), do: false
+  defp external_visible?(%{visibility: :internal}), do: false
   defp external_visible?(_message), do: true
 
   defp text_node(message) do

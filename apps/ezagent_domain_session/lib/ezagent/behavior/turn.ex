@@ -243,7 +243,7 @@ defmodule Ezagent.Behavior.Turn do
     turn = %{
       trigger: trigger,
       owner: ctx.caller,
-      mode: :auto,
+      mode: publish_mode(ctx),
       expected: MapSet.new(),
       collected: %{},
       result: [],
@@ -460,7 +460,7 @@ defmodule Ezagent.Behavior.Turn do
 
   defp hold_visibility(%{result: %{message_ids: message_ids}})
        when is_list(message_ids) and message_ids != [] do
-    {:ok, _count} = Ezagent.MessageStore.mark_visibility(message_ids, :operator_only)
+    {:ok, _count} = Ezagent.MessageStore.mark_visibility(message_ids, :internal)
     :ok
   end
 
@@ -613,7 +613,15 @@ defmodule Ezagent.Behavior.Turn do
   defp write_chat_message_from_ref(_ref, _turn, _ctx), do: []
 
   defp initial_visibility(%{mode: :auto}), do: :external_visible
-  defp initial_visibility(_turn), do: :operator_only
+  defp initial_visibility(_turn), do: :internal
+
+  defp publish_mode(%{self_uri: %URI{} = session_uri}) do
+    Ezagent.Socialware.Installation.publish_policy(session_uri)
+  rescue
+    DBConnection.OwnershipError -> :auto
+  end
+
+  defp publish_mode(_ctx), do: :auto
 
   defp next_surface_version(ctx) do
     ctx

@@ -106,6 +106,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     # per-agent dir under the ezagent home. Non-cc test flavors ignore cwd.
     autosvc_cwd =
       Keyword.get(opts, :autoservice_cwd, default_autoservice_cwd(ws, autosvc_agent))
+
     # kb-agent flavor: `native` on the live node (kb = role `kb` × flavor
     # `native`, per EzagentPluginKb.Application). The test passes its own
     # registered flavor.
@@ -282,9 +283,15 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
   defp ensure_workspace(ws) do
     case Workspace.create(ws, %{}) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-      {:error, :already_exists} -> :ok
+      {:ok, _} ->
+        :ok
+
+      {:error, {:already_started, _}} ->
+        :ok
+
+      {:error, :already_exists} ->
+        :ok
+
       # Workspace.create may report an existing ws in several shapes; treat a
       # live/persisted workspace as success.
       other ->
@@ -410,21 +417,38 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
   end
 
-  # Create a LIVE public_view session in the current BEAM (recipe §2: the
+  # Create a LIVE anonymous-web-access session in the current BEAM (recipe §2: the
   # public controller gates on the live session slice before join, so the
   # session must be live in the serving node). Idempotent.
   defp ensure_public_view_session(ws, short) do
     session_uri = EzUri.new!("session://#{ws}/default/#{short}")
+    definition_name = "autosvc-#{short}"
+
+    {:ok, _} =
+      Ezagent.Socialware.DefinitionRegistry.seed_definition_if_absent(
+        %{
+          name: definition_name,
+          bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+          shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+          visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+        },
+        workspace_uri: Ezagent.URI.workspace(ws)
+      )
+
+    content = %{name: "autosvc-#{short}", installs: [definition_name]}
 
     {:ok, tmpl} =
-      Ezagent.Entity.SessionTemplate.persist_version_as_system(
-        %{name: "autosvc-#{short}", public_view: true},
-        ws
+      Ezagent.Entity.SessionTemplate.persist_version_as_system(content, ws)
+
+    {:ok, behaviors} =
+      Ezagent.Socialware.Installation.behavior_set_for_template(
+        content,
+        Ezagent.URI.workspace(ws)
       )
 
     case Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
            uri: session_uri,
-           behaviors: Ezagent.Entity.Session.socialware_behaviors()
+           behaviors: behaviors
          }) do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
@@ -432,6 +456,14 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+
+    :ok =
+      Ezagent.Socialware.Installation.install_template_installs(
+        session_uri,
+        Ezagent.URI.workspace(ws),
+        content,
+        Ezagent.Entity.User.admin_uri()
+      )
 
     {:ok, _} =
       Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{

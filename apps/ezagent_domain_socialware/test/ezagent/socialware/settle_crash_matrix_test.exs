@@ -61,7 +61,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
 
     msg =
       Message.new(sender_uri(), %{text: "answer bubble", attachments: []},
-        visibility: :operator_only
+        visibility: :internal
       )
 
     assert {:ok, msg} = MessageStore.write(msg, ctx.session)

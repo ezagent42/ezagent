@@ -6,7 +6,16 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
-  alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeed, ChatFeedAuth}
+
+  alias Ezagent.Socialware.{
+    AnonBinding,
+    AnonUser,
+    ChatFeed,
+    ChatFeedAuth,
+    DefinitionRegistry,
+    Installation
+  }
+
   alias EzagentWeb.SessionPrincipal
   alias EzagentWeb.Socialware.AnonCookie
 
@@ -28,18 +37,40 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
   defp u, do: System.unique_integer([:positive])
 
   defp public_session do
-    {:ok, tmpl} =
-      SessionTemplate.persist_version_as_system(
-        %{name: "takeover-pub-#{u()}", public_view: true},
-        "team-alpha"
+    u = u()
+    definition_name = "takeover-def-#{u}"
+
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(
+        %{
+          name: definition_name,
+          bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+          shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+          visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+        },
+        workspace_uri: Ezagent.URI.workspace("team-alpha")
       )
+
+    content = %{name: "takeover-pub-#{u}", installs: [definition_name]}
+    {:ok, tmpl} = SessionTemplate.persist_version_as_system(content, "team-alpha")
 
     uri = Ezagent.URI.new!("session://team-alpha/default/takeover-#{u()}")
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.socialware_behaviors()})
+    {:ok, behaviors} =
+      Installation.behavior_set_for_template(content, Ezagent.URI.workspace("team-alpha"))
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: behaviors})
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+
+    :ok =
+      Installation.install_template_installs(
+        uri,
+        Ezagent.URI.workspace("team-alpha"),
+        content,
+        Ezagent.Entity.User.admin_uri()
+      )
+
     {:ok, _} = ConfigActions.system_set_working_copy(uri, %{session_template_uri: tmpl})
 
     on_exit(fn -> terminate(uri) end)

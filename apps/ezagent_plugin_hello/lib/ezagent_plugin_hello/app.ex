@@ -12,8 +12,9 @@ defmodule EzagentPluginHello.App do
   """
 
   alias Ezagent.{Capability, Invocation, WorkspaceRegistry}
-  alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
+  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
   @doc """
   Idempotently create the hello app: a `public_view` SessionTemplate, a live
@@ -25,15 +26,22 @@ defmodule EzagentPluginHello.App do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     builder_uri = Ezagent.URI.entity(ws, :agent, "hello_#{name}")
     workspace = Capability.workspace_of(session_uri)
+    socialware_name = "hello-#{name}"
+    content = %{name: socialware_name, installs: [socialware_name]}
 
-    with {:ok, tmpl} <-
-           SessionTemplate.persist_version_as_system(
-             %{name: "hello-#{name}", public_view: true},
-             ws
-           ),
+    with {:ok, _} <- seed_hello_definition(ws, socialware_name),
+         {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
+         {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <-
-           spawn_kind(Session, %{uri: session_uri, behaviors: Session.socialware_behaviors()}),
+           spawn_kind(Session, %{uri: session_uri, behaviors: behaviors}),
          :ok <- bind_workspace(session_uri, workspace),
+         :ok <-
+           Installation.install_template_installs(
+             session_uri,
+             workspace,
+             content,
+             User.admin_uri()
+           ),
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
          :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}),
@@ -49,6 +57,30 @@ defmodule EzagentPluginHello.App do
   end
 
   # --- internals --------------------------------------------------------
+
+  defp seed_hello_definition(ws, name) do
+    DefinitionRegistry.seed_definition_if_absent(
+      %{
+        name: name,
+        bases: [
+          Ezagent.Behavior.Session,
+          Ezagent.Behavior.Publisher.SessionImpl
+        ],
+        shape: [
+          Ezagent.Behavior.Turn,
+          Ezagent.Behavior.Surface
+        ],
+        members: [],
+        routing_rules: [],
+        prompt_templates: %{},
+        legends: %{},
+        adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+      },
+      workspace_uri: Ezagent.URI.workspace(ws),
+      actor_uri: User.admin_uri()
+    )
+  end
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the
   # Template Class create path) hits an already-bound session; that is success,

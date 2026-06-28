@@ -24,15 +24,16 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec state_for(URI.t(), %{
           required(:caller_uri) => URI.t() | nil,
+          optional(:caller_caps) => Enumerable.t(),
           required(:workspace_uri) => URI.t() | nil,
           required(:sessions) => [map()]
         }) :: map()
-  def state_for(%URI{} = session_uri, %{
-        caller_uri: caller_uri,
-        workspace_uri: workspace_uri,
-        sessions: sessions
-      }) do
-    messages = load_messages(session_uri)
+  def state_for(%URI{} = session_uri, opts) when is_map(opts) do
+    caller_uri = Map.fetch!(opts, :caller_uri)
+    workspace_uri = Map.fetch!(opts, :workspace_uri)
+    sessions = Map.fetch!(opts, :sessions)
+    caller_caps = Map.get(opts, :caller_caps, MapSet.new())
+    messages = load_messages(session_uri, caller_caps)
 
     %{
       "component" => "conversation",
@@ -135,13 +136,13 @@ defmodule Ezagent.World.ConversationData do
   Returns `{rows, next_oldest_cursor}` for the island to prepend; an invalid
   cursor yields `{[], nil}` (no paging).
   """
-  @spec load_older(URI.t(), String.t()) :: {[map()], String.t() | nil}
-  def load_older(%URI{} = session_uri, before) when is_binary(before) do
+  @spec load_older(URI.t(), String.t(), Enumerable.t()) :: {[map()], String.t() | nil}
+  def load_older(%URI{} = session_uri, before, caller_caps \\ MapSet.new())
+      when is_binary(before) do
     case DateTime.from_iso8601(before) do
       {:ok, cursor, _offset} ->
         rows =
-          session_uri
-          |> Ezagent.MessageStore.older_than(cursor, @message_limit)
+          older_messages(session_uri, cursor, caller_caps)
           |> Enum.reverse()
           |> messages_to_rows()
 
@@ -180,12 +181,80 @@ defmodule Ezagent.World.ConversationData do
   def oldest_cursor_iso([%{"at" => at} | _]) when is_binary(at), do: at
   def oldest_cursor_iso(_), do: nil
 
-  defp load_messages(%URI{} = session_uri) do
+  defp load_messages(%URI{} = session_uri, caller_caps) do
     session_uri
-    |> Ezagent.MessageStore.recent_in_session(@message_limit)
+    |> recent_messages(caller_caps)
     |> Enum.reverse()
     |> messages_to_rows()
   end
+
+  defp recent_messages(%URI{} = session_uri, caller_caps) do
+    if read_unfiltered?(session_uri, caller_caps) do
+      Ezagent.MessageStore.recent_in_session(session_uri, @message_limit)
+    else
+      Ezagent.MessageStore.recent_visible_in_session(session_uri, @message_limit)
+    end
+  end
+
+  defp older_messages(%URI{} = session_uri, %DateTime{} = cursor, caller_caps) do
+    if read_unfiltered?(session_uri, caller_caps) do
+      Ezagent.MessageStore.older_than(session_uri, cursor, @message_limit)
+    else
+      Ezagent.MessageStore.older_visible_than(session_uri, cursor, @message_limit)
+    end
+  end
+
+  defp read_unfiltered?(%URI{} = session_uri, caller_caps) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    caller_caps
+    |> cap_list()
+    |> Enum.any?(&read_unfiltered_cap?(&1, session_uri, workspace_uri))
+  rescue
+    _ -> false
+  end
+
+  defp cap_list(%MapSet{} = caps), do: MapSet.to_list(caps)
+  defp cap_list(caps) when is_list(caps), do: caps
+  defp cap_list(_), do: []
+
+  defp read_unfiltered_cap?(
+         %Ezagent.Capability{} = cap,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri
+       ) do
+    cap_field?(cap.kind, :session) and
+      cap_field?(cap.behavior, Ezagent.Behavior.Session) and
+      cap_field?(Map.get(cap, :action, :any), :read_unfiltered) and
+      cap_instance?(cap.instance, session_uri, workspace_uri) and
+      cap_workspace?(cap.workspace_uri, workspace_uri)
+  end
+
+  defp read_unfiltered_cap?(_, _, _), do: false
+
+  defp cap_field?(:any, _needed), do: true
+  defp cap_field?(same, same), do: true
+  defp cap_field?(_, _), do: false
+
+  defp cap_instance?(:any, _session_uri, _workspace_uri), do: true
+
+  defp cap_instance?({:within_session, %URI{} = held}, %URI{} = session_uri, _workspace_uri),
+    do: same_uri?(held, session_uri)
+
+  defp cap_instance?({:within_workspace, %URI{} = held}, _session_uri, %URI{} = workspace_uri),
+    do: same_uri?(held, workspace_uri)
+
+  defp cap_instance?(%URI{} = held, %URI{} = session_uri, _workspace_uri),
+    do: same_uri?(held, session_uri)
+
+  defp cap_instance?(_, _, _), do: false
+
+  defp cap_workspace?(:any, _workspace_uri), do: true
+  defp cap_workspace?(%URI{} = held, %URI{} = workspace_uri), do: same_uri?(held, workspace_uri)
+  defp cap_workspace?(_, _), do: false
+
+  defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
+  defp same_uri?(_, _), do: false
 
   defp messages_to_rows(messages) when is_list(messages) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)

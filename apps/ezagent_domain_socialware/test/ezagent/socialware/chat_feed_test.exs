@@ -6,7 +6,7 @@ defmodule Ezagent.Socialware.ChatFeedTest do
   chat message list into the SAME json-render shape the customer SPA renders
   (`%{type: "container", props: %{layout: "stack"}, children: [text nodes]}`),
   served over the SAME P3-2 Channel + SPA. Per-message visibility is applied:
-  only `:external_visible` messages are projected (an `:operator_only` chat
+  only `:external_visible` messages are projected (an `:internal` chat
   message — if one ever exists — is dropped, so it never leaks to the external
   read). The membership gate (who may call at all) is enforced separately by the
   ChatMembership predicate (P4-3); this module is the pure render only.
@@ -63,10 +63,10 @@ defmodule Ezagent.Socialware.ChatFeedTest do
       assert ChatFeed.chat_tree(messages) == ChatFeed.chat_tree(messages)
     end
 
-    test "VISIBILITY: operator_only messages are filtered out of the projection" do
+    test "VISIBILITY: internal messages are filtered out of the projection" do
       messages = [
         msg("public", id: "p", visibility: :external_visible),
-        msg("secret", id: "s", visibility: :operator_only),
+        msg("secret", id: "s", visibility: :internal),
         msg("also public", id: "q", visibility: :external_visible)
       ]
 

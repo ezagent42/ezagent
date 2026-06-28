@@ -17,7 +17,7 @@ defmodule Ezagent.Message do
       body:        %{text: String.t(), attachments: [%URI{}]}  # 结构化
       ref_id:      String.t() | nil     # ^reply-to 另一条 message id
       inserted_at: DateTime.t()
-      visibility: :external_visible | :operator_only
+      visibility: :external_visible | :internal
 
   Message is session-internal data, not a dispatchable Kind. The previous
   `message://<uuid>` URI shape was retired in PR #149 / SPEC v2 §5.13 — the
@@ -36,7 +36,7 @@ defmodule Ezagent.Message do
     being replied to)
   - `:inserted_at` — `DateTime.t()`,默认 `DateTime.utc_now()`
   - `:id` — 重写 id(测试 / replay 用,正常不传)
-  - `:visibility` — `:external_visible | :operator_only`, default `:external_visible`
+  - `:visibility` — `:external_visible | :internal`, default `:external_visible`
 
   ## Phase 2 边界
 
@@ -70,7 +70,7 @@ defmodule Ezagent.Message do
           body: body_shape(),
           ref_id: String.t() | nil,
           inserted_at: DateTime.t(),
-          visibility: :external_visible | :operator_only
+          visibility: :external_visible | :internal
         }
 
   # `id` is the primary key (plain UUID hex); ecto_sqlite3 stores it as TEXT.
@@ -116,7 +116,7 @@ defmodule Ezagent.Message do
     field :inserted_at, :utc_datetime_usec
 
     field :visibility, Ecto.Enum,
-      values: [:external_visible, :operator_only],
+      values: [:external_visible, :internal],
       default: :external_visible
 
     # The ROUTE-INTO-THIS-SESSION timestamp — set fresh at `MessageStore.write/2`

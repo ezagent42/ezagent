@@ -8,7 +8,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
   external_visible) message in this session?". `ExternalFeed.approved_attachment?/2`
   is that gate; `mint_approved_token/3` mints a signed token ONLY when it passes;
   and because the gate is re-checked at serve time, flipping the message back to
-  `operator_only` revokes an already-minted token (a lever beyond TTL).
+  `internal` revokes an already-minted token (a lever beyond TTL).
   """
   use EzagentCore.DataCase, async: false
 
@@ -78,11 +78,11 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
     assert ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
-  test "approved_attachment? is FALSE for an operator-only (not-approved) attachment", ctx do
+  test "approved_attachment? is FALSE for an internal (not-approved) attachment", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     upload = upload_uri(ws_name, "uuid-secret.pdf")
 
-    _ = commit_message_with_attachment(ctx, upload, :operator_only)
+    _ = commit_message_with_attachment(ctx, upload, :internal)
 
     refute ExternalFeed.approved_attachment?(ctx.session, upload)
   end
@@ -116,7 +116,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
              ExternalFeed.mint_approved_token(ctx.session, not_approved, mint)
   end
 
-  test "serve-time re-validation: flipping to operator_only revokes approval", ctx do
+  test "serve-time re-validation: flipping to internal revokes approval", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     upload = upload_uri(ws_name, "uuid-revoke.pdf")
 
@@ -125,7 +125,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     # Operator flips visibility back — an already-minted token must stop working
     # because the serve-time check now returns false.
-    {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
+    {:ok, _} = MessageStore.mark_visibility([written.id], :internal)
     refute ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
@@ -171,7 +171,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
     test "a not-approved attachment is unauthorized even for a member", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-secret.pdf")
-      _ = commit_message_with_attachment(ctx, upload, :operator_only)
+      _ = commit_message_with_attachment(ctx, upload, :internal)
 
       assert {:error, :unauthorized} =
                ExternalFeed.authorized_attachment_path(
@@ -182,7 +182,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
                )
     end
 
-    test "serve-time revocation: flipping to operator_only denies a previously-OK path", ctx do
+    test "serve-time revocation: flipping to internal denies a previously-OK path", ctx do
       ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
       upload = upload_uri(ws_name, "uuid-revoke.pdf")
       written = commit_message_with_attachment(ctx, upload, :external_visible)
@@ -195,7 +195,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
                  &fake_resolve/2
                )
 
-      {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
+      {:ok, _} = MessageStore.mark_visibility([written.id], :internal)
 
       assert {:error, :unauthorized} =
                ExternalFeed.authorized_attachment_path(
