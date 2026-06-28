@@ -80,6 +80,16 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
 
     # The cap set covers EVERY declared action (no missing / extra).
     assert MapSet.new(role.requested_caps, & &1.action) == MapSet.new(actions)
+
+    # Taxonomy §4.1 de-bake: the 9-stage product-dev chain + CI/import defaults
+    # are BUSINESS semantics carried as recipe `config` DATA (layer 2), NOT
+    # hardcoded in Behavior.Kanban (layer 1). The Behavior reads them back via
+    # RecipeRegistry at runtime; this asserts the data is present + well-shaped.
+    assert role.config == %{
+             stages: [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr],
+             ci_stage: :pr,
+             import_default_stage: :feature
+           }
   end
 
   test "a recipe with bare-atom caps is REJECTED (HIGH-1 guard)" do

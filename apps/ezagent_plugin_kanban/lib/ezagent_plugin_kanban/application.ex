@@ -69,6 +69,20 @@ defmodule EzagentPluginKanban.Application do
   Public so the role test + future create wiring can assert the exact recipe
   without re-deriving the action list (single source of truth =
   `Ezagent.Behavior.Kanban.actions/0`).
+
+  ## `config` — the 9-stage product-dev chain as LAYER-2 DATA (taxonomy §4.1)
+
+  The specific 9-stage product-development relay chain + its CI/import defaults
+  are BUSINESS semantics — they live HERE as recipe `config` data (layer 2), NOT
+  hardcoded in `Behavior.Kanban` (layer 1). The Behavior reads them at runtime
+  via `RecipeRegistry.lookup/1` (see `Ezagent.Behavior.Kanban.Shared.stages/1`).
+  The Behavior itself stays generic board MECHANISM (columns/cards/stage/claim/
+  PR actions + the state machine) with ZERO specific stage names.
+
+    * `stages` — the ordered 9-stage chain (order = relay order; index drives the
+      `stage_fits?` monotonic-progress rule).
+    * `ci_stage` — the stage whose nodes get CI-gate evaluation (`Ci.check_pr_gate`).
+    * `import_default_stage` — the default stage assigned to markmap-imported nodes.
   """
   @spec kanban_manager_recipe() :: map()
   def kanban_manager_recipe do
@@ -79,7 +93,14 @@ defmodule EzagentPluginKanban.Application do
       requested_caps:
         for action <- Ezagent.Behavior.Kanban.actions() do
           %{behavior: Ezagent.Behavior.Kanban, action: action}
-        end
+        end,
+      # Layer-2 business semantics (taxonomy red line 1+2): the specific 9-stage
+      # product-dev chain + CI/import defaults. Data, NOT Behavior.Kanban code.
+      config: %{
+        stages: [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr],
+        ci_stage: :pr,
+        import_default_stage: :feature
+      }
     }
   end
 

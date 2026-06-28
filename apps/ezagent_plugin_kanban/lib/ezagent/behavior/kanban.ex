@@ -12,12 +12,19 @@ defmodule Ezagent.Behavior.Kanban do
 
       node = %{
         parent_id, title, order,                       # 拓扑
-        stage:     :positioning|:metric|:pain|:anchor|:ux|:feature|:issue|:test|:pr,  # 9阶段固定链(非权限边界)
+        stage:     atom,                                # 接力链阶段(具体哪几棒见 recipe config 数据,非权限边界)
         owner:     user_uri | nil,                      # 认领人; 既问责又是权限闸
         status:    :unassigned|:claimed|:doing|:done,   # 粗4态(细状态归外部工具)
         artifacts: [%{tool,kind,ref,url}],              # 挂工具产物(github PR/飞书文档/xmind…)
         metrics:   [%{name,target,current,unit}]        # 挂指标(价值/运营节点)
       }
+
+  ## stage 链 = LAYER-2 DATA（taxonomy §4.1）
+  本 Behavior 是**通用看板机制**（列/卡/stage/认领/PR 动作 + 状态机），**不含**具体阶段名。
+  具体的接力链（哪几棒、顺序）+ CI 评价触发棒 + markmap 导入默认棒 = 业务语义，住在
+  `kanban-manager` recipe 的 `config` 数据里（`EzagentPluginKanban.Application.kanban_manager_recipe/0`），
+  本 Behavior 在运行时经 `Shared.stages/1` / `Shared.config_get/3` 读回（read-through over
+  `RecipeRegistry`）。这样业务语义不进 layer-1 代码（taxonomy 红线 1+2）。
 
   ## 权限 = admin + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
   改一个节点 = `ctx.caller == node.owner` 或 caller 持 wildcard cap(admin)；未认领节点
@@ -34,8 +41,6 @@ defmodule Ezagent.Behavior.Kanban do
   alias EzagentPluginKanban.Markmap
   alias EzagentPluginKanban.Miro
 
-  # 产品自举开发流程的 9 个固定阶段（真相源接力链；顺序即 list 顺序，索引用于插入校验）。
-  @stages [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr]
   # set_status 只在已认领后的三态间流转；:unassigned 经 claim/unclaim 切换。
   @settable_status [:claimed, :doing, :done]
 
@@ -307,8 +312,10 @@ defmodule Ezagent.Behavior.Kanban do
         id = "n" <> Integer.to_string(new_seq)
         order = Enum.count(nodes, fn {_id, n} -> n.parent_id == parent_id end)
 
-        # 根节点默认第一阶段 :positioning；子节点默认继承父阶段（插入校验在 set_stage 收口）。
-        stage = if parent_id, do: nodes[parent_id].stage, else: :positioning
+        # 根节点默认第一阶段（链首，来自 recipe config 数据）；子节点默认继承父阶段
+        # （插入校验在 set_stage 收口）。
+        stages = Shared.stages(ctx)
+        stage = if parent_id, do: nodes[parent_id].stage, else: List.first(stages)
         node = new_node(parent_id, title, order, stage)
         new_root = root_id || if(parent_id == nil, do: id, else: nil)
 
@@ -326,6 +333,7 @@ defmodule Ezagent.Behavior.Kanban do
     new_parent_id = nilify(Map.get(args, :new_parent_id))
     t = tree(ctx)
     nodes = t.nodes
+    stages = Shared.stages(ctx)
 
     cond do
       not Map.has_key?(nodes, id) ->
@@ -342,7 +350,7 @@ defmodule Ezagent.Behavior.Kanban do
 
       # R1：移动后 node.stage 必须 ≥ 新父 stage（子树各节点 stage 已 ≥ node，整链保持单调）。
       new_parent_id != nil and
-          stage_index(nodes[id].stage) < stage_index(nodes[new_parent_id].stage) ->
+          stage_index(stages, nodes[id].stage) < stage_index(stages, nodes[new_parent_id].stage) ->
         {:error, {:stage_order_violation, nodes[id].stage}}
 
       true ->
@@ -414,8 +422,9 @@ defmodule Ezagent.Behavior.Kanban do
   @doc false
   def handle_set_stage(%{id: id, stage: stage}, ctx) do
     t = tree(ctx)
+    stages = Shared.stages(ctx)
 
-    case parse_enum(stage, @stages) do
+    case parse_enum(stage, stages) do
       {:ok, s} ->
         cond do
           not Map.has_key?(t.nodes, id) ->
@@ -423,7 +432,7 @@ defmodule Ezagent.Behavior.Kanban do
 
           # R1 插入规则：阶段顺序固定，深入只能往后——节点 stage 必须 ≥ 父、≤ 每个子。
           # 例："issue 后不能插 feature" = feature(5) < issue(6)，做 issue 子节点时拒。
-          not stage_fits?(t.nodes, id, s) ->
+          not stage_fits?(stages, t.nodes, id, s) ->
             {:error, {:stage_order_violation, stage}}
 
           true ->
@@ -435,23 +444,24 @@ defmodule Ezagent.Behavior.Kanban do
     end
   end
 
-  # 节点 stage 的链上索引（@stages 顺序即固定链；找不到当 0）。
-  defp stage_index(s), do: Enum.find_index(@stages, &(&1 == s)) || 0
+  # 节点 stage 的链上索引（stages 顺序即固定链，来自 recipe config 数据；找不到当 0）。
+  defp stage_index(stages, s), do: Enum.find_index(stages, &(&1 == s)) || 0
 
-  # R1.1（07 固定接力链）：stage 是结构事实非自由属性，沿固定 9 棒链推进——
-  # 根固定第一棒 :positioning；非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
+  # R1.1（固定接力链）：stage 是结构事实非自由属性，沿固定棒链推进——
+  # 根固定链首棒；非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
   # 对称地，每个子只能是"本棒"或"本棒+1"。这把"随意改 stage"收死成相邻棒推进。
-  defp stage_fits?(nodes, id, s) do
+  defp stage_fits?(stages, nodes, id, s) do
     node = nodes[id]
-    si = stage_index(s)
+    si = stage_index(stages, s)
+    first_stage = List.first(stages)
 
     parent_ok =
       case node.parent_id do
         nil ->
-          s == :positioning
+          s == first_stage
 
         pid ->
-          pi = stage_index(nodes[pid].stage)
+          pi = stage_index(stages, nodes[pid].stage)
           si == pi or si == pi + 1
       end
 
@@ -459,7 +469,7 @@ defmodule Ezagent.Behavior.Kanban do
       nodes
       |> Enum.filter(fn {_i, n} -> n.parent_id == id end)
       |> Enum.all?(fn {_i, c} ->
-        ci = stage_index(c.stage)
+        ci = stage_index(stages, c.stage)
         ci == si or ci == si + 1
       end)
 
@@ -549,10 +559,14 @@ defmodule Ezagent.Behavior.Kanban do
   def handle_get_tree(_args, ctx) do
     t = tree(ctx)
     inner = %{nodes: t.nodes, root_id: t.root_id}
+    stages = Shared.stages(ctx)
+    ci_stage = Shared.config_atom(ctx, :ci_stage, List.last(stages))
 
     # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）。
     # config/miro/github/ci = 出站连接器只读投影（df-tech 下沉：world 不再直读
     # BoardConfig/Miro/Github，全经此 dispatch 返回拿到）。
+    # stages = 接力链（layer-2 recipe config 数据投影）：world 读模型 + 前端经此
+    # dispatch 返回拿到棒链，不再 world 侧硬编码 @stages（taxonomy §4.1 de-bake）。
     {:ok,
      %{
        tree: inner,
@@ -560,8 +574,9 @@ defmodule Ezagent.Behavior.Kanban do
        config: board_config(ctx),
        miro: miro_status(),
        github: github_status(),
-       # pr 节点的 CI 评价摘要（前端 ci 徽章）：%{node_id => verdict}，纯函数算。
-       ci: ci_summaries(inner)
+       stages: stages,
+       # ci_stage 棒节点的 CI 评价摘要（前端 ci 徽章）：%{node_id => verdict}，纯函数算。
+       ci: ci_summaries(inner, ci_stage)
      }, []}
   end
 
@@ -601,9 +616,10 @@ defmodule Ezagent.Behavior.Kanban do
     _ -> %{configured: false}
   end
 
-  # 给每个 stage==:pr 节点算 CI 评价（纯函数，无副作用）。前端 ci 徽章用。
-  defp ci_summaries(%{nodes: nodes} = tree) do
-    for {id, n} <- nodes, Map.get(n, :stage) == :pr, into: %{} do
+  # 给每个 stage==ci_stage 节点算 CI 评价（纯函数，无副作用）。前端 ci 徽章用。
+  # ci_stage 来自 recipe config 数据（不再硬编码 :pr；taxonomy §4.1 de-bake）。
+  defp ci_summaries(%{nodes: nodes} = tree, ci_stage) do
+    for {id, n} <- nodes, Map.get(n, :stage) == ci_stage, into: %{} do
       {id, Ci.check_pr_gate(tree, id)}
     end
   end
@@ -628,7 +644,9 @@ defmodule Ezagent.Behavior.Kanban do
         case Markmap.parse(markdown) do
           {:ok, %{nodes: parsed, root_id: root_id, seq: seq}} ->
             # markmap 只有拓扑——补默认 stage/owner/status/artifacts/metrics。
-            nodes = Map.new(parsed, fn {id, n} -> {id, enrich_parsed(n)} end)
+            # 导入默认棒来自 recipe config 数据（不再硬编码 :feature；taxonomy §4.1）。
+            import_default = Shared.config_atom(ctx, :import_default_stage, List.first(Shared.stages(ctx)))
+            nodes = Map.new(parsed, fn {id, n} -> {id, enrich_parsed(n, import_default)} end)
 
             # 导入覆盖拓扑，但保留图级别 drop 历史（drops 是 board 级，不随导入清空）。
             {:ok, %{count: map_size(nodes)},
@@ -701,8 +719,8 @@ defmodule Ezagent.Behavior.Kanban do
     }
   end
 
-  defp enrich_parsed(%{parent_id: p, title: t, order: o}),
-    do: new_node(p, t, o, :feature)
+  defp enrich_parsed(%{parent_id: p, title: t, order: o}, import_default_stage),
+    do: new_node(p, t, o, import_default_stage)
 
   defp tree(ctx), do: Shared.tree(ctx)
 
