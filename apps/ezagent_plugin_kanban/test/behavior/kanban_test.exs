@@ -6,14 +6,29 @@ defmodule Ezagent.Behavior.KanbanTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Behavior.Kanban
+  alias EzagentPluginKanban.Application, as: KanbanApp
 
   @admin_cap Ezagent.Capability.admin_genesis_cap()
 
+  # 棒链来自 recipe config 数据（layer-2）——测试经此数据路径注入 ctx，不再依赖
+  # Behavior 内硬编码的 @stages（taxonomy §4.1 de-bake）。@stages / @ci_stage /
+  # @import_default_stage 直接读 kanban_manager_recipe() 的 config，单一真相源。
+  @recipe_config KanbanApp.kanban_manager_recipe()[:config]
+  @stages @recipe_config[:stages]
+  @first_stage List.first(@stages)
+  @second_stage Enum.at(@stages, 1)
+  @third_stage Enum.at(@stages, 2)
+
   defp rd(tree), do: fn k, d -> Map.get(%{tree: tree}, k, d) end
-  defp admin_ctx(tree), do: %{read: rd(tree), caps: MapSet.new([@admin_cap]), caller: nil}
+  defp admin_ctx(tree), do: Map.merge(@recipe_config, %{read: rd(tree), caps: MapSet.new([@admin_cap]), caller: nil})
 
   defp user_ctx(tree, user),
-    do: %{read: rd(tree), caps: MapSet.new(), caller: Ezagent.URI.new!(user)}
+    do:
+      Map.merge(@recipe_config, %{
+        read: rd(tree),
+        caps: MapSet.new(),
+        caller: Ezagent.URI.new!(user)
+      })
 
   defp committed(effects),
     do:
@@ -36,7 +51,7 @@ defmodule Ezagent.Behavior.KanbanTest do
   end
 
   describe "add_node（默认字段 + 授权）" do
-    test "admin 建根：默认 stage=:positioning / owner=nil / status=:unassigned / 空挂载" do
+    test "admin 建根：默认 stage=链首 / owner=nil / status=:unassigned / 空挂载" do
       assert {:ok, %{id: "n1"}, e} =
                Kanban.handle_add_node(
                  %{parent_id: "", title: "根"},
@@ -44,7 +59,7 @@ defmodule Ezagent.Behavior.KanbanTest do
                )
 
       n = committed(e).nodes["n1"]
-      assert n.stage == :positioning and n.owner == nil and n.status == :unassigned
+      assert n.stage == @first_stage and n.owner == nil and n.status == :unassigned
       assert n.artifacts == [] and n.metrics == []
     end
 
@@ -62,7 +77,7 @@ defmodule Ezagent.Behavior.KanbanTest do
       assert {:ok, %{id: _}, e} =
                Kanban.handle_add_node(%{parent_id: r, title: "x"}, admin_ctx(t))
 
-      assert committed(e).nodes |> Map.values() |> Enum.all?(&(&1.stage == :positioning))
+      assert committed(e).nodes |> Map.values() |> Enum.all?(&(&1.stage == @first_stage))
 
       assert {:error, :forbidden} =
                Kanban.handle_add_node(
@@ -206,41 +221,43 @@ defmodule Ezagent.Behavior.KanbanTest do
   describe "set_stage / import 授权" do
     test "set_stage 改阶段（owner/admin）", %{} do
       {t, _r, c} = seed()
-      # c 父=root(positioning)，只能 positioning 或 metric(父+1)
-      assert {:ok, %{}, e} = Kanban.handle_set_stage(%{id: c, stage: "metric"}, admin_ctx(t))
-      assert committed(e).nodes[c].stage == :metric
+      # c 父=root(链首)，只能链首或第二棒(父+1)
+      assert {:ok, %{}, e} =
+               Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+      assert committed(e).nodes[c].stage == @second_stage
 
       assert {:error, {:invalid_stage, "nope"}} =
                Kanban.handle_set_stage(%{id: c, stage: "nope"}, admin_ctx(t))
     end
 
-    test "set_stage R1.1：stage 沿固定链推进（只父棒或父棒+1，根固定 positioning，不能跳棒）", %{} do
+    test "set_stage R1.1：stage 沿固定链推进（只父棒或父棒+1，根固定链首，不能跳棒）", %{} do
       {t, r, c} = seed()
 
-      # 根固定 positioning：设成 metric → 拒
+      # 根固定链首：设成第二棒 → 拒
       assert {:error, {:stage_order_violation, _}} =
-               Kanban.handle_set_stage(%{id: r, stage: "metric"}, admin_ctx(t))
+               Kanban.handle_set_stage(%{id: r, stage: to_string(@second_stage)}, admin_ctx(t))
 
-      # 子 c（父 positioning=0）：设 metric(1=父+1) → OK
-      assert {:ok, %{}, e1} = Kanban.handle_set_stage(%{id: c, stage: "metric"}, admin_ctx(t))
-      assert committed(e1).nodes[c].stage == :metric
+      # 子 c（父=链首=0）：设第二棒(1=父+1) → OK
+      assert {:ok, %{}, e1} =
+               Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+      assert committed(e1).nodes[c].stage == @second_stage
 
-      # 子 c：设 pain(2=父+2) → 拒（跳棒）
+      # 子 c：设第三棒(2=父+2) → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
-               Kanban.handle_set_stage(%{id: c, stage: "pain"}, admin_ctx(t))
+               Kanban.handle_set_stage(%{id: c, stage: to_string(@third_stage)}, admin_ctx(t))
 
-      # 子 c：设 issue(6) → 拒（跳棒）
+      # 子 c：设末棒 → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
-               Kanban.handle_set_stage(%{id: c, stage: "issue"}, admin_ctx(t))
+               Kanban.handle_set_stage(%{id: c, stage: to_string(List.last(@stages))}, admin_ctx(t))
     end
 
     test "drop_subtree：砍子树 + 记进图级别 drop 历史(:drops, 不挂某节点)", %{} do
       {t, _r, c} = seed()
-      {:ok, _, e1} = Kanban.handle_set_stage(%{id: c, stage: "metric"}, admin_ctx(t))
+      {:ok, _, e1} = Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
       t1 = committed(e1)
       {:ok, %{id: gc}, e2} = Kanban.handle_add_node(%{parent_id: c, title: "痛点X"}, admin_ctx(t1))
       t2 = committed(e2)
-      {:ok, _, e3} = Kanban.handle_set_stage(%{id: gc, stage: "pain"}, admin_ctx(t2))
+      {:ok, _, e3} = Kanban.handle_set_stage(%{id: gc, stage: to_string(@third_stage)}, admin_ctx(t2))
       t3 = committed(e3)
       {:ok, %{id: ggc}, e4} = Kanban.handle_add_node(%{parent_id: gc, title: "方案A"}, admin_ctx(t3))
       t4 = committed(e4)

@@ -28,10 +28,14 @@ defmodule Ezagent.World.KanbanData do
   写动作在 `Ezagent.World.KanbanActions`；本模块只读。
   """
 
-  alias Ezagent.Invocation
+  alias Ezagent.{Agent.RecipeRegistry, Invocation}
 
-  @stages ~w(positioning metric pain anchor ux feature issue test pr)
   @statuses ~w(claimed doing done)
+
+  # kanban-manager role 名（world 已在 list_instances 用此名经 list_by_role 枚举；
+  # 此处复用同一 role 名 read-through 取 recipe config 数据——棒链 = layer-2 数据，
+  # world 不硬编码 9 棒。taxonomy §4.1 de-bake）。
+  @kanban_role "kanban-manager"
 
   @doc "为 kanban 路由（列表页 entity_uri=nil / 详情页带 uri）构建前端 state。"
   @spec state_for(map(), map()) :: map()
@@ -51,7 +55,8 @@ defmodule Ezagent.World.KanbanData do
       "kanban_uri" => encode_uri(uri),
       "instances" => list_instances(ctx),
       "tree" => snapshot && snapshot["tree"],
-      "stages" => @stages,
+      # 棒链来自 recipe config 数据（layer-2），不再 world 侧 @stages 硬编码。
+      "stages" => stages_from_recipe(),
       "statuses" => @statuses,
       "miro" => (snapshot && snapshot["miro"]) || %{"configured" => false},
       "github" => (snapshot && snapshot["github"]) || %{"configured" => false},
@@ -144,6 +149,9 @@ defmodule Ezagent.World.KanbanData do
             "root_id" => root,
             "drops" => Enum.map(Map.get(res, :drops, []), &jsonable_map/1)
           },
+          # 棒链从 get_tree 响应读（Behavior 从 recipe config 投影；layer-2 数据），
+          # 找不到回 recipe 直读（详情页冷启动场景）。
+          "stages" => stages_from_res(res) || stages_from_recipe(),
           "config" => jsonable_config(Map.get(res, :config)),
           "miro" => jsonable_status(Map.get(res, :miro)),
           "github" => jsonable_status(Map.get(res, :github))
@@ -152,6 +160,7 @@ defmodule Ezagent.World.KanbanData do
       _ ->
         %{
           "tree" => %{"nodes" => %{}, "root_id" => nil, "drops" => []},
+          "stages" => stages_from_recipe(),
           "config" => %{"github_repo" => nil, "miro_board" => nil},
           "miro" => %{"configured" => false},
           "github" => %{"configured" => false}
@@ -169,6 +178,33 @@ defmodule Ezagent.World.KanbanData do
   end
 
   # --- helpers --------------------------------------------------------
+
+  # 棒链来自 kanban-manager recipe 的 config.stages（layer-2 数据，read-through over
+  # RecipeRegistry）。世界侧不硬编码 9 棒——棒链是业务语义，住在 recipe config 里
+  # （taxonomy §4.1 / 红线 1+2）。返回 string list（前端要 JSON-safe 字符串）。
+  # 无 recipe（未 seed / 冷启动前）→ []，前端渲染退化（与原 @stages 缺省等价的最小退路）。
+  defp stages_from_recipe do
+    case RecipeRegistry.lookup(@kanban_role) do
+      {:ok, %{config: %{} = config}} ->
+        case config[:stages] || config["stages"] do
+          [_ | _] = stages -> Enum.map(stages, &to_string/1)
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  end
+
+  # get_tree 响应里的棒链（Behavior 从 recipe config 投影出来的 atom list）→ string list。
+  defp stages_from_res(res) do
+    case Map.get(res, :stages) do
+      [_ | _] = stages -> Enum.map(stages, &to_string/1)
+      _ -> nil
+    end
+  end
 
   # list-by-role 的 workspace 边界（RF-7 scoping）：ctx 携带 `workspace_uri`
   # （world_live `state_for_route` 注入）→ 限定快照扫描在本 tenant。缺省 `:all`
@@ -215,8 +251,9 @@ defmodule Ezagent.World.KanbanData do
       "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1)
     }
 
-    # 片5：pr 节点附 CI 评价摘要（Behavior 在 get_tree 里算好，按 node_id 索引）。
-    case Map.get(n, :stage) == :pr && Map.get(ci, id) do
+    # 片5：ci_stage 棒节点附 CI 评价摘要（Behavior 在 get_tree 里按 ci_stage 算好、
+    # 按 node_id 索引；world 不再硬编码 :pr——只看 ci map 有无此节点）。
+    case Map.get(ci, id) do
       %{} = v -> Map.put(base, "ci", jsonable_ci(v))
       _ -> base
     end

@@ -52,7 +52,8 @@ defmodule Ezagent.Agent.Recipe do
             script: nil,
             behaviors: [],
             requested_caps: [],
-            session_template: nil
+            session_template: nil,
+            config: %{}
 
   @type skill_ref :: String.t()
   @type plugin_ref :: String.t()
@@ -67,7 +68,8 @@ defmodule Ezagent.Agent.Recipe do
           script: String.t() | nil,
           behaviors: [module()],
           requested_caps: [cap_template()],
-          session_template: String.t() | URI.t() | nil
+          session_template: String.t() | URI.t() | nil,
+          config: map()
         }
 
   @doc """
@@ -102,7 +104,8 @@ defmodule Ezagent.Agent.Recipe do
           script: get(recipe, :script, nil),
           behaviors: get(recipe, :behaviors, []),
           requested_caps: get(recipe, :requested_caps, []),
-          session_template: get(recipe, :session_template, nil)
+          session_template: get(recipe, :session_template, nil),
+          config: get(recipe, :config, %{})
         })
 
       flavor_field ->
@@ -124,12 +127,25 @@ defmodule Ezagent.Agent.Recipe do
          {:ok, requested_caps} <- caps_field(role.requested_caps),
          :ok <- ref_field(role.prompt, :prompt),
          :ok <- ref_field(role.script, :script),
-         :ok <- ref_field(role.session_template, :session_template) do
+         :ok <- ref_field(role.session_template, :session_template),
+         {:ok, config} <- config_field(role.config) do
       # behaviors → module atoms; requested_caps → atom-keyed templates (value
       # canonicalization + minting are PR-1b's); passive → coerced boolean.
-      {:ok, %{role | passive: passive, behaviors: behaviors, requested_caps: requested_caps}}
+      {:ok, %{role | passive: passive, behaviors: behaviors, requested_caps: requested_caps, config: config}}
     end
   end
+
+  # `config` is the layer-2 business-config bag a recipe may carry for its
+  # behaviors (e.g. `Behavior.Kanban`'s stage chain + CI/import defaults). It is
+  # opaque map data — the recipe does NOT interpret it (the owning Behavior
+  # reads its own keys, atom/string-key tolerant, at runtime). Only shape-
+  # validate: nil → `%{}`; must be a map. This keeps the recipe the SOLE layer-2
+  # carrier of business semantics while the Behavior stays generic mechanism.
+  # (Taxonomy §0.2 / red line 1+2: business semantics live as data here, NOT in
+  # layer-1 Behavior code.)
+  defp config_field(nil), do: {:ok, %{}}
+  defp config_field(value) when is_map(value), do: {:ok, value}
+  defp config_field(value), do: {:error, {:invalid_role_field, :config, value}}
 
   # `passive` marks a NON-PRINCIPAL data actor (RF-6): an `entity://agent/*`
   # that acts only on dispatch and must NOT be a chat principal — non-mentionable,
