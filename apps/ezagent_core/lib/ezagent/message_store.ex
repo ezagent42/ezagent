@@ -152,6 +152,28 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
+  N most-recent external-visible messages in `session_uri`, descending.
+
+  This is the fail-closed read for callers that do not hold the socialware
+  management `:read_unfiltered` cap.
+  """
+  @spec recent_visible_in_session(URI.t(), pos_integer()) :: [Message.t()]
+  def recent_visible_in_session(%URI{} = session_uri, limit)
+      when is_integer(limit) and limit > 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      where:
+        m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :external_visible,
+      order_by: [desc: m.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   Messages in `session_uri` strictly older than `cursor` (inserted_at).
 
   Descending order (newest of the older-than-cursor batch first), bounded
@@ -172,6 +194,28 @@ defmodule Ezagent.MessageStore do
       where:
         m.session_uri == ^session_str and m.inserted_at < ^cursor and
           m.workspace_uri == ^workspace_str,
+      order_by: [desc: m.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  External-visible messages in `session_uri` strictly older than `cursor`.
+
+  Descending order, bounded by `limit`. This is the paginated companion to
+  `recent_visible_in_session/2` for non-`read_unfiltered` callers.
+  """
+  @spec older_visible_than(URI.t(), DateTime.t(), pos_integer()) :: [Message.t()]
+  def older_visible_than(%URI{} = session_uri, %DateTime{} = cursor, limit)
+      when is_integer(limit) and limit > 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      where:
+        m.session_uri == ^session_str and m.inserted_at < ^cursor and
+          m.workspace_uri == ^workspace_str and m.visibility == :external_visible,
       order_by: [desc: m.inserted_at],
       limit: ^limit
     )

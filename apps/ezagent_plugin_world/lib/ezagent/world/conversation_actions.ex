@@ -177,7 +177,12 @@ defmodule Ezagent.World.ConversationActions do
   @spec load_older(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def load_older(socket, %URI{} = session_uri, before) when is_binary(before) do
-    {older, next_cursor} = ConversationData.load_older(session_uri, before)
+    {older, next_cursor} =
+      ConversationData.load_older(
+        session_uri,
+        before,
+        Map.get(socket.assigns, :current_caps, MapSet.new())
+      )
 
     {:noreply,
      push_event(socket, "chat:older", %{"messages" => older, "oldest_cursor" => next_cursor})}
