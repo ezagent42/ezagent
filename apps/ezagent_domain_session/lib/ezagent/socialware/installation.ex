@@ -124,6 +124,18 @@ defmodule Ezagent.Socialware.Installation do
 
   def web_anon_access?(_), do: false
 
+  @doc "Return the effective publish policy for a session's installed socialwares."
+  @spec publish_policy(URI.t()) :: :auto | :supervised
+  def publish_policy(%URI{scheme: "session"} = session_uri) do
+    if Enum.any?(installed_definitions(session_uri), &supervised?/1) do
+      :supervised
+    else
+      :auto
+    end
+  end
+
+  def publish_policy(_), do: :auto
+
   @doc "Return true when `session_uri` has a current install record for `ref`."
   @spec installed?(URI.t(), String.t()) :: boolean()
   def installed?(%URI{scheme: "session"} = session_uri, ref) when is_binary(ref) do
@@ -203,6 +215,10 @@ defmodule Ezagent.Socialware.Installation do
     else
       _ -> nil
     end
+  end
+
+  defp supervised?(%Definition{visibility_policy: policy}) do
+    Map.get(policy, :publish_policy, :auto) == :supervised
   end
 
   defp seed_install(session_uri, workspace_uri, definition, object, install, actor_uri) do

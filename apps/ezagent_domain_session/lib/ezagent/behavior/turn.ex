@@ -243,7 +243,7 @@ defmodule Ezagent.Behavior.Turn do
     turn = %{
       trigger: trigger,
       owner: ctx.caller,
-      mode: :auto,
+      mode: publish_mode(ctx),
       expected: MapSet.new(),
       collected: %{},
       result: [],
@@ -614,6 +614,12 @@ defmodule Ezagent.Behavior.Turn do
 
   defp initial_visibility(%{mode: :auto}), do: :external_visible
   defp initial_visibility(_turn), do: :internal
+
+  defp publish_mode(%{self_uri: %URI{} = session_uri}) do
+    Ezagent.Socialware.Installation.publish_policy(session_uri)
+  end
+
+  defp publish_mode(_ctx), do: :auto
 
   defp next_surface_version(ctx) do
     ctx
