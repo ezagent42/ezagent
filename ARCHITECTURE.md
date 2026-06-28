@@ -10,9 +10,11 @@
 
 ## 1. 项目定位
 
-**Ezagent (Event-Sourcing Router) Kind Runtime** 是一个 Elixir/OTP-native 的 multi-channel → multi-agent 编排支撑系统。它把五件事正交拆开——**寻址 / 调用 / 执行 / 行为 / 权限**——然后用 Phoenix 的 transport 层作为外部入口,Registry 作为内部路由,把它们缝合。
+**Ezagent 是一个 socialware platform** —— 它的 runtime 是一个 message router,在 router 之上 host 可 install 的 **socialware**(human+program hybrid FLOW)。一个 session 是一个 host;它 **installs** 一个或多个 socialware definitions(config-as-data,`config://<ws>/socialware/<name>`),socialware 把 **bases**(capability substrates)+ 一个 **shape**(flow-specific behavior+recipe)compose 进 session 的 `:kind_base` union。Operator 打开一个 socialware(不是"打开 base"),在 shared、observed 的 turn surface 内跟 agents 协作,可 hold / settle / approve / take over program output 在它到达 external audience 之前 —— human-in-the-loop gating 是 first-class,不是 add-on。
 
-**系统形状是 IRC-style multi-tenant message bus over Phoenix transport**——actor 间通过 Message 通信,routing rules 决定每条 Message 的 receivers,Behavior 处理 Invocation 做出反应。Session = routing context owner(类似 IRC channel);Agent / User = Principal(类似 IRC nickname);Message = Entity-Entity 通信的 envelope。
+Router 层把五件事正交拆开——**寻址 / 调用 / 执行 / 行为 / 权限**——用 Phoenix 的 transport 层作为外部入口,Registry 作为内部路由,把它们缝合。**系统形状是 IRC-style multi-tenant message bus over Phoenix transport**——actor 间通过 Message 通信,routing rules 决定每条 Message 的 receivers,Behavior 处理 Invocation 做出反应。Session = routing context owner(类似 IRC channel);Agent / User = Principal(类似 IRC nickname);Message = Entity-Entity 通信的 envelope。
+
+> **概念 taxonomy 详见** `docs/socialware-concepts.md`(base / socialware / fixture 三层)+ `docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md`(4 carrier layers + anti-leak red lines)+ GLOSSARY.md §2 术语表。本节只给 router 层的 framing;socialware 概念在 §3 + §9 展开。
 
 ### 1.1 不是什么
 
@@ -92,7 +94,7 @@ Phoenix 在 Ezagent 里扮演 **transport framework** 角色,不是 fullstack fr
 
 **LiveView 的两个用途**:
 
-1. **早期内部 IM 前端**(v0)— 在接外部 IM(Feishu/Slack)之前,先用 LiveView 写一个简陋的 IM-style 浏览器界面。**目的不是产品级 UI**,而是让我们尽早 dogfood Ezagent 的 IM-shape 概念(adapter pattern、Behavior schema、`@interface` 生成),验证它跟传统 IM 的差异。这部分代码放在独立 plugin `ezagent_web_liveview`,可独立装卸。
+1. **早期内部 IM 前端**(v0)— 在接外部 IM(Feishu/Slack)之前,先用 LiveView 写一个简陋的 IM-style 浏览器界面。**目的不是产品级 UI**,而是让我们尽早 dogfood Ezagent 的 IM-shape 概念(adapter pattern、Behavior schema、`@interface` 生成),验证它跟传统 IM 的差异。这部分代码原在 `ezagent_web_liveview` plugin,**该 app 已并入** `ezagent_plugin_world`(world/admin LiveView surface)+ `ezagent_web`(Phoenix entry + `home_live`);`lv_cli_parity` invariant test enforce 旧 `ezagent_plugin_liveview` 名不再存在。
 2. **未来 admin dashboard**(v0.x)— 系统监控面板可用 LiveView 写;若选 Next.js 也行,两条路都保留。哪条最终主用,看 dogfood 结果。
 
 **Phoenix.Controller / View 仍然不用** — 我们的 HTTP 入口都是 Plug-level(Webhook / AdminAPI),不需要 MVC convention。
@@ -127,6 +129,53 @@ Capability  — (Kind, Behavior, instance)     (CapBAC via ctx.caps)
 ```
 
 四大概念。**v0.2 的 Process trait/impl 概念在 v0.3 删除**——执行机制就是 GenServer,没有第二种;v0.2 里 `os-process`/`pty`/`web` 三种 impl 实际是不同层的东西混在一起:
+
+### 3.0 Socialware concept axis(正交于上面四个 core 抽象)
+
+上面四个(Kind/Behavior/Plugin/Capability)是 **router 层**的 core 抽象。Socialware unification(2026-06-26/28)在其之上叠了一组 **concept-taxonomy 抽象**,把 ezagent 从"一个 router"reframe 成"一个 host 可 install socialware 的 platform"。完整定义见 `docs/socialware-concepts.md` + GLOSSARY.md §2;此处给摘要 + code 锚点(均 `origin/main`-verified):
+
+```
+Base (基座)         — capability substrate(Behavior owning a state slice + general
+                      reusable actions);composed INTO a socialware;NOT user-operable.
+                      Verified: orchestrator (Behavior.Template content + Orchestrator.Tools
+                      + SessionManager, no new Behavior), surface (Behavior.Surface),
+                      pty (Behavior.Pty), sandbox (Behavior.Sandbox), cc-headless-agent.
+Socialware          — human+program hybrid FLOW;composes ≥1 base + a shape;directly
+                      user-operable. Verified instances: chat (world Conversation,
+                      generic; composes orchestrator+surface+Turn shape), kanban
+                      (board WITH task semantics; Behavior.Kanban shape).
+Fixture             — a seeded instance/use of a socialware for a business (autoservice
+                      = chat for customer-service). NOT a concept; must NOT enter the
+                      concept/schema layer.
+Recipe (axis A)     — flavor-agnostic sandbox-content recipe (what an agent is built
+                      from). Ezagent.Agent.Recipe (apps/ezagent_core/.../agent/recipe.ex);
+                      ConfigObject config://<ws>/recipe/<name>, key "recipe";
+                      resolved by Ezagent.Agent.RecipeRegistry (apps/ezagent_domain_agent/...).
+Responsibility (B)  — the function a principal serves in a session (role_name:
+                      bot/reviewer/orchestrator/supervisor), routed via {:role, name}.
+                      "role" word stays ONLY in this responsibility sense.
+Definition          — L2 ConfigObject (config-as-data): reusable/forkable/content-addressed
+                      config bundle (recipe or socialware definition).
+                      config://<ws>/{recipe|socialware}/<name>; NOT a Kind URI.
+Runtime state       — L3 per-instance dynamic slice of a Kind's Behavior state
+                      (kind_snapshots; rehydrated on restart).
+Shape               — flow-specific behavior(s)+recipe making composed bases into a
+                      particular flow (chat's Turn; kanban's Kanban).
+Install relation    — "session S has socialware W installed" = (a) a per-install
+                      ConfigObject (subject=session_uri, key="install:"<>ref) +
+                      (b) the socialware's bases+shape mounted into the session's
+                      :kind_base union. LANDED: Ezagent.Socialware.Installation
+                      (apps/ezagent_domain_session/.../socialware/installation.ex).
+```
+
+**两条正交轴**(详见 `docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md`):
+
+- **recipe(axis A)vs responsibility(axis B)**(#1059 / Decision #155):recipe = "what an agent is built from"(build-time,agent-only);responsibility = "what function a principal serves in a session"(runtime,cross-principal)。一个 member 可 built from `bot` recipe 且 carrying `bot` responsibility —— 两 name 不必匹配。
+- **4 carrier layers**(artifact-kind 轴)vs **3 code tiers**(core/domain/plugin,code-dependency 轴):正交。一个 plugin 可同时发 L1 code + L2 seed definitions。详见 §10.8。
+
+**老 `:public_view` SessionTemplate boolean** 已 split(landed P4):identity job → install relation;anon-gate job → socialware-def `visibility_policy.web_anon_access`。`Ezagent.Socialware.PublicView` 保留为 compat facade(delegate 到 `Installation.web_anon_access?/1`)。**老 `Ezagent.Role` 已 rename 为 `Ezagent.Agent.Recipe`(#127/#1071)** —— 全 codebase 无 `defmodule Ezagent.Role`。
+
+### 3.1 Kind
 
 - `web` → **Transport adapter**(顶层,§12)
 - `os-process` / `pty` → **Behavior 内部资源**(§6.3 标准 Behavior 库)
@@ -1735,6 +1784,17 @@ V0.4 双层模型正好把它们解耦:
 
 V0.4 spec **不创建** AgentPreset / ToolPreset Kind,仅留下 framing 兼容性——双层模型天然支持未来扩展。
 
+### 9.6 Socialware definition ≠ Template Kind
+
+Socialware unification(2026-06-26/28)引入的 **socialware definition 不是一种 Template Kind** —— 它是一个 **opaque `config://<ws>/socialware/<name>` ConfigObject**(L2 definition data,sibling of the recipe on the same `ConfigStore`/`ConfigObject` substrate),**不是** spawnable Template Kind。
+
+- **存处**:`Ezagent.Socialware.DefinitionRegistry`(`apps/ezagent_domain_session/lib/ezagent/socialware/definition_registry.ex`,moduledoc "Definitions live at `config://<workspace>/socialware/<name>` with ConfigObject key `\"socialware\"`")。`config://` 是 ConfigStore-internal opaque subject,**不在** 6 个 Kind URI scheme 集合内(`entity session template resource workspace system`,`apps/ezagent_core/lib/ezagent/plugin.ex:88` `@core_schemes`)。当前 template spawn 只支持 `agent` 和 `session` type;`template://.../socialware` 会暗示一个不存在的 hidden Template Kind。
+- **对称物**:recipe —— `Ezagent.Agent.Recipe` 同样是 `config://<ws>/recipe/<name>` ConfigObject(key `"recipe"`),不是 Template Kind。两者是 ConfigStore 上的 sibling opaque subjects。
+- **SessionTemplate 的角色**:SessionTemplate 是 **plugin-composition** —— 它持一个 `installs: [{socialware-ref, seed-overrides}]` 字段(`Ezagent.Socialware.Installation.installs_from_template/1`),命名 *which* socialware-defs 装到 session;它 **不** 是 socialware definition 本身。Socialware definition 承载 bases/shape/members/routing_rules/adapters/visibility_policy;SessionTemplate 只持 generic composition + lineage。
+- **install relation**(landed P4):`Ezagent.Socialware.Installation`(`apps/ezagent_domain_session/lib/ezagent/socialware/installation.ex`,`@install_key_prefix "install:"`)写 per-session ConfigObject record + 把 socialware 的 bases+shape thread 进 Session 的 `:kind_base` union。
+
+老 `:public_view` SessionTemplate boolean field 已删除(split 为 install relation + `visibility_policy.web_anon_access`);`Ezagent.Socialware.PublicView` 保留为 compat facade。详见 `docs/together/2026-06-26/specs/socialware-unification.md` §2.3-§2.4 + GLOSSARY.md §2 "Install" / "Definition" 条目。
+
 ---
 
 ## 10. 持久化分层
@@ -1880,49 +1940,41 @@ CREATE INDEX ON messages (session_uri, inserted_at);
 CREATE INDEX ON messages (sender);
 ```
 
+**`visibility` 字段(rename landed)**:`Message.visibility :: :external_visible | :internal`(verified `apps/ezagent_core/lib/ezagent/message.ex:20,119-120`;migration `20260628001000_rename_operator_only_visibility_to_internal.exs`)。旧 `:customer_visible | :operator_only` 已 rename:`:internal` = all-info superset(held turn output、operator/management unfiltered read);`:external_visible` = audience-visible。Per-message visibility 是 real revocation primitive(`external_feed.ex`)。详见 GLOSSARY.md §2 Message 条目 + Decision #155。
+
 **Message stream 跟 Invocation audit (D) 不混淆**:
 - D 记**所有 Invocation**(管理操作 + Message 投递),弱 schema,运维角度
 - F 记**Message 实体本身**,只在 Message identity-create 时写一次,中转转发不重复写,业务角度
 
 LiveView dogfood IM 渲染 message stream UI 时,SELECT from F;routing 内部转发用 F 的 URI 引用同一条 Message,不是复制。
 
-### 10.5 G — 文件附件
+### 10.5 G — 文件附件(landed:Uploads + FsResolver + DownloadToken)
 
-外部 IM(Feishu/Slack)消息可含图片、文档、语音、视频。流程:
+外部 IM(Feishu/Slack)消息可含图片、文档、语音、视频。**Landed 设计(Decision #155 red line 4):blob bytes NEVER inline in Postgres。** Bytes 落在 host filesystem(`EZAGENT_HOME/uploads/<ws>/<name>`,ws-partitioned)或 S3-compatible object-storage;Postgres 只存 `resource://<ws>/uploads/<name>` URI ref + 一个 MAC-signed `DownloadToken`(S3-presigned-URL style bearer token)。
 
 ```
 1. Feishu webhook 推 message,带 file_key
-2. Python feishu adapter 调 Feishu API 下载文件内容
-3. adapter 调 Ezagent.Behavior.FileStorage 的 :upload action,带 binary + metadata
-4. Ezagent 根据大小决定存储:
-   - <10MB → SQLite BLOB 存到 attachments 表
-   - >=10MB → S3-compatible(用 `req_s3`,跟已有 Req 同生态)
-5. FileStorage 返回 storage_uri(file://<id> 或 s3://<bucket>/<key>)
-6. adapter 构造 %Message{body: %{text: "...", attachments: [storage_uri]}}
-7. Message 在 Ezagent 内层层中转,attachments 字段只是 URI 引用,不重复 binary
+2. Python feishu adapter 调 Feishu API 下载文件内容(bytes)
+3. adapter 调 Ezagent.Uploads 写 bytes 到 Home.path("uploads")/<ws>/<name>(disk)
+   (或 S3-compatible object-storage)
+4. Ezagent.Uploads 返回 resource://<ws>/uploads/<name>  URI ref(存进 Postgres,NOT bytes)
+5. adapter 构造 %Message{body: %{text: "...", attachments: [resource_uri]}}
+6. Message 在 Ezagent 内层层中转,attachments 字段只是 URI 引用,不重复 binary
+7. consumer 要读 bytes 时 mint 一个 DownloadToken(MAC-signed,绑 ws-scoped URI),
+   拿 token 解出 FsResolver 解析的物理路径/S3 key 取 bytes —— 永远不为 bytes 本身 mint
 ```
 
-```sql
-CREATE TABLE attachments (
-  uri          TEXT PRIMARY KEY,              -- file://<id>
-  storage      TEXT NOT NULL,                 -- 'postgres' | 's3'
-  content_type TEXT NOT NULL,
-  byte_size    INTEGER NOT NULL,
-  data         BLOB,                         -- 仅 storage='sqlite' 时使用
-  s3_key       TEXT,                          -- 仅 storage='s3' 时使用
-  meta         TEXT NOT NULL DEFAULT '{}',
-  inserted_at  TEXT NOT NULL
-);
-```
+**Verified landed substrate(`origin/main`):**
 
-> **Implementation 全部 Phoenix 生态**:
-> - 上传 HTTP 入口:`Plug.Upload` + multipart
-> - LiveView 上传(dogfood 期):`Phoenix.LiveView.Upload`(支持 external upload 直传 S3)
-> - 元数据 + 内容入库:`Ecto`
-> - S3 client(可选,只在 G 用):**`req_s3`**(跟 `Req` 同 author / 同生态)
-> - 标准 Behavior `Ezagent.Behavior.FileStorage` 由 `esr_behavior_file_storage` plugin 提供
+| 模块 | 路径 | 职责 |
+|---|---|---|
+| `Ezagent.Uploads` | `apps/ezagent_core/lib/ezagent/uploads.ex` | upload chokepoint;moduledoc:"Attachments are addressed as `resource://<ws>/uploads/<name>` … bytes live at `Home.path(\"uploads\")/<ws>/<name>` — ws-partitioned" |
+| `Ezagent.Uploads.DownloadToken` | `apps/ezagent_core/lib/ezagent/uploads/download_token.ex` | moduledoc:"S3-presigned-URL style: a MAC-signed bearer token that encodes the full ws-scoped `resource://<ws>/uploads/<name>` URI" |
+| `Ezagent.Resource.FsResolver` | `apps/ezagent_core/lib/ezagent/resource/fs_resolver.ex` | 把 `resource://` URI 解析到物理 fs 路径 / S3 key |
 
-`req_s3` 是**唯一可能新增**的 dep,而且只在启用 S3 时引入。纯 SQLite BLOB 路径连这个也不需要。
+Consumers mint a token for the stored URI,never for bytes(e.g. `conversation_data.ex` 给 attachment URI mint token,不传 bytes)。
+
+> ⚠️ **本节历史版本描述过一个 `<10MB → SQLite BLOB` 的 `attachments` 表 with a `data BLOB` column。** 那个设计 **从未 landed**(或已被 superseded),且会 **violate** Decision #155 red line 4(blob-never-inline)。当前 landed 代码 regardless of size 都把 bytes 存 disk,Postgres 只持 URI ref + token。见 SPEC `docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md` §4.5(STALE-DOC anti-pattern,now fixed)。可选 arch-gate(§6.3 of the SPEC):fail if any migration 引入 `:binary`/`BLOB` column on an `attachments`/`uploads` table(scoped to attachment/upload tables + content-bearing column names only —— 合法的 `state_binary` / token hash binary 列不在此列)。
 
 ### 10.6 A 类 — Plugin 运行时配置
 
@@ -1945,6 +1997,8 @@ end
 运维通过 plugin 自己暴露的 admin Behavior 改这些配置(走完整 CapBAC + audit),不是直接改 SQLite。Hot-reload 由 plugin 自己实现(`Phoenix.PubSub.subscribe("config:updated")` 等模式)。
 
 **为什么不用 `Application.spec/2` env**:`:env` 是**编译期静态**——运维改 Feishu app credentials 时不可能 recompile + restart 全系统。类型 A 持久化提供运行时可变性。
+
+> **Cross-ref**:reusable / forkable / content-addressed 的定义(recipe、socialware definition、responsibility assignment)优先住 L2 ConfigObject(`config://<ws>/{recipe|socialware}/<name>`,见 §9.6 + GLOSSARY §2 "Definition")。本节 A 类 plugin-owned Ecto 表是 plugin *runtime* 配置(app credentials 等),跟 L2 definition data 是不同 home —— definition 是 cross-instance reusable 的 config-as-data,runtime 配置是 per-plugin operational secret。
 
 ### 10.7 feishu-cc 切片参考表(v0 第一个垂直切片)
 
@@ -1994,6 +2048,47 @@ Ezagent.RoutingRegistry.put(SessionRules, session_uri, {matcher, receivers})
 ```
 
 未来其他 plugin(Slack adapter 等)按同模式各自声明类似 `ChatRouting` 表(`{slack_channel, team_id} → session_uri`),互不干扰。
+
+### 10.8 4-carrier-layer taxonomy(artifact-kind 轴,正交于 3 code tiers)
+
+> **Source of truth:** `docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md` §0 + Decision #155 (GLOSSARY.md §1)。本节是摘要;normative 定义 + anti-pattern verdicts + red lines 见该 SPEC。
+
+每个 ezagent artifact 落在四 carrier layer 之一。四层是 **artifact-kind + storage-home + anti-leak rule** 轴,**正交于** 3 code tiers(core/domain/plugin,§3 + `.claude/skills/ezagent-developer/references/three-tier-structure.md`)—— 3 tiers 管 **code-dependency direction**,4 carrier layers 管 **artifact kind + storage home**。一个 plugin 可同时发 L1 code + L2 seed definitions。
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LAYER 4 — EZAGENT_HOME files        (host-side runtime files)                │
+│   creds, kanban-boards.json mapping, logs, PTY pid-files, upload bytes      │
+│   NOTHING queryable by the BEAM as typed state; files the host OS owns      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ LAYER 3 — Runtime state data        (Postgres kind_snapshots slice + blobs) │
+│   per-agent/session DYNAMIC instance state: kanban task list, messages,     │
+│   turn state, membership, settlement. The live slice.                      │
+│   ► Blob sub-rule: binary bytes (video/attachments) → object-storage/fs     │
+│     (EZAGENT_HOME or S3); Postgres stores ONLY a URI ref + signed download  │
+│     token. Blob NEVER inline in Postgres. (§10.5)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ LAYER 2 — Definition data           (Postgres ConfigObject; static/reusable) │
+│   config-as-data: recipe, socialware-definition, responsibility role_name,  │
+│   shape config, persona, adapters, visibility_policy.                       │
+│   ► Business semantics LIVE HERE and ONLY here.                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ LAYER 1 — Code plugin               (apps/ezagent_plugin_*; compiled in)     │
+│   Behavior.Kanban etc. shape MECHANISM; Orchestrator.Tools; Surface render. │
+│   NO business words. Generic, reusable.                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**6 anti-leak red lines(Decision #155):**
+
+1. **Business concepts → L2 (definition DATA) ONLY。** Salesperson / customer-service-flow / board-semantics / persona / autoservice 住 L2 ConfigObject data value,never in L1 code / core / agent modules / L3 schema。
+2. **Business mechanism ≠ business semantics。** 需要的 code mechanism 是 L1 plugin(如 `Behavior.Kanban` 的 board/task mechanism),但 business semantics(which columns / which stages)是 L2 data。Only generic mechanism 是 code。(Known partial leak:`Behavior.Kanban` 仍 hardcode 9-stage product chain at `kanban.ex:37-38` —— target 是 move to L2 data。)
+3. **加新 socialware 不得改 `ezagent_core`。** 新 socialware = L2 definition +(可选)L1 plugin for novel mechanism。Core 不动。(Anti-pattern 4.6 — FIXED;`Ezagent.Socialware.DefinitionRegistry` 在 `domain_session` 不在 core。)
+4. **Blob NEVER inline in Postgres。** Bytes → L4;Postgres → URI ref + signed `DownloadToken` only。(§10.5 landed design;`Ezagent.Uploads` + `DownloadToken` + `FsResolver`。)
+5. **`socialware` 是 substrate name,不是 business concept。** Core 可命名 socialware substrate(tables、registry seam),不得命名 business-app concepts。NP-2 layer-vocabulary lint(`ezagent.check_invariants.lifecycle`)是 enforcement seam。
+6. **Fixture NOT a concept。** autoservice / loom / 命名部署是 configured instance(L2 seed + L3 instance),不入 concept taxonomy / config schema。
+
+**"new thing goes in which layer?" judgment rule** —— 见 SPEC §3(top-down decision flowchart;compound deliverable 先 decompose,each atomic artifact has exactly one home)。
 
 ---
 
@@ -2479,7 +2574,7 @@ apps/esr_plugin_<name>/              — Umbrella 目录
 :ezagent_behavior_<name>                 — 标准 Behavior 单 plugin(注册一个 Behavior)
 :ezagent_adapter_<name>                  — 单侧 transport adapter(例:ezagent_adapter_cli)
 :ezagent_plugin_<name>                   — 复合 plugin,可能含多组件(例:ezagent_plugin_cc 含 Elixir + Python 两侧)
-:ezagent_web_<name>                      — Phoenix 入口 plugin(例:ezagent_web_liveview)
+:ezagent_web_<name>                      — Phoenix 入口(例:`ezagent_web`,Endpoint/Socket/Plug/auth boundary;`ezagent_web_liveview` 已 absorbed —— admin/world LiveView surface 现住 `ezagent_plugin_world`,`ezagent_web` 持 Phoenix entry + `home_live`)
 ```
 
 ### 13.1 Plugin 示例区分
@@ -2493,7 +2588,10 @@ apps/esr_plugin_<name>/              — Umbrella 目录
 | `esr_behavior_pty` | 单 Behavior | 注册 `Ezagent.Behavior.Pty`(底层 `:ex_pty`) |
 | `esr_behavior_chat` | 单 Behavior | 注册 `Ezagent.Behavior.Chat` |
 | `esr_adapter_cli` | 单侧 adapter | CLI 工具,从 BehaviorRegistry 自动生成命令 |
-| `ezagent_web_liveview` | Phoenix 入口 | LiveView IM(v0 dogfood + 未来产品) |
+| `ezagent_web` | Phoenix 入口 | Endpoint/Socket/Plug/auth boundary + `home_live`(`ezagent_web_liveview` 已并入此 + `ezagent_plugin_world`) |
+| `ezagent_plugin_world` | 复合 plugin | world Conversation surface(`Ezagent.World.ConversationActions`/`ConversationData`)+ kanban UI + admin/world LiveView surface |
+| `ezagent_plugin_kanban` | 复合 plugin | `Behavior.Kanban`(board/task mechanism)+ `kanban_manager` role recipe |
+| `ezagent_domain_socialware` | domain | socialware substrate:`ExternalMirror`/`PublicView`(compat facade)/`anon_user`/`chat_feed`/`external_feed` |
 | `ezagent_plugin_cc` | 复合 plugin | 注册 `Ezagent.Session.CC`,通过本地 pty 拉 claude binary |
 | `ezagent_plugin_cc` | 复合 plugin | 含 Elixir adapter + Python channel server 两侧,桥接外部 CC |
 | `ezagent_plugin_feishu` | 复合 plugin | 含 Elixir adapter + Python feishu bot |
@@ -2575,8 +2673,11 @@ Plugin 不在此 budget 内——plugin 想多大都行,但应该自己有内部
 | ezagent_plugin_echo | 144 | Echo Behavior + Entity(Phase 1 demo,稳定不动)|
 | ezagent_plugin_cc_bridge_v1_prototype | 450 | MCP bridge Phase 1(v1_prototype 保留;Phase 5 重写但 cc-pty plugin 现在覆盖了使用场景)|
 | ezagent_plugin_cc | 417 | Template Class + PtyServer + Application(wraps shell script via PTY; auto-confirm dialog) |
-| ezagent_web | 1,486 | Phoenix Router + Endpoint + Controllers(login + cc-bridge announce + SSE)+ Plug.RequireUser |
-| ezagent_web_liveview | 1,683 | AdminLive(coordinator)+ 4 components + WorkspacesLive + WorkspaceDetailLive + RoutingLive + ScrollOnUpdate JS hook |
+| ezagent_web | 1,486 | Phoenix Router + Endpoint + Controllers(login + cc-bridge announce + SSE)+ Plug.RequireUser + `home_live` |
+| ~~ezagent_web_liveview~~ | ~~1,683~~ | **已并入** `ezagent_plugin_world`(world/admin LiveView surface:Conversation + kanban UI)+ `ezagent_web`(Phoenix entry)。旧 `ezagent_plugin_liveview` 名由 `lv_cli_parity` invariant enforce 不存在 |
+| ezagent_plugin_world | — | world Conversation surface(`Ezagent.World.ConversationActions`/`ConversationData`)+ kanban UI + admin LiveView surface(chat socialware 的 surface) |
+| ezagent_plugin_kanban | — | `Behavior.Kanban`(board/task mechanism)+ `kanban_manager` role recipe(passive,per-instance mount on `Entity.Agent`) |
+| ezagent_domain_socialware | — | socialware substrate:`ExternalMirror`/`PublicView`(compat facade)/`anon_user`/`chat_feed`/`external_feed`/`Installation` 调用点 |
 
 **Phase 4-completion 增量(从 Phase 4d 到现在)**:~3,800 LOC across 9 PRs(Template + Snapshot + CLI + Multi-user prov + Multi-user UI + Matcher combinators + Routing LV editor + CC PTY + Routing consolidation)。所有 PR 都有 invariant test;主要架构 gate 数 = 5(plugin isolation workspace / snapshot restart / CLI auto-derive / routing consolidation no-leak / cc-pty Template Class via real plugin)。
 
@@ -2693,7 +2794,7 @@ SQLite vs Postgres 语法差异在 spec 里**不存在**——v0 完全 SQLite�
 - `:erlexec` → `esr_behavior_os_process`
 - `:ex_pty` → `esr_behavior_pty`
 - `:optimus` → `esr_adapter_cli`(CLI 参考实现,见 Appendix D)
-- `:phoenix_live_view` → `ezagent_web_liveview`(IM dogfood + 可选 admin,见 Appendix D)
+- `:phoenix_live_view` → `ezagent_plugin_world` / `ezagent_web`(IM dogfood + admin/world LiveView surface;旧 `ezagent_web_liveview` 已并入,见 §13.1)
 - `:phoenix_live_dashboard` → 开发期 dep,ezagent_web 应用层加
 
 ---
