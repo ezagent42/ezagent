@@ -79,12 +79,12 @@ defmodule Ezagent.Socialware.Definition do
       name: definition.name,
       bases: Enum.map(definition.bases, &Atom.to_string/1),
       shape: Enum.map(definition.shape, &Atom.to_string/1),
-      members: definition.members,
-      routing_rules: definition.routing_rules,
-      prompt_templates: definition.prompt_templates,
-      legends: definition.legends,
+      members: json_safe(definition.members),
+      routing_rules: json_safe(definition.routing_rules),
+      prompt_templates: json_safe(definition.prompt_templates),
+      legends: json_safe(definition.legends),
       orchestrator_template_uri: uri_string(definition.orchestrator_template_uri),
-      adapters: definition.adapters,
+      adapters: json_safe(definition.adapters),
       visibility_policy: stringify_visibility(definition.visibility_policy)
     }
   end
@@ -198,6 +198,27 @@ defmodule Ezagent.Socialware.Definition do
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(_), do: nil
+
+  defp json_safe(%URI{} = uri), do: URI.to_string(uri)
+
+  defp json_safe({_, _} = tuple) do
+    Ezagent.Routing.Matcher.to_json(tuple)
+  rescue
+    _ -> Tuple.to_list(tuple) |> json_safe()
+  end
+
+  defp json_safe(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {json_key(key), json_safe(value)} end)
+  end
+
+  defp json_safe(list) when is_list(list), do: Enum.map(list, &json_safe/1)
+  defp json_safe(value) when is_boolean(value), do: value
+  defp json_safe(atom) when is_atom(atom) and not is_nil(atom), do: Atom.to_string(atom)
+  defp json_safe(value), do: value
+
+  defp json_key(key) when is_atom(key), do: Atom.to_string(key)
+  defp json_key(key) when is_binary(key), do: key
+  defp json_key(key), do: to_string(key)
 
   defp get(map, key, default \\ nil) do
     Map.get(map, key, Map.get(map, Atom.to_string(key), default))

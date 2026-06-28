@@ -30,6 +30,23 @@ defmodule Ezagent.Socialware.Installation do
 
   def installs_from_template(_), do: @default_installs
 
+  @doc "Parse a SessionTemplate's install declarations into canonical install specs."
+  @spec parsed_installs_from_template(map()) :: {:ok, [install_spec()]} | {:error, term()}
+  def parsed_installs_from_template(content) when is_map(content),
+    do: parse_installs(installs_from_template(content))
+
+  def parsed_installs_from_template(_content), do: parse_installs(@default_installs)
+
+  @doc "Resolve a SessionTemplate's install declarations to definitions and ConfigObjects."
+  @spec resolved_template_installs(map(), URI.t() | String.t()) ::
+          {:ok, [{Definition.t(), ConfigObject.t(), install_spec()}]} | {:error, term()}
+  def resolved_template_installs(content, workspace_uri) when is_map(content) do
+    with {:ok, installs} <- parsed_installs_from_template(content),
+         {:ok, definitions} <- resolve_definitions(installs, workspace_uri) do
+      {:ok, definitions}
+    end
+  end
+
   @doc "Resolve a SessionTemplate's installs into the Session host behavior set."
   @spec behavior_set_for_template(map(), URI.t() | String.t()) ::
           {:ok, [module()]} | {:error, term()}
@@ -69,6 +86,32 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
+  @doc "Repoint all per-session install records to the definitions named by a template."
+  @spec repoint_template_installs(URI.t(), URI.t() | String.t(), map(), URI.t() | String.t()) ::
+          :ok | {:error, term()}
+  def repoint_template_installs(
+        %URI{scheme: "session"} = session_uri,
+        workspace_uri,
+        content,
+        actor_uri
+      ) do
+    with {:ok, definitions} <- resolved_template_installs(content, workspace_uri) do
+      Enum.reduce_while(definitions, :ok, fn {definition, object, install}, :ok ->
+        case point_session_install(
+               session_uri,
+               workspace_uri,
+               install,
+               definition,
+               object,
+               actor_uri
+             ) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+  end
+
   @doc "True when any installed socialware definition allows anonymous web access."
   @spec web_anon_access?(URI.t()) :: boolean()
   def web_anon_access?(%URI{scheme: "session"} = session_uri) do
@@ -91,6 +134,42 @@ defmodule Ezagent.Socialware.Installation do
       {:ok, %ConfigObject{}},
       ConfigStore.resolve(@install_layer, workspace, session_uri, key)
     )
+  end
+
+  def installed?(_session_uri, _ref), do: false
+
+  @doc "Repoint one session install record to a newer socialware definition object."
+  @spec point_session_install(
+          URI.t(),
+          URI.t() | String.t(),
+          install_spec(),
+          Definition.t(),
+          ConfigObject.t(),
+          URI.t() | String.t()
+        ) :: {:ok, ConfigObject.t()} | {:error, term()}
+  def point_session_install(
+        %URI{scheme: "session"} = session_uri,
+        workspace_uri,
+        install,
+        %Definition{} = definition,
+        %ConfigObject{} = object,
+        actor_uri
+      )
+      when is_map(install) do
+    ref = install.ref
+
+    with {:ok, %{object: %ConfigObject{} = install_object}} <-
+           ConfigStore.write_and_point(%{
+             layer: @install_layer,
+             workspace_uri: workspace_uri,
+             subject_uri: session_uri,
+             key: install_key(ref),
+             body: install_body(ref, install.config, definition, object),
+             actor_uri: actor_uri,
+             source_turn_id: unique_source_turn_id("socialware-install", session_uri, ref)
+           }) do
+      {:ok, install_object}
+    end
   end
 
   @doc "Return the exact socialware definitions currently installed on a session."
@@ -134,17 +213,21 @@ defmodule Ezagent.Socialware.Installation do
       workspace_uri: workspace_uri,
       subject_uri: session_uri,
       key: install_key(ref),
-      body: %{
-        ref: ref,
-        seed_config: install.config,
-        definition_subject_uri: object.subject_uri,
-        definition_config_id: object.id
-      },
+      body: install_body(ref, install.config, definition, object),
       actor_uri: actor_uri,
       source_turn_id: "socialware-install:#{URI.to_string(session_uri)}:#{ref}",
       collision_tag:
         {:socialware_install_collision, URI.to_string(session_uri), ref, definition.name}
     })
+  end
+
+  defp install_body(ref, config, %Definition{} = _definition, %ConfigObject{} = object) do
+    %{
+      ref: ref,
+      seed_config: config,
+      definition_subject_uri: object.subject_uri,
+      definition_config_id: object.id
+    }
   end
 
   defp resolve_definitions(installs, workspace_uri) do
@@ -203,4 +286,8 @@ defmodule Ezagent.Socialware.Installation do
   defp parse_install(other), do: {:error, {:invalid_socialware_install, other}}
 
   defp install_key(ref), do: @install_key_prefix <> ref
+
+  defp unique_source_turn_id(prefix, %URI{} = session_uri, ref) do
+    "#{prefix}:#{URI.to_string(session_uri)}:#{ref}:#{System.unique_integer([:positive, :monotonic])}"
+  end
 end

@@ -76,6 +76,33 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     end
   end
 
+  @doc "Write a new current ConfigObject version for a workspace socialware definition."
+  @spec write_definition(Definition.t() | map(), keyword()) ::
+          {:ok, ConfigObject.t()} | {:error, term()}
+  def write_definition(definition_or_attrs, opts \\ []) do
+    with {:ok, %Definition{} = definition} <- normalize_definition(definition_or_attrs),
+         workspace_uri =
+           opts |> Keyword.get(:workspace_uri, system_workspace_uri()) |> uri_string(),
+         subject = definition_subject_uri(workspace_uri, definition.name),
+         actor = Keyword.get(opts, :actor_uri, default_seed_actor()),
+         source_turn_id =
+           Keyword.get_lazy(opts, :source_turn_id, fn ->
+             unique_source_turn_id(workspace_uri, definition.name)
+           end),
+         {:ok, %{object: %ConfigObject{} = object}} <-
+           ConfigStore.write_and_point(%{
+             layer: @definition_layer,
+             workspace_uri: workspace_uri,
+             subject_uri: subject,
+             key: @definition_key,
+             body: Definition.body(definition),
+             actor_uri: actor,
+             source_turn_id: source_turn_id
+           }) do
+      {:ok, object}
+    end
+  end
+
   @doc "Return the in-repo built-in definitions used as boot seed data."
   @spec builtin_definitions() :: [Definition.t()]
   def builtin_definitions do
@@ -142,4 +169,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri
+
+  defp unique_source_turn_id(workspace_uri, name) do
+    "socialware-definition-write:#{workspace_uri}:#{name}:#{System.unique_integer([:positive, :monotonic])}"
+  end
 end

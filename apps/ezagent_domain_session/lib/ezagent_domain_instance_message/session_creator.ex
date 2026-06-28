@@ -40,7 +40,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
 
   alias Ezagent.KindRegistry
-  alias Ezagent.Socialware.Installation
+  alias Ezagent.Socialware.{DefinitionEditor, Installation}
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
@@ -459,7 +459,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # provisioned lazily by routing and are NOT part of create completeness.
   defp session_complete?(
          %URI{} = session_uri,
-         %URI{} = _workspace_uri,
+         %URI{} = workspace_uri,
          %URI{} = owner_uri,
          template_content
        ) do
@@ -468,9 +468,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     wc = Session.read_template_working_copy(session_uri)
 
     declarations =
-      case Map.get(template_content, :members) || Map.get(template_content, "members") do
-        list when is_list(list) -> Enum.filter(list, &template_member_declaration?/1)
-        _ -> []
+      case DefinitionEditor.member_declarations_for_template(template_content, workspace_uri) do
+        {:ok, list} -> Enum.filter(list, &template_member_declaration?/1)
+        {:error, _} -> []
       end
 
     bound? and owner_member? and

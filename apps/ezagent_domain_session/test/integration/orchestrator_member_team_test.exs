@@ -30,6 +30,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Matcher, Resolver}
+  alias Ezagent.Socialware.DefinitionRegistry
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -237,7 +238,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # ── the team is built. Now prove it ROUTES (PR-2/PR-4/PR-6 seam). ──────
     slice = chat_slice(session_uri)
     assert slice.prompt_templates[tpl_ref] == "接龙：{body}（by {sender}）"
-    assert {:ok, %{bound_rule_set: ^rule_set}} = SessionBehavior.resolve_legend(slice, legend_name)
+
+    assert {:ok, %{bound_rule_set: ^rule_set}} =
+             SessionBehavior.resolve_legend(slice, legend_name)
 
     table = Resolver.default_routing_table()
     rows = RoutingRegistry.list_all(table)
@@ -303,7 +306,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
            "B1: orchestrator-defined rule must be stamped created_by=session_uri " <>
              "(got #{inspect(row.created_by)}); otherwise session_rule_set_rules drops it"
 
-    # And it round-trips into a saved SessionTemplate (the snapshot captures it).
+    # And it round-trips into the saved template's installed Socialware definition.
     caps =
       MapSet.put(
         mcp[:caps],
@@ -325,17 +328,23 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
       workspace_uri: @workspace_uri
     ]
 
-    assert {:ok, %URI{} = new_template_uri} =
-             Tools.save_template_as("pr8-b1-saved-#{n}", save_opts)
+    template_name = "pr8-b1-saved-#{n}"
+
+    assert {:ok, %URI{} = new_template_uri} = Tools.save_template_as(template_name, save_opts)
 
     {:ok, content} = Ezagent.Entity.Session.read_template_content(new_template_uri)
-    rules = Map.get(content, :routing_rules) || Map.get(content, "routing_rules") || []
+    assert content.installs == [template_name]
+    refute Map.has_key?(content, :routing_rules)
+    refute Map.has_key?(content, "routing_rules")
+
+    assert {:ok, definition, _object} = DefinitionRegistry.lookup(@workspace_uri, template_name)
+    rules = definition.routing_rules
 
     assert Enum.any?(rules, fn r ->
              (Map.get(r, :rule_set) || Map.get(r, "rule_set")) == rule_set
            end),
            "B1: the orchestrator-defined rule-set rule must be captured in the saved " <>
-             "template's routing_rules; got #{inspect(rules)}"
+             "template's socialware definition routing_rules; got #{inspect(rules)}"
   end
 
   test "codex M2 — an unauthorized add_managed_member does NOT spawn a worker" do
