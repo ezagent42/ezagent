@@ -25,6 +25,18 @@
 > **role-materialization foundation** (RF-1..RF-8: runtime mount/detach + role
 > recipes), **kanban-as-role** (#103-105, the landed config-as-data installable
 > precedent), and the recipe/responsibility split (#1059).
+>
+> **REVISE (2026-06-28, same day).** Two lead decisions folded: **(1) OQ-1 closed
+> as (a)** — the orchestrator's "base-ness" IS the EXISTING combo (recipe via
+> role-as-data + `Orchestrator.Tools` + `SessionManager`), classified conceptually
+> as the "orchestration base" with **zero new Behavior / zero new code**;
+> `Behavior.Template` stays template-content storage (NOT a session-mounted
+> runtime base); no `Behavior.Template` refit; no new `Behavior.Orchestrator`;
+> OQ-1 removed from §9. **(2) P10 added** — a **codex-runnable automated** E2E
+> suite (not a manual live agent-browser run) covering the full socialware
+> lifecycle (author→install→run customer→run supervisor→security→publish_policy)
+> as the completion gate; reuses the `autoservice_tier1_seed_test.exs` harness
+> pattern; placed after P9 (final phase). Re-review in §10.3.
 
 ---
 
@@ -71,9 +83,10 @@ a *socialware* that composes it.
 ├─────────────────────────────────────────────────────────────────────┤
 │  BASE (基座, PLURAL)  (capability substrates; NOT user-operated)     │
 │     composed INTO socialwares; provide capability, not a product     │
-│     • orchestrator  = orchestration-recipe substrate                 │
-│       (Ezagent.Behavior.Template — see §0.2 caveat: recipe-content,  │
-│        NOT a session-mounted runtime base)                           │
+│     • orchestrator  = the orchestration base — the EXISTING combo    │
+│       (recipe via role-as-data + Orchestrator.Tools +                │
+│        SessionManager executor); NO new Behavior, NO                 │
+│        Behavior.Template refit (lead decision, OQ-1 closed (a))      │
 │     • hello/surface = render/external-surface base                   │
 │                       (Ezagent.Behavior.Surface)                     │
 │     • Behavior.Pty, Behavior.Sandbox, Behavior.CcHeadlessAgent       │
@@ -89,27 +102,30 @@ socialwares. Verified bases (all `defmodule`-confirmed on `origin/main`):
 
 | Base | Module | What it provides | Verified |
 |---|---|---|---|
-| **orchestrator** (recipe-content substrate — **caveat, §0.2 below**) | `Ezagent.Behavior.Template` | the **orchestration-recipe substrate** — carries the `:template` content slice (team / routing / persona / tool-catalog recipe) with dispatchable `:read`/`:write`/`:instantiate` actions; the orchestrator tool catalog (`add_managed_member`, `define_rule_set_rule`, `define_prompt_template`, `define_legend`, `save_template_as`, `migrate_session`) mutates this content. **NOT a session-mounted runtime base** — it lives on the `SessionTemplate` Kind (the composition recipe), not in a session's `:kind_base`. The runtime "process/agent+tools" is the composite of this recipe content + `Orchestrator.Tools` (the catalog) + `SessionManager` (the executor). | `behavior/template.ex:1,11-29` (moduledoc: "dispatchable template-CONTENT Behavior for the AgentTemplate + SessionTemplate Kinds"); tools at `orchestrator/tools.ex:135,376,555,661,707,756,760`; **Session `behaviors/0` does NOT include `Behavior.Template`** (`entity/session.ex:56-93`) |
+| **orchestrator** (the orchestration base — **lead decision, OQ-1 closed (a)**) | `Ezagent.Behavior.Template` (recipe-content carrier) + `Orchestrator.Tools` + `SessionManager` | the **orchestration base** — conceptually ONE base among several, but its "base-ness" is the **EXISTING combo** with **zero new Behavior/code**: the orchestrator recipe rides `Behavior.Template`'s `:template` content slice (team/routing/persona/tool-catalog recipe, via role-as-data) + `Orchestrator.Tools` (the tool catalog: `add_managed_member`, `define_rule_set_rule`, `define_prompt_template`, `define_legend`, `save_template_as`, `migrate_session`) + `SessionManager` (the executor). **`Behavior.Template` stays exactly what codex found it** — template-CONTENT storage (the `:template` slice on the `SessionTemplate`/`AgentTemplate` Kinds with `:read`/`:write`/`:instantiate`), **NOT a session-mounted runtime base** (Session `behaviors/0` does not include it). **No `Behavior.Template` refit; no new `Behavior.Orchestrator`.** When a socialware "composes the orchestrator base," it means the socialware definition's team/routing/persona ride the `Behavior.Template` content substrate (via SessionTemplate/ConfigStore) and the orchestrator agent + tool catalog execute against it. | `behavior/template.ex:1,11-29` (moduledoc: "dispatchable template-CONTENT Behavior for the AgentTemplate + SessionTemplate Kinds"); tools at `orchestrator/tools.ex:135,376,555,661,707,756,760`; **Session `behaviors/0` does NOT include `Behavior.Template`** (`entity/session.ex:56-93`) |
 | **hello/surface** | `Ezagent.Behavior.Surface` | the render/external-surface substrate — owns the `:surface` slice; immutable page versions + an `:approved` pointer; `:put_version`/`:approve`/`:commit_settlement` actions | `behavior/surface.ex:1,2-6` (moduledoc: "Immutable socialware page surface") |
 | **pty** | `Ezagent.Behavior.Pty` | terminal/PTY substrate | `ezagent_domain_pty/lib/ezagent/behavior/pty.ex:1` |
 | **sandbox** | `Ezagent.Behavior.Sandbox` | per-agent config_dir + Kind.Template plugin-extension substrate | `ezagent_core/lib/ezagent/behavior/sandbox.ex:1` |
 | **cc-headless-agent** | `Ezagent.Behavior.CcHeadlessAgent` | the cc SDK sync-result-persistence + headless-agent substrate | `ezagent_domain_agent/lib/ezagent/behavior/cc_headless_agent.ex:1` |
 
-> **Caveat (codex Q7 UNSOUND-as-written, folded — OQ for the lead, §9).** The
-> lead's final model mapped "orchestrator = process/agent+tools base
-> (`Ezagent.Behavior.Template`)." Code-verification + codex both show
+> **DECIDED — OQ-1 closed as (a), no new concept (lead decision, 2026-06-28).**
+> The lead's final model mapped "orchestrator = process/agent+tools base
+> (`Ezagent.Behavior.Template`)." Code-verification + codex both confirmed
 > `Behavior.Template` is **template-CONTENT storage** (the `:template` slice on
 > the `SessionTemplate`/`AgentTemplate` Kinds with `:read`/`:write`/`:instantiate`
 > actions), **NOT a session-mounted runtime base** — Session behavior sets
-> (`entity/session.ex:56-93`) do not include it. This SPEC therefore reclassifies
-> the "orchestrator base" as the **orchestration-recipe substrate**: `Behavior.Template`
-> carries the process *recipe* (team/routing/persona), and the runtime
-> "process/agent+tools" is the **composite** of that recipe + `Orchestrator.Tools`
-> (the tool catalog) + `SessionManager` (the executor). When a socialware "composes
-> the orchestrator base," it means the socialware definition's team/routing/persona
-> ride the `Behavior.Template` content substrate (via SessionTemplate/ConfigStore),
-> and the orchestrator agent + tool catalog execute against it. **Confirm the
-> reclassification with the lead** (the lead invited the misclassification check).
+> (`entity/session.ex:56-93`) do not include it. **The lead resolved this as
+> option (a): the orchestrator's "base-ness" IS the EXISTING combo** — the
+> orchestrator recipe via role-as-data + `Orchestrator.Tools` (the catalog) +
+> `SessionManager` (the executor) — classified conceptually as the
+> "orchestration base" but with **ZERO new Behavior and ZERO new code.**
+> `Behavior.Template` stays exactly what codex found it (template-CONTENT
+> storage, NOT a session-mounted runtime base). **There is no `Behavior.Template`
+> refit and no new `Behavior.Orchestrator`** — anywhere in this SPEC. When a
+> socialware "composes the orchestrator base," it means the socialware
+> definition's team/routing/persona ride the `Behavior.Template` content substrate
+> (via SessionTemplate/ConfigStore) and the orchestrator agent + tool catalog
+> execute against it. OQ-1 is removed from the open-questions list (§9).
 
 **Socialware.** A human+program hybrid flow that composes one or more bases + a
 **shape** and is directly user-operable. Two verified instances:
@@ -122,8 +138,9 @@ socialwares. Verified bases (all `defmodule`-confirmed on `origin/main`):
   derived against `MessageStore`/`EntityPresenter`/`Message` — NOT [retired]
   `SessionContext`") + `Conversation.tsx`
   (`apps/ezagent_plugin_world/assets/src/components/Conversation.tsx`). The chat
-  **socialware** composes the **orchestrator** recipe substrate (`Behavior.Template`,
-  the team/routing/persona recipe) + the **surface** base (`Behavior.Surface`, the
+  **socialware** composes the **orchestrator base** (the existing recipe+tools+executor
+  combo — `Behavior.Template` recipe content + `Orchestrator.Tools` + `SessionManager`,
+  no new Behavior) + the **surface** base (`Behavior.Surface`, the
   rendered conversation surface) + the **conversation shape** (`Behavior.Turn`, the
   turn state machine — see §0.4). **Current-state precision (codex Q1 fix):** today
   the *plain* chat path (`Session.chat_behaviors/0`, `entity/session.ex:71-93`)
@@ -178,7 +195,7 @@ claim/status/artifact actions). The shape is what distinguishes two socialwares
 that compose the *same* bases (chat and a future "board-chat" could both compose
 orchestrator+surface but differ in shape).
 
-> **Precision (open for the lead, §9 OQ-1):** `Turn`'s moduledoc calls it
+> **Precision (open for the lead, §9 item 1):** `Turn`'s moduledoc calls it
 > "Socialware orchestration state machine," which sits between "base" and
 > "shape." The clean classification: a **base** is general (reusable across
 > unrelated socialwares); a **shape** is flow-specific. `Turn` is flow-specific
@@ -194,8 +211,9 @@ orchestrator+surface but differ in shape).
 > `supervisor` responsibility + B2 pool authoring is **P9-target** (§3, §7.1) —
 > do not author `supervisor` before P9.
 
-1. **Pick the bases** your flow needs: does it need the orchestration-recipe
-   substrate (orchestrator/`Behavior.Template`)? a rendered external surface
+1. **Pick the bases** your flow needs: does it need the orchestration base
+   (orchestrator = the existing recipe+tools+executor combo, no new Behavior)?
+   a rendered external surface
    (surface/`Behavior.Surface`)? a terminal (`Behavior.Pty`)? a sandbox
    (`Behavior.Sandbox`)? a cc headless agent (`Behavior.CcHeadlessAgent`)?
 2. **Define the shape** — the flow-specific behavior(s) + recipe (team,
@@ -238,8 +256,10 @@ The developer does NOT touch the host Kind, declare the bases in
 - **orchestrator is ONE base among several**, NOT "the" base. A socialware may
   compose orchestrator + surface, or surface + pty, or orchestrator alone. Do
   not treat orchestrator as the singular foundation. (And note: the orchestrator
-  "base" is the **recipe-content substrate** `Behavior.Template`, not a
-  session-mounted runtime — §0.2 caveat.)
+  "base" is the **existing recipe+tools+executor combo** — `Behavior.Template`
+  recipe content + `Orchestrator.Tools` + `SessionManager` — with **no new
+  Behavior and no `Behavior.Template` refit**; `Behavior.Template` stays
+  template-content storage, not a session-mounted runtime — §0.2 DECIDED.)
 
 ---
 
@@ -250,9 +270,12 @@ All citations verified against `origin/main` (`67b49303`).
 ### 1.1 The bases (exist)
 
 All five bases in §0.2 are `defmodule`-confirmed on `origin/main`. The
-orchestrator base (`Behavior.Template`) carries the `:template` content slice
-(team/routing/persona) on the SessionTemplate Kind; the orchestrator tool
-catalog (`orchestrator/tools.ex`) mutates that content. The surface base
+orchestrator base is the **existing combo** (lead decision, OQ-1 closed (a)):
+`Behavior.Template` carries the `:template` content slice (team/routing/persona)
+on the SessionTemplate Kind (template-content storage, NOT a session-mounted
+runtime base — unchanged), and the orchestrator tool catalog
+(`orchestrator/tools.ex`) + `SessionManager` execute against it. **No new
+Behavior, no `Behavior.Template` refit.** The surface base
 (`Behavior.Surface`) owns the `:surface` slice. `Behavior.Pty`, `Sandbox`,
 `CcHeadlessAgent` are registered on their respective domain Kinds.
 
@@ -419,11 +442,11 @@ lacks:
 
 ```
 config://<ws>/socialware/<name>             # installable socialware definition (config-as-data; ConfigObject, key "socialware"; opaque subject, NOT a Kind)
-├── bases         : [Ezagent.Behavior.Template, Ezagent.Behavior.Surface, …]   # REUSE: the per-instance set the host mounts
+├── bases         : [Ezagent.Behavior.Surface, Ezagent.Behavior.Pty, …]        # REUSE: the per-instance SESSION-MOUNTED set the host mounts via :kind_base (Surface/Pty/Sandbox/CcHeadlessAgent — Behaviors that own a session slice). NOTE: the orchestrator base is NOT in this list — it is NOT session-mounted; its recipe rides Behavior.Template on the SessionTemplate Kind (see orchestrator_template_uri below) + Orchestrator.Tools + SessionManager (the existing combo, no new Behavior).
 ├── shape         : [Ezagent.Behavior.Turn, …]                                 # the flow-specific behaviors (chat's turn; kanban's board/task)
 ├── members       : [%{uri|source_template_uri, role_name, …}]                 # the socialware's slice of the team (B1 responsibility)
 ├── routing_rules : [%{matcher, receivers, rule_set, …}]                       # {:role, name} routing
-├── prompt_templates / legends / orchestrator_template_uri                    # the orchestration recipe
+├── prompt_templates / legends / orchestrator_template_uri                    # the orchestration recipe (Behavior.Template content substrate — NOT session-mounted; OQ-1 closed (a))
 ├── adapters      : [%{adapter_id, role: :customer|:internal, config}]         # NEW: ExternalMirror.Adapter set
 │     ├── "web_feed"      :pull   (chat + page disciplines; the SPA shell)
 │     ├── "feishu_mirror" :push   (a customer channel)   [optional]
@@ -782,6 +805,9 @@ phase is independently landable + verifiable with a named gate.
    P7 (dual-path FORM editor)                                needs P4/P5; gated behind P8
         ▼
    P9 (supervisor named responsibility + B2 pool + fan-out + quorum/arbiter + takeover UI — 4 sub-steps)   needs P8 + P7; defer (L)
+        │
+        ▼
+   P10 (whole-implementation lifecycle E2E — COD-RUNNABLE automated suite; gates completion)   needs P4-P9; FINAL
 ```
 
 > **P8 split (codex Q5 fix).** P8 has a **minimal-first subset (P8a)** — cap-gate
@@ -803,12 +829,14 @@ phase is independently landable + verifiable with a named gate.
 | **P7 — dual-path FORM editor** | world form fills full socialware-def + adapter picker + visibility; SessionTemplate composition picker; converge with orchestrator loop on one def | **M** | NOW | form authors non-empty members/routing/prompt_templates/legends + adapter set + an `installs` composition; round-trips with `save_template_as`; `"current"` tag published on save |
 | **P8 — cap-gate the operator/management unfiltered read (the security fix, NO named role)** | **P8a (pre-prod-now, before P7):** `read_unfiltered` cap fail-closed gate on the *existing* `/sessions` unfiltered `recent_in_session` read (`router.ex:32-38` RequireEntity-only → add the cap gate; `MessageStore.recent_in_session/2` has no visibility filter today). **P8b (ride #1059):** relabel `operator_tree`/"Operator SessionView"→internal. Re-homes PR-4 authz fix. **NO named "supervisor"/"operator" role introduced.** | **S-M** | **P8a NOW (leak exists today); P8b ride #1059** | P8a: a non-holder authenticated workspace user cannot read `:internal`/`:operator_only` messages via `/sessions` (the PR-4 disclosure gate, fail-closed); P8b: relabel-only elsewhere |
 | **P9 — supervisor named responsibility + B2 pool + fan-out + quorum/arbiter + takeover UI (4 sub-steps)** | see §7.1 | **L** | defer (post-prod ok) | per sub-step gates in §7.1 |
+| **P10 — whole-implementation lifecycle E2E (codex-runnable automated suite; gates completion)** | an **automated** E2E test suite (codex-runnable, NOT a manual live agent-browser run) covering the FULL socialware lifecycle as assertions, reusing the existing e2e harness pattern (`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs` — `Code.require_file` + `EzagentCore.DataCase` + `skip_if_no_entity_spawn` + in-process dispatch-then-assert; `scripts/autoservice_tier1_seed.exs` + `scripts/world_e2e_seed.exs` seed modules; the in-process dispatch entry `apps/ezagent_cli/lib/ezagent_cli/exec.ex` (`EzagentCli.Exec.exec/1`) — NOT the `mix ezagent` RPC shell; `apps/ezagent_plugin_kb/test/e2e/kb_role_native_test.exs` mount/role assertions). See §7.4 for the lifecycle assertions. | **M** | **NOW (gates completion)** | the automated lifecycle E2E suite is green — author→install→run customer→run supervisor→security→publish_policy (§7.4); the invariant test FAILS if any lifecycle step is unmet |
 
 **Recommended order:** P0 (concepts doc, pre-prod) → P1 (cheapest, pre-prod-
 critical) → P2 (independent) → P3 (foundational) → P4 (foundational L) → P5 → P6
 → **P8a (security, pre-prod-now — the `/sessions` leak exists today)** → P7
-(editor, gated behind P8a) → P8b (relabel, ride #1059) → P9 (last, deferred).
-P1/P2 land in parallel (no shared file). **C1 (P1) stays pre-prod-first.** **No
+(editor, gated behind P8a) → P8b (relabel, ride #1059) → P9 (last, deferred)
+→ **P10 (codex-runnable lifecycle E2E — gates completion; lands after every
+phase it asserts).** P1/P2 land in parallel (no shared file). **C1 (P1) stays pre-prod-first.** **No
 named operator role lands in P1-P8** — P8 introduces only the `read_unfiltered`
 cap-gate; **`supervisor` is a NAMED routing responsibility ONLY in P9**, where
 the fan-out target + multi-holder pool need a name. **The security cap-gate (P8a)
@@ -822,7 +850,7 @@ P8a is pre-prod-now, before the editor (P7) widens exposure.
 | **P9-a assignment** | `domain_workspace` | principal→responsibility assignment + `:assign_role` cap; **`supervisor` becomes a named responsibility here** | assigning/unassigning a holder is durable + cap-gated; **no new app edge** |
 | **P9-b approval workflow** | `domain_session` | approval/quorum/arbiter Behavior (verdict collection, `quorum_policy`, arbiter escalation) | a quorum→arbiter escalation test; stale-holder verdict rejected (assignment↔cap atomicity) |
 | **P9-c fan-out seam** | `core/routing` + **session-injected resolver** | `{:role,name}`→`[uri]` multi-holder resolution + **same-ws + current-assignment validation** | a test proving fan-out delivery mints **no `:receive` cap** for unassigned/out-of-scope principals (the load-bearing tenant-isolation gate) |
-| **P9-d takeover UI** | the editor (`ezagent_plugin_world`) | claim/approve/escalate **product surface** (live E2E is the coordinator's job, not codex's) | the UI drives `:claim`/`:settle`/`:approve` (no raw `mix ezagent` dispatch) |
+| **P9-d takeover UI** | the editor (`ezagent_plugin_world`) | claim/approve/escalate **product surface** | the UI drives `:claim`/`:settle`/`:approve` (no raw `mix ezagent` dispatch); the lifecycle verbs are ALSO asserted automatedly by P10 |
 
 ### 7.2 Cross-phase couplings
 
@@ -848,6 +876,15 @@ P8a is pre-prod-now, before the editor (P7) widens exposure.
   `supervisor` responsibility + the editor (P7) to assign holders + drive
   takeover. P9 is otherwise additive (new state in workspace + session + routing)
   and shares no file with P0-P8.
+- **P10 → P4-P9 (FINAL, gates completion):** P10 is the codex-runnable lifecycle
+  E2E suite. It lands AFTER every phase whose behavior it asserts (P4 install
+  relation, P5 orchestrator re-target, P6 publish_policy, P8a security cap-gate,
+  P7 dual-path editor, P9 supervisor/B2 if in scope). P10 is not a hard dep for
+  any earlier phase to *land* — it is the **completion gate**: the implementation
+  is "done" when the P10 suite is green. A subset of P10 (author→install→run
+  customer→security→publish_policy) is runnable once P4-P8 land; the
+  supervisor/B2-quorum assertions are added once P9 lands (P10 is placed after
+  P9 in the DAG so the full lifecycle is asserted).
 
 ### 7.3 Dep-DAG legality (zero new app edge)
 
@@ -875,6 +912,109 @@ domain_workspace → {domain_identity, domain_agent}`; workspace not→session.
 Workflow in session (not workspace) because the quorum Behavior needs message
 replies + membership, which only `domain_session` has; hosting in workspace would
 **cycle**. **No new `domain.role` app** (YAGNI).
+
+### 7.4 P10 — the codex-runnable lifecycle E2E (completion gate)
+
+> **Lead decision (2026-06-28):** the whole-implementation E2E (P10) MUST be an
+> **automated test suite codex can run itself**, not a manual live agent-browser
+> run by the coordinator. Per the *completion-requires-invariant-test* discipline,
+> the gate is a test that **FAILS when the socialware-lifecycle goal is unmet.**
+> A live agent-browser screenshot by the coordinator may remain as a SECONDARY
+> visual confirmation; the GATE is the codex-runnable automated suite below.
+
+P10 is a single e2e test module (sibling of
+`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`) that
+`Code.require_file`s a lifecycle seed and asserts the full socialware lifecycle
+end to end through dispatch — no browser, no live cc PTY. Each step is a
+distinct `assert` so a missing/broken phase fails the suite by name. Reused
+harnesses (all `origin/main`-confirmed):
+
+- **`apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs`** — the
+  `use EzagentCore.DataCase, async: false` + `Code.require_file(@seed)` +
+  `skip_if_no_entity_spawn` + dispatch-then-assert pattern; its moduledoc already
+  separates the *deterministic routing/retrieval half* (provable here) from the
+  *cc-woven-answer soul* (a live-stack concern) — P10 reuses exactly that split.
+- **`scripts/autoservice_tier1_seed.exs`** + **`scripts/world_e2e_seed.exs`** —
+  the seed modules that wire the chain; P10's lifecycle seed is a sibling.
+- **`apps/ezagent_cli/lib/ezagent_cli/exec.ex`** (`EzagentCli.Exec.exec/1`) — the
+  **in-process** dispatch entry point the e2e tests call directly (the `mix
+  ezagent` task at `apps/ezagent_cli/lib/mix/tasks/ezagent.ex` is only a
+  distributed-Erlang RPC shell around `:rpc.call(..., EzagentCli.Exec, :exec, ...)`
+  that needs a running runtime node — NOT codex-runnable in a DataCase; the test
+  calls `EzagentCli.Exec.exec/1` or `Ezagent.Invocation.dispatch/1` in-process
+  instead, exactly as `autoservice_tier1_seed_test.exs` dispatches through the
+  Resolver in-process).
+- **`apps/ezagent_plugin_kb/test/e2e/kb_role_native_test.exs`** — the
+  per-instance mount + `role_name` assertion pattern (reused for the install +
+  B1 responsibility assertions).
+
+**The lifecycle assertions (each automated; the suite FAILS if any is unmet):**
+
+1. **Author (dual-path editor → one definition).** Dispatch the Path A form save
+   (`workspace.template.save` / the §4 form payload) AND the Path B orchestrator
+   loop (`add_managed_member` + `define_rule_set_rule` + `save_template_as`).
+   Assert BOTH terminate at the **same content-addressed** `config://<ws>/socialware/<name>@<hash>`
+   `ConfigObject` (key `"socialware"`) with the expected `bases`/`shape`/`members`/
+   `routing_rules`/`adapters`/`visibility_policy` fields, and that the `"current"`
+   tag is published on save. **Gates P4 + P5 + P7.**
+2. **Install (install relation).** Install the socialware onto a session via the
+   `installs` composition. Assert the per-install `ConfigObject` record exists
+   (`subject = session_uri`, `key = "install:" <> socialware-ref`) AND the
+   session's `effective_set/2` `:kind_base` union includes the socialware's
+   session-mounted bases+shape (Surface/Turn) via `extra_part` — fail-closed
+   `resolve_closure`. **Gates P3 + P4.**
+3. **Run customer-side (bot replies).** A customer reaches the external-surface
+   base via the `AnonIngress` primitive (`admit_anonymous_participant/2` → mint →
+   join-as-anon → mount `:join` cap). Assert a dispatched bare customer message
+   routes to the `bot` responsibility (B1 `{:role, "bot"}` single-resolve) and a
+   reply lands in `MessageStore` for the session. **Gates P2 + P4 (anon) + P5
+   (B1 routing).** *(Honest split, inherited from the autoservice harness
+   moduledoc: the automated test proves routing + message-store landing via a
+   non-cc test flavor; the cc-woven-answer-level soul — a live cc-orchestrator
+   weaving the fact into a chat reply — rides cc's PTY/startup blockers and
+   remains a live-stack SECONDARY concern, NOT a P10 gate. Flagged in §9.)*
+4. **Run supervisor-side (claim/approve/escalate).** A principal holding the
+   `read_unfiltered` cap sees the full conversation including `:internal`
+   messages. Assert `:claim` flips the turn to `mode: :copilot, status:
+   :awaiting_human` and holds output `:internal`; `:settle` flips the held
+   message to `:external_visible`; `:approve` advances the surface page
+   pointer. **If P9 is in scope:** assert B2 pool fan-out — `{:role,
+   "supervisor"}` resolves to the N current holders (same-workspace +
+   current-assignment validation), a quorum verdict is collected under
+   `quorum_policy`, and a conflicting-verdict case escalates to
+   `{:role, "arbiter"}`; a stale-holder verdict is rejected. **Gates P6 + P8a +
+   P9 (when in scope).**
+5. **Security gate (non-supervisor cannot see `:internal`).** An authenticated
+   workspace user **without** the `read_unfiltered` cap calls
+   `recent_in_session/2` (the `/sessions` unfiltered read) and the result
+   **excludes** `:internal`/`:operator_only` messages — fail-closed. Assert no
+   `:internal` message is returned to the non-holder. **Gates P8a (the load-bearing
+   security cap-gate).**
+6. **publish_policy (review-first holds then publishes).** A socialware
+   configured `visibility_policy.publish_policy = :supervised` holds a turn's
+   output `:internal` on `handle_open` until `:settle`/`:approve`, then flips it
+   to `:external_visible`. A socialware configured `:auto` publishes immediately
+   (today's behavior). Assert both branches. **Gates P6.**
+
+**The invariant:** the suite is green iff the full lifecycle
+(author→install→run customer→run supervisor→security→publish_policy) holds. It
+FAILS by name if any phase is missing or broken — e.g. if P8a's cap-gate is
+absent, assertion 5 fails (non-holder sees `:internal`); if P4's install
+relation is absent, assertion 2 fails (no install record / `extra_part`); if
+P6's `publish_policy` is unwired, assertion 6 fails (a `:supervised` turn
+publishes without approval). That is the completion gate.
+
+> **Anti-stub rule (codex re-review).** The lifecycle seed + assertions MUST
+> exercise the **public author/install/dispatch entrypoints** — the form-save
+> dispatch, the orchestrator-tool dispatch, `create_session` with `installs`,
+> `admit_anonymous_participant/2`, `EzagentCli.Exec.exec/1` /
+> `Ezagent.Invocation.dispatch/1`, `:claim`/`:settle`/`:approve` verbs, and the
+> `recent_in_session/2` read — and then **observe** the resulting
+> `ConfigObject`/`:kind_base`/message-store state. They MUST NOT hand-insert
+> the expected `ConfigObject` install record or write `:kind_base` directly and
+> then assert on the stub. A phase that only satisfies the assertion via a
+> hand-stub is not "landed" — the test fails by design if the public
+> entrypoint doesn't produce the state.
 
 ---
 
@@ -928,64 +1068,74 @@ a customer-facing adapter).
 
 ## 9. Open questions for the lead
 
-1. **Orchestrator base reclassification (codex Q7 UNSOUND-as-written — PROMINENT).**
-   The lead's final model mapped "orchestrator = process/agent+tools base
-   (`Ezagent.Behavior.Template`)." Code-verification + codex both show
-   `Behavior.Template` is **template-CONTENT storage** (the `:template` slice on
-   `SessionTemplate`/`AgentTemplate` Kinds), **NOT a session-mounted runtime base**
-   — Session `behaviors/0` (`entity/session.ex:56-93`) does not include it. This
-   SPEC reclassifies "orchestrator base" as the **orchestration-recipe substrate**
-   (`Behavior.Template` carries the process *recipe*; the runtime "process/agent+
-   tools" = recipe + `Orchestrator.Tools` + `SessionManager`). **Confirm the
-   reclassification** — or does the lead want a *new* session-mounted
-   "orchestrator" Behavior distinct from `Behavior.Template` (genuinely new work,
-   not in this SPEC's scope)?
-2. **`Turn` classification (§0.4).** `Turn`'s moduledoc calls it "Socialware
+> **OQ-1 (orchestrator base reclassification) — CLOSED as (a) by lead decision,
+> 2026-06-28.** Resolved: the orchestrator's "base-ness" IS the existing combo
+> (recipe via role-as-data + `Orchestrator.Tools` + `SessionManager` executor),
+> classified conceptually as the "orchestration base" with **zero new Behavior /
+> zero new code**; `Behavior.Template` stays template-content storage (not a
+> session-mounted runtime base); no `Behavior.Template` refit; no new
+> `Behavior.Orchestrator`. Removed from the open list; recorded in §0.2 + §10.
+> The questions below are renumbered 1-11 (11 = the P10 non-automatable-step
+> flag added this revision).
+
+1. **`Turn` classification (§0.4).** `Turn`'s moduledoc calls it "Socialware
    orchestration state machine," which sits between "base" and "shape." This SPEC
    classifies `Turn` as **chat's shape** (flow-specific: a kanban has no turns),
    not a base (general: reusable across unrelated socialwares). Confirm — or is
    `Turn` part of the orchestrator base?
-3. **Team/routing home for non-socialware orchestrated chat (§2.8 OQ-2).** Move
+2. **Team/routing home for non-socialware orchestrated chat (§2.8).** Move
    `members`/`routing`/`legends` out of SessionTemplate into the socialware
    definition for *all* sessions — making **plain orchestration its own
    installable socialware** (`config://<ws>/socialware/<chat-team>`, fully
    symmetric, recommended) — or keep a generic base composition on the
    SessionTemplate (hedges migration)? This shapes P5's blast radius.
-4. **`web_anon_access` granularity.** The split (§2.4) puts the anon gate on the
+3. **`web_anon_access` granularity.** The split (§2.4) puts the anon gate on the
    web adapter (per-adapter already). Confirm anon is a web-adapter attribute,
    not a socialware-global flag. (Recommend per-adapter.)
-5. **Binary visibility horizon.** Multiple external adapters share one
+4. **Binary visibility horizon.** Multiple external adapters share one
    `external_visible` slice today. If two customer channels ever need *different*
    curations of one session, binary visibility → audience-set is a real M→L
    generalization that should precede prod. The name `:internal` is the
    **all-info superset** and stays even if visibility later goes multi-audience.
    Near-term need? (Recommend: keep binary, YAGNI.)
-6. **Install mechanism on the Session host.** §2.2 confirms `effective_set`'s
+5. **Install mechanism on the Session host.** §2.2 confirms `effective_set`'s
    `extra_part` admits undeclared behaviors and kanban proves it on
    `Entity.Agent`. Confirm the SAME mount path on the Session host is acceptable
    (it is core + declaration-free, so plugin-isolation holds) — or does the lead
    want the Session host to *declare* socialware bases (tighter, but breaks the
    isolation North Star)? (Recommend: declaration-free mount.)
-7. **Editor convergence depth.** Path A (form) + Path B (orchestrator loop, now
+6. **Editor convergence depth.** Path A (form) + Path B (orchestrator loop, now
    re-targeted to the socialware-def, §2.8) both mutate the def. Confirm the form
    is a thin projection of the orchestrator-tool semantics, not a parallel write
    path.
-8. **B2 wanted now, or is B1 + P8 enough?** A single-operator socialware is fully
+7. **B2 wanted now, or is B1 + P8 enough?** A single-operator socialware is fully
    served by B1 + the P8 cap-gate. The multi-holder pool + quorum/arbiter (B2,
    P9) is real new work. Confirm the multi-supervisor + conflicting-verdict
    scenario is near-term before building P9. (Recommend: ship P8, defer P9.)
-9. **`role_name` uniqueness for the pool.** Relax `role_name_conflict/3` to allow
+8. **`role_name` uniqueness for the pool.** Relax `role_name_conflict/3` to allow
    many holders, **or** keep B1's unique alias + a separate workspace assignment
    for B2? (Recommend the latter — two facets.)
-10. **Two instances of the SAME behavior-owning socialware on one session (codex
-    Q5 HIGH).** Supporting e.g. two chat desks on one session needs app-scoped
-    slice keys + app-scoped action routing (Behaviors own singleton slices today
-    — `Turn`/`:turns`, `Surface`/`:surface`). This SPEC scopes it OUT (distinct
-    socialwares per session — chat + kanban — is the near-term need and works
-    without it). Confirm two-of-the-same is not near-term.
-11. **P0 doc location + bilingual.** Land §0 as `docs/socialware-concepts.md`
+9. **Two instances of the SAME behavior-owning socialware on one session (codex
+   Q5 HIGH).** Supporting e.g. two chat desks on one session needs app-scoped
+   slice keys + app-scoped action routing (Behaviors own singleton slices today
+   — `Turn`/`:turns`, `Surface`/`:surface`). This SPEC scopes it OUT (distinct
+   socialwares per session — chat + kanban — is the near-term need and works
+   without it). Confirm two-of-the-same is not near-term.
+10. **P0 doc location + bilingual.** Land §0 as `docs/socialware-concepts.md`
     (EN) + `docs/socialware-concepts.zh_cn.md` (中), per the bilingual docs
     convention? (Recommend yes.)
+11. **P10 non-automatable step (flag, not a gate).** The P10 lifecycle assertion
+    #3 ("bot replies") proves **routing + message-store landing** via a non-cc
+    test flavor (the `autoservice_tier1_seed_test.exs` harness already documents
+    this exact split). The **cc-woven-answer-level soul** — a live cc-orchestrator
+    weaving a retrieved fact into a chat reply through the customer surface —
+    rides cc's PTY/startup blockers and is **NOT automatable in the e2e suite**
+    (it needs a live cc runtime). It remains a **live-stack SECONDARY** visual
+    confirmation (coordinator's agent-browser screenshot), NOT a P10 gate. Flag:
+    is the routing+message-store-landing proof sufficient as the completion gate
+    for the customer-side, or does the lead want a separate live-cc gate before
+    declaring socialware "done"? (Recommend: sufficient — the live-cc soul is a
+    cc-runtime concern, tracked separately, not a socialware-completion blocker.)
 
 ---
 
@@ -999,8 +1149,11 @@ a customer-facing adapter).
 ### 10.1 Review questions + verdicts
 
 **NET: SOUND-WITH-FIXES — no UNSOUND finding overall; one base misclassification
-(orchestrator=`Behavior.Template`) folded as a reclassification + OQ-1.** All six
-codex fixes folded into §0-§9 before push.
+(orchestrator=`Behavior.Template`) folded as a reclassification, then **closed as
+OQ-1=(a) by lead decision** (no new Behavior; the orchestrator base IS the existing
+recipe+tools+executor combo).** All six codex fixes folded into §0-§9 before push;
+OQ-1 closed and removed from §9; P10 (codex-runnable lifecycle E2E) added per lead
+decision. Re-review in §10.3.
 
 | Q | Codex verdict | Disposition |
 |---|---|---|
@@ -1010,7 +1163,7 @@ codex fixes folded into §0-§9 before push.
 | 4 — install-relation cleanly replaces public_view? | **SOUND-WITH-FIXES** — 10 runtime sites right. **Fix:** `public_view` also in non-production surfaces (`scripts/autoservice_tier1_seed.exs:413-427`, `agent-console-demo/index.html:258-270,731`); the P4 "no public_view read anywhere" gate must migrate/delete or explicitly exclude these. | **FOLDED** — §2.4 non-production-sites note added. |
 | 5 — phased plan safe + each landable + security cap-gate not-deferred? | **SOUND-WITH-FIXES** — P3 independently landable (catalog seam) SOUND; dep-DAG SOUND. **Fix:** the unfiltered `/sessions` read **exists today** (`router.ex:32-38` RequireEntity-only; `recent_in_session/2` `message_store.ex:141-152` has no visibility filter; messages carry `:operator_only` `message.ex:118-120`) → P8 must land **before P7**, not after. | **FOLDED** — §7 DAG reordered P8 before P7; P8 split into P8a (pre-prod-now, gate existing read) + P8b (relabel, ride #1059); recommended order + couplings updated. |
 | 6 — any new concept that should reuse an existing one? | **SOUND-WITH-FIXES** — socialware-def as sibling of Role (not `%Role{}`, which lacks adapters/visibility) is right; reuse ConfigStore/role seed/read-through pattern. **Fix:** correct the "template subtype" language (folded into Q3's `config://` fix). | **FOLDED** — §2.3 reworded. |
-| 7 — any base misclassified? | **UNSOUND for orchestrator; SOUND for Turn/Surface.** `Behavior.Template` is template-content storage (`:read`/`:write`/`:instantiate` on AgentTemplate/SessionTemplate Kinds), NOT a session-mounted "process/agent+tools base" — Session `behaviors/0` does not include it. Turn=shape SOUND; Surface=base SOUND. | **FOLDED** — §0.2 orchestrator reclassified as "orchestration-recipe substrate" (recipe-content, not session-mounted; runtime = recipe + `Orchestrator.Tools` + `SessionManager`); caveat block + OQ-1 added for lead confirmation. |
+| 7 — any base misclassified? | **UNSOUND for orchestrator; SOUND for Turn/Surface.** `Behavior.Template` is template-content storage (`:read`/`:write`/`:instantiate` on AgentTemplate/SessionTemplate Kinds), NOT a session-mounted "process/agent+tools base" — Session `behaviors/0` does not include it. Turn=shape SOUND; Surface=base SOUND. | **FOLDED + CLOSED (a)** — §0.2 orchestrator reclassified as the "orchestration base" = the existing recipe+tools+executor combo (`Behavior.Template` recipe content + `Orchestrator.Tools` + `SessionManager`); **lead closed OQ-1 as (a): no new Behavior, no `Behavior.Template` refit, no new `Behavior.Orchestrator`**; OQ-1 removed from §9. |
 
 ### 10.2 Prior passes (carried forward)
 
@@ -1027,7 +1180,7 @@ carry into this rewrite:
 - The install relation cleanly replaces `public_view` (Q4 SOUND-WITH-FIXES — the
   10th site `WorkspacePlugin.tsx:190-198` added).
 - "Two same-type socialware instances" is a genuine mechanism limit (Q5 HIGH) —
-  scoped OUT as OQ-10.
+  scoped OUT as OQ-9.
 - No new Kind URI scheme — the rewrite avoids both `socialware://` AND
   `template://.../socialware` (codex Q3 fix: template spawn supports only
   `agent`/`session`); the socialware-def is addressed `config://<ws>/socialware/
@@ -1040,10 +1193,37 @@ carry into this rewrite:
 - The B2 `core/routing reaches assignment` row corrected to the
   **injected-resolver seam** (§3.4, §7.3); accountability reworded to "via the
   `Identity.Grant` grant path."
-- **(This revision's pass)** orchestrator base reclassification (Q7 UNSOUND),
-  `config://` address (Q3), P8-before-P7 security ordering (Q5), non-prod
-  `public_view` sites (Q4), §0.5 supervisor/P9 reservation (Q2), §1.4 chat
-  composition precision (Q1) — all folded above.
+- **(This revision's pass)** orchestrator base reclassification (Q7 UNSOUND)
+  → **closed as OQ-1=(a)** (lead decision: the orchestrator base IS the existing
+  recipe+tools+executor combo; no new Behavior), `config://` address (Q3),
+  P8-before-P7 security ordering (Q5), non-prod `public_view` sites (Q4), §0.5
+  supervisor/P9 reservation (Q2), §1.4 chat composition precision (Q1) — all
+  folded above; **P10 (codex-runnable lifecycle E2E) added per lead decision**
+  (§7.4).
+
+### 10.3 Re-review (2026-06-28, after folding the two lead decisions)
+
+> *Static-only re-review (codex/gpt-5.5, no build/mix/tests) against the REVISED
+> spec on the `docs/socialware-app-unification` branch. Verified harness +
+> dispatch claims against `origin/main` (`67b49303`).*
+
+**NET: SOUND-WITH-FIXES — no UNSOUND.** OQ-1=(a) cleanly closed; P10 lifecycle
+coverage complete; harnesses + the deterministic-vs-live-cc split verified real.
+Four narrow fixes folded before push (numbering/cross-refs + a runtime-RPC
+dispatch-path correction + an anti-stub rule).
+
+| RQ | Codex verdict | Disposition |
+|---|---|---|
+| RQ-1 — OQ-1=(a) cleanly closed, no residual "new Behavior"? | **SOUND-WITH-FIXES** — substantively closed (§0.2 `:105,111-128`; §2.3 `bases` excludes orchestrator from session-mounted set `:445,449`). **Fix:** §0.4 still said "§9 OQ-1" for Turn after OQ-1 was closed → ambiguous. | **FOLDED** — §0.4 reworded to "§9 item 1". |
+| RQ-2 — P10 actually codex-runnable + non-gameable + gates completion? | **SOUND-WITH-FIXES** — harnesses exist; `autoservice_tier1_seed_test.exs:7-32,58-219` has the exact deterministic-vs-live-cc split P10 reuses; install/security assertions non-gameable if via public flow (`message_store.ex:141-152`, `message.ex:118-120` ⇒ absent P8a leaks). **Fix:** P10 cited `mix ezagent` as the dispatch path, but that task is a `:rpc.call` shell needing a running runtime (`mix/tasks/ezagent.ex:52-78`) — not codex-runnable in a DataCase. | **FOLDED** — §7.4 + P10 table row re-pointed to the in-process `EzagentCli.Exec.exec/1` (`apps/ezagent_cli/lib/ezagent_cli/exec.ex`) / `Ezagent.Invocation.dispatch/1`; anti-stub rule added (assertions observe state produced by public entrypoints, never hand-inserted `ConfigObject`/`:kind_base` stubs). |
+| RQ-3 — lifecycle coverage complete? | **SOUND** — author/install/customer/supervisor/security/publish_policy all enumerated (`:947-999`); B2/quorum correctly conditional on P9 (`:879-887,975-980`). | none. |
+| RQ-4 — any non-automatable step needing flagging? | **SOUND-WITH-FIXES** — the cc-woven-answer flag is honest (`autoservice_tier1_seed_test.exs:28-32`; SPEC `:965-969,1108-1119`); no hidden browser/Feishu-WS dependency. **Fix:** same `mix ezagent` runtime-RPC issue as RQ-2. | **FOLDED** (with RQ-2). |
+| RQ-5 — new revision issues? | **SOUND-WITH-FIXES** — numbering drift only: §9 said "renumbered 1-10" but lists 11 (P10 flag added); §0.4 "OQ-1" ambiguity. No model breakage. | **FOLDED** — §9 header note corrected to "1-11"; §0.4 → "item 1". |
+
+**Codex fixes folded (4):** §0.4 Turn cross-ref (`OQ-1`→`item 1`); §9 count
+(`1-10`→`1-11`); P10 dispatch path (`mix ezagent` RPC shell → in-process
+`EzagentCli.Exec.exec/1`); §7.4 anti-stub rule. No new open questions beyond
+§9 item 11 (the P10 non-automatable-step flag, already filed).
 
 ---
 
