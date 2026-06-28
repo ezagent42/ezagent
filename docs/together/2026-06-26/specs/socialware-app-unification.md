@@ -163,7 +163,19 @@ claim, so here is the **parity audit** — every `public_view` read/write site o
 | 4 | `anon_user.ex:99-154` — `public_view_granter/1` (= session owner) | cap granter (#154) | **unchanged** — anon's `:join` cap is still `granted_by` the session owner |
 | 5 | `membership.ex:371,801,818` — `public_view` open-join doc/granter | (b) anon path | re-points to (2) — same resolver |
 | 6 | `app.ex:31` (hello) — writes `public_view: true` | (a)+(b) at create | hello's `App.ensure_app` declares `socialware://hello-<n>` with the `web_feed` adapter (`web_anon_access: true`) + sets the marker |
-| 7 | `workspace_plugin_actions.ex:326` — world toggle writes `public_view` | (a)+(b) authored | the form (§5) authors the app: marker + `web_feed` adapter w/ anon |
+| 7 | `workspace_plugin_actions.ex:334` — world toggle writes `public_view` | (a)+(b) authored | the form (§5) authors the app: marker + `web_feed` adapter w/ anon |
+| 8 | `chat_feed_controller.ex:108` + `external_feed_controller.ex:131` — the two public controllers call `PublicView.public_view?/1` as their ingress gate | (b) per-route anon gate | re-point to (2). **In P2 these collapse into the `AnonIngress` shim (§5.1), so the re-point is in ONE chokepoint, not two route bodies** — the reason P2-before-P3 is cheaper |
+| 9 | `workspace_plugin_data.ex:189,211,256-258` — world read-model `public_view?/1` helper (renders the "Public socialware app" badge in the template panel) | (a) identity, read for DISPLAY | reads the **marker** (is the template/app bound to a `socialware://<name>`?), not the boolean |
+
+**Codex Q2 fix (was OVERCLAIM):** rows 8-9 were added after codex flagged the
+table as incomplete — it missed the two controller gate call sites and the world
+read-model display helper. With them, the audit is complete: every `public_view`
+read/write on `origin/main` maps to *either* the marker (identity: rows 1, 9; +
+the author-writes 6, 7) *or* the web-adapter `web_anon_access` attribute (anon
+gate: rows 2, 3, 5, 8). Row 4 (the cap granter) is unchanged. (Non-prod sites —
+test fixtures `*_test.exs`, `router.ex` comments, the `autoservice_tier1_seed.exs`
+script, `hello/template/hello_session.ex` doc — track the same two homes and are
+not load-bearing.)
 
 **Therefore `public_view?/1` does NOT become "is there a marker?".** Identity =
 marker; anon-gate = web-adapter attribute. PR-3's anon ingress (§5.1) must wire its
@@ -357,6 +369,13 @@ enum value** stored as a string in the DB — doing it *after* prod is a live da
 migration over real message history; doing it *now* is a dev-only `db.reset`. That
 asymmetry is the entire reason C1 is **pre-prod-now**.
 
+> **Codex Q3 clarification:** the column is a **plain string with a default, NOT a
+> DB enum constraint** (`…20260618000400…:6-9`, `pg_baseline.exs:54`) — so C1 is a
+> `Ecto.Enum` value rename + a one-shot data `UPDATE`, not a type-altering
+> migration. "Pre-prod-now" therefore rests on the single deployment fact that
+> **there is no prod message history yet**; confirm that holds before P1 (it is the
+> one external assumption the source cannot prove).
+
 - **Touches (~15-18 files, from the operator analysis §3):** `message.ex` (enum +
   typespec + default doc); `message_store.ex` (`mark_visibility`,
   `chat_visible_recent`, `committed_external_visible*`); `turn.ex`
@@ -467,13 +486,20 @@ undeclared-dep gate (`undeclared_umbrella_dep_test.exs`) stay green; #1060 Gate 
 
 ## 9. Codex adversarial-review verdict
 
-> _(To be filled by the codex companion run; this SPEC ships with the static
-> review folded. Codex prompt: is the `socialware://<name>` object a real
-> simplification or another layer? does the marker cleanly replace `public_view`
-> without breakage — given the §2.3 split? is the phasing safe, esp P1's
-> persisted-enum rename pre-prod? does it reuse existing concepts or sneak in new
-> ones? does AnonIngress fold cleanly, and is superseding PR-4 safe (the §5.2
-> disclosure-fix re-home)?)_
+Static-only review (gpt-5.5, no build/tests) against `origin/main`, reading the
+spec + every cited source. **Overall: SOUND-WITH-ONE-OVERCLAIM** — one real fix
+folded (the §2.3 parity table), everything else confirmed.
+
+| Q | Codex verdict | Disposition |
+|---|---|---|
+| 1 — app object real simplification? | **SOUND-WITH-FIXES** — a real simplification *iff* §2.2's fan-out / stable-identity cases are real; the spec's own OQ-1 caveat (1:1:1 → redundant) is honest. Confirmed `SessionTemplate` is content-addressed (`session_template.ex:190-203`, `:name` dropped from hash) + versioned-URI persisted (`:343-371`). | No change — OQ-1 already puts the redundancy test to the lead. |
+| 2 — marker replaces public_view cleanly? | **OVERCLAIM — §2.3 parity table INCOMPLETE.** Missed the two controller gate call sites (`chat_feed_controller.ex:98-115`, `external_feed_controller.ex:124-138`) and the world read-model display helper (`workspace_plugin_data.ex:189-211,256-258`). The split itself is correct. | **FIXED** — §2.3 rows 8-9 added + a "Codex Q2 fix" note; the audit is now exhaustive (every site → marker OR web-adapter attr). |
+| 3 — phasing safe (P1 enum rename + dep-DAG)? | **SOUND-WITH-FIXES** — `Message.visibility` is an `Ecto.Enum` with `:operator_only` (`message.ex:73-74,118-120`); writers/readers cited (`turn.ex:463,616`, `message_store.ex:288-291`). Note: the migration defines only a string column + default, **no DB enum constraint** (`…20260618000400…:6-9`, `pg_baseline.exs:54`) — so the rename is even cheaper, but "pre-prod" safety rests on there being no prod data. Dep-DAG **confirmed**: socialware deps identity/session/external_mirror (`socialware/mix.exs:31-39`); identity does NOT dep socialware (`identity/mix.exs:34-38`); external_mirror deps only core/identity (`external_mirror/mix.exs:59-70`) → socialware is the only legal host. | Folded the "pre-prod = no prod data; the column has no enum constraint so it's a data UPDATE not a type change" clarification into §6/§7. |
+| 4 — AnonIngress fold + PR-4 supersede safe? | **SOUND-WITH-FIXES** — anon ingress is already socialware-owned (`anon_user.ex:118-131`) with duplicate web-shim logic in both controllers (`chat_feed_controller.ex:144-154`, `external_feed_controller.ex:162-167`); folds cleanly. Superseding PR-4 is safe **only if C3 is not deferred past any operator unfiltered read** — the spec states exactly this (§5.2, §7.1) and confirmed world reads raw `recent_in_session` (`conversation_data.ex:183-187`) under `RequireEntity` (`router.ex:154-155`), unlike the `:external_visible`-filtered query (`message_store.ex:171-178` vs `:274-278`). | No change — the C3-gates-PR4 condition is already the §5.2 + §7 P6 contract. |
+
+**Net:** the core model survives review. The single substantive correction (Q2,
+parity-table completeness) is folded; Q1/Q3/Q4 are sound with clarifications
+incorporated. No finding was UNSOUND.
 
 ---
 
