@@ -94,6 +94,13 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
      "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 658,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
+    # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
+    # as the zip-unpack target for a plugin-package hot-load. The runtime
+    # Ezagent.PluginPackage module is home-path-free (it takes :unpack_to as an
+    # opt); this operator entry point is the sanctioned home-path resolver.
+    {"apps/ezagent_core/lib/mix/tasks/ezagent.plugin.install.ex",
+     "Mix.Tasks.Ezagent.Plugin.Install.install_from_path/2", 123,
+     "operator mix-task — supplies EZAGENT_HOME/plugins as zip-unpack target"},
     # world layout one-shot migration (plugin-resource SPEC §4.4, HIGH-8) —
     # operator mix-task run app-not-started; re-keys legacy world/layouts JSON
     # onto the world-layouts/<ws>/<name> resolver path then deletes the old tree.

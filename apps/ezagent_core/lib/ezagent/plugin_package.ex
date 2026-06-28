@@ -62,7 +62,6 @@ defmodule Ezagent.PluginPackage do
 
   alias Ezagent.{
     CapabilityRegistry,
-    Home,
     PluginAssetRegistry,
     PluginRegistry,
     PluginPackage.InstalledRegistry,
@@ -72,10 +71,20 @@ defmodule Ezagent.PluginPackage do
     TemplateRegistry
   }
 
-  @doc "Install a plugin package (archive path OR unpacked directory)."
-  @spec install(Path.t()) :: {:ok, map()} | {:error, term()}
-  def install(package_path) do
-    dir = unpack!(package_path)
+  @doc """
+  Install a plugin package (archive path OR unpacked directory).
+
+  ## Options
+
+  - `:unpack_to` — the directory to unpack a `.zip` archive into. Required
+    when `package_path` is a `.zip` (the runtime module does NOT call
+    `Ezagent.Home.path/1` directly — that home-path resolution is an
+    operator concern, routed through the sanctioned `mix ezagent.plugin.install`
+    task). An unpacked directory install ignores this option.
+  """
+  @spec install(Path.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def install(package_path, opts \\ []) do
+    dir = unpack!(package_path, opts[:unpack_to])
     manifest = Manifest.read!(dir)
     ebin = Path.join(dir, "ebin")
     priv_dir = Path.join(dir, "priv")
@@ -119,11 +128,11 @@ defmodule Ezagent.PluginPackage do
     end
   end
 
-  @doc "Swap: unload v1 (by slug) + install v2 (package path)."
-  @spec swap(String.t(), Path.t()) :: {:ok, map()} | {:error, term()}
-  def swap(v1_slug, v2_package) when is_binary(v1_slug) do
+  @doc "Swap: unload v1 (by slug) + install v2 (package path). Accepts install opts."
+  @spec swap(String.t(), Path.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def swap(v1_slug, v2_package, opts \\ []) when is_binary(v1_slug) do
     with :ok <- unload(v1_slug),
-         {:ok, result} <- install(v2_package) do
+         {:ok, result} <- install(v2_package, opts) do
       {:ok, result}
     end
   end
@@ -138,7 +147,7 @@ defmodule Ezagent.PluginPackage do
 
   # --- install steps --------------------------------------------------------
 
-  defp unpack!(path) do
+  defp unpack!(path, unpack_to) do
     abs = Path.expand(path)
 
     cond do
@@ -146,7 +155,7 @@ defmodule Ezagent.PluginPackage do
         abs
 
       String.ends_with?(abs, ".zip") ->
-        dest = unpack_dir(abs)
+        dest = unpack_dir(abs, unpack_to)
         File.rm_rf!(dest)
         File.mkdir_p!(dest)
         {:ok, _entries} = :zip.unzip(to_charlist(abs), [{:cwd, to_charlist(dest)}])
@@ -159,9 +168,15 @@ defmodule Ezagent.PluginPackage do
     end
   end
 
-  defp unpack_dir(archive_path) do
+  defp unpack_dir(_archive_path, nil) do
+    raise ArgumentError,
+          "installing a .zip archive requires an `:unpack_to` target directory " <>
+            "(the operator mix task supplies EZAGENT_HOME/plugins); got nil"
+  end
+
+  defp unpack_dir(archive_path, unpack_to) do
     base = Path.basename(archive_path, ".zip")
-    Path.join(Home.path(:plugins), "#{base}-#{:erlang.phash2(archive_path)}")
+    Path.join(unpack_to, "#{base}-#{:erlang.phash2(archive_path)}")
   end
 
   defp add_code_path(ebin) do

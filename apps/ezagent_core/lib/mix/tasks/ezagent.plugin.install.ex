@@ -116,7 +116,11 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
     # raw-ebin path below still serves a plain compiled app dir without
     # a manifest.
     if File.exists?(Path.join(abs, "manifest.json")) do
-      case Ezagent.PluginPackage.install(abs) do
+      # Operator mix-task supplies the EZAGENT_HOME plugins dir as the
+      # zip-unpack target (the runtime Ezagent.PluginPackage module does
+      # NOT call Home.path/1 directly — sanctioned home-path resolution
+      # lives in operator tooling, not runtime lib code).
+      case Ezagent.PluginPackage.install(abs, unpack_to: Ezagent.Home.path(:plugins)) do
         {:ok, %{slug: slug, app: app}} ->
           Mix.shell().info("✓ plugin package #{inspect(slug)} (app #{inspect(app)}) installed + hot-loaded")
 
