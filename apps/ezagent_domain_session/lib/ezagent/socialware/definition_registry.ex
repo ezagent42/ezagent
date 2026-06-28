@@ -3,7 +3,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   ConfigStore-backed resolver for socialware definitions.
 
   Definitions live at `config://<workspace>/socialware/<name>` with ConfigObject
-  key `"socialware"`, mirroring role-as-data's `config://.../role/...` pattern.
+  key `"socialware"`, mirroring role-as-data's `config://.../recipe/...` pattern.
   """
 
   alias Ezagent.Entity.Session

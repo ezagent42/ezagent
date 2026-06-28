@@ -21,21 +21,21 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
     %{name: name, system_ws: RecipeRegistry.system_workspace_uri()}
   end
 
-  defp role_subject(ws, name), do: RecipeRegistry.role_subject_uri(ws, name)
+  defp role_subject(ws, name), do: RecipeRegistry.recipe_subject_uri(ws, name)
 
   defp resolve_role_object(ws, name) do
-    ConfigStore.resolve("workspace", ws, role_subject(ws, name), RecipeRegistry.role_key())
+    ConfigStore.resolve("workspace", ws, role_subject(ws, name), RecipeRegistry.recipe_key())
   end
 
   # ---- §8.1 role is its OWN subject; seed writes CONFIG (not just ETS) -------
 
-  test "seed_role_if_absent writes a role ConfigObject resolvable at config://<sys>/role/<name>",
+  test "seed_role_if_absent writes a role ConfigObject resolvable at config://<sys>/recipe/<name>",
        %{name: name, system_ws: ws} do
     assert {:ok, :seeded} =
              RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "hello", skills: ["s1"]})
 
     # The seed wrote a real ConfigObject (proves config, not ETS).
-    assert {:ok, %ConfigObject{body: body, subject_uri: subj, key: "role"}} =
+    assert {:ok, %ConfigObject{body: body, subject_uri: subj, key: "recipe"}} =
              resolve_role_object(ws, name)
 
     assert subj == role_subject(ws, name)
@@ -185,7 +185,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
         layer: "workspace",
         workspace_uri: ws,
         subject_uri: role_subject(ws, name),
-        key: "role",
+        key: "recipe",
         body: %{"name" => name, "prompt" => "overridden"},
         actor_uri: "entity://system/user/admin",
         source_turn_id: "override-#{System.unique_integer([:positive])}"
@@ -226,7 +226,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
         layer: "workspace",
         workspace_uri: tenant_ws,
         subject_uri: role_subject(tenant_ws, name),
-        key: "role",
+        key: "recipe",
         body: %{"name" => name, "prompt" => "tenant-fork"},
         actor_uri: "entity://system/user/admin",
         source_turn_id: "fork-#{System.unique_integer([:positive])}"
@@ -281,7 +281,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
         layer: "workspace",
         workspace_uri: ws,
         subject_uri: role_subject(ws, name),
-        key: "role",
+        key: "recipe",
         body: %{"name" => name, "prompt" => "v2"},
         actor_uri: "entity://system/user/admin",
         source_turn_id: "repoint-#{System.unique_integer([:positive])}"

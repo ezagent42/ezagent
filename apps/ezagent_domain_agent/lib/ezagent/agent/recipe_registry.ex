@@ -5,8 +5,8 @@ defmodule Ezagent.Agent.RecipeRegistry do
   §3/§4).
 
   A **role** is a flavor-agnostic sandbox-content recipe (see `Ezagent.Agent.Recipe`)
-  stored UNIFORMLY as a `ConfigObject`: `subject_uri = config://<ws>/role/<name>`,
-  `key = "role"`, `body =` the recipe map. A built-in role is **not** a special
+  stored UNIFORMLY as a `ConfigObject`: `subject_uri = config://<ws>/recipe/<name>`,
+  `key = "recipe"`, `body =` the recipe map. A built-in role is **not** a special
   code recipe — it is the SAME data shape as a user-authored role; only the
   *seeding origin* differs (§0).
 
@@ -22,7 +22,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
   Resolution (within caller workspace `ws`):
 
     1. ETS hit for `(ws, name)` → return cached `%Recipe{}`.
-    2. else `ConfigStore.resolve("workspace", ws, config://<ws>/role/<name>, "role")`.
+    2. else `ConfigStore.resolve("workspace", ws, config://<ws>/recipe/<name>, "recipe")`.
     3. if `:none` → fall back to `(system_ws, name)` (the cross-ws fallback that
        delivers "workspace-scoped + forkable": a tenant sees the system built-in
        until it forks its own; §3 OQ-2). This fallback lives HERE, not in
@@ -52,20 +52,20 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
   @table :ezagent_role_registry
 
-  # Fixed ConfigObject key per role subject (one role-recipe slice per role).
-  @role_key "role"
+  # Fixed ConfigObject key per recipe subject (one recipe-recipe slice per role).
+  @recipe_key "recipe"
 
-  # Role-config lives on the `workspace` layer of the cascade (a role is a
+  # Recipe-config lives on the `workspace` layer of the cascade (a role is a
   # workspace-scoped reusable recipe; user/session layers are not meaningful).
-  @role_layer "workspace"
+  @recipe_layer "workspace"
 
   @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
   @spec table() :: atom()
   def table, do: @table
 
-  @doc "The fixed ConfigObject `key` for a role subject."
-  @spec role_key() :: String.t()
-  def role_key, do: @role_key
+  @doc "The fixed ConfigObject `key` for a recipe subject."
+  @spec recipe_key() :: String.t()
+  def recipe_key, do: @recipe_key
 
   @doc """
   The canonical system workspace URI string built-in roles are seeded under
@@ -77,15 +77,15 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
   @doc """
   The role's OWN ConfigStore subject STRING for `(workspace, name)`:
-  `config://<ws>/role/<name>` (workspace-first to match the `entity://`
+  `config://<ws>/recipe/<name>` (workspace-first to match the `entity://`
   convention, but NOT an `entity://` principal — `Ezagent.URI.entity/3` rejects
   non-`user|agent|worker` types; ConfigStore string-matches this opaquely; §2.2).
   """
-  @spec role_subject_uri(String.t(), String.t()) :: String.t()
-  def role_subject_uri(workspace_uri, name)
+  @spec recipe_subject_uri(String.t(), String.t()) :: String.t()
+  def recipe_subject_uri(workspace_uri, name)
       when is_binary(workspace_uri) and is_binary(name) and name != "" do
     workspace = workspace_uri |> Ezagent.URI.new!() |> Ezagent.URI.workspace_name!()
-    "config://#{workspace}/role/#{name}"
+    "config://#{workspace}/recipe/#{name}"
   end
 
   @doc """
@@ -190,16 +190,16 @@ defmodule Ezagent.Agent.RecipeRegistry do
   defp resolve_object(ws, name) do
     system_ws = system_workspace_uri()
 
-    case ConfigStore.resolve(@role_layer, ws, role_subject_uri(ws, name), @role_key) do
+    case ConfigStore.resolve(@recipe_layer, ws, recipe_subject_uri(ws, name), @recipe_key) do
       {:ok, object} ->
         {:ok, object}
 
       :none when ws != system_ws ->
         ConfigStore.resolve(
-          @role_layer,
+          @recipe_layer,
           system_ws,
-          role_subject_uri(system_ws, name),
-          @role_key
+          recipe_subject_uri(system_ws, name),
+          @recipe_key
         )
 
       :none ->
@@ -231,7 +231,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
   @doc """
   Seed `recipe` as a role ConfigObject in the SYSTEM workspace IFF no pointer yet
-  exists for its `(system_ws, config://<ws>/role/<name>, "role")` — the atomic
+  exists for its `(system_ws, config://<ws>/recipe/<name>, "recipe")` — the atomic
   seed-once-if-no-pointer primitive (§4.1/§4.2).
 
   - First boot: no pointer → writes object + points. The built-in is now config.
@@ -252,15 +252,15 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
     with {:ok, %Recipe{}} <- validate_recipe(recipe) do
       ws = system_workspace_uri()
-      subject = role_subject_uri(ws, name)
+      subject = recipe_subject_uri(ws, name)
       actor = Keyword.get(opts, :actor_uri, default_seed_actor())
       body = recipe_body(recipe)
 
       ConfigStore.seed_object_if_no_pointer(%{
-        layer: @role_layer,
+        layer: @recipe_layer,
         workspace_uri: ws,
         subject_uri: subject,
-        key: @role_key,
+        key: @recipe_key,
         body: body,
         actor_uri: actor,
         source_turn_id: "role-seed:#{ws}:#{name}",
