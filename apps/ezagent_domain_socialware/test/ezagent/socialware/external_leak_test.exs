@@ -37,7 +37,7 @@ defmodule Ezagent.Socialware.ExternalLeakTest do
     %{session: session, workspace: workspace, caller: @owner}
   end
 
-  test "operator-only never reaches an EXTERNAL route; operator route still sees it", ctx do
+  test "internal content never reaches an external route; internal route still sees it", ctx do
     msg =
       Message.new(sender_uri(), %{text: "draft suggestion", attachments: []},
         visibility: :internal

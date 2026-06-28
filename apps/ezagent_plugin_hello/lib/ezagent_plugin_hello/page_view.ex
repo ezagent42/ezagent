@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.PageView do
   @moduledoc """
-  Operator `SessionView` for a hello session's page surface — the un-degraded
-  operator render.
+  Internal `SessionView` for a hello session's page surface — the un-degraded
+  internal render.
 
   Socialware's own `PageView` renders the Surface tree with a tiny 5-type
   server-side HEEx renderer, which does NOT know hello's catalog
@@ -9,7 +9,7 @@ defmodule EzagentPluginHello.PageView do
   This view instead emits a `<div phx-hook="HelloRenderer" data-spec=…>` that
   hydrates hello's `@json-render` island (`/assets/hello/main.js`, the SAME
   renderer the customer surface uses) INSIDE the world LiveView shell — so the
-  operator sees the real rendered page.
+  internal reader sees the real rendered page.
 
   Registered via `Ezagent.UI.SessionViewRegistry` from
   `EzagentPluginHello.Application.start/2`; world renders any registered
@@ -48,7 +48,7 @@ defmodule EzagentPluginHello.PageView do
 
     assigns =
       assigns
-      |> assign(:tree, Surface.operator_tree(assigns[:surface] || %{}))
+      |> assign(:tree, Surface.internal_tree(assigns[:surface] || %{}))
       |> assign(:module_url, module_url())
 
     ~H"""
@@ -74,9 +74,9 @@ defmodule EzagentPluginHello.PageView do
     """
   end
 
-  # Operator-only: the customer surface renders the approved tree through the
-  # socialware customer SPA, not this SessionView. (external_render?/0 +
-  # external_render/1 are optional callbacks — omitted → operator-only.)
+  # Internal-only: the external surface renders the approved tree through the
+  # socialware external SPA, not this SessionView. (external_render?/0 +
+  # external_render/1 are optional callbacks — omitted → internal-only.)
 
   defp module_url do
     Application.get_env(:ezagent_plugin_hello, :hello_module_url, "/assets/hello/main.js")

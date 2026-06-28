@@ -1,5 +1,5 @@
 // LiveView phx-hook that hydrates hello's @json-render island inside the world
-// operator shell. Registered in ezagent_web's app.js LiveSocket hooks (NOT in
+// internal shell. Registered in ezagent_web's app.js LiveSocket hooks (NOT in
 // world). It dynamically imports the built island bundle
 // (`data-hello-module-url` → `/assets/hello/main.js`) and calls
 // `mountHello(el, {spec})` with the session's approved Surface tree

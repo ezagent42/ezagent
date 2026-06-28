@@ -124,7 +124,7 @@ export function Conversation({
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
   const activeView = state.active_view === "pty" ? "pty" : "chat"
-  // TEMPORARY (hello operator view): only hello sessions get a Page tab. The
+  // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the external surface. See HelloPagePreview below.
   const isHelloSession = sessionUri.includes("/hello/")
@@ -807,11 +807,11 @@ function kindLabel(kind: string, mine: boolean) {
   return "Participant"
 }
 
-// TEMPORARY operator preview of a hello session's rendered page. Embeds the
+// TEMPORARY internal preview of a hello session's rendered page. Embeds the
 // public `/socialware/external` surface (the working renderer) in an iframe,
 // rather than the native @json-render island. The proper home for this is world
 // surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
-// until then this is a clearly-labelled stopgap so an operator can see the page
+// until then this is a clearly-labelled stopgap so an internal reader can see the page
 // without leaving the console. Hello sessions are `public_view`, so the customer
 // URL renders with no token/login.
 function HelloPagePreview({sessionUri}: {sessionUri: string}) {

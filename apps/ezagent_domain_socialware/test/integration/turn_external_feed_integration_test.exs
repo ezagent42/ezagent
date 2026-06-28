@@ -94,7 +94,7 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
     assert snapshot.page == page_tree
   end
 
-  test "copilot draft stays operator-only until settle approval", ctx do
+  test "copilot draft stays internal until settle approval", ctx do
     page_tree = %{type: "text", props: %{text: "held page"}}
 
     assert {:ok, %{turn_id: turn_id}} =

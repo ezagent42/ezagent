@@ -78,7 +78,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
     assert ExternalFeed.approved_attachment?(ctx.session, upload)
   end
 
-  test "approved_attachment? is FALSE for an operator-only (not-approved) attachment", ctx do
+  test "approved_attachment? is FALSE for an internal (not-approved) attachment", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     upload = upload_uri(ws_name, "uuid-secret.pdf")
 

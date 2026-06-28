@@ -54,8 +54,8 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
 
   and `ExternalFeed.authorized_attachment_path/4` re-validates that the attachment
   is STILL an approved (committed, external-visible) item before resolving — so a
-  captured token stops working once an operator flips the message back to
-  operator-only (serve-time revocation, codex HIGH). Fails closed on any
+  captured token stops working once an internal reviewer flips the message back
+  to internal-only (serve-time revocation, codex HIGH). Fails closed on any
   missing/invalid input.
   """
   def download(conn, %{

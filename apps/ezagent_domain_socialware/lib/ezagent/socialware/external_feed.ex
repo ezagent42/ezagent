@@ -290,7 +290,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
   This is the **approved-only gate** for the external feed: a download token is
   minted only when this returns `true`, AND it is re-checked at serve time
   (serve-time re-validation — a revocation lever beyond the token TTL: if an
-  operator flips the message back to `internal` via
+  reviewer flips the message back to `internal` via
   `MessageStore.mark_visibility/2`, an already-minted token stops working).
 
   Unlike the internal participation check this is purely visibility-based: a feed

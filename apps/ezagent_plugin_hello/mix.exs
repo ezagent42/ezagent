@@ -43,7 +43,7 @@ defmodule EzagentPluginHello.MixProject do
       # `CustomerFeed` + `public_view` (anonymous visitor delivery of the
       # approved Surface tree) live in ezagent_domain_socialware.
       {:ezagent_domain_socialware, in_umbrella: true},
-      # `Ezagent.UI.SessionViewRegistry` — register the hello operator PageView.
+      # `Ezagent.UI.SessionViewRegistry` — register the hello internal PageView.
       {:ezagent_domain_ui, in_umbrella: true},
       # `Ezagent.Entity.User` (`User.admin_uri/0` — the admin-genesis dispatch
       # authority used by `App`/`TurnDriver` to drive a session's Turn) is

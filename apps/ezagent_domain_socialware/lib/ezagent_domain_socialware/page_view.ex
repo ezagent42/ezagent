@@ -1,8 +1,8 @@
 defmodule EzagentDomainSocialware.PageView do
   @moduledoc """
-  Operator SessionView for the socialware page surface.
+  Internal SessionView for the socialware page surface.
 
-  Renders the latest retained page version. Customer rendering is a later
+  Renders the latest retained page version. External rendering is a later
   React/json-render surface and follows `Ezagent.Behavior.Surface.external_tree/1`.
   """
 
@@ -40,7 +40,7 @@ defmodule EzagentDomainSocialware.PageView do
       assigns
       |> assign_new(:surface, fn -> load_surface(assigns[:session_uri]) end)
 
-    assigns = assign(assigns, :tree, Surface.operator_tree(assigns[:surface] || %{}))
+    assigns = assign(assigns, :tree, Surface.internal_tree(assigns[:surface] || %{}))
 
     ~H"""
     <div id="socialware-page-view" class="flex-1 overflow-auto bg-white dark:bg-zinc-950 min-h-0">

@@ -2,8 +2,8 @@ defmodule Ezagent.Behavior.Surface do
   @moduledoc """
   Immutable socialware page surface.
 
-  Owns the `:surface` slice. Operators read the latest retained version;
-  customers read only the version pointed to by `:approved`.
+  Owns the `:surface` slice. Internal readers see the latest retained version;
+  external readers see only the version pointed to by `:approved`.
   """
 
   # lifecycle:state_slice_override
@@ -111,8 +111,8 @@ defmodule Ezagent.Behavior.Surface do
     end
   end
 
-  @spec operator_tree(map()) :: map() | nil
-  def operator_tree(surface) when is_map(surface) do
+  @spec internal_tree(map()) :: map() | nil
+  def internal_tree(surface) when is_map(surface) do
     surface
     |> latest_version()
     |> version_tree(surface)

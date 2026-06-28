@@ -15,7 +15,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
     )
   end
 
-  test "renders the latest operator page tree" do
+  test "renders the latest internal page tree" do
     surface = %{
       versions: %{
         1 => %{tree: %{type: "text", props: %{text: "old approved"}}, by_turn: "turn-1"},
