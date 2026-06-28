@@ -121,7 +121,15 @@ defmodule EzagentCore.EtsOwner do
     # that need durable ordering use `Ezagent.MessageStore` /
     # `Ezagent.Kind.Snapshot`. The cursor is a "you missed N events
     # since you last saw cursor X" hint, not a primary key.
-    {Ezagent.SliceChange.Cursors, :set}
+    {Ezagent.SliceChange.Cursors, :set},
+    # Plugin-package (Q1-C): runtime catalog of unpacked plugin packages —
+    # slug → %{manifest, app, ebin, priv_dir, modules}. Populated by
+    # `Ezagent.PluginPackage.install/1`, reduced by `unload/1`. Owned here
+    # (same crash-recovery + boot-order discipline as the other registries)
+    # so the unload path can reverse a hot-load without re-reading the
+    # plugin module (which may have been purged).
+    {:literal, :ezagent_plugin_asset_registry, :set},
+    {:literal, :ezagent_plugin_package_registry, :set},
     # Notification SPEC v2 PR-N1 (Allen 2026-05-24):
     # `:ezagent_notification_subscriptions` is INTENTIONALLY NOT
     # owned here. Codex PR-N1 round-2 HIGH-1: this is a

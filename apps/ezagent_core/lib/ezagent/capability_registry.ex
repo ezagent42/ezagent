@@ -101,6 +101,47 @@ defmodule Ezagent.CapabilityRegistry do
   end
 
   @doc """
+  Unregister a `(kind, action, behavior)` triple — the reverse of
+  `register/3`, used by the plugin-package UNLOAD path (handoff piece 4).
+
+  Removes BOTH:
+  - the cap-subject row `{{kind, behavior, action}, _}` from the
+    subjects table, AND
+  - the dispatch row `{{kind, action}, behavior}` from
+    `BehaviorRegistry` (so `Invocation.dispatch/1` stops routing to
+    the now-unloaded behavior → `{:error, {:unknown_action, action}}`).
+
+  Idempotent. Only removes the row if it still points at `behavior`
+  (defense in depth: a swap that already re-registered a NEW behavior
+  for the same `{kind, action}` is NOT clobbered by a late v1 unload).
+  """
+  @spec unregister(kind :: module(), action :: atom(), behavior :: module()) :: :ok
+  def unregister(kind, action, behavior)
+      when is_atom(kind) and is_atom(action) and is_atom(behavior) do
+    # Remove the cap-subject row ONLY if it still points at THIS behavior
+    # (a swap may have re-registered a v2 behavior under the same
+    # {kind, action}; the unload of v1 must not clobber v2).
+    case :ets.lookup(Subjects.table(), {kind, behavior, action}) do
+      [{{^kind, ^behavior, ^action}, _}] ->
+        :ets.delete(Subjects.table(), {kind, behavior, action})
+
+      _ ->
+        :ok
+    end
+
+    # Remove the dispatch row ONLY if it still points at THIS behavior.
+    case BehaviorRegistry.lookup(kind, action) do
+      {:ok, ^behavior} ->
+        :ok = BehaviorRegistry.unregister(kind, action)
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  end
+
+  @doc """
   Register a default-grant policy for new instances of `kind`. `grant_fn`
   receives the spawn-time `workspace_uri` and returns the list of caps
   the new instance should receive.

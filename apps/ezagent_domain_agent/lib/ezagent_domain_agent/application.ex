@@ -57,6 +57,11 @@ defmodule EzagentDomainAgent.Application do
     # `roles/0` is seeded as a role ConfigObject at boot. Registered HERE (before
     # any role-declaring plugin boots — they all compile-dep domain_agent).
     :ok = Ezagent.Plugin.RoleSeedHook.register(Ezagent.Agent.RoleSeedHook)
+    # Plugin-package (Q1-C): register the package seed-hook impl so a
+    # hot-loaded plugin package's `seed_refs` (recipe definitions) are
+    # seeded into ConfigStore at install + retired at unload. Registered
+    # HERE (the host is up before any package install call).
+    :ok = Ezagent.Plugin.SeedHook.register(Ezagent.Agent.PackageSeedHook)
 
     result
   end

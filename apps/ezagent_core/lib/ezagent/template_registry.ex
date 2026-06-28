@@ -74,4 +74,14 @@ defmodule Ezagent.TemplateRegistry do
     |> Enum.map(fn {name, _module} -> name end)
     |> Enum.sort()
   end
+
+  @doc """
+  Unregister a Template Class by name — the reverse of `register/1`,
+  used by the plugin-package UNLOAD path (handoff piece 4). Idempotent.
+  """
+  @spec unregister(String.t()) :: :ok
+  def unregister(name) when is_binary(name) do
+    :ets.delete(@table, name)
+    :ok
+  end
 end

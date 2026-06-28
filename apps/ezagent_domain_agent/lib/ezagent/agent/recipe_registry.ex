@@ -48,7 +48,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
   """
 
   alias Ezagent.Agent.Recipe
-  alias Ezagent.Socialware.ConfigStore
+  alias Ezagent.Socialware.{ConfigObject, ConfigPointer, ConfigStore}
 
   @table :ezagent_role_registry
 
@@ -66,6 +66,10 @@ defmodule Ezagent.Agent.RecipeRegistry do
   @doc "The fixed ConfigObject `key` for a recipe subject."
   @spec recipe_key() :: String.t()
   def recipe_key, do: @recipe_key
+
+  @doc "The ConfigStore `layer` a recipe subject lives on (`\"workspace\"`)."
+  @spec recipe_layer() :: String.t()
+  def recipe_layer, do: @recipe_layer
 
   @doc """
   The canonical system workspace URI string built-in roles are seeded under
@@ -267,6 +271,50 @@ defmodule Ezagent.Agent.RecipeRegistry do
         collision_tag: {:role_seed_collision, name}
       })
     end
+  end
+
+  @doc """
+  Retire a seeded role — the override-safe reverse of
+  `seed_role_if_absent/2`. Deletes the ConfigPointer + its ConfigObject
+  ONLY if the pointed object is still the SEED (its `source_turn_id`
+  matches the deterministic seed value); a tenant CR override carries a
+  different `source_turn_id` and SURVIVES the retire. Also invalidates
+  the read-through ETS cache entry so a post-retire `lookup/1` misses.
+
+  Used by the plugin-package UNLOAD path (`Ezagent.Agent.PackageSeedHook`).
+  Idempotent (a never-seeded or already-retired role is a no-op).
+  """
+  @spec retire_role(String.t()) :: :ok
+  def retire_role(name) when is_binary(name) do
+    ws = system_workspace_uri()
+    subject = recipe_subject_uri(ws, name)
+    pointer_id = ConfigPointer.id(@recipe_layer, ws, subject, @recipe_key)
+    seed_turn = "role-seed:#{ws}:#{name}"
+
+    case EzagentCore.Repo.get(ConfigPointer, pointer_id) do
+      nil ->
+        :ok
+
+      pointer ->
+        obj = EzagentCore.Repo.get(ConfigObject, pointer.config_id)
+
+        if obj && obj.source_turn_id == seed_turn do
+          EzagentCore.Repo.delete(pointer)
+          _ = EzagentCore.Repo.delete(obj)
+        end
+
+        :ok
+    end
+  rescue
+    _ -> :ok
+  after
+    # Invalidate the read-through ETS cache so a post-retire lookup misses
+    # (otherwise the cached %Recipe{} keeps answering :ok after the DB row
+    # is gone). Always runs — even if the DB delete was skipped (an override
+    # survives, but the cache entry is stale relative to the now-different
+    # pointed object, so re-resolution on next lookup is the honest state).
+    :ets.delete(@table, {system_workspace_uri(), name})
+    :ok
   end
 
   @doc """

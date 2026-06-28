@@ -65,4 +65,18 @@ defmodule Ezagent.BehaviorRegistry do
   @doc "List all `{{kind, action}, behavior}` triples — for debug/admin."
   @spec list_all() :: [{{module(), atom()}, module()}]
   def list_all, do: :ets.tab2list(@table)
+
+  @doc false
+  # WARN: direct calls FORBIDDEN in production code outside
+  # `Ezagent.CapabilityRegistry.unregister/3`. Same allowlist as
+  # `register/3` (enforced by the single_capability_registration_entry
+  # invariant test). A plugin-package UNLOAD routes through
+  # `CapabilityRegistry.unregister/3`, which calls this AND removes the
+  # cap-subject row — keeping the two tables consistent on the reverse
+  # path the way `register/3` does on the forward path.
+  @spec unregister(kind :: module(), action :: atom()) :: :ok
+  def unregister(kind, action) when is_atom(kind) and is_atom(action) do
+    :ets.delete(@table, {kind, action})
+    :ok
+  end
 end

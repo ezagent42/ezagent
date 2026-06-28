@@ -138,6 +138,19 @@ defmodule EzagentWeb.Router do
     get "/socialware/chat", Socialware.ChatFeedController, :show
   end
 
+  # Plugin-package (Q1-C): hot-loaded plugins serve their frontend island
+  # bundles here WITHOUT a web rebuild. `Ezagent.PluginAssetRegistry` is
+  # augmented at hot-load (install) and reduced at unload; this controller
+  # streams from the unpacked package's `priv/` dir. Public (an island JS/CSS
+  # bundle is, like `ezagent_web/priv/static/assets`, a static asset — the
+  # bundle is not a capability-gated surface; the BEHIND it is).
+  scope "/plugin-assets", EzagentWeb do
+    pipe_through :api
+
+    get "/:slug/*path", PluginAssetController, :show
+  end
+
+
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect
   # path that bypasses the HTTP Plug pipeline).
