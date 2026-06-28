@@ -11,6 +11,52 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{ConfigObject, Definition, DefinitionRegistry, Installation}
 
+  @doc """
+  Validate a socialware definition at the shared authoring boundary.
+
+  `complete: true` is used by the declarative form save, where the payload must
+  be runnable on its own. Incremental orchestrator tools use the same structural
+  normalization and may leave other sections to later tool calls.
+  """
+  @spec validate_definition(Definition.t() | map(), keyword()) ::
+          {:ok, Definition.t()} | {:error, term()}
+  def validate_definition(definition_or_attrs, opts \\ [])
+
+  def validate_definition(%Definition{} = definition, opts) do
+    if Keyword.get(opts, :complete, false) do
+      validate_complete_definition(definition)
+    else
+      {:ok, definition}
+    end
+  end
+
+  def validate_definition(attrs, opts) when is_map(attrs) do
+    with {:ok, %Definition{} = definition} <- Definition.new(attrs) do
+      validate_definition(definition, opts)
+    end
+  end
+
+  def validate_definition(other, _opts), do: {:error, {:invalid_socialware_definition, other}}
+
+  @doc "Validate and persist a form-authored socialware definition."
+  @spec save_authored_definition(map() | Definition.t(), URI.t(), URI.t(), keyword()) ::
+          {:ok, Definition.t(), ConfigObject.t()} | {:error, term()}
+  def save_authored_definition(
+        definition_or_attrs,
+        %URI{} = workspace_uri,
+        %URI{} = actor_uri,
+        opts \\ []
+      ) do
+    with {:ok, %Definition{} = definition} <- validate_definition(definition_or_attrs, opts),
+         {:ok, %ConfigObject{} = object} <-
+           DefinitionRegistry.write_definition(definition,
+             workspace_uri: workspace_uri,
+             actor_uri: actor_uri
+           ) do
+      {:ok, definition, object}
+    end
+  end
+
   @doc "Return the merged socialware config installed by a SessionTemplate."
   @spec config_for_template(map(), URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
   def config_for_template(template_content, workspace_uri) when is_map(template_content) do
@@ -166,9 +212,40 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     end
   end
 
-  defp normalize_update(%Definition{} = definition), do: {:ok, definition}
-  defp normalize_update(attrs) when is_map(attrs), do: Definition.new(attrs)
-  defp normalize_update(other), do: {:error, {:invalid_socialware_definition_update, other}}
+  defp normalize_update(definition_or_attrs) do
+    case validate_definition(definition_or_attrs) do
+      {:ok, definition} -> {:ok, definition}
+      {:error, reason} -> {:error, {:invalid_socialware_definition_update, reason}}
+    end
+  end
+
+  defp validate_complete_definition(%Definition{} = definition) do
+    cond do
+      definition.bases == [] ->
+        {:error, {:incomplete_socialware_definition, :bases}}
+
+      definition.shape == [] ->
+        {:error, {:incomplete_socialware_definition, :shape}}
+
+      definition.members == [] ->
+        {:error, {:incomplete_socialware_definition, :members}}
+
+      definition.routing_rules == [] ->
+        {:error, {:incomplete_socialware_definition, :routing_rules}}
+
+      map_size(definition.prompt_templates) == 0 ->
+        {:error, {:incomplete_socialware_definition, :prompt_templates}}
+
+      map_size(definition.legends) == 0 ->
+        {:error, {:incomplete_socialware_definition, :legends}}
+
+      definition.adapters == [] ->
+        {:error, {:incomplete_socialware_definition, :adapters}}
+
+      true ->
+        {:ok, definition}
+    end
+  end
 
   defp empty_config do
     %{

@@ -196,21 +196,27 @@ defmodule Ezagent.World.WorkspacePluginActions do
     with true <- name != "",
          %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
          workspace_name <- Ezagent.URI.name!(workspace_uri),
-         content <- session_template_content(params, workspace_uri),
+         {:ok, socialware_definition} <- prepare_form_socialware(params),
+         socialware_ref <- socialware_ref(socialware_definition),
+         content <- session_template_content(params, workspace_uri, socialware_ref),
          :ok <- authorize_template_save(workspace_uri, caller, name, content),
+         {:ok, _saved_socialware_ref} <-
+           save_prepared_socialware(socialware_definition, workspace_uri, caller),
          {:ok, template_uri} <-
            Ezagent.Entity.SessionTemplate.create(name, content,
              caller: caller,
              caps: [session_template_write_cap(workspace_uri, caller)],
              workspace: workspace_name
-           ) do
+           ),
+         :ok <- publish_current_template(workspace_uri, name, template_uri, caller) do
       put_world_state(
         socket,
         %{
           "session_templates" => WorkspacePluginData.session_template_rows(workspace_name),
           "template_notice" => "template_saved",
           "template_error" => nil,
-          "last_template_uri" => uri_string(template_uri)
+          "last_template_uri" => uri_string(template_uri),
+          "last_socialware_ref" => socialware_ref
         },
         "ok"
       )
@@ -323,23 +329,58 @@ defmodule Ezagent.World.WorkspacePluginActions do
     put_world_state(socket, %{"auto_derive_notice" => notice}, status)
   end
 
-  defp session_template_content(params, %URI{} = workspace_uri) do
-    %{
-      description: params |> Map.get("description", "") |> to_string() |> String.trim(),
-      members: [],
-      prompt_templates: %{},
-      legends: %{},
-      routing_rules: [],
-      default_workspace_uri: workspace_uri,
-      installs: template_installs(params)
-    }
+  defp prepare_form_socialware(params) do
+    case Map.get(params, "socialware") || Map.get(params, :socialware) do
+      socialware when is_map(socialware) ->
+        Ezagent.Socialware.DefinitionEditor.validate_definition(socialware, complete: true)
+
+      _ ->
+        {:ok, nil}
+    end
   end
 
-  defp template_installs(params) do
-    case Map.get(params, "installs") do
-      installs when is_list(installs) and installs != [] -> installs
-      _ -> ["chat"]
+  defp save_prepared_socialware(nil, _workspace_uri, _caller), do: {:ok, nil}
+
+  defp save_prepared_socialware(definition, %URI{} = workspace_uri, %URI{} = caller) do
+    case Ezagent.Socialware.DefinitionEditor.save_authored_definition(
+           definition,
+           workspace_uri,
+           caller,
+           complete: true
+         ) do
+      {:ok, saved, _object} -> {:ok, saved.name}
+      {:error, _} = error -> error
     end
+  end
+
+  defp socialware_ref(%Ezagent.Socialware.Definition{name: name}), do: name
+  defp socialware_ref(nil), do: nil
+
+  defp session_template_content(params, %URI{} = workspace_uri, socialware_ref) do
+    params
+    |> Map.put("default_workspace_uri", workspace_uri)
+    |> Ezagent.Socialware.DefinitionEditor.composition_template_content(
+      nil,
+      workspace_uri,
+      socialware_ref
+    )
+  end
+
+  defp publish_current_template(
+         %URI{} = workspace_uri,
+         name,
+         %URI{} = template_uri,
+         %URI{} = caller
+       )
+       when is_binary(name) do
+    Ezagent.TemplateTags.put(workspace_uri, name, "current", template_hash!(template_uri), caller)
+  end
+
+  defp template_hash!(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.name!()
+    |> String.split("@", parts: 2)
+    |> List.last()
   end
 
   defp authorize_template_save(%URI{} = workspace_uri, %URI{} = caller, name, content) do
