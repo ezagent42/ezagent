@@ -50,12 +50,14 @@ defmodule Ezagent.PluginPackage.Manifest do
 
   @typedoc """
   A seed-definition ref: a file path within the package's `priv/`
-  containing a layer-2 definition (recipe / socialware-definition) to
-  seed into ConfigStore at install, keyed by `kind` (`:recipe` |
-  `:socialware`) and a `name` for unload bookkeeping.
+  containing a layer-2 recipe definition to seed into ConfigStore at
+  install, keyed by `name` for unload bookkeeping. (`kind` is `:recipe`
+  only for now — socialware-definition seeding is a future enhancement;
+  a `:socialware` seed_ref is REJECTED at parse time rather than
+  silently dropped.)
   """
   @type seed_ref :: %{
-          kind: :recipe | :socialware,
+          kind: :recipe,
           name: String.t(),
           file: String.t()
         }
@@ -161,22 +163,27 @@ defmodule Ezagent.PluginPackage.Manifest do
     end)
 
     Enum.each(m.asset_entries, fn %{route: route, file: file} ->
-      unless is_binary(route) and route != "" and is_binary(file) and file != "" do
+      unless is_binary(route) and route != "" do
         raise ArgumentError,
-              "manifest `asset_entries` must each carry non-empty `route` + `file`"
+              "manifest `asset_entries` must each carry a non-empty `route`"
       end
+
+      assert_safe_rel_path!(file, "asset_entries[].file")
     end)
 
     Enum.each(m.seed_refs, fn %{kind: kind, name: name, file: file} = ref ->
-      unless kind in [:recipe, :socialware] do
+      unless kind == :recipe do
         raise ArgumentError,
-              "manifest `seed_refs` entry #{inspect(ref)} kind must be :recipe | :socialware"
+              "manifest `seed_refs` entry #{inspect(ref)} kind must be :recipe " <>
+                "(socialware-def seeding is a future enhancement — rejected, not a no-op)"
       end
 
-      unless is_binary(name) and name != "" and is_binary(file) and file != "" do
+      unless is_binary(name) and name != "" do
         raise ArgumentError,
-              "manifest `seed_refs` entry #{inspect(ref)} must carry non-empty `name` + `file`"
+              "manifest `seed_refs` entry #{inspect(ref)} must carry a non-empty `name`"
       end
+
+      assert_safe_rel_path!(file, "seed_refs[].file")
     end)
 
     m
@@ -249,6 +256,48 @@ defmodule Ezagent.PluginPackage.Manifest do
     end
   end
 
+  # Atom-table-exhaustion defense (L-9): manifest JSON is author-supplied;
+  # a charset-restricted guard prevents a malicious manifest from minting
+  # arbitrary atoms. Action atoms may carry a trailing `?` (predicate
+  # actions like `:has_cap?`); the guard allows lowercase + digits +
+  # underscore + a trailing `?`.
+  defp to_action_atom!(value, field) when is_binary(value) do
+    if String.match?(value, ~r/^[a-z][a-z0-9_]*[?]?$/) do
+      String.to_atom(value)
+    else
+      raise ArgumentError,
+            "manifest field `#{field}` must be a lowercase action atom " <>
+              "(letters/digits/_/trailing-?); got: #{inspect(value)}"
+    end
+  end
+
+  # Path-traversal defense (H-1): a manifest's `file` ref (asset entry or
+  # seed ref) is joined onto the package's `priv/` dir at serve/seed time.
+  # Reject any `file` that is absolute OR contains a `..` segment, so a
+  # malicious package cannot read/serve arbitrary host files (e.g. credentials
+  # under EZAGENT_HOME) via the public `/plugin-assets/...` route. Defense-in-
+  # depth: `PluginAssetRegistry.register/2` ALSO asserts the expanded path
+  # stays within `priv_dir`.
+  defp assert_safe_rel_path!(file, field) do
+    unless is_binary(file) and file != "" do
+      raise ArgumentError, "manifest field `#{field}` must be a non-empty string"
+    end
+
+    if Path.type(file) == :absolute do
+      raise ArgumentError,
+            "manifest field `#{field}` must be a RELATIVE path (within priv/); " <>
+              "got absolute: #{inspect(file)}"
+    end
+
+    if Enum.any?(Path.split(file), &(&1 == "..")) do
+      raise ArgumentError,
+            "manifest field `#{field}` must not contain `..` segments " <>
+              "(path-traversal defense); got: #{inspect(file)}"
+    end
+
+    :ok
+  end
+
   defp to_module!(value, field) when is_binary(value) do
     value = String.trim_leading(value, "Elixir.")
     mod = Module.concat(["Elixir" | String.split(value, ".")])
@@ -262,7 +311,8 @@ defmodule Ezagent.PluginPackage.Manifest do
   defp parse_behaviors(list) when is_list(list) do
     Enum.map(list, fn
       %{"kind" => k, "action" => a, "behavior" => b} ->
-        {to_module!(k, "behaviors.kind"), String.to_atom(a), to_module!(b, "behaviors.behavior")}
+        {to_module!(k, "behaviors.kind"), to_action_atom!(a, "behaviors.action"),
+         to_module!(b, "behaviors.behavior")}
 
       other ->
         raise ArgumentError, "manifest `behaviors` entry #{inspect(other)} is malformed"
@@ -276,10 +326,10 @@ defmodule Ezagent.PluginPackage.Manifest do
   defp parse_routing_tables(list) when is_list(list) do
     Enum.map(list, fn
       %{"table" => t, "opts" => opts} ->
-        {String.to_atom(t), opts || []}
+        {to_atom!(t, "routing_tables.table"), opts || []}
 
       name when is_binary(name) ->
-        {String.to_atom(name), []}
+        {to_atom!(name, "routing_tables.table"), []}
 
       other ->
         raise ArgumentError, "manifest `routing_tables` entry #{inspect(other)} is malformed"
@@ -302,15 +352,14 @@ defmodule Ezagent.PluginPackage.Manifest do
 
   defp parse_seed_refs(list) when is_list(list) do
     Enum.map(list, fn
-      %{"kind" => kind, "name" => name, "file" => file} ->
-        %{
-          kind: if(kind == "socialware", do: :socialware, else: :recipe),
-          name: name,
-          file: file
-        }
+      %{"kind" => "recipe", "name" => name, "file" => file} ->
+        %{kind: :recipe, name: name, file: file}
 
-      other ->
-        raise ArgumentError, "manifest `seed_refs` entry #{inspect(other)} is malformed"
+      %{"kind" => _other_kind} = other ->
+        raise ArgumentError,
+              "manifest `seed_refs` entry #{inspect(other)}: kind must be \"recipe\". " <>
+                "Socialware-definition seeding is a future enhancement (no silent no-op) — " <>
+                "ship socialware-defs via the plugin's own boot hooks for now."
     end)
   end
 

@@ -30,10 +30,10 @@ defmodule Ezagent.Plugin.SeedHook do
 
   @hooks_key {__MODULE__, :hooks}
 
-  @callback seed(kind :: :recipe | :socialware, name :: String.t(), body :: map()) ::
+  @callback seed(kind :: :recipe, name :: String.t(), body :: map()) ::
               :ok | {:error, term()}
 
-  @callback retire(kind :: :recipe | :socialware, name :: String.t()) :: :ok
+  @callback retire(kind :: :recipe, name :: String.t()) :: :ok
 
   @doc "Register a downstream seed-hook implementation."
   @spec register(module()) :: :ok
@@ -44,22 +44,26 @@ defmodule Ezagent.Plugin.SeedHook do
   end
 
   @doc """
-  Seed a definition `body` (decoded JSON map) of `kind` under `name`
+  Seed a recipe definition `body` (decoded JSON map) under `name`
   through the registered hook(s). The first `{:error, _}` halts.
+
+  `kind` is `:recipe` only (socialware-definition seeding is a future
+  enhancement — a `:socialware` seed_ref is REJECTED at manifest parse
+  time, not silently dropped here).
   """
-  @spec seed(:recipe | :socialware, String.t(), map()) :: :ok | {:error, term()}
-  def seed(kind, name, body) when kind in [:recipe, :socialware] and is_binary(name) and is_map(body) do
-    invoke_hooks(:seed, [kind, name, body])
+  @spec seed(:recipe, String.t(), map()) :: :ok | {:error, term()}
+  def seed(:recipe, name, body) when is_binary(name) and is_map(body) do
+    invoke_hooks(:seed, [:recipe, name, body])
   end
 
   @doc """
-  Retire the seed definition `(kind, name)` — the reverse of `seed/3`,
+  Retire the recipe seed definition `name` — the reverse of `seed/3`,
   used by the unload path. Override-safe (a tenant CR override survives;
   see the implementation). Idempotent.
   """
-  @spec retire(:recipe | :socialware, String.t()) :: :ok
-  def retire(kind, name) when kind in [:recipe, :socialware] and is_binary(name) do
-    invoke_hooks(:retire, [kind, name])
+  @spec retire(:recipe, String.t()) :: :ok
+  def retire(:recipe, name) when is_binary(name) do
+    invoke_hooks(:retire, [:recipe, name])
     :ok
   end
 

@@ -53,12 +53,29 @@ defmodule Ezagent.PluginAssetRegistry do
 
   Raises `ArgumentError` if a `(slug, route)` is already registered
   with a DIFFERENT `abs_path` (two packages fighting over the same
-  route — caller bug, surfaced loudly).
+  route — caller bug, surfaced loudly), OR if an asset `file` resolves
+  OUTSIDE `priv_dir` (path-traversal defense-in-depth, H-1).
   """
   @spec register(Manifest.t(), Path.t()) :: :ok
   def register(%Manifest{} = manifest, priv_dir) do
+    # Defense-in-depth (H-1): the manifest's `file` is validated against
+    # `..`/absolute at parse time, but re-assert here that the EXPANDED
+    # abs_path stays within the expanded priv_dir — so even a path that
+    # slipped past validation (or a future caller that bypasses the
+    # manifest) cannot serve a file outside the plugin's priv dir via the
+    # public `/plugin-assets/...` route.
+    priv_prefix = Path.expand(priv_dir) <> "/"
+
     Enum.each(manifest.asset_entries, fn %{route: route, file: file, content_type: ct} ->
-      abs_path = Path.join(priv_dir, file)
+      abs_path = Path.expand(Path.join(priv_dir, file))
+
+      unless String.starts_with?(abs_path, priv_prefix) do
+        raise ArgumentError,
+              "PluginAssetRegistry: asset entry #{inspect(file)} for slug " <>
+                "#{inspect(manifest.slug)} resolves OUTSIDE priv_dir " <>
+                "(#{inspect(abs_path)} not under #{inspect(priv_prefix)}); " <>
+                "rejecting path-traversal attempt."
+      end
 
       key = {manifest.slug, route}
 

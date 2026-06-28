@@ -24,12 +24,8 @@ defmodule Ezagent.Agent.PackageSeedHook do
     end
   end
 
-  def seed(:socialware, _name, _body), do: :ok
-
   @impl true
   def retire(:recipe, name) when is_binary(name) do
     RecipeRegistry.retire_role(name)
   end
-
-  def retire(:socialware, _name), do: :ok
 end

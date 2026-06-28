@@ -293,7 +293,6 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
     case EzagentCore.Repo.get(ConfigPointer, pointer_id) do
       nil ->
-        IO.inspect({"RETIRE nil pointer", pointer_id}, label: "retire")
         :ok
 
       pointer ->
