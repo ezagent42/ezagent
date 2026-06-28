@@ -4,7 +4,7 @@
 > no code changed by this SPEC. Skills loaded: `ezagent-developer`,
 > `ezagent-socialware`. All code citations verified against `origin/main`
 > (`67b49303`). Worktree off `origin/main`; branch `docs/socialware-app-unification`.
-> Codex adversarial-review record in §10.
+> Codex adversarial-review record in §9.
 >
 > **This SPEC synthesizes three prior read-only analyses** (all on their own
 > `docs/*` branches) into ONE coherent model + a landable phased plan:
@@ -37,10 +37,18 @@ one source of truth** — a declarative world **form** and the in-session
 **orchestrator conversation loop**. The autoservice "operator" residue de-bakes in
 three moves (C1 rename the persisted `:operator_only` enum → `:internal`; C2 lift
 the auto-publish default into the app's config; C3 name the operator cap-bundle a
-`supervisor` **responsibility**). The anonymous customer entry folds in as comms
-PR-3's `admit_anonymous_participant` domain primitive + thin web shim. Comms PR-4
-(world-on-contract-axis) is **superseded** here — its one load-bearing piece (a
-named operator-authz predicate) re-homes onto C3's `supervisor` cap.
+`supervisor` **responsibility**). **The SPEC 收口s BOTH axes of the `role`
+homonym:** recipe (axis A — "what an agent is built from", mostly done via #1048
+role-as-data, decoupling locked by #1059) AND **responsibility** (axis B — "what
+function a principal serves in a session", §2.7): the app's members **carry**
+responsibilities (`role_name`s) that the editor **assigns**; the supervisor/takeover
+flow IS responsibility-in-action — a B1 single-holder name (C3) that scales to a
+**B2 multi-holder pool** with claim/approve/escalate/arbiter routing (the autosvc
+human-takeover loop the interface inventory found has *no product surface*). The
+anonymous customer entry folds in as comms PR-3's `admit_anonymous_participant`
+domain primitive + thin web shim. Comms PR-4 (world-on-contract-axis) is
+**superseded** here — its one load-bearing piece (a named operator-authz predicate)
+re-homes onto C3's `supervisor` cap.
 
 **Zero new redundant concepts.** The only genuinely NEW objects are the
 `socialware://<name>` definition, the `belongs_to` marker, and the world form
@@ -83,10 +91,20 @@ independent analyses each found the same shape from a different angle:
    already *composed* (no Kind/role/cap) — the only residue is a persisted enum
    name leak (`:operator_only`) and one hardcoded default (auto-publish).
 
+5. **The responsibility/takeover layer is implicit and surface-less.** Members
+   carry an undocumented `role_name` (B1); the operator takeover verbs
+   (`:claim`/`:settle`/`:approve`) exist but have **no product surface** (reachable
+   only by raw `mix ezagent` dispatch — operator analysis §5); and a *multi-holder*
+   supervisor pool with conflict arbitration is *not expressible at all* (B1's
+   `role_name` is unique per session). The domain-role research designed this as B2;
+   the socialware takeover flow is its first real consumer.
+
 The 收口: give socialware **one named definition object** that (a) makes the
 identity explicit, (b) makes the channel set data, (c) is the single thing both
-editors mutate, and (d) carries the config that the de-baked operator policy
-reads — while reusing every existing primitive underneath.
+editors mutate, (d) carries the config that the de-baked operator policy reads, and
+(e) **declares its responsibilities** (members' B1 `role_name`s + B2 supervisor
+pool) so the takeover loop becomes first-class responsibility-routing — while
+reusing every existing primitive underneath.
 
 ---
 
@@ -145,7 +163,7 @@ lifetimes** — three concrete divergences, not hand-waving:
 1:1:1 to a single template version with one fixed channel set forever, the object
 *is* redundant with template content and should instead be 2-3 new content keys on
 `SessionTemplate`. The divergences above are the test; the lead's decision is the
-distinct object, and §11/OQ-1 puts the redundancy question to codex + lead
+distinct object, and §10/OQ-1 puts the redundancy question to codex + lead
 explicitly rather than asserting it settled.
 
 ### 2.3 The marker REPLACES `public_view` — and it is a SPLIT, not a flat rename
@@ -258,10 +276,148 @@ naming + one default. The unification gives each residue a home in the new model
 - **C3 — name the operator cap-bundle a `supervisor` responsibility.** The
   `{:claim, :settle, :approve, read-unfiltered}` bundle becomes a first-class
   **axis-B responsibility** (session membership `role_name` + cap bundle), exactly
-  the recipe/responsibility split (#1059) §C3. Defer until a consumer needs the
-  named handle — and the natural consumer is **the editor's operator surface +
-  the superseded PR-4 authz predicate** (§5.2). Keep per-message visibility as a
-  real revocation primitive (`external_feed.ex:293`), rename only.
+  the recipe/responsibility split (#1059) §C3. **C3 is the entry point to the full
+  responsibility & routing layer — the supervisor/takeover flow is
+  responsibility-in-action (a B2 multi-holder pool), designed in full in §2.7.**
+  Keep per-message visibility as a real revocation primitive
+  (`external_feed.ex:293`), rename only.
+
+---
+
+### 2.7 The responsibility & routing layer — B1/B2, and the takeover loop
+
+A socialware app is not only a template + channels: it is a set of **principals
+each serving a responsibility** (a function in the session). This is the SPEC's
+second 收口 axis — alongside recipe (axis A, mostly done via #1048/#1059),
+**responsibility (axis B)** is folded in here as the model's routing layer. The
+autosvc **operator/supervisor takeover flow IS responsibility-in-action** — it is
+exactly the **B2** the domain-role research designed
+(`docs/domain-role-research:…/role-for-users-domain-role.md`). C3 above is its
+single-holder entry point; the multi-holder pool + takeover loop is this section.
+
+**The two axes, stated once (research §1, #1059):**
+- **recipe (A)** = "what an *agent* is built from" — skills/prompt/behaviors/
+  `requested_caps`/`config_dir` contents. **Build-time, agent-only** (the recipe
+  shape *cannot* describe a human — research §2).
+- **responsibility (B)** = "what *function a principal* (user OR agent) serves in a
+  session" — a `role_name` + routing `{:role, name}` + standing caps. **Runtime,
+  cross-principal.**
+
+In the app, a member may be an agent **built from** the `bot` recipe **carrying**
+the `bot` responsibility — but the two names need not match (#1059: no structural
+forcing, `recipe_responsibility_lockin_test.exs`). The `supervisor` responsibility
+is held by **humans**, who have no recipe at all. The editor (§4) **assigns
+responsibilities**; it never conflates them with recipes.
+
+#### 2.7.1 How a socialware app declares its responsibilities (in the definition)
+
+The definition declares responsibility names as **data** — the members carry B1
+`role_name`s, and the `config` names which responsibilities are **B2 pools**:
+
+```
+template_ref.members : [%{uri, role_name: "orchestrator" | "bot" | "reviewer", ...}]   # B1 single-holder
+config.responsibilities : [
+  %{name: "bot",        kind: :b1_single},                # the agent member's session function
+  %{name: "supervisor", kind: :b2_pool,                   # multi-holder HUMAN takeover pool
+    caps: [:claim, :settle, :approve, :read_unfiltered],  # the operator cap-bundle (C3)
+    quorum_policy: :any_one | :majority | :n_of_m,
+    arbiter: "arbiter" | nil}
+]
+```
+
+Names are data; **holders are assigned** — B1 holders by member `role_name` in the
+`template_ref`; B2 pool holders by a **workspace-scoped assignment** (§2.7.4),
+written by the editor.
+
+#### 2.7.2 B1 vs B2 — when each is needed
+
+| | **B1 (exists today)** | **B2 (new — the takeover pool)** |
+|---|---|---|
+| scope | per **session** | per **workspace** |
+| holders | **single** (`role_name` unique per session, `role_name_conflict/3`) | **many** (a pool of N principals share responsibility R) |
+| `{:role,name}` resolves to | exactly **one** URI | **fan-out** over all current holders |
+| use in a socialware app | "the one orchestrator / the one bot / the one reviewer of THIS session" | "the **supervisor pool** watching ALL support sessions; any of N humans can take over; conflicting verdicts arbitrated" |
+
+**The operator/supervisor takeover flow = B2.** It needs ≥2 holders of
+`supervisor` (a pool) and quorum/arbiter on disagreement — *two disagreeing
+holders cannot even exist under B1's unique-per-session invariant* (research §1.2),
+so B2 is genuinely new state, not a B1 wrapper. A simple single-operator app can
+stop at B1 (C3); a multi-operator autosvc desk needs B2.
+
+#### 2.7.3 The takeover / approval / escalation loop as responsibility-routing
+
+This is the autosvc human-takeover loop the interface inventory (operator analysis
+§5) flagged has **NO product surface** today — the `:claim`/`:settle`/`:approve`
+verbs are reachable only via raw `mix ezagent` dispatch. The loop **reuses the
+existing generic verbs** (operator analysis §1e — already generic; "the human" is a
+param, not a baked role) and expresses escalation as routing-by-responsibility:
+
+1. **bot escalates** → a routing rule `{from: bot, on: <signal>} -> {:role,
+   "supervisor"}` delivers to the **B2 pool** (fan-out across all current
+   supervisors).
+2. **a human supervisor claims** → dispatches `:claim` on the `Turn`
+   (`turn.ex:49`, `handle_claim(%{by: by})` records the claimer as `owner` —
+   `:320`); the turn → `mode: :copilot, status: :awaiting_human` and its output is
+   **held `:internal`** (C1) until released.
+3. **release** → `:settle` (flip the held messages to `:external_visible`) or
+   `:approve` (advance the surface page pointer).
+4. **conflicting verdicts** → the **B2 approval/quorum Behavior** (§2.7.4) collects
+   verdicts from pool holders under `quorum_policy`; on conflict it **escalates to
+   `{:role, "arbiter"}`** — recursion over the *same* fan-out + collect machinery,
+   one level up.
+
+So "operator takeover" is fully composed from: per-message visibility (the hold/
+release lever, kept), the generic `:claim`/`:settle`/`:approve` verbs (kept), and
+B2 responsibility-routing (new). No `operator` Kind/role/cap is introduced — the
+operator analysis's "already-composed" verdict holds, now with the pool + quorum
+that B1 lacked.
+
+#### 2.7.4 Where the B2 machinery lives (dep-DAG, codex-corrected in the research)
+
+Verified umbrella edges (`mix.exs`, `origin/main`): `domain_session →
+domain_workspace → {domain_identity, domain_agent}`; **workspace does NOT dep
+session**. That forces a **split** (workspace-hosting the workflow would cycle):
+
+- **Durable principal→responsibility assignment → `domain_workspace`** (a new
+  **`:assign_role`** cap, sibling to the role-authoring caps role-as-data already
+  puts there). Workspace already deps identity (#154 caps) — **no new edge**.
+- **Approval/quorum/arbiter workflow Behavior → `domain_session`** (the only app
+  with message replies + membership + routing; it already deps workspace, so it
+  *reads* the assignment over the existing session→workspace edge). **No new
+  edge, no cycle.**
+- **Assignment-gated fan-out receiver boundary → `core/routing`** (`{:role,name}`
+  → `[uri]`). **This is NOT a one-line `expand_receiver` change** — a naïve
+  workspace-wide fan-out would hand out-of-scope/stale principals to delivery,
+  which mints a narrow `:receive` cap per recipient → a tenant-isolation hole
+  (research §3.2, codex HIGH). B2 routing must add a **same-workspace +
+  current-assignment validation** before delivery, with a test proving delivery
+  cannot mint `:receive` caps for unassigned/out-of-scope principals.
+- **Assignment↔cap lifecycle is NEW state** — identity caps are a flat `MapSet`,
+  not role-bundled; assigning `supervisor` does **not** auto-grant `approve`, and
+  unassigning does **not** auto-revoke it (research §3.3, codex MED). B2 must own
+  an explicit **grant-on-assign / revoke-on-unassign** binding **or** atomically
+  re-check assignment+cap at verdict-acceptance time (so a stale holder's verdict
+  is rejected).
+- **Accountability:** B2 approval caps are accountable **iff minted via
+  `Ezagent.Identity.Grant.prepare/4`** (which enforces `granted_by ==
+  %URI{scheme:"entity"}`) — *not* via the runtime `granted_by_entity?/1` predicate,
+  which only rejects `system://` (research §3.3/Q4, codex MED, `capability.ex:319`).
+- **No new `domain.role` app** (YAGNI; research §4) — the workspace-assignment +
+  session-workflow split respects the real edges and buys nothing less than a new
+  app would. **socialware needs no new edge:** it only *names* responsibilities as
+  data; the assignment lives in workspace (written by the editor / world plugin,
+  which already deps workspace) and the workflow runs in session (which socialware
+  already deps).
+
+#### 2.7.5 Why this is responsibility, not a socialware special
+
+Every primitive here is cross-principal and generic — none is socialware-specific.
+A `reviewer`-pool gating a code-merge (the research's motivating scenario) and a
+`supervisor`-pool gating an autosvc takeover are **the same B2 machine** with
+different responsibility names. The socialware app merely *declares the names + the
+B2 config* in its definition; the assignment, routing, and workflow are reused
+domain primitives. This keeps the 收口 honest: the takeover loop adds no concept
+that only socialware could use.
 
 ---
 
@@ -281,7 +437,14 @@ naming + one default. The unification gives each residue a home in the new model
 | **`belongs_to: socialware://<name>` marker** | **NEW** | explicit identity, replaces `public_view` boolean (job a) |
 | **the world form editor** (full-template + adapter picker) | **NEW** | closes the editor gap; one of two paths onto the def |
 | `admit_anonymous_participant` primitive + `AnonIngress` shim | **NEW (= comms PR-3)** | folded in (§5.1) |
-| `supervisor` responsibility + cap-bundle | **NEW (= C3, deferred)** | names the operator authority; re-homes PR-4 §6.6 |
+| membership `role_name` + `{:role,name}` routing (**B1**) | **REUSE** | single-holder per-session responsibility (orchestrator/bot/reviewer) |
+| identity-slice caps + `Ezagent.Identity.Grant` | **REUSE** | the approval-authority primitive (accountable, #154) |
+| `supervisor` responsibility (single-holder, **B1**) + cap-bundle | **NEW (= C3)** | names the operator authority; re-homes PR-4 §6.6 (§5.2) |
+| **B2 workspace assignment** (`:assign_role` cap, `domain_workspace`) | **NEW** | many-holder principal→responsibility pool (the supervisor pool) |
+| **assignment-gated fan-out receiver boundary** (`core/routing`) | **NEW** | `{:role,name}`→`[uri]` with same-ws + current-assignment validation (no `:receive`-cap leak) |
+| **assignment↔cap lifecycle** | **NEW** | grant-on-assign/revoke-on-unassign (caps are flat, not role-bundled) |
+| **approval/quorum/arbiter Behavior** (`domain_session`) | **NEW** | verdict-collection + arbiter escalation (the B2 takeover workflow) |
+| **the takeover product surface** (claim/approve/escalate UI) | **NEW** | closes the interface-inventory "no product surface" gap (operator analysis §5) |
 
 ---
 
@@ -309,6 +472,16 @@ write (`persist_version_as_system`-style) on `socialware://<name>` and its
 tools express; neither owns a private copy. The "current" tag must be published
 on author-save (the skill gotcha #3 / template analysis S-item) so name-based
 adopt-on-create is deterministic.
+
+**The editor is where responsibilities are assigned (§2.7).** Both paths assign on
+two axes: **B1** — set each member's `role_name` in the `template_ref` (the
+`bot`/`reviewer`/`orchestrator` function); **B2** — assign the supervisor-pool
+holders via the workspace assignment (`:assign_role`, `domain_workspace`). The form
+exposes a member-responsibility editor + a supervisor-pool roster; the orchestrator
+loop expresses the same via `add_managed_member(role_name:)` + a new assign-pool
+tool. Assignment is **never** conflated with the agent recipe (axis A): assigning
+the `bot` responsibility to a member is independent of which recipe built that
+agent (#1059).
 
 ---
 
@@ -414,7 +587,10 @@ no file.
         P5 (dual-path FORM editor)             needs P3 (picks adapters vs the app object)
              │
              ▼
-        P6 (C3 supervisor responsibility + relabel; re-homes PR-4 fix)  defer; ride #1059
+        P6 (C3 supervisor responsibility B1 + relabel; re-homes PR-4 fix)  defer; ride #1059
+             │
+             ▼
+        P7 (B2 supervisor pool + takeover surface)  needs P6 (B1 name) + P5 (editor); defer (L)
 ```
 
 | Phase | What | Blast | Pre-prod? | Independent gate (verifiable) |
@@ -424,11 +600,17 @@ no file.
 | **P3 — app object + marker** | `socialware://<name>` def object; `belongs_to` marker; split `public_view` per §2.3 parity table | **L** | NOW (no prod data) | a gate that **no `public_view` boolean is read** anywhere; identity resolves via marker, anon-gate via web-adapter attr; hello `App.ensure_app` migrated |
 | **P4 — C2** | lift auto/hold default into `config.publish_policy`; `handle_open` reads it | **S** | NOW | `:auto` preserves today; new test: a `:supervised` turn stays `:internal` until `:settle` |
 | **P5 — FORM editor** | world form fills full template + adapter picker + config; converge with orchestrator loop on one def | **M** | NOW | form authors a non-empty `members`/`routing_rules`/`prompt_templates`/`legends` + adapter set; round-trips with `save_template_as`; "current" tag published on save |
-| **P6 — C3 (defer)** | `supervisor` responsibility + cap-bundle; relabel `operator_tree`/"Operator SessionView"→internal; **re-home PR-4 §6.6 authz fix** | **S-M** | defer; ride #1059 | operator unfiltered read gated by `supervisor` cap fail-closed (the PR-4 disclosure-bug gate); relabel-only elsewhere |
+| **P6 — C3 (B1 supervisor)** | `supervisor` responsibility as a **single-holder B1** `role_name` + cap-bundle; relabel `operator_tree`/"Operator SessionView"→internal; **re-home PR-4 §6.6 authz fix** | **S-M** | defer; ride #1059 | operator unfiltered read gated by the `supervisor` cap fail-closed (the PR-4 disclosure-bug gate); relabel-only elsewhere |
+| **P7 — B2 supervisor pool + takeover surface** | many-holder workspace assignment (`:assign_role`, `domain_workspace`) + assignment-gated `{:role,name}` fan-out (`core/routing`) + approval/quorum/arbiter Behavior (`domain_session`) + the claim/approve/escalate **product surface** in the editor's operator console | **L** | defer (post-prod ok) | a test proving fan-out delivery mints **no `:receive` cap** for unassigned/out-of-scope principals; an assignment↔cap atomicity test (stale-holder verdict rejected); a quorum→arbiter escalation test; the takeover UI drives `:claim`/`:settle`/`:approve` (no raw `mix ezagent` dispatch needed) |
 
 **Recommended order:** P1 (cheapest, pre-prod-critical) → P2 (independent, smaller)
-→ P3 (foundational L) → P4 → P5 → P6. P1 and P2 can land in parallel with each
-other (no shared file); both precede the rest only by convenience, not dependency.
+→ P3 (foundational L) → P4 → P5 → P6 (B1 takeover authz) → P7 (B2 pool, last/deferred).
+P1 and P2 can land in parallel with each other (no shared file); both precede the
+rest only by convenience, not dependency. **P6/P7 are the responsibility-layer
+phases** (§2.7): P6 lands the minimal named takeover authority + the disclosure-bug
+gate (single operator); P7 lands the full multi-holder pool + the missing product
+surface (multi-operator autosvc desk). P7 is the largest deferred item; it can land
+post-prod since it is additive new state.
 
 ### 7.1 Cross-phase couplings (the edges that break "fully independent")
 
@@ -445,6 +627,10 @@ other (no shared file); both precede the rest only by convenience, not dependenc
   adapter list, so P5 needs P3.
 - **P6 → PR-4 fix:** superseding PR-4 is safe only once C3 provides the
   `supervisor` authz predicate (§5.2).
+- **P7 → P6 + P5 (responsibility layer):** B2 needs the **B1 `supervisor` name**
+  (P6) to pool against, and the **editor** (P5) to assign pool holders + drive the
+  takeover surface. P7 is therefore last. P7 is otherwise additive (new state in
+  workspace + session + routing) and shares no file with P1-P5.
 
 ### 7.2 Dep-DAG legality (zero new app edge)
 
@@ -460,6 +646,27 @@ undeclared-dep gate (`undeclared_umbrella_dep_test.exs`) stay green; #1060 Gate 
 (participation writes) and Gate 2 (web→external_mirror IoC) are untouched by P1-P5
 (P6's operator read honors them as PR-4 specified).
 
+**The B2 responsibility layer (P7) — also zero new app edge** (verified `mix.exs`,
+`origin/main`): `domain_session → domain_workspace → {domain_identity,
+domain_agent}`; **workspace does NOT dep session.** So the research's split is
+forced and legal:
+
+| B2 piece | Host app | Reaches | New edge? |
+|---|---|---|---|
+| principal→responsibility **assignment** + `:assign_role` cap | `domain_workspace` | `domain_identity` caps (↓, already dep) | **No** |
+| approval/quorum/arbiter **Behavior** | `domain_session` | workspace assignment (via existing session→workspace edge), session routing/membership | **No** |
+| assignment-gated **fan-out boundary** | `core/routing` | the assignment (validated), `Delivery` | **No** |
+| takeover **product surface** | the editor (`ezagent_plugin_world`) | workspace assignment (world already deps workspace), session verbs | **No** |
+
+**Why the workflow is in session, not workspace:** the quorum Behavior needs
+message replies + membership, which only `domain_session` has; workspace does not
+dep session, so hosting it in workspace would **cycle** (research §4.2, codex
+HIGH-corrected). **socialware needs no workspace edge:** it only *declares*
+responsibility names as data; assignment lives in workspace (written by the
+editor), the workflow runs in session (socialware already deps session). **No new
+`domain.role` app** (YAGNI; research §4). The fan-out boundary's tenant-isolation
+gate (no `:receive`-cap leak) is the load-bearing new check (research §3.2).
+
 ---
 
 ## 8. Reconciliation with role-as-data / recipe-responsibility / comms-unify
@@ -468,13 +675,20 @@ undeclared-dep gate (`undeclared_umbrella_dep_test.exs`) stay green; #1060 Gate 
   snapshot + `ConfigObject` cascade as roles. `config.publish_policy` /
   `web_anon_access` are `ConfigObject` data (workspace > user > session), not code
   policy. No new substrate; the app object rides the exact mechanism #1048 built.
-- **recipe/responsibility split (#1059).** C3's `supervisor` is **axis B — a
-  responsibility** (session membership `role_name` + a cap bundle), never an axis-A
-  recipe; the split proved the axes are independent and unforced
-  (`recipe_responsibility_lockin_test.exs`). C1's enum rename rides #1059's
-  deferred symbol-rename window (one collision-audit). The `template_ref` carries
-  recipe-side config (members may name agents with recipes); the app object adds
-  no recipe concept.
+- **recipe/responsibility split (#1059) + domain-role research (B1/B2).** This
+  SPEC now 收口s **both** axes. **Recipe (A)** is mostly done: role-as-data #1048
+  makes it a `config://<ws>/role/<name>` ConfigObject, decoupling locked by #1059
+  (`recipe_responsibility_lockin_test.exs` — no structural forcing of `role_name ==
+  recipe-name`). **Responsibility (B)** is folded in by §2.7: **B1** (single-holder
+  per-session `role_name` + `{:role,name}` routing) already exists and is reused
+  for the app's `orchestrator`/`bot`/`reviewer` members; **B2** (the multi-holder
+  supervisor pool + claim/approve/escalate/takeover) is the NEW design, hosted per
+  the research's codex-corrected split (assignment→`domain_workspace`,
+  workflow→`domain_session`, no new `domain.role` app). C3's `supervisor` is the B1
+  entry; P7 is the B2 pool. The app's members **carry** responsibilities; the
+  editor **assigns** them; neither is conflated with the recipe (a `bot`-recipe
+  agent need not carry the `bot` responsibility — #1059). C1's enum rename rides
+  #1059's deferred symbol-rename window (one collision-audit).
 - **comms-unify (#1047) / #1060.** The app's `adapters` list = the
   `ExternalMirror.Adapter` set already unified on `SessionFeedChannel`; the two
   browser disciplines are `delivery_discipline/0` configs of the `:pull` web
@@ -532,6 +746,25 @@ incorporated. No finding was UNSOUND.
 6. **Editor convergence depth.** Path A (form) and Path B (orchestrator loop) both
    mutate the def. Confirm the form is a thin projection of the orchestrator-tool
    semantics (recommended) rather than a parallel write path that could drift.
+7. **B2 wanted now, or is B1 enough? (responsibility layer, §2.7 / research OQ-1).**
+   A single-operator socialware app is fully served by B1 + C3 (P6). The
+   multi-holder supervisor pool + quorum/arbiter (B2, P7) is real new work
+   (workspace assignment + gated fan-out + a Behavior). Confirm the multi-supervisor
+   takeover + conflicting-verdict scenario is a near-term need before building P7.
+   (Recommend: ship P6 now, defer P7 until a real multi-operator desk exists.)
+8. **`role_name` uniqueness for the pool (research OQ-2).** B2 needs ≥2 holders of
+   `supervisor`. Relax `role_name_conflict/3` to allow many holders of the same
+   responsibility, **or** keep B1's unique per-session alias and add a *separate*
+   many-holder workspace assignment for B2? (Recommend the latter — two facets, not
+   one overloaded field.)
+9. **Quorum/arbiter policy (research OQ-4).** What verdict policy
+   (unanimous/majority/any-one/N-of-M) and is `arbiter` a tiebreaker (decides only
+   on conflict) or a required final approver? This shapes the P7 Behavior's state
+   machine.
+10. **Vocabulary (research OQ-5).** Adopt "agent recipe" for axis A and reserve
+    "responsibility" for axis B in the app definition + editor labels, to retire the
+    `role` homonym? (Recommend yes — the definition uses `role_name` for B today;
+    naming the pool a "responsibility" in the UI avoids the recurring confusion.)
 
 ---
 
@@ -540,7 +773,15 @@ incorporated. No finding was UNSOUND.
 - All reads via `git show origin/main:<path>` (`67b49303`) — no working-tree trust.
 - Synthesized from: `docs/socialware-operator-analysis` (operator C1/C2/C3 +
   blast radius), `docs/socialware-template-model` (template→data→instance + editor
-  gap), `docs/comms-pr34-spec` (PR-3 AnonIngress + PR-4 world-on-contract).
+  gap), `docs/comms-pr34-spec` (PR-3 AnonIngress + PR-4 world-on-contract),
+  `docs/domain-role-research` (`role-for-users-domain-role.md` — the B1/B2
+  responsibility model + the workspace-assignment/session-workflow home split).
+- Responsibility layer (§2.7): `domain_session → domain_workspace` edge
+  (`session/mix.exs:36`), `domain_workspace` does NOT dep session
+  (`workspace/mix.exs`); B1 membership `role_name` + `{:role,name}` routing;
+  `:claim`/`:settle`/`:approve` verbs (`turn.ex:49,320`, `surface.ex:20`);
+  `Identity.Grant.prepare/4` (accountable granter) vs `granted_by_entity?/1`
+  backstop (`capability.ex:319`).
 - Live contract: `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/
   adapter.ex:167-377` (the `@callback` block: `adapter_kind/0`,
   `render_authorized/2`, `live_topics/1`, `delivery_discipline/0`,
