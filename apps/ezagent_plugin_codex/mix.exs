@@ -35,6 +35,10 @@ defmodule EzagentPluginCodex.MixProject do
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
+      # P10.0 codex-orchestrator reuses the flavor-agnostic orchestrator role
+      # recipe currently hosted by the cc plugin. This does NOT reuse cc's PTY
+      # or MCP transport; codex keeps its own app-server/AgentBridge path.
+      {:ezagent_plugin_cc, in_umbrella: true},
       {:phoenix, "~> 1.8.0"}
     ]
   end

@@ -47,6 +47,26 @@ defmodule EzagentPluginCodex.BridgeAdapter do
     {:reply, {:error, %{reason: "reply requires text + session_uris"}}, socket}
   end
 
+  def handle_client_event("run_tool", %{"tool" => tool} = params, socket)
+      when is_binary(tool) do
+    arguments =
+      case Map.get(params, "arguments") do
+        %{} = map -> map
+        _ -> %{}
+      end
+
+    result =
+      socket.assigns.agent_uri
+      |> call_session_manager(tool, arguments, socket.assigns[:bridge_token])
+      |> encode_tool_result()
+
+    {:reply, {:ok, result}, socket}
+  end
+
+  def handle_client_event("run_tool", _other, socket) do
+    {:reply, {:error, %{reason: "run_tool requires tool"}}, socket}
+  end
+
   def handle_client_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl Ezagent.AgentBridge.Adapter
@@ -59,7 +79,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
   def join_info(params, _socket) do
     %{
       codex_info: Map.get(params, "codex_info", %{}),
-      tools: Map.get(params, "tools", ["reply"])
+      tools: Map.get(params, "tools", ["reply", "run_tool"])
     }
   end
 
@@ -126,6 +146,34 @@ defmodule EzagentPluginCodex.BridgeAdapter do
     end
 
     :ok
+  end
+
+  defp call_session_manager(%URI{} = orchestrator_uri, tool, arguments, token)
+       when is_binary(token) do
+    key = URI.to_string(orchestrator_uri)
+
+    case Registry.lookup(Ezagent.Session.SessionManagerRegistry, key) do
+      [{pid, _}] -> GenServer.call(pid, {:run_tool, tool, arguments, token}, :infinity)
+      [] -> {:error, :session_manager_unavailable}
+    end
+  rescue
+    ArgumentError -> {:error, :session_manager_unavailable}
+  end
+
+  defp call_session_manager(_orchestrator_uri, _tool, _arguments, _token),
+    do: {:error, :unauthorized}
+
+  defp encode_tool_result(:ok), do: %{"ok" => true, "result" => %{}}
+  defp encode_tool_result({:ok, value}), do: %{"ok" => true, "result" => jsonable(value)}
+  defp encode_tool_result({:error, reason}), do: %{"ok" => false, "error" => inspect(reason)}
+  defp encode_tool_result(other), do: %{"ok" => false, "error" => inspect(other)}
+
+  defp jsonable(value) do
+    value
+    |> Jason.encode!()
+    |> Jason.decode!()
+  rescue
+    _ -> inspect(value)
   end
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)

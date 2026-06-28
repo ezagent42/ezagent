@@ -142,6 +142,7 @@ def raw_summary(raw: str | bytes) -> str:
 class CodexClient:
     def __init__(self) -> None:
         self.ws = None
+        self.bridge: PhoenixBridge | None = None
         self.reader_task: asyncio.Task | None = None
         self.next_id = 0
         self.pending: dict[int, asyncio.Future] = {}
@@ -375,6 +376,18 @@ class CodexClient:
             "applyPatchApproval",
         }:
             result = {"decision": "decline"}
+        elif method in {"tool/call", "tools/call", "mcp/tools/call"}:
+            try:
+                result = await self._run_bridge_tool(msg.get("params") or {})
+            except Exception as exc:
+                await self._write(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": -32000, "message": str(exc)},
+                    }
+                )
+                return
         else:
             await self._write(
                 {
@@ -387,6 +400,29 @@ class CodexClient:
 
         await self._write({"jsonrpc": "2.0", "id": req_id, "result": result})
 
+    async def _run_bridge_tool(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self.bridge is None:
+            raise RuntimeError("AgentBridge is not connected")
+
+        tool = params.get("tool") or params.get("name") or params.get("toolName")
+        if not isinstance(tool, str) or not tool:
+            raise RuntimeError("tool request missing tool/name")
+
+        arguments = params.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = params.get("input")
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        reply = await self.bridge.call("run_tool", {"tool": tool, "arguments": arguments})
+        response = reply.get("response") if isinstance(reply, dict) else None
+        if not isinstance(response, dict):
+            raise RuntimeError(f"invalid run_tool reply: {reply!r}")
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error") or "run_tool failed"))
+        result = response.get("result")
+        return result if isinstance(result, dict) else {"result": result}
+
 
 def extract_agent_message_text(turn: dict[str, Any]) -> str:
     items = turn.get("items") or []
@@ -398,38 +434,64 @@ def extract_agent_message_text(turn: dict[str, Any]) -> str:
     return "".join(texts)
 
 
-async def heartbeat_loop(ws, ref_counter: list[int]) -> None:
+async def heartbeat_loop(bridge: "PhoenixBridge") -> None:
     while True:
         await asyncio.sleep(30)
-        ref_counter[0] += 1
-        await ws.send(json.dumps([None, str(ref_counter[0]), "phoenix", "heartbeat", {}]))
+        bridge.ref_counter += 1
+        await bridge.ws.send(
+            json.dumps([None, str(bridge.ref_counter), "phoenix", "heartbeat", {}])
+        )
 
 
-async def send_reply(ws, join_ref: str, ref_counter: list[int], payload: dict[str, Any]) -> None:
-    ref_counter[0] += 1
-    frame = [join_ref, str(ref_counter[0]), bridge_topic(), "reply", payload]
-    await ws.send(json.dumps(frame))
+class PhoenixBridge:
+    def __init__(self, ws, join_ref: str, topic: str) -> None:
+        self.ws = ws
+        self.join_ref = join_ref
+        self.topic = topic
+        self.ref_counter = 1
+        self.pending: dict[str, asyncio.Future] = {}
+
+    async def push(self, event: str, payload: dict[str, Any]) -> str:
+        self.ref_counter += 1
+        ref = str(self.ref_counter)
+        await self.ws.send(json.dumps([self.join_ref, ref, self.topic, event, payload]))
+        return ref
+
+    async def call(self, event: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        ref = await self.push(event, payload)
+        fut = loop.create_future()
+        self.pending[ref] = fut
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self.pending.pop(ref, None)
+
+    def handle_reply(self, ref: str, payload: dict[str, Any]) -> bool:
+        fut = self.pending.get(ref)
+        if fut is None or fut.done():
+            return False
+        fut.set_result(payload)
+        return True
 
 
 async def handle_codex_turn(
     client: CodexClient,
-    ws,
-    join_ref: str,
-    ref_counter: list[int],
+    bridge: PhoenixBridge,
     payload: dict[str, Any],
 ) -> None:
     try:
         reply = await client.submit_turn(payload or {})
         if reply.get("text") and reply.get("session_uris"):
-            await send_reply(ws, join_ref, ref_counter, reply)
+            await bridge.push("reply", reply)
         else:
             LOG.warning("not sending empty or unroutable codex reply: %r", reply)
     except Exception:
         LOG.exception("codex turn failed")
 
 
-async def inbound_loop(ws, client: CodexClient, join_ref: str, ref_counter: list[int]) -> None:
-    async for raw in ws:
+async def inbound_loop(bridge: PhoenixBridge, client: CodexClient) -> None:
+    async for raw in bridge.ws:
         try:
             frame = json.loads(raw)
         except json.JSONDecodeError:
@@ -438,8 +500,10 @@ async def inbound_loop(ws, client: CodexClient, join_ref: str, ref_counter: list
         if not isinstance(frame, list) or len(frame) < 5:
             continue
         _join_ref, _ref, _topic, event, payload = frame[:5]
-        if event == "codex_turn":
-            asyncio.create_task(handle_codex_turn(client, ws, join_ref, ref_counter, payload or {}))
+        if event == "phx_reply" and isinstance(payload, dict):
+            bridge.handle_reply(str(_ref), payload)
+        elif event == "codex_turn":
+            asyncio.create_task(handle_codex_turn(client, bridge, payload or {}))
 
 
 async def connect_loop() -> None:
@@ -453,14 +517,13 @@ async def connect_loop() -> None:
             LOG.info("connecting %s", url)
             async with websockets.connect(url, max_size=None) as ws:
                 topic = bridge_topic()
-                ref_counter = [1]
                 join_ref = "1"
                 join_payload = {
                     "codex_info": {
                         "app_server_socket": CODEX_SOCK,
                         "cwd": CWD,
                     },
-                    "tools": ["reply"],
+                    "tools": ["reply", "run_tool"],
                 }
                 await ws.send(json.dumps([join_ref, "1", topic, "phx_join", join_payload]))
 
@@ -474,9 +537,11 @@ async def connect_loop() -> None:
 
                 LOG.info("join ok: %s", topic)
                 backoff = 2
+                bridge = PhoenixBridge(ws, join_ref, topic)
+                client.bridge = bridge
                 await asyncio.gather(
-                    inbound_loop(ws, client, join_ref, ref_counter),
-                    heartbeat_loop(ws, ref_counter),
+                    inbound_loop(bridge, client),
+                    heartbeat_loop(bridge),
                 )
         except (OSError, websockets.exceptions.WebSocketException, asyncio.TimeoutError):
             LOG.exception("bridge connection failed; retry in %ds", backoff)
