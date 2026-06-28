@@ -194,8 +194,9 @@
   #   are byte-identical to ChatFeedController/ChatFeedSocket. SPEC §5.4 chose two
   #   PARALLEL surfaces and §9 names touching ChatFeed* a non-goal, so extracting a
   #   shared EzagentWeb.Socialware.AnonIngress is a deferred follow-up (touches
-  #   ChatFeed*), not done in this PR. 40→48.
-  cross_file_duplicate_fn_groups: 48,
+  # - 2026-06-28 socialware P2: AnonAdmission + AnonIngress collapsed the
+  #   duplicated anon lifecycle in chat/external feed controllers. 48→42.
+  cross_file_duplicate_fn_groups: 42,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
