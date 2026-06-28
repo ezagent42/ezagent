@@ -223,6 +223,42 @@ defmodule Ezagent.RoutingRegistry do
     :ok
   end
 
+  @doc """
+  Undeclare a routing table — the reverse of `declare_table/2`, used by
+  the plugin-package UNLOAD path (handoff piece 4). Deletes the data
+  table, the reverse table (if any), and the meta entry.
+
+  Deliberately does NOT assert owner (same carve-out as
+  `replace_table_contents/2`): an unload runs in the operator's process,
+  not the plugin's original boot process. Idempotent — a table that was
+  never declared (or already undeclared) is a no-op.
+  """
+  @spec undeclare_table(table_name()) :: :ok
+  def undeclare_table(name) when is_atom(name) do
+    case :ets.lookup(@meta_table, name) do
+      [{^name, _meta}] ->
+        # :ets.delete/1 on a named table is a no-op if the table is gone
+        # (a restart could have already reaped it). Wrap to stay idempotent.
+        try do
+          :ets.delete(data_table(name))
+        rescue
+          ArgumentError -> :ok
+        end
+
+        try do
+          :ets.delete(reverse_table(name))
+        rescue
+          ArgumentError -> :ok
+        end
+
+        :ets.delete(@meta_table, name)
+        :ok
+
+      [] ->
+        :ok
+    end
+  end
+
   # --- Internals --------------------------------------------------------
 
   defp data_table(name), do: :"ezagent_routing_#{name}"

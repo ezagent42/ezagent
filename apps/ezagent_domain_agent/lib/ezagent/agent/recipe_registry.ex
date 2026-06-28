@@ -67,6 +67,10 @@ defmodule Ezagent.Agent.RecipeRegistry do
   @spec recipe_key() :: String.t()
   def recipe_key, do: @recipe_key
 
+  @doc "The ConfigStore `layer` a recipe subject lives on (`\"workspace\"`)."
+  @spec recipe_layer() :: String.t()
+  def recipe_layer, do: @recipe_layer
+
   @doc """
   The canonical system workspace URI string built-in roles are seeded under
   (`workspace://system`). One place; all built-ins live here and are reached by

@@ -71,4 +71,14 @@ defmodule Ezagent.PluginRegistry do
       [] -> nil
     end
   end
+
+  @doc """
+  Unregister a plugin by slug — the reverse of `register/1`, used by
+  the plugin-package UNLOAD path (handoff piece 4). Idempotent.
+  """
+  @spec unregister(String.t()) :: :ok
+  def unregister(slug) when is_binary(slug) do
+    :ets.delete(@table, slug)
+    :ok
+  end
 end
