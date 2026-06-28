@@ -1,7 +1,7 @@
 defmodule EzagentWeb.Socialware.ChatFeedController do
   @moduledoc """
   Entrypoint for the CHAT external SPA — reachable by an AUTHENTICATED member OR,
-  for a `public_view` session, by an ANONYMOUS visitor (issue #51 §4.1).
+  for a session with an installed web-anonymous socialware, by an ANONYMOUS visitor.
 
   ## Two caller kinds (the route is NO LONGER behind `RequireEntity`)
 
@@ -16,17 +16,17 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
       but assign-or-nil instead of bounce). That principal gets a `ChatFeedAuth` token
       bound to it, exactly as before. No anon identity is minted for a signed-in user.
 
-    * **Anonymous** — no `current_entity_uri`. The page is served ONLY if the
-      session's Template declares `public_view: true`
-      (`Ezagent.Socialware.PublicView.public_view?/1`); a private session bounces to
-      `/login` (preserving the pre-#51 anon-bounce). For a public session the
-      controller mints / reuses a read-only anon-User
+    * **Anonymous** — no `current_entity_uri`. The page is served ONLY if an
+      installed socialware definition declares `web_anon_access: true`
+      (`Ezagent.Socialware.PublicView.web_anon_access?/1`); a private session
+      bounces to `/login` (preserving the pre-#51 anon-bounce). For a public
+      session the controller mints / reuses a read-only anon-User
       (`Ezagent.Socialware.AnonUser`), joins it to the session, drops a signed
       `socialware_anon` cookie, and issues the anon's `ChatFeedAuth` token.
 
   ## The anonymous flow (§4.1, fail-closed)
 
-  1. `PublicView.public_view?/1` gate — a NON-public session never mints an anon and
+  1. `PublicView.web_anon_access?/1` gate — a NON-public session never mints an anon and
      never becomes anon-accessible; it bounces to `/login` (security property #4).
   2. **Returning visitor** — read the signed `socialware_anon` cookie
      (`AnonCookie.verify/2`). The cookie is the integrity-checked handle: verify →

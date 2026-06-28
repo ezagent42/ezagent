@@ -569,7 +569,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # `ctx[:authorization_rule]` is set — and ONLY `Ezagent.Identity.Grant`
   # (the chokepoint) sets it, exclusively for the `{:rule, name,
   # configurer}` tag, after the caller verified the rule's precondition
-  # (e.g. `PublicView.public_view?/1`). The grant is then authorized on
+  # (e.g. `PublicView.web_anon_access?/1`). The grant is then authorized on
   # the rule's assertion rather than on `ctx.caps` (which is `[]` for a
   # rule grant). The STRUCTURAL bound: a rule may NOT mint a wildcard
   # cap. `rule_cap_bounded?/1` is written to MATCH

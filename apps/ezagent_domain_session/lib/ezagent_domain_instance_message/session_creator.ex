@@ -40,7 +40,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
 
   alias Ezagent.KindRegistry
-  alias Ezagent.Session.InstallCatalog
+  alias Ezagent.Socialware.Installation
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
@@ -328,14 +328,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # half-start the SPEC forbids. A COMPLETE session is returned
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
-    with {:ok, behaviors} <- InstallCatalog.behavior_set_for_template(template_content) do
+    with {:ok, behaviors} <-
+           Installation.behavior_set_for_template(template_content, workspace_uri) do
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
-             # P3 socialware-unification: the SessionTemplate's `installs`
-             # field selects the explicit per-instance behavior set. Missing
-             # installs preserve the legacy chat default until P4 replaces the
-             # temporary built-in catalog.
+             # P4 socialware-unification: the SessionTemplate's `installs`
+             # field resolves through ConfigStore-backed socialware definitions
+             # and selects the explicit per-instance behavior set.
              behaviors: behaviors
            }) do
         {:ok, _pid} ->
@@ -383,7 +383,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          template_content
        ) do
     if session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
-      {:ok, session_uri, %{}}
+      case Installation.install_template_installs(
+             session_uri,
+             workspace_uri,
+             template_content,
+             effective_owner
+           ) do
+        :ok -> {:ok, session_uri, %{}}
+        {:error, reason} -> {:error, reason}
+      end
     else
       Logger.warning(
         "EzagentDomainInstanceMessage.SessionCreator.create_session: existing session=" <>
@@ -423,7 +431,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    with {:ok, behaviors} <- InstallCatalog.behavior_set_for_template(template_content) do
+    with {:ok, behaviors} <-
+           Installation.behavior_set_for_template(template_content, workspace_uri) do
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
@@ -535,6 +544,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
              Materializer.grant_owner_participant_teardown_cap(
                effective_owner,
                workspace_uri
+             ),
+           :ok <-
+             Installation.install_template_installs(
+               session_uri,
+               workspace_uri,
+               template_content,
+               effective_owner
              ),
            :ok <-
              materialize_template_team(

@@ -953,7 +953,10 @@ defmodule EzagentWeb.WorldConversationTest do
     end
   end
 
-  test "world template save persists public_view and created sessions are public", %{conn: conn} do
+  test "world template save persists installs and created sessions allow web anon access", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
     template_name = "world-public-#{System.unique_integer([:positive])}"
     session_name = "world-public-session-#{System.unique_integer([:positive])}"
 
@@ -967,7 +970,7 @@ defmodule EzagentWeb.WorldConversationTest do
         "template" => %{
           "name" => template_name,
           "description" => "Public socialware template",
-          "public_view" => true
+          "installs" => ["socialware"]
         }
       }
     })
@@ -976,7 +979,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
     assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
-    assert Map.get(content, :public_view) == true
+    assert Map.get(content, :installs) == ["socialware"]
 
     view
     |> element("#world-root")
@@ -989,7 +992,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     assert_patch(view, "/sessions?session=#{encoded}")
-    assert Ezagent.Socialware.PublicView.public_view?(session_uri)
+    assert Ezagent.Socialware.PublicView.web_anon_access?(session_uri)
   end
 
   # --- helpers ----------------------------------------------------------

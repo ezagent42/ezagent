@@ -1,98 +1,79 @@
 defmodule Ezagent.Socialware.PublicViewTest do
   @moduledoc """
-  Issue #51 — `public_view` is a SessionTemplate-level config (spec §3.5, OQ-6).
+  P4 anonymous web access gate.
 
-  Both the fail-closed default (`public_view?/1` is `false` for an un-flagged
-  session) AND the Template-flag resolution (a session whose materializing
-  SessionTemplate declares `public_view: true` is viewable) are tested.
+  The old SessionTemplate boolean is split into a per-session install relation
+  plus the installed socialware definition's `visibility_policy.web_anon_access`.
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
-  alias Ezagent.Socialware.PublicView
+  alias Ezagent.Socialware.{DefinitionRegistry, Installation, PublicView}
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :default, "pv-#{System.unique_integer([:positive])}")
   end
 
-  # Spawn a bare Session Kind (no orchestrator / create_session) in workspace
-  # `system`, then point its durable working copy at `template_uri` via the
-  # system-internal write path — the minimal live session the resolver reads.
-  defp session_for_template(template_uri) do
+  defp public_session(web_anon_access) do
+    u = System.unique_integer([:positive])
+    name = "pv-def-#{u}"
+
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(definition(name, web_anon_access),
+        workspace_uri: Ezagent.URI.workspace(:system)
+      )
+
+    content = %{name: "pv-tmpl-#{u}", installs: [name]}
+
+    {:ok, template_uri} =
+      SessionTemplate.persist_version_as_system(content, "system")
+
     uri = Ezagent.URI.session(:system, :default, "pv-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.socialware_behaviors()})
+    {:ok, behaviors} =
+      Installation.behavior_set_for_template(content, Ezagent.URI.workspace(:system))
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: behaviors})
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+
+    :ok =
+      Installation.install_template_installs(
+        uri,
+        Ezagent.URI.workspace(:system),
+        content,
+        Ezagent.Entity.User.admin_uri()
+      )
+
     {:ok, _} = ConfigActions.system_set_working_copy(uri, %{session_template_uri: template_uri})
     uri
   end
 
-  describe "public_view?/1 — fail-closed default (GREEN)" do
-    test "a session with no public-view Template is NOT publicly viewable" do
-      refute PublicView.public_view?(session_uri())
+  defp definition(name, web_anon_access) do
+    %{
+      name: name,
+      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
+    }
+  end
+
+  describe "web_anon_access?/1 — fail-closed default" do
+    test "a session with no install relation is NOT publicly viewable" do
+      refute PublicView.web_anon_access?(session_uri())
     end
 
     test "a non-session URI is NOT publicly viewable" do
-      refute PublicView.public_view?(Ezagent.URI.entity(:team_alpha, :user, "alice"))
-      refute PublicView.public_view?(nil)
+      refute PublicView.web_anon_access?(Ezagent.URI.entity(:team_alpha, :user, "alice"))
+      refute PublicView.web_anon_access?(nil)
     end
   end
 
-  describe "public_view?/1 — Template-flag resolution" do
-    # NOTE: spawned Session Kinds run in their own processes — `use
-    # EzagentCore.DataCase, async: false` already shares the sandbox via a
-    # drainable Agent owner, so a redundant `Sandbox.mode({:shared, self()})`
-    # here only re-globalized the connection onto the dying test pid and
-    # clobbered concurrent suites with "owner exited" errors (#92).
-
-    test "true iff the session's materializing Template declares public_view: true" do
-      u = System.unique_integer([:positive])
-
-      {:ok, pubview_uri} =
-        SessionTemplate.persist_version_as_system(
-          %{name: "pv-tmpl-#{u}", public_view: true},
-          "system"
-        )
-
-      {:ok, plain_uri} =
-        SessionTemplate.persist_version_as_system(%{name: "plain-tmpl-#{u}"}, "system")
-
-      # P materialized from a public_view: true Template → viewable
-      assert PublicView.public_view?(session_for_template(pubview_uri))
-
-      # Q materialized from a Template WITHOUT the flag → fail-closed private
-      refute PublicView.public_view?(session_for_template(plain_uri))
-    end
-
-    test "fail-closed: a NON-boolean flag value (string \"true\") does NOT open the session" do
-      u = System.unique_integer([:positive])
-
-      # only an explicit boolean `true` opens; a string "true" (JSON/schema drift)
-      # must stay private
-      {:ok, str_uri} =
-        SessionTemplate.persist_version_as_system(
-          %{name: "str-tmpl-#{u}", public_view: "true"},
-          "system"
-        )
-
-      refute PublicView.public_view?(session_for_template(str_uri))
-    end
-
-    test "fail-closed: a working-copy pointing at a DIFFERENT-workspace public template" do
-      u = System.unique_integer([:positive])
-
-      # a public_view:true template in workspace team-alpha; a system-workspace
-      # session must NOT become public by pointing at it (cross-workspace pointer)
-      {:ok, foreign_uri} =
-        SessionTemplate.persist_version_as_system(
-          %{name: "foreign-tmpl-#{u}", public_view: true},
-          "team-alpha"
-        )
-
-      refute PublicView.public_view?(session_for_template(foreign_uri))
+  describe "web_anon_access?/1 — install definition resolution" do
+    test "true iff an installed socialware definition enables web anonymous access" do
+      assert PublicView.web_anon_access?(public_session(true))
+      refute PublicView.web_anon_access?(public_session(false))
     end
   end
 end

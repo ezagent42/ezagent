@@ -32,7 +32,8 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
 
   alias Ezagent.Capability
   alias Ezagent.Behavior.Session.Membership
-  alias Ezagent.Entity.User
+  alias Ezagent.Entity.{Session, SessionTemplate, User}
+  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
   # NOTE: spawned Session / User Kinds run in their own processes and read the
   # rows this test inserts (the 甲-1 lesson — the mount runs CALLER-SIDE here).
@@ -239,28 +240,39 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
     end
   end
 
-  # A live session in `team-alpha` whose materializing Template declares
-  # `public_view: flag`, owned by `owner_uri`. Mirrors the socialware suite's
-  # `AnonPublicViewGrantTest.public_session/2` fixture (same-workspace string).
+  # A live session in `team-alpha` whose installed socialware definition
+  # declares `web_anon_access: flag`, owned by `owner_uri`.
   defp public_view_session(flag, %URI{} = owner_uri) do
     u = uniq()
+    name = "g3-def-#{u}"
 
-    {:ok, tmpl_uri} =
-      Ezagent.Entity.SessionTemplate.persist_version_as_system(
-        %{name: "g3-tmpl-#{u}", public_view: flag},
-        @ws
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(definition(name, flag),
+        workspace_uri: Ezagent.URI.workspace(@ws)
       )
 
+    content = %{name: "g3-tmpl-#{u}", installs: [name]}
+    {:ok, tmpl_uri} = SessionTemplate.persist_version_as_system(content, @ws)
+
     session_uri = URI.new!("session://#{@ws}/default/g3-#{u}")
+    {:ok, behaviors} = Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@ws))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.Session.socialware_behaviors(),
+        behaviors: behaviors,
         owner_uri: owner_uri
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+
+    :ok =
+      Installation.install_template_installs(
+        session_uri,
+        Ezagent.URI.workspace(@ws),
+        content,
+        owner_uri
+      )
 
     {:ok, _} =
       Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(
@@ -270,5 +282,14 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
 
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     session_uri
+  end
+
+  defp definition(name, web_anon_access) do
+    %{
+      name: name,
+      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
+    }
   end
 end

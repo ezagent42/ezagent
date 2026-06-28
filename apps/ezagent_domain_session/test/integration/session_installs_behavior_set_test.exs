@@ -5,9 +5,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTes
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.KindRegistry
+  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
   alias EzagentDomainInstanceMessage.SessionCreator
 
   defp uniq, do: System.unique_integer([:positive])
+
+  setup do
+    :ok = seed_builtins()
+  end
 
   test "create_session uses template installs to spawn a socialware session" do
     template_name = "install-socialware-#{uniq()}"
@@ -23,6 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTes
     end)
 
     assert captured_behaviors(session_uri) == Session.socialware_behaviors()
+    assert Installation.installed?(session_uri, "socialware")
   end
 
   test "create_session keeps chat installs out of Turn and Surface" do
@@ -39,6 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTes
     end)
 
     assert captured_behaviors(session_uri) == Session.chat_behaviors()
+    assert Installation.installed?(session_uri, "chat")
   end
 
   defp template_content(name, installs) do
@@ -84,6 +91,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTes
 
       :error ->
         :ok
+    end
+  end
+
+  defp seed_builtins do
+    case DefinitionRegistry.seed_builtin_definitions() do
+      :ok -> :ok
+      {:error, {:socialware_definition_seed_collision, _}} -> :ok
     end
   end
 end

@@ -60,7 +60,7 @@ defmodule EzagentWeb.Socialware.AnonIngress do
   defp resolve_anonymous(conn, session_uri, opts) do
     _ = Ezagent.SpawnRegistry.ensure_live(session_uri)
 
-    if PublicView.public_view?(session_uri) do
+    if PublicView.web_anon_access?(session_uri) do
       conn
       |> read_valid_cookie(session_uri)
       |> case do

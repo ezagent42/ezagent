@@ -54,6 +54,7 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   alias Ezagent.RoutingRegistry
   alias Ezagent.Entity.{AgentTemplate, Session, SessionTemplate, User}
+  alias Ezagent.Socialware.DefinitionRegistry
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
   alias EzagentDomainInstanceMessage.AgentModuleResolver
 
@@ -155,6 +156,8 @@ defmodule EzagentDomainInstanceMessage.Application do
         # to match what it actually seeds. Test-env skip — see helper
         # docstring.
         :ok = ensure_system_workspace()
+
+        :ok = seed_builtin_socialware_definitions()
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
         # agent is NO LONGER seeded here. Seeding it from chat's
@@ -459,6 +462,21 @@ defmodule EzagentDomainInstanceMessage.Application do
                   "#{inspect(reason)}. Every `create_session(... template_name: \"default\")` " <>
                   "would fail to resolve the template; refusing to boot."
       end
+    end
+  end
+
+  defp seed_builtin_socialware_definitions do
+    case DefinitionRegistry.seed_builtin_definitions() do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        if test_env?() do
+          :ok
+        else
+          raise "EzagentDomainInstanceMessage boot aborted — built-in socialware " <>
+                  "definitions could not be persisted: #{inspect(reason)}"
+        end
     end
   end
 

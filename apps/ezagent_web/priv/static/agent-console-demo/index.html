@@ -257,7 +257,7 @@ const AGENT_TEMPLATES = [
 
 const SESSION_TEMPLATES = [
   {uri:"template://acme/session/storefront@a1b2c3d4", name:"storefront", tag:"current",
-   description:"导购前台 + 三角分诊 team", public_view:true,
+   description:"导购前台 + 三角分诊 team", web_anon_access:true,
    orchestrator_template_uri:"template://acme/agent/cc_orchestrator",
    members:[
      {role_name:"greeter", source:"template://acme/agent/doorman"},
@@ -267,7 +267,7 @@ const SESSION_TEMPLATES = [
    legends:[{name:"导购", member_set:["greeter","triage"], bound_rule_set:"frontline", fold:true}],
    routing_rules:3},
   {uri:"template://acme/session/storefront@7e6d5c4b", name:"storefront", tag:"v3-draft",
-   description:"storefront 草稿（加了 escalation 自动转人工）", public_view:false,
+   description:"storefront 草稿（加了 escalation 自动转人工）", web_anon_access:false,
    orchestrator_template_uri:"template://acme/agent/cc_orchestrator",
    members:[
      {role_name:"greeter", source:"template://acme/agent/doorman"},
@@ -728,7 +728,7 @@ function submitCreateST(){
     {s:"ok",t:"创建后",d:`给 owner 授该模板的 Template cap · request_id=${req}`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷，单主体）· request_id=${req}`},
   ], ()=>{
-    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"draft", description:String(val("f-stdesc")||""), public_view:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"draft", description:String(val("f-stdesc")||""), web_anon_access:false, orchestrator_template_uri:"template://acme/agent/cc_orchestrator", members:[], legends:[], routing_rules:0});
     AUDIT.unshift({ts:nowts(),op:"SessionTemplate.create",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} · ${req}`});
     go("session-templates");
   });
@@ -844,7 +844,7 @@ function submitForkST(){
     {s:"ok",t:"单阶段 · operator 自有授权",d:`caller=operator · Template :fork cap · <code>SessionTemplate.fork/3</code> · config-only（深拷贝 source 的 members/legends/rules）✓`},
     {s:"ok",t:"审计",d:`operator=alice · execution=operator（冷）· request_id=${req}`},
   ], ()=>{
-    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"fork", description:`forked from ${shortUri(srcUri)}`, public_view:false, orchestrator_template_uri:src.orchestrator_template_uri, members:deepCopy(src.members||[]), legends:deepCopy(src.legends||[]), routing_rules:src.routing_rules||0});
+    SESSION_TEMPLATES.push({uri:`template://acme/session/${name}@${mockHash(12)}`, name:name, tag:"fork", description:`forked from ${shortUri(srcUri)}`, web_anon_access:false, orchestrator_template_uri:src.orchestrator_template_uri, members:deepCopy(src.members||[]), legends:deepCopy(src.legends||[]), routing_rules:src.routing_rules||0});
     AUDIT.unshift({ts:nowts(),op:"SessionTemplate.fork",operator:"entity://acme/user/alice",exec:"entity://acme/user/alice",live:"cold",result:"ok",note:`${name} ← ${shortUri(srcUri)} · ${req}`});
     go("session-templates");
   });
@@ -1045,12 +1045,12 @@ overview(){ return `
   <div class="world-header"><h1>Session Templates <span class="badge cold">冷</span></h1>
   <p><code>Ezagent.Entity.SessionTemplate</code> · 生产级多 agent team 配置。URI <code>template://&lt;ws&gt;/session/&lt;name&gt;@&lt;hash&gt;</code>（workspace-first，SHA-256 内容寻址）。</p></div>
   <div class="card">
-    <table><thead><tr><th>URI</th><th>tag</th><th>members</th><th>legends</th><th>public_view</th><th></th></tr></thead>
+    <table><thead><tr><th>URI</th><th>tag</th><th>members</th><th>legends</th><th>web anon</th><th></th></tr></thead>
     <tbody>${SESSION_TEMPLATES.map(t=>`<tr>
       <td><span class="uri">${t.uri}</span></td>
       <td>${t.tag==="current"?'<span class="badge live">current</span>':`<span class="badge tag">${t.tag}</span>`}</td>
       <td>${t.members.length}</td><td>${t.legends.map(l=>l.name).join(", ")||"—"}</td>
-      <td>${t.public_view?'✓':'<span class="muted">—</span>'}</td>
+      <td>${t.web_anon_access?'✓':'<span class="muted">—</span>'}</td>
       <td><button class="btn" onclick="go('team')">查看活实例 →</button></td>
     </tr>`).join("")}</tbody></table>
   </div>

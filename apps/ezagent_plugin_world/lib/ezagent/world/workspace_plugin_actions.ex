@@ -331,8 +331,15 @@ defmodule Ezagent.World.WorkspacePluginActions do
       legends: %{},
       routing_rules: [],
       default_workspace_uri: workspace_uri,
-      public_view: truthy?(Map.get(params, "public_view", false))
+      installs: template_installs(params)
     }
+  end
+
+  defp template_installs(params) do
+    case Map.get(params, "installs") do
+      installs when is_list(installs) and installs != [] -> installs
+      _ -> ["chat"]
+    end
   end
 
   defp authorize_template_save(%URI{} = workspace_uri, %URI{} = caller, name, content) do
@@ -381,9 +388,6 @@ defmodule Ezagent.World.WorkspacePluginActions do
       function_exported?(uri_options, :valid_for?, 4) and
       apply(uri_options, :valid_for?, [caller, workspace, user_uri, [:entity]])
   end
-
-  defp truthy?(value) when value in [true, "true", "on", "1", 1], do: true
-  defp truthy?(_), do: false
 
   defp reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason(reason), do: inspect(reason)

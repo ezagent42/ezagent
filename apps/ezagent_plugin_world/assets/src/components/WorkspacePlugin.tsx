@@ -177,7 +177,7 @@ function SessionTemplatePanel({
 }) {
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
-  const [publicView, setPublicView] = React.useState(false)
+  const [webAnonAccess, setWebAnonAccess] = React.useState(false)
 
   return (
     <section className={subsectionClass} data-world-component="workspace-templates">
@@ -193,7 +193,7 @@ function SessionTemplatePanel({
             template: {
               name,
               description,
-              public_view: publicView,
+              installs: webAnonAccess ? ["socialware"] : ["chat"],
             },
           })
         }}
@@ -218,10 +218,10 @@ function SessionTemplatePanel({
         </label>
         <label className="flex items-center gap-2 text-sm text-foreground">
           <input
-            id="world-session-template-public-view"
+            id="world-session-template-web-anon-access"
             type="checkbox"
-            checked={publicView}
-            onChange={(event) => setPublicView(event.target.checked)}
+            checked={webAnonAccess}
+            onChange={(event) => setWebAnonAccess(event.target.checked)}
           />
           <span>Public socialware app</span>
         </label>

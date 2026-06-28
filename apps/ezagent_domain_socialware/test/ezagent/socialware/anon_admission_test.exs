@@ -3,7 +3,16 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
 
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
-  alias Ezagent.Socialware.{AnonAdmission, AnonBinding, AnonUser, ChatFeed}
+
+  alias Ezagent.Socialware.{
+    AnonAdmission,
+    AnonBinding,
+    AnonUser,
+    ChatFeed,
+    DefinitionRegistry,
+    Installation
+  }
+
   alias Ezagent.{Capability, KindRegistry}
 
   @workspace "team-alpha"
@@ -12,28 +21,53 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
   defp public_session(flag \\ true) do
     u = System.unique_integer([:positive])
 
-    {:ok, tmpl_uri} =
-      SessionTemplate.persist_version_as_system(
-        %{name: "anon-admission-tmpl-#{u}", public_view: flag},
-        @workspace
+    name = "anon-admission-def-#{u}"
+
+    {:ok, _} =
+      DefinitionRegistry.seed_definition_if_absent(definition(name, flag),
+        workspace_uri: Ezagent.URI.workspace(@workspace)
       )
 
+    content = %{name: "anon-admission-tmpl-#{u}", installs: [name]}
+
+    {:ok, tmpl_uri} = SessionTemplate.persist_version_as_system(content, @workspace)
+
     session_uri = Ezagent.URI.new!("session://#{@workspace}/default/anon-admission-#{u}")
+
+    {:ok, behaviors} =
+      Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
         owner_uri: @owner,
-        behaviors: Session.socialware_behaviors()
+        behaviors: behaviors
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+
+    :ok =
+      Installation.install_template_installs(
+        session_uri,
+        Ezagent.URI.workspace(@workspace),
+        content,
+        @owner
+      )
 
     {:ok, _} =
       ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl_uri})
 
     on_exit(fn -> terminate(session_uri) end)
     session_uri
+  end
+
+  defp definition(name, web_anon_access) do
+    %{
+      name: name,
+      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
+      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
+    }
   end
 
   defp terminate(uri) do
