@@ -593,6 +593,7 @@ defmodule EzagentDomainInstanceMessage.Application do
       # as a role member and provisioned lazily by routing.
       members: members,
       prompt_templates: %{},
+      installs: ["chat"],
       legends: %{},
       routing_rules: [],
       default_workspace_uri: workspace_uri,

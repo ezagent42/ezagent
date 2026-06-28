@@ -47,6 +47,10 @@ defmodule Ezagent.Entity.SessionTemplate do
         members:                    [map()],
         # `prompt_templates` — the named template map (§3.4): name => template str.
         prompt_templates:           %{optional(String.t()) => String.t()},
+        # `installs` — product/runtime install refs consumed by
+        # `Ezagent.Session.InstallCatalog` during materialization.
+        # P3 built-ins: "chat" and "socialware"; absent preserves "chat".
+        installs:                   [String.t()],
         # `legends` — the §3.6 legend defs: name => %{member_set, bound_rule_set, fold}.
         legends:                    %{optional(String.t()) => map()},
         # `nil` for a PLAIN (orchestrator-less) template — the create flow
@@ -761,7 +765,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   @config_atom_keys ~w(name description members prompt_templates legends
                        orchestrator_template_uri routing_rules
                        default_workspace_uri parent_template_uri
-                       version_tag created_by created_at public_view)a
+                       version_tag created_by created_at public_view installs)a
   defp normalize_config_keys(config) do
     Map.new(config, fn
       {k, v} when is_atom(k) ->

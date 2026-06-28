@@ -14,6 +14,7 @@ defmodule EzagentPluginHello.App do
   alias Ezagent.{Capability, Invocation, WorkspaceRegistry}
   alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.Session.InstallCatalog
 
   @doc """
   Idempotently create the hello app: a `public_view` SessionTemplate, a live
@@ -25,14 +26,13 @@ defmodule EzagentPluginHello.App do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     builder_uri = Ezagent.URI.entity(ws, :agent, "hello_#{name}")
     workspace = Capability.workspace_of(session_uri)
+    content = %{name: "hello-#{name}", public_view: true, installs: ["socialware"]}
 
     with {:ok, tmpl} <-
-           SessionTemplate.persist_version_as_system(
-             %{name: "hello-#{name}", public_view: true},
-             ws
-           ),
+           SessionTemplate.persist_version_as_system(content, ws),
+         {:ok, behaviors} <- InstallCatalog.behavior_set_for_template(content),
          :ok <-
-           spawn_kind(Session, %{uri: session_uri, behaviors: Session.socialware_behaviors()}),
+           spawn_kind(Session, %{uri: session_uri, behaviors: behaviors}),
          :ok <- bind_workspace(session_uri, workspace),
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),

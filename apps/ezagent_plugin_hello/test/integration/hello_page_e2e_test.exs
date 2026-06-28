@@ -19,6 +19,8 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace
+  alias Ezagent.Behavior.KindBase
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
@@ -110,6 +112,12 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
     assert {:error, :unauthorized} =
              Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, ctx.session)
+  end
+
+  test "ensure_app spawns the session through the socialware install set", ctx do
+    {:ok, slice} = Ezagent.Kind.get_slice(ctx.session, :kind_base)
+
+    assert KindBase.behaviors_in_slice(slice) == Session.socialware_behaviors()
   end
 
   # --- helpers ---------------------------------------------------------------

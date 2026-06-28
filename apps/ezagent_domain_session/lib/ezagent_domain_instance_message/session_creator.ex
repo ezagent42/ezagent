@@ -40,6 +40,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
 
   alias Ezagent.KindRegistry
+  alias Ezagent.Session.InstallCatalog
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
@@ -327,45 +328,46 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # half-start the SPEC forbids. A COMPLETE session is returned
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
-    case Ezagent.Kind.spawn(Session, %{
-           uri: session_uri,
-           owner_uri: effective_owner,
-           # P5-0b: explicit chat behavior set → non-nil :kind_base (scoped
-           # guard). P5-1b: `Session.behaviors/0` is now the UNION, so this
-           # passes `chat_behaviors/0` (the chat subset) — selects
-           # {Session, Publisher, ExternalMirror}, excludes Turn/Surface so the
-           # P1 per-instance gate denies them on chat instances.
-           behaviors: Session.chat_behaviors()
-         }) do
-      {:ok, _pid} ->
-        finalize_fresh_session(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+    with {:ok, behaviors} <- InstallCatalog.behavior_set_for_template(template_content) do
+      case Ezagent.Kind.spawn(Session, %{
+             uri: session_uri,
+             owner_uri: effective_owner,
+             # P3 socialware-unification: the SessionTemplate's `installs`
+             # field selects the explicit per-instance behavior set. Missing
+             # installs preserve the legacy chat default until P4 replaces the
+             # temporary built-in catalog.
+             behaviors: behaviors
+           }) do
+        {:ok, _pid} ->
+          finalize_fresh_session(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, {:already_started, _pid}} ->
-        verify_or_recreate(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+        {:error, {:already_started, _pid}} ->
+          verify_or_recreate(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, {:already_registered, _}} ->
-        verify_or_recreate(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+        {:error, {:already_registered, _}} ->
+          verify_or_recreate(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -421,25 +423,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    case Ezagent.Kind.spawn(Session, %{
-           uri: session_uri,
-           owner_uri: effective_owner,
-           # P5-0b: explicit chat behavior set on the recreate-after-rollback
-           # path too → non-nil :kind_base. P5-1b: now the chat SUBSET of the
-           # union (`chat_behaviors/0`), not the union itself.
-           behaviors: Session.chat_behaviors()
-         }) do
-      {:ok, _pid} ->
-        finalize_fresh_session(
-          session_uri,
-          workspace_uri,
-          effective_owner,
-          session_template_uri,
-          template_content
-        )
+    with {:ok, behaviors} <- InstallCatalog.behavior_set_for_template(template_content) do
+      case Ezagent.Kind.spawn(Session, %{
+             uri: session_uri,
+             owner_uri: effective_owner,
+             behaviors: behaviors
+           }) do
+        {:ok, _pid} ->
+          finalize_fresh_session(
+            session_uri,
+            workspace_uri,
+            effective_owner,
+            session_template_uri,
+            template_content
+          )
 
-      {:error, reason} ->
-        {:error, {:recreate_after_incomplete_failed, reason}}
+        {:error, reason} ->
+          {:error, {:recreate_after_incomplete_failed, reason}}
+      end
     end
   end
 
