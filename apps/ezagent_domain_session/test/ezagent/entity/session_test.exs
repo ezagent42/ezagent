@@ -19,7 +19,8 @@ defmodule Ezagent.Entity.SessionTest do
                Ezagent.Behavior.Publisher.SessionImpl,
                Ezagent.Behavior.ExternalMirror,
                Ezagent.Behavior.Turn,
-               Ezagent.Behavior.Surface
+               Ezagent.Behavior.Surface,
+               Ezagent.Behavior.SupervisorApproval
              ]
 
       assert Session.chat_behaviors() == [
@@ -32,6 +33,7 @@ defmodule Ezagent.Entity.SessionTest do
                Ezagent.Behavior.Session,
                Ezagent.Behavior.Turn,
                Ezagent.Behavior.Surface,
+               Ezagent.Behavior.SupervisorApproval,
                Ezagent.Behavior.Publisher.SessionImpl
              ]
     end

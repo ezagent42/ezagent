@@ -217,6 +217,27 @@ defmodule Ezagent.Routing.ResolverTest do
                )
     end
 
+    test "tagged role receivers can fan out through an injected multi-holder resolver", %{
+      table: t
+    } do
+      holder_a = Ezagent.URI.user(:team_alpha, "supervisor-a")
+      holder_b = Ezagent.URI.user(:team_alpha, "supervisor-b")
+      session_uri = Ezagent.URI.session(:team_alpha, :default, "main")
+
+      :ok =
+        RoutingRegistry.put(t, Matcher.always(), %{
+          receivers: [Ezagent.Routing.Receiver.role("supervisor")],
+          applies_to_users: []
+        })
+
+      assert [{^holder_a, _ctx}, {^holder_b, _ctx2}] =
+               Resolver.resolve_with_ctx(msg(), session_uri, [],
+                 role_resolver: fn
+                   "supervisor", _ctx -> [holder_a, holder_b]
+                 end
+               )
+    end
+
     test "legacy bare role-looking strings are not role receivers", %{table: t} do
       :ok =
         RoutingRegistry.put(t, Matcher.always(), %{

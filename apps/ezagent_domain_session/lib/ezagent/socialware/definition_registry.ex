@@ -43,11 +43,11 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     end
   end
 
-  @doc "Seed the built-in chat and socialware definitions if absent."
+  @doc "Seed the built-in chat and socialware definitions if absent or stale."
   @spec seed_builtin_definitions() :: :ok | {:error, term()}
   def seed_builtin_definitions do
     Enum.reduce_while(builtin_definitions(), :ok, fn definition, :ok ->
-      case seed_definition_if_absent(definition, workspace_uri: system_workspace_uri()) do
+      case seed_builtin_definition(definition, workspace_uri: system_workspace_uri()) do
         {:ok, _} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
@@ -121,7 +121,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         ],
         shape: [
           Ezagent.Behavior.Turn,
-          Ezagent.Behavior.Surface
+          Ezagent.Behavior.Surface,
+          Ezagent.Behavior.SupervisorApproval
         ],
         adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true}
@@ -165,10 +166,66 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   defp normalize_definition(%Definition{} = definition), do: {:ok, definition}
   defp normalize_definition(attrs) when is_map(attrs), do: Definition.new(attrs)
 
+  defp seed_builtin_definition(%Definition{} = definition, opts) do
+    workspace_uri = opts |> Keyword.fetch!(:workspace_uri) |> uri_string()
+    subject = definition_subject_uri(workspace_uri, definition.name)
+    body = Definition.body(definition)
+    normalized_body = json_normalize(body)
+
+    case ConfigStore.resolve(@definition_layer, workspace_uri, subject, @definition_key) do
+      :none ->
+        seed_definition_if_absent(definition, workspace_uri: workspace_uri)
+
+      {:ok, %ConfigObject{body: ^normalized_body}} ->
+        {:ok, :exists}
+
+      {:ok, %ConfigObject{} = object} ->
+        if builtin_seed_object?(object) do
+          write_definition(definition,
+            workspace_uri: workspace_uri,
+            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, body)
+          )
+          |> case do
+            {:ok, _object} -> {:ok, :seeded}
+            {:error, reason} -> {:error, reason}
+          end
+        else
+          {:ok, :exists}
+        end
+    end
+  end
+
+  defp builtin_seed_object?(%ConfigObject{source_turn_id: source_turn_id})
+       when is_binary(source_turn_id) do
+    String.starts_with?(source_turn_id, [
+      "socialware-definition-seed:",
+      "socialware-definition-seed-upgrade:"
+    ])
+  end
+
+  defp builtin_seed_object?(_), do: false
+
   defp default_seed_actor, do: Ezagent.URI.user(:system, :admin) |> URI.to_string()
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri
+
+  defp json_normalize(body) do
+    body
+    |> Jason.encode!()
+    |> Jason.decode!()
+  end
+
+  defp builtin_upgrade_source_turn_id(workspace_uri, name, body) do
+    hash =
+      body
+      |> json_normalize()
+      |> Jason.encode!()
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.encode16(case: :lower)
+
+    "socialware-definition-seed-upgrade:#{workspace_uri}:#{name}:#{hash}"
+  end
 
   defp unique_source_turn_id(workspace_uri, name) do
     "socialware-definition-write:#{workspace_uri}:#{name}:#{System.unique_integer([:positive, :monotonic])}"

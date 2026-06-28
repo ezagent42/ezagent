@@ -120,15 +120,17 @@ defmodule Ezagent.Behavior.Session do
   require Logger
 
   alias Ezagent.{KindRegistry, Message, MessageStore}
+
   alias Ezagent.Behavior.Session.{
     ConfigActions,
     Delivery,
     Legends,
     Members,
     Membership,
+    RoleResolver,
     Teardown
   }
-  alias Ezagent.Behavior.Session.RouteProvisioner
+
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 ring depth + `recent_messages_ring_depth/0` MOVED to
@@ -517,7 +519,7 @@ defmodule Ezagent.Behavior.Session do
                 in_session_members,
                 workspace_uri: workspace_uri,
                 role_resolver: fn role_name, _route_ctx ->
-                  RouteProvisioner.resolve_role(role_name, ctx, provision_key, __MODULE__)
+                  RoleResolver.resolve(role_name, workspace_uri, ctx, provision_key, __MODULE__)
                 end,
                 # RF-6: inject the passive-actor predicate (parallel to
                 # `role_resolver`) so the resolver's universal final-output gate

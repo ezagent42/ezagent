@@ -70,12 +70,26 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
   # ── the union declaration + the two subsets ────────────────────────────────
 
   test "Entity.Session.behaviors/0 is the chat+socialware UNION" do
-    assert SessionKind.behaviors() == [Session, SessionImpl, ExternalMirror, Turn, Surface]
+    assert SessionKind.behaviors() == [
+             Session,
+             SessionImpl,
+             ExternalMirror,
+             Turn,
+             Surface,
+             Ezagent.Behavior.SupervisorApproval
+           ]
   end
 
   test "chat_behaviors/0 excludes Turn/Surface; socialware_behaviors/0 excludes ExternalMirror" do
     assert SessionKind.chat_behaviors() == [Session, SessionImpl, ExternalMirror]
-    assert SessionKind.socialware_behaviors() == [Session, Turn, Surface, SessionImpl]
+
+    assert SessionKind.socialware_behaviors() == [
+             Session,
+             Turn,
+             Surface,
+             Ezagent.Behavior.SupervisorApproval,
+             SessionImpl
+           ]
 
     refute Turn in SessionKind.chat_behaviors()
     refute Surface in SessionKind.chat_behaviors()
@@ -184,7 +198,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
     :ok = Ezagent.Ecto.KindSnapshot.delete(URI.to_string(uri))
 
     # First spawn (cold) with the socialware subset → persist.
-    fresh = Snapshot.load_or_init(uri, SessionKind, %{behaviors: SessionKind.socialware_behaviors()})
+    fresh =
+      Snapshot.load_or_init(uri, SessionKind, %{behaviors: SessionKind.socialware_behaviors()})
+
     :ok = SnapshotFixtures.save_kind_snapshot(uri, SessionKind, fresh)
 
     # Cold-reload via the SAME args the demand-spawn "session" SpawnRegistry route

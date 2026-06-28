@@ -102,6 +102,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # session it views; the workspace is DERIVED from that session (never supplied),
     # so a binding can never span tenants.
     {Ezagent.Socialware.AnonBinding, "socialware_anon_bindings"},
+    # Socialware P9 — named workspace responsibility assignments are scoped to
+    # one workspace; the same holder URI cannot receive a responsibility across
+    # tenants without a separate row in that tenant.
+    {Ezagent.Workspace.ResponsibilityAssignment, "workspace_responsibility_assignments"},
     # #88 PR-1 — durable RFC 5322 threading state for the email
     # ExternalMirror Binding, keyed by the binding row id. Per-tenant:
     # the thread (root/last Message-ID + References chain) is scoped to

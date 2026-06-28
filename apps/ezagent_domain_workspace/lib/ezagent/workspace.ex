@@ -371,6 +371,14 @@ defmodule Ezagent.Workspace do
     end
   end
 
+  @doc "See `Ezagent.Workspace.ResponsibilityAssignments.assign_role/5`."
+  defdelegate assign_role(workspace_uri, responsibility, holder, config, ctx),
+    to: Ezagent.Workspace.ResponsibilityAssignments
+
+  @doc "See `Ezagent.Workspace.ResponsibilityAssignments.unassign_role/4`."
+  defdelegate unassign_role(workspace_uri, responsibility, holder, ctx),
+    to: Ezagent.Workspace.ResponsibilityAssignments
+
   defp list_current_members_for_persist(name) do
     target =
       name

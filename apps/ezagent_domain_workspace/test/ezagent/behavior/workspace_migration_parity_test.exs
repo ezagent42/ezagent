@@ -562,11 +562,12 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       assert Ezagent.Behavior.new_style?(WB)
     end
 
-    test "actions/0 lists the 12 declared actions" do
+    test "actions/0 lists the 14 declared actions" do
       assert WB.actions() |> Enum.sort() ==
                [
                  :add_member,
                  :add_template,
+                 :assign_role,
                  :create_agent,
                  :create_session,
                  :instantiate,
@@ -576,7 +577,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
                  :remove_cross_prefix_members,
                  :remove_member,
                  :remove_template,
-                 :set_routing_rules
+                 :set_routing_rules,
+                 :unassign_role
                ]
     end
 

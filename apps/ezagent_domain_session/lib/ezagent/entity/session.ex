@@ -59,7 +59,8 @@ defmodule Ezagent.Entity.Session do
       Ezagent.Behavior.Publisher.SessionImpl,
       Ezagent.Behavior.ExternalMirror,
       Ezagent.Behavior.Turn,
-      Ezagent.Behavior.Surface
+      Ezagent.Behavior.Surface,
+      Ezagent.Behavior.SupervisorApproval
     ]
 
   @doc """
@@ -89,6 +90,7 @@ defmodule Ezagent.Entity.Session do
       Ezagent.Behavior.Session,
       Ezagent.Behavior.Turn,
       Ezagent.Behavior.Surface,
+      Ezagent.Behavior.SupervisorApproval,
       Ezagent.Behavior.Publisher.SessionImpl
     ]
 

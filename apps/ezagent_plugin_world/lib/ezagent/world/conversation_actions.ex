@@ -87,6 +87,28 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &restart_orchestrator(socket, &1))
   end
 
+  def handle_dispatch(socket, "turn.claim", %{"session_uri" => sid, "turn_id" => turn_id})
+      when is_binary(turn_id) do
+    with_session(socket, sid, &dispatch_turn_claim(socket, &1, turn_id))
+  end
+
+  def handle_dispatch(socket, "turn.settle", %{"session_uri" => sid, "turn_id" => turn_id})
+      when is_binary(turn_id) do
+    with_session(
+      socket,
+      sid,
+      &dispatch_session_action(socket, &1, :turn, :settle, %{turn_id: turn_id})
+    )
+  end
+
+  def handle_dispatch(socket, "surface.approve", %{"session_uri" => sid, "version" => version}) do
+    with_session(socket, sid, &dispatch_surface_approve(socket, &1, version))
+  end
+
+  def handle_dispatch(socket, "supervisor.verdict", %{"session_uri" => sid} = args) do
+    with_session(socket, sid, &dispatch_supervisor_verdict(socket, &1, args))
+  end
+
   def handle_dispatch(socket, "session.routing.add", %{"session_uri" => sid, "rule" => rule})
       when is_map(rule) do
     with_session(socket, sid, &add_routing_rule(socket, &1, rule))
@@ -363,6 +385,88 @@ defmodule Ezagent.World.ConversationActions do
       {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
     end
   end
+
+  @doc "Claim a socialware turn for internal review through the Turn behavior."
+  @spec dispatch_turn_claim(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def dispatch_turn_claim(socket, %URI{} = session_uri, turn_id) when is_binary(turn_id) do
+    dispatch_session_action(socket, session_uri, :turn, :claim, %{
+      turn_id: turn_id,
+      by: socket.assigns.current_entity_uri
+    })
+  end
+
+  @doc "Approve a surface version through the Surface behavior."
+  @spec dispatch_surface_approve(Phoenix.LiveView.Socket.t(), URI.t(), term()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def dispatch_surface_approve(socket, %URI{} = session_uri, version) do
+    case parse_positive_integer(version) do
+      {:ok, version} ->
+        dispatch_session_action(socket, session_uri, :surface, :approve, %{version: version})
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_version")}
+    end
+  end
+
+  @doc "Submit a B2 supervisor verdict through the session approval workflow."
+  @spec dispatch_supervisor_verdict(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def dispatch_supervisor_verdict(socket, %URI{} = session_uri, args) when is_map(args) do
+    turn_id = Map.get(args, "turn_id", "")
+    verdict = Map.get(args, "verdict", "approve")
+
+    if is_binary(turn_id) and turn_id != "" do
+      dispatch_session_action(socket, session_uri, :supervisor_approval, :submit_verdict, %{
+        turn_id: turn_id,
+        responsibility: Map.get(args, "responsibility", "supervisor"),
+        verdict: normalize_verdict_arg(verdict),
+        quorum_policy: Map.get(args, "quorum_policy", %{"type" => "any_one"}),
+        arbiter: Map.get(args, "arbiter")
+      })
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:bad_turn_id")}
+    end
+  end
+
+  defp dispatch_session_action(socket, %URI{} = session_uri, behavior_prefix, action, args)
+       when is_atom(behavior_prefix) and is_atom(action) and is_map(args) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
+        mode: :call,
+        args: args,
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      })
+
+    case result do
+      {:ok, _} ->
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      :ok ->
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp parse_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp parse_positive_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> {:ok, int}
+      _ -> :error
+    end
+  end
+
+  defp parse_positive_integer(_), do: :error
+
+  defp normalize_verdict_arg(value) when value in ["reject", "rejected"], do: :reject
+  defp normalize_verdict_arg(_), do: :approve
 
   @doc "Add a session-scoped mention-routing rule."
   @spec add_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::

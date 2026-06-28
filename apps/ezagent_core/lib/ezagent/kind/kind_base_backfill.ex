@@ -104,13 +104,15 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   # Order matches the former socialware-session Kind's behavior set exactly —
   # now `Entity.Session.socialware_behaviors/0` (Session, Turn, Surface,
-  # Publisher.SessionImpl) — so a backfilled :kind_base is byte-identical to a live
-  # socialware spawn — the P5-2 cold-restart round-trip invariant compares the
-  # raw captured list, not just the (reorder-normalized) effective set. (codex LOW)
+  # SupervisorApproval, Publisher.SessionImpl) — so a backfilled :kind_base is
+  # byte-identical to a live socialware spawn — the P5-2 cold-restart round-trip
+  # invariant compares the raw captured list, not just the (reorder-normalized)
+  # effective set. (codex LOW)
   @socialware_set [
     Ezagent.Behavior.Session,
     Ezagent.Behavior.Turn,
     Ezagent.Behavior.Surface,
+    Ezagent.Behavior.SupervisorApproval,
     Ezagent.Behavior.Publisher.SessionImpl
   ]
 

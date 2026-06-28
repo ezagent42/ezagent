@@ -450,6 +450,8 @@ defmodule Ezagent.Routing.Resolver do
          }) do
       %URI{} = uri -> [uri]
       {:ok, %URI{} = uri} -> [uri]
+      uris when is_list(uris) -> Enum.filter(uris, &match?(%URI{}, &1))
+      {:ok, uris} when is_list(uris) -> Enum.filter(uris, &match?(%URI{}, &1))
       nil -> []
       :error -> []
       {:error, _} -> []

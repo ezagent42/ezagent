@@ -118,9 +118,10 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
       :ok = CapabilityRegistry.register(Session, action, ExternalMirrorBehavior)
     end)
 
-    # P5-1b (socialware substrate collapse) — register Turn + Surface on the
-    # now-UNIFIED `Entity.Session` (relocated from socialware's `application.ex`,
-    # which registered them on the former standalone socialware-session Kind).
+    # P5-1b/P9 (socialware substrate collapse) — register Turn, Surface, and
+    # SupervisorApproval on the now-UNIFIED `Entity.Session` (relocated from
+    # socialware's `application.ex`, which registered them on the former
+    # standalone socialware-session Kind).
     # SAFE under P1: a chat
     # instance's `:kind_base` (`Session.chat_behaviors/0`) excludes Turn/Surface
     # → `instance_set_gate` (runtime E9) DENIES `turn.*`/`surface.*` on it; a
@@ -131,6 +132,15 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
 
     Enum.each(Ezagent.Behavior.Surface.actions(), fn action ->
       :ok = CapabilityRegistry.register(Session, action, Ezagent.Behavior.Surface)
+    end)
+
+    Enum.each(Ezagent.Behavior.SupervisorApproval.actions(), fn action ->
+      :ok =
+        CapabilityRegistry.register(
+          Session,
+          action,
+          Ezagent.Behavior.SupervisorApproval
+        )
     end)
 
     # Phase 7 completion PR-5 (SPEC §1.6b) — register `Behavior.Terminable`'s

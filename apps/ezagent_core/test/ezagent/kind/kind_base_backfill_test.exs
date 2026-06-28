@@ -148,6 +148,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
                Ezagent.Behavior.Session,
                Ezagent.Behavior.Turn,
                Ezagent.Behavior.Surface,
+               Ezagent.Behavior.SupervisorApproval,
                Ezagent.Behavior.Publisher.SessionImpl
              ]
     end
