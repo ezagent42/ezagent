@@ -5,6 +5,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   use Phoenix.LiveView
 
+  alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.AdminActions
   alias Ezagent.World.AgentActions
@@ -374,6 +375,8 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = socket.assigns.current_entity_uri
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
+    provision_session_join_authority(session_uri, caller)
+
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
@@ -397,6 +400,8 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp dispatch_session_join_ok(socket, %URI{} = session_uri) do
+    mount_session_participation_caps(session_uri, socket.assigns.current_entity_uri)
+
     {:noreply,
      socket
      |> assign(:current_session_uri, session_uri)
@@ -404,6 +409,16 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:last_dispatch_status, "ok")
      |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
   end
+
+  defp provision_session_join_authority(%URI{} = session_uri, %URI{} = caller_uri),
+    do: Membership.provision_join_authority(session_uri, caller_uri)
+
+  defp provision_session_join_authority(_session_uri, _caller_uri), do: {:error, :no_authority}
+
+  defp mount_session_participation_caps(%URI{} = session_uri, %URI{} = caller_uri),
+    do: Membership.mount_participation_caps(session_uri, caller_uri)
+
+  defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
     workspace_uri = socket.assigns.current_workspace_uri

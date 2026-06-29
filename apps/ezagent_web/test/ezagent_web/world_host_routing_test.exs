@@ -102,6 +102,38 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
   end
 
+  test "world sessions_table opens an existing member without preloaded join caps", %{conn: conn} do
+    caller = "entity://system/user/world_existing_member_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok = create_read_only_user(caller_uri, [])
+    {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+
+    refute holds_join_cap?(caller_uri, session_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "sessions.join",
+      "args" => %{"session_uri" => URI.to_string(session_uri)}
+    })
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert has_element?(view, "#world-root[data-world-component='conversation']")
+  end
+
   test "world React island navigation patches without a full page reload", %{conn: conn} do
     conn =
       conn
@@ -441,6 +473,30 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       granted_by: caller_uri,
       granted_at: DateTime.utc_now()
     }
+  end
+
+  defp join_member_as_admin(session_uri, member_uri) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :join),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  defp holds_join_cap?(caller_uri, session_uri) do
+    Enum.any?(Ezagent.Identity.list_caps_for(caller_uri), fn
+      %Ezagent.Capability{} = cap ->
+        cap.kind == :session and cap.behavior == Ezagent.Behavior.Session and
+          Ezagent.Capability.action_of(cap) == :join and cap.instance == session_uri
+
+      _ ->
+        false
+    end)
   end
 
   defp layout_manage_cap(caller_uri, workspace_uri) do
