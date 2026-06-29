@@ -662,12 +662,14 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
 
   defp file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config)
        when is_binary(flavor) and is_binary(class_name) do
+    config_dir = per_agent_config_dir(class_name, agent_uri)
+    validated_cwd = validate_cwd_or_default(cwd, config_dir)
     %{
       "class" => class_name,
       "flavor" => flavor,
       "agent_uri" => agent_uri_string(agent_uri),
-      "project_cwd" => Path.expand(cwd),
-      "config_dir" => per_agent_config_dir(class_name, agent_uri)
+      "project_cwd" => validated_cwd,
+      "config_dir" => config_dir
     }
     |> Map.merge(flavor_config || %{})
   end
@@ -992,3 +994,17 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     end
   end
 end
+
+  # Security: validate project_cwd is within allowed roots (config_dir or operator allowlist).
+  # Falls back to the agent's config_dir if cwd is nil/empty (auto-default).
+  defp validate_cwd_or_default(nil, config_dir), do: config_dir
+  defp validate_cwd_or_default("", config_dir), do: config_dir
+
+  defp validate_cwd_or_default(cwd, config_dir) when is_binary(cwd) do
+    case Ezagent.Sandbox.ConfigDir.validate_project_cwd(cwd, config_dir) do
+      {:ok, expanded} -> expanded
+      {:error, {:cwd_outside_allowed_roots, path}} ->
+        raise ArgumentError, "project_cwd #{inspect(path)} is outside allowed roots. " <>
+                "Set EZAGENT_ALLOWED_CWD_ROOTS (colon-separated) to allow additional paths."
+    end
+  end
