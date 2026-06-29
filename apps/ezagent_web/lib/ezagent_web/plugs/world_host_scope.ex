@@ -9,8 +9,12 @@ defmodule EzagentWeb.Plugs.WorldHostScope do
   import Plug.Conn
   import Phoenix.Controller, only: [put_view: 2, render: 2]
 
+  @behaviour Plug
+
+  @impl Plug
   def init(opts), do: opts
 
+  @impl Plug
   def call(conn, _opts) do
     case Application.get_env(:ezagent_web, :world_host_scope, "world.") do
       nil ->
