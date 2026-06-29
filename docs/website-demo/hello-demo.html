@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hello · 试玩 · Ezagent</title>
+<!-- 试玩占位页（DS 外壳）。go-live 时由 hello「界面即问即生」真实试玩接管。token 内联自 ezagent-design。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;800&family=Noto+Serif+SC:wght@600&family=Space+Mono:wght@400;700&display=swap');
+:root{--ground:#E8E8EB;--card:#FFFFFF;--ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--accent:#0B5CFF;--orange:#FF8A1E;--orange-wash:#FFEBD6;
+  --r-lg:22px;--r-pill:999px;--shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --font-ui:'Inter',system-ui,sans-serif;--font-cn:'Noto Serif SC',serif;--font-mono:'Space Mono',monospace}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--ground);font-family:var(--font-ui);padding:32px}
+.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);max-width:560px;width:100%;padding:56px 56px 48px;text-align:center}
+.glyph{width:60px;height:60px;border-radius:18px;background:var(--orange);display:grid;place-items:center;margin:0 auto 22px;color:#fff}
+.glyph svg{width:32px;height:32px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.06em;padding:4px 12px;border-radius:var(--r-pill);background:var(--orange-wash);color:var(--orange)}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+h1{font-family:var(--font-cn);font-weight:600;font-size:34px;margin:18px 0 0;color:var(--ink)}
+.en{font-family:var(--font-ui);font-weight:800;font-size:18px;letter-spacing:-.02em;color:var(--ink-2);margin-top:6px}
+p{color:var(--ink-2);line-height:1.6;font-size:15px;margin:18px auto 0;max-width:42ch}
+a.back{display:inline-flex;align-items:center;gap:8px;margin-top:30px;font-family:var(--font-mono);font-size:13px;color:var(--accent);text-decoration:none}
+a.back:hover{text-decoration:underline}
+.foot{margin-top:26px;font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5z"/></svg></div>
+  <span class="badge"><span class="dot"></span>hello · 生成层 · generation</span>
+  <h1>hello 试玩</h1>
+  <div class="en">Try hello · Coming soon</div>
+  <p>「用一句话把界面长出来、为每个客户实时重组」的可交互试玩正在搭建中。敬请期待 — say it, and the interface grows.</p>
+  <a class="back" href="index.html">← 返回官网 · Back</a>
+  <div class="foot">demo placeholder · 由 hello 真实试玩接管</div>
+</div>
+</body>
+</html>

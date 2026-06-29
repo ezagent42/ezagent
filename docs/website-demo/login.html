@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Login · Ezagent</title>
+<!-- 登录占位页（DS 外壳）。go-live 时接 ezagent 真实身份/会话。token 内联自 ezagent-design。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@450;500;600;800&family=Noto+Serif+SC:wght@600&family=Space+Mono:wght@400;700&display=swap');
+:root{--ground:#E8E8EB;--ground-2:#EFEFF1;--card:#FFFFFF;--ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--line:#E2E2E6;
+  --accent:#0B5CFF;--accent-hover:#1466FF;--on-accent:#fff;--focus-ring:rgba(11,92,255,.45);
+  --r-md:16px;--r-lg:22px;--r-pill:999px;--shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --font-ui:'Inter',system-ui,sans-serif;--font-cn:'Noto Serif SC',serif;--font-mono:'Space Mono',monospace}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--ground);font-family:var(--font-ui);padding:32px}
+.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);max-width:420px;width:100%;padding:44px 44px 36px}
+.top{display:flex;align-items:center;gap:11px;justify-content:center;margin-bottom:8px}
+.top img{height:30px;width:auto}
+.top b{font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:18px;color:var(--ink)}
+h1{font-family:var(--font-cn);font-weight:600;font-size:26px;text-align:center;margin:18px 0 2px;color:var(--ink)}
+.sub{text-align:center;color:var(--ink-3);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;margin-bottom:26px}
+label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin:0 0 7px}
+input{width:100%;padding:13px 15px;border:0;border-radius:var(--r-md);background:var(--ground-2);font-family:var(--font-ui);font-size:15px;color:var(--ink);margin-bottom:16px;box-shadow:inset 0 0 0 1px var(--line)}
+input:focus{outline:none;box-shadow:0 0 0 3px var(--focus-ring)}
+.btn{width:100%;appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;padding:14px;border-radius:var(--r-pill);background:var(--accent);color:var(--on-accent);transition:background 150ms,transform 150ms}
+.btn:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.note{text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:18px}
+a.back{color:var(--accent);text-decoration:none}a.back:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="top"><img src="ezagent-logo.png" alt="Ezagent"><b>EZAGENT</b></div>
+  <h1>登录</h1>
+  <div class="sub">LOG IN TO YOUR ORGANIZATION IDE</div>
+  <form onsubmit="event.preventDefault();this.querySelector('.btn').textContent='demo · 占位未接 →'">
+    <label for="email">邮箱 · Email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="you@org.com">
+    <label for="pw">密码 · Password</label>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="••••••••">
+    <button class="btn" type="submit">登录 · Log in</button>
+  </form>
+  <div class="note">demo placeholder · 接 ezagent 真实身份/会话 · <a class="back" href="index.html">← 返回官网</a></div>
+</div>
+</body>
+</html>
