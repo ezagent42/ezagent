@@ -126,4 +126,32 @@ defmodule Ezagent.Sandbox.ConfigDir do
             "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
             "callers must pass a fully-formed URI."
   end
+
+  @doc """
+  Validate that a project_cwd is within an allowed root (security: prevents
+  agents from running in arbitrary host paths like ~/.ssh or /etc).
+
+  Allowed roots:
+  1. The agent's own config_dir (the default — per-agent home).
+  2. Operator-configured roots via EZAGENT_ALLOWED_CWD_ROOTS (colon-separated).
+  """
+  @spec validate_project_cwd(String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, {:cwd_outside_allowed_roots, String.t()}}
+  def validate_project_cwd(cwd, config_dir)
+      when is_binary(cwd) and is_binary(config_dir) do
+    expanded = Path.expand(cwd)
+    operator_roots =
+      (System.get_env("EZAGENT_ALLOWED_CWD_ROOTS") || "")
+      |> String.split(":", trim: true)
+      |> Enum.map(&Path.expand/1)
+
+    allowed_roots = [config_dir | operator_roots]
+
+    if Enum.any?(allowed_roots, &String.starts_with?(expanded, &1 <> "/")) or
+         expanded == config_dir do
+      {:ok, expanded}
+    else
+      {:error, {:cwd_outside_allowed_roots, expanded}}
+    end
+  end
 end

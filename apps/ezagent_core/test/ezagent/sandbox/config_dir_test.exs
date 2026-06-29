@@ -78,3 +78,24 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
     end
   end
 end
+
+  describe "validate_project_cwd/2" do
+    test "accepts cwd within config_dir" do
+      config_dir = "/tmp/ezagent-test/config"
+      assert {:ok, "/tmp/ezagent-test/config/sub"} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd("/tmp/ezagent-test/config/sub", config_dir)
+    end
+
+    test "rejects cwd outside config_dir and operator roots" do
+      assert {:error, {:cwd_outside_allowed_roots, _}} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd("/etc/passwd", "/tmp/ezagent-test/config")
+    end
+
+    test "accepts cwd within operator-configured root" do
+      prev = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+      System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", "/Users/h2oslabs/Workspace")
+      assert {:ok, _} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd("/Users/h2oslabs/Workspace/esr-ng", "/tmp/ezagent")
+      if prev, do: System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", prev), else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    end
+  end
