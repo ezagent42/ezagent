@@ -119,7 +119,7 @@ agent_uri="$(
     "SELECT uri FROM kind_snapshots WHERE uri LIKE 'entity://%/agent/%' ORDER BY updated_at DESC LIMIT 1;"
 )"
 [ -n "$agent_uri" ] || fail "Agent slice integrity: no agent kind_snapshots found"
-docker exec -e VERIFY_AGENT_URI="$agent_uri" "$CTR" /app/bin/ezagent eval '
+docker exec -e VERIFY_AGENT_URI="$agent_uri" "$CTR" /app/bin/ezagent rpc '
 uri = System.fetch_env!("VERIFY_AGENT_URI")
 row =
   case Ezagent.SnapshotStore.latest(uri) do
