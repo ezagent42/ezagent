@@ -34,6 +34,10 @@ config :ezagent_domain_session,
 config :ezagent_web,
   ecto_repos: [EzagentCore.Repo],
   generators: [context_app: :ezagent_core],
+  # Operator-console host scope. dev/test keep Phoenix's `"world."` prefix
+  # semantics (`world.localhost`, `world.ezagent.chat`); prod overrides to nil
+  # so `/admin`, `/sessions`, `/identities`, etc. serve on the public apex.
+  world_host_scope: "world.",
   # Session-cookie domain (read at compile time by EzagentWeb.Endpoint). Production
   # is fronted by the `*.ezagent.chat` tunnels, so the cookie is shared across the
   # `app.` / `world.` subdomains. `dev.exs` overrides this to `nil` (host-only) so

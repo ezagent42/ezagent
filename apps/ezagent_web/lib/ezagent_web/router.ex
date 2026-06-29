@@ -29,11 +29,53 @@ defmodule EzagentWeb.Router do
     plug :accepts, ["json"]
   end
 
-  scope "/", EzagentPluginWorld, host: "world." do
-    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+  @world_host_scope Application.compile_env(:ezagent_web, :world_host_scope)
+
+  if is_binary(@world_host_scope) and @world_host_scope != "" do
+    scope "/", EzagentPluginWorld, host: @world_host_scope do
+      pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+      live_session :world_root_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+        live "/", WorldLive
+        live "/sessions", WorldLive
+        live "/identities", WorldLive
+        live "/identities/users", WorldLive
+        live "/identities/agents", WorldLive
+        live "/identities/users/:uri/caps", WorldLive
+        live "/identities/agents/:uri/caps", WorldLive
+        live "/identities/agents/:uri/api-keys", WorldLive
+        live "/identities/agents/:uri/config", WorldLive
+        live "/identities/agents/new", WorldLive
+        live "/identities/agents/:uri/extensions", WorldLive
+        live "/identities/agents/:uri/terminal", WorldLive
+        live "/identities/agents/:uri", WorldLive
+        live "/workspaces", WorldLive
+        live "/workspaces/:name", WorldLive
+        live "/plugins", WorldLive
+        live "/plugins/feishu/bindings", WorldLive
+        live "/plugins/auto/:kind", WorldLive
+        live "/plugins/auto/:kind/:uri", WorldLive
+        live "/plugins/kanban", WorldLive
+        live "/plugins/kanban/:uri", WorldLive
+        live "/profile", WorldLive
+        live "/admin", WorldLive
+        live "/admin/logs", WorldLive
+        live "/admin/registry", WorldLive
+        live "/admin/snapshots", WorldLive
+        live "/admin/templates", WorldLive
+        live "/admin/caps", WorldLive
+        live "/admin/audit/authz", WorldLive
+        live "/admin/settings", WorldLive
+        live "/admin/routing", WorldLive
+        live "/admin/sessions/:id/external_mirror", WorldLive
+      end
+    end
+  end
+
+  scope "/", EzagentPluginWorld do
+    pipe_through [:browser, EzagentWeb.Plugs.WorldHostScope, EzagentWeb.Plugs.RequireEntity]
 
     live_session :world_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
-      live "/", WorldLive
       live "/sessions", WorldLive
       live "/identities", WorldLive
       live "/identities/users", WorldLive
@@ -149,7 +191,6 @@ defmodule EzagentWeb.Router do
 
     get "/:slug/*path", PluginAssetController, :show
   end
-
 
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect

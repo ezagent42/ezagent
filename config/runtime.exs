@@ -16,6 +16,15 @@ if config_env() == :dev do
     priv: "priv/repo_pg"
 end
 
+public_host = System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat")
+public_scheme = System.get_env("EZAGENT_PUBLIC_SCHEME", "https")
+
+public_port =
+  case System.get_env("EZAGENT_PUBLIC_PORT") do
+    nil -> if public_scheme == "https", do: 443, else: 80
+    port_str -> String.to_integer(port_str)
+  end
+
 # The block below contains prod specific runtime configuration.
 if config_env() == :prod do
   database_url =
@@ -56,6 +65,17 @@ if config_env() == :prod do
     |> String.split(",", trim: true)
     |> Enum.map(&String.trim/1)
 
+  world_host_scope =
+    case System.get_env("WORLD_HOST_SCOPE") do
+      nil -> nil
+      "" -> nil
+      "nil" -> nil
+      "none" -> nil
+      scope -> scope
+    end
+
+  config :ezagent_web, :world_host_scope, world_host_scope
+
   config :ezagent_web, EzagentWeb.Endpoint,
     # OTP release boot must start the endpoint (no `mix phx.server` in prod).
     # The prod container always serves, so set it unconditionally here.
@@ -68,8 +88,7 @@ if config_env() == :prod do
     ],
     check_origin:
       [
-        "https://app.ezagent.chat",
-        "https://world.ezagent.chat",
+        "#{public_scheme}://#{public_host}",
         "http://100.64.0.27:10042",
         "http://localhost:10042",
         "http://127.0.0.1:10042"
@@ -143,17 +162,9 @@ end
 # Endpoint `:url` only affects URL generation, not the bind address — the
 # server still binds to the `:http` port configured above. (2026-05-26
 # Allen: dev workflow needs Tailscale fallback when cloudflared is down.)
-public_scheme = System.get_env("EZAGENT_PUBLIC_SCHEME", "https")
-
-public_port =
-  case System.get_env("EZAGENT_PUBLIC_PORT") do
-    nil -> if public_scheme == "https", do: 443, else: 80
-    port_str -> String.to_integer(port_str)
-  end
-
 config :ezagent_web, EzagentWeb.Endpoint,
   url: [
-    host: System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat"),
+    host: public_host,
     scheme: public_scheme,
     port: public_port
   ]
