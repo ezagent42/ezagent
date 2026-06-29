@@ -21,8 +21,10 @@ set -a
 set +a
 
 compose() { docker-compose --env-file "$SECRETS_HOME/.env.$1" -f docker/docker-compose.yml "${@:2}"; }
-pgctr()   { compose "$1" ps -q postgres; }
-ezctr()   { compose "$1" ps -q ezagent; }
+# Resolve containers by name pattern (CWD-independent; compose-from-worktree can
+# misresolve project name → wrong container → wrong DB → false FATAL).
+pgctr()   { docker ps -q --filter "name=ezagent-$1-postgres"; }
+ezctr()   { docker ps -q --filter "name=ezagent-$1-ezagent"; }
 
 fail() {
   echo "!! gate failed: $1" >&2
@@ -117,7 +119,7 @@ agent_uri="$(
     "SELECT uri FROM kind_snapshots WHERE uri LIKE 'entity://%/agent/%' ORDER BY updated_at DESC LIMIT 1;"
 )"
 [ -n "$agent_uri" ] || fail "Agent slice integrity: no agent kind_snapshots found"
-docker exec -e VERIFY_AGENT_URI="$agent_uri" "$CTR" /app/bin/ezagent eval '
+docker exec -e VERIFY_AGENT_URI="$agent_uri" "$CTR" /app/bin/ezagent rpc '
 uri = System.fetch_env!("VERIFY_AGENT_URI")
 row =
   case Ezagent.SnapshotStore.latest(uri) do
