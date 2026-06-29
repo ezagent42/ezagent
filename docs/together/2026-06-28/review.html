@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-06-28 周末</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .cap{background:#dcfce7;color:#166534}.plan{background:#e0e7ff;color:#3730a3}.fix{background:#fef3c7;color:#92400e}.test{background:#f3e8ff;color:#6b21a8}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .warn{color:#b45309}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-06-28 周末周期（Fri 0626 → Sun 0628）</h1>
+<p>数据窗口 <code>1036..1076</code>（origin/main，周末能力交付 PR）。本回顾面向全体开发者：呈现产品大局、统计团队效能、提炼改进点。原始数据见 <code>docs/together/2026-06-28/review.md</code>（coordinator 工作底稿，本 HTML 为团队面向重写）。</p>
+
+<div>
+  <span class="kpi"><b>40</b>能力交付 PR</span>
+  <span class="kpi"><b>1</b>贡献者（allenwoods，含 claude/codex agent 协同）</span>
+  <span class="kpi"><b>~46k</b>LOC（增+删）</span>
+  <span class="kpi"><b>~3 天</b>交付周期（0626→0628，solo-coordinator）</span>
+  <span class="kpi"><b>3</b>独立对抗评审（#1069/#1076/#1066）</span>
+</div>
+
+<div class="big">
+<b>产品大局（这个周末把"architecture 收口"一次性做完）：</b> 周末主线是<b>架构收口</b>——把一周来"已落地但不完整/未对齐"的 agent/socialware 体系彻底对齐到统一模型。
+<b>socialware 统一</b>（#1069 P1-P10：base/socialware/fixture 模型 + codex-orchestrator + E2E gate）→ <b>role 收口</b>（#1070/#1071 A→Recipe 符号+存储键统一，#127 闭环）→ <b>taxonomy + glossary/arch 对齐</b>（#1072 四层 carrier 边界 SPEC + #1074 GLOSSARY/ARCHITECTURE 重写）→ <b>kanban 去 bake</b>（#1075 9 段业务链 code→data）→ <b>Q1-C plugin-package</b>（#1076 manifest + hot-load + unload/swap + E2E gate，独立评审抓出 H-1 路径穿越安全洞）。
+同时清掉一批潜伏 bug：<b>#1066 cc ReadyGate</b>（普通 cc agent 此前根本不会 ready——socialware 工作揭出的潜伏缺陷）、<b>#1064 冷重启 role-seed 碰撞</b>（对已 seed DB 重启即 boot-crash，#110 部署相关）、<b>#1061/#1062 docker 镜像构建</b>、<b>#1065 hello 岛构建</b>。
+一句话："<b>什么是 base/socialware/fixture/definition/runtime-state/blob，红线在哪</b>"这个长期模糊的问题，这个周末给出了结构化答案——<b>下一周从架构 pivot 到产品/上线</b>（官网 / 内测 / 自举）。
+</div>
+
+<h2>§1 周末工作统计（按任务类别）</h2>
+<table>
+<tr><th>类别 / 任务</th><th>完成</th><th>实现 PR</th><th>开发人员</th><th>summary</th></tr>
+
+<tr><td colspan="5" style="background:#dbeafe;font-weight:600"><b>A. 架构 / socialware 收口（周末主题）</b></td></tr>
+<tr><td><b>socialware 统一（P1-P10）</b></td>
+<td>base/socialware/fixture 模型 + codex-orchestrator + P10 E2E gate（codex 自驱；独立评审 SOUND，CI 干净）</td>
+<td>#1069（实现）· #1068（SPEC + codex handoff docs）</td><td>allenwoods（codex subagent 自驱实现）</td>
+<td>✅ socialware 统一模型落 main</td></tr>
+
+<tr><td><b>role 收口（A→Recipe）</b></td>
+<td>符号改名 <code>Ezagent.Role→Ezagent.Agent.Recipe</code>（#127）+ ConfigStore 存储键 <code>role→recipe</code>（pre-prod）；recipe/responsibility 解耦锁死（T1-T3 + no-default）；role-as-data（ConfigObjects 只读穿透 + 幂等 seed）</td>
+<td>#1070 · #1071 · #1059 · #1048</td><td>allenwoods</td>
+<td>✅ "role" 一词只表"职责"语义；recipe（code+storage）统一。#127 闭环</td></tr>
+
+<tr><td><b>taxonomy + glossary/arch 对齐</b></td>
+<td>四层 carrier 边界 SPEC（code plugin / definition data / runtime state+blob / EZAGENT_HOME）+ 判定规则 + 已验证反模式 + 红线；GLOSSARY + ARCHITECTURE 三层对齐统一模型；§10.5 inline-BLOB 红线违例文档重写 → 落地 Uploads+FsResolver+DownloadToken</td>
+<td>#1072 · #1074</td><td>allenwoods（opus subagent）</td>
+<td>✅ "base/socialware/fixture/definition/runtime-state/blob 是什么"给出结构化答案</td></tr>
+
+<tr><td><b>kanban 去 bake</b></td>
+<td>9 段业务链 code→recipe data（taxonomy §4.1 泄漏闭环）</td>
+<td>#1075</td><td>allenwoods</td>
+<td>✅ 看板业务语义从代码搬进数据</td></tr>
+
+<tr><td><b>Q1-C plugin-package（full）</b></td>
+<td>manifest + hot-load（免重启）+ assets hot-load（#1065-class）+ unload/swap（closes D7-8）+ codex-runnable E2E gate。<b>独立评审抓出并修复 H-1 路径穿越安全洞</b>（公开 <code>/plugin-assets/</code> 端点可经恶意 manifest <code>file</code> 外泄 EZAGENT_HOME 凭据）+ H-2 静默 no-op + M-4 debug 代码</td>
+<td>#1076 · #1073（codex handoff doc）</td><td>allenwoods（codex 自驱 + opus 独立评审）</td>
+<td>✅ 插件包全生命周期上 main；安全洞在合入前被评审抓掉</td></tr>
+
+<tr><td><b>comms 统一</b></td>
+<td>comms-unify PR-1+2（collapse chat+external feeds 到一个 SessionFeedChannel）+ MED 反回归 gate</td>
+<td>#1047 · #1060</td><td>allenwoods（codex subagent）</td>
+<td>✅ 通信面统一到单一 feed channel</td></tr>
+
+<tr><td colspan="5" style="background:#fef3c7;font-weight:600"><b>B. 潜伏 bug 修复（部署阻断 + 运行时）</b></td></tr>
+<tr><td><b>cc ReadyGate</b></td>
+<td>普通 cc agent 经 bridge-bind 走 ReadyGate（#505）——<b>此前只有 orchestrator cc 会 ready，普通 cc agent 根本不会 ready</b>（socialware 工作揭出的潜伏缺陷）</td>
+<td>#1066</td><td>allenwoods</td>
+<td>✅ #505 闭环；潜伏 bug</td></tr>
+
+<tr><td><b>冷重启 role-seed 碰撞</b></td>
+<td>atom-valued requested_caps JSON 不对称 → 对已 seed DB 重启即 boot-crash（#110 部署相关）</td>
+<td>#1064</td><td>allenwoods</td>
+<td>✅ 部署阻断清除</td></tr>
+
+<tr><td><b>Docker 镜像构建</b></td>
+<td>Dockerfile.prod + Dockerfile.ci empty-proxy 构建断（#129）；Dockerfile.dev 镜像构建（exqlite NIF + npm ERESOLVE，#124）</td>
+<td>#1062 · #1061</td><td>allenwoods</td>
+<td>✅ 三 Dockerfile 全部可构建</td></tr>
+
+<tr><td><b>hello 岛构建</b></td>
+<td>hello 插件岛在共享 aliases 里构建（#1063）</td>
+<td>#1065</td><td>allenwoods</td>
+<td>✅ 部署前置</td></tr>
+
+<tr><td><b>#108 CI flake 根治</b></td>
+<td>PluginIsolation/AnonUserGC 深层 race 消除（harness-verified）</td>
+<td>#1055</td><td>allenwoods</td>
+<td>🟡 harness 内验证；#108 长期跟踪项仍 in_progress</td></tr>
+
+<tr><td><b>role/registry 回归</b></td>
+<td>orchestrator role bootstrap DB read-through ownership（#1048 回归）· positional URI read in role_registry workspace_host（uri_query gate）· autosvc Tier-1 seed RoleRegistry rename 回归 · silent Loader OwnershipError + required_caps parity（#108）</td>
+<td>#1054 · #1052 · #1056 · #1041</td><td>allenwoods</td>
+<td>✅ 一批 role-as-data 改造伴生回归全部清掉</td></tr>
+
+<tr><td><b>CR governance 收口</b></td>
+<td>publish-status gate 加固 + non-user-layer 物化钉死（#1042 后续）</td>
+<td>#1049</td><td>allenwoods</td>
+<td>✅</td></tr>
+
+<tr><td colspan="5" style="background:#dcfce7;font-weight:600"><b>C. 功能 / E2E</b></td></tr>
+<tr><td><b>F7 session 治理</b></td>
+<td>PR-A remove_participant（user/invited，同构，owner-gated）+ PR-B spawned-worker teardown + owner teardown cap（cap-model 改动）</td>
+<td>#1046 · #1057</td><td>allenwoods</td>
+<td>✅ session 参与者生命周期闭环</td></tr>
+
+<tr><td><b>AutoService Tier-1 seed</b></td>
+<td>Tier-1 seed + 确定性回归（scenario-13）</td>
+<td>#1051</td><td>allenwoods</td>
+<td>✅ autoservice 回归有确定性 fixture</td></tr>
+
+<tr><td><b>容器内 E2E 浏览器</b></td>
+<td>container-reachable chromium sidecar（容器内 E2E 浏览器 loop）+ 本地 ubuntu-CI docker harness（复现 macOS 不可能复现的 flake）</td>
+<td>#1050 · #1045</td><td>allenwoods</td>
+<td>✅ E2E/CI 可在容器内跑</td></tr>
+
+<tr><td><b>CR governance（最小）</b></td>
+<td>stage→preview→publish on ConfigStore</td>
+<td>#1042</td><td>allenwoods</td>
+<td>✅ 配置变更治理落地</td></tr>
+
+<tr><td><b>Domain.Agent 统一读</b></td>
+<td>统一非激活 <code>Domain.Agent.read_*</code> + no_surface_read_dispatch gate</td>
+<td>#1039</td><td>allenwoods</td>
+<td>✅ 读路径不激活 agent</td></tr>
+
+<tr><td><b>customer 概念退役</b></td>
+<td>retire customer concept → anon-user + external visibility</td>
+<td>#1037</td><td>allenwoods</td>
+<td>✅ 模型简化</td></tr>
+
+<tr><td><b>retrieval-first KB</b></td>
+<td>kb role × native，独立 sqlite FTS5（trigram）</td>
+<td>#1036</td><td>allenwoods</td>
+<td>✅ KB 走检索优先</td></tr>
+
+<tr><td><b>默认键 + Protocol API 改名</b></td>
+<td>默认键 <code>advisor.behavior→agent.soul</code>（kill identity_data drift literal）· LLM Protocol API 改名 + endpoint module 拆分（#96/#99 残留）</td>
+<td>#1038 · #1053</td><td>allenwoods</td>
+<td>✅ 命名对齐统一模型</td></tr>
+
+<tr><td colspan="5" style="background:#e0e7ff;font-weight:600"><b>D. 文档 / 流程</b></td></tr>
+<tr><td><b>autoservice reframe</b></td>
+<td>flavor-agnostic reframe + 最终 no-shared-loop 决定（shelves #133 agentic-loop；autosvc = chat fixture）</td>
+<td>#1067</td><td>allenwoods</td>
+<td>✅ autoservice 定位明确</td></tr>
+
+<tr><td><b>autoservice E2E 场景 + v3 reference</b></td>
+<td>autoservice e2e scenario + v3 reference 文档</td>
+<td>#1044 · #1043</td><td>allenwoods</td>
+<td>✅</td></tr>
+
+<tr><td><b>skill 合并</b></td>
+<td>agent-extension guidance 合并进 ezagent-developer skill</td>
+<td>#1040</td><td>allenwoods</td>
+<td>✅</td></tr>
+
+<tr><td><b>周末会话流程 + 效能记录</b></td>
+<td>weekend session process + efficiency record（2026-06-26）</td>
+<td>#1058</td><td>allenwoods</td>
+<td>✅</td></tr>
+</table>
+
+<h2>§2 周末开发效能（method deltas）</h2>
+
+<h3>逐 PR / 任务效能与依赖</h3>
+<ul>
+<li><b>codex-handoff 自驱合约（沉淀为 memory → standing practice）</b>：codex/subagent 自驱合并到<b>唯一</b>目标分支（base main），不开 PR、不合并 main，返回目标分支由 lead 验收+合并。lead 预置 goal + 分阶段 gate。用于 socialware P1-P10、#127、#1071、Q1-C。<b>结论：大块实现分派的可控默认范式——monitor + stall 重派，commit-per-step + fresh re-dispatch 恢复了 3 次 transient API stall。</b></li>
+<li><b>大/险 PR 独立对抗评审（ROI 验证）</b>：#1076 plugin-package 的独立 opus 评审抓出作者漏掉的 <b>H-1 路径穿越安全洞</b>（公开 <code>/plugin-assets/</code> 端点可经恶意 manifest <code>file</code> 外泄 EZAGENT_HOME 凭据）。<b>规则确立</b>：任何触及 (a) 公开/未认证端点、(b) BEAM code-purge/unload、(c) 文件服务路径、(d) >300 行 core 机器的 PR，合入前必须独立 opus 评审。doc-only PR 跳过（开销不值）。</li>
+<li><b>"known-flake" 不是免死金牌（纪律守住）</b>：#1069 唯一的 CI 红是 <code>PresenceReadReceipts</code>——合入前先验证它<b>在 main 也红</b>（非回归）才放行。整周末 0 个 flake-masked regression 漏进 main（#108 深层 race 仍 in_progress，但未遮蔽任何真实回归）。</li>
+<li><b>顺序耦合（改进点）</b>：40 PR 在 0627 burst（31 个）+ 0628 收口（9 个）两天内合并，solo-coordinator 直接合流（无 stack.md/returns）。优点快；<b>缺点</b>：direct-merge cadence 不演练 dev-together 的 stack/return/reconcile loop——若本周团队返还 handoff，需重新启用 stack.md 流程（记为 process-debt，owner: lead）。</li>
+<li><b>bus-factor</b>：架构收口仍集中在一人（allenwoods + agents）。收口完成后下周把产品面分给团队并行、lead 聚焦上线收口。</li>
+</ul>
+
+<h3>开发中暴露的问题 → 沉淀</h3>
+<blockquote><b>socialware taxonomy 红线违例（#1074 抓出）</b>：§10.5 inline-BLOB 的旧文档本身违反了刚定的红线（definition 层不应承载 BLOB）。<b>根本教训：红线一旦确立，立即 grep 全文档/代码对齐，否则文档自己就是反模式。</b>已在 #1074 重写并落地 Uploads+FsResolver+DownloadToken。</blockquote>
+
+<h2>§3 数据统计 + 名册</h2>
+<h3>按开发者（口径：能力交付，非 PR 数排名）</h3>
+<table>
+<tr><th>开发者</th><th class="num">能力 PR</th><th class="num">总 PR</th><th class="num">LOC</th><th>交付的功能点</th></tr>
+<tr><td>allenwoods（含 claude/codex agent 协同）</td><td class="num">40</td><td class="num">40</td><td class="num">~46,300</td><td>socialware P1-P10 统一 · role 收口（A→Recipe #127）· taxonomy+glossary/arch · kanban 去 bake · Q1-C plugin-package（+安全洞修复）· comms 统一 · cc ReadyGate · 冷重启 role-seed · docker 三镜像 · F7 PR-A/B · autosvc Tier-1 seed · 容器内 E2E 浏览器 · CR governance · Domain.Agent 统一读 · customer 退役 · retrieval-first KB · Protocol API 改名 · 多个回归修复 · 文档/skill</td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280"><b>注</b>：周末为 solo-coordinator（Claude 作 lead+implementer-via-subagents，Allen 经 Feishu 评审）。所有 PR 作者为 <code>allenwoods</code>（其名下 claude/codex agent 协同实现）。功能点 = 用户/开发者可见的能力交付单元（非 LOC/commit 数）。LOC 含 #1061 dockerfile（10.8k，多行镜像层）与 #1069 socialware（6.4k+1k）。</p>
+
+<h3>交付节奏（按合并日，KST）</h3>
+<table style="border:none">
+<tr style="background:none"><td style="border:none;width:120px">06-27（六）</td><td style="border:none"><span style="display:inline-block;height:14px;background:#2563eb;width:310px"></span> 31 ⟵ burst 日（架构对齐 + bug + 功能）</td></tr>
+<tr style="background:none"><td style="border:none">06-28（日）</td><td style="border:none"><span style="display:inline-block;height:14px;background:#f59e0b;width:100px"></span> 9 ⟵ 收口日（socialware P1-P10 + Q1-C + taxonomy）</td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280">0627 是 burst（31 PR），0628 是收口（9 PR，socialware 统一 + plugin-package + taxonomy/glossary）。</p>
+
+<h3>名册 / next-track（为下周 pivot 设定）</h3>
+<table>
+<tr><th>开发者</th><th>周末</th><th>本周 next-track（pivot 架构→产品/上线）</th><th>latest_return（依据）</th></tr>
+<tr><td><b>allenwoods</b>（lead）</td><td>solo 收口 + 评审</td><td>官网上线 + 自举 dogfood 场景拍板 + #110 live 部署（手）+ design system 源交付</td><td>n/a（lead）</td></tr>
+<tr><td><b>zhaomato</b></td><td>off</td><td><b>FP1 官网</b>（ezagent-served socialware + design-system 适配）+ FP4 design system 适配（website-first）</td><td><code>2026-06-23/returns/world-hello-convergence.md</code>（current_track: 官网 on @json-render）</td></tr>
+<tr><td><b>zyli</b></td><td>off</td><td><b>FP2 系统内部测试</b>（live smoke + bug triage）+ 含 #110 live 部署与 allen 协同</td><td><code>2026-06-23/returns/world-deploy-e2e-pg.md</code>（current_track: 人肉 full-flow validation）</td></tr>
+<tr><td><b>gaga</b></td><td>off</td><td>（待 Allen 派发；建议 agent 配置/运维面支持 FP2 内测）</td><td><code>2026-06-24/returns/cc-headless-real-implementation.md</code>（cc-headless DONE #931）</td></tr>
+<tr><td><b>fatnine</b></td><td>off</td><td>（待 Allen 派发；后端/core 面支持内测 bug triage）</td><td><code>2026-06-22/returns/agent-console.md</code>（#84 Agent Console CRUD）</td></tr>
+<tr><td><b>jjkysy</b></td><td>off</td><td><b>FP5 kanban #1020 处置</b>（merge + 2 minor follow-ups，kanban 插件原作）</td><td>n/a（无 active track；kanban 插件原作 #964）</td></tr>
+<tr><td><b>ruihua</b>（designer）</td><td>off</td><td>FP1/FP4 设计输入（官网版式 + design system 适配可读性，不改代码）</td><td>n/a（designer）</td></tr>
+<tr><td><b>claude / codex</b>（agent）</td><td>off-plan support</td><td>off-plan（编排/修复/subagent 分派 on request）</td><td>n/a</td></tr>
+</table>
+<p style="font-size:12px;color:#6b7280"><code>team.md</code> 的 <code>current_track</code>/<code>latest_return</code> 更新延后到周一第一份 plan（Allen 正把 track 从架构重定向到 官网/内测/自举）。本表 next-track 为 review 设定，供 plan 采纳。</p>
+
+<h3>口径说明</h3>
+<blockquote>
+<b>交付周期</b> = 单 PR 首 commit→合并。本周末为 solo-coordinator 直接合流 cadence（per-PR 验证后 <code>--admin --squash --delete-branch</code> 合并），无 stack.md/returns。<b>归属</b>：按 PR 作者（allenwoods，含其名下 claude/codex agent）。<b>窗口</b>：40 能力 PR = #1036→#1076（0627T00:28→0628T17:20 KST）；#1077（本 review 文档）与 #1078（design-system audit，合于 0629T01:25Z）为流程/文档制品，不计入 40 能力 KPI。
+</blockquote>
+
+<h2>Required accounting</h2>
+<table>
+<tr><th>Metric</th><th class="num">Count</th></tr>
+<tr><td>计划任务（周末）</td><td class="num">~15（6-item checklist + 架构 reframe）</td></tr>
+<tr><td>合并到 main 的能力 PR</td><td class="num">40</td></tr>
+<tr><td>独立对抗评审执行</td><td class="num">3（#1069, #1076, #1066）</td></tr>
+<tr><td>抓出 must-fix 的评审</td><td class="num">1（#1076: H-1 安全 + H-2 + M-4）</td></tr>
+<tr><td>subagent stall（transient API）恢复</td><td class="num">3</td></tr>
+<tr><td>结转延后项</td><td class="num">#108, #110, #111, #1020, #128, #88, #55, #112, Q1-C follow-ups</td></tr>
+<tr><td>flake-masked regression 漏进 main</td><td class="num">0</td></tr>
+</table>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。原始 coordinator 底稿 <code>docs/together/2026-06-28/review.md</code>。模版可复用：下周期换数据即可。</p>
+</body>
+</html>
