@@ -179,12 +179,103 @@
 
 <h2>handoff 顺序（lead 周一发出）</h2>
 <ol>
-<li><b>Allen 先决</b>（阻塞 FP1/FP3/FP4）：① DS 源已交付（<code>/Users/h2oslabs/Workspace/ezagent-design</code>）；② ezagent-served 官网已确认；③ 域名 path 挂 app.ezagent.chat；④ dogfood 场景偏好（推荐 PR-E2E trigger）；⑤ DS 5 OQ（collision strategy / React 18 vs 19 / dark-mode 统一 / fonts / daisyUI 移除时机 / @json-render vs DS 组件 / dot-grid）。</li>
+<li><b>Allen 已决（2026-06-29）</b>：DS 源✓ <code>/Users/h2oslabs/Workspace/ezagent-design</code> · 官网=ezagent-served✓ · 域名挂 app.ezagent.chat path✓ · 主前端=zyli✓ · <b>DS OQ：①token 碰撞=直接删 daisyUI（不留桥接）②island vendor DS .jsx 源码✓（确认）③字体全局 4 家（Inter+Noto Serif SC+Noto Sans SC+Space Mono）④daisyUI 尽快删（同①）⑤@json-render/shadcn 改 DS token（A，省）</b> · FP3 自举=PR-E2E trigger（A，默认；Allen 可改）。</li>
 <li><b>并行起步</b>（今日）：FP6 ruihua demo（mock）‖ FP4 zyli DS 升级 ‖ FP5 jjkysy kanban rebase+E2E ‖ FP7 FatNine 门控 ‖ FP2 gaga autoservice live verify。</li>
 <li><b>FP1 zhaomato 官网 build</b>（明日，on 升级后 DS + demo）。</li>
 <li><b>FP3 自举</b>：Allen 场景拍板后派发（allen/zyli）。</li>
 <li><b>FP8 carry-in</b>：allen 跟踪派发。</li>
 </ol>
+
+<h2>§4 开工 prompt（点按钮复制 → 粘给该 dev 的 agent）</h2>
+<p style="font-size:12px;color:#6b7280">每按钮复制对应 dev 的今日 handoff 启动 prompt（含必读 + 分支契约 + 验证门）。lead 周一发；dev 粘到自己的 cc/codex agent 开工。</p>
+<table>
+<tr><th>dev</th><th>FP</th><th></th></tr>
+<tr><td><b>zyli</b>（主前端）</td><td>FP4 DS 升级</td><td><button class="cp" onclick="cp('zyli')">📋 复制开工 prompt</button></td></tr>
+<tr><td><b>zhaomato</b></td><td>FP1 官网（明日）+ hello 复核（今日）</td><td><button class="cp" onclick="cp('zhaomato')">📋 复制开工 prompt</button></td></tr>
+<tr><td><b>gaga</b></td><td>FP2 内测</td><td><button class="cp" onclick="cp('gaga')">📋 复制开工 prompt</button></td></tr>
+<tr><td><b>jjkysy</b></td><td>FP5 kanban #1020</td><td><button class="cp" onclick="cp('jjkysy')">📋 复制开工 prompt</button></td></tr>
+<tr><td><b>ruihua</b></td><td>FP6 官网 demo</td><td><button class="cp" onclick="cp('ruihua')">📋 复制开工 prompt</button></td></tr>
+<tr><td><b>FatNine</b></td><td>FP7 leak gate</td><td><button class="cp" onclick="cp('fatnine')">📋 复制开工 prompt</button></td></tr>
+</table>
+<style>.cp{background:#059669;color:#fff;border:0;border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}.cp:hover{background:#047857}.cp.ok{background:#0FA06E}</style>
+<script>
+const P={
+zyli:`zyli（主前端）— 今日 FP4 design system 升级。
+
+【任务】把 ezagent-design/components/ 的手写 React 组件升级到基于 shadcn（ezagent 现两个都用 daisyUI+shadcn，统一到 shadcn；Allen 定：直接删 daisyUI、不留桥接）。再据升级后 DS 更新 ezagent UI（website-first：operator shell + 官网先，world/hello/customer 后）。
+
+【Allen 决策】① 直接删 daisyUI；② island 必须 vendor DS 的 .jsx 源码（DS bundle 是 global IIFE，在 Vite ESM 会 ReferenceError，不能引 bundle）；③ 字体全局 4 家（Inter+Noto Serif SC+Noto Sans SC+Space Mono）；⑤ @json-render/shadcn 改用 DS token（省，OQ5=A）。
+
+【必读】git show origin/main:docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md (#1072) + 同目录 socialware-unification.md (#1069) + docs/together/2026-06-28/notes/design-system-adaptation-audit.md。设计系统源 /Users/h2oslabs/Workspace/ezagent-design。
+
+【契约】分支 feat/ds-upgrade off origin/main；self-merge 到 target 分支（commit per step、push 增量）；不合 main、不开 PR；返回 target 分支给 lead 验收合并。
+
+【验证门】DS 组件上 shadcn；ezagent UI 渲染品牌色(#D81830/#0048A8/#FFD400+cobalt#0B5CFF)/4 字体/pill/浮动柔影卡/毛玻璃；mix ezagent.arch.scan + check_invariants + 编译绿。`,
+
+zhaomato:`zhaomato — 今日 hello live 复核 + 明日 FP1 官网 build。
+
+【今日】hello live 复核（调研 A：substrate 已绿、31 测试过；只需 fresh disposable 栈 rerun hello 截图 + 跑 'pnpm install && mix assets.build' 否则页面空白因 bundle 改名 viewer_app.js + 刷 apps/ezagent_plugin_hello/mix.exs:43 过时注释 CustomerFeed/public_view）。
+
+【明日 FP1】官网 = ezagent-served socialware（一个"就是官网"的 socialware），挂 app.ezagent.chat 的 path（暂不独立域名——后续你加"绑定独立域"功能）。等 zyli DS 升级(FP4) + ruihua demo(FP6) 落地后、在升级后 DS+demo 上建。可今日先用 mock-DS 并行起步。
+
+【必读】#1072 taxonomy + #1069 socialware 模型（git show origin/main:docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md + 2026-06-26/specs/socialware-unification.md）+ docs/together/2026-06-29/notes/hello-autosvc-state-check.md。
+
+【契约】分支 feat/website-socialware off origin/main；self-merge 到 target；不合 main 不开 PR；返回 lead 验收合并。
+
+【验证门】hello live 截图绿；官网在 app.ezagent.chat path live、渲染升级后 DS、展示 ezagent 项目+团队。`,
+
+gaga:`gaga — 今日 FP2 系统内部测试。
+
+【任务】live 重跑 scripts/autoservice_tier1_serve_seed.exs 确认 autoservice 确定性链 live 站起来 + 报 cc-orchestrator answer-loop 状态（调研 A 关键：live cc-orchestrator 不能 Workspace.create_agent——{:role_unsupported_for_flavor,"cc"}——需经 session-create orchestrator-template 路径物化；live cc answer loop 是剩余工作项、非 socialware 接线问题）。bug triage。#110 live 三环境部署 Allen 做 promotion、你跑验证。你的 #938 ConfigStore 现是 #1069 Installation 关系的基底（load-bearing）。
+
+【必读】#1072 + #1069 + docs/together/2026-06-29/notes/hello-autosvc-state-check.md。
+
+【契约】分支 verify/autoservice-live off origin/main；self-merge 到 target；返回 lead 验收合并。
+
+【验证门】autoservice 确定性链 live 绿（kb+route+session）+ cc answer-loop 状态报告（或阻塞点）+ bug 清单。凭证自生成（bootstrap admin token/set_password），不问 Allen。`,
+
+jjkysy:`jjkysy — 今日 FP5 kanban #1020 处置（kanban = 第一个完整 socialware）。
+
+【任务】#1020 现 OPEN + MERGEABLE-but-BEHIND + REVIEW_REQUIRED + 0 GitHub reviews。① rebase 到 origin/main（解 weekend #1069/#1071/#1075 drift；零冲突 fast-forward）；② fresh post-socialware 栈重跑 E2E（apps/ezagent_plugin_kanban/test/e2e/scenario_kanban_relay_routing_test.exs Resolver 契约测 + live 截图）；③ 拿 GitHub review approval（现 0 review，需至少 1）；④ merge；⑤ 开 2 follow-up PR（relay marker 加 Matcher.from(self_uri) 防无鉴权唤醒；register_pr 幂等/idempotency）。
+
+【必读】#1072 taxonomy + #1069 socialware（kanban 是最完整 socialware 实例：recipe+9-stage-data+relay routing+pm-coordinator+dev-together+github gateway）。
+
+【契约】在 #1020 分支 self-merge（rebase+push）；返回 lead 验收合并（或你 self-merge 后 lead 复核）。2 follow-up 各开独立 PR。
+
+【验证门】kanban E2E post-#1069/#1075 绿 + #1020 合 main + 2 follow-up PR 开。`,
+
+ruihua:`ruihua — 今日 FP6 官网 demo（明日交 zhaomato 上线）。
+
+【任务】官网 demo：3 段（介绍 ezagent 项目 / kanban 展示 / contributors 团队）+ mock ezagent API。基于 ezagent-design（/Users/h2oslabs/Workspace/ezagent-design：styles.css+tokens+components+templates/landing/Landing.dc.html 作介绍 seed）。
+
+【关键：须 RESKIN】你先前 #1022 的 官网原型-全站-暗黑玻璃-v2.html 用了违反 DS 的皮（cream/coral/electric-blue+grain）→ 必须 reskin 到 DS：#E8E8EB 地 + cobalt#0B5CFF 交互色 + Noto Serif SC/Sans SC/Space Mono + 浮动白卡+柔影+毛玻璃、纯色块非渐变。
+
+【数据源】contributors = docs/together/team.md；kanban schema 问 jjkysy（在 #1020 分支）；mock API 模仿 :introspect（无 OpenAPI/swagger，看 ARCHITECTURE.md:333 + socialware chat-feed controller）。
+
+【必读】ezagent-design 的 DESIGN.md/README.md（品牌规约）+ #1072（懂分层边界，业务概念只在数据层）。
+
+【契约】分支 docs/website-demo off origin/main；self-merge 到 target；返回 lead 验收。
+
+【验证门】demo 3 段渲染 DS token（不是旧 cream/coral 皮）+ mock API 可调。`,
+
+fatnine:`FatNine — 今日 FP7 leak 检测 gate + create-socialware skill verify。
+
+【任务】读 #1072(taxonomy 边界/防泄漏红线) + #1069(socialware 模型)。
+
+① skill verify/patch：ezagent-socialware/SKILL.md 已是编写指南（Path-A world UI + Path-B primitives）、非缺口——verify/patch、不重建。ezagent-developer 有 agent-extension 指南(#1040)。
+
+② 真活=检测 gate（调研 B：现仅 NP-2 模块名级 lint，无内容级业务词 gate；#1072 §6 的 4 gate 全是提案）：
+- 加内容级业务词 leak gate：词表加 Kanban/Board/Task/Sales/Customer/Autoservice + 内容级 grep apps/ezagent_core/lib/**/*.ex + '# arch-allow:' 抑制 + baseline caps（复用 lib_files/0）。
+- 落 #1072 §6 的 4 gate：NP-2 content 扩展、新-Kind 断言、blob-inline 迁移门、plugin-package manifest 门。
+- #1027 F3/F4/F7 silent-failure → no-silent-leak gate。
+- 先核实 no_customer_concept / no_role_concept_in_core 是否存在（调研 B 说 grep=0，但 #144/#1071 与之协同——查清真相、存在则扩展、不存在则建）。
+
+【契约】分支 feat/leak-gates off origin/main；self-merge 到 target；不合 main 不开 PR；返回 lead 验收合并。
+
+【验证门】内容级 leak gate 上 CI（baseline 0 新违规）；4 gate 落地；skill verify 通过；arch.scan/check_invariants 绿。`
+};
+function cp(k){const t=P[k];navigator.clipboard.writeText(t).then(()=>{const b=event.target;b.textContent='✅ 已复制';b.classList.add('ok');setTimeout(()=>{b.textContent='📋 复制开工 prompt';b.classList.remove('ok')},1500)});}
+</script>
 
 <h2>out-of-scope（原则③登记）</h2>
 <ul>
