@@ -229,7 +229,10 @@ flowchart TD
 
 ### 漏洞与冗余分析(诚实评估)
 
-- **关键盲区 = 本设计存在的理由**:错误①/②产出的代码**能通过 format / test / check_invariants / CI 全部硬 gate**——因为"用了过重的层"本身**不违反任何不变式**(多写一个 plugin、或把本该 seed 的数据写进 domain,都是合法代码)。⟹ **现有硬 enforcement 链对"选错层"这个失败模式是瞎的**。只有决策期 rule-gate(软)+ 提案中的 §6 gate(仅覆盖 business-semantics-in-core 一小块)能碰它。
+> **先讲清一个易误读点(现状 = 实施之后)**:"选错层的代码能通过全部**硬 gate**"这句话,**现状成立,本设计实施之后依然成立**——因为本设计**故意不加"层选择"的硬 gate**(D5:rule-gate 与 chokepoint 都是软的、从不挡死)。实施之后改变的**不是**"多一道硬 gate 事后逮住它",**而是**把干预**提前 + 变软**(决策期引导 + 写码瞬间提醒 + 收尾解释 + 让人 review 更易发现),从而**降低"产出错误层代码"的概率**。本设计的本质是**"把错误挡在发生之前的软引导",不是"逮在提交之时的硬拦截"**。
+
+- **关键盲区 = 本设计存在的理由**:错误①/②产出的代码**能通过 format / test / check_invariants / CI 全部硬 gate**——因为"用了过重的层"本身**不违反任何不变式**(多写一个 plugin、或把本该 seed 的数据写进 domain,都是合法代码)。⟹ **现有(且实施后仍然)硬 enforcement 链对"选错层"这个失败模式是瞎的**。只有决策期 rule-gate(软)+ 提案中的 §6 gate(仅覆盖 business-semantics-in-core 一小块)能碰它。
+- **为什么不干脆加硬 gate 逮它**:"选错层"一般情况下**无法机器判定**——机器看不出"这段合法代码本可以更轻"。只有特定子情形(如"业务语义写进 core")可硬 gate,那恰是提案 §6 的活,且 **D9 明确不揽**。
 - **层选择质量控制是"有意做软"的,不是漏洞**:rule-gate + chokepoint 都不硬 block,因为合法的 core 改动确实存在,硬挡会逼人绕路(绕路比漏报更糟)。⟹ 层选择靠"发现 + 纠偏 + 解释 + 人 review";硬 enforcement 只在**不变式**层。这是设计权衡。
 - **有意冗余(健康)**:sub-step-gate(本地)与 ci.yml(远程)跑同一批检查 = defense-in-depth(本地快反馈 + 远程防绕过本地 hook),非浪费。
 - **已知未补缺口(非本设计,已被 §7/§6 追踪)**:§6 arch-gate 未建(business-semantics **内容级** grep、new-Kind defmodule、blob-inline migration);现有 NP-2 lint 只查**模块名**不查内容。
