@@ -55,6 +55,9 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
   setup do
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+    cwd = System.tmp_dir!()
+    previous_allowed_roots = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", cwd)
 
     case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
       :ok -> :ok
@@ -70,7 +73,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
       caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
 
-    cwd = System.tmp_dir!()
+    on_exit(fn -> restore_system_env("EZAGENT_ALLOWED_CWD_ROOTS", previous_allowed_roots) end)
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd}
   end
@@ -122,6 +125,9 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:ezagent_domain_workspace, key)
   defp restore_env(key, value), do: Application.put_env(:ezagent_domain_workspace, key, value)
+
+  defp restore_system_env(key, nil), do: System.delete_env(key)
+  defp restore_system_env(key, value), do: System.put_env(key, value)
 
   describe "create-time flavor config ingest — cc file flavor" do
     setup :install_flavor_config_spawn_facade

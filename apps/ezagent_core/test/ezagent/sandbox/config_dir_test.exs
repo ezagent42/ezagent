@@ -111,5 +111,35 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
         do: System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", prev),
         else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
     end
+
+    test "accepts cwd equal to operator-configured root" do
+      prev = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+      root = System.tmp_dir!()
+      System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", root)
+
+      assert {:ok, ^root} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd(
+                 root,
+                 "/tmp/ezagent"
+               )
+
+      if prev,
+        do: System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", prev),
+        else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    end
+
+    test "bang validator defaults nil cwd and raises outside allowed roots" do
+      assert Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default!(
+               nil,
+               "/tmp/ezagent-test/config"
+             ) == "/tmp/ezagent-test/config"
+
+      assert_raise ArgumentError, ~r/project_cwd/, fn ->
+        Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default!(
+          "/etc/passwd",
+          "/tmp/ezagent-test/config"
+        )
+      end
+    end
   end
 end

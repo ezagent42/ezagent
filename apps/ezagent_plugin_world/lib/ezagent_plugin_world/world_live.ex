@@ -184,7 +184,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   @impl true
   def handle_event("world:navigate", %{"to" => to}, socket) when is_binary(to) do
-    case world_patch_to(to) do
+    case Ezagent.World.Navigation.patch_to(to) do
       {:ok, path} -> {:noreply, push_patch(socket, to: path)}
       :error -> {:noreply, socket}
     end
@@ -280,70 +280,6 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
   end
-
-  defp world_patch_to(to) do
-    with {:ok, path, query} <- split_world_patch_to(to),
-         true <- world_patch_path?(path) do
-      {:ok, path <> query_suffix(query)}
-    else
-      _ -> :error
-    end
-  end
-
-  defp split_world_patch_to(to) do
-    cond do
-      String.contains?(to, ["#", "://"]) ->
-        :error
-
-      String.starts_with?(to, "//") ->
-        :error
-
-      true ->
-        case String.split(to, "?", parts: 2) do
-          [path] -> {:ok, path, nil}
-          [path, query] -> {:ok, path, query}
-        end
-    end
-  end
-
-  defp query_suffix(nil), do: ""
-  defp query_suffix(""), do: ""
-  defp query_suffix(query), do: "?" <> query
-
-  defp world_patch_path?("/"), do: true
-  defp world_patch_path?("/sessions"), do: true
-  defp world_patch_path?("/identities"), do: true
-  defp world_patch_path?("/identities/users"), do: true
-  defp world_patch_path?("/identities/agents"), do: true
-  defp world_patch_path?("/identities/agents/new"), do: true
-  defp world_patch_path?("/workspaces"), do: true
-  defp world_patch_path?("/plugins"), do: true
-  defp world_patch_path?("/plugins/feishu/bindings"), do: true
-  defp world_patch_path?("/plugins/kanban"), do: true
-  defp world_patch_path?("/profile"), do: true
-  defp world_patch_path?("/admin"), do: true
-  defp world_patch_path?("/admin/logs"), do: true
-  defp world_patch_path?("/admin/registry"), do: true
-  defp world_patch_path?("/admin/snapshots"), do: true
-  defp world_patch_path?("/admin/templates"), do: true
-  defp world_patch_path?("/admin/caps"), do: true
-  defp world_patch_path?("/admin/audit/authz"), do: true
-  defp world_patch_path?("/admin/settings"), do: true
-  defp world_patch_path?("/admin/routing"), do: true
-
-  defp world_patch_path?(path) when is_binary(path) do
-    Regex.match?(~r{\A/identities/(?:users|agents)/[^/]+/caps\z}, path) or
-      Regex.match?(
-        ~r{\A/identities/agents/[^/]+(?:/api-keys|/config|/extensions|/terminal)?\z},
-        path
-      ) or
-      Regex.match?(~r{\A/workspaces/[^/]+\z}, path) or
-      Regex.match?(~r{\A/plugins/kanban/[^/]+\z}, path) or
-      Regex.match?(~r{\A/plugins/auto/[^/]+(?:/[^/]+)?\z}, path) or
-      Regex.match?(~r{\A/admin/sessions/[^/]+/external_mirror\z}, path)
-  end
-
-  defp world_patch_path?(_), do: false
 
   @impl true
   def render(assigns) do

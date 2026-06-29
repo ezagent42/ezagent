@@ -140,18 +140,40 @@ defmodule Ezagent.Sandbox.ConfigDir do
   def validate_project_cwd(cwd, config_dir)
       when is_binary(cwd) and is_binary(config_dir) do
     expanded = Path.expand(cwd)
+
     operator_roots =
       (System.get_env("EZAGENT_ALLOWED_CWD_ROOTS") || "")
       |> String.split(":", trim: true)
       |> Enum.map(&Path.expand/1)
 
-    allowed_roots = [config_dir | operator_roots]
-
-    if Enum.any?(allowed_roots, &String.starts_with?(expanded, &1 <> "/")) or
-         expanded == config_dir do
+    if Enum.any?([config_dir | operator_roots], &within_root?(expanded, &1)) do
       {:ok, expanded}
     else
       {:error, {:cwd_outside_allowed_roots, expanded}}
     end
+  end
+
+  @doc """
+  Validate a project_cwd or fall back to the agent config_dir.
+  """
+  @spec validate_project_cwd_or_default!(String.t() | nil, String.t()) :: String.t()
+  def validate_project_cwd_or_default!(nil, config_dir), do: config_dir
+  def validate_project_cwd_or_default!("", config_dir), do: config_dir
+
+  def validate_project_cwd_or_default!(cwd, config_dir) when is_binary(cwd) do
+    case validate_project_cwd(cwd, config_dir) do
+      {:ok, expanded} ->
+        expanded
+
+      {:error, {:cwd_outside_allowed_roots, path}} ->
+        raise ArgumentError,
+              "project_cwd #{inspect(path)} is outside allowed roots. " <>
+                "Set EZAGENT_ALLOWED_CWD_ROOTS (colon-separated) to allow additional paths."
+    end
+  end
+
+  defp within_root?(path, root) do
+    expanded_root = Path.expand(root)
+    path == expanded_root or String.starts_with?(path, expanded_root <> "/")
   end
 end
