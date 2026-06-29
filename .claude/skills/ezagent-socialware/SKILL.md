@@ -1,24 +1,44 @@
 ---
 name: ezagent-socialware
 description: >-
-  Use whenever creating, configuring, or reasoning about a SOCIALWARE app in
-  the ezagent codebase — i.e. a session made publicly viewable so external /
-  anonymous users (not registered operators) can watch and join it. Trigger on
-  any of: "socialware app", "public_view" session/template, the
-  /socialware/chat or /socialware/customer surfaces, the customer React SPA,
-  anonymous-visitor access, ChatFeed / CustomerFeed, AnonUser / AnonBinding,
-  the anon→login takeover, the "Public socialware app" toggle in the world UI,
-  versioned templates / the "current" tag / migrate_session, the orchestrator
-  member/rule/legend tools, or "how does an author publish a socialware
-  experience". A socialware app is NOT a normal operator session — its
-  defining property (public_view) lives on a SessionTemplate and unlocks a
-  whole anonymous-access lifecycle most contributors don't know exists. Load
-  this skill before touching any of that so you build on the real author flow
-  (now: world UI + versioned templates) instead of inventing one. Pairs with
-  the ezagent-developer skill for the underlying dispatch/CapBAC/Behavior rules.
+  Use when creating, configuring, or reasoning about ezagent socialware: a
+  public_view SessionTemplate/session that anonymous external users can watch or
+  join. Trigger on socialware apps, public_view, /socialware/chat,
+  /socialware/customer, customer React SPA, anonymous access, ChatFeed,
+  CustomerFeed, AnonUser, AnonBinding, anon-to-login takeover, the world UI
+  "Public socialware app" toggle, versioned templates, current tags,
+  migrate_session, or author publishing flow. Pair with ezagent-developer for
+  dispatch, CapBAC, Behavior, and Kind invariants.
 ---
 
 # ezagent-socialware
+
+## Invocation details
+
+Use whenever creating, configuring, or reasoning about a SOCIALWARE app in the
+ezagent codebase: a session made publicly viewable so external / anonymous users
+(not registered operators) can watch and join it.
+
+Trigger on any of:
+- "socialware app"
+- `public_view` session/template
+- the `/socialware/chat` or `/socialware/customer` surfaces
+- the customer React SPA
+- anonymous-visitor access
+- `ChatFeed` / `CustomerFeed`
+- `AnonUser` / `AnonBinding`
+- the anon-to-login takeover
+- the "Public socialware app" toggle in the world UI
+- versioned templates / the "current" tag / `migrate_session`
+- the orchestrator member/rule/legend tools
+- "how does an author publish a socialware experience"
+
+A socialware app is not a normal operator session. Its defining property
+(`public_view`) lives on a `SessionTemplate` and unlocks a whole
+anonymous-access lifecycle most contributors do not know exists. Load this skill
+before touching any of that so you build on the real author flow (now: world UI
++ versioned templates) instead of inventing one. Pair this with the
+ezagent-developer skill for the underlying dispatch/CapBAC/Behavior rules.
 
 You are authoring or modifying a **socialware app** in the ezagent repo. This
 skill captures the *real* author flow as it exists in `main` (`515fcc99`,
