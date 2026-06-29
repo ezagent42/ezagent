@@ -123,6 +123,28 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
     assert :external_visible in values, ":external_visible must be the external-read value"
   end
 
+  test "legacy stored customer_visible rows are migrated to external_visible" do
+    apps_root = Path.expand("../../../..", __DIR__)
+
+    for migration_dir <- [
+          "apps/ezagent_core/priv/repo/migrations",
+          "apps/ezagent_core/priv/repo_pg/migrations"
+        ] do
+      migration_text =
+        apps_root
+        |> Path.join(migration_dir)
+        |> Path.join("*.exs")
+        |> Path.wildcard()
+        |> Enum.map_join("\n", &File.read!/1)
+
+      assert migration_text =~ "customer_visible",
+             "#{migration_dir} must rewrite legacy message visibility customer_visible"
+
+      assert migration_text =~ "external_visible",
+             "#{migration_dir} must rewrite legacy message visibility to external_visible"
+    end
+  end
+
   test "the internal visibility value uses the new spelling" do
     apps_root = Path.expand("../../../..", __DIR__)
     retired = "operator" <> "_only"

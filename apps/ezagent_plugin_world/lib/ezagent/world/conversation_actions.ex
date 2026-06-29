@@ -682,6 +682,8 @@ defmodule Ezagent.World.ConversationActions do
       %URI{} = caller_uri when not is_nil(caps) ->
         # JIT, owner-rooted per-session :join cap (`:sync` so it lands before the
         # dispatch authorizes via the live slice read).
+        _ = Ezagent.LocalRuntime.ensure_live(session_uri)
+        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller_uri)
         _ = Membership.provision_join_authority(session_uri, caller_uri)
 
         result =

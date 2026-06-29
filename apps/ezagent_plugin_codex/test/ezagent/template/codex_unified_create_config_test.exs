@@ -26,6 +26,9 @@ defmodule Ezagent.PluginCodex.Template.CodexUnifiedCreateConfigTest do
 
   setup do
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+    cwd = System.tmp_dir!()
+    previous_allowed_roots = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", cwd)
 
     case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
       :ok -> :ok
@@ -48,6 +51,7 @@ defmodule Ezagent.PluginCodex.Template.CodexUnifiedCreateConfigTest do
     on_exit(fn ->
       restore_env(:agent_spawn_facade, previous)
       restore_env(:agent_create_flavor_config_test_pid, previous_pid)
+      restore_system_env("EZAGENT_ALLOWED_CWD_ROOTS", previous_allowed_roots)
     end)
 
     ws_name = "codex-create-config-#{System.unique_integer([:positive])}"
@@ -62,7 +66,7 @@ defmodule Ezagent.PluginCodex.Template.CodexUnifiedCreateConfigTest do
      ws_name: ws_name,
      workspace_uri: URI.new!("workspace://#{ws_name}"),
      admin_ctx: admin_ctx,
-     cwd: System.tmp_dir!()}
+     cwd: cwd}
   end
 
   test "Workspace.create_agent carries codex config into content and respawn data", %{
@@ -128,4 +132,7 @@ defmodule Ezagent.PluginCodex.Template.CodexUnifiedCreateConfigTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:ezagent_domain_workspace, key)
   defp restore_env(key, value), do: Application.put_env(:ezagent_domain_workspace, key, value)
+
+  defp restore_system_env(key, nil), do: System.delete_env(key)
+  defp restore_system_env(key, value), do: System.put_env(key, value)
 end

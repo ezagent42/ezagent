@@ -38,14 +38,13 @@ const tree = {
 const rendered = renderJsonNode(React, tree, registry)
 const renderedContainer = rendered.type(rendered.props)
 assert.equal(renderedContainer.type, "section")
-// sw-* contract classes are preserved (styling Tailwind/daisyUI classes are
+// sw-* contract classes are preserved (styling Tailwind classes are
 // added ALONGSIDE — the agent-browser E2E + downstream tooling key off sw-*).
 assert.match(renderedContainer.props.className, /\bsw-container\b/)
 assert.match(renderedContainer.props.className, /\bsw-container-stack\b/)
 
-// The styled container wraps its rendered children in a daisyUI `card-body`
-// div for padding/spacing; the per-child keys (and the #36 regression) live on
-// that wrapper's children.
+// The styled container wraps its rendered children in a div for padding/spacing;
+// the per-child keys (and the #36 regression) live on that wrapper's children.
 const cardBody = renderedContainer.children[0]
 assert.equal(cardBody.type, "div")
 const containerChildren = cardBody.children
@@ -58,7 +57,7 @@ assert.equal(textNode.children[0], "hello")
 const tableNode = containerChildren[1].type(containerChildren[1].props)
 assert.equal(tableNode.type, "table")
 assert.match(tableNode.props.className, /\bsw-table\b/)
-assert.match(tableNode.props.className, /\btable-zebra\b/)
+assert.match(tableNode.props.className, /\bborder-border\b/)
 
 // #36 regression: keyless container children get a STABLE, UNIQUE key from their
 // index — incl. index 0. Pre-fix `child.key || index` / `node.key || undefined`

@@ -135,11 +135,11 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
         <title>Socialware Chat</title>
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap">
         <link rel="stylesheet" href="/assets/css/viewer.css">
         <script defer type="module" src="/assets/js/viewer_app.js"></script>
       </head>
-      <body class="min-h-screen bg-base-200 text-base-content antialiased">
+      <body class="min-h-screen bg-background text-foreground antialiased">
         <main id="socialware-viewer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed"></main>
       </body>
     </html>

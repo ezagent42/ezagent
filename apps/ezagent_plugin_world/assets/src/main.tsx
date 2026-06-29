@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, ChevronDown, ChevronRight, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
+import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -13,6 +13,7 @@ import {Overview} from "./components/Overview"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
+import {cn} from "./lib/utils"
 import slotManifest from "./slots.manifest.json"
 import "./styles.css"
 
@@ -58,10 +59,21 @@ type WorldMountOptions = {
   caller?: {
     entity_uri?: string | null
     workspace_uri?: string | null
+    current_workspace_name?: string | null
     display_name?: string | null
+    is_system_member?: boolean
+    workspaces?: WorkspaceNavItem[]
   }
   pushEvent?: (event: string, payload: unknown, onReply?: (reply: unknown) => void) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+}
+
+type WorkspaceNavItem = {
+  name?: string | null
+  uri?: string | null
+  current?: boolean
+  switch_path?: string | null
+  detail_path?: string | null
 }
 
 type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
@@ -144,7 +156,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
     return (
       <div className="flex min-h-screen bg-background text-foreground">
         {!navCollapsed && (
-          <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4" aria-label="World navigation">
+          <aside className="hidden w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4 sm:flex" aria-label="World navigation">
             <div className="flex items-center justify-between">
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
               <button
@@ -167,9 +179,10 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
           </aside>
         )}
 
-        <main className="min-w-0 flex-1 p-6">
-          <header className="mb-5 flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-3">
+        <main className="min-w-0 flex-1 p-4 sm:p-6">
+          <MobileNav currentPath={state.path} />
+          <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto">
               {navCollapsed && (
                 <button
                   type="button"
@@ -181,23 +194,18 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                   <PanelLeft className="h-4 w-4" aria-hidden="true" />
                 </button>
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1 sm:flex-none">
                 <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
-                <h1 className="mt-1 text-xl font-semibold text-foreground">{state.title || pageTitle(state.component)}</h1>
+                <h1 className="mt-1 text-xl font-semibold leading-tight text-foreground">{state.title || pageTitle(state.component)}</h1>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <a
-                href="/workspaces"
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                title="Switch workspace"
-              >
-                <Boxes aria-hidden="true" className="h-3.5 w-3.5" />
-                <span className="max-w-[200px] truncate">
-                  {state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}
-                </span>
-                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
-              </a>
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
+              <WorkspaceSwitcher
+                currentWorkspaceName={caller?.current_workspace_name}
+                currentWorkspaceUri={state.workspace_uri || caller?.workspace_uri}
+                isSystemMember={caller?.is_system_member === true}
+                workspaces={caller?.workspaces || []}
+              />
               <ThemeToggle />
               <Button
                 id="world-cmdk-open"
@@ -219,7 +227,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
           />
 
-          <div className="grid gap-4" data-component-count={components.length}>
+          <div className="grid min-w-0 gap-4" data-component-count={components.length}>
             {(components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]).map((component) =>
               renderLayoutComponent(component, {
                 layout: currentLayout,
@@ -426,6 +434,18 @@ const NAV_ITEMS: Array<[string, string]> = [
   ["Profile", "/profile"],
 ]
 
+function MobileNav({currentPath}: {currentPath?: string}) {
+  return (
+    <nav className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1 sm:hidden" aria-label="World navigation">
+      {NAV_ITEMS.map(([label, href]) => (
+        <a className={cn(navClass(currentPath, href), "shrink-0 px-3 py-1.5")} href={href} key={href}>
+          {label}
+        </a>
+      ))}
+    </nav>
+  )
+}
+
 // The top-level section a (possibly deep) path belongs to — drives the
 // breadcrumb root + back link.
 function sectionRoot(path?: string): {label: string; href: string} | null {
@@ -460,17 +480,17 @@ function ThemeToggle() {
   const [dark, setDark] = React.useState(false)
 
   React.useEffect(() => {
-    const stored = localStorage.getItem("world-theme")
+    const stored = localStorage.getItem("phx:theme")
     const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
     const isDark = stored ? stored === "dark" : prefersDark
-    document.documentElement.classList.toggle("dark", isDark)
+    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light")
     setDark(isDark)
   }, [])
 
   const toggle = () => {
     const next = !dark
-    document.documentElement.classList.toggle("dark", next)
-    localStorage.setItem("world-theme", next ? "dark" : "light")
+    document.documentElement.setAttribute("data-theme", next ? "dark" : "light")
+    localStorage.setItem("phx:theme", next ? "dark" : "light")
     setDark(next)
   }
 
@@ -487,6 +507,141 @@ function ThemeToggle() {
 // the LiveView channel — so it needs the same CSRF token Phoenix forms carry.
 function csrfToken(): string {
   return document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || ""
+}
+
+function WorkspaceSwitcher({
+  currentWorkspaceName,
+  currentWorkspaceUri,
+  isSystemMember,
+  workspaces,
+}: {
+  currentWorkspaceName?: string | null
+  currentWorkspaceUri?: string | null
+  isSystemMember: boolean
+  workspaces: WorkspaceNavItem[]
+}) {
+  const [open, setOpen] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+  const label = currentWorkspaceName || currentWorkspaceUri || "workspace"
+
+  React.useEffect(() => {
+    if (!open) return undefined
+
+    const onPointer = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+
+    document.addEventListener("mousedown", onPointer)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onPointer)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="relative max-w-full" ref={ref}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Switch workspace"
+        title="Switch workspace"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+      >
+        <Boxes aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          <span className="font-semibold text-foreground">ezagent</span>
+          <span className="mx-1 text-muted-foreground">/</span>
+          <span className="font-mono">{label}</span>
+        </span>
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-50 mt-1.5 w-72 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl sm:left-0 sm:right-auto"
+        >
+          <div className="border-b border-border px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Workspaces
+          </div>
+          <div className="max-h-72 overflow-y-auto py-1">
+            {workspaces.map((workspace) => {
+              const name = workspaceLabel(workspace)
+              const current = workspace.current === true || workspace.uri === currentWorkspaceUri
+
+              if (current) {
+                return (
+                  <div
+                    key={workspace.uri || workspace.name || name}
+                    role="menuitem"
+                    aria-current="true"
+                    className="flex items-center justify-between gap-2 bg-muted/50 px-3 py-2 text-xs"
+                  >
+                    <WorkspaceMenuLabel workspace={workspace} />
+                    <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-foreground" />
+                  </div>
+                )
+              }
+
+              return (
+                <form
+                  key={workspace.uri || workspace.name || name}
+                  action={workspace.switch_path || "/workspaces/switch"}
+                  method="post"
+                  className="block"
+                >
+                  <input type="hidden" name="_csrf_token" value={csrfToken()} />
+                  <input type="hidden" name="workspace" value={String(workspace.name || name)} />
+                  <button
+                    type="submit"
+                    role="menuitem"
+                    title={isSystemMember ? `Operate on workspace ${name}` : `Sign in to workspace ${name}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.currentTarget.form?.submit()
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  >
+                    <WorkspaceMenuLabel workspace={workspace} />
+                    {!isSystemMember && <Lock aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+                  </button>
+                </form>
+              )
+            })}
+            {workspaces.length === 0 && <div className="px-3 py-3 text-xs text-muted-foreground">No workspaces</div>}
+          </div>
+          <div className="border-t border-border px-3 py-2">
+            <a href="/workspaces" className="text-xs font-medium text-foreground transition hover:text-primary">
+              Manage workspaces
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WorkspaceMenuLabel({workspace}: {workspace: WorkspaceNavItem}) {
+  return (
+    <span className="min-w-0">
+      <span className="block truncate font-mono text-foreground">{workspaceLabel(workspace)}</span>
+      {workspace.uri && (
+        <span className="block truncate font-mono text-[11px] text-muted-foreground" title={workspace.uri}>
+          {workspace.uri}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function workspaceLabel(workspace: WorkspaceNavItem): string {
+  return String(workspace.name || workspace.uri || "workspace")
 }
 
 // Header account menu — the world UI's logout / switch-account entry point (F3).
@@ -703,13 +858,16 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 }
 
 function navClass(path: string | undefined, href: string) {
+  const currentPath = path ?? (typeof window !== "undefined" ? window.location.pathname : undefined)
   const active =
     href === "/"
-      ? path === "/" || path === undefined
-      : path === href ||
-        (href === "/identities" && path?.startsWith("/identities")) ||
-        (href === "/workspaces" && path?.startsWith("/workspaces")) ||
-        (href === "/plugins" && path?.startsWith("/plugins"))
+      ? currentPath === "/" || currentPath === undefined
+      : currentPath === href ||
+        (href === "/sessions" && currentPath?.startsWith("/sessions")) ||
+        (href === "/identities" && currentPath?.startsWith("/identities")) ||
+        (href === "/admin" && currentPath?.startsWith("/admin")) ||
+        (href === "/workspaces" && currentPath?.startsWith("/workspaces")) ||
+        (href === "/plugins" && currentPath?.startsWith("/plugins"))
 
   return active
     ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
@@ -776,4 +934,3 @@ function pageTitle(component: string | undefined) {
       return "Sessions"
   }
 }
-

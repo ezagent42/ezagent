@@ -5,6 +5,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   use Phoenix.LiveView
 
+  alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.AdminActions
   alias Ezagent.World.AgentActions
@@ -20,16 +21,19 @@ defmodule EzagentPluginWorld.WorldLive do
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
     sessions = list_sessions(workspace)
     current_session_uri = List.first(sessions)
 
     socket = assign(socket, :subscribed_topics, MapSet.new())
 
-    caller_payload = %{
-      "entity_uri" => encode_uri(caller),
-      "workspace_uri" => encode_uri(workspace),
-      "display_name" => caller_display_name(caller)
-    }
+    caller_payload =
+      caller_payload(
+        caller,
+        workspace,
+        caps,
+        Map.get(socket.assigns, :is_system_member?, false)
+      )
 
     layout = layout_for(workspace, caller)
     if connected?(socket), do: subscribe_global_inbound(caller)
@@ -40,7 +44,7 @@ defmodule EzagentPluginWorld.WorldLive do
         current_session_uri,
         workspace,
         layout,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        caps
       )
       |> put_command_palette(socket)
 
@@ -179,6 +183,13 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_event("world:navigate", %{"to" => to}, socket) when is_binary(to) do
+    case Ezagent.World.Navigation.patch_to(to) do
+      {:ok, path} -> {:noreply, push_patch(socket, to: path)}
+      :error -> {:noreply, socket}
+    end
+  end
+
   def handle_event(
         "world:dispatch",
         %{"action" => "sessions.join", "args" => %{"session_uri" => session_uri_str}},
@@ -303,6 +314,10 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = socket.assigns.current_entity_uri
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
+    _ = Ezagent.LocalRuntime.ensure_live(session_uri)
+    _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller)
+    provision_session_join_authority(session_uri, caller)
+
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
@@ -320,12 +335,17 @@ defmodule EzagentPluginWorld.WorldLive do
       {:ok, _payload} ->
         dispatch_session_join_ok(socket, session_uri)
 
+      {:error, :unauthorized} ->
+        dispatch_session_join_observe(socket, session_uri, :unauthorized)
+
       {:error, reason} ->
         {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
     end
   end
 
   defp dispatch_session_join_ok(socket, %URI{} = session_uri) do
+    mount_session_participation_caps(session_uri, socket.assigns.current_entity_uri)
+
     {:noreply,
      socket
      |> assign(:current_session_uri, session_uri)
@@ -333,6 +353,25 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:last_dispatch_status, "ok")
      |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
   end
+
+  defp dispatch_session_join_observe(socket, %URI{} = session_uri, reason) do
+    {:noreply,
+     socket
+     |> assign(:current_session_uri, session_uri)
+     |> assign(:current_session_uri_str, URI.to_string(session_uri))
+     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
+     |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+  end
+
+  defp provision_session_join_authority(%URI{} = session_uri, %URI{} = caller_uri),
+    do: Membership.provision_join_authority(session_uri, caller_uri)
+
+  defp provision_session_join_authority(_session_uri, _caller_uri), do: {:error, :no_authority}
+
+  defp mount_session_participation_caps(%URI{} = session_uri, %URI{} = caller_uri),
+    do: Membership.mount_participation_caps(session_uri, caller_uri)
+
+  defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
     workspace_uri = socket.assigns.current_workspace_uri
@@ -699,6 +738,35 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace
     }
   end
+
+  defp caller_payload(caller, workspace, caps, system_member?) do
+    %{
+      "entity_uri" => encode_uri(caller),
+      "workspace_uri" => encode_uri(workspace),
+      "current_workspace_name" => workspace_name(workspace),
+      "display_name" => caller_display_name(caller),
+      "is_system_member" => system_member?,
+      "workspaces" => workspace_switcher_rows(caller, workspace, caps)
+    }
+  end
+
+  defp workspace_switcher_rows(caller, current_workspace, caps) do
+    Ezagent.Workspace.list_workspaces_for(caller, caps)
+    |> Enum.map(fn workspace ->
+      %{
+        "name" => workspace.name,
+        "uri" => encode_uri(workspace.uri),
+        "current" => same_uri?(workspace.uri, current_workspace),
+        "switch_path" => "/workspaces/switch",
+        "detail_path" => "/workspaces/#{URI.encode_www_form(workspace.name)}"
+      }
+    end)
+  end
+
+  defp workspace_name(%URI{scheme: "workspace"} = workspace_uri),
+    do: Ezagent.URI.name!(workspace_uri)
+
+  defp workspace_name(_), do: nil
 
   defp list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
     EzagentDomainInstanceMessage.list_sessions(workspace_uri)

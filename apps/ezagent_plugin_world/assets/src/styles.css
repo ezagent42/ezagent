@@ -13,49 +13,72 @@
  * bubbles render unstyled. They resolve against world's own design tokens below. */
 @source "../node_modules/@json-render/shadcn/dist";
 
-@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 :root {
+  --ez-red: #D81830;
+  --ez-blueink: #0048A8;
+  --ez-yellow: #FFD400;
+  --ez-jade: #0FA06E;
+  --ez-cobalt: #0B5CFF;
+  --ez-bg: #E8E8EB;
+  --font-sans: "Inter", "Noto Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei",
+    "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-serif: "Noto Serif SC", Georgia, serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    "Liberation Mono", monospace;
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(24, 24, 27, 0.06),
+    0 8px 24px rgba(24, 24, 27, 0.08);
+  --shadow-soft: 0 8px 24px rgba(24, 24, 27, 0.10);
+  --background: var(--ez-bg);
   --foreground: oklch(0.129 0.042 264.695);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
+  --primary: var(--ez-cobalt);
+  --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.968 0.007 247.896);
   --secondary-foreground: oklch(0.208 0.042 265.755);
   --muted: oklch(0.968 0.007 247.896);
   --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
+  --accent: var(--ez-yellow);
+  --accent-foreground: oklch(0.129 0.042 264.695);
+  --neutral: var(--ez-blueink);
+  --neutral-foreground: oklch(0.98 0 0);
+  --destructive: var(--ez-red);
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
+  --ring: var(--ez-cobalt);
 }
 
-.dark {
+[data-theme="dark"] {
   --background: oklch(0.129 0.042 264.695);
   --foreground: oklch(0.984 0.003 247.858);
   --card: oklch(0.208 0.042 265.755);
   --card-foreground: oklch(0.984 0.003 247.858);
   --popover: oklch(0.208 0.042 265.755);
   --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
+  --primary: #6EA0FF;
   --primary-foreground: oklch(0.208 0.042 265.755);
   --secondary: oklch(0.279 0.041 260.031);
   --secondary-foreground: oklch(0.984 0.003 247.858);
   --muted: oklch(0.279 0.041 260.031);
   --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
+  --accent: var(--ez-yellow);
+  --accent-foreground: oklch(0.129 0.042 264.695);
+  --neutral: var(--ez-blueink);
+  --neutral-foreground: oklch(0.98 0.003 247.858);
+  --destructive: #FF6A7A;
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
+  --ring: #6EA0FF;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.20),
+    0 8px 24px rgba(0, 0, 0, 0.24);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
 }
 
 @theme inline {
@@ -89,7 +112,16 @@
   }
 
   body {
+    font-family: var(--font-sans);
     background-color: var(--background);
     color: var(--foreground);
+  }
+
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-family: var(--font-mono);
   }
 }

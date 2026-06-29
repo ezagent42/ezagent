@@ -10,7 +10,7 @@ defmodule EzagentWeb.AuthBoundaryLayout do
   is why they each render a raw heredoc HTML string instead of HEEx.
 
   Pre-PR-E (SPEC v2 §G7), the login page carried ~270 LOC of inline
-  CSS (full Geist font + design tokens + dark mode + mobile-visible
+  CSS (Ezagent DS fonts + design tokens + dark mode + mobile-visible
   flash) and the registration page carried ~25 LOC of stripped legacy
   CSS — so the two looked dramatically different. This helper extracts
   the chrome verbatim from `SessionController` so both pages share the
@@ -114,27 +114,35 @@ defmodule EzagentWeb.AuthBoundaryLayout do
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap">
     <style>
       :root {
-        --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-        --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
-        --ink: #0a0a0a;
-        --ink-dim: #525252;
-        --line: #e5e5e5;
-        --accent: #1f883d;
-        --accent-faint: #e6f4ea;
-        --bg-page: #fafafa;
-        --bg-card: #ffffff;
-        --bg-input: #ffffff;
-        --bg-code: #f4f4f5;
-        --error-fg: #b91c1c;
+        --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --font-serif: 'Noto Serif SC', Georgia, serif;
+        --font-mono: 'Space Mono', ui-monospace, Menlo, monospace;
+        --red: #D81830;
+        --blueink: #0048A8;
+        --yellow: #FFD400;
+        --jade: #0FA06E;
+        --accent: #0B5CFF;
+        --ink: #17171B;
+        --ink-dim: #707078;
+        --line: rgba(23,23,27,0.10);
+        --accent-faint: #EAF1FF;
+        --bg-page: #E8E8EB;
+        --bg-card: #FFFFFF;
+        --bg-input: #FFFFFF;
+        --bg-code: #F3F3F5;
+        --error-fg: var(--red);
         --error-bg: #fef2f2;
         --error-line: #fecaca;
-        --info-fg: #047857;
+        --info-fg: var(--jade);
         --info-bg: #ecfdf5;
         --info-line: #a7f3d0;
         --btn-fg: #ffffff;
+        --radius-card: 22px;
+        --radius-pill: 999px;
+        --shadow-card: 0 1px 1px rgba(23,23,27,0.03), 0 10px 24px rgba(23,23,27,0.08), 0 32px 72px rgba(23,23,27,0.10);
       }
       /* Phase 8c PR-D — explicit theme + system-pref fallback. The
          login page renders before the LV WS, so we honor both
@@ -143,38 +151,40 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         --ink: #fafafa;
         --ink-dim: #a3a3a3;
         --line: #27272a;
-        --accent: #4ade80;
-        --accent-faint: #052e16;
-        --bg-page: #09090b;
-        --bg-card: #18181b;
-        --bg-input: #18181b;
-        --bg-code: #27272a;
-        --error-fg: #fca5a5;
+        --accent: #6EA0FF;
+        --accent-faint: #102856;
+        --bg-page: #101015;
+        --bg-card: #17171B;
+        --bg-input: #17171B;
+        --bg-code: #232329;
+        --error-fg: #FF6A7A;
         --error-bg: #450a0a;
         --error-line: #7f1d1d;
         --info-fg: #6ee7b7;
         --info-bg: #022c1e;
         --info-line: #064e3b;
-        --btn-fg: #18181b;
+        --btn-fg: #071226;
+        --shadow-card: 0 1px 1px rgba(0,0,0,0.16), 0 16px 42px rgba(0,0,0,0.32), 0 40px 100px rgba(0,0,0,0.38);
       }
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]) {
           --ink: #fafafa;
           --ink-dim: #a3a3a3;
           --line: #27272a;
-          --accent: #4ade80;
-          --accent-faint: #052e16;
-          --bg-page: #09090b;
-          --bg-card: #18181b;
-          --bg-input: #18181b;
-          --bg-code: #27272a;
-          --error-fg: #fca5a5;
+          --accent: #6EA0FF;
+          --accent-faint: #102856;
+          --bg-page: #101015;
+          --bg-card: #17171B;
+          --bg-input: #17171B;
+          --bg-code: #232329;
+          --error-fg: #FF6A7A;
           --error-bg: #450a0a;
           --error-line: #7f1d1d;
           --info-fg: #6ee7b7;
           --info-bg: #022c1e;
           --info-line: #064e3b;
-          --btn-fg: #18181b;
+          --btn-fg: #071226;
+          --shadow-card: 0 1px 1px rgba(0,0,0,0.16), 0 16px 42px rgba(0,0,0,0.32), 0 40px 100px rgba(0,0,0,0.38);
         }
       }
       * { box-sizing: border-box; }
@@ -183,10 +193,7 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         margin: 0;
         font-family: var(--font-sans);
         color: var(--ink);
-        background:
-          radial-gradient(circle at 0% 0%, rgba(31,136,61,0.04), transparent 40%),
-          radial-gradient(circle at 100% 100%, rgba(10,10,10,0.03), transparent 40%),
-          var(--bg-page);
+        background: var(--bg-page);
         display: grid;
         place-items: center;
         padding: 24px;
@@ -195,10 +202,10 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         width: 100%;
         max-width: 380px;
         background: var(--bg-card);
-        border: 1px solid var(--line);
-        border-radius: 12px;
+        border: 0;
+        border-radius: var(--radius-card);
         padding: 32px 28px;
-        box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 8px 24px -12px rgba(0,0,0,0.06);
+        box-shadow: var(--shadow-card);
       }
       .brand {
         font-family: var(--font-mono);
@@ -208,13 +215,19 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         text-transform: uppercase;
         margin: 0 0 4px;
       }
-      h1 { font-size: 22px; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.01em; }
+      h1 {
+        font-family: var(--font-serif);
+        font-size: 25px;
+        font-weight: 700;
+        margin: 0 0 24px;
+        letter-spacing: 0;
+      }
       form { display: flex; flex-direction: column; gap: 10px; }
       label { font-size: 12px; color: var(--ink-dim); font-weight: 500; }
       input {
         padding: 10px 12px;
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: var(--radius-pill);
         font-size: 14px;
         font-family: var(--font-mono);
         background: var(--bg-input);
@@ -228,14 +241,14 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         background: var(--ink);
         color: var(--btn-fg);
         border: none;
-        border-radius: 8px;
+        border-radius: var(--radius-pill);
         font-size: 14px;
         font-weight: 500;
         font-family: var(--font-sans);
         cursor: pointer;
-        transition: opacity 120ms ease;
+        transition: transform 120ms ease, opacity 120ms ease;
       }
-      button:hover { opacity: 0.85; }
+      button:hover { opacity: 0.92; transform: translateY(-1px); }
       button.secondary {
         background: var(--bg-input);
         color: var(--ink);
@@ -251,7 +264,7 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         padding: 10px 12px;
         background: var(--error-bg);
         border: 1px solid var(--error-line);
-        border-radius: 8px;
+        border-radius: 14px;
         margin-bottom: 12px;
       }
       .info {
@@ -260,7 +273,7 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         padding: 10px 12px;
         background: var(--info-bg);
         border: 1px solid var(--info-line);
-        border-radius: 8px;
+        border-radius: 14px;
         margin-bottom: 12px;
       }
       /* Allen 2026-05-24 — mobile-visible flash bubble for the auth
@@ -273,8 +286,8 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         gap: 10px;
         padding: 14px 16px;
         margin-bottom: 16px;
-        border-radius: 10px;
-        border-width: 2px;
+        border-radius: 16px;
+        border-width: 1px;
         border-style: solid;
         font-size: 15px;
         line-height: 1.4;
@@ -329,17 +342,17 @@ defmodule EzagentWeb.AuthBoundaryLayout do
         padding: 10px 12px;
         background: var(--bg-code);
         border: 1px dashed var(--line);
-        border-radius: 8px;
+        border-radius: 14px;
       }
       .hint { color: var(--ink-dim); font-size: 12px; margin: 18px 0 0; line-height: 1.55; }
-      code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-code); padding: 1px 5px; border-radius: 3px; }
+      code { font-family: var(--font-mono); font-size: 11px; background: var(--bg-code); padding: 1px 5px; border-radius: 999px; }
     </style>
   </head>
   """
 
   @doc """
   Returns the full `<!DOCTYPE html>` + `<head>` block (including the
-  Geist font import + the design-tokens CSS + the dark-mode rules)
+  Ezagent DS font import + the design-tokens CSS + the dark-mode rules)
   plus the opening `<html lang="en">` tag.
 
   `title` is HTML-escaped before substitution; pass the

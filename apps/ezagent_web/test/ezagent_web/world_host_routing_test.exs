@@ -73,6 +73,39 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert has_element?(view, "#world-root[data-world-component='overview']")
   end
 
+  test "world shell exposes visible workspaces for the header switcher", %{conn: conn} do
+    target = "world-switcher-#{System.unique_integer([:positive])}"
+    {:ok, _} = Ezagent.Workspace.Store.create(target, %{})
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, _view, html} = live(conn, "/sessions")
+    caller = world_caller(html)
+
+    assert caller["workspace_uri"] == "workspace://system"
+    assert caller["current_workspace_name"] == "system"
+
+    assert Enum.any?(caller["workspaces"], fn workspace ->
+             workspace["name"] == "system" and
+               workspace["uri"] == "workspace://system" and
+               workspace["current"] == true and
+               workspace["switch_path"] == "/workspaces/switch"
+           end)
+
+    assert Enum.any?(caller["workspaces"], fn workspace ->
+             workspace["name"] == target and
+               workspace["uri"] == "workspace://#{target}" and
+               workspace["current"] == false and
+               workspace["switch_path"] == "/workspaces/switch"
+           end)
+  end
+
   test "world sessions_table dispatch joins through Invocation.dispatch", %{conn: conn} do
     caller = "entity://system/user/world_join_#{System.unique_integer([:positive])}"
     caller_uri = Ezagent.URI.new!(caller)
@@ -100,6 +133,166 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     assert html =~ ~s(data-last-dispatch="ok")
     assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
+  end
+
+  test "world sessions_table opens an existing member without preloaded join caps", %{conn: conn} do
+    caller = "entity://system/user/world_existing_member_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok = create_read_only_user(caller_uri, [])
+    {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+
+    refute holds_join_cap?(caller_uri, session_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "sessions.join",
+      "args" => %{"session_uri" => URI.to_string(session_uri)}
+    })
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert has_element?(view, "#world-root[data-world-component='conversation']")
+  end
+
+  test "world sessions_table opens an existing member whose principal is cold", %{conn: conn} do
+    caller =
+      "entity://system/user/world_cold_existing_member_#{System.unique_integer([:positive])}"
+
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    on_exit(fn ->
+      _ = Ezagent.LocalRuntime.ensure_live(session_uri)
+      _ = Ezagent.Entity.spawn_principal(caller_uri)
+    end)
+
+    :ok = create_read_only_user(caller_uri, [])
+    {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+    :ok = Ezagent.Kind.terminate(caller_uri)
+    wait_until(fn -> Ezagent.KindRegistry.lookup(caller_uri) == :error end)
+
+    refute holds_join_cap?(caller_uri, session_uri)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "sessions.join",
+      "args" => %{"session_uri" => URI.to_string(session_uri)}
+    })
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert has_element?(view, "#world-root[data-world-component='conversation']")
+    assert holds_join_cap?(caller_uri, session_uri)
+  end
+
+  test "world sessions_table opens observe-only when caller cannot join", %{conn: conn} do
+    caller = "entity://system/user/world_observe_only_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok = create_read_only_user(caller_uri, [])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "sessions.join",
+      "args" => %{"session_uri" => URI.to_string(session_uri)}
+    })
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert has_element?(view, "#world-root[data-world-component='conversation']")
+    refute holds_join_cap?(caller_uri, session_uri)
+  end
+
+  test "world conversation deep link rehydrates a cold member session before self-join", %{
+    conn: conn
+  } do
+    caller =
+      "entity://system/user/world_cold_deep_link_member_#{System.unique_integer([:positive])}"
+
+    caller_uri = Ezagent.URI.new!(caller)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    on_exit(fn ->
+      _ = Ezagent.LocalRuntime.ensure_live(session_uri)
+      _ = Ezagent.Entity.spawn_principal(caller_uri)
+    end)
+
+    :ok = create_read_only_user(caller_uri, [])
+    {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+    :ok = Ezagent.Kind.terminate(session_uri)
+    :ok = Ezagent.Kind.terminate(caller_uri)
+    wait_until(fn -> Ezagent.KindRegistry.lookup(session_uri) == :error end)
+    wait_until(fn -> Ezagent.KindRegistry.lookup(caller_uri) == :error end)
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    assert has_element?(view, "#world-root[data-world-component='conversation']")
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(caller_uri)
+    assert holds_join_cap?(caller_uri, session_uri)
+  end
+
+  test "world React island navigation patches without a full page reload", %{conn: conn} do
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:navigate", %{"to" => "/identities/agents/new"})
+
+    assert_patch(view, "/identities/agents/new")
   end
 
   test "world.ezagent.chat sessions path stays inside the world scope", %{conn: conn} do
@@ -273,10 +466,11 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     end
   end
 
-  test "world sessions_table dispatch denies caller without caps", %{conn: conn} do
+  test "world sessions_table dispatch records join denial", %{conn: conn} do
     caller = "entity://system/user/world_no_caps_#{System.unique_integer([:positive])}"
     caller_uri = Ezagent.URI.new!(caller)
     session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     :ok = create_read_only_user(caller_uri, [])
 
@@ -299,6 +493,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       })
 
     assert html =~ ~s(data-last-dispatch="error:unauthorized")
+    assert_patch(view, "/sessions?session=#{encoded}")
   end
 
   test "world layout manage dispatch persists and reloads for admin", %{conn: conn} do
@@ -425,6 +620,42 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     }
   end
 
+  defp join_member_as_admin(session_uri, member_uri) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :join),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  defp holds_join_cap?(caller_uri, session_uri) do
+    Enum.any?(Ezagent.Identity.list_caps_for(caller_uri), fn
+      %Ezagent.Capability{} = cap ->
+        cap.kind == :session and cap.behavior == Ezagent.Behavior.Session and
+          Ezagent.Capability.action_of(cap) == :join and cap.instance == session_uri
+
+      _ ->
+        false
+    end)
+  end
+
+  defp wait_until(fun, attempts \\ 50)
+  defp wait_until(_fun, 0), do: flunk("condition not met in time")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
   defp layout_manage_cap(caller_uri, workspace_uri) do
     %Ezagent.Capability{
       kind: :workspace,
@@ -435,6 +666,23 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       granted_by: caller_uri,
       granted_at: DateTime.utc_now()
     }
+  end
+
+  defp world_caller(html) do
+    [_, json] = Regex.run(~r/data-caller="([^"]*)"/, html)
+
+    json
+    |> html_unescape()
+    |> Jason.decode!()
+  end
+
+  defp html_unescape(s) do
+    s
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&amp;", "&")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
   end
 
   defp persisted_order_layout(workspace_uri) do

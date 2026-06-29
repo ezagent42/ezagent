@@ -8,19 +8,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap"
     />
     <style>
       :root {
-        --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-        --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
-        --ink: #0a0a0a;
-        --ink-dim: #525252;
+        --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --font-serif: 'Noto Serif SC', Georgia, serif;
+        --font-mono: 'Space Mono', ui-monospace, Menlo, monospace;
+        --ink: #17171B;
+        --ink-dim: #707078;
         --ink-faint: #a3a3a3;
-        --line: #e5e5e5;
-        --accent: #1f883d;
-        --bg-top: #fafafa;
-        --bg-bottom: #ffffff;
+        --line: rgba(23,23,27,0.10);
+        --accent: #0B5CFF;
+        --bg-top: #E8E8EB;
+        --bg-bottom: #E8E8EB;
         --btn-bg: #ffffff;
       }
       /* Phase 8c PR-D — honor explicit data-theme=dark from the theme
@@ -31,9 +32,9 @@
         --ink-dim: #a3a3a3;
         --ink-faint: #525252;
         --line: #27272a;
-        --accent: #4ade80;
-        --bg-top: #09090b;
-        --bg-bottom: #18181b;
+        --accent: #6EA0FF;
+        --bg-top: #101015;
+        --bg-bottom: #101015;
         --btn-bg: #18181b;
       }
       @media (prefers-color-scheme: dark) {
@@ -42,9 +43,9 @@
           --ink-dim: #a3a3a3;
           --ink-faint: #525252;
           --line: #27272a;
-          --accent: #4ade80;
-          --bg-top: #09090b;
-          --bg-bottom: #18181b;
+          --accent: #6EA0FF;
+          --bg-top: #101015;
+          --bg-bottom: #101015;
           --btn-bg: #18181b;
         }
       }
@@ -53,8 +54,7 @@
       body {
         font-family: var(--font-sans);
         color: var(--ink);
-        background:
-          linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+        background: var(--bg-top);
         display: grid;
         place-items: center;
         padding: 24px;
@@ -95,7 +95,7 @@
         font-size: 13px;
         font-weight: 500;
         padding: 8px 16px;
-        border-radius: 8px;
+        border-radius: 999px;
         border: 1px solid var(--line);
         background: var(--btn-bg);
         color: var(--ink);
@@ -103,7 +103,7 @@
         transition: all 120ms ease;
       }
       .btn:hover { border-color: var(--ink); }
-      .btn-primary { background: var(--ink); color: var(--bg-top); border-color: var(--ink); }
+      .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
       .btn-primary:hover { opacity: 0.85; }
       .brand {
         position: fixed;

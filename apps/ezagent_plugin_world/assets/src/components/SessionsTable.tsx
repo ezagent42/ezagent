@@ -44,11 +44,11 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
 
   return (
     <section
-      className="space-y-4 rounded-lg border border-border bg-card p-5 text-card-foreground"
+      className="min-w-0 max-w-full space-y-4 overflow-hidden rounded-lg border border-border bg-card p-5 text-card-foreground"
       aria-labelledby="sessions-title"
       data-world-component="sessions_table"
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 id="sessions-title" className="text-lg font-semibold text-foreground">
             Session activity
@@ -114,8 +114,53 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
         </form>
       )}
 
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full border-collapse text-sm">
+      <div className="grid gap-2 sm:hidden">
+        {sessions.length === 0 ? (
+          <div className="rounded-md border border-border bg-muted/30 px-3 py-6 text-center text-sm text-muted-foreground">
+            No sessions in this workspace.
+          </div>
+        ) : (
+          sessions.map((session) => {
+            const active = session.uri === currentSessionUri
+
+            return (
+              <article
+                className="rounded-md border border-border bg-background p-3 data-[active=true]:bg-accent/40"
+                data-active={active ? "true" : "false"}
+                key={session.uri}
+              >
+                <div className="flex items-start gap-2">
+                  <Circle className={active ? "mt-1 h-2 w-2 shrink-0 fill-[var(--ez-jade)] text-[var(--ez-jade)]" : "mt-1 h-2 w-2 shrink-0 fill-muted-foreground/40 text-muted-foreground/40"} aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <code className="block break-all font-mono text-xs text-foreground">{session.uri}</code>
+                    <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                      <span className="font-mono">{session.workspace_uri || "-"}</span>
+                      <span>{active ? "Open" : "Available"}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <a
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                    href={`/admin/sessions/${encodeURIComponent(session.uri)}/external_mirror`}
+                    title="Bind a Feishu chat to this session"
+                  >
+                    <Cable className="h-3.5 w-3.5" aria-hidden="true" />
+                    External mirror
+                  </a>
+                  <Button size="sm" variant={active ? "secondary" : "default"} onClick={() => onJoin?.(session.uri)}>
+                    <ArrowRight aria-hidden="true" />
+                    Open
+                  </Button>
+                </div>
+              </article>
+            )
+          })
+        )}
+      </div>
+
+      <div className="hidden w-full max-w-full overflow-x-auto rounded-md border border-border sm:block">
+        <table className="min-w-[760px] w-full border-collapse text-sm">
           <thead className="bg-muted/50 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Session</th>
@@ -139,7 +184,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                   <tr key={session.uri} data-active={active ? "true" : "false"} className="hover:bg-muted/30 data-[active=true]:bg-accent/40">
                     <td className="px-3 py-2 align-top">
                       <div className="flex items-center gap-2">
-                        <Circle className={active ? "h-2 w-2 fill-emerald-500 text-emerald-500" : "h-2 w-2 fill-muted-foreground/40 text-muted-foreground/40"} aria-hidden="true" />
+                        <Circle className={active ? "h-2 w-2 fill-[var(--ez-jade)] text-[var(--ez-jade)]" : "h-2 w-2 fill-muted-foreground/40 text-muted-foreground/40"} aria-hidden="true" />
                         <span className="font-mono text-xs text-foreground">{session.uri}</span>
                       </div>
                     </td>
