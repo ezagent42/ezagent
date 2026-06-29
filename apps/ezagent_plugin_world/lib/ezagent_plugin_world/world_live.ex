@@ -375,6 +375,8 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = socket.assigns.current_entity_uri
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
+    _ = Ezagent.LocalRuntime.ensure_live(session_uri)
+    _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller)
     provision_session_join_authority(session_uri, caller)
 
     target = Ezagent.URI.with_action(session_uri, :session, :join)
@@ -394,6 +396,9 @@ defmodule EzagentPluginWorld.WorldLive do
       {:ok, _payload} ->
         dispatch_session_join_ok(socket, session_uri)
 
+      {:error, :unauthorized} ->
+        dispatch_session_join_observe(socket, session_uri, :unauthorized)
+
       {:error, reason} ->
         {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
     end
@@ -407,6 +412,15 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:current_session_uri, session_uri)
      |> assign(:current_session_uri_str, URI.to_string(session_uri))
      |> assign(:last_dispatch_status, "ok")
+     |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+  end
+
+  defp dispatch_session_join_observe(socket, %URI{} = session_uri, reason) do
+    {:noreply,
+     socket
+     |> assign(:current_session_uri, session_uri)
+     |> assign(:current_session_uri_str, URI.to_string(session_uri))
+     |> assign(:last_dispatch_status, "error:#{reason_to_string(reason)}")
      |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
   end
 
