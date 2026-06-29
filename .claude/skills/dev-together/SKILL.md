@@ -41,6 +41,7 @@ standard + conflict/merge management:
 - execute a handoff → **superpowers:executing-plans** / **superpowers:subagent-driven-development**
 - adversarial review → **codex-rescue** (static-only, no `mix`)
 - project rules → **ezagent-developer**, **ezagent-socialware**, `docs/guide/world-coordination.md`
+- deploy/promotion work → **ezagent-deploy** (nightly→beta→stable build/promote/reflow/verify/smoke flow)
 
 ## Roles
 - **Lead programmer** — anyone, human or agent. Plans, generates handoffs, and is
@@ -52,8 +53,9 @@ standard + conflict/merge management:
 > branches.** Task branches merge into `main` only. `beta` (smoke) and `release`
 > (stable, + `vX.Y.Z` tags) are long-lived **promotion pointers** advanced solely by
 > the deploy flow (`git branch -f beta <main-sha> && git push`), never merged into by
-> `close`/`push`. See the guard in [commands/close.md](commands/close.md) and the deploy
-> spec `docs/superpowers/specs/2026-06-25-deploy-flow-design.md`.
+> `close`/`push`. For deploy work, load **ezagent-deploy**; see also the guard in
+> [commands/close.md](commands/close.md) and the deploy spec
+> `docs/superpowers/specs/2026-06-25-deploy-flow-design.md`.
 
 ## Artifacts — `docs/together/YYYY-MM-DD/` (one dated folder per day)
 ```

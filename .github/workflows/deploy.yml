@@ -28,6 +28,12 @@ jobs:
           else echo "channel=stable" >> "$GITHUB_OUTPUT"; fi
       - name: Deploy
         run: docker/deploy.sh "${{ steps.ch.outputs.channel }}"
+      - name: Reflow stable data and verify migration rehearsal (nightly/beta only)
+        if: steps.ch.outputs.channel != 'stable'
+        run: |
+          docker/backup.sh "${{ steps.ch.outputs.channel }}"
+          docker/reflow.sh "${{ steps.ch.outputs.channel }}"
+          docker/verify-rehearsal.sh "${{ steps.ch.outputs.channel }}"
       - name: Smoke (beta only)
         if: steps.ch.outputs.channel == 'beta'
         run: docker/smoke.sh beta
