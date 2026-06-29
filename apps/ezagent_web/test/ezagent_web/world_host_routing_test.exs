@@ -102,6 +102,24 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
   end
 
+  test "world React island navigation patches without a full page reload", %{conn: conn} do
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:navigate", %{"to" => "/identities/agents/new"})
+
+    assert_patch(view, "/identities/agents/new")
+  end
+
   test "world.ezagent.chat sessions path stays inside the world scope", %{conn: conn} do
     conn =
       conn

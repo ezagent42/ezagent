@@ -1,6 +1,17 @@
+import {worldNavigationTarget} from "./world_navigation.js"
+
 export const WorldRenderer = {
   async mounted() {
     this._worldUnmount = null
+    this._worldNavigate = (event) => {
+      const to = worldNavigationTarget(event, this.el)
+      if (!to) return
+
+      event.preventDefault()
+      this.pushEventTo(this.el, "world:navigate", {to})
+    }
+
+    this.el.addEventListener("click", this._worldNavigate)
     const moduleUrl = this.el.dataset.worldModuleUrl
 
     if (!moduleUrl) {
@@ -28,6 +39,7 @@ export const WorldRenderer = {
   },
 
   destroyed() {
+    if (this._worldNavigate) this.el.removeEventListener("click", this._worldNavigate)
     if (this._worldUnmount) this._worldUnmount()
   },
 }
