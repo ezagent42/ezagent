@@ -146,6 +146,31 @@
   /* propose */
   .wc-propose{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--accent-press);background:var(--accent-wash);padding:9px 16px;border-radius:var(--r-pill);margin-left:auto;transition:all 150ms}
   .wc-propose:hover{background:var(--accent);color:var(--on-accent)}
+  /* demo 控制条 */
+  .wc-dembar{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:150;display:flex;align-items:center;gap:10px;padding:9px 14px 9px 16px;border-radius:var(--r-pill);background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--shadow-card),var(--glass-edge)}
+  body:not([data-page="worldcup"]) .wc-dembar{display:none}
+  .wc-dembar .dnote{font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+  .wc-dembtn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:13px;padding:9px 15px;border-radius:var(--r-pill);transition:all 150ms}
+  .wc-dembtn.ff{background:var(--orange-wash);color:var(--orange)}.wc-dembtn.ff:hover{background:var(--orange);color:#fff}
+  .wc-dembtn.merge{background:var(--ground-2);color:var(--ink)}.wc-dembtn.merge:hover{background:var(--ground-hover)}
+  /* 分享卡 */
+  .wc-sharecard{background:#14131C;border-radius:var(--r-lg);padding:26px 26px 22px;color:#F4F2EC;position:relative;overflow:hidden}
+  .wc-sharecard .sc-num{position:absolute;top:18px;right:20px;font-family:var(--font-mono);font-size:11px;color:#85837B}
+  .wc-sharecard .sc-eye{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue)}
+  .wc-sharecard .sc-badge{display:inline-block;margin-top:10px;font-family:var(--font-mono);font-size:11px;font-weight:700;background:var(--blue);color:#fff;padding:4px 11px;border-radius:var(--r-pill)}
+  .wc-sharecard .sc-title{font-family:var(--font-cn);font-weight:600;font-size:23px;margin:12px 0 4px;line-height:1.3}
+  .wc-sharecard .sc-sub{font-size:13px;color:#B6B4AC}
+  .wc-sharecard .sc-lines{margin:16px 0 12px}
+  .wc-sharecard .sc-line{display:flex;justify-content:space-between;gap:12px;font-size:13px;color:#B6B4AC;border-top:1px solid rgba(255,255,255,.08);padding:9px 0}
+  .wc-sharecard .sc-line b{color:#fff}
+  .wc-sharecard .sc-cta{font-size:12.5px;color:#5AA2FF;margin-top:4px}
+  .wc-sharecard .sc-brand{margin-top:16px;font-family:var(--font-mono);font-size:10px;color:#56544D}
+  .wc-sharebtns{display:flex;gap:10px;margin-top:16px}
+  .wc-sharebtns .b{flex:1;appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:14px;padding:12px;border-radius:var(--r-pill);transition:all 150ms}
+  .wc-sharebtns .b.g{background:var(--ground-2);color:var(--ink)}.wc-sharebtns .b.g:hover{background:var(--ground-hover)}
+  .wc-sharebtns .b.gold{background:var(--accent);color:var(--on-accent)}.wc-sharebtns .b.gold:hover{background:var(--accent-hover)}
+  .wc-ffstage{text-align:center;padding:22px 0 6px}
+  .wc-ffbig{font-family:var(--font-cn);font-weight:600;font-size:36px}
   @media (max-width:860px){.wc-grid{grid-template-columns:1fr}.wc-predrow{flex-direction:column}}
   `;
   if (!$('#wc-style')) { const s = el('style'); s.id = 'wc-style'; s.textContent = CSS; document.head.appendChild(s); }
@@ -502,6 +527,96 @@
   }
   function renderAll() { renderStatus(); renderTicker(); renderViewTabs(); renderView(); }
 
+  // ── 裂变分享卡 ────────────────────────────────────────────────────────────
+  let CARD_NO = 137;
+  function shareCard(opts) {
+    const no = opts.no || ('#' + String(++CARD_NO).padStart(6, '0'));
+    openModal(`<div class="wc-sharecard">
+        <span class="sc-num">world.cup ${no}</span>
+        <div class="sc-eye">${opts.eye || 'WORLD.CUP'}</div>
+        ${opts.badge ? `<div class="sc-badge">${opts.badge}</div>` : ''}
+        <div class="sc-title">${opts.title}</div>
+        ${opts.sub ? `<div class="sc-sub">${opts.sub}</div>` : ''}
+        <div class="sc-lines">${(opts.lines || []).map((l) => `<div class="sc-line"><span>${l[0]}</span><b>${l[1]}</b></div>`).join('')}</div>
+        ${opts.cta ? `<div class="sc-cta">${opts.cta}</div>` : ''}
+        <div class="sc-brand">Ezagent · world.cup · Issue, PR, Merge!</div>
+      </div>
+      <div class="wc-sharebtns">
+        <button class="b g" id="wc-sctxt">复制文案</button>
+        <button class="b gold" data-close>完成</button>
+      </div>`, true);
+    $('#wc-sctxt').onclick = () => { (navigator.clipboard?.writeText(opts.copyText || opts.title) || Promise.reject()).then(() => toast(opts.copiedToast || '文案已复制 →'), () => toast('复制失败，长按手动复制')); };
+  }
+  function shareRecordCard() {
+    const me = you(), tb = totalBets(me), rate = tb ? Math.round(hitRate(me) * 100) : 0;
+    shareCard({
+      eye: '我的预测战绩', badge: tb ? `命中率 ${rate}%` : '新晋预言家',
+      title: (tb >= MIN_BETS && eyeRank() <= 3) ? '我是 world.cup 眼光榜常客' : '我在 world.cup 押路线图',
+      lines: [['声望', fmt(me.renown)], ['战绩', `${me.hits} 胜 ${me.misses} 负`], ['我要用的需求', myWant.size + ' 个'], ['眼光榜', tb >= MIN_BETS ? ('#' + eyeRank()) : '冲榜中']],
+      cta: '来 world.cup 押你看好的功能，赌它会不会火 →',
+      copyText: `我在 Ezagent world.cup 押路线图：命中率 ${rate}%、${me.hits}胜${me.misses}负、声望 ${fmt(me.renown)}。来赌你看好的功能。`,
+      copiedToast: '战绩文案已复制，去发群里 →',
+    });
+  }
+  function shareForeseerCard(it) {
+    shareCard({
+      eye: '需求先知', badge: 'EARLY ADOPTER',
+      title: `我早就要了「${it.title}」`,
+      sub: `现在它上线了（${it.prRef || it.id} 已合并）`,
+      lines: [['我举手得早', '✓'], ['最终候补', it.waitlist + ' 人'], ['状态', '已上线']],
+      cta: '眼光不错？来挑下一个会火的功能 →',
+      copyText: `我早就在 Ezagent world.cup 举手要「${it.title}」，现在它上线了。来挑下一个会火的。`,
+      copiedToast: '先知卡文案已复制 →',
+    });
+  }
+
+  // ── demo 控制：快进结算 / 模拟 PR 合并 ─────────────────────────────────────
+  function fastForwardSettle() {
+    const open = MARKETS.filter((m) => m.status === 'open');
+    if (!open.length) { toast('没有可结算的预测了'); return; }
+    const m = open.find((x) => POSITIONS.some((p) => p.marketId === x.id && p.status === 'open')) || open[0];
+    const it = itemOfMarket(m);
+    const surge = ((it.waitlist + POSITIONS.length * 7 + 17) % 54) - 10;
+    it.waitlist = Math.max(0, it.waitlist + surge);
+    const winKey = it.waitlist >= m.hotAt ? 'long' : 'short';
+    openModal(`<h3 style="text-align:center">结算窗口到期</h3>
+      <p class="wc-msub" style="text-align:center">${it ? it.title : m.id} · 会不会火</p>
+      <div class="wc-ffstage" id="wc-ffstage"><div class="wc-msub">统计候补数…</div></div>`);
+    setTimeout(() => {
+      settle(m.id, winKey);
+      const win = m.sides.find((s) => s.key === winKey);
+      const won = POSITIONS.filter((p) => p.marketId === m.id && p.status === 'won');
+      const lost = POSITIONS.filter((p) => p.marketId === m.id && p.status === 'lost');
+      const winnings = won.reduce((s, p) => s + p.amount * p.lockedOdds, 0);
+      const verdict = won.length ? `<div style="color:var(--jade);font-weight:800;font-size:18px">你押中了！+${fmt(winnings)} 声望</div>`
+        : lost.length ? `<div style="color:var(--red);font-weight:700">这把没押中（已计入战绩）</div>`
+        : `<div class="wc-msub">你没押这个 —— 围观一次结算</div>`;
+      const ff = $('#wc-ffstage');
+      if (ff) ff.innerHTML = `
+        <div class="wc-ffbig" style="color:${winKey === 'long' ? 'var(--jade)' : 'var(--ink-3)'}">${winKey === 'long' ? '会火' : '没火'}</div>
+        <div style="margin-top:6px;font-weight:600;color:var(--ink)">候补 ${it.waitlist} / 阈值 ${m.hotAt} → ${win.label}</div>
+        <div style="margin-top:14px">${verdict}</div>
+        <button class="wc-mbtn" id="wc-ffdone">${won.length ? '晒预测战绩' : '知道了'}</button>`;
+      TICKER_EVENTS.unshift({ pr: it ? it.id : m.id, txt: `结算 → 候补 ${it.waitlist} · ${win.label}` });
+      const done = $('#wc-ffdone'); if (done) done.onclick = () => { closeModal(); if (won.length) shareRecordCard(); renderAll(); };
+      renderAll();
+    }, 1100);
+  }
+  function mergeAdvance() {
+    const cand = ITEMS.filter((i) => i.stage === 'pr').concat(ITEMS.filter((i) => i.stage === 'issue'));
+    const it = cand.find((i) => myWant.has(i.id)) || cand[0];
+    if (!it) { toast('没有可推进的需求了'); return; }
+    const wasEarly = myWant.has(it.id);
+    const mk = marketFor(it); if (mk) settle(mk.id, it.waitlist >= mk.hotAt ? 'long' : 'short');
+    it.stage = 'merged'; it.prRef = it.id; it.when = '刚刚';
+    const merge = NOW, pr = Math.min(it.t.pr, merge - 0.25), issue = Math.min(it.t.issue, pr - 0.25);
+    it.t = { issue, pr, merge };
+    buildMarkets(); renderAll();
+    toast(`${it.id} 已合并上线！`);
+    TICKER_EVENTS.unshift({ pr: it.id, txt: '已合并 → 候补者收到上线通知' });
+    if (wasEarly) shareForeseerCard(it);
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
   async function boot() {
     const root = $('#wc-root'); if (!root) return;
@@ -516,9 +631,17 @@
     $('#wc-status').addEventListener('click', (e) => {
       const p = e.target.closest('[data-panel]'); if (p) { openPanel(p.dataset.panel); return; }
       const lb = e.target.closest('[data-lb]'); if (lb) { openLeaderboard(lb.dataset.lb); return; }
-      if (e.target.closest('#wc-record')) { toast('晒战绩 · 分享卡 Step5 接入'); return; }
+      if (e.target.closest('#wc-record')) { shareRecordCard(); return; }
     });
     $('#wc-propose').addEventListener('click', openPropose);
+    // demo 控制条（挂 body，真·viewport-fixed；按 body[data-page] CSS 控制显隐）
+    if (!$('#wc-dembar')) {
+      const d = el('div', 'wc-dembar'); d.id = 'wc-dembar';
+      d.innerHTML = `<button class="wc-dembtn ff" id="wc-ff">快进结算</button><button class="wc-dembtn merge" id="wc-merge">模拟 PR 合并</button><span class="dnote">demo 控制</span>`;
+      document.body.appendChild(d);
+      $('#wc-ff').onclick = fastForwardSettle;
+      $('#wc-merge').onclick = mergeAdvance;
+    }
     $('#wc-view').addEventListener('click', (e) => {
       let b;
       if (b = e.target.closest('[data-want]')) { onWantClick(b.dataset.want); return; }

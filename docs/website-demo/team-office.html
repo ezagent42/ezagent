@@ -174,53 +174,73 @@ const ROLE_BADGE={lead:'lead',
   'human-dev':'dev',designer:'designer',agent:'agent'};
 const ROLE_CN={lead:'lead · 队长','human-dev':'dev · 开发',designer:'designer · 设计',agent:'agent · AI'};
 
+/* 屏幕内容（按矩形自适应，可放进任意尺寸的屏）──────────────────────────────── */
+function screen(type,x,y,w,h,delay){
+  if(type==='canvas'){
+    const p=Math.round(w*0.08);
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="#F4F4F6"/>
+      <rect x="${x+p}" y="${y+p}" width="${Math.round(w*0.36)}" height="${Math.round(h*0.44)}" rx="3" fill="var(--blue)"/>
+      <rect x="${x+Math.round(w*0.52)}" y="${y+p}" width="${Math.round(w*0.4)}" height="${Math.round(h*0.18)}" rx="3" fill="var(--yellow)"/>
+      <rect x="${x+Math.round(w*0.52)}" y="${y+Math.round(h*0.34)}" width="${Math.round(w*0.4)}" height="${Math.round(h*0.16)}" rx="3" fill="var(--red)"/>
+      <rect class="anim" x="${x+p}" y="${y+Math.round(h*0.62)}" width="${w-p*2}" height="${Math.round(h*0.16)}" rx="3" fill="var(--jade)" style="animation:codeline 2.8s var(--ease-out) infinite;animation-delay:${delay}s"/>`;
+  }
+  if(type==='cube'){
+    const f=Math.min(w,h)/58,hw=13*f,hh=7*f,dep=14*f,cx=x+w/2,ty=y+h*0.18,my=ty+hh;
+    const dy=y+h-7,dxs=[cx-9,cx,cx+9];
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="var(--screen-dark)"/>
+      <g class="anim" style="transform-origin:${cx}px ${(my+dep/2).toFixed(1)}px;animation:cubeSpin 2.8s var(--ease-out) infinite;animation-delay:${delay}s">
+        <path d="M${cx} ${ty.toFixed(1)} l${hw.toFixed(1)} ${hh.toFixed(1)} l${-hw.toFixed(1)} ${hh.toFixed(1)} l${-hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--yellow)"/>
+        <path d="M${(cx-hw).toFixed(1)} ${my.toFixed(1)} l${hw.toFixed(1)} ${hh.toFixed(1)} v${dep.toFixed(1)} l${-hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--red)"/>
+        <path d="M${(cx+hw).toFixed(1)} ${my.toFixed(1)} l${-hw.toFixed(1)} ${hh.toFixed(1)} v${dep.toFixed(1)} l${hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--blueink)"/>
+      </g>
+      <g fill="var(--blue)">${dxs.map((dx,i)=>`<circle class="anim" cx="${dx}" cy="${dy.toFixed(1)}" r="2.3" style="animation:think 1.4s infinite;animation-delay:${i*0.2}s"/>`).join('')}</g>`;
+  }
+  // code（默认）
+  const p=Math.round(w*0.08),lx=x+p,lw=w-p*2,n=4,step=(h-8)/(n+0.6);
+  const cols=['var(--jade)','var(--ink-4)','var(--blue)','var(--orange)'],ws=[.5,.78,.62,.42];
+  let g=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="var(--screen-dark)"/>`;
+  g+=`<g class="anim" style="animation:codeline 2.4s var(--ease-out) infinite;animation-delay:${delay}s">`;
+  for(let i=0;i<n;i++)g+=`<rect x="${lx}" y="${(y+5+step*i).toFixed(1)}" width="${Math.round(lw*ws[i])}" height="3.2" rx="1.6" fill="${cols[i]}"/>`;
+  g+=`</g><rect class="anim" x="${lx}" y="${(y+5+step*n).toFixed(1)}" width="6" height="3.2" fill="#fff" style="animation:caret 1s steps(1) infinite;animation-delay:${delay}s"/>`;
+  return g;
+}
+/* 一台显示器（外框 + 屏 + 颈托落到桌面）─────────────────────────────────────── */
+function monitor(x,y,w,h,type,delay){
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#0F0E16"/>
+    ${screen(type,x+5,y+5,w-10,h-13,delay)}
+    <rect x="${(x+w/2-7)}" y="${y+h-2}" width="14" height="14" fill="var(--desk-edge)"/>`;
+}
+/* 笔记本（俯视：键盘面 + 翻起的屏，摆桌面左前）──────────────────────────────── */
+function laptopSVG(){
+  return `<g>
+    <path d="M38 176 L94 176 L89 152 L43 152 Z" fill="#D9D9DF" stroke="var(--desk-edge)" stroke-width="1"/>
+    <rect x="48" y="160" width="34" height="10" rx="2" fill="#C2C2C9"/>
+    <path d="M44 151 L88 151 L84 131 L50 131 Z" fill="#0F0E16"/>
+    <path d="M49 148 L83 148 L80 134 L53 134 Z" fill="var(--blue)" opacity=".5"/>
+  </g>`;
+}
+
+/* 显示器布局：Allen + 张宁 双等屏；其余真人 大屏+笔记本；agent 单屏 ───────────── */
+const PERSONA={allenwoods:'dual',zhaomaota97:'dual'};
+const monLayout=m=>PERSONA[m.gh]||(m.role==='agent'?'solo':'biglaptop');
+
 /* ── 一张桌的 SVG（近俯视：后排显示器 / 中间键盘+手 / 近处小人）─────────────── */
 function deskSVG(m){
   const kbd=KBD[hashN(m.gh,KBD.length)];
-  const screen=ROLE_SCREEN[m.role]||'code';
+  const type=ROLE_SCREEN[m.role]||'code';
   const delay=(hashN(m.gh,28)/10).toFixed(2);          // 错峰相位，整屋不同步
-  let screenInner='';
-  if(screen==='code'){
-    screenInner=`
-      <rect x="70" y="20" width="100" height="58" rx="4" fill="var(--screen-dark)"/>
-      <g class="anim" style="animation:codeline 2.4s var(--ease-out) infinite;animation-delay:${delay}s">
-        <rect x="78" y="28" width="40" height="3.4" rx="1.7" fill="var(--jade)"/>
-        <rect x="78" y="36" width="64" height="3.4" rx="1.7" fill="var(--ink-4)"/>
-        <rect x="78" y="44" width="52" height="3.4" rx="1.7" fill="var(--blue)"/>
-        <rect x="78" y="52" width="70" height="3.4" rx="1.7" fill="var(--ink-4)"/>
-        <rect x="78" y="60" width="34" height="3.4" rx="1.7" fill="var(--orange)"/>
-      </g>
-      <rect class="anim" x="116" y="60" width="6" height="3.4" fill="#fff" style="animation:caret 1s steps(1) infinite;animation-delay:${delay}s"/>`;
-  }else if(screen==='canvas'){
-    screenInner=`
-      <rect x="70" y="20" width="100" height="58" rx="4" fill="#F4F4F6"/>
-      <rect x="78" y="28" width="38" height="26" rx="3" fill="var(--blue)"/>
-      <rect x="120" y="28" width="42" height="12" rx="3" fill="var(--yellow)"/>
-      <rect x="120" y="44" width="42" height="10" rx="3" fill="var(--red)"/>
-      <rect class="anim" x="78" y="60" width="84" height="10" rx="3" fill="var(--jade)" style="animation:codeline 2.8s var(--ease-out) infinite;animation-delay:${delay}s"/>`;
-  }else{ // cube — agent
-    screenInner=`
-      <rect x="70" y="20" width="100" height="58" rx="4" fill="var(--screen-dark)"/>
-      <g class="anim" style="transform-origin:120px 46px;animation:cubeSpin 2.8s var(--ease-out) infinite;animation-delay:${delay}s">
-        <path d="M120 32l13 7-13 7-13-7z" fill="var(--yellow)"/>
-        <path d="M107 39l13 7v14l-13-7z" fill="var(--red)"/>
-        <path d="M133 39l-13 7v14l13-7z" fill="var(--blueink)"/>
-      </g>
-      <g fill="var(--blue)">
-        <circle class="anim" cx="110" cy="70" r="2.4" style="animation:think 1.4s infinite;animation-delay:0s"/>
-        <circle class="anim" cx="120" cy="70" r="2.4" style="animation:think 1.4s infinite;animation-delay:.2s"/>
-        <circle class="anim" cx="130" cy="70" r="2.4" style="animation:think 1.4s infinite;animation-delay:.4s"/>
-      </g>`;
-  }
-  return `<svg viewBox="0 0 240 200" role="img" aria-label="${m.cn} 的工位">
+  const lay=monLayout(m);
+  let mon='';
+  if(lay==='dual')      mon=monitor(30,16,84,58,type,delay)+monitor(126,16,84,58,type,delay);
+  else if(lay==='solo') mon=monitor(64,14,112,70,type,delay);
+  else                  mon=monitor(58,10,124,74,type,delay)+laptopSVG();   // biglaptop
+  return `<svg viewBox="0 0 240 250" role="img" aria-label="${m.cn} 的工位">
     <!-- 地面投影 -->
-    <ellipse cx="120" cy="186" rx="92" ry="13" fill="rgba(15,15,15,.07)"/>
+    <ellipse cx="120" cy="222" rx="96" ry="15" fill="rgba(15,15,15,.07)"/>
     <!-- 桌面（近俯视，略带前宽透视） -->
     <path d="M44 86 L196 86 L210 168 L30 168 Z" fill="var(--desk)" stroke="var(--desk-edge)" stroke-width="1.5"/>
-    <!-- 显示器 -->
-    <rect x="64" y="14" width="112" height="70" rx="7" fill="#0F0E16"/>
-    ${screenInner}
-    <rect x="112" y="84" width="16" height="8" fill="var(--desk-edge)"/>
+    <!-- 显示器（按个人布局） -->
+    ${mon}
     <!-- 键盘（De Stijl 原色） -->
     <rect x="86" y="120" width="68" height="20" rx="4" fill="${kbd}"/>
     <g opacity=".28" fill="#000">
@@ -229,14 +249,32 @@ function deskSVG(m){
       <rect x="140" y="125" width="8" height="4" rx="1"/>
       <rect x="98" y="132" width="44" height="4" rx="2"/>
     </g>
-    <!-- 小人：圆头 + 剩影肩，近处压在桌前缘 -->
-    <g class="anim" style="transform-origin:120px 168px;animation:headBob 2.8s var(--ease-out) infinite;animation-delay:${delay}s">
-      <path d="M86 196 Q120 150 154 196 Z" fill="var(--seat)"/>
-      <circle cx="120" cy="158" r="20" fill="var(--seat)"/>
+    <!-- 办公椅（近俯视：五爪滚轮底座 + 座垫 + 靠背 + 扶手，中灰与近黑小人拉开层次）-->
+    <g fill="var(--ink-3)">
+      <g stroke="var(--ink-3)" stroke-width="6" stroke-linecap="round">
+        <line x1="120" y1="210" x2="120" y2="240"/>
+        <line x1="120" y1="210" x2="92"  y2="232"/>
+        <line x1="120" y1="210" x2="148" y2="232"/>
+        <line x1="120" y1="210" x2="97"  y2="204"/>
+        <line x1="120" y1="210" x2="143" y2="204"/>
+      </g>
+      <circle cx="120" cy="240" r="4"/><circle cx="92" cy="232" r="4"/><circle cx="148" cy="232" r="4"/>
+      <circle cx="97" cy="204" r="4"/><circle cx="143" cy="204" r="4"/>
+      <ellipse cx="120" cy="204" rx="31" ry="15"/>
+      <rect x="83" y="182" width="11" height="36" rx="5.5"/>
+      <rect x="146" y="182" width="11" height="36" rx="5.5"/>
+      <path d="M95 200 Q95 148 120 148 Q145 148 145 200 Z"/>
+    </g>
+    <!-- 小人（坐进椅子，手臂伸向键盘）-->
+    <g fill="var(--seat)">
+      <rect x="97" y="146" width="12" height="56" rx="6"/>
+      <rect x="131" y="146" width="12" height="56" rx="6"/>
+      <path d="M94 214 Q120 174 146 214 Z"/>
+      <circle class="anim" cx="120" cy="166" r="18" style="transform-origin:120px 166px;animation:headBob 2.8s var(--ease-out) infinite;animation-delay:${delay}s"/>
     </g>
     <!-- 双手敲键 -->
-    <rect class="anim" x="96" y="142" width="14" height="10" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handL .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
-    <rect class="anim" x="130" y="142" width="14" height="10" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handR .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
+    <rect class="anim" x="96" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handL .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
+    <rect class="anim" x="130" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handR .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
   </svg>`;
 }
 

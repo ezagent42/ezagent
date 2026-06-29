@@ -314,6 +314,7 @@ const hashN=(s,m)=>[...s].reduce((a,c)=>a+c.charCodeAt(0),0)%m;
 const PAGES=['intro','worldcup','contributors'];
 function setPage(p){
   if(!PAGES.includes(p))p='intro';
+  document.body.dataset.page=p;
   document.querySelectorAll('[data-page-panel]').forEach(m=>m.hidden=m.dataset.pagePanel!==p);
   document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.page===p));
   const h=p==='intro'?'#':'#'+p; if(location.hash!==h)history.replaceState(null,'',h);
