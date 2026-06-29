@@ -87,20 +87,22 @@
   .wc-ev .pr{font-family:var(--font-mono);color:var(--accent-press);font-weight:700}.wc-ev b{color:var(--ink);font-weight:600}
   @keyframes wc-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
   @media (prefers-reduced-motion:reduce){.wc-ticker .tk{animation:none}}
-  /* gantt (时间线) */
+  /* gantt (时间线) · 每需求三段 Issue→PR→Merge */
   .wc-gantt{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:24px 26px;overflow-x:auto}
-  .wc-gchart{position:relative;min-width:680px}
-  .wc-gbg{position:absolute;left:0;right:0;top:30px;bottom:0;display:grid;z-index:0;pointer-events:none}
-  .wc-gbg span{border-left:1px solid var(--line)}.wc-gbg span:first-child{border-left:0}
-  .wc-ghead{display:grid;margin-bottom:16px;position:relative;z-index:1}
-  .wc-ghead span{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding-left:8px}
-  .wc-grow{display:grid;position:relative;z-index:1;margin-bottom:7px;align-items:center}
-  .wc-gbar{height:11px;border-radius:var(--r-pill)}
-  .wc-gbar.live{background:var(--jade)}.wc-gbar.wip{background:var(--orange)}.wc-gbar.planned{background:var(--ground-hover);box-shadow:inset 0 0 0 1px var(--line)}
-  .wc-glabel{font-size:12.5px;color:var(--ink);padding-left:6px;font-weight:500}
-  .wc-glabel .gs{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);margin-left:8px}
+  .wc-gchart2{position:relative;min-width:720px}
+  .wc-gbg2{position:absolute;left:0;right:0;top:30px;bottom:0;display:grid;grid-template-columns:repeat(3,1fr);z-index:0;pointer-events:none}
+  .wc-gbg2 span{border-left:1px solid var(--line)}.wc-gbg2 span:first-child{border-left:0}
+  .wc-gyears{display:grid;grid-template-columns:repeat(3,1fr);margin-bottom:16px;position:relative;z-index:1}
+  .wc-gyears span{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding-left:8px}
+  .wc-grow2{position:relative;z-index:1;margin-bottom:15px}
+  .wc-glabel2{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin-bottom:7px;font-weight:500}
+  .wc-glabel2 .gs{font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+  .wc-track{position:relative;height:10px}
+  .wc-seg{position:absolute;height:10px;border-radius:var(--r-pill)}
+  .wc-seg.issue{background:var(--ink-4)}.wc-seg.pr{background:var(--orange)}.wc-seg.merge{background:var(--jade)}
+  .wc-seg.proj{opacity:.32;background-image:repeating-linear-gradient(45deg,rgba(0,0,0,.18) 0 4px,transparent 4px 8px)}
   .wc-glegend{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-bottom:14px}
-  .wc-glegend b.l{color:var(--jade)}.wc-glegend b.w{color:var(--orange)}.wc-glegend b.p{color:var(--ink-3)}
+  .wc-glegend b.i{color:var(--ink-4)}.wc-glegend b.p{color:var(--orange)}.wc-glegend b.m{color:var(--jade)}
   /* scenario gallery */
   .wc-galwrap{display:flex;flex-direction:column;gap:26px}
   .wc-galhead{display:flex;align-items:center;gap:10px;margin-bottom:14px}
@@ -256,26 +258,34 @@
       <ul>${DATA.定位.map(posLi).join('')}</ul></li></ul>`;
   }
 
-  // 时间线：成果按季度甘特
+  // 时间线：每个需求三段 Issue → PR → Merge（横轴＝时间，未到的斜纹＝预计）
+  const Y0 = 2025, Y1 = 2027.5, YEARS = [2025, 2026, 2027], NOW = 2026.45;
+  const ypct = (y) => ((Math.max(Y0, Math.min(Y1, y)) - Y0) / (Y1 - Y0)) * 100;
+  function whenYear(w) { if (!w) return NOW; const m = w.match(/(\d{4})\D*Q?(\d)?/); if (!m) return NOW; return +m[1] + ((m[2] ? +m[2] : 1) - 1) * 0.25; }
+  // segs: [cls, start, end, real?]
+  function rowSegs(status, when) {
+    const y = whenYear(when);
+    if (status === 'live') return [['issue', y - 0.55, y - 0.25, 1], ['pr', y - 0.25, y - 0.05, 1], ['merge', y - 0.05, y + 0.12, 1]];
+    if (status === 'wip') return [['issue', y - 0.4, y - 0.1, 1], ['pr', y - 0.1, NOW, 1], ['merge', y + 0.35, y + 0.5, 0]];
+    return [['issue', NOW, NOW + 0.25, 1], ['pr', NOW + 0.25, NOW + 0.5, 0], ['merge', NOW + 0.5, NOW + 0.65, 0]];
+  }
+  function ganttRow(r) {
+    const segs = rowSegs(r.status, r.when);
+    const bars = segs.map(([cls, a, b, real]) => `<div class="wc-seg ${cls}${real ? '' : ' proj'}" style="left:${ypct(a)}%;width:${Math.max(1.5, ypct(b) - ypct(a))}%"></div>`).join('');
+    return `<div class="wc-grow2">
+      <div class="wc-glabel2" style="margin-left:${ypct(segs[0][1])}%">${statusTag(r.status)}<span>${r.label}</span><span class="gs">${r.sub}</span></div>
+      <div class="wc-track">${bars}</div></div>`;
+  }
   function renderTimeline() {
-    const ach = allAch().filter((a) => a.when);
-    const qs = [...new Set(ach.map((a) => a.when))].sort();
-    const planned = allPains().filter((p) => !p.成果.length);
-    const names = qs.concat(planned.length ? ['想做'] : []);
-    const cols = names.length || 1;
-    const gtc = `grid-template-columns:repeat(${cols},1fr)`;
     const rows = [];
-    ach.forEach((a) => { const i = qs.indexOf(a.when) + 1;
-      rows.push({ cls: a.status, start: i, span: a.status === 'wip' ? cols - i + 1 : 1, label: a.title, sub: scn(a.场景) }); });
-    planned.forEach((p) => rows.push({ cls: 'planned', start: cols, span: 1, label: p.gc, sub: scn(p.场景) }));
-    rows.sort((a, b) => a.start - b.start || a.cls.localeCompare(b.cls));
-    const body = rows.map((s) => `<div class="wc-grow" style="${gtc}">
-      <div class="wc-gbar ${s.cls}" style="grid-column:${s.start}/span ${s.span};grid-row:1"></div>
-      <div class="wc-glabel" style="grid-column-start:${s.start};grid-row:2">${s.label}<span class="gs">${s.sub}</span></div></div>`).join('');
-    return `<div class="wc-glegend">横轴＝季度 · <b class="l">已上线</b> / <b class="w">在做</b> / <b class="p">想做</b>（绑真实 PR）</div>
-      <div class="wc-gantt"><div class="wc-gchart" style="min-width:${cols * 170}px">
-        <div class="wc-gbg" style="${gtc}">${names.map(() => '<span></span>').join('')}</div>
-        <div class="wc-ghead" style="${gtc}">${names.map((q) => `<span>${q}</span>`).join('')}</div>${body}</div></div>`;
+    allAch().forEach((a) => rows.push({ label: a.title, status: a.status, when: a.when, sub: 'PR #' + a.prId }));
+    allPains().filter((p) => !p.成果.length).forEach((p) => rows.push({ label: p.gc, status: 'planned', when: '', sub: scn(p.场景) }));
+    rows.sort((a, b) => whenYear(a.when) - whenYear(b.when));
+    return `<div class="wc-glegend">横轴＝时间 · 每个需求三段：<b class="i">Issue</b> → <b class="p">PR</b> → <b class="m">Merge</b>（斜纹＝预计）</div>
+      <div class="wc-gantt"><div class="wc-gchart2">
+        <div class="wc-gbg2">${YEARS.map(() => '<span></span>').join('')}</div>
+        <div class="wc-gyears">${YEARS.map((y) => `<span>${y}</span>`).join('')}</div>
+        ${rows.map(ganttRow).join('')}</div></div>`;
   }
 
   // 场景：按 scene 分组成果卡

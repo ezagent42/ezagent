@@ -74,6 +74,10 @@ main[data-page-panel]{padding-top:14px;animation:fu var(--dur-enter) var(--ease-
 .tab:hover{background:var(--ground-hover);color:var(--ink)}
 .tab.active{background:var(--accent);color:var(--on-accent)}
 .tab.active .en{color:rgba(255,255,255,.72)}
+.tab .navball{width:16px;height:16px;display:inline-block;transform-origin:center 85%;animation:ballbounce 1.5s cubic-bezier(.3,.6,.3,1) infinite}
+.tab:hover .navball{animation-duration:.7s}
+@keyframes ballbounce{0%{transform:translateY(0) rotate(0)}20%{transform:translateY(-5px) rotate(-16deg)}40%{transform:translateY(0) rotate(0)}55%{transform:translateY(-2px) rotate(11deg)}70%,100%{transform:translateY(0) rotate(0)}}
+@media (prefers-reduced-motion:reduce){.tab .navball{animation:none}}
 .nav .spacer{flex:1}
 .iconbtn{appearance:none;border:0;cursor:pointer;width:38px;height:38px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-2);display:grid;place-items:center;transition:all 150ms var(--ease-out)}
 .iconbtn:hover{background:var(--ground-hover);color:var(--ink)}
@@ -192,7 +196,7 @@ footer .mono{font-size:11px}
   <div class="brand" data-page="intro"><img class="logo light" src="ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></div>
   <div class="tabs" id="tabs">
     <button class="tab" data-page="intro">介绍<span class="en">Intro</span></button>
-    <button class="tab" data-page="worldcup">world.cup<span class="en">Progress</span></button>
+    <button class="tab" data-page="worldcup"><svg class="navball" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff" stroke="#17171B" stroke-width="1.6"/><path d="M12 7.2l3 2.2-1.15 3.5h-3.7L9 9.4z" fill="#17171B"/><path d="M12 7.2V4.2M15 9.4l2.7-1M13.85 12.9l1.7 2.4M10.15 12.9l-1.7 2.4M9 9.4l-2.7-1" stroke="#17171B" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>world.cup<span class="en">Progress</span></button>
     <button class="tab" data-page="contributors">团队<span class="en">Team</span></button>
   </div>
   <span class="spacer"></span>
@@ -269,18 +273,10 @@ footer .mono{font-size:11px}
 <!-- ════════ world.cup / PROGRESS ════════ -->
 <main data-page-panel="worldcup" hidden>
 <div class="wrap">
-  <div class="bip">
-    <svg class="ball" viewBox="0 0 48 48" aria-hidden="true">
-      <circle cx="24" cy="24" r="21" fill="#fff" stroke="#17171B" stroke-width="2"/>
-      <path d="M24 11l7 5-3 8h-8l-3-8z" fill="#17171B"/>
-      <path d="M24 11l7 5M24 11l-7 5M31 16l6-2M17 16l-6-2M21 24l-6 6M27 24l6 6M20 32h8" stroke="#17171B" stroke-width="2" fill="none" stroke-linecap="round"/>
-    </svg>
-    <span class="blob" style="width:160px;height:160px;background:var(--blue);left:-30px;top:-40px"></span>
-    <span class="blob" style="width:130px;height:130px;background:var(--orange);right:40px;bottom:-50px"></span>
-    <div style="position:relative;z-index:2">
-      <div class="bt">Build in public · world.cup</div>
-      <div class="bl">所有成果都来自真实研发进度——不画饼。给你在意的押一票，影响我们先做什么。</div>
-    </div>
+  <div class="sec-head first">
+    <span class="over">Progress · world.cup</span>
+    <h2>我们做到哪了</h2>
+    <p class="sub">所有成果都来自真实研发进度——不画饼。给你在意的投一票 / 押一注，影响我们先做什么。</p>
   </div>
 
   <div id="wc-root"></div>
