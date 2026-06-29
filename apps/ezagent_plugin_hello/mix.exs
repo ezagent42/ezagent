@@ -40,8 +40,9 @@ defmodule EzagentPluginHello.MixProject do
       # ezagent_domain_session; the hello page is born only via
       # `Surface.put_version/2` driven by `Turn`.
       {:ezagent_domain_session, in_umbrella: true},
-      # `CustomerFeed` + `public_view` (anonymous visitor delivery of the
-      # approved Surface tree) live in ezagent_domain_socialware.
+      # `ExternalFeed` + `public_view` (external/anonymous visitor delivery of
+      # the approved Surface page) live in ezagent_domain_socialware.
+      # (Was `CustomerFeed`, renamed in the socialware unification — #1069.)
       {:ezagent_domain_socialware, in_umbrella: true},
       # `Ezagent.UI.SessionViewRegistry` — register the hello internal PageView.
       {:ezagent_domain_ui, in_umbrella: true},
