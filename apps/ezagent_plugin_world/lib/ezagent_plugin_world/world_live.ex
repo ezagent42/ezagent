@@ -278,20 +278,27 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp world_patch_to(to) do
-    uri = URI.parse(to)
+    with {:ok, path, query} <- split_world_patch_to(to),
+         true <- world_patch_path?(path) do
+      {:ok, path <> query_suffix(query)}
+    else
+      _ -> :error
+    end
+  end
 
+  defp split_world_patch_to(to) do
     cond do
-      uri.scheme || uri.host || uri.userinfo || uri.fragment ->
+      String.contains?(to, ["#", "://"]) ->
         :error
 
-      not is_binary(uri.path) ->
-        :error
-
-      not world_patch_path?(uri.path) ->
+      String.starts_with?(to, "//") ->
         :error
 
       true ->
-        {:ok, uri.path <> query_suffix(uri.query)}
+        case String.split(to, "?", parts: 2) do
+          [path] -> {:ok, path, nil}
+          [path, query] -> {:ok, path, query}
+        end
     end
   end
 
