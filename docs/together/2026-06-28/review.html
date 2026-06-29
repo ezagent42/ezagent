@@ -42,11 +42,21 @@
 一句话："<b>什么是 base/socialware/fixture/definition/runtime-state/blob，红线在哪</b>"这个长期模糊的问题，这个周末给出了结构化答案——<b>下一周从架构 pivot 到产品/上线</b>（官网 / 内测 / 自举）。
 </div>
 
+<div class="big" style="background:#eff6ff;border-color:#bfdbfe">
+<b>两份 layering SPEC = 本周全员的必读对齐件。</b> 周末产出两份相互正交、代码已验证的设计档，是本周一切产品/测试工作的<b>前置阅读</b>：
+<ul style="margin:6px 0">
+<li><b>#1072 <code>ezagent-taxonomy-boundaries.md</code></b>（四层 carrier 边界）—— 定义 artifact <b>物理住在哪一层</b>（code plugin / definition data / runtime-state+blob / EZAGENT_HOME）+ 反泄漏红线 + §6 可选 arch-gate 草案。回答"X 该放哪"。</li>
+<li><b>#1069 <code>socialware-unification.md</code></b>（base/socialware/fixture 模型）—— 定义<b>什么是 socialware</b>（人+程序混合 FLOW，非纯 app）+ base/socialware/fixture 三层 + shape（recipe+responsibility+routing）+ P1-P10 落地相位。回答"X 是什么"。</li>
+</ul>
+两档<b>组合阅读</b>：concepts doc（#1069 §0）给概念分类，taxonomy SPEC（#1072）给 carrier 层+红线。本周凡涉及"新功能放哪/算不算泄漏"的判断，先查这两份。
+</div>
+
 <h2>§1 周末工作统计（按任务类别）</h2>
+<p style="font-size:12px;color:#6b7280">40 能力 PR 按类别分：12 架构/socialware 收口 · 11 潜伏 bug 修复 · 11 功能/E2E · 6 文档/流程。</p>
 <table>
 <tr><th>类别 / 任务</th><th>完成</th><th>实现 PR</th><th>开发人员</th><th>summary</th></tr>
 
-<tr><td colspan="5" style="background:#dbeafe;font-weight:600"><b>A. 架构 / socialware 收口（周末主题）</b></td></tr>
+<tr><td colspan="5" style="background:#dbeafe;font-weight:600"><b>A. 架构 / socialware 收口（周末主题，12 PR）</b></td></tr>
 <tr><td><b>socialware 统一（P1-P10）</b></td>
 <td>base/socialware/fixture 模型 + codex-orchestrator + P10 E2E gate（codex 自驱；独立评审 SOUND，CI 干净）</td>
 <td>#1069（实现）· #1068（SPEC + codex handoff docs）</td><td>allenwoods（codex subagent 自驱实现）</td>
@@ -77,7 +87,7 @@
 <td>#1047 · #1060</td><td>allenwoods（codex subagent）</td>
 <td>✅ 通信面统一到单一 feed channel</td></tr>
 
-<tr><td colspan="5" style="background:#fef3c7;font-weight:600"><b>B. 潜伏 bug 修复（部署阻断 + 运行时）</b></td></tr>
+<tr><td colspan="5" style="background:#fef3c7;font-weight:600"><b>B. 潜伏 bug 修复（部署阻断 + 运行时，11 PR）</b></td></tr>
 <tr><td><b>cc ReadyGate</b></td>
 <td>普通 cc agent 经 bridge-bind 走 ReadyGate（#505）——<b>此前只有 orchestrator cc 会 ready，普通 cc agent 根本不会 ready</b>（socialware 工作揭出的潜伏缺陷）</td>
 <td>#1066</td><td>allenwoods</td>
@@ -113,7 +123,7 @@
 <td>#1049</td><td>allenwoods</td>
 <td>✅</td></tr>
 
-<tr><td colspan="5" style="background:#dcfce7;font-weight:600"><b>C. 功能 / E2E</b></td></tr>
+<tr><td colspan="5" style="background:#dcfce7;font-weight:600"><b>C. 功能 / E2E（11 PR）</b></td></tr>
 <tr><td><b>F7 session 治理</b></td>
 <td>PR-A remove_participant（user/invited，同构，owner-gated）+ PR-B spawned-worker teardown + owner teardown cap（cap-model 改动）</td>
 <td>#1046 · #1057</td><td>allenwoods</td>
@@ -140,7 +150,7 @@
 <td>✅ 读路径不激活 agent</td></tr>
 
 <tr><td><b>customer 概念退役</b></td>
-<td>retire customer concept → anon-user + external visibility</td>
+<td>retire customer concept → anon-user + external visibility（<code>CustomerFeed→ExternalFeed</code>、<code>/socialware/customer→/socialware/external</code> 301 back-compat）</td>
 <td>#1037</td><td>allenwoods</td>
 <td>✅ 模型简化</td></tr>
 
@@ -154,7 +164,7 @@
 <td>#1038 · #1053</td><td>allenwoods</td>
 <td>✅ 命名对齐统一模型</td></tr>
 
-<tr><td colspan="5" style="background:#e0e7ff;font-weight:600"><b>D. 文档 / 流程</b></td></tr>
+<tr><td colspan="5" style="background:#e0e7ff;font-weight:600"><b>D. 文档 / 流程（6 PR）</b></td></tr>
 <tr><td><b>autoservice reframe</b></td>
 <td>flavor-agnostic reframe + 最终 no-shared-loop 决定（shelves #133 agentic-loop；autosvc = chat fixture）</td>
 <td>#1067</td><td>allenwoods</td>
@@ -166,7 +176,7 @@
 <td>✅</td></tr>
 
 <tr><td><b>skill 合并</b></td>
-<td>agent-extension guidance 合并进 ezagent-developer skill</td>
+<td>agent-extension guidance 合并进 ezagent-developer skill（<code>references/extending-agents.md</code>）</td>
 <td>#1040</td><td>allenwoods</td>
 <td>✅</td></tr>
 
@@ -186,6 +196,11 @@
 <li><b>顺序耦合（改进点）</b>：40 PR 在 0627 burst（31 个）+ 0628 收口（9 个）两天内合并，solo-coordinator 直接合流（无 stack.md/returns）。优点快；<b>缺点</b>：direct-merge cadence 不演练 dev-together 的 stack/return/reconcile loop——若本周团队返还 handoff，需重新启用 stack.md 流程（记为 process-debt，owner: lead）。</li>
 <li><b>bus-factor</b>：架构收口仍集中在一人（allenwoods + agents）。收口完成后下周把产品面分给团队并行、lead 聚焦上线收口。</li>
 </ul>
+
+<h3>架构收口对前序团队工作的回溯验证（两份 investigation，0629）</h3>
+<blockquote><b>investigation A —— hello / autoservice 在 socialware 统一后仍可跑（已验证）。</b> 周末 #1069/#1075/#1037 改了 socialware 的<b>门控</b>（<code>public_view: true</code> 标志 → <code>installs</code> 列表 + <code>DefinitionRegistry</code> + <code>Installation</code> + <code>visibility_policy.web_anon_access</code>），但 zhaomato 的渲染器/Surface tree/json-render catalog/builder <b>原样存活</b>，只被机械地重指向新门控。<b>hello 插件 31 测试全绿</b>（含 <code>hello_page_e2e_test.exs</code> 匿名访客断言）；<b>autoservice Tier-1 seed 2/2 绿</b>，已成为 chat socialware fixture（定义走 ConfigObject，业务逻辑不在代码里）。剩余缺口 = live cc answer loop（cc PTY/startup 阻塞，<b>非</b> socialware 布线问题，与 #1069 前同一文档化缺口）。结论：架构收口<b>未回归</b>前序产品面。</blockquote>
+<blockquote><b>investigation A —— gaga 的 ConfigStore 成为 #1069 的承载底座。</b> gaga #938 的 <code>ConfigStore</code> + <code>config_schema/0</code> callback 不是被废弃，而是 #1069 <code>Installation</code> 模块（<code>installation.ex:10,147+</code>）alias 并依赖的底座——socialware-def-as-ConfigObject 模型直接建在它上面。gaga 的 agent-config 契约<b>比以前更重要</b>，不是更不重要：它是 <code>Installation.installed_definitions/1</code> 能按 ConfigStore 指针解析一个 session 已装 socialware 的原因。</blockquote>
+<blockquote><b>investigation B —— 泄漏检测门控的真实缺口（为 FatNine 本周任务定位）。</b> 周末 #1072 §6 起草了 4 个 arch-gate（NP-2 内容级扩展 / 新-Kind 断言 / blob-inline 迁移门 / plugin-package manifest 门），<b>均为设计草案，无一落地</b>。今天唯一的泄漏门 = NP-2 <b>模块名级</b> lint（<code>lifecycle.ex:303</code>），词表<b>不含</b>业务词（<code>Kanban/Board/Task/Sales/Customer/Autoservice</code> 均缺），且<b>从不扫源码/注释内容</b>。prompt 里假设的 <code>no_customer_concept</code> / <code>no_role_concept_in_core</code> 测试 <b>grep 全仓 = 0 命中，不存在</b>。 FatNine 的 #1027 QA 发现 F3/F4/F7（后端对/UI 静默）正是同一 no-silent-leak 哲学的运行时镜像——可直接复用为泄漏门规格。</blockquote>
 
 <h3>开发中暴露的问题 → 沉淀</h3>
 <blockquote><b>socialware taxonomy 红线违例（#1074 抓出）</b>：§10.5 inline-BLOB 的旧文档本身违反了刚定的红线（definition 层不应承载 BLOB）。<b>根本教训：红线一旦确立，立即 grep 全文档/代码对齐，否则文档自己就是反模式。</b>已在 #1074 重写并落地 Uploads+FsResolver+DownloadToken。</blockquote>
@@ -207,14 +222,14 @@
 
 <h3>名册 / next-track（为下周 pivot 设定）</h3>
 <table>
-<tr><th>开发者</th><th>周末</th><th>本周 next-track（pivot 架构→产品/上线）</th><th>latest_return（依据）</th></tr>
-<tr><td><b>allenwoods</b>（lead）</td><td>solo 收口 + 评审</td><td>官网上线 + 自举 dogfood 场景拍板 + #110 live 部署（手）+ design system 源交付</td><td>n/a（lead）</td></tr>
-<tr><td><b>zhaomato</b></td><td>off</td><td><b>FP1 官网</b>（ezagent-served socialware + design-system 适配）+ FP4 design system 适配（website-first）</td><td><code>2026-06-23/returns/world-hello-convergence.md</code>（current_track: 官网 on @json-render）</td></tr>
-<tr><td><b>zyli</b></td><td>off</td><td><b>FP2 系统内部测试</b>（live smoke + bug triage）+ 含 #110 live 部署与 allen 协同</td><td><code>2026-06-23/returns/world-deploy-e2e-pg.md</code>（current_track: 人肉 full-flow validation）</td></tr>
-<tr><td><b>gaga</b></td><td>off</td><td>（待 Allen 派发；建议 agent 配置/运维面支持 FP2 内测）</td><td><code>2026-06-24/returns/cc-headless-real-implementation.md</code>（cc-headless DONE #931）</td></tr>
-<tr><td><b>fatnine</b></td><td>off</td><td>（待 Allen 派发；后端/core 面支持内测 bug triage）</td><td><code>2026-06-22/returns/agent-console.md</code>（#84 Agent Console CRUD）</td></tr>
-<tr><td><b>jjkysy</b></td><td>off</td><td><b>FP5 kanban #1020 处置</b>（merge + 2 minor follow-ups，kanban 插件原作）</td><td>n/a（无 active track；kanban 插件原作 #964）</td></tr>
-<tr><td><b>ruihua</b>（designer）</td><td>off</td><td>FP1/FP4 设计输入（官网版式 + design system 适配可读性，不改代码）</td><td>n/a（designer）</td></tr>
+<tr><th>开发者</th><th>周末</th><th>本周 next-track（pivot 架构→产品/上线）</th><th>依据</th></tr>
+<tr><td><b>allenwoods</b>（lead）</td><td>solo 收口 + 评审</td><td>官网决策 + 自举 dogfood 场景拍板 + #110 live 部署（手）+ carry-in 跟踪（FP8）</td><td>n/a（lead）</td></tr>
+<tr><td><b>zhaomato</b></td><td>off</td><td><b>FP1 官网 build</b>（ezagent-served socialware，在 zyli DS 升级 + ruihua demo 之上）。前序 #910/#982/#603 经 investigation A 确认<b>原样存活</b>——仅需 live 重跑截图 + 刷 <code>mix.exs:43</code> 过时注释</td><td><code>2026-06-23/returns/world-hello-convergence.md</code></td></tr>
+<tr><td><b>zyli</b></td><td>off</td><td><b>FP4 design system 升级</b>（Allen 0629 重定向：zyli = 主前端）。ezagent-design/components 手搓件 → 组件库（shadcn 推荐）；再据升级后 DS 更新 ezagent UI</td><td><code>2026-06-23/returns/world-deploy-e2e-pg.md</code></td></tr>
+<tr><td><b>gaga</b></td><td>off</td><td><b>FP2 系统内部测试</b>（autoservice live 重跑 + cc-orchestrator answer-loop 报告）。investigation A：其 #938 ConfigStore 现 load-bearing；autosvc 确定性半（kb+route+public_view）已绿，live cc answer loop 仍是文档化缺口</td><td><code>2026-06-24/returns/cc-headless-real-implementation.md</code></td></tr>
+<tr><td><b>fatnine</b></td><td>off</td><td><b>FP7 泄漏检测门 + skill 验证</b>（investigation B：skill 非缺口，门控才是真活）。#958 console CRUD 已 integrated；#1027 QA F3/F4/F7 → no-silent-leak 门</td><td><code>2026-06-22/returns/agent-console.md</code></td></tr>
+<tr><td><b>jjkysy</b></td><td>off</td><td><b>FP5 kanban #1020 处置</b>（rebase→E2E 重跑→GitHub review→merge→2 follow-ups）。kanban 插件原作 #964；investigation B：#1020 BEHIND + 0 reviews</td><td>n/a（无 active track；kanban 插件原作 #964）</td></tr>
+<tr><td><b>ruihua</b>（designer）</td><td>off</td><td><b>FP6 官网 demo</b>（3 段 介绍/kanban/contributors + mock API，据 ezagent-design）。<b>须 reskin</b> 先前暗黑玻璃 v2（cream/coral/electric-blue 违 DS）→ DS <code>#E8E8EB</code>+cobalt+Noto Serif SC</td><td>team.md role: designer</td></tr>
 <tr><td><b>claude / codex</b>（agent）</td><td>off-plan support</td><td>off-plan（编排/修复/subagent 分派 on request）</td><td>n/a</td></tr>
 </table>
 <p style="font-size:12px;color:#6b7280"><code>team.md</code> 的 <code>current_track</code>/<code>latest_return</code> 更新延后到周一第一份 plan（Allen 正把 track 从架构重定向到 官网/内测/自举）。本表 next-track 为 review 设定，供 plan 采纳。</p>
@@ -234,6 +249,7 @@
 <tr><td>subagent stall（transient API）恢复</td><td class="num">3</td></tr>
 <tr><td>结转延后项</td><td class="num">#108, #110, #111, #1020, #128, #88, #55, #112, Q1-C follow-ups</td></tr>
 <tr><td>flake-masked regression 漏进 main</td><td class="num">0</td></tr>
+<tr><td>investigation 回溯验证（前序团队工作未回归）</td><td class="num">2（hello/autosvc state · skill/gates/kanban/ruihua state）</td></tr>
 </table>
 
 <p style="margin-top:30px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。原始 coordinator 底稿 <code>docs/together/2026-06-28/review.md</code>。模版可复用：下周期换数据即可。</p>
