@@ -31,9 +31,18 @@ config :ezagent_core,
 config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator"
 
+config :ezagent_domain_session,
+  public_scheme: "https",
+  public_host: "app.ezagent.chat",
+  public_port: 443
+
 config :ezagent_web,
   ecto_repos: [EzagentCore.Repo],
   generators: [context_app: :ezagent_core],
+  # Operator-console host scope. dev/test keep Phoenix's `"world."` prefix
+  # semantics (`world.localhost`, `world.ezagent.chat`); prod overrides to nil
+  # so `/admin`, `/sessions`, `/identities`, etc. serve on the public apex.
+  world_host_scope: "world.",
   # Session-cookie domain (read at compile time by EzagentWeb.Endpoint). Production
   # is fronted by the `*.ezagent.chat` tunnels, so the cookie is shared across the
   # `app.` / `world.` subdomains. `dev.exs` overrides this to `nil` (host-only) so
@@ -129,6 +138,8 @@ config :mime, :types, %{
 # API adapters, so no hackney/finch dependency is pulled in.
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.SMTP
 config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.SMTP
+
+config :ezagent_plugin_email, :verification_base_url, "https://app.ezagent.chat"
 config :swoosh, :api_client, false
 
 # Import environment specific config. This must remain at the bottom

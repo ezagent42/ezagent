@@ -167,6 +167,6 @@ defmodule Ezagent.Email.Verification do
   end
 
   defp confirm_base_url do
-    Application.get_env(:ezagent_plugin_email, :verification_base_url, "https://app.ezagent.chat")
+    Application.get_env(:ezagent_plugin_email, :verification_base_url, "http://localhost")
   end
 end

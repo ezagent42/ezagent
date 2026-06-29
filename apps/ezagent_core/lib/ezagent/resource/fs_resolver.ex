@@ -63,7 +63,6 @@ defmodule Ezagent.Resource.FsResolver do
   Tests register via the test-only `register_type/2` path.
   """
 
-  alias Ezagent.Resource.FsResolver.Registry
   alias Ezagent.URI, as: EzURI
 
   @table :ezagent_resource_fs_types
@@ -109,12 +108,16 @@ defmodule Ezagent.Resource.FsResolver do
     def register_type(type, %{backend_component: backend, authority: authority})
         when is_binary(type) and type != "" and is_binary(backend) and backend != "" and
                is_function(authority, 2) do
-      Registry.register_for_test(type, %{backend_component: backend, authority: authority})
+      Ezagent.Resource.FsResolver.Registry.register_for_test(type, %{
+        backend_component: backend,
+        authority: authority
+      })
     end
 
     @doc "Remove a test-only `<type>`. **Test-only** — compiled out of `:prod`."
     @spec unregister_type(String.t()) :: :ok
-    def unregister_type(type) when is_binary(type), do: Registry.unregister_for_test(type)
+    def unregister_type(type) when is_binary(type),
+      do: Ezagent.Resource.FsResolver.Registry.unregister_for_test(type)
   end
 
   @doc """

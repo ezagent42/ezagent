@@ -9,6 +9,9 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   setup do
     ensure_world_layouts_registered!()
 
+    prior_world_host_scope =
+      Application.get_env(:ezagent_web, :world_host_scope, :__ezagent_missing__)
+
     prior_home = System.get_env("EZAGENT_HOME")
 
     home =
@@ -20,6 +23,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       if prior_home,
         do: System.put_env("EZAGENT_HOME", prior_home),
         else: System.delete_env("EZAGENT_HOME")
+
+      if prior_world_host_scope == :__ezagent_missing__,
+        do: Application.delete_env(:ezagent_web, :world_host_scope),
+        else: Application.put_env(:ezagent_web, :world_host_scope, prior_world_host_scope)
 
       File.rm_rf!(home)
     end)
@@ -210,6 +217,30 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       assert has_element?(view, "#world-root[data-world-component='#{component}']")
       assert html =~ component
     end
+  end
+
+  test "nil world host scope serves operator routes on apex without taking apex root",
+       %{conn: conn} do
+    Application.put_env(:ezagent_web, :world_host_scope, nil)
+
+    admin_conn =
+      conn
+      |> Map.put(:host, "app.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, html} = live(admin_conn, "/admin")
+
+    assert html =~ ~s(id="world-root")
+    assert has_element?(view, "#world-root[data-world-component='dashboard']")
+
+    route_info = Phoenix.Router.route_info(EzagentWeb.Router, "GET", "/", "app.ezagent.chat")
+
+    assert route_info.plug == Phoenix.LiveView.Plug
+    assert route_info.route == "/"
+    assert {EzagentWeb.HomeLive, _action, _opts, _metadata} = route_info.phoenix_live_view
   end
 
   test "world workspace and plugin group paths stay inside the world scope", %{conn: conn} do
