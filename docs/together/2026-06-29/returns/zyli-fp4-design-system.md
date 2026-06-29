@@ -24,6 +24,8 @@
   - Noto Serif SC
   - Space Mono
 - Fixed the World mobile shell and Sessions surface so mobile pages no longer create page-level horizontal overflow.
+- Added the World React-island navigation bridge: same-origin World links are intercepted in the island, sent as `world:navigate`, validated in `WorldLive`, and applied with `push_patch` so internal navigation does not trigger browser full-page reloads.
+- Follow-up fix `d1dd406270992a9c3d5512675f882c04a81db64c` removes stdlib `URI.parse/1` from the World navigation validation path so the URI canonicalization invariant stays green.
 - Removed previously introduced nonessential/format-like changes from the PR, including `apps/ezagent_core/`, `router.ex`, `config.exs`, `ide_shell.ex`, and an unrelated 2026-06-26 return doc change.
 
 ## DoD reconciliation
@@ -35,28 +37,36 @@
 | 3 | Font stack uses Inter + Noto Sans SC + Noto Serif SC + Space Mono on touched app surfaces. | met | Google Fonts links and CSS variables in `apps/ezagent_web/lib/ezagent_web/components/layouts/root.html.heex`, auth/error/denied pages, socialware controllers, and app/viewer/world/hello CSS. |
 | 4 | User-facing visual pass covers operator shell and world sessions on desktop/mobile. | met | Evidence files: `desktop-admin.png`, `desktop-sessions.png`, `mobile-admin-final.png`, `mobile-sessions-final.png`, and `mobile-final-result.json` under `docs/together/2026-06-29/evidence/visual-fp4-brand/`. |
 | 5 | Mobile pages have no page-level horizontal overflow. | met | `mobile-final-result.json` records `scrollWidth == clientWidth == 390` for both `sessions` and `admin`; `pageErrors: []`. |
-| 6 | Local build/architecture gates pass for the touched work. | met | Ran `mix assets.build`, `mix compile --warnings-as-errors`, `mix ezagent.arch.scan`, `mix ezagent.check_invariants`, and `curl http://127.0.0.1:10042/_health -> 200`. |
-| 7 | PR branch is rebased on current `main`. | met | `origin/main` and `git merge-base origin/main HEAD` both equal `755b2a9bf73214753e81b795dabb97f4bfaa6a6b`. |
-| 8 | CI `precommit + check_invariants` is green on the PR head. | not-met | PR head `041f7ea57eaee935714b4d032cfab4cc5c117504`; CI run https://github.com/ezagent42/ezagent/actions/runs/28356923198 failed. Failure: `apps/ezagent_web/test/ezagent_web/world_host_routing_test.exs:215` raises `Jason.Encoder` for PID from `EzagentPluginWorld.WorldLive.handle_params/3`. Lead should not merge until this is fixed and CI is green. |
+| 6 | Local build/architecture gates pass for the touched work. | met | Original FP4 gates passed: `mix assets.build`, `mix compile --warnings-as-errors`, `mix ezagent.arch.scan`, `mix ezagent.check_invariants`, and `curl http://127.0.0.1:10042/_health -> 200`. Navigation follow-up verification also passed locally: `node apps/ezagent_plugin_world/assets/test/world_navigation_test.mjs`, `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_plugin_world/test/assets/world_navigation_test.exs`, `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_core/test/invariants/uri_canonicalization_invariant_test.exs`, and `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_web/test/ezagent_web/world_host_routing_test.exs --trace`. |
+| 7 | PR branch is rebased on current `main`. | met | `origin/main` and `git merge-base origin/main HEAD` both equal `fbe4caf8dba65c945448919ffd961b42b9f31c3d` at the navigation follow-up update. |
+| 8 | CI `precommit + check_invariants` is green on the PR head. | not-met | Implementation head `d1dd406270992a9c3d5512675f882c04a81db64c` fixes the World navigation URI parser gate locally. Latest observed GitHub CI before this return-doc update was https://github.com/ezagent42/ezagent/actions/runs/28363802856/job/84024599620 on older PR head `af80077bc581693402097be556ec6f7a96704703`; it failed on `URI.parse/1` in `WorldLive` plus two `PluginIsolationWorkspaceTest` failures. Lead should wait for the post-push CI rerun and merge only after `precommit + check_invariants` is green on the latest PR head. |
 | 9 | External design-system source upgrade from `/Users/h2oslabs/Workspace/ezagent-design/components` to shadcn, if considered part of this handoff. | deferred | This PR only changes the ezagent repo. The handoff wording mixed external DS-source upgrade with ezagent UI adaptation; lead should decide whether the external DS repo upgrade is a separate FP4 follow-up or required before closing FP4. |
 
-**Method friction:** The FP4 handoff mixed two scopes: updating the external `ezagent-design` source and adapting ezagent app surfaces. The current branch completes the ezagent app adaptation, but the external design-system source path is outside this repo and should be split into a separate handoff or explicitly marked out-of-scope. Also, the machine gate caught a World host routing regression after visual/local targeted gates passed; future UI handoffs touching World should include `apps/ezagent_web/test/ezagent_web/world_host_routing_test.exs` in the targeted verification list.
+**Method friction:** The FP4 handoff mixed two scopes: updating the external `ezagent-design` source and adapting ezagent app surfaces. The current branch completes the ezagent app adaptation, but the external design-system source path is outside this repo and should be split into a separate handoff or explicitly marked out-of-scope. Also, the machine gate caught World-specific regressions after visual/local targeted gates passed; future UI handoffs touching World should include `apps/ezagent_web/test/ezagent_web/world_host_routing_test.exs` and `apps/ezagent_core/test/invariants/uri_canonicalization_invariant_test.exs` in the targeted verification list.
+
+## Post-return update -- World navigation reload fix
+
+- **updated_at:** 2026-06-29 18:18 +0800
+- **Implementation commits:** `af80077bc581693402097be556ec6f7a96704703` adds the React island -> LiveView `world:navigate` bridge; `d1dd406270992a9c3d5512675f882c04a81db64c` removes stdlib `URI.parse/1` from the server-side path validation.
+- **Behavior:** internal same-origin World links now patch through LiveView (`push_patch`) instead of causing a browser full-page reload; external links, downloads, new-tab clicks, fragments, absolute URLs, and non-World paths remain native/no-op.
+- **Local verification:** `node apps/ezagent_plugin_world/assets/test/world_navigation_test.mjs` passed; `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_plugin_world/test/assets/world_navigation_test.exs` passed; `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_core/test/invariants/uri_canonicalization_invariant_test.exs` passed; `MIX_ENV=test POSTGRES_PORT=5432 mix test apps/ezagent_web/test/ezagent_web/world_host_routing_test.exs --trace` passed with 13 tests, 0 failures.
+- **CI status:** old CI on `af80077bc581693402097be556ec6f7a96704703` is red; new CI must rerun after pushing this return update and the `d1dd4062` fix.
 
 ## Gate status
 
-- Branch head: `041f7ea57eaee935714b4d032cfab4cc5c117504`
-- Rebase base: `755b2a9bf73214753e81b795dabb97f4bfaa6a6b`
+- Implementation head: `d1dd406270992a9c3d5512675f882c04a81db64c`
+- Rebase base: `fbe4caf8dba65c945448919ffd961b42b9f31c3d`
 - PR: https://github.com/ezagent42/ezagent/pull/1083
-- CI run: https://github.com/ezagent42/ezagent/actions/runs/28356923198
-- CI status: failed
+- Latest observed CI run: https://github.com/ezagent42/ezagent/actions/runs/28363802856/job/84024599620
+- Latest observed CI status: failed on older PR head `af80077bc581693402097be556ec6f7a96704703`
 - Failed check: `precommit + check_invariants`
-- Failure summary: `EzagentWeb.WorldHostRoutingTest` fails because `EzagentPluginWorld.WorldLive.handle_params/3` attempts to JSON-encode a PID in props.
+- Failure summary: the previous WorldLive PID JSON failure is fixed; the next observed failure was stdlib `URI.parse/1` in `WorldLive` (fixed locally by `d1dd4062`) plus two `Ezagent.Integration.PluginIsolationWorkspaceTest` failures in the CI merge ref. Latest PR CI must be rechecked after push.
 
 ## Deferred / open decisions
 
 - Decide whether the external `/Users/h2oslabs/Workspace/ezagent-design` shadcn migration is part of this FP4 return or a separate follow-up.
-- Fix the CI failure before merge.
+- Wait for the new PR CI run after the navigation follow-up push. If `PluginIsolationWorkspaceTest` remains red after the World URI parser fix, decide whether it is base/test flake or a required follow-up before merging.
 
 ## Merge request
 
-Do not merge yet. The branch is ready for review as the FP4 app-surface implementation, but the machine return gate is red. Merge request becomes valid after the CI failure is fixed and `precommit + check_invariants` is green on PR head.
+Do not merge yet. The branch is ready for review as the FP4 app-surface implementation plus World navigation reload fix, but the machine return gate must be green on the latest PR head before merge.
