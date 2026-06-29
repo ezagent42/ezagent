@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>组织的 IDE · Organization IDE · Ezagent</title>
+<meta name="description" content="Ezagent — 组织 IDE。一套柔软而清晰的界面，构建、运行并交付 AI agent。Build, run, and ship agents.">
+<!--
+  官网 demo · FP6 · 3 段（介绍 / kanban / contributors）+ mock ezagent API
+  设计系统：ezagent-design（github.com/ezagent42/design-system）。
+  token 内联自该 DS（colors/typography/effects/spacing/fonts），署名 vendored；
+  zhaomato 在 @json-render 底座承接时应直 link 真 styles.css。
+  皮：#E8E8EB 地 · cobalt #0B5CFF 交互 · Noto Serif SC 标题 · 纯色块非渐变 · 浮白卡柔影毛玻璃。
+-->
+<style>
+/* ── Ezagent DS · webfonts（tokens/fonts.css）──────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+/* ── Ezagent DS · tokens（内联自 ezagent-design）───────────────────────────── */
+:root{
+  --ground:#E8E8EB; --ground-2:#EFEFF1; --ground-hover:#E4E4E8; --card:#FFFFFF;
+  --ink:#17171B; --ink-2:#56565E; --ink-3:#8A8A92; --ink-4:#B6B6BC; --line:#E2E2E6;
+  --red:#D81830; --blueink:#0048A8; --yellow:#FFD400; --jade:#0FA06E;
+  --blue:#0B5CFF; --blue-deep:#0040C4; --blue-wash:#E7EEFF; --orange:#FF8A1E;
+  --jade-wash:#DCF1E8; --red-wash:#FAE0E3; --yellow-wash:#FFF4CC; --orange-wash:#FFEBD6;
+  --accent:var(--blue); --accent-hover:#1466FF; --accent-press:var(--blue-deep);
+  --accent-wash:var(--blue-wash); --on-accent:#FFFFFF; --focus-ring:rgba(11,92,255,.45);
+  --success:var(--jade); --danger:var(--red); --warning:var(--orange);
+  /* type */
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  /* radii / elevation / motion */
+  --r-sm:10px; --r-md:16px; --r-lg:22px; --r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 13.4px 17.9px rgba(15,15,15,.045),0 7.5px 10px rgba(15,15,15,.04),0 4px 5.3px rgba(15,15,15,.03),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --glass-blur:blur(14px) saturate(1.4); --glass-bg:rgba(255,255,255,.55); --glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);
+  --ease-out:cubic-bezier(.16,1,.3,1); --dur-base:250ms; --dur-enter:500ms;
+  --gap-grid:22px; --pad-page-x:44px; --container:1280px;
+}
+:root[data-theme="dark"]{
+  --ground:#16151C; --ground-2:#211F2A; --ground-hover:#2A2834; --card:#1E1C26;
+  --ink:#F4F2EC; --ink-2:#B6B4AC; --ink-3:#85837B; --ink-4:#56544D; --line:#332F3B;
+  --red:#FF5A4D; --blueink:#4D8DF0; --yellow:#FFD84D; --jade:#34D6A0;
+  --blue:#5AA2FF; --blue-deep:#A9CBFF; --blue-wash:#1E2A40; --orange:#FFA94D;
+  --jade-wash:#173A2E; --red-wash:#3E211E; --yellow-wash:#3A3416; --orange-wash:#3A2A16;
+  --accent-hover:#74B2FF; --on-accent:#0E1A2E; --focus-ring:rgba(90,162,255,.5);
+  --glass-bg:rgba(42,41,54,.5); --glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+}
+
+/* ── base ─────────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;overflow-x:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);
+  font-weight:450;-webkit-font-smoothing:antialiased;transition:background var(--dur-base) var(--ease-out);}
+h1,h2,h3,p{margin:0}
+a{color:inherit;text-decoration:none}
+.mono{font-family:var(--font-mono);letter-spacing:.02em}
+.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.wrap{max-width:var(--container);margin:0 auto;padding:0 var(--pad-page-x)}
+section{scroll-margin-top:92px}
+
+/* ── nav · floating glass card ────────────────────────────────────────────── */
+.nav{position:sticky;top:16px;z-index:50;margin:16px auto 0;max-width:var(--container);
+  display:flex;align-items:center;gap:18px;padding:10px 14px 10px 20px;border-radius:var(--r-pill);
+  background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--shadow-sm),var(--glass-edge);}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:17px}
+.brand .cube{display:block;width:22px;height:22px}
+.tabs{display:flex;gap:4px;margin-left:6px}
+.tab{appearance:none;border:0;background:transparent;cursor:pointer;font-family:inherit;font-size:14px;font-weight:500;
+  color:var(--ink-2);padding:8px 14px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out);display:flex;gap:7px;align-items:center}
+.tab .en{font-size:11px;color:var(--ink-4);font-family:var(--font-mono)}
+.tab:hover{background:var(--ground-hover);color:var(--ink)}
+.tab.active{background:var(--accent);color:var(--on-accent)}
+.tab.active .en{color:rgba(255,255,255,.7)}
+.nav .spacer{flex:1}
+.iconbtn{appearance:none;border:0;cursor:pointer;width:38px;height:38px;border-radius:var(--r-pill);
+  background:var(--ground-2);color:var(--ink-2);display:grid;place-items:center;transition:all 150ms var(--ease-out)}
+.iconbtn:hover{background:var(--ground-hover);color:var(--ink)}
+.ghbtn{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);padding:9px 16px;border-radius:var(--r-pill);
+  background:var(--ground-2);transition:all 150ms var(--ease-out)}
+.ghbtn:hover{background:var(--ink);color:var(--card)}
+
+/* ── shared surfaces ──────────────────────────────────────────────────────── */
+.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
+.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;
+  padding:14px 24px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),box-shadow 150ms var(--ease-out),background 150ms}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--focus-ring)}
+.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+.btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+.btn.primary:active{transform:scale(.98)}
+.btn.secondary{background:var(--ground-2);color:var(--ink)}
+.btn.secondary:hover{background:var(--ground-hover);transform:translateY(-1px)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.04em;
+  padding:4px 11px;border-radius:var(--r-pill)}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.badge.info{background:var(--blue-wash);color:var(--blue-deep)}
+.badge.success{background:var(--jade-wash);color:var(--jade)}
+.badge.danger{background:var(--red-wash);color:var(--red)}
+.badge.warning{background:var(--orange-wash);color:var(--orange)}
+.badge.neutral{background:var(--ground-2);color:var(--ink-3)}
+.tag{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:11px;padding:3px 9px;border-radius:var(--r-pill);
+  color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line)}
+.avatar{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-ui);font-weight:700;
+  font-size:14px;color:#fff;flex:none;box-shadow:var(--shadow-sm)}
+
+/* ── hero（介绍段）· Landing.dc seed ──────────────────────────────────────── */
+.hero{margin-top:var(--gap-grid);overflow:hidden}
+.hero .inner{padding:72px 80px 40px}
+.hero h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(40px,6vw,68px);line-height:1.12;letter-spacing:.01em;margin:24px 0 0}
+.hero h1 .hl{color:var(--accent)}
+.hero .sub{font-family:var(--font-ui);font-weight:800;font-size:clamp(22px,3vw,32px);letter-spacing:-.02em;color:var(--ink-2);margin-top:12px}
+.hero .lead{font-size:19px;line-height:1.6;color:var(--ink-2);max-width:56ch;margin:22px 0 0;font-weight:450}
+.hero .cta{display:flex;gap:14px;margin-top:36px;flex-wrap:wrap}
+.points{height:150px;display:flex;flex-wrap:wrap;gap:9px;padding:24px 80px;align-content:center;overflow:hidden}
+.points i{width:11px;height:11px;border-radius:50%}
+
+/* ── 两产品（介绍段）──────────────────────────────────────────────────────── */
+.sec-head{margin:60px 0 22px}
+.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.2;margin-top:8px}
+.sec-head .sub{color:var(--ink-2);margin-top:8px;font-size:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap-grid)}
+.product{padding:34px 36px;display:flex;flex-direction:column;gap:14px;position:relative;overflow:hidden}
+.product .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;color:var(--accent)}
+.product h3{font-family:var(--font-cn);font-weight:600;font-size:24px}
+.product p{color:var(--ink-2);line-height:1.6;font-size:15px}
+.product .glyph{position:absolute;top:28px;right:30px;width:44px;height:44px;border-radius:var(--r-md);display:grid;place-items:center;color:#fff}
+.product .glyph svg{width:24px;height:24px}
+.foundation{margin-top:var(--gap-grid);padding:22px 32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  background:var(--ink);color:var(--card);border-radius:var(--r-lg)}
+.foundation .t{font-family:var(--font-cn);font-weight:500;font-size:17px}
+.foundation .m{font-family:var(--font-mono);font-size:12px;color:var(--ink-4);margin-left:auto}
+
+/* ── chat demo（介绍段 · 可交互）──────────────────────────────────────────── */
+.chat{margin-top:var(--gap-grid);padding:0;overflow:hidden}
+.chat .stage{background:#14131C;padding:26px 30px 30px;position:relative}
+.chat .stage .blob{position:absolute;border-radius:999px;filter:blur(40px);opacity:.5;pointer-events:none}
+.chat .head{display:flex;align-items:center;gap:10px;position:relative;z-index:2;margin-bottom:18px}
+.chat .head .t{color:#F4F2EC;font-family:var(--font-cn);font-weight:500;font-size:16px}
+.chat .feed{position:relative;z-index:2;display:flex;flex-direction:column;gap:12px;min-height:80px}
+.bubble{max-width:78%;padding:12px 16px;border-radius:16px;font-size:14px;line-height:1.5;animation:fu var(--dur-enter) var(--ease-out) both}
+.bubble.user{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:6px}
+.bubble.agent{align-self:flex-start;background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  color:#16161C;box-shadow:var(--glass-edge);border-bottom-left-radius:6px}
+:root[data-theme="dark"] .bubble.agent{color:#F4F2EC}
+.composer{display:flex;gap:10px;align-items:center;padding:14px 16px;background:var(--card);flex-wrap:wrap}
+.chips{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+.chip{appearance:none;border:0;cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);
+  background:var(--ground-2);padding:8px 13px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out)}
+.chip:hover:not(:disabled){background:var(--accent-wash);color:var(--accent-press)}
+.chip:disabled{opacity:.4;cursor:default}
+
+/* generated mini-UI（hello render tree）*/
+.gen{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.gen-board{display:flex;gap:8px}
+.gen-col{flex:1;background:rgba(255,255,255,.5);border-radius:10px;padding:8px;min-width:96px}
+.gen-col .ch{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;margin-bottom:6px;display:flex;align-items:center;gap:5px}
+.gen-col .ch::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c)}
+.gen-ticket{background:#fff;border-radius:7px;padding:6px 8px;font-size:11px;color:#17171B;margin-bottom:5px;display:flex;justify-content:space-between;gap:6px}
+.gen-ticket .tg{font-family:var(--font-mono);font-size:9px;color:var(--ink-3)}
+.gen-stat{background:#fff;border-radius:12px;padding:14px 18px;display:inline-flex;flex-direction:column;gap:2px;min-width:150px}
+.gen-stat .l{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-3)}
+.gen-stat .v{font-family:var(--font-ui);font-weight:800;font-size:30px;letter-spacing:-.02em;line-height:1;color:var(--vc,#17171B)}
+.gen-stat .d{font-family:var(--font-mono);font-size:11px;color:var(--jade)}
+
+/* ── kanban 段 ─────────────────────────────────────────────────────────────── */
+.seg{display:inline-flex;background:var(--ground-2);border-radius:var(--r-pill);padding:4px;gap:4px;margin-bottom:22px}
+.seg button{appearance:none;border:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:500;color:var(--ink-2);
+  padding:8px 16px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out)}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm)}
+.board{display:flex;gap:var(--gap-grid);overflow-x:auto;padding-bottom:8px}
+.col{flex:1;min-width:230px;background:var(--ground-2);border-radius:var(--r-lg);padding:16px}
+.col .colhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.col .colhead .nm{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);display:flex;align-items:center;gap:7px}
+.col .colhead .nm::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink-4))}
+.col .cnt{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.kcard{background:var(--card);border-radius:var(--r-md);padding:13px 15px;box-shadow:var(--shadow-sm);margin-bottom:10px}
+.kcard .kt{font-size:13.5px;line-height:1.4;color:var(--ink);font-weight:500}
+.kcard .meta{display:flex;align-items:center;gap:8px;margin-top:10px}
+.kcard .meta .who{font-family:var(--font-mono);font-size:10px;color:var(--ink-3)}
+.kcard .samp{font-size:12px;color:var(--ink-2);line-height:1.5;margin-top:6px}
+.avatar.xs{width:24px;height:24px;font-size:10px}
+
+/* ── contributors 段 ──────────────────────────────────────────────────────── */
+.team{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap-grid)}
+.member{padding:24px 26px;display:flex;flex-direction:column;gap:4px}
+.member .top{display:flex;align-items:center;gap:13px;margin-bottom:10px}
+.member .nm{font-family:var(--font-cn);font-weight:600;font-size:18px}
+.member .gh{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.member .track{font-size:13.5px;color:var(--ink-2);line-height:1.5;margin-top:6px}
+.member .bg{font-size:12px;color:var(--ink-3);margin-top:8px}
+
+/* ── footer ───────────────────────────────────────────────────────────────── */
+footer{margin:70px 0 40px;color:var(--ink-3);font-size:13px;text-align:center;line-height:1.7}
+footer .mono{font-size:11px}
+
+@keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+.fu{animation:fu var(--dur-enter) var(--ease-out) both}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+@media (max-width:860px){
+  .hero .inner{padding:48px 28px 28px}.points{padding:20px 28px}
+  .grid2,.team{grid-template-columns:1fr}.wrap{padding:0 20px}
+  .foundation{flex-direction:column;align-items:flex-start;gap:10px}.foundation .m{margin-left:0}
+  .hero h1{font-size:46px}.points{gap:7px}
+  .nav{padding:8px 10px 8px 14px;gap:8px}.tab .en{display:none}.brand span.wm{display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- ── NAV ──────────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <a class="brand" href="#intro"><svg class="cube" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5z" fill="#FFD400"/><path d="M3 7l9 5v10l-9-5z" fill="#D81830"/><path d="M21 7l-9 5v10l9-5z" fill="#0048A8"/></svg><span class="wm">EZAGENT</span></a>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-go="intro">介绍<span class="en">Intro</span></button>
+    <button class="tab" data-go="kanban">看板<span class="en">Kanban</span></button>
+    <button class="tab" data-go="team">团队<span class="en">Contributors</span></button>
+  </div>
+  <span class="spacer"></span>
+  <a class="ghbtn" href="https://github.com/ezagent42" target="_blank" rel="noopener">↗ GitHub</a>
+  <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</nav>
+
+<div class="wrap">
+
+  <!-- ── 介绍 / INTRO ───────────────────────────────────────────────────── -->
+  <section id="intro">
+    <div class="hero card fu">
+      <div class="inner">
+        <span class="badge info"><span class="dot"></span>Organization IDE · 2026</span>
+        <h1>组织的 <span class="hl">IDE</span>。</h1>
+        <div class="sub">Organization IDE.</div>
+        <p class="lead">Ezagent 让你用一套柔软而清晰的界面，构建、运行并交付组织的 AI agent。把整个组织的复杂度变得在手、可搭建 — build, run, and ship agents. 纯色为轴，留白为形。</p>
+        <div class="cta">
+          <button class="btn primary" onclick="location.href='https://github.com/ezagent42'">开始使用 · Get started →</button>
+          <button class="btn secondary" data-go="kanban">看看进度 · See progress</button>
+        </div>
+      </div>
+      <div class="points" id="points"></div>
+    </div>
+
+    <div class="sec-head">
+      <span class="over">Open source · 开源项目</span>
+      <h2>一个底座，两个产品</h2>
+      <p class="sub">同一套 ezagent 地基之上 — world 让消息可靠流转，hello 让界面即问即生。</p>
+    </div>
+    <div class="grid2">
+      <div class="product card fu">
+        <div class="glyph" style="background:var(--blue)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+        </div>
+        <span class="eyebrow">world · 接住层 · routing</span>
+        <h3>把每条消息接住，不丢</h3>
+        <p>多渠道进来的消息可靠路由给各 agent / 会话，随便换底层 AI 都不掉上下文。消息没人接住，默认不会静默丢失。</p>
+        <div><span class="tag">message-router</span> <span class="tag">multi-channel</span> <span class="tag">no-drop</span></div>
+      </div>
+      <div class="product card fu">
+        <div class="glyph" style="background:var(--orange)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5z"/></svg>
+        </div>
+        <span class="eyebrow">hello · 生成层 · generation</span>
+        <h3>用一句话，生成你要的界面</h3>
+        <p>说清你想要什么，界面当场长出来，还会为每个客户实时重新组合 — 不写一行前端代码。</p>
+        <div><span class="tag">json-render</span> <span class="tag">say-it-grows</span> <span class="tag">per-customer</span></div>
+      </div>
+    </div>
+    <div class="foundation fu">
+      <span class="badge success"><span class="dot"></span>ezagent</span>
+      <span class="t">一个底座，两个产品 · One substrate, two products</span>
+      <span class="m">core · Kind / Behavior / dispatch / CapBAC / 可靠性原语</span>
+    </div>
+
+    <div class="sec-head">
+      <span class="over">Live demo · 界面即问即生</span>
+      <h2>问一句，hello 把界面长出来</h2>
+      <p class="sub">点下面的示例，看 hello 当场为你重组界面（mock ezagent API · chat-feed）。</p>
+    </div>
+    <div class="chat card fu">
+      <div class="stage">
+        <span class="blob" style="width:160px;height:160px;background:var(--blue);left:-30px;top:-50px"></span>
+        <span class="blob" style="width:120px;height:120px;background:var(--orange);right:60px;bottom:-50px"></span>
+        <div class="head">
+          <span class="avatar xs" style="background:var(--orange)">h</span>
+          <span class="t">hello · 生成层</span>
+        </div>
+        <div class="feed" id="feed"></div>
+      </div>
+      <div class="composer">
+        <div class="chips" id="chips"></div>
+        <button class="btn secondary" id="reset" style="padding:9px 16px;font-size:13px">重置 · Reset</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 看板 / KANBAN ──────────────────────────────────────────────────── -->
+  <section id="kanban">
+    <div class="sec-head">
+      <span class="over">Progress · world.cup · 看板进度</span>
+      <h2>我们做到哪了</h2>
+      <p class="sub">真实看板透明化 — 团队怎么开发、官网怎么一层层长出来，都在看板上。</p>
+    </div>
+    <div class="seg" id="boardseg">
+      <button class="on" data-board="dev">团队开发看板 · Dev</button>
+      <button data-board="vc">官网价值链 · Value-chain</button>
+    </div>
+    <div id="boardmeta" class="over" style="margin:-8px 0 16px"></div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <!-- ── 团队 / CONTRIBUTORS ────────────────────────────────────────────── -->
+  <section id="team">
+    <div class="sec-head">
+      <span class="over">Contributors · 团队</span>
+      <h2>谁在做这个</h2>
+      <p class="sub">一个用 AI agent 协作开发自己的小队 — 数据源 docs/together/team.md。</p>
+    </div>
+    <div class="team" id="teamgrid"></div>
+  </section>
+
+  <footer>
+    <div>组织的 IDE · Organization IDE — Ezagent</div>
+    <div class="mono">demo · 3 段 + mock ezagent API · 设计系统 ezagent-design · 数据为 mock，go-live 由 @json-render 底座承接</div>
+  </footer>
+</div>
+
+<script src="mock-ezagent-api.js"></script>
+<script>
+/* ── 视图层：只 render mock-ezagent-api 的产物（遵 #1072 分层）─────────────── */
+const $ = (s, r=document) => r.querySelector(s);
+const el = (t, c, h) => { const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+
+// 头像配色（确定性：按名字 hash 取品牌色）
+const AV = ['var(--blue)','var(--red)','var(--jade)','var(--orange)','var(--blueink)'];
+const avColor = s => AV[[...s].reduce((a,c)=>a+c.charCodeAt(0),0)%AV.length];
+const initials = (cn,gh) => /[一-龥]/.test(cn) ? cn.slice(-2) : (cn||gh).slice(0,2);
+
+// stage → 品牌色（看板列点 / badge）
+const STAGE_C = { plan:'var(--ink-4)', dive:'var(--blue)', return:'var(--orange)', review:'var(--yellow)', shipped:'var(--jade)',
+  positioning:'var(--blueink)', metric:'var(--blue)', pain:'var(--red)', anchor:'var(--orange)', ux:'var(--yellow)',
+  feature:'var(--jade)', issue:'var(--red)', test:'var(--orange)', pr:'var(--jade)' };
+const STAGE_CN = { plan:'规划', dive:'进行中', return:'回流', review:'评审', shipped:'已交付' };
+
+/* ── tab / nav 切换 ───────────────────────────────────────────────────────── */
+const go = id => { document.getElementById(id).scrollIntoView({behavior:'smooth',block:'start'}); };
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.go)));
+const tabs=[...document.querySelectorAll('#tabs .tab')], secs=['intro','kanban','team'];
+const io=new IntersectionObserver(es=>es.forEach(e=>{ if(e.isIntersecting){
+  const i=secs.indexOf(e.target.id); tabs.forEach((t,k)=>t.classList.toggle('active',k===i)); }}),{rootMargin:'-45% 0px -50% 0px'});
+secs.forEach(s=>io.observe(document.getElementById(s)));
+
+/* ── theme toggle ─────────────────────────────────────────────────────────── */
+$('#theme').addEventListener('click',()=>{ const r=document.documentElement;
+  r.dataset.theme = r.dataset.theme==='dark' ? 'light' : 'dark'; });
+
+/* ── 点彩 ColorPoints ─────────────────────────────────────────────────────── */
+(function(){ const P=$('#points'), cols=['var(--red)','var(--blue)','var(--yellow)','var(--jade)','var(--orange)','var(--blueink)'];
+  let seed=4; const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280;};
+  for(let i=0;i<52;i++){ const d=el('i'); d.style.background=cols[Math.floor(rnd()*cols.length)];
+    d.style.opacity=(.35+rnd()*.55).toFixed(2); d.style.transform=`scale(${(.6+rnd()*1.1).toFixed(2)})`; P.appendChild(d);} })();
+
+/* ── 介绍段 · 可交互 chat（hello render tree → DOM）────────────────────────── */
+const SCRIPT = EZ.chatScript();
+function renderNode(n){
+  if(n.kind==='board'){ const w=el('div','gen'); if(n.props.title) w.appendChild(el('div','mono',n.props.title)).style.cssText='font-size:11px;color:var(--ink-3)';
+    const b=el('div','gen-board'); n.children.forEach(c=>b.appendChild(renderNode(c))); w.appendChild(b); return w; }
+  if(n.kind==='col'){ const c=el('div','gen-col'); c.style.setProperty('--c',`var(--${n.props.tone})`);
+    c.appendChild(el('div','ch',n.props.title)); n.children.forEach(t=>c.appendChild(renderNode(t))); return c; }
+  if(n.kind==='ticket'){ const t=el('div','gen-ticket'); t.appendChild(el('span',null,n.props.text)); t.appendChild(el('span','tg',n.props.tag)); return t; }
+  if(n.kind==='stat'){ const s=el('div','gen-stat'); if(n.props.accent)s.style.setProperty('--vc',n.props.accent);
+    s.appendChild(el('div','l',n.props.label)); s.appendChild(el('div','v',n.props.value+' <span style="font-size:12px;font-weight:400;color:var(--ink-3)">'+n.props.unit+'</span>'));
+    if(n.props.delta)s.appendChild(el('div','d','▲ '+n.props.delta)); return s; }
+  return el('div',null,'');
+}
+const feed=$('#feed'), chips=$('#chips'); let step=0;
+function buildChips(){ chips.innerHTML=''; SCRIPT.forEach((s,i)=>{ const c=el('button','chip','“'+s.prompt+'”'); c.disabled=i!==step;
+  c.addEventListener('click',()=>send(i)); chips.appendChild(c); }); }
+async function send(i){
+  feed.appendChild(el('div','bubble user',SCRIPT[i].prompt));
+  step=i+1; buildChips(); feed.scrollIntoView({block:'end'});
+  const msgs=await EZ.chatFeed(i);                       // ← 走 chat-feed mock 接口
+  msgs.forEach(m=>{ const b=el('div','bubble agent',m.text); b.appendChild(renderNode(m.render)); feed.appendChild(b); });
+  feed.lastChild.scrollIntoView({block:'nearest'});
+}
+$('#reset').addEventListener('click',()=>{ feed.innerHTML=''; step=0; buildChips(); });
+buildChips();
+
+/* ── 看板段 · 两个 board（dev / value-chain）──────────────────────────────── */
+const boardEl=$('#board'), metaEl=$('#boardmeta');
+async function showBoard(which){
+  boardEl.innerHTML='<div class="over">loading…</div>';
+  if(which==='dev'){
+    const b=await EZ.kanbanDev(); metaEl.textContent=b.subtitle;
+    boardEl.innerHTML='';
+    b.stages.forEach(st=>{
+      const items=Object.entries(b.nodes).filter(([,n])=>n.stage===st).sort((a,c)=>a[1].order-c[1].order);
+      const col=el('div','col'); col.style.setProperty('--c',STAGE_C[st]||'var(--ink-4)');
+      col.appendChild(el('div','colhead',`<span class="nm">${STAGE_CN[st]||st}</span><span class="cnt">${items.length}</span>`));
+      items.forEach(([,n])=>{ const k=el('div','kcard');
+        k.appendChild(el('div','kt',n.title));
+        const m=el('div','meta'); const a=el('div','avatar xs',initials('',n.owner)); a.style.background=avColor(n.owner);
+        m.appendChild(a); m.appendChild(el('span','who',n.owner));
+        m.appendChild(el('span','badge '+(n.status==='done'?'success':n.status==='in_progress'?'info':'neutral'),n.status));
+        k.appendChild(m); col.appendChild(k); });
+      boardEl.appendChild(col);
+    });
+  } else {
+    const b=await EZ.kanbanValueChain(); metaEl.textContent=b.subtitle;
+    boardEl.innerHTML='';
+    b.segments.forEach((sg,i)=>{
+      const col=el('div','col'); col.style.setProperty('--c',Object.values(STAGE_C)[i+5]||'var(--jade)');
+      col.appendChild(el('div','colhead',`<span class="nm">段 ${i+1}</span><span class="cnt">${sg.count} 卡</span>`));
+      const head=el('div','kcard'); head.appendChild(el('div','kt',sg.title));
+      head.appendChild(el('div','meta',`<span class="badge neutral">★ ${sg.metric}</span>`)); col.appendChild(head);
+      sg.cards.forEach(c=>{ const k=el('div','kcard'); k.appendChild(el('div','samp',c)); col.appendChild(k); });
+      boardEl.appendChild(col);
+    });
+  }
+}
+document.querySelectorAll('#boardseg button').forEach(btn=>btn.addEventListener('click',()=>{
+  document.querySelectorAll('#boardseg button').forEach(b=>b.classList.toggle('on',b===btn));
+  showBoard(btn.dataset.board); }));
+showBoard('dev');
+
+/* ── 团队段 · contributors（team.md）──────────────────────────────────────── */
+const ROLE_BADGE={lead:'warning','human-dev':'info',designer:'success',agent:'neutral'};
+const ROLE_CN={lead:'lead · 队长','human-dev':'dev · 开发',designer:'designer · 设计',agent:'agent · AI'};
+(async()=>{ const grid=$('#teamgrid'); const list=await EZ.contributors();
+  list.forEach(m=>{ const card=el('div','member card fu');
+    const top=el('div','top'); const a=el('div','avatar',initials(m.cn,m.gh)); a.style.background=avColor(m.gh);
+    top.appendChild(a);
+    const id=el('div'); id.appendChild(el('div','nm',m.cn)); id.appendChild(el('div','gh','@'+m.gh)); top.appendChild(id);
+    card.appendChild(top);
+    card.appendChild(el('span','badge '+(ROLE_BADGE[m.role]||'neutral'),ROLE_CN[m.role]||m.role)).style.alignSelf='flex-start';
+    card.appendChild(el('div','track',m.track));
+    card.appendChild(el('div','bg',m.bg+' · '+m.tz));
+    grid.appendChild(card); });
+})();
+</script>
+</body>
+</html>
