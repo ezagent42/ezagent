@@ -693,4 +693,83 @@ defmodule EzagentPluginHello.Generator do
     do: System.get_env("HELLO_LLM_API_URL") || "https://api.deepseek.com/chat/completions"
 
   defp model, do: System.get_env("HELLO_LLM_MODEL") || "deepseek-chat"
+
+  # === card path (chat-bubble json-render fragment) =====================
+
+  @doc """
+  Producer-free render-card tool: turn a "show me the data" request into a
+  json-render card FRAGMENT (+ optional css) for a chat bubble. Returns
+  `{:ok, %{spec: tree, css: css | nil}}`. The producer posts it as a message
+  whose `body` carries `render: spec` (+ `render_css: css`); the render transport
+  (`feed_encoding`, #1035) shows it as a card. NO persona/cap coupling — any
+  producer can call it. `current` is the current page spec (or nil) so the model
+  can reuse on-page data/components. Retried once on malformed JSON.
+  """
+  @spec render_card(map() | nil, String.t()) ::
+          {:ok, %{spec: map(), css: String.t() | nil}} | {:error, term()}
+  def render_card(current, user_text) when is_binary(user_text) do
+    with {:ok, spec} <- card_spec_with_retry(current, user_text) do
+      css = if style_request?(user_text), do: card_css(spec, user_text), else: nil
+      {:ok, %{spec: spec, css: css}}
+    end
+  end
+
+  defp card_spec_with_retry(current, user_text) do
+    case card_spec(current, user_text) do
+      {:ok, _} = ok -> ok
+      {:error, _} -> card_spec(current, user_text)
+    end
+  end
+
+  # Ask the model for ONE catalog fragment (root = Card/Stack/Table…), validate it
+  # against the same catalog as a page. `current` page spec (if any) is context.
+  defp card_spec(current, user_text) do
+    prompt =
+      if is_map(current) do
+        """
+        The page's CURRENT spec (reuse its data/components where relevant):
+
+        ```json
+        #{Jason.encode!(current)}
+        ```
+
+        Show the user this, as a self-contained card/table fragment:
+
+        #{user_text}
+        """
+      else
+        user_text
+      end
+
+    with {:ok, %{content: content}} <- call_llm(Prompts.card_gen_system(), prompt),
+         {:ok, raw} <- Spec.extract(content),
+         {:ok, spec} <- Spec.validate(raw) do
+      {:ok, spec}
+    end
+  end
+
+  # Per-card CSS theme — only when the user explicitly asks for a look. The model
+  # writes un-prefixed selectors; the client scopes them to the card's unique id.
+  # Returns nil on failure (default styling) rather than a broken theme.
+  defp card_css(spec, user_text) do
+    prompt = """
+    Style request: #{user_text}
+
+    The card spec:
+
+    #{Jason.encode!(spec)}
+    """
+
+    case call_llm(Prompts.card_theme_system(), prompt) do
+      {:ok, %{content: content}} ->
+        case Sanitize.css(content) do
+          css when is_binary(css) and css != "" -> css
+          _ -> nil
+        end
+
+      other ->
+        Logger.warning("hello.Generator: card theme failed: #{inspect(other)}")
+        nil
+    end
+  end
 end
