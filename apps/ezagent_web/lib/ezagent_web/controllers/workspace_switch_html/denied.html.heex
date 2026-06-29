@@ -8,19 +8,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap"
     />
     <style>
       :root {
-        --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-        --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
-        --ink: #0a0a0a;
-        --ink-dim: #525252;
+        --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, -apple-system, sans-serif;
+        --font-serif: 'Noto Serif SC', Georgia, serif;
+        --font-mono: 'Space Mono', ui-monospace, Menlo, monospace;
+        --ink: #17171B;
+        --ink-dim: #707078;
         --ink-faint: #a3a3a3;
-        --line: #e5e5e5;
-        --accent: #ea580c;
-        --bg-top: #fafafa;
-        --bg-bottom: #ffffff;
+        --line: rgba(23,23,27,0.10);
+        --accent: #0B5CFF;
+        --bg-top: #E8E8EB;
+        --bg-bottom: #E8E8EB;
         --btn-bg: #ffffff;
         --card-bg: #ffffff;
       }
@@ -29,9 +30,9 @@
         --ink-dim: #a3a3a3;
         --ink-faint: #525252;
         --line: #27272a;
-        --accent: #fb923c;
-        --bg-top: #09090b;
-        --bg-bottom: #18181b;
+        --accent: #6EA0FF;
+        --bg-top: #101015;
+        --bg-bottom: #101015;
         --btn-bg: #18181b;
         --card-bg: #18181b;
       }
@@ -41,9 +42,9 @@
           --ink-dim: #a3a3a3;
           --ink-faint: #525252;
           --line: #27272a;
-          --accent: #fb923c;
-          --bg-top: #09090b;
-          --bg-bottom: #18181b;
+          --accent: #6EA0FF;
+          --bg-top: #101015;
+          --bg-bottom: #101015;
           --btn-bg: #18181b;
           --card-bg: #18181b;
         }
@@ -53,7 +54,7 @@
       body {
         font-family: var(--font-sans);
         color: var(--ink);
-        background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+        background: var(--bg-top);
         display: grid;
         place-items: center;
         padding: 24px;
@@ -62,10 +63,10 @@
         max-width: 480px;
         width: 100%;
         background: var(--card-bg);
-        border: 1px solid var(--line);
-        border-radius: 12px;
+        border: 0;
+        border-radius: 22px;
         padding: 32px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        box-shadow: 0 1px 1px rgba(23,23,27,0.03), 0 10px 24px rgba(23,23,27,0.08), 0 32px 72px rgba(23,23,27,0.10);
       }
       .badge {
         display: inline-block;
@@ -102,7 +103,7 @@
         font-size: 13px;
         font-weight: 500;
         padding: 9px 18px;
-        border-radius: 8px;
+        border-radius: 999px;
         border: 1px solid var(--line);
         background: var(--btn-bg);
         color: var(--ink);

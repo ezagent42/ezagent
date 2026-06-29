@@ -9,39 +9,74 @@ defmodule EzagentPluginHello.ShellCss do
   minimal CSS for exactly its classes, ARBITRARY values (`w-[800px]`) included.
   The result is stored next to the shell and inlined on the customer page.
 
-  Fast (~40ms) and self-contained (no daisyUI plugin / vendor-path coupling — the
+  Fast (~40ms) and self-contained (no UI-plugin / vendor-path coupling — the
   theme tokens are inlined). Returns "" on any failure so generation never breaks.
   """
   require Logger
 
   # The customer surface theme tokens (mirrors apps/ezagent_web/assets/css/
-  # viewer.css). Declared as @theme so Tailwind emits `bg-primary`, `text-base-
-  # content`, `from-accent`, … from them without the daisyUI plugin.
+  # viewer.css). Declared as @theme so Tailwind emits `bg-primary`,
+  # `text-foreground`, `from-accent`, … without a UI plugin.
   @theme """
-  @theme {
-    --color-base-100: oklch(99% 0 0);
-    --color-base-200: oklch(96% 0.001 286.375);
-    --color-base-300: oklch(92% 0.004 286.32);
-    --color-base-content: oklch(21% 0.006 285.885);
-    --color-primary: oklch(58% 0.233 277.117);
-    --color-primary-content: oklch(96% 0.018 272.314);
-    --color-secondary: oklch(55% 0.027 264.364);
-    --color-secondary-content: oklch(98% 0.002 247.839);
-    --color-accent: oklch(60% 0.25 292.717);
-    --color-accent-content: oklch(96% 0.016 293.756);
-    --color-neutral: oklch(44% 0.017 285.786);
-    --color-neutral-content: oklch(98% 0 0);
-    --color-info: oklch(62% 0.214 259.815);
-    --color-info-content: oklch(97% 0.014 254.604);
-    --color-success: oklch(70% 0.14 182.503);
-    --color-success-content: oklch(98% 0.014 180.72);
-    --color-warning: oklch(66% 0.179 58.318);
-    --color-warning-content: oklch(98% 0.022 95.277);
-    --color-error: oklch(58% 0.253 17.585);
-    --color-error-content: oklch(96% 0.015 12.422);
-    --radius-selector: 0.5rem;
-    --radius-field: 0.375rem;
-    --radius-box: 0.75rem;
+  @theme inline {
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+  }
+
+  :root {
+    --ez-red: #D81830;
+    --ez-blueink: #0048A8;
+    --ez-yellow: #FFD400;
+    --ez-jade: #0FA06E;
+    --ez-cobalt: #0B5CFF;
+    --ez-bg: #E8E8EB;
+    --radius: 0.625rem;
+    --radius-pill: 999px;
+    --shadow-card: 0 1px 2px rgba(24, 24, 27, 0.06),
+      0 8px 24px rgba(24, 24, 27, 0.08);
+    --shadow-soft: 0 8px 24px rgba(24, 24, 27, 0.10);
+    --background: var(--ez-bg);
+    --foreground: oklch(21% 0.006 285.885);
+    --card: oklch(100% 0 0);
+    --card-foreground: oklch(21% 0.006 285.885);
+    --popover: oklch(100% 0 0);
+    --popover-foreground: oklch(21% 0.006 285.885);
+    --primary: var(--ez-cobalt);
+    --primary-foreground: oklch(100% 0 0);
+    --secondary: oklch(96% 0.001 286.375);
+    --secondary-foreground: oklch(21% 0.006 285.885);
+    --muted: oklch(96% 0.001 286.375);
+    --muted-foreground: oklch(55% 0.027 264.364);
+    --accent: var(--ez-yellow);
+    --accent-foreground: oklch(21% 0.006 285.885);
+    --neutral: var(--ez-blueink);
+    --neutral-foreground: oklch(98% 0 0);
+    --destructive: var(--ez-red);
+    --destructive-foreground: oklch(96% 0.015 12.422);
+    --border: oklch(92% 0.004 286.32);
+    --input: oklch(92% 0.004 286.32);
+    --ring: var(--ez-cobalt);
   }
   """
 

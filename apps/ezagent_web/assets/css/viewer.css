@@ -4,7 +4,7 @@
    external_feed_controller.ex) is a standalone, public, controller-rendered HTML
    shell that boots the React app in apps/ezagent_domain_socialware/assets/js/.
    It does NOT load app.css (that's the operator LiveView surface), so this is
-   its own small Tailwind v4 + daisyUI build.
+   its own small Tailwind v4 + shadcn-token build.
 
    The `@source` directives below point Tailwind at the React SPA's JS so the
    utility classes it emits at runtime are scanned and NOT purged. The paths
@@ -30,87 +30,82 @@
    bundle (codex #709 review). */
 @source "../../lib/ezagent_web/controllers/socialware";
 
-/* daisyUI plugin (mirrors app.css's setup). `themes: false` — we declare the
-   single theme we want below. */
-@plugin "../vendor/daisyui" {
-  themes: false;
-}
-
-/* A clean light daisyUI theme inspired by the operator-side "light" theme so
-   the external viewer surface reads as part of the same product. */
-@plugin "../vendor/daisyui-theme" {
-  name: "viewer";
-  default: true;
-  prefersdark: false;
-  color-scheme: "light";
-  --color-base-100: oklch(99% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(44% 0.017 285.786);
-  --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.5rem;
-  --radius-field: 0.375rem;
-  --radius-box: 0.75rem;
-  --size-selector: 0.25rem;
-  --size-field: 0.25rem;
-  --border: 1px;
-  --depth: 1;
-  --noise: 0;
-}
-
 :root {
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
-    "Liberation Mono", "Courier New", monospace;
+  --ez-red: #D81830;
+  --ez-blueink: #0048A8;
+  --ez-yellow: #FFD400;
+  --ez-jade: #0FA06E;
+  --ez-cobalt: #0B5CFF;
+  --ez-bg: #E8E8EB;
+  --font-sans: "Inter", "Noto Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei",
+    "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-serif: "Noto Serif SC", Georgia, serif;
+  --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    "Liberation Mono", monospace;
+  --radius: 0.625rem;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(24, 24, 27, 0.06),
+    0 8px 24px rgba(24, 24, 27, 0.08);
+  --shadow-soft: 0 8px 24px rgba(24, 24, 27, 0.10);
+  --background: var(--ez-bg);
+  --foreground: oklch(21% 0.006 285.885);
+  --card: oklch(100% 0 0);
+  --card-foreground: oklch(21% 0.006 285.885);
+  --popover: oklch(100% 0 0);
+  --popover-foreground: oklch(21% 0.006 285.885);
+  --primary: var(--ez-cobalt);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(96% 0.001 286.375);
+  --secondary-foreground: oklch(21% 0.006 285.885);
+  --muted: oklch(96% 0.001 286.375);
+  --muted-foreground: oklch(55% 0.027 264.364);
+  --accent: var(--ez-yellow);
+  --accent-foreground: oklch(21% 0.006 285.885);
+  --neutral: var(--ez-blueink);
+  --neutral-foreground: oklch(98% 0 0);
+  --destructive: var(--ez-red);
+  --destructive-foreground: oklch(96% 0.015 12.422);
+  --border: oklch(92% 0.004 286.32);
+  --input: oklch(92% 0.004 286.32);
+  --ring: var(--ez-cobalt);
+  color-scheme: light;
 }
 
 /* shadcn semantic color tokens (@json-render/shadcn components use bg-background /
    bg-card / bg-primary / text-foreground / border-border / …). Tailwind v4 maps
-   `bg-<name>` to `--color-<name>`, so define them here — aligned to the daisyUI
-   palette above so the AI HTML frame and the shadcn content read as one site. */
-@theme {
-  --color-background: oklch(99% 0 0);
-  --color-foreground: oklch(21% 0.006 285.885);
-  --color-card: oklch(99% 0 0);
-  --color-card-foreground: oklch(21% 0.006 285.885);
-  --color-popover: oklch(99% 0 0);
-  --color-popover-foreground: oklch(21% 0.006 285.885);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-foreground: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(96% 0.001 286.375);
-  --color-secondary-foreground: oklch(21% 0.006 285.885);
-  --color-muted: oklch(96% 0.001 286.375);
-  --color-muted-foreground: oklch(52% 0.013 285.8);
-  --color-accent: oklch(95% 0.02 277);
-  --color-accent-foreground: oklch(30% 0.08 277);
-  --color-destructive: oklch(58% 0.253 17.585);
-  --color-destructive-foreground: oklch(98% 0 0);
-  --color-border: oklch(92% 0.004 286.32);
-  --color-input: oklch(92% 0.004 286.32);
-  --color-ring: oklch(58% 0.233 277.117);
-  --radius: 0.625rem;
+   `bg-<name>` to `--color-<name>`, so expose them through shared vars. */
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 }
 
 html,
 body {
   font-family: var(--font-sans);
-  font-feature-settings: "ss01", "cv11";
+  background-color: var(--background);
+  color: var(--foreground);
 }
 
 code,

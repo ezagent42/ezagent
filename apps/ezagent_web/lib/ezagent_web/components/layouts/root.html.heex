@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap"
     />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
@@ -23,12 +23,8 @@
     </script>
     <script>
       (() => {
-        // Phase 8c (Allen 2026-05-20): "System" was a no-op when picked
-        // because we just removed the data-theme attribute, which left
-        // the page on whatever default the daisyUI light theme registers
-        // — no actual respect for the OS preference. Now System actively
-        // reads `prefers-color-scheme` AND installs a media listener so
-        // OS-level changes propagate without reload.
+        // "System" actively reads `prefers-color-scheme` and installs a
+        // media listener so OS-level changes propagate without reload.
         const mql = window.matchMedia("(prefers-color-scheme: dark)");
         const applyResolved = (theme) => {
           const resolved = theme === "system" ? (mql.matches ? "dark" : "light") : theme;

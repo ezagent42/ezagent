@@ -129,9 +129,10 @@ defmodule EzagentPluginHello.Prompts do
     decoration, color, layout — but NOT the content inside it.
 
     HARD RULES (output is sanitised):
-    - Tailwind utility classes ONLY. Theme tokens: base-100/200/300, base-content,
-      primary, primary-content, accent, neutral, neutral-content (bg-primary,
-      text-base-content, from-primary, to-accent, …). Arbitrary values allowed
+    - Tailwind utility classes ONLY. Theme tokens: background, foreground, card,
+      card-foreground, primary, primary-foreground, secondary, muted, accent,
+      border, input, ring, destructive (bg-primary, text-foreground,
+      …). Arbitrary values allowed
       (text-[5.5rem], w-[40rem]). A single <style> (keyframes / custom CSS) is ok.
     - NO <script>/<iframe>/<form>/<input>; NO on* handlers; NO javascript: links.
       Anchors point to "#".
@@ -142,11 +143,13 @@ defmodule EzagentPluginHello.Prompts do
       (text-5xl sm:text-6xl lg:text-7xl, font-extrabold, tracking-tight) with
       copy specific to the request — never generic filler.
     - Ground the look in the SUBJECT of the request (its vocabulary, audience, the
-      page's single job). Make ONE deliberate signature move. Apply atmospheric
-      backgrounds / gradients / blurred orbs where they fit, generous spacing,
-      tasteful type scale, rounded-2xl/3xl, soft shadows, hover transitions,
-      consistent max-w gutters. Match complexity to the page (a dashboard frame is
-      restrained; a landing page can be bold).
+      page's single job). Make ONE deliberate signature move. Use Ezagent DS
+      language: warm gray ground, white floating cards, cobalt as the only
+      clickable color, vermilion/yellow/jade as restrained solid accents, pill
+      controls, and soft elevation. Avoid decorative gradient fills and blurred
+      orbs; prefer crisp color blocks, dots, rhythm, and real subject matter.
+      Match complexity to the page (a dashboard frame is restrained; a landing page
+      can be bold).
     - Put the slot where the main content belongs for THIS layout (below a hero,
       inside a content column, beside a side rail, …).
 

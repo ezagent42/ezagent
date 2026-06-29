@@ -228,18 +228,18 @@ defmodule EzagentWeb.HomeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 px-4">
+    <div class="min-h-screen flex items-center justify-center bg-background px-4 text-foreground">
       <div class="w-full max-w-md">
         <div class="text-center mb-8">
-          <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+          <h1 class="text-2xl font-semibold text-foreground">
             {gettext("Welcome to ezagent")}
           </h1>
-          <p class="mt-2 text-sm text-zinc-500">
+          <p class="mt-2 text-sm text-muted-foreground">
             {gettext("Let's set up your first session.")}
           </p>
         </div>
 
-        <div class="bg-white dark:bg-zinc-900 rounded-md border border-zinc-200 dark:border-zinc-800 shadow-sm p-6">
+        <div class="bg-card rounded-[var(--radius)] shadow-[var(--shadow-card)] p-6">
           <.form
             for={@form}
             id="first-session-wizard"
@@ -249,7 +249,7 @@ defmodule EzagentWeb.HomeLive do
             <div>
               <label
                 for="wizard_short_name"
-                class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                class="block text-sm font-medium text-foreground mb-1"
               >
                 {gettext("Session short name")}
               </label>
@@ -260,9 +260,9 @@ defmodule EzagentWeb.HomeLive do
                 value={@form[:short_name].value}
                 placeholder="main"
                 autocomplete="off"
-                class="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-md text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-500"
+                class="w-full px-3 py-2 text-sm bg-card border border-input rounded-full text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p class="mt-1 text-xs text-zinc-500">
+              <p class="mt-1 text-xs text-muted-foreground">
                 {gettext("Creates a system workspace session named")}
                 <span class="font-mono" id="short-name-preview">{@form[:short_name].value}</span>.
               </p>
@@ -277,11 +277,11 @@ defmodule EzagentWeb.HomeLive do
                 name="wizard[with_echo]"
                 value="true"
                 checked={@form[:with_echo].value in ["true", "on", true]}
-                class="mt-0.5 rounded border-zinc-300 dark:border-zinc-700"
+                class="mt-0.5 rounded border-input accent-primary"
               />
-              <span class="text-xs text-zinc-700 dark:text-zinc-300">
+              <span class="text-xs text-foreground">
                 {gettext("Include echo demo agent")}
-                <span class="block text-zinc-500">
+                <span class="block text-muted-foreground">
                   {gettext("Adds")}
                   {gettext(
                     "Adds the default echo agent as a session member so you can verify the chat round-trip works."
@@ -290,20 +290,20 @@ defmodule EzagentWeb.HomeLive do
               </span>
             </label>
 
-            <div :if={@flash_error} class="text-sm text-red-600 dark:text-red-400">
+            <div :if={@flash_error} class="text-sm text-destructive">
               {@flash_error}
             </div>
 
             <button
               type="submit"
-              class="w-full px-4 py-2 text-sm font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-md hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+              class="w-full px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-full shadow-[var(--shadow-soft)] hover:bg-primary/90 transition-colors"
             >
               {gettext("Create session")}
             </button>
           </.form>
         </div>
 
-        <p class="mt-6 text-center text-xs text-zinc-500">
+        <p class="mt-6 text-center text-xs text-muted-foreground">
           {gettext("Signed in as")} <span class="font-mono">{@current_entity_uri_str}</span>
         </p>
       </div>

@@ -559,8 +559,9 @@ defmodule EzagentPluginHello.Generator do
       if is_binary(instruction) and String.trim(instruction) != "" do
         """
         STYLE CHANGE the user asked for — APPLY it. Restyle the relevant element /
-        section (bold colors, gradients, shadows, motion, better type & spacing are
-        all fair game — make it genuinely look great), keeping the rest coherent:
+        section with Ezagent DS language (cobalt actions, solid red/yellow/jade
+        accents, pill controls, white floating cards, soft shadows, strong type and
+        spacing; avoid decorative gradient fills), keeping the rest coherent:
 
         #{instruction}
 

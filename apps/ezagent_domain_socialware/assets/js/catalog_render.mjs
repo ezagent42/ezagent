@@ -73,7 +73,7 @@ function PageNode(React) {
             {
               key: "__title",
               className:
-                "sw-page-title text-2xl font-semibold tracking-tight text-base-content",
+                "sw-page-title text-2xl font-semibold tracking-tight text-foreground",
             },
             title
           ),
@@ -111,7 +111,7 @@ function SectionNode(React) {
   }
 }
 
-// `card` — a titled daisyUI card wrapping its children (props.title).
+// `card` — a titled shadcn-token card wrapping its children (props.title).
 function CardNode(React) {
   return function CardJsonNode({props, children, registry}) {
     const title = String(props.title || "")
@@ -121,7 +121,7 @@ function CardNode(React) {
             "h2",
             {
               key: "__title",
-              className: "sw-card-title card-title text-base font-semibold",
+              className: "sw-card-title text-base font-semibold text-card-foreground",
             },
             title
           ),
@@ -130,10 +130,10 @@ function CardNode(React) {
 
     return React.createElement(
       "div",
-      {className: "sw-card card border border-base-300 bg-base-100 shadow-sm"},
+      {className: "sw-card rounded-[var(--radius)] bg-card shadow-[var(--shadow-card)]"},
       React.createElement(
         "div",
-        {className: "card-body flex flex-col gap-3"},
+        {className: "flex flex-col gap-3 p-4 text-card-foreground"},
         ...header,
         ...children.map((child, index) =>
           renderJsonNode(React, {...child, key: child.key ?? index}, registry)
@@ -158,7 +158,7 @@ function HeadingNode(React) {
     return React.createElement(
       `h${level}`,
       {
-        className: `sw-heading sw-heading-${level} font-semibold tracking-tight text-base-content ${sizes[level]}`,
+        className: `sw-heading sw-heading-${level} font-semibold tracking-tight text-foreground ${sizes[level]}`,
       },
       String(props.text || "")
     )
@@ -176,14 +176,22 @@ function ButtonNode(React) {
     if (href) {
       return React.createElement(
         "a",
-        {className: "sw-button btn btn-primary btn-sm", href},
+        {
+          className:
+            "sw-button inline-flex h-8 items-center justify-center rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground shadow-[var(--shadow-soft)] transition hover:bg-primary/90",
+          href,
+        },
         label
       )
     }
 
     return React.createElement(
       "button",
-      {className: "sw-button btn btn-primary btn-sm", type: "button"},
+      {
+        className:
+          "sw-button inline-flex h-8 items-center justify-center rounded-full bg-primary px-3 text-sm font-medium text-primary-foreground shadow-[var(--shadow-soft)] transition hover:bg-primary/90",
+        type: "button",
+      },
       label
     )
   }
@@ -198,14 +206,14 @@ function ImageNode(React) {
         "div",
         {
           className:
-            "sw-image sw-image-empty rounded-box border border-dashed border-base-300 bg-base-200/50 px-4 py-6 text-center text-sm italic text-base-content/50",
+            "sw-image sw-image-empty rounded-[var(--radius)] border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-sm italic text-muted-foreground",
         },
         "Image unavailable"
       )
     }
 
     return React.createElement("img", {
-      className: "sw-image w-full rounded-box border border-base-300",
+      className: "sw-image w-full rounded-[var(--radius)] shadow-[var(--shadow-card)]",
       src,
       alt: String(props.alt || ""),
       loading: "lazy",
@@ -219,14 +227,13 @@ function clampLevel(level) {
   return Math.min(6, Math.max(1, Math.trunc(n)))
 }
 
-// --- legacy socialware set (verbatim contract — do not alter classes/roots) --
+// --- legacy socialware set (preserve sw-* contract classes/roots) ------------
 
 function Container(React) {
   return function ContainerNode({props, children, registry}) {
     const layout = props.layout === "grid" ? "grid" : "stack"
-    // Tailwind/daisyUI styling lives ALONGSIDE the sw-* contract classes
-    // (kept verbatim — E2E + renderer tests rely on them). Grid → responsive
-    // two-up; stack → vertical rhythm. Wrapped as a card body for padding.
+    // Tailwind styling lives ALONGSIDE the sw-* contract classes. Grid →
+    // responsive two-up; stack → vertical rhythm.
     const layoutClasses =
       layout === "grid"
         ? "grid grid-cols-1 gap-4 sm:grid-cols-2"
@@ -235,11 +242,11 @@ function Container(React) {
     return React.createElement(
       "section",
       {
-        className: `sw-container sw-container-${layout} card bg-base-100 shadow-sm border border-base-300`,
+        className: `sw-container sw-container-${layout} rounded-[var(--radius)] bg-card shadow-[var(--shadow-card)]`,
       },
       React.createElement(
         "div",
-        {className: `card-body ${layoutClasses}`},
+        {className: `p-4 text-card-foreground ${layoutClasses}`},
         children.map((child, index) =>
           renderJsonNode(React, {...child, key: child.key ?? index}, registry)
         )
@@ -252,7 +259,7 @@ function TextNode(React) {
   return function TextJsonNode({props}) {
     return React.createElement(
       "p",
-      {className: "sw-text text-sm leading-relaxed text-base-content/80"},
+      {className: "sw-text text-sm leading-relaxed text-foreground/80"},
       String(props.text || "")
     )
   }
@@ -264,24 +271,23 @@ function TableNode(React) {
     const rows = Array.isArray(props.rows) ? props.rows : []
 
     // Keep `table` as the ROOT element — the renderer-contract test asserts
-    // `tableNode.type === "table"`. daisyUI `table table-zebra` + a bordered,
-    // rounded, horizontally-scrollable frame applied directly on the table.
+    // `tableNode.type === "table"`.
     return React.createElement(
       "table",
       {
         className:
-          "sw-table table table-zebra w-full overflow-hidden rounded-box border border-base-300",
+          "sw-table w-full overflow-hidden rounded-[var(--radius)] border border-border text-sm",
       },
       React.createElement(
         "thead",
         {},
         React.createElement(
           "tr",
-          {className: "bg-base-200"},
+          {className: "border-b border-border bg-muted/60"},
           columns.map((column) =>
             React.createElement(
               "th",
-              {key: column, className: "text-xs font-semibold uppercase tracking-wide text-base-content/70"},
+              {key: column, className: "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"},
               String(column)
             )
           )
@@ -293,11 +299,11 @@ function TableNode(React) {
         rows.map((row, rowIndex) =>
           React.createElement(
             "tr",
-            {key: rowIndex, className: "hover:bg-base-200/60"},
+            {key: rowIndex, className: "border-b border-border odd:bg-muted/30 hover:bg-muted/60"},
             columns.map((column) =>
               React.createElement(
                 "td",
-                {key: column, className: "text-sm"},
+                {key: column, className: "px-3 py-2 text-sm text-foreground"},
                 String(row[column] ?? "")
               )
             )
@@ -317,7 +323,7 @@ function CodeNode(React, Sandpack) {
     // `codeNode.type === Sandpack`. Visual framing is supplied via Sandpack's
     // own `className` (a bordered, rounded card) rather than a wrapper div.
     return React.createElement(Sandpack, {
-      className: "sw-code overflow-hidden rounded-box border border-base-300 shadow-sm",
+      className: "sw-code overflow-hidden rounded-[var(--radius)] border border-border shadow-[var(--shadow-card)]",
       template: language === "html" ? "static" : "react",
       files: codeFiles(language, source),
       options: {
@@ -335,7 +341,7 @@ function UnknownNode(React) {
       "div",
       {
         className:
-          "sw-unknown-node rounded-box border border-dashed border-base-300 bg-base-200/50 px-4 py-3 text-sm italic text-base-content/60",
+          "sw-unknown-node rounded-[var(--radius)] border border-dashed border-border bg-muted/50 px-4 py-3 text-sm italic text-muted-foreground",
         "data-node-type": nodeType,
       },
       `Unsupported node type: ${nodeType}`

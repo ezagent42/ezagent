@@ -1,0 +1,59 @@
+{
+  "pages": [
+    {
+      "route": "sessions",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "activeNav": [
+        "Sessions",
+        "Sessions"
+      ],
+      "tokens": {
+        "--ez-red": "#D81830",
+        "--ez-blueink": "#0048A8",
+        "--ez-yellow": "#FFD400",
+        "--ez-cobalt": "#0B5CFF",
+        "--ez-bg": "#E8E8EB",
+        "--primary": "#0B5CFF",
+        "--accent": "#FFD400",
+        "--background": "#E8E8EB"
+      },
+      "text": "Overview\nSessions\nIdentities\nAdmin\nWorkspaces\nPlugins\nProfile\nSessions\nworkspace://system\nCommand\nAdmin\nLayout\n\nLayout changes require manage access.\n\nReset\nlayout_editor\nlayout-editor\nsessions_table\nsessions-table\nSession activity\n\n本工作区的会话列表 —— 状态、外部镜像与快捷入口。\n\nNew session\nsession://system/default/e2e-auto\nworkspace://system\nOpen\nExternal mirror\nOpen\nsession://system/default/feishu-bing\nworkspace://system\nAvailable\nExternal mirror\nOpen\nsession://system/generic/conv_workspace_system_1b51c08c\nworkspace://system\nAvailable\nExternal mirror\nOpen\nsession://system/generic/conv_workspace_system_c4e49e36"
+    },
+    {
+      "route": "admin",
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "activeNav": [
+        "Admin",
+        "Admin",
+        "Dashboard"
+      ],
+      "tokens": {
+        "--ez-red": "#D81830",
+        "--ez-blueink": "#0048A8",
+        "--ez-yellow": "#FFD400",
+        "--ez-cobalt": "#0B5CFF",
+        "--ez-bg": "#E8E8EB",
+        "--primary": "#0B5CFF",
+        "--accent": "#FFD400",
+        "--background": "#E8E8EB"
+      },
+      "text": "Overview\nSessions\nIdentities\nAdmin\nWorkspaces\nPlugins\nProfile\nAdmin Dashboard\nworkspace://system\nCommand\nAdmin\nDashboard\nObservability\nRegistry\nSnapshots\nTemplates\nCapabilities\nAuthz Audit\nSettings\nRouting\n\nADMIN\n\nDashboard\nKinds\n26\nSessions\n4\nWorkspaces\n4\nEntities\n11\nAgents\n3\nCC orchestrator\nok\nconfig_dir\n/home/lenovo/.ezagent/cc-orchestrator/.claude\ncreated_at\n2026-06-29 06:43:51.259550Z\nflavor\ncc\nname\ncc-orchestrator\nproject_cwd\n/home/lenovo/.ezagent/cc-orchestrator\nrole\norchestrator\ntemplate\ntemplate://system/agent/cc-orchestrator"
+    }
+  ],
+  "consoleErrors": [
+    {
+      "type": "warning",
+      "text": "WebSocket connection to 'ws://world.localhost:10042/phoenix/live_reload/socket/websocket?vsn=2.0.0' failed: WebSocket is closed before the connection is established.",
+      "loc": {
+        "url": "http://world.localhost:10042/phoenix/live_reload/frame",
+        "line": 1471,
+        "column": 0,
+        "lineNumber": 1471,
+        "columnNumber": 0
+      }
+    }
+  ],
+  "pageErrors": []
+}

@@ -61,7 +61,7 @@ type Tone = "default" | "primary" | "success" | "warning" | "danger" | "info"
 
 // Shared field styling — shadcn token-based, dark-aware (PR-3).
 const fieldClass =
-  "w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+  "w-full rounded-full border border-input bg-card px-3 text-sm text-foreground shadow-sm outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
 
 export function Input({className, ...props}: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input className={cn(fieldClass, "h-9", className)} {...props} />
@@ -89,7 +89,7 @@ export function Card({
   children: React.ReactNode
 }) {
   return (
-    <section className={cn("rounded-md border border-border bg-card shadow-sm", className)}>
+    <section className={cn("rounded-[var(--radius)] bg-card shadow-[var(--shadow-card)]", className)}>
       {header && <div className="border-b border-border px-4 py-3 text-sm font-semibold text-card-foreground">{header}</div>}
       <div className="p-4 text-sm text-card-foreground">{children}</div>
     </section>
@@ -105,7 +105,7 @@ export function Badge({
   className?: string
   children: React.ReactNode
 }) {
-  return <span className={cn("inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium", toneClass(tone), className)}>{children}</span>
+  return <span className={cn("inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium", toneClass(tone), className)}>{children}</span>
 }
 
 export function PageHeader({
@@ -143,7 +143,7 @@ export function Breadcrumb({items}: {items: Array<{label: string; href?: string 
 
 export function Stat({label, value, icon}: {label: string; value: React.ReactNode; icon?: React.ReactNode}) {
   return (
-    <div className="rounded-md border border-border bg-card p-3">
+    <div className="rounded-[var(--radius)] bg-card p-3 shadow-[var(--shadow-card)]">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
         <span>{label}</span>
@@ -178,13 +178,11 @@ export function StatusDot({tone = "default", pulse = false}: {tone?: Tone; pulse
 export function Avatar({uri, size = "sm"}: {uri?: string | null; size?: "xs" | "sm" | "md"}) {
   const seed = uri || "?"
   const label = seed.split("/").filter(Boolean).pop()?.slice(0, 1).toUpperCase() || "?"
-  const hue = hashHue(seed)
   const sizeClass = size === "md" ? "h-8 w-8 text-xs" : size === "xs" ? "h-4 w-4 text-[8px]" : "h-6 w-6 text-[10px]"
 
   return (
     <span
-      className={cn("inline-flex shrink-0 items-center justify-center rounded-full font-medium text-white", sizeClass)}
-      style={{background: `conic-gradient(from 220deg, hsl(${hue} 70% 52%), hsl(${(hue + 120) % 360} 65% 45%))`}}
+      className={cn("inline-flex shrink-0 items-center justify-center rounded-full bg-primary font-medium text-primary-foreground", sizeClass)}
     >
       {label}
     </span>
@@ -226,7 +224,7 @@ export function Modal({open, title, children, footer}: {open: boolean; title?: s
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <section className="w-full max-w-md overflow-hidden rounded-md bg-card text-card-foreground shadow-2xl">
+      <section className="w-full max-w-md overflow-hidden rounded-[var(--radius)] bg-card text-card-foreground shadow-[var(--shadow-card)]">
         {title && <header className="border-b border-border px-4 py-3 text-sm font-semibold">{title}</header>}
         <div className="px-4 py-3 text-sm">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-border bg-muted/40 px-4 py-3">{footer}</footer>}
@@ -236,12 +234,12 @@ export function Modal({open, title, children, footer}: {open: boolean; title?: s
 }
 
 export function Toast({tone = "info", children}: {tone?: Tone; children: React.ReactNode}) {
-  return <div className={cn("rounded-md border px-3 py-2 text-sm shadow-lg", toneClass(tone))}>{children}</div>
+  return <div className={cn("rounded-[var(--radius)] px-3 py-2 text-sm shadow-[var(--shadow-card)]", toneClass(tone))}>{children}</div>
 }
 
 export function TreeList({items}: {items: Array<{id: string; label: React.ReactNode; depth?: number}>}) {
   return (
-    <div className="rounded-md border border-border bg-card py-1 text-sm text-card-foreground">
+    <div className="rounded-[var(--radius)] bg-card py-1 text-sm text-card-foreground shadow-[var(--shadow-card)]">
       {items.map((item) => (
         <div className="flex items-center gap-2 px-2 py-1.5" key={item.id} style={{paddingLeft: `${8 + (item.depth || 0) * 16}px`}}>
           <Circle aria-hidden="true" className="h-2 w-2 fill-muted-foreground/40 text-muted-foreground/40" />
@@ -254,7 +252,7 @@ export function TreeList({items}: {items: Array<{id: string; label: React.ReactN
 
 export function EmptyState({label, action}: {label: string; action?: React.ReactNode}) {
   return (
-    <div className="rounded-md border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
+    <div className="rounded-[var(--radius)] border border-dashed border-border bg-muted/40 px-4 py-6 text-center text-sm text-muted-foreground">
       <p>{label}</p>
       {action && <div className="mt-3">{action}</div>}
     </div>
@@ -271,7 +269,7 @@ export function FormField({label, children}: {label: string; children: React.Rea
 }
 
 export function UriChip({uri}: {uri?: string | null}) {
-  return <code className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">{uri || "none"}</code>
+  return <code className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs text-muted-foreground">{uri || "none"}</code>
 }
 
 export function Toolbar({children}: {children: React.ReactNode}) {
@@ -321,23 +319,19 @@ export function UriPicker({options = [], value}: {options?: string[]; value?: st
 }
 
 function toneClass(tone: Tone) {
-  if (tone === "primary") return "border-primary bg-primary text-primary-foreground"
-  if (tone === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
-  if (tone === "warning") return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300"
-  if (tone === "danger") return "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
-  if (tone === "info") return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
-  return "border-border bg-muted text-muted-foreground"
+  if (tone === "primary") return "border-transparent bg-primary text-primary-foreground"
+  if (tone === "success") return "border-transparent bg-[color:color-mix(in_srgb,var(--ez-jade)_12%,white)] text-[var(--ez-jade)]"
+  if (tone === "warning") return "border-transparent bg-accent text-accent-foreground"
+  if (tone === "danger") return "border-transparent bg-destructive/10 text-destructive"
+  if (tone === "info") return "border-transparent bg-[color:color-mix(in_srgb,var(--ez-blueink)_10%,white)] text-[var(--ez-blueink)]"
+  return "border-transparent bg-muted text-muted-foreground"
 }
 
 function dotClass(tone: Tone) {
-  if (tone === "success") return "bg-emerald-500"
-  if (tone === "warning") return "bg-amber-500"
-  if (tone === "danger") return "bg-red-500"
-  if (tone === "info") return "bg-sky-500"
+  if (tone === "success") return "bg-[var(--ez-jade)]"
+  if (tone === "warning") return "bg-[var(--ez-yellow)]"
+  if (tone === "danger") return "bg-destructive"
+  if (tone === "info") return "bg-[var(--ez-blueink)]"
   if (tone === "primary") return "bg-primary"
   return "bg-muted-foreground/50"
-}
-
-function hashHue(seed: string) {
-  return Array.from(seed).reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) % 360, 0)
 }
