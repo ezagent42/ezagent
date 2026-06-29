@@ -628,16 +628,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # `{:sandbox_write_path_failed, %URI{cc_orchestrator-main},
       # :not_ready}`.
       #
-      # `ReadyGate.await/2` is the structural fix — a bounded poll
-      # (5s test-tolerance bound; production typically resolves in
-      # 1-2ms once the post-init chain completes). The wait is only
-      # "best-effort accelerate the success path"; if the bound is
-      # exhausted (impossible in practice except under DBConnection
-      # contention) the dispatch is still attempted and the original
-      # `:not_ready` shape is preserved for callers' error handling.
-      _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
-
-      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      case Ezagent.Invocation.dispatch_registered_local(%Ezagent.Invocation{
              target: target,
              mode: :call,
              args: %{
@@ -645,24 +636,29 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                template_class: template_class,
                respawn_template_data: respawn_data
              },
+             # The normal `Invocation.dispatch/1` path gates synchronous calls
+             # on the public ReadyGate. For bridge-backed cc agents that gate
+             # intentionally stays `:not_ready` until the external transport
+             # joins, but this write is spawn-internal state initialization and
+             # must happen before that transport is available.
+             #
              # System-principal elimination (#154 north star, 2026-06-19) —
-             # this is the AGENT acting on its OWN sandbox: the dispatch
-             # target (`worker_uri?action=sandbox.write_path`) IS the agent
-             # whose `:sandbox` slice is written. So it is GENUINE
-             # self-authority (capbac.md §7 "actor-self → {:held_by, self}"),
-             # NOT an ambient `system://agent-internal` borrow. The agent is
-             # live at this point (`ReadyGate.await/2` above), so `worker_uri`
-             # is a valid `caller` entity. We carry the agent's OWN
+             # this is the AGENT acting on its OWN sandbox: the dispatch target
+             # (`worker_uri?action=sandbox.write_path`) IS the agent whose
+             # `:sandbox` slice is written. So it is GENUINE self-authority
+             # (capbac.md §7 "actor-self → {:held_by, self}"), NOT an ambient
+             # `system://agent-internal` borrow. We carry the agent's OWN
              # `sandbox.write_path` cap INLINE in `ctx.caps` (same precedent as
              # `ExternalMirrorWorker.worker_publish_caps/1`): the cap is the
              # step-5.5 authorizer (`granted_via_ctx_caps?`), which ALSO avoids
              # the `granted_via_holds_cap?` self-call deadlock (a self-dispatch
              # reading its own `:identity` slice via `GenServer.call` blocks on
              # itself — runtime.ex step-5.5 comment). Scoped to the SPECIFIC
-             # agent (`instance:`/`workspace_uri:` from `worker_uri`) for tightest
-             # least-privilege; `granted_by` = the agent itself (a real entity,
-             # #154-compliant) — provenance only on an inline authorizer
-             # (never routed through `Ezagent.Identity.Grant`).
+             # agent (`instance:`/`workspace_uri:` from `worker_uri`) for
+             # tightest least-privilege; `granted_by` = the agent itself (a real
+             # entity, #154-compliant) — provenance only on an inline authorizer
+             # cap that is never granted/persisted through
+             # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
              ctx: %{
                caller: worker_uri,
                caps: [sandbox_write_path_self_cap(worker_uri)],

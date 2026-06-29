@@ -118,7 +118,12 @@ defmodule Ezagent.Identity.Grant do
   """
   @spec grant_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
           :ok | {:error, term()}
-  def grant_cap_via_router(%URI{} = target, %Capability{} = cap, authorization, reply_mode \\ :async) do
+  def grant_cap_via_router(
+        %URI{} = target,
+        %Capability{} = cap,
+        authorization,
+        reply_mode \\ :async
+      ) do
     case prepare(target, cap, authorization, :grant_cap) do
       {:ok, {target_uri, cap2, ctx}} ->
         cmd = %Cmd{
@@ -242,10 +247,22 @@ defmodule Ezagent.Identity.Grant do
           ctx: Map.put(ctx, :reply, {:caller_inbox, self()})
         }
 
-        normalize_dispatch_result(Invocation.dispatch(inv))
+        normalize_dispatch_result(dispatch_imperative_invocation(inv))
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  defp dispatch_imperative_invocation(%Invocation{} = inv) do
+    instance_uri = Ezagent.URI.instance(inv.target)
+
+    case {Ezagent.ReadyGate.status(instance_uri), Ezagent.KindRegistry.lookup(instance_uri)} do
+      {:not_ready, {:ok, pid}} when is_pid(pid) ->
+        Invocation.dispatch_registered_local(inv)
+
+      _ ->
+        Invocation.dispatch(inv)
     end
   end
 
