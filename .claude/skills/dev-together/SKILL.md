@@ -1,33 +1,59 @@
 ---
 name: dev-together
 description: >-
-  The shared daily team-development workflow for the ezagent project. Use
-  whenever someone is running, or participating in, the dev-together cycle — a
-  lead programmer (human OR agent) and developers (human OR agent) moving work
-  through: plan the day's tasks → generate handoffs → accept a handoff and build
-  on a per-task branch → return results → stack/order the returns →
-  review-test-merge to main → end-of-day retrospective. Trigger on
-  `dev-together <cmd>` (init / plan / handoff / dive / return / push / close /
-  review) AND on natural phrasings like "kick off the day / split today's tasks
-  so the branches don't collide", "generate the handoffs and give me dev
-  prompts", "pick up / accept this handoff", "return my finished work to the
-  lead", "stack the returned handoffs / what's the merge order", "close out the
-  day / merge what's ready after checking the DoD and gates", "end-of-day dev
-  review — efficiency, gaps, next-day plan", "is this ready to hand off / what's
-  the definition of done", "discuss-first or just build this", "what can we
-  defer", or "install the dev-together hooks". This is the GLUE around the mature
-  skills (superpowers:brainstorming, superpowers:writing-plans,
-  superpowers:executing-plans / subagent-driven-development, codex-rescue review)
-  — load it before ANY step so the cadence, roles, the docs/together/<date>/
-  artifact layout, the handoff standard (demonstrable-DoD), conflict-avoidance,
-  and the per-task-branch merge model are applied consistently. Do NOT trigger
-  for unrelated one-off git operations (a bare "git push" or "rebase"), a generic
-  code-review of a single PR, closing a GitHub issue, brainstorming non-dev
-  content, or handing off a non-engineering ticket — those are near-misses, not
-  this workflow.
+  Use for the ezagent dev-together daily team workflow: plan tasks, generate
+  handoffs, accept/dive into a handoff, return results, stack returned work,
+  review-test-merge, close the day, and write retrospectives. Trigger on
+  dev-together commands (init, plan, handoff, dive, return, push, close, review)
+  and natural requests about daily task splitting, handoffs, merge ordering,
+  definition of done, closeout, hooks, or team workflow. Do not trigger for
+  unrelated one-off git operations, generic single-PR review, issue closing,
+  non-dev brainstorming, or non-engineering handoffs.
 ---
 
 # dev-together
+
+## Invocation details
+
+Use whenever someone is running, or participating in, the shared ezagent
+dev-together cycle: a lead programmer (human or agent) and developers (human or
+agent) moving work through plan, handoff, dive, return, stack/order, review,
+test, merge to main, and end-of-day retrospective.
+
+Trigger on `dev-together <cmd>`:
+- `init`
+- `plan`
+- `handoff`
+- `dive`
+- `return`
+- `push`
+- `close`
+- `review`
+
+Also trigger on natural phrasings like:
+- "kick off the day / split today's tasks so the branches don't collide"
+- "generate the handoffs and give me dev prompts"
+- "pick up / accept this handoff"
+- "return my finished work to the lead"
+- "stack the returned handoffs / what's the merge order"
+- "close out the day / merge what's ready after checking the DoD and gates"
+- "end-of-day dev review: efficiency, gaps, next-day plan"
+- "is this ready to hand off / what's the definition of done"
+- "discuss-first or just build this"
+- "what can we defer"
+- "install the dev-together hooks"
+
+This is the glue around the mature skills (superpowers:brainstorming,
+superpowers:writing-plans, superpowers:executing-plans /
+subagent-driven-development, codex-rescue review). Load it before any step so
+the cadence, roles, `docs/together/<date>/` artifact layout, handoff standard
+(demonstrable DoD), conflict avoidance, and per-task-branch merge model are
+applied consistently.
+
+Do not trigger for unrelated one-off git operations (a bare "git push" or
+"rebase"), generic code review of a single PR, closing a GitHub issue,
+brainstorming non-dev content, or handing off a non-engineering ticket. Those
+are near-misses, not this workflow.
 
 How the ezagent team ships work each day. The lead programmer orchestrates a
 **fleet of independent developers — human *and* agents** in parallel; this skill
