@@ -21,16 +21,19 @@ defmodule EzagentPluginWorld.WorldLive do
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
     sessions = list_sessions(workspace)
     current_session_uri = List.first(sessions)
 
     socket = assign(socket, :subscribed_topics, MapSet.new())
 
-    caller_payload = %{
-      "entity_uri" => encode_uri(caller),
-      "workspace_uri" => encode_uri(workspace),
-      "display_name" => caller_display_name(caller)
-    }
+    caller_payload =
+      caller_payload(
+        caller,
+        workspace,
+        caps,
+        Map.get(socket.assigns, :is_system_member?, false)
+      )
 
     layout = layout_for(workspace, caller)
     if connected?(socket), do: subscribe_global_inbound(caller)
@@ -41,7 +44,7 @@ defmodule EzagentPluginWorld.WorldLive do
         current_session_uri,
         workspace,
         layout,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        caps
       )
       |> put_command_palette(socket)
 
@@ -799,6 +802,35 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace
     }
   end
+
+  defp caller_payload(caller, workspace, caps, system_member?) do
+    %{
+      "entity_uri" => encode_uri(caller),
+      "workspace_uri" => encode_uri(workspace),
+      "current_workspace_name" => workspace_name(workspace),
+      "display_name" => caller_display_name(caller),
+      "is_system_member" => system_member?,
+      "workspaces" => workspace_switcher_rows(caller, workspace, caps)
+    }
+  end
+
+  defp workspace_switcher_rows(caller, current_workspace, caps) do
+    Ezagent.Workspace.list_workspaces_for(caller, caps)
+    |> Enum.map(fn workspace ->
+      %{
+        "name" => workspace.name,
+        "uri" => encode_uri(workspace.uri),
+        "current" => same_uri?(workspace.uri, current_workspace),
+        "switch_path" => "/workspaces/switch",
+        "detail_path" => "/workspaces/#{URI.encode_www_form(workspace.name)}"
+      }
+    end)
+  end
+
+  defp workspace_name(%URI{scheme: "workspace"} = workspace_uri),
+    do: Ezagent.URI.name!(workspace_uri)
+
+  defp workspace_name(_), do: nil
 
   defp list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
     EzagentDomainInstanceMessage.list_sessions(workspace_uri)

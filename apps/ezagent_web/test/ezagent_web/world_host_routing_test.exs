@@ -73,6 +73,39 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert has_element?(view, "#world-root[data-world-component='overview']")
   end
 
+  test "world shell exposes visible workspaces for the header switcher", %{conn: conn} do
+    target = "world-switcher-#{System.unique_integer([:positive])}"
+    {:ok, _} = Ezagent.Workspace.Store.create(target, %{})
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, _view, html} = live(conn, "/sessions")
+    caller = world_caller(html)
+
+    assert caller["workspace_uri"] == "workspace://system"
+    assert caller["current_workspace_name"] == "system"
+
+    assert Enum.any?(caller["workspaces"], fn workspace ->
+             workspace["name"] == "system" and
+               workspace["uri"] == "workspace://system" and
+               workspace["current"] == true and
+               workspace["switch_path"] == "/workspaces/switch"
+           end)
+
+    assert Enum.any?(caller["workspaces"], fn workspace ->
+             workspace["name"] == target and
+               workspace["uri"] == "workspace://#{target}" and
+               workspace["current"] == false and
+               workspace["switch_path"] == "/workspaces/switch"
+           end)
+  end
+
   test "world sessions_table dispatch joins through Invocation.dispatch", %{conn: conn} do
     caller = "entity://system/user/world_join_#{System.unique_integer([:positive])}"
     caller_uri = Ezagent.URI.new!(caller)
@@ -633,6 +666,23 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       granted_by: caller_uri,
       granted_at: DateTime.utc_now()
     }
+  end
+
+  defp world_caller(html) do
+    [_, json] = Regex.run(~r/data-caller="([^"]*)"/, html)
+
+    json
+    |> html_unescape()
+    |> Jason.decode!()
+  end
+
+  defp html_unescape(s) do
+    s
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&amp;", "&")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
   end
 
   defp persisted_order_layout(workspace_uri) do

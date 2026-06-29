@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, ChevronDown, ChevronRight, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
+import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -59,10 +59,21 @@ type WorldMountOptions = {
   caller?: {
     entity_uri?: string | null
     workspace_uri?: string | null
+    current_workspace_name?: string | null
     display_name?: string | null
+    is_system_member?: boolean
+    workspaces?: WorkspaceNavItem[]
   }
   pushEvent?: (event: string, payload: unknown, onReply?: (reply: unknown) => void) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+}
+
+type WorkspaceNavItem = {
+  name?: string | null
+  uri?: string | null
+  current?: boolean
+  switch_path?: string | null
+  detail_path?: string | null
 }
 
 type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
@@ -189,17 +200,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
               </div>
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
-              <a
-                href="/workspaces"
-                className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                title="Switch workspace"
-              >
-                <Boxes aria-hidden="true" className="h-3.5 w-3.5" />
-                <span className="max-w-[180px] truncate sm:max-w-[200px]">
-                  {state.workspace_uri || caller?.workspace_uri || "workspace unavailable"}
-                </span>
-                <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
-              </a>
+              <WorkspaceSwitcher
+                currentWorkspaceName={caller?.current_workspace_name}
+                currentWorkspaceUri={state.workspace_uri || caller?.workspace_uri}
+                isSystemMember={caller?.is_system_member === true}
+                workspaces={caller?.workspaces || []}
+              />
               <ThemeToggle />
               <Button
                 id="world-cmdk-open"
@@ -501,6 +507,141 @@ function ThemeToggle() {
 // the LiveView channel — so it needs the same CSRF token Phoenix forms carry.
 function csrfToken(): string {
   return document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || ""
+}
+
+function WorkspaceSwitcher({
+  currentWorkspaceName,
+  currentWorkspaceUri,
+  isSystemMember,
+  workspaces,
+}: {
+  currentWorkspaceName?: string | null
+  currentWorkspaceUri?: string | null
+  isSystemMember: boolean
+  workspaces: WorkspaceNavItem[]
+}) {
+  const [open, setOpen] = React.useState(false)
+  const ref = React.useRef<HTMLDivElement>(null)
+  const label = currentWorkspaceName || currentWorkspaceUri || "workspace"
+
+  React.useEffect(() => {
+    if (!open) return undefined
+
+    const onPointer = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+
+    document.addEventListener("mousedown", onPointer)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onPointer)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="relative max-w-full" ref={ref}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Switch workspace"
+        title="Switch workspace"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+      >
+        <Boxes aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          <span className="font-semibold text-foreground">ezagent</span>
+          <span className="mx-1 text-muted-foreground">/</span>
+          <span className="font-mono">{label}</span>
+        </span>
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-50 mt-1.5 w-72 overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl sm:left-0 sm:right-auto"
+        >
+          <div className="border-b border-border px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Workspaces
+          </div>
+          <div className="max-h-72 overflow-y-auto py-1">
+            {workspaces.map((workspace) => {
+              const name = workspaceLabel(workspace)
+              const current = workspace.current === true || workspace.uri === currentWorkspaceUri
+
+              if (current) {
+                return (
+                  <div
+                    key={workspace.uri || workspace.name || name}
+                    role="menuitem"
+                    aria-current="true"
+                    className="flex items-center justify-between gap-2 bg-muted/50 px-3 py-2 text-xs"
+                  >
+                    <WorkspaceMenuLabel workspace={workspace} />
+                    <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-foreground" />
+                  </div>
+                )
+              }
+
+              return (
+                <form
+                  key={workspace.uri || workspace.name || name}
+                  action={workspace.switch_path || "/workspaces/switch"}
+                  method="post"
+                  className="block"
+                >
+                  <input type="hidden" name="_csrf_token" value={csrfToken()} />
+                  <input type="hidden" name="workspace" value={String(workspace.name || name)} />
+                  <button
+                    type="submit"
+                    role="menuitem"
+                    title={isSystemMember ? `Operate on workspace ${name}` : `Sign in to workspace ${name}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.currentTarget.form?.submit()
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  >
+                    <WorkspaceMenuLabel workspace={workspace} />
+                    {!isSystemMember && <Lock aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />}
+                  </button>
+                </form>
+              )
+            })}
+            {workspaces.length === 0 && <div className="px-3 py-3 text-xs text-muted-foreground">No workspaces</div>}
+          </div>
+          <div className="border-t border-border px-3 py-2">
+            <a href="/workspaces" className="text-xs font-medium text-foreground transition hover:text-primary">
+              Manage workspaces
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WorkspaceMenuLabel({workspace}: {workspace: WorkspaceNavItem}) {
+  return (
+    <span className="min-w-0">
+      <span className="block truncate font-mono text-foreground">{workspaceLabel(workspace)}</span>
+      {workspace.uri && (
+        <span className="block truncate font-mono text-[11px] text-muted-foreground" title={workspace.uri}>
+          {workspace.uri}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function workspaceLabel(workspace: WorkspaceNavItem): string {
+  return String(workspace.name || workspace.uri || "workspace")
 }
 
 // Header account menu — the world UI's logout / switch-account entry point (F3).
