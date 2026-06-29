@@ -90,7 +90,7 @@ flowchart TD
 **读图要点**:rule-gate 与 chokepoint hook(★NEW★)是**软**的——前者在动手前引导、后者在写代码瞬间提醒,都不挡死;sub-step-gate 与 CI 是**硬**的——不过不让前进。chokepoint hook 的触发是"AI 本 session 第一次编辑 `apps/` 下 `.ex` 文件时自动弹出",之后静默(不重复打扰)。
 
 > **两个边界澄清(评审采纳)**:
-> 1. **chokepoint hook 只兜"写代码"这一条路**(`apps/**/*.ex`)。改 config(G0)、seed 数据 / 运行时 orchestrator(G1/G2)、纯文档等**不触发 hook**——它们的"动手前"保证来自 **CLAUDE.md always-loaded 那一句 + 进 brainstorm 时加载 skill**,不是 hook。所以"确定性进入闸门"靠的是 always-loaded 指令;hook 只是**代码路径的最后兜底**,不是万能触发器。
+> 1. **chokepoint hook 只兜"写代码"这一条路**(`apps/**/*.ex`)。改 config(G0)、seed 数据 / 运行时 orchestrator(G1/G2)、纯文档等**不触发 hook**——它们的"动手前"在场靠 **CLAUDE.md always-loaded 那一句 + 进 brainstorm 时加载 skill**,不是 hook。注意:always-loaded **只在 Claude Code 项目会话内**提供默认在场(跨 AI surface 不保证);hook 只是**代码路径的最后兜底**,不是万能触发器。⟹ 谁都不是 100% 触发,是"双保险 + 提前 + 提醒"叠加降漏报,与 §17 验收口径(降概率,非硬挡)一致。
 > 2. **本地 hard gate 有边界**:`sub-step-gate.sh` 对**没有 staged Elixir 文件**的 commit 会跳过(纯文档/配置提交不跑 format/test/不变式)——图里这道"硬"对非代码提交其实不拦,真正兜底是远程 CI。
 
 ### 质量控制覆盖表
@@ -99,7 +99,7 @@ flowchart TD
 |---|---|---|---|---|---|
 | 决策 | **rule-gate** | brainstorm 时 | 软(advisory) | **选错层**(错误①②)+ E2E 缺失 | ★NEW★ |
 | 写码瞬间 | **chokepoint hook** | 首次改 `.ex` | 软(reminder) | 忘走闸门 / 正写最重层 | ★NEW★ |
-| 本地提交 | sub-step-gate.sh | commit/tag | 硬(exit2) | format / test / 8 条 grep 不变式 | 已存在 |
+| 本地提交 | sub-step-gate.sh | commit/tag | 硬(exit2) | format / test / `check_invariants` grep gates | 已存在 |
 | 远程 | ci.yml | PR / push main | 硬(不能 merge) | precommit + check_invariants | 已存在 |
 | 远程权限 | protect-dev-together-skill.yml | PR / push | 条件硬 | 越权改 dev-together skill | 已存在 |
 | 评审 | 同事 / Allen | PR | 人 | 设计 / 方向 | 已存在 |
@@ -149,7 +149,7 @@ brainstorm 一个 ezagent 改动
 开发者一上来说"帮我在 core 里加…"时,闸门动手前拦住,走阶梯,若更轻档可行 → 掰回最轻可行档并说明理由。chokepoint hook 在"要写 core/domain"那一刻提供确定性的第二道纠偏。
 
 ### 7.2 架构视角解释 = 给 reviewer 的「层级决策回执」(评审采纳)
-这份收尾解释不只是给本人看的总结,更是一张**可被 PR reviewer 依赖的决策回执(layer-decision receipt)**——因为选错层的代码能过全部硬 gate(§4),**人**是最后一道能拦住它的关卡,而 reviewer 需要"这次为什么落这层"的现成依据。所以闸门**应把这张回执落到 PR 描述 / commit body**(实施期定具体落地位),让 reviewer 一眼看出层级决策是否合理。
+这份收尾解释不只是给本人看的总结,更是一张**可被 PR reviewer 依赖的决策回执(layer-decision receipt)**——因为选错层的代码能过全部硬 gate(§4),**人**是最后一道能拦住它的关卡,而 reviewer 需要"这次为什么落这层"的现成依据。所以闸门**应把这张回执落地**,让 reviewer 一眼看出层级决策是否合理。**默认落地位 = PR 描述**(reviewer 主战场);**无 PR 时落 commit body**作备选。实施计划须把这个默认钉死,不再留作"实施期再定"。
 
 `references/explain-template.md` 固定结构,至少含:
 1. **需求**:一句话复述。
@@ -171,7 +171,7 @@ taxonomy SPEC §3 判定流程图回答的是「这个 **artifact** 物理落 ca
 
 **根因 2 —— 入口分裂 + 不可发现。** AI 第一跳是 `CLAUDE.md`(纯指针);taxonomy §3 流程图 + 6 red lines + 5 步作者指南**埋在 `docs/together/` 的 dated SPEC、且部分是 DESIGN 状态**,不在每-prompt 可发现路径;`three-tier-structure.md` 只 link 出去、不前置成"决策前门"。
 
-**根因 3 —— 顶层指针过时 / 自相矛盾。** 实锤:`CLAUDE.md` 教 `use Ezagent.Behavior`(应为 `use Ezagent.Lifecycle`);指 `references/new-contract.md`(应指 `lifecycle.md`);"8 条硬不变式"(实为 P1-P27 + 20 条);`README.md` "Phase 0 complete"(现 phase7);且完全没提 Decision #155 / carrier-layer taxonomy。
+**根因 3 —— 顶层指针过时 / 自相矛盾。** 实锤:`CLAUDE.md` 教 `use Ezagent.Behavior`(应为 `use Ezagent.Lifecycle`);指 `references/new-contract.md`(应指 `lifecycle.md`);"8 条硬不变式"(实为 P1-P27 + `architecture-invariants.md` 当前 22 条);`README.md` "Phase 0 complete"(现 phase7);且完全没提 Decision #155 / carrier-layer taxonomy。
 
 ## 9. 关键决策记录(已与用户拍板)
 
@@ -180,8 +180,8 @@ taxonomy SPEC §3 判定流程图回答的是「这个 **artifact** 物理落 ca
 | D1 | 载体走**方案 B**:薄路由 skill + 厚规则库 `ezagent-developer` | 命中"统一入口/前置路由/规则唯一源",轻量先行 |
 | D2 | 诊断修正获认可 | 见 §8 |
 | D3 | 闸门挂 **brainstorm 时机**;**不改 vendored brainstorming 本体**(v6.0.3) | 借力高频 skill,不 fork 上游 |
-| D4 | 触发 = **薄 skill + 硬 hook 双保险** | 防 AI 漏触发 |
-| D5 | 硬 hook = **PreToolUse chokepoint hook**(改 .ex 那刻、session 幂等、提醒不 block) | 默认安静、关键挡一下、从不挡死 |
+| D4 | 触发 = **薄 skill + 自动 hook(chokepoint)双保险** | 防 AI 漏触发("自动"=确定性触发,非 hard-block) |
+| D5 | 自动 hook = **PreToolUse chokepoint hook**(改 .ex 那刻、session 幂等、**软提醒不 block**) | 默认安静、关键提醒一下、从不挡死 |
 | D6 | 实验力度 = **混合(论证优先,可行则真跑)** | 平衡严谨与成本 |
 | D7 | **re-anchor 到已落地两轴 taxonomy**(轴 A 三 tier + 轴 B carrier layers + 概念轴);直觉阶梯保留作前门但用既有词汇定义;**只引不抄** | 不另立第三套 taxonomy(避免制造新的重叠矛盾) |
 | D8 | 未落地 P3–P10 **不硬 block**;**大胆先写 spec+计划**,计划埋"实施前置检查门",并行等代码落地 | 见 §13 |
@@ -225,7 +225,7 @@ PreToolUse chokepoint hook    →  改代码那一刻的确定性、安静的兜
 - **行为**:本 session **首次**触碰代码时,注入"这次改动过层级闸门了吗?判定落哪档?";之后静默(session 级幂等,sentinel 文件)。对提问 / 文档 / 探索**零打扰**。
 - **加料(纠偏)**:命中 `apps/ezagent_core/` 或 `apps/ezagent_domain_*/` 时提示更尖锐——"你正要写最重的 carrier-L1/core,闸门 sanction 过吗?业务语义是不是其实该进 carrier-L2 数据?"。
 - **力度**:**提醒 / 追问,不硬 block**。硬 enforcement 留给已存在的 `check_invariants` / CI。
-- **覆盖边界(评审采纳)**:hook **只覆盖代码路径**(`apps/**/*.ex`),不覆盖 config / seed 数据 / 运行时 orchestrator / 文档——后者靠 §10.B 的 always-loaded 句兜底。hook 是"代码路径最后兜底",不是"动手前唯一闸口";"动手前进入闸门"的确定性来自 always-loaded 指令。
+- **覆盖边界(评审采纳)**:hook **只覆盖代码路径**(`apps/**/*.ex`),不覆盖 config / seed 数据 / 运行时 orchestrator / 文档——后者靠 §10.B 的 always-loaded 句在场。hook 是"代码路径最后兜底",不是"动手前唯一闸口";always-loaded 句**只在 Claude Code 项目会话内**提供默认在场(跨 AI surface 不保证)。
 - **先例 + 实现风险**:复用 `scripts/hooks/sub-step-gate.sh` 同款 PreToolUse 手法。新脚本如 `scripts/hooks/layer-gate-reminder.sh`,在 `.claude/settings.json` 注册。**注意**:Claude Code hook 的 matcher 语义、能否从 stdin 拿到 `tool_input.file_path`、sentinel 文件落哪(session 维度),都需 v1 先做 spike 验证(见 §14),不要假设成立。
 
 ## 11. 测绘结论:治理来源现状(只读盘点)
@@ -234,7 +234,7 @@ PreToolUse chokepoint hook    →  改代码那一刻的确定性、安静的兜
 
 | 类 | 来源 | 性质 |
 |---|---|---|
-| ① 真·权威源(规则定义处) | `.claude/skills/ezagent-developer/`:SKILL.md(导航)+ 12 references(~2146 行):`design-principles.md`(P1-P27)、`architecture-invariants.md`(20 条 + CI gate)、`capbac.md`/`lifecycle.md`/`three-tier-structure.md`/`anti-patterns.md`/`how-to-recipes.md` 等 | **已高度集中** |
+| ① 真·权威源(规则定义处) | `.claude/skills/ezagent-developer/`:SKILL.md(导航)+ 12 references(~2146 行):`design-principles.md`(P1-P27)、`architecture-invariants.md`(当前 22 条 + CI gate)、`capbac.md`/`lifecycle.md`/`three-tier-structure.md`/`anti-patterns.md`/`how-to-recipes.md` 等 | **已高度集中** |
 | ② 权威 rationale + 决策档案 | `ARCHITECTURE.md`(3359 行,Allen 维护、只读)+ `GLOSSARY.md`(Decision Log **#1–#155** + 术语表 + 消歧) | 教学论证 + 历史 |
 | ②b **分层/载体 taxonomy(测绘首轮漏看)** | `docs/socialware-concepts.md`(**已落地**:base/socialware/fixture/recipe/responsibility + 5 步作者指南)、`docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md`(**DESIGN**:4 carrier layers + **§3 判定流程图** + 6 red lines + §6 提案 arch-gate)、`docs/together/2026-06-26/specs/socialware-unification.md`(**DESIGN**,lead,P0–P10)、**GLOSSARY Decision #155** | 已是权威概念,但散/埋/部分 DESIGN。注:taxonomy SPEC §7 的 GLOSSARY + three-tier-structure follow-up **已在 base 落地**(详见 §15) |
 | ③ 入口 / 启动 checklist / 指针 | `CLAUDE.md`(每 prompt 加载,纯指针)、`README.md`、`CONTRIBUTING.md`、`IMPLEMENTATION_ROADMAP.md`、`AGENTS.md`(纯 Phoenix,独立无重叠) | **过时最多** |
@@ -314,7 +314,7 @@ effort 升级脊梁 + 两轴映射是**架构稳定**的;未来迭代只需扩 `
 
 > 验收口径(评审采纳):目标是**降低"选错层"概率 + 留下可被 reviewer 拦截的回执**,**不是**"硬挡住选错层"(后者一般无法机器判定,见 §4)。
 
-- **发现率**:对一个全新 ezagent 改动需求,AI 动手前进入闸门——确定性来自 **CLAUDE.md always-loaded 那一句**(每 prompt 在场);chokepoint hook 是**代码路径的额外兜底**,不是唯一闸口。
+- **发现率**:对一个全新 ezagent 改动需求,AI 动手前进入闸门——**在 Claude Code 项目会话内**由 **CLAUDE.md always-loaded 那一句**提供默认在场(每 prompt 加载;跨 AI surface 不保证);chokepoint hook 是**代码路径的额外兜底**,不是唯一闸口。
 - **路由正确**:错误①/② 代表性需求各 ≥1 走查样例,闸门判出正确最轻档(含"其实运行时就能改"的错误②样例)。
 - **留下决策回执**:每次走完闸门,产出可落到 PR 描述 / commit 的 layer-decision receipt(§7.2),reviewer 能据此判断层级决策是否合理。
 - **运行时盲区补齐**:`runtime-capability-map.md` 覆盖 orchestrator 运行时可写的 carrier-L2/L3 项,**每行带四态(landed / api-landed / target-Pn / n.a.)+ source ref + 核对日期**,且有 owner + 更新触发条件 + 核对命令。
@@ -334,7 +334,7 @@ effort 升级脊梁 + 两轴映射是**架构稳定**的;未来迭代只需扩 `
 |---|---|---|
 | `CLAUDE.md` | 教 `use Ezagent.Behavior` 作开发者表面 | 开发者用 `use Ezagent.Lifecycle`;`use Ezagent.Behavior` 为 INTERNAL ENGINE |
 | `CLAUDE.md` | 指 `references/new-contract.md` | 指 `references/lifecycle.md` |
-| `CLAUDE.md` / `IMPLEMENTATION_ROADMAP.md` | "8 条硬不变式" | P1-P27 + `architecture-invariants.md` 20 条 |
+| `CLAUDE.md` / `IMPLEMENTATION_ROADMAP.md` | "8 条硬不变式" | P1-P27 + `architecture-invariants.md`(当前 22 条,数量会增,引用别写死) |
 | `CLAUDE.md` | 无 carrier-layer / Decision #155 指针 | 加指向 `socialware-concepts.md` + Decision #155 + taxonomy SPEC |
 | `README.md` | "Phase 0 complete" | 当前 phase7(或指向 roadmap 动态状态) |
 
