@@ -1,92 +1,100 @@
 # Ezagent Rule-Gate(层级升级闸门)设计
 
 - **日期**:2026-06-29
-- **状态**:设计已批准,待写实施计划(writing-plans)
+- **版本**:v2(re-anchor 到已落地的两轴 taxonomy;v1 见 git 历史)
+- **状态**:设计待 review(用户 review spec 后再出实施计划)
 - **载体决策**:方案 B —— 两层拆分(薄「路由闸门 skill」+ 厚「规则库 skill `ezagent-developer`」)
 - **目标仓**:ezagent42/ezagent(Elixir/Phoenix 平台仓)
+- **base commit**:`755b2a9b`(= 设计期 `origin/main`)
 
 ---
 
 ## 1. 背景与真实痛点
 
-症状:实施方向错误频发,本质是「在比需求更重的层去改动」。ezagent 的扩展机制有一条由轻到重的链:
-
-```
-config → session/orchestrator(运行时,用户在 session 里用 orchestrator 直接改/加)→ plugin → domain → core
-```
-
-两类高频错误:
-- **错误①**:本该加个 plugin 就满足的,最后改到了 core 和 domain。
-- **错误②**:本该改 config、或用户直接在 session 里用 orchestrator 就能完成的,最后却做成了一个 plugin。
-
-原假设是「规则太多 + 索引不全 + 部分过时矛盾,导致 AI 找不到 / 找到错的」。经只读测绘后**修正**:规则其实已 ~80% 集中在一个 skill,真痛点更精确(见 §3)。
+症状:实施方向错误频发,本质是「在比需求更重的层去改动」。两类高频错误:
+- **错误①**:本该加个 plugin 就满足的,最后改到了 core / domain。
+- **错误②**:本该改 config、或用户在 session 里用 orchestrator 运行时就能完成(甚至只需 seed 一条数据)的,最后却做成了一个 plugin。
 
 面向人群:**不熟整体架构、用 AI 改码的新开发者**——核心防"乱改 / 改错层";同时把"解释 + 纠偏"做完整。
+
+> **v2 关键修正**:经只读测绘 + 深读 socialware/taxonomy 三件套后确认——仓里**已经有**分层定义,甚至有一张判定流程图;真痛点不是"没有规则",而是「**层定义有了但缺一个'给需求选最轻 effort'的可发现前门,且最轻的两个 rung(config/运行时)没被纳入**」。本设计据此 re-anchor(见 §3、§5)。
 
 ---
 
 ## 2. 测绘结论:治理来源现状(只读盘点)
 
-按职能(非文件位置)分五类:
+### 2.1 五类来源(按职能,非文件位置)
 
 | 类 | 来源 | 性质 |
 |---|---|---|
-| ① 真·权威源(规则定义处) | `.claude/skills/ezagent-developer/`:SKILL.md(导航)+ 12 个 references(~2146 行):`design-principles.md`(P1-P27,5 组)、`architecture-invariants.md`(20 条 + CI gate)、`capbac.md`/`lifecycle.md`/`new-contract.md`/`three-tier-structure.md`/`anti-patterns.md`/`how-to-recipes.md`/`debug-recipes.md`/`ui-contract.md`/`slice-and-snapshot.md`(弃用)/`pointer-index.md` | **已高度集中** |
-| ② 权威 rationale + 决策档案 | `ARCHITECTURE.md`(3359 行,Allen 维护、只读)+ `GLOSSARY.md`(Decision Log #1–#154 + 术语表 + 消歧) | 教学论证 + 历史 |
-| ③ 入口 / 启动 checklist / 指针 | `CLAUDE.md`(每 prompt 加载,纯指针)、`README.md`、`CONTRIBUTING.md`、`IMPLEMENTATION_ROADMAP.md`(phase 种子)、`AGENTS.md`(纯 Phoenix 通用、独立无重叠) | **过时最多** |
-| ④ 强制 gate(真会跑) | `scripts/hooks/sub-step-gate.sh`(PreToolUse,commit/tag 前 `format+test+check_invariants`,exit 2 阻断)、CI `ci.yml`、`mix ezagent.{arch.scan,doc.scan,check_invariants,check_invariants.lifecycle}`、`protect-dev-together-skill.yml` | 提交期强制 |
-| ⑤ per-phase 规格 + how-to | `docs/phase-specs/`(phase0–7,当前 phase7)、`docs/guide/`、`docs/onboarding/`、`docs/architecture/`、`docs/scenarios/`(35 条 E2E) | 文档 |
+| ① 真·权威源(规则定义处) | `.claude/skills/ezagent-developer/`:SKILL.md(导航)+ 12 references(~2146 行):`design-principles.md`(P1-P27,5 组)、`architecture-invariants.md`(20 条 + CI gate)、`capbac.md`/`lifecycle.md`/`new-contract.md`/`three-tier-structure.md`/`anti-patterns.md`/`how-to-recipes.md` 等 | **已高度集中** |
+| ② 权威 rationale + 决策档案 | `ARCHITECTURE.md`(3359 行,Allen 维护、只读)+ `GLOSSARY.md`(Decision Log **#1–#155** + 术语表 + 消歧) | 教学论证 + 历史 |
+| ②b **分层/载体 taxonomy(测绘首轮漏看)** | `docs/socialware-concepts.md`(**已落地**:base/socialware/fixture/recipe/responsibility 概念轴 + 5 步作者指南)、`docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md`(**DESIGN**:4 carrier layers + **§3 判定流程图** + 6 red lines + §6 提案 arch-gate)、`docs/together/2026-06-26/specs/socialware-unification.md`(**DESIGN**,lead 拍板,P0–P10)、**GLOSSARY Decision #155** | 已是权威概念,但散/埋/部分 DESIGN |
+| ③ 入口 / 启动 checklist / 指针 | `CLAUDE.md`(每 prompt 加载,纯指针)、`README.md`、`CONTRIBUTING.md`、`IMPLEMENTATION_ROADMAP.md`、`AGENTS.md`(纯 Phoenix,独立无重叠) | **过时最多** |
+| ④ 强制 gate(真会跑) | `scripts/hooks/sub-step-gate.sh`(PreToolUse,commit/tag 前 `format+test+check_invariants`,exit 2 阻断)、CI `ci.yml`、`mix ezagent.{arch.scan,doc.scan,check_invariants,check_invariants.lifecycle}`(后者已有 NP-2 层词汇 lint)、`protect-dev-together-skill.yml` | 提交期强制 |
+| ⑤ per-phase 规格 + how-to | `docs/phase-specs/`(phase0–7)、`docs/guide/`、`docs/onboarding/`、`docs/scenarios/` | 文档 |
+
+### 2.2 已落地的两条正交轴(re-anchor 的地基)
+
+- **轴 A — 代码依赖方向**:`core → domain → plugin`(`three-tier-structure.md`)。
+- **轴 B — artifact carrier 层**:`L1 code / L2 definition-data / L3 runtime-state / L4 EZAGENT_HOME files`(taxonomy SPEC §0;Decision #155)。一个 plugin 可同时发 L1 code + L2 seed 数据。
+- **概念轴**:`base / socialware / fixture / recipe / responsibility`(socialware-concepts)。
+
+taxonomy SPEC **§3 已有一张判定流程图**「new thing goes in which layer?」(6 步 first-match-wins,落在轴 B);**§5 有 6 条 red lines**(核心:**业务语义只能进 L2 数据,永不进 L1 code / core**)。`three-tier-structure.md` 顶部已 link 出去这些。
 
 ---
 
-## 3. 诊断:三个根因
+## 3. 诊断:三个根因(v2 修正)
 
-**根因 1(最致命)——缺「最轻层」决策路由,而且恰恰缺最轻的两层。**
-现有 `P9「读什么数据决定层级」` + `three-tier-structure.md` 只覆盖 **core/domain/plugin** 三层的横向归属,**完全不覆盖** `config` 和 `session/orchestrator 运行时`。整条由轻到重的链「在 `ARCHITECTURE.md` 里没有任何显式文字表述,只通过反例隐含展示」。
-- 错误①:有 P9 但要 AI 自己推理,没反向决策树兜底。
-- 错误②:**无解**——"运行时 orchestrator 到底能改什么"完全没文档化,散在 `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/*.ex` 代码里;AI 看不到运行时这条路,自然往 plugin 跳。
+**根因 1(最致命)—— 有"落哪层"的判定,但缺"给需求选最轻 effort"的前门,且漏了最轻两个 rung。**
+taxonomy §3 流程图回答的是「这个 **artifact** 物理落 L1/L2/L3/L4 哪层」——它假设你**已经决定要造什么 artifact**。它**不回答**:"给一个**需求**,能不能干脆**不写代码**(改 config / 运行时 seed 数据)就满足?"。具体:
+- 它没有 **config / 运行时-orchestrator** 这两个最轻 rung(它是 artifact-storage 视角,不是 runtime-vs-build / 能否零代码视角)。
+- 它没有 **E2E-first + 逐层证伪** 的纪律(选层是静态判断,不是"先证明更轻的走不通")。
+- 这正是错误②的成因:`runtime-capability-map`(运行时不写代码能改什么)从未被映射;AI 看不到这条路,默认往 plugin 跳。
 
-**根因 2 —— 入口分裂、内部无索引。** AI 第一跳是 `CLAUDE.md`(只是指针,且不指向任何决策路由,因为它不存在);真权威在 skill,而 skill 自身也缺中央索引(无 CI-gates registry、无 decision tree,references 间靠手工交叉引用)。
+**根因 2 —— 入口分裂 + 不可发现。** AI 第一跳是 `CLAUDE.md`(纯指针);taxonomy §3 流程图 + 6 red lines + 5 步作者指南**埋在 `docs/together/` 的 dated SPEC、且部分是 DESIGN 状态**,不在每-prompt 可发现路径;`ezagent-developer/three-tier-structure.md` 只 link 出去、不前置成"决策前门"。
 
-**根因 3 —— 顶层指针过时 / 自相矛盾(降低信任、主动误导)。** 实锤:
-- `CLAUDE.md` 教 `use Ezagent.Behavior`,但 2026-05-29 起开发者表面已是 `use Ezagent.Lifecycle`(前者降为 INTERNAL ENGINE,Phase C gate 硬拒绝开发者层用它)——CLAUDE.md 在教一个会被 gate 拦下的写法。
-- `CLAUDE.md` 指 `references/new-contract.md`,但它已是 engine 内部,应指 `references/lifecycle.md`。
-- `CLAUDE.md` / `IMPLEMENTATION_ROADMAP.md` 说"8 条硬不变式",实际 P1-P27 + 20 条不变式。
-- `README.md` 仍写"Phase 0 complete"(现 phase7);`GLOSSARY` Decision #99 的 `init_slice` 已被 Lifecycle 禁用却未标注被取代;`CONTRIBUTING` 硬 gate 清单不全。
+**根因 3 —— 顶层指针过时 / 自相矛盾。** 实锤:`CLAUDE.md` 教 `use Ezagent.Behavior`(应为 `use Ezagent.Lifecycle`,前者已是 INTERNAL ENGINE、Phase C gate 硬拒);指 `references/new-contract.md`(应指 `lifecycle.md`);"8 条硬不变式"(实为 P1-P27 + 20 条);`README.md` "Phase 0 complete"(现 phase7);且**完全没提 Decision #155 / carrier-layer taxonomy**。
 
 ---
 
 ## 4. 设计目标(对照用户六条)
 
 1. AI 容易发现的「统一入口」。
-2. 进入后有条理、够快地定位当前任务对应规则——尤其前置一个「决策/路由」闸门:拿到需求先判断「满足它的最轻的层是哪层」再动手。
-3. 规则整合成唯一实时来源(skill 成权威,旧文件逐步瘦身 / 被替代)。
-4. 核心开发者(人)方便维护、修改这套规则。
-5. 人性化:机制面向 AI agent,但收尾的总结要用对人友好的语言讲清「做了什么、为什么这么做、挡下了哪些违规」。
+2. 进入后有条理、够快地定位规则——尤其前置一个「决策/路由」闸门:拿到需求先判断「满足它的最轻的层/载体是哪」再动手。
+3. 规则整合成唯一实时来源(skill 成权威导航,旧文件逐步瘦身;**只引不抄**已落地 taxonomy)。
+4. 核心开发者(人)方便维护、修改。
+5. 人性化:面向 AI,但收尾总结用对人友好的语言讲清「做了什么、为什么这么做(架构视角)、挡下了哪些违规」。
 6. 未来 ezagent 再迭代可持续复用。
 
 ---
 
-## 5. 核心模型:层级升级闸门(Layer-Escalation Gate)
+## 5. 核心模型:层级升级闸门(挂在 brainstorm 时机)
 
-挂在 **brainstorm 时机**(任何 ezagent 改动需求进 brainstorm 即启动):
+### 5.1 闸门三步
 
-**Step 0 —— 先定 E2E 验收**:先问"什么 E2E flow 能证明它成了"。复用现有 `docs/phase-specs/*/VERIFICATION.md` / `e2e-parity/FLOWS.md` + dev-together 的 demonstrable-DoD 文化。
+**Step 0 —— 先定 E2E 验收**:先问"什么 E2E flow 能证明它成了"。复用 `docs/phase-specs/*/VERIFICATION.md` / `e2e-parity/FLOWS.md` + dev-together 的 demonstrable-DoD。
 
-**Step 1 —— 由轻到重的升级阶梯,每层"被证伪"才准往上爬**:
+**Step 1 —— 由轻到重升级阶梯,每档"被证伪"才准往上爬**(实验力度 = 混合:论证优先,可行则真跑;显然不可能则记一条书面理由即可升级)。
 
-```
-L0 config           ┐
-L1 session/运行时    ┘ 不动代码,先用配置 + orchestrator 工具去【实验】能否让 E2E 过 → 过则打住
-L2 plugin           — 运行时走不通,才尝试 plugin → 过则打住
-L3 domain / core    — plugin 也不行,才进最重的层
-```
+**Step 2 —— 两个面向人的输出**(§9):实时纠偏 + 架构视角解释。
 
-实验力度 = **混合(论证优先,可行则真跑)**:AI 先用证据(列出可用的 config 旋钮 / orchestrator 工具)判最轻层能否满足;若**看起来可行**,必须**真跑一遍**运行时实验让 E2E 过才能收;若**显然不可能**,记一条书面理由即可升级。
+### 5.2 直觉阶梯 = 既有两轴词汇(不另立第三套 taxonomy)
 
-这一步把错误②从"无解"变"有解":阶梯强制先试最轻两层,且用 E2E 当客观裁判,不靠 AI 拍脑袋。
+给新人一条**直觉教学梯**,但**每一档都用既有词汇定义**,并标"今天能否零代码":
 
-**Step 2 —— 两个面向人的输出**(详见 §9):实时纠偏 + 架构视角解释。
+| 闸门档(直觉名) | = 既有权威词汇 | 今天能否零代码 | 典型需求 |
+|---|---|---|---|
+| **L0 config / deploy** | env + mix deps 开关 | 改配置,(可选)重启 | 端口/DB/SMTP、plugin 启停、默认 orchestrator |
+| **L1 运行时 orchestrator** | 写 **carrier-L2 定义数据(ConfigObject)** + **carrier-L3 slice**,经 orchestrator 工具 | **零代码、不重启**(取决于 socialware P3–P5 落地度,见 §7) | 加会话成员、改路由规则(RuleStore)、改 Legend、(target)seed 一个 socialware-def / recipe |
+| **L2 build-time data seed** | carrier-L2 数据,随发布 seed 脚本 | 数据,但要 deploy | 预置 recipe / socialware 定义 |
+| **L3 plugin** | **carrier-L1 code**,plugin tier(新 generic 机制 / 新 shape Behavior / adapter) | 写代码、重编译 | 新 agent 风味、新外部集成、新 shape |
+| **L4 domain** | carrier-L1 code,domain tier(新 Kind / load-bearing 词汇) | 同上,更重 + 可能 migration | 新 Kind 类型 |
+| **L5 core** | carrier-L1 code,core(primitives) | 几乎只有 Allen | 新 Registry、dispatch、URI scheme、Capability 算法 |
+
+> **注意**:闸门档名(L0–L5)是 effort/升级序,**不等于** carrier-layer 编号(L1–L4)。文档里两者出现时显式区分:写「闸门档 Ln」或「carrier-L n」。
+
+闸门的独有价值 = taxonomy §3 回答"artifact 落哪 carrier 层";闸门回答**正交的**"给**需求**选最轻 effort 档,且有没有用 E2E 证明更轻档走不通"。**红线引用**(永真,今天已验证 FIXED):业务语义→carrier-L2 数据,永不进 carrier-L1/core;加新 socialware 不得改 `ezagent_core`。
 
 ---
 
@@ -100,139 +108,168 @@ PreToolUse chokepoint hook    →  改代码那一刻的确定性、安静的兜
 
 ### 6.A 新建薄 skill `ezagent-rule-gate`
 
-- `SKILL.md`:触发 description 写成"**决定 ezagent 改动方向 / 选哪一层 / brainstorm 一个 ezagent 改动时**"触发;正文 = §5 升级阶梯 + §9 两个输出契约。**保持薄**,深内容下沉到 references。
-- `references/layer-decision.md`:**反向决策树**(config→运行时→plugin→domain→core),每层带具体 go/no-go 判定问题 + 10–20 个真实需求走查样例;**链接**到 `ezagent-developer` 的 P9 / `three-tier-structure.md` / `how-to-recipes.md`,**不复制**。
-- `references/runtime-capability-map.md`:**当前全仓缺失、价值最高的新产物**——"session/orchestrator 运行时不动代码能改什么"边界表(member / rule / legend / template 工具、`Ezagent.Routing.RuleStore`、`Ezagent.AppSettings` 等),从 `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/*.ex` 与 `behavior/orchestrator_admin.ex` 提炼。**直接补上错误②的盲区。**
-- `references/explain-template.md`:§9 收尾解释的中文模板。
+- `SKILL.md`:触发 description = "**决定 ezagent 改动方向 / 选哪一层 / brainstorm 一个 ezagent 改动时**";正文 = §5 升级阶梯 + §9 两输出契约。**保持薄**,深内容下沉 references。
+- `references/layer-decision.md`:**决策树**(§5.2 直觉阶梯,逐档 go/no-go 判定 + 10–20 个真实需求走查样例,覆盖错误①/②代表案例)。**只引不抄**:link 到 taxonomy §3 流程图、§5 6 red lines、socialware-concepts 5 步、Decision #155;**新增** = config/运行时两 rung + effort 升级序 + E2E-first 纪律 + **landed/target 标注**。
+- `references/runtime-capability-map.md`:**最高价值新产物**——"orchestrator 运行时不写代码能改哪些 carrier-L2/L3 数据,且**当前 main 真的通了的部分**"。从 `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/*.ex`、`behavior/orchestrator_admin.ex`、`Ezagent.Routing.RuleStore`、socialware `DefinitionRegistry` / `RecipeRegistry` 提炼。**每行标 landed / target(P3–P5)**。直接解错误②盲区。
+- `references/explain-template.md`:§9.2 收尾解释的中文模板。
 
-命名遵循项目约定(kebab-case、`ezagent-` 前缀,对齐 `ezagent-developer` / `ezagent-session-orchestrator` / `ezagent-socialware`)。
+命名遵循项目约定(kebab-case、`ezagent-` 前缀)。
 
 ### 6.B CLAUDE.md 一句 always-loaded 硬指针
 
-在 `CLAUDE.md` 顶部(必读区)加一句 load-bearing:
+`CLAUDE.md` 必读区加一句 load-bearing:
 
-> 任何 ezagent 代码改动,进 brainstorm 前先 load `ezagent-rule-gate` 走层级闸门(先定 E2E → 由轻到重选最轻可行层)。
-
-CLAUDE.md 每个 prompt 都加载 ⇒ 确定性发现入口。
+> 任何 ezagent 代码改动,进 brainstorm 前先 load `ezagent-rule-gate` 走层级闸门(先定 E2E → 由轻到重选最轻可行档;业务语义优先 carrier-L2 数据,别进 core)。
 
 ### 6.C PreToolUse chokepoint hook(安静兜底 + 纠偏)
 
-原则:**规范不指望纪律,指望结构;把硬 gate 钉在"写代码"这个不可逆边界,而不是每一步;默认安静、关键时刻挡一下、从不挡死。**
+原则:**规范不指望纪律,指望结构;硬 gate 钉在"写代码"这个不可逆边界;默认安静、关键时刻挡一下、从不挡死。**
 
 - **触发**:`PreToolUse` 匹配 `Edit|Write`,且 `tool_input.file_path` 落在 `apps/**/*.ex`。
-- **行为**:本 session **首次**触碰代码时,注入一句"这次改动过层级闸门了吗?判定落在哪层?";之后静默(session 级幂等,用 sentinel 文件)。对提问 / 文档 / 探索 **零打扰**。
-- **加料(纠偏)**:命中 `apps/ezagent_core/` 或 `apps/ezagent_domain_*/` 时提示更尖锐——"你正要写**最重的层**,闸门 sanction 过吗?"。把"实时纠偏"做成确定性、低噪音、精准命中犯案现场的触发。
-- **力度**:**提醒 / 追问,不硬 block**(硬 block 会让人绕路,绕路比漏报更糟)。真正硬 block 留给已存在的 `check_invariants` / CI(提交期)。
-- **先例**:复用 `scripts/hooks/sub-step-gate.sh`(已是 PreToolUse 钩在 Bash/git commit)的同款手法,只是挪到"改 .ex 的那一刻"。新脚本如 `scripts/hooks/layer-gate-reminder.sh`,在 `.claude/settings.json` 注册。
+- **行为**:本 session **首次**触碰代码时,注入"这次改动过层级闸门了吗?判定落哪档?";之后静默(session 级幂等,sentinel 文件)。对提问 / 文档 / 探索**零打扰**。
+- **加料(纠偏)**:命中 `apps/ezagent_core/` 或 `apps/ezagent_domain_*/` 时提示更尖锐——"你正要写最重的 carrier-L1/core,闸门 sanction 过吗?业务语义是不是其实该进 carrier-L2 数据?"。
+- **力度**:**提醒 / 追问,不硬 block**(硬 block 会让人绕路)。硬 enforcement 留给已存在的 `check_invariants` / CI(提交期)。
+- **先例**:复用 `scripts/hooks/sub-step-gate.sh`(已是 PreToolUse 钩 Bash)同款手法。新脚本如 `scripts/hooks/layer-gate-reminder.sh`,在 `.claude/settings.json` 注册。
 
 ---
 
-## 7. 三阶段不重叠的治理链(闸门与现有 gate 的分工)
+## 7. landed vs target:闸门是活文档,不照抄静态 SPEC
 
-```
-决策期     ezagent-rule-gate    →  「选对层」(本设计,process 闸门)
-层内实施   ezagent-developer    →  「层内怎么写对」(规则库,按需查)
-提交期     check_invariants/CI  →  「没写错 / 没违规」(强制 gate,已存在)
-```
+socialware P0–P10 中,「**加 socialware = 纯 seed carrier-L2 数据、零代码**」是 **target**(靠 P3 de-hardcode behavior-set→`installs` 数据 / P4 socialware-def ConfigObject / P5 抽 config),而 **main 现在约 P0–P2**——**今天**加 socialware 仍部分要碰 call-site / 代码。
 
-三段各管一段、互不重复。闸门**还会顺手**告诉你:选定该层后适用哪些不变式 / CI gate(链到 `architecture-invariants.md`),把决策期与提交期接上。
+⟹ 闸门**必须区分"今天能走"和"目标路径"**:
+- `layer-decision.md` 的 socialware 相关格 + `runtime-capability-map.md` 每行都带 **landed / target(phase)** 标注。
+- 内容**以 link 权威源为主**(socialware-concepts / Decision #155 / taxonomy SPEC),自己只维护 **effort 升级脊梁 + 当前 landed 现状**,降低 staleness。
+- 这两块是仅有的"会随 P3–P10 演进"的部分;其余组件与 socialware 进度无关。
 
 ---
 
-## 8. 数据流(一次改动怎么走)
+## 8. 爆炸半径:未落地代码会不会硬 block 本设计?
 
-```
-brainstorm 一个 ezagent 改动
-  → load ezagent-rule-gate
-  → Step0 定 E2E 验收
-  → Step1 阶梯(论证优先;看着可行就真跑运行时实验,E2E 过才打住)
-  → 选出最轻可行层(若原指令更重 → 当场纠偏)
-  → 交给 ezagent-developer 拿层内规则 / recipe 实施
-  →(写代码时 chokepoint hook 在改 .ex 那一刻做确定性兜底)
-  → Step2 友好中文解释收尾
-```
+**结论:不会硬 block。** 未落地的 P3–P10 / taxonomy(DESIGN)/ §6 arch-gate(提案),只碰到 7 个产物里的 2 个,且都是**加法**(让最轻路径更轻/更宽),不推翻决策树**结构**。
+
+| 产物 | 依赖未落地? | 影响 |
+|---|---|---|
+| ① SKILL.md 流程 | 无 | 独立 |
+| ② 决策树**脊梁** + red lines | 无 | red lines 今天已验证 FIXED(taxonomy §4.3/§4.6),脊梁稳定 |
+| ② 决策树"加 socialware=零代码"**单格** | 软(target=P3–P5) | 标 landed/target,结构不变,落地后只刷该格值 |
+| ③ `runtime-capability-map` | 软(P3–P5 扩可写集) | **增量友好**:按现状写+标注;落地后长新行不作废 |
+| ④ explain-template / ⑤ CLAUDE.md 句 / ⑥ hook / ⑦ 过时清理 | 无 | 独立 |
+
+**唯一真风险(非 block)= 词汇漂移**:P3–P5 若改 socialware-def 寻址 / `installs` 字段名,我们引用会 stale。**缓解内建**:只引不抄 + landed/target 标注 + 活文档。
+**§6 arch-gate**:本设计**不揽**(lead 的事),其未落地与我们零关系。
 
 ---
 
 ## 9. 两个面向人的输出
 
 ### 9.1 实时纠偏(动手前)
-开发者一上来就说"帮我在 core 里加…"时,闸门在动手前拦住,走阶梯,若发现更轻层可行 → 把方向掰回最轻可行层,并说明理由。chokepoint hook 在"要写 core/domain"那一刻提供确定性的第二道纠偏。
+开发者一上来说"帮我在 core 里加…"时,闸门动手前拦住,走阶梯,若更轻档可行 → 掰回最轻可行档并说明理由。chokepoint hook 在"要写 core/domain"那一刻提供确定性的第二道纠偏。
 
 ### 9.2 架构视角解释(收尾,中文友好)
-`references/explain-template.md` 固定结构,至少包含:
+`references/explain-template.md` 固定结构,至少含:
 1. **需求**:一句话复述。
 2. **E2E 验收**:用什么 flow 证明成了。
-3. **落在哪层 + 为什么**:从整体架构视角解释(为什么不更轻 / 为什么不必更重),引用决策树对应分支。
-4. **挡下了什么**:哪些更重的层 / 哪些错误指令被拦,为什么。
-5. **该层适用的 gate**:提交前会被哪些不变式 / CI 检查(链 `architecture-invariants.md`)。
-
-目的:让开发者不只知道"AI 做了什么",还从整体架构理解"为什么这么做"。
+3. **落在哪档 + 为什么**:整体架构视角(为什么不更轻 / 不必更重),引决策树分支 + 相关 red line。
+4. **挡下了什么**:哪些更重档 / 哪些错误指令被拦,为什么。
+5. **该档适用的 gate**:提交前会被哪些不变式 / CI 检查(链 `architecture-invariants.md`)。
 
 ---
 
-## 10. 关键决策记录(已与用户拍板)
+## 10. 三阶段不重叠的治理链
+
+```
+决策期     ezagent-rule-gate    →  「选对档」(本设计,process 闸门)
+层内实施   ezagent-developer    →  「层内怎么写对」(规则库,按需查)
+提交期     check_invariants/CI  →  「没写错 / 没违规」(强制 gate,已存在)
+```
+
+闸门还会顺手告诉你选定档适用的不变式 / CI gate,把决策期与提交期接上。
+
+---
+
+## 11. 数据流
+
+```
+brainstorm 一个 ezagent 改动
+  → load ezagent-rule-gate
+  → Step0 定 E2E 验收
+  → Step1 阶梯(论证优先;看着可行就真跑运行时实验,E2E 过才打住;查 landed/target)
+  → 选出最轻可行档(若原指令更重 → 当场纠偏)
+  → 交给 ezagent-developer 拿层内规则 / recipe 实施
+  →(写代码时 chokepoint hook 在改 .ex 那一刻确定性兜底)
+  → Step2 友好中文解释收尾
+```
+
+---
+
+## 12. 关键决策记录(已与用户拍板)
 
 | # | 决策 | 取舍 |
 |---|---|---|
-| D1 | 载体走**方案 B**:薄路由 skill + 厚规则库 `ezagent-developer` | 精准命中"统一入口 / 前置路由闸门 / 规则唯一源",轻量先行 |
-| D2 | 诊断修正获认可:规则非"散落无家",真痛点是**缺最轻两层决策路由 + 顶层指针过时** | 后续设计围绕补这两块 |
-| D3 | 闸门挂在 **brainstorm 时机**(复用全公司都用的 superpowers brainstorm 习惯);**不改 vendored brainstorming 本体**(v6.0.3,改了会被覆盖) | 借力高频 skill 提升发现率,不 fork 上游 |
-| D4 | 触发机制 = **薄 skill + 硬 hook 双保险** | 防 AI 漏触发(用户根虑) |
-| D5 | 硬 hook 具体形态 = **PreToolUse chokepoint hook**(改 .ex 那一刻、session 级幂等、提醒不 block),**替换**掉早期"settings 关键词 hook(噪音) vs 纯 CLAUDE.md 指令(靠自觉)"的二选一 | 默认安静、关键时刻挡一下、从不挡死;放在不可逆边界 |
+| D1 | 载体走**方案 B**:薄路由 skill + 厚规则库 `ezagent-developer` | 命中"统一入口/前置路由/规则唯一源",轻量先行 |
+| D2 | 诊断修正获认可 | 见 §3 |
+| D3 | 闸门挂 **brainstorm 时机**;**不改 vendored brainstorming 本体**(v6.0.3) | 借力高频 skill,不 fork 上游 |
+| D4 | 触发 = **薄 skill + 硬 hook 双保险** | 防 AI 漏触发 |
+| D5 | 硬 hook = **PreToolUse chokepoint hook**(改 .ex 那刻、session 幂等、提醒不 block) | 默认安静、关键挡一下、从不挡死 |
 | D6 | 实验力度 = **混合(论证优先,可行则真跑)** | 平衡严谨与成本 |
+| **D7** | **re-anchor 到已落地两轴 taxonomy**(轴 A 三 tier + 轴 B carrier layers + 概念轴);直觉阶梯保留作前门但用既有词汇定义;**只引不抄** | 不另立第三套 taxonomy(避免制造新的重叠矛盾) |
+| **D8** | 未落地 P3–P10 **不硬 block**;**大胆先写 spec+计划**,计划埋"实施前置检查门",并行等代码落地 | 见 §8 |
+| **D9** | **不揽** taxonomy §6 提案 arch-gate(硬 enforcement) | lead 的事;我们只做发现+纠偏 nudge |
 
 ---
 
-## 11. 范围:v1 做什么 / 延后什么
+## 13. 范围:v1 做什么 / 延后什么
 
-**v1(本次)**:
+**v1**:
 - 新建 `ezagent-rule-gate` skill(`SKILL.md` + `layer-decision.md` + `runtime-capability-map.md` + `explain-template.md`)。
-- `CLAUDE.md` 加 §6.B 那一句 always-loaded 硬指针。
-- 新增 `scripts/hooks/layer-gate-reminder.sh` 并在 `.claude/settings.json` 注册(§6.C)。
-- **最小**清理 §3 根因 3 里会主动误导闸门的过时指针:`CLAUDE.md` 的 `Behavior`→`Lifecycle`、`new-contract`→`lifecycle`、"8条"→P1-P27 表述;`README.md` 的 Phase 状态。
+- `CLAUDE.md` 加 §6.B 那句 always-loaded 指针 + Decision #155 / carrier-taxonomy 指针。
+- 新增 `scripts/hooks/layer-gate-reminder.sh` 并在 `.claude/settings.json` 注册。
+- **最小**清理 §3 根因 3 会主动误导的过时指针(`Behavior`→`Lifecycle`、`new-contract`→`lifecycle`、"8条"→P1-P27;`README` phase 状态)。
 
-**延后(不在 v1)**:
-- 旧文件全量瘦身 / 被替代(README / CONTRIBUTING / ROADMAP 的整体重构)。
-- 数据驱动 registry(方案 C:规则结构化成机器可读单一源 + CI 校验规则与代码一致)——作为本设计成熟后的演进。
-- `ezagent-developer` 内部中央索引(CI-gates registry):可作为 `runtime-capability-map` 之后的下一块。
+**实施前置检查门(写进计划)**:真正建 skill 前先 `git fetch` + 核对「P3–P5 落地了吗 / 当前 phase / 运行时可写集」,据此刷新 `layer-decision.md` 的 socialware 格 + `runtime-capability-map.md`。
 
-**明确不做**:改 `ARCHITECTURE.md`(Allen 维护);发明新架构 Decision(走 Allen review)。
+**延后**:旧文件全量瘦身;数据驱动 registry(方案 C);`ezagent-developer` 内部中央 CI-gates registry。
 
----
-
-## 12. 可复用性
-
-阶梯 + 运行时能力表是**架构稳定**的,不绑具体 phase;未来迭代只需扩 `layer-decision.md` 的走查样例、更新 `runtime-capability-map.md`。决策树与 phase 解耦 ⇒ 满足"持续复用"。
+**明确不做**:改 `ARCHITECTURE.md`;发明新架构 Decision;建 taxonomy §6 arch-gate(D9)。
 
 ---
 
-## 13. 验收(这套机制本身怎么算"做成了")
+## 14. 可复用性
 
-- **发现率**:对一个全新 ezagent 改动需求,AI 在动手前确定性地进入闸门(CLAUDE.md 指令 + chokepoint hook 双保险至少一条触发)。
-- **路由正确**:对 §3 错误①/② 的代表性需求各 ≥1 个走查样例,闸门能判出正确的最轻层。
-- **运行时盲区补齐**:`runtime-capability-map.md` 覆盖 orchestrator 工具能改的全部运行时项,可被引用判定"该不该做成 plugin"。
-- **解释完整**:收尾输出按 §9.2 模板,新人能读懂"为什么落这层"。
-- **安静**:hook 对纯文档 / 提问 / 探索零打扰;同一 session 不重复打扰。
-- **不挡死**:有意识地改 core 仍可越过(确认即过),硬拦留给提交期 gate。
+effort 升级脊梁 + 两轴映射是**架构稳定**的;未来迭代只需扩 `layer-decision.md` 走查样例、刷新 `runtime-capability-map.md` 的 landed/target。与具体 phase 解耦 ⇒ 持续复用。
 
 ---
 
-## 附录 A:分层实况表(决策树要锚定的事实地基)
+## 15. 验收(这套机制本身怎么算"做成了")
 
-| 层 | 代码体现 | 改它代价/门槛 | 典型该用它的需求 |
-|---|---|---|---|
-| **config** | `config/*.exs` + env + mix deps 清单 | 0–2h,重启(可选) | 端口/DB/SMTP、plugin 启停、默认 orchestrator |
-| **session/运行时** | `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/` + `OrchestratorAdmin` Behavior | 几分钟、零代码,MCP 工具调用,持久到 DB | 加会话成员、改路由规则(RuleStore)、改 Legend、改 SessionTemplate 配置 |
-| **plugin**(现有 13 个) | `apps/ezagent_plugin_*/`(OTP app) | 0.5–3h,重编译 | 新 agent 风味、新外部集成、UI、Template Class |
-| **domain**(11 个) | `apps/ezagent_domain_*/` | 1–8h,重编译 + 可能 migration | 新 Kind 类型、某 Kind 首个核心 Behavior |
-| **core**(~920 LOC) | `apps/ezagent_core/` | 4–40h,牵动全局 + 全部不变式,通常仅 Allen | 新 Registry、dispatch 模型、新 URI scheme、Capability 算法 |
+- **发现率**:对一个全新 ezagent 改动需求,AI 动手前确定性进入闸门(CLAUDE.md 指令 + chokepoint hook 至少一条触发)。
+- **路由正确**:错误①/② 代表性需求各 ≥1 走查样例,闸门判出正确最轻档。
+- **运行时盲区补齐**:`runtime-capability-map.md` 覆盖 orchestrator 运行时可写的 carrier-L2/L3 项,带 landed/target 标注。
+- **不另立词汇**:决策树用既有两轴 + 概念轴词汇,red lines 来自引用而非复述。
+- **解释完整**:收尾按 §9.2 模板,新人读懂"为什么落这档"。
+- **安静 + 不挡死**:hook 对文档/提问零打扰、session 不重复;有意识改 core 确认即过。
+
+---
+
+## 附录 A:分层实况表(决策树锚定的事实地基)
+
+见 §5.2。carrier-layer 定义见 taxonomy SPEC §0 / Decision #155;三 tier 见 `three-tier-structure.md`;概念轴见 `socialware-concepts.md`。
 
 ## 附录 B:v1 要清理的过时指针清单
 
 | 文件 | 过时内容 | 改成 |
 |---|---|---|
 | `CLAUDE.md` | 教 `use Ezagent.Behavior` 作开发者表面 | 开发者用 `use Ezagent.Lifecycle`;`use Ezagent.Behavior` 为 INTERNAL ENGINE |
-| `CLAUDE.md` | 指 `references/new-contract.md` | 指 `references/lifecycle.md`(new-contract 为 engine 内部) |
+| `CLAUDE.md` | 指 `references/new-contract.md` | 指 `references/lifecycle.md` |
 | `CLAUDE.md` / `IMPLEMENTATION_ROADMAP.md` | "8 条硬不变式" | P1-P27 + `architecture-invariants.md` 20 条 |
+| `CLAUDE.md` | 无 carrier-layer / Decision #155 指针 | 加指向 `socialware-concepts.md` + Decision #155 + taxonomy SPEC |
 | `README.md` | "Phase 0 complete" | 当前 phase7(或指向 roadmap 动态状态) |
+
+## 附录 C:已读的权威源(本设计 link、不复述)
+
+- `docs/socialware-concepts.md`(LANDED)— 概念轴 + 5 步作者指南 + anti-patterns
+- `docs/together/2026-06-28/specs/ezagent-taxonomy-boundaries.md`(DESIGN)— §0 4 carrier layers / §3 判定流程图 / §5 6 red lines / §6 提案 arch-gate
+- `docs/together/2026-06-26/specs/socialware-unification.md`(DESIGN,lead)— P0–P10
+- `GLOSSARY.md` Decision #155 — carrier-layer taxonomy + anti-leak red lines
+- `.claude/skills/ezagent-developer/references/three-tier-structure.md` — 轴 A + 顶部正交轴提示
