@@ -291,6 +291,11 @@
   # resolver shape (`resource_types/0`) is NOT flagged. Hard zero, no allowlist —
   # Plan-B never landed on main; this locks it out.
   resource_kind_as_genserver: 0,
+  # World host-scope config (2026-06-29) — deployment HTTP host literals belong
+  # in config/runtime config, not production lib code. Forbids the old
+  # `host: "world."` router regression and app/world deploy host strings copied
+  # into libraries. Email addresses/domains are not counted.
+  hardcoded_deploy_domain_hosts: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

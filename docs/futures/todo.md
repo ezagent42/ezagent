@@ -1425,3 +1425,31 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > kill the facade test's owner connection. NOT a close regression (no merge touched
 > `apps/ezagent_domain_external_mirror`). Fix: same `EzagentCore.DataCase` / `async:
 > false` hardening pg applied to `repair_orchestrator_test`. Owner: external_mirror/pg.
+
+---
+
+## 2026-06-29 session — active tasks (post-restart补录)
+
+> Session TaskList 是内存态(session-scoped),重启清空;补录进此文件(持久 source of truth)。
+
+### #146 — Week 2026-06-29: 官网上线 + 内测 + 自举 + design system (IN PROGRESS)
+- FP1 官网(ezagent-served socialware, app.ezagent.chat path) → zhaomato.
+- FP2 内测 → gaga + allen (#110 DONE).
+- FP3 自举(PR-E2E trigger, B路线) → allen/zyli.
+- FP4 DS 升级(手写→shadcn) → zyli(主前端).
+- FP5 kanban #1020 → jjkysy.
+- FP6 官网 demo → ruihua.
+- FP7 leak gate → FatNine.
+- FP8 carry-in → allen.
+- plan.html v3 on main #1081(含 §4 复制开工prompt按钮 + Allen decisions).
+
+### #147 — world host-scope config-driven (IN PROGRESS, codex done, CI+merge pending)
+- Fix: router.ex host:"world." config-driven(dev/test="world." / prod=nil→apex). Handoff #1084.
+
+### #148 — reflow Phase-1 full-data rehearsal incl credentials (PENDING, codex dispatched)
+- Harden reflow.sh: FULL data reflow incl credentials. verify-rehearsal.sh 6 gates. deploy.yml wired. Handoff #1087.
+
+### DONE this session
+- #110 ✅ three-env deploy on current main (755b2a9b).
+- #1082 ✅ cross-env data-sync SPEC.
+- #1085 ✅ migration-rehearsal Phase-1 draft.

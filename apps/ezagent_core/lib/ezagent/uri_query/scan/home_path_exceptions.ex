@@ -39,7 +39,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # chokepoint every migrated family routes through (SPEC §5.1). Not migratable
     # (it IS the migration target); not boot/operator.
     {"apps/ezagent_core/lib/ezagent/resource/fs_resolver.ex",
-     "Ezagent.Resource.FsResolver.resolve/2", 150,
+     "Ezagent.Resource.FsResolver.resolve/2", 153,
      "resource:// resolver backend — R-4 sanctioned single Home.path chokepoint"},
     # the system:// resolver backend (Resource-unification P3, SPEC §10 OI-3) —
     # the sanctioned SINGLE Home.path chokepoint every node-global system artifact

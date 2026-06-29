@@ -4,6 +4,9 @@ import Config
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
 
+# Keep the operator console on world.localhost in local development.
+config :ezagent_web, :world_host_scope, "world."
+
 # task #87 — in dev, email goes to the in-memory Local adapter (preview at
 # /dev/mailbox if mounted) so confirmation/reset links work with no SMTP.
 # Prod uses the compile-pinned SMTP adapter (config.exs) + runtime smtp_config.

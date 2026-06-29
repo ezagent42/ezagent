@@ -1,5 +1,9 @@
 import Config
 
+# Keep TEST host routing aligned with local development: world routes are still
+# scoped to world.localhost/world.* unless a test deliberately overrides it.
+config :ezagent_web, :world_host_scope, "world."
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
