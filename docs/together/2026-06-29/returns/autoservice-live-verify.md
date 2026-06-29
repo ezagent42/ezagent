@@ -34,12 +34,31 @@ route            : always(in_session)→AutoService-agent  id=2
 
 ---
 
-## S4 cc answer-loop：BLOCKED — 已知缺口
+## S4 cc answer-loop：已在 fix/cc-agent-create-autoservice 修复
 
-**错误**：`{:autoservice_agent_create_failed, {:role_unsupported_for_flavor, "cc"}}`  
-**根因**：`Workspace.create_agent/3` 对 `cc` flavor 不支持。cc-flavor orchestrator **必须经 `session-create orchestrator-template` 路径物化**，不走 `create_agent`。  
-**状态**：seed 代码 best-effort 设计（不 crash），S1/S2a/S3 链已完整 wired，cc 物化是剩余工作项。  
-**cc 物化路径**（未验证）：`session-create orchestrator-template` → `SessionManager.load_orchestrator_caps/1` → kb.query cap → MCP bridge 暴露 `kb_query` 工具 → message → cc answer weaving ZEPHYR-7731。
+**原错误**：`{:autoservice_agent_create_failed, {:role_unsupported_for_flavor, "cc"}}`  
+**根因**：`Workspace.create_agent/3` 对 file-flavor（`cc`/`codex`/`codex-remote`/`cc-headless`）的 `role: "orchestrator"` 不支持；cc orchestrator 必须经 AgentTemplate 物化路径。  
+
+**fix/cc-agent-create-autoservice 的处理**（单独提交，不并入本分支）：
+1. `scripts/autoservice_tier1_seed.exs`：cc+orchestrator 分支改为读 `template://system/agent/cc-orchestrator` 并调 `Entity.Agent.spawn_from_template_content/5`，非 cc flavor 仍走原 `create_agent` 路径
+2. `ezagent_core/invocation.ex`：新增 `Invocation.dispatch_registered_local/1` 内部接缝——target Kind 已在本地 KindRegistry 注册、跳过 public ReadyGate wait、仍经 CapBAC+args validation+effects+snapshot+audit，专供物化/bootstrap 内部初始化路径
+3. `entity/agent/template_spawn.ex`：`record_sandbox_state/3` 改走 `dispatch_registered_local/1`，cc 模板物化在 bridge join 前即可持久化 sandbox 状态
+4. `identity/grant.ex`：imperative grant 若 target Kind 已本地注册但 public not-ready，改走 `dispatch_registered_local/1`
+5. `session/session_manager.ex`：`load_orchestrator_caps/1` 改用 `Identity.read_entity_caps/1`（不走 ReadyGate-gated 路径），适配 bridge-backed orchestrator
+
+**验证结果**（fix 分支，6 tests 0 failures）：
+```elixir
+# live IEx probe
+{Ezagent.KindRegistry.lookup(uri), Ezagent.ReadyGate.status(uri),
+ length(Ezagent.Identity.read_entity_caps(uri)),
+ Enum.any?(caps, &(&1.behavior == Ezagent.Behavior.Kb and Capability.action_of(&1) == :query))}
+# => {{:ok, #PID<...>}, :failed, 4, true}
+```
+Agent 已存在，kb.query 授权在 durable caps 中。
+
+**residual**：`ReadyGate.status == :failed`——本地 Claude Code 未登录（`Not logged in · Run /login`），外部 bridge 未 join，answer-loop 仍不可用；待 cc auth 配置后闭环。
+
+**参考**：`docs/together/2026-06-29/returns/cc-agent-create-failure-resolution.md`（fix 分支）
 
 ---
 
