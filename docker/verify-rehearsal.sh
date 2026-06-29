@@ -21,8 +21,10 @@ set -a
 set +a
 
 compose() { docker-compose --env-file "$SECRETS_HOME/.env.$1" -f docker/docker-compose.yml "${@:2}"; }
-pgctr()   { compose "$1" ps -q postgres; }
-ezctr()   { compose "$1" ps -q ezagent; }
+# Resolve containers by name pattern (CWD-independent; compose-from-worktree can
+# misresolve project name → wrong container → wrong DB → false FATAL).
+pgctr()   { docker ps -q --filter "name=ezagent-$1-postgres"; }
+ezctr()   { docker ps -q --filter "name=ezagent-$1-ezagent"; }
 
 fail() {
   echo "!! gate failed: $1" >&2
