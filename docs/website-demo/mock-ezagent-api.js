@@ -117,12 +117,29 @@
     },
   };
 
+  // ── world.cup 路线图（押注标的）· 产品 feature roadmap（对应价值链产品卡）─────
+  //    stage: issue(想做) | pr(在做) | merged(已上线)。waitlist/unlockAt = L1 候补门槛；
+  //    t = 甘特时间戳(issue→pr→merge 年份)。结算真相源 = PR 合并。
+  const ROADMAP = [
+    { id: '#360', pos: 'hello｜界面生成', title: '一句话生成可用界面',   stage: 'pr',     scene: '生成', when: '2025 Q3', waitlist: 128, unlockAt: 150, prRef: '#360', t: { issue: 2025.3, pr: 2025.9, merge: 2026.8 } },
+    { id: '#318', pos: 'world｜消息流转', title: '通用 webhook 接入',     stage: 'pr',     scene: '连接', when: '2025 Q3', waitlist: 92,  unlockAt: 120, prRef: '#318', t: { issue: 2025.6, pr: 2026.2, merge: 2026.9 } },
+    { id: '#366', pos: 'hello｜界面生成', title: '生成界面可二次编辑',     stage: 'issue',  scene: '定制', when: '',        waitlist: 138, unlockAt: 150, prRef: '',     t: { issue: 2026.2, pr: 2026.9, merge: 2027.2 } },
+    { id: '#340', pos: 'world｜消息流转', title: '渠道掉线自动重连',       stage: 'issue',  scene: '稳定', when: '',        waitlist: 64,  unlockAt: 100, prRef: '',     t: { issue: 2026.4, pr: 2027.0, merge: 2027.4 } },
+    { id: '#380', pos: 'hello｜界面生成', title: '移动端自适应生成',       stage: 'issue',  scene: '生成', when: '',        waitlist: 77,  unlockAt: 100, prRef: '',     t: { issue: 2026.5, pr: 2027.1, merge: 2027.5 } },
+    { id: '#372', pos: 'hello｜界面生成', title: '不同角色看到不同视图',   stage: 'issue',  scene: '定制', when: '',        waitlist: 41,  unlockAt: 100, prRef: '',     t: { issue: 2026.3, pr: 2027.0, merge: 2027.4 } },
+    { id: '#355', pos: 'world｜消息流转', title: '消息流量可视化看板',     stage: 'issue',  scene: '观测', when: '',        waitlist: 38,  unlockAt: 100, prRef: '',     t: { issue: 2026.5, pr: 2027.2, merge: 2027.6 } },
+    { id: '#312', pos: 'world｜消息流转', title: '常用渠道一键接入',       stage: 'merged', scene: '连接', when: '2025 Q1', waitlist: 210, unlockAt: 120, prRef: '#312', t: { issue: 2024.2, pr: 2024.6, merge: 2025.1 } },
+    { id: '#333', pos: 'world｜消息流转', title: '换 AI/后端不用重写',     stage: 'merged', scene: '灵活', when: '2025 Q2', waitlist: 176, unlockAt: 150, prRef: '#333', t: { issue: 2024.6, pr: 2024.9, merge: 2025.4 } },
+    { id: '#301', pos: 'world｜消息流转', title: '消息不丢、出错有兜底',   stage: 'merged', scene: '稳定', when: '2025 Q1', waitlist: 150, unlockAt: 120, prRef: '#301', t: { issue: 2024.1, pr: 2024.5, merge: 2025.0 } },
+  ];
+
   // ── public API（async 仿网络，且证明视图走"接口"而非直读常量）──────────────
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   global.EZ = {
     async contributors() { await wait(120); return CONTRIBUTORS.slice(); },
     async kanbanDev()    { await wait(160); return JSON.parse(JSON.stringify(KANBAN_DEV)); },
     async kanbanValueChain() { await wait(160); return JSON.parse(JSON.stringify(KANBAN_VALUECHAIN)); },
+    async worldcup()     { await wait(160); return JSON.parse(JSON.stringify(ROADMAP)); },
     async introspect()   { await wait(100); return JSON.parse(JSON.stringify(INTROSPECT)); },
     chatScript()         { return JSON.parse(JSON.stringify(CHAT_SCRIPT)); },
     // chat-feed wire shape：把一条 reply 编成 feed_encoding 的 {id,text,sender,render}

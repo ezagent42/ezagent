@@ -283,13 +283,7 @@ footer .mono{font-size:11px}
     </div>
   </div>
 
-  <div class="seg" id="boardseg" style="margin-top:18px">
-    <button class="on" data-board="dev">赛程 · 开发看板</button>
-    <button data-board="vc">官网价值链 · Value-chain</button>
-  </div>
-  <div id="boardmeta" class="over" style="margin:-6px 0 16px"></div>
-  <div class="board" id="board"></div>
-  <footer><div class="mono">真实看板透明化 · 团队怎么开发、官网怎么一层层长出来都在看板上 · 投票为 mock</div></footer>
+  <div id="wc-root"></div>
 </div>
 </main>
 
@@ -307,6 +301,7 @@ footer .mono{font-size:11px}
 </main>
 
 <script src="mock-ezagent-api.js"></script>
+<script src="worldcup.js"></script>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
@@ -334,47 +329,7 @@ $('#theme').addEventListener('click',()=>{const r=document.documentElement;r.dat
   for(let i=0;i<52;i++){const d=el('i');d.style.background=cols[Math.floor(rnd()*cols.length)];
     d.style.opacity=(.35+rnd()*.55).toFixed(2);d.style.transform=`scale(${(.6+rnd()*1.1).toFixed(2)})`;P.appendChild(d)}})();
 
-/* ── world.cup 看板（⚽ + 3 视角 + 投票，内容用 kanban）──────────────────── */
-const STAGE_C={positioning:'var(--blueink)',metric:'var(--blue)',pain:'var(--red)',anchor:'var(--orange)',ux:'var(--yellow)',feature:'var(--jade)'};
-// dev stage → 3 视角（想做 / 在做 / 做完）
-const VIEW3=[
-  {key:'want',cn:'想做 · backlog',c:'var(--ink-4)',stages:['plan']},
-  {key:'doing',cn:'在做 · in play',c:'var(--blue)',stages:['dive','return','review']},
-  {key:'done',cn:'做完 · shipped',c:'var(--jade)',stages:['shipped']},
-];
-const boardEl=$('#board'),metaEl=$('#boardmeta');
-function voteBtn(id){
-  const n0=8+hashN(id,40);const b=el('button','vote',`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l8 8M12 4l-8 8M12 4v16"/></svg><span>${n0}</span>`);
-  b.addEventListener('click',()=>{const s=b.querySelector('span');if(b.classList.contains('voted')){b.classList.remove('voted');s.textContent=n0}else{b.classList.add('voted');s.textContent=n0+1}});
-  return b;
-}
-async function showBoard(which){
-  boardEl.innerHTML='<div class="over">loading…</div>';
-  if(which==='dev'){
-    const b=await EZ.kanbanDev();metaEl.textContent=b.subtitle+' · 想做 / 在做 / 做完 三视角';
-    boardEl.innerHTML='';
-    VIEW3.forEach(v=>{
-      const items=Object.entries(b.nodes).filter(([,n])=>v.stages.includes(n.stage)).sort((a,c)=>a[1].order-c[1].order);
-      const col=el('div','col');col.style.setProperty('--c',v.c);
-      col.appendChild(el('div','colhead',`<span class="nm">${v.cn}</span><span class="cnt">${items.length}</span>`));
-      items.forEach(([id,n])=>{const k=el('div','kcard');k.appendChild(el('div','kt',n.title));
-        const m=el('div','meta');const a=el('div','avatar xs',initials('',n.owner));a.style.background=avColor(n.owner);
-        m.appendChild(a);m.appendChild(el('span','who',n.owner));m.appendChild(voteBtn(id));k.appendChild(m);col.appendChild(k)});
-      boardEl.appendChild(col)});
-  }else{
-    const b=await EZ.kanbanValueChain();metaEl.textContent=b.subtitle;
-    boardEl.innerHTML='';
-    b.segments.forEach((sg,i)=>{const col=el('div','col');col.style.setProperty('--c',Object.values(STAGE_C)[i]||'var(--jade)');
-      col.appendChild(el('div','colhead',`<span class="nm">段 ${i+1}</span><span class="cnt">${sg.count} 卡</span>`));
-      const head=el('div','kcard');head.appendChild(el('div','kt',sg.title));
-      head.appendChild(el('div','meta',`<span class="badge neutral">★ ${sg.metric}</span>`));col.appendChild(head);
-      sg.cards.forEach((c,j)=>{const k=el('div','kcard');k.appendChild(el('div','samp',c));
-        const m=el('div','meta');m.appendChild(voteBtn(sg.id+j));k.appendChild(m);col.appendChild(k)});
-      boardEl.appendChild(col)});
-  }
-}
-document.querySelectorAll('#boardseg button').forEach(btn=>btn.addEventListener('click',()=>{
-  document.querySelectorAll('#boardseg button').forEach(b=>b.classList.toggle('on',b===btn));showBoard(btn.dataset.board)}));
+/* ── world.cup（押注路线图）由 worldcup.js 渲染进 #wc-root ─────────────────── */
 
 /* ── contributors ──────────────────────────────────────────────────────── */
 const ROLE_BADGE={lead:'warning','human-dev':'info',designer:'success',agent:'neutral'};
@@ -382,7 +337,6 @@ const ROLE_CN={lead:'lead · 队长','human-dev':'dev · 开发',designer:'desig
 
 /* ── boot ──────────────────────────────────────────────────────────────── */
 (async()=>{
-  showBoard('dev');
   const grid=$('#teamgrid'),list=await EZ.contributors();
   list.forEach(m=>{const card=el('div','member card');
     const top=el('div','top');const a=el('div','avatar',initials(m.cn,m.gh));a.style.background=avColor(m.gh);top.appendChild(a);
