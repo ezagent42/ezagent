@@ -73,9 +73,19 @@ a{color:inherit;text-decoration:none}
 .sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.2;margin-top:8px}
 .sec-head .sub{color:var(--ink-2);margin-top:8px;font-size:16px;max-width:62ch}
 
-/* ── 办公室地板 ──────────────────────────────────────────────────────────── */
-.office{display:grid;grid-template-columns:repeat(3,1fr);gap:46px 40px;padding:18px 0 10px}
-.seat{display:flex;flex-direction:column;align-items:center;gap:14px;
+/* ── 办公室地板（按平面图分区：lead 独立 / 开发 pod 成对 / AI 区）──────────── */
+#floor{display:flex;flex-direction:column;gap:34px;padding:8px 0 10px}
+.zone-label{margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.zone-label::after{content:"";flex:1;height:1px;background:var(--line)}
+.benchset{display:flex;flex-direction:column;gap:26px}
+/* bench = 一对拼桌的岛；淡底把成对的人“连”在一起 */
+.bench{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;
+  background:var(--ground-2);border-radius:var(--r-lg);padding:24px 26px 28px;position:relative}
+.bench.solo{grid-template-columns:minmax(0,300px);justify-content:start}
+.bench.lead{background:var(--blue-wash)}
+.bench.ai{background:var(--ground-2);box-shadow:inset 0 0 0 1px var(--line)}
+.bench.ai .desk svg{opacity:.98}
+.seat{display:flex;flex-direction:column;align-items:center;gap:13px;
   animation:fu var(--dur-enter) var(--ease-out) both}
 .desk{position:relative;width:100%;max-width:240px;cursor:default;
   transition:transform 220ms var(--ease-out),filter 220ms var(--ease-out)}
@@ -113,8 +123,7 @@ footer .mono{font-size:11px}
 .anim{transform-box:fill-box;transform-origin:center}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
-@media (max-width:980px){.office{grid-template-columns:repeat(2,1fr);gap:40px 30px}}
-@media (max-width:620px){.office{grid-template-columns:1fr}.wrap{padding:0 20px}}
+@media (max-width:620px){.bench{grid-template-columns:1fr;gap:30px}.bench.solo{grid-template-columns:1fr}.wrap{padding:0 20px}}
 </style>
 </head>
 <body>
@@ -135,7 +144,7 @@ footer .mono{font-size:11px}
     <p class="sub">一间会动的办公室 — 每个真实成员一张桌，坐在屏前操作电脑，屏幕上是他正在做的项目。数据源 docs/together/team.md。</p>
   </div>
 
-  <div class="office" id="office"></div>
+  <div id="floor"></div>
 
   <footer>
     <div>组织的 IDE · Organization IDE — Ezagent</div>
@@ -146,7 +155,15 @@ footer .mono{font-size:11px}
 <script src="mock-ezagent-api.js"></script>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 const hashN=(s,m)=>[...(s||'')].reduce((a,c)=>a+c.charCodeAt(0),0)%m;
+
+/* 座位平面图（来自 20260629 floor-plan）：lead 独立 · 6 人成对 pod · AI 区 ───── */
+const LAYOUT=[
+  {key:'lead', label:'lead · 队长区',     rows:[['allenwoods']]},
+  {key:'team', label:'team · 开发 pod',   rows:[['jjkysy','gagameow'],['ruihuachen-designer','zyli-developer'],['FatNine','zhaomaota97']]},
+  {key:'ai',   label:'AI · 协作 agent',   rows:[['claude','codex']]},
+];
 
 $('#theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'});
 
@@ -223,23 +240,36 @@ function deskSVG(m){
   </svg>`;
 }
 
-/* ── 渲染整间办公室 ──────────────────────────────────────────────────────── */
+/* ── 渲染整间办公室（按 LAYOUT 分区落座）────────────────────────────────── */
+function seatNode(m,i){
+  const seat=el('div','seat');
+  seat.style.animationDelay=(i*70)+'ms';   // 桌子错峰浮入
+  seat.innerHTML=`
+    <div class="desk">${deskSVG(m)}</div>
+    <div class="plate">
+      <div class="nm">${m.cn}</div>
+      <div class="gh">@${m.gh}</div>
+      <div class="badge ${ROLE_BADGE[m.role]||'agent'}"><span class="dot"></span>${ROLE_CN[m.role]||m.role}</div>
+      <div class="track">${m.track}</div>
+    </div>`;
+  return seat;
+}
 (async()=>{
-  const office=$('#office');
+  const floor=$('#floor');
   const list=await EZ.contributors();
-  list.forEach((m,i)=>{
-    const seat=document.createElement('div');
-    seat.className='seat';
-    seat.style.animationDelay=(i*70)+'ms';   // 桌子错峰浮入
-    seat.innerHTML=`
-      <div class="desk">${deskSVG(m)}</div>
-      <div class="plate">
-        <div class="nm">${m.cn}</div>
-        <div class="gh">@${m.gh}</div>
-        <div class="badge ${ROLE_BADGE[m.role]||'agent'}"><span class="dot"></span>${ROLE_CN[m.role]||m.role}</div>
-        <div class="track">${m.track}</div>
-      </div>`;
-    office.appendChild(seat);
+  const byGh=Object.fromEntries(list.map(m=>[m.gh,m]));
+  let i=0;
+  LAYOUT.forEach(zone=>{
+    const z=el('div','zone '+zone.key);
+    z.appendChild(el('div','over zone-label',zone.label));
+    const set=el('div','benchset');
+    zone.rows.forEach(row=>{
+      const bench=el('div','bench '+zone.key+(row.length===1?' solo':''));
+      row.forEach(gh=>{const m=byGh[gh];if(m)bench.appendChild(seatNode(m,i++))});
+      set.appendChild(bench);
+    });
+    z.appendChild(set);
+    floor.appendChild(z);
   });
 })();
 </script>

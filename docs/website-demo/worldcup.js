@@ -125,6 +125,27 @@
   .wc-ptag.live{background:var(--jade-wash);color:var(--jade)}
   .wc-ptag.issue{background:var(--red-wash);color:var(--red)}
   .wc-ptag.merged{background:var(--ground-hover);color:var(--ink-3)}
+  /* leaderboard */
+  .wc-lbtabs{display:flex;gap:6px}
+  .wc-lbtabs button{appearance:none;border:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:var(--ground-2);padding:8px 14px;border-radius:var(--r-pill)}
+  .wc-lbtabs button.on{background:var(--accent);color:var(--on-accent)}
+  .wc-lbrow{display:flex;align-items:center;gap:14px;padding:11px 10px;border-bottom:1px solid var(--line)}
+  .wc-lbrow.me{background:var(--accent-wash);border-radius:var(--r-md);border-bottom:0}
+  .wc-lbrow .rk{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--ink-3);width:22px}
+  .wc-lbrow .nm{font-size:14px;font-weight:600;color:var(--ink);flex:1}
+  .wc-lbrow .mt2{font-family:var(--font-mono);font-size:12px;color:var(--ink-2)}
+  /* ticker */
+  .wc-ticker{overflow:hidden;background:var(--card);border-radius:var(--r-pill);box-shadow:var(--shadow-sm);padding:10px 0;margin-bottom:16px;white-space:nowrap;-webkit-mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent)}
+  .wc-ticker .tk{display:inline-block;animation:wc-scroll 30s linear infinite}
+  .wc-ev{display:inline-flex;align-items:center;gap:7px;margin:0 26px;font-size:12.5px;color:var(--ink-2)}
+  .wc-ev::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--jade)}
+  .wc-ev .pr{font-family:var(--font-mono);color:var(--accent-press);font-weight:700}
+  .wc-ev b{color:var(--ink);font-weight:600}
+  @keyframes wc-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  @media (prefers-reduced-motion:reduce){.wc-ticker .tk{animation:none}}
+  /* propose */
+  .wc-propose{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--accent-press);background:var(--accent-wash);padding:9px 16px;border-radius:var(--r-pill);margin-left:auto;transition:all 150ms}
+  .wc-propose:hover{background:var(--accent);color:var(--on-accent)}
   @media (max-width:860px){.wc-grid{grid-template-columns:1fr}.wc-predrow{flex-direction:column}}
   `;
   if (!$('#wc-style')) { const s = el('style'); s.id = 'wc-style'; s.textContent = CSS; document.head.appendChild(s); }
@@ -168,6 +189,27 @@
     });
   }
   const myStakeOn = (mid, sk) => POSITIONS.filter((p) => p.marketId === mid && p.sideKey === sk).reduce((s, p) => s + p.amount, 0);
+
+  // 双榜（眼光榜=命中率，声望榜=总声望）+ 提需求序号 + 滚动事件
+  const RIVALS = [
+    { name: '盯盘老张', renown: 4820, hits: 31, misses: 9 }, { name: 'eyes_of_qa', renown: 3110, hits: 22, misses: 11 },
+    { name: '押注狂魔', renown: 5950, hits: 18, misses: 26 }, { name: '@mia', renown: 2440, hits: 14, misses: 6 },
+    { name: '冷静观察者', renown: 1890, hits: 9, misses: 3 }, { name: '@kev', renown: 2760, hits: 17, misses: 14 },
+    { name: 'all_in_dev', renown: 980, hits: 5, misses: 12 }, { name: '稳健派', renown: 1620, hits: 11, misses: 7 },
+    { name: '梭哈一时爽', renown: 6300, hits: 20, misses: 30 }, { name: '信号挖掘机', renown: 3540, hits: 25, misses: 8 },
+  ];
+  const MIN_BETS = 5;
+  const totalBets = (x) => x.hits + x.misses;
+  const hitRate = (x) => (totalBets(x) ? x.hits / totalBets(x) : 0);
+  const you = () => ({ name: '你', renown: LEDGER.renown, hits: LEDGER.hits, misses: LEDGER.misses, me: true });
+  const eyeRank = () => { const me = you(); return RIVALS.filter((r) => totalBets(r) >= MIN_BETS && hitRate(r) > hitRate(me)).length + 1; };
+  const renownRank = () => RIVALS.filter((r) => r.renown > LEDGER.renown).length + 1;
+  let SEQ = 137;
+  let TICKER_EVENTS = [
+    { pr: '#312', txt: '已合并 → 候补 210 破阈值，看多通吃' },
+    { pr: '#333', txt: '已合并 → 早期「我要用」者收到上线通知' },
+    { pr: '#366', txt: '候补冲上 138/150 · 看多赔率跳水' },
+  ];
 
   const STAGE = {
     issue:  { cn: 'Issue · 想做',   c: 'var(--ink-4)' },
@@ -298,7 +340,8 @@
 
   function shell() {
     return `<div class="wc-status" id="wc-status"></div>
-      <div class="wc-viewbar"><div class="wc-tabs" id="wc-tabs"></div></div>
+      <div class="wc-ticker" id="wc-ticker"></div>
+      <div class="wc-viewbar"><div class="wc-tabs" id="wc-tabs"></div><button class="wc-propose" id="wc-propose">+ 提个需求</button></div>
       <div class="wc-hint" id="wc-hint"></div>
       <div id="wc-view"></div>`;
   }
@@ -399,19 +442,65 @@
     openModal(`<h3>${title}</h3><div style="margin-top:14px;max-height:62vh;overflow:auto">${fn()}</div>`, true);
   }
 
-  // ── 状态条（Step4 补双榜 rank）────────────────────────────────────────────
+  // ── 状态条（含双榜 rank）──────────────────────────────────────────────────
   function renderStatus() {
+    const me = you(), tb = totalBets(me);
+    const eye = tb >= MIN_BETS ? '#' + eyeRank() : '未上榜';
+    const rate = tb ? Math.round(hitRate(me) * 100) + '%' : '—';
     const open = POSITIONS.filter((p) => p.status === 'open').length;
     $('#wc-status').innerHTML = `
       <div class="wc-stat"><div class="n">${fmt(LEDGER.renown)}<span class="u">声望</span></div><div class="k">押注余额</div></div>
       <div class="wc-sep"></div>
-      <div class="wc-stat click" data-panel="want"><div class="n">${myWant.size}</div><div class="k">我要用的需求</div></div>
+      <div class="wc-stat click" data-lb="eye"><div class="n">${eye}</div><div class="k">眼光榜 · 命中率 ${rate}</div></div>
       <div class="wc-sep"></div>
-      <div class="wc-stat click" data-panel="positions"><div class="n">${POSITIONS.length}</div><div class="k">预测仓位 · 待结算 ${open}</div></div>
+      <div class="wc-stat click" data-lb="renown"><div class="n">#${renownRank()}</div><div class="k">声望榜 · ${me.hits}胜${me.misses}负</div></div>
+      <div class="wc-sep"></div>
+      <div class="wc-stat click" data-panel="want"><div class="n">${myWant.size}</div><div class="k">我要用</div></div>
+      <div class="wc-sep"></div>
+      <div class="wc-stat click" data-panel="positions"><div class="n">${POSITIONS.length}</div><div class="k">仓位 · 待结算 ${open}</div></div>
       <div class="sp"></div>
       <button class="gold" id="wc-record">晒战绩</button>`;
   }
-  function renderAll() { renderStatus(); renderViewTabs(); renderView(); }
+  function renderTicker() {
+    const evs = TICKER_EVENTS.map((e) => `<span class="wc-ev"><span class="pr">${e.pr}</span> <b>${e.txt}</b></span>`).join('');
+    $('#wc-ticker').innerHTML = `<div class="tk">${evs}${evs}</div>`;
+  }
+  // ── 双榜 ──────────────────────────────────────────────────────────────────
+  function openLeaderboard(which) {
+    which = which === 'renown' ? 'renown' : 'eye';
+    const me = you();
+    const rows = which === 'eye'
+      ? [...RIVALS, me].filter((r) => r.me || totalBets(r) >= MIN_BETS).sort((a, b) => hitRate(b) - hitRate(a) || b.hits - a.hits)
+      : [...RIVALS, me].sort((a, b) => b.renown - a.renown);
+    const body = rows.map((r, i) => {
+      const metric = which === 'eye'
+        ? (totalBets(r) ? `${Math.round(hitRate(r) * 100)}% · ${r.hits}胜${r.misses}负` : '—')
+        : `${fmt(r.renown)} 声望`;
+      return `<div class="wc-lbrow${r.me ? ' me' : ''}"><span class="rk">${i + 1}</span><span class="nm">${r.name}${r.me ? '（你）' : ''}</span><span class="mt2">${metric}</span></div>`;
+    }).join('');
+    openModal(`<h3>排行榜</h3>
+      <div class="wc-lbtabs" style="margin-top:16px"><button class="${which === 'eye' ? 'on' : ''}" data-lbt="eye">眼光榜 · 命中率</button><button class="${which === 'renown' ? 'on' : ''}" data-lbt="renown">声望榜 · 总量</button></div>
+      <div style="margin-top:8px;max-height:54vh;overflow:auto">${body}</div>
+      <p class="wc-mnote" style="margin-top:12px">眼光榜需 ≥${MIN_BETS} 注上榜（防刷）· 虚拟声望 · 不可提现</p>`, true);
+    [...document.querySelectorAll('[data-lbt]')].forEach((b) => (b.onclick = () => openLeaderboard(b.dataset.lbt)));
+  }
+  // ── 提个需求（开 Issue）────────────────────────────────────────────────────
+  function openPropose() {
+    openModal(`<h3>提个需求（开一个 Issue）</h3>
+      <p class="wc-msub">提交后进入「价值视角」的 Issue 阶段，等同行举手。攒够人就解锁。</p>
+      <div class="wc-field"><label>一句话需求（标题）</label><input id="wc-ptitle" placeholder="例：自动把工单同步到 Notion" maxlength="24"></div>
+      <div class="wc-field"><label>场景</label><select id="wc-pscene"><option>连接</option><option>稳定</option><option>生成</option><option>定制</option><option>观测</option><option>灵活</option></select></div>
+      <div class="wc-field"><label>战略定位</label><select id="wc-ppos"><option>world｜消息流转</option><option>hello｜界面生成</option></select></div>
+      <button class="wc-mbtn" id="wc-confirmprop">提交（开 Issue）</button>`);
+    $('#wc-confirmprop').onclick = () => { const title = $('#wc-ptitle').value.trim(); if (!title) { toast('给需求起个标题'); return; } submitProposal(title, $('#wc-pscene').value, $('#wc-ppos').value); };
+  }
+  function submitProposal(title, scene, pos) {
+    const id = '#' + (900 + (++SEQ - 137));
+    ITEMS.unshift({ id, pos, title, stage: 'issue', scene, when: '', waitlist: 1, unlockAt: 100, prRef: '', t: { issue: NOW, pr: NOW + 0.6, merge: NOW + 1.2 } });
+    myWant.add(id); buildMarkets();
+    closeModal(); view = 'value'; renderAll(); toast('已开 Issue · 你是第 1 个想要的');
+  }
+  function renderAll() { renderStatus(); renderTicker(); renderViewTabs(); renderView(); }
 
   // ── boot ──────────────────────────────────────────────────────────────────
   async function boot() {
@@ -426,8 +515,10 @@
     });
     $('#wc-status').addEventListener('click', (e) => {
       const p = e.target.closest('[data-panel]'); if (p) { openPanel(p.dataset.panel); return; }
+      const lb = e.target.closest('[data-lb]'); if (lb) { openLeaderboard(lb.dataset.lb); return; }
       if (e.target.closest('#wc-record')) { toast('晒战绩 · 分享卡 Step5 接入'); return; }
     });
+    $('#wc-propose').addEventListener('click', openPropose);
     $('#wc-view').addEventListener('click', (e) => {
       let b;
       if (b = e.target.closest('[data-want]')) { onWantClick(b.dataset.want); return; }
