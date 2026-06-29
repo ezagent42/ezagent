@@ -328,8 +328,34 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       no_flavor_refs_in_core: length(flavor_refs_in_core),
       cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
       raw_port_spawn_executable: raw_port_spawn_executable(),
-      resource_kind_as_genserver: resource_kind_as_genserver()
+      resource_kind_as_genserver: resource_kind_as_genserver(),
+      hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts()
     ]
+  end
+
+  # World host-scope config (2026-06-29) — deployment host literals belong in
+  # config/runtime config, not production lib code. This catches the operator
+  # console regression shape (`host: "world."`) and app/world deploy host strings
+  # copied into libraries (`"app.ezagent.chat"`, `"https://world.ezagent.chat"`).
+  # It intentionally does NOT flag ezagent.chat email addresses/domains; email is
+  # a product identity, not an HTTP deployment host.
+  @hardcoded_deploy_domain_regex ~r/host:\s*"world\."|"(?:https?:\/\/)?(?:app|world)\.ezagent\.chat(?:\/[^"]*)?"/
+
+  defp hardcoded_deploy_domain_hosts do
+    grep(@hardcoded_deploy_domain_regex, skip_comment_lines?: true)
+    |> length()
+  end
+
+  @doc false
+  @spec count_hardcoded_deploy_domain_hosts_in_source(String.t()) :: non_neg_integer()
+  def count_hardcoded_deploy_domain_hosts_in_source(source) when is_binary(source) do
+    source
+    |> String.split("\n")
+    |> Enum.count(fn line ->
+      not String.contains?(line, "# arch-allow:") and
+        not comment_line?(line) and
+        Regex.match?(@hardcoded_deploy_domain_regex, line)
+    end)
   end
 
   # kanban-as-role K5 (2026-06-25) — resource-only-files gate (cap 0). `resource://`

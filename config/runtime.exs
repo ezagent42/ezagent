@@ -25,6 +25,23 @@ public_port =
     port_str -> String.to_integer(port_str)
   end
 
+public_authority =
+  if (public_scheme == "https" and public_port == 443) or
+       (public_scheme == "http" and public_port == 80) do
+    public_host
+  else
+    "#{public_host}:#{public_port}"
+  end
+
+public_origin = "#{public_scheme}://#{public_authority}"
+
+config :ezagent_domain_session,
+  public_scheme: public_scheme,
+  public_host: public_host,
+  public_port: public_port
+
+config :ezagent_plugin_email, :verification_base_url, public_origin
+
 # The block below contains prod specific runtime configuration.
 if config_env() == :prod do
   database_url =
@@ -88,7 +105,7 @@ if config_env() == :prod do
     ],
     check_origin:
       [
-        "#{public_scheme}://#{public_host}",
+        public_origin,
         "http://100.64.0.27:10042",
         "http://localhost:10042",
         "http://127.0.0.1:10042"

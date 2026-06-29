@@ -122,18 +122,38 @@ defmodule Ezagent.Agent.CredentialNotifier do
   # (EZAGENT_PUBLIC_SCHEME / _HOST / _PORT, per config/runtime.exs) so the clickable
   # link points at the right place in https-prod AND http+port dev/Tailscale.
   defp public_base_url do
-    scheme = System.get_env("EZAGENT_PUBLIC_SCHEME", "https")
-    host = System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat")
+    scheme =
+      System.get_env("EZAGENT_PUBLIC_SCHEME") ||
+        Application.get_env(:ezagent_domain_session, :public_scheme, "http")
+
+    host =
+      System.get_env("EZAGENT_PUBLIC_HOST") ||
+        Application.get_env(:ezagent_domain_session, :public_host, "localhost")
+
+    configured_port = Application.get_env(:ezagent_domain_session, :public_port)
     default_port = if scheme == "https", do: "443", else: "80"
 
     authority =
-      case System.get_env("EZAGENT_PUBLIC_PORT") do
-        nil -> host
-        "" -> host
-        ^default_port -> host
-        port -> "#{host}:#{port}"
+      case System.get_env("EZAGENT_PUBLIC_PORT") || configured_port do
+        nil ->
+          host
+
+        "" ->
+          host
+
+        port when is_integer(port) ->
+          authority_for_port(host, Integer.to_string(port), default_port)
+
+        ^default_port ->
+          host
+
+        port ->
+          "#{host}:#{port}"
       end
 
     "#{scheme}://#{authority}"
   end
+
+  defp authority_for_port(host, port, port), do: host
+  defp authority_for_port(host, port, _default_port), do: "#{host}:#{port}"
 end
