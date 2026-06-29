@@ -305,7 +305,8 @@ defmodule Ezagent.PluginPackage.Manifest do
     mod
   rescue
     _ ->
-      raise ArgumentError, "manifest field `#{field}` is not a valid module atom: #{inspect(value)}"
+      raise ArgumentError,
+            "manifest field `#{field}` is not a valid module atom: #{inspect(value)}"
   end
 
   defp parse_behaviors(list) when is_list(list) do

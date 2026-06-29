@@ -163,7 +163,9 @@ defmodule Ezagent.Agent.RecipeTest do
     end
 
     test "rejects non-string skills/plugins entries" do
-      assert {:error, {:invalid_role_field, :skills, _}} = Recipe.new(%{skills: [:atom_not_string]})
+      assert {:error, {:invalid_role_field, :skills, _}} =
+               Recipe.new(%{skills: [:atom_not_string]})
+
       assert {:error, {:invalid_role_field, :plugins, _}} = Recipe.new(%{plugins: [123]})
     end
 
