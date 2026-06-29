@@ -129,7 +129,7 @@ defmodule EzagentCore.EtsOwner do
     # so the unload path can reverse a hot-load without re-reading the
     # plugin module (which may have been purged).
     {:literal, :ezagent_plugin_asset_registry, :set},
-    {:literal, :ezagent_plugin_package_registry, :set}
+    {:literal, :ezagent_plugin_package_registry, :set},
     # Notification SPEC v2 PR-N1 (Allen 2026-05-24):
     # `:ezagent_notification_subscriptions` is INTENTIONALLY NOT
     # owned here. Codex PR-N1 round-2 HIGH-1: this is a

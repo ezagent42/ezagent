@@ -131,14 +131,7 @@ defmodule Ezagent.Agent.Recipe do
          {:ok, config} <- config_field(role.config) do
       # behaviors → module atoms; requested_caps → atom-keyed templates (value
       # canonicalization + minting are PR-1b's); passive → coerced boolean.
-      {:ok,
-       %{
-         role
-         | passive: passive,
-           behaviors: behaviors,
-           requested_caps: requested_caps,
-           config: config
-       }}
+      {:ok, %{role | passive: passive, behaviors: behaviors, requested_caps: requested_caps, config: config}}
     end
   end
 

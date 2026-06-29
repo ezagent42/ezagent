@@ -82,11 +82,7 @@ defmodule Ezagent.PluginPackage.ManifestSecurityTest do
       assert_raise ArgumentError, ~r/lowercase action atom/, fn ->
         manifest(%{
           "behaviors" => [
-            %{
-              "kind" => "Ezagent.Entity.Agent",
-              "action" => "Evil Action!",
-              "behavior" => "Ezagent.X"
-            }
+            %{"kind" => "Ezagent.Entity.Agent", "action" => "Evil Action!", "behavior" => "Ezagent.X"}
           ]
         })
       end
