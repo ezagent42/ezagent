@@ -117,21 +117,40 @@
     },
   };
 
-  // ── world.cup 路线图（押注标的）· 产品 feature roadmap（对应价值链产品卡）─────
-  //    stage: issue(想做) | pr(在做) | merged(已上线)。waitlist/unlockAt = L1 候补门槛；
-  //    t = 甘特时间戳(issue→pr→merge 年份)。结算真相源 = PR 合并。
-  const ROADMAP = [
-    { id: '#360', pos: 'hello｜界面生成', title: '一句话生成可用界面',   stage: 'pr',     scene: '生成', when: '2025 Q3', waitlist: 128, unlockAt: 150, prRef: '#360', t: { issue: 2025.3, pr: 2025.9, merge: 2026.8 } },
-    { id: '#318', pos: 'world｜消息流转', title: '通用 webhook 接入',     stage: 'pr',     scene: '连接', when: '2025 Q3', waitlist: 92,  unlockAt: 120, prRef: '#318', t: { issue: 2025.6, pr: 2026.2, merge: 2026.9 } },
-    { id: '#366', pos: 'hello｜界面生成', title: '生成界面可二次编辑',     stage: 'issue',  scene: '定制', when: '',        waitlist: 138, unlockAt: 150, prRef: '',     t: { issue: 2026.2, pr: 2026.9, merge: 2027.2 } },
-    { id: '#340', pos: 'world｜消息流转', title: '渠道掉线自动重连',       stage: 'issue',  scene: '稳定', when: '',        waitlist: 64,  unlockAt: 100, prRef: '',     t: { issue: 2026.4, pr: 2027.0, merge: 2027.4 } },
-    { id: '#380', pos: 'hello｜界面生成', title: '移动端自适应生成',       stage: 'issue',  scene: '生成', when: '',        waitlist: 77,  unlockAt: 100, prRef: '',     t: { issue: 2026.5, pr: 2027.1, merge: 2027.5 } },
-    { id: '#372', pos: 'hello｜界面生成', title: '不同角色看到不同视图',   stage: 'issue',  scene: '定制', when: '',        waitlist: 41,  unlockAt: 100, prRef: '',     t: { issue: 2026.3, pr: 2027.0, merge: 2027.4 } },
-    { id: '#355', pos: 'world｜消息流转', title: '消息流量可视化看板',     stage: 'issue',  scene: '观测', when: '',        waitlist: 38,  unlockAt: 100, prRef: '',     t: { issue: 2026.5, pr: 2027.2, merge: 2027.6 } },
-    { id: '#312', pos: 'world｜消息流转', title: '常用渠道一键接入',       stage: 'merged', scene: '连接', when: '2025 Q1', waitlist: 210, unlockAt: 120, prRef: '#312', t: { issue: 2024.2, pr: 2024.6, merge: 2025.1 } },
-    { id: '#333', pos: 'world｜消息流转', title: '换 AI/后端不用重写',     stage: 'merged', scene: '灵活', when: '2025 Q2', waitlist: 176, unlockAt: 150, prRef: '#333', t: { issue: 2024.6, pr: 2024.9, merge: 2025.4 } },
-    { id: '#301', pos: 'world｜消息流转', title: '消息不丢、出错有兜底',   stage: 'merged', scene: '稳定', when: '2025 Q1', waitlist: 150, unlockAt: 120, prRef: '#301', t: { issue: 2024.1, pr: 2024.5, merge: 2025.0 } },
-  ];
+  // ── world.cup 路线图 · v2 嵌套模型（定位 → 痛点 → 成果）──────────────────────
+  //    成果 = 真实 GitHub PR（merged→live 已上线 / open→wip 在做）；prId/title/status 真实。
+  //    痛点(planned，成果为空) ← 真实 open issue。votes=「我想要」票数。结算真相源=PR 合并。
+  //    来源：github.com/ezagent42/ezagent（merged PR #1065–#1085 · open PR/issue）。
+  const WORLDCUP = {
+    定位: [
+      { id: 'pos-world', title: 'world｜让消息在工具、渠道、AI 之间顺畅流转', votes: 46, 痛点: [
+        { id: 'p-w1', gc: '每接一个新渠道，都要重做一遍', 场景: '连接', votes: 40, 成果: [
+          { prId: 1069, title: '统一 socialware 对客流水线 P1–P10', 场景: '连接', when: '2026 Q2', status: 'live', likes: 21 },
+          { prId: 1066, title: 'cc ReadyGate 经 bridge-bind 接住消息', 场景: '连接', when: '2026 Q2', status: 'live', likes: 9 },
+        ] },
+        { id: 'p-w2', gc: '消息偶尔悄悄丢了 / 架构纪律守不住', 场景: '稳定', votes: 33, 成果: [
+          { prId: 1075, title: 'kanban 9 阶段业务链 code→data（消除越界）', 场景: '稳定', when: '2026 Q2', status: 'live', likes: 8 },
+          { prId: 1072, title: '4 层载体边界 + 反模式收口', 场景: '稳定', when: '2026 Q2', status: 'live', likes: 6 },
+        ] },
+        { id: 'p-w3', gc: 'URI / 文档跨仓库对不齐（issue #895）', 场景: '观测', votes: 17, 成果: [] },
+      ] },
+      { id: 'pos-hello', title: 'hello｜用一句话，生成你要的界面', votes: 39, 痛点: [
+        { id: 'p-h1', gc: '想要个界面，还得等开发排期', 场景: '生成', votes: 38, 成果: [
+          { prId: 1065, title: 'hello 渲染岛接进共享 aliases（部署前置）', 场景: '生成', when: '2026 Q2', status: 'live', likes: 12 },
+          { prId: 1083, title: '把 handoff 界面迁到 shadcn 品牌系统', 场景: '定制', when: '2026 Q2', status: 'wip', likes: 7 },
+        ] },
+        { id: 'p-h2', gc: '客户面冷启动 302 / SPA 构建不出来（issue #878/#879）', 场景: '定制', votes: 22, 成果: [] },
+      ] },
+      { id: 'pos-platform', title: '平台｜底座、插件与开发流程', votes: 28, 痛点: [
+        { id: 'p-p1', gc: '扩展能力得改底层、热加载难', 场景: '扩展', votes: 24, 成果: [
+          { prId: 1076, title: 'plugin-package 全 Q1-C：manifest + 热加载 + 热卸载', 场景: '扩展', when: '2026 Q2', status: 'live', likes: 14 },
+        ] },
+        { id: 'p-p2', gc: '团队开发流程看不见、对不齐', 场景: '工具', votes: 19, 成果: [
+          { prId: 1020, title: 'kanban 穿起团队开发全流程（分 Phase 实施）', 场景: '工具', when: '2026 Q2', status: 'wip', likes: 11 },
+        ] },
+      ] },
+    ],
+  };
 
   // ── public API（async 仿网络，且证明视图走"接口"而非直读常量）──────────────
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -139,7 +158,7 @@
     async contributors() { await wait(120); return CONTRIBUTORS.slice(); },
     async kanbanDev()    { await wait(160); return JSON.parse(JSON.stringify(KANBAN_DEV)); },
     async kanbanValueChain() { await wait(160); return JSON.parse(JSON.stringify(KANBAN_VALUECHAIN)); },
-    async worldcup()     { await wait(160); return JSON.parse(JSON.stringify(ROADMAP)); },
+    async worldcup()     { await wait(160); return JSON.parse(JSON.stringify(WORLDCUP)); },
     async introspect()   { await wait(100); return JSON.parse(JSON.stringify(INTROSPECT)); },
     chatScript()         { return JSON.parse(JSON.stringify(CHAT_SCRIPT)); },
     // chat-feed wire shape：把一条 reply 编成 feed_encoding 的 {id,text,sender,render}

@@ -55,10 +55,11 @@ body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-c
 h1,h2,h3,p{margin:0}
 .mono{font-family:var(--font-mono);letter-spacing:.02em}
 .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.wrap{max-width:var(--container);margin:0 auto;padding:0 var(--pad-page-x)}
+.wrap{max-width:var(--container);margin:0 auto;padding:0 var(--pad-page-x);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}   /* 一屏放下全部桌子 */
 
 /* slim header */
-.bar{display:flex;align-items:center;gap:14px;padding:22px 0 6px}
+.bar{flex:none;display:flex;align-items:center;gap:14px;padding:16px 0 4px}
 .brand{display:flex;align-items:center;gap:10px;font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:17px}
 .brand .cube{width:22px;height:22px}
 .bar .spacer{flex:1}
@@ -68,48 +69,69 @@ h1,h2,h3,p{margin:0}
 .backlink:hover{background:var(--ink);color:var(--card)}
 a{color:inherit;text-decoration:none}
 
-/* section head */
-.sec-head{margin:30px 0 26px}
-.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.2;margin-top:8px}
-.sec-head .sub{color:var(--ink-2);margin-top:8px;font-size:16px;max-width:62ch}
+/* section head（slim，给桌子让出一屏高度）*/
+.sec-head{flex:none;margin:10px 0 8px}
+.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(20px,2.6vw,27px);line-height:1.15;margin-top:4px}
+.sec-head .sub{color:var(--ink-2);margin-top:4px;font-size:13.5px;max-width:74ch}
 
-/* ── 办公室地板（按平面图分区：lead 独立 / 开发 pod 成对 / AI 区）──────────── */
-#floor{display:flex;flex-direction:column;gap:34px;padding:8px 0 10px}
-.zone-label{margin-bottom:14px;display:flex;align-items:center;gap:10px}
-.zone-label::after{content:"";flex:1;height:1px;background:var(--line)}
-.benchset{display:flex;flex-direction:column;gap:26px}
-/* bench = 一对拼桌的岛；淡底把成对的人“连”在一起 */
-.bench{display:grid;grid-template-columns:repeat(2,1fr);gap:24px;
-  background:var(--ground-2);border-radius:var(--r-lg);padding:24px 26px 28px;position:relative}
-.bench.solo{grid-template-columns:minmax(0,300px);justify-content:start}
-.bench.lead{background:var(--blue-wash)}
-.bench.ai{background:var(--ground-2);box-shadow:inset 0 0 0 1px var(--line)}
-.bench.ai .desk svg{opacity:.98}
-.seat{display:flex;flex-direction:column;align-items:center;gap:13px;
+/* ── 办公室地板（一屏平面图：左栏 Allen+AI / 过道 / 右栏 6 人 pod 3×2）──────── */
+#floor{flex:1;min-height:0;display:flex;align-items:center;gap:clamp(16px,2.4vw,38px);padding:2px 0}
+.col-left{flex:0 0 21%;display:flex;flex-direction:column;justify-content:center;gap:clamp(5px,1.4vh,18px)}
+.col-left .seat:first-child{margin-bottom:clamp(4px,1vh,14px)}   /* Allen 与 AI 之间留缝 */
+.pod-right{flex:1;display:grid;grid-template-columns:1fr 1fr;align-content:center;
+  gap:clamp(5px,1.4vh,18px) clamp(18px,2.6vw,44px);
+  padding-left:clamp(16px,2.4vw,42px);border-left:1px solid var(--line)}  /* 中间过道 */
+.seat{position:relative;display:flex;flex-direction:column;align-items:center;gap:7px;
   animation:fu var(--dur-enter) var(--ease-out) both}
-.desk{position:relative;width:100%;max-width:240px;cursor:default;
-  transition:transform 220ms var(--ease-out),filter 220ms var(--ease-out)}
-.desk svg{display:block;width:100%;height:auto;overflow:visible}
-.seat:hover .desk{transform:translateY(-6px)}
-.seat:hover .desk svg{filter:drop-shadow(0 26px 28px rgba(15,15,15,.16))}
-/* hover 暂停该桌动画 */
+.desk{position:relative;width:100%;max-width:min(150px,15.6vh);cursor:default}   /* 随视口高度缩放，保证一屏 */
+.desk svg{display:block;width:100%;height:auto;overflow:visible;transition:filter 220ms var(--ease-out)}
+/* hover：不抬桌，凑近看屏幕（peek），并暂停该桌动画让人看清 */
+.seat:hover .desk svg{filter:drop-shadow(0 14px 18px rgba(15,15,15,.12))}
 .seat:hover .anim{animation-play-state:paused}
 
-/* 铭牌 */
-.plate{text-align:center;line-height:1.35}
-.plate .nm{font-family:var(--font-cn);font-weight:600;font-size:16px;color:var(--ink)}
-.plate .gh{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);margin-top:1px}
-.plate .badge{display:inline-flex;align-items:center;gap:5px;margin-top:7px;font-family:var(--font-mono);
-  font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 9px;border-radius:var(--r-pill)}
-.plate .badge .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+/* hover peek：把这个人电脑屏幕放大成可读窗口 ───────────────────────────────── */
+.peek{position:absolute;left:50%;top:0;z-index:30;width:252px;
+  transform:translate(-50%,calc(-100% + 6px)) scale(.96);transform-origin:bottom center;
+  opacity:0;pointer-events:none;transition:opacity .18s var(--ease-out),transform .26s var(--ease-out)}
+.seat:hover .peek{opacity:1;transform:translate(-50%,calc(-100% - 8px)) scale(1)}
+.peek-win{border-radius:13px;overflow:hidden;background:var(--card);box-shadow:var(--shadow-card)}
+.peek-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--ground-2)}
+.peek-bar .pd{width:8px;height:8px;border-radius:50%}
+.peek-bar .pd.r{background:var(--red)}.peek-bar .pd.y{background:var(--yellow)}.peek-bar .pd.g{background:var(--jade)}
+.peek-app{margin-left:6px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.peek-body{padding:14px 15px 16px;font-family:var(--font-mono);font-size:11px;line-height:1.7;min-height:92px}
+.peek-code .peek-body,.peek-cube .peek-body{background:var(--screen-dark);color:#D8D8DE}
+.peek-canvas .peek-body{background:#F7F7F9;color:var(--ink)}
+.pk-mut{color:var(--ink-3)}.pk-g{color:var(--jade)}.pk-c{color:var(--blue)}.pk-y{color:var(--orange)}.pk-d{color:var(--ink-3)}
+.pk-hl{color:#fff;font-weight:700;margin:4px 0;font-family:var(--font-cn-ui);font-size:12px;line-height:1.5}
+.peek-canvas .pk-hl{color:var(--ink)}
+.pk-caret{animation:caret 1s steps(1) infinite}
+.pk-chips{display:flex;gap:6px;margin-bottom:9px}.pk-chips i{width:28px;height:15px;border-radius:4px;display:block}
+.pk-art{font-family:var(--font-cn-ui);font-weight:600;font-size:13px;margin-bottom:5px;color:var(--ink)}
+.pk-meta{color:var(--ink-3);font-size:10px}
+.pk-ag{text-align:center}.pk-ag svg{margin:0 auto 6px;display:block}
+.pk-line{color:var(--blue)}
+
+/* peek 底部身份说明（track 等完整信息移到 hover 这里）*/
+.peek-cap{padding:9px 13px 11px;font-family:var(--font-cn-ui);font-size:11px;color:var(--ink-2);
+  background:var(--card);border-top:1px solid var(--line);line-height:1.5}
+.peek-cap b{color:var(--ink);font-family:var(--font-cn);font-weight:600}
+.peek-cap .pc-gh{font-family:var(--font-mono);font-size:9.5px;color:var(--ink-3);margin-left:5px}
+
+/* 铭牌（一屏精简：名字 + 角色，track 进 hover）*/
+.plate{text-align:center;line-height:1.25}
+.plate .nm{font-family:var(--font-cn);font-weight:600;font-size:13.5px;color:var(--ink)}
+.plate .badge{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-family:var(--font-mono);
+  font-size:9px;font-weight:700;letter-spacing:.03em;padding:2px 8px;border-radius:var(--r-pill)}
+.plate .badge .dot{width:4px;height:4px;border-radius:50%;background:currentColor}
 .badge.lead{background:var(--orange-wash);color:var(--orange)}
 .badge.dev{background:var(--blue-wash);color:var(--blue-deep)}
 .badge.designer{background:var(--jade-wash);color:var(--jade)}
 .badge.agent{background:var(--ground-2);color:var(--ink-3)}
-.plate .track{font-size:12px;color:var(--ink-2);margin-top:8px;max-width:24ch;margin-left:auto;margin-right:auto}
 
-footer{margin:54px 0 40px;color:var(--ink-3);font-size:13px;text-align:center;line-height:1.7}
-footer .mono{font-size:11px}
+footer{flex:none;margin:4px 0 8px;color:var(--ink-3);font-size:11px;text-align:center;line-height:1.5}
+footer .mono{font-size:10px}
+footer .l1{display:none}   /* 一屏下只保留一行脚注 */
 
 /* ── 微动作 keyframes ─────────────────────────────────────────────────────── */
 @keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
@@ -123,7 +145,19 @@ footer .mono{font-size:11px}
 .anim{transform-box:fill-box;transform-origin:center}
 
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
-@media (max-width:620px){.bench{grid-template-columns:1fr;gap:30px}.bench.solo{grid-template-columns:1fr}.wrap{padding:0 20px}}
+/* 矮屏：收掉副标题与多余边距，给桌子腾高度 */
+@media (max-height:840px){.sec-head .sub{display:none}.sec-head{margin:6px 0 4px}.bar{padding:12px 0 2px}}
+/* 屏太小/太矮时退出“一屏”模式，改竖向滚动，避免挤压 */
+@media (max-width:880px),(max-height:600px){
+  .wrap{height:auto;overflow:visible;padding-bottom:24px}
+  #floor{flex-direction:column;align-items:stretch;gap:24px}
+  .col-left{flex:none;display:grid;grid-template-columns:repeat(3,1fr)}
+  .col-left .seat:first-child{margin-bottom:0}
+  .pod-right{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:22px}
+  .desk{max-width:168px}
+  .sec-head h2{font-size:24px}
+}
+@media (max-width:560px){.col-left,.pod-right{grid-template-columns:1fr 1fr}.wrap{padding:0 20px}}
 </style>
 </head>
 <body>
@@ -147,8 +181,8 @@ footer .mono{font-size:11px}
   <div id="floor"></div>
 
   <footer>
-    <div>组织的 IDE · Organization IDE — Ezagent</div>
-    <div class="mono">contributors 办公室 demo · 数据走 EZ.contributors() · 参考 office-loop.mp4</div>
+    <div class="l1">组织的 IDE · Organization IDE — Ezagent</div>
+    <div class="mono">这支队伍怎么发布 · 办公室 demo · 数据走 EZ.contributors() · hover 看屏</div>
   </footer>
 </div>
 
@@ -158,11 +192,12 @@ const $=(s,r=document)=>r.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
 const hashN=(s,m)=>[...(s||'')].reduce((a,c)=>a+c.charCodeAt(0),0)%m;
 
-/* 座位平面图（来自 20260629 floor-plan）：lead 独立 · 6 人成对 pod · AI 区 ───── */
-const LAYOUT=[
-  {key:'lead', label:'lead · 队长区',     rows:[['allenwoods']]},
-  {key:'team', label:'team · 开发 pod',   rows:[['jjkysy','gagameow'],['ruihuachen-designer','zyli-developer'],['FatNine','zhaomaota97']]},
-  {key:'ai',   label:'AI · 协作 agent',   rows:[['claude','codex']]},
+/* 座位平面图（来自 20260629 floor-plan）：左栏 Allen + AI；右栏 6 人 pod 3×2 ──── */
+const COL_LEFT=['allenwoods','claude','codex'];     // 左栏：队长在上，两个 agent 在下
+const POD=[                                          // 右栏 pod（成对，顺序照平面图）
+  'jjkysy','gagameow',
+  'ruihuachen-designer','zyli-developer',
+  'FatNine','zhaomaota97',
 ];
 
 $('#theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'});
@@ -224,6 +259,40 @@ function laptopSVG(){
 const PERSONA={allenwoods:'dual',zhaomaota97:'dual'};
 const monLayout=m=>PERSONA[m.gh]||(m.role==='agent'?'solo':'biglaptop');
 
+/* 桌面个性化道具（扁平矢量 · De Stijl 配色 · 摆在桌面右前角）──────────────────── */
+const PROPS={
+  allenwoods:['coffee','plant'],          // 队长：咖啡 + 绿植
+  jjkysy:['books'],                        // 架构/原则把关：书堆
+  gagameow:['coffee'],                     // 咖啡
+  'zyli-developer':['walnuts'],            // 文玩核桃 ×2
+  zhaomaota97:['sticky'],                  // 前端：便签
+  FatNine:['can'],                         // 能量罐
+  'ruihuachen-designer':['milktea'],       // 奶茶
+};
+function propSVG(k){
+  switch(k){
+    case 'milktea': return `<rect x="-8" y="-1" width="16" height="4" rx="2" fill="#fff" stroke="var(--line)"/>
+      <path d="M-7 3 L7 3 L5 18 L-5 18 Z" fill="#fff" stroke="var(--line)"/>
+      <path d="M-5.4 9 L5.4 9 L4.4 18 L-4.4 18 Z" fill="#E7C9A0"/>
+      <circle cx="-2" cy="16" r="1.3" fill="#3A2A1A"/><circle cx="2" cy="16" r="1.3" fill="#3A2A1A"/><circle cx="0" cy="14" r="1.3" fill="#3A2A1A"/>
+      <rect x="3" y="-11" width="3" height="14" rx="1.5" fill="var(--red)" transform="rotate(13 4 -4)"/>`;
+    case 'walnuts': return `<circle cx="-5" cy="13" r="6" fill="#9A6B3F"/><path d="M-5 7.5 V18.5" stroke="#6E4A28" stroke-width="1.2"/>
+      <circle cx="7" cy="14" r="6" fill="#85572F"/><path d="M7 8.5 V19.5" stroke="#5C3D20" stroke-width="1.2"/>`;
+    case 'coffee': return `<circle cx="0" cy="12" r="7" fill="#fff" stroke="var(--line)"/><circle cx="0" cy="12" r="4.4" fill="#5A3A22"/>
+      <path d="M7 9 q5.5 0 5.5 4 q0 4 -5.5 4" fill="none" stroke="var(--line)" stroke-width="1.6"/>`;
+    case 'plant': return `<path d="M-5 9 L5 9 L4 18 L-4 18 Z" fill="var(--orange)"/>
+      <circle cx="-3" cy="6" r="4" fill="var(--jade)"/><circle cx="3.2" cy="5" r="4.6" fill="#0FA06E"/><circle cx="0" cy="2.5" r="4" fill="var(--jade)"/>`;
+    case 'books': return `<rect x="-8" y="13" width="16" height="4.4" rx="1" fill="var(--blue)"/>
+      <rect x="-7" y="8.6" width="15" height="4.4" rx="1" fill="var(--red)"/><rect x="-6" y="4.2" width="13" height="4.4" rx="1" fill="var(--yellow)"/>`;
+    case 'can': return `<rect x="-5" y="2" width="10" height="16" rx="3" fill="var(--jade)"/><rect x="-5" y="2" width="10" height="4" rx="2" fill="var(--ink-4)"/>
+      <rect x="-1.6" y="7" width="3" height="9" rx="1.5" fill="#fff" opacity=".45"/>`;
+    case 'sticky': return `<g transform="rotate(-8)"><rect x="-7" y="3" width="15" height="15" rx="1.5" fill="var(--yellow)"/>
+      <rect x="-4" y="7" width="9" height="1.6" rx=".8" fill="#C9A800"/><rect x="-4" y="10.5" width="6.5" height="1.6" rx=".8" fill="#C9A800"/></g>`;
+    default: return '';
+  }
+}
+function propsFor(m){return (PROPS[m.gh]||[]).map((k,i)=>`<g transform="translate(${172+i*22},147)">${propSVG(k)}</g>`).join('');}
+
 /* ── 一张桌的 SVG（近俯视：后排显示器 / 中间键盘+手 / 近处小人）─────────────── */
 function deskSVG(m){
   const kbd=KBD[hashN(m.gh,KBD.length)];
@@ -249,6 +318,8 @@ function deskSVG(m){
       <rect x="140" y="125" width="8" height="4" rx="1"/>
       <rect x="98" y="132" width="44" height="4" rx="2"/>
     </g>
+    <!-- 桌面个性化道具 -->
+    ${propsFor(m)}
     <!-- 办公椅（近俯视：五爪滚轮底座 + 座垫 + 靠背 + 扶手，中灰与近黑小人拉开层次）-->
     <g fill="var(--ink-3)">
       <g stroke="var(--ink-3)" stroke-width="6" stroke-linecap="round">
@@ -265,17 +336,40 @@ function deskSVG(m){
       <rect x="146" y="182" width="11" height="36" rx="5.5"/>
       <path d="M95 200 Q95 148 120 148 Q145 148 145 200 Z"/>
     </g>
-    <!-- 小人（坐进椅子，手臂伸向键盘）-->
+    ${m.role!=='agent'?`<!-- 小人（坐进椅子，手臂伸向键盘）。agent 座位空着，只有电脑在动 -->
     <g fill="var(--seat)">
       <rect x="97" y="146" width="12" height="56" rx="6"/>
       <rect x="131" y="146" width="12" height="56" rx="6"/>
       <path d="M94 214 Q120 174 146 214 Z"/>
       <circle class="anim" cx="120" cy="166" r="18" style="transform-origin:120px 166px;animation:headBob 2.8s var(--ease-out) infinite;animation-delay:${delay}s"/>
     </g>
-    <!-- 双手敲键 -->
     <rect class="anim" x="96" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handL .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
-    <rect class="anim" x="130" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handR .82s var(--ease-out) infinite;animation-delay:${delay}s"/>
+    <rect class="anim" x="130" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handR .82s var(--ease-out) infinite;animation-delay:${delay}s"/>`:''}
   </svg>`;
+}
+
+/* hover peek：把这个人电脑屏幕放大成可读窗口（app 名 + track 当文件名 + 内容）── */
+function peekHTML(m){
+  const type=ROLE_SCREEN[m.role]||'code';
+  let app,body;
+  if(type==='canvas'){
+    app='Canvas · 版式';
+    body=`<div class="pk-chips"><i style="background:var(--blue)"></i><i style="background:var(--yellow)"></i><i style="background:var(--red)"></i><i style="background:var(--jade)"></i></div>
+      <div class="pk-art">${m.track}</div><div class="pk-meta">frame 1 / 3 · 为每个客户实时重组</div>`;
+  }else if(type==='cube'){
+    app='agent-loop';
+    body=`<div class="pk-ag"><svg viewBox="0 0 40 40" width="42" height="42"><path d="M20 8l11 6-11 6-11-6z" fill="var(--yellow)"/><path d="M9 14l11 6v12l-11-6z" fill="var(--red)"/><path d="M31 14l-11 6v12l11-6z" fill="var(--blueink)"/></svg>
+      <div class="pk-line">thinking… <span class="pk-caret">▌</span></div><div class="pk-hl">${m.track}</div></div>`;
+  }else{
+    app='~/ezagent — zsh';
+    body=`<div><span class="pk-g">➜</span> <span class="pk-c">ezagent</span> <span class="pk-d">git:(</span><span class="pk-y">main</span><span class="pk-d">)</span></div>
+      <div class="pk-mut"># 正在做 · now</div><div class="pk-hl">${m.track}</div>
+      <div><span class="pk-g">●</span> compiling… <span class="pk-caret">▌</span></div>`;
+  }
+  return `<div class="peek peek-${type}" aria-hidden="true"><div class="peek-win">
+    <div class="peek-bar"><i class="pd r"></i><i class="pd y"></i><i class="pd g"></i><span class="peek-app">${app}</span></div>
+    <div class="peek-body">${body}</div>
+    <div class="peek-cap"><b>${m.cn}</b><span class="pc-gh">@${m.gh}</span><br>${m.track}</div></div></div>`;
 }
 
 /* ── 渲染整间办公室（按 LAYOUT 分区落座）────────────────────────────────── */
@@ -283,12 +377,11 @@ function seatNode(m,i){
   const seat=el('div','seat');
   seat.style.animationDelay=(i*70)+'ms';   // 桌子错峰浮入
   seat.innerHTML=`
+    ${peekHTML(m)}
     <div class="desk">${deskSVG(m)}</div>
     <div class="plate">
       <div class="nm">${m.cn}</div>
-      <div class="gh">@${m.gh}</div>
       <div class="badge ${ROLE_BADGE[m.role]||'agent'}"><span class="dot"></span>${ROLE_CN[m.role]||m.role}</div>
-      <div class="track">${m.track}</div>
     </div>`;
   return seat;
 }
@@ -297,18 +390,11 @@ function seatNode(m,i){
   const list=await EZ.contributors();
   const byGh=Object.fromEntries(list.map(m=>[m.gh,m]));
   let i=0;
-  LAYOUT.forEach(zone=>{
-    const z=el('div','zone '+zone.key);
-    z.appendChild(el('div','over zone-label',zone.label));
-    const set=el('div','benchset');
-    zone.rows.forEach(row=>{
-      const bench=el('div','bench '+zone.key+(row.length===1?' solo':''));
-      row.forEach(gh=>{const m=byGh[gh];if(m)bench.appendChild(seatNode(m,i++))});
-      set.appendChild(bench);
-    });
-    z.appendChild(set);
-    floor.appendChild(z);
-  });
+  const left=el('div','col-left');
+  COL_LEFT.forEach(gh=>{const m=byGh[gh];if(m)left.appendChild(seatNode(m,i++))});
+  const pod=el('div','pod-right');
+  POD.forEach(gh=>{const m=byGh[gh];if(m)pod.appendChild(seatNode(m,i++))});
+  floor.append(left,pod);
 })();
 </script>
 </body>
