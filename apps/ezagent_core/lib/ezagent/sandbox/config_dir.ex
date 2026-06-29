@@ -126,7 +126,6 @@ defmodule Ezagent.Sandbox.ConfigDir do
             "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
             "callers must pass a fully-formed URI."
   end
-end
 
   @doc """
   Validate that a project_cwd is within an allowed root (security: prevents
@@ -155,5 +154,4 @@ end
       {:error, {:cwd_outside_allowed_roots, expanded}}
     end
   end
-    end
-  end
+end
