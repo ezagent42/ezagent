@@ -1,7 +1,7 @@
 # cc agent creation failure resolution
 
 Date: 2026-06-29
-Branch: `worktree-verify+autoservice-live-codex`
+Branch: `fix/cc-agent-create-autoservice`
 
 ## Problem
 
@@ -62,6 +62,53 @@ Semantics:
 - still enters `Kind.Server -> Kind.Runtime.handle_dispatch/4`
 - still preserves CapBAC, args validation, effects, snapshot commit, and audit
 - intended only for materialization/bootstrap/internal initialization paths
+
+## Flavor Scope
+
+The original failure is not a cc-only rule. `cc`, `cc-headless`, `codex`, and
+`codex-remote` are all file-backed flavors for the generic role-create gate:
+
+```elixir
+@file_flavors ~w(cc cc-headless echo codex codex-remote)
+```
+
+Therefore all of these fail if an operator tries to create an orchestrator via
+the direct generic role path:
+
+```elixir
+Workspace.create_agent(workspace_uri, %{flavor: flavor, role: "orchestrator", ...}, ctx)
+```
+
+The correct path for file-flavor orchestrators is template materialization:
+
+```text
+template://system/agent/<flavor-orchestrator>
+  -> Ezagent.Entity.Agent.spawn_from_template_content/5
+```
+
+The reason Codex did not hit the same AutoService failure earlier is that the
+Codex orchestrator seed only writes the `codex-orchestrator` AgentTemplate. It
+does not require a live `entity://.../agent/...` orchestrator to be materialized
+during seed. AutoService has the stronger requirement: after seed,
+`entity://autosvc/agent/autoservice` must exist and later `session.send` must be
+able to route into the agent answer-loop.
+
+The ReadyGate issue applies by transport class, not by name:
+
+| flavor | Generic `role` create | transport class | ReadyGate/bridge materialization risk |
+| --- | --- | --- | --- |
+| `cc` | rejected | `:subprocess_ws` | yes; this is the bug fixed here |
+| `codex` | rejected | `:subprocess_ws` | yes if a live agent is materialized before bridge join |
+| `codex-remote` | rejected | `:subprocess_ws` | yes; same class as codex with remote topic/sidecar |
+| `cc-headless` | rejected | `:in_process_sync` | not the same bridge-join risk; main risks are SDK sidecar/auth/result persistence |
+
+`cc-headless` and `codex-remote` are therefore not equivalent. `cc-headless`
+uses an in-process synchronous SDK sidecar and persists the returned result via
+`Ezagent.Behavior.CcHeadlessAgent`. `codex-remote` delegates to the Codex bridge
+adapter, uses an `agent_bridge:codex-remote:<agent_uri>` topic, and replies
+asynchronously through the external bridge. Both are file-flavors and must avoid
+generic role create, but only the bridge-backed flavors directly need the
+local-registered dispatch seam to initialize before public transport readiness.
 
 ## Implemented Changes
 
@@ -136,4 +183,3 @@ The agent exists and has durable `kb.query` authority. `ReadyGate.status == :fai
 - Claude Code local auth is missing: TUI reports `Not logged in · Run /login`, preventing bridge readiness and real answer-loop replies.
 - Chat UI still renders `Unsupported node: container`.
 - Dev watcher still fails because `node node_modules/.bin/vite` tries to parse a pnpm shell shim as JavaScript.
-
