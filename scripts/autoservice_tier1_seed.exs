@@ -554,10 +554,34 @@ defmodule Ezagent.AutoService.Tier1Seed do
   """
   def deep_links(%{session_uri: session_uri}, base \\ "http://localhost:10042") do
     enc = session_uri |> URI.to_string() |> URI.encode_www_form()
+    operator_base = operator_base_url(base)
 
     %{
       customer: "#{base}/socialware/chat?session_uri=#{enc}",
-      operator: "#{String.replace(base, "//", "//world.")}/sessions?session=#{enc}"
+      operator: "#{operator_base}/sessions?session=#{enc}"
     }
+  end
+
+  defp operator_base_url(base) do
+    case System.get_env("EZAGENT_OPERATOR_BASE_URL") do
+      nil -> default_operator_base_url(base)
+      "" -> default_operator_base_url(base)
+      override -> String.trim_trailing(override, "/")
+    end
+  end
+
+  defp default_operator_base_url(base) do
+    uri = URI.parse(base)
+
+    case uri.host do
+      host when host in ["localhost", "127.0.0.1"] ->
+        uri
+        |> Map.put(:host, "world.localhost")
+        |> URI.to_string()
+        |> String.trim_trailing("/")
+
+      _other ->
+        String.trim_trailing(base, "/")
+    end
   end
 end

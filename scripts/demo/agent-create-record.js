@@ -16,8 +16,8 @@
 //   4. `cc` agent with EMPTY project_cwd -> server rejects with a VISIBLE
 //      operator message ("cc 需要 project_cwd ...") -> no silent drop
 //
-// World routes are host-scoped (`host: "world."`), so ORIGIN must be the
-// world.<host> vhost. Login is the controller-rendered email+password form
+// In dev/test, world routes use the config-scoped world.localhost vhost.
+// Login is the controller-rendered email+password form
 // (#email + #password, plain POST). Records the browser compositor -> webm +
 // numbered PNGs; ffmpeg transcodes to GIF + MP4.
 //
