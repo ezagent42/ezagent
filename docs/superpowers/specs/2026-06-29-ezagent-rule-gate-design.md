@@ -186,6 +186,55 @@ socialware P0–P10 中,「**加 socialware = 纯 seed carrier-L2 数据、零�
 
 闸门还会顺手告诉你选定档适用的不变式 / CI gate,把决策期与提交期接上。
 
+> **范围澄清(sub-step-gate 不在本设计构建范围)**:`scripts/hooks/sub-step-gate.sh` 是**已存在的提交期硬 enforcement**(commit/tag 时 format+test+check_invariants,exit2 挡死),方向与本设计的**决策期软路由**不同。本设计**不修改它**,只在下图标进来,并**复用它的 PreToolUse 手法**实现我们自己的 chokepoint hook(匹配 `Edit|Write`,与它匹配 `Bash` 不冲突)。
+
+---
+
+## 10.5 开发工作流全景图 + 质量控制分析
+
+### 全景流程图
+
+> 图例:**★NEW★** = 本设计新增;无标注 = 已存在;虚线框 = 提案未建。
+
+```mermaid
+flowchart TD
+    A["开发者需求(ezagent 改动)"] --> B{"进 brainstorm?"}
+    B -->|是| RG["rule-gate 决策期闸门 ★NEW★<br/>Step0 定 E2E<br/>Step1 由轻到重选最轻可行档<br/>Step2 纠偏 + 架构解释"]
+    RG --> C["ezagent-developer<br/>层内规则 / recipe"]
+    C --> D["写代码"]
+    D -.->|"首次改 apps 下 .ex"| CH["chokepoint hook ★NEW★<br/>PreToolUse Edit/Write<br/>提醒 + 纠偏(不 block)"]
+    CH -.-> D
+    D --> E{"git commit / tag"}
+    E -.->|"PreToolUse Bash"| SG["sub-step-gate.sh<br/>format + test + check_invariants<br/>exit2 硬 block"]
+    SG -->|绿| F["push / open PR"]
+    SG -->|红| D
+    F --> CI["CI ci.yml<br/>mix precommit + check_invariants<br/>不过不能 merge"]
+    CI -->|绿| RV["同事 / Allen review"]
+    CI -->|红| D
+    G6["taxonomy §6 arch-gates<br/>(提案/未建,非本设计 D9)"] -.-> CI
+    RV --> M["merge → main"]
+```
+
+### 质量控制覆盖表
+
+| 阶段 | 组件 | 时机 | 力度 | 抓什么 | 状态 |
+|---|---|---|---|---|---|
+| 决策 | **rule-gate** | brainstorm 时 | 软(advisory) | **选错层**(错误①②)+ E2E 缺失 | ★NEW★ |
+| 写码瞬间 | **chokepoint hook** | 首次改 `.ex` | 软(reminder) | 忘走闸门 / 正写最重层 | ★NEW★ |
+| 本地提交 | sub-step-gate.sh | commit/tag | 硬(exit2) | format / test / 8 条 grep 不变式 | 已存在 |
+| 远程 | ci.yml | PR / push main | 硬(不能 merge) | precommit + check_invariants | 已存在 |
+| 远程权限 | protect-dev-together-skill.yml | PR / push | 条件硬 | 越权改 dev-together skill | 已存在 |
+| 评审 | 同事 / Allen | PR | 人 | 设计 / 方向 | 已存在 |
+| (未建) | taxonomy §6 arch-gates | CI | 硬 | 业务语义入 core / 新 Kind / blob-inline | 提案,非本设计(D9) |
+
+### 漏洞与冗余分析(诚实评估)
+
+- **关键盲区 = 本设计存在的理由**:错误①/②产出的代码**能通过 format / test / check_invariants / CI 全部硬 gate**——因为"用了过重的层"本身**不违反任何不变式**(多写一个 plugin、或把本该 seed 的数据写进 domain,都是合法代码)。⟹ **现有硬 enforcement 链对"选错层"这个失败模式是瞎的**。只有决策期 rule-gate(软)+ 提案中的 §6 gate(仅覆盖 business-semantics-in-core 一小块)能碰它。
+- **层选择质量控制是"有意做软"的,不是漏洞**:rule-gate + chokepoint 都不硬 block,因为合法的 core 改动确实存在,硬挡会逼人绕路(绕路比漏报更糟)。⟹ 层选择靠"发现 + 纠偏 + 解释 + 人 review";硬 enforcement 只在**不变式**层。这是设计权衡。
+- **有意冗余(健康)**:sub-step-gate(本地)与 ci.yml(远程)跑同一批检查 = defense-in-depth(本地快反馈 + 远程防绕过本地 hook),非浪费。
+- **已知未补缺口(非本设计,已被 §7/§6 追踪)**:§6 arch-gate 未建(business-semantics **内容级** grep、new-Kind defmodule、blob-inline migration);现有 NP-2 lint 只查**模块名**不查内容。
+- **解释维度是全新的**:收尾的"为什么落这层(架构视角)"是现有链**完全没有**的——现有 gate 只回答"过 / 不过",从不解释架构理由。这是 rule-gate 对"人性化"目标的独有贡献。
+
 ---
 
 ## 11. 数据流
@@ -249,6 +298,26 @@ effort 升级脊梁 + 两轴映射是**架构稳定**的;未来迭代只需扩 `
 - **不另立词汇**:决策树用既有两轴 + 概念轴词汇,red lines 来自引用而非复述。
 - **解释完整**:收尾按 §9.2 模板,新人读懂"为什么落这档"。
 - **安静 + 不挡死**:hook 对文档/提问零打扰、session 不重复;有意识改 core 确认即过。
+
+---
+
+## 16. 与已落地 taxonomy / §7 follow-up 的协同(实施期勿忘)
+
+> 背景:"两套 taxonomy" **不是历史遗留冲突,而是故意正交的两条轴**(轴 A 代码依赖三 tier;轴 B artifact carrier L1–L4;见 §2.2),由同期设计、互相 cross-reference、同收进 **Decision #155**。**不要**提"统一 taxonomy"的 issue/PR(前提错 + 会和下面已追踪的工作重复)。真正的债是**旧文档没跟上新轴**,而 taxonomy SPEC **§7 已是一份完整 staleness 清单并排好 follow-up PR**。
+
+实施 rule-gate 时必须与这些**已被追踪**的事项协同,避免写出冲突或重复的副本:
+
+| §7 已追踪事项 | 计划的 follow-up | 我们的动作 |
+|---|---|---|
+| GLOSSARY 缺 base/socialware/fixture/recipe 等术语;footer 仍写 #87(实到 #155) | `docs(glossary): add socialware taxonomy terms + #155` | **不重复**;`layer-decision.md` 只 link GLOSSARY + Decision #155 |
+| `ARCHITECTURE.md` §10.5 blob 设计 stale + 违反 blob red line;§1/§3/§9/§10.4/§10.6 stale(Last updated 2026-05-15) | `docs(architecture): align to socialware unification` | **不重复**;rule-gate 引用 taxonomy SPEC 为权威,不碰 ARCHITECTURE(Allen 维护) |
+| `references/three-tier-structure.md` app 名 stale(`ezagent_domain_chat` / `ezagent_plugin_liveview` 已不存在)、未提新轴 | §7.3 flagged follow-up | **不重复写**;rule-gate 只 link 它;若该文件先于我们被修则直接受益 |
+
+**给 reviewer / Allen 的开放问题**(放进 spec PR 描述,不单独开 issue):
+1. rule-gate 是否应成为这套 taxonomy 的**可发现前门 / 整合家**?
+2. rule-gate 与上面两条 `align` PR 的**先后顺序**怎么排?(若 align PR 先落,我们的 link 直接受益;若我们先落,link 指向 DESIGN 状态的 SPEC,需在落地后回链。)
+
+**实施前置检查门(与 §13 呼应)**:真正建 skill 前 `git fetch`,核对上面三条 follow-up 是否已落地 + socialware P3–P5 进度,据此决定 `layer-decision.md` / `runtime-capability-map.md` 的 link 目标与 landed/target 标注。
 
 ---
 
