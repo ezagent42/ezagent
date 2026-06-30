@@ -1,11 +1,11 @@
 title:	kanban/n2: Phase2 inbound e2e round2 (登录表单)
 state:	OPEN
 author:	jjkysy
-labels:	
-assignees:	
-reviewers:	
-projects:	
-milestone:	
+labels:
+assignees:
+reviewers:
+projects:
+milestone:
 number:	6
 url:	https://github.com/jjkysy/test-ezagent/pull/6
 additions:	4
