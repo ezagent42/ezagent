@@ -114,6 +114,47 @@ defmodule Ezagent.World.ConversationData do
   end
 
   @doc """
+  Caller-scoped entity search for the conversation invite picker.
+
+  Includes registered users from the current workspace even when their Kind is
+  cold, plus live agents from the registry. Final submission still revalidates
+  in `ConversationActions.invite_member/3`; this read path is only the picker
+  option source.
+  """
+  @spec search_invitable_entities(URI.t(), URI.t(), String.t(), URI.t()) :: [map()]
+  def search_invitable_entities(
+        %URI{} = caller_uri,
+        %URI{} = workspace_uri,
+        query,
+        %URI{} = session_uri
+      )
+      when is_binary(query) do
+    member_uris =
+      session_uri
+      |> member_options()
+      |> Enum.map(&Map.get(&1, "uri"))
+      |> MapSet.new()
+
+    candidates =
+      (registered_user_uris(workspace_uri) ++ live_agent_uris(workspace_uri))
+      |> Enum.uniq_by(&URI.to_string/1)
+      |> Enum.filter(&uri_options_valid_for?(caller_uri, workspace_uri, &1))
+
+    display_map = Ezagent.EntityPresenter.display_many(candidates)
+    normalized_query = normalize_search_query(query)
+
+    candidates
+    |> Enum.map(&entity_search_row(&1, display_map, member_uris))
+    |> Enum.filter(&matches_entity_query?(&1, normalized_query))
+    |> Enum.sort_by(&{&1["already_member"], String.downcase(&1["label"]), &1["uri"]})
+    |> Enum.take(20)
+  rescue
+    _ -> []
+  end
+
+  def search_invitable_entities(_, _, _, _), do: []
+
+  @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`
   (`member_options/1` rows). Recognizes explicit `@entity://...` URIs and bare
   `@name` tokens resolved by URI path segment then display name (unique match
@@ -186,6 +227,68 @@ defmodule Ezagent.World.ConversationData do
     |> recent_messages(caller_caps)
     |> Enum.reverse()
     |> messages_to_rows()
+  end
+
+  defp registered_user_uris(%URI{} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.Users.list_in_workspace()
+    |> Enum.map(& &1.uri)
+  end
+
+  defp live_agent_uris(%URI{} = workspace_uri) do
+    Ezagent.KindRegistry.list_all()
+    |> Enum.flat_map(fn {uri_str, _pid} ->
+      case Ezagent.URI.parse(uri_str) do
+        {:ok, %URI{scheme: "entity"} = uri} ->
+          if Ezagent.URI.type?(uri, :agent) and uri_in_workspace?(uri, workspace_uri),
+            do: [uri],
+            else: []
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp uri_in_workspace?(%URI{} = uri, %URI{} = workspace_uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{} = uri_workspace -> same_uri?(uri_workspace, workspace_uri)
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp uri_options_valid_for?(%URI{} = caller_uri, %URI{} = workspace_uri, %URI{} = uri) do
+    Module.concat([Ezagent.UI, UriOptions])
+    |> apply(:valid_for?, [caller_uri, workspace_uri, uri, [:entity]])
+  rescue
+    _ -> false
+  end
+
+  defp entity_search_row(%URI{} = uri, display_map, member_uris) do
+    uri_str = URI.to_string(uri)
+
+    %{
+      "uri" => uri_str,
+      "label" => Map.get(display_map, uri_str, Ezagent.EntityPresenter.display(uri_str)),
+      "kind" => sender_kind(uri_str),
+      "already_member" => MapSet.member?(member_uris, uri_str)
+    }
+  end
+
+  defp normalize_search_query(query) when is_binary(query),
+    do: query |> String.trim() |> String.downcase()
+
+  defp matches_entity_query?(_row, ""), do: true
+
+  defp matches_entity_query?(row, query) do
+    row
+    |> Map.take(["uri", "label", "kind"])
+    |> Map.values()
+    |> Enum.any?(fn value ->
+      value |> to_string() |> String.downcase() |> String.contains?(query)
+    end)
   end
 
   defp recent_messages(%URI{} = session_uri, caller_caps) do

@@ -537,31 +537,36 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply, Phoenix.LiveView.Socket.t()}
   def invite_member(socket, %URI{} = session_uri, member_str) when is_binary(member_str) do
     caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     case parse_member_uri(member_str) do
       {:ok, %URI{} = member_uri} ->
-        # `:join` requires a LIVE member Kind (`:member_not_registered` else); a
-        # registered-but-cold invitee (e.g. a user who hasn't logged in this
-        # boot) is spawned from its snapshot first. Best-effort — a never-created
-        # URI stays unspawned and the join below fails closed to an error status.
-        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+        if uri_options_valid_for?(caller, workspace, member_uri, [:entity]) do
+          # `:join` requires a LIVE member Kind (`:member_not_registered` else); a
+          # registered-but-cold invitee (e.g. a user who hasn't logged in this
+          # boot) is spawned from its snapshot first. Best-effort — a never-created
+          # URI stays unspawned and the join below fails closed to an error status.
+          _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
 
-        result =
-          Invocation.dispatch(%Invocation{
-            target: Ezagent.URI.with_action(session_uri, :session, :join),
-            mode: :call,
-            args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore}
-          })
+          result =
+            Invocation.dispatch(%Invocation{
+              target: Ezagent.URI.with_action(session_uri, :session, :join),
+              mode: :call,
+              args: %{member: member_uri},
+              ctx: %{caller: caller, caps: caps, reply: :ignore}
+            })
 
-        case result do
-          r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            _ = Membership.mount_participation_caps(session_uri, member_uri)
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+          case result do
+            r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
+              _ = Membership.mount_participation_caps(session_uri, member_uri)
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
+        else
+          {:noreply, assign(socket, :last_dispatch_status, "error:invalid_member_uri")}
         end
 
       :error ->

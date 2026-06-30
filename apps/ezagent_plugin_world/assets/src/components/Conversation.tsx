@@ -51,6 +51,18 @@ type MemberRow = {
   kind?: string | null
 }
 
+type InviteOption = {
+  uri: string
+  label?: string | null
+  kind?: string | null
+  already_member?: boolean
+}
+
+type InviteSearchReply = {
+  options?: InviteOption[]
+  error?: string
+}
+
 type RoutingRule = {
   id: number
   table?: string | null
@@ -91,6 +103,7 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onSearchEntities?: (sessionUri: string, q: string, callback: (reply: InviteSearchReply) => void) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -115,6 +128,7 @@ export function Conversation({
   onLoadOlder,
   onMarkDisplayed,
   onInvite,
+  onSearchEntities,
   onPtyInput,
   onPtyResize,
   onServerEvent,
@@ -139,6 +153,10 @@ export function Conversation({
   const [uploading, setUploading] = React.useState(false)
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
+  const [inviteOptions, setInviteOptions] = React.useState<InviteOption[]>([])
+  const [inviteLoading, setInviteLoading] = React.useState(false)
+  const [inviteSearchError, setInviteSearchError] = React.useState<string | null>(null)
+  const [selectedInvite, setSelectedInvite] = React.useState<InviteOption | null>(null)
   const [debugOpen, setDebugOpen] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
@@ -148,6 +166,7 @@ export function Conversation({
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
+  const inviteSearchSeq = React.useRef(0)
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Inserting the member's URI path segment keeps it a single bare
@@ -187,6 +206,46 @@ export function Conversation({
       el.setSelectionRange(pos, pos)
     })
   }
+
+  React.useEffect(() => {
+    if (!inviteOpen) {
+      inviteSearchSeq.current += 1
+      setInviteOptions([])
+      setInviteLoading(false)
+      setInviteSearchError(null)
+      return undefined
+    }
+
+    if (!sessionUri || !onSearchEntities) {
+      setInviteOptions([])
+      setInviteLoading(false)
+      setInviteSearchError(null)
+      return undefined
+    }
+
+    const seq = ++inviteSearchSeq.current
+    const q = inviteValue.trim()
+    setInviteLoading(true)
+    setInviteSearchError(null)
+
+    const timer = window.setTimeout(() => {
+      try {
+        onSearchEntities(sessionUri, q, (reply) => {
+          if (seq !== inviteSearchSeq.current) return
+          setInviteOptions(Array.isArray(reply.options) ? reply.options.filter((option) => typeof option.uri === "string") : [])
+          setInviteSearchError(reply.error ? "Search failed." : null)
+          setInviteLoading(false)
+        })
+      } catch (_e) {
+        if (seq !== inviteSearchSeq.current) return
+        setInviteOptions([])
+        setInviteSearchError("Search failed.")
+        setInviteLoading(false)
+      }
+    }, 150)
+
+    return () => window.clearTimeout(timer)
+  }, [inviteOpen, inviteValue, onSearchEntities, sessionUri])
 
   React.useEffect(() => {
     if (!onServerEvent) return undefined
@@ -581,26 +640,73 @@ export function Conversation({
             className="flex flex-col gap-2 border-b border-border px-4 py-2.5"
             onSubmit={(event) => {
               event.preventDefault()
-              const member = inviteValue.trim()
+              const member = (selectedInvite?.uri || inviteValue).trim()
               if (!member || !sessionUri) return
               onInvite(sessionUri, member)
               setInviteValue("")
+              setSelectedInvite(null)
               setInviteOpen(false)
             }}
           >
             <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-input">
-              Invite by entity URI
+              Search or paste entity URI
             </label>
             <input
               id="world-invite-input"
               className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-foreground"
               value={inviteValue}
-              onChange={(event) => setInviteValue(event.target.value)}
+              onChange={(event) => {
+                setInviteValue(event.target.value)
+                setSelectedInvite(null)
+              }}
               placeholder="entity://workspace/user/name"
               autoFocus
             />
+            <div className="max-h-40 overflow-y-auto rounded-md border border-border bg-background" role="listbox" aria-label="Invite entity results">
+              {inviteOptions.length === 0 ? (
+                <div className="px-2.5 py-2 text-[12px] text-muted-foreground">
+                  {inviteLoading ? "Searching..." : inviteValue.trim() ? "No matching entities." : "Start typing to filter entities."}
+                </div>
+              ) : (
+                inviteOptions.map((option) => {
+                  const selected = selectedInvite?.uri === option.uri
+                  const disabled = option.already_member === true
+
+                  return (
+                    <button
+                      key={option.uri}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      disabled={disabled}
+                      className={[
+                        "flex w-full min-w-0 flex-col gap-0.5 px-2.5 py-2 text-left text-[12px]",
+                        "border-b border-border last:border-b-0",
+                        disabled ? "cursor-not-allowed opacity-60" : "hover:bg-muted",
+                        selected && !disabled ? "bg-muted" : "",
+                      ].join(" ")}
+                      onClick={() => {
+                        if (disabled) return
+                        setSelectedInvite(option)
+                        setInviteValue(option.uri)
+                      }}
+                    >
+                      <span className="flex min-w-0 items-center justify-between gap-2">
+                        <span className="truncate font-medium text-foreground">{option.label || option.uri}</span>
+                        <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                          {option.kind || "entity"}
+                        </span>
+                      </span>
+                      <span className="truncate font-mono text-[11px] text-muted-foreground">{option.uri}</span>
+                      {disabled && <span className="text-[11px] text-muted-foreground">Already in session</span>}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            {inviteSearchError && <p className="m-0 text-[12px] text-destructive">{inviteSearchError}</p>}
             <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={!inviteValue.trim()}>
+              <Button type="submit" size="sm" disabled={!selectedInvite && !inviteValue.trim()}>
                 Invite
               </Button>
               <Button
@@ -610,6 +716,7 @@ export function Conversation({
                 onClick={() => {
                   setInviteOpen(false)
                   setInviteValue("")
+                  setSelectedInvite(null)
                 }}
               >
                 Cancel

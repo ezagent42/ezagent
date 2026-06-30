@@ -1,0 +1,28 @@
+{
+  "baseUrl": "http://world.localhost:10042",
+  "inviteUri": "entity://system/agent/e2e-test",
+  "sessionUri": "session://system/default/e2e-auto",
+  "screenshots": [
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/01-register-self-registration.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/02-identities-no-user-create.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/03-session-created.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/04-invite-picker-results.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/05-invite-after-submit.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/06-invite-existing-member-disabled.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/07-current-invite-picker-e2e-test-result.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/08-current-invite-after-e2e-test-submit.png",
+    "docs/together/2026-06-30/tests/session-invite-entity-search/browser-verification/09-current-invite-existing-member-disabled.png"
+  ],
+  "checks": {
+    "currentRunBranch": "feat/session-invite-entity-search-0630",
+    "currentRunSessionUri": "session://system/default/e2e-auto",
+    "currentRunInviteUri": "entity://system/agent/e2e-test",
+    "inviteSearchResultVisible": true,
+    "inviteSearchResultDisabledBeforeInvite": false,
+    "memberVisibleAfterInvite": true,
+    "inviteSearchResultDisabledAfterInvite": true,
+    "alreadyInSessionVisible": true,
+    "browserConsoleErrors": false
+  },
+  "consoleErrors": []
+}

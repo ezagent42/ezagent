@@ -496,6 +496,133 @@ defmodule EzagentWeb.WorldConversationTest do
     assert html =~ ~s(data-last-dispatch="error:bad_member_uri")
   end
 
+  test "session.invite rejects a cross-workspace entity before dispatching join", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    other = "entity://otherws/user/invite_cross_#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.invite",
+        "args" => %{"session_uri" => URI.to_string(session_uri), "member" => other}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:invalid_member_uri")
+  end
+
+  test "world:entity_search hook is accepted on the conversation route", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:entity_search", %{
+        "session_uri" => URI.to_string(session_uri),
+        "q" => "admin"
+      })
+
+    assert html =~ ~s(id="world-root")
+  end
+
+  test "session invite entity search includes cold registered users in the current workspace" do
+    session_uri = world_session_uri()
+
+    cold_user =
+      Ezagent.URI.new!("entity://system/user/invite_cold_#{System.unique_integer([:positive])}")
+
+    assert {:ok, _} = Ezagent.Users.create_read_only(cold_user, [])
+
+    rows =
+      Ezagent.World.ConversationData.search_invitable_entities(
+        Ezagent.Entity.User.admin_uri(),
+        Ezagent.URI.workspace(:system),
+        "invite_cold",
+        session_uri
+      )
+
+    assert Enum.any?(rows, &(&1["uri"] == URI.to_string(cold_user)))
+  end
+
+  test "session invite entity search includes live agents in the current workspace" do
+    session_uri = world_session_uri()
+
+    agent_uri =
+      Ezagent.URI.new!("entity://system/agent/invite_agent_#{System.unique_integer([:positive])}")
+
+    assert :ok = Ezagent.KindRegistry.put_new(agent_uri)
+
+    rows =
+      Ezagent.World.ConversationData.search_invitable_entities(
+        Ezagent.Entity.User.admin_uri(),
+        Ezagent.URI.workspace(:system),
+        "invite_agent",
+        session_uri
+      )
+
+    assert Enum.any?(rows, &(&1["uri"] == URI.to_string(agent_uri)))
+  end
+
+  test "session invite entity search does not leak cross-workspace users" do
+    session_uri = world_session_uri()
+
+    other_user =
+      Ezagent.URI.new!("entity://otherws/user/invite_other_#{System.unique_integer([:positive])}")
+
+    assert {:ok, _} = Ezagent.Users.create_read_only(other_user, [])
+
+    rows =
+      Ezagent.World.ConversationData.search_invitable_entities(
+        Ezagent.Entity.User.admin_uri(),
+        Ezagent.URI.workspace(:system),
+        "invite_other",
+        session_uri
+      )
+
+    refute Enum.any?(rows, &(&1["uri"] == URI.to_string(other_user)))
+  end
+
+  test "session invite entity search marks existing session members" do
+    session_uri = world_session_uri()
+    member = "entity://system/user/invite_member_#{System.unique_integer([:positive])}"
+    member_uri = Ezagent.URI.new!(member)
+
+    :ok = create_read_only_user(member_uri, [session_cap(member_uri, session_uri, :join)])
+
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: member_uri},
+        ctx: %{
+          caller: member_uri,
+          caps: MapSet.new([session_cap(member_uri, session_uri, :join)]),
+          reply: :ignore
+        }
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    rows =
+      Ezagent.World.ConversationData.search_invitable_entities(
+        Ezagent.Entity.User.admin_uri(),
+        Ezagent.URI.workspace(:system),
+        "invite_member",
+        session_uri
+      )
+
+    assert %{"already_member" => true} =
+             Enum.find(rows, &(&1["uri"] == member))
+  end
+
   test "PR-4: session.create persists a new session and opens its conversation", %{conn: conn} do
     short_name = "world-pr4-#{System.unique_integer([:positive])}"
 

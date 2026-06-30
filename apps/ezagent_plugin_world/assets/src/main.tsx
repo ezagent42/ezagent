@@ -76,6 +76,16 @@ type WorkspaceNavItem = {
   detail_path?: string | null
 }
 
+type EntitySearchReply = {
+  options?: Array<{
+    uri: string
+    label?: string | null
+    kind?: string | null
+    already_member?: boolean
+  }>
+  error?: string
+}
+
 type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   can_manage_layout?: boolean
   cmdk?: {
@@ -316,6 +326,9 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     action: "session.invite",
                     args: {session_uri: sessionUri, member},
                   })
+                },
+                onSearchEntities: (sessionUri, q, callback) => {
+                  pushEvent?.("world:entity_search", {session_uri: sessionUri, q}, (reply) => callback(reply as EntitySearchReply))
                 },
                 onRemoveParticipant: (sessionUri, participant) => {
                   pushEvent?.("world:dispatch", {
@@ -750,6 +763,7 @@ type RenderContext = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onSearchEntities?: (sessionUri: string, q: string, callback: (reply: EntitySearchReply) => void) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -792,6 +806,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
+          onSearchEntities={context.onSearchEntities}
           onRemoveParticipant={context.onRemoveParticipant}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}

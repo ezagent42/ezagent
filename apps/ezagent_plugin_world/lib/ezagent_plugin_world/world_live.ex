@@ -12,6 +12,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.EntitySearchActions
   alias Ezagent.World.WorkspacePluginActions
   alias EzagentPluginWorld.Layouts
 
@@ -189,6 +190,9 @@ defmodule EzagentPluginWorld.WorldLive do
       :error -> {:noreply, socket}
     end
   end
+
+  def handle_event("world:entity_search", params, socket),
+    do: EntitySearchActions.handle_search(socket, params)
 
   def handle_event(
         "world:dispatch",
