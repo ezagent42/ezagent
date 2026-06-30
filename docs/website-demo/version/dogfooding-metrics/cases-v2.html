@@ -10,12 +10,15 @@
 <link rel="stylesheet" href="styles.css">
 <style>
 /* ── Cases 页特有构件 ── */
-/* 左侧纵向目录 rail：固定在页面最左、主内容区之外 */
-.subnav{position:fixed;top:120px;width:108px;left:calc((100vw - var(--container))/2 - 128px);display:flex;flex-direction:column;gap:2px;z-index:45}
+/* 两栏：左侧纵向目录 rail（主内容区内）+ 正文 */
+.caselayout{display:grid;grid-template-columns:128px 1fr;gap:44px;align-items:start;margin-top:var(--gap-grid)}
+.subnav{position:sticky;top:96px;display:flex;flex-direction:column;gap:2px}
 .subnav a{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);padding:9px 12px;border-radius:var(--r-sm);border-left:2px solid transparent;transition:all 150ms var(--ease-out)}
 .subnav a:hover{color:var(--ink);background:var(--ground-2);border-left-color:var(--line)}
 .subnav a.active{color:var(--accent-press);border-left-color:var(--accent);background:var(--accent-wash)}
-@media (max-width:1460px){.subnav{display:none}}
+/* 跳转到达:章节标题闪烁两次 */
+@keyframes flash2{0%,100%{background-color:transparent;box-shadow:0 0 0 4px transparent}15%,55%{background-color:var(--accent-wash);box-shadow:0 0 0 4px var(--accent-wash)}35%,75%{background-color:transparent;box-shadow:0 0 0 4px transparent}}
+h2.flashing{animation:flash2 1.1s ease-in-out;border-radius:8px}
 /* hero 成果数字带 */
 .herostats{display:flex;flex-wrap:wrap;gap:18px;padding:0 80px 40px}
 .herostats .hs{flex:1;min-width:150px;background:var(--ground-2);border-radius:var(--r-md);padding:18px 20px}
@@ -49,6 +52,7 @@
 .ctaband .t{font-family:var(--font-cn);font-weight:600;font-size:19px;color:var(--accent-press)}
 .ctaband .btn{margin-left:auto}
 @media (max-width:860px){
+  .caselayout{grid-template-columns:1fr;gap:0}.subnav{display:none}
   .herostats{padding:0 26px 26px}.scn{padding:22px 22px}.quote{padding:34px 24px}
 }
 </style>
@@ -70,15 +74,6 @@
   <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
   </button>
-</nav>
-
-<!-- 左侧纵向目录：固定在页面最左、主内容区之外（宽屏显示）-->
-<nav class="subnav">
-  <a href="#overview">概览</a>
-  <a href="#challenge">挑战</a>
-  <a href="#solution">解决方案</a>
-  <a href="#results">成效</a>
-  <a href="#method">方法与口径</a>
 </nav>
 
 <div class="wrap">
@@ -105,6 +100,17 @@
     <span class="badge neutral"><span class="dot"></span>DEMO</span>
     <span>样张。标 <b style="color:var(--jade)">真实</b> 的数字来自本仓库 git 与 dev-together 记录；标 <b style="color:#9A7B00">示例</b> 的待度量。口径见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。</span>
   </div>
+
+  <!-- 两栏：左侧纵向目录（主内容区内）+ 正文 -->
+  <div class="caselayout">
+    <nav class="subnav">
+      <a href="#overview">概览</a>
+      <a href="#challenge">挑战</a>
+      <a href="#solution">解决方案</a>
+      <a href="#results">成效</a>
+      <a href="#method">方法与口径</a>
+    </nav>
+    <div class="casemain">
 
   <!-- 概览 -->
       <div class="sec-head" style="margin-top:8px" id="overview"><span class="over">概览</span><h2>客户：我们自己</h2></div>
@@ -184,6 +190,9 @@
         <span>更多用 Ezagent 提效降本的案例，陆续添加中。</span>
       </div>
 
+    </div><!-- /casemain -->
+  </div><!-- /caselayout -->
+
   <footer><div>组织的 IDE · Organization IDE — Ezagent</div><div class="mono">Cases · Case 01 自举 · 真实数据取自本仓库</div></footer>
 </div>
 
@@ -197,7 +206,11 @@ document.querySelectorAll('.ba').forEach(s=>io.observe(s));
 // 子导航点击:平滑滚动,让章节标题落在视口中央(不被顶栏遮挡)
 document.querySelectorAll('.subnav a[href^="#"]').forEach(a=>a.addEventListener('click',e=>{
   const t=document.getElementById(a.getAttribute('href').slice(1));
-  if(t){e.preventDefault();t.scrollIntoView({behavior:reduce?'auto':'smooth',block:'center'});history.replaceState(null,'','#'+t.id);}
+  if(t){e.preventDefault();t.scrollIntoView({behavior:reduce?'auto':'smooth',block:'center'});history.replaceState(null,'','#'+t.id);
+    const hd=t.querySelector('h2')||t;
+    setTimeout(()=>{hd.classList.remove('flashing');void hd.offsetWidth;hd.classList.add('flashing');
+      hd.addEventListener('animationend',()=>hd.classList.remove('flashing'),{once:true});}, reduce?0:360);
+  }
 }));
 // 滚动时高亮当前章节(标题接近视口中央时激活)
 const navlinks=[...document.querySelectorAll('.subnav a[href^="#"]')];
