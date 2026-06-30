@@ -24,15 +24,15 @@
 <body>
 <h1>dev-together 计划 · 2026-06-30（Tue，W27）</h1>
 <div class="meta">
-<b>planned_at:</b> 2026-06-30 09:55 +0800 · <b>lead:</b> allen / codex · <b>day_deadline:</b> 2026-06-30 23:59 +0800<br>
+<b>planned_at:</b> 2026-06-30 09:55 +0800 · <b>lead:</b> allen · <b>day_deadline:</b> 2026-06-30 23:59 +0800<br>
 <b>lead_confirmed:</b> pending（本 HTML 发给 Allen 确认；#1102 确认前不合并）<br>
 <b>本周目标（W27）:</b> 1. Get ezagent running inside the team · 2. Build official website · 3. Make dev-together self-bootstrapping<br>
-<b>0629 close 后基线:</b> #1096 已合 <code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>；#1095 已合 <code>23320282478194263e207ed305660a551219cc80</code>；#1102 仅是 close/plan 文档，待确认。<br>
-<b>今日方向:</b> 从"修正 AutoService materialization 方案"转入 <b>live verification + stale PR cleanup + 产品缺口推进</b>。
+<b>0629 close 后基线:</b> 团队 6 个 PR 已合：#1083 DS、#1090 官网 demo、#1095 AutoService verify、#1096 AutoService fix、#1099 hello render_card、#1100 rule-gate spec。#1102 仅是 close/plan 文档，待确认。<br>
+<b>今日方向:</b> 从"0629 团队交付收账"转入 <b>live verification + stale PR cleanup + 产品缺口推进</b>。
 </div>
 
 <div class="big" style="background:#f0fdf4;border-color:#bbf7d0">
-<b>全员必读：</b> 0629 的主要架构风险已经解除：#1096 最终没有把 <code>dispatch_registered_local</code> 合进 core，而是把 sandbox 配置放回 Agent create 初始状态。
+<b>全员必读：</b> 0629 的团队交付基线是 6 个 merged PR；其中主要架构风险是 #1096，最终没有把 <code>dispatch_registered_local</code> 合进 core，而是把 sandbox 配置放回 Agent create 初始状态。
 今天的工作不要重新打开这个设计，除非 live 验证给出新的反证。所有会跑测试的任务必须使用<b>临时 PostgreSQL Docker</b>，测试后删除；不使用默认 sqlite，也不依赖本机 55432 PG volume。
 </div>
 
@@ -42,7 +42,7 @@
 <div class="gap"><b>world-host-scope 只过了静态 gate。</b> DB-backed gate 在 return 环境受阻；今天必须临时 PG 重跑，不能把"环境红"当完成。</div>
 <div class="gap"><b>#1020 过大，不能顺手合。</b> 209 files / 13k LOC，post-socialware drift 后需要 dedicated review/test/split verdict。</div>
 <div class="gap"><b>#1026/#1022 是 stale PR debt。</b> 前者是旧 lead-side analysis，后者混了 lockfile sync 与 personal docs；需要关闭或拆分，避免 PR queue 噪音遮住真实工作。</div>
-<div class="gap"><b>0629 close 文档本身要确认。</b> #1102 的 review/plan HTML 需要 Allen 确认后再合并；确认前只 push，不 merge。</div>
+<div class="gap"><b>0629 close 文档本身要确认。</b> #1102 的 review/plan HTML 已按 6 个团队 PR 口径修正，需要 Allen 确认后再合并；确认前只 push，不 merge。</div>
 
 <h2>§2 今日任务计划（feature points → 可交付结果）</h2>
 <table>
@@ -118,7 +118,7 @@
 <tr><td><b>zhaomato</b></td><td><span class="ok">T4 website demo follow-up</span>。继续 #1090 官网 demo，避免碰 operator World host routing。</td><td>若必须改 shared styles，先与 T2/T3 串行协调。</td><td>#1090 merged website demo · W27 Goal 2。</td></tr>
 <tr><td><b>jjkysy</b></td><td><span class="ok">T5 #1020 review-first track</span>。先 rebase/review/test/split verdict，不 opportunistic merge。</td><td>大 PR dedicated track；需要 changed-file risk map。</td><td>#1020 open state · kanban plugin 原作背景。</td></tr>
 <tr><td><b>allen</b>（lead）</td><td><span class="ok">T6 stale PR cleanup + #1102 confirmation gate</span>。</td><td>#1102 等用户确认 HTML 后再 merge。</td><td>0629 stack/review · current open PR list。</td></tr>
-<tr><td><b>codex / claude</b>（agent）</td><td>off-plan support：review/test/merge support、Feishu summaries、isolated verification runs。</td><td>不占 human-dev track row。</td><td>team.md role: agent。</td></tr>
+<tr><td><b>agent support</b></td><td>off-plan support：review/test/merge support、Feishu summaries、isolated verification runs。</td><td>不占 human-dev track row；不作为团队 PR owner。</td><td>team.md role: agent。</td></tr>
 </table>
 
 <h2>冲突图 / 依赖与顺序</h2>

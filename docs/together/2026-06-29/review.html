@@ -25,102 +25,116 @@
 </head>
 <body>
 <h1>dev-together 回顾 · 2026-06-29 周一 close</h1>
-<p>reviewed_at: <code>2026-06-30 09:45 +0800</code>。本回顾是 0629 returns 的补账 close：当天有 return 文件但没有 <code>stack.md</code>，因此 0630 先补 ledger，再合并已验证项。原始底稿见 <code>docs/together/2026-06-29/review.md</code> 与 <code>stack.md</code>。</p>
+<p>reviewed_at: <code>2026-06-30 09:45 +0800</code> · lead: <code>allen</code>。本回顾按 0629 转发/提交的团队 PR 做 close accounting；Codex/Claude worktree return 只作为验证/整理支持，不作为团队 owner。</p>
 
 <div>
-  <span class="kpi"><b>4</b>return files reconciled</span>
-  <span class="kpi"><b>2</b>PRs merged</span>
-  <span class="kpi"><b>2</b>merge SHAs recorded</span>
-  <span class="kpi"><b>4</b>stale/open PRs carried</span>
-  <span class="kpi"><b>1</b>wrong-approach caught before merge</span>
+  <span class="kpi"><b>6</b>团队 PR 合入</span>
+  <span class="kpi"><b>5</b>贡献者</span>
+  <span class="kpi"><b>105</b>changed files</span>
+  <span class="kpi"><b>5.1k</b>additions</span>
+  <span class="kpi"><b>2.0k</b>deletions</span>
 </div>
 
 <div class="big">
-<b>产品/架构大局：</b> 0629 的关键不是多合一个修复，而是把 AutoService cc orchestrator 的问题从错误的 Y 解法拉回 X 问题。
-最初 #1096 引入 <code>dispatch_registered_local</code>，把本应属于 agent create 初始状态的 sandbox 配置绕进 core dispatch 本地旁路；最终合入版删除这条路，
-改为 <b>AgentTemplate 物化 + Agent Kind create-time sandbox config 初始化 + <code>sandbox.update_config</code></b>。
-这意味着：AutoService 需要的是正确 materialize 一个 live cc orchestrator，而不是让 core dispatch 暴露一条新的业务旁路。
+<b>产品大局：</b> 0629 不是一个单点 AutoService close，而是 W27 第一批团队推进：<b>design system</b>（#1083）、
+<b>官网 demo</b>（#1090）、<b>AutoService live verify + materialization fix</b>（#1095/#1096）、
+<b>hello render-card substrate</b>（#1099）、<b>AI 开发 rule-gate 设计</b>（#1100）。
+这 6 个 PR 才是当日团队 close 结果。
 </div>
 
 <div class="note">
-<b>Allen 关心的 core leak 结论：</b> 合入到 <code>main</code> 的 #1096 没有修改 <code>apps/ezagent_core/lib/ezagent/invocation.ex</code>，也没有留下 <code>dispatch_registered_local</code>。
-授权仍走 <code>Identity.Grant</code> + <code>Invocation.dispatch/1</code>；AutoService 的特定配置被收回到 create-time agent state。
+<b>owner 口径修正：</b> 表内 owner/author 使用 GitHub PR 作者和 dev-together 人员：zyli、ruihua、gaga、zhaomato、FatNine。
+Codex/Claude 可以出现在 evidence/support notes 中，但不应作为 0629 团队交付 owner。
 </div>
 
-<h2>§1 0629 close 结果（按 return）</h2>
+<h2>§1 0629 团队 PR close 结果</h2>
 <table>
-<tr><th>return</th><th>branch / PR</th><th>owner</th><th>close outcome</th><th>说明</th></tr>
+<tr><th>PR</th><th>author</th><th>track</th><th>merged SHA</th><th>交付内容 / close 判断</th></tr>
 <tr>
-<td><code>cc-agent-create-failure-resolution.md</code></td>
-<td><code>fix/cc-agent-create-autoservice</code> · #1096</td>
-<td>gaga + codex lead redo</td>
-<td><span class="pill merged">merged</span><br><code>72ae93a381d87943d2d41a04446483c8026fa7b0</code></td>
-<td>重做后移除 core local dispatch，改为 create-time sandbox init；本地临时 PG 全量 <code>mix precommit</code> 通过；GitHub CI 绿后 squash merge。</td>
-</tr>
-<tr>
-<td><code>autoservice-live-verify-codex.md</code></td>
-<td>evidence only · related #1095</td>
-<td>codex</td>
-<td><span class="pill merged">merged as refreshed docs</span><br><code>23320282478194263e207ed305660a551219cc80</code></td>
-<td>#1095 在 #1096 之后刷新，删除 stale local-dispatch 结论，记录最终 materialization fix。它不证明真实 agent-authored answer-loop，0630 继续验。</td>
-</tr>
-<tr>
-<td><code>world-host-scope-config-driven.md</code></td>
-<td><code>fix/world-host-scope-config-driven</code></td>
-<td>codex</td>
-<td><span class="pill defer">deferred</span></td>
-<td>静态 gate 通过，DB-backed gate 在 return 环境受阻。0630 以临时 PostgreSQL Docker 重跑后再决定 PR/merge。</td>
-</tr>
-<tr>
-<td><code>zyli-fp4-design-system.md</code></td>
-<td>#1083</td>
+<td>#1083<br><b>feat(ui): migrate handoff surfaces to shadcn brand system</b></td>
 <td>zyli</td>
-<td><span class="pill merged">already on main</span></td>
-<td>#1083 已在本 close 前进入 main：<code>a7ad4a66 feat(ui): migrate handoff surfaces to shadcn brand system</code>。外部 DS-source 问题为 follow-up。</td>
+<td>FP4 design system</td>
+<td><span class="pill merged">merged</span><br><code>a7ad4a66ed638e8fe285f151de4c2d44601c4cff</code></td>
+<td>移除 daisyUI vendor layer，迁移 handoff/world/viewer/hello touched surfaces 到 shadcn/Tailwind semantic tokens；附 desktop/mobile visual evidence。</td>
+</tr>
+<tr>
+<td>#1090<br><b>feat(website): 官网 demo</b></td>
+<td>ruihua</td>
+<td>FP6 website demo</td>
+<td><span class="pill merged">merged</span><br><code>2adb5685d4670a94383255955498c4398b8a8020</code></td>
+<td><code>docs/website-demo/</code> 隔离交付：多页官网 demo、mock ezagent API、world.cup 押注/路线图、团队数据；DS reskin 到 ezagent-design。</td>
+</tr>
+<tr>
+<td>#1095<br><b>docs(fp2): refresh AutoService live verify after #1096</b></td>
+<td>gaga</td>
+<td>FP2 AutoService verification</td>
+<td><span class="pill merged">merged</span><br><code>23320282478194263e207ed305660a551219cc80</code></td>
+<td>记录 S1/S2/S3 green、S4 materialization fixed by #1096、真实 cc answer-loop 仍受 Claude auth/bridge readiness 阻塞；保留 BUG triage。</td>
+</tr>
+<tr>
+<td>#1096<br><b>Fix AutoService cc orchestrator materialization</b></td>
+<td>gaga</td>
+<td>FP2 AutoService fix</td>
+<td><span class="pill merged">merged</span><br><code>72ae93a381d87943d2d41a04446483c8026fa7b0</code></td>
+<td>最终方案移除 <code>dispatch_registered_local</code>，不改 core invocation；cc orchestrator 经 AgentTemplate materialize，sandbox config 在 Agent create/spawn 时初始化。</td>
+</tr>
+<tr>
+<td>#1099<br><b>feat(hello): render_card tool + fix main compile</b></td>
+<td>zhaomato</td>
+<td>hello / website substrate</td>
+<td><span class="pill merged">merged</span><br><code>cd8db2f98543dedbdaf4655bfcf67fc4a33436f6</code></td>
+<td>新增 producer-free <code>render_card</code> 工具；同时修复 #1097 把 helper 放到 module 外导致 main 不编译的问题。</td>
+</tr>
+<tr>
+<td>#1100<br><b>docs(spec): AI 开发治理机制 rule-gate</b></td>
+<td>FatNine</td>
+<td>governance / rule-gate design</td>
+<td><span class="pill merged">merged</span><br><code>24a66628613a84b78da1e35d2e1b2021ff8cb631</code></td>
+<td>纯文档 spec，提出 G0 config → G5 core 的层级升级闸门；目标是减少 AI 开发误把业务逻辑推到 core/domain。</td>
 </tr>
 </table>
 
-<h2>§2 GitHub PR 状态对齐</h2>
+<h2>§2 支持项 / 未计入 6 PR 的项</h2>
 <table>
-<tr><th>PR</th><th>0629/0630 close 状态</th><th>决定</th></tr>
-<tr><td>#1096 <b>fix cc agent create autoservice</b></td><td><span class="pill merged">merged</span> CI green, mergeable</td><td>合入 main：<code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>。</td></tr>
-<tr><td>#1095 <b>refresh AutoService live verify after #1096</b></td><td><span class="pill merged">merged</span> refreshed after #1096, CI green</td><td>合入 main：<code>23320282478194263e207ed305660a551219cc80</code>。</td></tr>
-<tr><td>#1027 <b>Agent Console QA findings</b></td><td><span class="pill open">left open intentionally</span></td><td>作为 0630 Agent Console bugfix 输入源；修复排进 T2 后再关闭/刷新。</td></tr>
-<tr><td>#1026 <b>2026-06-26 team-PR intake</b></td><td><span class="pill defer">stale</span></td><td>抽取仍有价值的 notes 后关闭，不让旧 lead-side analysis 长期挂着。</td></tr>
-<tr><td>#1022 <b>lockfile sync + docs/rh</b></td><td><span class="pill defer">stale / mixed scope</span></td><td>拆分或关闭；lockfile sync 与个人 docs 不应绑在一个 PR。</td></tr>
-<tr><td>#1020 <b>kanban team dev flow</b></td><td><span class="pill open">dedicated review required</span></td><td>209 files / 13k LOC，不能 opportunistic merge；0630 独立 T5 做 rebase/review/split verdict。</td></tr>
+<tr><th>item</th><th>owner / author</th><th>状态</th><th>close 口径</th></tr>
+<tr><td>#1089 world-host-scope config driven</td><td>zyli</td><td><span class="pill defer">closed unmerged</span></td><td>被已合入的 #1086 线覆盖/重复，不计入 6 个 merged team PR；后续 DB-backed gate 仍需临时 PG 重跑。</td></tr>
+<tr><td><code>returns/autoservice-live-verify-codex.md</code></td><td>agent support</td><td>evidence</td><td>可作为 #1095/#1096 的独立验证补充，但不是团队 PR owner。</td></tr>
+<tr><td><code>returns/world-host-scope-config-driven.md</code></td><td>agent support</td><td><span class="pill defer">deferred</span></td><td>静态 gate 通过，DB-backed gate 待 0630 临时 PG 重跑。</td></tr>
 </table>
 
-<h2>§3 方法复盘（method deltas）</h2>
-<h3>做对的地方</h3>
+<h2>§3 关键判断</h2>
+<h3>#1096 core leak 风险</h3>
+<blockquote>最终合入版没有修改 <code>apps/ezagent_core/lib/ezagent/invocation.ex</code>，没有保留 <code>dispatch_registered_local</code>。AutoService 特定状态回到 Agent create-time sandbox config；授权仍走 <code>Identity.Grant</code> + <code>Invocation.dispatch/1</code>。</blockquote>
+
+<h3>#1099 main compile 修复</h3>
+<blockquote>#1099 把 #1097 helper placement 导致的 broken main 一并修掉。这个修复不属于 hello 产品能力本身，但如果不合，后续验证都会被 main compile 阻断；close 允许它随同合入。</blockquote>
+
+<h3>#1100 governance spec</h3>
+<blockquote>#1100 是 rule-gate 设计输入，风险低（docs-only），但后续实现必须另开 plan/PR；不得把 spec merge 当作 enforcement 已落地。</blockquote>
+
+<h2>§4 方法复盘（method deltas）</h2>
 <ul>
-<li><b>wrong-Y 被及时拦住：</b> 用户追问 "是不是钻进 Y 问题" 后，close 重新定位 X：AutoService seed 要 materialize live cc orchestrator，并带正确 cwd/sandbox/respawn/kb 权限。</li>
-<li><b>架构边界守住：</b> 最终方案没有把 AutoService 业务逻辑、ReadyGate 例外或 CapBAC 旁路放进 core dispatch；sandbox config 回到 agent create 初始状态。</li>
-<li><b>测试环境纪律变好：</b> #1096 验证使用临时 PostgreSQL Docker，测试后删除；不再依赖废弃 sqlite 或本机 55432 脏 PG。</li>
-<li><b>给贡献者留下上下文：</b> PR body/comment 解释 redo 原因，避免佳佳只能从 TUI 碎片理解为什么原方案被替换。</li>
+<li><b>close 账本必须从 PR state 出发。</b> 这次初版 review 错把 agent 本地 close 工作当成全日结果，漏掉 #1083/#1090/#1099/#1100。后续 close 先拉 GitHub 当日 PR 列表和 Feishu 转发清单，再写 stack。</li>
+<li><b>owner 必须是 human/team PR author。</b> Agent 可以做验证、整理、redo 支持，但不能写成团队交付 owner。</li>
+<li><b>重复/支持项要分栏。</b> #1089、agent support returns、world-host-scope deferred 这类项要单列为 support/duplicate/deferred，避免混进 merged team PR count。</li>
+<li><b>测试环境规则继续保留。</b> 涉 DB 的后续验证仍使用临时 PostgreSQL Docker，测试后删除。</li>
 </ul>
 
-<h3>暴露的问题</h3>
-<blockquote><b>0629 没有及时写 stack.md。</b> return 到 close 之间缺少 merge ledger，导致 0630 必须补账重建。规则修正：有 return 就必须在 close 前写 <code>stack.md</code>，每个 return 明确 merged/deferred/superseded/out-of-scope。</blockquote>
-<blockquote><b>team.md 滞后。</b> 多名开发者的 <code>latest_return</code> 仍指向旧日期，0630 plan 必须结合最新 return/PR 实况，而不能只信 roster。review 作为唯一 writer 需要在日终更新。</blockquote>
-<blockquote><b>验证约束需要显式化。</b> 本机默认 sqlite 已废弃，本机 PG volume 也已证实不可靠。后续测试规则：始终使用临时 PostgreSQL Docker，测试后删除。</blockquote>
-
-<h2>§4 Required accounting</h2>
+<h2>§5 Required accounting</h2>
 <table>
 <tr><th>Metric</th><th class="num">Count</th><th>说明</th></tr>
-<tr><td>0629 plan 任务</td><td class="num">n/a</td><td>0629 有周计划 HTML，但当天 close ledger 缺失；本 review 按 returns 补账。</td></tr>
-<tr><td>return files arrived</td><td class="num">4</td><td>#1096, #1095 evidence refresh, world-host-scope, zyli FP4。</td></tr>
-<tr><td>returns entered stack.md</td><td class="num">4</td><td>0630 补写 <code>docs/together/2026-06-29/stack.md</code>。</td></tr>
-<tr><td>merged to main in this close pass</td><td class="num">2</td><td>#1096 + #1095。</td></tr>
-<tr><td>deferred</td><td class="num">1</td><td>world-host-scope 需临时 PG 重跑。</td></tr>
-<tr><td>already merged before ledger</td><td class="num">1</td><td>#1083 zyli DS handoff surfaces。</td></tr>
-<tr><td>related stale/open PRs carried</td><td class="num">4</td><td>#1027, #1026, #1022, #1020。</td></tr>
+<tr><td>团队 merged PR</td><td class="num">6</td><td>#1083, #1090, #1095, #1096, #1099, #1100。</td></tr>
+<tr><td>贡献者</td><td class="num">5</td><td>zyli, ruihua, gaga, zhaomato, FatNine。</td></tr>
+<tr><td>AutoService PR</td><td class="num">2</td><td>#1095 verification docs + #1096 materialization fix。</td></tr>
+<tr><td>docs/spec-only PR</td><td class="num">1</td><td>#1100 rule-gate design；#1095 是 verification report，但属于 FP2 evidence。</td></tr>
+<tr><td>closed unmerged duplicate/support PR</td><td class="num">1</td><td>#1089，不计入 merged total。</td></tr>
+<tr><td>agent support returns</td><td class="num">2+</td><td>用于补证据/redo，不作为 owner rows。</td></tr>
 </table>
 
-<h2>§5 结转到 2026-06-30</h2>
+<h2>§6 结转到 2026-06-30</h2>
 <table>
 <tr><th>结转项</th><th>owner / 0630 track</th><th>done signal</th></tr>
-<tr><td>AutoService real answer-loop verification：证明 <code>session://autosvc/default/tier1</code> 中有 agent-authored reply，并用到 KB fact <code>ZEPHYR-7731</code>。</td><td>gaga · T1</td><td>绿则截图/日志；不绿则给出 Claude auth/bridge blocker 的最小证据。</td></tr>
+<tr><td>AutoService real answer-loop verification：#1095/#1096 已记录 materialization 状态，但还没证明 agent-authored reply。</td><td>gaga · T1</td><td>绿则截图/日志；不绿则给出 Claude auth/bridge blocker 的最小证据。</td></tr>
 <tr><td>#1027 Agent Console QA findings 进入修复，而不是继续做 docs-only open PR。</td><td>fatnine · T2</td><td>F3/F4 测试覆盖；F7 implement 或明确 split decision。</td></tr>
 <tr><td><code>world-host-scope-config-driven</code> DB-backed gates 以临时 PG 重跑。</td><td>zyli · T3</td><td>命令、结果、PG cleanup proof、PR/merge 建议。</td></tr>
 <tr><td>#1020 kanban/dev-together E2E 做 dedicated review。</td><td>jjkysy · T5</td><td>changed-file risk map + merge/split/close verdict。</td></tr>

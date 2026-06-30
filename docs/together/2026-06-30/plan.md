@@ -1,7 +1,7 @@
 # Dev Together Plan - 2026-06-30
 
 planned_at: 2026-06-30 09:55 +0800
-lead: allen / codex
+lead: allen
 day_deadline: 2026-06-30 23:59 +0800
 timezone: GMT+8
 
@@ -13,7 +13,8 @@ timezone: GMT+8
   - `docs/together/2026-06-29/stack.md`
   - `docs/together/2026-06-29/review.md`
   - `docs/together/2026-06-29/returns/*`
-  - open PR snapshot on 2026-06-30 after merging #1095: #1027, #1026, #1022, #1020.
+  - 2026-06-29 merged team PRs: #1083, #1090, #1095, #1096, #1099, #1100.
+  - open PR snapshot on 2026-06-30 after merging the 0629 team set: #1027, #1026, #1022, #1020.
 
 ## Planned Tasks
 
@@ -47,8 +48,9 @@ timezone: GMT+8
 
 ## Off-Plan Support
 
-- codex: bounded review/test/merge support; no independent track row.
-- claude: Feishu-facing summaries, PR comment drafting, and isolated verification runs.
+- agent support: bounded review/test/merge support, Feishu-facing summaries,
+  PR comment drafting, and isolated verification runs; no independent human-dev
+  track row.
 
 ## Discuss-First Triggers
 
