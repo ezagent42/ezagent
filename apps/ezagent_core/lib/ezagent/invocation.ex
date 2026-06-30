@@ -128,49 +128,6 @@ defmodule Ezagent.Invocation do
     end
   end
 
-  @doc false
-  @spec dispatch_registered_local(t()) ::
-          {:ok, term()}
-          | :ok
-          | {:error, :no_such_actor}
-          | {:error, :unsupported_mode}
-          | {:error, {:invalid_args, list()}}
-          | {:error, {:unknown_action, atom()}}
-          | {:error, :unauthorized}
-          | {:error, :cross_workspace_denied}
-          | {:ok, :duplicate_ignored}
-          | {:error, term()}
-  def dispatch_registered_local(%__MODULE__{mode: mode})
-      when mode not in [:call, :call_stream] do
-    {:error, :unsupported_mode}
-  end
-
-  def dispatch_registered_local(%__MODULE__{target: target, ctx: ctx} = inv) do
-    instance_uri = Ezagent.URI.instance(target)
-
-    with :ok <-
-           Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
-             instance_uri,
-             {:dispatch_registered_local, target}
-           ),
-         :ok <- maybe_idempotency_check(ctx),
-         {:ok, pid} <- lookup_registered_local(instance_uri) do
-      timeout = inv.ctx[:deadline_ms] || 5_000
-
-      case call_live_target(pid, {:ezagent_dispatch, inv}, timeout) do
-        {:ok, result} -> result
-        :dead_target -> {:error, :no_such_actor}
-      end
-    end
-  end
-
-  defp lookup_registered_local(instance_uri) do
-    case Ezagent.KindRegistry.lookup(instance_uri) do
-      {:ok, pid} when is_pid(pid) -> {:ok, pid}
-      :error -> {:error, :no_such_actor}
-    end
-  end
-
   # codex E2E fix v2 Bug B (2026-05-29) — cold-spawn-from-snapshot on the
   # dispatch path. Pre-fix, a dispatch to a Kind URI whose process was
   # never spawned in this BEAM (ReadyGate status `:unknown`) returned

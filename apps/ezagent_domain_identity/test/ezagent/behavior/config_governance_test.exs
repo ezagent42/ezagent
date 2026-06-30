@@ -545,8 +545,8 @@ defmodule Ezagent.Behavior.ConfigGovernanceTest do
     assert :none = ConfigStore.resolve(:user, workspace, agent, @cascade_key)
 
     # (2) Materialization is USER-LAYER-ONLY: no user-layer pointer ⇒ the seam
-    # emits no sandbox.write_path, so the cache's user_layer_uri stays at its
-    # seed. Sleep to give any (erroneous) async write_path effect time to land —
+    # emits no sandbox.update_config, so the cache's user_layer_uri stays at its
+    # seed. Sleep to give any (erroneous) async update_config effect time to land —
     # the assertion would catch a regression where a workspace publish starts
     # projecting into the sandbox cache.
     Process.sleep(100)
@@ -640,7 +640,7 @@ defmodule Ezagent.Behavior.ConfigGovernanceTest do
   defp seed_sandbox_cascade(agent, workspace) do
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.write_path"),
+        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
         mode: :call,
         args: %{
           config_dir_path: "/tmp/agent-cg-#{System.unique_integer([:positive])}",

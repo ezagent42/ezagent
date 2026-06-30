@@ -23,45 +23,20 @@ The failure is expected under the current design.
 
 `Workspace.create_agent/3` is the generic agent creation path. File-backed flavors such as `cc` intentionally do not support `role: "orchestrator"` there. The cc orchestrator must be materialized through the orchestrator AgentTemplate path used by session-create.
 
-After switching to the template path, a second issue appeared: bridge-backed cc agents keep public `ReadyGate` as `:not_ready` until their external transport bridge joins. Seed/materialization still needs to perform internal initialization before that bridge is ready:
+After switching to the template path, a second issue appeared: bridge-backed cc agents keep public `ReadyGate` as `:not_ready` until their external transport bridge joins. The old cc materialization path spawned the Agent Kind first, then tried to record the sandbox config through a post-spawn `sandbox.write_path` dispatch. That dispatch is a normal public `:call`, so it waited on public readiness and could time out before the bridge joined.
 
-- write the agent sandbox state with `sandbox.write_path`
-- grant delegated caps with `identity.grant_cap`
-
-Those internal initialization calls should not wait for chat transport readiness, but they must still preserve Runtime authorization, validation, effects, snapshot commit, and audit behavior.
-
-## Framework Constraint
-
-The framework does not have a blanket rule that every in-VM call must only use `Invocation.dispatch/1` or `Router.dispatch/1`.
-
-The stricter rules are:
-
-- Business/cross-Kind dispatch should go through `Invocation.dispatch/1` or `Router.dispatch/1`.
-- Grant/revoke dispatch construction must stay in `Ezagent.Identity.Grant`.
-- Capability checks must stay at the dispatch chokepoint or explicitly allowlisted read/ctx-construction sites.
-- Lifecycle handlers must not directly call engine internals; they should emit effects.
-
-`Kind.Server`'s `{:ezagent_dispatch, inv}` message is a core internal protocol. Domain code should not depend on that message shape directly.
+The sandbox config directory is not transport state. It is Agent creation state: `Ezagent.Behavior.Sandbox.create/1` already accepts `config_dir_path`, `template_class`, and `respawn_template_data` from Kind spawn args. The fix is to use that existing creation contract instead of adding a core dispatch bypass.
 
 ## Decision
 
-Keep the functional fix, but move the local dispatch exception into `ezagent_core`.
+Do not add `dispatch_registered_local/1` or any other local-dispatch exception.
 
-Add a narrow core-owned internal seam:
+Instead:
 
-```elixir
-Ezagent.Invocation.dispatch_registered_local(inv)
-```
-
-Semantics:
-
-- target Kind must already be registered locally in `KindRegistry`
-- no lazy spawn
-- no public ReadyGate wait
-- no external transport readiness wait
-- still enters `Kind.Server -> Kind.Runtime.handle_dispatch/4`
-- still preserves CapBAC, args validation, effects, snapshot commit, and audit
-- intended only for materialization/bootstrap/internal initialization paths
+- rename `sandbox.write_path` to `sandbox.update_config`, because the action updates sandbox slice metadata rather than writing a filesystem path;
+- pass sandbox config into the Agent Kind at create time so `Sandbox.create/1` initializes the durable slice;
+- keep the post-spawn `sandbox.update_config` dispatch only as a fallback for Template Classes that do not initialize sandbox in spawn args;
+- keep grant/revoke on the normal `Ezagent.Identity.Grant` chokepoint and normal dispatch path.
 
 ## Flavor Scope
 
@@ -107,8 +82,9 @@ uses an in-process synchronous SDK sidecar and persists the returned result via
 `Ezagent.Behavior.CcHeadlessAgent`. `codex-remote` delegates to the Codex bridge
 adapter, uses an `agent_bridge:codex-remote:<agent_uri>` topic, and replies
 asynchronously through the external bridge. Both are file-flavors and must avoid
-generic role create, but only the bridge-backed flavors directly need the
-local-registered dispatch seam to initialize before public transport readiness.
+generic role create, but bridge-backed flavors are where post-spawn public
+dispatch is most likely to race transport readiness. Their creation-time
+sandbox config must not depend on external transport readiness.
 
 ## Implemented Changes
 
@@ -118,41 +94,68 @@ local-registered dispatch seam to initialize before public transport readiness.
 
 2. `apps/ezagent_core/lib/ezagent/invocation.ex`
 
-   Added `Ezagent.Invocation.dispatch_registered_local/1` as the core-owned local dispatch seam.
+   The attempted `Ezagent.Invocation.dispatch_registered_local/1` seam was removed. Core dispatch remains unchanged.
 
 3. `apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn.ex`
 
-   `record_sandbox_state/3` now writes `sandbox.write_path` through `dispatch_registered_local/1`, so cc template materialization can persist sandbox state before the bridge joins.
+   `record_sandbox_state/3` now first checks whether the worker's live sandbox slice already matches the returned template meta. If it matches, it skips the fallback dispatch. If it does not match, it performs a normal `Invocation.dispatch/1` to `sandbox.update_config`.
 
 4. `apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex`
 
-   `Identity.Grant` remains the only grant/revoke dispatch construction chokepoint. When an imperative grant targets a locally registered but public-not-ready Kind, it uses `dispatch_registered_local/1` instead of directly calling `Kind.Server`.
+   Reverted the local-dispatch branch. `Identity.Grant` remains the only grant/revoke dispatch construction chokepoint and uses normal `Invocation.dispatch/1`.
 
 5. `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex`
 
    `load_orchestrator_caps/1` reads durable delegated caps via `Ezagent.Identity.read_entity_caps/1`, avoiding public ReadyGate-gated `Identity.list_caps_for/1` for bridge-backed orchestrators.
+
+6. `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent/spawn.ex`
+
+   `CcAgent` now spawns the Agent Kind directly with sandbox init args: `config_dir_path`, `template_class`, and `respawn_template_data`. The config directory is still materialized only after the caller wins the atomic `:started` branch, preserving the existing "loser does not touch config dir" concurrency invariant.
+
+7. `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex`
+
+   Renamed the action and cap subject from `:write_path` to `:update_config`.
 
 ## Verification
 
 Commands run:
 
 ```bash
-mix format apps/ezagent_core/lib/ezagent/invocation.ex \
+MIX_DEPS_PATH=/private/tmp/esr-ng-pr-1099/deps mix format \
+  apps/ezagent_core/lib/ezagent/behavior/sandbox.ex \
   apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn.ex \
+  apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent/spawn.ex \
   apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex \
   apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex \
   scripts/autoservice_tier1_seed.exs
 
-env SHELL=/bin/bash mix test \
+MIX_DEPS_PATH=/private/tmp/esr-ng-pr-1099/deps POSTGRES_PORT=55433 mix test \
+  apps/ezagent_core/test/ezagent/behavior/sandbox_test.exs \
+  apps/ezagent_core/test/ezagent/behavior/sandbox_migration_parity_test.exs \
+  apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs \
+  apps/ezagent_domain_session/test/integration/sandbox_destroy_test.exs
+
+MIX_DEPS_PATH=/private/tmp/esr-ng-pr-1099/deps POSTGRES_PORT=55433 mix test \
+  apps/ezagent_domain_identity/test/ezagent/behavior/config_evolve_test.exs \
+  apps/ezagent_domain_identity/test/ezagent/behavior/config_governance_test.exs \
+  apps/ezagent_plugin_curl_agent/test/ezagent/plugin_curl_agent/curl_snapshot_migration_test.exs \
+  apps/ezagent_core/test/invariants/no_unowned_system_principal_grant_test.exs \
+  apps/ezagent_core/test/invariants/sensitive_slice_read_test.exs
+
+MIX_DEPS_PATH=/private/tmp/esr-ng-pr-1099/deps POSTGRES_PORT=55433 mix test \
   apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs \
   apps/ezagent_core/test/invariants/grant_dispatch_chokepoint_test.exs \
-  apps/ezagent_core/test/ezagent/invocation_activate_budget_test.exs
+  apps/ezagent_core/test/ezagent/invocation_activate_budget_test.exs \
+  apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs \
+  apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_test.exs
 ```
 
 Result:
 
 ```text
-6 tests, 0 failures
+43 + 1 + 15 tests, 0 failures
+28 + 38 + 10 tests, 0 failures
+4 + 49 + 2 tests, 0 failures
 ```
 
 Live verification on port `10144`:

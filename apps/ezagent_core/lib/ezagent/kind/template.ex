@@ -156,7 +156,7 @@ defmodule Ezagent.Kind.Template do
   #
   # **NOTE on `create_config_dir`** (codex PR2 round-1 HIGH-1): there is
   # NO `create_config_dir/N` callback by design. The 2-phase pattern
-  # ("init slice nil → late dispatch write_path") was too late for
+  # ("init slice nil → late dispatch update_config") was too late for
   # plugins that launch a sidecar during `instantiate/3` using a
   # filesystem path (cc starts its PTY with the universal `config_dir` before
   # any subsequent dispatch could populate the slice). Instead, the
@@ -164,7 +164,7 @@ defmodule Ezagent.Kind.Template do
   # (it is the only place that knows the full plugin-specific spawn
   # timing) and returns the path through the existing
   # `instantiate_meta()` shape — `Agent.spawn_from_template_content/4`
-  # then dispatches `sandbox.write_path` AFTER the plugin's instantiate
+  # then dispatches `sandbox.update_config` AFTER the plugin's instantiate
   # succeeds. PR3 lands the meta-passing convention + cc plugin impl.
   #
   # The other 3 callbacks below ARE here because they are POST-create

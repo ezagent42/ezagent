@@ -115,9 +115,10 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
     test "accepts cwd equal to operator-configured root" do
       prev = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
       root = System.tmp_dir!()
+      expanded_root = Path.expand(root)
       System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", root)
 
-      assert {:ok, ^root} =
+      assert {:ok, ^expanded_root} =
                Ezagent.Sandbox.ConfigDir.validate_project_cwd(
                  root,
                  "/tmp/ezagent"

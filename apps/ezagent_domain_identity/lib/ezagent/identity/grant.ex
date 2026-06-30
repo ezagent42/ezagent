@@ -247,22 +247,10 @@ defmodule Ezagent.Identity.Grant do
           ctx: Map.put(ctx, :reply, {:caller_inbox, self()})
         }
 
-        normalize_dispatch_result(dispatch_imperative_invocation(inv))
+        normalize_dispatch_result(Invocation.dispatch(inv))
 
       {:error, _} = err ->
         err
-    end
-  end
-
-  defp dispatch_imperative_invocation(%Invocation{} = inv) do
-    instance_uri = Ezagent.URI.instance(inv.target)
-
-    case {Ezagent.ReadyGate.status(instance_uri), Ezagent.KindRegistry.lookup(instance_uri)} do
-      {:not_ready, {:ok, pid}} when is_pid(pid) ->
-        Invocation.dispatch_registered_local(inv)
-
-      _ ->
-        Invocation.dispatch(inv)
     end
   end
 

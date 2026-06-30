@@ -4,7 +4,7 @@ defmodule Ezagent.Behavior.SandboxTest do
   per-agent config_dir + extension-management scaffolding.
 
   Pure-function level: `actions/0`, `state_slice/0`, `init_slice/1`,
-  `invoke/4` for `:read` / `:write_path`. The `:destroy` action is
+  `invoke/4` for `:read` / `:update_config`. The `:destroy` action is
   exercised in the integration test (it has side effects on the OTP
   supervision tree).
   """
@@ -46,8 +46,8 @@ defmodule Ezagent.Behavior.SandboxTest do
   end
 
   describe "Behavior contract surface" do
-    test "actions/0 returns [:read, :write_path, :destroy]" do
-      assert Sandbox.actions() == [:read, :write_path, :destroy]
+    test "actions/0 returns [:read, :update_config, :destroy]" do
+      assert Sandbox.actions() == [:read, :update_config, :destroy]
     end
 
     test "state_slice/0 is :sandbox" do
@@ -99,7 +99,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       args = %{config_dir_path: "/tmp/agent-x", template_class: SomeMod}
 
       # Missing key → nil in state (the PTY-orphan-restart respawn flow
-      # opts in via :write_path, not via create/1; legacy spawn paths
+      # opts in via :update_config, not via create/1; legacy spawn paths
       # that don't dispatch the new key still produce a clean state).
       assert Sandbox.init_slice(args) ==
                %{
@@ -133,12 +133,12 @@ defmodule Ezagent.Behavior.SandboxTest do
 
     test "cap_subjects/0 carries all 3 subjects" do
       subjects = Sandbox.cap_subjects() |> Enum.map(&elem(&1, 0))
-      assert subjects == [:read, :write_path, :destroy]
+      assert subjects == [:read, :update_config, :destroy]
     end
 
     test "interface/0 declares all 3 actions, all :call mode" do
       iface = Sandbox.interface()
-      assert Map.keys(iface) |> Enum.sort() == [:destroy, :read, :write_path]
+      assert Map.keys(iface) |> Enum.sort() == [:destroy, :read, :update_config]
       for {_action, def} <- iface, do: assert(def.modes == [:call])
     end
   end
@@ -187,7 +187,7 @@ defmodule Ezagent.Behavior.SandboxTest do
     # no live process to race a stale read against.
   end
 
-  describe "invoke(:write_path, ...)" do
+  describe "invoke(:update_config, ...)" do
     test "sets both fields in the slice (legacy 2-key write, leaves respawn_template_data alone)" do
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
       args = %{config_dir_path: "/tmp/agent-y", template_class: MyClass}
@@ -198,7 +198,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: MyClass,
                 respawn_template_data: nil
               }} =
-               invoke_via_new_contract(:write_path, slice, args, %{})
+               invoke_via_new_contract(:update_config, slice, args, %{})
 
       # Legacy 2-key write — respawn_template_data is NOT touched.
       assert new_slice == %{
@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: MyClass,
                 respawn_template_data: %{"cwd" => "/tmp/agent-z", "extra" => "k"}
               }} =
-               invoke_via_new_contract(:write_path, slice, args, %{})
+               invoke_via_new_contract(:update_config, slice, args, %{})
 
       assert new_slice == %{
                config_dir_path: "/tmp/agent-z",
@@ -251,7 +251,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: NewClass,
                 respawn_template_data: %{"cwd" => "/new/path"}
               }} =
-               invoke_via_new_contract(:write_path, slice, args, %{})
+               invoke_via_new_contract(:update_config, slice, args, %{})
 
       assert new_slice == %{
                config_dir_path: "/new/path",
@@ -265,7 +265,7 @@ defmodule Ezagent.Behavior.SandboxTest do
 
       assert {:error, {:invalid_config_dir_path, 123}} =
                invoke_via_new_contract(
-                 :write_path,
+                 :update_config,
                  slice,
                  %{config_dir_path: 123, template_class: nil},
                  %{}
@@ -277,7 +277,7 @@ defmodule Ezagent.Behavior.SandboxTest do
 
       assert {:error, {:invalid_template_class, "ModString"}} =
                invoke_via_new_contract(
-                 :write_path,
+                 :update_config,
                  slice,
                  %{config_dir_path: nil, template_class: "ModString"},
                  %{}
@@ -289,7 +289,7 @@ defmodule Ezagent.Behavior.SandboxTest do
 
       assert {:error, {:invalid_respawn_template_data, "not-a-map"}} =
                invoke_via_new_contract(
-                 :write_path,
+                 :update_config,
                  slice,
                  %{
                    config_dir_path: nil,
@@ -314,7 +314,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 respawn_template_data: nil
               }} =
                invoke_via_new_contract(
-                 :write_path,
+                 :update_config,
                  slice,
                  %{config_dir_path: nil, template_class: nil, respawn_template_data: nil},
                  %{}
@@ -327,7 +327,7 @@ defmodule Ezagent.Behavior.SandboxTest do
              }
     end
 
-    # NOTE: the pre-Lifecycle `:write_path` destroyed?-gate rejection test
+    # NOTE: the pre-Lifecycle `:update_config` destroyed?-gate rejection test
     # was REMOVED for the same reason as `:read` above (SPEC §2.3B — the
     # gate disappears; destroyed = absence of state).
   end

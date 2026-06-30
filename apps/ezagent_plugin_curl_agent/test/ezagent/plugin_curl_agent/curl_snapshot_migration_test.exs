@@ -264,12 +264,12 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
 
       # codex P1 regression: the migration threaded the row URI into
       # Behavior.Identity.create/1, so the migrated agent cold-loads WITH its
-      # self-scoped Sandbox.write_path + ConfigEvolve.reconcile_cascade caps
+      # self-scoped Sandbox.update_config + ConfigEvolve.reconcile_cascade caps
       # (fresh-spawn parity). Without the URI the identity slice is empty and
       # config-evolve self-dispatch is unauthorized.
       assert {:ok, %{caps: identity_caps}} = Kind.get_slice(uri, :identity)
       self_caps = identity_caps |> MapSet.to_list() |> Enum.map(&{&1.behavior, &1.action})
-      assert {Ezagent.Behavior.Sandbox, :write_path} in self_caps
+      assert {Ezagent.Behavior.Sandbox, :update_config} in self_caps
       assert {Ezagent.Behavior.ConfigEvolve, :reconcile_cascade} in self_caps
 
       # The reparented curl Behavior is in the effective set (its public action

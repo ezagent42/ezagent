@@ -28,7 +28,7 @@ defmodule Ezagent.Behavior.Sandbox do
   ### `state` (PERSISTENT — framework auto-snapshots)
 
       %{
-        config_dir_path:       nil | String.t(),  # absolute path; nil until :write_path
+        config_dir_path:       nil | String.t(),  # absolute path; nil until :update_config
         template_class:        nil | module(),    # Kind.Template Class that owns the dir
         respawn_template_data: nil | map(),        # opaque plugin instantiate/3 tmpl arg
                                                    # (cwd + respawn knobs); fed back to the
@@ -90,18 +90,18 @@ defmodule Ezagent.Behavior.Sandbox do
   state. `destroy/2` runs the FS cleanup, then the framework clears
   durable `state` + flips the ever-created marker; a respawn at the same
   URI goes through `create/1` again (clean). The 20ms-window race the
-  gate guarded (a concurrent `:read`/`:write_path` seeing already-cleaned
+  gate guarded (a concurrent `:read`/`:update_config` seeing already-cleaned
   state) is now closed by the destroy path terminating the process — a
   dispatch to a terminated Kind cannot read stale state because there is
   no live process to dispatch to.
 
-  ## Actions — `:read` / `:write_path` / `:destroy`
+  ## Actions — `:read` / `:update_config` / `:destroy`
 
   - **`:read`** (`:call`) — return the state fields (config_dir_path,
     template_class, respawn_template_data, pty_phase). Plugin-agnostic LV
     uses this + `template_class.list_extensions/1` to render the per-agent
     extension toggle grid.
-  - **`:write_path`** (`:call`, args `%{config_dir_path:, template_class:,
+  - **`:update_config`** (`:call`, args `%{config_dir_path:, template_class:,
     respawn_template_data:}`) — population dispatched by the spawn caller
     AFTER the plugin's `instantiate/3` returned the per-agent dir in meta
     (PR3). Writes the durable `state` fields via `{:set, key, value}`
@@ -153,14 +153,14 @@ defmodule Ezagent.Behavior.Sandbox do
     description: "read the agent's sandbox state (config_dir_path, template_class)"
   )
 
-  action(:write_path,
+  action(:update_config,
     args: %{
       config_dir_path: {:option, :string},
       template_class: {:option, :atom},
       respawn_template_data: {:option, :map}
     },
     returns: %{config_dir_path: {:option, :string}},
-    caps: [:write_path],
+    caps: [:update_config],
     modes: [:call],
     description:
       "set the agent's config_dir_path (one-time, at spawn — caller is the " <>
@@ -185,7 +185,7 @@ defmodule Ezagent.Behavior.Sandbox do
   def required_caps do
     %{
       read: Ezagent.Capability.cap(:agent, __MODULE__, :read),
-      write_path: Ezagent.Capability.cap(:agent, __MODULE__, :write_path),
+      update_config: Ezagent.Capability.cap(:agent, __MODULE__, :update_config),
       destroy: Ezagent.Capability.cap(:agent, __MODULE__, :destroy)
     }
   end
@@ -366,19 +366,19 @@ defmodule Ezagent.Behavior.Sandbox do
     end
   end
 
-  # ---- :write_path ----------------------------------------------------------
+  # ---- :update_config ----------------------------------------------------------
 
   # Population dispatched by the spawn caller AFTER the plugin's
   # `instantiate/3` returned the per-agent dir in meta (PR3 wiring).
   # Subsequent invocations are allowed (re-spawn / re-bind) — there is no
   # immutability semantics here; the caller (spawn orchestrator) is trusted.
-  def handle_write_path(args, ctx) when is_map(args) do
+  def handle_update_config(args, ctx) when is_map(args) do
     # Destroyed-gate (C-C): same strict rejection as `:read` during the
     # post-destroy live window.
     if destroyed?(ctx) do
       {:error, :destroyed}
     else
-      do_write_path(args)
+      do_update_config(args)
     end
   end
 
@@ -402,7 +402,7 @@ defmodule Ezagent.Behavior.Sandbox do
   #      dispatch reply wins the race against process death).
   #
   # The process-dict gate is GONE (SPEC §2.3B). The `:destroyed`-gate
-  # rejection of concurrent `:read`/`:write_path` is no longer needed: the
+  # rejection of concurrent `:read`/`:update_config` is no longer needed: the
   # scheduled termination removes the live process, after which no
   # dispatch can reach it.
   #
@@ -450,7 +450,7 @@ defmodule Ezagent.Behavior.Sandbox do
          # Remediation SPEC 2026-05-30 C-C: re-introduce the destroyed-gate,
          # but as a TRANSIENT (never persisted) instead of the old process-dict
          # / persisted flag. During the ~20ms live window before the scheduled
-         # termination removes the process, a concurrent `:read`/`:write_path`
+         # termination removes the process, a concurrent `:read`/`:update_config`
          # must STRICTLY return `{:error, :destroyed}` (SandboxDestroyTest) —
          # NOT `{:ok, cleared_state}`. Because transients are stripped at the
          # serialize boundary and rebuilt EMPTY in `activate/2`, a re-spawn
@@ -462,9 +462,9 @@ defmodule Ezagent.Behavior.Sandbox do
        ]}
   end
 
-  # Validate the write_path args + build the `:set` effects. Returns the
+  # Validate the update_config args + build the `:set` effects. Returns the
   # `{:ok, result, effects}` shape (or `{:error, _}`).
-  defp do_write_path(args) do
+  defp do_update_config(args) do
     path = Map.get(args, :config_dir_path)
     tc = Map.get(args, :template_class)
     # PTY-orphan-restart: optional respawn-template-data arg. Present →

@@ -65,7 +65,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     # make a rejected adoption non-zero-side-effect. The Template Class
     # only brings up a sidecar for a worker IT freshly started; whether
     # to adopt a pre-existing worker is the caller's decision.
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+    config_dir = resolve_config_home(agent_uri, tmpl)
+
+    tmpl_with_dir =
+      tmpl
+      |> put_agent_config_dir(config_dir)
+      |> Map.put_new("flavor", "cc")
+
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
       case started_or_adopted do
         :already_started ->
           # Codex PR3 round-2 HIGH-2 — DO NOT call create_agent_config_dir
@@ -117,7 +124,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           #    remove the just-created config_dir (full rollback).
           # 5. On full success: return `config_dir_path: dir` AND
           #    `respawn_template_data: tmpl_with_dir` in meta so caller
-          #    dispatches `sandbox.write_path` with both. The persisted
+          #    dispatches `sandbox.update_config` with both. The persisted
           #    respawn data lets Sandbox.post_init/2 call back into
           #    `ensure_subprocess_alive/2` on a phx restart
           #    (PTY-orphan-restart 2026-05-26).
@@ -140,10 +147,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # the failure independent of caller wiring. The PTY itself MUST
           # still come up — only role-bootstrap is best-effort, the rest
           # (config_dir, PTY) stays load-bearing.
-          with {:ok, config_dir, grant_ctx} <- create_agent_config_dir_with_grant(agent_uri, tmpl),
-               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir),
+          with {:ok, materialized_config_dir, grant_ctx} <-
+                 create_agent_config_dir_with_grant(agent_uri, tmpl),
+               tmpl_with_dir =
+                 tmpl
+                 |> put_agent_config_dir(materialized_config_dir)
+                 |> Map.put_new("flavor", "cc"),
                {:ok, role_meta} <-
-                 CcAgent.try_role_bootstrap(tmpl_with_dir, config_dir, agent_uri),
+                 CcAgent.try_role_bootstrap(tmpl_with_dir, materialized_config_dir, agent_uri),
                # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized
                # but the subprocess launches HERE (ensure_pty_server). A grant revoked
                # between materialize and launch would otherwise launch with the copied
@@ -157,11 +168,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
             # + warns + telemetry when the materialized token is already expired,
             # so the owner is told to re-login instead of the agent silently 401ing.
             credential_meta =
-              EzagentPluginCc.CredentialFreshness.remind(agent_uri, config_dir)
+              EzagentPluginCc.CredentialFreshness.remind(agent_uri, materialized_config_dir)
 
             base_meta = %{
               fresh?: true,
-              config_dir_path: config_dir,
+              config_dir_path: materialized_config_dir,
               respawn_template_data: tmpl_with_dir
             }
 
@@ -201,27 +212,47 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
 
-  # codex round-6 HIGH-1 — `LocalRuntime.ensure_started_detailed/1`
-  # (delegating to the owner-gated `SpawnRegistry.spawn_detailed/1`) preserves
-  # the atomic `DynamicSupervisor` outcome: exactly one concurrent
-  # caller gets `:started`, every other gets `:already_started`. This
-  # is the ground-truth freshness signal — NOT a pre-probe (a pre-probe
-  # is a TOCTOU window). Returns `{:ok, :started | :already_started}`.
-  defp ensure_agent_kind(agent_uri) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
-      {:ok, :started, _pid} ->
+  # codex round-6 HIGH-1 — `Kind.spawn/2` preserves the atomic
+  # `DynamicSupervisor` outcome: exactly one concurrent caller gets
+  # `:started`, every other gets `:already_started`. This is the
+  # ground-truth freshness signal — NOT a pre-probe (a pre-probe is a
+  # TOCTOU window). Returns `{:ok, :started | :already_started}`.
+  #
+  # AutoService cc-orchestrator materialization (2026-06-30): pass the
+  # sandbox state as Agent Kind init args so `Sandbox.create/1` persists
+  # `config_dir_path` + respawn data before bridge transport readiness can
+  # hold the public ReadyGate at `:not_ready`. The config directory is still
+  # materialized only after this call wins `:started`, preserving the
+  # loser-does-not-touch-config-dir race invariant above.
+  defp ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
+    init_args = %{
+      uri: agent_uri,
+      config_dir_path: config_dir,
+      template_class: CcAgent,
+      respawn_template_data: tmpl_with_dir
+    }
+
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+      {:ok, _pid} ->
         {:ok, :started}
 
-      {:ok, :already_started, _pid} ->
+      {:error, {:already_started, _pid}} ->
         # Atomic dedup at KindRegistry / supervisor level — the Kind was
         # spawned by a concurrent caller (or by an earlier instantiate
         # that crashed between Kind spawn and PtyServer start). Still a
         # success, but THIS call did not create the worker.
         {:ok, :already_started}
 
+      {:error, {:already_registered, _uri_or_pid}} ->
+        # Direct `Kind.spawn/2` reports a live registry collision as
+        # `:already_registered`; the previous LocalRuntime wrapper exposed
+        # this adoption case as `:already_started`. Preserve that template
+        # idempotency contract.
+        {:ok, :already_started}
+
       {:error, reason} ->
         Logger.warning(
-          "cc.agent: LocalRuntime.ensure_started_detailed failed for #{URI.to_string(agent_uri)}: " <>
+          "cc.agent: Kind.spawn failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 
@@ -574,5 +605,4 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # re-materialize — see the FLAGGED full-re-resolve note.)
   defp grant_revoked_for_restart?(%URI{} = agent_uri),
     do: Ezagent.Credential.HomeRuntime.grant_revoked_for_restart?(agent_uri)
-
 end

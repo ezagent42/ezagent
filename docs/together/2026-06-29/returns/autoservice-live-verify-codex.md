@@ -46,8 +46,9 @@ The seed now mirrors the session-create orchestrator-template path:
 - reads `template://system/agent/cc-orchestrator`
 - overrides the working cwd for `entity://autosvc/agent/autoservice`
 - calls `Ezagent.Entity.Agent.spawn_from_template_content/5`
-- records sandbox state through the core-owned `Ezagent.Invocation.dispatch_registered_local/1` internal seam instead of waiting for external cc transport readiness
-- grants `kb.query` through the Identity grant chokepoint; the chokepoint uses the same core internal seam when the target Kind is locally registered but not externally ready
+- initializes sandbox config as Agent Kind create-time state through `Sandbox.create/1`
+- skips the fallback `sandbox.update_config` dispatch when the initialized sandbox state already matches the Template Class meta
+- grants `kb.query` through the normal Identity grant chokepoint
 
 Live IEx evidence after restart:
 
@@ -174,8 +175,8 @@ Green:
 
 - AutoService cc orchestrator is materialized at `entity://autosvc/agent/autoservice`.
 - The generic `Workspace.create_agent` `{:role_unsupported_for_flavor, "cc"}` blocker is fixed.
-- Sandbox state writes no longer time out behind the external cc transport readiness gate.
-- The local-dispatch exception is now owned by `ezagent_core` (`Ezagent.Invocation.dispatch_registered_local/1`); domain code no longer calls `Kind.Server`'s private `{:ezagent_dispatch, inv}` message directly.
+- Sandbox config is initialized during Agent Kind create, so creation no longer depends on external cc transport readiness.
+- No core local-dispatch exception is required; `Ezagent.Invocation.dispatch/1` remains the dispatch path.
 - The AutoService agent's durable identity slice includes `kb.query`.
 - `SessionManager.load_orchestrator_caps/1` now reads delegated orchestrator caps from durable entity identity state instead of public ReadyGate-gated `list_caps_for/1`.
 - Isolated stack bootstraps on non-conflicting ports.

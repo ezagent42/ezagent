@@ -9,7 +9,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
   Covers §7:
    1. authority gate — manager (manage-cap) CAN apply; stranger denied.
    2. durable apply — object + pointer written, applied marker set, idempotent.
-   3. step-2 projection — deferred sandbox.write_path refreshes the cache.
+   3. step-2 projection — deferred sandbox.update_config refreshes the cache.
    4. no cross-entity escalation — write fails (logged, non-fatal) without the
       self-cap (proves it is genuinely self-cap-gated).
    5. boot reconciliation — divergence (apply but drop the deferred dispatch)
@@ -83,7 +83,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
 
   # ---- §7.3 step-2 projection ---------------------------------------------
 
-  test "after apply, the deferred sandbox.write_path refreshes cascade_resolution.user_layer_uri",
+  test "after apply, the deferred sandbox.update_config refreshes cascade_resolution.user_layer_uri",
        %{agent: agent, workspace: workspace} do
     seed_sandbox_cascade(agent, workspace)
     manager = grant_manage_cap(agent, workspace)
@@ -94,28 +94,28 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
     want = URI.to_string(ConfigProjection.object_uri(workspace, cid))
 
     assert wait_until(fn -> sandbox_user_layer_uri(agent) == want end),
-           "deferred sandbox.write_path never refreshed user_layer_uri to #{want}; " <>
+           "deferred sandbox.update_config never refreshed user_layer_uri to #{want}; " <>
              "got #{inspect(sandbox_user_layer_uri(agent))}"
   end
 
   # ---- §7.4 no cross-entity escalation (self-cap gated) --------------------
 
   # The sandbox write is genuinely cap-gated: a caller WITHOUT the agent's
-  # self-scoped `cap(:agent, Sandbox, :write_path)` is denied. The step-2
+  # self-scoped `cap(:agent, Sandbox, :update_config)` is denied. The step-2
   # projection succeeds (§7.3) precisely because it carries the agent's OWN
   # caps (read from its :identity sibling), not the step-1 manager's caps —
   # the manager holds only the manage-cap, which does NOT authorize
-  # sandbox.write_path. This pair (this test + §7.3) proves the write is
+  # sandbox.update_config. This pair (this test + §7.3) proves the write is
   # authorized by the self-cap and nothing weaker.
-  test "sandbox.write_path is denied to a caller lacking the agent's self-cap",
+  test "sandbox.update_config is denied to a caller lacking the agent's self-cap",
        %{agent: agent, workspace: workspace} do
     seed_sandbox_cascade(agent, workspace)
-    # The manager holds ONLY the manage-cap — NOT Sandbox.write_path.
+    # The manager holds ONLY the manage-cap — NOT Sandbox.update_config.
     manager = grant_manage_cap(agent, workspace)
 
     assert {:error, :unauthorized} =
              Invocation.dispatch(%Invocation{
-               target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.write_path"),
+               target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
                mode: :call,
                args: %{
                  config_dir_path: "/tmp/x",
@@ -359,7 +359,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
   # ---- PR-6 ITEM 3 — idempotent re-apply REFRESHES a stale sandbox ---------
 
   # The already-applied early-return used to emit `[]` effects, so a redelivery
-  # after a lost step-2 (deferred sandbox.write_path) left the Sandbox cache
+  # after a lost step-2 (deferred sandbox.update_config) left the Sandbox cache
   # stale until the next boot reconcile. ITEM 3: the idempotent path must emit
   # the SAME sandbox projection (computed from the CURRENT pointer) so a
   # redelivery self-heals the cache — WITHOUT minting a new object.
@@ -511,7 +511,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
   defp write_sandbox(agent, respawn_template_data) do
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.write_path"),
+        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
         mode: :call,
         args: %{
           config_dir_path: "/tmp/agent-ce-#{System.unique_integer([:positive])}",

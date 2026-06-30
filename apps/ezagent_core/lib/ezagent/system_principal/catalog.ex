@@ -113,8 +113,8 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # `(:session, PublisherSI, :subscribe_from)` authorizer cap.
   # System-principal elimination (#154, 2026-06-19) — `alias
   # Ezagent.Behavior.Sandbox` removed with the `system://agent-internal` entry
-  # (its only consumer, `cap(:agent, Sandbox, :write_path)`). The agent now
-  # carries its own inline `sandbox.write_path` self-authority cap at the
+  # (its only consumer, `cap(:agent, Sandbox, :update_config)`). The agent now
+  # carries its own inline `sandbox.update_config` self-authority cap at the
   # `Agent.TemplateSpawn` dispatch site.
   # `alias Ezagent.Behavior.Template` removed 2026-06-20 — its last use
   # (the `template-materialize` Catalog cap) was eliminated (#154).
@@ -277,12 +277,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # remains — the elimination ratchet reaches 0 + genesis.
       # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "actor-self")
       # — `system://agent-internal` is DELETED. Its ONLY live authority was
-      # `cap(:agent, Sandbox, :write_path)`, used by
+      # `cap(:agent, Sandbox, :update_config)`, used by
       # `Agent.TemplateSpawn.do_record_sandbox_state/4` to write the freshly-
       # spawned worker's OWN `:sandbox` slice. That is the AGENT acting on
       # ITSELF → genuine self-authority (capbac.md §7): the dispatch now carries
-      # the agent's own instance-scoped `sandbox.write_path` cap INLINE in
-      # `ctx.caps` (`TemplateSpawn.sandbox_write_path_self_cap/1`, `caller =
+      # the agent's own instance-scoped `sandbox.update_config` cap INLINE in
+      # `ctx.caps` (`TemplateSpawn.sandbox_update_config_self_cap/1`, `caller =
       # worker_uri`) — same play as the eliminated `system://worker-publish`.
       # The vestigial `grant_cap` (no live caller) was already dropped 2026-06-16;
       # the cross-entity `Sandbox:read` (#607 self-evolve) became agent-owned

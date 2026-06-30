@@ -261,10 +261,10 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
         |> SagaRunner.run(
           :reserve_a,
           fn _ctx, _eff ->
-            # Mutate Agent A's slice via sandbox.write_path — observable
+            # Mutate Agent A's slice via sandbox.update_config — observable
             # state change that compensate can undo.
             {:ok, _} =
-              dispatch(agent_uri_a, "sandbox.write_path", %{
+              dispatch(agent_uri_a, "sandbox.update_config", %{
                 config_dir_path: "/tmp/scen24-a-#{uniq()}",
                 template_class: nil
               })
@@ -277,7 +277,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
           :reserve_b,
           fn _ctx, _eff ->
             {:ok, _} =
-              dispatch(agent_uri_b, "sandbox.write_path", %{
+              dispatch(agent_uri_b, "sandbox.update_config", %{
                 config_dir_path: "/tmp/scen24-b-#{uniq()}",
                 template_class: nil
               })
@@ -317,7 +317,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
           :ok_step,
           fn _ctx, _eff ->
             {:ok, _} =
-              dispatch(agent_uri, "sandbox.write_path", %{
+              dispatch(agent_uri, "sandbox.update_config", %{
                 config_dir_path: "/tmp/scen24-raise-#{uniq()}",
                 template_class: nil
               })
@@ -441,7 +441,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
       # Seed initial state.
       assert {:ok, _} =
-               dispatch(agent_uri, "sandbox.write_path", %{
+               dispatch(agent_uri, "sandbox.update_config", %{
                  config_dir_path: old_path,
                  template_class: nil
                })
@@ -456,7 +456,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
             {:ok, %{config_dir_path: captured}} = dispatch(agent_uri, "sandbox.read")
 
             {:ok, _} =
-              dispatch(agent_uri, "sandbox.write_path", %{
+              dispatch(agent_uri, "sandbox.update_config", %{
                 config_dir_path: new_path,
                 template_class: nil
               })
@@ -472,7 +472,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
               end)
 
             {:ok, _} =
-              dispatch(agent_uri, "sandbox.write_path", %{
+              dispatch(agent_uri, "sandbox.update_config", %{
                 config_dir_path: pre.config_dir_path,
                 template_class: nil
               })
