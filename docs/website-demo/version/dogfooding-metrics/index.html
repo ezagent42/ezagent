@@ -3,158 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>研发效能成果 · Engineering Velocity · Ezagent</title>
-<meta name="description" content="Ezagent dogfooding — 团队用 ezagent 与 dev-together 编排自身研发的效能成果。Real metrics from our own development.">
-<!--
-  官网变体 demo · roadmap-v1 落地 · dogfooding 效率成果（P1★）
-  设计系统沿用 docs/website-demo/index.html（ezagent-design tokens）。砍花活、头条=效率成果。
-  数据:真实=当前仓库 git+dev-together 计算(标数据源/窗口); 示例=待真实度量(明确标注)。口径见 metrics-spec-draft.md。
--->
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
-:root{
-  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
-  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
-  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
-  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
-  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
-  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);
-  --accent-wash:var(--blue-wash);--on-accent:#FFFFFF;--focus-ring:rgba(11,92,255,.45);
-  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
-  --font-cn:'Noto Serif SC','Songti SC',serif;
-  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
-  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
-  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
-  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
-  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 13.4px 17.9px rgba(15,15,15,.045),0 7.5px 10px rgba(15,15,15,.04),0 4px 5.3px rgba(15,15,15,.03),0 1.7px 2.2px rgba(15,15,15,.022);
-  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
-  --glass-blur:blur(14px) saturate(1.4);--glass-bg:rgba(255,255,255,.55);--glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);
-  --ease-out:cubic-bezier(.16,1,.3,1);--dur-base:250ms;--dur-enter:500ms;
-  --gap-grid:22px;--pad-page-x:44px;--container:1180px;
-}
-:root[data-theme="dark"]{
-  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
-  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
-  --red:#FF5A4D;--blueink:#4D8DF0;--yellow:#FFD84D;--jade:#34D6A0;
-  --blue:#5AA2FF;--blue-deep:#A9CBFF;--blue-wash:#1E2A40;--orange:#FFA94D;
-  --jade-wash:#173A2E;--red-wash:#3E211E;--yellow-wash:#3A3416;--orange-wash:#3A2A16;
-  --accent-hover:#74B2FF;--on-accent:#0E1A2E;--focus-ring:rgba(90,162,255,.5);
-  --glass-bg:rgba(42,41,54,.5);--glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
-  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
-  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
-}
-*{box-sizing:border-box}
-html{scroll-behavior:smooth;overflow-x:hidden}
-body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased;transition:background var(--dur-base) var(--ease-out)}
-h1,h2,h3,h4,p{margin:0}
-a{color:inherit;text-decoration:none}
-.mono{font-family:var(--font-mono);letter-spacing:.02em}
-.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.wrap{max-width:var(--container);margin:0 auto;padding:0 var(--pad-page-x)}
-
-/* nav */
-.nav{position:sticky;top:16px;z-index:50;margin:16px auto 0;max-width:var(--container);display:flex;align-items:center;gap:18px;padding:10px 14px 10px 20px;border-radius:var(--r-pill);background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);box-shadow:var(--shadow-sm),var(--glass-edge)}
-.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:17px}
-.brand .logo{height:26px;width:auto;display:block}
-.brand .logo.dark{display:none}
-:root[data-theme="dark"] .brand .logo.light{display:none}
-:root[data-theme="dark"] .brand .logo.dark{display:block}
-.nav .spacer{flex:1}
-.navlink{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);padding:9px 14px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out)}
-.navlink:hover{background:var(--ground-hover);color:var(--ink)}
-.loginbtn{font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent-press);background:var(--accent-wash);padding:9px 16px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out)}
-.loginbtn:hover{background:var(--accent);color:var(--on-accent)}
-.iconbtn{appearance:none;border:0;cursor:pointer;width:38px;height:38px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-2);display:grid;place-items:center;transition:all 150ms var(--ease-out)}
-.iconbtn:hover{background:var(--ground-hover);color:var(--ink)}
-
-/* components */
-.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
-.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;padding:14px 24px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),background 150ms;display:inline-flex;align-items:center;gap:8px}
-.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
-.btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
-.btn.secondary{background:var(--ground-2);color:var(--ink)}
-.btn.secondary:hover{background:var(--ground-hover);transform:translateY(-1px)}
-.btn.sm{padding:10px 18px;font-size:14px}
-.badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 11px;border-radius:var(--r-pill)}
-.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-.badge.info{background:var(--blue-wash);color:var(--blue-deep)}
-.badge.success{background:var(--jade-wash);color:var(--jade)}
-.badge.neutral{background:var(--ground-2);color:var(--ink-3)}
-.tag{display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:11px;padding:3px 9px;border-radius:var(--r-pill);color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line)}
-
-/* section heads */
-.sec-head{margin:58px 0 22px}
-.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.2;margin-top:8px}
-.sec-head .sub{color:var(--ink-2);margin-top:8px;font-size:16px;max-width:64ch;line-height:1.6}
-
-/* hero */
-.hero{margin-top:var(--gap-grid);overflow:hidden}
-.hero .inner{padding:64px 72px 36px}
-.hero h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(36px,5vw,58px);line-height:1.14;letter-spacing:.01em;margin:22px 0 0}
-.hero h1 .hl{color:var(--accent)}
-.hero .sub{font-family:var(--font-ui);font-weight:800;font-size:clamp(20px,2.6vw,28px);letter-spacing:-.02em;color:var(--ink-2);margin-top:12px}
-.hero .lead{font-size:18px;line-height:1.65;color:var(--ink-2);max-width:60ch;margin:22px 0 0}
-.hero .cta{display:flex;gap:14px;margin-top:34px;flex-wrap:wrap}
-
-/* metrics — KPI cards */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap-grid)}
-.kpi{padding:26px 26px 22px;display:flex;flex-direction:column;gap:6px;position:relative}
-.kpi .lab{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
-.kpi .val{font-family:var(--font-ui);font-weight:800;font-size:clamp(30px,4vw,42px);line-height:1;letter-spacing:-.02em;color:var(--ink)}
-.kpi .val .u{font-size:16px;font-weight:700;color:var(--ink-3);margin-left:4px}
-.kpi .note{font-size:13px;color:var(--ink-2);line-height:1.5}
-.kpi .src{font-family:var(--font-mono);font-size:10px;color:var(--ink-4);margin-top:auto;padding-top:8px}
-.kpi.accent .val{color:var(--accent)}
-.flag{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:var(--r-pill);position:absolute;top:16px;right:16px}
-.flag.real{background:var(--jade-wash);color:var(--jade)}
-.flag.sample{background:var(--yellow-wash);color:#9A7B00}
-:root[data-theme="dark"] .flag.sample{color:var(--yellow)}
-
-/* before/after bars */
-.ba{padding:30px 34px}
-.ba h3{font-family:var(--font-cn);font-weight:600;font-size:20px}
-.ba .barrow{display:flex;align-items:center;gap:16px;margin-top:18px}
-.ba .barrow .nm{width:96px;flex:none;font-family:var(--font-mono);font-size:12px;color:var(--ink-2)}
-.ba .track{flex:1;background:var(--ground-2);border-radius:var(--r-pill);height:30px;overflow:hidden}
-.ba .fill{height:100%;border-radius:var(--r-pill);display:flex;align-items:center;justify-content:flex-end;padding-right:12px;font-family:var(--font-mono);font-size:12px;font-weight:700;color:#fff;width:0;transition:width 900ms var(--ease-out)}
-.ba .fill.before{background:var(--ink-4)}
-.ba .fill.after{background:var(--accent)}
-.ba .delta{margin-top:16px;font-size:14px;color:var(--ink-2)}
-.ba .delta b{font-family:var(--font-ui);font-weight:800;color:var(--accent);font-size:18px}
-.foot-note{font-size:12.5px;color:var(--ink-3);line-height:1.6;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
-
-/* cases (Y) */
-.cases{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap-grid)}
-.case{padding:24px 26px;display:flex;flex-direction:column;gap:10px}
-.case .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--accent)}
-.case h4{font-family:var(--font-cn);font-weight:600;font-size:18px}
-.case p{color:var(--ink-2);font-size:14px;line-height:1.6}
-.case .stat{font-family:var(--font-mono);font-size:13px;color:var(--ink);margin-top:auto;padding-top:8px;border-top:1px solid var(--line)}
-
-/* products */
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap-grid)}
-.product{padding:32px 34px;display:flex;flex-direction:column;gap:12px;position:relative}
-.product .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;color:var(--accent)}
-.product h3{font-family:var(--font-cn);font-weight:600;font-size:22px}
-.product>p{color:var(--ink-2);line-height:1.6;font-size:15px}
-.product .glyph{position:absolute;top:28px;right:30px;width:42px;height:42px;border-radius:var(--r-md);display:grid;place-items:center;color:#fff}
-.product .glyph svg{width:23px;height:23px}
-.product .foot{display:flex;align-items:center;gap:12px;margin-top:8px;flex-wrap:wrap}
-
-.banner{margin-top:18px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-2);background:var(--ground-2);padding:12px 18px;border-radius:var(--r-md);line-height:1.5}
-.banner .badge{flex:none}
-footer{margin:72px 0 40px;color:var(--ink-3);font-size:13px;text-align:center;line-height:1.8}
-footer .mono{font-size:11px}
-footer a{color:var(--ink-2);text-decoration:underline}
-@keyframes fu{from{opacity:0;transform:translateY(18px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
-.fu{animation:fu var(--dur-enter) var(--ease-out) both}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}.ba .fill{transition:none}}
-@media (max-width:920px){
-  .kpis{grid-template-columns:repeat(2,1fr)}.cases,.grid2{grid-template-columns:1fr}
-  .hero .inner{padding:44px 26px 26px}.wrap{padding:0 20px}
-  .nav{padding:8px 10px 8px 14px;gap:8px}.navlink{display:none}
-}
-</style>
+<title>组织的 IDE · Organization IDE · Ezagent</title>
+<meta name="description" content="Ezagent — 组织 IDE。构建、运行并交付组织的 AI agent。">
+<!-- 官网 demo · 精简首页：hero + 产品 + proof teaser（链到 Cases）。共享 styles.css。 -->
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
@@ -162,7 +14,7 @@ footer a{color:var(--ink-2);text-decoration:underline}
   <a class="brand" href="../../index.html"><img class="logo light" src="../../ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../../ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span>EZAGENT</span></a>
   <span class="spacer"></span>
   <a class="navlink" href="#products">产品 · Products</a>
-  <a class="navlink" href="#dogfooding">自举实证 · Dogfooding</a>
+  <a class="navlink" href="cases.html">案例 · Cases</a>
   <a class="loginbtn" href="../../login.html">登录 · Login</a>
   <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -171,7 +23,7 @@ footer a{color:var(--ink-2);text-decoration:underline}
 
 <div class="wrap">
 
-  <!-- HERO — 组织的 IDE（定位，不变） -->
+  <!-- HERO -->
   <section class="hero card fu">
     <div class="inner">
       <span class="badge info"><span class="dot"></span>Organization IDE · 2026</span>
@@ -180,7 +32,7 @@ footer a{color:var(--ink-2);text-decoration:underline}
       <p class="lead">Ezagent 让你以一套清晰而柔软的界面，构建、运行并交付组织的 AI agent —— 把整个组织的复杂度，收拢为可搭建、可交付的工作流。</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/ezagent42" target="_blank" rel="noopener">开始使用 · Get started →</a>
-        <a class="btn secondary" href="#dogfooding">查看自举实证 · See dogfooding</a>
+        <a class="btn secondary" href="cases.html">查看案例 · See cases</a>
       </div>
     </div>
   </section>
@@ -208,142 +60,28 @@ footer a{color:var(--ink-2);text-decoration:underline}
     </div>
   </div>
 
-  <!-- ════ 自举实证 section（在"一个底座，两个产品"下方）════ -->
-  <div class="sec-head" id="dogfooding">
-    <span class="over">Dogfooding · 自举实证</span>
-    <h2>我们用 Ezagent 构建 Ezagent</h2>
-    <p class="sub">团队以 ezagent 与 dev-together 编排自身的研发与协作。下列数据取自本仓库的真实交付记录，而非市场宣传。</p>
-  </div>
-
-  <div class="banner">
-    <span class="badge neutral"><span class="dot"></span>DEMO</span>
-    <span>本页为 roadmap-v1 样张。标 <b style="color:var(--jade)">真实</b> 的指标取自当前仓库 git 与 dev-together 记录（含时间窗与数据源）；标 <b style="color:#9A7B00">示例</b> 的为待真实度量的占位。口径见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。</span>
-  </div>
-
-  <!-- 子层 X: 研发效能（主）-->
-  <div class="sec-head" id="velocity" style="margin:30px 0 18px">
-    <span class="over">Layer 1 · 用 Ezagent 做研发</span>
-    <h2 style="font-size:24px">研发效能 · Engineering velocity</h2>
-    <p class="sub">研发团队将工作流跑在 ezagent 与 dev-together 编排之上所体现的交付效能。面向以研发为主的早期用户——这是与你最相关的一层。</p>
-  </div>
-
-  <div class="kpis">
-    <div class="kpi card accent fu">
-      <span class="flag real">● 真实</span>
-      <span class="lab">交付吞吐 · Throughput</span>
-      <span class="val" data-count="170">0<span class="u">PR / 周</span></span>
-      <span class="note">编排节奏下的周均合并量。</span>
-      <span class="src">git · 2026-06-22→30</span>
+  <!-- proof teaser → Cases -->
+  <a class="teaser card fu" href="cases.html">
+    <div class="tlabel">
+      <span class="badge success"><span class="dot"></span>Dogfooding · 自举实证</span>
+      <span class="tt">我们用 Ezagent 构建 Ezagent</span>
     </div>
-    <div class="kpi card accent fu">
-      <span class="flag real">● 真实</span>
-      <span class="lab">吞吐提升 · Uplift</span>
-      <span class="val" data-count="1.8" data-dec="1">0<span class="u">×</span></span>
-      <span class="note">较编排启用前 3 周（94 → 170 PR/周）。</span>
-      <span class="src">git · before/after · 见下注</span>
+    <div class="teaser-stats">
+      <div><b>1.8×</b><span>研发交付吞吐</span></div>
+      <div><b>194</b><span>合并 PR · 8 工作日</span></div>
+      <div><b>7</b><span>贡献者</span></div>
     </div>
-    <div class="kpi card fu">
-      <span class="flag real">● 真实</span>
-      <span class="lab">编排闭环 · Cycles</span>
-      <span class="val" data-count="35">0<span class="u">/ 37</span></span>
-      <span class="note">8 个工作日完成的 handoff → return 闭环。</span>
-      <span class="src">dev-together · returns</span>
-    </div>
-    <div class="kpi card fu">
-      <span class="flag real">● 真实</span>
-      <span class="lab">贡献者 · Contributors</span>
-      <span class="val" data-count="7">0<span class="u">人</span></span>
-      <span class="note">同窗口内合并 PR 的活跃贡献者。</span>
-      <span class="src">git · authors</span>
-    </div>
-    <div class="kpi card fu">
-      <span class="flag sample">● 示例</span>
-      <span class="lab">交付周期中位 · Cycle time</span>
-      <span class="val" style="color:var(--ink-3)">— <span class="u">h</span></span>
-      <span class="note">handoff→merge 中位时长，待按口径剔除 squash 时序假象后给出。</span>
-      <span class="src">待真实度量</span>
-    </div>
-    <div class="kpi card fu">
-      <span class="flag sample">● 示例</span>
-      <span class="lab">一次过率 · First-pass</span>
-      <span class="val" style="color:var(--ink-3)">— <span class="u">%</span></span>
-      <span class="note">return 时 CI 首次即绿且 DoD 全 met 的比例。</span>
-      <span class="src">待真实度量</span>
-    </div>
-    <div class="kpi card fu">
-      <span class="flag real">● 真实</span>
-      <span class="lab">代码提交 · Commits</span>
-      <span class="val" data-count="228">0</span>
-      <span class="note">同窗口内进入主干的提交数。</span>
-      <span class="src">git · 8 工作日</span>
-    </div>
-    <div class="kpi card fu">
-      <span class="flag sample">● 示例</span>
-      <span class="lab">能力扩张 · Coverage</span>
-      <span class="val" style="color:var(--ink-3)">—</span>
-      <span class="note">单人可独立闭环的任务类数（全栈 / 部署覆盖）。</span>
-      <span class="src">待真实度量</span>
-    </div>
-  </div>
-
-  <div class="ba card fu" style="margin-top:var(--gap-grid)">
-    <h3>编排前 / 后 · Before & after</h3>
-    <div class="barrow"><span class="nm">编排前</span><div class="track"><div class="fill before" data-w="56">94 PR/周</div></div></div>
-    <div class="barrow"><span class="nm">编排后</span><div class="track"><div class="fill after" data-w="100">170 PR/周</div></div></div>
-    <p class="delta">周均合并吞吐提升 <b>≈ 1.8×</b>（编排前 2026-06-01→21，3 周；编排后 2026-06-22→30）。</p>
-    <p class="foot-note">数据源:本仓库 <span class="mono">git log</span> + <span class="mono">gh pr</span>，按周归一。<b>Confounder（未剔除）:</b> 该窗口同时包含人员变动、流程改进与模型升级；此处仅作方向性指示，正式对外前按 <a href="metrics-spec-draft.md" style="text-decoration:underline">口径</a>复核并标注。归因:研发工作流提效，归 <b>ezagent 的研发体验</b>，非裸用某模型。</p>
-  </div>
-
-  <!-- 子层 Y: 组织自举（辅）-->
-  <div class="sec-head" style="margin:34px 0 18px">
-    <span class="over">Layer 2 · 整个组织跑在 Ezagent 上</span>
-    <h2 style="font-size:24px">组织自举 · Running the org on Ezagent</h2>
-    <p class="sub">不止研发——团队的协作、socialware、看板等组织工作亦路由进 ezagent 自举。以下为真实案例；量化指标随产品成熟逐步公开。</p>
-  </div>
-  <div class="cases">
-    <div class="case card fu">
-      <span class="eyebrow">coordination · 协作编排</span>
-      <h4>dev-together 多 agent 编排</h4>
-      <p>团队每日的计划、交接、交付与复盘，以 ezagent 的角色 × agent 模型在生产 workspace 中编排运行。</p>
-      <span class="stat">7 人 · 8 工作日 · 194 合并 PR</span>
-    </div>
-    <div class="case card fu">
-      <span class="eyebrow">socialware · 公共会话</span>
-      <h4>对外协作跑在 ezagent</h4>
-      <p>socialware 与插件包能力在自有栈上联调收口，组织级公共会话经 ezagent 承载。</p>
-      <span class="stat">示例 · 量化待埋点</span>
-    </div>
-    <div class="case card fu">
-      <span class="eyebrow">kanban · 业务流</span>
-      <h4>看板业务链自举</h4>
-      <p>九段业务链以数据驱动的方式跑在 ezagent 之上，作为组织运营自举的一环。</p>
-      <span class="stat">示例 · 量化待埋点</span>
-    </div>
-  </div>
+    <span class="tcta">查看案例 · See the case →</span>
+  </a>
 
   <footer>
     <div>组织的 IDE · Organization IDE — Ezagent</div>
-    <div class="mono">dogfooding 效率成果 · roadmap-v1 · 真实数据取自本仓库 · 口径 <a href="metrics-spec-draft.md">metrics-spec-draft.md</a></div>
+    <div class="mono">demo · 首页 + Cases · 数据取自本仓库真实交付记录</div>
   </footer>
 </div>
 
 <script>
-// 主题切换
 document.getElementById('theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';});
-const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
-// KPI 数字滚动 + before/after 条形,进入视口时触发
-const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(!e.isIntersecting)return;io.unobserve(e.target);
-  e.target.querySelectorAll('.val[data-count]').forEach(v=>{
-    const target=parseFloat(v.dataset.count),dec=+(v.dataset.dec||0),u=v.querySelector('.u');
-    if(reduce){v.firstChild.textContent=target.toFixed(dec);return;}
-    let t0=null;const dur=900;
-    const step=(ts)=>{t0=t0||ts;const p=Math.min(1,(ts-t0)/dur);const val=(target*(1-Math.pow(1-p,3)));
-      v.firstChild.textContent=val.toFixed(dec);if(p<1)requestAnimationFrame(step);else v.firstChild.textContent=target.toFixed(dec);};
-    requestAnimationFrame(step);
-  });
-  e.target.querySelectorAll('.fill[data-w]').forEach(f=>{f.style.width=reduce?f.dataset.w+'%':'';if(!reduce)requestAnimationFrame(()=>f.style.width=f.dataset.w+'%');});
-});},{threshold:.3});
-document.querySelectorAll('.kpis,.ba').forEach(s=>io.observe(s));
 </script>
 </body>
 </html>

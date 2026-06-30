@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>案例 · Ezagent builds Ezagent · Cases · Ezagent</title>
+<meta name="description" content="Ezagent 案例 — 团队用 ezagent 与 dev-together 编排自身研发的提效成果。Real metrics from our own development.">
+<!-- 官网 demo · Cases 案例研究页（dogfooding 案例 #1）。共享 styles.css。数据:真实(git+dev-together)+示例(待度量)。 -->
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="nav">
+  <a class="brand" href="index.html"><img class="logo light" src="../../ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../../ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span>EZAGENT</span></a>
+  <span class="spacer"></span>
+  <a class="navlink" href="index.html#products">产品 · Products</a>
+  <a class="navlink active" href="cases.html">案例 · Cases</a>
+  <a class="loginbtn" href="../../login.html">登录 · Login</a>
+  <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</nav>
+
+<div class="wrap">
+
+  <p class="crumb"><a href="index.html">首页</a> / <a href="cases.html">案例 · Cases</a> / Ezagent builds Ezagent</p>
+
+  <!-- CASE HERO -->
+  <section class="hero card fu">
+    <div class="inner">
+      <span class="badge success"><span class="dot"></span>Case 01 · Dogfooding 自举实证</span>
+      <h1>我们用 <span class="hl">Ezagent</span> 构建 Ezagent。</h1>
+      <div class="sub">We build Ezagent on Ezagent.</div>
+      <p class="lead">团队将自身的研发与协作流程，全程跑在 ezagent 与 dev-together 编排之上。研发交付吞吐较编排前提升约 <b style="color:var(--accent)">1.8×</b> —— 下列数据均取自本仓库真实交付记录，而非市场宣传。</p>
+    </div>
+  </section>
+
+  <div class="banner">
+    <span class="badge neutral"><span class="dot"></span>DEMO</span>
+    <span>本页为 roadmap-v1 样张。标 <b style="color:var(--jade)">真实</b> 的指标取自当前仓库 git 与 dev-together 记录（含时间窗与数据源）；标 <b style="color:#9A7B00">示例</b> 的为待真实度量的占位。口径见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。</span>
+  </div>
+
+  <!-- 背景 / 挑战 / 做法 -->
+  <div class="sec-head"><span class="over">Overview · 概览</span><h2>背景 · 挑战 · 做法</h2></div>
+  <div class="cs-grid">
+    <div class="cs-block card fu">
+      <span class="eyebrow">Context · 背景</span>
+      <h3>自己造、自己用</h3>
+      <p>Ezagent 是面向组织的 IDE。开发团队在构建它的同时，把日常研发与协作搬到了 ezagent 自身之上——既是作者，也是第一批用户。</p>
+    </div>
+    <div class="cs-block card fu">
+      <span class="eyebrow">Challenge · 挑战</span>
+      <h3>多人多 agent 的协同</h3>
+      <p>研发涉及多名工程师与多个 AI agent 并行推进，传统方式下计划、交接与交付难以对齐，上下文易丢失、返工成本高。</p>
+    </div>
+    <div class="cs-block card fu">
+      <span class="eyebrow">Approach · 做法</span>
+      <h3>把工作流跑在 Ezagent 上</h3>
+      <p>以 ezagent 的角色 × agent 模型 + dev-together 编排，统一计划、交接、交付与复盘，在生产 workspace 中持续运行。</p>
+    </div>
+  </div>
+
+  <!-- 成效 X -->
+  <div class="sec-head" style="margin:48px 0 18px">
+    <span class="over">Results · Layer 1 · 用 Ezagent 做研发</span>
+    <h2>研发效能 · Engineering velocity</h2>
+    <p class="sub">研发团队将工作流跑在 ezagent 与 dev-together 编排之上所体现的交付效能。面向以研发为主的早期用户——这是与你最相关的一层。</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi card accent fu">
+      <span class="flag real">● 真实</span><span class="lab">交付吞吐 · Throughput</span>
+      <span class="val" data-count="170">0<span class="u">PR / 周</span></span>
+      <span class="note">编排节奏下的周均合并量。</span><span class="src">git · 2026-06-22→30</span>
+    </div>
+    <div class="kpi card accent fu">
+      <span class="flag real">● 真实</span><span class="lab">吞吐提升 · Uplift</span>
+      <span class="val" data-count="1.8" data-dec="1">0<span class="u">×</span></span>
+      <span class="note">较编排启用前 3 周（94 → 170 PR/周）。</span><span class="src">git · before/after · 见下注</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag real">● 真实</span><span class="lab">编排闭环 · Cycles</span>
+      <span class="val" data-count="35">0<span class="u">/ 37</span></span>
+      <span class="note">8 个工作日完成的 handoff → return 闭环。</span><span class="src">dev-together · returns</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag real">● 真实</span><span class="lab">贡献者 · Contributors</span>
+      <span class="val" data-count="7">0<span class="u">人</span></span>
+      <span class="note">同窗口内合并 PR 的活跃贡献者。</span><span class="src">git · authors</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag sample">● 示例</span><span class="lab">交付周期中位 · Cycle time</span>
+      <span class="val" style="color:var(--ink-3)">— <span class="u">h</span></span>
+      <span class="note">handoff→merge 中位时长，待按口径剔除 squash 时序假象后给出。</span><span class="src">待真实度量</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag sample">● 示例</span><span class="lab">一次过率 · First-pass</span>
+      <span class="val" style="color:var(--ink-3)">— <span class="u">%</span></span>
+      <span class="note">return 时 CI 首次即绿且 DoD 全 met 的比例。</span><span class="src">待真实度量</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag real">● 真实</span><span class="lab">代码提交 · Commits</span>
+      <span class="val" data-count="228">0</span>
+      <span class="note">同窗口内进入主干的提交数。</span><span class="src">git · 8 工作日</span>
+    </div>
+    <div class="kpi card fu">
+      <span class="flag sample">● 示例</span><span class="lab">能力扩张 · Coverage</span>
+      <span class="val" style="color:var(--ink-3)">—</span>
+      <span class="note">单人可独立闭环的任务类数（全栈 / 部署覆盖）。</span><span class="src">待真实度量</span>
+    </div>
+  </div>
+
+  <div class="ba card fu" style="margin-top:var(--gap-grid)">
+    <h3>编排前 / 后 · Before & after</h3>
+    <div class="barrow"><span class="nm">编排前</span><div class="track"><div class="fill before" data-w="56">94 PR/周</div></div></div>
+    <div class="barrow"><span class="nm">编排后</span><div class="track"><div class="fill after" data-w="100">170 PR/周</div></div></div>
+    <p class="delta">周均合并吞吐提升 <b>≈ 1.8×</b>（编排前 2026-06-01→21，3 周；编排后 2026-06-22→30）。</p>
+    <p class="foot-note">数据源:本仓库 <span class="mono">git log</span> + <span class="mono">gh pr</span>，按周归一。<b>Confounder（未剔除）:</b> 该窗口同时包含人员变动、流程改进与模型升级；此处仅作方向性指示，正式对外前按 <a href="metrics-spec-draft.md" style="text-decoration:underline">口径</a>复核并标注。归因:研发工作流提效，归 <b>ezagent 的研发体验</b>，非裸用某模型。</p>
+  </div>
+
+  <!-- 成效 Y -->
+  <div class="sec-head" style="margin:48px 0 18px">
+    <span class="over">Results · Layer 2 · 整个组织跑在 Ezagent 上</span>
+    <h2>组织自举 · Running the org on Ezagent</h2>
+    <p class="sub">不止研发——团队的协作、socialware、看板等组织工作亦路由进 ezagent 自举。以下为真实案例；量化指标随产品成熟逐步公开。</p>
+  </div>
+  <div class="cases">
+    <div class="case card fu">
+      <span class="eyebrow">coordination · 协作编排</span><h4>dev-together 多 agent 编排</h4>
+      <p>团队每日的计划、交接、交付与复盘，以 ezagent 的角色 × agent 模型在生产 workspace 中编排运行。</p>
+      <span class="stat">7 人 · 8 工作日 · 194 合并 PR</span>
+    </div>
+    <div class="case card fu">
+      <span class="eyebrow">socialware · 公共会话</span><h4>对外协作跑在 ezagent</h4>
+      <p>socialware 与插件包能力在自有栈上联调收口，组织级公共会话经 ezagent 承载。</p>
+      <span class="stat">示例 · 量化待埋点</span>
+    </div>
+    <div class="case card fu">
+      <span class="eyebrow">kanban · 业务流</span><h4>看板业务链自举</h4>
+      <p>九段业务链以数据驱动的方式跑在 ezagent 之上，作为组织运营自举的一环。</p>
+      <span class="stat">示例 · 量化待埋点</span>
+    </div>
+  </div>
+
+  <!-- 方法与口径 -->
+  <div class="sec-head" style="margin:48px 0 18px"><span class="over">Method · 方法与口径</span><h2>数据怎么来的</h2>
+    <p class="sub">所有真实数字均可按统一口径复算；弱基线处以案例叙事替代百分比，不编造。完整口径与开放问题见文档。</p>
+  </div>
+  <div class="banner" style="margin-top:0">
+    <span class="badge neutral"><span class="dot"></span>口径</span>
+    <span>度量对象、指标定义、before/after 基线与诚实护栏，见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。本案例为 dogfooding（自家团队），后续将补充外部用户案例。</span>
+  </div>
+
+  <!-- more coming -->
+  <div class="more fu">
+    <span class="badge info"><span class="dot"></span>More coming</span>
+    <span>更多使用 Ezagent 获得提效降本的案例陆续添加中。</span>
+  </div>
+
+  <footer>
+    <div>组织的 IDE · Organization IDE — Ezagent</div>
+    <div class="mono">Cases · Case 01 dogfooding · 真实数据取自本仓库 · 口径 <a href="metrics-spec-draft.md">metrics-spec-draft.md</a></div>
+  </footer>
+</div>
+
+<script>
+document.getElementById('theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';});
+const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(!e.isIntersecting)return;io.unobserve(e.target);
+  e.target.querySelectorAll('.val[data-count]').forEach(v=>{
+    const target=parseFloat(v.dataset.count),dec=+(v.dataset.dec||0);
+    if(reduce){v.firstChild.textContent=target.toFixed(dec);return;}
+    let t0=null;const dur=900;
+    const step=(ts)=>{t0=t0||ts;const p=Math.min(1,(ts-t0)/dur);const val=(target*(1-Math.pow(1-p,3)));
+      v.firstChild.textContent=val.toFixed(dec);if(p<1)requestAnimationFrame(step);else v.firstChild.textContent=target.toFixed(dec);};
+    requestAnimationFrame(step);
+  });
+  e.target.querySelectorAll('.fill[data-w]').forEach(f=>{if(reduce){f.style.width=f.dataset.w+'%';}else{requestAnimationFrame(()=>f.style.width=f.dataset.w+'%');}});
+});},{threshold:.3});
+document.querySelectorAll('.kpis,.ba').forEach(s=>io.observe(s));
+</script>
+</body>
+</html>
