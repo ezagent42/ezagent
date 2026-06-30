@@ -34,16 +34,15 @@ defmodule EzagentCli.MixProject do
       {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
-      # TEST-ONLY (post-lifecycle remediation): the CLI invariant suites
-      # spawn `Session` Kinds and assert the auto-derived `session`
-      # subcommand. The Session Kind + its Chat Behaviors + the `session`
-      # SpawnRegistry handler are all owned by ezagent_domain_session;
-      # running the cli suite in isolation without it yields
-      # `{:no_spawn_fn, "session"}` and a missing `session` subcommand.
-      # In production the CLI RPCs into the running BEAM (which has chat
-      # loaded), so depending on chat `only: :test` makes the isolated
-      # suite faithful to that topology without coupling the CLI lib/.
-      {:ezagent_domain_session, in_umbrella: true, only: :test},
+      # Phase 3 ③ T7h — the `mix ezagent session send` verb builds a real
+      # `%Ezagent.Message{}` with server-side @mention resolution via
+      # `Ezagent.Session.MessageComposer` (the SAME composer the World UI chat
+      # uses). That module is owned by ezagent_domain_session, so the CLI lib
+      # now depends on it at compile time (previously TEST-ONLY: the invariant
+      # suites already needed the Session Kind + its `session` SpawnRegistry
+      # handler). No cycle — nothing in ezagent_domain_session's dep closure
+      # references ezagent_cli; the CLI remains a leaf entry-point app.
+      {:ezagent_domain_session, in_umbrella: true},
       {:optimus, "~> 0.5"},
       {:jason, ">= 0.0.0"}
     ]

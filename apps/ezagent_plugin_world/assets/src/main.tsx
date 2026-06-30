@@ -53,9 +53,19 @@ type WorldLayout = {
   }>
 }
 
+// Layer-2 modular nav: a top-level sidebar entry contributed by an
+// INSTALLED plugin via its `nav_surfaces/0`. View-invariant chrome, passed
+// once at mount (see world_renderer.js `data-plugin-nav`).
+type PluginNavItem = {
+  label: string
+  path: string
+  icon?: string
+}
+
 type WorldMountOptions = {
   layout?: WorldLayout
   state?: WorldState
+  pluginNav?: PluginNavItem[]
   caller?: {
     entity_uri?: string | null
     workspace_uri?: string | null
@@ -110,9 +120,21 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
   }
 }
 
-function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent}: WorldMountOptions) {
+function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
+
+  // Static core nav + INSTALLED-plugin nav (Layer-2 modular UI). Plugin
+  // entries append after the core peers; deduped by path so a plugin can't
+  // shadow a core route. No plugin installed → no extra entry.
+  const navItems = React.useMemo<Array<[string, string]>>(() => {
+    const seen = new Set(NAV_ITEMS.map(([, href]) => href))
+    const pluginItems: Array<[string, string]> = (pluginNav || [])
+      .filter((item) => item && typeof item.label === "string" && typeof item.path === "string")
+      .filter((item) => !seen.has(item.path))
+      .map((item) => [item.label, item.path])
+    return [...NAV_ITEMS, ...pluginItems]
+  }, [pluginNav])
 
   // 左侧导航收起状态。LiveView 导航会重挂 React 岛,故持久化到 localStorage
   // 以跨页面保持(否则每次切页又弹开)。
@@ -170,7 +192,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
               </button>
             </div>
             <nav className="flex flex-col gap-0.5">
-              {NAV_ITEMS.map(([label, href]) => (
+              {navItems.map(([label, href]) => (
                 <a className={navClass(state.path, href)} href={href} key={href}>
                   {label}
                 </a>
@@ -795,6 +817,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onRemoveParticipant={context.onRemoveParticipant}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
+          onSessionTabAction={context.onWorkspacePluginAction}
           onServerEvent={context.onServerEvent}
         />
       )

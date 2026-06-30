@@ -461,6 +461,11 @@ defmodule Ezagent.Plugin.BootTest do
     end
   end
 
+  # NOTE (2026-06-30): the `boot/1 — nav_surfaces/0 validation` describe was
+  # removed — core boot no longer validates nav/session surfaces (they moved to
+  # `Ezagent.World.UiSurfaceProvider`, shape-checked read-time in world). The
+  # config_surface/0 boot validation above stays.
+
   describe "boot/1 — resource_types/0 publish (plugin-resource SPEC §4.2 / §6)" do
     alias Ezagent.Resource.FsResolver
     alias Ezagent.URI, as: EzURI

@@ -24,12 +24,14 @@ const SURFACES = [
   "AdminSurface",
   "WorkspacePluginSurface",
   "IdentitiesSurface",
+  "Kanban",
 ]
 
 // Sanctioned `:subcomponent` mounts: a parent surface owning a nested slot,
 // marked in the DOM with `data-world-subcomponent`. file => [allowed surfaces].
+// Conversation owns the PTY terminal and (Layer-3) the kanban board tab.
 const SUBCOMPONENT_ALLOWLIST = {
-  "Conversation.tsx": ["PtyTerminalSurface"],
+  "Conversation.tsx": ["PtyTerminalSurface", "Kanban"],
 }
 
 const errors = []

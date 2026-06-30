@@ -118,6 +118,13 @@ defmodule EzagentWeb.MixProject do
       # registers the `kb` recipe + resource_types/0 registers the kb-store /
       # kb-source FsResolver types; Behavior.Kb loads per-instance via RF-1).
       {:ezagent_plugin_kb, in_umbrella: true},
+      # 通用 github 插件（gh CLI）—— 声明使其 OTP app boots（roles/0 登记 github-gateway
+      # recipe）。kanban 经 dispatch 调它（懒种 gateway，不编译依赖）。
+      {:ezagent_plugin_github, in_umbrella: true},
+      # dev-together —— 团队 dev workflow（cc-headless × dev-together role 载的 SKILL）。
+      # 不再是独立 plugin：role-as-data 收敛进 `Ezagent.Agent.DefaultRecipes`（domain
+      # agent），boot 由 `Ezagent.Agent.DefaultRecipeSeed` 统一种（recipe + 模板）。
+      # 空壳 `ezagent_plugin_dev_together` 已删除，故 dep 移除。
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]

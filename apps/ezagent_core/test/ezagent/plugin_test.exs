@@ -58,6 +58,12 @@ defmodule Ezagent.PluginTest do
       # untouched optionals still carry defaults
       assert OverridingPlugin.kinds() == []
     end
+
+    # NOTE (2026-06-30): the `nav_surfaces/0` / `session_tabs/0` override tests +
+    # the `SurfaceValidator.assert_session_tab!/2` describe moved OUT of core —
+    # those surfaces are no longer core `Ezagent.Plugin` callbacks. They live in
+    # `Ezagent.World.UiSurfaceProvider` now; their coverage is in
+    # `apps/ezagent_plugin_world/test/ezagent/world/{ui_surface_provider,plugin_nav_surfaces,plugin_session_tabs}_test.exs`.
   end
 
   describe "core_schemes/0" do

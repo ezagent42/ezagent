@@ -112,8 +112,18 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # lookup (no grant/mutation, just display).
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
         # Session entity — chat send recipient-resolution reads
-        # member caps to filter mention-gated routing.
+        # member caps to filter mention-gated routing. ALSO holds
+        # `orchestrator_spawn_template_opts/2`, which reads the session OWNER's
+        # OWN caps to BUILD the credential-cascade spawn ctx (`caps:`) — NOT a
+        # cap-gate decision outside dispatch.
         "apps/ezagent_domain_session/lib/ezagent/entity/session.ex",
+        # Phase3③ T7c — the per-session default-agent materialize engine reads the
+        # OWNER's OWN caps to BUILD the spawn cascade ctx (`opts[:caps]`),
+        # generalizing `Ezagent.Entity.Session.orchestrator_spawn_template_opts/2`
+        # (allowlisted above) off the hardcoded `cc-orchestrator` role. Same class
+        # as that call: a read of the owner's authority to feed the credential
+        # cascade, NOT a cap-gate decision outside the dispatch chokepoint.
+        "apps/ezagent_domain_agent/lib/ezagent/agent/session_agent_materialize.ex",
         # RFC #402 (Allen 2026-05-26) — the internal session creator
         # reads the creator's caps to skip a duplicate OrchestratorAdmin
         # :restart cap grant when an equivalent one already exists.
@@ -167,6 +177,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       allowlist: [
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_domain_workspace/lib/mix/",
+        # Phase3③ T7a — the default-agent recipe-cap grant ENGINE moved out of the
+        # boot-time `DefaultAgentSeed` (a non-deliberate after_boot entry, p7's
+        # exact target) into the sanctioned OPERATOR/materialize mix task
+        # `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps`. Same sanctioned mix-task
+        # category as the `ezagent_domain_workspace/lib/mix/` entry above (p7 desc:
+        # "+ mix tasks"); the boot path now only template-seeds (no auto-grant).
+        "apps/ezagent_domain_agent/lib/mix/",
         "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex",
         # PR-9a (#53): AgentTemplate relocated to the ezagent_domain_agent app.
         "apps/ezagent_domain_agent/lib/ezagent/entity/agent_template.ex",

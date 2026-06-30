@@ -63,6 +63,16 @@ defmodule EzagentDomainAgent.Application do
     # HERE (the host is up before any package install call).
     :ok = Ezagent.Plugin.SeedHook.register(Ezagent.Agent.PackageSeedHook)
 
+    # default cc-headless role-agents (`pm-coordinator` + `dev-together`):
+    # role-as-data seeded HERE, NOT from any plugin `roles/0`. They are generic
+    # cc-headless agent configs (NEITHER plugin's definitional agent), so the
+    # recipe config + its `cc × <role>` AgentTemplate converge behind this one
+    # generic boot-time seeder. This is the domain-agent boot's latest point —
+    # Repo (core) / ConfigStore (identity, started before us) / the AgentTemplate
+    # Kind supervisor (a child above) are all up. `:test`-skipped + boot-safe
+    # internally (mirrors RoleSeedHook / the identity admin/smtp seed).
+    :ok = Ezagent.Agent.DefaultRecipeSeed.seed_all()
+
     result
   end
 end

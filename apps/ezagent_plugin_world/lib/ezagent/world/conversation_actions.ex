@@ -323,19 +323,54 @@ defmodule Ezagent.World.ConversationActions do
     :exit, reason -> {:error, {:create_session_exit, reason}}
   end
 
-  @doc "Switch the active conversation sub-view (`chat` or `pty`)."
+  @doc """
+  Switch the active conversation sub-view.
+
+  `chat` / `pty` are the static built-in views; any other view is valid ONLY if
+  an INSTALLED plugin declares it as a `session_tabs/0` tab whose condition holds
+  for this session (Layer-3 modular UI). This収编s the old hardcoded `"page"`
+  TEMPORARY special-case — the whitelist is now session_tabs-driven, so the
+  switcher carries no per-plugin knowledge (board-entry-and-modular-ui §2/§5).
+  """
   @spec switch_view(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  # "page" (TEMPORARY): the hello operator page-preview view. Proper world
-  # surfacing of registered SessionViews is Phase 3; this just toggles the
-  # active view so the React UI can embed the customer surface.
-  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty", "page"] do
+  def switch_view(socket, %URI{}, view) when view in ["chat", "pty"] do
     {:noreply, push_world_state(socket, %{"active_view" => view})}
   end
 
-  def switch_view(socket, %URI{}, _view) do
-    {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
+  def switch_view(socket, %URI{} = session_uri, view) do
+    if session_tab?(session_uri, view) do
+      {:noreply, push_world_state(socket, session_tab_state(socket, session_uri, view))}
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
+    end
   end
+
+  # A plugin-declared session tab is a valid view iff it resolves visible for
+  # THIS session (e.g. kanban only once a board is bound) — the same resolution
+  # the conversation state pushes to the switcher, so the backend whitelist and
+  # the rendered tabs can't drift.
+  defp session_tab?(%URI{} = session_uri, view) do
+    Ezagent.World.WorkspacePluginData.plugin_session_tabs(session_uri)
+    |> Enum.any?(fn %{"id" => id} -> id == view end)
+  end
+
+  # Per-tab body state. The kanban tab carries the bound board (resolved through
+  # KanbanData's decoupled get_tree scan — world never imports the kanban
+  # plugin). Any other declared tab just flips `active_view`; its renderer reads
+  # from the already-pushed conversation state.
+  defp session_tab_state(socket, %URI{} = session_uri, "kanban") do
+    ctx = %{
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      workspace_uri: socket.assigns.current_workspace_uri
+    }
+
+    board = Ezagent.World.KanbanData.board_state_for_session(session_uri, ctx)
+    %{"active_view" => "kanban", "kanban_board" => board}
+  end
+
+  defp session_tab_state(_socket, %URI{}, view), do: %{"active_view" => view}
 
   @doc "Switch the conversation panel to the PTY view for a member agent."
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::

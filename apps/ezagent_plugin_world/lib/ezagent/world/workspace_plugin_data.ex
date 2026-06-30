@@ -301,6 +301,102 @@ defmodule Ezagent.World.WorkspacePluginData do
 
   defp template_status(_), do: "missing_class"
 
+  @doc """
+  Layer-2 left-rail nav entries contributed by INSTALLED plugins.
+
+  Reuses the same `PluginRegistry.list_all/0` traversal as `list_plugins/0`
+  (board-entry-and-modular-ui §2 "world 通用渲染") — reads every installed
+  plugin that DECLARES `nav_surfaces/0` and serializes to JSON-safe
+  `[%{"label", "path"}]` (+ optional `"icon"`) for the React sidebar.
+
+  `nav_surfaces/0` is the **World-side** `Ezagent.World.UiSurfaceProvider`
+  convention (NOT a core `Ezagent.Plugin` callback — decision 2026-06-30): a
+  plugin contributes by defining a plain `nav_surfaces/0` function, read here
+  via `function_exported?/3` (an absent function ⇒ no entry, "没装就没入口").
+  Each entry is filtered through `UiSurfaceProvider.valid_nav_surface?/1`
+  (fail-closed) so one plugin's malformed entry is skipped, not crash the whole
+  sidebar. An uninstalled plugin is not in the registry, so it contributes
+  nothing. Entries are deterministically ordered by plugin slug then declaration
+  order.
+  """
+  @spec plugin_nav_surfaces() :: [%{required(String.t()) => String.t()}]
+  def plugin_nav_surfaces do
+    Ezagent.PluginRegistry.list_all()
+    |> Enum.sort_by(fn plugin_module -> plugin_module.plugin_info().slug end)
+    |> Enum.filter(&function_exported?(&1, :nav_surfaces, 0))
+    |> Enum.flat_map(fn plugin_module ->
+      plugin_module.nav_surfaces()
+      |> Enum.filter(&Ezagent.World.UiSurfaceProvider.valid_nav_surface?/1)
+      |> Enum.map(&nav_surface_row/1)
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp nav_surface_row(%{label: label, path: path} = surface)
+       when is_binary(label) and is_binary(path) do
+    base = %{"label" => label, "path" => path}
+
+    case Map.get(surface, :icon) do
+      icon when is_binary(icon) -> Map.put(base, "icon", icon)
+      _ -> base
+    end
+  end
+
+  @doc """
+  Layer-3 conversation tabs contributed by INSTALLED plugins, RESOLVED for a
+  given `session_uri`.
+
+  Same `PluginRegistry.list_all/0` traversal as `plugin_nav_surfaces/0`
+  (board-entry-and-modular-ui §2 "world 通用渲染") — reads every installed
+  plugin that DECLARES `session_tabs/0` and keeps the tabs whose `:condition`
+  holds for this session (`:always` / absent ⇒ always; a 1-arity predicate ⇒
+  evaluated with the session URI string). kanban's condition is the cheap
+  `BoardConfig.session_bound?/1` file read, so a session BOUND to a board grows
+  the kanban tab and a free session does not.
+
+  `session_tabs/0` is the **World-side** `Ezagent.World.UiSurfaceProvider`
+  convention (NOT a core `Ezagent.Plugin` callback — decision 2026-06-30): read
+  here via `function_exported?/3` (absent function ⇒ no tab) and filtered
+  through `UiSurfaceProvider.valid_session_tab?/1` (fail-closed) so a malformed
+  entry is skipped, not crash the view switcher. Serializes to JSON-safe
+  `[%{"id", "label"}]`; an uninstalled plugin contributes nothing ("没插件就没
+  tab"). Ordered by plugin slug then declaration.
+  """
+  @spec plugin_session_tabs(URI.t() | String.t() | nil) :: [%{required(String.t()) => String.t()}]
+  def plugin_session_tabs(session_uri) do
+    session_str = encode_uri(session_uri) || session_uri
+
+    Ezagent.PluginRegistry.list_all()
+    |> Enum.sort_by(fn plugin_module -> plugin_module.plugin_info().slug end)
+    |> Enum.filter(&function_exported?(&1, :session_tabs, 0))
+    |> Enum.flat_map(fn plugin_module ->
+      plugin_module.session_tabs()
+      |> Enum.filter(&Ezagent.World.UiSurfaceProvider.valid_session_tab?/1)
+      |> Enum.filter(&session_tab_visible?(&1, session_str))
+      |> Enum.map(&session_tab_row/1)
+    end)
+  rescue
+    _ -> []
+  end
+
+  # Evaluate a session tab's per-session visibility condition. Absent / `:always`
+  # ⇒ visible; a 1-arity predicate ⇒ called with the session URI string. A
+  # predicate that raises is treated as "not visible" (fail-closed) so one
+  # plugin's bad condition can't break the whole view switcher.
+  defp session_tab_visible?(%{condition: :always}, _session_str), do: true
+
+  defp session_tab_visible?(%{condition: fun}, session_str) when is_function(fun, 1) do
+    fun.(session_str) == true
+  rescue
+    _ -> false
+  end
+
+  defp session_tab_visible?(%{}, _session_str), do: true
+
+  defp session_tab_row(%{id: id, label: label}) when is_binary(id) and is_binary(label),
+    do: %{"id" => id, "label" => label}
+
   defp list_plugins do
     Ezagent.PluginRegistry.list_all()
     |> Enum.map(fn plugin_module ->

@@ -177,6 +177,15 @@ defmodule EzagentPluginCc.Application do
     # only on a bridge/schema install failure, deliberately uncaught).
     :ok = Ezagent.Orchestrator.CcOrchestratorSeed.seed()
 
+    # Phase 3 ③ refactor 2026-06-30 — the cc-flavor AgentTemplate half of the
+    # generic default role-agents (pm-coordinator + dev-together). Their recipe
+    # config is seeded earlier in `EzagentDomainAgent.Application.start/2`
+    # (flavor-agnostic), but the `cc × <role>` AgentTemplate needs the cc flavor's
+    # template spawn fn published by `load_all/0` above — the SAME boot-order
+    # reason as the cc-orchestrator seed (at domain_agent `start/2` it would hit
+    # `{:no_spawn_fn, "template"}`). Boot-safe (logs + `:ok` on soft failure).
+    _ = Ezagent.Agent.DefaultRecipeSeed.seed_templates_all()
+
     # 2026-05-31 orchestrator-startup-atomicity §4 — the test-only
     # `session://default/system/main` seed runs HERE (not in
     # `EzagentDomainInstanceMessage.Application.start/2`) because the atomic

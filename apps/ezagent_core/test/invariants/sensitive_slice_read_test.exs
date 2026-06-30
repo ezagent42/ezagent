@@ -88,6 +88,10 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     # --- agent domain: CurlAgent funds its outbound HTTP call with its own creds ---
     {"apps/ezagent_domain_agent/lib/ezagent/behavior/curl_agent.ex", :api_keys} =>
       "CurlAgent reads sibling :api_keys to fund its outbound call (same agent's own credential)",
+    # --- github gateway: per-identity token selection (照 CurlAgent precedent) ---
+    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/creds.ex", :api_keys} =>
+      "github gateway reads the CALLER's OWN :api_keys to select its per-identity github PAT — " <>
+        "same sanctioned read pattern as CurlAgent (read-only, non-dispatch, the caller's own credential)",
     # --- identity domain: config evolution mutates config under the agent's own authority ---
     {"apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex", :identity} =>
       "ConfigEvolve reads sibling :identity caps to evolve config under the agent's own authority",

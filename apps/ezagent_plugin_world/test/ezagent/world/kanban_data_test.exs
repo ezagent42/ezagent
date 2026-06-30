@@ -128,6 +128,36 @@ defmodule Ezagent.World.KanbanDataTest do
     end)
   end
 
+  test "board_state_for_session resolves the board BOUND to a session (Layer-3 tab body)",
+       %{workspace_uri: ws, admin_ctx: admin_ctx, ctx: ctx} do
+    skip_if_no_entity_spawn(fn ->
+      uri = spawn_board(ws, admin_ctx)
+      {:ok, %{id: "n1"}} = dispatch(uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+
+      session =
+        URI.new!("session://system/default/board-tab-#{System.unique_integer([:positive])}")
+
+      {:ok, _} =
+        dispatch(uri, :bind_session, %{session_uri: URI.to_string(session)}, admin_ctx)
+
+      board = KanbanData.board_state_for_session(session, ctx)
+
+      assert board["kanban_uri"] == URI.to_string(uri)
+      assert board["bound_session_uri"] == URI.to_string(session)
+      assert board["tree"]["root_id"] == "n1"
+    end)
+  end
+
+  test "board_state_for_session returns nil when no board is bound to the session",
+       %{workspace_uri: ws, admin_ctx: admin_ctx, ctx: ctx} do
+    skip_if_no_entity_spawn(fn ->
+      _uri = spawn_board(ws, admin_ctx)
+      unbound = URI.new!("session://system/default/unbound-#{System.unique_integer([:positive])}")
+
+      assert KanbanData.board_state_for_session(unbound, ctx) == nil
+    end)
+  end
+
   test "list_instances returns the kanban-manager via list-by-role with its entity://agent URI",
        %{workspace_uri: ws, admin_ctx: admin_ctx, ctx: ctx} do
     skip_if_no_entity_spawn(fn ->

@@ -332,7 +332,14 @@
   #   `def detached(_state, _ctx), do: :ok` default INSIDE the quote — exactly
   #   like its siblings `activated/2`/`deactivate/2`/`create/1`, which are also
   #   counted-undocumented quote defaults. +1 symmetric with them. 393→394.
-  undocumented_public_defs: 394,
+  # arch-cap-bump: board-entry-and-modular-ui added two optional Ezagent.Plugin
+  #   callbacks — `nav_surfaces/0` (Layer-2 left-rail) + `session_tabs/0`
+  #   (Layer-3 per-session tab) — as counted-undocumented `use Ezagent.Plugin`
+  #   quote defaults. 2026-06-30 (decision (a): nav/session are World-UI concepts,
+  #   not core contract) DELETED both quote defaults from plugin.ex — they moved
+  #   to `Ezagent.World.UiSurfaceProvider` (world tier). Two fewer counted
+  #   undocumented quote defaults in core. 395→393.
+  undocumented_public_defs: 393,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
