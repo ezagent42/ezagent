@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的主页 · My achievements · Ezagent</title>
+<meta name="description" content="你在 Ezagent 的个人主页：指挥官驾照、成就墙与常用功能。">
+<!-- 个人主页（成就中心）· ezagent-design DS (@ebce041)。读 demo-state 共享状态。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);--accent-wash:var(--blue-wash);--on-accent:#fff;--focus-ring:rgba(11,92,255,.45);
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;--font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;--font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --glass-bg:rgba(255,255,255,.55);--glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);--glass-blur:blur(14px) saturate(1.4);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-enter:500ms;--stage:#14131C;--gap-grid:22px;--container:1100px;--pad-page-x:44px;
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --blue:#5AA2FF;--accent-press:#A9CBFF;--blue-wash:#1E2A40;--on-accent:#0E1A2E;--accent-hover:#74B2FF;--focus-ring:rgba(90,162,255,.5);
+  --jade:#34D6A0;--jade-wash:#173A2E;--red:#FF5A4D;--red-wash:#3E211E;--yellow:#FFD84D;--yellow-wash:#3A3416;--orange:#FFA94D;--orange-wash:#3A2A16;
+  --glass-bg:rgba(42,41,54,.5);--glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}html{overflow-x:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,p{margin:0}a{color:inherit;text-decoration:none}
+.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.wrap{max-width:var(--container);margin:0 auto;padding:30px var(--pad-page-x) 70px;animation:fu var(--dur-enter) var(--ease-out) both}
+@keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+@media (prefers-reduced-motion:reduce){.wrap,*{animation:none!important}}
+/* 标题：统一 world.cup 的 sec-head 样式 */
+.sec-head{margin:38px 0 16px}
+.sec-head.first{margin-top:var(--gap-grid)}
+.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,3.4vw,34px);line-height:1.2;margin-top:8px}
+.sec-head h3{font-family:var(--font-cn);font-weight:600;font-size:20px;line-height:1.3;margin-top:6px}
+.sec-head .sub{color:var(--ink-2);margin-top:8px;font-size:16px}
+.sec-head .sub b{color:var(--accent-press)}
+
+/* 身份头 */
+.identity{background:var(--stage);color:#F4F2EC;border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:26px 30px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.id-badge{flex:none;width:88px;height:88px;border-radius:50%;display:grid;place-items:center;font-family:var(--font-ui);font-weight:800;font-size:30px;color:#fff;box-shadow:0 0 0 7px rgba(255,255,255,.06)}
+.id-main{flex:1;min-width:200px}
+.id-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;font-weight:700}
+.id-name{font-family:var(--font-cn);font-weight:600;font-size:26px;margin:4px 0 4px}
+.id-sub{font-size:13px;color:#B6B4AC}.id-sub b{color:#F4F2EC}
+.id-meta{display:flex;gap:18px;margin-top:12px;flex-wrap:wrap}
+.id-meta .m{font-family:var(--font-mono);font-size:11px;color:#85837B}.id-meta .m b{color:#F4F2EC;font-size:14px}
+.id-empty{flex:1;min-width:200px}
+.id-empty h3{font-family:var(--font-cn);font-weight:600;font-size:22px}
+.id-empty p{color:#B6B4AC;font-size:14px;margin-top:6px;line-height:1.6}
+.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:14px;padding:12px 22px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out);display:inline-flex;align-items:center;gap:7px}
+.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}.btn.primary:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.btn.light{background:#F4F2EC;color:#17171B}.btn.light:hover{transform:translateY(-1px)}
+
+/* 左右结构：我的成就 | 常用功能 */
+.cols{display:grid;grid-template-columns:1.7fr 1fr;gap:var(--gap-grid);align-items:start;margin-top:8px}
+.col .sec-head{margin:0 0 14px}
+/* 成就墙 */
+.ach-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.ach{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:18px;display:flex;flex-direction:column;gap:7px;position:relative}
+.ach.locked{box-shadow:var(--shadow-sm);background:var(--ground-2)}
+.ach .ic{width:38px;height:38px;border-radius:var(--r-md);display:grid;place-items:center;margin-bottom:2px}
+.ach.got .ic{background:var(--jade-wash);color:var(--jade)}
+.ach.locked .ic{background:var(--ground-hover);color:var(--ink-4)}
+.ach .nm{font-family:var(--font-cn-ui);font-weight:600;font-size:15px;color:var(--ink)}
+.ach.locked .nm{color:var(--ink-3)}
+.ach .en{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-4);text-transform:uppercase}
+.ach .ds{font-size:12.5px;color:var(--ink-2);line-height:1.5;flex:1}
+.ach .how{appearance:none;border:0;cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--accent-press);background:var(--accent-wash);border-radius:var(--r-pill);padding:7px 12px;text-align:center;margin-top:4px;transition:all 150ms;text-decoration:none;display:block}
+.ach .how:hover{background:var(--accent);color:var(--on-accent)}
+.ach .how.auto{background:var(--ground-hover);color:var(--ink-3);cursor:default}
+.ach .badge-got{position:absolute;top:16px;right:16px;font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--jade);background:var(--jade-wash);padding:3px 9px;border-radius:var(--r-pill)}
+/* 常用功能：设置页式常驻行 */
+.fn-list{display:flex;flex-direction:column;gap:10px}
+.fn-row{display:flex;align-items:center;gap:13px;background:var(--card);border-radius:var(--r-md);box-shadow:var(--shadow-sm);padding:14px 16px;cursor:pointer;text-decoration:none;transition:all 150ms var(--ease-out)}
+.fn-row:hover{box-shadow:var(--shadow-card);transform:translateY(-1px)}
+.fn-row .fi{width:38px;height:38px;border-radius:var(--r-md);display:grid;place-items:center;color:#fff;flex:none}
+.fn-row .ft{flex:1;min-width:0}
+.fn-row .ft .t{font-family:var(--font-cn-ui);font-weight:600;font-size:14.5px;color:var(--ink)}
+.fn-row .ft .s{font-size:12px;color:var(--ink-2);margin-top:2px;line-height:1.4}
+.fn-row .chev{color:var(--ink-4);flex:none}
+
+footer{margin:50px 0 0;text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);line-height:1.7}
+/* modal */
+.mask{position:fixed;inset:0;background:rgba(15,15,20,.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:grid;place-items:center;z-index:80;padding:20px}
+.modal{position:relative;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);max-width:440px;width:100%;padding:28px 30px}
+.modal h3{font-family:var(--font-cn);font-weight:600;font-size:21px}
+.modal .x{position:absolute;top:14px;right:18px;cursor:pointer;color:var(--ink-3);font-size:22px}
+.modal p.sub{color:var(--ink-2);font-size:13px;margin:6px 0 0;line-height:1.5}
+.field{margin-top:14px}.field label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:7px}
+.field input,.field select,.field textarea{width:100%;box-sizing:border-box;padding:12px 14px;border:0;border-radius:var(--r-md);background:var(--ground-2);font-family:var(--font-ui);font-size:15px;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.field textarea{min-height:88px;resize:vertical;font-family:var(--font-cn-ui)}
+.field input:focus,.field select:focus,.field textarea:focus{outline:none;box-shadow:0 0 0 3px var(--focus-ring)}
+.mbtn{width:100%;appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;padding:13px;border-radius:var(--r-pill);background:var(--accent);color:var(--on-accent);margin-top:16px}.mbtn:hover{background:var(--accent-hover)}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--card);font-size:13.5px;padding:12px 20px;border-radius:var(--r-pill);box-shadow:var(--shadow-card);z-index:90;opacity:0;pointer-events:none;transition:all .25s var(--ease-out)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media (max-width:860px){.cols{grid-template-columns:1fr}.ach-grid{grid-template-columns:1fr 1fr}.wrap{padding:24px 18px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="sec-head first">
+    <span class="over">My achievements · 个人主页</span>
+    <h2>我的主页</h2>
+    <p class="sub">已解锁 <b id="pgN">0</b> / <span id="pgT">7</span> 成就 · 边玩边解锁，参与我们的共建。</p>
+  </div>
+
+  <div id="identity"></div>
+
+  <div class="cols">
+    <div class="col">
+      <div class="sec-head"><span class="over">Achievements · 成就墙</span><h3>我的成就</h3></div>
+      <div class="ach-grid" id="achGrid"></div>
+    </div>
+    <div class="col">
+      <div class="sec-head"><span class="over">Functions · 常用功能</span><h3>常用功能</h3></div>
+      <div class="fn-list" id="fnList"></div>
+    </div>
+  </div>
+
+  <footer>原型 demo · 成就 / 编号为本地 mock（localStorage）· 接价值链 ③-C 成就簇</footer>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toast" id="toast"></div>
+
+<script src="demo-state.js"></script>
+<script src="site-nav.js"></script>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2300);}
+const TICK='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const LOCK='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+const CHEV='<svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>';
+
+/* 身份头 */
+function renderIdentity(){
+  const lic=EZD.license(),box=$('#identity');box.innerHTML='';
+  if(lic){
+    const dark=['#FFD400','#FFD84D'].includes(lic.color);
+    box.innerHTML=`<div class="identity"><div class="id-badge" style="background:${lic.color};color:${dark?'#17171B':'#fff'};box-shadow:0 0 0 7px ${lic.color}22">${lic.agents}</div>
+      <div class="id-main">
+        <div class="id-eyebrow" style="color:${lic.color}">${lic.eyebrow} · 指挥官驾照</div>
+        <div class="id-name">${lic.tier}</div>
+        <div class="id-sub">${lic.persona?`画像 <b>${lic.persona}</b> · `:''}超过全站 <b>${lic.pct}%</b> 的人</div>
+        <div class="id-meta"><span class="m">编号 <b>${lic.serial}</b></span><span class="m">领证 <b>${lic.date}</b></span><span class="m">可指挥 <b>${lic.agents}</b> agent</span></div>
+      </div><a class="btn light" href="driver-license.html">查看 / 重测</a></div>`;
+  }else{
+    box.innerHTML=`<div class="identity"><div class="id-badge" style="background:var(--ground-hover);color:#85837B">?</div>
+      <div class="id-empty"><h3>还没有你的指挥官驾照</h3><p>30 秒、5 道题，测出你能同时指挥几个 agent，领一张专属名牌——这是你主页的身份。</p></div>
+      <a class="btn primary" href="driver-license.html">去测一张 →</a></div>`;
+  }
+}
+
+/* 成就墙 */
+function renderAch(){
+  const grid=$('#achGrid');grid.innerHTML='';
+  EZD.ACH.forEach(a=>{
+    const got=EZD.has(a.id);
+    const c=el('div','ach '+(got?'got':'locked'));
+    let how='';
+    if(!got){
+      if(a.auto) how='<div class="how auto">回溯授予</div>';
+      else if(a.go && a.go[0]==='@') how=`<button class="how" data-mod="${a.go.slice(1)}">${a.how} →</button>`;
+      else how=`<a class="how" href="${a.go}">${a.how} →</a>`;
+    }
+    c.innerHTML=`${got?'<span class="badge-got">已解锁</span>':''}<div class="ic">${got?TICK:LOCK}</div>
+      <div class="nm">${a.name}</div><div class="en">${a.en}</div><div class="ds">${a.desc}</div>${how}`;
+    grid.appendChild(c);
+  });
+  $('#pgN').textContent=EZD.unlockedCount();$('#pgT').textContent=EZD.ACH.length;
+  grid.querySelectorAll('[data-mod]').forEach(b=>b.onclick=()=>{b.dataset.mod==='profile'?openProfile():openFeedback();});
+}
+
+/* 常用功能：设置页式常驻行（不与成就一一对应、无"已完成"）*/
+const FN=[
+  {color:'var(--accent)',title:'我的指挥官驾照',sub:'查看测试结果 · 重新测一次',go:()=>location.href='driver-license.html',glyph:'<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>'},
+  {color:'var(--blueink)',title:'角色档案',sub:'查看 / 编辑职业 · 行业 · 画像',go:openProfile,glyph:'<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0"/>'},
+  {color:'var(--red)',title:'提交反馈',sub:'想法 / 痛点随时提，可多次',go:openFeedback,glyph:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'},
+  {color:'var(--orange)',title:'试玩产品',sub:'world / hello 亲手跑一次',go:()=>{EZD.unlock('try');render();window.open('world-demo.html','_blank');},glyph:'<path d="M7 4v16l13-8z"/>'},
+  {color:'var(--jade)',title:'world.cup 路线图',sub:'给功能投票 / 押注，影响优先级',go:()=>{EZD.unlock('vote');location.href='index.html#worldcup';},glyph:'<path d="M12 4l8 8M12 4l-8 8M12 4v16"/>'},
+];
+function renderFn(){
+  const l=$('#fnList');l.innerHTML='';
+  FN.forEach(f=>{
+    const r=el('a','fn-row');r.href='#';
+    r.innerHTML=`<div class="fi" style="background:${f.color}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${f.glyph}</svg></div>
+      <div class="ft"><div class="t">${f.title}</div><div class="s">${f.sub}</div></div>${CHEV}`;
+    r.onclick=(e)=>{e.preventDefault();f.go();};
+    l.appendChild(r);
+  });
+}
+
+/* modal */
+function modal(html){const m=$('#modalRoot');m.innerHTML=`<div class="mask" data-mask><div class="modal">${html}<span class="x" data-close>×</span></div></div>`;
+  m.onclick=e=>{if(e.target.closest('[data-close]')||e.target.hasAttribute('data-mask'))m.innerHTML='';};}
+function closeModal(){$('#modalRoot').innerHTML='';}
+function openProfile(){
+  const p=EZD.profile()||{};
+  modal(`<h3>角色档案</h3><p class="sub">告诉我们你是谁——官网会按你这一刻为你重组（hello 即问即生）。可随时改。</p>
+    <div class="field"><label>职业 / 角色</label><input id="pf-role" placeholder="例：跨境电商店主 / 客服负责人 / 独立开发者" value="${p.role||''}"></div>
+    <div class="field"><label>行业领域</label><select id="pf-ind"><option ${p.ind==='电商'?'selected':''}>电商</option><option ${p.ind==='企业服务'?'selected':''}>企业服务</option><option ${p.ind==='AI / 技术'?'selected':''}>AI / 技术</option><option ${p.ind==='内容 / 营销'?'selected':''}>内容 / 营销</option><option ${p.ind==='其他'?'selected':''}>其他</option></select></div>
+    <div class="field"><label>你更像哪种人</label><select id="pf-persona"><option ${p.persona==='赵全扛'?'selected':''}>赵全扛 · 什么都自己扛</option><option ${p.persona==='钱降本'?'selected':''}>钱降本 · 想砍重复劳动</option><option ${p.persona==='孙集成'?'selected':''}>孙集成 · 自己接 API 搭过流程</option><option ${p.persona==='李统筹'?'selected':''}>李统筹 · 盯团队总产出</option></select></div>
+    <button class="mbtn" id="pf-go">保存档案</button>`);
+  $('#pf-go').onclick=()=>{const role=$('#pf-role').value.trim();if(!role){toast('填一下职业 / 角色');return;}
+    EZD.setProfile({role,ind:$('#pf-ind').value,persona:$('#pf-persona').value.split(' ')[0]});closeModal();render();toast('档案已保存'+(EZD.has('profile')?' · 成就「画像已建」':''));};
+}
+function openFeedback(){
+  modal(`<h3>提交反馈</h3><p class="sub">你卡住的、想要的、觉得不对的——一句话也行，我们真的看。可多次提交。</p>
+    <div class="field"><label>你的反馈</label><textarea id="fb-txt" placeholder="例：希望多个 agent 协同时能看到全局进度…"></textarea></div>
+    <button class="mbtn" id="fb-go">提交（demo · 不真实发送）</button>`);
+  $('#fb-go').onclick=()=>{const v=$('#fb-txt').value.trim();if(!v){toast('写一句也行');return;}const first=!EZD.has('feedback');EZD.unlock('feedback');closeModal();render();toast(first?'收到！解锁成就「共创者」→':'又一条反馈，谢谢你 →');};
+}
+
+function render(){renderIdentity();renderAch();renderFn();}
+render();
+</script>
+</body>
+</html>

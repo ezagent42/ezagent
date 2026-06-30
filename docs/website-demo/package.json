@@ -1,0 +1,10 @@
+{
+  "name": "ezagent-website-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ezagent 官网 demo（静态站，本地预览）",
+  "scripts": {
+    "start": "npx --yes serve . -l 8080",
+    "serve": "python3 -m http.server 8080"
+  }
+}
