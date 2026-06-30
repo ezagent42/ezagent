@@ -109,11 +109,54 @@ export function AdminSurface({
   }
 
   return (
-    <div className="space-y-4">
-      <AdminNav current={state.component} />
-      {adminBody(state, onAction)}
-    </div>
+    <section className="grid h-[666px] min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[232px_minmax(0,1fr)]" data-world-manage-layout>
+      <aside className="min-h-0 overflow-y-auto border-b border-border bg-card p-3 lg:border-b-0 lg:border-r" aria-label="Manage sections">
+        <div className="mb-3 px-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage</p>
+          <h2 className="text-sm font-semibold text-foreground">Admin</h2>
+        </div>
+        <nav className="grid gap-1 manage-nav">
+          {[
+            ["Workspace", "/workspaces", "members, templates, routing"],
+            ["Plugins", "/plugins", "routes, flavors, installed apps"],
+            ["Integrations", "/plugins/feishu/bindings", "Feishu, mirrors, connectors"],
+            ["Admin", "/admin", "runtime and registry"],
+            ["Access", "/admin/caps", "caps and authz audit"],
+            ["System", "/admin/settings", "SMTP, routing, diagnostics"],
+          ].map(([label, href, hint]) => {
+            const active = adminManageActive(state.component, label)
+            return (
+              <a
+                key={label}
+                href={href}
+                aria-current={active ? "page" : undefined}
+                className={
+                  active
+                    ? "rounded-md border border-primary/30 bg-accent/70 px-3 py-2 text-sm font-medium text-accent-foreground"
+                    : "rounded-md border border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition hover:border-border hover:bg-muted hover:text-foreground"
+                }
+              >
+                <span className="block text-foreground">{label}</span>
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{hint}</span>
+              </a>
+            )
+          })}
+        </nav>
+      </aside>
+      <main className="min-h-0 overflow-y-auto p-4">
+        <div className="space-y-4">
+          <AdminNav current={state.component} />
+          {adminBody(state, onAction)}
+        </div>
+      </main>
+    </section>
   )
+}
+
+function adminManageActive(component: string | undefined, label: string) {
+  if (label === "Access") return component === "caps_admin" || component === "authz_audit"
+  if (label === "System") return component === "settings" || component === "routing"
+  return label === "Admin" && !["caps_admin", "authz_audit", "settings", "routing"].includes(component || "")
 }
 
 // ---------------------------------------------------------------------------

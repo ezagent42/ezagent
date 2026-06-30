@@ -6,6 +6,35 @@ defmodule Ezagent.World.RoutesTest do
   @agent_uri "entity://acme/agent/my-agent"
   @encoded URI.encode_www_form(@agent_uri)
 
+  test "root resolves to the Chat sessions surface" do
+    route = Routes.route_for(%{}, "https://example.com/")
+
+    assert route.component == "sessions_table"
+    assert route.title == "Chat"
+    assert route.path == "/"
+  end
+
+  test "session query resolves to the Chat conversation surface" do
+    session = "session://acme/default/main"
+
+    route =
+      Routes.route_for(
+        %{"session" => URI.encode_www_form(session)},
+        "https://example.com/sessions"
+      )
+
+    assert route.component == "conversation"
+    assert route.title == "Chat"
+    assert URI.to_string(route.session_uri) == session
+  end
+
+  test "unknown world paths fall back to Chat rather than Overview copy" do
+    route = Routes.route_for(%{}, "https://example.com/not-a-world-route")
+
+    assert route.component == "sessions_table"
+    assert route.title == "Chat"
+  end
+
   test "agent config sub-route resolves to agent_config component" do
     url = "https://example.com/identities/agents/#{@encoded}/config"
     route = Routes.route_for(%{}, url)
@@ -51,6 +80,15 @@ defmodule Ezagent.World.RoutesTest do
     assert route.component == "kanban"
     assert route.group == :workspace_plugins
     assert route.entity_uri == nil
+  end
+
+  test "knowledge base declared plugin route resolves to the plugins surface with focus" do
+    route = Routes.route_for(%{}, "https://example.com/plugins/kb")
+
+    assert route.component == "plugins"
+    assert route.group == :workspace_plugins
+    assert route.title == "Knowledge Base"
+    assert route.focus_slug == "kb"
   end
 
   test "kanban detail route resolves to the kanban component with the kanban-manager agent URI" do

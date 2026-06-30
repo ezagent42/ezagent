@@ -181,6 +181,42 @@ const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 const secondaryActionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted"
+const agentShellClass =
+  "grid h-[666px] min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(520px,1fr)]"
+const agentPanelClass = "min-h-0 overflow-y-auto bg-background p-4"
+const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions", "Terminal"] as const
+const defaultAgentFlavors = ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"]
+const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
+  cc: [
+    {key: "model", type: "string", label: "model"},
+    {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
+    {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
+    {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
+  ],
+  "cc-headless": [
+    {key: "model", type: "string", label: "model"},
+    {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
+    {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
+    {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
+  ],
+  codex: [
+    {key: "model", type: "string", label: "model"},
+    {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
+    {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
+  ],
+  "codex-remote": [
+    {key: "model", type: "string", label: "model"},
+    {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
+    {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
+  ],
+  py: [{key: "script", type: "text", label: "script"}],
+  curl: [
+    {key: "provider", type: "string", label: "provider"},
+    {key: "api_url", type: "string", label: "api_url"},
+    {key: "model", type: "string", label: "model"},
+  ],
+  native: [{key: "role", type: "string", label: "role"}],
+}
 
 export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUserProfile, onSetUserPassword, onDisableUser, onEnableUser, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
@@ -484,64 +520,102 @@ function UserDetail({
 
 function AgentsTable({state}: {state: IdentitiesState}) {
   const agents = state.agents || []
+  const [query, setQuery] = React.useState("")
+  const filteredAgents = agents.filter((agent) => {
+    const haystack = [agent.display_name, agent.name, agent.uri, agent.flavor, agent.alive ? "live" : "registered", state.workspace_uri]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+
+    return haystack.includes(query.trim().toLowerCase())
+  })
 
   return (
-    <section className={surfaceClass} data-world-component="agents_table" aria-labelledby="agents-title">
-      <SectionHeader
-        eyebrow="Agents"
-        title="Agents"
-        actions={
-          <a className={actionLinkClass} href="/identities/agents/new">
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            New agent
-          </a>
-        }
-      />
-      {state.action_error && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-          {state.action_error}
-        </p>
-      )}
-      {/* F1: flavor filter — the agents table now offers the same All/Users/Agents
-          + per-flavor chips the identities directory does, so an operator can
-          narrow by flavor without hand-editing the URL. */}
-      <FilterBar active={state.filter || "agents"} flavors={state.agent_flavors || []} />
-      <div className={tableWrapClass}>
-        <table className={tableClass} id="world-agents-table">
-          <thead className={theadClass}>
-            <tr>
-              <th className={thClass}>Name / URI</th>
-              <th className={thClass}>Flavor</th>
-              <th className={thClass}>Status</th>
-              <th className={thClass}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className={tbodyClass}>
-            {agents.map((agent) => (
-              <tr key={agent.uri} className={rowClass}>
-                <td className={tdClass}>
-                  <strong className="block text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
-                  <code className={codeClass}>{agent.uri}</code>
-                </td>
-                <td className={tdClass}>{agent.flavor || "unknown"}</td>
-                <td className={tdClass}>{agent.alive ? "live" : "registered"}</td>
-                <td className={tdClass}>
+    <section className={agentShellClass} data-world-agents-layout="directory" data-world-component="agents_table" aria-labelledby="agents-title">
+      <aside className="flex min-h-0 flex-col border-b border-border bg-card lg:border-b-0 lg:border-r" aria-label="Directory">
+        <div className="border-b border-border px-3 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Directory</p>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <h2 id="agents-title" className="text-sm font-semibold text-foreground">Users + agents</h2>
+            <a className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground" href="/identities/agents/new" aria-label="Create agent">
+              <Plus aria-hidden="true" className="h-4 w-4" />
+            </a>
+          </div>
+        </div>
+        <div className="space-y-3 border-b border-border px-3 py-3">
+          <div className="inline-flex rounded-[10px] border border-border bg-muted p-[3px]">
+            <a className="rounded-md bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm" href="/identities/agents">Agents</a>
+            <a className="rounded-md px-3 py-1 text-xs font-medium text-muted-foreground hover:text-foreground" href="/identities/users">Users</a>
+          </div>
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by flavor, status, workspace" aria-label="Filter by flavor, status, workspace" />
+          <FilterBar active={state.filter || "agents"} flavors={state.agent_flavors || []} />
+        </div>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+          {filteredAgents.map((agent) => (
+            <a
+              className="block rounded-md border border-transparent px-2.5 py-2 transition hover:border-border hover:bg-muted/60"
+              href={agent.detail_path || "#"}
+              key={agent.uri}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <strong className="truncate text-sm text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{agent.flavor || "unknown"}</span>
+              </span>
+              <code className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{agent.uri}</code>
+            </a>
+          ))}
+          {filteredAgents.length === 0 && <EmptyState label="No agents in this workspace." />}
+        </div>
+      </aside>
+
+      <main className={agentPanelClass}>
+        <div className="space-y-4">
+          <SectionHeader
+            eyebrow="Agents"
+            title="Agent directory"
+            actions={
+              <a className={actionLinkClass} href="/identities/agents/new">
+                <Plus aria-hidden="true" className="h-4 w-4" />
+                New agent
+              </a>
+            }
+          />
+          {state.action_error && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              {state.action_error}
+            </p>
+          )}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <MiniStat label="Agents" value={agents.length} />
+            <MiniStat label="Live" value={agents.filter((agent) => agent.alive).length} />
+            <MiniStat label="Flavors" value={(state.agent_flavors || []).length} />
+          </div>
+          <div className="space-y-2 rounded-lg border border-border bg-card p-4">
+            <AgentRouteTabs active="Overview" />
+            <div className="grid gap-2">
+              {filteredAgents.map((agent) => (
+                <div className="grid gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto]" key={agent.uri}>
+                  <div className="min-w-0">
+                    <strong className="block truncate text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                    <code className={codeClass}>{agent.uri}</code>
+                  </div>
                   <InlineLinks
                     links={[
-                      ["Status", agent.detail_path],
-                      ["Caps", agent.caps_path],
-                      ["API Keys", agent.api_keys_path],
-                      ["Extensions", agent.extensions_path],
+                      ["Overview", agent.detail_path],
                       ["Config", agent.config_path],
+                      ["Keys", agent.api_keys_path],
+                      ["Caps", agent.caps_path],
+                      ["Extensions", agent.extensions_path],
+                      ["Terminal", agent.detail_path ? `${agent.detail_path}/terminal` : null],
                     ]}
                   />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {agents.length === 0 && <EmptyState label="No agents in this workspace." />}
-      </div>
+                </div>
+              ))}
+              {filteredAgents.length === 0 && <EmptyState label="No agents in this workspace." />}
+            </div>
+          </div>
+        </div>
+      </main>
     </section>
   )
 }
@@ -554,6 +628,7 @@ function EntityCaps({state}: {state: IdentitiesState}) {
     <section className={surfaceClass} data-world-component="entity_caps" aria-labelledby="caps-title">
       <SectionHeader eyebrow={state.entity_kind || "entity"} title="Entity caps" />
       <code className={uriClass}>{state.entity_uri}</code>
+      {state.entity_kind === "agent" && <AgentRouteTabs active="Caps" agentUri={state.entity_uri} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-caps-table">
@@ -626,6 +701,7 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
     <section className={surfaceClass} data-world-component="agent_detail" aria-labelledby="agent-detail-title">
       <SectionHeader eyebrow="Agent" title="Agent detail" />
       <code className={uriClass}>{state.agent_uri}</code>
+      <AgentRouteTabs active="Overview" agentUri={state.agent_uri} />
       {/* F4: a delete failure (e.g. agent still bound to a live session) now
           surfaces ON the detail page where the Delete button lives, instead of
           being dropped on the list route the user already navigated away from. */}
@@ -721,8 +797,9 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
 }
 
 function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateAgent?: (payload: Record<string, unknown>) => void}) {
+  const flavors = allAgentFlavors(state)
   const [form, setForm] = React.useState({
-    flavor: state.default_flavor || state.flavors?.[0] || "cc",
+    flavor: state.default_flavor || flavors[0] || "cc",
     name: "",
     cwd: "",
     caps: "",
@@ -741,7 +818,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   const scriptMissing = scriptRequired && !(form.configFields["script"] || "").trim()
 
   // M4: flavor-specific schema for dynamic create fields
-  const flavorSchema = (state.config_schemas || {})[form.flavor] || []
+  const flavorSchema = createSchemaForFlavor(form.flavor, (state.config_schemas || {})[form.flavor])
 
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
@@ -759,7 +836,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   }
 
   return (
-    <section className={surfaceClass} data-world-component="agent_new_form" aria-labelledby="agent-new-title">
+    <section className={surfaceClass} data-world-agents-layout="directory" data-world-component="agent_new_form" aria-labelledby="agent-new-title">
       <SectionHeader eyebrow="Provision" title="New agent" />
       {state.create_error && (
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
@@ -768,13 +845,14 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
       )}
       <form
         id="world-agent-new-form"
+        data-world-agent-create-form
         className="grid gap-3 sm:grid-cols-2"
         onSubmit={handleSubmit}
       >
         <label className={fieldLabel}>
           <span>Flavor</span>
           <Select value={form.flavor} onChange={(event) => setForm({...form, flavor: event.target.value})}>
-            {(state.flavors || [form.flavor]).map((flavor) => (
+            {flavors.map((flavor) => (
               <option key={flavor} value={flavor}>{flavor}</option>
             ))}
           </Select>
@@ -800,7 +878,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                   <span className="font-mono text-xs">
                     {f.label || f.key}
                     {scriptRequired && f.key === "script" && <span className="text-destructive"> *</span>}
-                    {f.help && <span className="text-[10px] text-muted-foreground ml-1">({f.help})</span>}
+                    {f.help && <span className="ml-1 text-[10px] text-muted-foreground">({f.help})</span>}
                   </span>
                   {f.type === "enum" && f.options ? (
                     <Select
@@ -895,6 +973,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
       <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
         <SectionHeader eyebrow="Agent" title="Agent config" />
         <code className={uriClass}>{agentUri}</code>
+        <AgentRouteTabs active="Config" agentUri={agentUri} />
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
           {state.config_error}
         </p>
@@ -908,6 +987,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
       <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
         <SectionHeader eyebrow="Agent" title="Agent config" />
         <code className={uriClass}>{agentUri}</code>
+        <AgentRouteTabs active="Config" agentUri={agentUri} />
         <p className="text-sm text-muted-foreground">Loading config…</p>
       </section>
     )
@@ -917,6 +997,7 @@ function AgentConfigEditor({state, onConfigUpdate, onConfigDeletePath}: AgentCon
     <section className={surfaceClass} data-world-component="agent_config" aria-labelledby="agent-config-title">
       <SectionHeader eyebrow="Agent" title="Agent config" />
       <code className={uriClass}>{agentUri}</code>
+      <AgentRouteTabs active="Config" agentUri={agentUri} />
       <div className="space-y-6">
         {(cascade.keys ?? []).map((keyEntry) => (
           <AgentConfigKeySection
@@ -1223,6 +1304,7 @@ function AgentApiKeys({
       <section className={surfaceClass} data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
         <SectionHeader eyebrow="Secrets" title="Agent API keys" />
         <code className={uriClass}>{state.agent_uri}</code>
+        <AgentRouteTabs active="Keys" agentUri={state.agent_uri} />
         <EmptyState label="This agent flavor does not support API keys." />
       </section>
     )
@@ -1232,6 +1314,7 @@ function AgentApiKeys({
     <section className={surfaceClass} data-world-component="agent_api_keys" aria-labelledby="api-keys-title">
       <SectionHeader eyebrow="Secrets" title="Agent API keys" />
       <code className={uriClass}>{state.agent_uri}</code>
+      <AgentRouteTabs active="Keys" agentUri={state.agent_uri} />
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-api-keys-table">
@@ -1326,6 +1409,7 @@ function AgentExtensions({state}: {state: IdentitiesState}) {
     <section className={surfaceClass} data-world-component="agent_extensions" aria-labelledby="agent-extensions-title">
       <SectionHeader eyebrow="Extensions" title="Agent extensions" />
       <code className={uriClass}>{state.agent_uri}</code>
+      <AgentRouteTabs active="Extensions" agentUri={state.agent_uri} />
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
       {state.notice && <p className="text-sm text-muted-foreground">{state.notice}</p>}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1351,6 +1435,59 @@ function SectionHeader({eyebrow, title, actions}: {eyebrow: string; title: strin
       </div>
       {actions}
     </div>
+  )
+}
+
+function MiniStat({label, value}: {label: string; value: React.ReactNode}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+      <strong className="mt-1 block text-lg text-foreground">{value}</strong>
+    </div>
+  )
+}
+
+function AgentRouteTabs({
+  active,
+  agentUri,
+}: {
+  active: (typeof agentTabs)[number]
+  agentUri?: string | null
+}) {
+  const encoded = agentUri ? encodeURIComponent(agentUri) : null
+  const links: Record<(typeof agentTabs)[number], string | null> = {
+    Overview: encoded ? `/identities/agents/${encoded}` : "/identities/agents",
+    Config: encoded ? `/identities/agents/${encoded}/config` : null,
+    Keys: encoded ? `/identities/agents/${encoded}/api-keys` : null,
+    Caps: encoded ? `/identities/agents/${encoded}/caps` : null,
+    Extensions: encoded ? `/identities/agents/${encoded}/extensions` : null,
+    Terminal: encoded ? `/identities/agents/${encoded}/terminal` : null,
+  }
+
+  return (
+    <nav className="flex flex-wrap gap-1 rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Agent detail tabs">
+      {agentTabs.map((tab) => {
+        const href = links[tab]
+        const className =
+          active === tab
+            ? "rounded-md bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm"
+            : "rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition hover:bg-background hover:text-foreground"
+
+        if (!href) {
+          return (
+            <span className={`${className} opacity-60`} key={tab}>
+              {tab}
+            </span>
+          )
+        }
+
+        return (
+          <a className={className} href={href} aria-current={active === tab ? "page" : undefined} key={tab}>
+            {tab}
+          </a>
+        )
+      })}
+    </nav>
   )
 }
 
@@ -1440,6 +1577,18 @@ function activeMatches(active: string, label: string) {
   if (label === "Users") return active === "users"
   if (label === "Agents") return active === "agents"
   return active === label
+}
+
+function allAgentFlavors(state: IdentitiesState): string[] {
+  return Array.from(new Set([...(state.flavors || []), ...defaultAgentFlavors]))
+}
+
+function createSchemaForFlavor(flavor: string, schema?: ConfigSchemaField[]): ConfigSchemaField[] {
+  const current = schema || []
+  const fallback = defaultCreateSchema[flavor] || []
+  const seen = new Set(current.map((field) => field.key))
+
+  return [...current, ...fallback.filter((field) => !seen.has(field.key))]
 }
 
 function previewAgentUri(workspaceUri: string | null | undefined, name: string) {

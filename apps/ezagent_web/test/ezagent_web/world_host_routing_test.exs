@@ -66,11 +66,39 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     {:ok, view, html} = live(conn, "/")
 
-    # FP5 S2-a:根落地页改为独立 Overview dashboard(不再复用 sessions_table);
-    # sessions_table + 布局管理移到 /sessions(见下方 layout manage 用例)。
     assert html =~ ~s(id="world-root")
     assert has_element?(view, "#world-root[phx-hook='WorldRenderer'][phx-update='ignore']")
-    assert has_element?(view, "#world-root[data-world-component='overview']")
+    assert has_element?(view, "#world-root[data-world-component='sessions_table']")
+    assert has_element?(view, ~s([data-world-loading="shell-skeleton"]))
+    assert has_element?(view, "[data-world-loading-progress]")
+    assert has_element?(view, ~s([data-world-loading-panel="sessions"]))
+    assert has_element?(view, ~s([data-world-loading-panel="conversation"]))
+    assert has_element?(view, ~s([data-world-loading-panel="context"]))
+    refute html =~ "motion-safe:animate-spin"
+  end
+
+  test "world Chat default uses the IM single-slot layout, not the persisted layout editor",
+       %{conn: conn} do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    layout = persisted_order_layout(workspace_uri)
+
+    {:ok, _saved} =
+      Ezagent.World.LayoutManager.write_layout(workspace_uri, layout, %{workspace: "system"})
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, _view, html} = live(conn, "/sessions")
+    state = world_state(html)
+
+    assert "sessions_table" == state["component"]
+    assert ["sessions_table"] = state["layout"]["components"] |> Enum.map(& &1["type"])
+    refute html =~ "layout_editor"
   end
 
   test "world shell exposes visible workspaces for the header switcher", %{conn: conn} do
@@ -508,7 +536,6 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    # FP5 S2-a:布局管理面是 sessions_table,现位于 /sessions(根改为 Overview)
     {:ok, view, _html} = live(conn, "/sessions")
 
     html =
@@ -532,7 +559,9 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     {:ok, _view, html} = live(conn, "/sessions")
     assert html =~ "sessions_table"
-    assert html =~ "layout_editor"
+    state = world_state(html)
+    assert ["sessions_table"] = state["layout"]["components"] |> Enum.map(& &1["type"])
+    refute html =~ "layout_editor"
   end
 
   test "world layout manage affordance follows explicit cap grant", %{conn: conn} do
@@ -550,10 +579,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    # FP5 S2-a:布局管理 affordance 在 sessions_table(/sessions),根改为 Overview
     {:ok, _view, html} = live(conn, "/sessions")
 
-    assert html =~ ~s(&quot;can_manage_layout&quot;:true)
+    state = world_state(html)
+    assert state["can_manage_layout"] == false
   end
 
   test "world layout manage dispatch denies caller without manage cap", %{conn: conn} do
@@ -670,6 +699,14 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   defp world_caller(html) do
     [_, json] = Regex.run(~r/data-caller="([^"]*)"/, html)
+
+    json
+    |> html_unescape()
+    |> Jason.decode!()
+  end
+
+  defp world_state(html) do
+    [_, json] = Regex.run(~r/data-world-state="([^"]*)"/, html)
 
     json
     |> html_unescape()

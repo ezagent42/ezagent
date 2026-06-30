@@ -7,6 +7,8 @@
 @source "../../lib/ezagent_web";
 /* Scan the domain UI component library for shared Tailwind classes. */
 @source "../../../ezagent_domain_ui/lib";
+/* Scan plugin-owned LiveView shells that render before their React islands hydrate. */
+@source "../../../ezagent_plugin_world/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */

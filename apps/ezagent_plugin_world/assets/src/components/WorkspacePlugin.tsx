@@ -18,6 +18,7 @@ export type WorkspacePluginState = {
   entity_options?: unknown[]
   entity_uri?: string | null
   error?: string
+  focus_slug?: string | null
   instances?: DataRow[]
   kind?: string | null
   members?: string[]
@@ -60,20 +61,89 @@ export function WorkspacePluginSurface({
   state: WorkspacePluginState
   onAction?: (action: string, args: Record<string, unknown>) => void
 }) {
+  if (state.component === "profile") return <Profile state={state} onAction={onAction} />
+
+  let content: React.ReactNode
+
   switch (state.component) {
     case "workspace_detail":
-      return <WorkspaceDetail state={state} onAction={onAction} />
+      content = <WorkspaceDetail state={state} onAction={onAction} />
+      break
     case "plugins":
-      return <Plugins state={state} />
-    case "profile":
-      return <Profile state={state} onAction={onAction} />
+      content = <Plugins state={state} />
+      break
     case "auto_derive":
-      return <AutoDerive state={state} onAction={onAction} />
+      content = <AutoDerive state={state} onAction={onAction} />
+      break
     case "feishu_bindings":
-      return <FeishuBindings state={state} onAction={onAction} />
+      content = <FeishuBindings state={state} onAction={onAction} />
+      break
     default:
-      return <Workspaces state={state} />
+      content = <Workspaces state={state} />
   }
+
+  return (
+    <ManageFrame active={manageActiveFor(state.component)} title={state.title || "Manage"}>
+      {content}
+    </ManageFrame>
+  )
+}
+
+const MANAGE_ITEMS: Array<{key: string; label: string; href: string; hint: string}> = [
+  {key: "workspace", label: "Workspace", href: "/workspaces", hint: "members, templates, routing"},
+  {key: "plugins", label: "Plugins", href: "/plugins", hint: "routes, flavors, installed apps"},
+  {key: "integrations", label: "Integrations", href: "/plugins/feishu/bindings", hint: "Feishu, mirrors, connectors"},
+  {key: "admin", label: "Admin", href: "/admin", hint: "runtime and registry"},
+  {key: "access", label: "Access", href: "/admin/caps", hint: "caps and authz audit"},
+  {key: "system", label: "System", href: "/admin/settings", hint: "SMTP, routing, diagnostics"},
+]
+
+export function ManageFrame({
+  active,
+  title,
+  children,
+}: {
+  active: string
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="grid h-[666px] min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[232px_minmax(0,1fr)]" data-world-manage-layout>
+      <aside className="min-h-0 overflow-y-auto border-b border-border bg-card p-3 lg:border-b-0 lg:border-r" aria-label="Manage sections">
+        <div className="mb-3 px-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage</p>
+          <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        </div>
+        <nav className="grid gap-1 manage-nav">
+          {MANAGE_ITEMS.map((item) => {
+            const selected = item.key === active
+            return (
+              <a
+                key={item.key}
+                href={item.href}
+                aria-current={selected ? "page" : undefined}
+                className={
+                  selected
+                    ? "rounded-md border border-primary/30 bg-accent/70 px-3 py-2 text-sm font-medium text-accent-foreground"
+                    : "rounded-md border border-transparent px-3 py-2 text-sm font-medium text-muted-foreground transition hover:border-border hover:bg-muted hover:text-foreground"
+                }
+              >
+                <span className="block text-foreground">{item.label}</span>
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">{item.hint}</span>
+              </a>
+            )
+          })}
+        </nav>
+      </aside>
+      <main className="min-h-0 overflow-y-auto p-4">{children}</main>
+    </section>
+  )
+}
+
+function manageActiveFor(component?: string) {
+  if (component === "plugins" || component === "auto_derive") return "plugins"
+  if (component === "feishu_bindings") return "integrations"
+  return "workspace"
 }
 
 function Workspaces({state}: {state: WorkspacePluginState}) {
@@ -289,40 +359,50 @@ function Plugins({state}: {state: WorkspacePluginState}) {
       <Header eyebrow="Plugins" title="Installed plugins" icon={<Plug className="h-4 w-4" />} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {rows.map((plugin) => {
-          // FP5：有 config_surface 的插件，整张卡可点进入其面（此前只有底部小链接，
-          // 大量卡看着像死的）。无操作面的保持纯信息卡（不可点、淡显）。
           const href = plugin.config_path ? String(plugin.config_path) : null
+          const status = pluginSurfaceStatus(plugin)
+          const clickable = href && status !== "route gap"
           const key = String(plugin.slug || plugin.name)
+          const focused = state.focus_slug === plugin.slug
           const body = (
             <>
               <div className="flex items-start justify-between gap-2">
                 <div className="font-semibold text-foreground">{String(plugin.name || plugin.slug)}</div>
-                {href && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+                {clickable && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
               </div>
               <p className="text-sm text-muted-foreground">{String(plugin.description || "")}</p>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <code className={codeClass}>{String(plugin.version || "dev")}</code>
-                {href ? (
-                  <span className="text-primary">{String(plugin.config_label || "Configure")}</span>
-                ) : (
-                  <span>no config</span>
-                )}
+                <span className={status === "route gap" ? "text-amber-600 dark:text-amber-300" : href ? "text-primary" : ""}>
+                  {status}
+                </span>
               </div>
+              {href && <div className="route-line truncate font-mono text-xs text-muted-foreground">{href}</div>}
             </>
           )
 
-          return href ? (
+          return clickable ? (
             <a
               key={key}
               href={href}
-              className="block space-y-2 rounded-md border border-border bg-background p-3 transition hover:border-primary/50 hover:bg-muted/40"
+              data-world-plugin-card
+              data-world-plugin-status={status}
+              className={[
+                "block space-y-2 rounded-md border bg-background p-3 transition hover:border-primary/50 hover:bg-muted/40",
+                focused ? "border-primary/60" : "border-border",
+              ].join(" ")}
             >
               {body}
             </a>
           ) : (
             <article
               key={key}
-              className="space-y-2 rounded-md border border-border bg-background p-3 opacity-75"
+              data-world-plugin-card
+              data-world-plugin-status={status}
+              className={[
+                "space-y-2 rounded-md border bg-background p-3 opacity-75",
+                focused ? "border-primary/60" : "border-border",
+              ].join(" ")}
             >
               {body}
             </article>
@@ -330,8 +410,44 @@ function Plugins({state}: {state: WorkspacePluginState}) {
         })}
         {rows.length === 0 && <EmptyState label="No plugins registered." />}
       </div>
+      <section className={subsectionClass} data-world-plugin-surface-table>
+        <Header eyebrow="Matrix" title="Config surfaces" compact />
+        <div className={tableWrapClass}>
+          <table className={tableClass}>
+            <thead className={theadClass}>
+              <tr>
+                <th className={thClass}>Plugin</th>
+                <th className={thClass}>Surface</th>
+                <th className={thClass}>Target</th>
+                <th className={thClass}>Label</th>
+              </tr>
+            </thead>
+            <tbody className={tbodyClass}>
+              {rows.map((plugin) => (
+                <tr key={String(plugin.slug || plugin.name)} className={rowClass}>
+                  <td className={tdClass}>{String(plugin.slug || plugin.name)}</td>
+                  <td className={tdClass}>{pluginSurfaceStatus(plugin)}</td>
+                  <td className={tdClass}><code className={codeClass}>{String(plugin.config_path || "—")}</code></td>
+                  <td className={tdClass}>{String(plugin.config_label || "—")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length === 0 && <EmptyState label="No plugin surfaces." />}
+        </div>
+      </section>
     </section>
   )
+}
+
+function pluginSurfaceStatus(plugin: DataRow): string {
+  const slug = String(plugin.slug || "")
+  const path = typeof plugin.config_path === "string" ? plugin.config_path : ""
+
+  if (slug === "kb" && path === "/plugins/kb") return "route gap"
+  if (path.startsWith("/identities?filter=agent:")) return "flavor"
+  if (path) return "route"
+  return "no config"
 }
 
 function Profile({

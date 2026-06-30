@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, PanelLeft, PanelLeftClose, Sun, User} from "lucide-react"
+import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, Plus, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface} from "./components/Admin"
@@ -12,8 +12,8 @@ import {Kanban} from "./components/Kanban"
 import {Overview} from "./components/Overview"
 import {SessionsTable} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
-import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
-import {cn} from "./lib/utils"
+import {ManageFrame, WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
+import {isPrimaryNavActive, pageTitleForComponent, primaryNavItems, sectionRoot as worldSectionRoot} from "../js/world_ia.js"
 import slotManifest from "./slots.manifest.json"
 import "./styles.css"
 
@@ -114,27 +114,6 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
 
-  // 左侧导航收起状态。LiveView 导航会重挂 React 岛,故持久化到 localStorage
-  // 以跨页面保持(否则每次切页又弹开)。
-  const [navCollapsed, setNavCollapsed] = React.useState<boolean>(() => {
-    try {
-      return localStorage.getItem("world:nav-collapsed") === "1"
-    } catch {
-      return false
-    }
-  })
-  const toggleNav = React.useCallback(() => {
-    setNavCollapsed((collapsed) => {
-      const next = !collapsed
-      try {
-        localStorage.setItem("world:nav-collapsed", next ? "1" : "0")
-      } catch {
-        // localStorage 不可用(隐私模式等)时仅内存态,可接受
-      }
-      return next
-    })
-  }, [])
-
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
@@ -151,84 +130,80 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
   const components = [...(currentLayout.components || [])].sort(
     (a, b) => (a.placement?.y || 0) - (b.placement?.y || 0),
   )
+  const renderedComponents = components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]
+  const hasConversation = renderedComponents.some((component) => rendererFamily(component.type) === "conversation")
+  const topAction = topActionForSection(state.path)
 
   if (components.length > 0 || state.component === "sessions_table") {
     return (
-      <div className="flex min-h-screen bg-background text-foreground">
-        {!navCollapsed && (
-          <aside className="hidden w-60 shrink-0 flex-col gap-4 border-r border-border bg-card p-4 sm:flex" aria-label="World navigation">
-            <div className="flex items-center justify-between">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary font-semibold text-primary-foreground">W</div>
-              <button
-                type="button"
-                onClick={toggleNav}
-                aria-label="收起菜单"
-                title="收起菜单"
-                className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-              >
-                <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
-              </button>
+      <div
+        className="grid min-h-screen grid-rows-[auto_minmax(0,1fr)] bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
+        data-world-shell="prototype"
+      >
+        <header
+          className="grid grid-cols-1 items-center gap-3 border-b border-border bg-card px-3 py-2 shadow-sm sm:grid-cols-[250px_minmax(260px,1fr)_auto] sm:px-3.5 sm:py-0"
+          data-world-topbar
+        >
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-[7px] border-2 border-primary bg-primary font-mono text-[13px] font-bold text-primary-foreground">
+              ez
             </div>
-            <nav className="flex flex-col gap-0.5">
-              {NAV_ITEMS.map(([label, href]) => (
+            <WorkspaceSwitcher
+              currentWorkspaceName={caller?.current_workspace_name}
+              currentWorkspaceUri={state.workspace_uri || caller?.workspace_uri}
+              isSystemMember={caller?.is_system_member === true}
+              workspaces={caller?.workspaces || []}
+            />
+          </div>
+
+          <nav
+            className="inline-flex min-w-0 justify-self-stretch rounded-[10px] border border-border bg-muted p-[3px] sm:justify-self-center"
+            aria-label="Primary"
+            data-world-primary-nav
+          >
+            <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto">
+              {NAV_ITEMS.map(({label, href}) => (
                 <a className={navClass(state.path, href)} href={href} key={href}>
                   {label}
                 </a>
               ))}
-            </nav>
-          </aside>
-        )}
+            </div>
+          </nav>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6">
-          <MobileNav currentPath={state.path} />
-          <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto">
-              {navCollapsed && (
-                <button
-                  type="button"
-                  onClick={toggleNav}
-                  aria-label="展开菜单"
-                  title="展开菜单"
-                  className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                >
-                  <PanelLeft className="h-4 w-4" aria-hidden="true" />
-                </button>
-              )}
+          <div className="flex min-w-0 items-center justify-end gap-2">
+            <a
+              data-world-top-action
+              className="inline-flex min-h-[34px] items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] border border-primary bg-primary px-3 text-[13px] font-semibold text-primary-foreground transition hover:opacity-90"
+              href={topAction.href}
+            >
+              {topAction.icon === "plus" && <Plus aria-hidden="true" className="h-4 w-4" />}
+              {topAction.label}
+            </a>
+            <AccountMenu
+              displayName={caller?.display_name}
+              entityUri={caller?.entity_uri}
+              capsPath={entityCapsPath(caller?.entity_uri)}
+              themeControl={<ThemeToggle variant="menu" />}
+            />
+          </div>
+        </header>
+
+        <main className={hasConversation ? "min-h-0 min-w-0 overflow-hidden" : "min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
+          {!hasConversation && (
+            <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1 sm:flex-none">
                 <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
                 <h1 className="mt-1 text-xl font-semibold leading-tight text-foreground">{state.title || pageTitle(state.component)}</h1>
               </div>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
-              <WorkspaceSwitcher
-                currentWorkspaceName={caller?.current_workspace_name}
-                currentWorkspaceUri={state.workspace_uri || caller?.workspace_uri}
-                isSystemMember={caller?.is_system_member === true}
-                workspaces={caller?.workspaces || []}
-              />
-              <ThemeToggle />
-              <Button
-                id="world-cmdk-open"
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => pushEvent?.("world:dispatch", {action: "cmdk.open", args: {}})}
-              >
-                Command
-              </Button>
-              <AccountMenu
-                displayName={caller?.display_name}
-                entityUri={caller?.entity_uri}
-              />
-            </div>
-          </header>
+            </header>
+          )}
           <CommandPalette
             cmdk={state.cmdk}
             onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
           />
 
-          <div className="grid min-w-0 gap-4" data-component-count={components.length}>
-            {(components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]).map((component) =>
+          <div className={hasConversation ? "min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
+            {renderedComponents.map((component) =>
               renderLayoutComponent(component, {
                 layout: currentLayout,
                 state,
@@ -450,42 +425,12 @@ function CommandPalette({
   )
 }
 
-// Shell navigation items (label, href). PR-7 nav IA: Users/Agents are NOT
-// separate top-level entries — they are sub-views of Identities (reachable via
-// its All/Users/Agents filter bar), so the prior triple entry-point is collapsed
-// to a single Identities link.
-const NAV_ITEMS: Array<[string, string]> = [
-  ["Overview", "/"],
-  ["Sessions", "/sessions"],
-  ["Identities", "/identities"],
-  ["Admin", "/admin"],
-  ["Workspaces", "/workspaces"],
-  ["Plugins", "/plugins"],
-  ["Profile", "/profile"],
-]
-
-function MobileNav({currentPath}: {currentPath?: string}) {
-  return (
-    <nav className="mb-4 flex gap-1 overflow-x-auto rounded-lg border border-border bg-card p-1 sm:hidden" aria-label="World navigation">
-      {NAV_ITEMS.map(([label, href]) => (
-        <a className={cn(navClass(currentPath, href), "shrink-0 px-3 py-1.5")} href={href} key={href}>
-          {label}
-        </a>
-      ))}
-    </nav>
-  )
-}
+const NAV_ITEMS = primaryNavItems()
 
 // The top-level section a (possibly deep) path belongs to — drives the
 // breadcrumb root + back link.
 function sectionRoot(path?: string): {label: string; href: string} | null {
-  if (!path) return null
-  if (path.startsWith("/identities")) return {label: "Identities", href: "/identities"}
-  if (path.startsWith("/admin")) return {label: "Admin", href: "/admin"}
-  if (path.startsWith("/workspaces")) return {label: "Workspaces", href: "/workspaces"}
-  if (path.startsWith("/plugins")) return {label: "Plugins", href: "/plugins"}
-  if (path.startsWith("/sessions")) return {label: "Sessions", href: "/sessions"}
-  return null
+  return worldSectionRoot(path)
 }
 
 // Breadcrumb + back affordance for nested pages. Top-level pages (path === the
@@ -506,7 +451,21 @@ function Breadcrumbs({path, title}: {path?: string; title: string}) {
   )
 }
 
-function ThemeToggle() {
+function topActionForSection(path?: string): {label: string; href: string; icon?: "plus"} {
+  const root = sectionRoot(path)
+
+  if (root?.label === "Agents") {
+    return {label: "New agent", href: "/identities/agents/new", icon: "plus"}
+  }
+
+  if (root?.label === "Manage") {
+    return {label: "View audit", href: "/admin/audit/authz"}
+  }
+
+  return {label: "New chat", href: "/sessions", icon: "plus"}
+}
+
+function ThemeToggle({variant = "icon"}: {variant?: "icon" | "menu"}) {
   const [dark, setDark] = React.useState(false)
 
   React.useEffect(() => {
@@ -524,9 +483,23 @@ function ThemeToggle() {
     setDark(next)
   }
 
+  if (variant === "menu") {
+    return (
+      <button
+        type="button"
+        role="menuitem"
+        onClick={toggle}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+      >
+        {dark ? <Sun aria-hidden="true" className="h-4 w-4" /> : <Moon aria-hidden="true" className="h-4 w-4" />}
+        {dark ? "Light mode" : "Dark mode"}
+      </button>
+    )
+  }
+
   return (
     <Button type="button" variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
-      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {dark ? <Sun aria-hidden="true" className="h-4 w-4" /> : <Moon aria-hidden="true" className="h-4 w-4" />}
     </Button>
   )
 }
@@ -576,12 +549,13 @@ function WorkspaceSwitcher({
     <div className="relative max-w-full" ref={ref}>
       <button
         type="button"
+        aria-label="Account menu"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Switch workspace"
+        aria-label={`Switch workspace: ezagent / ${label}`}
         title="Switch workspace"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        className="inline-flex min-h-[34px] max-w-full items-center justify-between gap-1.5 rounded-[10px] border border-border bg-muted px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
       >
         <Boxes aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 truncate">
@@ -674,12 +648,20 @@ function workspaceLabel(workspace: WorkspaceNavItem): string {
   return String(workspace.name || workspace.uri || "workspace")
 }
 
-// Header account menu — the world UI's logout / switch-account entry point (F3).
-// Mirrors the LiveView shell's avatar menu (ide_shell.ex): a display-name button
-// opening a dropdown whose only action is a CSRF-protected POST to /logout. Switch
-// account = logout + re-auth (no in-place context swap; SPEC v3 §6.4), so "Sign out"
-// is also how an operator changes who they are signed in as.
-function AccountMenu({displayName, entityUri}: {displayName?: string | null; entityUri?: string | null}) {
+// Header account menu — personal account state lives here rather than in the
+// primary nav. Switch account = logout + re-auth (no in-place context swap;
+// SPEC v3 §6.4), so "Sign out" is also how an operator changes identity.
+function AccountMenu({
+  displayName,
+  entityUri,
+  capsPath,
+  themeControl,
+}: {
+  displayName?: string | null
+  entityUri?: string | null
+  capsPath?: string | null
+  themeControl?: React.ReactNode
+}) {
   const [open, setOpen] = React.useState(false)
   const ref = React.useRef<HTMLDivElement>(null)
   const formRef = React.useRef<HTMLFormElement>(null)
@@ -730,6 +712,25 @@ function AccountMenu({displayName, entityUri}: {displayName?: string | null; ent
               </div>
             )}
           </div>
+          <a
+            href="/profile"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            <User aria-hidden="true" className="h-4 w-4" />
+            Profile
+          </a>
+          {capsPath && (
+            <a
+              href={capsPath}
+              role="menuitem"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              <Lock aria-hidden="true" className="h-4 w-4" />
+              My capabilities
+            </a>
+          )}
+          {themeControl}
           <form ref={formRef} action="/logout" method="post" className="block">
             <input type="hidden" name="_csrf_token" value={csrfToken()} />
             <button
@@ -755,6 +756,15 @@ function AccountMenu({displayName, entityUri}: {displayName?: string | null; ent
       )}
     </div>
   )
+}
+
+function entityCapsPath(entityUri?: string | null): string | null {
+  if (!entityUri) return null
+
+  const encoded = encodeURIComponent(entityUri)
+  if (entityUri.includes("/agent/")) return `/identities/agents/${encoded}/caps`
+  if (entityUri.includes("/user/")) return `/identities/users/${encoded}/caps`
+  return null
 }
 
 type RenderContext = {
@@ -864,11 +874,12 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       // kanban 操作面（kanban-as-role K4）：复用 onWorkspacePluginAction 透传 world:dispatch
       // （kanban.* 动作经 WorldLive 的 @kanban_actions 子句路由到 KanbanActions）。
       return (
-        <Kanban
-          key={component.id}
-          state={{...context.state, component: component.type}}
-          onAction={context.onWorkspacePluginAction}
-        />
+        <ManageFrame key={component.id} active="plugins" title="Kanban">
+          <Kanban
+            state={{...context.state, component: component.type}}
+            onAction={context.onWorkspacePluginAction}
+          />
+        </ManageFrame>
       )
 
     case "identities":
@@ -899,15 +910,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 
 function navClass(path: string | undefined, href: string) {
   const currentPath = path ?? (typeof window !== "undefined" ? window.location.pathname : undefined)
-  const active =
-    href === "/"
-      ? currentPath === "/" || currentPath === undefined
-      : currentPath === href ||
-        (href === "/sessions" && currentPath?.startsWith("/sessions")) ||
-        (href === "/identities" && currentPath?.startsWith("/identities")) ||
-        (href === "/admin" && currentPath?.startsWith("/admin")) ||
-        (href === "/workspaces" && currentPath?.startsWith("/workspaces")) ||
-        (href === "/plugins" && currentPath?.startsWith("/plugins"))
+  const active = isPrimaryNavActive(currentPath, href)
 
   return active
     ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
@@ -915,62 +918,5 @@ function navClass(path: string | undefined, href: string) {
 }
 
 function pageTitle(component: string | undefined) {
-  switch (component) {
-    case "overview":
-      return "Overview"
-    case "conversation":
-      return "Conversation"
-    case "identities":
-      return "Identities"
-    case "users_table":
-      return "Users"
-    case "agents_table":
-      return "Agents"
-    case "entity_caps":
-      return "Entity caps"
-    case "agent_detail":
-      return "Agent detail"
-    case "agent_new_form":
-      return "New agent"
-    case "agent_api_keys":
-      return "Agent API keys"
-    case "agent_extensions":
-      return "Agent extensions"
-    case "pty_terminal":
-      return "Terminal"
-    case "dashboard":
-      return "Admin dashboard"
-    case "observability":
-      return "Observability"
-    case "entity_registry":
-      return "Entity registry"
-    case "snapshots":
-      return "Snapshots"
-    case "templates":
-      return "Templates"
-    case "caps_admin":
-      return "Capabilities"
-    case "authz_audit":
-      return "Authz audit"
-    case "settings":
-      return "Settings"
-    case "routing":
-      return "Routing"
-    case "external_mirror":
-      return "External mirror"
-    case "workspaces_list":
-      return "Workspaces"
-    case "workspace_detail":
-      return "Workspace detail"
-    case "plugins":
-      return "Plugins"
-    case "profile":
-      return "Profile"
-    case "auto_derive":
-      return "Auto derive"
-    case "feishu_bindings":
-      return "Feishu bindings"
-    default:
-      return "Sessions"
-  }
+  return pageTitleForComponent(component)
 }

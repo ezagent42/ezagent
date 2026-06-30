@@ -50,8 +50,10 @@ defmodule Ezagent.World.WorkspacePluginData do
     Map.merge(base, workspace_detail(name))
   end
 
-  defp component_state(%{component: "plugins"}, base, _workspace_uri, _caller, _caps) do
-    Map.put(base, "plugins", list_plugins())
+  defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
+    base
+    |> Map.put("plugins", list_plugins())
+    |> Map.put("focus_slug", Map.get(route, :focus_slug))
   end
 
   defp component_state(

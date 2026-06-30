@@ -14,7 +14,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.ConversationActions
   alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
-  alias EzagentPluginWorld.Layouts
+  alias EzagentPluginWorld.{Layouts, WorldLoading}
 
   @refresh_ms 2_000
 
@@ -251,7 +251,7 @@ defmodule EzagentPluginWorld.WorldLive do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
@@ -307,10 +307,7 @@ defmodule EzagentPluginWorld.WorldLive do
           data-world-css-url={@world_css_url}
           class="min-h-screen"
         >
-          <div class="flex min-h-screen items-center justify-center bg-[#f8fafc] px-6">
-            <div class="h-10 w-10 rounded-full border border-[#d1d5db] border-t-[#111827] motion-safe:animate-spin">
-            </div>
-          </div>
+          <WorldLoading.shell />
         </div>
       </main>
     </Layouts.app>
@@ -519,15 +516,10 @@ defmodule EzagentPluginWorld.WorldLive do
   defp layout_for(_, _),
     do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
-  # The /sessions landing reads its (multi-slot, user-arrangeable) persisted
-  # layout; every other route derives a synthetic single-slot layout. BOTH go
-  # through `LayoutManager.validate_layout/2` so EVERY route's layout is a
-  # registry-validated layout — a route that produces an unregistered slot
-  # fails loudly here (and is caught pre-merge by the layout gate) instead of
-  # silently falling through to a renderer default.
-  defp layout_for_route(%{component: "sessions_table"}, workspace_uri, caller_uri),
-    do: layout_for(workspace_uri, caller_uri)
-
+  # Route pages derive synthetic single-slot layouts. The older persisted
+  # multi-slot layout still exists for the layout.manage behavior, but Chat is
+  # now an IM surface; rendering a layout editor beside the default conversation
+  # shell breaks the product contract.
   defp layout_for_route(%{component: component, title: title}, workspace_uri, _caller_uri) do
     scope_uri =
       if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
@@ -856,14 +848,6 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp parse_agent_uri(_), do: :error
 
-  # Single per-route layout-management policy (the one place that decides).
-  # Today only the /sessions landing carries a multi-slot, user-arrangeable
-  # layout, so it is the only route where managing the layout is meaningful —
-  # and only for a caller holding the workspace-scoped layout `:manage` cap.
-  # Every other route is a single synthetic slot; rearranging it is a no-op.
-  defp can_manage_layout?("sessions_table", workspace_uri, caps),
-    do: layout_manage_affordance?(workspace_uri, caps)
-
   defp can_manage_layout?(_component, _workspace_uri, _caps), do: false
 
   defp put_can_manage_layout(state, component, socket) do
@@ -875,26 +859,6 @@ defmodule EzagentPluginWorld.WorldLive do
       can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
     )
   end
-
-  defp layout_manage_affordance?(%URI{} = workspace_uri, caps) do
-    Enum.any?(caps, &layout_manage_cap?(&1, workspace_uri))
-  end
-
-  defp layout_manage_affordance?(_, _), do: false
-
-  defp layout_manage_cap?(%Ezagent.Capability{} = cap, %URI{} = workspace_uri) do
-    cap.kind == :workspace and
-      cap.behavior == Ezagent.World.Behavior.Layout and
-      Ezagent.Capability.action_of(cap) in [:manage, :any] and
-      cap_scope_matches?(cap.instance, Ezagent.URI.instance(workspace_uri)) and
-      cap_scope_matches?(cap.workspace_uri, Ezagent.Capability.workspace_of(workspace_uri))
-  end
-
-  defp layout_manage_cap?(_, _), do: false
-
-  defp cap_scope_matches?(:any, _needed), do: true
-  defp cap_scope_matches?(%URI{} = actual, %URI{} = needed), do: same_uri?(actual, needed)
-  defp cap_scope_matches?(actual, needed), do: actual == needed
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false
