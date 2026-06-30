@@ -45,8 +45,9 @@ The merged SHA is `72ae93a381d87943d2d41a04446483c8026fa7b0`.
 
 ## 4. Carry Forward To 2026-06-30
 
-1. Refresh or close #1095. Its docs still mention the old local-dispatch seam and
-   should not be merged as-is after #1096.
+1. Run the remaining AutoService real answer-loop verification after Claude Code
+   auth/bridge readiness is available. #1095 now records #1096's final
+   materialization fix, but it does not prove an agent-authored reply.
 2. Rerun `world-host-scope-config-driven` DB-backed gates with temporary PG and
    decide whether to open/merge a PR.
 3. Turn #1027 Agent Console QA findings into prioritized bugfix tasks instead of

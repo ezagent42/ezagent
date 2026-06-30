@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dev Together Review - 2026-06-29</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Dev Together Review - 2026-06-29</h1>
+</header>
+<h1 id="dev-together-review---2026-06-29">Dev Together Review -
+2026-06-29</h1>
+<p>reviewed_at: 2026-06-30 09:45 +0800 lead: allen / codex timezone:
+GMT+8</p>
+<h2 id="close-summary">1. Close Summary</h2>
+<p>The main close result is #1096. The initial branch solved the wrong
+problem by adding a core local dispatch bypass. The accepted merge
+removed that bypass and fixed the actual AutoService create-time state
+problem:</p>
+<ul>
+<li>cc orchestrator creation goes through AgentTemplate
+materialization;</li>
+<li>sandbox config is initialized during Agent Kind create;</li>
+<li><code>sandbox.write_path</code> is now
+<code>sandbox.update_config</code>;</li>
+<li><code>TemplateSpawn</code> skips fallback dispatch when the live
+sandbox slice already matches the returned meta;</li>
+<li>grants stay on the normal <code>Identity.Grant</code> +
+<code>Invocation.dispatch/1</code> path.</li>
+</ul>
+<p>The merged SHA is
+<code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>.</p>
+<h2 id="what-went-well">2. What Went Well</h2>
+<ul>
+<li>The suspected core leak was caught before merge. Final
+<code>origin/main</code> diff has no
+<code>apps/ezagent_core/lib/ezagent/invocation.ex</code> change.</li>
+<li>The fix now matches the architecture: sandbox config is create-time
+Agent state, not an external transport readiness concern.</li>
+<li>Verification used a disposable PostgreSQL Docker container and
+removed it after tests, avoiding both the deprecated sqlite path and the
+corrupt local PG volume.</li>
+<li>PR comment and PR body now explain the redo, so the contributor has
+a durable record rather than only TUI context.</li>
+</ul>
+<h2 id="friction-process-debt">3. Friction / Process Debt</h2>
+<ul>
+<li>2026-06-29 had returns but no <code>stack.md</code>, so close had to
+reconstruct the ledger after the fact.</li>
+<li><code>team.md</code> still points several developers at old latest
+returns. Today’s plan should cite the newest real return/PR state even
+if <code>team.md</code> is stale, then update team state in the next
+review.</li>
+<li><code>2026-W27/weekly-goals.md</code> was missing. It has now been
+created by rolling the W26 goals forward and adding dev-together
+self-bootstrapping as an explicit weekly goal.</li>
+<li>Local default PG on 55432 is corrupt. The durable rule is now: use
+temporary PG Docker for tests and delete it after the run.</li>
+</ul>
+<h2 id="carry-forward-to-2026-06-30">4. Carry Forward To 2026-06-30</h2>
+<ol type="1">
+<li>Run the remaining AutoService real answer-loop verification after
+Claude Code auth/bridge readiness is available. #1095 now records
+#1096’s final materialization fix, but it does not prove an
+agent-authored reply.</li>
+<li>Rerun <code>world-host-scope-config-driven</code> DB-backed gates
+with temporary PG and decide whether to open/merge a PR.</li>
+<li>Turn #1027 Agent Console QA findings into prioritized bugfix tasks
+instead of leaving the report as an open stale docs PR.</li>
+<li>Review #1020 as a dedicated kanban/dev-together E2E track. It is too
+large for opportunistic close.</li>
+<li>Decide #1022 split/close: lockfile sync and personal docs should not
+remain coupled.</li>
+</ol>
+</body>
+</html>

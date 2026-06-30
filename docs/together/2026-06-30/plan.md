@@ -13,13 +13,13 @@ timezone: GMT+8
   - `docs/together/2026-06-29/stack.md`
   - `docs/together/2026-06-29/review.md`
   - `docs/together/2026-06-29/returns/*`
-  - open PR snapshot on 2026-06-30: #1095, #1027, #1026, #1022, #1020.
+  - open PR snapshot on 2026-06-30 after merging #1095: #1027, #1026, #1022, #1020.
 
 ## Planned Tasks
 
 | task id | owner | branch | weekly goal | scope | owned surfaces / files | required reading | DoD artifact | deadline |
 |---|---|---|---|---|---|---|---|---|
-| T1-autoservice-doc-close | gaga | `gaga/0630-autoservice-doc-close` | Goal 1 | Refresh or close #1095 after #1096. Remove stale `dispatch_registered_local` wording, link merge SHA `72ae93a3`, and list remaining live issues as follow-ups. | `docs/together/2026-06-29/returns/autoservice-live-verify-codex.md`, #1095 PR body/comments | #1096 PR comment, `docs/together/2026-06-29/stack.md`, `returns/autoservice-live-verify-codex.md` | Updated #1095 or explicit close comment; no stale architecture claim remains. | 2026-06-30 14:00 |
+| T1-autoservice-answer-loop | gaga | `gaga/0630-autoservice-answer-loop` | Goal 1 | Continue from merged #1095/#1096: verify the real AutoService cc answer-loop after Claude Code auth/bridge readiness. The target success signal is an agent-authored reply in `session://autosvc/default/tier1` that uses the KB fact `ZEPHYR-7731`. If auth cannot be made ready, return exact blocker evidence and the smallest next operational step. | AutoService live stack, `scripts/autoservice_tier1_seed.exs`, #1095 report, #1096 PR comment | #1095 merged report, `docs/together/2026-06-29/returns/cc-agent-create-failure-resolution.md`, temporary PG rule | Return doc with commands, screenshots/log evidence, PG cleanup proof if DB tests run, and clear verdict: answer-loop green or auth/bridge blocker. | 2026-06-30 16:00 |
 | T2-agent-console-f3-f4-f7 | fatnine | `fix/agent-console-qa-f3-f4-f7` | Goal 1 | Convert #1027 QA findings into fixes for the high-value Agent Console blockers: invalid default `advisor` session template silent failure, occupied-agent delete feedback, and missing session remove/delete path decision. | `apps/ezagent_plugin_world/`, `apps/ezagent_web/test/ezagent_web/`, Agent Console LiveView/tests, #1027 docs | #1027 body, `docs/together/2026-06-26/agent-console-qa-findings.md`, AGENTS.md Phoenix/LiveView rules | PR with tests for F3 and F4; F7 either implemented or explicitly split with a tested UX decision. | 2026-06-30 18:00 |
 | T3-world-host-scope-verify | zyli | `verify/world-host-scope-temp-pg` | Goal 1 | Rerun the deferred DB-backed gates from `world-host-scope-config-driven` using temporary PG Docker. If green, open/refresh PR; if red, return exact failing gate and fix recommendation. | `apps/ezagent_web/lib/ezagent_web/router.ex`, `config/*.exs`, world host routing tests, socialware P10 E2E | `returns/world-host-scope-config-driven.md`, `docs/guide/world-coordination.md`, temporary PG rule | Return doc with commands, PG container cleanup proof, and merge recommendation. | 2026-06-30 16:00 |
 | T4-website-demo-followup | zhaomato | `feat/website-demo-followup-0630` | Goal 2 | Continue official website work from merged #1090 without touching World operator host routing. Focus on demo/content polish and `@json-render` substrate compatibility. | website/demo docs and app surfaces from #1090; avoid `apps/ezagent_plugin_world/assets/src/styles.css` unless coordinated | #1090, `docs/guide/world-coordination.md`, FP4 design-system return | PR or return with screenshots and clear separation from operator World/socialware surfaces. | 2026-06-30 18:00 |
@@ -30,7 +30,7 @@ timezone: GMT+8
 
 | surface | tasks | conflict / serialization rule |
 |---|---|---|
-| AutoService docs / #1095 | T1, lead close | T1 owns content refresh; lead only closes/merges after T1 return. |
+| AutoService live stack | T1, lead close | #1095 docs are already merged; T1 owns only real answer-loop verification and must not reopen the core materialization design unless new evidence contradicts #1096. |
 | Agent Console / World LiveView | T2, T3, T4 | T2 owns Agent Console behavior. T3 only verifies/reruns host routing. T4 must not modify operator World routing or shared `styles.css` without explicit coordination. |
 | `apps/ezagent_plugin_world/assets/src/styles.css` | T4, possible T2 | Serialize through zhaomato if website/demo visual work touches it; T2 should prefer behavior/tests over shared style edits. |
 | PR queue / dev-together ledger | T5, T6, lead | T5 owns #1020 technical verdict. T6 owns stale docs PR cleanup. Lead updates `stack.md` only after returns. |
@@ -38,7 +38,7 @@ timezone: GMT+8
 
 ## Handoff Order
 
-1. T1 to gaga first: short docs/close loop, unblocks stale #1095.
+1. T1 to gaga first: live answer-loop verification, building on merged #1095/#1096.
 2. T3 to zyli in parallel: verification-only and uses temporary PG.
 3. T2 to fatnine once T3's host-routing result is known if it changes World routing assumptions; otherwise can start immediately with Agent Console tests.
 4. T4 to zhaomato in parallel but with World style ownership warning.
