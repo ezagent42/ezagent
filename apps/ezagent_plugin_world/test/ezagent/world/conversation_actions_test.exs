@@ -38,4 +38,39 @@ defmodule Ezagent.World.ConversationActionsTest do
       assert is_binary(msg) and msg != ""
     end
   end
+
+  # Regression: a session name with a space used to crash session URI parsing
+  # ("URI parse failed at \":\": \"session://ezagent/hello/hello world\"").
+  describe "session name sanitization (URI path-segment safety)" do
+    test "collapses whitespace to '-' so a spaced name builds a valid session URI" do
+      assert ConversationActions.sanitize_short_name("hello world") == "hello-world"
+      assert ConversationActions.sanitize_short_name("  multi   space  ") == "multi-space"
+
+      uri = Ezagent.URI.session("ezagent", "hello", ConversationActions.sanitize_short_name("hello world"))
+      assert %URI{} = uri
+      assert URI.to_string(uri) == "session://ezagent/hello/hello-world"
+    end
+
+    test "CJK / reserved names are rejected cleanly (Ezagent.URI parses strictly)" do
+      # Ezagent.URI.new! rejects raw CJK in a segment, so a CJK name must be caught
+      # by uri_safe_short_name?/1 (→ :invalid_short_name) rather than crash the build.
+      refute ConversationActions.uri_safe_short_name?("客服-会话")
+      assert_raise ArgumentError, fn -> Ezagent.URI.session("ezagent", "hello", "客服-会话") end
+    end
+
+    test "uri_safe_short_name?/1 allows the URI unreserved set, rejects the rest" do
+      for ok <- ["hello-world", "multi-space", "abc_123", "a.b~c", "Session1"] do
+        assert ConversationActions.uri_safe_short_name?(ok), "expected #{ok} allowed"
+      end
+
+      for bad <- ["a/b", "a:b", "a?b", "a#b", "a@b", "a[b", "a b", "客服", ""] do
+        refute ConversationActions.uri_safe_short_name?(bad), "expected #{inspect(bad)} rejected"
+      end
+    end
+
+    test ":invalid_short_name maps to a friendly, non-empty message" do
+      msg = ConversationActions.session_create_error_message(:invalid_short_name)
+      assert is_binary(msg) and msg != ""
+    end
+  end
 end
