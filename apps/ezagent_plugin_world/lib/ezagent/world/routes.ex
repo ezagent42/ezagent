@@ -23,18 +23,13 @@ defmodule Ezagent.World.Routes do
           %URI{} = session_uri ->
             %{
               component: "conversation",
-              title: "Conversation",
+              title: "Chat",
               path: path,
               session_uri: session_uri
             }
 
-          nil when path == "/" ->
-            # FP5 S2-a:Overview 落地页是独立 dashboard(KPI 概览 + 快捷入口),
-            # 不再与 /sessions 雷同复用 sessions_table。
-            %{component: "overview", title: "Overview", path: path}
-
           nil ->
-            %{component: "sessions_table", title: "Sessions", path: path}
+            %{component: "sessions_table", title: "Chat", path: path}
         end
 
       path == "/identities" ->
@@ -80,6 +75,15 @@ defmodule Ezagent.World.Routes do
 
       path == "/plugins" ->
         %{group: :workspace_plugins, component: "plugins", title: "Plugins", path: path}
+
+      path == "/plugins/kb" ->
+        %{
+          group: :workspace_plugins,
+          component: "plugins",
+          title: "Knowledge Base",
+          path: path,
+          focus_slug: "kb"
+        }
 
       path == "/plugins/feishu/bindings" ->
         %{
@@ -237,7 +241,7 @@ defmodule Ezagent.World.Routes do
         }
 
       true ->
-        %{component: "sessions_table", title: "Sessions", path: path}
+        %{component: "sessions_table", title: "Chat", path: path}
     end
   end
 
