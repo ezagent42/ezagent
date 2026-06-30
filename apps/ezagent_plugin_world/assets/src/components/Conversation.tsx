@@ -324,20 +324,75 @@ export function Conversation({
 
   return (
     <div
-      className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_260px]"
+      className="grid h-[666px] min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
       data-world-component="conversation"
+      data-world-chat-layout="im"
       data-expanded={expanded ? "true" : "false"}
     >
-      <section className="flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground">
-        <div className="flex items-center justify-between gap-4 border-b border-border p-4">
+      <aside
+        className="hidden min-h-0 flex-col overflow-hidden border-r border-border bg-[#fafafa] text-card-foreground lg:flex"
+        aria-label="Sessions"
+        data-world-session-rail
+      >
+        <div className="flex min-h-[58px] items-center justify-between gap-2.5 border-b border-border px-3 py-2.5">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session</p>
-            <h2 className="text-[17px] font-semibold text-foreground">Conversation</h2>
+            <h2 className="text-[13px] font-bold text-foreground">Sessions</h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">Current workspace only</p>
+          </div>
+          <Button size="sm" variant="secondary" aria-label="Create a new session">
+            <Plus aria-hidden="true" />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+          <div className="mb-2 min-h-[34px] rounded-[10px] border border-border bg-muted px-2.5 py-2 text-[12px] text-muted-foreground">
+            Filter sessions, template, status
+          </div>
+          {sessions.length === 0 ? (
+            <p className="px-2 py-3 text-[13px] leading-relaxed text-muted-foreground">No sessions in this workspace.</p>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {sessions.map((session) => {
+                const active = session.uri === sessionUri
+                const label = session.name || uriSegment(session.uri)
+
+                return (
+                  <li key={session.uri}>
+                    <button
+                      type="button"
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => onSwitch(session.uri)}
+                      className={
+                        active
+                          ? "flex w-full min-w-0 items-start gap-2 rounded-[10px] border border-[#f0d44a] bg-[#fff2a6] px-2.5 py-2.5 text-left text-foreground"
+                          : "flex w-full min-w-0 items-start gap-2 rounded-[10px] border border-border bg-card px-2.5 py-2.5 text-left text-muted-foreground transition hover:border-primary hover:text-foreground"
+                      }
+                    >
+                      <MessageSquare aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-semibold">{label}</span>
+                        <span className="mt-0.5 block truncate font-mono text-[11px] opacity-75" title={session.uri}>
+                          {session.uri}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </aside>
+
+      <section className="flex min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
+        <div className="flex min-h-[58px] items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div>
+            <h2 className="text-[13px] font-bold text-foreground">{sessionUri ? uriSegment(sessionUri) : "Conversation"}</h2>
+            <p className="mt-0.5 max-w-[48ch] truncate font-mono text-[11px] text-muted-foreground">{sessionUri || "No active session"}</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {sessions.length > 1 && (
               <select
-                className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground"
+                className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground lg:hidden"
                 value={sessionUri}
                 onChange={(event) => onSwitch(event.target.value)}
                 aria-label="Switch session"
@@ -349,7 +404,7 @@ export function Conversation({
                 ))}
               </select>
             )}
-            <div className="inline-flex items-center rounded-lg border border-border bg-muted p-0.5" aria-label="Session view">
+            <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
               <button type="button" className={segmentClass(activeView === "chat")} onClick={() => sessionUri && onSwitchView(sessionUri, "chat")} aria-label="Show chat">
                 <MessageSquare aria-hidden="true" className="h-[15px] w-[15px]" />
                 Chat
@@ -390,7 +445,11 @@ export function Conversation({
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <div className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-card px-[18px] py-5" ref={scrollRef} data-message-count={messages.length}>
+            <div
+              className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-[linear-gradient(#ffffff,#ffffff),repeating-linear-gradient(0deg,transparent,transparent_31px,rgba(23,32,42,0.04)_32px)] px-4 py-4"
+              ref={scrollRef}
+              data-message-count={messages.length}
+            >
               {oldestCursor && (
                 <div className="flex justify-center pb-0.5">
                   <Button size="sm" variant="secondary" onClick={loadOlder}>
@@ -460,7 +519,7 @@ export function Conversation({
               )}
             </div>
 
-            <form className="flex items-end gap-2.5 border-t border-border bg-card p-4" onSubmit={submit}>
+            <form className="flex items-end gap-2.5 border-t border-border bg-[#fafafa] px-4 py-3" onSubmit={submit}>
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
                   <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="Mention a member">
@@ -486,7 +545,7 @@ export function Conversation({
                 )}
                 <textarea
                   ref={inputRef}
-                  className="max-h-[180px] min-h-[46px] w-full resize-y rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                  className="max-h-[180px] min-h-[58px] w-full resize-y rounded-[10px] border border-input bg-card px-3 py-2.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                   value={text}
                   onChange={(event) => onComposerChange(event.target.value, event.target.selectionStart)}
                   onKeyDown={(event) => {
@@ -565,8 +624,8 @@ export function Conversation({
         )}
       </section>
 
-      <aside className="flex h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground" aria-label="Session members">
-        <div className="flex items-start justify-between gap-2.5 border-b border-border px-4 py-3">
+      <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[#fafafa] text-card-foreground" aria-label="Session members">
+        <div className="flex min-h-[58px] items-start justify-between gap-2.5 border-b border-border px-4 py-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
             <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>

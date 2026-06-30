@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>World UI IM Refactor Harness</title>
+    <link rel="stylesheet" href="../../../../../apps/ezagent_web/priv/static/assets/world/world.css" />
+    <style>
+      body { margin: 0; }
+      #harness-controls {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        z-index: 9999;
+        display: flex;
+        gap: 4px;
+        padding: 6px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--card);
+        box-shadow: var(--shadow-soft);
+      }
+      #harness-controls button {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--background);
+        color: var(--foreground);
+        font: 12px var(--font-sans);
+        padding: 4px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="world-root"></div>
+    <div id="harness-controls" aria-label="Harness screens"></div>
+    <script type="module">
+      import {mountWorld} from "../../../../../apps/ezagent_web/priv/static/assets/world/main.js?v=world-ui-im-refactor-0630-4"
+
+      const caller = {
+        entity_uri: "entity://system/user/admin",
+        workspace_uri: "workspace://system",
+        current_workspace_name: "system",
+        display_name: "Admin",
+        is_system_member: true,
+        workspaces: [
+          {name: "system", uri: "workspace://system", current: true, switch_path: "/workspaces/switch"},
+          {name: "customer-demo", uri: "workspace://customer-demo", current: false, switch_path: "/workspaces/switch"},
+        ],
+      }
+
+      const sessions = [
+        {uri: "session://system/default/cc-agent-roundtrip", name: "cc-agent-roundtrip", workspace_uri: "workspace://system"},
+        {uri: "session://system/default/kanban-manager-handoff", name: "kanban-manager handoff", workspace_uri: "workspace://system"},
+        {uri: "session://system/default/feishu-bing", name: "feishu-bing", workspace_uri: "workspace://system"},
+      ]
+
+      const agents = [
+        {
+          uri: "entity://system/agent/cc_roundtrip",
+          display_name: "cc-roundtrip",
+          flavor: "cc",
+          alive: true,
+          detail_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fcc_roundtrip",
+          config_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fcc_roundtrip/config",
+          api_keys_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fcc_roundtrip/api-keys",
+          caps_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fcc_roundtrip/caps",
+          extensions_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fcc_roundtrip/extensions",
+        },
+        {
+          uri: "entity://system/agent/kanban_manager",
+          display_name: "kanban-manager",
+          flavor: "native",
+          alive: true,
+          detail_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fkanban_manager",
+          config_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fkanban_manager/config",
+          api_keys_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fkanban_manager/api-keys",
+          caps_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fkanban_manager/caps",
+          extensions_path: "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fkanban_manager/extensions",
+        },
+      ]
+
+      const plugins = [
+        {slug: "feishu", name: "Feishu (Lark)", version: "dev", description: "Open id to user URI bindings.", config_path: "/plugins/feishu/bindings", config_label: "Bindings"},
+        {slug: "kanban", name: "Kanban", version: "dev", description: "Miro and GitHub connector workspace.", config_path: "/plugins/kanban", config_label: "Kanban"},
+        {slug: "kb", name: "Knowledge Base", version: "dev", description: "Knowledge-base plugin declared route.", config_path: "/plugins/kb", config_label: "Knowledge Base"},
+        {slug: "cc", name: "Claude Code", version: "dev", description: "Agent flavor plugin.", config_path: "/identities?filter=agent:cc", config_label: "cc agents"},
+        {slug: "email", name: "Email", version: "dev", description: "Mail integration.", config_path: null, config_label: "Configure"},
+      ]
+
+      const base = {
+        workspace_uri: "workspace://system",
+        current_session_uri: sessions[0].uri,
+        sessions,
+        templates: ["default", "hello", "customer-support"],
+      }
+
+      const screens = {
+        sessions: {
+          layout: single("sessions_table"),
+          state: {...base, component: "sessions_table", title: "Chat", path: "/sessions"},
+        },
+        conversation: {
+          layout: single("conversation"),
+          state: {
+            ...base,
+            component: "conversation",
+            title: "Chat",
+            path: "/sessions",
+            session_uri: sessions[0].uri,
+            caller_uri: caller.entity_uri,
+            members: [
+              {uri: "entity://system/user/admin", display_name: "Admin", online: true, kind: "user"},
+              {uri: "entity://system/agent/cc_roundtrip", display_name: "cc-roundtrip", online: true, kind: "agent"},
+            ],
+            messages: [
+              {id: "m1", sender: "entity://system/user/admin", sender_display: "Admin", text: "请检查这个 handoff 并给出改动计划。", at: "18:00"},
+              {id: "m2", sender: "entity://system/agent/cc_roundtrip", sender_display: "cc-roundtrip", text: "我会先读取设计稿，再对齐 Chat / Agents / Manage 的生产 UI。", at: "18:01"},
+            ],
+            routing_rules: [
+              {id: 1, table: "session", matcher: "always", receivers: ["entity://system/agent/cc_roundtrip"], enabled: true},
+            ],
+          },
+        },
+        agents: {
+          layout: single("agents_table"),
+          state: {component: "agents_table", title: "Agents", path: "/identities/agents", workspace_uri: "workspace://system", agents, agent_flavors: ["cc", "native"]},
+        },
+        "agent-new": {
+          layout: single("agent_new_form"),
+          state: {component: "agent_new_form", title: "New Agent", path: "/identities/agents/new", workspace_uri: "workspace://system", flavors: ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"], default_flavor: "cc"},
+        },
+        plugins: {
+          layout: single("plugins"),
+          state: {component: "plugins", title: "Plugins", path: "/plugins", workspace_uri: "workspace://system", plugins, focus_slug: "kb"},
+        },
+        admin: {
+          layout: single("dashboard"),
+          state: {component: "dashboard", title: "Admin Dashboard", path: "/admin", workspace_uri: "workspace://system", kpis: {kinds: 42, sessions: 8, workspaces: 3, entities: 17, agents: 9}, cc_orchestrator_status: {state: "ok", active: 2}},
+        },
+      }
+
+      function single(type) {
+        return {version: 1, scope: "workspace://system", components: [{id: type, type, placement: {x: 0, y: 0, w: 12, h: 8}, props: {}}]}
+      }
+
+      function render() {
+        const key = location.hash.replace("#", "") || "sessions"
+        const screen = screens[key] || screens.sessions
+        mountWorld(document.getElementById("world-root"), {
+          ...screen,
+          caller,
+          pushEvent: (event, payload) => console.log("pushEvent", event, payload),
+          onServerEvent: () => undefined,
+        })
+      }
+
+      const controls = document.getElementById("harness-controls")
+      Object.keys(screens).forEach((key) => {
+        const button = document.createElement("button")
+        button.textContent = key
+        button.addEventListener("click", () => {
+          location.hash = key
+        })
+        controls.appendChild(button)
+      })
+      window.addEventListener("hashchange", render)
+      render()
+    </script>
+  </body>
+</html>

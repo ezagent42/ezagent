@@ -11,7 +11,7 @@ defmodule Ezagent.World.IdentityData do
   alias Ezagent.Invocation
   alias Ezagent.World.{CapData, UserData}
 
-  @fallback_flavors ~w(cc py curl)
+  @fallback_flavors ~w(cc cc-headless codex codex-remote py curl native)
 
   @type route :: %{
           component: String.t(),
@@ -338,12 +338,21 @@ defmodule Ezagent.World.IdentityData do
   @doc "Registered agent flavors for the new-agent component."
   @spec list_flavors() :: [String.t()]
   def list_flavors do
-    case Ezagent.AgentFlavorRegistry.list_all() do
-      [] -> @fallback_flavors
-      entries -> entries |> Enum.map(fn {flavor, _decl} -> flavor end) |> Enum.sort()
-    end
+    Ezagent.AgentFlavorRegistry.list_all()
+    |> Enum.map(fn {flavor, _decl} -> flavor end)
+    |> ordered_flavors()
   rescue
     _ -> @fallback_flavors
+  end
+
+  defp ordered_flavors(flavors) do
+    extras =
+      flavors
+      |> Enum.reject(&(&1 in @fallback_flavors))
+      |> Enum.sort()
+
+    (@fallback_flavors ++ extras)
+    |> Enum.uniq()
   end
 
   @doc "Map a create_agent/grant failure reason to an operator-facing message."
