@@ -496,6 +496,39 @@ defmodule EzagentWeb.WorldConversationTest do
     assert html =~ ~s(data-last-dispatch="error:bad_member_uri")
   end
 
+  test "session.remove_participant removes an invited entity from the session", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    invitee = "entity://system/user/world_remove_#{System.unique_integer([:positive])}"
+    invitee_uri = Ezagent.URI.new!(invitee)
+    :ok = create_read_only_user(invitee_uri, [])
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.invite",
+      "args" => %{"session_uri" => URI.to_string(session_uri), "member" => invitee}
+    })
+
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert invitee in Enum.map(Map.keys(members), &URI.to_string/1)
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.remove_participant",
+        "args" => %{"session_uri" => URI.to_string(session_uri), "participant" => invitee}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    refute invitee in Enum.map(Map.keys(members), &URI.to_string/1)
+  end
+
   test "PR-4: session.create persists a new session and opens its conversation", %{conn: conn} do
     short_name = "world-pr4-#{System.unique_integer([:positive])}"
 
