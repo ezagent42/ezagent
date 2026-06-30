@@ -16,7 +16,7 @@ Service under test:
    - Root cause: `100.64.0.20` must bypass the local HTTP proxy.
    - Local browser validation should use `world.localhost`, not the tailnet IP.
 
-2. After bypassing the proxy, login initially worked but `/sessions` stayed on the loading spinner.
+2. After bypassing the proxy, login initially worked but `/sessions` stayed on the loading state.
    - Root cause: the worktree did not have `apps/ezagent_web/assets/node_modules`, so the web shell esbuild watcher could not produce `/assets/js/app.js`.
    - Recovery performed: `npm install` in `apps/ezagent_web/assets`, then `mix esbuild ezagent_web`.
 
@@ -39,7 +39,7 @@ Service under test:
 
 - `01-unauth-sessions-entry.png`: proxy path failure, HTTP 502.
 - `02-login-noproxy.png`: login page after proxy bypass.
-- `03-sessions-after-login.png`: spinner before `/assets/js/app.js` existed.
+- `03-sessions-after-login.png`: refreshed current shell-skeleton loading state after the loading UI refactor.
 - `04-login-fixed-assets.png`: login page after asset recovery.
 - `05-sessions-list-rendered.png`: sessions list rendered after login.
 - `06-session-detail-after-open.png`: selected session detail, IM chat layout.
