@@ -13,7 +13,7 @@
 - **Infrastructure / plumbing: YES — green end-to-end.** Every reliability primitive + transport works: cc orchestrator materialization (#1096), isolated login, agent-bridge, ReadyGate, routing, agent reply, reply store + route-back. **kb_query retrieves `ZEPHYR-7731` at the tool level on this run's DB.**
 - **Answer-soul (the agent autonomously retrieves + quotes `ZEPHYR-7731` to the customer): NO — blocked at the agent-wiring layer, not the architecture.**
 
-**Three** exact, operational blockers were found — none is a core-architecture redesign. All are fixable at the seed/config layer.
+**Four** exact, operational blockers were found (A bridge-port, B persona, C registration, D session↔orchestrator binding) — none is a core-architecture redesign. B and C were fixed + verified in the seed; the chain of B→C→D shows the seed's shortcut materialization should be replaced by the real session-create orchestrator flow (see "Seed fix attempt" below).
 
 This run also resolves the 2026-06-29 carry-forward (the real answer-loop, gated on cc auth). cc auth was solved (cred injection); doing so **exposed a chain of seed-wiring blockers (bridge port → orchestrator persona → orchestrator registration) that the "not logged in" symptom was masking.**
 
@@ -97,6 +97,21 @@ To isolate Blocker B's cause, a minimal **support-agent persona** was injected i
 1. **No support persona** → agent doesn't try (deflects / flails).
 2. **Even with persona** → `kb_query`-over-MCP rejected (`:orchestrator_not_registered`) — Blocker C.
 3. **(secondary)** the "secret access code" framing trips Claude's safety only on explicit, exfiltration-shaped phrasing.
+
+---
+
+## Seed fix attempt + ⛔ Blocker D (the shortcut keeps diverging from the real flow)
+
+`scripts/autoservice_tier1_seed.exs` was patched (verified on a fresh DB+HOME run):
+
+- **Blocker B fix — support persona:** the seed now writes a tier-1 support-agent `CLAUDE.md` (kb agent = `kb-tier1`, use `kb_query`) into the agent cwd before the PTY launches. **Verified working** — the agent reliably queries `kb-tier1` for a *natural* question (no more deflect/flail).
+- **Blocker C fix — orchestrator registration:** the seed now calls `Orchestrator.McpRegistry.register/2`. **Verified working** — `:orchestrator_not_registered` errors drop to **0**; the MCP channel join is accepted.
+
+But the answer-soul still does not complete — a **fourth** gap surfaces once the join is accepted. The agent itself reported it: *"the `kb_query` call failed with a session context error."* `McpServer.resolve_session/1` reverse-resolves the session from the orchestrator URI via `stored_orchestrator_uri/1`, which reads the **session's** chat-slice `working_copy.orchestrator_uri`. The seed creates the session and the agent **separately** and never sets the session→orchestrator pointer — so `resolve_session` returns `:error` → *"Orchestrator session context could not be resolved."*
+
+**The pattern is the finding:** the seed materializes the orchestrator via the `spawn_from_template_content` **shortcut**, and each fix (port → persona → registration → session binding → …) just uncovers the next binding the **real session-create orchestrator flow** (`Ezagent.Entity.Session.spawn_from_template/2` + the Generator) does atomically. Piecemeal patching is whack-a-mole.
+
+**Recommendation (discuss-first):** stop patching the shortcut and materialize the AutoService agent through the **real session-create orchestrator flow** (which spawns + registers + binds the session↔orchestrator pair + sets the chat slice in one path). The persona write stays useful either way. — **needs Allen's call.**
 
 ---
 
