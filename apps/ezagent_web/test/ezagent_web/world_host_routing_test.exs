@@ -69,6 +69,12 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert html =~ ~s(id="world-root")
     assert has_element?(view, "#world-root[phx-hook='WorldRenderer'][phx-update='ignore']")
     assert has_element?(view, "#world-root[data-world-component='sessions_table']")
+    assert has_element?(view, ~s([data-world-loading="shell-skeleton"]))
+    assert has_element?(view, "[data-world-loading-progress]")
+    assert has_element?(view, ~s([data-world-loading-panel="sessions"]))
+    assert has_element?(view, ~s([data-world-loading-panel="conversation"]))
+    assert has_element?(view, ~s([data-world-loading-panel="context"]))
+    refute html =~ "motion-safe:animate-spin"
   end
 
   test "world Chat default uses the IM single-slot layout, not the persisted layout editor",

@@ -12,6 +12,7 @@
  * Tailwind v4 does not scan by default, so without this the json-render chat
  * bubbles render unstyled. They resolve against world's own design tokens below. */
 @source "../node_modules/@json-render/shadcn/dist";
+@source "../../lib";
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
