@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-06-29</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .merged{background:#dcfce7;color:#166534}.defer{background:#fef3c7;color:#92400e}.open{background:#e0e7ff;color:#3730a3}.risk{background:#fee2e2;color:#991b1b}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin:14px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-06-29 周一 close</h1>
+<p>reviewed_at: <code>2026-06-30 09:45 +0800</code> · lead: <code>allen</code>。本回顾按 0629 转发/提交的团队 PR 做 close accounting；Codex/Claude worktree return 只作为验证/整理支持，不作为团队 owner。</p>
+
+<div>
+  <span class="kpi"><b>6</b>团队 PR 合入</span>
+  <span class="kpi"><b>5</b>贡献者</span>
+  <span class="kpi"><b>105</b>changed files</span>
+  <span class="kpi"><b>5.1k</b>additions</span>
+  <span class="kpi"><b>2.0k</b>deletions</span>
+</div>
+
+<div class="big">
+<b>产品大局：</b> 0629 不是一个单点 AutoService close，而是 W27 第一批团队推进：<b>design system</b>（#1083）、
+<b>官网 demo</b>（#1090）、<b>AutoService live verify + materialization fix</b>（#1095/#1096）、
+<b>hello render-card substrate</b>（#1099）、<b>AI 开发 rule-gate 设计</b>（#1100）。
+这 6 个 PR 才是当日团队 close 结果。
+</div>
+
+<div class="note">
+<b>owner 口径修正：</b> 表内 owner/author 使用 GitHub PR 作者和 dev-together 人员：zyli、ruihua、gaga、zhaomato、FatNine。
+Codex/Claude 可以出现在 evidence/support notes 中，但不应作为 0629 团队交付 owner。
+</div>
+
+<h2>§1 0629 团队 PR close 结果</h2>
+<table>
+<tr><th>PR</th><th>author</th><th>track</th><th>merged SHA</th><th>交付内容 / close 判断</th></tr>
+<tr>
+<td>#1083<br><b>feat(ui): migrate handoff surfaces to shadcn brand system</b></td>
+<td>zyli</td>
+<td>FP4 design system</td>
+<td><span class="pill merged">merged</span><br><code>a7ad4a66ed638e8fe285f151de4c2d44601c4cff</code></td>
+<td>移除 daisyUI vendor layer，迁移 handoff/world/viewer/hello touched surfaces 到 shadcn/Tailwind semantic tokens；附 desktop/mobile visual evidence。</td>
+</tr>
+<tr>
+<td>#1090<br><b>feat(website): 官网 demo</b></td>
+<td>ruihua</td>
+<td>FP6 website demo</td>
+<td><span class="pill merged">merged</span><br><code>2adb5685d4670a94383255955498c4398b8a8020</code></td>
+<td><code>docs/website-demo/</code> 隔离交付：多页官网 demo、mock ezagent API、world.cup 押注/路线图、团队数据；DS reskin 到 ezagent-design。</td>
+</tr>
+<tr>
+<td>#1095<br><b>docs(fp2): refresh AutoService live verify after #1096</b></td>
+<td>gaga</td>
+<td>FP2 AutoService verification</td>
+<td><span class="pill merged">merged</span><br><code>23320282478194263e207ed305660a551219cc80</code></td>
+<td>记录 S1/S2/S3 green、S4 materialization fixed by #1096、真实 cc answer-loop 仍受 Claude auth/bridge readiness 阻塞；保留 BUG triage。</td>
+</tr>
+<tr>
+<td>#1096<br><b>Fix AutoService cc orchestrator materialization</b></td>
+<td>gaga</td>
+<td>FP2 AutoService fix</td>
+<td><span class="pill merged">merged</span><br><code>72ae93a381d87943d2d41a04446483c8026fa7b0</code></td>
+<td>最终方案移除 <code>dispatch_registered_local</code>，不改 core invocation；cc orchestrator 经 AgentTemplate materialize，sandbox config 在 Agent create/spawn 时初始化。</td>
+</tr>
+<tr>
+<td>#1099<br><b>feat(hello): render_card tool + fix main compile</b></td>
+<td>zhaomato</td>
+<td>hello / website substrate</td>
+<td><span class="pill merged">merged</span><br><code>cd8db2f98543dedbdaf4655bfcf67fc4a33436f6</code></td>
+<td>新增 producer-free <code>render_card</code> 工具；同时修复 #1097 把 helper 放到 module 外导致 main 不编译的问题。</td>
+</tr>
+<tr>
+<td>#1100<br><b>docs(spec): AI 开发治理机制 rule-gate</b></td>
+<td>FatNine</td>
+<td>governance / rule-gate design</td>
+<td><span class="pill merged">merged</span><br><code>24a66628613a84b78da1e35d2e1b2021ff8cb631</code></td>
+<td>纯文档 spec，提出 G0 config → G5 core 的层级升级闸门；目标是减少 AI 开发误把业务逻辑推到 core/domain。</td>
+</tr>
+</table>
+
+<h2>§2 支持项 / 未计入 6 PR 的项</h2>
+<table>
+<tr><th>item</th><th>owner / author</th><th>状态</th><th>close 口径</th></tr>
+<tr><td>#1089 world-host-scope config driven</td><td>zyli</td><td><span class="pill defer">closed unmerged</span></td><td>被已合入的 #1086 线覆盖/重复，不计入 6 个 merged team PR；后续 DB-backed gate 仍需临时 PG 重跑。</td></tr>
+<tr><td><code>returns/autoservice-live-verify-codex.md</code></td><td>agent support</td><td>evidence</td><td>可作为 #1095/#1096 的独立验证补充，但不是团队 PR owner。</td></tr>
+<tr><td><code>returns/world-host-scope-config-driven.md</code></td><td>agent support</td><td><span class="pill defer">deferred</span></td><td>静态 gate 通过，DB-backed gate 待 0630 临时 PG 重跑。</td></tr>
+</table>
+
+<h2>§3 关键判断</h2>
+<h3>#1096 core leak 风险</h3>
+<blockquote>最终合入版没有修改 <code>apps/ezagent_core/lib/ezagent/invocation.ex</code>，没有保留 <code>dispatch_registered_local</code>。AutoService 特定状态回到 Agent create-time sandbox config；授权仍走 <code>Identity.Grant</code> + <code>Invocation.dispatch/1</code>。</blockquote>
+
+<h3>#1099 main compile 修复</h3>
+<blockquote>#1099 把 #1097 helper placement 导致的 broken main 一并修掉。这个修复不属于 hello 产品能力本身，但如果不合，后续验证都会被 main compile 阻断；close 允许它随同合入。</blockquote>
+
+<h3>#1100 governance spec</h3>
+<blockquote>#1100 是 rule-gate 设计输入，风险低（docs-only），但后续实现必须另开 plan/PR；不得把 spec merge 当作 enforcement 已落地。</blockquote>
+
+<h2>§4 方法复盘（method deltas）</h2>
+<ul>
+<li><b>close 账本必须从 PR state 出发。</b> 这次初版 review 错把 agent 本地 close 工作当成全日结果，漏掉 #1083/#1090/#1099/#1100。后续 close 先拉 GitHub 当日 PR 列表和 Feishu 转发清单，再写 stack。</li>
+<li><b>owner 必须是 human/team PR author。</b> Agent 可以做验证、整理、redo 支持，但不能写成团队交付 owner。</li>
+<li><b>重复/支持项要分栏。</b> #1089、agent support returns、world-host-scope deferred 这类项要单列为 support/duplicate/deferred，避免混进 merged team PR count。</li>
+<li><b>测试环境规则继续保留。</b> 涉 DB 的后续验证仍使用临时 PostgreSQL Docker，测试后删除。</li>
+</ul>
+
+<h2>§5 Required accounting</h2>
+<table>
+<tr><th>Metric</th><th class="num">Count</th><th>说明</th></tr>
+<tr><td>团队 merged PR</td><td class="num">6</td><td>#1083, #1090, #1095, #1096, #1099, #1100。</td></tr>
+<tr><td>贡献者</td><td class="num">5</td><td>zyli, ruihua, gaga, zhaomato, FatNine。</td></tr>
+<tr><td>AutoService PR</td><td class="num">2</td><td>#1095 verification docs + #1096 materialization fix。</td></tr>
+<tr><td>docs/spec-only PR</td><td class="num">1</td><td>#1100 rule-gate design；#1095 是 verification report，但属于 FP2 evidence。</td></tr>
+<tr><td>closed unmerged duplicate/support PR</td><td class="num">1</td><td>#1089，不计入 merged total。</td></tr>
+<tr><td>agent support returns</td><td class="num">2+</td><td>用于补证据/redo，不作为 owner rows。</td></tr>
+</table>
+
+<h2>§6 结转到 2026-06-30</h2>
+<table>
+<tr><th>结转项</th><th>owner / 0630 track</th><th>done signal</th></tr>
+<tr><td>AutoService real answer-loop verification：#1095/#1096 已记录 materialization 状态，但还没证明 agent-authored reply。</td><td>gaga · T1</td><td>绿则截图/日志；不绿则给出 Claude auth/bridge blocker 的最小证据。</td></tr>
+<tr><td>#1027 Agent Console QA findings 进入修复，而不是继续做 docs-only open PR。</td><td>fatnine · T2</td><td>F3/F4 测试覆盖；F7 implement 或明确 split decision。</td></tr>
+<tr><td><code>world-host-scope-config-driven</code> DB-backed gates 以临时 PG 重跑。</td><td>zyli · T3</td><td>命令、结果、PG cleanup proof、PR/merge 建议。</td></tr>
+<tr><td>#1020 kanban/dev-together E2E 做 dedicated review。</td><td>jjkysy · T5</td><td>changed-file risk map + merge/split/close verdict。</td></tr>
+<tr><td>#1026/#1022 stale PR cleanup。</td><td>allen · T6</td><td>关闭或刷新路径写回 0630 stack。</td></tr>
+</table>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本 HTML 使用 0625/0628 review 的团队报告模板；Markdown 底稿保留在 <code>review.md</code>。</p>
+</body>
+</html>
