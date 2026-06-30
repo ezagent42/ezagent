@@ -161,9 +161,8 @@ footer a{color:var(--ink-2);text-decoration:underline}
 <nav class="nav">
   <a class="brand" href="../../index.html"><img class="logo light" src="../../ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../../ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span>EZAGENT</span></a>
   <span class="spacer"></span>
-  <a class="navlink" href="#velocity">研发效能 · Velocity</a>
-  <a class="navlink" href="#dogfooding">组织自举 · Dogfooding</a>
   <a class="navlink" href="#products">产品 · Products</a>
+  <a class="navlink" href="#dogfooding">自举实证 · Dogfooding</a>
   <a class="loginbtn" href="../../login.html">登录 · Login</a>
   <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -172,29 +171,59 @@ footer a{color:var(--ink-2);text-decoration:underline}
 
 <div class="wrap">
 
-  <!-- HERO -->
+  <!-- HERO — 组织的 IDE（定位，不变） -->
   <section class="hero card fu">
     <div class="inner">
-      <span class="badge info"><span class="dot"></span>Dogfooding · 自举实证</span>
-      <h1>我们用 <span class="hl">Ezagent</span> 构建 Ezagent。</h1>
-      <div class="sub">We build Ezagent on Ezagent.</div>
-      <p class="lead">Ezagent 是面向组织的 IDE。团队以 ezagent 与 dev-together 编排自身的研发与协作流程——下列效能数据，均取自本仓库的真实交付记录，而非市场宣传。</p>
+      <span class="badge info"><span class="dot"></span>Organization IDE · 2026</span>
+      <h1>组织的 <span class="hl">IDE</span>。</h1>
+      <div class="sub">Organization IDE.</div>
+      <p class="lead">Ezagent 让你以一套清晰而柔软的界面，构建、运行并交付组织的 AI agent —— 把整个组织的复杂度，收拢为可搭建、可交付的工作流。</p>
       <div class="cta">
-        <a class="btn primary" href="#velocity">查看效能数据 · See the metrics →</a>
-        <a class="btn secondary" href="#products">了解产品 · Products</a>
+        <a class="btn primary" href="https://github.com/ezagent42" target="_blank" rel="noopener">开始使用 · Get started →</a>
+        <a class="btn secondary" href="#dogfooding">查看自举实证 · See dogfooding</a>
       </div>
     </div>
   </section>
+
+  <!-- 一个底座，两个产品 -->
+  <div class="sec-head" id="products">
+    <span class="over">Open source · 开源项目</span>
+    <h2>一个底座，两个产品</h2>
+    <p class="sub">同一套 ezagent 地基之上 —— world 负责消息可靠流转，hello 负责界面即时生成。</p>
+  </div>
+  <div class="grid2">
+    <div class="product card fu">
+      <div class="glyph" style="background:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
+      <span class="eyebrow">world · 连接层 · routing</span>
+      <h3>消息在工具、渠道与 AI 之间可靠流转</h3>
+      <p>任意渠道接入，每条消息均有处理与兜底；更换模型或后端仅需配置，对客流水线不丢消息。</p>
+      <div class="foot"><a class="btn primary sm" href="../../world-demo.html">查看演示 · View demo →</a><span class="tag">message-router</span></div>
+    </div>
+    <div class="product card fu">
+      <div class="glyph" style="background:var(--orange)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5z"/></svg></div>
+      <span class="eyebrow">hello · 生成层 · generation</span>
+      <h3>以自然语言生成所需界面</h3>
+      <p>描述需求即可生成可用界面，并为每位用户实时重组，无需编写前端代码。</p>
+      <div class="foot"><a class="btn primary sm" href="../../hello-demo.html">查看演示 · View demo →</a><span class="tag">json-render</span></div>
+    </div>
+  </div>
+
+  <!-- ════ 自举实证 section（在"一个底座，两个产品"下方）════ -->
+  <div class="sec-head" id="dogfooding">
+    <span class="over">Dogfooding · 自举实证</span>
+    <h2>我们用 Ezagent 构建 Ezagent</h2>
+    <p class="sub">团队以 ezagent 与 dev-together 编排自身的研发与协作。下列数据取自本仓库的真实交付记录，而非市场宣传。</p>
+  </div>
 
   <div class="banner">
     <span class="badge neutral"><span class="dot"></span>DEMO</span>
     <span>本页为 roadmap-v1 样张。标 <b style="color:var(--jade)">真实</b> 的指标取自当前仓库 git 与 dev-together 记录（含时间窗与数据源）；标 <b style="color:#9A7B00">示例</b> 的为待真实度量的占位。口径见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。</span>
   </div>
 
-  <!-- ════ X 层（头条）: 研发效能 ════ -->
-  <div class="sec-head" id="velocity">
+  <!-- 子层 X: 研发效能（主）-->
+  <div class="sec-head" id="velocity" style="margin:30px 0 18px">
     <span class="over">Layer 1 · 用 Ezagent 做研发</span>
-    <h2>研发效能 · Engineering velocity</h2>
+    <h2 style="font-size:24px">研发效能 · Engineering velocity</h2>
     <p class="sub">研发团队将工作流跑在 ezagent 与 dev-together 编排之上所体现的交付效能。面向以研发为主的早期用户——这是与你最相关的一层。</p>
   </div>
 
@@ -265,10 +294,10 @@ footer a{color:var(--ink-2);text-decoration:underline}
     <p class="foot-note">数据源:本仓库 <span class="mono">git log</span> + <span class="mono">gh pr</span>，按周归一。<b>Confounder（未剔除）:</b> 该窗口同时包含人员变动、流程改进与模型升级；此处仅作方向性指示，正式对外前按 <a href="metrics-spec-draft.md" style="text-decoration:underline">口径</a>复核并标注。归因:研发工作流提效，归 <b>ezagent 的研发体验</b>，非裸用某模型。</p>
   </div>
 
-  <!-- ════ Y 层（背书）: 组织自举 ════ -->
-  <div class="sec-head" id="dogfooding">
+  <!-- 子层 Y: 组织自举（辅）-->
+  <div class="sec-head" style="margin:34px 0 18px">
     <span class="over">Layer 2 · 整个组织跑在 Ezagent 上</span>
-    <h2>组织自举 · Running the org on Ezagent</h2>
+    <h2 style="font-size:24px">组织自举 · Running the org on Ezagent</h2>
     <p class="sub">不止研发——团队的协作、socialware、看板等组织工作亦路由进 ezagent 自举。以下为真实案例；量化指标随产品成熟逐步公开。</p>
   </div>
   <div class="cases">
@@ -289,29 +318,6 @@ footer a{color:var(--ink-2);text-decoration:underline}
       <h4>看板业务链自举</h4>
       <p>九段业务链以数据驱动的方式跑在 ezagent 之上，作为组织运营自举的一环。</p>
       <span class="stat">示例 · 量化待埋点</span>
-    </div>
-  </div>
-
-  <!-- 产品（精简保留） -->
-  <div class="sec-head" id="products">
-    <span class="over">Open source · 开源项目</span>
-    <h2>一个底座，两个产品</h2>
-    <p class="sub">同一套 ezagent 地基之上 —— world 负责消息可靠流转，hello 负责界面即时生成。</p>
-  </div>
-  <div class="grid2">
-    <div class="product card fu">
-      <div class="glyph" style="background:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg></div>
-      <span class="eyebrow">world · 连接层 · routing</span>
-      <h3>消息在工具、渠道与 AI 之间可靠流转</h3>
-      <p>任意渠道接入，每条消息均有处理与兜底；更换模型或后端仅需配置，对客流水线不丢消息。</p>
-      <div class="foot"><a class="btn primary sm" href="../../world-demo.html">查看演示 · View demo →</a><span class="tag">message-router</span></div>
-    </div>
-    <div class="product card fu">
-      <div class="glyph" style="background:var(--orange)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5z"/></svg></div>
-      <span class="eyebrow">hello · 生成层 · generation</span>
-      <h3>以自然语言生成所需界面</h3>
-      <p>描述需求即可生成可用界面，并为每位用户实时重组，无需编写前端代码。</p>
-      <div class="foot"><a class="btn primary sm" href="../../hello-demo.html">查看演示 · View demo →</a><span class="tag">json-render</span></div>
     </div>
   </div>
 
