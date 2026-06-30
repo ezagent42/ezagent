@@ -92,3 +92,32 @@ Agent (claude TUI), in order:
 Totals: 8 esr-orchestrator calls + 11 shell commands; resorts to filesystem snooping
 => wants to help but has no support-agent context (kb name / role / instruction),
    so it never cleanly retrieves+quotes ZEPHYR-7731 via kb_query.
+
+================================================================================
+VERIFICATION (follow-up) — support persona injected; same NATURAL question
+================================================================================
+Injected into the agent's cwd CLAUDE.md (wiring only, NO corpus reframing):
+  "You are a tier-1 customer support agent ... kb agent is kb-tier1 ... when a
+   customer asks a support question you MUST call kb_query with kb-tier1 ..."
+
+Natural question (same shape that DEFLECTED in Test 1):
+  "Hi! I'm a tier-one customer and I need to reach the priority support hotline.
+   What's the access code I should quote when I call in?"
+
+Agent (claude TUI) — BEHAVIOUR FLIPPED vs Test 1:
+  "Let me look that up in the knowledge base for you."
+  esr-orchestrator <- "priority support hotline access code"   (correct query; knows kb-tier1)
+  ... retries ...
+  "I attempted to look up the priority support hotline access code via the kb-tier1
+   knowledge base three times, but the kb_query tool failed each time. I replied to
+   the customer explaining the temporary issue ... rather than risk providing
+   incorrect information from memory."
+=> persona alone makes it query the kb correctly => cause is WIRING, not soul.
+
+BLOCKER C root cause (kb_query 500), 106x in the same run:
+  [warning] Ezagent.Orchestrator.McpChannel: entity://autosvc/agent/autoservice
+    authenticated but is NOT a registered orchestrator (:orchestrator_not_registered)
+    — join rejected (fail-closed)
+  => seed never calls Orchestrator.McpRegistry.register/2 (done by the real
+     session-create orchestrator flow); the direct in-node kb_query proof works
+     because it bypasses the MCP channel's registration gate.

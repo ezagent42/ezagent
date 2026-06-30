@@ -13,9 +13,9 @@
 - **Infrastructure / plumbing: YES — green end-to-end.** Every reliability primitive + transport works: cc orchestrator materialization (#1096), isolated login, agent-bridge, ReadyGate, routing, agent reply, reply store + route-back. **kb_query retrieves `ZEPHYR-7731` at the tool level on this run's DB.**
 - **Answer-soul (the agent autonomously retrieves + quotes `ZEPHYR-7731` to the customer): NO — blocked at the agent-wiring layer, not the architecture.**
 
-Two **exact, operational** blockers were found — neither is a core-architecture redesign. Both are fixable at the seed/config layer.
+**Three** exact, operational blockers were found — none is a core-architecture redesign. All are fixable at the seed/config layer.
 
-This run also resolves the 2026-06-29 carry-forward (the real answer-loop, gated on cc auth). cc auth was solved (cred injection); doing so **exposed a second blocker (bridge port) that was masking the answer-soul blocker.**
+This run also resolves the 2026-06-29 carry-forward (the real answer-loop, gated on cc auth). cc auth was solved (cred injection); doing so **exposed a chain of seed-wiring blockers (bridge port → orchestrator persona → orchestrator registration) that the "not logged in" symptom was masking.**
 
 ---
 
@@ -64,6 +64,39 @@ Observed across three customer-message framings (Sonnet 4.6, live):
 ## ⚠️ Scenario-design tension to flag (Allen)
 
 The soul-anchor fact is deliberately framed in the corpus as a **"secret access code, published only in the kb, never to the model, rotates quarterly."** That is exactly the shape of a credential a well-aligned Claude is trained to **protect**. The harder the prompt pushes for "the exact code," the more it reads as exfiltration (see Test 2's outright refusal). This fact-framing **collides with Claude's safety guardrails** and likely needs reframing (e.g. "published support contact info" rather than "secret access code") for the answer-soul to land cleanly and reproducibly.
+
+---
+
+## ⛔ Blocker C — the AutoService agent is never registered as an orchestrator → `kb_query`-over-MCP fails
+
+Surfaced by the verification below (once the agent actually *tries* to query the kb). When the agent's claude calls `kb_query` via the `esr-orchestrator` MCP server, the orchestrator MCP channel rejects the join **fail-closed**:
+
+```
+Ezagent.Orchestrator.McpChannel: entity://autosvc/agent/autoservice authenticated
+but is NOT a registered orchestrator (:orchestrator_not_registered) — join rejected
+```
+
+`Orchestrator.McpRegistry.register/2` is the ETS row the channel checks. It is normally written by the **session-create orchestrator flow** (`entity/session/orchestrator.ex`, `orchestrator_admin.ex`) after the session spawns its orchestrator. The seed materializes the AutoService agent via `spawn_from_template_content` directly and **never calls `McpRegistry.register`** — so all 7 orchestrator tools (incl. `kb_query`) fail with a 500 at the channel join. (The in-node `Orchestrator.Tools.kb_query` proof above works precisely because it bypasses the MCP channel + its registration gate.)
+
+**Fix (operational):** the seed must `McpRegistry.register(autosvc_uri, session_uri:, workspace_uri:, owner_uri:)` after spawning the agent (re-registered each boot — the registry is in-memory ETS).
+
+---
+
+## Verification — is it the "soul" framing or the wiring? → **wiring, decisively**
+
+To isolate Blocker B's cause, a minimal **support-agent persona** was injected into the agent's own `CLAUDE.md` (cwd): *"you are tier-1 support; the kb agent is `kb-tier1`; call `kb_query` for support questions"* — **wiring only, no reframing of the corpus fact**. Then the **same natural question that deflected in Test 1** was sent.
+
+| | no persona (Test 1) | with support persona |
+|---|---|---|
+| queries the kb? | ❌ deflects "I don't have access", never queries | ✅ "Let me look that up in the knowledge base" |
+| query behaviour | — | calls `kb_query` against **`kb-tier1`** with correct terms, retries 3× |
+| on tool failure | — | correctly tells the customer there's a temporary issue, **does not fabricate** a code |
+
+**Conclusion:** the soul-framing was **not** the reason the agent doesn't query the kb — the **wiring (persona/context) was**. A natural question never reaches the safety layer. The persona fix flipped the behaviour immediately, and in doing so exposed **Blocker C** (the `:orchestrator_not_registered` 500). The full causal chain — all seed/wiring, zero core architecture:
+
+1. **No support persona** → agent doesn't try (deflects / flails).
+2. **Even with persona** → `kb_query`-over-MCP rejected (`:orchestrator_not_registered`) — Blocker C.
+3. **(secondary)** the "secret access code" framing trips Claude's safety only on explicit, exfiltration-shaped phrasing.
 
 ---
 
