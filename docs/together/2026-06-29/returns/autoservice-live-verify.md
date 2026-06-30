@@ -19,7 +19,7 @@
 | S3 KB 检索 ZEPHYR-7731 | `mix test apps/ezagent_plugin_kb/test/e2e/autoservice_tier1_seed_test.exs` — 2 tests, 0 failures | ✓ GREEN |
 | S3 KB live IEx probe | `Orchestrator.Tools.kb_query/4` → `{:ok, %{chunks: [...]}}` 含 ZEPHYR-7731 | ✓ GREEN |
 | S3 message routing | `session.send` 存储 + routed_at 标记 + fan-out invocation granted | ✓ GREEN |
-| S4 cc answer-loop | cc-flavor orchestrator 创建失败 | BLOCKED (known gap) |
+| S4 cc answer-loop | cc-flavor orchestrator materialization fixed by #1096; real answer-loop still blocked by local Claude auth | PARTIAL GREEN |
 | arch.scan | `mix ezagent.arch.scan` — 全部 fitness function PASS | ✓ GREEN |
 | check_invariants | `mix ezagent.check_invariants` — 8 条硬不变式全绿 | ✓ GREEN |
 
@@ -34,19 +34,21 @@ route            : always(in_session)→AutoService-agent  id=2
 
 ---
 
-## S4 cc answer-loop：已在 fix/cc-agent-create-autoservice 修复
+## S4 cc answer-loop：#1096 已合入最终修复
 
 **原错误**：`{:autoservice_agent_create_failed, {:role_unsupported_for_flavor, "cc"}}`  
 **根因**：`Workspace.create_agent/3` 对 file-flavor（`cc`/`codex`/`codex-remote`/`cc-headless`）的 `role: "orchestrator"` 不支持；cc orchestrator 必须经 AgentTemplate 物化路径。  
 
-**fix/cc-agent-create-autoservice 的处理**（单独提交，不并入本分支）：
-1. `scripts/autoservice_tier1_seed.exs`：cc+orchestrator 分支改为读 `template://system/agent/cc-orchestrator` 并调 `Entity.Agent.spawn_from_template_content/5`，非 cc flavor 仍走原 `create_agent` 路径
-2. `ezagent_core/invocation.ex`：新增 `Invocation.dispatch_registered_local/1` 内部接缝——target Kind 已在本地 KindRegistry 注册、跳过 public ReadyGate wait、仍经 CapBAC+args validation+effects+snapshot+audit，专供物化/bootstrap 内部初始化路径
-3. `entity/agent/template_spawn.ex`：`record_sandbox_state/3` 改走 `dispatch_registered_local/1`，cc 模板物化在 bridge join 前即可持久化 sandbox 状态
-4. `identity/grant.ex`：imperative grant 若 target Kind 已本地注册但 public not-ready，改走 `dispatch_registered_local/1`
-5. `session/session_manager.ex`：`load_orchestrator_caps/1` 改用 `Identity.read_entity_caps/1`（不走 ReadyGate-gated 路径），适配 bridge-backed orchestrator
+**#1096 的最终处理**（已 squash merge 到 `main`，merge SHA `72ae93a381d87943d2d41a04446483c8026fa7b0`）：
+1. `scripts/autoservice_tier1_seed.exs`：cc+orchestrator 分支改为读 `template://system/agent/cc-orchestrator` 并调 `Entity.Agent.spawn_from_template_content/5`，非 cc flavor 仍走原 `create_agent` 路径。
+2. 撤销旧方案中的 core local dispatch seam。最终 diff 相对 `main` 不包含 `apps/ezagent_core/lib/ezagent/invocation.ex` 改动；没有 `Invocation.dispatch_registered_local/1`。
+3. `sandbox.write_path` 机械 rename 为 `sandbox.update_config`，语义从“写路径”收敛为“更新 sandbox config slice”。
+4. cc Agent Kind 在 create/spawn 时传入 sandbox 初始状态：`config_dir_path`、`template_class`、`respawn_template_data`，由 `Sandbox.create/1` 初始化 durable slice。
+5. `TemplateSpawn.record_sandbox_state/3` 先检查 live sandbox slice 是否已与 template meta 一致；一致则跳过 fallback dispatch，不依赖 public ReadyGate。只有不一致时才走正常 `Invocation.dispatch/1` 到 `sandbox.update_config`。
+6. `Identity.Grant` 保持正常 `Invocation.dispatch/1`；没有 grant bypass。
+7. `SessionManager.load_orchestrator_caps/1` 改用 `Identity.read_entity_caps/1` 读取 durable delegated caps，适配 bridge-backed orchestrator recovery。
 
-**验证结果**（fix 分支，6 tests 0 failures）：
+**验证结果**（#1096）：
 ```elixir
 # live IEx probe
 {Ezagent.KindRegistry.lookup(uri), Ezagent.ReadyGate.status(uri),
@@ -56,9 +58,15 @@ route            : always(in_session)→AutoService-agent  id=2
 ```
 Agent 已存在，kb.query 授权在 durable caps 中。
 
-**residual**：`ReadyGate.status == :failed`——本地 Claude Code 未登录（`Not logged in · Run /login`），外部 bridge 未 join，answer-loop 仍不可用；待 cc auth 配置后闭环。
+本地验证还包括：
+- temporary PostgreSQL Docker (`POSTGRES_PORT=55433`)；
+- targeted AutoService / sandbox / cc / grant suites 全绿；
+- full `mix precommit` 全绿；
+- GitHub `precommit + check_invariants` 全绿。
 
-**参考**：`docs/together/2026-06-29/returns/cc-agent-create-failure-resolution.md`（fix 分支）
+**residual**：`ReadyGate.status == :failed`——本地 Claude Code 未登录（`Not logged in · Run /login`），外部 bridge 未 join，真实 answer-loop 仍不可用；待 cc auth 配置后闭环。
+
+**参考**：`docs/together/2026-06-29/returns/cc-agent-create-failure-resolution.md`、PR #1096。
 
 ---
 
@@ -135,7 +143,8 @@ execute "ALTER TABLE socialware_customer_outbox RENAME TO socialware_delivery_ou
 ## Pending
 
 - [ ] **#110 live 三环境验证**：待 Allen promotion（nightly→beta→stable），promotion 完成后跑验证截图
-- [ ] **S4 cc answer-loop**：cc-flavor orchestrator 物化（session-create orchestrator-template 路径）
+- [x] **S4 cc orchestrator materialization**：#1096 已合入；agent 可创建并持有 durable `kb.query`
+- [ ] **S4 real answer-loop**：待 Claude Code 登录/bridge ready 后复测 agent-authored reply
 
 ---
 
@@ -148,7 +157,7 @@ execute "ALTER TABLE socialware_customer_outbox RENAME TO socialware_delivery_ou
 - [x] S3 KB live IEx probe 绿（ZEPHYR-7731 chunks 返回）
 - [x] S3 message/routing DB evidence 验证（routed_at + invocation granted）
 - [x] WS surface 探针（chat read_only / external anon not_logged_in 行为确认）
-- [x] S4 cc answer-loop 状态文档化（BLOCKED, known gap）
+- [x] S4 cc orchestrator materialization 状态文档化（#1096 fixed）
 - [x] arch.scan all PASS
 - [x] check_invariants all green
 - [x] BUG-1 根因确认 + 临时缓解验证（ecto.reset → 14 tests, 0 failures）
