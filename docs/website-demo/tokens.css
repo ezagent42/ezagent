@@ -1,0 +1,41 @@
+/* ============================================================================
+ * tokens.css · ezagent-design 设计 token（单一来源）
+ * ----------------------------------------------------------------------------
+ * 自 index.html 的 :root（light）+ :root[data-theme="dark"]（dark）逐字提取。
+ * index.html 是真理之源 — 改 token 改这里 + index.html，勿令两者漂移。
+ * site-nav.js 依赖此处完整 token 集（glass / ground / accent-variant 等）。
+ * ========================================================================== */
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);
+  --accent-wash:var(--blue-wash);--on-accent:#FFFFFF;--focus-ring:rgba(11,92,255,.45);
+  --success:var(--jade);--danger:var(--red);--warning:var(--orange);--stage:#14131C;
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 13.4px 17.9px rgba(15,15,15,.045),0 7.5px 10px rgba(15,15,15,.04),0 4px 5.3px rgba(15,15,15,.03),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --glass-blur:blur(14px) saturate(1.4);--glass-bg:rgba(255,255,255,.55);--glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-base:250ms;--dur-enter:500ms;
+  --gap-grid:22px;--pad-page-x:44px;--container:1280px;
+  --desk:#FFFFFF;--desk-edge:#E9E9ED;--screen-dark:#14131C;--seat:#2A2832;  /* 办公室：桌面/屏/小人 */
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --red:#FF5A4D;--blueink:#4D8DF0;--yellow:#FFD84D;--jade:#34D6A0;
+  --blue:#5AA2FF;--blue-deep:#A9CBFF;--blue-wash:#1E2A40;--orange:#FFA94D;
+  --jade-wash:#173A2E;--red-wash:#3E211E;--yellow-wash:#3A3416;--orange-wash:#3A2A16;
+  --accent-hover:#74B2FF;--on-accent:#0E1A2E;--focus-ring:rgba(90,162,255,.5);
+  --glass-bg:rgba(42,41,54,.5);--glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+  --desk:#272531;--desk-edge:#332F3B;--screen-dark:#0C0B12;--seat:#3C3A45;
+}
