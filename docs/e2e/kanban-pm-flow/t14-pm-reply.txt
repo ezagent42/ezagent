@@ -1,0 +1,10 @@
+已处理节点 n2「build the export-to-markdown feature」：
+
+1) 判 gate：读了看板（board=entity://system/agent/kbflow14board）。n2 是 n1 的子节点，当前 gate = **positioning（定位）**，也就是 9 棒接力链（定位→北极星→痛点→认领→线框→功能卡→issue→测试→PR）的第一棒；之前 status=unassigned、无 owner、无产物，只有一个标题——所以定位这一棒的产物还没产。
+
+2) 认领 + 推进：已用我的身份 claim_node 认领（owner=pm-coordinator-kbflow14），并 set_status 把状态推到 **doing**。已复核生效：n2 现在 owner=我、status=doing、stage=positioning。
+   （注意：我只推了 status，没动 stage——stage 要等产物到位、我判这一棒 gate 通过后才 set_stage 接力，不会偷跑。）
+
+3) 派活：已通过 session send 把产物工作定向交给 **@dev-together-kbflow14**，要求它产出本阶段「定位」短文/文件（讲清功能是什么、给谁用、解决什么痛点、v1 范围边界），DoD = 一个具体 artifact，且明确告知它只产 artifact、不碰看板/GitHub。
+
+接下来：等 dev 把 return 发回（会经 relay-back 自动唤醒我），我再 attach_artifact 把产物挂到 n2，并判定是否够格推进到下一棒。板的推进和登记全程由我来做。

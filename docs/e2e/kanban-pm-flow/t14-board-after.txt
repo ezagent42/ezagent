@@ -1,0 +1,1 @@
+"n2" => %{owner: "entity://system/agent/pm-coordinator-kbflow14", status: :doing, title: "build the export-to-markdown feature", stage: :metric, order: 0, parent_id: "n1", artifacts: [%{kind: "positioning", ref: "/home/yaosh/.ezagent/dev-together/n2-positioning-export-to-markdown.md"

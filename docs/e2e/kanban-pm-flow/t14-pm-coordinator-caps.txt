@@ -1,0 +1,13 @@
+  Ezagent.Behavior.Kanban.add_node  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.attach_artifact  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.claim_node  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.get_tree  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.register_pr  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.set_stage  scoped→/agent/kbflow14board
+  Ezagent.Behavior.Kanban.set_status  scoped→/agent/kbflow14board
+  Ezagent.Behavior.ConfigEvolve.reconcile_cascade  scoped→/agent/pm-coordinator-kbflow14
+  Ezagent.Behavior.Github.create_issue  scoped→/agent/pm-coordinator-kbflow14
+  Ezagent.Behavior.Github.get_pull  scoped→/agent/pm-coordinator-kbflow14
+  Ezagent.Behavior.Github.post_comment  scoped→/agent/pm-coordinator-kbflow14
+  Ezagent.Behavior.Identity.list_caps  scoped→/agent/pm-coordinator-kbflow14
+  Ezagent.Behavior.Sandbox.write_path  scoped→/agent/pm-coordinator-kbflow14

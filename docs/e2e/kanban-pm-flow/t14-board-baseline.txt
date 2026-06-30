@@ -1,0 +1,2 @@
+  %{nodes: %{"n1" => %{owner: nil, status: :unassigned, title: "build the export-to-markdown feature", stage: :positioning, order: 0, parent_id: nil, artifacts: [], metrics: []}, "n2" => %{owner: nil, status: :unassigned, title: "build the export-to-markdown feature", stage: :positioning, order: 0, parent_id: "n1", artifacts: [], metrics: []}}, root_id: "n1"}
+stages:
