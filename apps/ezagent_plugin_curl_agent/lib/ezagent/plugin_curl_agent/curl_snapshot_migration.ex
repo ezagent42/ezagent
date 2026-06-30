@@ -183,7 +183,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
           # doesn't `KeyError` (the #52 cold-restart bug class). Pass the row URI
           # exactly as a fresh `Entity.Agent` spawn does: most behaviors ignore
           # it, but `Behavior.Identity.create/1` reads `:uri` to embed the
-          # agent's self-scoped `Sandbox.write_path` + `ConfigEvolve.reconcile_cascade`
+          # agent's self-scoped `Sandbox.update_config` + `ConfigEvolve.reconcile_cascade`
           # caps (else config-evolve self-dispatch is unauthorized after
           # migration — codex P1, r4).
           {:ok, created} = behavior.create(%{uri: uri})

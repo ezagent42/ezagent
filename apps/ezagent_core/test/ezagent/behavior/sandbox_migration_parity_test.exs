@@ -11,12 +11,12 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
   across the three dispatchable actions:
 
     - `:read`        — read-only; gated by process-dict destroyed?
-    - `:write_path`  — slice mutations via `{:set, key, value}` effects
+    - `:update_config`  — slice mutations via `{:set, key, value}` effects
     - `:destroy`     — terminal action with FS cleanup + termination
 
   ## Codex r3 P2-g coverage — full dispatch path
 
-  The `:read` + `:write_path` dispatch-path tests exercise the WHOLE
+  The `:read` + `:update_config` dispatch-path tests exercise the WHOLE
   pipeline (`Invocation → BehaviorRegistry → CapBAC → handler →
   effects → state writeback`). The `:destroy` action's full path is
   exercised already by integration tests; here we drive the handler
@@ -52,7 +52,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
   setup do
     :ok = BehaviorRegistry.register(StubAgentKind, :read, Sandbox)
-    :ok = BehaviorRegistry.register(StubAgentKind, :write_path, Sandbox)
+    :ok = BehaviorRegistry.register(StubAgentKind, :update_config, Sandbox)
     :ok = BehaviorRegistry.register(StubAgentKind, :destroy, Sandbox)
 
     agent_uri =
@@ -85,12 +85,12 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert Ezagent.Behavior.new_style?(Sandbox)
     end
 
-    test "__action_names__/0 lists [:read, :write_path, :destroy]" do
-      assert Enum.sort(Sandbox.__action_names__()) == [:destroy, :read, :write_path]
+    test "__action_names__/0 lists [:read, :update_config, :destroy]" do
+      assert Enum.sort(Sandbox.__action_names__()) == [:destroy, :read, :update_config]
     end
 
     test "every action has a handler exported" do
-      for action <- [:read, :write_path, :destroy] do
+      for action <- [:read, :update_config, :destroy] do
         handler = String.to_atom("handle_#{action}")
 
         assert function_exported?(Sandbox, handler, 2),
@@ -162,7 +162,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert result.template_class == nil
     end
 
-    test ":write_path via Kind.Runtime — slice mutates via :set effects",
+    test ":update_config via Kind.Runtime — slice mutates via :set effects",
          %{agent_uri: agent_uri, admin_caps: admin_caps, state: state} do
       args = %{
         config_dir_path: "/tmp/agent-z",
@@ -170,7 +170,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
         respawn_template_data: %{"cwd" => "/tmp/agent-z"}
       }
 
-      inv = build_invocation(agent_uri, :write_path, args, admin_caps)
+      inv = build_invocation(agent_uri, :update_config, args, admin_caps)
 
       assert {:ok, new_state, result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
@@ -187,14 +187,14 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert result.respawn_template_data == %{"cwd" => "/tmp/agent-z"}
     end
 
-    test ":write_path is NOT gated by a destroyed flag (gate REMOVED — SPEC §2.3B)",
+    test ":update_config is NOT gated by a destroyed flag (gate REMOVED — SPEC §2.3B)",
          %{agent_uri: agent_uri, admin_caps: admin_caps, state: state} do
       # SPEC §2.3B: the process-dict `destroyed?` gate is gone. A
-      # write_path is no longer rejected with `{:error, :destroyed}`; the
+      # update_config is no longer rejected with `{:error, :destroyed}`; the
       # destroy path instead clears `state` + terminates the process, so
       # there is no live process to race a write against post-destroy.
       args = %{config_dir_path: "/new/path", template_class: NewMod}
-      inv = build_invocation(agent_uri, :write_path, args, admin_caps)
+      inv = build_invocation(agent_uri, :update_config, args, admin_caps)
 
       assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
@@ -203,10 +203,10 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert new_state.sandbox.state.template_class == NewMod
     end
 
-    test ":write_path — invalid config_dir_path → {:error, _}",
+    test ":update_config — invalid config_dir_path → {:error, _}",
          %{agent_uri: agent_uri, admin_caps: admin_caps, state: state} do
       args = %{config_dir_path: 12345, template_class: nil}
-      inv = build_invocation(agent_uri, :write_path, args, admin_caps)
+      inv = build_invocation(agent_uri, :update_config, args, admin_caps)
 
       # The Kind.Runtime's `validate_args/3` step (5.7) catches type
       # mismatches against the action's `args:` schema BEFORE the
@@ -220,7 +220,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
     end
 
-    test ":write_path — without respawn_template_data leaves slice's existing value",
+    test ":update_config — without respawn_template_data leaves slice's existing value",
          %{agent_uri: agent_uri, admin_caps: admin_caps} do
       state = %{
         sandbox: %{
@@ -236,7 +236,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       # Args omits :respawn_template_data → handler must NOT touch it.
       args = %{config_dir_path: "/tmp/x", template_class: MyClass}
-      inv = build_invocation(agent_uri, :write_path, args, admin_caps)
+      inv = build_invocation(agent_uri, :update_config, args, admin_caps)
 
       assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
@@ -346,21 +346,21 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
   describe "legacy callbacks remain available (framework wiring)" do
     test "actions/0, interface/0, cap_subjects/0 all defined" do
-      assert Enum.sort(Sandbox.actions()) == [:destroy, :read, :write_path]
+      assert Enum.sort(Sandbox.actions()) == [:destroy, :read, :update_config]
       iface = Sandbox.interface()
 
-      for action <- [:read, :write_path, :destroy] do
+      for action <- [:read, :update_config, :destroy] do
         assert Map.has_key?(iface, action), "interface missing #{action}"
       end
 
       subjects = Sandbox.cap_subjects() |> Enum.map(&elem(&1, 0))
-      assert Enum.sort(subjects) == [:destroy, :read, :write_path]
+      assert Enum.sort(subjects) == [:destroy, :read, :update_config]
     end
 
     test "required_caps/0 uses the :agent axis (Agent Kind registration)" do
       caps = Sandbox.required_caps()
 
-      for action <- [:read, :write_path, :destroy] do
+      for action <- [:read, :update_config, :destroy] do
         assert %Ezagent.Capability{kind: :agent, behavior: Sandbox, action: ^action} =
                  caps[action]
       end

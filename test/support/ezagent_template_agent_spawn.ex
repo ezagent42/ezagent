@@ -131,7 +131,7 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
     _ = Ezagent.ReadyGate.await(agent_uri, 5_000)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: Ezagent.URI.with_action(agent_uri, :sandbox, :write_path),
+           target: Ezagent.URI.with_action(agent_uri, :sandbox, :update_config),
            mode: :call,
            args: %{
              config_dir_path: nil,
@@ -140,16 +140,16 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
            },
            ctx: %{
              # #830 fallout fix — `system://agent-internal` was eliminated; mirror
-             # production `Agent.TemplateSpawn.sandbox_write_path_self_cap/1`: the
+             # production `Agent.TemplateSpawn.sandbox_update_config_self_cap/1`: the
              # agent records its OWN sandbox state under its OWN inline
-             # `sandbox.write_path` self-authority (a real entity granter).
+             # `sandbox.update_config` self-authority (a real entity granter).
              caller: agent_uri,
              caps: [
                %Ezagent.Capability{
                  Ezagent.Capability.cap(
                    :agent,
                    Ezagent.Behavior.Sandbox,
-                   :write_path,
+                   :update_config,
                    Ezagent.URI.instance(agent_uri),
                    Ezagent.Capability.workspace_of(agent_uri)
                  )

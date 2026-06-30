@@ -255,7 +255,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       config_dir = "/tmp/scen25-agent-#{uniq()}"
 
       assert {:ok, _} =
-               dispatch(agent_uri, "sandbox.write_path", %{
+               dispatch(agent_uri, "sandbox.update_config", %{
                  config_dir_path: config_dir,
                  template_class: nil
                })

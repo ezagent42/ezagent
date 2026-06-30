@@ -122,7 +122,7 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # ruled chat-router / chat-reply / orchestrator-tools / session-internal → A
   # (fan-out / self-authority), and agent-internal → A by DROPPING its vestigial
   # grant_cap (no live grant_cap/revoke_cap caller ran under it — its only live
-  # use is sandbox.write_path self-authority; git-grep confirmed 2026-06-16).
+  # use is sandbox.update_config self-authority; git-grep confirmed 2026-06-16).
   @category_a [
     # ELIMINATED 2026-06-20, 甲-4 (north star): "system://chat-router" — a
     # NON-minter holding only `bootstrap_wildcard()` (the last non-genesis
@@ -153,7 +153,7 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # `@bootstrap` genesis remains (covered by the @bootstrap bucket).
     # ELIMINATED 2026-06-19 (north star): "system://agent-internal" — it was a
     # NON-minter (its vestigial grant_cap dropped 2026-06-16), holding only
-    # `cap(:agent, Sandbox, :write_path)`. That sandbox write is the agent acting
+    # `cap(:agent, Sandbox, :update_config)`. That sandbox write is the agent acting
     # on its OWN slice → genuine self-authority, now carried inline at the
     # `Agent.TemplateSpawn` dispatch (`caller: worker_uri`). With its last cap
     # re-attributed to the agent, the principal leaves the Catalog.
@@ -317,8 +317,8 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
       refute grant_minting_cap?(sentinel)
     end
 
-    test "an unrelated narrow cap (Sandbox :write_path) is NOT a minter" do
-      refute grant_minting_cap?(Capability.cap(:agent, Ezagent.Behavior.Sandbox, :write_path))
+    test "an unrelated narrow cap (Sandbox :update_config) is NOT a minter" do
+      refute grant_minting_cap?(Capability.cap(:agent, Ezagent.Behavior.Sandbox, :update_config))
     end
 
     test "a non-IdentityAdmin grant_cap action (different behavior) is NOT a minter" do

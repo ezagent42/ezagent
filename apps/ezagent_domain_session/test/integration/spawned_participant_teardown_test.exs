@@ -52,7 +52,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.write_path"),
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.update_config"),
         mode: :call,
         args: %{config_dir_path: config_dir, template_class: template_class},
         ctx: %{

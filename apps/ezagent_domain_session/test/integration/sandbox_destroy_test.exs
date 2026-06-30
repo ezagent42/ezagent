@@ -5,11 +5,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
 
   Asserts:
 
-  - `sandbox.read` / `sandbox.write_path` resolve through `BehaviorRegistry`
+  - `sandbox.read` / `sandbox.update_config` resolve through `BehaviorRegistry`
     on the Agent Kind (registered in `register_chat_behaviors/0`);
   - A fresh Agent's `:sandbox` slice initializes to
     `%{config_dir_path: nil, template_class: nil}`;
-  - `sandbox.write_path` dispatch persists the path + template_class;
+  - `sandbox.update_config` dispatch persists the path + template_class;
   - `sandbox.destroy` schedules the agent's termination via the same
     detached-Task pattern as `Lifecycle.terminate`;
   - `destroy` invokes `template_class.destroy_config_dir/1` when the
@@ -49,8 +49,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
 
   defp wait_until_gone(uri, tries \\ 50) do
     cond do
-      tries == 0 -> :still_alive
-      KindRegistry.lookup(uri) == :error -> :gone
+      tries == 0 ->
+        :still_alive
+
+      KindRegistry.lookup(uri) == :error ->
+        :gone
+
       true ->
         Process.sleep(10)
         wait_until_gone(uri, tries - 1)
@@ -59,7 +63,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
 
   describe "BehaviorRegistry resolution" do
     test "all 3 Sandbox actions resolve on the Agent Kind" do
-      for action <- [:read, :write_path, :destroy] do
+      for action <- [:read, :update_config, :destroy] do
         assert {:ok, Sandbox} = BehaviorRegistry.lookup(Agent, action),
                "Sandbox must register :#{action} on Agent Kind via register_chat_behaviors"
       end
@@ -83,12 +87,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
     end
   end
 
-  describe ":write_path persists the slice" do
-    test "after write_path, :read returns the new fields" do
+  describe ":update_config persists the slice" do
+    test "after update_config, :read returns the new fields" do
       uri = spawn_agent_kind()
 
       assert {:ok, %{config_dir_path: "/tmp/agent-x", template_class: StubClass}} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/agent-x",
                  template_class: StubClass
                })
@@ -97,17 +101,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
                dispatch(uri, "read", %{})
     end
 
-    test "write_path can be invoked multiple times (no immutability)" do
+    test "update_config can be invoked multiple times (no immutability)" do
       uri = spawn_agent_kind()
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/v1",
                  template_class: ClassV1
                })
 
       assert {:ok, %{config_dir_path: "/tmp/v2", template_class: ClassV2}} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/v2",
                  template_class: ClassV2
                })
@@ -132,7 +136,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       uri = spawn_agent_kind()
       assert {:ok, _pid} = KindRegistry.lookup(uri)
 
-      # No write_path → template_class is nil → destroy should still work
+      # No update_config → template_class is nil → destroy should still work
       assert {:ok, %{destroyed: true}} = dispatch(uri, "destroy", %{})
       assert :gone = wait_until_gone(uri)
     end
@@ -141,11 +145,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       uri = spawn_agent_kind()
       config_dir = "/tmp/stubbed-#{uniq()}"
 
-      # Wire a stub Template Class via write_path. The stub broadcasts
+      # Wire a stub Template Class via update_config. The stub broadcasts
       # both args via PubSub so we can assert the callback was invoked
       # with the right tuple.
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: config_dir,
                  template_class: __MODULE__.StubTemplateClass
                })
@@ -171,7 +175,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
 
     test "after :destroy, :read STRICTLY returns {:error, :destroyed}" do
       uri = spawn_agent_kind()
-      assert {:ok, _} = dispatch(uri, "write_path", %{config_dir_path: "/tmp/x", template_class: nil})
+
+      assert {:ok, _} =
+               dispatch(uri, "update_config", %{config_dir_path: "/tmp/x", template_class: nil})
 
       assert {:ok, %{destroyed: true}} = dispatch(uri, "destroy", %{})
 
@@ -181,15 +187,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       assert :gone = wait_until_gone(uri)
     end
 
-    test "after :destroy, :write_path STRICTLY returns {:error, :destroyed}" do
+    test "after :destroy, :update_config STRICTLY returns {:error, :destroyed}" do
       uri = spawn_agent_kind()
-      assert {:ok, _} = dispatch(uri, "write_path", %{config_dir_path: "/tmp/x", template_class: nil})
+
+      assert {:ok, _} =
+               dispatch(uri, "update_config", %{config_dir_path: "/tmp/x", template_class: nil})
 
       assert {:ok, %{destroyed: true}} = dispatch(uri, "destroy", %{})
 
       assert {:error, :destroyed} =
-               dispatch(uri, "write_path", %{config_dir_path: "/tmp/y", template_class: nil}),
-             "post-destroy write_path must hit the gate clause (not :no_such_actor)"
+               dispatch(uri, "update_config", %{config_dir_path: "/tmp/y", template_class: nil}),
+             "post-destroy update_config must hit the gate clause (not :no_such_actor)"
 
       assert :gone = wait_until_gone(uri)
     end
@@ -209,7 +217,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       uri = spawn_agent_kind()
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/v1",
                  template_class: nil
                })
@@ -229,9 +237,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
                dispatch(uri, "read", %{}),
              "re-spawned agent must inherit a CLEARED slice (no stale config_dir_path)"
 
-      # And write_path can now populate fresh state.
+      # And update_config can now populate fresh state.
       assert {:ok, %{config_dir_path: "/tmp/v2"}} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/v2",
                  template_class: nil
                })
@@ -245,7 +253,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       uri = spawn_agent_kind()
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/raises",
                  template_class: __MODULE__.RaisingStubClass
                })
@@ -262,7 +270,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       uri = spawn_agent_kind()
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: "/tmp/exits",
                  template_class: __MODULE__.ExitingStubClass
                })
@@ -284,7 +292,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       config_dir = "/tmp/cleanup-fails-#{uniq()}"
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: config_dir,
                  template_class: __MODULE__.RaisingStubClass
                })
@@ -314,7 +322,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       config_dir = "/tmp/cleanup-succeeds-#{uniq()}"
 
       assert {:ok, _} =
-               dispatch(uri, "write_path", %{
+               dispatch(uri, "update_config", %{
                  config_dir_path: config_dir,
                  template_class: __MODULE__.StubTemplateClass
                })

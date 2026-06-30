@@ -349,7 +349,9 @@ defmodule Ezagent.Session.SessionManager do
   # caps yields an empty set, and every underlying tool DENIES at the dispatch
   # chokepoint (no admin_caps fallback).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    Ezagent.Identity.list_caps_for(orchestrator_uri)
+    orchestrator_uri
+    |> Ezagent.Identity.read_entity_caps()
+    |> MapSet.new()
   rescue
     _ -> MapSet.new()
   end

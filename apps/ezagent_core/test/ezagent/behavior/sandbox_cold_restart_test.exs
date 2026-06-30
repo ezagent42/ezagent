@@ -54,7 +54,7 @@ defmodule Ezagent.Behavior.SandboxColdRestartTest do
 
     # Register the Sandbox actions for this test-only Kind so dispatch can
     # resolve them (production Kinds register at app boot). Idempotent.
-    for action <- [:read, :write_path, :destroy] do
+    for action <- [:read, :update_config, :destroy] do
       if Ezagent.BehaviorRegistry.lookup(SandboxColdRestartKind, action) == :error do
         :ok = Ezagent.CapabilityRegistry.register(SandboxColdRestartKind, action, Sandbox)
       end

@@ -152,6 +152,7 @@ defmodule Ezagent.Invariants.NoCustomerConceptTest do
 
     refute Enum.any?(values, &(Atom.to_string(&1) == retired)),
            "#{retired} must be retired from the enum"
+
     assert :internal in values, ":internal must be the internal-read value"
 
     offenders =

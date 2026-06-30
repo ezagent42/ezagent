@@ -427,7 +427,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # obligations run, nothing to undo — round 7.)
       if fresh? do
         # PR3 2026-05-24 — `record_sandbox_state/3` is a NEW CHECKED step
-        # after post-spawn obligations: dispatches `sandbox.write_path`
+        # after post-spawn obligations: dispatches `sandbox.update_config`
         # on each worker so its `:sandbox` slice carries the per-agent
         # config_dir + template_class. Without this, a destroy_config_dir
         # callback later cannot know what to clean up.
@@ -437,7 +437,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # worker, unbind workspace, forget lineage, AND (cc-specific)
         # the plugin's own `rollback_agent_config_dir` already ran
         # inside `instantiate/3` if PTY failed there. Here we additionally
-        # delete the dir we just created if the write_path dispatch
+        # delete the dir we just created if the update_config dispatch
         # itself fails — otherwise the agent terminates but the dir
         # leaks because `Sandbox.invoke(:destroy, ...)` would never run
         # (the agent never even came up).
@@ -459,7 +459,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         end
       else
         # `fresh?: false` — adopted a pre-existing worker. Still
-        # write_path so its slice reflects the (already-existing)
+        # update_config so its slice reflects the (already-existing)
         # config_dir, but don't roll back on failure (we didn't create
         # the worker).
         _ = record_sandbox_state(workers, instantiate_meta, template_class)
@@ -565,7 +565,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
-  # PR3 2026-05-24 — dispatch `sandbox.write_path` on each worker URI
+  # PR3 2026-05-24 — dispatch `sandbox.update_config` on each worker URI
   # so the agent's `:sandbox` slice carries the per-agent
   # `config_dir_path` + `template_class`. Both fields are needed by
   # `Sandbox.invoke(:destroy, ...)` to invoke the right cleanup callback
@@ -591,7 +591,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         template_class,
         # PTY-orphan-restart 2026-05-26 — the plugin Template Class
         # may also emit `:respawn_template_data` in meta (cc does;
-        # echo doesn't). Passed through to `sandbox.write_path` so
+        # echo doesn't). Passed through to `sandbox.update_config` so
         # the slice carries enough state for `Sandbox.post_init/2` to
         # respawn the subprocess on a phx restart. Absent in meta →
         # `nil` here → not written into the slice.
@@ -607,80 +607,99 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.update_config")
 
-      # codex E2E fix v2 Bug A (2026-05-29) — the Agent Kind was just
-      # spawned by `template_class.instantiate/3`. `Kind.Server.init/1`
-      # registers `:not_ready` synchronously and returns
-      # `{:continue, :announce_ready}`; the `:ready` flip happens
-      # asynchronously in `handle_continue` after the post-init Behavior
-      # chain runs. The orchestrator-spawn path
-      # (`Session.ensure_orchestrator` → `spawn_from_template_content` →
-      # `record_sandbox_state`) hits this dispatch microseconds after
-      # `start_link` returns — typically before the GenServer's
-      # `handle_continue(:announce_ready, ...)` message has been
-      # processed. A `:call` dispatch in that window fails fast with
-      # `{:error, :not_ready}` (hard invariant #3, so the synchronous
-      # caller doesn't block on `deadline_ms`), and the Sandbox slice's
-      # `respawn_template_data` never gets written — which means
-      # `Sandbox.post_init/2` cannot re-spawn the PTY subprocess on the
-      # next phx restart. Allen e2e symptom 2026-05-28 was
-      # `{:sandbox_write_path_failed, %URI{cc_orchestrator-main},
-      # :not_ready}`.
-      #
-      # `ReadyGate.await/2` is the structural fix — a bounded poll
-      # (5s test-tolerance bound; production typically resolves in
-      # 1-2ms once the post-init chain completes). The wait is only
-      # "best-effort accelerate the success path"; if the bound is
-      # exhausted (impossible in practice except under DBConnection
-      # contention) the dispatch is still attempted and the original
-      # `:not_ready` shape is preserved for callers' error handling.
-      _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
+      if sandbox_state_matches?(worker_uri, config_dir, template_class, respawn_data) do
+        {:cont, :ok}
+      else
+        # codex E2E fix v2 Bug A (2026-05-29) — the Agent Kind was just
+        # spawned by `template_class.instantiate/3`. `Kind.Server.init/1`
+        # registers `:not_ready` synchronously and returns
+        # `{:continue, :announce_ready}`; the `:ready` flip happens
+        # asynchronously in `handle_continue` after the post-init Behavior
+        # chain runs. The orchestrator-spawn path
+        # (`Session.ensure_orchestrator` → `spawn_from_template_content` →
+        # `record_sandbox_state`) hits this dispatch microseconds after
+        # `start_link` returns — typically before the GenServer's
+        # `handle_continue(:announce_ready, ...)` message has been
+        # processed. A `:call` dispatch in that window fails fast with
+        # `{:error, :not_ready}` (hard invariant #3, so the synchronous
+        # caller doesn't block on `deadline_ms`), and the Sandbox slice's
+        # `respawn_template_data` never gets written — which means
+        # `Sandbox.post_init/2` cannot re-spawn the PTY subprocess on the
+        # next phx restart. Allen e2e symptom 2026-05-28 was
+        # `{:sandbox_update_config_failed, %URI{cc_orchestrator-main},
+        # :not_ready}`.
+        #
+        # Bridge-backed cc agents are spawned with this sandbox state in their
+        # Kind init args before transport readiness can hold ReadyGate at
+        # `:not_ready`. The slice-match check above covers that case without
+        # adding a core dispatch bypass; this fallback remains the normal
+        # post-spawn write path for templates that do not initialize sandbox in
+        # spawn args.
+        _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
 
-      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-             target: target,
-             mode: :call,
-             args: %{
-               config_dir_path: config_dir,
-               template_class: template_class,
-               respawn_template_data: respawn_data
-             },
-             # System-principal elimination (#154 north star, 2026-06-19) —
-             # this is the AGENT acting on its OWN sandbox: the dispatch
-             # target (`worker_uri?action=sandbox.write_path`) IS the agent
-             # whose `:sandbox` slice is written. So it is GENUINE
-             # self-authority (capbac.md §7 "actor-self → {:held_by, self}"),
-             # NOT an ambient `system://agent-internal` borrow. The agent is
-             # live at this point (`ReadyGate.await/2` above), so `worker_uri`
-             # is a valid `caller` entity. We carry the agent's OWN
-             # `sandbox.write_path` cap INLINE in `ctx.caps` (same precedent as
-             # `ExternalMirrorWorker.worker_publish_caps/1`): the cap is the
-             # step-5.5 authorizer (`granted_via_ctx_caps?`), which ALSO avoids
-             # the `granted_via_holds_cap?` self-call deadlock (a self-dispatch
-             # reading its own `:identity` slice via `GenServer.call` blocks on
-             # itself — runtime.ex step-5.5 comment). Scoped to the SPECIFIC
-             # agent (`instance:`/`workspace_uri:` from `worker_uri`) for tightest
-             # least-privilege; `granted_by` = the agent itself (a real entity,
-             # #154-compliant) — provenance only on an inline authorizer
-             # (never routed through `Ezagent.Identity.Grant`).
-             ctx: %{
-               caller: worker_uri,
-               caps: [sandbox_write_path_self_cap(worker_uri)],
-               reply: {:caller_inbox, self()}
-             }
-           }) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:sandbox_write_path_failed, worker_uri, reason}}}
+        case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               target: target,
+               mode: :call,
+               args: %{
+                 config_dir_path: config_dir,
+                 template_class: template_class,
+                 respawn_template_data: respawn_data
+               },
+               # System-principal elimination (#154 north star, 2026-06-19) —
+               # this is the AGENT acting on its OWN sandbox: the dispatch target
+               # (`worker_uri?action=sandbox.update_config`) IS the agent whose
+               # `:sandbox` slice is written. So it is GENUINE self-authority
+               # (capbac.md §7 "actor-self → {:held_by, self}"), NOT an ambient
+               # `system://agent-internal` borrow. We carry the agent's OWN
+               # `sandbox.update_config` cap INLINE in `ctx.caps` (same precedent as
+               # `ExternalMirrorWorker.worker_publish_caps/1`): the cap is the
+               # step-5.5 authorizer (`granted_via_ctx_caps?`), which ALSO avoids
+               # the `granted_via_holds_cap?` self-call deadlock (a self-dispatch
+               # reading its own `:identity` slice via `GenServer.call` blocks on
+               # itself — runtime.ex step-5.5 comment). Scoped to the SPECIFIC
+               # agent (`instance:`/`workspace_uri:` from `worker_uri`) for
+               # tightest least-privilege; `granted_by` = the agent itself (a real
+               # entity, #154-compliant) — provenance only on an inline authorizer
+               # cap that is never granted/persisted through
+               # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
+               ctx: %{
+                 caller: worker_uri,
+                 caps: [sandbox_update_config_self_cap(worker_uri)],
+                 reply: {:caller_inbox, self()}
+               }
+             }) do
+          {:ok, _} ->
+            {:cont, :ok}
+
+          {:error, reason} ->
+            {:halt, {:error, {:sandbox_update_config_failed, worker_uri, reason}}}
+        end
       end
     end)
   end
 
+  defp sandbox_state_matches?(%URI{} = worker_uri, config_dir, template_class, respawn_data) do
+    case Ezagent.Kind.get_slice(worker_uri, :sandbox) do
+      {:ok, slice} when is_map(slice) ->
+        state = Ezagent.Kind.normalize_slice_view(slice)
+
+        Map.get(state, :config_dir_path) == config_dir and
+          Map.get(state, :template_class) == template_class and
+          Map.get(state, :respawn_template_data) == respawn_data
+
+      _ ->
+        false
+    end
+  end
+
   # System-principal elimination (#154, 2026-06-19) — the agent's OWN
-  # `sandbox.write_path` self-authority cap, the step-5.5 authorizer for
+  # `sandbox.update_config` self-authority cap, the step-5.5 authorizer for
   # `do_record_sandbox_state/4`'s self-dispatch (replaces the deleted
   # `system://agent-internal` principal). Shape mirrors
-  # `Ezagent.Behavior.Sandbox.required_caps/0[:write_path]` =
-  # `cap(:agent, Sandbox, :write_path)` but SCOPED to the specific agent
+  # `Ezagent.Behavior.Sandbox.required_caps/0[:update_config]` =
+  # `cap(:agent, Sandbox, :update_config)` but SCOPED to the specific agent
   # (`instance`/`workspace_uri` derived from `agent_uri`) for tightest
   # least-privilege — the runtime substitutes the same concrete instance from
   # the target, so concrete==concrete matches at dispatch. `granted_by` =
@@ -688,12 +707,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
   # authorizer cap that is never granted/persisted through
   # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
-  defp sandbox_write_path_self_cap(%URI{} = agent_uri) do
+  defp sandbox_update_config_self_cap(%URI{} = agent_uri) do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :agent,
         Ezagent.Behavior.Sandbox,
-        :write_path,
+        :update_config,
         Ezagent.URI.instance(agent_uri),
         Ezagent.Capability.workspace_of(agent_uri)
       )

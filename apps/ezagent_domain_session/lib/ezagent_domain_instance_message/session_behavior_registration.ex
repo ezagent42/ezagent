@@ -159,7 +159,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
 
     # PR2 2026-05-24 — Sandbox Behavior registers the per-agent config_dir +
     # extension-management actions. In `Agent.behaviors/0` (init_slice fires);
-    # ALSO registered so dispatch (read / write_path / destroy) goes through
+    # ALSO registered so dispatch (read / update_config / destroy) goes through
     # CapBAC. Same pattern as Terminable above.
     alias Ezagent.Behavior.Sandbox, as: SandboxB
 

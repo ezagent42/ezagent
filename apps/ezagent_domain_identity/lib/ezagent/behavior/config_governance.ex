@@ -29,7 +29,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
 
   `publish_cr` runs in a genuine agent ACTION ctx (`reads_siblings([:sandbox,
   :identity])`) so — AFTER the publish Multi flips the pointer(s) — it can emit
-  the deferred `sandbox.write_path` self-dispatch via the public reuse seam
+  the deferred `sandbox.update_config` self-dispatch via the public reuse seam
   `ConfigEvolve.sandbox_refresh_effects/2`, which projects the CURRENT (now
   published) pointer object into the config_dir. The pointer flip ALONE does NOT
   materialize — the effect emission is mandatory.
@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
   # Read the agent's OWN Sandbox + Identity siblings — IDENTICAL to ConfigEvolve.
   # `:sandbox` so publish/rollback can compute the deferred materialization
   # effect; `:identity` so that effect carries the AGENT's OWN caps (its
-  # self-scoped `cap(:agent, Sandbox, :write_path)`), not the manage-cap caller's.
+  # self-scoped `cap(:agent, Sandbox, :update_config)`), not the manage-cap caller's.
   reads_siblings([:sandbox, :identity])
 
   @default_cascade_key "agent.soul"
@@ -207,7 +207,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
   end
 
   # codex must-fix #3 — publish in a real agent action ctx so the deferred
-  # sandbox.write_path fires. The Multi flips the pointer(s); THEN we emit the
+  # sandbox.update_config fires. The Multi flips the pointer(s); THEN we emit the
   # materialization effect (projecting the now-current published object).
   @doc false
   @spec handle_publish_cr(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
@@ -337,7 +337,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
 
   # ---- materialization effect (reuse ConfigEvolve's public seam) -----------
 
-  # Emit ONE deferred sandbox.write_path per affected (subject, key) — the same
+  # Emit ONE deferred sandbox.update_config per affected (subject, key) — the same
   # current-pointer projection ConfigEvolve uses on its idempotent path. The
   # sandbox cache models the user-layer cascade per key; we project each distinct
   # key the CR touched (dedup). No new materialization mechanism.

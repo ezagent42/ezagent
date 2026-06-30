@@ -142,8 +142,8 @@ defmodule Ezagent.Behavior.Identity do
   # self-caps at create gain TWO self-scoped entries, held over ITSELF
   # (instance: self), so the agent can:
   #   1. project its durable config pointer into its own Sandbox cache
-  #      (the step-2 / boot-reconcile `Cmd(self, :write_path, …)`) — gated
-  #      by `cap(:agent, Sandbox, :write_path)`, and
+  #      (the step-2 / boot-reconcile `Cmd(self, :update_config, …)`) — gated
+  #      by `cap(:agent, Sandbox, :update_config)`, and
   #   2. run its own boot reconciliation (`reconcile_cascade`) — gated by
   #      `cap(:agent, ConfigEvolve, :reconcile_cascade)`.
   # User Kinds get neither (the cascade write + reconcile are agent-only).
@@ -154,7 +154,7 @@ defmodule Ezagent.Behavior.Identity do
 
       caps
       |> MapSet.put(
-        self_scoped_cap(:agent, Ezagent.Behavior.Sandbox, :write_path, instance, workspace_uri)
+        self_scoped_cap(:agent, Ezagent.Behavior.Sandbox, :update_config, instance, workspace_uri)
       )
       |> MapSet.put(
         self_scoped_cap(

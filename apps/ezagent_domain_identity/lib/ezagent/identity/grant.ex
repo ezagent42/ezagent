@@ -118,7 +118,12 @@ defmodule Ezagent.Identity.Grant do
   """
   @spec grant_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
           :ok | {:error, term()}
-  def grant_cap_via_router(%URI{} = target, %Capability{} = cap, authorization, reply_mode \\ :async) do
+  def grant_cap_via_router(
+        %URI{} = target,
+        %Capability{} = cap,
+        authorization,
+        reply_mode \\ :async
+      ) do
     case prepare(target, cap, authorization, :grant_cap) do
       {:ok, {target_uri, cap2, ctx}} ->
         cmd = %Cmd{

@@ -379,25 +379,82 @@ defmodule Ezagent.AutoService.Tier1Seed do
         {:ok, uri}
 
       :error ->
-        # role "orchestrator" threads the orchestrator MCP bridge (cc flavor) so
-        # a live claude exposes the 7-tool surface incl. kb_query. cc requires a
-        # non-empty cwd (project working dir); ensure it exists on disk.
-        _ = if cwd != "", do: File.mkdir_p(cwd)
-
-        case Workspace.create_agent(
-               workspace_uri,
-               %{flavor: flavor, name: name, role: role, cwd: cwd, with_pty: false},
-               admin_ctx
-             ) do
-          {:ok, %{agent_uri: got}} -> {:ok, got}
-          {:error, reason} -> {:error, {:autoservice_agent_create_failed, reason}}
-        end
+        do_ensure_autoservice_agent(uri, workspace_uri, ws, name, flavor, role, cwd, admin_ctx)
     end
+  end
+
+  defp do_ensure_autoservice_agent(
+         uri,
+         workspace_uri,
+         _ws,
+         _name,
+         "cc",
+         "orchestrator",
+         cwd,
+         admin_ctx
+       ) do
+    # RF-5b is intentionally not supported by the generic Workspace.create_agent
+    # route for file flavors (`{:role_unsupported_for_flavor, "cc"}`). The
+    # session-create path materializes cc orchestrators by reading the seeded
+    # cc-orchestrator AgentTemplate and invoking Agent.spawn_from_template_content.
+    # Mirror that path here while keeping the deterministic autoservice URI.
+    source_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+    _ = if cwd != "", do: File.mkdir_p(cwd)
+
+    with {:ok, content} <-
+           Ezagent.Orchestrator.Tools.read_source_template_content(source_template_uri),
+         content <- autoservice_orchestrator_template_content(content, cwd),
+         {:ok, _result} <-
+           Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             uri,
+             admin_ctx.caller,
+             workspace_uri,
+             caller: admin_ctx.caller,
+             caps: admin_ctx.caps,
+             source_template_uri: source_template_uri
+           ) do
+      {:ok, uri}
+    else
+      {:error, reason} -> {:error, {:autoservice_agent_create_failed, reason}}
+    end
+  end
+
+  defp do_ensure_autoservice_agent(
+         _uri,
+         workspace_uri,
+         _ws,
+         name,
+         flavor,
+         role,
+         cwd,
+         admin_ctx
+       ) do
+    # Non-cc test/native flavors still use the generic create path exercised by
+    # the deterministic seed test.
+    _ = if cwd != "", do: File.mkdir_p(cwd)
+
+    case Workspace.create_agent(
+           workspace_uri,
+           %{flavor: flavor, name: name, role: role, cwd: cwd, with_pty: false},
+           admin_ctx
+         ) do
+      {:ok, %{agent_uri: got}} -> {:ok, got}
+      {:error, reason} -> {:error, {:autoservice_agent_create_failed, reason}}
+    end
+  end
+
+  defp autoservice_orchestrator_template_content(content, cwd) do
+    content
+    |> Map.put(:project_cwd, cwd)
+    |> Map.put("project_cwd", cwd)
+    |> Map.put(:role, "orchestrator")
+    |> Map.put("role", "orchestrator")
   end
 
   # Grant the AutoService orchestrator the `kb.query` cap INTO ITS OWN identity
   # slice — the exact source the live orchestrator reads
-  # (`SessionManager.load_orchestrator_caps/1` = `Identity.list_caps_for/1`,
+  # (`SessionManager.load_orchestrator_caps/1` = `Identity.read_entity_caps/1`,
   # which reconstructs the orchestrator's delegated caps session-side). Without
   # this grant, a seeded cc-orchestrator's delegated caps are the orchestration
   # tools only; `kb.query` would DENY at the dispatch chokepoint (fail-closed) —

@@ -17,22 +17,22 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     THE SAME handler, it reads the current Sandbox cascade (via
     `reads_siblings([:sandbox])`), computes the refreshed
     `respawn_template_data`, and emits ONE
-    `{:dispatch_after_commit, Cmd(self, :write_path, rtd)}` — the deferred
-    self-dispatch to **`sandbox.write_path`** (rev-4 H1: the dispatched
-    action IS `:write_path`, matching the agent's self-scoped
-    `cap(:agent, Sandbox, :write_path)` — there is no
+    `{:dispatch_after_commit, Cmd(self, :update_config, rtd)}` — the deferred
+    self-dispatch to **`sandbox.update_config`** (rev-4 H1: the dispatched
+    action IS `:update_config`, matching the agent's self-scoped
+    `cap(:agent, Sandbox, :update_config)` — there is no
     `project_cascade_to_sandbox` action whose action axis the runtime would
     overwrite).
 
   - **STEP 2** is therefore NOT a separate ConfigEvolve action — it is the
-    deferred `sandbox.write_path` self-dispatch step 1 emits. Demoting the
+    deferred `sandbox.update_config` self-dispatch step 1 emits. Demoting the
     Sandbox pointer from source to spawn-cache keeps the spawn read path
     untouched.
 
   ## Boot reconciliation (crash-window self-heal)
 
   If the agent crashes between step 1's commit and the deferred
-  `write_path` running, the Sandbox cache is stale. `activate/2` cannot emit
+  `update_config` running, the Sandbox cache is stale. `activate/2` cannot emit
   effects and is NOT given sibling slices (the Lifecycle macro owns
   `post_init/2 → {:continue, :ezagent_activate} → handle_continue/3` and
   builds the activate ctx with no `:siblings`/`:caps`). So `activate/2`
@@ -43,7 +43,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   `reconcile_cascade` ACTION (carrying the agent's OWN caps, read from its
   `:identity` slice via `ctx.slice_state`), whose handler — a full action
   ctx WITH `ctx.siblings[:sandbox]` — compares the `ConfigStore` pointer to
-  the Sandbox cache and emits the SAME `Cmd(self, :write_path, rtd)` if they
+  the Sandbox cache and emits the SAME `Cmd(self, :update_config, rtd)` if they
   diverge. This closes the window in the agent's own domain (no
   `core→ConfigStore` dependency).
 
@@ -53,8 +53,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   manages the agent may evolve it; the membership-OR-lineage approximation
   is retired). `reconcile_cascade` → the agent's self-scoped
   `cap(:agent, ConfigEvolve, :reconcile_cascade)`. The emitted
-  `sandbox.write_path` → the agent's self-scoped
-  `cap(:agent, Sandbox, :write_path)`. The confused-deputy authority guard
+  `sandbox.update_config` → the agent's self-scoped
+  `cap(:agent, Sandbox, :update_config)`. The confused-deputy authority guard
   (`subject_uri` belongs to a manageable agent) is GONE because the agent
   IS the subject — there is no deputy.
 
@@ -74,9 +74,9 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # (the genuine ApiKeys in-process read precedent) to compute the refreshed
   # respawn_template_data. Surfaced as `ctx.siblings[:sandbox]` on action ctx.
   #
-  # `:identity` is ALSO declared because the deferred `sandbox.write_path`
+  # `:identity` is ALSO declared because the deferred `sandbox.update_config`
   # self-dispatch must carry the AGENT's OWN caps (its self-scoped
-  # `cap(:agent, Sandbox, :write_path)`), NOT the step-1 caller's (the
+  # `cap(:agent, Sandbox, :update_config)`), NOT the step-1 caller's (the
   # manager holds only the manage-cap). The agent's caps live in its own
   # `:identity` slice on the same Kind — read in-process via
   # `ctx.siblings[:identity][:caps]`.
@@ -144,7 +144,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     modes: [:cast],
     description:
       "Reconcile the agent's Sandbox cache against the durable ConfigStore " <>
-        "pointer (boot self-heal); emits sandbox.write_path if divergent"
+        "pointer (boot self-heal); emits sandbox.update_config if divergent"
   )
 
   # rev-4 (H1): each declared cap's ACTION equals the dispatched action it
@@ -157,8 +157,8 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   #     matches anything → authorized.
   #   reconcile_cascade → cap(:agent, ConfigEvolve, :reconcile_cascade)  (self)
   #
-  # The sandbox write step 1 / reconcile emit is a Cmd(self, :write_path, …),
-  # gated by cap(:agent, Sandbox, :write_path) — the agent holds it over
+  # The sandbox write step 1 / reconcile emit is a Cmd(self, :update_config, …),
+  # gated by cap(:agent, Sandbox, :update_config) — the agent holds it over
   # itself (granted at create, see Ezagent.Behavior.Identity.create/1).
   def required_caps do
     %{
@@ -206,7 +206,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # or authorize a dispatch. It self-dispatches the `reconcile_cascade`
   # ACTION instead (an action dispatch builds the full ctx WITH siblings),
   # carrying the agent's OWN caps read from its `:identity` slice — that is
-  # what holds the self-scoped `reconcile_cascade` + `Sandbox.write_path`
+  # what holds the self-scoped `reconcile_cascade` + `Sandbox.update_config`
   # caps granted at create.
   @impl Ezagent.Lifecycle
   def handle_signal(@ce_reconcile_signal, ctx) do
@@ -232,7 +232,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # object-keyed ordering) MINUS (a) the subject-authority confused-deputy
   # predicate (the manage-cap gate + self-subject replace it) and (b) the
   # `repoint_agent_layer/2` cross-entity write (step 2 = the deferred
-  # sandbox.write_path self-dispatch replaces it).
+  # sandbox.update_config self-dispatch replaces it).
   #
   # The delta is carried in the dispatch ARGS (the agent has no `:turns`
   # slice — only the Session does). `turn_id` is the idempotency marker
@@ -274,7 +274,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       # lookup is scoped to self.
       #
       # ITEM 3 (PR-6/7) — the idempotent path emits the deferred
-      # sandbox.write_path projection of the CURRENT pointer object (NOT the
+      # sandbox.update_config projection of the CURRENT pointer object (NOT the
       # redelivered, possibly-superseded turn's object), so a redelivery
       # self-heals the cache to the live config (B) and NEVER reverts it to a
       # superseded turn (A). If there is no current pointer object, emit none.
@@ -390,7 +390,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # predicate + the cross-entity repoint. Validates the caller-supplied
   # `config_id` (must name an existing in-scope object) BEFORE any side
   # effect, then advances the pointer and emits the same deferred
-  # sandbox.write_path projection.
+  # sandbox.update_config projection.
   @spec handle_repoint_config(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_repoint_config(args, ctx) do
     raw_attrs = %{
@@ -521,7 +521,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   # Self-dispatched from `handle_signal/2` post-`:ready`. Compares the
   # ConfigStore current user-layer pointer to the Sandbox cache
   # (`cascade_resolution.user_layer_uri`) and emits the SAME
-  # `Cmd(self, :write_path, rtd)` if they diverge. Reads the sandbox via
+  # `Cmd(self, :update_config, rtd)` if they diverge. Reads the sandbox via
   # `ctx.siblings[:sandbox]` (the action-ctx sibling injection). A no-op
   # (or absent pointer / sandbox) returns `{reconciled: false}` with no
   # effects.
@@ -538,13 +538,13 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     end
   end
 
-  # ---- step-2 effect builder (deferred sandbox.write_path self-dispatch) ----
+  # ---- step-2 effect builder (deferred sandbox.update_config self-dispatch) ----
   #
   # rev-4 H1: read the agent's OWN Sandbox cascade in-process (sibling),
   # compute the refreshed respawn_template_data with the new object's URI as
   # `user_layer_uri`, and emit ONE `{:dispatch_after_commit, Cmd(self,
-  # :write_path, rtd)}`. The dispatched action IS `:write_path` → gated by
-  # the agent's self-scoped `cap(:agent, Sandbox, :write_path)`. As a
+  # :update_config, rtd)}`. The dispatched action IS `:update_config` → gated by
+  # the agent's self-scoped `cap(:agent, Sandbox, :update_config)`. As a
   # post-commit cast it never deadlocks; on a missing self-cap the write
   # fails (logged, non-fatal — the boot reconcile heals).
   #
@@ -569,7 +569,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   end
 
   @doc """
-  CR-governance reuse seam — emit the deferred `sandbox.write_path` self-dispatch
+  CR-governance reuse seam — emit the deferred `sandbox.update_config` self-dispatch
   that re-materializes the agent's resolved soul into its config_dir, projecting
   the CURRENT durable pointer for `(subject_uri, key)`.
 
@@ -609,9 +609,9 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     end
   end
 
-  # Build the `sandbox.write_path` self-dispatch Cmd that refreshes the
+  # Build the `sandbox.update_config` self-dispatch Cmd that refreshes the
   # cascade `user_layer_uri` to `object_uri`. Preserves config_dir_path +
-  # template_class (write_path overwrites all three fields); only
+  # template_class (update_config overwrites all three fields); only
   # respawn_template_data changes.
   defp sandbox_write_cmd(ctx, sandbox, object_uri) when is_binary(object_uri) do
     rtd = Map.get(sandbox, :respawn_template_data)
@@ -621,14 +621,14 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
     Ezagent.Cmd.new(
       ctx.self_uri,
-      :write_path,
+      :update_config,
       %{
         config_dir_path: Map.get(sandbox, :config_dir_path),
         template_class: Map.get(sandbox, :template_class),
         respawn_template_data: updated_rtd
       },
       # The write is the AGENT acting on ITSELF — authorized by its OWN
-      # self-scoped `cap(:agent, Sandbox, :write_path)`, NOT the step-1
+      # self-scoped `cap(:agent, Sandbox, :update_config)`, NOT the step-1
       # caller's (the manager holds only the manage-cap). Carry the agent's
       # own caps from its `:identity` sibling slice. If the self-cap is
       # absent the write is denied (logged, non-fatal — boot reconcile
@@ -697,7 +697,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   #
   #   * ACTION ctx (`handle_apply_config_delta` / `handle_reconcile_cascade`)
   #     — the declared `:identity` sibling, `ctx.siblings[:identity][:caps]`.
-  #     Used to authorize the deferred `sandbox.write_path` self-dispatch.
+  #     Used to authorize the deferred `sandbox.update_config` self-dispatch.
   #   * SIGNAL ctx (`handle_signal/2`) — there is NO sibling injection; the
   #     macro surfaces all slices read-only via `ctx.slice_state`. Used to
   #     authorize the `reconcile_cascade` self-dispatch.

@@ -122,7 +122,9 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
       # lives in operator tooling, not runtime lib code).
       case Ezagent.PluginPackage.install(abs, unpack_to: Ezagent.Home.path(:plugins)) do
         {:ok, %{slug: slug, app: app}} ->
-          Mix.shell().info("✓ plugin package #{inspect(slug)} (app #{inspect(app)}) installed + hot-loaded")
+          Mix.shell().info(
+            "✓ plugin package #{inspect(slug)} (app #{inspect(app)}) installed + hot-loaded"
+          )
 
         {:error, reason} ->
           Mix.shell().error("plugin package install failed: #{inspect(reason)}")
