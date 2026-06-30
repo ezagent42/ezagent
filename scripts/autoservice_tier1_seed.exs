@@ -144,6 +144,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
           autosvc_role,
           autosvc_cwd,
           session_uri,
+          kb_agent,
           admin_ctx
         )
 
@@ -174,11 +175,32 @@ defmodule Ezagent.AutoService.Tier1Seed do
          role,
          cwd,
          session_uri,
+         kb_agent,
          admin_ctx
        ) do
-    case ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, admin_ctx) do
+    case ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, kb_agent, admin_ctx) do
       {:ok, autosvc_uri} ->
-        with :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
+        with :ok <-
+               maybe_bind_session_orchestrator(session_uri, autosvc_uri, flavor, role),
+             :ok <-
+               maybe_register_orchestrator(
+                 autosvc_uri,
+                 session_uri,
+                 workspace_uri,
+                 flavor,
+                 role,
+                 admin_ctx
+               ),
+             :ok <-
+               maybe_ensure_session_manager(
+                 autosvc_uri,
+                 session_uri,
+                 workspace_uri,
+                 flavor,
+                 role,
+                 admin_ctx
+               ),
+             :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
              :ok <- join_member(session_uri, autosvc_uri, :agent) do
           :created
         else
@@ -371,7 +393,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     _ -> Path.join([System.tmp_dir!(), "autosvc-agents", ws, name])
   end
 
-  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, admin_ctx) do
+  defp ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, kb_agent, admin_ctx) do
     uri = EzUri.agent(ws, name)
 
     case Ezagent.KindRegistry.lookup(uri) do
@@ -379,7 +401,17 @@ defmodule Ezagent.AutoService.Tier1Seed do
         {:ok, uri}
 
       :error ->
-        do_ensure_autoservice_agent(uri, workspace_uri, ws, name, flavor, role, cwd, admin_ctx)
+        do_ensure_autoservice_agent(
+          uri,
+          workspace_uri,
+          ws,
+          name,
+          flavor,
+          role,
+          cwd,
+          kb_agent,
+          admin_ctx
+        )
     end
   end
 
@@ -391,6 +423,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
          "cc",
          "orchestrator",
          cwd,
+         kb_agent,
          admin_ctx
        ) do
     # RF-5b is intentionally not supported by the generic Workspace.create_agent
@@ -400,6 +433,12 @@ defmodule Ezagent.AutoService.Tier1Seed do
     # Mirror that path here while keeping the deterministic autoservice URI.
     source_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
     _ = if cwd != "", do: File.mkdir_p(cwd)
+
+    # Support-agent persona: the cc-orchestrator template primes a TEAM-manager
+    # persona, so without this the agent has no support context and deflects/flails
+    # instead of using kb_query. Written to the cwd CLAUDE.md (claude project
+    # memory) BEFORE the PTY launches. (Verified 2026-06-30 in the T1 return.)
+    _ = write_support_persona(cwd, kb_agent)
 
     with {:ok, content} <-
            Ezagent.Orchestrator.Tools.read_source_template_content(source_template_uri),
@@ -428,6 +467,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
          flavor,
          role,
          cwd,
+         _kb_agent,
          admin_ctx
        ) do
     # Non-cc test/native flavors still use the generic create path exercised by
@@ -450,6 +490,138 @@ defmodule Ezagent.AutoService.Tier1Seed do
     |> Map.put("project_cwd", cwd)
     |> Map.put(:role, "orchestrator")
     |> Map.put("role", "orchestrator")
+  end
+
+  # Bind the session → orchestrator (the canonical `Materializer.store_session_
+  # orchestrator_uri/2` the real session-create flow uses). This is the SOURCE OF
+  # TRUTH: `Orchestrator.McpServer.resolve_session/1` reverse-resolves the session
+  # from the orchestrator URI by scanning sessions for a chat-slice
+  # `working_copy.orchestrator_uri` that matches. Without it the orchestrator MCP's
+  # `kb_query` (and the auto-`McpRegistry.register` in `build_context`) fail with a
+  # "session context error". Setting it both fixes the kb_query context AND drives
+  # the MCP server's own registration. Accepts the deterministic autoservice URI.
+  defp maybe_bind_session_orchestrator(session_uri, autosvc_uri, "cc", "orchestrator") do
+    # `McpServer.orchestrator_working_copy/1` GATES on `:orchestrator_template_uri`
+    # being a `%URI{}` and only THEN returns the wc carrying `:orchestrator_uri`.
+    # So the session→orchestrator binding needs BOTH keys, written into the chat
+    # slice's `template_working_copy` (the same primitives the real flow's
+    # `Materializer.{materialize_orchestrator_working_copy,store_session_orchestrator_uri}`
+    # use). read-modify-write preserves the `session_template_uri` already set by
+    # `ensure_public_view_session`.
+    orch_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+
+    working_copy =
+      session_uri
+      |> Ezagent.Entity.Session.read_template_working_copy()
+      |> Map.put(:orchestrator_template_uri, orch_template_uri)
+      |> Map.put(:orchestrator_uri, autosvc_uri)
+
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} ->
+        Logger.info("autosvc-seed: bound session→orchestrator #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:bind_session_orchestrator_failed, reason}}
+
+      other ->
+        {:error, {:bind_session_orchestrator_failed, other}}
+    end
+  rescue
+    e -> {:error, {:bind_session_orchestrator_failed, e}}
+  end
+
+  defp maybe_bind_session_orchestrator(_session, _uri, _flavor, _role), do: :ok
+
+  # Register the AutoService agent as an orchestrator so its `esr-orchestrator`
+  # MCP-channel join is accepted. `Ezagent.Orchestrator.McpChannel` gates
+  # fail-closed on a `McpRegistry` row; without it every orchestrator tool (incl.
+  # `kb_query`) fails with `:orchestrator_not_registered`. The real session-create
+  # orchestrator flow writes this row — the seed materializes the agent directly
+  # via `spawn_from_template_content`, so it must register here. ETS-backed →
+  # re-registered every boot (the live seed re-runs at boot). Only meaningful for
+  # the live cc orchestrator; non-cc test flavors are not orchestrators.
+  defp maybe_register_orchestrator(
+         autosvc_uri,
+         session_uri,
+         workspace_uri,
+         "cc",
+         "orchestrator",
+         admin_ctx
+       ) do
+    case Ezagent.Orchestrator.McpRegistry.register(autosvc_uri,
+           session_uri: session_uri,
+           workspace_uri: workspace_uri,
+           owner_uri: admin_ctx.caller
+         ) do
+      :ok ->
+        Logger.info("autosvc-seed: registered orchestrator #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:register_orchestrator_failed, reason}}
+    end
+  rescue
+    e -> {:error, {:register_orchestrator_failed, e}}
+  end
+
+  defp maybe_register_orchestrator(_uri, _session, _ws, _flavor, _role, _ctx), do: :ok
+
+  # Start the orchestrator's `SessionManager` (the per-orchestrator-session executor
+  # the orchestrator MCP `tools/call` path needs — `McpServer` returns
+  # `:orchestrator_context_unavailable` without a live one). This is the missing
+  # piece that left `kb_query` silently failing even after B/C/D: the bridge token
+  # was minted at cc spawn (`McpConfigWriter.write_with_token!`), but no SessionManager
+  # was reconstructing the orchestrator's session-side caps. Modeled on the sanctioned
+  # `agent_contract_g4` setup (`SessionManager.ensure_started/1`, all public API).
+  # Idempotent (`ensure_started`); only for the live cc orchestrator.
+  defp maybe_ensure_session_manager(autosvc_uri, session_uri, workspace_uri, "cc", "orchestrator", admin_ctx) do
+    case Ezagent.Session.SessionManager.ensure_started(
+           orchestrator_uri: autosvc_uri,
+           session_uri: session_uri,
+           workspace_uri: workspace_uri,
+           owner_uri: admin_ctx.caller
+         ) do
+      {:ok, _sm} ->
+        Logger.info("autosvc-seed: started SessionManager for #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:ensure_session_manager_failed, reason}}
+    end
+  rescue
+    e -> {:error, {:ensure_session_manager_failed, e}}
+  end
+
+  defp maybe_ensure_session_manager(_uri, _session, _ws, _flavor, _role, _ctx), do: :ok
+
+  # Write a tier-1 support-agent persona into the agent's cwd `CLAUDE.md` (claude
+  # project memory). The AutoService agent reuses the cc-orchestrator (team-manager)
+  # template to obtain the orchestrator MCP (the `kb_query` tool), so without a
+  # support persona it has no support context and deflects/flails instead of
+  # querying the kb. Best-effort (never blocks create).
+  defp write_support_persona(cwd, kb_agent) when is_binary(cwd) and cwd != "" do
+    File.write(Path.join(cwd, "CLAUDE.md"), support_persona(kb_agent))
+  end
+
+  defp write_support_persona(_cwd, _kb_agent), do: :ok
+
+  defp support_persona(kb_agent) do
+    """
+    # AutoService Tier-1 Support Agent
+
+    You are a **tier-1 customer support agent** for AutoService. Customers chat with
+    you to get help with their account and support needs.
+
+    You have a `kb_query` tool (exposed by the `esr-orchestrator` MCP server) backed
+    by this workspace's knowledge base. The knowledge-base agent is named **`#{kb_agent}`**.
+
+    When a customer asks a support question — for example, how to reach the priority
+    support hotline — you MUST call `kb_query` with `kb_agent_name: "#{kb_agent}"` to
+    look up the answer in the knowledge base, then answer the customer using exactly
+    what you retrieved. Do not answer support questions from memory and do not tell
+    the customer you lack access; always consult `#{kb_agent}` via `kb_query` first.
+    """
   end
 
   # Grant the AutoService orchestrator the `kb.query` cap INTO ITS OWN identity

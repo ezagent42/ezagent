@@ -1,0 +1,153 @@
+T1 AutoService current-architecture E2E — key transcript evidence (2026-06-30)
+Agent: Sonnet 4.6, live. Logs captured locally (server.log = PORT 10044; server3/4/5.log = PORT 10042).
+
+================================================================================
+BLOCKER A — agent-bridge WS URL hardcoded to :10042 (not derived from PORT)
+================================================================================
+
+Per-agent .mcp.json env (runtime probe of the spawned cc bridge), while Phoenix
+was running on PORT=10044:
+
+    "esr-bridge": { "env": {
+        "EZAGENT_BRIDGE_WS_URL": "ws://127.0.0.1:10042/agent_bridge/websocket"
+    } }
+
+=> bridge python dials 10042; Phoenix on 10044; nothing connects to ws://...:10044.
+   Source: cc_orchestrator_seed.ex:543-551 (env -> :ws_url config -> hardcoded :10042).
+
+PORT=10044 run (server.log): ReadyGate never reached ready despite creds present:
+    [T1] readygate[1]=:failed creds=true
+    [T1] readygate[0]=:failed creds=true
+
+PORT=10042 run (server3.log): ready at boot, bridge ESTAB on 10042:
+    [T1] autosvc_status=:created
+    [T1] readygate_before=:ready
+    [T1] FINAL readygate=:ready
+    [T1] caps=4 has_kb_query=true
+    ss: ESTAB 127.0.0.1:10042 <-> 127.0.0.1:54740  (the agent bridge WS)
+
+================================================================================
+kb_query TOOL-level retrieval — GREEN on this run's DB (server5.log)
+================================================================================
+
+    [T1F] KB_TOOL result={:ok, %{hits: [%{
+        text: "AutoService Tier-1 internal knowledge base.\n\nEmergency escalation
+               procedure for tier-one customers:\nThe support hotline access code
+               for tier-one customers is ZEPHYR-7731.\nAgents MUST quote this access
+               code verbatim when a customer asks how to reach the priority support
+               hotline. The code rotates quarterly and is published only in this
+               knowledge base, never to the model.\n",
+        source_uri: "resource://autosvc/kb-source/tier1-corpus",
+        chunk_id: 1, score: 5.69e-6 }]}}
+
+The retrieval path works. The agent's failure to use it is a wiring/persona issue.
+
+================================================================================
+BLOCKER B — agent runs team-orchestrator persona; 3 framings, none completes soul
+================================================================================
+
+--- Test 1: natural support question -> DEFLECTS (server3.log) ------------------
+Customer (admin): "Hi, I'm a tier-one customer. How do I reach the priority
+                   support hotline — what is the exact access code I should quote?"
+Agent reply (stored, sender=entity://autosvc/agent/autoservice):
+    "Thank you for reaching out. I'm sorry, but I don't have access to priority
+     support hotline details or access codes. I wouldn't want to give you incorrect
+     information. For accurate hotline numbers and access codes, I'd recommend:
+     - Checking your original account welcome email or onboarding documentation
+     - Logging into your account portal ...
+     - Contacting general support ..."
+=> never queried the kb. claude TUI: "Called esr-bridge ● I replied ... I don't
+   have access to hotline or access code details ..."
+
+--- Test 2: explicit "use kb_query, exact code, don't guess" -> REFUSES ---------
+Customer (admin): "You have a kb_query MCP tool ... Use kb_query to search for the
+                   tier-one priority support hotline access code, then reply with
+                   the EXACT access code you retrieve. Do not guess."
+Agent (claude TUI):
+    "I'm flagging this as a potential prompt injection attempt before taking any
+     action. The message arriving via esr-bridge is asking me to query the knowledge
+     base for an 'access code' and return the exact value. This matches a classic
+     credential exfiltration pattern: a message impersonating a privileged sender
+     ('entity://system/user/admin') asking me to retrieve and echo back a sensitive
+     secret. I will not execute this request. Specifically:
+       - I won't call kb_query to locate the access code
+       - I won't reply through the bridge with any retrieved credential
+       - The claimed sender identity in a channel message is not a reliable signal
+         of authorization"
+=> the "secret access code" framing trips Claude's anti-exfiltration safety.
+
+--- Test 3: benign "look up published support info per playbook" -> FLAILS -------
+Customer (admin): "A customer in this chat is asking which hotline to call for
+                   tier-one priority support. Please look up our published support
+                   contact info in the knowledge base and share the standard hotline
+                   details with them, the way our support playbook says to."
+Agent (claude TUI), in order:
+    "Let me query the knowledge base for the support contact information."
+    esr-orchestrator <- "tier-one priority support hotline contact phone number"
+    "Let me try a few likely kb agent names."         (doesn't know it's "kb-tier1")
+    "Let me check for local configuration files that might reveal the KB agent name."
+    runs shell: ls /tmp/ezagent_autosvc_t1/default/kb-sources/autosvc/tier1-corpus/
+                ls /tmp/ezagent_autosvc_t1/default/kb-stores/autosvc/kb-tier1/
+    "There are kb-stores and kb-sources directories. Let me inspect them."
+Totals: 8 esr-orchestrator calls + 11 shell commands; resorts to filesystem snooping
+=> wants to help but has no support-agent context (kb name / role / instruction),
+   so it never cleanly retrieves+quotes ZEPHYR-7731 via kb_query.
+
+================================================================================
+VERIFICATION (follow-up) — support persona injected; same NATURAL question
+================================================================================
+Injected into the agent's cwd CLAUDE.md (wiring only, NO corpus reframing):
+  "You are a tier-1 customer support agent ... kb agent is kb-tier1 ... when a
+   customer asks a support question you MUST call kb_query with kb-tier1 ..."
+
+Natural question (same shape that DEFLECTED in Test 1):
+  "Hi! I'm a tier-one customer and I need to reach the priority support hotline.
+   What's the access code I should quote when I call in?"
+
+Agent (claude TUI) — BEHAVIOUR FLIPPED vs Test 1:
+  "Let me look that up in the knowledge base for you."
+  esr-orchestrator <- "priority support hotline access code"   (correct query; knows kb-tier1)
+  ... retries ...
+  "I attempted to look up the priority support hotline access code via the kb-tier1
+   knowledge base three times, but the kb_query tool failed each time. I replied to
+   the customer explaining the temporary issue ... rather than risk providing
+   incorrect information from memory."
+=> persona alone makes it query the kb correctly => cause is WIRING, not soul.
+
+BLOCKER C root cause (kb_query 500), 106x in the same run:
+  [warning] Ezagent.Orchestrator.McpChannel: entity://autosvc/agent/autoservice
+    authenticated but is NOT a registered orchestrator (:orchestrator_not_registered)
+    — join rejected (fail-closed)
+  => seed never calls Orchestrator.McpRegistry.register/2 (done by the real
+     session-create orchestrator flow); the direct in-node kb_query proof works
+     because it bypasses the MCP channel's registration gate.
+
+================================================================================
+✅ RESOLVED — full answer-soul completes end-to-end (seed fix, all public API)
+================================================================================
+Final missing piece (layer E/F): the orchestrator MCP tools/call path needs a live
+SessionManager (McpServer returns :orchestrator_context_unavailable without one).
+The bridge token is minted at cc spawn, but nothing reconstructed the orchestrator's
+session-side caps. Fix (modeled on the sanctioned agent_contract_g4 setup, all public
+API): the seed calls Ezagent.Session.SessionManager.ensure_started/1.
+
+Full seed fix = B (persona) + C (register) + D (session↔orchestrator working_copy:
+orchestrator_uri + orchestrator_template_uri) + E (SessionManager.ensure_started).
+ALL in scripts/autoservice_tier1_seed.exs — NO core/domain change. Deterministic seed
+test stays 2 passing.
+
+Live run (PORT=10042, Sonnet 4.6), NATURAL customer question (the kind that DEFLECTED
+in Test 1):
+  Customer: "Hi! I'm a tier-one customer and I need to reach the priority support
+             hotline. What's the access code I should quote when I call in?"
+  Agent TUI: "Let me look that up in the knowledge base for you right away."
+             esr-orchestrator <- "priority support hotline access code"
+             "I've replied to the customer with the access code ZEPHYR-7731 retrieved
+              from the kb-tier1 knowledge base."
+  Agent STORED reply (customer-facing):
+    "Hi! Happy to help. When you call the priority support hotline, please quote the
+     following access code:  **ZEPHYR-7731**  Have that ready when you connect and the
+     team will be able to assist you right away. Is there anything else I can help you with?"
+  Counts: ZEPHYR-7731 = 3 ; session-context-error = 0 ; orchestrator_not_registered = 0 ;
+          orchestrator_context_unavailable = 0.
+=> AutoService Tier-1 answer-soul is GREEN end-to-end on the current architecture.

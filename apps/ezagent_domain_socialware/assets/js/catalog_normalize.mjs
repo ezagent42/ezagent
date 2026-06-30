@@ -36,9 +36,21 @@ function isContainer(node) {
 //    child, so a leaf-only stack (heading/text/buttons) keeps items-start and a
 //    lone button is not stretched full-width. An explicit `align` is never
 //    overridden.
+// The backend chat/page builders still emit the legacy 5-type set
+// (`container`/`text`/`table`/`code`); the renderer migrated to the shadcn
+// catalog (`Stack`/`Text`/`Table`/…). Without remapping, a legacy `container`/
+// `text` page renders "Unsupported node: <type>" (the socialware chat-feed bug).
+const LEGACY_TO_SHADCN = {container: "Stack", text: "Text", table: "Table", code: "Text"}
+
 export function normalizeSpec(node) {
   if (Array.isArray(node)) return node.map(normalizeSpec)
   if (!node || typeof node !== "object") return node
+
+  // Remap a legacy node type to its shadcn equivalent BEFORE type-specific
+  // coercion below (the Table/Stack branches key off the post-remap type).
+  if (typeof node.type === "string" && LEGACY_TO_SHADCN[node.type]) {
+    node = {...node, type: LEGACY_TO_SHADCN[node.type]}
+  }
 
   let props = node.props
 
