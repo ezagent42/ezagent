@@ -46,6 +46,17 @@ timezone: GMT+8
 5. T5 to jjkysy as a review-first handoff; no build until the verdict says split or merge.
 6. T6 stays with lead and runs after T1/T5 results.
 
+## Paste-Ready Start Prompts
+
+| dev | prompt |
+|---|---|
+| gaga | `dev-together dive docs/together/2026-06-30/handoffs/t1-autoservice-answer-loop.md` — verify the real AutoService cc answer-loop after #1095/#1096. Success is an agent-authored reply in `session://autosvc/default/tier1` using `ZEPHYR-7731`; otherwise return exact Claude auth/bridge blocker evidence. |
+| fatnine | `dev-together dive docs/together/2026-06-30/handoffs/t2-agent-console-f3-f4-f7.md` — convert #1027 Agent Console F3/F4/F7 QA findings into tested fixes or a split decision. Stop before CapBAC/session authority changes. |
+| zyli | `dev-together dive docs/together/2026-06-30/handoffs/t3-world-host-scope-temp-pg.md` — rerun world-host-scope DB-backed gates with temporary PostgreSQL Docker and return cleanup proof plus merge/fix/defer verdict. |
+| zhaomato | `dev-together dive docs/together/2026-06-30/handoffs/t4-website-demo-followup.md` — continue #1090 website demo/json-render follow-up without touching operator World routing; coordinate before shared style edits. |
+| jjkysy | `dev-together dive docs/together/2026-06-30/handoffs/t5-kanban-pr1020-review.md` — review #1020 first, produce changed-file risk map, gates, and merge/split/close verdict before any build. |
+| allen | Lead-only: close stale PRs #1026/#1022 after current returns; no developer handoff needed. |
+
 ## Off-Plan Support
 
 - agent support: bounded review/test/merge support, Feishu-facing summaries,

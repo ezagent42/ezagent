@@ -140,6 +140,17 @@
 <li><b>T6 allen</b> 在 T1/T5 返回后做 stale PR cleanup；#1102 等 Allen 确认 HTML 后合并。</li>
 </ol>
 
+<h2>开工 prompt（复制给对应 dev）</h2>
+<table>
+<tr><th>dev</th><th>prompt</th></tr>
+<tr><td><b>gaga</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t1-autoservice-answer-loop.md</code><br>验证 #1095/#1096 后真实 AutoService cc answer-loop。成功信号是 <code>session://autosvc/default/tier1</code> 中 agent-authored reply 使用 <code>ZEPHYR-7731</code>；否则返回精确 Claude auth/bridge blocker 证据。</td></tr>
+<tr><td><b>fatnine</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t2-agent-console-f3-f4-f7.md</code><br>把 #1027 Agent Console F3/F4/F7 QA findings 转成 tested fixes 或 split decision；触及 CapBAC/session authority 前停手确认。</td></tr>
+<tr><td><b>zyli</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t3-world-host-scope-temp-pg.md</code><br>用临时 PostgreSQL Docker 重跑 world-host-scope DB-backed gates，返回 cleanup proof 和 merge/fix/defer verdict。</td></tr>
+<tr><td><b>zhaomato</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t4-website-demo-followup.md</code><br>继续 #1090 官网 demo/json-render follow-up，不碰 operator World routing；改 shared style 前先协调。</td></tr>
+<tr><td><b>jjkysy</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t5-kanban-pr1020-review.md</code><br>先 review #1020，产出 changed-file risk map、gates 和 merge/split/close verdict；无 verdict 前不做大改。</td></tr>
+<tr><td><b>allen</b></td><td>Lead-only：close stale PRs #1026/#1022，等 returns 后更新 stack；不需要开发者 handoff。</td></tr>
+</table>
+
 <h2>Discuss-first triggers</h2>
 <blockquote><b>T2 停手线：</b> 任何 CapBAC、session membership、cross-workspace authority 变化必须先设计确认。</blockquote>
 <blockquote><b>T4 停手线：</b> 任何 World operator routing、socialware customer/external routes、shared world styles 变化必须与 T2/T3 协调。</blockquote>
