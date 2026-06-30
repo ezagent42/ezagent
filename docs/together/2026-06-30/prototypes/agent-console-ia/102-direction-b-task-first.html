@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B · 任务首页 + 对象详情</title>
+  <link rel="stylesheet" href="./prototype.css">
+</head>
+<body>
+  <main class="page">
+    <h2>B · 任务首页 + 对象详情</h2>
+    <p class="subtitle"><a href="./100-three-directions.html">返回总目录</a> · 这是我当前最推荐的方向。首页先围绕“继续做事”和“开始创建”，对象详情页再承接系统状态和高级配置。</p>
+
+    <div class="mockup">
+      <div class="mockup-header">第一屏：首页先讲任务，不先讲对象</div>
+      <div class="mockup-body">
+        <div class="mock-nav">首页 · 我的 Agent · 我的 Sessions · 模板库 · 运营视图</div>
+        <div class="cards" style="margin-top:16px;">
+          <div class="card">
+            <div class="card-body">
+              <h3>继续上次工作</h3>
+              <p>周报常驻 Session · 3 位成员 · 1 个 Claude 助手</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <h3>创建 Claude 助手</h3>
+              <p>给自己配一个长期协作助手，再挂到当前 Session</p>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <h3>待处理问题</h3>
+              <p>1 个 Agent 缺少环境，1 个 Session 没有可用助手</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="mockup">
+        <div class="mockup-header">创建页：用途导向向导</div>
+        <div class="mockup-body">
+          <p><strong>步骤 1：</strong>选择用途</p>
+          <ul>
+            <li>个人通用助手</li>
+            <li>项目协作助手</li>
+            <li>高级空白模板</li>
+          </ul>
+          <p><strong>步骤 2：</strong>选择挂到哪里</p>
+          <ul>
+            <li>挂到已有 Session</li>
+            <li>先创建，不立刻挂载</li>
+          </ul>
+          <p><strong>步骤 3：</strong>高级配置可折叠</p>
+          <p>默认不要求用户理解 `project_cwd`。</p>
+        </div>
+      </div>
+
+      <div class="mockup">
+        <div class="mockup-header">详情页：普通信息层 + 高级配置层</div>
+        <div class="mockup-body">
+          <p><strong>默认展示：</strong></p>
+          <ul>
+            <li>状态</li>
+            <li>用途</li>
+            <li>已连接的 Sessions</li>
+            <li>下一步动作</li>
+          </ul>
+          <p><strong>折叠展示：</strong></p>
+          <ul>
+            <li>flavor / runtime</li>
+            <li>cwd / sandbox</li>
+            <li>model / provider / MCP</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup">
+      <div class="mockup-header">一个典型用户旅程</div>
+      <div class="mockup-body">
+        <p><strong>场景：</strong>PM 想给自己配一个 Claude 助手</p>
+        <ol style="margin-left:20px;">
+          <li>进入首页，先看到“创建 Claude 助手”卡片</li>
+          <li>用模板/向导完成创建，不必先懂技术参数</li>
+          <li>系统引导把助手挂到当前 Session</li>
+          <li>只有当用户需要深配时，才进入详情页高级配置</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="pros-cons">
+      <div class="pros">
+        <h4>优点</h4>
+        <ul>
+          <li>最符合任务导向心智</li>
+          <li>把“先做成事”放在第一位</li>
+          <li>保留系统能力，但不强迫所有人先学模型</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <h4>风险</h4>
+        <ul>
+          <li>需要定义模板化创建体验</li>
+          <li>需要明确哪些参数可以托管隐藏</li>
+          <li>首页如果设计不好，容易变成“漂亮但空”的工作台</li>
+        </ul>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

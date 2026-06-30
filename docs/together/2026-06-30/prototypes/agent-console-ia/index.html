@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Console · 新版原型入口</title>
+  <link rel="stylesheet" href="./prototype.css">
+</head>
+<body>
+  <main class="page">
+    <h2>Agent Console · 新版原型入口</h2>
+    <p class="subtitle">这套是你刚才认可的方向：<strong>Overview 作为默认引导页 + 左侧栏保留稳定分类导航</strong>。下面这些页不再是说明卡片，而是更接近真实网页结构的 shell 原型。</p>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-body">
+          <h3>Overview</h3>
+          <p>默认 landing page。先回答“我现在有什么”“我下一步做什么”。</p>
+          <a class="btn" href="./110-overview-shell.html">打开 Overview</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Roster</h3>
+          <p>参考真实产品：把 `Identities` 翻译成更产品化的 `Roster`，内部再分 `All / People / Agents / Access`。</p>
+          <a class="ghost-btn" href="./111-identities-directory-shell.html">打开 Roster</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Create Agent</h3>
+          <p>用途导向创建页，避免把 `project_cwd` 变成第一门槛。</p>
+          <a class="ghost-btn" href="./112-create-agent-shell.html">打开创建页</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Agent Detail</h3>
+          <p>普通信息层 + 高级配置层，不再一上来就是技术细节。</p>
+          <a class="ghost-btn" href="./113-agent-detail-shell.html">打开详情页</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Sessions</h3>
+          <p>从协作场景理解人和 Agent 的关系，避免路径割裂。</p>
+          <a class="ghost-btn" href="./114-sessions-shell.html">打开 Sessions</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Admin</h3>
+          <p>补出真实系统的一等入口，并加可见的二级子导航。</p>
+          <a class="ghost-btn" href="./119-admin-shell.html">打开 Admin</a>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Workspaces / Plugins / Profile</h3>
+          <p>把原本混在一起的 placeholder 拆成真实入口页，避免语义冲突。</p>
+          <a class="ghost-btn" href="./115-workspaces-shell.html">打开 Workspaces</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="mockup" style="margin-top:24px;">
+      <div class="mockup-header">建议浏览顺序</div>
+      <div class="mockup-body">
+        <ol style="margin-left:20px;">
+          <li>先看 <strong>Overview</strong>，判断首页是否既能引导新手，又不妨碍熟手。</li>
+          <li>再看 <strong>Roster</strong>，确认 `People / Agents / Access` 是否比 `Identities` 更符合产品语言。</li>
+          <li>再看 <strong>Create Agent</strong> 和 <strong>Agent Detail</strong>，判断创建路径和配置分层是否顺。</li>
+          <li>最后看 <strong>Admin</strong>，确认可见子导航是否比“只能靠 URL/⌘K”更合理。</li>
+        </ol>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

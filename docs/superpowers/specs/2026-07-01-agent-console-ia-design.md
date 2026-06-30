@@ -1,162 +1,281 @@
-# Spec: Agent Console IA refresh (overview-first, roster naming, workspace/admin split)
+# 设计说明：Agent Console 信息架构刷新
 
-> **Date:** 2026-07-01
-> **Author:** Claude + user
-> **Status:** brainstorm-approved
-> **Scope:** information architecture, naming, navigation, and prototype direction for the current Agent Console review
-> **Out of scope:** backend contract changes, permission model changes, session lifecycle semantics, kanban plugin product design
+> 日期：2026-07-01
+> 作者：Claude + 用户
+> 状态：已确认方向
+> 范围：本轮 Agent Console review 涉及的信息架构、命名、导航、页面组织与原型方向
+> 不在本文件范围内：后端 contract 变更、权限语义变更、session lifecycle 语义变更、kanban plugin 产品设计
 
-## 0. Why this spec exists
+## 0. 这份文档为什么存在
 
-The current Agent Console review started as a completeness audit, but PM dogfood exposed a second class of problems: **the UI often fails to explain the real usage path even when underlying capabilities already exist**.
+这轮 Agent Console 任务一开始是一次 **completeness 复核**：检查有没有明显缺功能、缺反馈、缺错误提示、缺入口，能补的小缺口直接补，较大的问题单列。
 
-This spec records the agreed IA direction so the prototype, the final return doc, and future product discussions all reference the same decisions.
+但随着 PM dogfood 的真实反馈出现，我们确认了一件更重要的事：
 
-The problem is not only "which pages exist". The deeper problem is:
+> 现在剩下的主要问题，已经不只是“有没有功能”，而是“用户能不能顺着页面把事情做成”。
 
-- the current shell is too close to internal object taxonomy in some places
-- too many paths rely on users already understanding the model
-- some powerful entry points exist, but are not surfaced as first-class visible navigation
-- the current create/detail flow exposes low-level fields too early
+也就是说，这轮工作其实收敛出了两层结论：
 
-This spec therefore focuses on **user journey first**, while still respecting the real system structure.
+1. **完整性检查的结果**
+   - F1-F6 这类明确小缺口已经有修复和验证证据。
+   - F7 中的 `session delete/archive` 仍然缺失，但它不是小修，而是设计问题。
 
-## 1. Design goals
+2. **设计层的新判断**
+   - 底层有些能力已经存在，但页面没有把真实使用路径讲清楚。
+   - 这使得剩余问题的重心，从“补几个小功能”转向了“重组 UI/UX 的表达方式”。
 
-The refreshed Agent Console should:
+这份文档就是为了把第二层判断写清楚：  
+为什么完整性检查之后，下一步不是继续零碎补点，而是需要一套更清楚的 IA 设计。
 
-1. **Explain the first step.**
-   A first-time user should be able to land on the console and understand what they can do next.
+## 1. 完整性检查与设计梳理的关系
 
-2. **Preserve expert shortcuts.**
-   A familiar operator should still be able to jump directly to list/detail/config pages without going through a wizard-like homepage every time.
+这两件事不是平行的，而是前后相接的。
 
-3. **Reflect the real system, but in product language.**
-   The UI should not invent fake concepts, but it should translate internal terms into names users can understand.
+### 1.1 完整性检查回答了什么
 
-4. **Separate workflow surfaces from system-config surfaces.**
-   This follows the already-landed shell perspective split in the codebase: `workspace` perspective vs `admin` perspective.
+完整性检查主要回答：
 
-5. **Push deep configuration down.**
-   Creation and detail pages should start with business-meaningful information, then reveal advanced runtime/config fields later.
+- 当前明显缺失的功能点有哪些
+- 哪些属于明确小缺口，可以直接补
+- 哪些其实已经修了，只需要重新验证
+- 哪些虽然缺失，但一旦动手就会碰到更大的产品/语义问题
 
-## 2. Core IA decision
+这轮得到的关键信号是：
 
-### 2.1 Default landing model
+- `F1-F6` 已经基本收口
+- `F7` 只剩 `session delete/archive`
+- `mix assets.build` tooling 问题当前不可复现，不应继续扩 scope
 
-The default landing page is **Overview**, not a raw object list.
+### 1.2 设计梳理回答了什么
 
-Overview is responsible for:
+当明确的小缺口基本收掉以后，仍然存在的困惑就暴露出来了：
 
-- showing what currently exists
-- showing what needs attention
-- giving clear next-step actions
-- linking directly into the real surfaces
+- 为什么用户还是会卡住？
+- 为什么 PM 明明在做一个合理的任务，却不知道应该点哪里？
+- 为什么看起来“系统有能力”，但“用户像是没有入口”？
 
-Overview does **not** replace the real console navigation. It is a guided landing page layered on top of it.
+这时候就不能再用“补一个按钮”来解释问题，而要承认：
 
-### 2.2 Persistent left navigation
+> 现在剩下的主要问题，是页面没有把系统能力组织成用户可理解的路径。
 
-The left sidebar remains persistent and maps to the real product structure rather than hiding everything behind Overview.
+所以，完整性检查是这份设计文档的**前提**，不是旁支。
 
-The agreed direction is:
+## 2. 这轮识别出的核心设计问题
 
-- **Overview**
-- **Sessions**
-- **Roster**
-- **Workspaces**
-- **Plugins**
-- **Profile**
-- **Admin**
+### 2.1 首页缺少“第一步”引导
 
-This preserves the value of direct-entry navigation while making the first screen more approachable.
+用户进入 Agent Console 后，不容易立刻理解：
 
-## 3. Naming decisions
+- 我现在有什么
+- 我下一步应该做什么
+- 我应该从哪个入口开始
 
-### 3.1 Why not keep `Identities`
+现有页面更像一个系统控制台，而不是一个能带人进入工作状态的产品首页。
 
-`Identities` is structurally accurate, but too close to internal taxonomy. It does not clearly answer the product question:
+### 2.2 已有能力和可见入口之间有断裂
 
-> "Who or what participates in work inside this workspace?"
+一些底层能力已经存在，但用户在页面里看不到明确路径。
 
-For product-facing IA, this area is really about the set of participants available to the workspace: people, agents, and their access.
+表现出来就是：
 
-### 3.2 Chosen name: `Roster`
+- 功能不是完全没有
+- 但用户仍然会问“是不是还没开放”“是不是我入口找错了”
 
-The agreed replacement is **Roster**.
+这说明问题不只是后端有没有，而是前端有没有把它组织成清楚的旅程。
 
-Reasons:
+### 2.3 页面过于贴近内部对象分类
 
-- it reads like a workspace participant roster
-- it can include both people and agents
-- it naturally supports access/capability drill-down without sounding too technical
-- it fits the "responsibility / who participates" mental model better than `Identities`
+当前部分结构更像在暴露系统内部 taxonomy，而不是回答用户问题。
 
-### 3.3 Sub-navigation under Roster
+用户的真实问题通常是：
 
-`Roster` becomes a first-class section with visible secondary tabs:
+- 我怎么继续上次的工作？
+- 我怎么加一个助手？
+- 我怎么进入某个协作场景？
 
-- **All**
-- **People**
-- **Agents**
-- **Access**
-- **New Agent**
+而不是：
 
-The previous `Capabilities` label is translated to **Access** in the product surface. The underlying concept is still capability/capbac, but the product framing should answer the user question:
+- 我先去理解这套系统内部的对象分层。
 
-> "Who can do what?"
+### 2.4 一级导航、二级导航和页内筛选职责容易混淆
 
-instead of exposing the internal noun too early.
+这轮原型迭代里，我们已经亲眼看到一个典型问题：
 
-## 4. Workspace structure
+- `subnav` 已经承担页面主切换
+- 表格工具栏又重复放了一排类似切换
 
-### 4.1 Why Workspace needs to be deeper
+这会让用户分不清：
 
-The previous prototype treated Workspaces as a single coarse page. That is insufficient.
+- 什么是“换页面”
+- 什么是“当前页里的过滤”
 
-The `workspace` concept in ezagent is not just a list object. It is the main scope container for:
+所以信息架构不只是菜单名字问题，也包括每一层交互职责怎么分。
 
-- people and agents
-- session templates / recipes / socialware definitions
-- routing and rules
-- plugin/app configuration
-- workspace-level health and activity
+### 2.5 命名偏内部术语
 
-So the Workspace surface should be deeper and more structured.
+例如：
 
-### 4.2 Chosen Workspace sub-structure
+- `Identities`
+- `Capabilities`
 
-For a workspace detail surface, the agreed direction is:
+这些词对实现者是清楚的，但对产品用户不够直观。
 
-- **Overview**
-- **Roster**
-- **Sessions**
-- **Recipes & Templates**
-- **Rules**
-- **Apps**
-- **Health**
+它们没有很好地回答用户真正的问题：
 
-This is intentionally a product translation of the underlying axes:
+- 这里是在看谁？
+- 这里是在看谁能做什么？
 
-- the **workspace/admin perspective split** determines the outer shell separation
-- the **recipe/responsibility concepts** help drive the inner grouping:
-  - `Roster` corresponds to who participates / responsibility slots
-  - `Recipes & Templates` corresponds to reusable definition/config content
+## 3. 新设计想解决什么
 
-We do **not** expose `recipe` or `responsibility` as raw left-nav terms, because they are better as model semantics than as top-level product labels.
+这轮新设计不是为了“重做一套 UI”，而是为了解决以下几个具体问题：
 
-## 5. Two-perspective shell
+1. **让用户进来就知道第一步是什么**
+2. **保留熟悉用户的直达路径**
+3. **把底层模型翻译成产品语言**
+4. **把工作流页面与系统配置页面分开**
+5. **让 Workspace 从列表对象变成真实工作空间**
 
-The codebase already documents a two-perspective shell:
+## 4. 设计目标
 
-- `workspace` perspective for workflow surfaces
-- `admin` perspective for system-config surfaces
+刷新后的 Agent Console 应该做到：
 
-This spec adopts that directly for the UI story.
+1. **先解释第一步**
+   - 首次进入的用户，应该知道“我现在能做什么”。
 
-### 5.1 Workspace perspective
+2. **保留熟手直达**
+   - 熟悉系统的人，不应该每次都被迫先走首页引导。
 
-This includes:
+3. **忠于系统，但用产品语言表达**
+   - 不发明假概念，但也不把内部术语直接甩给用户。
+
+4. **区分工作流面与系统配置面**
+   - 这与仓库里已经落地的 `workspace perspective / admin perspective` 一致。
+
+5. **把深层配置往下压**
+   - 创建页和详情页不要一上来就把低层 runtime 字段拍到用户脸上。
+
+## 5. 核心信息架构决策
+
+### 5.1 `Overview` 作为默认 landing page
+
+默认首页不是对象平铺，而是 `Overview`。
+
+`Overview` 的职责是：
+
+- 展示当前有哪些对象和状态
+- 展示哪些事情需要处理
+- 给出推荐下一步
+- 提供进入真实页面的直达入口
+
+这里要强调：
+
+> `Overview` 不是为了替代真实导航，而是为了补上“默认落地页的引导能力”。
+
+### 5.2 左侧保留稳定导航
+
+左侧导航不应该被 Overview 吞掉。
+
+当前确认的方向是保留稳定主导航：
+
+- `Overview`
+- `Sessions`
+- `Roster`
+- `Workspaces`
+- `Plugins`
+- `Profile`
+- `Admin`
+
+这样可以同时满足两类人：
+
+- 新用户：先看 Overview 找第一步
+- 熟悉用户：直接从左栏进入目标页面
+
+## 6. 命名决策
+
+### 6.1 为什么不再用 `Identities`
+
+`Identities` 在结构上没错，但太贴近内部 taxonomy。
+
+它没有直接回答一个产品问题：
+
+> 这个 workspace 里，谁/什么在参与工作？
+
+### 6.2 这轮采用 `Roster`
+
+我们当前采用 `Roster` 作为产品层的名字。
+
+原因：
+
+- 更像“当前 workspace 的参与者总表”
+- 能同时容纳 People 和 Agents
+- 比 `Identities` 更贴近“谁在参与工作”这个心智
+
+### 6.3 `Capabilities` 在产品层改为 `Access`
+
+用户更容易理解的问题是：
+
+> 谁能做什么？
+
+所以在产品层的页面表达里，当前建议使用：
+
+- `Access`
+
+这并不意味着底层 capability/capbac 概念被改掉，只是页面表达更人类友好。
+
+### 6.4 `Roster` 的二级结构
+
+当前方向是：
+
+- `All`
+- `People`
+- `Agents`
+- `Access`
+- `New Agent`
+
+这里的重点不是“标签数量”，而是每一层职责清楚：
+
+- 二级导航负责主切换
+- 表格工具栏负责页内筛选
+
+## 7. Workspace 为什么要变深
+
+之前的原型里，`Workspace` 还是一张比较粗的列表页。
+
+这不够。
+
+因为 `workspace` 在 ezagent 里不是一个简单对象，它其实承载了：
+
+- people / agents
+- sessions
+- recipes / templates / socialware 定义
+- routing / rules
+- plugins / apps
+- 状态与健康信息
+
+所以在产品层，Workspace 不能只是“workspace 列表”，而应该展开为一个真实工作空间视图。
+
+当前收敛出的结构是：
+
+- `Overview`
+- `Roster`
+- `Sessions`
+- `Recipes & Templates`
+- `Rules`
+- `Apps`
+- `Health`
+
+## 8. 外层 shell：Workspace / Admin 两个视角
+
+仓库里已经明确存在两种外层视角：
+
+- `workspace perspective`
+- `admin perspective`
+
+这轮设计直接吸收这条判断。
+
+### 8.1 Workspace 视角
+
+面向日常工作和协作，包括：
 
 - Overview
 - Sessions
@@ -164,103 +283,96 @@ This includes:
 - Plugins
 - Profile
 
-and the day-to-day workspace-facing work.
+### 8.2 Admin 视角
 
-### 5.2 Admin perspective
+面向系统配置和治理，包括：
 
-This includes:
-
-- admin dashboard
+- dashboard
 - observability
 - registry
 - snapshots
 - templates
-- capabilities / authz audit
-- settings
-- routing
-- workspace-level configuration surfaces that behave like system config
+- authz audit / settings / routing
 
-The UI implication is:
+在 UI 上的含义是：
 
-- `Admin` should remain a first-class entry
-- `Admin` should have **visible secondary navigation**
-- admin subpages should not be discoverable only through deep links, URL knowledge, or command palette
+- `Admin` 仍然要保留一级入口
+- `Admin` 下要有可见的二级导航
+- 不能只靠深链接或命令面板才能找到
 
-## 6. Create and detail flow principles
+## 9. 创建页与详情页的原则
 
-### 6.1 Creation flow
+### 9.1 创建页
 
-The console should not behave like a naked low-level object constructor.
+创建页不应该像一个裸露的低层对象构造器。
 
-Creation should:
+创建时应该：
 
-- start with the user's intent / use case
-- optionally attach the new agent to a real working context
-- keep advanced runtime fields below the fold
+- 从用途开始
+- 允许顺手挂到一个真实工作场景
+- 把高级 runtime 字段折叠到后面
 
-For example, a PM creating a Claude helper should not hit `project_cwd` as the first required concept.
+例如，PM 创建 Claude 助手时，不应该第一步就被 `project_cwd` 卡住。
 
-### 6.2 Detail flow
+### 9.2 详情页
 
-Detail pages should default to:
+详情页默认应该先展示：
 
-- current state
-- connected sessions / usage context
-- recommended next actions
+- 当前状态
+- 已连接的 session / 使用场景
+- 推荐下一步
 
-Only after that should they reveal:
+再往下才是：
 
 - flavor
 - runtime mode
 - cwd
 - model/provider
-- MCP/config paths
+- MCP/config 等高级字段
 
-This keeps the system honest without making every detail page feel like an admin-only backend screen.
+## 10. 这对原型意味着什么
 
-## 7. What this means for the prototype
+当前原型应该体现以下变化：
 
-The prototype should reflect the following changes:
+1. `Overview` 成为默认 landing page
+2. 左侧保留稳定导航
+3. `Identities` 改为 `Roster`
+4. `Capabilities` 改为 `Access`
+5. `Roster` 增加可见二级导航
+6. `Workspace` 变成多页结构
+7. `Admin` 作为一等入口，且带可见子导航
+8. 熟悉用户仍可直接进入列表页/详情页
 
-1. Keep **Overview** as the default guided landing page.
-2. Keep the persistent left sidebar.
-3. Rename **Identities** to **Roster**.
-4. Rename **Capabilities** to **Access** in the product-facing surface.
-5. Add visible secondary navigation for `Roster`.
-6. Deepen `Workspace` into a real multi-section detail experience.
-7. Keep `Admin` as a first-class entry with visible secondary navigation.
-8. Preserve direct-entry paths for experienced users.
+## 11. 本文明确不做的事
 
-## 8. Non-goals
+这份文档**不决定**：
 
-This spec does **not** decide:
+- CapBAC 语义是否调整
+- cross-workspace authority 是否调整
+- `session delete/archive` 如何实现
+- plugin 范围外的产品设计
+- `Roster` 是否要成为代码层 rename
 
-- any change to CapBAC semantics
-- any cross-workspace authority change
-- session archive/delete implementation
-- plugin-specific product flows outside Agent Console scope
-- whether `Roster` should become a code-level rename
+这是一份 **产品 IA / 命名 / 页面组织文档**，不是后端模型重写文档。
 
-This is a **product IA and naming spec**, not a backend model rewrite.
+## 12. 后续仍需 review 的问题
 
-## 9. Open follow-up questions
+这些问题不阻塞当前方向，但适合在领导 review 后再继续细化：
 
-These do not block the prototype direction, but should be reviewed in the next design pass:
+1. 左侧导航是否要视觉上分组为 `Workspace` vs `Admin`
+2. `Workspaces` 顶层是否应保持复数，还是未来进入更强 current-workspace shell
+3. `Recipes & Templates` 后续是否应拆成两个页
+4. `Access` 是否长期放在 `Roster` 下面，还是以后独立成治理页面
 
-1. Should the left nav visually group items into `Workspace` vs `Admin`, or keep one flat list with stronger active-state cues?
-2. Should `Workspaces` stay plural in the top nav while `Roster` and `Sessions` are workspace-local, or should a future shell become explicitly current-workspace scoped?
-3. Should `Recipes & Templates` later split into two separate pages once the underlying product semantics are clearer to users?
-4. Should `Access` stay nested under `Roster`, or eventually become a dedicated cross-surface governance page for advanced operators?
+## 13. 当前确认的结论
 
-## 10. Accepted decision summary
-
-The agreed direction is:
+这轮已经确认的大方向是：
 
 - **Overview first**
-- **persistent left navigation**
-- **`Roster` replaces `Identities`**
-- **`Access` replaces product-facing `Capabilities`**
-- **Workspace detail becomes deeper and multi-section**
-- **outer shell follows the landed `workspace/admin` perspective split**
+- **左侧保留稳定导航**
+- **`Roster` 替代 `Identities`**
+- **`Access` 替代产品层 `Capabilities`**
+- **`Workspace` 变深，成为多层空间视图**
+- **外层 shell 沿用 `workspace/admin` 双视角**
 
-This is the design basis for the refreshed prototype and for the final "design issues" section in the Agent Console completeness return.
+这就是本轮原型与 return 文档的共同设计基础。

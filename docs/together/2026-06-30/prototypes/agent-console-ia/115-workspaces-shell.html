@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Console · Workspaces</title>
+  <link rel="stylesheet" href="./prototype.css">
+</head>
+<body>
+  <main class="app-shell-page">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><h1>Agent Console</h1><p>Workspace 不只是列表，需要有更细的详情层级。</p></div>
+        <div class="nav-group">
+          <div class="nav-label">Main</div>
+          <a class="nav-item" href="./110-overview-shell.html"><span>Overview</span><span class="nav-badge">首页</span></a>
+          <a class="nav-item" href="./114-sessions-shell.html"><span>Sessions</span><span class="nav-badge">4</span></a>
+          <a class="nav-item" href="./111-identities-directory-shell.html"><span>Roster</span><span class="nav-badge">People + Agents</span></a>
+          <a class="nav-item active" href="./115-workspaces-shell.html"><span>Workspaces</span><span class="nav-badge">3</span></a>
+          <a class="nav-item" href="./117-plugins-shell.html"><span>Plugins</span><span class="nav-badge">2</span></a>
+          <a class="nav-item" href="./118-profile-shell.html"><span>Profile</span></a>
+          <a class="nav-item" href="./119-admin-shell.html"><span>Admin</span></a>
+        </div>
+      </aside>
+      <section class="main-shell">
+        <div class="topbar">
+          <div class="topbar-left">
+            <div class="eyebrow">Workspace</div>
+            <h2>Workspaces</h2>
+            <p>工作区不仅是一个列表对象，也应该能展开到成员、会话、模板、规则和应用层。</p>
+          </div>
+        </div>
+        <div class="content-shell">
+          <div class="table-card">
+            <table>
+              <thead><tr><th>Name / URI</th><th>Members</th><th>Templates</th><th>Rules</th><th>Live</th></tr></thead>
+              <tbody>
+                <tr><td><strong><a href="./123-workspace-detail-shell.html">pm</a></strong><div class="secondary">workspace://pm</div></td><td>12</td><td>3</td><td>8</td><td>live</td></tr>
+                <tr><td><strong>eng</strong><div class="secondary">workspace://eng</div></td><td>24</td><td>5</td><td>14</td><td>live</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <h3>这页现在做两件事</h3>
+            <p class="panel-muted">第一层先盘点有哪些 workspaces；第二层进入某个 workspace，再切到它的 `Overview / Roster / Sessions / Recipes & Templates / Rules / Apps / Health`。</p>
+            <a class="ghost-btn" href="./123-workspace-detail-shell.html">查看 workspace detail 原型</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Console · Workspace · Health</title>
+  <link rel="stylesheet" href="./prototype.css">
+</head>
+<body>
+  <main class="app-shell-page">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><h1>Agent Console</h1><p>Workspace 内的状态与活动面。</p></div>
+        <div class="nav-group">
+          <div class="nav-label">Main</div>
+          <a class="nav-item" href="./110-overview-shell.html"><span>Overview</span><span class="nav-badge">首页</span></a>
+          <a class="nav-item" href="./114-sessions-shell.html"><span>Sessions</span><span class="nav-badge">4</span></a>
+          <a class="nav-item" href="./111-identities-directory-shell.html"><span>Roster</span><span class="nav-badge">People + Agents</span></a>
+          <a class="nav-item active" href="./115-workspaces-shell.html"><span>Workspaces</span><span class="nav-badge">3</span></a>
+          <a class="nav-item" href="./119-admin-shell.html"><span>Admin</span></a>
+        </div>
+      </aside>
+      <section class="main-shell">
+        <div class="topbar">
+          <div class="topbar-left">
+            <div class="crumbs"><span>Workspaces</span><span>/</span><span>pm</span><span>/</span><span>Health</span></div>
+            <h2>pm workspace · Health</h2>
+            <p>把状态、异常和推荐动作放在 workspace 视角下，而不是散落在各个对象页。</p>
+          </div>
+        </div>
+        <div class="subnav">
+          <a class="subnav-item" href="./123-workspace-detail-shell.html">Overview</a>
+          <a class="subnav-item" href="./124-workspace-roster-shell.html">Roster</a>
+          <a class="subnav-item" href="./114-sessions-shell.html">Sessions</a>
+          <a class="subnav-item" href="./125-workspace-recipes-shell.html">Recipes &amp; Templates</a>
+          <a class="subnav-item" href="./126-workspace-rules-shell.html">Rules</a>
+          <a class="subnav-item" href="./127-workspace-apps-shell.html">Apps</a>
+          <a class="subnav-item active" href="./128-workspace-health-shell.html">Health</a>
+        </div>
+        <div class="content-shell">
+          <div class="action-list">
+            <div class="action-item">
+              <h4>draft-helper 未挂入任何 session</h4>
+              <p class="secondary">建议从 Roster 直接挂入 `周报常驻 Session`。</p>
+            </div>
+            <div class="action-item">
+              <h4>1 个插件等待配置</h4>
+              <p class="secondary">建议去 Apps / Plugins 完成配置。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

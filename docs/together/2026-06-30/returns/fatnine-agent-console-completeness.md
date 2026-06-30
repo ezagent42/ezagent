@@ -154,6 +154,11 @@
 
 - [2026-07-01-agent-console-ia-design.md](file:///Users/daiming/workspace/ezagent42/ezagent/.claude/worktrees/fix-agent-console-completeness-0630/docs/superpowers/specs/2026-07-01-agent-console-ia-design.md)
 
+已推送的网页 demo：
+
+- [prototype index](file:///Users/daiming/workspace/ezagent42/ezagent/.claude/worktrees/fix-agent-console-completeness-0630/docs/together/2026-06-30/prototypes/agent-console-ia/index.html)
+- demo 目录：`docs/together/2026-06-30/prototypes/agent-console-ia/`
+
 ## 这轮发现并修掉的明显设计问题
 
 今晚在原型 review 过程中，我们还确认并修掉了一个明显问题：
@@ -201,7 +206,7 @@
 - 已补出更细的 Workspace 页面。
 - 已修正 `Roster / Agents` 页中二级导航与工具栏重复的问题。
 
-## 缺失清单摘要
+## 完整性复核总表（F1-F7）
 
 | ID | 严重度 | 现状 | 说明 |
 | --- | --- | --- | --- |
@@ -212,6 +217,12 @@
 | F5 Entity Caps `instance` column dumped raw `%URI{}` | 低 | 已修复 | 已有数据映射修复与测试。 |
 | F6 py flavor requires script but UI allowed raw backend error | 中 | 已修复 | 已有表单约束和友好错误。 |
 | F7 no remove-member/delete-session UI made bound agents hard to delete | 中高 | 部分修复 | remove participant 已有；session delete/archive 仍是设计问题。 |
+
+结论不是“缺失的都很小”。
+
+- `F1-F6` 现在都属于已修复项。
+- 当前剩余真正重要的缺失不是小修，而是 `F7` 中的 `session delete/archive`。
+- 除此之外，这轮新暴露出来的主要问题是 UI/UX 设计问题，也不属于小修。
 
 ## 设计问题单列
 

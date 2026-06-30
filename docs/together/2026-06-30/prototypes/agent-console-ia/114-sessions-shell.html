@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Console · Sessions</title>
+  <link rel="stylesheet" href="./prototype.css">
+</head>
+<body>
+  <main class="app-shell-page">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Agent Console</h1>
+          <p>Session 是“我在哪个协作场景里工作”，不是纯对象表。</p>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Main</div>
+          <a class="nav-item" href="./110-overview-shell.html"><span>Overview</span><span class="nav-badge">首页</span></a>
+          <a class="nav-item active" href="./114-sessions-shell.html"><span>Sessions</span><span class="nav-badge">4</span></a>
+          <a class="nav-item" href="./111-identities-directory-shell.html"><span>Roster</span><span class="nav-badge">People + Agents</span></a>
+          <a class="nav-item" href="./115-workspaces-shell.html"><span>Workspaces</span><span class="nav-badge">3</span></a>
+          <a class="nav-item" href="./117-plugins-shell.html"><span>Plugins</span><span class="nav-badge">2</span></a>
+          <a class="nav-item" href="./118-profile-shell.html"><span>Profile</span></a>
+          <a class="nav-item" href="./119-admin-shell.html"><span>Admin</span></a>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Direct Entry</div>
+          <a class="nav-item" href="./111-agents-shell.html"><span>Agents List</span><span class="nav-badge">6</span></a>
+          <a class="nav-item" href="./112-create-agent-shell.html"><span>New Agent</span></a>
+          <a class="nav-item active" href="./114-sessions-shell.html"><span>Sessions List</span><span class="nav-badge">4</span></a>
+        </div>
+      </aside>
+
+      <section class="main-shell">
+        <div class="topbar">
+          <div class="topbar-left">
+            <div class="eyebrow">Collaboration</div>
+            <h2>Sessions</h2>
+            <p>把“人”和“Agent”统一放在协作场景里理解，帮助用户从任务出发而不是对象出发。</p>
+          </div>
+          <div class="topbar-actions">
+            <a class="ghost-btn" href="./111-agents-shell.html">从已有 Agent 里添加</a>
+            <a class="btn" href="./112-create-agent-shell.html">创建并加入 Agent</a>
+          </div>
+        </div>
+
+        <div class="content-shell">
+          <div class="panel">
+            <div class="detail-hero">
+              <div class="detail-title">
+                <div class="kicker">Session</div>
+                <h3>周报常驻 Session</h3>
+                <p class="panel-muted">每周产品周报协作场景 · 3 位成员 · 1 个 Claude 助手</p>
+              </div>
+              <div class="tabs">
+                <a class="tab active" href="./114-sessions-shell.html">Overview</a>
+                <a class="tab" href="./114-sessions-shell.html">Members</a>
+                <a class="tab" href="./114-sessions-shell.html">Attached Agents</a>
+                <a class="tab" href="./114-sessions-shell.html">Settings</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="shell-grid">
+            <div class="panel">
+              <div class="kicker">这个场景里现在有什么</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>对象</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th>动作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>小明</strong><div class="secondary">PM</div></td>
+                    <td>成员</td>
+                    <td><span class="pill">在线</span></td>
+                    <td><a href="#">查看权限</a></td>
+                  </tr>
+                  <tr>
+                    <td><strong>weekly-bot</strong><div class="secondary">Claude 助手</div></td>
+                    <td>Agent</td>
+                    <td><span class="pill green">在线</span></td>
+                    <td><a href="./113-agent-detail-shell.html">查看详情</a></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="panel">
+              <div class="kicker">推荐动作</div>
+              <div class="action-list">
+                <div class="action-item">
+                  <h4>再添加一个个人 Claude 助手</h4>
+                  <p class="secondary">适合把周报草稿和总结交给个人助手处理，减少手工切换。</p>
+                  <a href="./112-create-agent-shell.html">创建并加入</a>
+                </div>
+                <div class="action-item">
+                  <h4>从已有 Agent 列表里挂入</h4>
+                  <p class="secondary">适合熟悉系统的用户，直接重用已有 Agent。</p>
+                  <a href="./111-agents-shell.html">去选择</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="kicker">为什么 Session 页重要</div>
+            <p class="panel-muted">很多用户会把“邀请成员”和“添加 Agent”混成一个动作。这个页面应该帮助用户理解：成员是人，Agent 是加入这个场景协作的助手；两者相关，但不是同一对象。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
