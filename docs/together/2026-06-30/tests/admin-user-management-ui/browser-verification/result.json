@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "base": "http://world.localhost:10043",
+  "adminEmail": "admin@ezagent.chat",
+  "userName": "ui-admin-388202",
+  "userUri": "entity://system/user/ui-admin-388202",
+  "editedEmail": "ui-admin-388202+edited@example.test",
+  "consoleErrors": [],
+  "screenshots": [
+    "01-users-list-new-user-entry.png",
+    "02-new-user-form.png",
+    "03-created-user-detail.png",
+    "04-profile-edited-password-reset.png",
+    "05-user-disabled.png",
+    "06-disabled-user-login-blocked.png",
+    "07-user-enabled.png",
+    "08-enabled-user-login-succeeds.png",
+    "09-identities-overview-new-user-entry.png"
+  ],
+  "steps": [
+    "login as admin",
+    "open /identities and verify New user overview entry",
+    "open /identities/users and verify New user entry",
+    "open /identities/users/new and create user",
+    "edit display name/email and reset password",
+    "disable user and verify password login is blocked",
+    "enable user and verify password login succeeds"
+  ]
+}

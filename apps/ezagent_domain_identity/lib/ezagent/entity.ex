@@ -70,33 +70,40 @@ defmodule Ezagent.Entity do
     uri_str = URI.to_string(uri)
     allow_tokens = Keyword.get(opts, :allow_user_tokens, true)
 
-    cond do
-      is_nil(Users.get_by_uri(uri_str)) ->
+    case Users.get_by_uri(uri_str) do
+      nil ->
         # Run a dummy verify to avoid timing leak.
         Bcrypt.no_user_verify()
         {:error, :no_such_user}
 
-      # Codex CLI/GUI audit 2026-05-24 HIGH-1: user URIs accept BOTH
-      # passwords (for the /login form) AND bearer tokens (for CLI
-      # access). Token.mint/2 already accepts user URIs; this
-      # completes the auth side. Try token first (cheaper; only checks
-      # entity_tokens table); fall through to password.
-      #
-      # task #87 (Codex plan-review #3): the human login FORM passes
-      # `allow_user_tokens: false` so a typed API token can't be used as a
-      # password. The CLI/API bearer path leaves it true.
-      allow_tokens and match?({:ok, _}, Token.verify(uri, secret)) ->
-        ensure_spawned(uri)
-        caps = Ezagent.Identity.list_caps_for(uri)
-        {:ok, %{caps: caps}}
+      %{disabled_at: %DateTime{}} ->
+        Bcrypt.no_user_verify()
+        {:error, :disabled}
 
-      Users.verify_password(uri_str, secret) ->
-        ensure_spawned(uri)
-        caps = Ezagent.Identity.list_caps_for(uri)
-        {:ok, %{caps: caps}}
+      _user ->
+        cond do
+          # Codex CLI/GUI audit 2026-05-24 HIGH-1: user URIs accept BOTH
+          # passwords (for the /login form) AND bearer tokens (for CLI
+          # access). Token.mint/2 already accepts user URIs; this
+          # completes the auth side. Try token first (cheaper; only checks
+          # entity_tokens table); fall through to password.
+          #
+          # task #87 (Codex plan-review #3): the human login FORM passes
+          # `allow_user_tokens: false` so a typed API token can't be used as a
+          # password. The CLI/API bearer path leaves it true.
+          allow_tokens and match?({:ok, _}, Token.verify(uri, secret)) ->
+            ensure_spawned(uri)
+            caps = Ezagent.Identity.list_caps_for(uri)
+            {:ok, %{caps: caps}}
 
-      true ->
-        {:error, :invalid_credentials}
+          Users.verify_password(uri_str, secret) ->
+            ensure_spawned(uri)
+            caps = Ezagent.Identity.list_caps_for(uri)
+            {:ok, %{caps: caps}}
+
+          true ->
+            {:error, :invalid_credentials}
+        end
     end
   end
 

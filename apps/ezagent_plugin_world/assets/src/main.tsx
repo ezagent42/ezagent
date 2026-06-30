@@ -257,6 +257,36 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
+                onCreateUser: (user) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "users.create",
+                    args: {user},
+                  })
+                },
+                onSaveUserProfile: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "users.profile.save",
+                    args: payload,
+                  })
+                },
+                onSetUserPassword: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "users.password.set",
+                    args: payload,
+                  })
+                },
+                onDisableUser: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "users.disable",
+                    args: payload,
+                  })
+                },
+                onEnableUser: (payload) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "users.enable",
+                    args: payload,
+                  })
+                },
                 onDeleteAgent: (agentUri: string) => {
                   pushEvent?.("world:dispatch", {
                     action: "agents.delete",
@@ -734,6 +764,11 @@ type RenderContext = {
   onCreateSession: (shortName: string, templateName: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
+  onCreateUser: (user: Record<string, unknown>) => void
+  onSaveUserProfile: (payload: {user_uri: string; display_name: string; email: string}) => void
+  onSetUserPassword: (payload: {user_uri: string; password: string}) => void
+  onDisableUser: (payload: {user_uri: string; reason: string}) => void
+  onEnableUser: (payload: {user_uri: string}) => void
   onDeleteAgent: (agentUri: string) => void
   onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => void
   onConfigDeletePath: (agentUri: string, key: string, path: string[]) => void
@@ -842,6 +877,11 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           key={component.id}
           state={{...context.state, component: component.type}}
           onCreateAgent={context.onCreateAgent}
+          onCreateUser={context.onCreateUser}
+          onSaveUserProfile={context.onSaveUserProfile}
+          onSetUserPassword={context.onSetUserPassword}
+          onDisableUser={context.onDisableUser}
+          onEnableUser={context.onEnableUser}
           onDeleteAgent={context.onDeleteAgent}
           onConfigUpdate={context.onConfigUpdate}
           onConfigDeletePath={context.onConfigDeletePath}

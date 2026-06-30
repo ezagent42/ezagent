@@ -12,6 +12,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
   alias EzagentPluginWorld.Layouts
 
@@ -216,6 +217,12 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @agent_actions and is_map(args) do
     AgentActions.handle_dispatch(socket, action, args)
+  end
+
+  @user_actions ~w(users.create users.profile.save users.password.set users.disable users.enable)
+  def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
+      when action in @user_actions and is_map(args) do
+    UserActions.handle_dispatch(socket, action, args)
   end
 
   def handle_event(
@@ -487,13 +494,11 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  defp world_module_url do
-    Application.get_env(:ezagent_plugin_world, :world_module_url, "/assets/world/main.js")
-  end
+  defp world_module_url,
+    do: Application.get_env(:ezagent_plugin_world, :world_module_url, "/assets/world/main.js")
 
-  defp world_css_url do
-    Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
-  end
+  defp world_css_url,
+    do: Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
 
   # R-3 (codex HIGH-4): the persisted-layout read threads the CALLER's
   # authenticated scope (`caller` = `current_entity_uri`) SEPARATELY from the
@@ -641,12 +646,20 @@ defmodule EzagentPluginWorld.WorldLive do
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
-      create_error: Map.get(socket.assigns, :agent_create_error)
+      create_error: create_error_for_route(route, socket)
     })
     |> Map.put("layout", layout)
     |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
+
+  defp create_error_for_route(%{component: "agent_new_form"}, socket),
+    do: Map.get(socket.assigns, :agent_create_error)
+
+  defp create_error_for_route(%{component: "user_new_form"}, socket),
+    do: Map.get(socket.assigns, :user_create_error)
+
+  defp create_error_for_route(_route, _socket), do: nil
 
   defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps) do
     workspace = encode_uri(workspace_uri)
@@ -976,9 +989,6 @@ defmodule EzagentPluginWorld.WorldLive do
   defp jsonable(nil), do: nil
   defp jsonable(other), do: inspect(other)
 
-  # Returns the name segment of a session URI as a short human-readable label.
-  # Handles both %URI{} structs and plain strings (the canonical helper returns %URI{}).
-  # Uses Ezagent.URI.name!/1 so no positional URI field reads (uri_query.scan safe).
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)
 

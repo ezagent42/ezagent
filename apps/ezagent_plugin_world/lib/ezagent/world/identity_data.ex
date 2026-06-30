@@ -9,6 +9,7 @@ defmodule Ezagent.World.IdentityData do
   """
 
   alias Ezagent.Invocation
+  alias Ezagent.World.{CapData, UserData}
 
   @fallback_flavors ~w(cc py curl)
 
@@ -38,13 +39,18 @@ defmodule Ezagent.World.IdentityData do
     |> put_create_error(component, Map.get(opts, :create_error))
   end
 
-  # Surface a create failure on the new-agent form. Always written for the
-  # agent_new_form component (nil clears any stale message via the React
-  # state merge); never written for other components.
+  # Surface create failures on the matching form. Always written for the
+  # form component (nil clears any stale message via the React state merge);
+  # never written for other components.
   defp put_create_error(state, "agent_new_form", nil), do: Map.put(state, "create_error", nil)
 
   defp put_create_error(state, "agent_new_form", reason),
     do: Map.put(state, "create_error", create_error_message(reason))
+
+  defp put_create_error(state, "user_new_form", nil), do: Map.put(state, "create_error", nil)
+
+  defp put_create_error(state, "user_new_form", reason),
+    do: Map.put(state, "create_error", UserData.error_message(reason))
 
   defp put_create_error(state, _component, _reason), do: state
 
@@ -63,8 +69,12 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("agent_flavors", agent_flavors(rows))
   end
 
-  defp component_state(%{component: "users_table"}, base, _workspace_uri, _caller, _caps) do
-    Map.put(base, "users", list_users())
+  defp component_state(%{component: "users_table"}, base, workspace_uri, _caller, _caps) do
+    Map.put(base, "users", UserData.list_users(workspace_uri))
+  end
+
+  defp component_state(%{component: "user_new_form"}, base, workspace_uri, _caller, _caps) do
+    Map.put(base, "preview_uri", UserData.preview_uri(workspace_uri, ""))
   end
 
   defp component_state(%{component: "agents_table"}, base, workspace_uri, _caller, _caps) do
@@ -87,7 +97,7 @@ defmodule Ezagent.World.IdentityData do
     base
     |> Map.put("entity_uri", encode_uri(entity_uri))
     |> Map.put("entity_kind", entity_kind(entity_uri))
-    |> Map.put("caps", list_entity_caps(entity_uri, caller, caps))
+    |> Map.put("caps", CapData.list_entity_caps(entity_uri, caller, caps))
   end
 
   defp component_state(
@@ -142,6 +152,29 @@ defmodule Ezagent.World.IdentityData do
     # it required in the create form (the `*` + Create-button gate) so the
     # operator can't submit without it and hit the raw `:missing_script` error.
     |> Map.put("script_required_flavors", ["py"])
+  end
+
+  defp component_state(
+         %{component: "user_detail", entity_uri: user_uri},
+         base,
+         _workspace,
+         caller,
+         caps
+       )
+       when not is_nil(user_uri) do
+    if UserData.exists?(user_uri) do
+      UserData.detail_state(base, user_uri, caller, caps)
+    else
+      base
+      |> Map.put("user_uri", encode_uri(user_uri))
+      |> Map.put("user_not_found", true)
+    end
+  end
+
+  defp component_state(%{component: "user_detail", entity_uri: nil}, base, _ws, _caller, _caps) do
+    base
+    |> Map.put("user_uri", nil)
+    |> Map.put("user_not_found", true)
   end
 
   defp component_state(
@@ -240,7 +273,7 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("agent_status", agent_status(agent_uri))
     |> Map.put("flavor", flavor)
     |> Map.put("bridge", bridge_entry(agent_uri))
-    |> Map.put("granted_caps", list_entity_caps(agent_uri, caller, caps))
+    |> Map.put("granted_caps", CapData.list_entity_caps(agent_uri, caller, caps))
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
     |> Map.put("config_dir", sandbox_config_dir(sandbox))
     |> Map.put("source_template", sandbox_source_template(sandbox))
@@ -302,39 +335,6 @@ defmodule Ezagent.World.IdentityData do
     _ -> []
   end
 
-  @doc "List provisioned user rows for the users table component."
-  @spec list_users() :: [map()]
-  def list_users do
-    system_members =
-      case Ezagent.Workspace.Store.get_by_name("system") do
-        %{members: members} -> MapSet.new(members, &Ezagent.URI.stable_key/1)
-        _ -> MapSet.new()
-      end
-
-    users = Ezagent.Users.list_all()
-    display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &URI.to_string(&1.uri)))
-
-    users
-    |> Enum.map(fn user ->
-      uri_str = URI.to_string(user.uri)
-      online? = Ezagent.Presence.present?(user.uri)
-
-      %{
-        "uri" => uri_str,
-        "display_name" => Map.get(display_map, uri_str, uri_str),
-        "has_password" => not is_nil(user.password_hash),
-        "cap_count" => length(user.caps),
-        "online" => online?,
-        "transports" => transports_summary(Ezagent.Presence.list(user.uri)),
-        "system_member" => MapSet.member?(system_members, Ezagent.URI.stable_key(user.uri)),
-        "caps_path" => caps_path("user", uri_str)
-      }
-    end)
-    |> Enum.sort_by(& &1["uri"])
-  rescue
-    _ -> []
-  end
-
   @doc "Registered agent flavors for the new-agent component."
   @spec list_flavors() :: [String.t()]
   def list_flavors do
@@ -387,49 +387,6 @@ defmodule Ezagent.World.IdentityData do
   rescue
     _ -> "<agent-uri>"
   end
-
-  # Read the entity's granted caps for the DETAIL surface WITHOUT activating the
-  # entity, via the unified non-activating reader `Ezagent.Domain.Agent.read_caps/2`
-  # (SPEC unified-non-activating-agent-read.md). The reader owns the de-activation
-  # (live slice → snapshot fallback) AND the two-route authz + self-read exemption
-  # the `identity.list_caps` dispatch enforced (FP5 S5 #115). This facade keeps
-  # only the `cap_row/1` RENDER mapping — no read/authz machinery to re-derive.
-  defp list_entity_caps(%URI{} = entity_uri, caller_uri, caller_caps) do
-    case Ezagent.Domain.Agent.read_caps(entity_uri, %{caller: caller_uri, caps: caller_caps}) do
-      {:ok, caps} -> Enum.map(caps, &cap_row/1)
-      {:error, reason} -> %{"error" => inspect(reason)}
-    end
-  rescue
-    err -> %{"error" => inspect(err)}
-  end
-
-  defp list_entity_caps(_entity_uri, _caller_uri, _caller_caps),
-    do: %{"error" => "invalid_entity"}
-
-  defp cap_row(cap) do
-    %{
-      "kind" => inspect(cap.kind),
-      "behavior" => inspect(cap.behavior),
-      "action" => inspect(Ezagent.Capability.action_of(cap)),
-      "instance" => instance_scope_display(cap.instance),
-      "workspace_uri" => encode_uri(cap.workspace_uri),
-      "granted_by" => encode_uri(cap.granted_by)
-    }
-  end
-
-  # F5: render the cap-instance scope readably instead of dumping the raw struct.
-  # A bare `%URI{}` becomes its canonical string (via `encode_uri/1`, the
-  # display-only renderer); the scope tuples (`:any`, `{:within_workspace, uri}`,
-  # `{:within_session, uri}`, `{:instance, uri}`) read as `tag uri` rather than
-  # `inspect/1`'s `%URI{...}` blob. (Display only — the URI stays opaque; no
-  # structural parse, hence routed through `encode_uri/1`.)
-  defp instance_scope_display(%URI{} = uri), do: encode_uri(uri)
-  defp instance_scope_display(:any), do: "any"
-
-  defp instance_scope_display({tag, %URI{} = uri}) when is_atom(tag),
-    do: "#{tag} #{encode_uri(uri)}"
-
-  defp instance_scope_display(other), do: inspect(other)
 
   # F2: an agent exists if it has a live process OR a persisted snapshot. A URI
   # with neither (never created, or deleted) is genuinely gone — the detail page
@@ -831,6 +788,7 @@ defmodule Ezagent.World.IdentityData do
   defp caps_path(_kind, _uri_str), do: nil
 
   defp detail_path("agent", uri_str), do: "/identities/agents/#{URI.encode_www_form(uri_str)}"
+  defp detail_path("user", uri_str), do: "/identities/users/#{URI.encode_www_form(uri_str)}"
   defp detail_path(_kind, _uri_str), do: nil
 
   defp api_keys_path("agent", uri_str),
@@ -847,18 +805,6 @@ defmodule Ezagent.World.IdentityData do
     do: "/identities/agents/#{URI.encode_www_form(uri_str)}/config"
 
   defp config_path(_kind, _uri_str), do: nil
-
-  defp transports_summary(presence_list) do
-    for entries <- Map.values(presence_list),
-        meta <- entries,
-        transport = Map.get(meta, :transport),
-        not is_nil(transport),
-        uniq: true do
-      to_string(transport)
-    end
-  rescue
-    _ -> []
-  end
 
   defp safe_parse_entity(s) when is_binary(s) do
     case Ezagent.URI.parse(s) do

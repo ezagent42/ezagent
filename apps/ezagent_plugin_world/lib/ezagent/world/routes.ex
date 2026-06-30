@@ -48,6 +48,9 @@ defmodule Ezagent.World.Routes do
       path == "/identities/users" ->
         %{component: "users_table", title: "Users", path: path}
 
+      path == "/identities/users/new" ->
+        %{component: "user_new_form", title: "New User", path: path}
+
       path == "/identities/agents" ->
         %{
           component: "agents_table",
@@ -182,6 +185,16 @@ defmodule Ezagent.World.Routes do
         %{
           component: "entity_caps",
           title: "Entity Caps",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
+      match = Regex.run(~r{\A/identities/users/([^/]+)\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "user_detail",
+          title: "User Detail",
           path: path,
           entity_uri: parse_entity_uri(encoded)
         }

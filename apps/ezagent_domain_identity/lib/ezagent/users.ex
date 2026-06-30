@@ -46,6 +46,12 @@ defmodule Ezagent.Users do
     # non-anon user) but `email_verified: false` until they click the
     # confirmation link. Form login is gated on `email_verified == true`.
     field(:email_verified, :boolean, default: false)
+    # Admin user management v1 — soft-disable real users. This intentionally
+    # does NOT use `delete/1`, which tears down provisioning rows and Kind
+    # snapshots for anon-User GC.
+    field(:disabled_at, :utc_datetime_usec)
+    field(:disabled_by, :string)
+    field(:disabled_reason, :string)
     # PR #142: per-user `cli_token` field removed — bearer tokens now
     # live in `entity_tokens` (entity-agnostic, supports agents too).
     # See `Ezagent.Entity.Token`.
@@ -58,7 +64,10 @@ defmodule Ezagent.Users do
           password_hash: String.t() | nil,
           caps: [Ezagent.Capability.t()],
           confirmed: boolean(),
-          email_verified: boolean()
+          email_verified: boolean(),
+          disabled_at: DateTime.t() | nil,
+          disabled_by: String.t() | nil,
+          disabled_reason: String.t() | nil
         }
 
   # --- write paths ---------------------------------------------------
@@ -240,6 +249,69 @@ defmodule Ezagent.Users do
   end
 
   @doc """
+  Soft-disable a user by URI.
+
+  Idempotent: disabling an already-disabled user preserves the original
+  timestamp/reason and returns the current decoded row.
+  """
+  @spec disable(URI.t() | String.t(), URI.t() | String.t(), String.t() | nil) ::
+          {:ok, decoded()} | {:error, :not_found}
+  def disable(uri, disabled_by, reason \\ nil) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        {:error, :not_found}
+
+      %__MODULE__{disabled_at: %DateTime{}} = row ->
+        {:ok, decode(row)}
+
+      row ->
+        row
+        |> Ecto.Changeset.change(%{
+          disabled_at: DateTime.utc_now(),
+          disabled_by: uri_to_str(disabled_by),
+          disabled_reason: normalize_reason(reason)
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> {:ok, decode(updated)}
+          {:error, _changeset} -> {:error, :not_found}
+        end
+    end
+  end
+
+  @doc "Re-enable a soft-disabled user. Idempotent for already-enabled users."
+  @spec enable(URI.t() | String.t()) :: {:ok, decoded()} | {:error, :not_found}
+  def enable(uri) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        {:error, :not_found}
+
+      row ->
+        row
+        |> Ecto.Changeset.change(%{
+          disabled_at: nil,
+          disabled_by: nil,
+          disabled_reason: nil
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> {:ok, decode(updated)}
+          {:error, _changeset} -> {:error, :not_found}
+        end
+    end
+  end
+
+  @doc "Whether a user is soft-disabled. Unknown users fail closed as disabled."
+  @spec disabled?(URI.t() | String.t()) :: boolean()
+  def disabled?(uri) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      %__MODULE__{disabled_at: %DateTime{}} -> true
+      nil -> true
+      _ -> false
+    end
+  end
+
+  @doc """
   Mark a user's email as verified (task #87). Returns `{:ok, decoded}` or
   `{:error, :not_found}`. Idempotent — re-marking a verified user is a no-op
   update. Independent of `confirmed` (anon-ness).
@@ -267,6 +339,10 @@ defmodule Ezagent.Users do
     uri_str = uri_to_str(uri)
 
     case Repo.get_by(__MODULE__, uri: uri_str) do
+      %__MODULE__{disabled_at: %DateTime{}} ->
+        Bcrypt.no_user_verify()
+        false
+
       %__MODULE__{password_hash: hash} when is_binary(hash) and hash != "" ->
         Bcrypt.verify_pass(password, hash)
 
@@ -362,9 +438,21 @@ defmodule Ezagent.Users do
       # (defensive): treat nil as false (unconfirmed).
       confirmed: row.confirmed == true,
       # task #87 — defensive nil → false (unverified).
-      email_verified: row.email_verified == true
+      email_verified: row.email_verified == true,
+      disabled_at: row.disabled_at,
+      disabled_by: row.disabled_by,
+      disabled_reason: row.disabled_reason
     }
   end
+
+  defp normalize_reason(reason) when is_binary(reason) do
+    case String.trim(reason) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_reason(_), do: nil
 
   defp decode_caps(nil), do: []
   defp decode_caps(""), do: []
