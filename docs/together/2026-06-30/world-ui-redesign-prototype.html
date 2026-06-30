@@ -1,0 +1,2602 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ezagent World UI Redesign Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ez-red: #D81830;
+      --ez-blueink: #0048A8;
+      --ez-yellow: #FFD400;
+      --ez-jade: #0FA06E;
+      --ez-cobalt: #0B5CFF;
+      --ez-bg: #E8E8EB;
+      --bg: var(--ez-bg);
+      --panel: #ffffff;
+      --panel-soft: #f4f4f5;
+      --ink: #09090b;
+      --muted: #53637d;
+      --line: #d4d4d8;
+      --line-strong: #c4c6ce;
+      --primary: var(--ez-cobalt);
+      --primary-soft: #e9f0ff;
+      --accent: var(--ez-yellow);
+      --accent-soft: #fff2a6;
+      --warn: #9a5b00;
+      --warn-soft: #fff6cf;
+      --danger: var(--ez-red);
+      --success: var(--ez-jade);
+      --shadow: 0 1px 2px rgba(24, 24, 27, 0.06), 0 8px 24px rgba(24, 24, 27, 0.08);
+      --shadow-soft: 0 8px 24px rgba(24, 24, 27, 0.10);
+      --radius: 10px;
+      --mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
+      --sans: "Inter", "Noto Sans SC", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --serif: "Noto Serif SC", Georgia, serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      min-height: 100vh;
+      padding: 28px;
+    }
+
+    .hero {
+      max-width: 1240px;
+      margin: 0 auto 22px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .intro {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      font-size: 30px;
+      line-height: 1.1;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .summary-card {
+      background: var(--ez-blueink);
+      color: #f7fbfb;
+      border-radius: var(--radius);
+      padding: 18px;
+      display: grid;
+      align-content: space-between;
+      min-height: 210px;
+    }
+
+    .summary-card p {
+      color: #dbeafe;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .pill.accent {
+      border-color: #e5c200;
+      background: var(--accent-soft);
+      color: #382d00;
+    }
+
+    .pill.warn {
+      border-color: #f0cf9c;
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .prototype {
+      max-width: 1240px;
+      margin: 0 auto;
+      display: grid;
+      gap: 22px;
+    }
+
+    .screen {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .screen-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafa;
+    }
+
+    .screen-title p {
+      margin: 4px 0 0;
+      font-size: 13px;
+    }
+
+    .label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .app-frame {
+      min-height: 720px;
+      display: grid;
+      grid-template-rows: 54px 1fr;
+      background: var(--bg);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 250px minmax(260px, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line-strong);
+      background: #ffffff;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--primary);
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .workspace {
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 186px;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0 9px;
+      background: var(--panel-soft);
+      font-size: 13px;
+      color: #3d4c68;
+    }
+
+    .nav {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      justify-self: center;
+      min-width: 0;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+    }
+
+    .nav a {
+      min-width: 92px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .nav a.active {
+      background: var(--accent);
+      color: var(--ink);
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .button {
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .button.primary {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: #fff;
+    }
+
+    .button.danger {
+      border-color: rgba(216, 24, 48, 0.3);
+      background: #fff5f6;
+      color: var(--danger);
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      background: #fff;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .chat-layout {
+      display: grid;
+      grid-template-columns: 276px minmax(430px, 1fr) 260px;
+      min-height: 666px;
+    }
+
+    .side,
+    .detail {
+      background: #fafafa;
+      border-right: 1px solid var(--line);
+      min-width: 0;
+    }
+
+    .detail {
+      border-right: 0;
+      border-left: 1px solid var(--line);
+    }
+
+    .pane-head {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .pane-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .pane-subtitle {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 2px;
+    }
+
+    .list {
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .session-row,
+    .agent-row,
+    .tool-row {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+    }
+
+    .session-row.active,
+    .agent-row.active,
+    .tool-row.active {
+      border-color: #f0d44a;
+      background: var(--accent-soft);
+    }
+
+    .row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .row-name {
+      font-size: 13px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      flex: 0 0 auto;
+    }
+
+    .dot.idle {
+      background: #a8b1b9;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mono {
+      font-family: var(--mono);
+    }
+
+    .chat-main {
+      display: grid;
+      grid-template-rows: 58px 1fr 92px;
+      min-width: 0;
+      background: #fff;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .segmented {
+      display: inline-flex;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      gap: 3px;
+    }
+
+    .segment {
+      min-width: 66px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .segment.active {
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .messages {
+      padding: 16px;
+      display: grid;
+      align-content: start;
+      gap: 14px;
+      background:
+        linear-gradient(#ffffff, #ffffff),
+        repeating-linear-gradient(0deg, transparent, transparent 31px, rgba(23, 32, 42, 0.04) 32px);
+      overflow: hidden;
+    }
+
+    .message {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 10px;
+      max-width: 88%;
+    }
+
+    .message.self {
+      justify-self: end;
+      grid-template-columns: minmax(0, 1fr) 34px;
+    }
+
+    .bubble {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px 12px;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .message.self .bubble {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .json-card {
+      margin-top: 8px;
+      border: 1px solid #cfdde8;
+      border-radius: var(--radius);
+      background: #f8fbfd;
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+    }
+
+    .composer {
+      border-top: 1px solid var(--line);
+      background: #fafafa;
+      padding: 12px 16px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .input-box {
+      min-height: 58px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      display: inline-flex;
+      min-height: 22px;
+      align-items: center;
+      padding: 0 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+      overflow: auto;
+    }
+
+    .tab {
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      border-color: #e5c200;
+      color: var(--ink);
+    }
+
+    .drawer-body {
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .session-detail-body {
+      min-height: 0;
+      overflow-y: auto;
+      display: grid;
+      align-content: start;
+      gap: 0;
+    }
+
+    .invite-form {
+      display: grid;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .member-list,
+    .routing-list {
+      margin: 0;
+      padding: 8px;
+      list-style: none;
+      display: grid;
+      gap: 2px;
+    }
+
+    .member-row {
+      min-height: 38px;
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 8px;
+    }
+
+    .member-row:hover {
+      background: var(--panel-soft);
+    }
+
+    .member-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .member-name.agent {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .kind-badge {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .icon-button {
+      width: 30px;
+      height: 30px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .routing-panel {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .routing-form {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+      gap: 8px;
+      padding: 8px;
+    }
+
+    .routing-form .field.wide-field {
+      grid-column: 1 / -1;
+    }
+
+    .routing-rule {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+
+    .routing-rule strong {
+      display: block;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .routing-rule span {
+      display: block;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .field {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      color: var(--muted);
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .form-grid .full-row {
+      grid-column: 1 / -1;
+    }
+
+    .form-field {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .mock-input,
+    .mock-select,
+    .mock-textarea {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 13px;
+    }
+
+    .mock-input.mono,
+    .mock-textarea.mono {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .mock-textarea {
+      min-height: 68px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .checkbox-row input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary);
+    }
+
+    .form-help {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
+    .split-layout {
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+      min-height: 660px;
+    }
+
+    .content {
+      background: #fff;
+      min-width: 0;
+      display: grid;
+      grid-template-rows: 58px 1fr;
+    }
+
+    .content-body {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 126px minmax(0, 1fr);
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .kv span:first-child {
+      color: var(--muted);
+    }
+
+    .table {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .tr {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr 0.8fr auto;
+      gap: 10px;
+      min-height: 42px;
+      align-items: center;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    .tr:last-child {
+      border-bottom: 0;
+    }
+
+    .tr.head {
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .manage-grid {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: 660px;
+      background: #fff;
+    }
+
+    .manage-nav {
+      border-right: 1px solid var(--line);
+      background: #fafafa;
+      padding: 12px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+    }
+
+    .manage-item {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 9px 10px;
+      display: grid;
+      gap: 3px;
+    }
+
+    .manage-item.active {
+      border-color: #f0d44a;
+      background: var(--accent-soft);
+    }
+
+    .route-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .route-card {
+      min-height: 92px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .route-card.active {
+      border-color: #f0d44a;
+      background: var(--accent-soft);
+    }
+
+    .route-card strong,
+    .manage-item strong {
+      color: var(--ink);
+    }
+
+    .route-line {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+
+    .status-badge {
+      width: fit-content;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .status-badge.ok {
+      border-color: #a6dab1;
+      background: #effaf2;
+      color: #17632a;
+    }
+
+    .status-badge.warn {
+      border-color: #f0d44a;
+      background: var(--accent-soft);
+      color: #6d5700;
+    }
+
+    .plugin-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 10px;
+      min-height: 116px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .plugin-card.active {
+      border-color: #f0d44a;
+      background: var(--accent-soft);
+    }
+
+    .plugin-card.disabled {
+      opacity: 0.7;
+      background: var(--panel-soft);
+    }
+
+    .plugin-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .subnav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .subnav .segment {
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .tr.cols-5 {
+      grid-template-columns: 1.1fr 0.8fr 0.8fr 0.8fr auto;
+    }
+
+    .tr.cols-6 {
+      grid-template-columns: 1.1fr 0.75fr 0.75fr 0.75fr 0.75fr auto;
+    }
+
+    .mono-line {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+
+    .kanban-preview {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      min-height: 240px;
+      background:
+        linear-gradient(90deg, rgba(255, 212, 0, 0.18), rgba(255, 212, 0, 0)),
+        #fff;
+      padding: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .kanban-col {
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      padding: 10px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.75);
+    }
+
+    .menu-mock {
+      position: relative;
+      min-height: 260px;
+      background: var(--bg);
+      padding: 18px;
+    }
+
+    .dropdown {
+      width: 280px;
+      margin-left: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .dropdown-head {
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .dropdown-row {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    .dropdown-row:last-child {
+      border-bottom: 0;
+      color: var(--danger);
+    }
+
+    .proto-click {
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease;
+    }
+
+    .proto-click:hover {
+      border-color: var(--primary);
+    }
+
+    .proto-click:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+
+    .proto-panel[hidden] {
+      display: none;
+    }
+
+    .proto-panel {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .flow-note {
+      border: 1px solid #b7caff;
+      border-radius: var(--radius);
+      background: var(--primary-soft);
+      color: #16345f;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .flow-note strong {
+      color: var(--ez-blueink);
+    }
+
+    .step-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .step-list li {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .step-index {
+      width: 22px;
+      height: 22px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .console-box {
+      min-height: 140px;
+      border-radius: var(--radius);
+      background: #111827;
+      color: #d1d5db;
+      padding: 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.55;
+      overflow: hidden;
+    }
+
+    .dropdown-row.active {
+      background: var(--accent-soft);
+      color: var(--ink);
+    }
+
+    .mobile-frame {
+      width: 390px;
+      max-width: 100%;
+      margin: 0 auto;
+      border: 1px solid var(--line-strong);
+      border-radius: 24px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .screen-pad {
+      padding: 18px;
+    }
+
+    .dropdown.full {
+      width: 100%;
+      margin: 0;
+    }
+
+    .mobile-top {
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .mobile-body {
+      min-height: 620px;
+      display: grid;
+      grid-template-rows: 56px 1fr 84px;
+    }
+
+    .mobile-drawer {
+      min-height: 248px;
+      border-top: 1px solid var(--line);
+      border-radius: 18px 18px 0 0;
+      padding: 12px;
+      background: #fafafa;
+      box-shadow: 0 -10px 30px rgba(23, 32, 42, 0.08);
+    }
+
+    @media (max-width: 980px) {
+      .page {
+        padding: 18px;
+      }
+
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar,
+      .chat-layout,
+      .split-layout,
+      .manage-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .side,
+      .detail {
+        border: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .chat-layout {
+        min-height: auto;
+      }
+
+      .detail {
+        border-top: 1px solid var(--line);
+      }
+
+      .grid-2,
+      .grid-3,
+      .kanban-preview {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        min-height: auto;
+        padding: 10px;
+      }
+
+      .nav {
+        justify-self: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="intro">
+        <div class="label">World UI redesign prototype</div>
+        <h1>把 ezagent World UI 重组为聊天软件主界面</h1>
+        <p>
+          这个原型按完整功能覆盖重新组织：顶部保留 workspace 切换，顶层导航收敛为 Chat、Agents、Manage，
+          Chat 成为默认工作台；Profile 进入用户菜单；设置类、工具类、系统类能力统一放入 Manage。
+        </p>
+        <div class="legend">
+          <span class="pill accent">全局 Workspace Switcher</span>
+          <span class="pill">Chat / Agents / Manage</span>
+          <span class="pill">Session detail drawer</span>
+          <span class="pill">User menu owns Profile</span>
+          <span class="pill warn">CmdK visible entry removed</span>
+        </div>
+      </div>
+      <aside class="summary-card">
+        <div>
+          <div class="label">Coverage rule</div>
+          <h2>不删除现有能力，只重排入口</h2>
+          <p>
+            sessions、agent config、workspace templates、socialware、plugins、Kanban、external mirror、SMTP、
+            caps、audit、routing 都被纳入新版 IA。
+          </p>
+        </div>
+        <div class="pill accent">Recommended top-level IA: Chat / Agents / Manage</div>
+      </aside>
+    </section>
+
+    <section class="prototype">
+      <article class="screen">
+        <div class="screen-title">
+          <div>
+            <div class="label">Screen 01</div>
+            <h2>Global shell + Chat default</h2>
+            <p>聊天成为主视图；workspace 切换是全局上下文，不属于 Settings。</p>
+          </div>
+          <span class="pill accent">Default route: /sessions</span>
+        </div>
+
+        <div class="app-frame">
+          <header class="topbar">
+            <div class="brand">
+              <div class="mark">ez</div>
+              <div class="workspace">
+                <span>ezagent / rh-lab</span>
+                <span>⌄</span>
+              </div>
+            </div>
+
+            <nav class="nav" aria-label="Primary">
+              <a class="active" href="#chat">Chat</a>
+              <a href="#agents">Agents</a>
+              <a href="#manage">Manage</a>
+            </nav>
+
+            <div class="top-actions">
+              <button class="button primary">＋ New chat</button>
+              <div class="avatar">RH</div>
+            </div>
+          </header>
+
+          <div class="chat-layout" id="chat">
+            <aside class="side">
+              <div class="pane-head">
+                <div>
+                  <div class="pane-title">Sessions</div>
+                  <div class="pane-subtitle">Current workspace only</div>
+                </div>
+                <button class="button">＋</button>
+              </div>
+              <div class="list">
+                <div class="field">Filter sessions, template, status</div>
+                <div class="session-row active">
+                  <div class="row-top">
+                    <div class="row-name">cc-agent-roundtrip</div>
+                    <span class="dot"></span>
+                  </div>
+                  <div class="meta">3 members · 2 unread · live</div>
+                  <div class="chips">
+                    <span class="chip">orchestrator</span>
+                    <span class="chip">pty</span>
+                  </div>
+                </div>
+                <div class="session-row">
+                  <div class="row-top">
+                    <div class="row-name">socialware hello preview</div>
+                    <span class="dot"></span>
+                  </div>
+                  <div class="meta">public view · external preview</div>
+                </div>
+                <div class="session-row">
+                  <div class="row-top">
+                    <div class="row-name">kanban-manager handoff</div>
+                    <span class="dot idle"></span>
+                  </div>
+                  <div class="meta">idle · template: dev-together</div>
+                </div>
+                <div class="mini-card">
+                  <div class="label">New session form</div>
+                  <div class="form-grid">
+                    <label class="form-field full-row">
+                      <span>Name</span>
+                      <input class="mock-input" value="support-triage" aria-label="Session name" />
+                    </label>
+                    <label class="form-field full-row">
+                      <span>Template</span>
+                      <select class="mock-select" aria-label="Session template">
+                        <option>default</option>
+                        <option>public-demo</option>
+                        <option>orchestrator</option>
+                        <option>dev-together</option>
+                      </select>
+                    </label>
+                    <div class="full-row">
+                      <button class="button primary">＋ Create</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+
+            <section class="chat-main">
+              <div class="chat-header">
+                <div>
+                  <div class="pane-title">cc-agent-roundtrip</div>
+                  <div class="pane-subtitle">session://rh-lab/default/cc-agent-roundtrip</div>
+                </div>
+                <div class="segmented">
+                  <span class="segment active">Chat</span>
+                  <span class="segment">PTY</span>
+                  <span class="segment">Preview</span>
+                </div>
+              </div>
+
+              <div class="messages">
+                <div class="message">
+                  <div class="avatar">CC</div>
+                  <div>
+                    <div class="bubble">
+                      已完成路由检查，发现 workspace switcher 需要保持为全局上下文。
+                      <div class="json-card">
+                        <strong>Action card</strong>
+                        <span class="meta">json-render bubble · scoped css · can send follow-up action</span>
+                      </div>
+                    </div>
+                    <div class="meta">displayed · 11:42</div>
+                  </div>
+                </div>
+
+                <div class="message self">
+                  <div>
+                    <div class="bubble">请把成员、routing、external mirror 都放在右侧 session drawer。</div>
+                    <div class="meta">sent · with @mention support</div>
+                  </div>
+                  <div class="avatar">ME</div>
+                </div>
+
+                <div class="message">
+                  <div class="avatar">AG</div>
+                  <div class="bubble">可以。右侧会直接沿用 session detail 的成员与路由面板结构。</div>
+                </div>
+              </div>
+
+              <div class="composer">
+                <div class="input-box">
+                  <span>Message @agent, paste files, or attach uploads...</span>
+                  <div class="chips">
+                    <span class="chip">spec.md</span>
+                    <span class="chip">@codex</span>
+                  </div>
+                </div>
+                <button class="button primary">Send</button>
+              </div>
+            </section>
+
+            <aside class="detail">
+              <div class="pane-head">
+                <div>
+                  <div class="label">Members</div>
+                  <div class="pane-title">3</div>
+                </div>
+                <button class="button">Invite</button>
+              </div>
+              <div class="session-detail-body">
+                <form class="invite-form">
+                  <label class="label" for="prototype-invite">Search or paste entity URI</label>
+                  <div class="field" id="prototype-invite">entity://rh-lab/user/name</div>
+                  <div class="mini-card">
+                    <div class="row-top">
+                      <strong>codex-remote</strong>
+                      <span class="kind-badge">agent</span>
+                    </div>
+                    <div class="meta">entity://rh-lab/agent/codex-remote</div>
+                  </div>
+                  <div class="chips">
+                    <span class="chip">Invite</span>
+                    <span class="chip">Cancel</span>
+                  </div>
+                </form>
+
+                <ul class="member-list" aria-label="Session members">
+                  <li class="member-row">
+                    <span class="dot"></span>
+                    <span class="member-name">rh</span>
+                    <span class="kind-badge">user</span>
+                    <button class="icon-button" aria-label="Remove member">−</button>
+                  </li>
+                  <li class="member-row">
+                    <span class="dot"></span>
+                    <span class="member-name agent">codex-remote</span>
+                    <span class="kind-badge">agent</span>
+                    <button class="icon-button" aria-label="Open terminal">⌘</button>
+                  </li>
+                  <li class="member-row">
+                    <span class="dot idle"></span>
+                    <span class="member-name">guest-reviewer</span>
+                    <span class="kind-badge">user</span>
+                    <button class="icon-button" aria-label="Remove member">−</button>
+                  </li>
+                </ul>
+
+                <div class="routing-panel">
+                  <div class="pane-head">
+                    <div>
+                      <div class="label">Routing</div>
+                      <div class="pane-title">2</div>
+                    </div>
+                    <span class="kind-badge">route</span>
+                  </div>
+                  <form class="routing-form">
+                    <div class="field">Mention</div>
+                    <div class="field">@codex</div>
+                    <div class="field wide-field">entity://rh-lab/agent/codex-remote</div>
+                    <button class="button primary" type="button">Add</button>
+                  </form>
+                  <ul class="routing-list">
+                    <li class="routing-rule">
+                      <div>
+                        <strong>mention:@codex</strong>
+                        <span>codex-remote</span>
+                      </div>
+                      <button class="button">Disable</button>
+                    </li>
+                    <li class="routing-rule">
+                      <div>
+                        <strong>always</strong>
+                        <span>cc-orchestrator</span>
+                      </div>
+                      <button class="button">Enable</button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen" id="agents">
+        <div class="screen-title">
+          <div>
+            <div class="label">Screen 02</div>
+            <h2>Agents</h2>
+            <p>把 agent/user identity 相关能力集中，detail tabs 覆盖 config、API keys、caps、extensions、terminal。</p>
+          </div>
+          <span class="pill">Routes: /identities/agents/*</span>
+        </div>
+
+        <div class="app-frame">
+          <header class="topbar">
+            <div class="brand">
+              <div class="mark">ez</div>
+              <div class="workspace"><span>ezagent / rh-lab</span><span>⌄</span></div>
+            </div>
+            <nav class="nav">
+              <a href="#chat">Chat</a>
+              <a class="active" href="#agents">Agents</a>
+              <a href="#manage">Manage</a>
+            </nav>
+            <div class="top-actions">
+              <button
+                class="button primary proto-click"
+                data-proto-control="agent"
+                data-proto-target="agent-new"
+                data-proto-next-title="Create agent"
+                data-proto-next-subtitle="route: /identities/agents/new"
+              >＋ New agent</button>
+              <div class="avatar">RH</div>
+            </div>
+          </header>
+
+          <div class="split-layout">
+            <aside class="side">
+              <div class="pane-head">
+                <div>
+                  <div class="pane-title">Directory</div>
+                  <div class="pane-subtitle">Users + agents</div>
+                </div>
+              </div>
+              <div class="list">
+                <div class="segmented">
+                  <span
+                    class="segment active proto-click"
+                    data-proto-control="agent"
+                    data-proto-target="agent-overview"
+                    data-proto-next-title="codex-remote"
+                    data-proto-next-subtitle="route: /identities/agents/entity%3A%2F%2Frh-lab%2Fagent%2Fcodex-remote"
+                  >Agents</span>
+                  <span
+                    class="segment proto-click"
+                    data-proto-control="agent"
+                    data-proto-target="agent-users"
+                    data-proto-next-title="Users"
+                    data-proto-next-subtitle="route: /identities/users"
+                  >Users</span>
+                </div>
+                <div class="field">Filter by flavor, status, workspace</div>
+                <div
+                  class="agent-row active proto-click"
+                  data-proto-control="agent"
+                  data-proto-target="agent-overview"
+                  data-proto-next-title="codex-remote"
+                  data-proto-next-subtitle="agent detail · workspace scoped config"
+                >
+                  <div class="row-top"><div class="row-name">codex-remote</div><span class="dot"></span></div>
+                  <div class="meta">flavor: codex · pty enabled</div>
+                </div>
+                <div
+                  class="agent-row proto-click"
+                  data-proto-control="agent"
+                  data-proto-target="agent-kanban"
+                  data-proto-next-title="kanban-manager"
+                  data-proto-next-subtitle="role agent detail · tool-backed board manager"
+                >
+                  <div class="row-top"><div class="row-name">kanban-manager</div><span class="dot"></span></div>
+                  <div class="meta">role agent · tool surface</div>
+                </div>
+                <div
+                  class="agent-row proto-click"
+                  data-proto-control="agent"
+                  data-proto-target="agent-deepseek"
+                  data-proto-next-title="deepseek-curl"
+                  data-proto-next-subtitle="curl flavor detail · API key required"
+                >
+                  <div class="row-top"><div class="row-name">deepseek-curl</div><span class="dot idle"></span></div>
+                  <div class="meta">api key missing</div>
+                </div>
+              </div>
+            </aside>
+
+            <section class="content">
+              <div class="chat-header">
+                <div>
+                  <div class="pane-title" data-proto-title="agent">codex-remote</div>
+                  <div class="pane-subtitle" data-proto-subtitle="agent">agent detail · workspace scoped config</div>
+                </div>
+                <div class="segmented">
+                  <span class="segment active proto-click" data-proto-control="agent" data-proto-target="agent-overview" data-proto-next-title="codex-remote" data-proto-next-subtitle="agent detail · workspace scoped config">Overview</span>
+                  <span class="segment proto-click" data-proto-control="agent" data-proto-target="agent-config" data-proto-next-title="codex-remote / Config" data-proto-next-subtitle="route: /identities/agents/:uri/config">Config</span>
+                  <span class="segment proto-click" data-proto-control="agent" data-proto-target="agent-keys" data-proto-next-title="codex-remote / API keys" data-proto-next-subtitle="route: /identities/agents/:uri/api-keys">Keys</span>
+                  <span class="segment proto-click" data-proto-control="agent" data-proto-target="agent-caps" data-proto-next-title="codex-remote / Capabilities" data-proto-next-subtitle="route: /identities/agents/:uri/caps">Caps</span>
+                  <span class="segment proto-click" data-proto-control="agent" data-proto-target="agent-terminal" data-proto-next-title="codex-remote / Terminal" data-proto-next-subtitle="route: /identities/agents/:uri/terminal">Terminal</span>
+                </div>
+              </div>
+              <div class="content-body">
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-overview">
+                  <div class="flow-note"><strong>Click path:</strong> Agents → codex-remote → Overview. This is the default detail page.</div>
+                  <div class="grid-3">
+                    <div class="mini-card"><div class="label">Status</div><strong>Live</strong><span class="meta">bridge connected</span></div>
+                    <div class="mini-card"><div class="label">Flavor</div><strong>codex</strong><span class="meta">with_pty: true</span></div>
+                    <div class="mini-card"><div class="label">Caps</div><strong>18 grants</strong><span class="meta">view / edit cap grants</span></div>
+                  </div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Config cascade</h3>
+                      <div class="kv"><span>workspace</span><strong>read-only inherited</strong></div>
+                      <div class="kv"><span>session</span><strong>read-only override</strong></div>
+                      <div class="kv"><span>user layer</span><strong>editable form fields</strong></div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Actions</h3>
+                      <ul class="step-list">
+                        <li><span class="step-index">1</span><span>Open config to edit user-layer overrides.</span></li>
+                        <li><span class="step-index">2</span><span>Open API keys for provider credentials.</span></li>
+                        <li><span class="step-index">3</span><span>Open terminal for PTY session.</span></li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-config" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → codex-remote → Config. Shows config cascade and editable user layer.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Config cascade</h3>
+                      <div class="kv"><span>workspace</span><strong>model: gpt-5-codex</strong></div>
+                      <div class="kv"><span>session</span><strong>approval: never</strong></div>
+                      <div class="kv"><span>user layer</span><strong>project_cwd editable</strong></div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>User layer editor</h3>
+                      <div class="field">project_cwd: /home/lenovo/workspace/ezagent</div>
+                      <div class="field">sandbox: danger-full-access</div>
+                      <div class="chips"><span class="chip">Save changes</span><span class="chip">Delete path</span><span class="chip">Repoint config</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-keys" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → codex-remote → Keys. Data-owner/admin can add or rotate provider keys.</div>
+                  <div class="mini-card">
+                    <h3>API keys</h3>
+                    <div class="table">
+                      <div class="tr head"><span>Name</span><span>Provider</span><span>Last used</span><span></span></div>
+                      <div class="tr"><span>default</span><span>OpenAI</span><span>today</span><button class="button">Rotate</button></div>
+                      <div class="tr"><span>deepseek</span><span>DeepSeek</span><span>never</span><button class="button primary">Add</button></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-caps" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → codex-remote → Caps. Lists concrete grants used by dispatch.</div>
+                  <div class="table">
+                    <div class="tr head"><span>Behavior</span><span>Scope</span><span>Workspace</span><span>Status</span></div>
+                    <div class="tr"><span>Chat.send</span><span>within session</span><span>rh-lab</span><span>granted</span></div>
+                    <div class="tr"><span>Pty.write</span><span>agent URI</span><span>rh-lab</span><span>granted</span></div>
+                    <div class="tr"><span>ApiKeys.put</span><span>owner</span><span>rh-lab</span><span>admin only</span></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-terminal" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → codex-remote → Terminal. Same PTY capability as Chat member drawer, but from agent detail.</div>
+                  <div class="console-box">$ codex --workspace /home/lenovo/workspace/ezagent<br />ready<br />agent: entity://rh-lab/agent/codex-remote<br />pty: attached</div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-new" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → New agent. Opens create form at `/identities/agents/new`.</div>
+                  <div class="mini-card">
+                    <h3>New agent</h3>
+                    <div class="form-grid">
+                      <label class="form-field">
+                        <span>Flavor</span>
+                        <select class="mock-select">
+                          <option>cc</option>
+                          <option>cc-headless</option>
+                          <option>codex</option>
+                          <option>codex-remote</option>
+                          <option>py</option>
+                          <option>curl</option>
+                          <option>native</option>
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span>Name *</span>
+                        <input class="mock-input" value="storefront-greeter" aria-label="Agent name" />
+                      </label>
+                      <label class="form-field full-row">
+                        <span>project_cwd *</span>
+                        <input class="mock-input mono" value="/home/lenovo/workspace/ezagent" aria-label="Project cwd" />
+                      </label>
+                      <div class="full-row">
+                        <div class="label">cc configuration</div>
+                      </div>
+                      <label class="form-field">
+                        <span class="mono">model</span>
+                        <input class="mock-input mono" value="claude-sonnet-4" aria-label="Model" />
+                      </label>
+                      <label class="form-field">
+                        <span class="mono">effort</span>
+                        <select class="mock-select">
+                          <option>default</option>
+                          <option>low</option>
+                          <option>medium</option>
+                          <option>high</option>
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="mono">permission_mode</span>
+                        <select class="mock-select">
+                          <option>default</option>
+                          <option>acceptEdits</option>
+                          <option>bypassPermissions</option>
+                          <option>plan</option>
+                        </select>
+                      </label>
+                      <label class="form-field">
+                        <span class="mono">tools</span>
+                        <input class="mock-input mono" value="Read, Write, Bash" aria-label="Tools" />
+                        <span class="form-help">Schema type is list; UI submits comma-separated values.</span>
+                      </label>
+                      <label class="form-field">
+                        <span>Requested caps</span>
+                        <input class="mock-input" value="chat.send, workspace.read" aria-label="Requested caps" />
+                        <span class="form-help">请求 kind.behavior（action 默认 any）→ 系统按 CapBAC 授予。</span>
+                      </label>
+                      <label class="checkbox-row">
+                        <input type="checkbox" checked />
+                        <span>With PTY</span>
+                      </label>
+                      <div class="full-row row-top">
+                        <code class="meta">entity://rh-lab/agent/storefront-greeter</code>
+                        <button class="button primary">＋ Create</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Contract coverage (read-only)</h3>
+                    <ul class="step-list">
+                      <li><span class="step-index">1</span><span>soul · skills · tools · lifecycle: Pending backend approval</span></li>
+                      <li><span class="step-index">2</span><span>executor extras: Pending backend approval</span></li>
+                      <li><span class="step-index">3</span><span>fork parent template: Deferred</span></li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-users" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → Users. User identity management stays under Agents/Identities, while personal Profile stays in user menu.</div>
+                  <div class="table">
+                    <div class="tr head"><span>User</span><span>Workspace</span><span>Status</span><span></span></div>
+                    <div class="tr"><span>rh</span><span>rh-lab</span><span>online</span><button class="button">Caps</button></div>
+                    <div class="tr"><span>guest-reviewer</span><span>rh-lab</span><span>invited</span><button class="button">Remove</button></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-kanban" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → kanban-manager. Role agent detail links out to Manage → Plugins → Kanban for board work.</div>
+                  <div class="grid-3">
+                    <div class="mini-card"><div class="label">Role</div><strong>kanban-manager</strong><span class="meta">native flavor</span></div>
+                    <div class="mini-card"><div class="label">Boards</div><strong>4</strong><span class="meta">Miro/GitHub sync</span></div>
+                    <div class="mini-card"><div class="label">Route</div><strong>/plugins/kanban</strong><span class="meta">tool surface</span></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="agent" data-proto-name="agent-deepseek" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Agents → deepseek-curl. Missing credentials are surfaced on the detail page.</div>
+                  <div class="mini-card">
+                    <h3>Credential required</h3>
+                    <p>Add an API key before this curl-flavored agent can answer routed turns.</p>
+                    <button class="button primary proto-click" data-proto-control="agent" data-proto-target="agent-keys" data-proto-next-title="deepseek-curl / API keys" data-proto-next-subtitle="route: /identities/agents/:uri/api-keys">Add API key</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen" id="manage">
+        <div class="screen-title">
+          <div>
+            <div class="label">Screen 03</div>
+            <h2>Manage</h2>
+            <p>Manage 不是一个泛化 Settings 页，而是工作区、插件、集成、Admin 控制台和系统配置的统一入口。</p>
+          </div>
+          <span class="pill">Workspace / Plugins / Integrations / Admin / Access / System</span>
+        </div>
+
+        <div class="app-frame">
+          <header class="topbar">
+            <div class="brand">
+              <div class="mark">ez</div>
+              <div class="workspace"><span>ezagent / rh-lab</span><span>⌄</span></div>
+            </div>
+            <nav class="nav">
+              <a href="#chat">Chat</a>
+              <a href="#agents">Agents</a>
+              <a class="active" href="#manage">Manage</a>
+            </nav>
+            <div class="top-actions">
+              <button
+                class="button proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-authz"
+                data-proto-next-title="Authz Audit"
+                data-proto-next-subtitle="route: /admin/audit/authz"
+              >View audit</button>
+              <div class="avatar">RH</div>
+            </div>
+          </header>
+
+          <div class="manage-grid">
+            <aside class="manage-nav">
+              <div
+                class="manage-item active proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-workspace"
+                data-proto-next-title="Workspace: rh-lab"
+                data-proto-next-subtitle="route: /workspaces/rh-lab"
+              >
+                <strong>Workspace</strong>
+                <span class="meta">members, templates, socialware</span>
+              </div>
+              <div
+                class="manage-item proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-plugins"
+                data-proto-next-title="Plugins"
+                data-proto-next-subtitle="route: /plugins"
+              >
+                <strong>Plugins</strong>
+                <span class="meta">config surfaces, flavors, route gaps</span>
+              </div>
+              <div
+                class="manage-item proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-integrations"
+                data-proto-next-title="Integrations"
+                data-proto-next-subtitle="routes: /plugins/feishu/bindings + /admin/sessions/:id/external_mirror"
+              >
+                <strong>Integrations</strong>
+                <span class="meta">Feishu, Email, API, external mirror</span>
+              </div>
+              <div
+                class="manage-item proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-admin"
+                data-proto-next-title="Admin Dashboard"
+                data-proto-next-subtitle="route: /admin"
+              >
+                <strong>Admin</strong>
+                <span class="meta">dashboard, logs, registry, snapshots</span>
+              </div>
+              <div
+                class="manage-item proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-access"
+                data-proto-next-title="Access"
+                data-proto-next-subtitle="routes: /admin/caps + /admin/audit/authz"
+              >
+                <strong>Access</strong>
+                <span class="meta">cap catalog, default grants, authz audit</span>
+              </div>
+              <div
+                class="manage-item proto-click"
+                data-proto-control="manage"
+                data-proto-target="manage-system"
+                data-proto-next-title="System config"
+                data-proto-next-subtitle="routes: /admin/settings + /admin/routing"
+              >
+                <strong>System</strong>
+                <span class="meta">SMTP, routing, mirror bindings</span>
+              </div>
+            </aside>
+
+            <section class="content">
+              <div class="chat-header">
+                <div>
+                  <div class="pane-title" data-proto-title="manage">Workspace: rh-lab</div>
+                  <div class="pane-subtitle" data-proto-subtitle="manage">manage workspace, not switch context</div>
+                </div>
+                <span class="pill">Workspace detail</span>
+              </div>
+              <div class="content-body">
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-workspace">
+                  <div class="flow-note"><strong>Click path:</strong> Manage → Workspace. Route is `/workspaces/:name`; workspace switching remains in the global header dropdown.</div>
+                  <div class="grid-3">
+                    <div class="mini-card"><div class="label">Members</div><strong>12</strong><span class="meta">remove member action</span></div>
+                    <div class="mini-card"><div class="label">Templates</div><strong>7</strong><span class="meta">session + socialware</span></div>
+                    <div class="mini-card"><div class="label">Routing</div><strong>5 rules</strong><span class="meta">mention dispatch</span></div>
+                  </div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Session templates</h3>
+                      <div class="route-line">Actual form: `world-session-template-form`</div>
+                      <div class="form-grid">
+                        <label class="form-field">
+                          <span>Name</span>
+                          <input id="prototype-template-name" class="mock-input" value="public-demo" aria-label="Template name" />
+                        </label>
+                        <label class="form-field">
+                          <span>Description</span>
+                          <input id="prototype-template-description" class="mock-input" value="Public customer-facing session" aria-label="Template description" />
+                        </label>
+                        <label class="checkbox-row full-row">
+                          <input id="prototype-template-public" type="checkbox" checked />
+                          <span>Public socialware app</span>
+                        </label>
+                        <div class="full-row">
+                          <button class="button primary">Save template</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Members</h3>
+                      <div class="table">
+                        <div class="tr head"><span>Entity URI</span><span>Kind</span><span>Status</span><span></span></div>
+                        <div class="tr"><span class="mono-line">entity://rh-lab/user/rh</span><span>user</span><span>owner</span><button class="button">Caps</button></div>
+                        <div class="tr"><span class="mono-line">entity://rh-lab/user/guest-reviewer</span><span>user</span><span>member</span><button class="button">Remove</button></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Saved templates</h3>
+                    <div class="table">
+                      <div class="tr cols-5 head"><span>Name</span><span>Source</span><span>Members</span><span>Public</span><span>Status</span></div>
+                      <div class="tr cols-5"><span>public-demo</span><span>session_template</span><span>1</span><span>yes</span><span>current</span></div>
+                      <div class="tr cols-5"><span>orchestrator</span><span>workspace_template</span><span>4</span><span>no</span><span>class_registered</span></div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Workspace routing rules</h3>
+                    <div class="table">
+                      <div class="tr head"><span>Matcher</span><span>Receivers</span><span>Scope</span><span>Status</span></div>
+                      <div class="tr"><span class="mono-line">mention("@support")</span><span>support-agent</span><span>workspace</span><span>enabled</span></div>
+                      <div class="tr"><span class="mono-line">text_contains("refund")</span><span>sales-copilot</span><span>workspace</span><span>enabled</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-plugins" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Manage → Plugins. This mirrors `/plugins`: plugin cards are clickable only when `config_surface/0` returns a route or flavor target.</div>
+                  <div class="grid-3">
+                    <div
+                      class="plugin-card proto-click"
+                      data-proto-control="manage"
+                      data-proto-target="manage-plugin-feishu"
+                      data-proto-next-title="Feishu Bindings"
+                      data-proto-next-subtitle="route: /plugins/feishu/bindings"
+                    >
+                      <div class="plugin-top"><strong>Feishu (Lark)</strong><span class="status-badge ok">route</span></div>
+                      <span class="meta">Inbound webhook + outbound bot.</span>
+                      <div class="route-line">/plugins/feishu/bindings</div>
+                    </div>
+                    <div
+                      class="plugin-card proto-click"
+                      data-proto-control="manage"
+                      data-proto-target="manage-plugin-kanban"
+                      data-proto-next-title="Kanban"
+                      data-proto-next-subtitle="route: /plugins/kanban"
+                    >
+                      <div class="plugin-top"><strong>Kanban</strong><span class="status-badge ok">route</span></div>
+                      <span class="meta">Global connector credentials and board list.</span>
+                      <div class="route-line">/plugins/kanban</div>
+                    </div>
+                    <div
+                      class="plugin-card proto-click"
+                      data-proto-control="manage"
+                      data-proto-target="manage-plugin-kb"
+                      data-proto-next-title="Knowledge Base"
+                      data-proto-next-subtitle="declared route: /plugins/kb · World route missing"
+                    >
+                      <div class="plugin-top"><strong>Knowledge Base</strong><span class="status-badge warn">route gap</span></div>
+                      <span class="meta">Plugin declares a config route, but World routes do not handle it yet.</span>
+                      <div class="route-line">/plugins/kb</div>
+                    </div>
+                    <div
+                      class="plugin-card proto-click"
+                      data-proto-control="manage"
+                      data-proto-target="manage-plugin-flavors"
+                      data-proto-next-title="Agent flavor plugins"
+                      data-proto-next-subtitle="route pattern: /identities?filter=agent:&lt;flavor&gt;"
+                    >
+                      <div class="plugin-top"><strong>CC / Codex / Curl / Py / Native</strong><span class="status-badge ok">flavor</span></div>
+                      <span class="meta">Flavor config surfaces jump to filtered Agents lists.</span>
+                      <div class="route-line">/identities?filter=agent:cc</div>
+                    </div>
+                    <div
+                      class="plugin-card proto-click"
+                      data-proto-control="manage"
+                      data-proto-target="manage-auto"
+                      data-proto-next-title="Auto Derive"
+                      data-proto-next-subtitle="routes: /plugins/auto/:kind + /plugins/auto/:kind/:uri"
+                    >
+                      <div class="plugin-top"><strong>Auto Derive</strong><span class="status-badge ok">dynamic</span></div>
+                      <span class="meta">Kind instance inspection and credential cascade.</span>
+                      <div class="route-line">/plugins/auto/agent</div>
+                    </div>
+                    <div class="plugin-card disabled">
+                      <div class="plugin-top"><strong>Email</strong><span class="status-badge">no config</span></div>
+                      <span class="meta">ExternalMirror adapter + inbound poller. Operated through session mirror binding.</span>
+                      <div class="route-line">config_surface: nil</div>
+                    </div>
+                    <div class="plugin-card disabled">
+                      <div class="plugin-top"><strong>LLM Protocol API</strong><span class="status-badge">no config</span></div>
+                      <span class="meta">OpenAI-compatible inbound API endpoint.</span>
+                      <div class="route-line">/v1/chat/completions</div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Plugin config surface table</h3>
+                    <div class="table">
+                      <div class="tr cols-5 head"><span>Plugin</span><span>Kind</span><span>Target</span><span>Label</span><span>Status</span></div>
+                      <div class="tr cols-5"><span>feishu</span><span>route</span><span class="mono-line">/plugins/feishu/bindings</span><span>Bindings</span><span>live</span></div>
+                      <div class="tr cols-5"><span>kanban</span><span>route</span><span class="mono-line">/plugins/kanban</span><span>看板</span><span>live</span></div>
+                      <div class="tr cols-5"><span>kb</span><span>route</span><span class="mono-line">/plugins/kb</span><span>Knowledge Base</span><span>missing route</span></div>
+                      <div class="tr cols-5"><span>cc</span><span>flavor</span><span class="mono-line">agent:cc</span><span>Claude Code Agents</span><span>filter</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-plugin-feishu" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → Feishu. Actual route `/plugins/feishu/bindings`; form dispatches `feishu.bind` and `feishu.unbind`.</div>
+                  <div class="mini-card">
+                    <h3>User binding form</h3>
+                    <div class="form-grid">
+                      <label class="form-field">
+                        <span>open_id</span>
+                        <input class="mock-input mono" value="ou_9b7f8a2c" aria-label="Feishu open id" />
+                      </label>
+                      <label class="form-field">
+                        <span>user URI</span>
+                        <input class="mock-input mono" value="entity://rh-lab/user/rh" aria-label="Feishu user URI" />
+                        <span class="form-help">Current UI uses a datalist backed by `UriOptions.entities/2`.</span>
+                      </label>
+                      <div class="full-row"><button class="button primary">Bind</button></div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Bindings table</h3>
+                    <div class="table">
+                      <div class="tr cols-5 head"><span>open_id</span><span>user_uri</span><span>bound_by</span><span>bound_at</span><span></span></div>
+                      <div class="tr cols-5"><span class="mono-line">ou_9b7f8a2c</span><span class="mono-line">entity://rh-lab/user/rh</span><span class="mono-line">entity://rh-lab/user/admin</span><span>2026-06-30</span><button class="button">Unbind</button></div>
+                      <div class="tr cols-5"><span class="mono-line">ou_customer_12</span><span class="mono-line">entity://rh-lab/user/customer-success</span><span class="mono-line">entity://rh-lab/user/admin</span><span>2026-06-29</span><button class="button">Unbind</button></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-plugin-kanban" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → Kanban. Actual `/plugins/kanban` page is a connector-credential config page; board editing lives in session Kanban/detail views.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Miro credentials</h3>
+                      <div class="form-grid">
+                        <label class="form-field full-row">
+                          <span>Access Token</span>
+                          <input class="mock-input mono" type="password" value="••••••••••••" aria-label="Miro access token" />
+                        </label>
+                        <div class="full-row"><button class="button primary">保存凭证</button> <span class="status-badge ok">已配置</span></div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>GitHub Access Token</h3>
+                      <div class="form-grid">
+                        <label class="form-field full-row">
+                          <span>Access Token (PAT)</span>
+                          <input class="mock-input mono" type="password" value="••••••••••••" aria-label="GitHub access token" />
+                        </label>
+                        <div class="full-row"><button class="button primary">保存 Token</button> <span class="status-badge ok">已配置</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Kanban manager agents</h3>
+                    <div class="table">
+                      <div class="tr head"><span>Board</span><span>Role</span><span>Route</span><span></span></div>
+                      <div class="tr"><span>Value chain board</span><span>kanban-manager</span><span class="mono-line">/plugins/kanban/entity%3A...</span><button class="button proto-click" data-proto-control="manage" data-proto-target="manage-kanban-detail" data-proto-next-title="Kanban board detail" data-proto-next-subtitle="route: /plugins/kanban/:uri">Open</button></div>
+                      <div class="tr"><span>Release readiness</span><span>kanban-manager</span><span class="mono-line">entity://rh-lab/agent/release-board</span><button class="button">Open</button></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-kanban-detail" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → Kanban → board row. Actual detail route `/plugins/kanban/:uri`; the side panel exposes board list and per-board connector config.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>本图配置</h3>
+                      <div class="form-grid">
+                        <label class="form-field full-row">
+                          <span>GitHub 仓库（owner/name）</span>
+                          <input class="mock-input" value="jjkysy/test-ezagent" aria-label="Kanban github repo" />
+                        </label>
+                        <label class="form-field full-row">
+                          <span>Miro 板名（按名字）</span>
+                          <input class="mock-input" value="ezagent value-chain board" aria-label="Kanban miro board" />
+                        </label>
+                        <div class="full-row"><button class="button primary">保存本图配置</button></div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Detail actions</h3>
+                      <ul class="step-list">
+                        <li><span class="step-index">1</span><span>`kanban.sync_miro` creates or reuses the board.</span></li>
+                        <li><span class="step-index">2</span><span>`kanban.sync_prs` updates registered PR state.</span></li>
+                        <li><span class="step-index">3</span><span>Node edit/claim/drop remains inside the board surface.</span></li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="kanban-preview">
+                    <div class="kanban-col"><strong>positioning</strong><div class="tool-row active"><span>Define target user</span><span class="meta">claimed</span></div></div>
+                    <div class="kanban-col"><strong>feature</strong><div class="tool-row"><span>Plugin config route audit</span><span class="meta">doing</span></div></div>
+                    <div class="kanban-col"><strong>pr</strong><div class="tool-row"><span>Admin nav coverage</span><span class="meta">CI 7/8</span></div></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-plugin-kb" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → Knowledge Base. The plugin declares `config_surface: %{kind: :route, path: "/plugins/kb"}`, but current World route/navigation code has no `/plugins/kb` handling.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Expected surface</h3>
+                      <div class="kv"><span>Role</span><strong>kb × native</strong></div>
+                      <div class="kv"><span>Actions</span><strong>kb.query / kb.ingest</strong></div>
+                      <div class="kv"><span>Store</span><strong class="mono-line">resource://&lt;ws&gt;/kb-store/&lt;agent&gt;</strong></div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Current gap</h3>
+                      <ul class="step-list">
+                        <li><span class="step-index">1</span><span>Add `/plugins/kb` to `World.Routes`.</span></li>
+                        <li><span class="step-index">2</span><span>Add it to `World.Navigation.patch_to/1`.</span></li>
+                        <li><span class="step-index">3</span><span>Provide a renderer/data builder before treating the card as live.</span></li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-plugin-flavors" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → flavor plugin. These are not standalone settings pages; they navigate to filtered Agents lists.</div>
+                  <div class="route-grid">
+                    <div class="route-card"><strong>Claude Code</strong><span class="meta">cc / cc-headless</span><div class="route-line">/identities?filter=agent:cc</div></div>
+                    <div class="route-card"><strong>Codex</strong><span class="meta">codex / codex-remote</span><div class="route-line">/identities?filter=agent:codex</div></div>
+                    <div class="route-card"><strong>Curl Agent</strong><span class="meta">HTTP API agents</span><div class="route-line">/identities?filter=agent:curl</div></div>
+                    <div class="route-card"><strong>Py Agent</strong><span class="meta">script-driven Python</span><div class="route-line">/identities?filter=agent:py</div></div>
+                    <div class="route-card"><strong>Native</strong><span class="meta">role host flavor</span><div class="route-line">/identities?filter=agent:native</div></div>
+                    <a class="route-card proto-click" href="#agents" data-proto-control="agent" data-proto-target="agent-new" data-proto-next-title="Create agent" data-proto-next-subtitle="route: /identities/agents/new"><strong>Create agent</strong><span class="meta">Use actual AgentNewForm fields.</span><div class="route-line">/identities/agents/new</div></a>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-auto" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Plugins → Auto derive. Actual dynamic routes are `/plugins/auto/:kind` and `/plugins/auto/:kind/:uri`.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Instance list</h3>
+                      <div class="table">
+                        <div class="tr head"><span>URI</span><span>Kind</span><span>Slice keys</span><span></span></div>
+                        <div class="tr"><span class="mono-line">entity://rh-lab/agent/codex-remote</span><span>agent</span><span>config, api_keys</span><button class="button">Detail</button></div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Credential cascade detail</h3>
+                      <div class="kv"><span>source</span><strong class="mono-line">resource://rh-lab/config-dir/codex-remote</strong></div>
+                      <div class="kv"><span>default</span><strong class="mono-line">resource://rh-lab/config-dir/default-codex</strong></div>
+                      <div class="form-grid">
+                        <label class="form-field">
+                          <span>Flavor</span>
+                          <input class="mock-input" value="codex" />
+                        </label>
+                        <label class="form-field">
+                          <span>Source URI</span>
+                          <input class="mock-input mono" value="resource://rh-lab/config-dir/default-codex" />
+                        </label>
+                        <div class="full-row"><button class="button primary">Set default source</button> <button class="button danger">Revoke grant</button></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-integrations" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Manage → Integrations. This collects external surfaces; user-level Feishu binding and session-level ExternalMirror remain separate routes.</div>
+                  <div class="grid-3">
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-plugin-feishu" data-proto-next-title="Feishu Bindings" data-proto-next-subtitle="route: /plugins/feishu/bindings"><div class="label">Feishu users</div><strong>8 bindings</strong><span class="meta">open_id → user URI</span></div>
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-external-mirror" data-proto-next-title="External Mirror" data-proto-next-subtitle="route: /admin/sessions/:id/external_mirror"><div class="label">Session mirror</div><strong>2 active</strong><span class="meta">Feishu / Email adapters</span></div>
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-plugin-kanban" data-proto-next-title="Kanban" data-proto-next-subtitle="route: /plugins/kanban"><div class="label">Miro + GitHub</div><strong>configured</strong><span class="meta">Kanban connectors</span></div>
+                  </div>
+                  <div class="table">
+                    <div class="tr head"><span>Integration</span><span>Scope</span><span>Actual route</span><span></span></div>
+                    <div class="tr"><span>External mirror</span><span>session</span><span class="mono-line">/admin/sessions/:id/external_mirror</span><button class="button proto-click" data-proto-control="manage" data-proto-target="manage-external-mirror" data-proto-next-title="External Mirror" data-proto-next-subtitle="route: /admin/sessions/:id/external_mirror">Open</button></div>
+                    <div class="tr"><span>Feishu binding</span><span>user</span><span class="mono-line">/plugins/feishu/bindings</span><button class="button proto-click" data-proto-control="manage" data-proto-target="manage-plugin-feishu" data-proto-next-title="Feishu Bindings" data-proto-next-subtitle="route: /plugins/feishu/bindings">Manage</button></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-external-mirror" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Integrations → External mirror. Actual route `/admin/sessions/:id/external_mirror`; form dispatches `external_mirror.bind` and `external_mirror.unbind`.</div>
+                  <div class="mini-card">
+                    <h3>Bind external target</h3>
+                    <div class="form-grid">
+                      <label class="form-field">
+                        <span>Adapter</span>
+                        <input class="mock-input" value="feishu" aria-label="External mirror adapter" />
+                      </label>
+                      <label class="form-field">
+                        <span>Target (chat id)</span>
+                        <input class="mock-input mono" value="oc_72c91f" aria-label="External mirror target" />
+                      </label>
+                      <label class="form-field full-row">
+                        <span>Session URI</span>
+                        <input class="mock-input mono" value="session://rh-lab/default/customer-room" aria-label="External mirror session" />
+                      </label>
+                      <div class="full-row"><button class="button primary">Bind</button></div>
+                    </div>
+                  </div>
+                  <div class="table">
+                    <div class="tr cols-5 head"><span>Adapter</span><span>Target</span><span>Workspace</span><span>Bound</span><span></span></div>
+                    <div class="tr cols-5"><span>feishu</span><span class="mono-line">oc_72c91f</span><span class="mono-line">workspace://rh-lab</span><span>2026-06-30</span><button class="button">Unbind</button></div>
+                    <div class="tr cols-5"><span>email</span><span class="mono-line">team@example.com</span><span class="mono-line">workspace://rh-lab</span><span>2026-06-29</span><button class="button">Unbind</button></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-admin" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Manage → Admin. This is the `/admin` dashboard and the root of the admin subnav currently implemented in `Admin.tsx`.</div>
+                  <div class="subnav">
+                    <span class="segment active proto-click" data-proto-control="manage" data-proto-target="manage-admin" data-proto-next-title="Admin Dashboard" data-proto-next-subtitle="route: /admin">Dashboard</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-observability" data-proto-next-title="Observability" data-proto-next-subtitle="route: /admin/logs">Observability</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-registry" data-proto-next-title="Entity Registry" data-proto-next-subtitle="route: /admin/registry">Registry</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-snapshots" data-proto-next-title="Snapshots" data-proto-next-subtitle="route: /admin/snapshots">Snapshots</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-templates" data-proto-next-title="Templates" data-proto-next-subtitle="route: /admin/templates">Templates</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-access" data-proto-next-title="Capabilities" data-proto-next-subtitle="route: /admin/caps">Capabilities</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-authz" data-proto-next-title="Authz Audit" data-proto-next-subtitle="route: /admin/audit/authz">Authz Audit</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-settings" data-proto-next-title="Settings" data-proto-next-subtitle="route: /admin/settings">Settings</span>
+                    <span class="segment proto-click" data-proto-control="manage" data-proto-target="manage-routing" data-proto-next-title="Routing" data-proto-next-subtitle="route: /admin/routing">Routing</span>
+                  </div>
+                  <div class="grid-3">
+                    <div class="mini-card"><div class="label">Kinds</div><strong>26</strong><span class="meta">KindRegistry rows</span></div>
+                    <div class="mini-card"><div class="label">Sessions</div><strong>11</strong><span class="meta">session:// rows</span></div>
+                    <div class="mini-card"><div class="label">Agents</div><strong>14</strong><span class="meta">entity:// agent rows</span></div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>CC orchestrator</h3>
+                    <div class="kv"><span>state</span><strong>ok</strong></div>
+                    <div class="kv"><span>template</span><strong class="mono-line">template://rh-lab/session/orchestrator@7ab9</strong></div>
+                    <div class="kv"><span>flavor</span><strong>cc</strong></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-observability" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Observability. Actual route `/admin/logs`; combines audit rows, snapshots, and bridge status.</div>
+                  <div class="grid-3">
+                    <div class="mini-card"><div class="label">Audit rows</div><strong>25</strong><span class="meta">recent invocations</span></div>
+                    <div class="mini-card"><div class="label">Snapshots</div><strong>12</strong><span class="meta">latest by workspace</span></div>
+                    <div class="mini-card"><div class="label">Bridges</div><strong>4</strong><span class="meta">AgentBridge registry</span></div>
+                  </div>
+                  <div class="table">
+                    <div class="tr cols-5 head"><span>Target</span><span>Action</span><span>Authz</span><span>Duration</span><span>At</span></div>
+                    <div class="tr cols-5"><span class="mono-line">session://rh-lab/default/customer-room</span><span>chat.send</span><span>granted</span><span>421 µs</span><span>2026-06-30</span></div>
+                    <div class="tr cols-5"><span class="mono-line">entity://rh-lab/agent/codex-remote</span><span>agent.receive</span><span>granted</span><span>902 µs</span><span>2026-06-30</span></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-registry" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Registry. Actual route `/admin/registry`; URI cells link back to entity/session/workspace details when possible.</div>
+                  <div class="table">
+                    <div class="tr head"><span>URI</span><span>Scheme</span><span>Status</span><span>PID</span></div>
+                    <div class="tr"><span class="mono-line">entity://rh-lab/agent/codex-remote</span><span>entity</span><span>live</span><span class="mono-line">#PID&lt;0.773.0&gt;</span></div>
+                    <div class="tr"><span class="mono-line">workspace://rh-lab</span><span>workspace</span><span>live</span><span class="mono-line">#PID&lt;0.712.0&gt;</span></div>
+                    <div class="tr"><span class="mono-line">template://rh-lab/session/public-demo@7ab9</span><span>template</span><span>live</span><span class="mono-line">#PID&lt;0.900.0&gt;</span></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-snapshots" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Snapshots. Actual route `/admin/snapshots`; reads `kind_snapshots` scoped by workspace when available.</div>
+                  <div class="table">
+                    <div class="tr cols-5 head"><span>URI</span><span>Kind</span><span>Version</span><span>Workspace</span><span>Updated</span></div>
+                    <div class="tr cols-5"><span class="mono-line">entity://rh-lab/agent/kanban-manager</span><span>agent</span><span>83</span><span class="mono-line">workspace://rh-lab</span><span>2026-06-30</span></div>
+                    <div class="tr cols-5"><span class="mono-line">session://rh-lab/default/customer-room</span><span>session</span><span>121</span><span class="mono-line">workspace://rh-lab</span><span>2026-06-30</span></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-templates" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Templates. Actual route `/admin/templates`; lists registered template Kinds, not the workspace create form.</div>
+                  <div class="table">
+                    <div class="tr head"><span>URI</span><span>Status</span><span>Type</span><span></span></div>
+                    <div class="tr"><span class="mono-line">template://rh-lab/session/public-demo@7ab9</span><span>live</span><span>session</span><button class="button">Open workspace</button></div>
+                    <div class="tr"><span class="mono-line">template://rh-lab/agent/codex-worker@31c4</span><span>live</span><span>agent</span><button class="button">Open agent</button></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-access" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Manage → Access or Admin → Capabilities. Actual route `/admin/caps`; shows grantable catalog and default grants by Kind.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Grantable capability catalog</h3>
+                      <div class="route-grid">
+                        <div class="route-card"><strong>Chat.send</strong><span class="meta">behavior cap</span><div class="route-line">Ezagent.Behavior.Chat.send</div></div>
+                        <div class="route-card"><strong>Layout.manage</strong><span class="meta">workspace scoped</span><div class="route-line">Ezagent.World.Behavior.Layout.manage</div></div>
+                        <div class="route-card"><strong>Kanban.*</strong><span class="meta">role requested caps</span><div class="route-line">Ezagent.Behavior.Kanban</div></div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>Default grants by kind</h3>
+                      <div class="table">
+                        <div class="tr head"><span>Kind</span><span>Caps</span><span>Workspace</span><span>Status</span></div>
+                        <div class="tr"><span>Workspace</span><span>layout.manage</span><span>rh-lab</span><span>default</span></div>
+                        <div class="tr"><span>Agent role</span><span>recipe requested caps</span><span>rh-lab</span><span>fail-closed</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-authz" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Authz Audit. Actual route `/admin/audit/authz`; same audit rows but focused on authorization outcomes.</div>
+                  <div class="table">
+                    <div class="tr cols-6 head"><span>Target</span><span>Action</span><span>Caller</span><span>Authz</span><span>Duration</span><span></span></div>
+                    <div class="tr cols-6"><span class="mono-line">entity://rh-lab/agent/curl-api</span><span>api_keys.put</span><span>rh</span><span>granted</span><span>311 µs</span><button class="button">Caps</button></div>
+                    <div class="tr cols-6"><span class="mono-line">workspace://other-lab</span><span>workspace.add_template</span><span>guest</span><span>denied</span><span>82 µs</span><button class="button">Inspect</button></div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-settings" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Settings. Current implemented settings are SMTP config and test email; profile stays in the user menu.</div>
+                  <div class="mini-card">
+                    <h3>SMTP settings</h3>
+                    <div class="form-grid">
+                      <label class="form-field"><span>Host</span><input class="mock-input" value="smtp.example.com" /></label>
+                      <label class="form-field"><span>Port</span><input class="mock-input" value="587" /></label>
+                      <label class="form-field"><span>Username</span><input class="mock-input" value="mailer@example.com" /></label>
+                      <label class="form-field"><span>Password</span><input class="mock-input" type="password" value="saved" /></label>
+                      <label class="form-field"><span>From address</span><input class="mock-input" value="Ezagent &lt;no-reply@example.com&gt;" /></label>
+                      <label class="checkbox-row"><input type="checkbox" checked /><span>TLS</span></label>
+                      <div class="full-row"><button class="button primary">Save SMTP</button> <span class="status-badge ok">configured</span></div>
+                    </div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Send test</h3>
+                    <div class="form-grid">
+                      <label class="form-field"><span>Test recipient</span><input class="mock-input" value="rh@example.com" /></label>
+                      <div><button class="button">Send test</button></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-routing" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Admin → Routing. Actual route `/admin/routing`; displays mention routing plus external mirror bindings.</div>
+                  <div class="grid-2">
+                    <div class="mini-card">
+                      <h3>Mention routing rules</h3>
+                      <div class="table">
+                        <div class="tr head"><span>Matcher</span><span>Receivers</span><span>Scope</span><span>Status</span></div>
+                        <div class="tr"><span class="mono-line">always()</span><span>orchestrator</span><span>session</span><span>enabled</span></div>
+                        <div class="tr"><span class="mono-line">from(customer)</span><span>support-agent</span><span>workspace</span><span>enabled</span></div>
+                      </div>
+                    </div>
+                    <div class="mini-card">
+                      <h3>External mirror bindings</h3>
+                      <div class="table">
+                        <div class="tr head"><span>Adapter</span><span>Target</span><span>Session</span><span>Bound</span></div>
+                        <div class="tr"><span>feishu</span><span class="mono-line">oc_72c91f</span><span class="mono-line">customer-room</span><span>2026-06-30</span></div>
+                        <div class="tr"><span>email</span><span class="mono-line">team@example.com</span><span class="mono-line">customer-room</span><span>2026-06-29</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="proto-panel" data-proto-panel="manage" data-proto-name="manage-system" hidden>
+                  <div class="flow-note"><strong>Click path:</strong> Manage → System. This is a friendlier landing for the admin settings/routing pages; it does not duplicate profile or workspace switching.</div>
+                  <div class="grid-3">
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-settings" data-proto-next-title="Settings" data-proto-next-subtitle="route: /admin/settings"><div class="label">SMTP</div><strong>configured</strong><span class="meta">magic-link delivery</span></div>
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-routing" data-proto-next-title="Routing" data-proto-next-subtitle="route: /admin/routing"><div class="label">Routing</div><strong>global + mention</strong><span class="meta">rules and mirror table</span></div>
+                    <div class="mini-card proto-click" data-proto-control="manage" data-proto-target="manage-observability" data-proto-next-title="Observability" data-proto-next-subtitle="route: /admin/logs"><div class="label">Diagnostics</div><strong>audit + snapshots</strong><span class="meta">runtime visibility</span></div>
+                  </div>
+                  <div class="mini-card">
+                    <h3>Why System is separate from Profile</h3>
+                    <p>System settings change app behavior for all operators. Profile is personal account state, so it remains in the avatar menu.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen">
+        <div class="screen-title">
+          <div>
+            <div class="label">Screen 04</div>
+            <h2>Workspace switcher + User menu</h2>
+            <p>workspace switcher 是全局上下文；Profile 和 Theme 进入用户菜单，不再占顶层导航。</p>
+          </div>
+          <span class="pill warn">No visible Search/CmdK button</span>
+        </div>
+
+        <div class="grid-2 screen-pad">
+          <div class="mini-card">
+            <h3>Workspace switcher dropdown</h3>
+            <div class="dropdown full">
+              <div class="dropdown-head">
+                <strong>ezagent / rh-lab</strong>
+                <div class="meta">System members can switch active workspace context.</div>
+              </div>
+              <div class="dropdown-row"><span>rh-lab</span><span class="pill accent">current</span></div>
+              <div class="dropdown-row"><span>system</span><span>switch</span></div>
+              <div class="dropdown-row"><span>customer-demo</span><span>switch</span></div>
+              <div class="dropdown-row"><span>Manage workspaces</span><span>→</span></div>
+            </div>
+          </div>
+
+          <div class="mini-card">
+            <h3>User menu dropdown</h3>
+            <div class="dropdown full">
+              <div class="dropdown-head">
+                <strong>RH</strong>
+                <div class="meta">ezuser://rh-lab/rh</div>
+              </div>
+              <div
+                class="dropdown-row active proto-click"
+                data-proto-control="user"
+                data-proto-target="user-profile"
+              ><span>Profile</span><span>display name</span></div>
+              <div
+                class="dropdown-row proto-click"
+                data-proto-control="user"
+                data-proto-target="user-caps"
+              ><span>My capabilities</span><span>caps</span></div>
+              <div
+                class="dropdown-row proto-click"
+                data-proto-control="user"
+                data-proto-target="user-theme"
+              ><span>Theme</span><span>light / dark</span></div>
+              <div
+                class="dropdown-row proto-click"
+                data-proto-control="user"
+                data-proto-target="user-signout"
+              ><span>Sign out</span><span>POST</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="screen-pad">
+          <div class="proto-panel" data-proto-panel="user" data-proto-name="user-profile">
+            <div class="flow-note"><strong>Click path:</strong> User menu → Profile. Profile is personal account state, so it lives in the avatar menu rather than Manage.</div>
+            <div class="grid-2">
+              <div class="mini-card">
+                <h3>Profile</h3>
+                <div class="kv"><span>Entity URI</span><strong>entity://rh-lab/user/rh</strong></div>
+                <div class="kv"><span>Display name</span><strong>RH</strong></div>
+                <div class="chips"><span class="chip">Edit display name</span><span class="chip">Save</span><span class="chip">Cancel</span></div>
+              </div>
+              <div class="mini-card">
+                <h3>After save</h3>
+                <ul class="step-list">
+                  <li><span class="step-index">1</span><span>Dispatch `profile.display_name.save`.</span></li>
+                  <li><span class="step-index">2</span><span>Update header avatar/menu display name.</span></li>
+                  <li><span class="step-index">3</span><span>Stay on current workspace context.</span></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="proto-panel" data-proto-panel="user" data-proto-name="user-caps" hidden>
+            <div class="flow-note"><strong>Click path:</strong> User menu → My capabilities. This is the caller's own cap view, not the global Access admin page.</div>
+            <div class="table">
+              <div class="tr head"><span>Behavior</span><span>Instance</span><span>Workspace</span><span>Status</span></div>
+              <div class="tr"><span>Chat.send</span><span>session://rh-lab/default/cc-agent-roundtrip</span><span>rh-lab</span><span>granted</span></div>
+              <div class="tr"><span>Layout.manage</span><span>workspace://rh-lab</span><span>rh-lab</span><span>granted</span></div>
+              <div class="tr"><span>Cross workspace</span><span>:any</span><span>system</span><span>system member only</span></div>
+            </div>
+          </div>
+
+          <div class="proto-panel" data-proto-panel="user" data-proto-name="user-theme" hidden>
+            <div class="flow-note"><strong>Click path:</strong> User menu → Theme. Theme is a shell preference and should affect every top-level route.</div>
+            <div class="grid-3">
+              <div class="mini-card"><div class="label">Light</div><strong>Current</strong><span class="meta">FP4 token light palette</span></div>
+              <div class="mini-card"><div class="label">Dark</div><strong>Available</strong><span class="meta">data-theme=dark</span></div>
+              <div class="mini-card"><div class="label">System</div><strong>Auto</strong><span class="meta">follow OS preference</span></div>
+            </div>
+          </div>
+
+          <div class="proto-panel" data-proto-panel="user" data-proto-name="user-signout" hidden>
+            <div class="flow-note"><strong>Click path:</strong> User menu → Sign out. This is a POST action, not client-side navigation.</div>
+            <div class="mini-card">
+              <h3>Sign out confirmation</h3>
+              <p>Submit logout form with CSRF token, clear session, then redirect to login. Workspace switch state is not silently reused after logout.</p>
+              <div class="chips"><span class="chip">Cancel</span><span class="chip">POST /logout</span></div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen">
+        <div class="screen-title">
+          <div>
+            <div class="label">Screen 05</div>
+            <h2>Mobile behavior</h2>
+            <p>移动端保留同样的信息架构：会话列表和详情抽屉变成 sheet，不把聊天输入区压缩掉。</p>
+          </div>
+          <span class="pill">Drawer-first mobile</span>
+        </div>
+
+        <div class="screen-pad">
+          <div class="mobile-frame">
+            <div class="mobile-top">
+              <div class="brand">
+                <div class="mark">ez</div>
+                <div>
+                  <div class="pane-title">rh-lab</div>
+                  <div class="meta">Chat</div>
+                </div>
+              </div>
+              <div class="top-actions">
+                <button class="button">☰</button>
+                <div class="avatar">RH</div>
+              </div>
+            </div>
+            <div class="mobile-body">
+              <div class="chat-header">
+                <button class="button">Sessions</button>
+                <div class="segmented">
+                  <span class="segment active">Chat</span>
+                  <span class="segment">PTY</span>
+                </div>
+              </div>
+              <div class="messages">
+                <div class="message">
+                  <div class="avatar">CC</div>
+                  <div class="bubble">移动端默认显示聊天，Sessions 和 Details 用 sheet 打开。</div>
+                </div>
+                <div class="message self">
+                  <div class="bubble">右侧 drawer 的 tabs 在移动端变成底部 sheet。</div>
+                  <div class="avatar">ME</div>
+                </div>
+              </div>
+              <div class="composer">
+                <div class="input-box">Message...</div>
+                <button class="button primary">Send</button>
+              </div>
+            </div>
+            <div class="mobile-drawer">
+              <div class="tabs">
+                <span class="tab active">Members</span>
+                <span class="tab">Files</span>
+                <span class="tab">Routing</span>
+              </div>
+              <div class="mini-card">
+                <div class="row-top"><strong>codex-remote</strong><button class="button">Open PTY</button></div>
+                <div class="meta">bottom sheet representation of session detail drawer</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+  <script>
+    (function () {
+      function activate(group, target) {
+        document.querySelectorAll('[data-proto-panel="' + group + '"]').forEach(function (panel) {
+          var active = panel.getAttribute("data-proto-name") === target;
+          panel.hidden = !active;
+        });
+
+        document.querySelectorAll('[data-proto-control="' + group + '"]').forEach(function (control) {
+          var active = control.getAttribute("data-proto-target") === target;
+          control.classList.toggle("active", active);
+          control.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+
+        var control = document.querySelector('[data-proto-control="' + group + '"][data-proto-target="' + target + '"]');
+        var title = document.querySelector('[data-proto-title="' + group + '"]');
+        var subtitle = document.querySelector('[data-proto-subtitle="' + group + '"]');
+        if (control && title && control.getAttribute("data-proto-next-title")) {
+          title.textContent = control.getAttribute("data-proto-next-title");
+        }
+        if (control && subtitle && control.getAttribute("data-proto-next-subtitle")) {
+          subtitle.textContent = control.getAttribute("data-proto-next-subtitle");
+        }
+      }
+
+      document.querySelectorAll("[data-proto-control]").forEach(function (control) {
+        control.setAttribute("tabindex", control.getAttribute("tabindex") || "0");
+        control.addEventListener("click", function () {
+          activate(control.getAttribute("data-proto-control"), control.getAttribute("data-proto-target"));
+        });
+        control.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            activate(control.getAttribute("data-proto-control"), control.getAttribute("data-proto-target"));
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
