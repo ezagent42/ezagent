@@ -37,7 +37,6 @@ defmodule Ezagent.Behavior.Kanban do
   alias Ezagent.Behavior.Kanban.Shared
   alias EzagentPluginKanban.BoardConfig
   alias EzagentPluginKanban.Ci
-  alias EzagentPluginKanban.Github
   alias EzagentPluginKanban.Markmap
   alias EzagentPluginKanban.Miro
 
@@ -184,7 +183,7 @@ defmodule Ezagent.Behavior.Kanban do
     returns: %{url: :string},
     caps: [:push_pr],
     modes: [:call],
-    description: "把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）"
+    description: "把产品需求摘要（requirement_digest）post 到已登记 PR（软留言）"
   )
 
   action(:register_pr,
@@ -225,6 +224,14 @@ defmodule Ezagent.Behavior.Kanban do
     caps: [:set_board_config],
     modes: [:call],
     description: "写本图连接器配置（github_repo + miro 板名；token 在全局）"
+  )
+
+  action(:bind_session,
+    args: %{session_uri: :string},
+    returns: %{session_uri: :string},
+    caps: [:bind_session],
+    modes: [:call],
+    description: "绑定本看板到一个会话（B1）：之后认领/状态/挂PR 等动作会向该会话 session.send 一条公告，重入路由触发下一个 agent（接力）"
   )
 
   action(:save_github_creds,
@@ -273,6 +280,7 @@ defmodule Ezagent.Behavior.Kanban do
           :sync_prs,
           :sync_miro,
           :set_board_config,
+          :bind_session,
           :save_github_creds,
           :save_miro_creds
         ],
@@ -573,22 +581,24 @@ defmodule Ezagent.Behavior.Kanban do
        drops: Map.get(t, :drops, []),
        config: board_config(ctx),
        miro: miro_status(),
-       github: github_status(),
+       github: github_status(ctx),
        stages: stages,
        # ci_stage 棒节点的 CI 评价摘要（前端 ci 徽章）：%{node_id => verdict}，纯函数算。
        ci: ci_summaries(inner, ci_stage)
      }, []}
   end
 
-  # 本图连接器配置（github_repo + miro 板名）；self_uri = 本 kanban 实例 URI。
+  # 本图连接器配置（github_repo + miro 板名 + 绑定会话）；self_uri = 本 kanban 实例 URI。
+  # `session_uri`（bind_session 写的板级绑定）随 get_tree 投影透出——world 的 Layer-3 会话内
+  # kanban tab 据它把「绑定到本会话的板」反查出来（KanbanData.board_state_for_session/2）。
   defp board_config(ctx) do
     case ctx[:self_uri] do
       %URI{} = uri ->
         c = BoardConfig.read(uri)
-        %{github_repo: c.github_repo, miro_board: c.miro_board}
+        %{github_repo: c.github_repo, miro_board: c.miro_board, session_uri: c.session_uri}
 
       _ ->
-        %{github_repo: nil, miro_board: nil}
+        %{github_repo: nil, miro_board: nil, session_uri: nil}
     end
   end
 
@@ -604,16 +614,19 @@ defmodule Ezagent.Behavior.Kanban do
     _ -> %{configured: false}
   end
 
-  defp github_status do
-    case Github.read_creds() do
-      {:ok, %{token: t, repo: r}} when is_binary(t) and t != "" ->
-        %{configured: true, repo: r}
+  # 本图 github 配置投影：configured = 本图 BoardConfig 配了 repo（per-board）。token 不在
+  # kanban——读写全归 github 插件 Creds（Phase 2），故这里不再读全局 token，只报 repo。
+  defp github_status(ctx) do
+    repo =
+      case ctx[:self_uri] do
+        %URI{} = uri -> BoardConfig.read(uri).github_repo
+        _ -> nil
+      end
 
-      _ ->
-        %{configured: false}
+    case repo do
+      r when is_binary(r) and r != "" -> %{configured: true, repo: r}
+      _ -> %{configured: false}
     end
-  rescue
-    _ -> %{configured: false}
   end
 
   # 给每个 stage==ci_stage 节点算 CI 评价（纯函数，无副作用）。前端 ci 徽章用。
@@ -701,6 +714,49 @@ defmodule Ezagent.Behavior.Kanban do
 
   @doc false
   def handle_save_miro_creds(args, ctx), do: Connectors.save_miro_creds(args, ctx)
+
+  @doc false
+  def handle_bind_session(args, ctx), do: Connectors.bind_session(args, ctx)
+
+  # B1 — 动作进路由：成功的接力动作（认领/状态/挂PR）后，若本看板绑定了会话，注入一条
+  # {:dispatch} 到该会话 session.send，让消息重入路由→触发下一个 agent（接力）。post_handle
+  # 仅在 handler 返回 {:ok,...} 时被引擎调用（runtime.ex:867/873），故此处无需再判成败。
+  @relay_actions [:claim_node, :set_status, :register_pr]
+
+  @impl Ezagent.Lifecycle
+  def post_handle(action, result, effects, ctx) when action in @relay_actions do
+    case board_session(ctx) do
+      nil ->
+        :cont
+
+      session_uri ->
+        text = relay_text(action, ctx)
+        {:ok, result, effects ++ Shared.session_dispatch(session_uri, ctx[:self_uri], text)}
+    end
+  end
+
+  def post_handle(_action, _result, _effects, _ctx), do: :cont
+
+  # 读本看板绑定的会话（板级配置，bind_session 写）。
+  defp board_session(ctx) do
+    case ctx[:self_uri] do
+      %URI{} = self_uri -> BoardConfig.read(self_uri).session_uri
+      _ -> nil
+    end
+  end
+
+  # 接力公告文本：带机器可读的事件标记（路由规则按 [kanban:<event>] 匹配触发对应 agent）+
+  # 操作者。节点细节由被触发的 agent 经 get_tree 读真相源——消息只做触发器，不做数据源。
+  defp relay_text(action, ctx) do
+    event =
+      case action do
+        :claim_node -> "claimed"
+        :set_status -> "status"
+        :register_pr -> "pr_registered"
+      end
+
+    "[kanban:#{event}] by #{Shared.caller_str(ctx) || "unknown"}"
+  end
 
   # --- helpers --------------------------------------------------------
 

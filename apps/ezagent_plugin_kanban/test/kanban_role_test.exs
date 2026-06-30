@@ -57,7 +57,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
 
     # BLOCKER-1: behaviors is EXACTLY [Behavior.Kanban] — Connectors is not a
-    # Behavior and must NOT appear; the 24 actions all resolve through Kanban.
+    # Behavior and must NOT appear; the 25 actions all resolve through Kanban.
     assert role.behaviors == [Kanban]
 
     # BLOCKER-2: passive flows through onto the struct.
@@ -69,8 +69,8 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     # carrying ONLY {behavior, action} (no `kind` materialization axis). The
     # count + shape pin the recipe; `==` on the whole struct would be brittle.
     actions = Kanban.actions()
-    assert length(actions) == 24, "kanban declares exactly 24 actions"
-    assert length(role.requested_caps) == 24
+    assert length(actions) == 25, "kanban declares exactly 25 actions (B1 加了 bind_session)"
+    assert length(role.requested_caps) == 25
 
     assert Enum.all?(role.requested_caps, fn cap ->
              is_map(cap) and cap.behavior == Kanban and cap.action in actions and
