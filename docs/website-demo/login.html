@@ -33,7 +33,7 @@ a.back{color:var(--accent);text-decoration:none}a.back:hover{text-decoration:und
   <div class="top"><img src="ezagent-logo.png" alt="Ezagent"><b>EZAGENT</b></div>
   <h1>登录</h1>
   <div class="sub">LOG IN TO YOUR ORGANIZATION IDE</div>
-  <form onsubmit="event.preventDefault();this.querySelector('.btn').textContent='demo · 占位未接 →'">
+  <form id="loginform">
     <label for="email">邮箱 · Email</label>
     <input id="email" type="email" autocomplete="email" placeholder="you@org.com">
     <label for="pw">密码 · Password</label>
@@ -42,5 +42,14 @@ a.back{color:var(--accent);text-decoration:none}a.back:hover{text-decoration:und
   </form>
   <div class="note">demo placeholder · 接 ezagent 真实身份/会话 · <a class="back" href="index.html">← 返回官网</a></div>
 </div>
+<script src="demo-state.js"></script>
+<script>
+document.getElementById('loginform').addEventListener('submit',function(e){
+  e.preventDefault();
+  var em=(document.getElementById('email').value||'').trim();
+  EZD.login(em);                       // 写登录态
+  location.href='achievement-center.html';   // 进个人中心
+});
+</script>
 </body>
 </html>
