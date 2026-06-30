@@ -13,7 +13,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
   alias Ezagent.World.WorkspacePluginActions
-  alias EzagentPluginWorld.Layouts
+  alias EzagentPluginWorld.{Layouts, WorldLoading}
 
   @refresh_ms 2_000
 
@@ -300,10 +300,7 @@ defmodule EzagentPluginWorld.WorldLive do
           data-world-css-url={@world_css_url}
           class="min-h-screen"
         >
-          <div class="flex min-h-screen items-center justify-center bg-[#f8fafc] px-6">
-            <div class="h-10 w-10 rounded-full border border-[#d1d5db] border-t-[#111827] motion-safe:animate-spin">
-            </div>
-          </div>
+          <WorldLoading.shell />
         </div>
       </main>
     </Layouts.app>
