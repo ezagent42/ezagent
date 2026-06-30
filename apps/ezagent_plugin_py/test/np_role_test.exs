@@ -94,7 +94,8 @@ defmodule Ezagent.PluginPy.NpRoleTest do
 
           admin_ctx = %{
             caller: User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            deadline_ms: 120_000
           }
 
           {:ok, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
