@@ -11,6 +11,19 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   require Logger
 
   alias Ezagent.PluginCc.Template.CcAgent
+  alias Ezagent.PluginCc.Template.OrchestratorBootstrap
+
+  # Phase 3 ③ T7d — the CLI-identity env a role-agent needs to act through the
+  # ezagent CLI (`mix ezagent <verb>`) AS ITSELF. `EzagentCli.Exec` authenticates
+  # every dispatching call against `entity_tokens` via these two vars (see
+  # `EzagentCli.Exec.resolve_caller/2` → `Ezagent.Entity.authenticate/2`); without
+  # them a `mix ezagent kanban.* / github.*` call fails CLOSED ("CLI calls require
+  # authentication"). The bridge's `EZAGENT_AGENT_TOKEN` is a SEPARATE bridge-connect
+  # token (`cc-channels.yaml`, verified by `AgentBridge.TokenStore`), NOT an entity
+  # token, so it cannot stand in here.
+  @cli_user_token_env "EZAGENT_USER_TOKEN"
+  @cli_entity_uri_env "EZAGENT_ENTITY_URI"
+  @cli_identity_token_label "cc-cli-identity"
 
   @doc false
   @spec build_pty_params(URI.t(), String.t(), map(), atom()) :: {:ok, map()} | {:error, term()}
@@ -79,6 +92,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         base_env
         |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_role_env(tmpl)
+        |> maybe_put_cli_identity_env(agent_uri, tmpl)
 
       {:ok, {argv, cmd_env}}
     end
@@ -130,6 +144,54 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
     CcAgent.auth_failure_signals()
     |> Enum.with_index()
     |> Enum.map(fn {sig, i} -> %{name: :"cc_auth_failure_#{i}", match: sig} end)
+  end
+
+  @doc false
+  # Phase 3 ③ T7d — inject the CLI-identity env (`EZAGENT_USER_TOKEN` +
+  # `EZAGENT_ENTITY_URI`) for a ROLE-agent so its `claude` brain can drive the
+  # ezagent CLI under its OWN identity + least-priv caps (every dispatch is
+  # CapBAC-gated; the token is scoped to THIS agent's caps — no self-mint, no
+  # admin fallback, exactly the threat model `TokenScopeCapbacTest` pins). A
+  # role-less legacy cc agent (`role_name/1 == nil`) gets nothing.
+  #
+  # The gate is GENERIC over any role (机制 ≠ 业务): the same path serves
+  # pm-coordinator / dev-together / orchestrator / any future cc role — it is the
+  # cli+skill paradigm (act through the CLI as yourself), not a per-role branch.
+  #
+  # A fresh entity token is minted here at build-time and exported ONLY into the
+  # process env (`cmd_env`) — the SAME ephemeral-credential pattern the bridge
+  # token (`EZAGENT_AGENT_TOKEN`) already uses; it is never written to disk. A
+  # mint failure is best-effort: the agent still spawns, but WITHOUT a CLI bearer
+  # token, so `mix ezagent` calls under its identity fail CLOSED (no silent admin
+  # fallback — `feedback_let_it_crash_no_workarounds`).
+  @spec maybe_put_cli_identity_env(map(), URI.t(), map()) :: map()
+  def maybe_put_cli_identity_env(env, %URI{} = agent_uri, tmpl)
+      when is_map(env) and is_map(tmpl) do
+    case OrchestratorBootstrap.role_name(tmpl) do
+      nil -> env
+      _role -> put_cli_identity_env(env, agent_uri)
+    end
+  end
+
+  defp put_cli_identity_env(env, %URI{} = agent_uri) do
+    case Ezagent.Entity.Token.mint(agent_uri, label: @cli_identity_token_label) do
+      {token, _row} when is_binary(token) ->
+        env
+        |> Map.put(@cli_user_token_env, token)
+        # canonical stable_key (== the key `Token.mint` persisted for this agent),
+        # so `EzagentCli.Exec.resolve_caller/2`'s `Ezagent.URI.new!/1` round-trips
+        # to the same `entity_tokens` row.
+        |> Map.put(@cli_entity_uri_env, Ezagent.URI.stable_key(agent_uri))
+
+      {:error, reason} ->
+        Logger.warning(
+          "cc.agent: CLI-identity token mint failed for #{URI.to_string(agent_uri)}: " <>
+            "#{inspect(reason)} — the agent spawns WITHOUT a CLI bearer token, so " <>
+            "`mix ezagent` calls under its identity fail CLOSED (no silent admin fallback)."
+        )
+
+        env
+    end
   end
 
   defp maybe_put_orchestrator_role_env(env, tmpl) when is_map(env) do

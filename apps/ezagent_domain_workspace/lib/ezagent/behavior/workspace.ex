@@ -266,7 +266,15 @@ defmodule Ezagent.Behavior.Workspace do
       cwd: :string,
       with_pty: :boolean,
       from: {:option, :uri},
-      flavor_config: {:option, :map}
+      flavor_config: {:option, :map},
+      # RF-5a — OPTIONAL role NAME. `AgentCreate.handle_create_agent/2`
+      # already reads `role` from args (RoleStep resolves its recipe +
+      # mints caps on the direct-spawn path); declaring it here is what
+      # lets the operator CLI (`mix ezagent workspace create_agent
+      # --role <name>`) pass it through Optimus's `allow_unknown_args:
+      # false` parse gate. Absent → roleless spawn (validator's
+      # `{:option, _}` clause treats missing as :ok).
+      role: {:option, :string}
     },
     returns: %{agent_uri: :uri, template_name: :string},
     caps: [:create_agent],

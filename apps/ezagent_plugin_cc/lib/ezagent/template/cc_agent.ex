@@ -333,22 +333,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end)
   end
 
-  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B — `role`
-  # is optional. Absent ⇒ default role (legacy cc agents). When
-  # orchestrator, `instantiate/3` additionally copies the
-  # `ezagent-session-orchestrator` skill into the per-agent config dir
-  # and appends a CLAUDE.md hint pointing at it, plus sets
-  # `EZAGENT_AGENT_ROLE=orchestrator` in `cmd_env`.
-  #
-  # codex PR #408 review LOW — accept BOTH string and atom forms on
-  # ingress. The SPEC type reads `:default | :orchestrator` (atoms); the
-  # implementer chose strings because JSON round-trips don't preserve
-  # atoms (snapshot reload). We normalise on read here (validator) AND on
-  # read in `orchestrator_role?/1` so callers can pass either form. The
-  # CANONICAL on-disk form (seed + AgentTemplate slice) stays the string
-  # `"orchestrator"` so snapshot round-trips don't generate atoms (no
-  # atom-table-exhaustion exposure); the validator only accepts both
-  # shapes so atom-literal call sites compile cleanly.
+  # `role` is optional (absent ⇒ default/legacy cc agent). Accept BOTH string and
+  # atom ingress (JSON round-trips don't preserve atoms; on-disk form is a string).
+  # Phase 3 ③ T4 (2026-06-28) — GENERALIZED beyond the hardcoded
+  # `default`/`orchestrator` allowlist: any OTHER name is accepted IFF it is a
+  # REGISTERED role (`RecipeRegistry.lookup/1`), else fail-loud `{:invalid_role,_}`.
+  # Opens the gate to `pm-coordinator`/… so a non-orchestrator cc role reaches the
+  # T2-generalized `OrchestratorBootstrap` skill-install — a GENERIC gate over any
+  # role, NOT a per-role branch (机制 ≠ 业务). `default` (no-role) + `orchestrator`
+  # (built-in) stay a PURE fast-path: behavior byte-identical to pre-T4 AND
+  # `validate/1` stays DB-free for them (it IS run in pure `ExUnit.Case` with
+  # `role: "orchestrator"` via `to_template_data/2`); only the new path hits the DB.
   defp check_role(tmpl) do
     case Map.fetch(tmpl, "role") do
       :error ->
@@ -356,6 +351,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       {:ok, r} when r in ["default", "orchestrator", :default, :orchestrator] ->
         :ok
+
+      {:ok, r} when is_binary(r) or is_atom(r) ->
+        name = if is_atom(r), do: Atom.to_string(r), else: r
+
+        case Ezagent.Agent.RecipeRegistry.lookup(name) do
+          {:ok, _role} -> :ok
+          :error -> {:error, {:invalid_role, r}}
+        end
 
       {:ok, bad} ->
         {:error, {:invalid_role, bad}}

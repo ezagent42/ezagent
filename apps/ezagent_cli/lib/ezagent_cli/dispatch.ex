@@ -3,8 +3,9 @@ defmodule EzagentCli.Dispatch do
   Build `%Ezagent.Invocation{}` from parsed Optimus result and dispatch.
 
   Constructs target URI from the `--<kind_type>` instance arg, threads
-  caps from caller's Identity slice (or admin default), waits on the
-  caller mailbox for `:call` mode.
+  caps from the caller's own Identity slice (resolved via `derive_caller`,
+  which REFUSES without an explicit identity — no admin fallback), waits on
+  the caller mailbox for `:call` mode.
   """
 
   alias Ezagent.Invocation
@@ -34,7 +35,19 @@ defmodule EzagentCli.Dispatch do
         # by `build_target_uri/6` for bare-name promotion (SPEC #366);
         # it is NOT an action arg.
         reserved = MapSet.new([type_name, :as, :deadline_ms, :instance_class])
-        action_args = Map.drop(options, MapSet.to_list(reserved))
+
+        # Boolean schema args are presence FLAGS in the Optimus tree
+        # (`TreeBuilder.action_subcommand/4`), so they arrive in
+        # `parsed.flags`, not `parsed.options`. Fold them back into the
+        # action args (Optimus defaults absent flags to `false`), minus
+        # the CLI-reserved control flags `:cast` / `:json` which are not
+        # action args.
+        bool_args = Map.drop(flags, [:cast, :json])
+
+        action_args =
+          options
+          |> Map.drop(MapSet.to_list(reserved))
+          |> Map.merge(bool_args)
 
         # Determine mode
         mode =
@@ -97,6 +110,194 @@ defmodule EzagentCli.Dispatch do
             err
         end
     end
+  end
+
+  @doc """
+  Generic dispatch verb (Phase 3 ③ T7f) — `mix ezagent dispatch <uri>
+  --action <behavior.action> [--args <json>]`.
+
+  The single escape hatch for per-instance role-mounted Behaviors (kanban,
+  github, …) that are NOT statically registered in `BehaviorRegistry`, so the
+  auto-derived `run_action/4` tree never exposes them. Caller identity + caps
+  are derived the SAME way as `run_action/4` (`derive_caller/1` reads the
+  per-process override `EzagentCli.Exec.exec/2` sets from the VERIFIED bearer
+  token), so the Invocation carries the caller's OWN caps and the in-dispatch
+  CapBAC gate authorizes exactly that caller — no privilege change versus the
+  typed verbs, no static kanban registration, no per-op facade boilerplate.
+
+  `parsed` is the Optimus result for the `dispatch` subcommand:
+  `%{args: %{target: uri_str}, options: %{action:, args:, ...}, flags: %{}}`.
+  """
+  @spec run_dispatch(map()) :: {:ok, term()} | {:error, term()}
+  def run_dispatch(parsed) do
+    options = Map.get(parsed, :options, %{})
+    pos_args = Map.get(parsed, :args, %{})
+    flags = Map.get(parsed, :flags, %{})
+
+    with {:ok, target_str} <- fetch_required(pos_args, :target, :missing_target_uri),
+         {:ok, action_str} <- fetch_required(options, :action, :missing_action),
+         {:ok, action_args} <- parse_args_json(Map.get(options, :args)),
+         {:ok, target_uri} <- build_dispatch_target(target_str, action_str),
+         {%URI{} = caller_uri, caps} <- derive_caller(options) do
+      mode = if Map.get(flags, :cast, false), do: :cast, else: :call
+      deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
+
+      inv = %Invocation{
+        target: target_uri,
+        mode: mode,
+        args: action_args,
+        ctx: %{
+          caller: caller_uri,
+          caps: caps,
+          reply: {:caller_inbox, self()},
+          deadline_ms: deadline_ms
+        }
+      }
+
+      do_dispatch(inv, mode, deadline_ms)
+    else
+      # `derive_caller/1` may return `{:error, :no_identity | :as_not_allowed |
+      # {:bad_as_uri, _}}` (a 2-tuple that does NOT match `{%URI{}, caps}`) and
+      # the arg/URI guards return their own `{:error, _}` — all surface verbatim
+      # so the CLI exits with a clear message instead of silently elevating.
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  `mix ezagent session send` (Phase 3 ③ T7h) — post a chat message into a
+  session through the SANCTIONED `session.send` dispatch.
+
+  The auto-derived `session send` verb declared `--message` as a JSON `:map`
+  and handed `Behavior.Session.handle_send/2` a plain map, which never matches
+  its `%{message: %Message{}}` head → the `:cast` was silently dropped (no row
+  in `messages`, no fan-out). This verb instead builds a REAL
+  `%Ezagent.Message{}` with server-side @mention resolution via
+  `Ezagent.Session.MessageComposer.build_message/3` — the EXACT path the World
+  UI chat composer uses (`Ezagent.World.ConversationData` delegates to the same
+  composer) — so `@pm` in the text routes to the mentioned agent.
+
+  Authorization is unchanged: the caller + caps come from the per-process
+  override `EzagentCli.Exec.exec/2` set from the VERIFIED bearer token (no
+  admin fallback), and the `:cast` rides the normal in-dispatch CapBAC gate.
+  `:send` is a `:cast`-only action; we mirror the World composer's
+  `mode: :cast, reply: :ignore`.
+
+  `parsed` is the Optimus result for `session send`:
+  `%{options: %{session:, message:, ...}, flags: %{cast:, json:}}`.
+  """
+  @spec run_session_send(map()) :: {:ok, term()} | {:error, term()}
+  def run_session_send(parsed) do
+    options = Map.get(parsed, :options, %{})
+
+    with {:ok, instance} <- fetch_required(options, :session, :missing_session_uri),
+         {:ok, text} <- fetch_required(options, :message, :missing_message),
+         {%URI{} = caller_uri, caps} <- derive_caller(options),
+         {:ok, session_uri} <- resolve_session_uri(instance, caller_uri, options) do
+      msg = Ezagent.Session.MessageComposer.build_message(caller_uri, text, session_uri)
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
+      deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
+
+      inv = %Invocation{
+        target: target,
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: caller_uri,
+          caps: caps,
+          reply: :ignore,
+          deadline_ms: deadline_ms
+        }
+      }
+
+      do_dispatch(inv, :cast, deadline_ms)
+    else
+      # `derive_caller/1` may return `{:error, :no_identity | :as_not_allowed |
+      # {:bad_as_uri, _}}` and the arg/URI guards return their own `{:error,
+      # _}` — all surface verbatim so the CLI exits with a clear message.
+      {:error, _} = err -> err
+    end
+  end
+
+  # Resolve the `--session` instance to a canonical session URI. A full URI is
+  # used as-is; a bare name is promoted structurally from the caller's workspace
+  # (reusing the same `--instance-class` rules as the typed verbs, SPEC
+  # #324/#366 — no silent `"default"` fallback) and built through the sanctioned
+  # `Ezagent.URI.session/3` typed builder (no raw scheme-literal interpolation —
+  # uri_query.scan gate).
+  defp resolve_session_uri(instance, %URI{} = caller_uri, options) when is_binary(instance) do
+    try do
+      case Ezagent.URI.new!(instance) do
+        %URI{scheme: "session"} = uri -> {:ok, uri}
+        _ -> {:error, {:not_a_session_uri, instance}}
+      end
+    rescue
+      ArgumentError ->
+        caller_workspace = workspace_name_from_caller(caller_uri)
+        instance_class = Map.get(options, :instance_class)
+        promoted = promote_to_3seg("session", instance, caller_workspace, instance_class)
+
+        case Ezagent.URI.path_segments(promoted) do
+          [ws, class, name] -> {:ok, Ezagent.URI.session(ws, class, name)}
+          _ -> {:error, {:malformed_session_instance, instance}}
+        end
+    end
+  end
+
+  # Required positional arg / option presence check. Absent or empty = a clear
+  # error tuple (rendered to a non-zero exit by `EzagentCli.Formatter`).
+  defp fetch_required(map, key, err) do
+    case Map.get(map, key) do
+      val when is_binary(val) and val != "" -> {:ok, val}
+      _ -> {:error, err}
+    end
+  end
+
+  # Append the operator-supplied `behavior.action` as the canonical `?action=`
+  # query on the (canonicalized) target URI — mirrors `build_target_uri/6`'s
+  # full-URI branch, but takes the action string verbatim (the whole point of
+  # the generic verb is the behavior is NOT statically known here, so we can't
+  # derive the slice segment from a `behavior_module`).
+  defp build_dispatch_target(target_str, action_str) do
+    if String.contains?(action_str, ".") do
+      try do
+        base = Ezagent.URI.new!(target_str)
+        {:ok, Ezagent.URI.new!(URI.to_string(base) <> "?action=" <> action_str)}
+      rescue
+        ArgumentError -> {:error, {:malformed_target_uri, target_str}}
+      end
+    else
+      {:error, {:bad_action_format, action_str}}
+    end
+  end
+
+  # `--args` is a JSON OBJECT of action args. Top-level keys are atomized via
+  # `String.to_existing_atom/1` (NEVER `to_atom/1` — no atom-table exhaustion:
+  # every action arg name is a compile-time atom declared in the Behavior's
+  # `action/3` macro). Nested values keep string keys — Behaviors that take map
+  # args (kanban `attach_artifact`/`set_metric`) normalize inner keys
+  # themselves (atom/string tolerant). Scalar JSON types (string/int/bool) map
+  # to the corresponding Elixir terms, so no per-arg coercion is needed for the
+  # behaviors this serves (kanban/github args are string/int/map).
+  defp parse_args_json(nil), do: {:ok, %{}}
+  defp parse_args_json(""), do: {:ok, %{}}
+
+  defp parse_args_json(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> atomize_top_keys(map)
+      {:ok, _other} -> {:error, {:args_not_a_json_object, json}}
+      {:error, _} -> {:error, {:malformed_args_json, json}}
+    end
+  end
+
+  defp atomize_top_keys(map) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {k, v}, {:ok, acc} ->
+      try do
+        {:cont, {:ok, Map.put(acc, String.to_existing_atom(k), v)}}
+      rescue
+        ArgumentError -> {:halt, {:error, {:unknown_arg_key, k}}}
+      end
+    end)
   end
 
   @doc """

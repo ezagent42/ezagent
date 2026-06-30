@@ -51,9 +51,17 @@ defmodule EzagentPluginWorld.WorldLive do
 
     if connected?(socket), do: send(self(), :push_world_state)
 
+    # Layer-2 modular nav: every INSTALLED plugin's `nav_surfaces/0`,
+    # merged into the static sidebar NAV_ITEMS on the React side. View-
+    # INVARIANT chrome (same on every route, like `caller`), so computed
+    # ONCE at mount and passed as its own mount option — never clobbered by
+    # per-route `world:state` pushes.
+    plugin_nav = Ezagent.World.WorkspacePluginData.plugin_nav_surfaces()
+
     {:ok,
      socket
      |> assign(:layout_json, Jason.encode!(layout))
+     |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
      |> assign(:caller_json, Jason.encode!(caller_payload))
      |> assign(:world_state, state)
      |> assign(:world_state_json, Jason.encode!(state))
@@ -257,7 +265,7 @@ defmodule EzagentPluginWorld.WorldLive do
     ConversationActions.handle_dispatch(socket, action, args)
   end
 
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.sync_github kanban.save_github_creds kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.sync_prs kanban.push_pr kanban.attach_code_file)
+  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.sync_github kanban.save_github_creds kanban.set_board_config kanban.bind_session kanban.attach_upload kanban.register_pr kanban.sync_prs kanban.push_pr kanban.attach_code_file)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @kanban_actions and is_map(args) do
     Ezagent.World.KanbanActions.handle_dispatch(socket, action, args)
@@ -298,6 +306,7 @@ defmodule EzagentPluginWorld.WorldLive do
           phx-hook="WorldRenderer"
           phx-update="ignore"
           data-layout={@layout_json}
+          data-plugin-nav={@plugin_nav_json}
           data-caller={@caller_json}
           data-world-state={@world_state_json}
           data-world-component={@world_component}
@@ -884,7 +893,8 @@ defmodule EzagentPluginWorld.WorldLive do
       %{"agent_uri" => agent_uri_str} ->
         with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str) do
           update_pty_state(socket, %{
-            "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
+            "agent_status" =>
+              Ezagent.World.Jsonable.to_json(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
             "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
             "pty_phase" => pty_phase(agent_uri)
           })
@@ -909,7 +919,7 @@ defmodule EzagentPluginWorld.WorldLive do
   defp push_inbound_event(socket, type, payload) do
     event = %{
       "type" => type,
-      "payload" => jsonable(payload),
+      "payload" => Ezagent.World.Jsonable.to_json(payload),
       "at" => DateTime.utc_now() |> DateTime.to_iso8601()
     }
 
@@ -935,24 +945,6 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  defp jsonable(%URI{} = uri), do: URI.to_string(uri)
-  defp jsonable(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp jsonable(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
-  defp jsonable(%_struct{} = struct), do: struct |> Map.from_struct() |> jsonable()
-
-  defp jsonable(map) when is_map(map),
-    do: Map.new(map, fn {key, value} -> {to_string(key), jsonable(value)} end)
-
-  defp jsonable(list) when is_list(list), do: Enum.map(list, &jsonable/1)
-  defp jsonable(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> jsonable()
-  defp jsonable(atom) when is_atom(atom), do: Atom.to_string(atom)
-  defp jsonable(pid) when is_pid(pid), do: inspect(pid)
-  defp jsonable(port) when is_port(port), do: inspect(port)
-  defp jsonable(ref) when is_reference(ref), do: inspect(ref)
-  defp jsonable(value) when is_binary(value) or is_number(value) or is_boolean(value), do: value
-  defp jsonable(nil), do: nil
-  defp jsonable(other), do: inspect(other)
-
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)
 
@@ -960,4 +952,8 @@ defmodule EzagentPluginWorld.WorldLive do
   defp encode_uri(_), do: nil
 
   defp caller_display_name(uri), do: Ezagent.World.CallerDisplay.name(uri)
+
+  # test helper：暴露 kanban 动作白名单（kanban_bind_session_test 断言 bind_session 在内）。
+  @doc false
+  def __kanban_actions__, do: @kanban_actions
 end

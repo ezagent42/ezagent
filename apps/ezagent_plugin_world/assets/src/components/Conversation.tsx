@@ -4,6 +4,7 @@ import {Bug, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus,
 import {Button} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {JsonRenderBubble} from "./JsonRenderBubble"
+import {Kanban, type KanbanState} from "./Kanban"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
@@ -77,6 +78,19 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   members?: MemberRow[]
+  // Layer-3 modular UI: INSTALLED-plugin conversation tabs RESOLVED for this
+  // session (server filters by each tab's condition; kanban shows iff a board
+  // is bound). Merged after the static chat/pty tabs in the view switcher.
+  session_tabs?: SessionTab[]
+  // The board bound to this session, lazily pushed when the kanban tab is
+  // opened (switch_view → KanbanData.board_state_for_session). null = no board.
+  kanban_board?: KanbanState | null
+}
+
+// A plugin-declared per-session tab (id is also the switch_view "view" value).
+type SessionTab = {
+  id: string
+  label: string
 }
 
 type Props = {
@@ -94,6 +108,10 @@ type Props = {
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
+  // Routes a plugin session-tab body action (e.g. kanban.*) over world:dispatch.
+  // Reuses world's existing workspace-plugin action seam — Conversation carries
+  // no per-plugin handler.
+  onSessionTabAction?: (action: string, args: Record<string, unknown>) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
@@ -117,16 +135,22 @@ export function Conversation({
   onInvite,
   onPtyInput,
   onPtyResize,
+  onSessionTabAction,
   onServerEvent,
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
-  const activeView = state.active_view === "pty" ? "pty" : "chat"
-  // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
-  // proper home for this is world surfacing registered SessionViews (Phase 3);
-  // for now it embeds the external surface. See HelloPagePreview below.
+  // Layer-3 modular UI: static built-in views (chat/pty) + plugin-declared
+  // session tabs (already condition-filtered server-side). The view switcher
+  // and the body both dispatch purely on this merged list — no per-plugin
+  // knowledge lives here (board-entry-and-modular-ui §2).
+  const sessionTabs = state.session_tabs || []
+  const knownViews = ["chat", "pty", ...sessionTabs.map((t) => t.id)]
+  const activeView = state.active_view && knownViews.includes(state.active_view) ? state.active_view : "chat"
+  // hello operator preview: hello sessions get a side page-preview panel (the
+  // public /socialware/external surface). Not a switcher tab — a split view.
   const isHelloSession = sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
@@ -419,6 +443,21 @@ export function Conversation({
                 <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
                 PTY
               </button>
+              {/* Plugin-declared session tabs, merged after the static views.
+                  Generic — Conversation knows no tab id; kanban contributes
+                  "看板" only when a board is bound (server-side condition). */}
+              {sessionTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={segmentClass(activeView === tab.id)}
+                  onClick={() => sessionUri && onSwitchView(sessionUri, tab.id)}
+                  aria-label={`Show ${tab.label}`}
+                  data-session-tab={tab.id}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
               <RotateCcw aria-hidden="true" />
@@ -447,6 +486,20 @@ export function Conversation({
               onResize={onPtyResize}
               onServerEvent={onServerEvent}
             />
+          </div>
+        ) : activeView === "kanban" ? (
+          // Layer-3 kanban tab = a parent-owned `:subcomponent` (like the PTY):
+          // renders the BOUND board, reusing the existing world Kanban renderer
+          // fed by `state.kanban_board` (switch_view → KanbanData.get_tree). The
+          // `data-world-subcomponent` marker keeps it sanctioned by the mount gate.
+          <div data-world-subcomponent="kanban_board" className="flex min-h-0 flex-1 overflow-auto">
+            {state.kanban_board ? (
+              <Kanban state={state.kanban_board} onAction={onSessionTabAction} />
+            ) : (
+              <p className="m-auto max-w-[40ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">
+                正在加载绑定的看板… 若长时间无内容，说明本会话尚未绑定看板（在某张图右下角「绑定会话」填本会话 URI）。
+              </p>
+            )}
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">

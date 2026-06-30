@@ -137,6 +137,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
   // 本图配置（全图属性，侧边栏内联可见可编辑）
   const [cfgRepo, setCfgRepo] = useState(state.config?.github_repo || "")
   const [cfgMiro, setCfgMiro] = useState(state.config?.miro_board || "")
+  const [cfgSession, setCfgSession] = useState(state.config?.session_uri || "")
 
   // 切 board / 树变化后，选中节点若已不存在则回退到根
   useEffect(() => {
@@ -244,6 +245,15 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">GitHub token 在 Plugins → 看板 全局配。</p>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              绑定会话（认领/状态/挂PR 后向该会话播报，触发接力 agent）
+              <input className={`${inputCls} w-full`} placeholder="如 session://system/default/main" value={cfgSession} onChange={(e) => setCfgSession(e.target.value)} />
+            </label>
+            <div>
+              <Button type="button" size="sm" onClick={() => onAction("kanban.bind_session", {kanban_uri: uri, session_uri: cfgSession.trim()})}>
+                绑定会话
+              </Button>
+            </div>
           </div>
 
           {/* drop 历史（全图属性）：任何棒 drop 都记一条，全图可见，不挂某个节点 */}

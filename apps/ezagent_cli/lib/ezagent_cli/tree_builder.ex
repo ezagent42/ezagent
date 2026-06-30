@@ -66,8 +66,59 @@ defmodule EzagentCli.TreeBuilder do
       version: "0.1.0",
       allow_unknown_args: false,
       parse_double_dash: true,
-      subcommands: kind_subcommands ++ facade_only_subcommands
+      subcommands: [dispatch_subcommand()] ++ kind_subcommands ++ facade_only_subcommands
     )
+  end
+
+  # Generic escape-hatch verb (Phase 3 ③ T7f). The kind/action subcommands
+  # above are derived from `BehaviorRegistry.list_all/0` — STATICALLY
+  # registered Behaviors only. Per-instance role-mounted Behaviors (kanban,
+  # github, … mounted via RF-1 on the generic `Entity.Agent` host, NOT
+  # statically registered → `behaviors/0 == []`) therefore never appear as
+  # typed verbs, so `mix ezagent kanban.* / github.*` fails "unrecognized
+  # arguments". `dispatch` is the one generic verb that reaches ANY mounted
+  # behavior action by full URI + `?action=<behavior.action>`.
+  #
+  # Authorization is UNCHANGED: `Dispatch.run_dispatch/1` threads the SAME
+  # token-derived caller + caps into the Invocation ctx, and the in-dispatch
+  # CapBAC gate authorizes the caller against its OWN caps — exactly like the
+  # auto-derived verbs. No static registration of kanban (keeps the
+  # kanban-as-role K2 invariant), no per-op facade boilerplate.
+  defp dispatch_subcommand do
+    {:dispatch,
+     [
+       name: "dispatch",
+       about:
+         "Generic dispatch: `dispatch <uri> --action <behavior.action> [--args <json>]` — " <>
+           "reaches per-instance role-mounted behaviors (kanban/github/…) absent from the static tree",
+       args: [
+         target: [
+           value_name: "URI",
+           parser: :string,
+           required: true
+         ]
+       ],
+       options: [
+         action: [
+           long: "action",
+           value_name: "BEHAVIOR.ACTION",
+           parser: :string,
+           required: true
+         ],
+         args: [
+           long: "args",
+           value_name: "JSON",
+           parser: :string,
+           required: false
+         ],
+         as: [long: "as", value_name: "USER_URI", parser: :string],
+         deadline_ms: [long: "deadline-ms", value_name: "MS", parser: :integer]
+       ],
+       flags: [
+         cast: [long: "cast"],
+         json: [long: "json"]
+       ]
+     ]}
   end
 
   defp kind_subcommand(type_name, actions) do
@@ -96,6 +147,40 @@ defmodule EzagentCli.TreeBuilder do
     ]
   end
 
+  # Phase 3 ③ T7h — `session send` override. The auto-derived shape would type
+  # `--message` as a JSON `:map` (the action arg `message: :map`) and hand the
+  # Behavior a plain map that never matches its `%{message: %Message{}}` head,
+  # so the `:cast` is silently dropped. Override the verb to take the chat TEXT
+  # as `--message <STR>`; `EzagentCli.Dispatch.run_session_send/1` builds a real
+  # `%Message{}` (with @mention resolution) before dispatching.
+  defp action_subcommand(_kind_module, :session, _behavior_module, :send) do
+    [
+      name: "send",
+      about: "Post a chat message into a session (builds a real Message + resolves @mentions)",
+      options: [
+        session: [
+          long: "session",
+          value_name: "SESSION_URI",
+          parser: :string,
+          required: true
+        ],
+        message: [
+          long: "message",
+          value_name: "TEXT",
+          parser: :string,
+          required: true
+        ],
+        as: [long: "as", value_name: "USER_URI", parser: :string],
+        deadline_ms: [long: "deadline-ms", value_name: "MS", parser: :integer],
+        instance_class: [long: "instance-class", value_name: "CLASS", parser: :string]
+      ],
+      flags: [
+        cast: [long: "cast"],
+        json: [long: "json"]
+      ]
+    ]
+  end
+
   defp action_subcommand(_kind_module, type_name, behavior_module, action) do
     interface = behavior_module.interface()[action] || %{}
     args_spec = Map.get(interface, :args, %{})
@@ -111,11 +196,33 @@ defmodule EzagentCli.TreeBuilder do
          required: true
        ]}
 
-    # Schema args as options
+    # Schema args → Optimus `:options` (valued) + `:flags` (boolean
+    # presence-only). Two parse bugs lived here and both blocked the
+    # generic `create_agent` CLI:
+    #
+    #   * a `:boolean` arg (`Coercion.flag?/1`) is a presence FLAG, not a
+    #     valued option. Routing it through `to_option` made it a required
+    #     string option (`--with-pty <value>`) that the operator could
+    #     never satisfy as a flag.
+    #   * an `{:option, T}` arg is OPTIONAL, but every arg was passed
+    #     `required: true`, and `Coercion.to_option/3`'s `Keyword.merge`
+    #     lets extra_opts win — overriding the `{:option, _}` base's
+    #     `required: false`. So `--from` / `--flavor-config` / `--role`
+    #     were all wrongly required.
+    {bool_args, valued_args} =
+      Enum.split_with(args_spec, fn {_name, type} -> Coercion.flag?(type) end)
+
     arg_options =
-      args_spec
+      valued_args
       |> Enum.map(fn {arg_name, arg_type} ->
-        Coercion.to_option(arg_name, arg_type, required: true)
+        required? = not match?({:option, _}, arg_type)
+        Coercion.to_option(arg_name, arg_type, required: required?)
+      end)
+
+    arg_flags =
+      bool_args
+      |> Enum.map(fn {arg_name, _type} ->
+        {arg_name, [long: to_string(arg_name) |> String.replace("_", "-")]}
       end)
 
     # --cast flag if both :call and :cast are supported
@@ -151,15 +258,13 @@ defmodule EzagentCli.TreeBuilder do
     # action subcommand uniformly — Optimus rejects conditional-by-
     # scheme options at the spec level.
     instance_class_opt =
-      {:instance_class,
-       [long: "instance-class", value_name: "CLASS", parser: :string]}
+      {:instance_class, [long: "instance-class", value_name: "CLASS", parser: :string]}
 
     [
       name: to_string(action),
       about: action_about(behavior_module, action),
-      options:
-        [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
-      flags: cast_flag ++ json_flag
+      options: [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
+      flags: cast_flag ++ json_flag ++ arg_flags
     ]
   end
 
@@ -181,7 +286,8 @@ defmodule EzagentCli.TreeBuilder do
     args_keyword =
       Map.get(spec, :args, [])
       |> Enum.map(fn {name, type} ->
-        {name, [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
+        {name,
+         [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
       end)
 
     opts_keyword =

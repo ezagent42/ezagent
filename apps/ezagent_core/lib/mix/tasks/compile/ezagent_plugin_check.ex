@@ -713,6 +713,12 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
     _ -> diagnostics
   end
 
+  # NOTE (2026-06-30): checks 6b (nav_surfaces/0) + 6c (session_tabs/0) were
+  # REMOVED. Those surfaces are no longer core `Ezagent.Plugin` callbacks —
+  # they moved to the World-side `Ezagent.World.UiSurfaceProvider` convention
+  # and are shape-checked read-time in world (`WorkspacePluginData`), not at
+  # plugin-compile time. config_surface/0 (check 6) stays.
+
   # --- check 7 — no direct *Registry.register / declare_table calls -----
 
   defp check_no_direct_registry_calls(diagnostics) do

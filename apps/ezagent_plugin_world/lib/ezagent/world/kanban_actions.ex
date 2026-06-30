@@ -130,6 +130,10 @@ defmodule Ezagent.World.KanbanActions do
         miro_board: Map.get(a, "miro_board", "")
       })
 
+  # 板级：绑定本看板到一个会话（B1 接力的前置）。
+  def handle_dispatch(socket, "kanban.bind_session", %{"kanban_uri" => u, "session_uri" => s}),
+    do: act_board(socket, u, :bind_session, %{session_uri: s})
+
   def handle_dispatch(
         socket,
         "kanban.attach_upload",

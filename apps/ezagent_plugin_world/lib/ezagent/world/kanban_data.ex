@@ -102,6 +102,40 @@ defmodule Ezagent.World.KanbanData do
   end
 
   @doc """
+  反查「绑定到 `session_uri` 的板」并返回其 board_state（Layer-3 会话内 kanban tab body）。
+
+  **零插件依赖**：world 不引 `EzagentPluginKanban.BoardConfig`（三层 P13——renderer 住
+  world，但入口/绑定是插件态）。改走已有 dispatch 缝：枚举本 workspace 的 kanban-manager
+  agents（`list_instances/1`，RF-7 快照来源），对每个 `board_snapshot/2`（`:get_tree` dispatch
+  带登录者身份）读 `config.session_uri`，命中本会话即返回该板的 `board_state/2`。命中 0 块 →
+  `nil`（前端显示空态）。O(板数) dispatch，仅在用户点开 kanban tab 时跑一次（非每次渲染），
+  板少无碍（量大需反向索引，board-entry-and-modular-ui §3 记一笔）。
+  """
+  @spec board_state_for_session(URI.t(), map()) :: map() | nil
+  def board_state_for_session(%URI{} = session_uri, ctx) do
+    session_str = URI.to_string(session_uri)
+
+    ctx
+    |> list_instances()
+    |> Enum.find_value(fn %{"uri" => board_uri_str} ->
+      with {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(board_uri_str),
+           snapshot = board_snapshot(board_uri, ctx),
+           true <- bound_to?(snapshot, session_str) do
+        Map.put(board_state(board_uri, ctx), "bound_session_uri", session_str)
+      else
+        _ -> false
+      end
+    end)
+  rescue
+    _ -> nil
+  end
+
+  defp bound_to?(%{"config" => %{"session_uri" => s}}, session_str) when is_binary(s),
+    do: s == session_str
+
+  defp bound_to?(_snapshot, _session_str), do: false
+
+  @doc """
   确保一个 kanban-manager agent 起活：dormant 的 passive agent 无 chat 流量保温，
   BEAM 重启后处于休眠。`get_tree` dispatch 打到没 live 的 agent 前先经核心 owner-gated
   chokepoint `Ezagent.LocalRuntime.ensure_started/1`（委托 `SpawnRegistry.spawn`，从
@@ -217,11 +251,18 @@ defmodule Ezagent.World.KanbanData do
     end
   end
 
-  # 连接器配置（github_repo + miro 板名）：Behavior 返回 atom 键 map，转 string 键给前端。
-  defp jsonable_config(%{github_repo: repo, miro_board: board}),
-    do: %{"github_repo" => repo, "miro_board" => board}
+  # 连接器配置（github_repo + miro 板名 + 绑定会话）：Behavior 返回 atom 键 map，转 string 键
+  # 给前端。`session_uri`（bind_session 写的板级绑定）一并透出——Layer-3 会话内 kanban tab
+  # 据它把「绑定到本会话的板」反查出来（board_state_for_session/2，全程 dispatch、零插件依赖）。
+  defp jsonable_config(%{github_repo: repo, miro_board: board} = cfg),
+    do: %{
+      "github_repo" => repo,
+      "miro_board" => board,
+      "session_uri" => Map.get(cfg, :session_uri)
+    }
 
-  defp jsonable_config(_), do: %{"github_repo" => nil, "miro_board" => nil}
+  defp jsonable_config(_),
+    do: %{"github_repo" => nil, "miro_board" => nil, "session_uri" => nil}
 
   # 凭证连接状态（configured + board_id/repo）：atom 键 → string 键。
   defp jsonable_status(%{configured: true} = s),

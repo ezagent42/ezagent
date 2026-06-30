@@ -53,9 +53,19 @@ type WorldLayout = {
   }>
 }
 
+// Layer-2 modular nav: a top-level sidebar entry contributed by an
+// INSTALLED plugin via its `nav_surfaces/0`. View-invariant chrome, passed
+// once at mount (see world_renderer.js `data-plugin-nav`).
+type PluginNavItem = {
+  label: string
+  path: string
+  icon?: string
+}
+
 type WorldMountOptions = {
   layout?: WorldLayout
   state?: WorldState
+  pluginNav?: PluginNavItem[]
   caller?: {
     entity_uri?: string | null
     workspace_uri?: string | null
@@ -110,10 +120,18 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
   }
 }
 
-function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent}: WorldMountOptions) {
+function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
 
+  const navItems = React.useMemo<typeof NAV_ITEMS>(() => {
+    const seen = new Set(NAV_ITEMS.map((item) => item.href))
+    const pluginItems = (pluginNav || [])
+      .filter((item) => item && typeof item.label === "string" && typeof item.path === "string")
+      .filter((item) => !seen.has(item.path))
+      .map((item) => ({label: item.label, href: item.path}))
+    return [...NAV_ITEMS, ...pluginItems]
+  }, [pluginNav])
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
@@ -162,7 +180,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             data-world-primary-nav
           >
             <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto">
-              {NAV_ITEMS.map(({label, href}) => (
+              {navItems.map(({label, href}) => (
                 <a className={navClass(state.path, href)} href={href} key={href}>
                   {label}
                 </a>
@@ -840,6 +858,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onRemoveParticipant={context.onRemoveParticipant}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
+          onSessionTabAction={context.onWorkspacePluginAction}
           onServerEvent={context.onServerEvent}
         />
       )

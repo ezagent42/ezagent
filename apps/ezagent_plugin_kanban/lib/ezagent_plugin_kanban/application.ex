@@ -31,6 +31,13 @@ defmodule EzagentPluginKanban.Application do
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
 
+  # NOTE: the `pm-coordinator` default agent's template-seed moved OUT of this
+  # plugin's `after_boot/0` into the generic `Ezagent.Agent.DefaultRecipeSeed`
+  # (domain-agent boot). pm is a generic cc-headless agent config, NOT the
+  # kanban plugin's definitional agent (that is `kanban-manager`, below), so it
+  # no longer rides this plugin's boot. `after_boot/0` falls back to the
+  # `use Ezagent.Plugin` default (`:ok`).
+
   @impl Ezagent.Plugin
   def plugin_info do
     %{
@@ -104,6 +111,14 @@ defmodule EzagentPluginKanban.Application do
     }
   end
 
+  # The `pm-coordinator` recipe moved to `Ezagent.Agent.DefaultRecipes` (the
+  # generic role-as-data source for cc-headless default agents). pm is NOT the
+  # kanban plugin's definitional agent — `kanban-manager` is. What STAYS kanban:
+  # the per-session pm materialize TRIGGER (`Connectors.bind_session`) + the
+  # board-scoping grant (`PmCoordinatorSeed.materialize/4`'s
+  # `cap_instance_overrides`), since landing pm onto a CONCRETE board is the
+  # kanban-aware piece.
+
   # kanban-as-role (K5)：DELETED the static `behaviors/0` `{kind, action, behavior}`
   # declarations. They registered `(EzagentPluginKanban.Kanban, action) → behavior`
   # rows in `CapabilityRegistry` for the now-deleted resource Kind. Under the role
@@ -131,4 +146,30 @@ defmodule EzagentPluginKanban.Application do
   # 把它渲染成 Plugins 页可点入口。
   @impl Ezagent.Plugin
   def config_surface, do: %{kind: :route, path: "/plugins/kanban", label: "看板"}
+
+  # nav_surfaces/0 — DELETED（2026-06-30）。看板 = 一个 agent（native ×
+  # `kanban-manager` role），不占左栏一级 nav，本就返 `[]`（2026-06-27 决策）。
+  # 加之 `nav_surfaces/0` 已不再是 core `Ezagent.Plugin` 契约 callback —— 它是
+  # World-UI 概念，搬到了 `Ezagent.World.UiSurfaceProvider`（duck-typed 约定）。
+  # 在该模型下「没有这个函数」= 「不贡献顶层 nav」，与原先返 `[]` 语义等价，故整段删除。
+  # `/plugins/kanban`（`config_surface/0`，上方）仍是**配置**入口，不变。
+
+  @doc """
+  session_tabs/0 — Layer-3 会话内 kanban tab（实现 World 的
+  `Ezagent.World.UiSurfaceProvider` 约定）。
+
+  一个 session **bind 一块板后**，那个 session 的会话视图多一个 kanban tab，显示绑定的
+  板。`condition` = 该 session 绑了板才出——便宜的 `BoardConfig.session_bound?/1` 文件读
+  （反扫 boards_for_session），world 经它对当前 session 算可见性、通用渲染（没装 kanban
+  插件就没这 tab）。tab body 复用 world 已有 KanbanData/get_tree/Kanban renderer（P13 UI
+  住 world），本插件只声明入口存在。
+
+  这是一个**普通 public 函数**（无 `@impl`）：`nav_surfaces/0` / `session_tabs/0` 已不在
+  core `Ezagent.Plugin` 契约里，world 经 `function_exported?/3` duck-typed 读取。不加
+  `@behaviour Ezagent.World.UiSurfaceProvider`——那会逼出 kanban→world 的反向 compile
+  依赖（world 是 UI 宿主，住在插件之上），靠函数名约定即可，保 kanban 零 plugin→plugin 依赖。
+  """
+  def session_tabs do
+    [%{id: "kanban", label: "看板", condition: &EzagentPluginKanban.BoardConfig.session_bound?/1}]
+  end
 end

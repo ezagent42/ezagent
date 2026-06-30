@@ -45,6 +45,10 @@ defmodule Ezagent.World.ConversationData do
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => member_options(session_uri),
       "routing_rules" => list_session_routing_rules(session_uri),
+      # Layer-3 modular UI: INSTALLED plugins' conversation tabs RESOLVED for
+      # this session (kanban shows iff a board is bound). The React switcher
+      # merges these after the static chat/pty tabs — "没插件就没 tab".
+      "session_tabs" => Ezagent.World.WorkspacePluginData.plugin_session_tabs(session_uri),
       "sessions" => sessions
     }
   end
@@ -123,12 +127,7 @@ defmodule Ezagent.World.ConversationData do
   the autocomplete UI.
   """
   @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
-  def parse_mentions(text, members) when is_binary(text) and is_list(members) do
-    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members))
-    |> Enum.uniq_by(&URI.to_string/1)
-  end
-
-  def parse_mentions(_text, _members), do: []
+  defdelegate parse_mentions(text, members), to: Ezagent.Session.MessageComposer
 
   @doc """
   Fetch a page of messages older than `cursor` (ISO-8601), oldest-first.
@@ -164,13 +163,8 @@ defmodule Ezagent.World.ConversationData do
   this function trusts the list it is given. `legend_triggers` stay empty.
   """
   @spec build_message(URI.t(), String.t(), URI.t(), [URI.t()]) :: Ezagent.Message.t()
-  def build_message(sender, text, session_uri, attachments \\ [])
-
-  def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
-      when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(session_uri))
-    Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
-  end
+  defdelegate build_message(sender, text, session_uri, attachments \\ []),
+    to: Ezagent.Session.MessageComposer
 
   @doc "Render-ready row for a single message (resolves the sender display)."
   @spec message_row(Ezagent.Message.t()) :: map()
@@ -402,63 +396,10 @@ defmodule Ezagent.World.ConversationData do
     end
   end
 
-  # --- @mention parse (port vs survivors; NO LV dep) ----------------------
-
-  defp parse_uri_mentions(text) do
-    ~r/@(entity:\/\/[^\s]+)/
-    |> Regex.scan(text, capture: :all_but_first)
-    |> List.flatten()
-    |> Enum.uniq()
-    |> Enum.flat_map(&safe_uri/1)
-  end
-
-  defp parse_bare_mentions(_text, []), do: []
-
-  defp parse_bare_mentions(text, members) do
-    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*)/u
-    |> Regex.scan(text, capture: :all_but_first)
-    |> List.flatten()
-    |> Enum.uniq()
-    |> Enum.flat_map(&resolve_member_name(&1, members))
-  end
-
-  # Bare @name resolves by URI path segment first, then by display name —
-  # unique match only (an ambiguous name resolves to nothing, never a guess).
-  defp resolve_member_name(name, members) do
-    by_segment = Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name))
-
-    candidates =
-      if by_segment != [],
-        do: by_segment,
-        else: Enum.filter(members, &(Map.get(&1, "display_name") == name))
-
-    case candidates |> Enum.map(&Map.get(&1, "uri")) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
-      [uri_str] -> safe_uri(uri_str)
-      _ -> []
-    end
-  end
-
-  defp uri_path_segment(uri_str) when is_binary(uri_str) do
-    case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{} = uri} ->
-        case Ezagent.URI.name(uri) do
-          {:ok, name} -> name
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp uri_path_segment(_), do: nil
-
-  defp safe_uri(uri_str) do
-    case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{} = uri} -> [uri]
-      _ -> []
-    end
-  end
+  # @mention parsing lives in the shared session-domain composer
+  # (`Ezagent.Session.MessageComposer`) — `parse_mentions/2` + `build_message/4`
+  # above delegate to it so the World UI and the CLI resolve recipients through
+  # ONE implementation (no plugin-local fork).
 
   defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
   defp encode_uri(_), do: nil

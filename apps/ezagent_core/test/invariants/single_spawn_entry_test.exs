@@ -221,7 +221,13 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # infrastructure (mirrors the ExternalMirror/codex/cc-sidecar exemptions),
       # NOT a Kind process — kanban boards are now the :kanban snapshot slice on
       # the kanban-manager Entity.Agent, spawned via Ezagent.Kind.spawn.
-      "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex"
+      "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex",
+      # EzagentPluginGithub.PrSync (Phase2 入站轮询) — the github PR-sync POLLER,
+      # a plugin-owned GenServer started under the plugin's own PrSyncSupervisor.
+      # Background integration infrastructure (mirrors the MiroSync exemption above),
+      # NOT a Kind process — it polls `gh` open PRs and dispatches `kanban.register_pr`
+      # back via Ezagent.Invocation.dispatch (cross-plugin, zero compile dep on kanban).
+      "apps/ezagent_plugin_github/lib/ezagent_plugin_github/pr_sync.ex"
     ]
   end
 end

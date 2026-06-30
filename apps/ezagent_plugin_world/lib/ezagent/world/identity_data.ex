@@ -311,6 +311,12 @@ defmodule Ezagent.World.IdentityData do
               "name" => entity_name,
               "display_name" => entity_name,
               "flavor" => flavor_for(entity_type, uri),
+              # role-as-data surfaced to the row (Layer-2 degrade, 2026-06-27):
+              # the durable role NAME (or nil when the agent has no role). This is
+              # the real isolation axis — flavor=native does NOT separate a kanban
+              # board from a github gateway (both native), but role does. Generic:
+              # any role-bearing agent surfaces its role; not kanban-specific.
+              "role" => role_for(entity_type, uri),
               "alive" => is_pid(pid) and Process.alive?(pid),
               "caps_path" => caps_path(entity_type, uri_str),
               "detail_path" => detail_path(entity_type, uri_str),
@@ -758,6 +764,21 @@ defmodule Ezagent.World.IdentityData do
 
   defp flavor_for(_, _), do: ""
 
+  # role-as-data (Layer-2 degrade, 2026-06-27): the durable role NAME via the
+  # SANCTIONED read path `UriQuery.resolve(:role, _)` (layered ETS → snapshot,
+  # owned by EzagentDomainInstanceMessage.UriQueryResolvers — the same chokepoint
+  # `flavor_for/2` uses for `:flavor`). nil when the agent carries no role. The
+  # row stays uniform (`"role"` key always present) so the filter/chip layer can
+  # treat a roleless agent as simply "no role" rather than a missing field.
+  defp role_for("agent", %URI{} = uri) do
+    case Ezagent.UriQuery.resolve(:role, uri) do
+      {:ok, role} when is_binary(role) and role != "" -> role
+      _ -> nil
+    end
+  end
+
+  defp role_for(_, _), do: nil
+
   defp workspace_name_filter(%URI{scheme: "workspace"} = uri), do: workspace_name(uri)
   defp workspace_name_filter(_), do: :all
 
@@ -779,6 +800,14 @@ defmodule Ezagent.World.IdentityData do
   defp matches_filter?(%{"kind" => "user"}, "users"), do: true
   defp matches_filter?(%{"kind" => "agent"}, "agents"), do: true
   defp matches_filter?(%{"kind" => "agent", "flavor" => flavor}, "agent:" <> flavor), do: true
+  # `role:<role>` — filter agents by their role-as-data (Layer-2 degrade): e.g.
+  # `role:kanban-manager` surfaces every kanban board (board = native ×
+  # kanban-manager agent). Generic by-role, mirroring the `agent:<flavor>` chip;
+  # a nil-role row never matches (the suffix binds to the row's role string).
+  defp matches_filter?(%{"kind" => "agent", "role" => role}, "role:" <> role)
+       when is_binary(role),
+       do: true
+
   defp matches_filter?(_row, _filter), do: false
 
   defp entity_kind(%URI{} = uri) do

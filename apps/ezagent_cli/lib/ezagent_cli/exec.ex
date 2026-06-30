@@ -156,6 +156,34 @@ defmodule EzagentCli.Exec do
     end
   end
 
+  # Generic dispatch verb (Phase 3 ③ T7f) — the escape hatch for per-instance
+  # role-mounted behaviors (kanban/github/…) that the static BehaviorRegistry
+  # tree never exposes. Caller identity + caps come from the SAME per-process
+  # override `exec_with_auth/2` set from the verified bearer token;
+  # `Dispatch.run_dispatch/1` threads them into the Invocation ctx so the
+  # in-dispatch CapBAC gate runs on the caller's OWN caps (no privilege change
+  # versus the typed verbs). Must precede the single-segment `[kind_atom]` help
+  # clause below — `[:dispatch]` would otherwise match it and render help.
+  defp handle_subcommand([:dispatch], parsed, _spec) do
+    result = Dispatch.run_dispatch(parsed)
+    json? = Map.get(parsed.flags, :json, false)
+    {output, exit_code} = Formatter.render(result, json?)
+    %{output: output, exit_code: exit_code}
+  end
+
+  # Phase 3 ③ T7h — `session send` builds a real `%Message{}` (with @mention
+  # resolution) instead of handing `handle_send/2` a plain map that its
+  # `%{message: %Message{}}` head rejects (silent cast drop). Must precede the
+  # generic `[kind, action]` clause so `[:session, :send]` routes here, not into
+  # `run_action/4`. Auth/caps come from the same per-process override as every
+  # other verb (set in `exec_with_auth/2`).
+  defp handle_subcommand([:session, :send], parsed, _spec) do
+    result = Dispatch.run_session_send(parsed)
+    json? = Map.get(parsed.flags, :json, false)
+    {output, exit_code} = Formatter.render(result, json?)
+    %{output: output, exit_code: exit_code}
+  end
+
   defp handle_subcommand([kind_atom], _parsed, spec) do
     sub = Optimus.fetch_subcommand(spec, [kind_atom])
     %{output: format_subcommand_help(sub), exit_code: 0}

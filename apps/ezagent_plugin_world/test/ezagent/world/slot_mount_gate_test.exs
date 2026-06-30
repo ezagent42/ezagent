@@ -18,10 +18,12 @@ defmodule Ezagent.World.SlotMountGateTest do
   # Layout-slot Surface components: the renderer's leaves, mountable ONLY by the
   # renderer in main.tsx.
   @surfaces ~w(LayoutEditor SessionsTable Conversation PtyTerminalSurface
-               AdminSurface WorkspacePluginSurface IdentitiesSurface)
+               AdminSurface WorkspacePluginSurface IdentitiesSurface Kanban)
 
   # Sanctioned `:subcomponent` mounts (parent-owned, data-world-subcomponent).
-  @subcomponent_allowlist %{"Conversation.tsx" => ["PtyTerminalSurface"]}
+  # Conversation owns the PTY terminal and (Layer-3) the kanban board tab — both
+  # parent-owned nested slots, marked `data-world-subcomponent`.
+  @subcomponent_allowlist %{"Conversation.tsx" => ["PtyTerminalSurface", "Kanban"]}
 
   defp component_files do
     @components |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tsx"))
