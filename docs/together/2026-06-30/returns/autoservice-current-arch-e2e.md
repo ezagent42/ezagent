@@ -11,7 +11,7 @@
 **Can the current architecture complete the AutoService flow?**
 
 - **Infrastructure / plumbing: YES — green end-to-end.** Every reliability primitive + transport works: cc orchestrator materialization (#1096), isolated login, agent-bridge, ReadyGate, routing, agent reply, reply store + route-back. **kb_query retrieves `ZEPHYR-7731` at the tool level on this run's DB.**
-- **Answer-soul (the agent autonomously retrieves + quotes `ZEPHYR-7731` to the customer): NO — blocked at the agent-wiring layer, not the architecture.**
+- **Answer-soul (the agent autonomously retrieves + quotes `ZEPHYR-7731` to the customer): ✅ YES — now GREEN end-to-end after the seed fix.** A NATURAL customer question ("what access code do I quote for the priority hotline?") makes the agent query `kb-tier1`, retrieve `ZEPHYR-7731`, and reply to the customer with it ("...please quote the following access code: **ZEPHYR-7731**..."). The fix is entirely in `scripts/autoservice_tier1_seed.exs` — **no core/domain change** (see "Seed fix" below).
 
 **Four** exact, operational blockers were found (A bridge-port, B persona, C registration, D session↔orchestrator binding) — none is a core-architecture redesign. B and C were fixed + verified in the seed; the chain of B→C→D shows the seed's shortcut materialization should be replaced by the real session-create orchestrator flow (see "Seed fix attempt" below).
 

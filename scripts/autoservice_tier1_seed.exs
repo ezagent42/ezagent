@@ -191,6 +191,15 @@ defmodule Ezagent.AutoService.Tier1Seed do
                  role,
                  admin_ctx
                ),
+             :ok <-
+               maybe_ensure_session_manager(
+                 autosvc_uri,
+                 session_uri,
+                 workspace_uri,
+                 flavor,
+                 role,
+                 admin_ctx
+               ),
              :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
              :ok <- join_member(session_uri, autosvc_uri, :agent) do
           :created
@@ -557,6 +566,34 @@ defmodule Ezagent.AutoService.Tier1Seed do
   end
 
   defp maybe_register_orchestrator(_uri, _session, _ws, _flavor, _role, _ctx), do: :ok
+
+  # Start the orchestrator's `SessionManager` (the per-orchestrator-session executor
+  # the orchestrator MCP `tools/call` path needs — `McpServer` returns
+  # `:orchestrator_context_unavailable` without a live one). This is the missing
+  # piece that left `kb_query` silently failing even after B/C/D: the bridge token
+  # was minted at cc spawn (`McpConfigWriter.write_with_token!`), but no SessionManager
+  # was reconstructing the orchestrator's session-side caps. Modeled on the sanctioned
+  # `agent_contract_g4` setup (`SessionManager.ensure_started/1`, all public API).
+  # Idempotent (`ensure_started`); only for the live cc orchestrator.
+  defp maybe_ensure_session_manager(autosvc_uri, session_uri, workspace_uri, "cc", "orchestrator", admin_ctx) do
+    case Ezagent.Session.SessionManager.ensure_started(
+           orchestrator_uri: autosvc_uri,
+           session_uri: session_uri,
+           workspace_uri: workspace_uri,
+           owner_uri: admin_ctx.caller
+         ) do
+      {:ok, _sm} ->
+        Logger.info("autosvc-seed: started SessionManager for #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:ensure_session_manager_failed, reason}}
+    end
+  rescue
+    e -> {:error, {:ensure_session_manager_failed, e}}
+  end
+
+  defp maybe_ensure_session_manager(_uri, _session, _ws, _flavor, _role, _ctx), do: :ok
 
   # Write a tier-1 support-agent persona into the agent's cwd `CLAUDE.md` (claude
   # project memory). The AutoService agent reuses the cc-orchestrator (team-manager)

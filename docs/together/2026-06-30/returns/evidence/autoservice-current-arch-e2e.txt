@@ -121,3 +121,33 @@ BLOCKER C root cause (kb_query 500), 106x in the same run:
   => seed never calls Orchestrator.McpRegistry.register/2 (done by the real
      session-create orchestrator flow); the direct in-node kb_query proof works
      because it bypasses the MCP channel's registration gate.
+
+================================================================================
+✅ RESOLVED — full answer-soul completes end-to-end (seed fix, all public API)
+================================================================================
+Final missing piece (layer E/F): the orchestrator MCP tools/call path needs a live
+SessionManager (McpServer returns :orchestrator_context_unavailable without one).
+The bridge token is minted at cc spawn, but nothing reconstructed the orchestrator's
+session-side caps. Fix (modeled on the sanctioned agent_contract_g4 setup, all public
+API): the seed calls Ezagent.Session.SessionManager.ensure_started/1.
+
+Full seed fix = B (persona) + C (register) + D (session↔orchestrator working_copy:
+orchestrator_uri + orchestrator_template_uri) + E (SessionManager.ensure_started).
+ALL in scripts/autoservice_tier1_seed.exs — NO core/domain change. Deterministic seed
+test stays 2 passing.
+
+Live run (PORT=10042, Sonnet 4.6), NATURAL customer question (the kind that DEFLECTED
+in Test 1):
+  Customer: "Hi! I'm a tier-one customer and I need to reach the priority support
+             hotline. What's the access code I should quote when I call in?"
+  Agent TUI: "Let me look that up in the knowledge base for you right away."
+             esr-orchestrator <- "priority support hotline access code"
+             "I've replied to the customer with the access code ZEPHYR-7731 retrieved
+              from the kb-tier1 knowledge base."
+  Agent STORED reply (customer-facing):
+    "Hi! Happy to help. When you call the priority support hotline, please quote the
+     following access code:  **ZEPHYR-7731**  Have that ready when you connect and the
+     team will be able to assist you right away. Is there anything else I can help you with?"
+  Counts: ZEPHYR-7731 = 3 ; session-context-error = 0 ; orchestrator_not_registered = 0 ;
+          orchestrator_context_unavailable = 0.
+=> AutoService Tier-1 answer-soul is GREEN end-to-end on the current architecture.
