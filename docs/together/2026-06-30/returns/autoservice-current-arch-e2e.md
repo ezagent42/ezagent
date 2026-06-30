@@ -105,13 +105,18 @@ To isolate Blocker B's cause, a minimal **support-agent persona** was injected i
 `scripts/autoservice_tier1_seed.exs` was patched (verified on a fresh DB+HOME run):
 
 - **Blocker B fix — support persona:** the seed now writes a tier-1 support-agent `CLAUDE.md` (kb agent = `kb-tier1`, use `kb_query`) into the agent cwd before the PTY launches. **Verified working** — the agent reliably queries `kb-tier1` for a *natural* question (no more deflect/flail).
-- **Blocker C fix — orchestrator registration:** the seed now calls `Orchestrator.McpRegistry.register/2`. **Verified working** — `:orchestrator_not_registered` errors drop to **0**; the MCP channel join is accepted.
+- **Blocker C fix — orchestrator registration:** the seed now calls `Orchestrator.McpRegistry.register/2`. **Verified** — `:orchestrator_not_registered` errors drop to **0**; the MCP channel join is accepted.
+- **Blocker D fix — session↔orchestrator binding:** the seed now writes BOTH `:orchestrator_template_uri` (a `%URI{}`, the gate `McpServer.orchestrator_working_copy/1` checks) AND `:orchestrator_uri` into the session chat-slice `template_working_copy`. **Verified** — the *"session context could not be resolved"* error disappears; `resolve_session/1` now matches the session.
 
-But the answer-soul still does not complete — a **fourth** gap surfaces once the join is accepted. The agent itself reported it: *"the `kb_query` call failed with a session context error."* `McpServer.resolve_session/1` reverse-resolves the session from the orchestrator URI via `stored_orchestrator_uri/1`, which reads the **session's** chat-slice `working_copy.orchestrator_uri`. The seed creates the session and the agent **separately** and never sets the session→orchestrator pointer — so `resolve_session` returns `:error` → *"Orchestrator session context could not be resolved."*
+But the answer-soul **still does not complete** — a deeper layer (E) remains: even with B+C+D fixed, `kb_query`-over-MCP still fails (the agent reports the kb "temporarily unavailable") with no error surfaced ezagent-side — i.e. the orchestrator's full MCP context (SessionManager / `LocalRuntime.ensure_started` / live-orchestrator-session machinery) is not what the seed's `public_view` session provides.
 
-**The pattern is the finding:** the seed materializes the orchestrator via the `spawn_from_template_content` **shortcut**, and each fix (port → persona → registration → session binding → …) just uncovers the next binding the **real session-create orchestrator flow** (`Ezagent.Entity.Session.spawn_from_template/2` + the Generator) does atomically. Piecemeal patching is whack-a-mole.
+**This is the decisive finding.** The whack-a-mole went **6–7 layers deep** (port → persona → registration → working-copy gate → session-pointer → live-session context → …), each fix verified and each uncovering the next. **A `public_view` socialware session + a `spawn_from_template_content` shortcut cannot be promoted into a working orchestrator-MCP session by patching bindings one at a time.** Two of the deeper requirements are only met by the real `EzagentDomainInstanceMessage.SessionCreator.create_session/3` flow, which builds a *live orchestrator session* (SessionManager + derived `cc_orchestrator-<session>` URI + all bindings) atomically.
 
-**Recommendation (discuss-first):** stop patching the shortcut and materialize the AutoService agent through the **real session-create orchestrator flow** (which spawns + registers + binds the session↔orchestrator pair + sets the chat slice in one path). The persona write stays useful either way. — **needs Allen's call.**
+**Recommendation — escalate to Allen (architectural):** the real question is **whether the AutoService support agent should be a cc-orchestrator at all.** The orchestrator MCP is a *team-manager* surface (`add_managed_member`, …) that happens to also expose `kb_query`; using it as a kb-backed support agent drags in the entire orchestrator-session machinery. Two clean paths, both Allen's call:
+1. **Route through `create_session/3`** — make AutoService a real orchestrator session (heaviest; changes the agent URI to the derived `cc_orchestrator-<session>`).
+2. **Don't make it an orchestrator** — give the support agent a direct `kb.query` path (e.g. a native/tool flavor holding the cap) instead of the orchestrator MCP, so none of the orchestrator-session machinery is needed.
+
+B (persona) is useful under either path. The committed seed patches (B/C/D) are verified-correct partial progress, not the finish line.
 
 ---
 

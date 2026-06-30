@@ -181,6 +181,8 @@ defmodule Ezagent.AutoService.Tier1Seed do
     case ensure_autoservice_agent(workspace_uri, ws, name, flavor, role, cwd, kb_agent, admin_ctx) do
       {:ok, autosvc_uri} ->
         with :ok <-
+               maybe_bind_session_orchestrator(session_uri, autosvc_uri, flavor, role),
+             :ok <-
                maybe_register_orchestrator(
                  autosvc_uri,
                  session_uri,
@@ -480,6 +482,47 @@ defmodule Ezagent.AutoService.Tier1Seed do
     |> Map.put(:role, "orchestrator")
     |> Map.put("role", "orchestrator")
   end
+
+  # Bind the session → orchestrator (the canonical `Materializer.store_session_
+  # orchestrator_uri/2` the real session-create flow uses). This is the SOURCE OF
+  # TRUTH: `Orchestrator.McpServer.resolve_session/1` reverse-resolves the session
+  # from the orchestrator URI by scanning sessions for a chat-slice
+  # `working_copy.orchestrator_uri` that matches. Without it the orchestrator MCP's
+  # `kb_query` (and the auto-`McpRegistry.register` in `build_context`) fail with a
+  # "session context error". Setting it both fixes the kb_query context AND drives
+  # the MCP server's own registration. Accepts the deterministic autoservice URI.
+  defp maybe_bind_session_orchestrator(session_uri, autosvc_uri, "cc", "orchestrator") do
+    # `McpServer.orchestrator_working_copy/1` GATES on `:orchestrator_template_uri`
+    # being a `%URI{}` and only THEN returns the wc carrying `:orchestrator_uri`.
+    # So the session→orchestrator binding needs BOTH keys, written into the chat
+    # slice's `template_working_copy` (the same primitives the real flow's
+    # `Materializer.{materialize_orchestrator_working_copy,store_session_orchestrator_uri}`
+    # use). read-modify-write preserves the `session_template_uri` already set by
+    # `ensure_public_view_session`.
+    orch_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+
+    working_copy =
+      session_uri
+      |> Ezagent.Entity.Session.read_template_working_copy()
+      |> Map.put(:orchestrator_template_uri, orch_template_uri)
+      |> Map.put(:orchestrator_uri, autosvc_uri)
+
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} ->
+        Logger.info("autosvc-seed: bound session→orchestrator #{URI.to_string(autosvc_uri)}")
+        :ok
+
+      {:error, reason} ->
+        {:error, {:bind_session_orchestrator_failed, reason}}
+
+      other ->
+        {:error, {:bind_session_orchestrator_failed, other}}
+    end
+  rescue
+    e -> {:error, {:bind_session_orchestrator_failed, e}}
+  end
+
+  defp maybe_bind_session_orchestrator(_session, _uri, _flavor, _role), do: :ok
 
   # Register the AutoService agent as an orchestrator so its `esr-orchestrator`
   # MCP-channel join is accepted. `Ezagent.Orchestrator.McpChannel` gates
