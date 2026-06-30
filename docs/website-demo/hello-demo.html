@@ -4,36 +4,54 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hello · 试玩 · Ezagent</title>
-<!-- 试玩占位页（DS 外壳）。go-live 时由 hello「界面即问即生」真实试玩接管。token 内联自 ezagent-design。 -->
+<!-- hello 真实试玩页：嵌真实 hello session 的 socialware 公开视图（与 backend 同源 10042，匿名只读）。token 自 tokens.css（单一来源）。 -->
+<link rel="stylesheet" href="tokens.css">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@500;800&family=Noto+Serif+SC:wght@600&family=Space+Mono:wght@400;700&display=swap');
-:root{--ground:#E8E8EB;--card:#FFFFFF;--ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--accent:#0B5CFF;--orange:#FF8A1E;--orange-wash:#FFEBD6;
-  --r-lg:22px;--r-pill:999px;--shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
-  --font-ui:'Inter',system-ui,sans-serif;--font-cn:'Noto Serif SC',serif;--font-mono:'Space Mono',monospace}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600&family=Space+Mono:wght@400;700&display=swap');
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--ground);font-family:var(--font-ui);padding:32px}
-.card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);max-width:560px;width:100%;padding:56px 56px 48px;text-align:center}
-.glyph{width:60px;height:60px;border-radius:18px;background:var(--orange);display:grid;place-items:center;margin:0 auto 22px;color:#fff}
-.glyph svg{width:32px;height:32px}
-.badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.06em;padding:4px 12px;border-radius:var(--r-pill);background:var(--orange-wash);color:var(--orange)}
-.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-h1{font-family:var(--font-cn);font-weight:600;font-size:34px;margin:18px 0 0;color:var(--ink)}
-.en{font-family:var(--font-ui);font-weight:800;font-size:18px;letter-spacing:-.02em;color:var(--ink-2);margin-top:6px}
-p{color:var(--ink-2);line-height:1.6;font-size:15px;margin:18px auto 0;max-width:42ch}
-a.back{display:inline-flex;align-items:center;gap:8px;margin-top:30px;font-family:var(--font-mono);font-size:13px;color:var(--accent);text-decoration:none}
+body{margin:0;min-height:100vh;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);padding-bottom:64px}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+.head{margin:38px 0 22px;text-align:center}
+.head .badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:.06em;padding:5px 13px;border-radius:var(--r-pill);background:var(--orange-wash);color:var(--orange)}
+.head .badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.head h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(30px,4.6vw,46px);line-height:1.15;margin:16px 0 0}
+.head p{color:var(--ink-2);line-height:1.65;font-size:16px;max-width:60ch;margin:16px auto 0}
+.head .em{color:var(--ink);font-weight:600}
+.stage{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);overflow:hidden;margin-top:6px}
+.stage-bar{display:flex;align-items:center;gap:9px;padding:13px 22px;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);border-bottom:1px solid var(--line)}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--jade);animation:livep 1.8s ease-in-out infinite;flex:none}
+@keyframes livep{0%,100%{box-shadow:0 0 0 0 rgba(15,160,110,.55)}50%{box-shadow:0 0 0 7px rgba(15,160,110,0)}}
+.stage-bar .uri{color:var(--ink-3)}
+.stage-bar .spacer{flex:1}
+.stage-bar .tag{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);border:1px solid var(--line);padding:2px 9px;border-radius:var(--r-pill)}
+.hello-frame{width:100%;height:660px;border:0;display:block;background:var(--ground-2)}
+.note{margin-top:16px;font-family:var(--font-mono);font-size:12px;color:var(--ink-3);text-align:center;line-height:1.6}
+a.back{display:inline-flex;align-items:center;gap:8px;margin-top:22px;font-family:var(--font-mono);font-size:13px;color:var(--accent);text-decoration:none}
 a.back:hover{text-decoration:underline}
-.foot{margin-top:26px;font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+@media (prefers-reduced-motion:reduce){.live-dot{animation:none}}
+@media (max-width:560px){.hello-frame{height:560px}}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5z"/></svg></div>
-  <span class="badge"><span class="dot"></span>hello · 生成层 · generation</span>
-  <h1>hello 试玩</h1>
-  <div class="en">Try hello · Coming soon</div>
-  <p>「用一句话把界面长出来、为每个客户实时重组」的可交互试玩正在搭建中。敬请期待 — say it, and the interface grows.</p>
+<div class="wrap">
+  <div class="head">
+    <span class="badge"><span class="dot"></span>hello · 生成层 · generation · LIVE</span>
+    <h1>hello 试玩 · Try hello</h1>
+    <p>下面是一个<span class="em">真实运行</span>的 hello session —— 由 hello builder 当场生成的 <span class="em">@json-render</span> 页面，匿名只读、实时渲染。不是截图、不是 mock。</p>
+  </div>
+  <div class="stage">
+    <div class="stage-bar">
+      <span class="live-dot"></span>真实渲染 · live
+      <span class="uri">session://system/hello/main</span>
+      <span class="spacer"></span>
+      <span class="tag">匿名只读 · anon</span>
+    </div>
+    <iframe class="hello-frame" src="/socialware/chat?session_uri=session://system/hello/main" title="hello live render" loading="lazy"></iframe>
+  </div>
+  <p class="note">官网与 backend 同源（同一 10042），hello 页面经 socialware 公开视图嵌入 —— 这就是「官网连通真实产品」的证明点。</p>
   <a class="back" href="index.html">← 返回官网 · Back</a>
-  <div class="foot">demo placeholder · 由 hello 真实试玩接管</div>
 </div>
+<script src="demo-state.js"></script>
+<script src="site-nav.js"></script>
 </body>
 </html>
