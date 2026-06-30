@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 计划 — 2026-06-30</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .gap{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .ok{color:#047857;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-06-30（Tue，W27）</h1>
+<div class="meta">
+<b>planned_at:</b> 2026-06-30 09:55 +0800 · <b>lead:</b> allen · <b>day_deadline:</b> 2026-06-30 23:59 +0800<br>
+<b>lead_confirmed:</b> true（按 Allen 0630 反馈重写）<br>
+<b>本周目标（W27）:</b> 1. Get ezagent running inside the team · 2. Build official website · 3. Make dev-together self-bootstrapping<br>
+<b>0629 close 后基线:</b> 团队 6 个 PR 已合：#1083 DS、#1090 官网 demo、#1095 AutoService verify、#1096 AutoService fix、#1099 hello render_card、#1100 rule-gate spec。<br>
+<b>今日方向:</b> 产品可跑、UI 可确认、官网先上线框架、kanban/socialware 可上线性判断、生产环境 + dev-team workspace。
+</div>
+
+<div class="big" style="background:#f0fdf4;border-color:#bbf7d0">
+<b>今日关键方向：</b> 今天要把 0629 的能力推进到可演示、可本地测试、可尝试生产上线：
+AutoService 跑完、Agent Console 补完整、UI 先给 IM-like demo、官网框架上线、kanban socialware 判定可上线、生产环境和 ezagent workspace 开始自举。
+</div>
+
+<h2>§1 目标缺口</h2>
+<div class="gap"><b>AutoService</b>：需要证明当前架构流程可以跑完，而不是继续停留在 materialization 修复说明。</div>
+<div class="gap"><b>Agent Console</b>：需要从 QA report 进入 completeness check 和直接修复。</div>
+<div class="gap"><b>UI</b>：当前 UI 与 IM 产品差距大，zyli 先给修改后的 demo 供大家确认。</div>
+<div class="gap"><b>官网</b>：先上线框架，风格/栏目一致；具体内容和交互体验可后续优化，ruihua 今天提供方向，zhaomato 建 hello 页面并连通 backend/world。</div>
+<div class="gap"><b>Kanban socialware</b>：需要判断现在是否已经可以上线，而不是只 review 大 PR。</div>
+<div class="gap"><b>生产自举</b>：生产环境要补齐，创建/使用 ezagent workspace，并把 dev-team 用户加入后真实测试。</div>
+
+<h2>§2 今日任务计划</h2>
+<table>
+<tr><th>#</th><th>task</th><th>负责</th><th>范围</th><th>DoD</th><th>deadline</th></tr>
+<tr><td>T1</td><td><b>AutoService current-architecture E2E</b></td><td>gaga</td><td>继续验证 AutoService 流程在当前架构上能否跑完；不重开 #1096 架构设计。</td><td>transcript/screenshots/logs + pass/blocker verdict。</td><td>16:00</td></tr>
+<tr><td>T2</td><td><b>Agent Console completeness</b></td><td>fatnine</td><td>验证 Agent Console 完善度，列出缺失内容，清晰小缺口直接修。</td><td>missing checklist + fixes/PR + design-decision list。</td><td>18:00</td></tr>
+<tr><td>T3</td><td><b>UI IM-like demo</b></td><td>zyli</td><td>对 UI 进行调整，先给一个修改后的 IM-like demo 给大家确认。</td><td>demo/screenshots + current-vs-target gap list + follow-up slices。</td><td>17:00</td></tr>
+<tr><td>T4</td><td><b>Website framework + hello page + prod attempt</b></td><td>zhaomato + ruihua</td><td>zhaomato 和 ruihua 对接：官网框架风格/栏目一致，hello 页面和 backend/world 联通；本地测后尝试上 <code>app.ezagent.chat</code>。ruihua 今天给栏目/内容/交互方向。</td><td>local proof + backend/world connectivity + production attempt record + ruihua follow-up list。</td><td>19:00</td></tr>
+<tr><td>T5</td><td><b>Kanban socialware launch check</b></td><td>jjkysy</td><td>检查 kanban socialware 现在是否已经可以上线。</td><td>launch/no-launch verdict + smoke/E2E proof or exact blockers。</td><td>20:00</td></tr>
+<tr><td>T6</td><td><b>Production workspace + dev-team users</b></td><td>allen</td><td>完善生产环境部署，创建/使用 ezagent workspace，添加当前 dev-team 所有人并测试。</td><td>workspace exists + users added + smoke test + deployment gaps。</td><td>21:00</td></tr>
+</table>
+
+<h2>§3 按开发者规划</h2>
+<table>
+<tr><th>开发者</th><th>今日 track</th><th>说明</th></tr>
+<tr><td><b>gaga</b></td><td><span class="ok">AutoService current-architecture E2E</span></td><td>证明能跑完或给精确 blocker。</td></tr>
+<tr><td><b>fatnine</b></td><td><span class="ok">Agent Console completeness</span></td><td>先列缺失，再直接修清晰小缺口。</td></tr>
+<tr><td><b>zyli</b></td><td><span class="ok">UI IM-like demo</span></td><td>先 demo 给团队确认，不先大范围生产 refactor。</td></tr>
+<tr><td><b>zhaomato</b></td><td><span class="ok">官网框架 + hello page + backend/world connectivity</span></td><td>本地测试后，和 Allen 协调生产尝试。</td></tr>
+<tr><td><b>ruihua</b></td><td><span class="ok">官网栏目/内容/交互方向</span></td><td>今天配合 zhaomato 先 unblock 框架上线；细节可后续优化。</td></tr>
+<tr><td><b>jjkysy</b></td><td><span class="ok">kanban socialware launch readiness</span></td><td>给 launch/no-launch 结论和阻塞项。</td></tr>
+<tr><td><b>allen</b></td><td><span class="ok">生产环境 + ezagent workspace + dev-team users</span></td><td>生产自举和真实用户测试。</td></tr>
+</table>
+
+<h2>开工 prompt（复制给对应 dev）</h2>
+<table>
+<tr><th>dev</th><th>prompt</th></tr>
+<tr><td><b>gaga</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t1-autoservice-current-arch-e2e.md</code><br>继续验证 AutoService 流程在当前架构上能否跑完；返回 transcript/screenshots/logs 和 pass/blocker verdict。</td></tr>
+<tr><td><b>fatnine</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t2-agent-console-completeness.md</code><br>验证 Agent Console 完善度，列出缺失内容，清晰小缺口直接修，设计问题单列。</td></tr>
+<tr><td><b>zyli</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t3-ui-im-demo.md</code><br>对 UI 进行 IM-like 调整，先交 demo/screenshots 给大家确认。</td></tr>
+<tr><td><b>zhaomato</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t4-website-framework-local-prod.md</code><br>和 ruihua 对接，先完成官网框架 + hello 页面 + backend/world 本地联通，再和 Allen 协调 <code>app.ezagent.chat</code> 生产尝试。</td></tr>
+<tr><td><b>ruihua</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t4-ruihua-website-content.md</code><br>给官网栏目、内容优先级、交互方向，先 unblock zhaomato 框架上线。</td></tr>
+<tr><td><b>jjkysy</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t5-kanban-socialware-launch-check.md</code><br>检查 kanban socialware 现在是否可上线，返回 launch/no-launch verdict。</td></tr>
+<tr><td><b>allen</b></td><td><code>dev-together dive docs/together/2026-06-30/handoffs/t6-production-workspace-dev-team.md</code><br>完善生产环境，创建/使用 ezagent workspace，添加 dev-team 用户并 smoke test。</td></tr>
+</table>
+
+<h2>冲突图 / 停手线</h2>
+<ul>
+<li><b>生产环境：</b> T4 上生产前必须和 T6/Allen 协调。</li>
+<li><b>UI：</b> T3 demo-first，团队确认前不做大范围生产 UI refactor。</li>
+<li><b>权限/用户：</b> T2/T6 涉 CapBAC、workspace authority、生产 access policy 时先确认。</li>
+<li><b>Kanban：</b> T5 先给 launch readiness；不直接把 #1020 大 PR 当小修合。</li>
+</ul>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本 HTML 对齐 Allen 0630 最新计划修正；Markdown 底稿保留在 <code>plan.md</code>。</p>
+</body>
+</html>
