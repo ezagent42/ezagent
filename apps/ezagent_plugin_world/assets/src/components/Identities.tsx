@@ -1,5 +1,5 @@
 import React from "react"
-import {Plus, UserRound, UsersRound} from "lucide-react"
+import {Ban, KeyRound, Plus, RotateCcw, Save, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -20,12 +20,20 @@ type IdentityRow = {
 type UserRow = {
   uri: string
   display_name?: string
+  email?: string | null
   has_password?: boolean
+  confirmed?: boolean
+  email_verified?: boolean
+  disabled?: boolean
+  disabled_at?: string | null
+  disabled_by?: string | null
+  disabled_reason?: string | null
   cap_count?: number
   online?: boolean
   transports?: string[]
   system_member?: boolean
   caps_path?: string | null
+  detail_path?: string | null
 }
 
 type CapRow = {
@@ -89,6 +97,7 @@ export type IdentitiesState = {
   agent_flavors?: string[]
   agent_status?: Record<string, unknown>
   agent_uri?: string | null
+  user_uri?: string | null
   agents?: IdentityRow[]
   api_keys?: ApiKeyRow[] | {error?: string; unsupported?: boolean}
   bridge?: Record<string, unknown> | null
@@ -120,6 +129,17 @@ export type IdentitiesState = {
   preview_uri?: string
   title?: string
   users?: UserRow[]
+  user_not_found?: boolean
+  display_name?: string | null
+  email?: string | null
+  has_password?: boolean
+  confirmed?: boolean
+  email_verified?: boolean
+  disabled?: boolean
+  disabled_at?: string | null
+  disabled_by?: string | null
+  disabled_reason?: string | null
+  cap_count?: number
   workspace_uri?: string | null
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
@@ -134,6 +154,11 @@ export type IdentitiesState = {
 type Props = {
   state: IdentitiesState
   onCreateAgent?: (payload: Record<string, unknown>) => void
+  onCreateUser?: (payload: Record<string, unknown>) => void
+  onSaveUserProfile?: (payload: {user_uri: string; display_name: string; email: string}) => void
+  onSetUserPassword?: (payload: {user_uri: string; password: string}) => void
+  onDisableUser?: (payload: {user_uri: string; reason: string}) => void
+  onEnableUser?: (payload: {user_uri: string}) => void
   onDeleteAgent?: (agentUri: string) => void
   onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
   onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
@@ -154,9 +179,23 @@ const uriClass = "block w-fit rounded-md border border-border bg-muted/50 px-2 p
 const codeClass = "font-mono text-xs text-muted-foreground"
 const actionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+const secondaryActionLinkClass =
+  "inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted"
 
-export function IdentitiesSurface({state, onCreateAgent, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUserProfile, onSetUserPassword, onDisableUser, onEnableUser, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
+  if (state.component === "user_new_form") return <UserNewForm state={state} onCreateUser={onCreateUser} />
+  if (state.component === "user_detail") {
+    return (
+      <UserDetail
+        state={state}
+        onSaveUserProfile={onSaveUserProfile}
+        onSetUserPassword={onSetUserPassword}
+        onDisableUser={onDisableUser}
+        onEnableUser={onEnableUser}
+      />
+    )
+  }
   if (state.component === "agents_table") return <AgentsTable state={state} />
   if (state.component === "entity_caps") return <EntityCaps state={state} />
   if (state.component === "agent_detail") return <AgentDetail state={state} onDeleteAgent={onDeleteAgent} />
@@ -176,10 +215,16 @@ function IdentityDirectory({state}: {state: IdentitiesState}) {
         eyebrow="Directory"
         title="Identities"
         actions={
-          <a className={actionLinkClass} href="/identities/agents/new">
-            <Plus aria-hidden="true" className="h-4 w-4" />
-            New agent
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a className={actionLinkClass} href="/identities/users/new">
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              New user
+            </a>
+            <a className={secondaryActionLinkClass} href="/identities/agents/new">
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              New agent
+            </a>
+          </div>
         }
       />
 
@@ -200,16 +245,28 @@ function UsersTable({state}: {state: IdentitiesState}) {
 
   return (
     <section className={surfaceClass} data-world-component="users_table" aria-labelledby="users-title">
-      <SectionHeader eyebrow="Principals" title="Users" />
+      <SectionHeader
+        eyebrow="Principals"
+        title="Users"
+        actions={
+          <a className={actionLinkClass} href="/identities/users/new">
+            <Plus aria-hidden="true" className="h-4 w-4" />
+            New user
+          </a>
+        }
+      />
       <div className={tableWrapClass}>
         <table className={tableClass} id="world-users-table">
           <thead className={theadClass}>
             <tr>
               <th className={thClass}>Name / URI</th>
+              <th className={thClass}>Email</th>
               <th className={thClass}>Password</th>
+              <th className={thClass}>Status</th>
               <th className={thClass}>Caps</th>
               <th className={thClass}>System</th>
               <th className={thClass}>Presence</th>
+              <th className={thClass}>Actions</th>
             </tr>
           </thead>
           <tbody className={tbodyClass}>
@@ -219,7 +276,11 @@ function UsersTable({state}: {state: IdentitiesState}) {
                   <strong className="block text-foreground">{user.display_name || user.uri}</strong>
                   <code className={codeClass}>{user.uri}</code>
                 </td>
+                <td className={tdClass}>{user.email || "—"}</td>
                 <td className={tdClass}>{user.has_password ? "set" : "unset"}</td>
+                <td className={tdClass}>
+                  <StatusPill tone={user.disabled ? "danger" : "success"} label={user.disabled ? "disabled" : "active"} />
+                </td>
                 <td className={tdClass}>
                   <a className="text-primary hover:underline" href={user.caps_path || "#"}>
                     {user.cap_count || 0}
@@ -227,11 +288,195 @@ function UsersTable({state}: {state: IdentitiesState}) {
                 </td>
                 <td className={tdClass}>{user.system_member ? "system" : "workspace"}</td>
                 <td className={tdClass}>{user.online ? `online ${formatList(user.transports)}` : "offline"}</td>
+                <td className={tdClass}>
+                  <InlineLinks links={[["Manage", user.detail_path], ["Caps", user.caps_path]]} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
         {users.length === 0 && <EmptyState label="No users." />}
+      </div>
+    </section>
+  )
+}
+
+function UserNewForm({state, onCreateUser}: {state: IdentitiesState; onCreateUser?: (payload: Record<string, unknown>) => void}) {
+  const [form, setForm] = React.useState({
+    name: "",
+    display_name: "",
+    email: "",
+    password: "",
+  })
+
+  const preview = form.name ? previewUserUri(state.workspace_uri, form.name) : state.preview_uri || "<user-uri>"
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    onCreateUser?.(form)
+  }
+
+  return (
+    <section className={surfaceClass} data-world-component="user_new_form" aria-labelledby="user-new-title">
+      <SectionHeader eyebrow="Provision" title="New user" />
+      {state.create_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.create_error}
+        </p>
+      )}
+      <form id="world-user-new-form" className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit}>
+        <label className={fieldLabel}>
+          <span>Name *</span>
+          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="zhangning" />
+        </label>
+        <label className={fieldLabel}>
+          <span>Display name</span>
+          <Input value={form.display_name} onChange={(event) => setForm({...form, display_name: event.target.value})} placeholder="Zhang Ning" />
+        </label>
+        <label className={fieldLabel}>
+          <span>Email</span>
+          <Input type="email" value={form.email} onChange={(event) => setForm({...form, email: event.target.value})} placeholder="zhangning@example.com" />
+        </label>
+        <label className={fieldLabel}>
+          <span>Password *</span>
+          <Input type="password" value={form.password} onChange={(event) => setForm({...form, password: event.target.value})} />
+        </label>
+        <div className="flex items-center justify-between gap-3 sm:col-span-2">
+          <code className={codeClass}>{preview}</code>
+          <Button type="submit" disabled={!form.name.trim() || !form.password.trim()}>
+            <Plus aria-hidden="true" />
+            Create
+          </Button>
+        </div>
+      </form>
+    </section>
+  )
+}
+
+function UserDetail({
+  state,
+  onSaveUserProfile,
+  onSetUserPassword,
+  onDisableUser,
+  onEnableUser,
+}: {
+  state: IdentitiesState
+  onSaveUserProfile?: (payload: {user_uri: string; display_name: string; email: string}) => void
+  onSetUserPassword?: (payload: {user_uri: string; password: string}) => void
+  onDisableUser?: (payload: {user_uri: string; reason: string}) => void
+  onEnableUser?: (payload: {user_uri: string}) => void
+}) {
+  const userUri = state.user_uri || ""
+  const [profile, setProfile] = React.useState({
+    display_name: state.display_name || "",
+    email: state.email || "",
+  })
+  const [password, setPassword] = React.useState("")
+  const [reason, setReason] = React.useState(state.disabled_reason || "")
+
+  React.useEffect(() => {
+    setProfile({display_name: state.display_name || "", email: state.email || ""})
+    setReason(state.disabled_reason || "")
+  }, [state.display_name, state.email, state.disabled_reason])
+
+  if (state.user_not_found) {
+    return (
+      <section className={surfaceClass} data-world-component="user_detail" aria-labelledby="user-detail-title">
+        <SectionHeader eyebrow="User" title="User detail" />
+        <code className={uriClass}>{state.user_uri}</code>
+        <EmptyState label="该 user 不存在。" />
+        <div>
+          <a className="text-primary hover:underline" href="/identities/users">
+            ← 返回 user 列表
+          </a>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className={surfaceClass} data-world-component="user_detail" aria-labelledby="user-detail-title">
+      <SectionHeader eyebrow="User" title="User detail" />
+      <code className={uriClass}>{userUri}</code>
+      {state.action_error && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+          {state.action_error}
+        </p>
+      )}
+
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <InfoRow label="Password" value={state.has_password ? "set" : "unset"} />
+        <InfoRow label="Confirmed" value={state.confirmed ? "yes" : "no"} />
+        <InfoRow label="Email verified" value={state.email_verified ? "yes" : "no"} />
+        <InfoRow label="Status" value={state.disabled ? "disabled" : "active"} />
+        {state.disabled_at && <InfoRow label="Disabled at" value={state.disabled_at} />}
+        {state.disabled_by && <InfoRow label="Disabled by" value={state.disabled_by} />}
+      </dl>
+
+      <form
+        id="world-user-profile-form"
+        className="grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSaveUserProfile?.({user_uri: userUri, ...profile})
+        }}
+      >
+        <label className={fieldLabel}>
+          <span>Display name</span>
+          <Input value={profile.display_name} onChange={(event) => setProfile({...profile, display_name: event.target.value})} />
+        </label>
+        <label className={fieldLabel}>
+          <span>Email</span>
+          <Input type="email" value={profile.email} onChange={(event) => setProfile({...profile, email: event.target.value})} />
+        </label>
+        <div className="flex justify-end sm:col-span-2">
+          <Button type="submit">
+            <Save aria-hidden="true" />
+            Save profile
+          </Button>
+        </div>
+      </form>
+
+      <form
+        id="world-user-password-form"
+        className="grid gap-3 rounded-md border border-border bg-background p-4 sm:grid-cols-[1fr_auto]"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSetUserPassword?.({user_uri: userUri, password})
+          setPassword("")
+        }}
+      >
+        <label className={fieldLabel}>
+          <span>New password</span>
+          <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        <div className="flex items-end">
+          <Button type="submit" disabled={!password.trim()}>
+            <KeyRound aria-hidden="true" />
+            Set password
+          </Button>
+        </div>
+      </form>
+
+      <div className="grid gap-3 rounded-md border border-border bg-background p-4">
+        <label className={fieldLabel}>
+          <span>Disable reason</span>
+          <Input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="offboarding note" />
+        </label>
+        <div className="flex flex-wrap gap-2">
+          {state.disabled ? (
+            <Button variant="secondary" onClick={() => onEnableUser?.({user_uri: userUri})}>
+              <RotateCcw aria-hidden="true" />
+              Enable user
+            </Button>
+          ) : (
+            <Button variant="danger" onClick={() => onDisableUser?.({user_uri: userUri, reason})}>
+              <Ban aria-hidden="true" />
+              Disable user
+            </Button>
+          )}
+          <InlineLinks links={[["Caps", state.caps_path]]} />
+        </div>
       </div>
     </section>
   )
@@ -1172,6 +1417,24 @@ function InlineLinks({links}: {links: Array<[string, string | null | undefined]>
   )
 }
 
+function InfoRow({label, value}: {label: string; value: string}) {
+  return (
+    <div className="flex justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="truncate text-sm text-foreground" title={value}>{value}</dd>
+    </div>
+  )
+}
+
+function StatusPill({tone, label}: {tone: "success" | "danger"; label: string}) {
+  const classes =
+    tone === "success"
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : "border-destructive/40 bg-destructive/10 text-destructive"
+
+  return <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${classes}`}>{label}</span>
+}
+
 function activeMatches(active: string, label: string) {
   if (label === "All") return active === "all"
   if (label === "Users") return active === "users"
@@ -1182,6 +1445,11 @@ function activeMatches(active: string, label: string) {
 function previewAgentUri(workspaceUri: string | null | undefined, name: string) {
   const workspace = workspaceUri?.replace("workspace://", "") || "system"
   return `entity://${workspace}/agent/${name}`
+}
+
+function previewUserUri(workspaceUri: string | null | undefined, name: string) {
+  const workspace = workspaceUri?.replace("workspace://", "") || "system"
+  return `entity://${workspace}/user/${name}`
 }
 
 function formatList(values: string[] | undefined) {

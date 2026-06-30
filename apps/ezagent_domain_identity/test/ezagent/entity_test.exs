@@ -141,5 +141,23 @@ defmodule Ezagent.EntityTest do
 
       assert {:ok, %{caps: _}} = Entity.authenticate(uri, plain_token)
     end
+
+    test "disabled users cannot authenticate with password or user bearer token" do
+      uri_str = "entity://team-alpha/user/disabled-auth-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri_str, "correct-password", [])
+      uri = Ezagent.URI.new!(uri_str)
+      {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "cli")
+
+      assert {:ok, %{caps: _}} = Entity.authenticate(uri, "correct-password")
+      assert {:ok, %{caps: _}} = Entity.authenticate(uri, plain_token)
+
+      assert {:ok, _} = Users.disable(uri, "entity://system/user/admin", "blocked")
+
+      assert {:error, :disabled} = Entity.authenticate(uri, "correct-password")
+      assert {:error, :disabled} = Entity.authenticate(uri, plain_token)
+
+      assert {:error, :disabled} =
+               Entity.authenticate(uri, "correct-password", allow_user_tokens: false)
+    end
   end
 end

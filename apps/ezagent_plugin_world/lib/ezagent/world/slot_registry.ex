@@ -75,6 +75,8 @@ defmodule Ezagent.World.SlotRegistry do
        [
          {"identities", "Identities"},
          {"users_table", "Users"},
+         {"user_new_form", "New User"},
+         {"user_detail", "User Detail"},
          {"agents_table", "Agents"},
          {"agent_new_form", "New Agent"},
          {"agent_detail", "Agent Detail"},

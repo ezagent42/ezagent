@@ -128,6 +128,54 @@ defmodule Ezagent.UsersTest do
     end
   end
 
+  describe "disable/enable user" do
+    test "disable marks the user and blocks password verification; enable restores it" do
+      uri = "entity://team-alpha/user/disabled-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+      assert Users.verify_password(uri, "secret")
+
+      assert {:ok, disabled} = Users.disable(uri, admin, "offboarded")
+      assert disabled.disabled_at
+      assert disabled.disabled_by == admin
+      assert disabled.disabled_reason == "offboarded"
+      assert Users.disabled?(uri)
+      refute Users.verify_password(uri, "secret")
+
+      assert {:ok, enabled} = Users.enable(uri)
+      refute enabled.disabled_at
+      refute enabled.disabled_by
+      refute enabled.disabled_reason
+      refute Users.disabled?(uri)
+      assert Users.verify_password(uri, "secret")
+    end
+
+    test "disable is idempotent and returns :not_found for unknown users" do
+      uri = "entity://team-alpha/user/disable-idem-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+
+      assert {:ok, first} = Users.disable(uri, admin, "first")
+      assert {:ok, second} = Users.disable(uri, admin, "second")
+      assert first.disabled_at == second.disabled_at
+      assert second.disabled_reason == "first"
+
+      assert {:error, :not_found} =
+               Users.disable(
+                 "entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}",
+                 admin,
+                 nil
+               )
+
+      assert {:error, :not_found} =
+               Users.enable(
+                 "entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}"
+               )
+    end
+  end
+
   describe "list_all/0 + get_by_uri/1" do
     test "lists every row + lookup roundtrip" do
       uri = "entity://team-alpha/user/list-#{System.unique_integer([:positive])}"

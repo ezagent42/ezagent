@@ -40,8 +40,10 @@ defmodule EzagentWeb.Router do
         live "/sessions", WorldLive
         live "/identities", WorldLive
         live "/identities/users", WorldLive
+        live "/identities/users/new", WorldLive
         live "/identities/agents", WorldLive
         live "/identities/users/:uri/caps", WorldLive
+        live "/identities/users/:uri", WorldLive
         live "/identities/agents/:uri/caps", WorldLive
         live "/identities/agents/:uri/api-keys", WorldLive
         live "/identities/agents/:uri/config", WorldLive
@@ -79,8 +81,10 @@ defmodule EzagentWeb.Router do
       live "/sessions", WorldLive
       live "/identities", WorldLive
       live "/identities/users", WorldLive
+      live "/identities/users/new", WorldLive
       live "/identities/agents", WorldLive
       live "/identities/users/:uri/caps", WorldLive
+      live "/identities/users/:uri", WorldLive
       live "/identities/agents/:uri/caps", WorldLive
       live "/identities/agents/:uri/api-keys", WorldLive
       live "/identities/agents/:uri/config", WorldLive

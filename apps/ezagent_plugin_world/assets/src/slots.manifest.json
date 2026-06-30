@@ -29,6 +29,8 @@
       "agents_table",
       "entity_caps",
       "identities",
+      "user_detail",
+      "user_new_form",
       "users_table"
     ],
     "kanban": [
@@ -61,17 +63,35 @@
     "world-cmdk"
   ],
   "slots": {
-    "agent_api_keys": {
+    "kanban": {
       "category": "layout_slot",
-      "data_source": "Ezagent.World.IdentityData",
-      "renderer_family": "identities",
-      "title": "Agent API Keys"
+      "data_source": "Ezagent.World.KanbanData",
+      "renderer_family": "kanban",
+      "title": "看板"
     },
-    "agent_config": {
+    "agent_new_form": {
       "category": "layout_slot",
       "data_source": "Ezagent.World.IdentityData",
       "renderer_family": "identities",
-      "title": "Agent Config"
+      "title": "New Agent"
+    },
+    "entity_registry": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Entity Registry"
+    },
+    "entity_caps": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Entity Caps"
+    },
+    "snapshots": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Snapshots"
     },
     "agent_detail": {
       "category": "layout_slot",
@@ -85,149 +105,11 @@
       "renderer_family": "identities",
       "title": "Agent Extensions"
     },
-    "agent_new_form": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.IdentityData",
-      "renderer_family": "identities",
-      "title": "New Agent"
-    },
-    "agents_table": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.IdentityData",
-      "renderer_family": "identities",
-      "title": "Agents"
-    },
-    "authz_audit": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Authz Audit"
-    },
-    "auto_derive": {
+    "workspace_detail": {
       "category": "layout_slot",
       "data_source": "Ezagent.World.WorkspacePluginData",
       "renderer_family": "workspace_plugins",
-      "title": "Auto Derive"
-    },
-    "caps_admin": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Capabilities"
-    },
-    "conversation": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.ConversationData",
-      "renderer_family": "conversation",
-      "title": "Conversation"
-    },
-    "dashboard": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Admin Dashboard"
-    },
-    "entity_caps": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.IdentityData",
-      "renderer_family": "identities",
-      "title": "Entity Caps"
-    },
-    "entity_registry": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Entity Registry"
-    },
-    "external_mirror": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "External Mirror"
-    },
-    "feishu_bindings": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.WorkspacePluginData",
-      "renderer_family": "workspace_plugins",
-      "title": "Feishu Bindings"
-    },
-    "identities": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.IdentityData",
-      "renderer_family": "identities",
-      "title": "Identities"
-    },
-    "kanban": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.KanbanData",
-      "renderer_family": "kanban",
-      "title": "看板"
-    },
-    "layout_editor": {
-      "category": "layout_slot",
-      "data_source": "layout",
-      "renderer_family": "layout_editor",
-      "title": "Layout"
-    },
-    "observability": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Observability"
-    },
-    "overview": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "overview",
-      "title": "Overview"
-    },
-    "plugins": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.WorkspacePluginData",
-      "renderer_family": "workspace_plugins",
-      "title": "Plugins"
-    },
-    "profile": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.WorkspacePluginData",
-      "renderer_family": "workspace_plugins",
-      "title": "Profile"
-    },
-    "pty_terminal": {
-      "category": "layout_slot",
-      "data_source": "world_live",
-      "renderer_family": "pty",
-      "title": "Terminal"
-    },
-    "routing": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Routing"
-    },
-    "sessions_table": {
-      "category": "layout_slot",
-      "data_source": "world_live",
-      "renderer_family": "sessions",
-      "title": "Sessions"
-    },
-    "settings": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Settings"
-    },
-    "snapshots": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Snapshots"
-    },
-    "templates": {
-      "category": "layout_slot",
-      "data_source": "Ezagent.World.AdminData",
-      "renderer_family": "admin",
-      "title": "Templates"
+      "title": "Workspace Detail"
     },
     "users_table": {
       "category": "layout_slot",
@@ -235,17 +117,149 @@
       "renderer_family": "identities",
       "title": "Users"
     },
-    "workspace_detail": {
+    "agent_config": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent Config"
+    },
+    "dashboard": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Admin Dashboard"
+    },
+    "layout_editor": {
+      "category": "layout_slot",
+      "data_source": "layout",
+      "renderer_family": "layout_editor",
+      "title": "Layout"
+    },
+    "user_detail": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "User Detail"
+    },
+    "external_mirror": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "External Mirror"
+    },
+    "agent_api_keys": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agent API Keys"
+    },
+    "conversation": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.ConversationData",
+      "renderer_family": "conversation",
+      "title": "Conversation"
+    },
+    "sessions_table": {
+      "category": "layout_slot",
+      "data_source": "world_live",
+      "renderer_family": "sessions",
+      "title": "Sessions"
+    },
+    "pty_terminal": {
+      "category": "layout_slot",
+      "data_source": "world_live",
+      "renderer_family": "pty",
+      "title": "Terminal"
+    },
+    "profile": {
       "category": "layout_slot",
       "data_source": "Ezagent.World.WorkspacePluginData",
       "renderer_family": "workspace_plugins",
-      "title": "Workspace Detail"
+      "title": "Profile"
+    },
+    "templates": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Templates"
+    },
+    "identities": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Identities"
+    },
+    "settings": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Settings"
+    },
+    "authz_audit": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Authz Audit"
+    },
+    "routing": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Routing"
+    },
+    "feishu_bindings": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Feishu Bindings"
+    },
+    "overview": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "overview",
+      "title": "Overview"
+    },
+    "observability": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Observability"
     },
     "workspaces_list": {
       "category": "layout_slot",
       "data_source": "Ezagent.World.WorkspacePluginData",
       "renderer_family": "workspace_plugins",
       "title": "Workspaces"
+    },
+    "caps_admin": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.AdminData",
+      "renderer_family": "admin",
+      "title": "Capabilities"
+    },
+    "plugins": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Plugins"
+    },
+    "agents_table": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "Agents"
+    },
+    "user_new_form": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.IdentityData",
+      "renderer_family": "identities",
+      "title": "New User"
+    },
+    "auto_derive": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "Auto Derive"
     }
   },
   "version": 1
