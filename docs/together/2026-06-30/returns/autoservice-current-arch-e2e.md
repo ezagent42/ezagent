@@ -142,5 +142,17 @@ Notes:
 
 ## Evidence
 
-Key transcript excerpts: `docs/together/2026-06-30/returns/evidence/autoservice-current-arch-e2e.txt`
-(natural deflection, explicit refusal, kb_query tool proof, benign-framing flail, the 10044→`:failed` vs 10042→`:ready` contrast).
+**Screenshots** (`docs/together/2026-06-30/returns/screenshots/`):
+- `autoservice-chat-zephyr-10042.png` — the anon customer chat (`/socialware/chat`) rendering the full live conversation: the customer's natural question, the two pre-fix failures ("knowledge base temporarily unavailable"), and the **post-fix success** — the agent's reply **"...please quote the following access code: ZEPHYR-7731..."**. This is the end-to-end answer-soul, customer-visible.
+- `autoservice-external-10042.png` — the external feed surface (empty generated-page state, renders cleanly).
+
+**Transcript / logs**: `docs/together/2026-06-30/returns/evidence/autoservice-current-arch-e2e.txt`
+(natural deflection, explicit refusal, kb_query tool proof, benign-framing flail, the 10044→`:failed` vs 10042→`:ready` contrast, and the final GREEN run). DB-level proof: the `messages` rows for `session://autosvc/default/tier1` show the 3 customer turns + 3 agent turns (the last carrying `ZEPHYR-7731`).
+
+**Side fix to make the screenshot possible — BUG-2 (socialware chat render):** the customer chat rendered *"Unsupported node: container"* and showed nothing, because the backend chat-feed builders still emit the legacy 5-type node set (`container`/`text`/…) while the viewer migrated to the `@json-render/shadcn` catalog (`Stack`/`Text`/…). Fixed frontend-only in `apps/ezagent_domain_socialware/assets/js/catalog_normalize.mjs` (a legacy→shadcn type remap in `normalizeSpec`, alongside the existing Table/Stack shims). `catalog_normalize_test` stays green. This is a **pre-existing socialware-wide bug** (not AutoService-specific) — without it the agent's reply is stored + routed but the customer can't *see* it.
+
+## DoD checklist
+- [x] Real AutoService flow transcript/screenshots/logs attached (above).
+- [x] Verdict: current architecture **can complete the flow** — answer-soul GREEN end-to-end.
+- [x] Blockers exact + operational (A bridge-port, B persona, C registration, D session binding, E SessionManager) — all fixed in the seed; none a core/domain change.
+- [x] DB-backed run: local PostgreSQL `127.0.0.1:55432` (== the `docker-compose.pg.yml` host-port convention; no Docker on this box — confirmed with gaga), isolated DB `ezagent_autosvc_t1`, **dropped on cleanup** (recorded at end of run).
