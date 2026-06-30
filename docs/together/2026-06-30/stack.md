@@ -14,6 +14,7 @@ Source of truth for this push: Feishu merged-forward return messages + GitHub PR
 | #1107 `feat(website): T4 官网框架 + hello 渲染 ruihua 官网支撑` | zhaomato | Runtime hello-site support script, static assets, docs/website-demo updates | blocked pending #1103 decision/rebase | CI green and mergeable now, but overlaps #1103 heavily. Merging in the wrong order can drop design docs or force manual conflict resolution. Also production page state is DB/runtime, not in PR. |
 | #1104 `docs(world): add June 30 UI redesign prototype` | zyli | World IM redesign prototype plus live World UI refactor, loading skeleton, deadline fix, screenshots | blocked pending dedicated UI review/rebase | CI green, mergeable, but scope expanded from prototype to large production World UI rewrite and overlaps #1105/#1020 World surfaces. Needs human visual review and branch refresh after safer PRs. |
 | #1020 `feat(kanban): team dev flow` | jjkysy | Kanban-driven dev workflow, PM/dev recipes, CLI verbs, GitHub plugin, World nav/surfaces, domain agent materialization | blocked / next-day architecture close | CI green, mergeable, but very large cross-tier change touching core/domain/plugin/CLI/World. It includes useful architecture follow-ups, but should not be merged in the same close batch as #1104/#1105 without a focused architecture review. |
+| #1112 `T2: Agent Console completeness 复核收口与 IA 设计梳理` | fatnine | Agent Console completeness review, F1-F6 evidence, remaining gap classification, IA prototype/design direction | late 0630 return / open | CI green. Return arrived after the initial close ledger. It reframes the remaining Agent Console work: F1-F6 are small fixed/validated gaps; the main remaining gap is session delete/archive and broader IA/UX design, not another batch of small fixes. |
 
 No return file existed in the local checkout at `docs/together/2026-06-30/` before this push. The returns existed in PRs and Feishu. This is a process gap: dev-together should require each developer to land a return artifact in the PR branch and the lead should pull those artifacts into the local ledger before close.
 
@@ -97,6 +98,30 @@ Risks:
 
 Verdict: not a same-day close merge. Make it the next architecture close target with a dedicated review pass focused on core/domain/plugin boundaries, CapBAC, and World UI overlap.
 
+### #1112 Agent Console Completeness / IA
+
+Quality:
+- The return usefully separates "small completeness gaps" from "design/IA gaps".
+- F1-F6 are reported as fixed or validated with evidence, so the remaining work is
+  no longer best handled as more one-off patches.
+- The important residual issue is session delete/archive, which needs product
+  semantics before implementation.
+- The PR includes a new Agent Console IA direction and demo link, intended to
+  answer homepage guidance, left-rail direct access, and overall information
+  architecture.
+
+Risks:
+- The PR is large for a review/design return: 30 files, about +3709 lines.
+- IA/prototype work can easily fan out. Lead comment on the PR: implement one
+  prototype to completion instead of building many prototypes that leave zero
+  completed path.
+- Session delete/archive should not be patched in ad hoc until the destructive
+  action semantics are clear.
+
+Verdict: record as a late 0630 return. Keep open for review; do not merge only
+because CI is green. Ask fatnine to choose one prototype path and drive it to a
+usable/verifiable state.
+
 ## Merge Order
 
 Recommended safe order:
@@ -110,6 +135,8 @@ Deferred / next stack:
 4. #1107 Website hello support: rebase after #1103, verify design artifacts preserved, smoke the refresh script.
 5. #1104 World UI IM refactor: rebase after #1105, retitle/split if production UI remains in scope, visual review required.
 6. #1020 Kanban team development flow: dedicated architecture review before merge; likely after #1104 conflict resolution or split out non-World/core-safe slices.
+7. #1112 Agent Console completeness / IA: review as the late T2 return; require
+   one prototype direction to be implemented through a usable state before merge.
 
 ## Process Deltas To Carry Forward
 
@@ -131,6 +158,7 @@ Executed on 2026-07-01 via GitHub squash/admin merge.
 | #1107 | left open | `OPEN`, mergeability recalculating after #1103 | Rebase/refresh required against `main` after #1103. Must verify all ruihua design artifacts remain available and smoke `scripts/refresh_hello_site.exs` before production rollout. |
 | #1104 | left open | `OPEN`, mergeability recalculating after #1105 | Needs rebase on #1105 and product/visual review. Consider split/retitle because it is no longer docs-only. |
 | #1020 | left open | `OPEN`, mergeability recalculating after safe stack | Needs dedicated architecture close review. Focus checks: no business logic in core, CapBAC boundaries, plugin isolation, World UI overlap with #1104/#1105. |
+| #1112 | late return, left open | `OPEN`, CI green | Added to the 0630 ledger after close. Review direction: finish one Agent Console IA prototype path instead of expanding multiple prototypes. |
 
 `origin/main` after the safe-stack close: `0d20fa191f9135420e6b9b2187aacde1250d55dd`.
 
@@ -140,3 +168,5 @@ Executed on 2026-07-01 via GitHub squash/admin merge.
 2. Ask zyli to rebase #1104 on `main`, retitle/split if production UI remains in scope, and provide a short visual-review checklist against the HTML prototype.
 3. Run a dedicated #1020 architecture review before merge. The review should enumerate core changes and prove every new core abstraction is plugin-agnostic and shared by more than one downstream surface.
 4. Add a dev-together return gate that fails PRs whose Feishu return is not mirrored into `docs/together/YYYY-MM-DD/returns/`.
+5. Ask fatnine to turn #1112 into one finished Agent Console prototype path, with
+   session delete/archive kept as a design decision rather than a drive-by fix.
