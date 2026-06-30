@@ -36,20 +36,27 @@ defmodule EzagentPluginKanban.MixProject do
       {:ezagent_core, in_umbrella: true},
       # Miro REST client JSON encode/decode（飞书也用，:httpc + Jason 不引重依赖）。
       {:jason, "~> 1.2"},
-      # kanban-as-role (K2/K3) integration tests: the role × native create path
-      # lives in the workspace/agent/session domains. plugin → domain is the
-      # allowed dependency arrow (mirrors ezagent_plugin_cc). The plugin's lib/
-      # never references the domains (it only declares the recipe + behaviors; the
-      # framework wires them at boot).
-      {:ezagent_domain_workspace, in_umbrella: true, only: :test},
-      # role-as-data (SPEC §4): domain_agent is now a PROD dep, not test-only —
-      # `roles/0` is seeded at boot via `Ezagent.Plugin.RoleSeedHook`, whose impl
-      # `Ezagent.Agent.RoleSeedHook` is registered by domain_agent's `start/2`.
-      # The prod dep makes OTP start domain_agent BEFORE this plugin, so the hook
-      # is registered before this plugin's `Ezagent.Plugin.boot/1` seeds its role
-      # (the seam is no-op if unregistered — the dep removes that race).
+      # RUNTIME dep — the connectors' lazy github-gateway seed
+      # (`Connectors.ensure_gateway/0`) calls `Ezagent.Workspace.create_agent`
+      # (RF-5a role-create) at first github dispatch — so workspace is PROD, NOT
+      # `only: :test`. plugin → domain is the allowed arrow (mirrors ezagent_plugin_cc);
+      # NOT a plugin → plugin dep (the github gateway is reached purely by dispatch /
+      # role name, zero compile dep on ezagent_plugin_github).
+      {:ezagent_domain_workspace, in_umbrella: true},
+      # role-as-data (SPEC §4): domain_agent is a PROD dep — `roles/0` is seeded at
+      # boot via `Ezagent.Plugin.RoleSeedHook` (impl registered by domain_agent's
+      # `start/2`, so OTP starts it BEFORE this plugin's `boot/1` seeds its role),
+      # AND `ezagent_domain_workspace` (above) depends on it at runtime, so it
+      # cannot be `only: :test`. plugin → domain, not plugin → plugin.
       {:ezagent_domain_agent, in_umbrella: true},
-      {:ezagent_domain_session, in_umbrella: true, only: :test}
+      # session is only exercised by K2/K3 integration tests (relay etc.) — no
+      # runtime lib reference — so it stays TEST-ONLY.
+      {:ezagent_domain_session, in_umbrella: true, only: :test},
+      # T7f: the generic `mix ezagent dispatch` verb e2e drives the CLI Exec
+      # surface against a role-mounted kanban agent (the actual gap the verb
+      # closes). TEST-ONLY — kanban has ZERO runtime ref to the CLI, and cli
+      # does NOT depend on kanban, so no compile cycle.
+      {:ezagent_cli, in_umbrella: true, only: :test}
     ]
   end
 end
