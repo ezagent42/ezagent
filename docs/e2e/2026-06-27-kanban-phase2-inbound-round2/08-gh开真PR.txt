@@ -1,0 +1,15 @@
+title:	kanban/n2: Phase2 inbound e2e round2 (登录表单)
+state:	OPEN
+author:	jjkysy
+labels:	
+assignees:	
+reviewers:	
+projects:	
+milestone:	
+number:	6
+url:	https://github.com/jjkysy/test-ezagent/pull/6
+additions:	4
+deletions:	0
+auto-merge:	disabled
+--
+Round2 auto-register inbound test. Branch encodes node id per PrSync convention kanban/<node_id> → node n2 of board p2r2-115537.

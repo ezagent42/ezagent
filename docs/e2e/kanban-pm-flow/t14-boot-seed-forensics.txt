@@ -1,0 +1,11 @@
+=== A. recipe ConfigObject via RecipeRegistry.lookup (unified DefaultRecipeSeed populated these) ===
+  lookup(pm-coordinator) => OK name=pm-coordinator passive=false skills=["pm-coordinator"] caps=10
+  lookup(dev-together) => OK name=dev-together passive=false skills=["dev-together"] caps=9
+  lookup(kanban-manager) => OK name=kanban-manager passive=true skills=[] caps=25
+=== B. DefaultRecipes.all/0 — the single unified data source ===
+  DefaultRecipes.all/0 names => ["pm-coordinator", "dev-together"]
+=== C. kanban roles/0 must be ONLY kanban-manager now (pm moved OUT to unified entry) ===
+  EzagentPluginKanban.roles/0 names => ["kanban-manager"]
+=== D. AgentTemplate Kind ALIVE in KindRegistry (boot-order fix: cc after_boot template-seed, NO {:no_spawn_fn}) ===
+  KindRegistry.lookup(template://system/agent/pm-coordinator) => ALIVE pid=#PID<12286.611.0>
+  KindRegistry.lookup(template://system/agent/dev-together) => ALIVE pid=#PID<12286.612.0>

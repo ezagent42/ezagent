@@ -1,0 +1,6 @@
+-[ RECORD 1 ]+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+rule_set     | kanban_relay_back
+table_name   | Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting
+matcher_data | {"type": "and", "items": [{"arg": "session://system/default/kbflow14", "type": "in_session"}, {"arg": "entity://system/agent/dev-together-kbflow14", "type": "from"}]}
+receivers    | {entity://system/agent/pm-coordinator-kbflow14}
+enabled      | t

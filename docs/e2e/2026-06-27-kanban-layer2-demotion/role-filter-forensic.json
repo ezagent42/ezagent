@@ -1,0 +1,30 @@
+{
+  "_source": "live read-model output of Ezagent.World.IdentityData.list_entities/2, serialized by the world LiveView into world-root's data-world-state attribute on the rendered /identities page (running server, node ezl2@127.0.0.1, DB ezagent_layer2_e2e). Read-only forensic — extracted via CDP eval, no operation driven by this read.",
+  "_captured_at": "2026-06-27 ~09:5x UTC (server10)",
+
+  "all_entities_rows": [
+    {"uri": "entity://system/agent/l2-demo-board", "kind": "agent", "flavor": "native", "role": "kanban-manager"},
+    {"uri": "entity://system/agent/py_default",    "kind": "agent", "flavor": "py",     "role": null},
+    {"uri": "entity://system/user/admin",          "kind": "user",  "flavor": "",       "role": null}
+  ],
+
+  "board_row_full": {
+    "uri": "entity://system/agent/l2-demo-board",
+    "kind": "agent",
+    "name": "l2-demo-board",
+    "display_name": "l2-demo-board",
+    "flavor": "native",
+    "role": "kanban-manager",
+    "alive": true,
+    "caps_path": "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fl2-demo-board/caps",
+    "detail_path": "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fl2-demo-board"
+  },
+
+  "role_filter_kanban_manager_selects": ["entity://system/agent/l2-demo-board"],
+
+  "_assertions": {
+    "board_row_carries_role": "PASS — role_for/2 surfaces 'kanban-manager' on the board's agent row (identity_data.ex)",
+    "roleless_agent_has_nil_role": "PASS — py_default (flavor=py, no role) row has role=null",
+    "role_filter_selects_only_board": "PASS — matches_filter?(%{kind:agent, role:kanban-manager}, 'role:kanban-manager') matches ONLY the board; py_default (role=null) and admin (kind=user) excluded"
+  }
+}

@@ -1,0 +1,10 @@
+03:31:02|admin|{entity://system/agent/dev-together-kbflow14}
+03:34:24|dev-together-kbflow14|{}
+03:35:08|attach_artifact|granted
+03:35:08|attach_artifact|granted
+03:35:17|get_tree|granted
+03:35:17|get_tree|granted
+03:36:03|set_stage|granted
+03:36:03|set_stage|granted
+03:36:05|get_tree|granted
+03:36:05|get_tree|granted

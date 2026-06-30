@@ -1,0 +1,14 @@
+=== RESULT ===
+%{
+  board_config: %{
+    session_uri: "session://system/default/main",
+    github_repo: "jjkysy/test-ezagent",
+    miro_board: nil
+  },
+  poller_keys: ["entity://system/agent/p2r2-115537"],
+  this_board_poller: %{
+    alive: true,
+    repo: "jjkysy/test-ezagent",
+    interval: 30000
+  }
+}

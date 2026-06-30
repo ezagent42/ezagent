@@ -1,0 +1,1 @@
+@pm-coordinator-kbflow14 请处理看板节点 n2（“build the export-to-markdown feature”）：先判断它当前所处的 gate，认领并把状态推进到 doing，然后把具体的产物工作派给 @dev-together-kbflow14 去做（dev 只产出 artifact，板的推进和登记你来做）。
