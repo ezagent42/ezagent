@@ -158,11 +158,11 @@
 
 相关设计文档：
 
-- [2026-07-01-agent-console-ia-design.md](file:///Users/daiming/workspace/ezagent42/ezagent/.claude/worktrees/fix-agent-console-completeness-0630/docs/superpowers/specs/2026-07-01-agent-console-ia-design.md)
+- [2026-07-01-agent-console-ia-design.md](../../../superpowers/specs/2026-07-01-agent-console-ia-design.md)
 
 已推送的网页 demo：
 
-- [prototype index](file:///Users/daiming/workspace/ezagent42/ezagent/.claude/worktrees/fix-agent-console-completeness-0630/docs/together/2026-06-30/prototypes/agent-console-ia/index.html)
+- [prototype index](../prototypes/agent-console-ia/index.html)
 - demo 目录：`docs/together/2026-06-30/prototypes/agent-console-ia/`
 
 ## 这轮发现并修掉的明显设计问题
