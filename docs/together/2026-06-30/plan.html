@@ -1,415 +1,158 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="generator" content="pandoc" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>Dev Together Plan - 2026-06-30</title>
-  <style>
-    /* Default styles provided by pandoc.
-    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
-    */
-    html {
-      color: #1a1a1a;
-      background-color: #fdfdfd;
-    }
-    body {
-      margin: 0 auto;
-      max-width: 36em;
-      padding-left: 50px;
-      padding-right: 50px;
-      padding-top: 50px;
-      padding-bottom: 50px;
-      hyphens: auto;
-      overflow-wrap: break-word;
-      text-rendering: optimizeLegibility;
-      font-kerning: normal;
-    }
-    @media (max-width: 600px) {
-      body {
-        font-size: 0.9em;
-        padding: 12px;
-      }
-      h1 {
-        font-size: 1.8em;
-      }
-    }
-    @media print {
-      html {
-        background-color: white;
-      }
-      body {
-        background-color: transparent;
-        color: black;
-        font-size: 12pt;
-      }
-      p, h2, h3 {
-        orphans: 3;
-        widows: 3;
-      }
-      h2, h3, h4 {
-        page-break-after: avoid;
-      }
-    }
-    p {
-      margin: 1em 0;
-    }
-    a {
-      color: #1a1a1a;
-    }
-    a:visited {
-      color: #1a1a1a;
-    }
-    img {
-      max-width: 100%;
-    }
-    svg {
-      height: auto;
-      max-width: 100%;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 1.4em;
-    }
-    h5, h6 {
-      font-size: 1em;
-      font-style: italic;
-    }
-    h6 {
-      font-weight: normal;
-    }
-    ol, ul {
-      padding-left: 1.7em;
-      margin-top: 1em;
-    }
-    li > ol, li > ul {
-      margin-top: 0;
-    }
-    blockquote {
-      margin: 1em 0 1em 1.7em;
-      padding-left: 1em;
-      border-left: 2px solid #e6e6e6;
-      color: #606060;
-    }
-    code {
-      white-space: pre-wrap;
-      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
-      font-size: 85%;
-      margin: 0;
-      hyphens: manual;
-    }
-    pre {
-      margin: 1em 0;
-      overflow: auto;
-    }
-    pre code {
-      padding: 0;
-      overflow: visible;
-      overflow-wrap: normal;
-    }
-    .sourceCode {
-     background-color: transparent;
-     overflow: visible;
-    }
-    hr {
-      border: none;
-      border-top: 1px solid #1a1a1a;
-      height: 1px;
-      margin: 1em 0;
-    }
-    table {
-      margin: 1em 0;
-      border-collapse: collapse;
-      width: 100%;
-      overflow-x: auto;
-      display: block;
-      font-variant-numeric: lining-nums tabular-nums;
-    }
-    table caption {
-      margin-bottom: 0.75em;
-    }
-    tbody {
-      margin-top: 0.5em;
-      border-top: 1px solid #1a1a1a;
-      border-bottom: 1px solid #1a1a1a;
-    }
-    th {
-      border-top: 1px solid #1a1a1a;
-      padding: 0.25em 0.5em 0.25em 0.5em;
-    }
-    td {
-      padding: 0.125em 0.5em 0.25em 0.5em;
-    }
-    header {
-      margin-bottom: 4em;
-      text-align: center;
-    }
-    #TOC li {
-      list-style: none;
-    }
-    #TOC ul {
-      padding-left: 1.3em;
-    }
-    #TOC > ul {
-      padding-left: 0;
-    }
-    #TOC a:not(:hover) {
-      text-decoration: none;
-    }
-    span.smallcaps{font-variant: small-caps;}
-    div.columns{display: flex; gap: min(4vw, 1.5em);}
-    div.column{flex: auto; overflow-x: auto;}
-    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
-    /* The extra [class] is a hack that increases specificity enough to
-       override a similar rule in reveal.js */
-    ul.task-list[class]{list-style: none;}
-    ul.task-list li input[type="checkbox"] {
-      font-size: inherit;
-      width: 0.8em;
-      margin: 0 0.8em 0.2em -1.6em;
-      vertical-align: middle;
-    }
-    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
-  </style>
+<meta charset="utf-8">
+<title>dev-together 计划 — 2026-06-30</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .gap{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .ok{color:#047857;font-weight:600}.defer{color:#b45309;font-weight:600}.risk{color:#991b1b;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
 </head>
 <body>
-<header id="title-block-header">
-<h1 class="title">Dev Together Plan - 2026-06-30</h1>
-</header>
-<h1 id="dev-together-plan---2026-06-30">Dev Together Plan -
-2026-06-30</h1>
-<p>planned_at: 2026-06-30 09:55 +0800 lead: allen / codex day_deadline:
-2026-06-30 23:59 +0800 timezone: GMT+8</p>
-<h2 id="inputs">Inputs</h2>
-<ul>
-<li>Roster source: <code>docs/together/team.md</code>, filtered to
-<code>role: human-dev</code>.</li>
-<li>Weekly goals:
-<code>docs/together/2026-W27/weekly-goals.md</code>.</li>
-<li>Continuity basis:
-<ul>
-<li><code>docs/together/2026-06-29/stack.md</code></li>
-<li><code>docs/together/2026-06-29/review.md</code></li>
-<li><code>docs/together/2026-06-29/returns/*</code></li>
-<li>open PR snapshot on 2026-06-30 after merging #1095: #1027, #1026,
-#1022, #1020.</li>
-</ul></li>
-</ul>
-<h2 id="planned-tasks">Planned Tasks</h2>
-<table style="width:100%;">
-<colgroup>
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-<col style="width: 11%" />
-</colgroup>
-<thead>
-<tr>
-<th>task id</th>
-<th>owner</th>
-<th>branch</th>
-<th>weekly goal</th>
-<th>scope</th>
-<th>owned surfaces / files</th>
-<th>required reading</th>
-<th>DoD artifact</th>
-<th>deadline</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>T1-autoservice-answer-loop</td>
-<td>gaga</td>
-<td><code>gaga/0630-autoservice-answer-loop</code></td>
-<td>Goal 1</td>
-<td>Continue from merged #1095/#1096: verify the real AutoService cc
-answer-loop after Claude Code auth/bridge readiness. The target success
-signal is an agent-authored reply in
-<code>session://autosvc/default/tier1</code> that uses the KB fact
-<code>ZEPHYR-7731</code>. If auth cannot be made ready, return exact
-blocker evidence and the smallest next operational step.</td>
-<td>AutoService live stack,
-<code>scripts/autoservice_tier1_seed.exs</code>, #1095 report, #1096 PR
-comment</td>
-<td>#1095 merged report,
-<code>docs/together/2026-06-29/returns/cc-agent-create-failure-resolution.md</code>,
-temporary PG rule</td>
-<td>Return doc with commands, screenshots/log evidence, PG cleanup proof
-if DB tests run, and clear verdict: answer-loop green or auth/bridge
-blocker.</td>
-<td>2026-06-30 16:00</td>
-</tr>
-<tr>
-<td>T2-agent-console-f3-f4-f7</td>
-<td>fatnine</td>
-<td><code>fix/agent-console-qa-f3-f4-f7</code></td>
-<td>Goal 1</td>
-<td>Convert #1027 QA findings into fixes for the high-value Agent
-Console blockers: invalid default <code>advisor</code> session template
-silent failure, occupied-agent delete feedback, and missing session
-remove/delete path decision.</td>
-<td><code>apps/ezagent_plugin_world/</code>,
-<code>apps/ezagent_web/test/ezagent_web/</code>, Agent Console
-LiveView/tests, #1027 docs</td>
-<td>#1027 body,
-<code>docs/together/2026-06-26/agent-console-qa-findings.md</code>,
-AGENTS.md Phoenix/LiveView rules</td>
-<td>PR with tests for F3 and F4; F7 either implemented or explicitly
-split with a tested UX decision.</td>
-<td>2026-06-30 18:00</td>
-</tr>
-<tr>
-<td>T3-world-host-scope-verify</td>
-<td>zyli</td>
-<td><code>verify/world-host-scope-temp-pg</code></td>
-<td>Goal 1</td>
-<td>Rerun the deferred DB-backed gates from
-<code>world-host-scope-config-driven</code> using temporary PG Docker.
-If green, open/refresh PR; if red, return exact failing gate and fix
-recommendation.</td>
-<td><code>apps/ezagent_web/lib/ezagent_web/router.ex</code>,
-<code>config/*.exs</code>, world host routing tests, socialware P10
-E2E</td>
-<td><code>returns/world-host-scope-config-driven.md</code>,
-<code>docs/guide/world-coordination.md</code>, temporary PG rule</td>
-<td>Return doc with commands, PG container cleanup proof, and merge
-recommendation.</td>
-<td>2026-06-30 16:00</td>
-</tr>
-<tr>
-<td>T4-website-demo-followup</td>
-<td>zhaomato</td>
-<td><code>feat/website-demo-followup-0630</code></td>
-<td>Goal 2</td>
-<td>Continue official website work from merged #1090 without touching
-World operator host routing. Focus on demo/content polish and
-<code>@json-render</code> substrate compatibility.</td>
-<td>website/demo docs and app surfaces from #1090; avoid
-<code>apps/ezagent_plugin_world/assets/src/styles.css</code> unless
-coordinated</td>
-<td>#1090, <code>docs/guide/world-coordination.md</code>, FP4
-design-system return</td>
-<td>PR or return with screenshots and clear separation from operator
-World/socialware surfaces.</td>
-<td>2026-06-30 18:00</td>
-</tr>
-<tr>
-<td>T5-kanban-pr1020-review</td>
-<td>jjkysy</td>
-<td><code>review/kanban-pr1020-post-socialware</code></td>
-<td>Goal 3</td>
-<td>Rebase/review #1020 after socialware and #1096 landed. Produce a
-split recommendation: merge as-is, split into smaller PRs, or
-close/rebuild.</td>
-<td>#1020 diff, <code>docs/e2e/kanban-pm-flow/</code>, kanban plugin,
-dev-together docs</td>
-<td>#1020 body,
-<code>docs/together/2026-06-29/notes/0629-status-snapshot.md</code>
-B3</td>
-<td>Review return with exact gates run, changed-file risk map, and
-merge/split verdict.</td>
-<td>2026-06-30 20:00</td>
-</tr>
-<tr>
-<td>T6-close-stale-prs</td>
-<td>allen</td>
-<td><code>docs/close-stale-prs-0630</code></td>
-<td>Goal 3</td>
-<td>Lead-only cleanup: close or refresh stale docs/housekeeping PRs
-#1026, #1022, and any subsumed return PR after extracting useful
-notes.</td>
-<td>PR comments, <code>docs/together/2026-06-29/stack.md</code>,
-<code>docs/together/2026-06-30/plan.md</code></td>
-<td>Current open PR list, 0629 review</td>
-<td>Each stale PR has either a close comment or refreshed mergeable path
-recorded in today’s stack.</td>
-<td>2026-06-30 21:00</td>
-</tr>
-</tbody>
-</table>
-<h2 id="conflict-map">Conflict Map</h2>
+<h1>dev-together 计划 · 2026-06-30（Tue，W27）</h1>
+<div class="meta">
+<b>planned_at:</b> 2026-06-30 09:55 +0800 · <b>lead:</b> allen / codex · <b>day_deadline:</b> 2026-06-30 23:59 +0800<br>
+<b>lead_confirmed:</b> pending（本 HTML 发给 Allen 确认；#1102 确认前不合并）<br>
+<b>本周目标（W27）:</b> 1. Get ezagent running inside the team · 2. Build official website · 3. Make dev-together self-bootstrapping<br>
+<b>0629 close 后基线:</b> #1096 已合 <code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>；#1095 已合 <code>23320282478194263e207ed305660a551219cc80</code>；#1102 仅是 close/plan 文档，待确认。<br>
+<b>今日方向:</b> 从"修正 AutoService materialization 方案"转入 <b>live verification + stale PR cleanup + 产品缺口推进</b>。
+</div>
+
+<div class="big" style="background:#f0fdf4;border-color:#bbf7d0">
+<b>全员必读：</b> 0629 的主要架构风险已经解除：#1096 最终没有把 <code>dispatch_registered_local</code> 合进 core，而是把 sandbox 配置放回 Agent create 初始状态。
+今天的工作不要重新打开这个设计，除非 live 验证给出新的反证。所有会跑测试的任务必须使用<b>临时 PostgreSQL Docker</b>，测试后删除；不使用默认 sqlite，也不依赖本机 55432 PG volume。
+</div>
+
+<h2>§1 0630 输入与缺口</h2>
+<div class="gap"><b>AutoService live answer-loop 还没证明。</b> #1096 修的是 cc orchestrator create/materialization；#1095 是刷新后的 verify 文档。尚未证明真实会话里 agent authored reply，并使用 KB fact <code>ZEPHYR-7731</code>。</div>
+<div class="gap"><b>#1027 Agent Console QA 仍是报告，不是修复。</b> F3 invalid default advisor session template 静默失败、F4 occupied-agent delete 反馈、F7 session remove/delete path 需要进代码和测试。</div>
+<div class="gap"><b>world-host-scope 只过了静态 gate。</b> DB-backed gate 在 return 环境受阻；今天必须临时 PG 重跑，不能把"环境红"当完成。</div>
+<div class="gap"><b>#1020 过大，不能顺手合。</b> 209 files / 13k LOC，post-socialware drift 后需要 dedicated review/test/split verdict。</div>
+<div class="gap"><b>#1026/#1022 是 stale PR debt。</b> 前者是旧 lead-side analysis，后者混了 lockfile sync 与 personal docs；需要关闭或拆分，避免 PR queue 噪音遮住真实工作。</div>
+<div class="gap"><b>0629 close 文档本身要确认。</b> #1102 的 review/plan HTML 需要 Allen 确认后再合并；确认前只 push，不 merge。</div>
+
+<h2>§2 今日任务计划（feature points → 可交付结果）</h2>
 <table>
-<colgroup>
-<col style="width: 33%" />
-<col style="width: 33%" />
-<col style="width: 33%" />
-</colgroup>
-<thead>
+<tr><th>#</th><th>task / feature point</th><th>映射周目标</th><th>负责</th><th>owned surfaces / files</th><th>DoD artifact</th><th>deadline</th></tr>
+
 <tr>
-<th>surface</th>
-<th>tasks</th>
-<th>conflict / serialization rule</th>
+<td>T1</td>
+<td><b>AutoService answer-loop live verify</b>：从 merged #1095/#1096 继续，只验证真实 cc answer-loop。目标成功信号：<code>session://autosvc/default/tier1</code> 中出现 agent-authored reply，并用到 KB fact <code>ZEPHYR-7731</code>。若 Claude auth/bridge 仍未 ready，返回精确 blocker 证据和最小下一步。</td>
+<td>Goal 1</td>
+<td><b>gaga</b></td>
+<td>AutoService live stack · <code>scripts/autoservice_tier1_seed.exs</code> · #1095 report · #1096 PR comment</td>
+<td>return doc：命令、截图/日志、临时 PG cleanup proof（如跑 DB 测试）、green/blocker verdict。</td>
+<td>16:00</td>
 </tr>
-</thead>
-<tbody>
+
 <tr>
-<td>AutoService live stack</td>
-<td>T1, lead close</td>
-<td>#1095 docs are already merged; T1 owns only real answer-loop
-verification and must not reopen the core materialization design unless
-new evidence contradicts #1096.</td>
+<td>T2</td>
+<td><b>Agent Console F3/F4/F7 fixes</b>：把 #1027 QA findings 转成修复。优先 F3 invalid default advisor template 不静默、F4 occupied-agent delete 有反馈、F7 session remove/delete path 做实现或明确拆分。</td>
+<td>Goal 1</td>
+<td><b>fatnine</b></td>
+<td><code>apps/ezagent_plugin_world/</code> · <code>apps/ezagent_web/test/ezagent_web/</code> · Agent Console LiveView/tests</td>
+<td>PR：F3/F4 有测试；F7 implement 或 split decision 有测试/设计说明。</td>
+<td>18:00</td>
 </tr>
+
 <tr>
-<td>Agent Console / World LiveView</td>
-<td>T2, T3, T4</td>
-<td>T2 owns Agent Console behavior. T3 only verifies/reruns host
-routing. T4 must not modify operator World routing or shared
-<code>styles.css</code> without explicit coordination.</td>
+<td>T3</td>
+<td><b>world-host-scope temp-PG verification</b>：重跑 <code>world-host-scope-config-driven</code> 的 DB-backed gates。绿则开/刷新 PR；红则返回 exact failing gate 和修复建议。</td>
+<td>Goal 1</td>
+<td><b>zyli</b></td>
+<td><code>apps/ezagent_web/lib/ezagent_web/router.ex</code> · <code>config/*.exs</code> · world host routing tests · socialware P10 E2E</td>
+<td>return doc：命令、PG container cleanup proof、merge recommendation。</td>
+<td>16:00</td>
 </tr>
+
 <tr>
-<td><code>apps/ezagent_plugin_world/assets/src/styles.css</code></td>
-<td>T4, possible T2</td>
-<td>Serialize through zhaomato if website/demo visual work touches it;
-T2 should prefer behavior/tests over shared style edits.</td>
+<td>T4</td>
+<td><b>official website demo follow-up</b>：从已合 #1090 继续官网 demo/content polish 与 <code>@json-render</code> substrate compatibility；不碰 World operator host routing。</td>
+<td>Goal 2</td>
+<td><b>zhaomato</b></td>
+<td>#1090 website/demo surfaces；避免未经协调修改 <code>apps/ezagent_plugin_world/assets/src/styles.css</code></td>
+<td>PR/return：截图 + 与 operator World/socialware surface 的边界说明。</td>
+<td>18:00</td>
 </tr>
+
 <tr>
-<td>PR queue / dev-together ledger</td>
-<td>T5, T6, lead</td>
-<td>T5 owns #1020 technical verdict. T6 owns stale docs PR cleanup. Lead
-updates <code>stack.md</code> only after returns.</td>
+<td>T5</td>
+<td><b>#1020 kanban/dev-together review</b>：rebase/review #1020，给出 merge-as-is / split / close-rebuild verdict。这个 PR 太大，先评审，不先写代码。</td>
+<td>Goal 3</td>
+<td><b>jjkysy</b></td>
+<td>#1020 diff · <code>docs/e2e/kanban-pm-flow/</code> · kanban plugin · dev-together docs</td>
+<td>review return：exact gates run、changed-file risk map、merge/split verdict。</td>
+<td>20:00</td>
 </tr>
+
 <tr>
-<td>Test database</td>
-<td>T2, T3, T5</td>
-<td>All tests use temporary PostgreSQL Docker containers and delete them
-after; no default sqlite and no local 55432 PG volume.</td>
+<td>T6</td>
+<td><b>lead stale PR cleanup</b>：关闭或刷新 #1026/#1022 等 stale docs/housekeeping PR，抽取仍有用的 notes，写进今日 stack。</td>
+<td>Goal 3</td>
+<td><b>allen</b></td>
+<td>PR comments · <code>docs/together/2026-06-29/stack.md</code> · <code>docs/together/2026-06-30/plan.md</code></td>
+<td>每个 stale PR 有 close comment 或 refreshed merge path；记录在今日 stack。</td>
+<td>21:00</td>
 </tr>
-</tbody>
 </table>
-<h2 id="handoff-order">Handoff Order</h2>
-<ol type="1">
-<li>T1 to gaga first: live answer-loop verification, building on merged
-#1095/#1096.</li>
-<li>T3 to zyli in parallel: verification-only and uses temporary
-PG.</li>
-<li>T2 to fatnine once T3’s host-routing result is known if it changes
-World routing assumptions; otherwise can start immediately with Agent
-Console tests.</li>
-<li>T4 to zhaomato in parallel but with World style ownership
-warning.</li>
-<li>T5 to jjkysy as a review-first handoff; no build until the verdict
-says split or merge.</li>
-<li>T6 stays with lead and runs after T1/T5 results.</li>
+
+<h2>§3 按开发者规划（handoff 总览）</h2>
+<table>
+<tr><th>开发者</th><th>今日 track</th><th>闭环/并行说明</th><th>依据</th></tr>
+<tr><td><b>gaga</b></td><td><span class="ok">T1 AutoService answer-loop live verify</span>。只验证真实 reply loop，不重开 #1096 core 设计。</td><td>可与 T2/T3/T4 并行；若 auth/bridge blocker，必须给最小可复现证据。</td><td>#1095 merged report · #1096 final design · 0629 review。</td></tr>
+<tr><td><b>fatnine</b></td><td><span class="ok">T2 Agent Console QA fixes</span>。把 #1027 从 QA report 推进到 tested fixes。</td><td>若涉及 CapBAC/session membership/cross-workspace authority，触发 discuss-first。</td><td>#1027 body · <code>docs/together/2026-06-26/agent-console-qa-findings.md</code>。</td></tr>
+<tr><td><b>zyli</b></td><td><span class="ok">T3 world-host-scope temp-PG verification</span>。验证优先，不把环境失败伪装成代码结论。</td><td>临时 PG Docker；测试后删除并记录 proof。</td><td><code>returns/world-host-scope-config-driven.md</code> · world coordination guide。</td></tr>
+<tr><td><b>zhaomato</b></td><td><span class="ok">T4 website demo follow-up</span>。继续 #1090 官网 demo，避免碰 operator World host routing。</td><td>若必须改 shared styles，先与 T2/T3 串行协调。</td><td>#1090 merged website demo · W27 Goal 2。</td></tr>
+<tr><td><b>jjkysy</b></td><td><span class="ok">T5 #1020 review-first track</span>。先 rebase/review/test/split verdict，不 opportunistic merge。</td><td>大 PR dedicated track；需要 changed-file risk map。</td><td>#1020 open state · kanban plugin 原作背景。</td></tr>
+<tr><td><b>allen</b>（lead）</td><td><span class="ok">T6 stale PR cleanup + #1102 confirmation gate</span>。</td><td>#1102 等用户确认 HTML 后再 merge。</td><td>0629 stack/review · current open PR list。</td></tr>
+<tr><td><b>codex / claude</b>（agent）</td><td>off-plan support：review/test/merge support、Feishu summaries、isolated verification runs。</td><td>不占 human-dev track row。</td><td>team.md role: agent。</td></tr>
+</table>
+
+<h2>冲突图 / 依赖与顺序</h2>
+<ul>
+<li><b>AutoService live stack：</b> T1 只拥有 real answer-loop verification。除非新证据推翻 #1096，否则不得重新引入 local dispatch / ReadyGate bypass。</li>
+<li><b>Agent Console / World LiveView：</b> T2 拥有 Agent Console behavior；T3 只验证 host routing；T4 不改 operator World routing。若都碰 World shared surface，按 T3 verify → T2 behavior → T4 visual 顺序。</li>
+<li><b><code>apps/ezagent_plugin_world/assets/src/styles.css</code>：</b> T4 可能触达，T2 应尽量只改 behavior/tests。若必须共享样式，zhaomato owns serialization。</li>
+<li><b>PR queue / dev-together ledger：</b> T5 owns #1020 technical verdict；T6 owns stale docs PR cleanup；lead 只在 return 到达后更新 stack。</li>
+<li><b>Test database：</b> T2/T3/T5 如需 DB，一律临时 PostgreSQL Docker，测试后删除；不使用默认 sqlite。</li>
+</ul>
+
+<h2>handoff 顺序</h2>
+<ol>
+<li><b>T1 gaga</b> 先发：live answer-loop 是 #1096/#1095 后的最高不确定性。</li>
+<li><b>T3 zyli</b> 并行：verification-only，用临时 PG，不阻塞 T1。</li>
+<li><b>T2 fatnine</b> 可立即开工；若 T3 改变 World routing assumptions，再回看。</li>
+<li><b>T4 zhaomato</b> 并行，但 shared style/World route 要先协调。</li>
+<li><b>T5 jjkysy</b> review-first；无 verdict 前不做大改。</li>
+<li><b>T6 allen</b> 在 T1/T5 返回后做 stale PR cleanup；#1102 等 Allen 确认 HTML 后合并。</li>
 </ol>
-<h2 id="off-plan-support">Off-Plan Support</h2>
+
+<h2>Discuss-first triggers</h2>
+<blockquote><b>T2 停手线：</b> 任何 CapBAC、session membership、cross-workspace authority 变化必须先设计确认。</blockquote>
+<blockquote><b>T4 停手线：</b> 任何 World operator routing、socialware customer/external routes、shared world styles 变化必须与 T2/T3 协调。</blockquote>
+<blockquote><b>T5 停手线：</b> 若结论是 #1020 merge-as-is，必须有 green CI + changed-file risk map；否则 split first。</blockquote>
+
+<h2>Out of scope</h2>
 <ul>
-<li>codex: bounded review/test/merge support; no independent track
-row.</li>
-<li>claude: Feishu-facing summaries, PR comment drafting, and isolated
-verification runs.</li>
+<li>今天不重写 #1096 的架构方案；只用 live evidence 验证。</li>
+<li>今天不把 #1020 当小修顺手 merge。</li>
+<li>今天不在没有 PG cleanup proof 的情况下接受 DB gate return。</li>
+<li>今天不合并 #1102，直到 Allen 确认本 HTML 与历史文档风格/内容一致。</li>
 </ul>
-<h2 id="discuss-first-triggers">Discuss-First Triggers</h2>
-<ul>
-<li>Any T2 fix that changes CapBAC, session membership semantics, or
-cross-workspace authority must stop for design review.</li>
-<li>Any T4 change touching World operator routing, socialware customer
-routes, or shared world styles must coordinate with T3/T2.</li>
-<li>Any T5 conclusion to merge #1020 as-is must include green CI and a
-changed-file risk map; otherwise split first.</li>
-</ul>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本 HTML 对齐 0629 plan 的团队计划模板；Markdown 底稿保留在 <code>plan.md</code>。</p>
 </body>
 </html>

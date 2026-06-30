@@ -1,243 +1,132 @@
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
+<html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="generator" content="pandoc" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>Dev Together Review - 2026-06-29</title>
-  <style>
-    /* Default styles provided by pandoc.
-    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
-    */
-    html {
-      color: #1a1a1a;
-      background-color: #fdfdfd;
-    }
-    body {
-      margin: 0 auto;
-      max-width: 36em;
-      padding-left: 50px;
-      padding-right: 50px;
-      padding-top: 50px;
-      padding-bottom: 50px;
-      hyphens: auto;
-      overflow-wrap: break-word;
-      text-rendering: optimizeLegibility;
-      font-kerning: normal;
-    }
-    @media (max-width: 600px) {
-      body {
-        font-size: 0.9em;
-        padding: 12px;
-      }
-      h1 {
-        font-size: 1.8em;
-      }
-    }
-    @media print {
-      html {
-        background-color: white;
-      }
-      body {
-        background-color: transparent;
-        color: black;
-        font-size: 12pt;
-      }
-      p, h2, h3 {
-        orphans: 3;
-        widows: 3;
-      }
-      h2, h3, h4 {
-        page-break-after: avoid;
-      }
-    }
-    p {
-      margin: 1em 0;
-    }
-    a {
-      color: #1a1a1a;
-    }
-    a:visited {
-      color: #1a1a1a;
-    }
-    img {
-      max-width: 100%;
-    }
-    svg {
-      height: auto;
-      max-width: 100%;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      margin-top: 1.4em;
-    }
-    h5, h6 {
-      font-size: 1em;
-      font-style: italic;
-    }
-    h6 {
-      font-weight: normal;
-    }
-    ol, ul {
-      padding-left: 1.7em;
-      margin-top: 1em;
-    }
-    li > ol, li > ul {
-      margin-top: 0;
-    }
-    blockquote {
-      margin: 1em 0 1em 1.7em;
-      padding-left: 1em;
-      border-left: 2px solid #e6e6e6;
-      color: #606060;
-    }
-    code {
-      white-space: pre-wrap;
-      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
-      font-size: 85%;
-      margin: 0;
-      hyphens: manual;
-    }
-    pre {
-      margin: 1em 0;
-      overflow: auto;
-    }
-    pre code {
-      padding: 0;
-      overflow: visible;
-      overflow-wrap: normal;
-    }
-    .sourceCode {
-     background-color: transparent;
-     overflow: visible;
-    }
-    hr {
-      border: none;
-      border-top: 1px solid #1a1a1a;
-      height: 1px;
-      margin: 1em 0;
-    }
-    table {
-      margin: 1em 0;
-      border-collapse: collapse;
-      width: 100%;
-      overflow-x: auto;
-      display: block;
-      font-variant-numeric: lining-nums tabular-nums;
-    }
-    table caption {
-      margin-bottom: 0.75em;
-    }
-    tbody {
-      margin-top: 0.5em;
-      border-top: 1px solid #1a1a1a;
-      border-bottom: 1px solid #1a1a1a;
-    }
-    th {
-      border-top: 1px solid #1a1a1a;
-      padding: 0.25em 0.5em 0.25em 0.5em;
-    }
-    td {
-      padding: 0.125em 0.5em 0.25em 0.5em;
-    }
-    header {
-      margin-bottom: 4em;
-      text-align: center;
-    }
-    #TOC li {
-      list-style: none;
-    }
-    #TOC ul {
-      padding-left: 1.3em;
-    }
-    #TOC > ul {
-      padding-left: 0;
-    }
-    #TOC a:not(:hover) {
-      text-decoration: none;
-    }
-    span.smallcaps{font-variant: small-caps;}
-    div.columns{display: flex; gap: min(4vw, 1.5em);}
-    div.column{flex: auto; overflow-x: auto;}
-    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
-    /* The extra [class] is a hack that increases specificity enough to
-       override a similar rule in reveal.js */
-    ul.task-list[class]{list-style: none;}
-    ul.task-list li input[type="checkbox"] {
-      font-size: inherit;
-      width: 0.8em;
-      margin: 0 0.8em 0.2em -1.6em;
-      vertical-align: middle;
-    }
-    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
-  </style>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-06-29</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .merged{background:#dcfce7;color:#166534}.defer{background:#fef3c7;color:#92400e}.open{background:#e0e7ff;color:#3730a3}.risk{background:#fee2e2;color:#991b1b}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin:14px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
 </head>
 <body>
-<header id="title-block-header">
-<h1 class="title">Dev Together Review - 2026-06-29</h1>
-</header>
-<h1 id="dev-together-review---2026-06-29">Dev Together Review -
-2026-06-29</h1>
-<p>reviewed_at: 2026-06-30 09:45 +0800 lead: allen / codex timezone:
-GMT+8</p>
-<h2 id="close-summary">1. Close Summary</h2>
-<p>The main close result is #1096. The initial branch solved the wrong
-problem by adding a core local dispatch bypass. The accepted merge
-removed that bypass and fixed the actual AutoService create-time state
-problem:</p>
+<h1>dev-together 回顾 · 2026-06-29 周一 close</h1>
+<p>reviewed_at: <code>2026-06-30 09:45 +0800</code>。本回顾是 0629 returns 的补账 close：当天有 return 文件但没有 <code>stack.md</code>，因此 0630 先补 ledger，再合并已验证项。原始底稿见 <code>docs/together/2026-06-29/review.md</code> 与 <code>stack.md</code>。</p>
+
+<div>
+  <span class="kpi"><b>4</b>return files reconciled</span>
+  <span class="kpi"><b>2</b>PRs merged</span>
+  <span class="kpi"><b>2</b>merge SHAs recorded</span>
+  <span class="kpi"><b>4</b>stale/open PRs carried</span>
+  <span class="kpi"><b>1</b>wrong-approach caught before merge</span>
+</div>
+
+<div class="big">
+<b>产品/架构大局：</b> 0629 的关键不是多合一个修复，而是把 AutoService cc orchestrator 的问题从错误的 Y 解法拉回 X 问题。
+最初 #1096 引入 <code>dispatch_registered_local</code>，把本应属于 agent create 初始状态的 sandbox 配置绕进 core dispatch 本地旁路；最终合入版删除这条路，
+改为 <b>AgentTemplate 物化 + Agent Kind create-time sandbox config 初始化 + <code>sandbox.update_config</code></b>。
+这意味着：AutoService 需要的是正确 materialize 一个 live cc orchestrator，而不是让 core dispatch 暴露一条新的业务旁路。
+</div>
+
+<div class="note">
+<b>Allen 关心的 core leak 结论：</b> 合入到 <code>main</code> 的 #1096 没有修改 <code>apps/ezagent_core/lib/ezagent/invocation.ex</code>，也没有留下 <code>dispatch_registered_local</code>。
+授权仍走 <code>Identity.Grant</code> + <code>Invocation.dispatch/1</code>；AutoService 的特定配置被收回到 create-time agent state。
+</div>
+
+<h2>§1 0629 close 结果（按 return）</h2>
+<table>
+<tr><th>return</th><th>branch / PR</th><th>owner</th><th>close outcome</th><th>说明</th></tr>
+<tr>
+<td><code>cc-agent-create-failure-resolution.md</code></td>
+<td><code>fix/cc-agent-create-autoservice</code> · #1096</td>
+<td>gaga + codex lead redo</td>
+<td><span class="pill merged">merged</span><br><code>72ae93a381d87943d2d41a04446483c8026fa7b0</code></td>
+<td>重做后移除 core local dispatch，改为 create-time sandbox init；本地临时 PG 全量 <code>mix precommit</code> 通过；GitHub CI 绿后 squash merge。</td>
+</tr>
+<tr>
+<td><code>autoservice-live-verify-codex.md</code></td>
+<td>evidence only · related #1095</td>
+<td>codex</td>
+<td><span class="pill merged">merged as refreshed docs</span><br><code>23320282478194263e207ed305660a551219cc80</code></td>
+<td>#1095 在 #1096 之后刷新，删除 stale local-dispatch 结论，记录最终 materialization fix。它不证明真实 agent-authored answer-loop，0630 继续验。</td>
+</tr>
+<tr>
+<td><code>world-host-scope-config-driven.md</code></td>
+<td><code>fix/world-host-scope-config-driven</code></td>
+<td>codex</td>
+<td><span class="pill defer">deferred</span></td>
+<td>静态 gate 通过，DB-backed gate 在 return 环境受阻。0630 以临时 PostgreSQL Docker 重跑后再决定 PR/merge。</td>
+</tr>
+<tr>
+<td><code>zyli-fp4-design-system.md</code></td>
+<td>#1083</td>
+<td>zyli</td>
+<td><span class="pill merged">already on main</span></td>
+<td>#1083 已在本 close 前进入 main：<code>a7ad4a66 feat(ui): migrate handoff surfaces to shadcn brand system</code>。外部 DS-source 问题为 follow-up。</td>
+</tr>
+</table>
+
+<h2>§2 GitHub PR 状态对齐</h2>
+<table>
+<tr><th>PR</th><th>0629/0630 close 状态</th><th>决定</th></tr>
+<tr><td>#1096 <b>fix cc agent create autoservice</b></td><td><span class="pill merged">merged</span> CI green, mergeable</td><td>合入 main：<code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>。</td></tr>
+<tr><td>#1095 <b>refresh AutoService live verify after #1096</b></td><td><span class="pill merged">merged</span> refreshed after #1096, CI green</td><td>合入 main：<code>23320282478194263e207ed305660a551219cc80</code>。</td></tr>
+<tr><td>#1027 <b>Agent Console QA findings</b></td><td><span class="pill open">left open intentionally</span></td><td>作为 0630 Agent Console bugfix 输入源；修复排进 T2 后再关闭/刷新。</td></tr>
+<tr><td>#1026 <b>2026-06-26 team-PR intake</b></td><td><span class="pill defer">stale</span></td><td>抽取仍有价值的 notes 后关闭，不让旧 lead-side analysis 长期挂着。</td></tr>
+<tr><td>#1022 <b>lockfile sync + docs/rh</b></td><td><span class="pill defer">stale / mixed scope</span></td><td>拆分或关闭；lockfile sync 与个人 docs 不应绑在一个 PR。</td></tr>
+<tr><td>#1020 <b>kanban team dev flow</b></td><td><span class="pill open">dedicated review required</span></td><td>209 files / 13k LOC，不能 opportunistic merge；0630 独立 T5 做 rebase/review/split verdict。</td></tr>
+</table>
+
+<h2>§3 方法复盘（method deltas）</h2>
+<h3>做对的地方</h3>
 <ul>
-<li>cc orchestrator creation goes through AgentTemplate
-materialization;</li>
-<li>sandbox config is initialized during Agent Kind create;</li>
-<li><code>sandbox.write_path</code> is now
-<code>sandbox.update_config</code>;</li>
-<li><code>TemplateSpawn</code> skips fallback dispatch when the live
-sandbox slice already matches the returned meta;</li>
-<li>grants stay on the normal <code>Identity.Grant</code> +
-<code>Invocation.dispatch/1</code> path.</li>
+<li><b>wrong-Y 被及时拦住：</b> 用户追问 "是不是钻进 Y 问题" 后，close 重新定位 X：AutoService seed 要 materialize live cc orchestrator，并带正确 cwd/sandbox/respawn/kb 权限。</li>
+<li><b>架构边界守住：</b> 最终方案没有把 AutoService 业务逻辑、ReadyGate 例外或 CapBAC 旁路放进 core dispatch；sandbox config 回到 agent create 初始状态。</li>
+<li><b>测试环境纪律变好：</b> #1096 验证使用临时 PostgreSQL Docker，测试后删除；不再依赖废弃 sqlite 或本机 55432 脏 PG。</li>
+<li><b>给贡献者留下上下文：</b> PR body/comment 解释 redo 原因，避免佳佳只能从 TUI 碎片理解为什么原方案被替换。</li>
 </ul>
-<p>The merged SHA is
-<code>72ae93a381d87943d2d41a04446483c8026fa7b0</code>.</p>
-<h2 id="what-went-well">2. What Went Well</h2>
-<ul>
-<li>The suspected core leak was caught before merge. Final
-<code>origin/main</code> diff has no
-<code>apps/ezagent_core/lib/ezagent/invocation.ex</code> change.</li>
-<li>The fix now matches the architecture: sandbox config is create-time
-Agent state, not an external transport readiness concern.</li>
-<li>Verification used a disposable PostgreSQL Docker container and
-removed it after tests, avoiding both the deprecated sqlite path and the
-corrupt local PG volume.</li>
-<li>PR comment and PR body now explain the redo, so the contributor has
-a durable record rather than only TUI context.</li>
-</ul>
-<h2 id="friction-process-debt">3. Friction / Process Debt</h2>
-<ul>
-<li>2026-06-29 had returns but no <code>stack.md</code>, so close had to
-reconstruct the ledger after the fact.</li>
-<li><code>team.md</code> still points several developers at old latest
-returns. Today’s plan should cite the newest real return/PR state even
-if <code>team.md</code> is stale, then update team state in the next
-review.</li>
-<li><code>2026-W27/weekly-goals.md</code> was missing. It has now been
-created by rolling the W26 goals forward and adding dev-together
-self-bootstrapping as an explicit weekly goal.</li>
-<li>Local default PG on 55432 is corrupt. The durable rule is now: use
-temporary PG Docker for tests and delete it after the run.</li>
-</ul>
-<h2 id="carry-forward-to-2026-06-30">4. Carry Forward To 2026-06-30</h2>
-<ol type="1">
-<li>Run the remaining AutoService real answer-loop verification after
-Claude Code auth/bridge readiness is available. #1095 now records
-#1096’s final materialization fix, but it does not prove an
-agent-authored reply.</li>
-<li>Rerun <code>world-host-scope-config-driven</code> DB-backed gates
-with temporary PG and decide whether to open/merge a PR.</li>
-<li>Turn #1027 Agent Console QA findings into prioritized bugfix tasks
-instead of leaving the report as an open stale docs PR.</li>
-<li>Review #1020 as a dedicated kanban/dev-together E2E track. It is too
-large for opportunistic close.</li>
-<li>Decide #1022 split/close: lockfile sync and personal docs should not
-remain coupled.</li>
-</ol>
+
+<h3>暴露的问题</h3>
+<blockquote><b>0629 没有及时写 stack.md。</b> return 到 close 之间缺少 merge ledger，导致 0630 必须补账重建。规则修正：有 return 就必须在 close 前写 <code>stack.md</code>，每个 return 明确 merged/deferred/superseded/out-of-scope。</blockquote>
+<blockquote><b>team.md 滞后。</b> 多名开发者的 <code>latest_return</code> 仍指向旧日期，0630 plan 必须结合最新 return/PR 实况，而不能只信 roster。review 作为唯一 writer 需要在日终更新。</blockquote>
+<blockquote><b>验证约束需要显式化。</b> 本机默认 sqlite 已废弃，本机 PG volume 也已证实不可靠。后续测试规则：始终使用临时 PostgreSQL Docker，测试后删除。</blockquote>
+
+<h2>§4 Required accounting</h2>
+<table>
+<tr><th>Metric</th><th class="num">Count</th><th>说明</th></tr>
+<tr><td>0629 plan 任务</td><td class="num">n/a</td><td>0629 有周计划 HTML，但当天 close ledger 缺失；本 review 按 returns 补账。</td></tr>
+<tr><td>return files arrived</td><td class="num">4</td><td>#1096, #1095 evidence refresh, world-host-scope, zyli FP4。</td></tr>
+<tr><td>returns entered stack.md</td><td class="num">4</td><td>0630 补写 <code>docs/together/2026-06-29/stack.md</code>。</td></tr>
+<tr><td>merged to main in this close pass</td><td class="num">2</td><td>#1096 + #1095。</td></tr>
+<tr><td>deferred</td><td class="num">1</td><td>world-host-scope 需临时 PG 重跑。</td></tr>
+<tr><td>already merged before ledger</td><td class="num">1</td><td>#1083 zyli DS handoff surfaces。</td></tr>
+<tr><td>related stale/open PRs carried</td><td class="num">4</td><td>#1027, #1026, #1022, #1020。</td></tr>
+</table>
+
+<h2>§5 结转到 2026-06-30</h2>
+<table>
+<tr><th>结转项</th><th>owner / 0630 track</th><th>done signal</th></tr>
+<tr><td>AutoService real answer-loop verification：证明 <code>session://autosvc/default/tier1</code> 中有 agent-authored reply，并用到 KB fact <code>ZEPHYR-7731</code>。</td><td>gaga · T1</td><td>绿则截图/日志；不绿则给出 Claude auth/bridge blocker 的最小证据。</td></tr>
+<tr><td>#1027 Agent Console QA findings 进入修复，而不是继续做 docs-only open PR。</td><td>fatnine · T2</td><td>F3/F4 测试覆盖；F7 implement 或明确 split decision。</td></tr>
+<tr><td><code>world-host-scope-config-driven</code> DB-backed gates 以临时 PG 重跑。</td><td>zyli · T3</td><td>命令、结果、PG cleanup proof、PR/merge 建议。</td></tr>
+<tr><td>#1020 kanban/dev-together E2E 做 dedicated review。</td><td>jjkysy · T5</td><td>changed-file risk map + merge/split/close verdict。</td></tr>
+<tr><td>#1026/#1022 stale PR cleanup。</td><td>allen · T6</td><td>关闭或刷新路径写回 0630 stack。</td></tr>
+</table>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">本 HTML 使用 0625/0628 review 的团队报告模板；Markdown 底稿保留在 <code>review.md</code>。</p>
 </body>
 </html>
