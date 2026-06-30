@@ -773,13 +773,24 @@ defmodule Ezagent.Workspace do
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
+    dispatch_ctx =
+      %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      |> maybe_put_deadline_ms(ctx)
+
     Router.dispatch(%Cmd{
       target: target,
       action: :create_agent,
       args: args,
-      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: dispatch_ctx
     })
   end
+
+  defp maybe_put_deadline_ms(dispatch_ctx, %{deadline_ms: deadline_ms})
+       when is_integer(deadline_ms) and deadline_ms > 0 do
+    Map.put(dispatch_ctx, :deadline_ms, deadline_ms)
+  end
+
+  defp maybe_put_deadline_ms(dispatch_ctx, _ctx), do: dispatch_ctx
 
   @doc """
   Dispatch the `:create_session` action on Workspace Kind — the
