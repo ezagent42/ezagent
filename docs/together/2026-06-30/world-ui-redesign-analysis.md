@@ -208,6 +208,42 @@ The external mirror route is session-level configuration. It should be reachable
 the Chat session drawer and from Admin Routing, but it should not be presented as a
 generic global plugin setting.
 
+## Current UI vs Target IM Gap Matrix
+
+| Area | Current World UI behavior | Target IM-like behavior | Prototype decision |
+| --- | --- | --- | --- |
+| First impression | The app reads as an operator console with several route surfaces. Chat exists, but it is not the dominant mental model. | The default surface should read as a chat product: sessions first, conversation center, session context drawer beside it. | Make Chat the default top-level destination and model the screen after the existing session detail layout. |
+| Primary navigation | Route vocabulary is implementation-oriented: sessions, identities, workspaces, plugins, profile, admin. | Navigation should match user intent: Chat, Agents, Manage. | Collapse top-level IA to `Chat / Agents / Manage`. |
+| Header | Header controls can compete with the main task, especially visible search or command controls during the first redesign pass. | Header should keep only global context and account controls that make sense everywhere. | Keep workspace switcher and user menu; remove visible search/CmdK entry from the prototype header. |
+| Workspace switching | Workspace is a real global scope but can be perceived as another settings/admin item. | Workspace switcher must stay visible as the global context selector. | Keep `ezagent / <workspace>` in the app shell; Manage can link to workspace management, not own the active switcher. |
+| Chat layout | The strongest existing pattern is the session detail view, but the whole World UI is not organized around it. | Session list, message feed, composer, and right drawer should be the main operating surface. | Use a three-column Chat screen: session list, conversation, session drawer. |
+| Session drawer | Session operations are present, but the UI direction needs to make members, invite, routing, tools, and mirrors feel like part of the conversation. | The right drawer should stay close to the conversation and support repeated session operations without route switching. | Right drawer includes members, invite, routing, external mirror, tools, and terminal affordances. |
+| Profile | Profile can look like an application settings section if it is treated as peer navigation. | Profile is personal account state and belongs behind the user avatar menu. | Move Profile, theme, and logout/account controls into the user menu. |
+| Agents | Identity, agent detail, config, API keys, caps, and terminal routes exist but need one clear mental bucket. | Agents is where users manage participants that can join or act in sessions. | Agents includes user/agent lists, create agent, and detail tabs for config, keys, caps, extensions, terminal. |
+| Create Agent | Generic card-style prototypes did not match the current implementation details. | Create Agent must use the real form model so the demo does not invent fields. | Prototype uses actual flavor select, name, project CWD, schema-driven fields, requested caps, PTY, and URI preview. |
+| Manage | A generic Settings bucket would mix workspace, plugins, system settings, and personal profile. | Manage should mean shared operational control, not personal preferences. | Manage is split into Workspace, Plugins, Integrations, Admin, Access, and System. |
+| Plugins | Plugin cards do not all have the same behavior. Some route to config, some filter agents, some have no config surface. | Plugin UI should follow each plugin's declared `config_surface`. | Feishu, Kanban, Auto derive, flavor plugins, no-surface plugins, and KB route gap are represented separately. |
+| Admin | Admin has many implemented subroutes, but presenting them as a broad settings pile is hard to scan. | Admin should be a sub-area inside Manage with its own dashboard and subnav. | Admin Dashboard, Observability, Registry, Snapshots, Templates, Capabilities, Authz Audit, Settings, and Routing are covered. |
+| Known route gaps | Some declared config surfaces are not actually handled by World routes/navigation. | Gaps should be visible so production work fixes them rather than masking them with fake UI. | `/plugins/kb` is marked as a route gap. |
+
+## Production Follow-up Slices
+
+These slices are intentionally listed as follow-up work after team confirmation.
+They should not be bundled into the demo PR.
+
+| Slice | Goal | Main surfaces | Acceptance evidence |
+| --- | --- | --- | --- |
+| P0 sign-off | Confirm the IM-like IA direction before production edits. | Prototype and this analysis document. | Team decision recorded in the PR or dev-together review. |
+| P1 app shell IA | Rename and reorganize primary nav to Chat, Agents, Manage; keep workspace switcher global; move Profile to user menu; remove visible search/CmdK entry if confirmed. | `main.tsx`, `world_navigation.js`, `Ezagent.World.Navigation`, route metadata. | Navigation tests plus desktop/mobile screenshots showing no overlap. |
+| P2 Chat default surface | Make the session/chat experience the default World landing pattern. | `Conversation.tsx`, session list data, session route handling, focused CSS or component-level styles. | Browser proof of session list, conversation, composer, and drawer in one screen. |
+| P3 session drawer parity | Align the right drawer with the existing session detail style and preserve member, invite, routing, tools, mirror, and terminal affordances. | `Conversation.tsx`, conversation data/actions, session invite/search actions, external mirror links. | Interaction test or browser script covering invite, routing visibility, and drawer state. |
+| P4 Agents IA | Consolidate identity and agent routes under Agents without changing backend contracts. | Agent list/detail/create surfaces, `/identities/*` route rendering. | Create Agent form screenshot and tests proving actual form fields still dispatch the existing action. |
+| P5 Manage IA | Build the Manage landing and subnav around Workspace, Plugins, Integrations, Admin, Access, and System. | WorkspacePlugin/Admin surfaces and route mapping. | Route coverage test proving all existing management routes remain reachable. |
+| P6 plugin config accuracy | Make plugin cards route according to `config_surface` instead of a generic settings panel. | Feishu, Kanban, Auto derive, flavor-filter links, no-config plugin states. | Plugin matrix test or snapshot showing route/flavor/no-surface behavior for each installed plugin. |
+| P7 admin detail polish | Keep Admin as a Manage sub-area while preserving current admin subroutes and SMTP/routing behavior. | `Admin.tsx`, admin data/actions. | Admin subnav browser proof plus SMTP form route coverage. |
+| P8 KB route decision | Decide whether `/plugins/kb` should be implemented, hidden, or changed in the plugin declaration. | KB plugin `config_surface`, World routes/navigation. | Either a working KB config route or a removed/deferred link with no dead navigation. |
+| P9 responsive and visual gate | Ensure the new IA works on desktop and mobile with the #1083 shadcn brand system. | World frontend styles, mobile nav, screenshots. | Desktop/mobile Playwright screenshots and no horizontal overflow. |
+
 ## Functional Coverage Checklist
 
 The updated prototype now covers the major World UI functions discussed during the
