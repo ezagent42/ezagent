@@ -384,12 +384,18 @@ export function Conversation({
       </aside>
 
       <section className="flex min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
-        <div className="flex min-h-[58px] items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <div>
+        <div
+          data-world-session-header
+          className="flex min-h-[58px] flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-nowrap sm:items-center"
+        >
+          <div className="min-w-0 flex-1">
             <h2 className="text-[13px] font-bold text-foreground">{sessionUri ? uriSegment(sessionUri) : "Conversation"}</h2>
             <p className="mt-0.5 max-w-[48ch] truncate font-mono text-[11px] text-muted-foreground">{sessionUri || "No active session"}</p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div
+            data-world-session-toolbar
+            className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end"
+          >
             {sessions.length > 1 && (
               <select
                 className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground lg:hidden"
