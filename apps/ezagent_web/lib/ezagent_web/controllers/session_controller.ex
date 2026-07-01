@@ -38,6 +38,7 @@ defmodule EzagentWeb.SessionController do
       {{CRED_ERROR}}
       <form method="post" action="/login">
         <input type="hidden" name="_csrf_token" value="{{CSRF}}">
+        {{RETURN_TO_FIELD}}
         <label for="email">{{T_EMAIL_ADDRESS}}</label>
         <input type="email" id="email" name="email" placeholder="you@example.com" required autofocus>
         <label for="password">{{T_PASSWORD}}</label>
@@ -80,33 +81,47 @@ defmodule EzagentWeb.SessionController do
   # workspace instead of `default`, and the page surfaces "Signing into
   # <name>" so the user understands the context they're about to enter.
   def new(conn, params) do
-    render_login_page(conn, workspace: Map.get(params, "workspace"))
+    render_login_page(conn,
+      workspace: Map.get(params, "workspace"),
+      return_to: Map.get(params, "return_to")
+    )
   end
 
   # POST /login — email + password (task #87 primary login). Resolves the
   # email to its canonical entity URI, authenticates password-only (no
   # token-as-password), then gates on email_verified. Generic errors so the
   # form does not leak which emails exist.
-  def create(conn, %{"email" => email, "password" => password})
+  def create(conn, %{"email" => email, "password" => password} = params)
       when is_binary(email) and is_binary(password) do
     email = email |> String.trim() |> String.downcase()
+    # Phase 9 PR-8 pattern (see `delete/2`): honour a `return_to` so a visitor
+    # who clicked "登录" from a socialware share page
+    # (`/socialware/external?session_uri=…`) lands back there after signing in
+    # instead of being dumped on `/sessions`. `safe_return_to/2` enforces
+    # local-relative paths (rejects absolute + protocol-relative URLs), so it
+    # can never be an open-redirect. Falls back to `/sessions` when absent.
+    return_to = params |> Map.get("return_to") |> safe_return_to("/sessions")
 
     case resolve_and_auth(email, password) do
       {:ok, uri_str} ->
         if login_verified?(uri_str) do
           conn
           |> SessionPrincipal.put(uri_str, workspace: nil)
-          |> redirect(to: "/sessions")
+          |> redirect(to: return_to)
         else
           # Shown ONLY after a correct password, so it does not reveal which
           # emails are registered (anti-enumeration, Codex #7).
           render_login_page(conn,
-            cred_error: gettext("Please confirm your email to finish signing in.")
+            cred_error: gettext("Please confirm your email to finish signing in."),
+            return_to: return_to
           )
         end
 
       :error ->
-        render_login_page(conn, cred_error: gettext("Invalid email or password."))
+        render_login_page(conn,
+          cred_error: gettext("Invalid email or password."),
+          return_to: return_to
+        )
     end
   end
 
@@ -140,29 +155,50 @@ defmodule EzagentWeb.SessionController do
     # on `/login?workspace=<ws>`. Restricted to local paths
     # (`String.starts_with?("/")` + no `//`) so it can't be a phishing
     # redirector to an external site.
-    return_to = params |> Map.get("return_to", "/login") |> safe_return_to()
+    return_to = params |> Map.get("return_to", "/login") |> safe_return_to("/login")
 
     conn
     |> SessionPrincipal.clear()
     |> redirect(to: return_to)
   end
 
-  defp safe_return_to(path) when is_binary(path) do
+  # Open-redirect guard: only local-relative paths survive. Anything else
+  # (absolute `http(s)://…`, protocol-relative `//evil.com`, backslash
+  # `/\evil.com` which some browsers treat as protocol-relative) falls back
+  # to the caller-supplied safe default. Used by both `delete/2` (logout,
+  # default `/login`) and `create/2` (login, default `/sessions`).
+  defp safe_return_to(path, fallback) when is_binary(path) do
     cond do
-      not String.starts_with?(path, "/") -> "/login"
-      # Reject protocol-relative redirects (`//evil.com/x`).
-      String.starts_with?(path, "//") -> "/login"
+      not String.starts_with?(path, "/") -> fallback
+      String.starts_with?(path, "//") -> fallback
+      String.starts_with?(path, "/\\") -> fallback
       true -> path
     end
   end
 
-  defp safe_return_to(_), do: "/login"
+  defp safe_return_to(_, fallback), do: fallback
 
   # --- internals ----------------------------------------------------
 
   defp render_login_page(conn, opts) do
     notice = Keyword.get(opts, :notice, "")
     cred_error = Keyword.get(opts, :cred_error)
+
+    # Thread a validated `return_to` through the credential POST as a hidden
+    # field so `create/2` can land the user back where they came from (e.g. a
+    # socialware share page). Only emitted when it survives the open-redirect
+    # guard; otherwise the form omits it and login uses its default landing.
+    return_to_field =
+      case Keyword.get(opts, :return_to) do
+        rt when is_binary(rt) ->
+          case safe_return_to(rt, nil) do
+            nil -> ""
+            safe -> ~s(<input type="hidden" name="return_to" value="#{esc(safe)}">)
+          end
+
+        _ ->
+          ""
+      end
 
     cred_error_html =
       if cred_error,
@@ -200,6 +236,7 @@ defmodule EzagentWeb.SessionController do
       @login_card_body
       |> String.replace("{{NOTICE}}", notice)
       |> String.replace("{{CRED_ERROR}}", cred_error_html)
+      |> String.replace("{{RETURN_TO_FIELD}}", return_to_field)
       |> String.replace("{{EMAIL_SECTION}}", email_section)
       |> String.replace("{{T_SIGN_IN}}", esc(gettext("Sign in")))
       |> String.replace("{{T_EMAIL_ADDRESS}}", esc(gettext("Email address")))
