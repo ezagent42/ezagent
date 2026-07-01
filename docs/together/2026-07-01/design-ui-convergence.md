@@ -60,7 +60,7 @@
 ### ② Hello · 生成层产品
 - **是什么:** 「用一句话，生成你要的界面」——聊天式 UI 生成工具（官网 hero 定义：hello · 生成 · generation，标签 json-render / say-it-grows）。
 - **本质:** 跑在 socialware 上的 plugin，`application.ex` 定义为 "AI-generated UI pages (@json-render) on the socialware substrate"。
-- **builder = world 控制台里 hello session 的 Conversation 视图**（见 `docs/together/2026-06-30/evidence/hello-ui/`）：左「Conversation」跟 `hello_web` agent 对话（"ruihua v3: exact tokens + CSS animations + live github"）→ 右「live preview」实时出页；右栏 MEMBERS（hello_web AGENT + users）+ ROUTING。
+- **builder = world 控制台里 hello session 的 Conversation 视图**（见 `docs/together/2026-07-01/evidence/hello-ui.jpg`）：左「Conversation」跟 `hello_web` agent 对话（"ruihua v3: exact tokens + CSS animations + live github"）→ 右「live preview」实时出页；右栏 MEMBERS（hello_web AGENT + users）+ ROUTING。
 - **三种编辑模式**（`prompts.ex`）: ① **整页生成** page_gen（一棵 json-render 树，37 组件 catalog）② **局部 patch 编辑** edit（set/replace/insert/remove by id，支持**点选元素再指令**）③ **主题 CSS** set_shell（另一步写 free CSS）。
 - **session/agent:** `session://system/hello/site`（system workspace），agent = `hello_web`；驱动脚本 `scripts/refresh_hello_site.exs`（拉真 GitHub 数据 → drive body + set_shell theme，可 cron 半动态）。
 - **文档:** `apps/ezagent_plugin_hello/`（`prompts.ex` 三 prompt / `spec.ex` catalog / `generator.ex`）、zhaomaota `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`。
@@ -267,6 +267,7 @@
 
 - **✅ 已定：入口 = A（并入 org 成员邀请）**。"招一个 GTM 工程师" = "给组织加个成员"，端用户不该进开发者控制台。**Agent Console（raw config）降为岗位详情里的"高级设置"**。
 - **✅ 初始 preset 岗位 = GTM 工程 / 客服 / 研发助手**（各绑定默认 skills/prompt/caps；研发助手贴 cc/codex flavor、客服贴 socialware autoservice）。
+- **🎬 可交互 demo:** `docs/website-demo/agent-hire-demo/index.html`（新极简 world 壳 + 对话内成员区 hire 流程，场景播放：招 GTM 工程 / 招研发助手 / 邀请一个人；本地起 `python3 -m http.server` 打开）。演示"招一个 agent = 给对话加成员"，Agent Console 降为岗位里的高级配置。
 
 #### 5.3 讨论待办（发 FatNine & gaga）
 1. **今天上线**：确认当前 Agent Console 就绪、不被岗位改造阻塞。
@@ -286,6 +287,6 @@
 
 ## 仍待确认
 
-- **Q2 ✅ 已答:** hello builder = world 控制台里 hello session 的 Conversation 面板，agent `hello_web`，session `session://system/hello/site`（截图 `docs/together/2026-06-30/evidence/hello-ui/`）。已回填 §1②。
+- **Q2 ✅ 已答:** hello builder = world 控制台里 hello session 的 Conversation 面板，agent `hello_web`，session `session://system/hello/site`（截图 `docs/together/2026-07-01/evidence/hello-ui.jpg`）。已回填 §1②。
 - **§5.2 待 zhaomato 确认:** 权限/发布模型 · theme 强制 token base · provision 方式（见 §5.2 讨论待办）。
 - **§5.3 ✅ ruihua 已定:** 入口 = A（并入 org 成员邀请）；preset 岗位 = GTM 工程/客服/研发助手；今天 Agent Console 按现状上线。**待 FatNine&gaga 落技术**（Role/AgentTemplate preset、邀请成员扩 agent、UI 迁移步骤）。

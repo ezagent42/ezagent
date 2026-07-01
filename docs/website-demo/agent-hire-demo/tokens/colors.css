@@ -1,0 +1,98 @@
+/* ============================================================
+   Ezagent · Color tokens
+   三原色为轴，柔软为形 — De Stijl primaries from the logo as the
+   brand axis; no gradients. Light-gray ground, white cards, ink text.
+   ============================================================ */
+:root {
+  /* ---- ground & neutrals · soft surfaces ---- */
+  --ground:   #E8E8EB;   /* app background · hsl(240 4% 91%) */
+  --ground-2: #EFEFF1;   /* recessed wells, inputs, tracks */
+  --ground-hover: #E4E4E8; /* hover on neutral surfaces */
+  --card:     #FFFFFF;   /* floating surfaces */
+  --ink:      #17171B;   /* primary foreground */
+  --ink-2:    #56565E;   /* secondary text */
+  --ink-3:    #8A8A92;   /* tertiary / captions */
+  --ink-4:    #B6B6BC;   /* disabled / faint */
+  --line:     #E2E2E6;   /* hairline dividers */
+
+  /* ---- 主轴 · logo 三原色 + 翠 (De Stijl primaries) ---- */
+  --red:      #D81830;   /* 红 · logo primary */
+  --blueink:  #0048A8;   /* 墨蓝 · structural logo blue */
+  --yellow:   #FFD400;   /* 黄 · logo primary */
+  --jade:     #0FA06E;   /* 翠 · extension / success */
+
+  /* ---- interactive / bright accents ---- */
+  --blue:      #0B5CFF;  /* 钴蓝 · bright · interactive primary action */
+  --blue-deep: #0040C4;  /* pressed / on-wash text */
+  --blue-wash: #E7EEFF;  /* tint surface for blue */
+  --orange:    #FF8A1E;  /* 暖橙 · vivid accent */
+
+  /* ---- semantic tint surfaces ---- */
+  --jade-wash: #DCF1E8;
+  --jade-deep: #0A7A52;
+  --red-wash:  #FAE0E3;
+  --red-deep:  #B01228;
+  --yellow-wash: #FFF4CC;
+  --orange-wash: #FFEBD6;
+
+  /* ============ semantic aliases ============ */
+  --surface-ground:   var(--ground);
+  --surface-sunken:   var(--ground-2);
+  --surface-card:     var(--card);
+  --text-strong:      var(--ink);
+  --text-body:        var(--ink-2);
+  --text-muted:       var(--ink-3);
+  --text-faint:       var(--ink-4);
+  --border-hairline:  var(--line);
+
+  --accent:        var(--blue);       /* primary interactive */
+  --accent-hover:  #1466FF;
+  --accent-press:  var(--blue-deep);
+  --accent-wash:   var(--blue-wash);
+  --on-accent:     #FFFFFF;
+
+  --success:       var(--jade);
+  --success-wash:  var(--jade-wash);
+  --success-text:  var(--jade-deep);
+  --danger:        var(--red);
+  --danger-wash:   var(--red-wash);
+  --danger-text:   var(--red-deep);
+  --warning:       var(--orange);
+  --warning-wash:  var(--orange-wash);
+  --focus-ring:    rgba(11,92,255,.45);
+}
+
+/* ================ DARK · 夜 ================
+   Brightened axis to read on near-black; same roles. */
+:root[data-theme="dark"] {
+  --ground:   #16151C;
+  --ground-2: #211F2A;
+  --ground-hover: #2A2834;
+  --card:     #1E1C26;
+  --ink:      #F4F2EC;
+  --ink-2:    #B6B4AC;
+  --ink-3:    #85837B;
+  --ink-4:    #56544D;
+  --line:     #332F3B;
+
+  --red:      #FF5A4D;
+  --blueink:  #4D8DF0;
+  --yellow:   #FFD84D;
+  --jade:     #34D6A0;
+
+  --blue:      #5AA2FF;
+  --blue-deep: #A9CBFF;
+  --blue-wash: #1E2A40;
+  --orange:    #FFA94D;
+
+  --jade-wash: #173A2E;
+  --jade-deep: #34D6A0;
+  --red-wash:  #3E211E;
+  --red-deep:  #FF8A7E;
+  --yellow-wash: #3A3416;
+  --orange-wash: #3A2A16;
+
+  --accent-hover: #74B2FF;
+  --on-accent:    #0E1A2E;
+  --focus-ring:   rgba(90,162,255,.5);
+}

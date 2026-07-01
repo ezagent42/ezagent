@@ -32,4 +32,4 @@
 
 ## 关联
 - 你昨天的交付 #1107（官网框架 + hello 渲染）+ `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`
-- hello builder 截图 `docs/together/2026-06-30/evidence/hello-ui/`
+- hello builder 截图 `docs/together/2026-07-01/evidence/hello-ui.jpg`

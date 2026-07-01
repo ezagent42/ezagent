@@ -1,0 +1,47 @@
+/* ============================================================
+   Ezagent · Typography tokens
+   Inter (Latin UI/display) · Noto Serif SC (CN headings) ·
+   Noto Sans SC (CN UI) · Space Mono (data/code).
+   Display is tight & heavy; CN headings are serif; data is mono.
+   ============================================================ */
+:root {
+  /* ---- families ---- */
+  --font-ui:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-cn:    'Noto Serif SC', 'Songti SC', serif;          /* CN headings */
+  --font-cn-ui: 'Noto Sans SC', 'PingFang SC', sans-serif;    /* CN body / UI */
+  --font-mono:  'Space Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---- weights ---- */
+  --fw-regular: 400; /* @kind font */
+  --fw-book:    450; /* @kind font */
+  --fw-medium:  500; /* @kind font */
+  --fw-semibold:600; /* @kind font */
+  --fw-bold:    700; /* @kind font */
+  --fw-black:   800; /* @kind font */
+
+  /* ---- type scale (px) ---- */
+  --fs-display: 50px;   /* hero · CN serif 600 or Inter 800 */
+  --fs-h1:      40px;
+  --fs-h2:      30px;
+  --fs-h3:      22px;
+  --fs-title:   18px;
+  --fs-body:    16px;
+  --fs-ui:      14px;
+  --fs-sm:      13px;
+  --fs-xs:      12px;
+  --fs-micro:   11px;   /* mono labels / overlines */
+  --fs-nano:    10px;
+
+  /* ---- line heights ---- */
+  --lh-tight:  1.14; /* @kind font */
+  --lh-snug:   1.3;  /* @kind font */
+  --lh-normal: 1.55; /* @kind font */
+  --lh-relaxed:1.65; /* @kind font */
+
+  /* ---- letter spacing ---- */
+  --ls-display: -0.02em;  /* @kind font */
+  --ls-cn:       0.01em;  /* @kind font */
+  --ls-ui:      -0.01em;  /* @kind font */
+  --ls-over:     0.14em;  /* @kind font */
+  --ls-mono:     0.02em;  /* @kind font */
+}

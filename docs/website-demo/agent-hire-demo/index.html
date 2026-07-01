@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ezagent · 在 world 里 hire 一个 agent · demo</title>
+
+<!-- 品牌 token（ezagent-design-system rev ebce041 拷贝） -->
+<link rel="stylesheet" href="tokens/fonts.css">
+<link rel="stylesheet" href="tokens/colors.css">
+<link rel="stylesheet" href="tokens/typography.css">
+<link rel="stylesheet" href="tokens/spacing.css">
+<link rel="stylesheet" href="tokens/effects.css">
+<!-- 场景播放器 -->
+<link rel="stylesheet" href="toolkit.css">
+
+<style>
+  :root{
+    --r-md:14px; --r-sm:10px;
+    --rail-w:60px; --session-w:280px; --members-w:264px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--ground);color:var(--ink);
+    font-family:var(--font-cn-ui);
+    font-size:var(--fs-ui);
+    padding-bottom:64px; /* room for player footer */
+  }
+  .mono{font-family:var(--font-mono)}
+  .serif{font-family:var(--font-cn)}
+  button{font-family:inherit;cursor:pointer}
+
+  /* ---------- world shell ---------- */
+  .app{
+    display:grid;
+    grid-template-columns:var(--rail-w) var(--session-w) 1fr;
+    height:calc(100vh - 64px);
+    min-height:600px;
+    overflow:hidden;
+  }
+
+  /* icon rail (窄) */
+  .rail{
+    background:var(--ink);color:#EDEDF2;
+    display:flex;flex-direction:column;align-items:center;
+    padding:14px 0;gap:10px;
+  }
+  .rail .logo{
+    width:34px;height:34px;border-radius:10px;background:var(--blue);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--font-ui);
+    margin-bottom:8px;
+  }
+  .rail .ic{
+    width:40px;height:40px;border-radius:12px;border:0;background:transparent;
+    color:#9A9AA6;display:grid;place-items:center;transition:.15s;
+  }
+  .rail .ic svg{width:20px;height:20px}
+  .rail .ic:hover{background:rgba(255,255,255,.08);color:#EDEDF2}
+  .rail .ic.on{background:var(--blue);color:#fff}
+  .rail .spacer{flex:1}
+
+  /* session column */
+  .sessions{
+    background:var(--ground-2);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  .ws-switch{
+    display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--line);
+    font-family:var(--font-ui);font-weight:600;color:var(--ink-2);font-size:13px;
+  }
+  .ws-switch .dot{width:20px;height:20px;border-radius:6px;background:var(--jade);display:inline-block}
+  .sessions-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
+  .sessions-head h2{margin:0;font-family:var(--font-ui);font-size:15px;font-weight:700}
+  .sessions-head .sub{color:var(--ink-3);font-size:11px}
+  .newbtn{
+    border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);
+    padding:6px 12px;font-size:12px;font-weight:600;font-family:var(--font-ui);
+    display:inline-flex;align-items:center;gap:5px;
+  }
+  .filter{margin:0 16px 10px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--card);color:var(--ink-3);font-size:12px}
+  .slist{overflow:auto;padding:0 10px 14px;display:flex;flex-direction:column;gap:4px}
+  .srow{
+    padding:10px 12px;border-radius:12px;cursor:pointer;border:1px solid transparent;
+    display:flex;flex-direction:column;gap:3px;
+  }
+  .srow:hover{background:var(--ground-hover)}
+  .srow.on{background:var(--card);border-color:var(--line);box-shadow:var(--shadow-sm)}
+  .srow .t{font-weight:600;color:var(--ink);font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .srow .t .live{width:7px;height:7px;border-radius:50%;background:var(--jade)}
+  .srow .u{color:var(--ink-3);font-size:11px;font-family:var(--font-mono)}
+
+  /* conversation + members */
+  .convo-col{display:grid;grid-template-columns:1fr var(--members-w);overflow:hidden;position:relative}
+  .conversation{display:flex;flex-direction:column;background:var(--ground);overflow:hidden}
+  .cv-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 22px;border-bottom:1px solid var(--line);background:var(--card);
+  }
+  .cv-head h1{margin:0;font-family:var(--font-cn);font-weight:600;font-size:18px}
+  .cv-head .uri{color:var(--ink-3);font-size:11px;font-family:var(--font-mono);margin-top:2px}
+  .seg{display:inline-flex;background:var(--ground-2);border-radius:var(--r-pill);padding:3px}
+  .seg button{border:0;background:transparent;border-radius:var(--r-pill);padding:5px 14px;font-size:12px;
+    color:var(--ink-2);font-family:var(--font-ui);font-weight:600}
+  .seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm)}
+  .timeline{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}
+  .msg{max-width:74%;display:flex;flex-direction:column;gap:5px}
+  .msg .who{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);display:flex;gap:8px;align-items:center}
+  .msg .bubble{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);
+    padding:11px 14px;line-height:1.55;box-shadow:var(--shadow-sm);font-size:13.5px}
+  .msg.me{align-self:flex-end;align-items:flex-end}
+  .msg.me .bubble{background:var(--blue-wash);border-color:transparent}
+  .msg.agent .bubble{border-left:3px solid var(--jade)}
+  .sys{align-self:center;font-size:11.5px;color:var(--ink-3);font-family:var(--font-mono);
+    background:var(--ground-2);border-radius:var(--r-pill);padding:5px 14px}
+  .sys b{color:var(--jade-deep);font-family:var(--font-ui)}
+  .composer{padding:14px 22px;border-top:1px solid var(--line);background:var(--card);display:flex;gap:10px;align-items:center}
+  .composer .box{flex:1;border:1px solid var(--line);border-radius:var(--r-pill);padding:10px 16px;color:var(--ink-3);font-size:13px;background:var(--ground-2)}
+  .composer .send{border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);padding:9px 18px;font-weight:600;font-family:var(--font-ui);font-size:13px}
+
+  /* members rail */
+  .members{background:var(--card);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+  .mem-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 10px}
+  .mem-head .ttl{font-family:var(--font-ui);font-weight:700;font-size:12px;letter-spacing:.04em;color:var(--ink-3)}
+  .mem-head .ttl b{display:block;color:var(--ink);font-size:15px;letter-spacing:0;margin-top:2px}
+  .invite{border:1px solid var(--blue);background:var(--blue-wash);color:var(--blue-deep);
+    border-radius:var(--r-pill);padding:6px 12px;font-size:12px;font-weight:700;font-family:var(--font-ui);
+    display:inline-flex;align-items:center;gap:5px;transition:.15s}
+  .invite:hover{background:var(--blue);color:#fff}
+  .mlist{overflow:auto;padding:4px 12px 14px;display:flex;flex-direction:column;gap:6px}
+  .mcard{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:12px}
+  .mcard:hover{background:var(--ground-2)}
+  .av{width:36px;height:36px;flex:none;display:grid;place-items:center;font-weight:700;color:#fff;font-family:var(--font-ui);font-size:14px}
+  .av.human{border-radius:50%;background:var(--blueink)}
+  .av.agent{border-radius:11px;background:var(--jade)}
+  .av.pending{background:var(--ink-4)}
+  .mcard .mi{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .mcard .mn{font-weight:600;font-size:13.5px;color:var(--ink);display:flex;align-items:center;gap:6px}
+  .mcard .ms{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tag{font-size:9px;font-weight:700;letter-spacing:.05em;font-family:var(--font-mono);
+    padding:2px 6px;border-radius:var(--r-pill);background:var(--jade-wash);color:var(--jade-deep)}
+  .tag.pending{background:var(--ground-hover);color:var(--ink-3)}
+
+  /* ---------- highlight pulse ---------- */
+  .pulse{position:relative;z-index:5}
+  .pulse::after{content:"";position:absolute;inset:-5px;border-radius:16px;
+    box-shadow:0 0 0 3px var(--blue);animation:pz 1.1s ease-out infinite;pointer-events:none}
+  @keyframes pz{0%{box-shadow:0 0 0 2px rgba(11,92,255,.9)}70%{box-shadow:0 0 0 9px rgba(11,92,255,0)}100%{box-shadow:0 0 0 9px rgba(11,92,255,0)}}
+
+  /* ---------- invite modal ---------- */
+  .scrim{position:fixed;inset:0;background:rgba(20,20,26,.34);backdrop-filter:blur(2px);
+    display:none;align-items:center;justify-content:center;z-index:40}
+  .scrim.on{display:flex}
+  .modal{width:560px;max-width:92vw;max-height:82vh;overflow:auto;background:var(--card);
+    border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:26px 28px}
+  .modal h3{margin:0 0 3px;font-family:var(--font-cn);font-weight:600;font-size:20px}
+  .modal .lede{color:var(--ink-3);font-size:12.5px;margin:0 0 20px}
+  .stage{display:none}
+  .stage.on{display:block;animation:fu .3s ease}
+  @keyframes fu{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .kinds{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .kind{border:1.5px solid var(--line);border-radius:var(--r-md);padding:18px;cursor:pointer;transition:.15s;background:var(--card)}
+  .kind:hover{border-color:var(--blue);box-shadow:var(--shadow-sm)}
+  .kind.sel{border-color:var(--blue);background:var(--blue-wash)}
+  .kind .ki{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;margin-bottom:12px;color:#fff}
+  .kind.h .ki{background:var(--blueink);border-radius:50%}
+  .kind.a .ki{background:var(--jade)}
+  .kind .kt{font-weight:700;font-size:15px;font-family:var(--font-ui)}
+  .kind .kd{color:var(--ink-3);font-size:12px;margin-top:4px;line-height:1.5}
+
+  .presets{display:flex;flex-direction:column;gap:11px}
+  .preset{border:1.5px solid var(--line);border-radius:var(--r-md);padding:14px 16px;cursor:pointer;
+    display:flex;gap:14px;align-items:flex-start;transition:.15s;background:var(--card)}
+  .preset:hover{border-color:var(--blue)}
+  .preset.sel{border-color:var(--blue);background:var(--blue-wash)}
+  .preset .pi{width:38px;height:38px;flex:none;border-radius:11px;background:var(--jade);display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--font-ui)}
+  .preset .pt{font-weight:700;font-size:14.5px;font-family:var(--font-ui)}
+  .preset .pd{color:var(--ink-2);font-size:12px;margin:3px 0 8px;line-height:1.5}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-size:10.5px;font-family:var(--font-mono);background:var(--ground-2);color:var(--ink-2);
+    border-radius:var(--r-pill);padding:3px 9px}
+  .chip.cap{background:var(--jade-wash);color:var(--jade-deep)}
+
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;font-family:var(--font-ui)}
+  .field input{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:var(--font-mono);color:var(--ink);background:var(--ground-2)}
+  .adv{border:1px solid var(--line);border-radius:var(--r-md);margin:6px 0 18px;overflow:hidden}
+  .adv summary{padding:12px 16px;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--ink-2);font-family:var(--font-ui);list-style:none;display:flex;justify-content:space-between}
+  .adv summary::-webkit-details-marker{display:none}
+  .adv .advbody{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr;gap:12px;color:var(--ink-3);font-size:11.5px;font-family:var(--font-mono)}
+  .adv .advbody div{background:var(--ground-2);border-radius:8px;padding:8px 10px}
+  .modal-foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+  .back{border:0;background:transparent;color:var(--ink-3);font-size:12.5px;font-family:var(--font-ui)}
+  .cta{border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);padding:11px 22px;font-weight:700;font-family:var(--font-ui);font-size:13.5px}
+  .note{font-size:11px;color:var(--ink-3);margin-top:14px;font-family:var(--font-mono)}
+
+  /* settings overlay */
+  .settings{position:fixed;inset:0;background:var(--ground);display:none;z-index:45;flex-direction:column}
+  .settings.on{display:flex}
+  .set-head{padding:16px 26px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:12px}
+  .set-head .crumb{color:var(--ink-3);font-size:12px;font-family:var(--font-mono)}
+  .set-head h2{margin:0;font-family:var(--font-cn);font-size:18px;font-weight:600}
+  .set-body{flex:1;overflow:auto;padding:26px;display:grid;grid-template-columns:200px 1fr;gap:24px}
+  .set-nav{display:flex;flex-direction:column;gap:3px}
+  .set-nav a{padding:9px 13px;border-radius:10px;font-size:13px;color:var(--ink-2);text-decoration:none;font-family:var(--font-ui)}
+  .set-nav a.on{background:var(--blue-wash);color:var(--blue-deep);font-weight:600}
+  .console{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;box-shadow:var(--shadow-sm)}
+  .console .ovl{font-size:11px;font-family:var(--font-mono);color:var(--ink-3);letter-spacing:.05em}
+  .console h3{margin:2px 0 4px;font-family:var(--font-cn);font-size:19px;font-weight:600}
+  .console .desc{color:var(--ink-3);font-size:12.5px;margin-bottom:18px;line-height:1.6}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+  .gfield label{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);display:block;margin-bottom:5px}
+  .gfield .val{border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:12.5px;font-family:var(--font-mono);color:var(--ink-2);background:var(--ground-2)}
+  .set-close{margin-left:auto;border:1px solid var(--line);background:var(--card);border-radius:var(--r-pill);padding:7px 15px;font-size:12.5px;font-family:var(--font-ui);font-weight:600}
+
+  /* caption pill */
+  .caption{position:fixed;left:50%;bottom:74px;transform:translateX(-50%);
+    background:var(--ink);color:#F4F2EC;padding:10px 20px;border-radius:var(--r-pill);
+    font-size:13px;font-family:var(--font-cn-ui);max-width:80vw;text-align:center;
+    box-shadow:var(--shadow-card);z-index:50;opacity:0;transition:.25s;pointer-events:none}
+  .caption.show{opacity:1}
+  .caption b{color:#7FB0FF}
+
+  .brandline{position:fixed;top:0;left:0;right:0;height:3px;
+    background:var(--blue);z-index:60}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- icon rail -->
+  <nav class="rail">
+    <div class="logo">ez</div>
+    <button class="ic on" title="Chat" id="ic-chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+    <button class="ic" title="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
+    <button class="ic" title="New"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+    <div class="spacer"></div>
+    <button class="ic" title="Settings" id="ic-gear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+  </nav>
+
+  <!-- session column -->
+  <section class="sessions">
+    <div class="ws-switch"><span class="dot"></span> ezagent / system ▾</div>
+    <div class="sessions-head">
+      <div><h2>Chat</h2><div class="sub">当前 workspace</div></div>
+      <button class="newbtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>New</button>
+    </div>
+    <div class="filter">筛选 session…</div>
+    <div class="slist">
+      <div class="srow on"><div class="t"><span class="live"></span>GTM 冲刺 · Q3 出海</div><div class="u">session://system/default/gtm-sprint</div></div>
+      <div class="srow"><div class="t">客户 onboarding</div><div class="u">session://system/default/onboarding</div></div>
+      <div class="srow"><div class="t">kanban 交接</div><div class="u">session://system/default/kanban</div></div>
+    </div>
+  </section>
+
+  <!-- conversation + members -->
+  <div class="convo-col">
+    <div class="conversation">
+      <div class="cv-head">
+        <div>
+          <h1>GTM 冲刺 · Q3 出海</h1>
+          <div class="uri">session://system/default/gtm-sprint</div>
+        </div>
+        <div class="seg"><button class="on">Chat</button><button>PTY</button></div>
+      </div>
+      <div class="timeline" id="timeline">
+        <div class="msg me"><div class="who">Admin · 你 · 10:24</div><div class="bubble">Q3 要做海外落地页 + 投放追踪，团队里没人专职盯这个。</div></div>
+        <div class="msg agent"><div class="who">world-bot · AGENT · 10:24</div><div class="bubble">要不要给这个 workspace 招一个 GTM 工程的岗位？在右边成员区就能邀请。</div></div>
+      </div>
+      <div class="composer"><div class="box">说点什么… @ 提及成员</div><button class="send">发送</button></div>
+    </div>
+
+    <!-- members rail (常驻) -->
+    <aside class="members" id="members">
+      <div class="mem-head">
+        <div class="ttl">MEMBERS<b>成员 · <span id="mcount">2</span></b></div>
+        <button class="invite" id="inviteBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>邀请</button>
+      </div>
+      <div class="mlist" id="mlist">
+        <div class="mcard"><div class="av human">A</div><div class="mi"><div class="mn">Admin</div><div class="ms">你 · owner</div></div></div>
+        <div class="mcard"><div class="av agent">W</div><div class="mi"><div class="mn">world-bot <span class="tag">AGENT</span></div><div class="ms">routing 协作</div></div></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ============ invite / hire modal ============ -->
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h3 id="mTitle">邀请成员 · Invite member</h3>
+    <p class="lede" id="mLede">给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。</p>
+
+    <!-- stage: kind -->
+    <div class="stage on" data-stage="kind" id="stg-kind">
+      <div class="kinds">
+        <div class="kind h" id="kind-human">
+          <div class="ki"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+          <div class="kt">邀请人 · Invite a person</div>
+          <div class="kd">发邮件邀请一位同事加入这个 workspace。</div>
+        </div>
+        <div class="kind a" id="kind-agent">
+          <div class="ki"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 7V4M9 13h.01M15 13h.01"/></svg></div>
+          <div class="kt">招一个 agent · Hire an agent</div>
+          <div class="kd">选一个岗位，命名，即刻上岗——它作为成员加入对话。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- stage: presets -->
+    <div class="stage" data-stage="presets" id="stg-presets">
+      <div class="presets">
+        <div class="preset" id="ps-gtm">
+          <div class="pi">G</div>
+          <div><div class="pt">GTM 工程 · GTM engineering</div>
+            <div class="pd">做落地页、埋点、投放追踪与增长实验。</div>
+            <div class="chips"><span class="chip">市场调研</span><span class="chip">落地页</span><span class="chip">数据追踪</span><span class="chip cap">web.read</span><span class="chip cap">analytics</span></div>
+          </div>
+        </div>
+        <div class="preset" id="ps-cs">
+          <div class="pi">客</div>
+          <div><div class="pt">客服 · Customer support</div>
+            <div class="pd">跑客户会话、查知识库、开工单（贴 autoservice）。</div>
+            <div class="chips"><span class="chip">会话</span><span class="chip">知识库</span><span class="chip">工单</span><span class="chip cap">chat.send</span><span class="chip cap">kb.read</span></div>
+          </div>
+        </div>
+        <div class="preset" id="ps-dev">
+          <div class="pi">研</div>
+          <div><div class="pt">研发助手 · Dev assistant</div>
+            <div class="pd">读代码、发 PR、跑测试（cc / codex flavor）。</div>
+            <div class="chips"><span class="chip">代码</span><span class="chip">PR</span><span class="chip">测试</span><span class="chip cap">repo.read</span><span class="chip cap">ci.run</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot"><button class="back" id="back-1">← 返回</button><span class="note">选一个岗位继续</span></div>
+    </div>
+
+    <!-- stage: naming -->
+    <div class="stage" data-stage="naming" id="stg-naming">
+      <div class="field">
+        <label>给这个岗位起个名字 · Name</label>
+        <input id="nameInput" value="gtm-engineer" readonly>
+      </div>
+      <details class="adv">
+        <summary><span>高级配置 · Advanced（原 Agent Console，可后调）</span><span id="advcaret">▾</span></summary>
+        <div class="advbody">
+          <div>flavor · cc</div><div>model · —（岗位默认）</div>
+          <div>tools · web, analytics</div><div>caps · web.read, analytics</div>
+          <div>project_cwd · /srv/system</div><div>With PTY · off</div>
+        </div>
+      </details>
+      <div class="modal-foot">
+        <button class="back" id="back-2">← 换岗位</button>
+        <button class="cta" id="hireBtn">招入 · Hire →</button>
+      </div>
+      <p class="note">岗位 = <b class="serif">skills + prompt + caps</b> 的 preset；技术细节收进「高级配置」。</p>
+    </div>
+
+    <!-- stage: human -->
+    <div class="stage" data-stage="human" id="stg-human">
+      <div class="field"><label>邮箱 · Email</label><input id="emailInput" value="lily@acme.com" readonly></div>
+      <div class="modal-foot"><button class="back" id="back-3">← 返回</button><button class="cta" id="sendInvite">发送邀请 · Send →</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ settings overlay (Agent Console 高级) ============ -->
+<div class="settings" id="settings">
+  <div class="set-head">
+    <span class="crumb">Settings ›</span><h2>Agent Console · 高级配置</h2>
+    <button class="set-close" id="setClose">← 回到 Chat</button>
+  </div>
+  <div class="set-body">
+    <nav class="set-nav">
+      <a>Workspace</a><a>Routing</a><a class="on">Agents（高级）</a><a>Plugins</a><a>Snapshots</a><a>Authz audit</a>
+    </nav>
+    <div>
+      <div class="console">
+        <div class="ovl">PROVISION（ADVANCED）</div>
+        <h3>gtm-engineer</h3>
+        <div class="desc">岗位「GTM 工程」的底层 agent 配置。端用户走「招一个 agent」即可，这层是给需要精调的人。</div>
+        <div class="grid2">
+          <div class="gfield"><label>flavor</label><div class="val">cc</div></div>
+          <div class="gfield"><label>岗位 preset</label><div class="val">gtm-engineering</div></div>
+          <div class="gfield"><label>model</label><div class="val">—（岗位默认）</div></div>
+          <div class="gfield"><label>effort</label><div class="val">medium</div></div>
+          <div class="gfield"><label>tools</label><div class="val">web, analytics</div></div>
+          <div class="gfield"><label>requested caps</label><div class="val">web.read, analytics</div></div>
+          <div class="gfield"><label>project_cwd</label><div class="val">/srv/system</div></div>
+          <div class="gfield"><label>With PTY</label><div class="val">off</div></div>
+        </div>
+        <p class="note">上游 <b class="serif">Ezagent.Role</b>（skills / prompt / caps）+ AgentTemplate 承接；这个页面就是原 Agent Console，降级为「高级」。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="caption" id="caption"></div>
+
+<!-- ============ scenario playback footer ============ -->
+<footer class="spt-footer" id="spt-footer">
+  <span class="spt-control-label">场景</span>
+  <div id="spt-scenario-btns" style="display: contents;"></div>
+  <div class="spt-footer-spacer"></div>
+  <span class="spt-step-counter" id="spt-step-counter">0 / 0</span>
+  <button class="spt-reset-btn" id="spt-reset-btn" type="button">↺ 重置</button>
+  <button class="spt-prev-btn" id="spt-prev-btn" type="button" disabled>⏮ 上一步</button>
+  <button class="spt-step-btn" id="spt-step-btn" type="button">⏭ 下一步</button>
+  <button class="spt-play-btn" id="spt-play-btn" type="button">▶ 自动播放</button>
+</footer>
+
+<script src="step-engine.js"></script>
+<script>
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const cap = t => { const c=$('#caption'); c.innerHTML=t; c.classList.add('show'); };
+function setStage(name){
+  document.querySelectorAll('.stage').forEach(s=>s.classList.toggle('on', s.dataset.stage===name));
+}
+function openModal(title,lede){ $('#mTitle').textContent=title; $('#mLede').textContent=lede; $('#scrim').classList.add('on'); }
+function closeModal(){ $('#scrim').classList.remove('on'); }
+function selKind(id){ document.querySelectorAll('.kind').forEach(k=>k.classList.remove('sel')); if(id) $(id).classList.add('sel'); }
+function selPreset(id){ document.querySelectorAll('.preset').forEach(p=>p.classList.remove('sel')); if(id) $(id).classList.add('sel'); }
+function clearHi(){ document.querySelectorAll('.pulse').forEach(e=>e.classList.remove('pulse')); }
+function hi(sel){ clearHi(); const e=$(sel); if(e) e.classList.add('pulse'); }
+function addMember(html){ $('#mlist').insertAdjacentHTML('beforeend', html); $('#mcount').textContent = document.querySelectorAll('#mlist .mcard').length; }
+function addSys(html){ $('#timeline').insertAdjacentHTML('beforeend', `<div class="sys">${html}</div>`); }
+function addMsg(cls,who,text){ $('#timeline').insertAdjacentHTML('beforeend', `<div class="msg ${cls}"><div class="who">${who}</div><div class="bubble">${text}</div></div>`); $('#timeline').scrollTop=1e6; }
+
+/* ---------- base reset ---------- */
+function resetDom(){
+  closeModal(); $('#settings').classList.remove('on');
+  setStage('kind'); selKind(null); selPreset(null); clearHi();
+  $('#nameInput').value='gtm-engineer';
+  // remove any hired/invited members (keep first 2)
+  const cards=[...document.querySelectorAll('#mlist .mcard')]; cards.slice(2).forEach(c=>c.remove());
+  $('#mcount').textContent=2;
+  // remove appended timeline nodes (keep first 2 msgs)
+  const tl=[...$('#timeline').children]; tl.slice(2).forEach(n=>n.remove());
+}
+
+/* ---------- shared flow builders ---------- */
+const agentSteps = (presetSel, name, initial, desc) => ([
+  { t:'act', act:'hlInvite', cap:'Admin 想给团队加个人手 —— 点右上角 <b>邀请</b>' },
+  { t:'wait', ms:500 },
+  { t:'act', act:'openInvite', cap:'邀请面板：一个人，或<b>招一个 agent</b>' },
+  { t:'wait', ms:400 },
+  { t:'act', act:'pickAgent', cap:'选「招一个 agent」—— 像给群里加个成员，不进开发者控制台' },
+  { t:'wait', ms:450 },
+  { t:'act', act:'showPresets', cap:'挑一个<b>岗位</b>（不是选 flavor / 配 caps）' },
+  { t:'wait', ms:450 },
+  { t:'act', act:'pickPreset', preset:presetSel, name, cap:`选「${desc}」—— 岗位自带默认 skills / caps` },
+  { t:'wait', ms:450 },
+  { t:'act', act:'showNaming', cap:'命名即可；技术细节收在<b>高级配置</b>里，可后调' },
+  { t:'wait', ms:500 },
+  { t:'act', act:'hire', name, initial, desc, cap:`点「招入」—— <b>${name}</b> 作为成员加入对话` },
+]);
+
+const SCENARIOS = {
+  gtm:  { steps: agentSteps('#ps-gtm','gtm-engineer','G','GTM 工程').concat([
+            { t:'wait', ms:500 },
+            { t:'act', act:'peekSettings', cap:'想精调？原 Agent Console 降级为岗位里的<b>高级配置</b>' },
+          ]) },
+  dev:  { steps: agentSteps('#ps-dev','dev-assistant','研','研发助手') },
+  human:{ steps: [
+            { t:'act', act:'hlInvite', cap:'对比：邀请<b>一个人</b>也是同一个入口' },
+            { t:'wait', ms:500 },
+            { t:'act', act:'openInvite', cap:'邀请面板' },
+            { t:'wait', ms:400 },
+            { t:'act', act:'pickHuman', cap:'选「邀请人」→ 填邮箱' },
+            { t:'wait', ms:450 },
+            { t:'act', act:'inviteHuman', cap:'发送邀请 —— 人以 <b>pending</b> 成员出现' },
+          ] },
+};
+
+async function executeStepCustom(step){
+  if(step.cap!=null) cap(step.cap);
+  switch(step.act){
+    case 'hlInvite': hi('#inviteBtn'); break;
+    case 'openInvite': clearHi(); openModal('邀请成员 · Invite member','给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。'); setStage('kind'); break;
+    case 'pickAgent': selKind('#kind-agent'); break;
+    case 'showPresets': selKind(null); setStage('presets'); break;
+    case 'pickPreset': selPreset(step.preset); $('#nameInput').value=step.name; break;
+    case 'showNaming': setStage('naming'); break;
+    case 'hire':
+      closeModal();
+      addMember(`<div class="mcard"><div class="av agent">${step.initial}</div><div class="mi"><div class="mn">${step.name} <span class="tag">AGENT</span></div><div class="ms">岗位 · ${step.desc}</div></div></div>`);
+      hi('#mlist .mcard:last-child');
+      addSys(`<b>${step.name}</b>（${step.desc}）已加入 workspace`);
+      addMsg('agent', `${step.name} · AGENT · 现在`, '我上岗了 👋 —— 落地页和投放追踪交给我，先拉一版竞品调研？');
+      break;
+    case 'pickHuman': selKind('#kind-human'); setStage('human'); break;
+    case 'inviteHuman':
+      closeModal();
+      addMember(`<div class="mcard"><div class="av human pending">L</div><div class="mi"><div class="mn">lily@acme.com <span class="tag pending">PENDING</span></div><div class="ms">已发邀请</div></div></div>`);
+      hi('#mlist .mcard:last-child');
+      addSys(`已向 <b>lily@acme.com</b> 发送邀请`);
+      break;
+    case 'peekSettings': clearHi(); $('#settings').classList.add('on'); break;
+  }
+}
+
+scenarioPlayback.init({
+  scenarios: SCENARIOS,
+  scenarioButtons: [
+    { id:'gtm',   label:'① 招 GTM 工程',  colorDot:'green' },
+    { id:'dev',   label:'② 招 研发助手',  colorDot:'blue'  },
+    { id:'human', label:'③ 邀请一个人',   colorDot:'gray'  },
+  ],
+  microStepTypes: ['wait'],
+  executeStepCustom,
+  onReset: () => { resetDom(); cap('▶ 播放，或按 <b>→</b> 单步 —— 看在 world 里怎么 hire 一个 agent。也可以直接点「邀请」自己走一遍'); },
+});
+
+/* ---------- 手动点击（与播放并行，方便自己走一遍）---------- */
+const PRESET = {
+  '#ps-gtm':{name:'gtm-engineer',initial:'G',desc:'GTM 工程'},
+  '#ps-cs' :{name:'cs-agent',    initial:'客',desc:'客服'},
+  '#ps-dev':{name:'dev-assistant',initial:'研',desc:'研发助手'},
+};
+function hireAgentDom(name,initial,desc){
+  closeModal();
+  addMember(`<div class="mcard"><div class="av agent">${initial}</div><div class="mi"><div class="mn">${name} <span class="tag">AGENT</span></div><div class="ms">岗位 · ${desc}</div></div></div>`);
+  hi('#mlist .mcard:last-child');
+  addSys(`<b>${name}</b>（${desc}）已加入 workspace`);
+  addMsg('agent', `${name} · AGENT · 现在`, '我上岗了 👋 —— 这个岗位的活交给我，先给你拉一版方案？');
+}
+let curPreset='#ps-gtm';
+$('#inviteBtn').onclick=()=>{ openModal('邀请成员 · Invite member','给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。'); setStage('kind'); selKind(null); clearHi(); };
+$('#kind-agent').onclick=()=>{ selKind('#kind-agent'); setTimeout(()=>{selKind(null); setStage('presets');},180); };
+$('#kind-human').onclick=()=>{ selKind('#kind-human'); setStage('human'); };
+Object.keys(PRESET).forEach(sel=>{ $(sel).onclick=()=>{ curPreset=sel; selPreset(sel); $('#nameInput').value=PRESET[sel].name; setStage('naming'); }; });
+$('#hireBtn').onclick=()=>{ const p=PRESET[curPreset]; hireAgentDom(p.name,p.initial,p.desc); };
+$('#sendInvite').onclick=()=>{ executeStepCustom({act:'inviteHuman'}); };
+$('#back-1').onclick=()=>setStage('kind');
+$('#back-2').onclick=()=>{ selPreset(null); setStage('presets'); };
+$('#back-3').onclick=()=>setStage('kind');
+$('#scrim').onclick=e=>{ if(e.target===$('#scrim')) closeModal(); };
+$('#ic-gear').onclick=()=>$('#settings').classList.add('on');
+$('#setClose').onclick=()=>$('#settings').classList.remove('on');
+</script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+/* =====================================================================
+ * scenario-playback-toolkit · toolkit.css
+ *
+ * Drop-in styles for the dark-footer scenario player.
+ *
+ * Compatibility:
+ *   - All CSS vars have FALLBACK values, so this works in any HTML page
+ *     without external design tokens.
+ *   - If your page already defines OneSyn 智道元生 tokens (ink-900, etc.),
+ *     they automatically override the fallbacks—no extra wiring needed.
+ *
+ * Customization:
+ *   - Override --spt-bg / --spt-fg / --spt-accent in your :root to retheme.
+ *   - Or override individual CSS vars per the table in REFERENCE.md.
+ * ===================================================================== */
+
+/* ----- Layout root: dark footer bar ----- */
+.spt-footer {
+  background: var(--ink-900, #1a1a1a);
+  color: var(--ink-200, #c2c8d5);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 10px;
+  font-size: 13px;
+  font-family: var(--font-sans, system-ui, -apple-system, "Source Sans 3", "Noto Sans SC", sans-serif);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  min-height: 56px;
+  box-sizing: border-box;
+}
+
+/* "场景" label on the left */
+.spt-footer .spt-control-label {
+  color: var(--ink-200, #c2c8d5);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-right: 4px;
+  font-family: var(--font-mono, "Source Code Pro", "JetBrains Mono", monospace);
+  opacity: 0.7;
+}
+
+/* ----- Scenario buttons (dynamically populated by JS) ----- */
+.spt-footer .spt-scenario-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--ink-200, #c2c8d5);
+  padding: 5px 12px;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--duration-fast, 160ms) ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.spt-footer .spt-scenario-btn:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+.spt-footer .spt-scenario-btn.active {
+  background: var(--color-primary-subtle, #ebf0f8);
+  border-color: var(--color-primary, #2b4d86);
+  color: var(--color-primary-text, #0c1c3d);
+  font-weight: 600;
+}
+
+/* ----- Color dot prefix on scenario buttons (optional) ----- */
+.spt-scenario-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.spt-scenario-color-dot.green  { background: var(--spring-500, #8eba3a); }
+.spt-scenario-color-dot.orange { background: var(--goose-500, #e54d1f); }
+.spt-scenario-color-dot.yellow { background: var(--gold-500, #d4a22e); }
+.spt-scenario-color-dot.gray   { background: var(--mountain-400, #8a94a8); }
+.spt-scenario-color-dot.red    { background: var(--vermillion-500, #ce2218); }
+.spt-scenario-color-dot.blue   { background: var(--indigo-500, #2b4d86); }
+
+/* ----- Spacer pushes controls to the right ----- */
+.spt-footer .spt-footer-spacer { flex: 1; }
+
+/* ----- Step counter ----- */
+.spt-footer .spt-step-counter {
+  font-family: var(--font-mono, "Source Code Pro", monospace);
+  font-size: 11px;
+  color: var(--ink-200, #c2c8d5);
+  opacity: 0.7;
+  min-width: 88px;
+  text-align: right;
+}
+
+/* ----- Control buttons (reset / prev / step / play) shared base ----- */
+.spt-footer .spt-play-btn,
+.spt-footer .spt-step-btn,
+.spt-footer .spt-prev-btn,
+.spt-footer .spt-reset-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--ink-200, #c2c8d5);
+  padding: 6px 14px;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all var(--duration-fast, 160ms) ease;
+}
+
+/* ----- Play button: primary CTA styling ----- */
+.spt-footer .spt-play-btn {
+  background: var(--color-primary, #2b4d86);
+  border-color: var(--color-primary, #2b4d86);
+  color: #fff;
+  font-weight: 500;
+}
+.spt-footer .spt-play-btn:hover {
+  background: var(--color-primary-hover, #173260);
+  border-color: var(--color-primary-hover, #173260);
+}
+
+/* ----- Other buttons: ghost on hover ----- */
+.spt-footer .spt-step-btn:hover,
+.spt-footer .spt-prev-btn:hover,
+.spt-footer .spt-reset-btn:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+
+/* ----- Disabled state ----- */
+.spt-footer .spt-play-btn:disabled,
+.spt-footer .spt-step-btn:disabled,
+.spt-footer .spt-prev-btn:disabled,
+.spt-footer .spt-reset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ----- Optional inline spinner for "playing..." state ----- */
+.spt-footer .spt-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  animation: spt-spin 0.7s linear infinite;
+}
+@keyframes spt-spin {
+  to { transform: rotate(360deg); }
+}

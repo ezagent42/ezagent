@@ -1,0 +1,31 @@
+/* ============================================================
+   Ezagent · Spacing & layout tokens
+   4px base rhythm. Generous gutters; cards breathe on the ground.
+   ============================================================ */
+:root {
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  30px;   /* card inner padding (vertical) */
+  --space-8:  32px;   /* card inner padding (horizontal) */
+  --space-9:  44px;
+  --space-10: 60px;
+  --space-12: 80px;
+  --space-16: 120px;
+
+  /* gaps */
+  --gap-grid:  22px;   /* between floating cards */
+  --gap-row:   14px;   /* inline component rows */
+  --gap-tight: 9px;
+
+  /* layout */
+  --container:    1340px;
+  --container-sm: 760px;
+  --pad-page-x:   44px;
+  --pad-page-y:   60px;
+  --pad-card:     30px 32px; /* @kind spacing */
+}
