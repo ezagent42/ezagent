@@ -140,11 +140,7 @@ defmodule Ezagent.Sandbox.ConfigDir do
   def validate_project_cwd(cwd, config_dir)
       when is_binary(cwd) and is_binary(config_dir) do
     expanded = Path.expand(cwd)
-
-    operator_roots =
-      (System.get_env("EZAGENT_ALLOWED_CWD_ROOTS") || "")
-      |> String.split(":", trim: true)
-      |> Enum.map(&Path.expand/1)
+    operator_roots = operator_allowed_project_cwd_roots()
 
     if Enum.any?([config_dir | operator_roots], &within_root?(expanded, &1)) do
       {:ok, expanded}
@@ -154,14 +150,38 @@ defmodule Ezagent.Sandbox.ConfigDir do
   end
 
   @doc """
+  Operator-configured roots that may be used for custom `project_cwd` values.
+
+  The list is UI/read-model data only. `validate_project_cwd/2` remains the
+  authoritative enforcement point.
+  """
+  @spec operator_allowed_project_cwd_roots() :: [String.t()]
+  def operator_allowed_project_cwd_roots do
+    (System.get_env("EZAGENT_ALLOWED_CWD_ROOTS") || "")
+    |> String.split(":", trim: true)
+    |> Enum.map(&Path.expand/1)
+  end
+
+  @doc """
   Validate a project_cwd or fall back to the agent config_dir.
   """
-  @spec validate_project_cwd_or_default!(String.t() | nil, String.t()) :: String.t()
-  def validate_project_cwd_or_default!(nil, config_dir), do: config_dir
-  def validate_project_cwd_or_default!("", config_dir), do: config_dir
+  @spec validate_project_cwd_or_default(String.t() | nil, String.t()) ::
+          {:ok, String.t()} | {:error, {:cwd_outside_allowed_roots, String.t()}}
+  def validate_project_cwd_or_default(nil, config_dir) when is_binary(config_dir),
+    do: {:ok, config_dir}
 
-  def validate_project_cwd_or_default!(cwd, config_dir) when is_binary(cwd) do
-    case validate_project_cwd(cwd, config_dir) do
+  def validate_project_cwd_or_default("", config_dir) when is_binary(config_dir),
+    do: {:ok, config_dir}
+
+  def validate_project_cwd_or_default(cwd, config_dir) when is_binary(cwd),
+    do: validate_project_cwd(cwd, config_dir)
+
+  @doc """
+  Validate a project_cwd or fall back to the agent config_dir, raising on error.
+  """
+  @spec validate_project_cwd_or_default!(String.t() | nil, String.t()) :: String.t()
+  def validate_project_cwd_or_default!(cwd, config_dir) do
+    case validate_project_cwd_or_default(cwd, config_dir) do
       {:ok, expanded} ->
         expanded
 

@@ -1,7 +1,7 @@
 defmodule Ezagent.World.IdentityDataTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
-  test "agent_new_form state advertises which flavors require project_cwd" do
+  test "agent_new_form state advertises project_cwd as optional for file flavors" do
     ws = Ezagent.URI.workspace("acme")
 
     state =
@@ -10,12 +10,33 @@ defmodule Ezagent.World.IdentityDataTest do
         %{workspace_uri: ws, caller_uri: nil, caller_caps: MapSet.new()}
       )
 
-    assert "cc" in state["cwd_required_flavors"]
-    assert "codex" in state["cwd_required_flavors"]
+    refute "cc" in state["cwd_required_flavors"]
+    refute "codex" in state["cwd_required_flavors"]
     # P2: echo (the only cwd-required-with-PTY flavor) retired into py, which has
     # no PTY-cwd rule — so no flavor requires cwd-with-PTY now.
     assert state["cwd_required_with_pty_flavors"] == []
     refute "curl" in state["cwd_required_flavors"]
+  end
+
+  test "agent_new_form state includes configured custom project_cwd roots" do
+    ws = Ezagent.URI.workspace("acme")
+    root = Path.join(System.tmp_dir!(), "ezagent-world-root")
+    prev = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", root)
+
+    on_exit(fn ->
+      if prev,
+        do: System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", prev),
+        else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
+    end)
+
+    state =
+      Ezagent.World.IdentityData.state_for(
+        %{component: "agent_new_form", title: "New agent", path: "/identities/agents/new"},
+        %{workspace_uri: ws, caller_uri: nil, caller_caps: MapSet.new()}
+      )
+
+    assert state["allowed_project_cwd_roots"] == [Path.expand(root)]
   end
 
   test "agent_detail state of a non-existent agent is a clean not-found, not a shell (F2)" do
@@ -44,10 +65,9 @@ defmodule Ezagent.World.IdentityDataTest do
   end
 
   test "create_error_message maps backend reasons to operator-facing text" do
-    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_cc) =~ "project_cwd"
-
-    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_codex) =~
-             "project_cwd"
+    assert Ezagent.World.IdentityData.create_error_message(
+             {:cwd_outside_allowed_roots, "/etc/passwd"}
+           ) =~ "允许"
 
     assert Ezagent.World.IdentityData.create_error_message({:bad_name, "x y"}) =~ "name"
     assert Ezagent.World.IdentityData.create_error_message({:bad_flavor, "zz"}) =~ "zz"

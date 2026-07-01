@@ -273,118 +273,49 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # path. `--from` is threaded as `explicit_source` so a configured
   # user-default does NOT silently override the requested clone source.
   defp do_create_agent("cc", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "cc.agent." <> agent_name(agent_uri)
-
-    tmpl = file_flavor_template("cc", "cc.agent", agent_uri, cwd, Map.get(params, :flavor_config))
-
-    register_and_invoke_template(
+    register_file_flavor_agent(
       session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
       agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
+      params,
+      "cc",
+      "cc.agent",
+      "cc.agent.",
       Map.get(params, :from_uri)
     )
   end
 
   defp do_create_agent("cc-headless", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "cc_headless.agent." <> agent_name(agent_uri)
-
-    tmpl =
-      file_flavor_template(
-        "cc-headless",
-        "cc_headless.agent",
-        agent_uri,
-        cwd,
-        Map.get(params, :flavor_config)
-      )
-
-    register_and_invoke_template(
+    register_file_flavor_agent(
       session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
       agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
+      params,
+      "cc-headless",
+      "cc_headless.agent",
+      "cc_headless.agent.",
       nil
     )
   end
 
   defp do_create_agent("codex", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "codex.agent." <> agent_name(agent_uri)
-
-    tmpl =
-      file_flavor_template(
-        "codex",
-        "codex.agent",
-        agent_uri,
-        cwd,
-        Map.get(params, :flavor_config)
-      )
-
-    register_and_invoke_template(
+    register_file_flavor_agent(
       session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
       agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
+      params,
+      "codex",
+      "codex.agent",
+      "codex.agent.",
       Map.get(params, :from_uri)
     )
   end
 
   defp do_create_agent("codex-remote", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "codex_remote.agent." <> agent_name(agent_uri)
-
-    tmpl =
-      file_flavor_template(
-        "codex-remote",
-        "codex_remote.agent",
-        agent_uri,
-        cwd,
-        Map.get(params, :flavor_config)
-      )
-
-    register_and_invoke_template(
+    register_file_flavor_agent(
       session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
       agent_uri,
-      Map.get(params, :caller),
-      Map.get(params, :caps),
+      params,
+      "codex-remote",
+      "codex_remote.agent",
+      "codex_remote.agent.",
       nil
     )
   end
@@ -473,6 +404,43 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
         {:error, reason} ->
           {:error, {:spawn_failed, reason}}
       end
+    end
+  end
+
+  defp register_file_flavor_agent(
+         session_templates,
+         agent_uri,
+         params,
+         flavor,
+         class_name,
+         tmpl_prefix,
+         from_uri
+       ) do
+    %{
+      cwd: cwd,
+      workspace_name: workspace_name,
+      workspace_uri: workspace_uri
+    } = params
+
+    with {:ok, tmpl} <-
+           file_flavor_template(
+             flavor,
+             class_name,
+             agent_uri,
+             cwd,
+             Map.get(params, :flavor_config)
+           ) do
+      register_and_invoke_template(
+        session_templates,
+        workspace_name,
+        workspace_uri,
+        tmpl_prefix <> agent_name(agent_uri),
+        tmpl,
+        agent_uri,
+        Map.get(params, :caller),
+        Map.get(params, :caps),
+        from_uri
+      )
     end
   end
 
@@ -649,11 +617,11 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # Test-only accessor — the persisted file-flavor template ALWAYS carries a
   # config_dir reference (the no-silent-fallback structural guarantee).
   def __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd),
-    do: file_flavor_template(flavor, class_name, agent_uri, cwd, %{})
+    do: file_flavor_template!(flavor, class_name, agent_uri, cwd, %{})
 
   @doc false
   def __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd, flavor_config),
-    do: file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config)
+    do: file_flavor_template!(flavor, class_name, agent_uri, cwd, flavor_config)
 
   @doc false
   # Test-only accessor — the cascade-content builder's no-silent-fallback
@@ -663,16 +631,26 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   defp file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config)
        when is_binary(flavor) and is_binary(class_name) do
     config_dir = per_agent_config_dir(class_name, agent_uri)
-    validated_cwd = Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default!(cwd, config_dir)
 
-    %{
-      "class" => class_name,
-      "flavor" => flavor,
-      "agent_uri" => agent_uri_string(agent_uri),
-      "project_cwd" => validated_cwd,
-      "config_dir" => config_dir
-    }
-    |> Map.merge(flavor_config || %{})
+    with {:ok, validated_cwd} <-
+           Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default(cwd, config_dir) do
+      {:ok,
+       %{
+         "class" => class_name,
+         "flavor" => flavor,
+         "agent_uri" => agent_uri_string(agent_uri),
+         "project_cwd" => validated_cwd,
+         "config_dir" => config_dir
+       }
+       |> Map.merge(flavor_config || %{})}
+    end
+  end
+
+  defp file_flavor_template!(flavor, class_name, agent_uri, cwd, flavor_config) do
+    case file_flavor_template(flavor, class_name, agent_uri, cwd, flavor_config) do
+      {:ok, tmpl} -> tmpl
+      {:error, reason} -> raise ArgumentError, "invalid project_cwd: #{inspect(reason)}"
+    end
   end
 
   # The per-agent config_dir TARGET — core authority (`Ezagent.Sandbox.ConfigDir`),

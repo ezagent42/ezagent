@@ -129,6 +129,44 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
         else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
     end
 
+    test "validator defaults nil or empty cwd to config_dir and returns errors" do
+      assert {:ok, "/tmp/ezagent-test/config"} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default(
+                 nil,
+                 "/tmp/ezagent-test/config"
+               )
+
+      assert {:ok, "/tmp/ezagent-test/config"} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default(
+                 "",
+                 "/tmp/ezagent-test/config"
+               )
+
+      assert {:error, {:cwd_outside_allowed_roots, _}} =
+               Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default(
+                 "/etc/passwd",
+                 "/tmp/ezagent-test/config"
+               )
+    end
+
+    test "operator_allowed_project_cwd_roots returns expanded configured roots" do
+      root = Path.join(System.tmp_dir!(), "ezagent-root-a")
+      nested = Path.join(System.tmp_dir!(), "ezagent-root-b/../ezagent-root-b")
+      prev = System.get_env("EZAGENT_ALLOWED_CWD_ROOTS")
+      System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", "#{root}:#{nested}")
+
+      on_exit(fn ->
+        if prev,
+          do: System.put_env("EZAGENT_ALLOWED_CWD_ROOTS", prev),
+          else: System.delete_env("EZAGENT_ALLOWED_CWD_ROOTS")
+      end)
+
+      assert Ezagent.Sandbox.ConfigDir.operator_allowed_project_cwd_roots() == [
+               Path.expand(root),
+               Path.expand(nested)
+             ]
+    end
+
     test "bang validator defaults nil cwd and raises outside allowed roots" do
       assert Ezagent.Sandbox.ConfigDir.validate_project_cwd_or_default!(
                nil,
