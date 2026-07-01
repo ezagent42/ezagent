@@ -123,6 +123,18 @@
 | **World UI** | **IM 三栏聊天式**（Sessions·会话·详情） | 人手写 LiveView | Chat/Agents/Manage + New chat（见 §1③ 新方向） | 低（LiveView + 聊天软件范式） |
 | **Agent Console** | 表单/表格 CRUD（world 内 surface） | 人手写 LiveView | 目录 rail + detail tabs（Overview/Config/Keys/Caps…） | 低（随 world 壳） |
 
+### 3.1 产品性格（personality）——在 design-system base 上做**变体**，不各画一套
+
+> ruihua 提议：直接面向终端用户的 **world / hello / website** 应各有一点**性格**。base（钴蓝动作色 / 三原色 / 字体 / 圆角 / 禁渐变）**不变**；性格只调"表达层"——先用 **IP 形象 + 主 accent 色板** 两个工具定调，再作用到**色彩 / 字体 / 组件**（都是 base 的变体，不破不变式）。
+
+| 面 | 性格一句话 | 主 accent（三原色里选） | 表达手法（base 之上） |
+|---|---|---|---|
+| **Website** | 酷炫、活泼、有能量 | 三原色高对比轮转（红/黄/翠点彩） | 大字号 + 块状几何 + 滚动揭示 / FadeUpBlur 加强 + IP 吉祥物 |
+| **World** | 「能接通一切」的**接线员**，左右逢源、稳 | 墨蓝 `--blueink`（结构 / 可靠） | 节点—连线母题、克制动效、IM 稳态；接线员 IP |
+| **Hello** | **设计师 × 工程师**双重人格：会生成、也精确 | 翠 `--jade`（生成 / 生长）+ mono 精确 | 生成态"呼吸"微动 × 网格 / 等宽的工整；builder-artist IP |
+| **Agent Console** | 随 world（接线员）+ 招聘的「HR 温度」 | 同 world 墨蓝 | 继承 world 壳；候选人卡带一点人情味 |
+| **Socialware** | **变色龙 / 中性**——让**客户品牌**当主角 | 最弱化 ezagent 性格 | base 尽量中性，per-fixture 由客户内容主导 |
+
 ## 4. 方向优先级（P0 = 今天必须对齐/落地方向；P1 = 后续迭代）
 
 > 本 memo 只出**方向**（Q3=a，今天不改代码）。以下是各面 owner **今天须照做的最高优先级方向**。
@@ -141,6 +153,8 @@
 | **World UI** | **方向定调：往 IM 三栏聊天式收敛**（更像聊天软件，见 evidence 原型）；壳套上游 token | 会话内 timeline/composer/members/routing/tools drawer 细化 |
 | **Agent Console** | 明确它**活在 world 壳内**，随 world 聊天式改版走；token 对齐 | detail tabs 信息层级打磨 |
 | **Socialware** | 作为底座，token 与品牌层对齐（官网/hello 都渲染在其上） | catalog 组件视觉逐个对表 |
+
+**跨面 P1 · 产品性格变体（§3.1）:** base 统一后，为 **Website / World / Hello 各出 IP 形象 + accent 色板 + 动效性格**，从 base 派生变体（Agent Console 随 world；Socialware 保持中性让客户品牌主导）。**今天 P0 仍是先把 base 对齐，不做性格**——性格是 base 稳定后的下一层。
 
 ---
 
