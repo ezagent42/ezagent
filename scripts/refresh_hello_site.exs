@@ -258,12 +258,14 @@ body =
       Build.text("core · Kind / Behavior / dispatch / CapBAC / 可靠性原语", "code")
     ]),
 
-    # section tab bar (decorative — catalog Tabs; content below does not switch)
+    # section tab bar — 2 tabs (ruihua W2), 1:1 with the two sibling sections
+    # below in the SAME order: worldcup (研发进度) then team (核心团队). No "Intro"
+    # tab: the hero/intro lives above, outside the tabs. W4 "看看进度" CTA
+    # (onClickUrl "#worldcup") dispatches jr-tab-switch to the worldcup value.
     Build.stack("tabbar-band", %{"gap" => "none"}, [
       Build.n("Tabs", %{"defaultValue" => "worldcup", "tabs" => [
-        %{"label" => "介绍 · Intro", "value" => "intro"},
-        %{"label" => "world.cup · Progress", "value" => "worldcup"},
-        %{"label" => "团队 · Team", "value" => "team"}
+        %{"label" => "研发进度 · Progress", "value" => "worldcup"},
+        %{"label" => "核心团队 · Team", "value" => "team"}
       ]}, [])
     ]),
 
