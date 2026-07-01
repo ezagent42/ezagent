@@ -40,8 +40,12 @@ defmodule Ezagent.World.AdminData do
 
   # Overview 操作员落地页（FP5 S2-a）：复用 dashboard 的 KPI 概览,前端再叠快捷入口。
   # 不带 orchestrator 明细 —— 那是 Admin Dashboard 的职责,Overview 只做轻量总览 + 导航。
-  defp component_state(%{component: "overview"}, base, _workspace_uri, _caller_uri) do
-    Map.put(base, "kpis", kpis())
+  # FP5 S2-b: 落地页需要 sessions 列表 + 模板名,提前注入方便前端直出。
+  defp component_state(%{component: "overview"}, base, workspace_uri, _caller_uri) do
+    base
+    |> Map.put("kpis", kpis())
+    |> Map.put("available_sessions", available_session_rows(workspace_uri))
+    |> Map.put("session_template_names", session_template_names(workspace_uri))
   end
 
   defp component_state(%{component: "observability"}, base, workspace_uri, _caller_uri) do
@@ -139,6 +143,69 @@ defmodule Ezagent.World.AdminData do
       "entities" => count_scheme(kinds, "entity"),
       "agents" => count_entity_type(kinds, "agent")
     }
+  end
+
+  # 落地页"可返回 session"列表:URI 序(非时间序),最多 3 条。
+  # guard 在 workspace URI 形状上,别的形状直接返回 [];底层异常也兜底到 []。
+  defp available_session_rows(%URI{scheme: "workspace"} = workspace_uri) do
+    workspace_uri
+    |> EzagentDomainInstanceMessage.list_sessions()
+    |> Enum.take(3)
+    |> Enum.map(fn session_uri ->
+      %{
+        "uri" => URI.to_string(session_uri),
+        "name" => session_name(session_uri)
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp available_session_rows(_), do: []
+
+  defp session_name(session_uri) do
+    case Ezagent.URI.name!(session_uri) do
+      name when is_binary(name) and name != "" -> name
+      _ -> URI.to_string(session_uri)
+    end
+  rescue
+    _ -> URI.to_string(session_uri)
+  end
+
+  # 落地页"可创建模板"名列表,与 WorldLive.session_template_names/1 同逻辑。
+  # WorldLive 不是 AdminData 的依赖,所以这里复制一份(单 source of truth 风险可控,
+  # 两处实现都对应同一 TemplateRegistry + WorkspacePluginData 数据源)。
+  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+    classes =
+      Ezagent.TemplateRegistry.registered_template_names()
+      |> Enum.filter(&String.starts_with?(&1, "session."))
+      |> Enum.filter(&class_directly_creatable?/1)
+      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
+
+    instances =
+      workspace_uri
+      |> Ezagent.URI.name!()
+      |> Ezagent.World.WorkspacePluginData.session_template_rows()
+      |> Enum.map(&Map.get(&1, "name"))
+
+    other =
+      (classes ++ instances)
+      |> Enum.reject(&(&1 in [nil, "", "default"]))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    ["default" | other]
+  rescue
+    _ -> ["default"]
+  end
+
+  defp session_template_names(_), do: ["default"]
+
+  defp class_directly_creatable?(class_name) do
+    case Ezagent.TemplateRegistry.lookup(class_name) do
+      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
+      :error -> true
+    end
   end
 
   defp count_scheme(kinds, scheme) do
