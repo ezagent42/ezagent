@@ -2,7 +2,7 @@
 
 > **From:** ruihua（designer） · **Date:** 2026-07-01
 > **Ladder:** lead 2026-07-01「产品形态收口」问②——官网对话框支持哪些交流主题 + 如何配置
-> **权威文档:** `docs/together/2026-07-01/design-ui-convergence.md`
+> **权威文档:** `docs/website-demo/design-ui-convergence.md`
 
 ## 先读文档这几段（按序）
 

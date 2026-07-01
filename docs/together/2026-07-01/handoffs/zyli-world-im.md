@@ -2,7 +2,7 @@
 
 > **From:** ruihua（designer） · **Date:** 2026-07-01
 > **Ladder:** lead 2026-07-01「产品形态收口」问①——World UI 改动，目标像 IM、不像后台管理平台
-> **权威文档:** `docs/together/2026-07-01/design-ui-convergence.md`
+> **权威文档:** `docs/website-demo/design-ui-convergence.md`
 
 ## 先读文档这几段
 

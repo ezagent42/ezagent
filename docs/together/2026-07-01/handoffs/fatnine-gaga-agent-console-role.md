@@ -2,7 +2,7 @@
 
 > **From:** ruihua（designer） · **Date:** 2026-07-01
 > **Ladder:** lead 2026-07-01「产品形态收口」问③——Agent Console 今天上线 + 后面向「创建岗位」迁移，入口在哪
-> **权威文档:** `docs/together/2026-07-01/design-ui-convergence.md` §5.3
+> **权威文档:** `docs/website-demo/design-ui-convergence.md` §5.3
 
 ## 先读文档这几段
 1. **§1④ Agent Console** —— 定义：world 内的一个 surface（`world_live.ex` 路由 clause），不是独立 app。

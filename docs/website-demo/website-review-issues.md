@@ -2,7 +2,7 @@
 
 > **Reviewer:** ruihua（designer） · **Date:** 2026-07-01
 > **被评审:** zhaomato Website / Hello（#1107 已合 + T2 `feat/website-hello-ruihua-0701`）
-> **评审依据（gate）:** `docs/together/2026-07-01/design-ui-convergence.md` §2 共通品牌层 / §3 差异 / §4 Website P0
+> **评审依据（gate）:** `docs/website-demo/design-ui-convergence.md` §2 共通品牌层 / §3 差异 / §4 Website P0
 > **角色:** T1 DoD「其他 UI PR 以此作为 review gate」——本文件是 Website 一侧的 gate 落地记录。
 
 ## 怎么打开对照看

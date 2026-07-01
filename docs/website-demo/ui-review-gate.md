@@ -1,7 +1,7 @@
 # UI Review Gate — 各 surface 自查清单（提 PR 前自己跑）
 
 > **From:** ruihua（designer） · **Date:** 2026-07-01
-> **来源:** `docs/together/2026-07-01/design-ui-convergence.md`（设计收敛 gate）
+> **来源:** `docs/website-demo/design-ui-convergence.md`（设计收敛 gate）
 > **性质:** 这不是"ruihua 逐个 review 你的 PR"，而是**把 gate 变成一份自查清单**——
 > 每个 UI PR **提交前 owner 自己对着跑一遍**，把结果 + 截图贴进 PR，lead 据此合并。
 > 卡壳/拿不准的设计问题再 @ruihua；日常达标靠自查，不靠我做瓶颈。
@@ -38,7 +38,7 @@
 - [ ] **诚实护栏**：数字只展真实可复算的
 - [ ] hello ↔ backend/world 联通验证过（附 refresh 命令证据）
 - [ ] 明确结论：是否可上线 `app.ezagent.chat`（须与 Allen/T6 协调）
-- 对照记录：`docs/together/2026-07-01/website-review-issues.md`
+- 对照记录：`docs/website-demo/website-review-issues.md`
 
 ### B2. Hello builder（zhaomato · T2）
 - [ ] 官网对话框 = **门户助手·导航式副驾**（切页面/滚动 + 短文字，非纯文字问答）

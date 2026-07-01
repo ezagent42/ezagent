@@ -289,7 +289,7 @@
 - **Q1 ✅ 品牌 canonical 源 = **`ezagent-design-system`** 远程库**（rev `ebce041`）。官网 `tokens.css` 须对齐上游、不另立标准。
 - **Q3 ✅ today-scope = 只出方向**（不改代码）；方向内须标注 P0（今天必须对齐）—— 见 §4。
 - **Q4（world）✅ World 最新方向 = IM 三栏聊天式**（lead 认为生产版不够像聊天软件），视觉参照 `docs/together/2026-06-30/evidence/world-ui-im-refactor-live/`，已写进 §1③ + §3 + §4。
-- **Q5 ✅ 落盘 = **`docs/together/2026-07-01/design-ui-convergence.md`** @ 分支 **`docs/design-ui-convergence-0701`（base 最新 main）。
+- **Q5 ✅ 落盘 = **`docs/website-demo/design-ui-convergence.md`** @ 分支 **`docs/design-ui-convergence-0701`（base 最新 main）。
 
 ## 仍待确认
 
