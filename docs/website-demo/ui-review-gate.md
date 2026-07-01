@@ -38,7 +38,7 @@
 - [ ] **诚实护栏**：数字只展真实可复算的
 - [ ] hello ↔ backend/world 联通验证过（附 refresh 命令证据）
 - [ ] 明确结论：是否可上线 `app.ezagent.chat`（须与 Allen/T6 协调）
-- 对照记录：`docs/website-demo/v1/website-review-issues.md`
+- 对照记录：`docs/website-demo/website-review-issues.md`
 
 ### B2. Hello builder（zhaomato · T2）
 - [ ] 官网对话框 = **门户助手·导航式副驾**（切页面/滚动 + 短文字，非纯文字问答）

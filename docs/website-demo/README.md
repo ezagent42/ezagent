@@ -7,13 +7,13 @@
 ```
 docs/website-demo/
 ├── design-ui-convergence.md   ← 设计收敛 gate（跨 5 面：Website/Hello/World/AgentConsole/Socialware，权威）
+├── ui-review-gate.md          ← 各 surface 自查清单（提 PR 前自跑）
+├── website-review-issues.md   ← 审 zhaomato 官网的问题记录（活文档）
 ├── v1/                        ← 当前官网 demo（静态站，可上线方向）
 │   ├── index.html             主站：介绍 / world.cup / 团队 三页
 │   ├── worldcup.js · mock-ezagent-api.js · site-nav.js · demo-state.js
 │   ├── world-demo.html · hello-demo.html · login.html · team-office.html
-│   ├── tokens.css · ezagent-logo*.png
-│   ├── website-review-issues.md   ← 审 zhaomato 官网的问题记录（活文档）
-│   └── ui-review-gate.md          ← 各 surface 自查清单（提 PR 前自跑）
+│   └── tokens.css · ezagent-logo*.png
 └── vx/                        ← 未来实现（尚未落地）
     ├── agent-hire-demo/       Agent Console → 招聘（候选人 profile 卡 + 场景播放）
     └── version/               官网优化 roadmap / UI-UX 审查 / dogfooding 案例
