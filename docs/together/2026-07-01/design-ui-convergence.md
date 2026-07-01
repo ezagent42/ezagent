@@ -241,9 +241,39 @@
 
 回来回填本节 + §4 Hello 行。
 
-### 5.3 Agent Console · with FatNine & gaga 〔下一轮讨论〕
-- lead: **今天要上线**；后面考虑向「**创建一个岗位**」迁移——Agent Console 更多是靠后的配置，end-user 做的是类似 invite 一个 "GTM engineering" 加入组织，**入口放哪里合适**待议。
-- 〔占位：ruihua 与 FatNine&gaga 讨论后回填〕
+### 5.3 Agent Console → 创建岗位 · with FatNine & gaga 〔本轮讨论〕
+
+**lead 三点:** ① Agent Console **今天要上线**；② 后面向「**创建一个岗位**」迁移——Agent Console 更偏"靠后的配置"，end-user 做的是类似 **invite 一个 "GTM engineering" 加入组织**；③ **入口放哪里合适**？
+
+**分工:** FatNine（戴明，#84 Agent Console UI）· gaga（黄佳佳，agent-config 后端契约）。
+
+#### 今天上线（P0，不阻塞）
+- 现状：Agent Console = world 内的 **Agents** tab（列表 + 详情 tabs：Overview/Config/Keys/Caps/Extensions/Terminal）+ **New Agent** 表单。
+- New Agent 表单很技术：Flavor(cc/codex/py/curl/native) · project_cwd · model · effort · permission_mode · tools · Requested caps · With PTY（见 `world-ui-im-refactor-live/26-agents.png` / `27-agent-new.png`）。
+- **判断：作为"靠后的配置/operator 面"，今天按现状上线 OK**，不为岗位改造挡上线。
+
+#### 后面改造：「配置 agent」→「创建岗位」（P1，讨论）
+- **本质 = 两层拆分**（代码已具雏形，不用从零）：
+  - **岗位层（人话）** —— 复用既有 **`Ezagent.Role`**（`skills`/`plugins`/`prompt`/`behaviors`/`requested_caps`）+ `AgentTemplate.desired_skills/desired_caps`。gap-analysis §5-6 明确：**domain 有 Role，但缺 operator 可视化管理面**——这正是要补的。
+  - **运行时层（机器配置）** —— 现有的 flavor/cwd/model/tools/caps 表单**降级为"高级配置"**，藏到岗位详情后面。
+- **end-user 心智：** 不是"provision 一个 cc-flavor agent 配这些 caps"，而是"我要个 **GTM 工程师**"——系统按岗位 preset 自动带出技术配置。
+
+#### 入口在哪里（lead 的核心问题 → 选项 + 建议）
+| 选项 | 说明 | 评价 |
+|---|---|---|
+| A. 并入「org 邀请成员」 | "邀请成员"里可选 **人 或 agent 岗位**，并列 | **推荐**：贴 lead"invite…加入组织"原话；复用 hello-ui 已有的 MEMBERS+Invite（人/agent 混排）；贴 world→IM（往频道邀成员） |
+| B. 独立"岗位市场/catalog" | 单独入口选 preset 岗位→命名→上岗 | 适合 preset 多时；但另立入口，端用户要多学一处 |
+| C. 保留 Agents tab 改名 | Agents→"团队/Roster"，主动作"招一个" | 折中；但仍在 operator 味重的 tab 里 |
+
+- **✅ 已定：入口 = A（并入 org 成员邀请）**。"招一个 GTM 工程师" = "给组织加个成员"，端用户不该进开发者控制台。**Agent Console（raw config）降为岗位详情里的"高级设置"**。
+- **✅ 初始 preset 岗位 = GTM 工程 / 客服 / 研发助手**（各绑定默认 skills/prompt/caps；研发助手贴 cc/codex flavor、客服贴 socialware autoservice）。
+
+#### 5.3 讨论待办（发 FatNine & gaga）
+1. **今天上线**：确认当前 Agent Console 就绪、不被岗位改造阻塞。
+2. **入口已定 = A**（并入 org 成员邀请，人 + agent 岗位同处）——技术上怎么把"邀请成员"扩成含 agent 岗位？
+3. **岗位层技术**（gaga）：`Ezagent.Role` + `AgentTemplate` preset 怎么把 raw config（flavor/cwd/model/tools/caps）收成一个"岗位"？运行时可编辑吗？
+4. **UI 迁移**（FatNine）：raw 表单降为"高级配置"、岗位层做"招一个"流程——分几步落？
+5. **preset 岗位已定 = GTM 工程 / 客服 / 研发助手**——各自默认 skills/prompt/caps 由 gaga/FatNine 定值。
 
 ---
 
@@ -258,4 +288,4 @@
 
 - **Q2 ✅ 已答:** hello builder = world 控制台里 hello session 的 Conversation 面板，agent `hello_web`，session `session://system/hello/site`（截图 `docs/together/2026-06-30/evidence/hello-ui/`）。已回填 §1②。
 - **§5.2 待 zhaomato 确认:** 权限/发布模型 · theme 强制 token base · provision 方式（见 §5.2 讨论待办）。
-- **§5.3 待 FatNine&gaga 确认:** Agent Console「创建岗位」迁移 + 入口位置。
+- **§5.3 ✅ ruihua 已定:** 入口 = A（并入 org 成员邀请）；preset 岗位 = GTM 工程/客服/研发助手；今天 Agent Console 按现状上线。**待 FatNine&gaga 落技术**（Role/AgentTemplate preset、邀请成员扩 agent、UI 迁移步骤）。
