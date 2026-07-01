@@ -258,45 +258,50 @@ body =
       Build.text("core · Kind / Behavior / dispatch / CapBAC / 可靠性原语", "code")
     ]),
 
-    # section tab bar — 2 tabs (ruihua W2), 1:1 with the two sibling sections
-    # below in the SAME order: worldcup (研发进度) then team (核心团队). No "Intro"
-    # tab: the hero/intro lives above, outside the tabs. W4 "看看进度" CTA
-    # (onClickUrl "#worldcup") dispatches jr-tab-switch to the worldcup value.
+    # section tabs — REAL content switching (ruihua W2). The two sections are the
+    # Tabs node's 2 CHILDREN (child[i] ↔ tabs[i]): TabsSwitch
+    # (catalog_jsonrender.mjs) renders ONLY the active child = true switch, not a
+    # decorative bar with both sections always visible. Order MUST match:
+    #   tab[0] worldcup → child[0] worldcup(研发进度)section
+    #   tab[1] team     → child[1] team(核心团队)section
+    # defaultValue "worldcup" shows 研发进度 first. W4 "看看进度" CTA
+    # (onClickUrl "#worldcup") dispatches jr-tab-switch → worldcup is a valid tab
+    # value, so it switches to the worldcup panel + scrolls the tab bar into view.
     Build.stack("tabbar-band", %{"gap" => "none"}, [
       Build.n("Tabs", %{"defaultValue" => "worldcup", "tabs" => [
         %{"label" => "研发进度 · Progress", "value" => "worldcup"},
         %{"label" => "核心团队 · Team", "value" => "team"}
-      ]}, [])
-    ]),
+      ]}, [
+        # child[0] — worldcup (研发进度) panel (tinted band)
+        Build.stack("section worldcup", %{"gap" => "none"}, [
+          Build.stack("worldcup-head", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
+            Build.n("Image", %{"src" => "/images/ruihua-ball.svg", "alt" => "world.cup", "width" => 30, "height" => 30}),
+            Build.text("PROGRESS · world.cup", "caption")
+          ]),
+          Build.heading("研发进度与公开路线图", "h2"),
+          Build.text("每一项进展都来自真实研发，可追溯至对应 PR、commit 与里程碑 — 不夸大、不造势。数据来自 github.com/ezagent42/ezagent（#{src_label}）。", "muted"),
+          Build.n("Grid", %{"columns" => 4, "gap" => "md", "className" => "stat-row"}, [
+            Build.n("Card", %{"className" => "stat"}, [Build.heading("##{latest_pr}", "h3"), Build.text("最新合并 PR", "caption")]),
+            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(length(data.contrib)), "h3"), Build.text("活跃贡献者", "caption")]),
+            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.issues), "h3"), Build.text("开放 issue", "caption")]),
+            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.lang), "h3"), Build.text("主语言 · OTP", "caption")])
+          ]),
+          Build.heading("近期已合并 · Recently merged", "h4"),
+          Build.n("Table", %{"caption" => "实时 / 快照 · github.com/ezagent42/ezagent · merged PRs",
+            "columns" => ["PR", "进展", "作者", "类型"], "rows" => pr_rows}),
+          Build.heading("贡献榜 · Contributor leaderboard", "h4"),
+          Build.n("Table", %{"caption" => "contributions API · 按提交数排序",
+            "columns" => ["#", "贡献者", "提交数", "方向"], "rows" => contrib_rows})
+        ]),
 
-    # world.cup (tinted band)
-    Build.stack("section worldcup", %{"gap" => "none"}, [
-      Build.stack("worldcup-head", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
-        Build.n("Image", %{"src" => "/images/ruihua-ball.svg", "alt" => "world.cup", "width" => 30, "height" => 30}),
-        Build.text("PROGRESS · world.cup", "caption")
-      ]),
-      Build.heading("研发进度与公开路线图", "h2"),
-      Build.text("每一项进展都来自真实研发，可追溯至对应 PR、commit 与里程碑 — 不夸大、不造势。数据来自 github.com/ezagent42/ezagent（#{src_label}）。", "muted"),
-      Build.n("Grid", %{"columns" => 4, "gap" => "md", "className" => "stat-row"}, [
-        Build.n("Card", %{"className" => "stat"}, [Build.heading("##{latest_pr}", "h3"), Build.text("最新合并 PR", "caption")]),
-        Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(length(data.contrib)), "h3"), Build.text("活跃贡献者", "caption")]),
-        Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.issues), "h3"), Build.text("开放 issue", "caption")]),
-        Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.lang), "h3"), Build.text("主语言 · OTP", "caption")])
-      ]),
-      Build.heading("近期已合并 · Recently merged", "h4"),
-      Build.n("Table", %{"caption" => "实时 / 快照 · github.com/ezagent42/ezagent · merged PRs",
-        "columns" => ["PR", "进展", "作者", "类型"], "rows" => pr_rows}),
-      Build.heading("贡献榜 · Contributor leaderboard", "h4"),
-      Build.n("Table", %{"caption" => "contributions API · 按提交数排序",
-        "columns" => ["#", "贡献者", "提交数", "方向"], "rows" => contrib_rows})
-    ]),
-
-    # team (ground band)
-    Build.stack("section team", %{"gap" => "none"}, [
-      Build.text("CONTRIBUTORS · 团队", "caption"),
-      Build.heading("核心团队", "h2"),
-      Build.text("用 AI agent 协作开发自身产品的核心团队 · 数据源 docs/together/team.md。", "muted"),
-      Build.n("Grid", %{"columns" => 3, "gap" => "lg", "className" => "team-wall"}, team_members)
+        # child[1] — team (核心团队) panel (ground band)
+        Build.stack("section team", %{"gap" => "none"}, [
+          Build.text("CONTRIBUTORS · 团队", "caption"),
+          Build.heading("核心团队", "h2"),
+          Build.text("用 AI agent 协作开发自身产品的核心团队 · 数据源 docs/together/team.md。", "muted"),
+          Build.n("Grid", %{"columns" => 3, "gap" => "lg", "className" => "team-wall"}, team_members)
+        ])
+      ])
     ]),
 
     # footer
@@ -347,9 +352,9 @@ theme_css = ~S"""
 .page-root > .products-section,
 .page-root > .foundation,
 .page-root > .tabbar-band,
-.page-root > .worldcup,
-.page-root > .team,
 .page-root > .footer{padding-inline:var(--pad-x)}
+/* worldcup/team are NO LONGER page-root children — they live inside the Tabs as
+   .jr-tabs-content panels; their gutter is re-applied below via .jr-tabs-content. */
 
 /* nav — centered floating glass pill */
 .page-root .nav{
@@ -414,11 +419,22 @@ theme_css = ~S"""
 .page-root .foundation p:nth-of-type(1){font-family:var(--font-cn);font-weight:500;font-size:16px;color:#F4F2EC;margin:0}
 .page-root .foundation code{font-family:var(--font-mono);font-size:12px;color:#85837B;background:transparent;margin-left:auto;padding:0}
 
-/* tab bar band */
+/* tab bar band — the pills sit at the page gutter (tabbar-band padding-inline) */
 .page-root .tabbar-band{padding-top:46px;padding-bottom:0;background:var(--ground)}
 .page-root [data-slot=tabs-list]{background:var(--ground-2);border-radius:var(--r-pill);padding:5px;gap:4px;height:auto;display:inline-flex}
 .page-root [data-slot=tabs-trigger]{font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--ink-2);border-radius:var(--r-pill);padding:9px 18px;border:0}
 .page-root [data-slot=tabs-trigger][data-state=active]{background:var(--accent);color:#fff;box-shadow:var(--shadow-accent)}
+
+/* tab content panels (REAL switch). worldcup/team are the Tabs' 2 children;
+   TabsSwitch wraps each in .jr-tabs-content (hidden unless active). The wrapper
+   inherits tabbar-band's padding-inline, so: (a) enforce show/hide on [hidden];
+   (b) bleed the panel back to full viewport width (negative margin cancels the
+   tabbar gutter) so worldcup's tinted band stays full-bleed; (c) re-apply the
+   page gutter to the inner content so it never glues to the left edge (this is
+   the alignment fix the coordinator called out). */
+.page-root .jr-tabs-content[hidden]{display:none}
+.page-root .jr-tabs-content{margin-inline:calc(-1 * var(--pad-x))}
+.page-root .jr-tabs-content > *{padding-inline:var(--pad-x, max(28px, calc((100% - 1340px) / 2)))}
 
 /* world.cup — tinted band */
 .page-root .worldcup{background:#F1F0F4;padding-top:40px;padding-bottom:56px}
