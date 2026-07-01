@@ -205,7 +205,7 @@ body =
     # nav (centered pill)
     Build.stack("nav", %{"direction" => "horizontal", "align" => "center", "justify" => "between"}, [
       Build.stack("brand", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
-        Build.n("Image", %{"src" => "/images/logo.svg", "alt" => "Ezagent", "width" => 28, "height" => 20}),
+        Build.n("Image", %{"src" => "/images/ezagent-logo.png", "alt" => "Ezagent", "width" => 20, "height" => 24}),
         Build.text("EZAGENT", "body")
       ]),
       Build.stack("navlinks", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
@@ -221,8 +221,10 @@ body =
       Build.heading("Organization IDE.", "h2"),
       Build.text("Ezagent 让你用一套柔软而清晰的界面，构建、运行并交付组织的 AI agent。把整个组织的复杂度变得在手、可搭建 — build, run, and ship agents. 纯色为轴，留白为形。", "lead"),
       Build.stack("cta", %{"direction" => "horizontal", "gap" => "sm"}, [
-        Build.button("开始使用 · Get started →", "default"),
-        Build.button("看看进度 · See progress", "secondary")
+        # W3: 开始使用 → open the GitHub repo in a new tab (renderer honors onClickUrl)
+        Build.n("Button", %{"label" => "开始使用 · Get started →", "variant" => "default", "onClickUrl" => "https://github.com/ezagent42/ezagent"}),
+        # W4: 看看进度 → dispatch jr-tab-switch to the world.cup/Progress tab + scroll
+        Build.n("Button", %{"label" => "看看进度 · See progress", "variant" => "secondary", "onClickUrl" => "#worldcup"})
       ])
     ]),
 
@@ -329,7 +331,9 @@ theme_css = ~S"""
   --glass:rgba(255,255,255,.62);
   --maxw:1340px;
   --pad-x:max(28px,calc((100% - var(--maxw)) / 2));
-  width:100%;max-width:none;margin:0;padding:0 0 4px;
+  /* W5: reserve room for the fixed socialware composer bar (~90px) so the last
+     row of content is never hidden behind it. */
+  width:100%;max-width:none;margin:0;padding:0 0 108px;
   background:var(--ground);color:var(--ink);
   font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;
   -webkit-font-smoothing:antialiased;line-height:1.55;
