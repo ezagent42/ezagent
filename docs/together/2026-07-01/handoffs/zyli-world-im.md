@@ -16,8 +16,8 @@
 
 1. **梳理"当前页面中不该给普通 IM 用户展示的东西"** —— 后台/运维味重的元素（URI、routing 内部、snapshot、authz audit 等）哪些对普通 IM 用户是噪声。
 2. **优化这些表达** —— 该隐藏的收进高级/管理入口，该改说法的换成聊天软件的说法（像 Slack/Telegram，不像控制台）。
-3. **朝 IM 三栏聊天式收敛** —— 参照最新原型 `docs/together/2026-06-30/evidence/world-ui-im-refactor-live/`（22-chat-default / 25-conversation / 30-mobile-chat）。
-4. **品牌对齐** —— 壳套上游 design-system token（钴蓝唯一动作色、白卡浅灰底、禁渐变、Noto/Inter 字体）。
+3. **IM 三栏聊天式** —— 你最新原型 `docs/together/2026-06-30/evidence/world-ui-im-refactor-live/`（22-chat-default / 25-conversation / 30-mobile-chat）已基本做到，**请对照收敛方向自查一遍**是否还有不够像 IM 的地方。
+4. **品牌对齐** —— 壳的 token 已大体对上，**请检查**是否全部用上游 design-system（钴蓝唯一动作色、白卡浅灰底、禁渐变、Noto/Inter 字体），有 hardcode 的换成 token。
 
 ## 请回给我什么
 - "不该给普通 IM 用户看的元素"梳理清单 + 各自的优化方式。
