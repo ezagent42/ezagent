@@ -63,12 +63,12 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
    proof and salvage branch. It must be split by ownership boundary before merge.
 4. **Design source of truth must be declared before parallel UI implementation.**
    For 0701, ruihua is the design anchor across UI/hello/console/socialware.
-5. **Seed is not the product.** #1106 should be recorded as a successful
-   AutoService Tier-1 harness, but AutoService product content must move to
-   definition data: AgentTemplate/soul markdown, resource fixtures,
-   SessionTemplate/socialware definition, and supported product/API install
-   paths. The rule is now captured in
-   `docs/together/contributing/seed-vs-product-boundary.md`.
+5. **Socialware needs a data/deployment boundary.** #1106 should be recorded as
+   a successful AutoService Tier-1 harness, and #1110 as a kanban integration
+   proof. Neither seed scripts nor big integration branches are the product
+   shape. Socialware apps must split definition data, runtime substrate, and
+   installer/deployment flow. The rule is now captured in
+   `docs/together/contributing/socialware-data-deployment-boundary.md`.
 
 ## Next-Day Suggestions
 
@@ -81,8 +81,8 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
    - fatnine: Agent Console one complete prototype
    - gaga: AutoService/socialware flow validation and gaps
    - jjkysy: split #1110
-4. Add a gaga-owned, jjkysy-reviewed task to move AutoService Tier-1 out of
-   seed-as-product: seed remains installer/verifier; persona/corpus/routing
-   become data/package artifacts.
+4. Add a gaga-owned, jjkysy-reviewed task for socialware data split and
+   deployment shape, covering both AutoService and kanban: definition data,
+   runtime substrate, and install/deploy/verification flow.
 5. Keep ruihua in the review gate: each surface should show how it follows the
    shared IA/visual direction before merging more UI code.

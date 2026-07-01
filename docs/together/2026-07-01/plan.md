@@ -19,7 +19,7 @@ Primary surfaces:
 - World UI shell
 - Agent Console
 - Socialware / AutoService public flow
-- AutoService seed/product boundary
+- Socialware data split and deployment shape
 - Kanban/dev-together integration branch split
 
 ## Tracks
@@ -32,7 +32,7 @@ Primary surfaces:
 | T4 Agent Console one complete prototype | fatnine | feat/agent-console-one-prototype-0701 | Goal 1 | Continue #1112 by choosing one Agent Console IA prototype path and making it usable/verifiable. Do not create additional prototype branches. Keep session delete/archive as a design decision unless semantics are agreed. | Agent Console demo/docs/surface files from #1112; avoid unrelated World shell edits | PR update or new PR with one completed prototype path, evidence, and remaining explicit design questions. | 17:00 |
 | T5 Socialware / AutoService public flow | gaga | feat/socialware-autoservice-ruihua-0701 | Goal 1 | Validate the customer-facing socialware/AutoService flow on current main after #1106. Identify UI/content gaps against ruihua direction and fix only narrow blocking issues. | socialware customer UI, AutoService seed/docs, no core dispatch changes | Return with E2E transcript/screenshots; PR only for narrow fixes. | 17:00 |
 | T6 Split #1110 | jjkysy | split/1110-surface-runtime-0701 | Goal 3 | Use #1110 as source branch and split into reviewable PRs. Start with PR A World UI surface substrate and PR B generic role-agent materialization. Do not merge the whole integration branch. | #1110 branch, `docs/together/2026-07-01/handoffs/jjkysy-split-pr-1110.md` | At least one smaller PR opened, with clear excluded scope and CI status. | 18:00 |
-| T7 AutoService seed/product boundary | gaga submit / jjkysy review | feat/autoservice-seed-product-boundary-0701 | Goal 1 / Goal 3 | Convert the #1106 lesson into a first productization slice: seed remains installer/verifier; AutoService persona/corpus/session package moves toward definition data. | `scripts/autoservice_tier1_seed.exs`, fixture/resource data, docs; no core/domain business logic | PR by gaga with jjkysy blocking review; support persona and/or KB corpus moved out of seed code; seed still verifies Tier-1. | 18:00 |
+| T7 Socialware data split and deployment shape | gaga submit / jjkysy review | feat/socialware-data-deployment-shape-0701 | Goal 1 / Goal 3 | Define and start implementing how socialware apps split definition data, runtime substrate, and install/deploy/verification flow. Must cover both AutoService and kanban. | socialware package/data docs, AutoService seed, kanban #1110 analysis, no core/domain business logic | PR by gaga with jjkysy blocking review; AutoService and kanban mapped to the same boundary; at least one small data/package slice or an explicit spec-first slice. | 18:00 |
 | T8 Lead integration | allen / lead | lead/0701-stack-review | Goal 3 | Review returned PRs, enforce design gate, keep main green, and avoid UI branch collisions. | `docs/together/2026-07-01/`, GitHub reviews | Updated stack/review notes and merge decisions. | 19:00 |
 
 ## Conflict Map
@@ -46,7 +46,7 @@ Primary surfaces:
 | Website demo/docs | zhaomato + ruihua | zhaomato implements; ruihua reviews direction. Avoid re-opening #1103/#1107 conflicts. |
 | Agent Console | fatnine | One prototype path only. No parallel IA branches. |
 | Socialware / AutoService | gaga | Validate current main; narrow PRs only. Do not reintroduce core dispatch/local registry changes. |
-| AutoService seed/product boundary | gaga / jjkysy | gaga submits, jjkysy reviews. Seed may install/verify; business persona/corpus/routing must move toward definition data. No core/domain business logic. |
+| Socialware data/deploy boundary | gaga / jjkysy | gaga submits, jjkysy reviews. Must cover AutoService and kanban. Split definition data, runtime substrate, install/deploy flow. No core/domain business logic. |
 | #1110 split | jjkysy | Split by ownership boundary. Do not combine substrate, business plugin, UI, persona, and docs in one PR. |
 
 ## Handoff Order
@@ -56,7 +56,7 @@ Primary surfaces:
 2. T2/T3/T4/T5 can run in parallel after the design gate.
 3. T6 can run independently, but must not merge into main today unless split PRs
    are small, green, and reviewed.
-4. T7 runs in parallel with T5 but should be reviewed by jjkysy before merge.
+4. T7 runs in parallel with T5/T6 but should be reviewed by jjkysy before merge.
 5. T8 runs throughout the day.
 
 ## Required Reading
@@ -65,8 +65,8 @@ Primary surfaces:
 - `docs/together/2026-06-30/stack.md`
 - `docs/together/2026-06-30/kanban-rebase-merge-analysis.md`
 - `docs/together/2026-07-01/handoffs/jjkysy-split-pr-1110.md` for jjkysy
-- `docs/together/2026-07-01/handoffs/autoservice-seed-product-boundary.md` for gaga and jjkysy
-- `docs/together/contributing/seed-vs-product-boundary.md`
+- `docs/together/2026-07-01/handoffs/socialware-data-deployment-boundary.md` for gaga and jjkysy
+- `docs/together/contributing/socialware-data-deployment-boundary.md`
 - `docs/guide/world-coordination.md` for any World UI work
 
 ## Off-Plan Support
