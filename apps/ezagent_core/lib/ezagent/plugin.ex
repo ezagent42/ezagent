@@ -67,24 +67,10 @@ defmodule Ezagent.Plugin do
   `Application.start/2` delegates to.
   """
 
-  # SPEC §2 + PR-5 codex HIGH-1: the six core SPEC v3 URI schemes.
-  # ALL six are owned by core/domain — a plugin owns NONE of them.
-  #
-  # `spawns/0` originally let a plugin register a spawn fn for a core
-  # scheme; codex PR-5 HIGH-1 showed that is itself the bug: a
-  # scheme-keyed `SpawnRegistry.register/2` OVERWRITES, so a plugin
-  # declaring `{"entity", fun}` passes the allowlist yet takes
-  # ownership of ALL `entity://` spawning. A plugin must NEVER own a
-  # scheme-level dispatcher (invariant 8). Since every scheme is
-  # core-owned, there is no valid plugin spawn declaration at all —
-  # `boot/1` and the `:ezagent_plugin_check` gate now REJECT any
-  # non-empty `spawns/0`. The callback is retained (so a plugin
-  # declaring one fails loudly with a precise message rather than a
-  # silent no-op), but it is effectively reserved/unusable.
-  #
-  # A plugin extends an existing scheme via its Kind's type/name
-  # prefix (e.g. `entity://agent/<ws>/cc_<name>`) or registers a
-  # Behavior on a core Kind — it never registers a scheme spawn fn.
+  # SPEC §2 + PR-5 codex HIGH-1: the six core SPEC v3 URI schemes — ALL six
+  # owned by core/domain, a plugin owns NONE (the moduledoc "spawns/0 is
+  # RESERVED" section explains why a plugin scheme spawn would hijack a core
+  # dispatcher via the scheme-keyed `SpawnRegistry.register/2` overwrite).
   @core_schemes ~w(entity session template resource workspace system)
 
   @typedoc """
@@ -194,6 +180,16 @@ defmodule Ezagent.Plugin do
           %{kind: :route, path: String.t(), label: String.t()}
           | %{kind: :flavor, flavor: String.t(), label: String.t()}
           | nil
+
+  # NOTE (2026-06-30): `nav_surfaces/0` + `session_tabs/0` are deliberately NOT
+  # core `Ezagent.Plugin` callbacks. They are World-UI concepts (left-rail nav +
+  # per-session conversation tab) whose only consumer is the world shell, so the
+  # convention lives World-side in `Ezagent.World.UiSurfaceProvider`
+  # (`apps/ezagent_plugin_world`), not in this transport/runtime contract. A
+  # plugin contributes a surface by defining a plain `nav_surfaces/0` /
+  # `session_tabs/0` function (duck-typed); world reads it via
+  # `function_exported?/3` + read-time shape filtering. `config_surface/0`
+  # (the `/plugins` config icon) STAYS here — it is unrelated.
 
   # --- REQUIRED ---
   @callback plugin_info() :: plugin_info()
@@ -456,9 +452,11 @@ defmodule Ezagent.Plugin do
       assert_agent_flavor!(plugin_module, decl)
     end)
 
-    Enum.each(plugin_module.config_surface() |> List.wrap(), fn surface ->
-      assert_config_surface!(plugin_module, surface)
-    end)
+    # Validate the plugin's `config_surface/0` shape — the contract module owns
+    # no per-surface iteration (LOC budget, ARCHITECTURE.md §14). The Layer-2
+    # nav / Layer-3 tab surfaces moved to World (`Ezagent.World.UiSurfaceProvider`,
+    # 2026-06-30) and are shape-checked read-time there, not here.
+    :ok = Ezagent.Plugin.SurfaceValidator.validate_surfaces!(plugin_module)
 
     Enum.each(plugin_module.template_classes(), fn class_module ->
       case Ezagent.TemplateRegistry.register(class_module) do
@@ -963,38 +961,5 @@ defmodule Ezagent.Plugin do
     |> Enum.member?(behaviour)
   rescue
     _ -> false
-  end
-
-  # codex PR-5 MEDIUM-5 — `config_surface/0` is `:route | :flavor |
-  # nil` in V1. `:form` (auto-rendered settings persisted to a store
-  # that does not exist yet) is V2 — reject it. A malformed map (or
-  # any non-conforming value) is also rejected so it cannot reach
-  # `plugins_live` and crash `/plugins`. Mirrors the
-  # `:ezagent_plugin_check` gate's compile-time check.
-  defp assert_config_surface!(_plugin_module, nil), do: :ok
-
-  defp assert_config_surface!(_plugin_module, %{kind: :route, path: path, label: label})
-       when is_binary(path) and is_binary(label),
-       do: :ok
-
-  defp assert_config_surface!(_plugin_module, %{kind: :flavor, flavor: flavor, label: label})
-       when is_binary(flavor) and is_binary(label),
-       do: :ok
-
-  defp assert_config_surface!(plugin_module, %{kind: :form} = surface) do
-    raise ArgumentError,
-          "#{inspect(plugin_module)} declared a `:form` config_surface/0 " <>
-            "(#{inspect(surface)}). The plugin settings store is V2 — `:form` " <>
-            "is rejected in V1. V1 config_surface/0 is :route | :flavor | nil " <>
-            "(SPEC §6.1)."
-  end
-
-  defp assert_config_surface!(plugin_module, surface) do
-    raise ArgumentError,
-          "#{inspect(plugin_module)} declared a malformed config_surface/0: " <>
-            "#{inspect(surface)}. V1 config_surface/0 is one of " <>
-            "%{kind: :route, path: String.t(), label: String.t()}, " <>
-            "%{kind: :flavor, flavor: String.t(), label: String.t()}, or nil " <>
-            "(SPEC §6.1)."
   end
 end
