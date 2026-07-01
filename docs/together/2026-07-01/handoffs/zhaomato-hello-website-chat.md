@@ -6,7 +6,7 @@
 
 ## 先读文档这几段（按序）
 
-1. **§2 什么是共通的** —— 品牌唯一权威源 = `ezagent-design-system`（rev `ebce041`）。**官网 `docs/website-demo/tokens.css` 请对齐上游、不另立标准。**
+1. **§2 什么是共通的** —— 品牌唯一权威源 = `ezagent-design-system`（rev `ebce041`）。**官网 `docs/website-demo/v1/tokens.css` 请对齐上游、不另立标准。**
 2. **§1① Website / §1② Hello** —— 官网 = hello 生成的页面；hello builder 三模式；session `session://system/hello/site` + agent `hello_web`。
 3. **§5.2（重点，全读）** —— 官网对话框定位、主题清单、留资页面、5 个技术待办。
 

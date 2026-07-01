@@ -55,7 +55,7 @@
   - zhaomaota 实现（真渲染）: `http://localhost:10042/socialware/chat?session_uri=session://system/hello/site`（需 `:10042` 栈）
   - ruihua 设计参照（静态）: `http://127.0.0.1:8080/index.html`（`docs/website-demo/`，`python3 -m http.server 8080`）
 - **域名:** 官网**尚无独立域名**，计划绑到 `app.ezagent.chat`（上生产前须与 Allen/T6 协调）。
-- **文档:** `docs/together/2026-06-30/returns/t4-ruihua-website-content.md`、`website-demo/version/2026-06-30-website-roadmap-v1.md`、zhaomaota `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`。
+- **文档:** `docs/together/2026-06-30/returns/t4-ruihua-website-content.md`、`website-demo/vx/version/2026-06-30-website-roadmap-v1.md`、zhaomaota `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`。
 
 ### ② Hello · 生成层产品
 - **是什么:** 「用一句话，生成你要的界面」——聊天式 UI 生成工具（官网 hero 定义：hello · 生成 · generation，标签 json-render / say-it-grows）。
@@ -92,7 +92,7 @@
 
 > **唯一权威源 = **`ezagent-design-system`** 远程库**（github.com/ezagent42/design-system，
 > 本 memo 依据 **rev **`ebce041`）。**五个面一律引用它的 token，不各自 hardcode、不从记忆猜色值。**
-> zhaomaota #1107 的 `docs/website-demo/tokens.css` 只是官网侧的本地拷贝，须与上游对齐、不另立标准。
+> zhaomaota #1107 的 `docs/website-demo/v1/tokens.css` 只是官网侧的本地拷贝，须与上游对齐、不另立标准。
 
 跨面**必须一致**的品牌层（token 名取自上游 `tokens/*.css`）：
 
@@ -273,7 +273,7 @@
   - **备选① 和 Invite 按钮结合** —— 不用独立空位，「邀请成员」里并列选"邀请人 / 招 agent"，一个入口两条路。
   - **备选② 对话召唤** —— 在会话里直接说「@hire 我需要一个能做…的人」，**候选人卡直接出现在对话流里**。最惊艳，但入口隐蔽。
 - **✅ 初始 preset / 热门角色 = GTM 工程 / 客服 / 研发助手**（作描述框下的"热门角色"chips，灵感非门槛；各绑定默认 skills/prompt/caps：研发助手贴 cc/codex、客服贴 socialware autoservice）。
-- **🎬 可交互 demo:** `docs/website-demo/agent-hire-demo/index.html`（真 world 壳 + 候选人 profile 卡；场景播放：**★推荐 空位→发职位应聘** / 备选入口 对话召唤 / 备选流程 描述→候选人；本地起 `python3 -m http.server` 打开）。
+- **🎬 可交互 demo:** `docs/website-demo/vx/agent-hire-demo/index.html`（真 world 壳 + 候选人 profile 卡；场景播放：**★推荐 空位→发职位应聘** / 备选入口 对话召唤 / 备选流程 描述→候选人；本地起 `python3 -m http.server` 打开）。
 
 #### 5.3 讨论待办（发 FatNine & gaga）
 1. **今天上线**：确认当前 Agent Console 就绪、不被岗位改造阻塞。

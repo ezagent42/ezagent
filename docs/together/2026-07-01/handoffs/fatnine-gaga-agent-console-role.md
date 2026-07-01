@@ -14,7 +14,7 @@
 **核心：不是"配置 agent"，是"招一个人"。** 端用户描述想要的角色 → 系统给一张**候选人 profile 卡**（人名/头衔/"我能帮你做什么"/技能）→ Onboard；flavor/model/caps 全不露，藏「高级配置」。
 
 - **今天上线**：当前 Agent Console（Agents tab + New Agent 表单）作为"靠后的配置/operator 面"**按现状上线，不为招聘改造挡上线**。
-- **🎬 交互 demo（照它做）:** `docs/website-demo/agent-hire-demo/index.html`（真 world 壳 + 候选人 profile 卡 + 场景播放）。
+- **🎬 交互 demo（照它做）:** `docs/website-demo/vx/agent-hire-demo/index.html`（真 world 壳 + 候选人 profile 卡 + 场景播放）。
 - **✅ 推荐路径（先实现这一条）= 花名册空位 + 流程B：**
   - 入口 = 成员区一个**主色蓝、醒目**的「招聘新 agent」空位；**邀请人（Invite）另存成员区头部**，人/agent 分清。
   - 流程 = **发职位（标题+brief）→ 2 位候选人应聘 → 对比 profile → 录用**（LinkedIn 式）。

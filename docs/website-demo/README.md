@@ -1,38 +1,40 @@
-# Ezagent 官网 demo · 本地预览
+# Ezagent 官网 / 产品 UX demo · 索引
 
-一个静态站点 demo（无后端、无构建步骤）。给同事本地自己看用。
+本目录按**版本**组织：`v1` = 当前可上线的官网原型，`vx` = 未来实现的探索。
 
-## 最简单：双击打开
+## 结构
 
-直接**双击 `index.html`**，浏览器打开即可（推荐 Chrome / Edge；需联网加载字体）。
-
-- 顶部 nav 切换 **介绍 / world.cup ⚽ / 团队** 三页
-- **world.cup**：价值树（战略定位 → 痛点 → 真实 PR 成果）+「我想要」投票 + 看多/看空押注 + 双榜 + Issue→PR→Merge 三段时间线 + 场景视图
-- 介绍页两个产品卡有「试玩」按钮（开占位页）；右上角有「登录」入口
-- 右上角月亮图标切换**深色主题**
-
-## 若双击打不开（个别浏览器对 file:// 有限制）
-
-在这个文件夹里起一个本地小服务，二选一，然后浏览器开 <http://localhost:8080>：
-
-```bash
-# 有 Node：
-npm start            # = npx serve . -l 8080
-
-# 或有 Python：
-python3 -m http.server 8080
+```
+docs/website-demo/
+├── design-ui-convergence.md   ← 设计收敛 gate（跨 5 面：Website/Hello/World/AgentConsole/Socialware，权威）
+├── v1/                        ← 当前官网 demo（静态站，可上线方向）
+│   ├── index.html             主站：介绍 / world.cup / 团队 三页
+│   ├── worldcup.js · mock-ezagent-api.js · site-nav.js · demo-state.js
+│   ├── world-demo.html · hello-demo.html · login.html · team-office.html
+│   ├── tokens.css · ezagent-logo*.png
+│   ├── website-review-issues.md   ← 审 zhaomato 官网的问题记录（活文档）
+│   └── ui-review-gate.md          ← 各 surface 自查清单（提 PR 前自跑）
+└── vx/                        ← 未来实现（尚未落地）
+    ├── agent-hire-demo/       Agent Console → 招聘（候选人 profile 卡 + 场景播放）
+    └── version/               官网优化 roadmap / UI-UX 审查 / dogfooding 案例
 ```
 
-## 文件说明
+## 打开 v1 官网 demo
 
-| 文件 | 是什么 |
-|---|---|
-| `index.html` | 主站（介绍 / world.cup / 团队 三页，单文件面板切换） |
-| `worldcup.js` | world.cup 价值树 / 投票 / 押注 / 双榜 / 时间线逻辑 |
-| `mock-ezagent-api.js` | mock 数据层（仿 ezagent 运行时 + 真实 GitHub PR/issue 采样） |
-| `world-demo.html` / `hello-demo.html` / `login.html` | 试玩 / 登录占位页 |
-| `team-office.html` | 团队办公室可视化（实验） |
-| `ezagent-logo*.png` | 官方 logo（亮 / 暗） |
+双击 **`v1/index.html`**（Chrome/Edge，需联网加载字体）；或起本地服务：
 
-> 数据为 mock + 真实 GitHub 采样；设计系统 = ezagent-design（`#E8E8EB` + cobalt `#0B5CFF` + Noto Serif SC）。
-> go-live 时由 @json-render 底座承接，届时直 link 真 `styles.css`。
+```bash
+cd v1 && python3 -m http.server 8080   # 然后开 http://localhost:8080
+```
+
+- 顶部 nav：**介绍 / world.cup / 团队** 三页
+- 介绍页两个产品卡有「试玩」按钮；右上角「登录」+ 深色主题切换
+
+## 打开 vx 招聘 demo
+
+```bash
+cd vx/agent-hire-demo && python3 -m http.server 8081   # http://localhost:8081
+```
+
+> 数据 = mock + 真实 GitHub 采样；设计系统 = `ezagent-design-system`（`#E8E8EB` + cobalt `#0B5CFF` + Noto Serif SC）。
+> go-live 由 @json-render 底座承接。

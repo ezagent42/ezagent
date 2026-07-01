@@ -38,7 +38,7 @@
 - [ ] **诚实护栏**：数字只展真实可复算的
 - [ ] hello ↔ backend/world 联通验证过（附 refresh 命令证据）
 - [ ] 明确结论：是否可上线 `app.ezagent.chat`（须与 Allen/T6 协调）
-- 对照记录：`docs/website-demo/website-review-issues.md`
+- 对照记录：`docs/website-demo/v1/website-review-issues.md`
 
 ### B2. Hello builder（zhaomato · T2）
 - [ ] 官网对话框 = **门户助手·导航式副驾**（切页面/滚动 + 短文字，非纯文字问答）
@@ -55,7 +55,7 @@
 ### B4. Agent Console → 招聘（fatnine · T4）
 - [ ] **一条完整 prototype path**（不并行多 IA 分支）
 - [ ] 端用户流程零技术感：描述角色 → **候选人 profile 卡** → Onboard；flavor/caps 藏「高级配置」
-- [ ] 推荐路径：花名册空位（蓝）→ 发职位 → 应聘 → 录用（见 demo `docs/website-demo/agent-hire-demo/`）
+- [ ] 推荐路径：花名册空位（蓝）→ 发职位 → 应聘 → 录用（见 demo `docs/website-demo/vx/agent-hire-demo/`）
 - [ ] Invite（人）与 招 agent 两个入口分清
 - [ ] session delete/archive 按**设计问题**处理，未定语义不硬补按钮
 
