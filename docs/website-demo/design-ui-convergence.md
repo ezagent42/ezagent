@@ -298,6 +298,45 @@
 
 ---
 
+## 6. gate 如何守门（design-check 工具方案）〔待实现〕
+
+**核心：不做成单一形态。** 本文档的要求天然分两类，一个工具吃不下：
+
+- **机械可判定（~80%，可自动化）**：动作色只能钴蓝、禁渐变、禁 hardcode hex、字体白名单、无 emoji 图标、圆角/token 用法 → 正则/AST/CSS lint 就能判。
+- **需要判断（~20%，自动化不了）**：world.cup 真数据不 mock、"导航式副驾非纯文字"、IM 三栏收敛、诚实护栏、personality 变体 → 人眼或 LLM。
+
+> 机械类做**硬 lint 门**，判断类做**自查清单/人审**。塞反了要么误报要么漏。
+
+**推荐形态：CLI lint 门 + 自查清单，挂 pre-commit / CI（分层）**
+
+```
+提 PR 前 ──▶ bin/design-check（或 mix ezagent.design_check）
+   │
+   ├─ Layer 1 机械 lint（硬门，exit≠0 挡 CI）
+   │    扫改动文件(css/heex/jsx/html)：hex 非 token · linear|radial-gradient
+   │    · 动作色 ≠ #0B5CFF · emoji 图标 · 非白名单字体
+   │    · 复用上游 design-system 的 _adherence.oxlintrc.json（已存在）
+   │
+   └─ Layer 2 打印 ui-review-gate.md 里"你那条 surface"的清单
+        dev 逐条自确认 + 附 before/after 截图进 PR
+
+  (可选 Layer 3 LLM 顾问：diff+截图喂 reviewer 子 agent 出 advisory，不当门)
+```
+
+**三条关键设计**
+1. **规则从 token 派生，不写死**：允许的 hex/字体读 `ezagent-design-system/tokens/*.css`；上游改 token，检查自动跟着变（单一事实源）。
+2. **复用已有**：design-system 仓已 ship `_adherence.oxlintrc.json`（ezagent-design-system skill 里就在跑 `npx oxlint --config`）——Layer 1 的 JS 部分包一层，补 CSS/HEEx/HTML 扫描即可。
+3. **挂两处**：git pre-commit hook（本地快、advisory）+ CI job（阻塞、权威），贴本仓 `mix precommit` + grep 不变式门文化。
+
+**落地顺序**
+1. 先做 Layer 1 四条高价值硬规则：hardcode hex / 渐变 / 非钴蓝动作色 / emoji 图标（最客观、最常翻车）。
+2. Layer 2 清单已有（`ui-review-gate.md`），让 `design-check` 末尾打印对应 surface 段。
+3.（可选）Layer 3 LLM 顾问，只提示判断类、不当硬门。
+
+> 一句话：**lint 硬门（机械）+ 自查清单（判断），挂 pre-commit/CI，规则从 design-system token 派生** —— 5 个 surface 通用。
+
+---
+
 ## 决策记录（本轮已定）
 
 - **Q1 ✅ 品牌 canonical 源 = **`ezagent-design-system`** 远程库**（rev `ebce041`）。官网 `tokens.css` 须对齐上游、不另立标准。
