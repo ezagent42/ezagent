@@ -3,7 +3,7 @@
 #
 # Fetches LIVE GitHub data (ezagent42/ezagent contributors + merged PRs + repo
 # meta) and re-drives a ruihua-faithful catalog/json-render body + CSS theme into
-# session://system/hello/site (drive(body)+set_shell(theme) same turn + wait for
+# session://system/hello/web (drive(body)+set_shell(theme) same turn + wait for
 # the async publish). Falls back to a 2026-06-30 snapshot if GitHub is unreachable.
 #
 # RUN (manual or cron):
@@ -119,8 +119,10 @@ defmodule SiteData do
 
     {meta, m_src} =
       case curl("") do
-        {:ok, %{} = d} ->
-          {%{stars: d["stargazers_count"], forks: d["forks_count"], issues: d["open_issues_count"], lang: d["language"]}, :live}
+        # only trust the repo payload when it carries real fields; a 403 rate-limit
+        # / error body is also a map and would otherwise nil out issues/lang.
+        {:ok, %{"stargazers_count" => stars} = d} when is_integer(stars) ->
+          {%{stars: stars, forks: d["forks_count"], issues: d["open_issues_count"], lang: d["language"]}, :live}
 
         _ ->
           {%{stars: 0, forks: 1, issues: 46, lang: "Elixir"}, :snapshot}
@@ -457,9 +459,9 @@ theme_css = ~S"""
 }
 """
 
-uri = Ezagent.URI.session("system", :hello, "site")
-{:ok, _s, builder} = EzagentPluginHello.App.ensure_app("system", "site")
-IO.puts("driving body + shell into session://system/hello/site ...")
+uri = Ezagent.URI.session("system", :hello, "web")
+{:ok, _s, builder} = EzagentPluginHello.App.ensure_app("system", "web")
+IO.puts("driving body + shell into session://system/hello/web ...")
 EzagentPluginHello.TurnDriver.drive(uri, body, "ruihua v2: full-width bands + ruihua SVGs + live github", builder)
 EzagentPluginHello.TurnDriver.set_shell(uri, builder, "", theme_css)
 IO.puts("waiting for async publish (13s)...")
