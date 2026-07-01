@@ -160,10 +160,10 @@
 
 - [2026-07-01-agent-console-ia-design.md](../../../superpowers/specs/2026-07-01-agent-console-ia-design.md)
 
-已推送的网页 demo：
+已收敛到可运行的实现：
 
-- [prototype index](../prototypes/agent-console-ia/index.html)
-- demo 目录：`docs/together/2026-06-30/prototypes/agent-console-ia/`
+- Overview 落地页增强：`apps/ezagent_plugin_world/assets/src/components/Overview.tsx`
+- 前后对比截图：`docs/together/2026-07-01/screenshots/overview-before-enhancement.png` / `overview-after-enhancement.png`
 
 ## 这轮发现并修掉的明显设计问题
 
