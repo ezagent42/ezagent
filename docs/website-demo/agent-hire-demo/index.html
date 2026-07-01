@@ -16,139 +16,142 @@
 
 <style>
   :root{
-    --r-md:14px; --r-sm:10px;
-    --rail-w:60px; --session-w:280px; --members-w:264px;
+    --r-md:12px; --r-sm:9px;
+    --sel:#FCE24F;                 /* 选中态黄（对齐真 world 的 active 高亮） */
+    --topbar-h:54px; --footer-h:64px;
+    --session-w:274px; --members-w:266px;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{
     background:var(--ground);color:var(--ink);
-    font-family:var(--font-cn-ui);
-    font-size:var(--fs-ui);
-    padding-bottom:64px; /* room for player footer */
+    font-family:var(--font-cn-ui);font-size:var(--fs-ui);
+    padding-bottom:var(--footer-h);
   }
   .mono{font-family:var(--font-mono)}
-  .serif{font-family:var(--font-cn)}
   button{font-family:inherit;cursor:pointer}
+  svg{display:block}
 
-  /* ---------- world shell ---------- */
+  /* ==================== TOP BAR ==================== */
+  .topbar{
+    height:var(--topbar-h);background:var(--card);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:16px;padding:0 18px;position:relative;z-index:20;
+  }
+  .tb-left{display:flex;align-items:center;gap:12px}
+  .logo{width:30px;height:30px;border-radius:9px;background:var(--blue);color:#fff;
+    display:grid;place-items:center;font-family:var(--font-ui);font-weight:800;font-size:13px}
+  .ws{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--ground-2);
+    border-radius:var(--r-pill);padding:6px 13px;font-size:13px;color:var(--ink-2);font-family:var(--font-mono)}
+  .ws b{color:var(--ink);font-weight:700}
+  .ws .hex{width:15px;height:15px;color:var(--ink-3)}
+  .tabs{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:4px;
+    background:var(--ground-2);border-radius:var(--r-pill);padding:4px}
+  .tab{border:0;background:transparent;border-radius:var(--r-pill);padding:6px 18px;
+    font-family:var(--font-ui);font-weight:600;font-size:14px;color:var(--ink-2)}
+  .tab.on{background:var(--sel);color:var(--ink)}
+  .tab:not(.on):hover{color:var(--ink)}
+  .tb-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .newchat{display:inline-flex;align-items:center;gap:6px;border:0;background:var(--blue);color:#fff;
+    border-radius:var(--r-pill);padding:8px 15px;font-family:var(--font-ui);font-weight:600;font-size:13px}
+  .admin{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--card);
+    border-radius:var(--r-pill);padding:7px 13px;font-size:13px;color:var(--ink-2);font-family:var(--font-ui);font-weight:500}
+
+  /* ==================== APP GRID ==================== */
   .app{
-    display:grid;
-    grid-template-columns:var(--rail-w) var(--session-w) 1fr;
-    height:calc(100vh - 64px);
-    min-height:600px;
-    overflow:hidden;
+    display:grid;grid-template-columns:var(--session-w) 1fr var(--members-w);
+    height:calc(100vh - var(--topbar-h) - var(--footer-h));min-height:560px;overflow:hidden;
   }
 
-  /* icon rail (窄) */
-  .rail{
-    background:var(--ink);color:#EDEDF2;
-    display:flex;flex-direction:column;align-items:center;
-    padding:14px 0;gap:10px;
-  }
-  .rail .logo{
-    width:34px;height:34px;border-radius:10px;background:var(--blue);
-    display:grid;place-items:center;color:#fff;font-weight:800;font-family:var(--font-ui);
-    margin-bottom:8px;
-  }
-  .rail .ic{
-    width:40px;height:40px;border-radius:12px;border:0;background:transparent;
-    color:#9A9AA6;display:grid;place-items:center;transition:.15s;
-  }
-  .rail .ic svg{width:20px;height:20px}
-  .rail .ic:hover{background:rgba(255,255,255,.08);color:#EDEDF2}
-  .rail .ic.on{background:var(--blue);color:#fff}
-  .rail .spacer{flex:1}
+  /* ---- Sessions ---- */
+  .sessions{background:var(--card);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+  .s-head{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px 6px}
+  .s-head h2{margin:0;font-family:var(--font-ui);font-weight:700;font-size:16px}
+  .s-head .sub{color:var(--ink-3);font-size:11.5px;margin-top:2px}
+  .plus{width:28px;height:28px;border-radius:8px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-2);display:grid;place-items:center}
+  .plus:hover{border-color:var(--blue);color:var(--blue)}
+  .filter{margin:8px 16px 10px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;
+    background:var(--ground-2);color:var(--ink-3);font-size:12.5px}
+  .slist{overflow:auto;padding:0 12px 14px;display:flex;flex-direction:column;gap:3px}
+  .srow{display:flex;gap:9px;align-items:flex-start;padding:10px 12px;border-radius:10px;
+    cursor:pointer;border-left:3px solid transparent}
+  .srow:hover{background:var(--ground-2)}
+  .srow.on{background:var(--yellow-wash);border-left-color:var(--yellow)}
+  .srow .sic{color:var(--ink-3);margin-top:1px}
+  .srow .t{font-weight:600;color:var(--ink);font-size:13px}
+  .srow .u{color:var(--ink-3);font-size:10.5px;font-family:var(--font-mono);margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
 
-  /* session column */
-  .sessions{
-    background:var(--ground-2);border-right:1px solid var(--line);
-    display:flex;flex-direction:column;overflow:hidden;
-  }
-  .ws-switch{
-    display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--line);
-    font-family:var(--font-ui);font-weight:600;color:var(--ink-2);font-size:13px;
-  }
-  .ws-switch .dot{width:20px;height:20px;border-radius:6px;background:var(--jade);display:inline-block}
-  .sessions-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 8px}
-  .sessions-head h2{margin:0;font-family:var(--font-ui);font-size:15px;font-weight:700}
-  .sessions-head .sub{color:var(--ink-3);font-size:11px}
-  .newbtn{
-    border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);
-    padding:6px 12px;font-size:12px;font-weight:600;font-family:var(--font-ui);
-    display:inline-flex;align-items:center;gap:5px;
-  }
-  .filter{margin:0 16px 10px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;
-    background:var(--card);color:var(--ink-3);font-size:12px}
-  .slist{overflow:auto;padding:0 10px 14px;display:flex;flex-direction:column;gap:4px}
-  .srow{
-    padding:10px 12px;border-radius:12px;cursor:pointer;border:1px solid transparent;
-    display:flex;flex-direction:column;gap:3px;
-  }
-  .srow:hover{background:var(--ground-hover)}
-  .srow.on{background:var(--card);border-color:var(--line);box-shadow:var(--shadow-sm)}
-  .srow .t{font-weight:600;color:var(--ink);font-size:13.5px;display:flex;align-items:center;gap:7px}
-  .srow .t .live{width:7px;height:7px;border-radius:50%;background:var(--jade)}
-  .srow .u{color:var(--ink-3);font-size:11px;font-family:var(--font-mono)}
-
-  /* conversation + members */
-  .convo-col{display:grid;grid-template-columns:1fr var(--members-w);overflow:hidden;position:relative}
+  /* ---- Conversation ---- */
   .conversation{display:flex;flex-direction:column;background:var(--ground);overflow:hidden}
-  .cv-head{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:16px 22px;border-bottom:1px solid var(--line);background:var(--card);
-  }
+  .cv-head{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;
+    border-bottom:1px solid var(--line);background:var(--card)}
   .cv-head h1{margin:0;font-family:var(--font-cn);font-weight:600;font-size:18px}
   .cv-head .uri{color:var(--ink-3);font-size:11px;font-family:var(--font-mono);margin-top:2px}
+  .cv-actions{display:flex;align-items:center;gap:8px}
   .seg{display:inline-flex;background:var(--ground-2);border-radius:var(--r-pill);padding:3px}
   .seg button{border:0;background:transparent;border-radius:var(--r-pill);padding:5px 14px;font-size:12px;
-    color:var(--ink-2);font-family:var(--font-ui);font-weight:600}
+    color:var(--ink-2);font-family:var(--font-ui);font-weight:600;display:inline-flex;align-items:center;gap:5px}
   .seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm)}
-  .timeline{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:14px}
-  .msg{max-width:74%;display:flex;flex-direction:column;gap:5px}
-  .msg .who{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);display:flex;gap:8px;align-items:center}
-  .msg .bubble{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);
-    padding:11px 14px;line-height:1.55;box-shadow:var(--shadow-sm);font-size:13.5px}
+  .iconbtn{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-3);display:grid;place-items:center}
+  .iconbtn:hover{color:var(--ink);border-color:var(--ink-4)}
+  .timeline{flex:1;overflow:auto;padding:22px 24px;display:flex;flex-direction:column;gap:16px}
+  .msg{max-width:52%;display:flex;flex-direction:column;gap:5px}
+  .msg .who{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);display:flex;gap:7px;align-items:center}
+  .msg .who .lbl{font-weight:700;letter-spacing:.04em}
+  .msg .bubble{border-radius:var(--r-md);padding:11px 14px;line-height:1.55;font-size:13.5px}
+  .msg.agent{align-self:flex-start}
+  .msg.agent .who .lbl{color:var(--jade-deep)}
+  .msg.agent .bubble{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--jade);box-shadow:var(--shadow-sm)}
   .msg.me{align-self:flex-end;align-items:flex-end}
-  .msg.me .bubble{background:var(--blue-wash);border-color:transparent}
-  .msg.agent .bubble{border-left:3px solid var(--jade)}
+  .msg.me .who .lbl{color:var(--blue-deep)}
+  .msg.me .bubble{background:var(--blue);color:#fff}
   .sys{align-self:center;font-size:11.5px;color:var(--ink-3);font-family:var(--font-mono);
-    background:var(--ground-2);border-radius:var(--r-pill);padding:5px 14px}
+    background:var(--card);border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 15px}
   .sys b{color:var(--jade-deep);font-family:var(--font-ui)}
-  .composer{padding:14px 22px;border-top:1px solid var(--line);background:var(--card);display:flex;gap:10px;align-items:center}
-  .composer .box{flex:1;border:1px solid var(--line);border-radius:var(--r-pill);padding:10px 16px;color:var(--ink-3);font-size:13px;background:var(--ground-2)}
-  .composer .send{border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);padding:9px 18px;font-weight:600;font-family:var(--font-ui);font-size:13px}
+  .composer{padding:14px 22px 16px;border-top:1px solid var(--line);background:var(--card);display:flex;gap:10px;align-items:center}
+  .composer .box{flex:1;border:1px solid var(--line);border-radius:var(--r-md);padding:13px 16px;color:var(--ink-3);font-size:13px;background:var(--card)}
+  .composer .attach{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink-3);display:grid;place-items:center}
+  .composer .send{display:inline-flex;align-items:center;gap:6px;border:0;background:var(--blue);color:#fff;
+    border-radius:var(--r-pill);padding:10px 18px;font-weight:600;font-family:var(--font-ui);font-size:13px}
 
-  /* members rail */
+  /* ---- Members + Routing ---- */
   .members{background:var(--card);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
   .mem-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 10px}
-  .mem-head .ttl{font-family:var(--font-ui);font-weight:700;font-size:12px;letter-spacing:.04em;color:var(--ink-3)}
-  .mem-head .ttl b{display:block;color:var(--ink);font-size:15px;letter-spacing:0;margin-top:2px}
-  .invite{border:1px solid var(--blue);background:var(--blue-wash);color:var(--blue-deep);
-    border-radius:var(--r-pill);padding:6px 12px;font-size:12px;font-weight:700;font-family:var(--font-ui);
-    display:inline-flex;align-items:center;gap:5px;transition:.15s}
-  .invite:hover{background:var(--blue);color:#fff}
-  .mlist{overflow:auto;padding:4px 12px 14px;display:flex;flex-direction:column;gap:6px}
-  .mcard{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:12px}
+  .mem-head .ttl{font-family:var(--font-mono);font-weight:700;font-size:11px;letter-spacing:.06em;color:var(--ink-3);display:flex;align-items:baseline;gap:8px}
+  .mem-head .ttl .cnt{font-family:var(--font-ui);font-size:16px;color:var(--ink)}
+  .invite{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-2);border-radius:var(--r-pill);padding:6px 12px;font-size:12px;font-weight:600;font-family:var(--font-ui);transition:.15s}
+  .invite:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-wash)}
+  .mlist{padding:2px 10px 8px;display:flex;flex-direction:column;gap:1px;max-height:44%;overflow:auto}
+  .mcard{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px}
   .mcard:hover{background:var(--ground-2)}
-  .av{width:36px;height:36px;flex:none;display:grid;place-items:center;font-weight:700;color:#fff;font-family:var(--font-ui);font-size:14px}
-  .av.human{border-radius:50%;background:var(--blueink)}
-  .av.agent{border-radius:11px;background:var(--jade)}
-  .av.pending{background:var(--ink-4)}
-  .mcard .mi{display:flex;flex-direction:column;gap:2px;min-width:0}
-  .mcard .mn{font-weight:600;font-size:13.5px;color:var(--ink);display:flex;align-items:center;gap:6px}
-  .mcard .ms{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tag{font-size:9px;font-weight:700;letter-spacing:.05em;font-family:var(--font-mono);
-    padding:2px 6px;border-radius:var(--r-pill);background:var(--jade-wash);color:var(--jade-deep)}
-  .tag.pending{background:var(--ground-hover);color:var(--ink-3)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-4);flex:none}
+  .dot.on{background:var(--jade)}
+  .mcard .mn{font-weight:600;font-size:13px;color:var(--ink);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mcard .role{font-family:var(--font-mono);font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--ink-3)}
+  .mcard .pill{font-family:var(--font-ui);font-size:10px;font-weight:700;color:var(--jade-deep);
+    background:var(--jade-wash);border-radius:var(--r-pill);padding:2px 7px}
+  .mcard .pill.pending{color:var(--ink-3);background:var(--ground-hover)}
+  .mcard .mi{width:26px;display:flex;gap:3px;justify-content:flex-end;color:var(--ink-4)}
 
-  /* ---------- highlight pulse ---------- */
+  .routing{border-top:1px solid var(--line);margin-top:auto;padding:14px 16px;display:flex;flex-direction:column;gap:9px}
+  .rt-head{font-family:var(--font-mono);font-weight:700;font-size:11px;letter-spacing:.06em;color:var(--ink-3);display:flex;align-items:baseline;gap:8px}
+  .rt-head .cnt{font-family:var(--font-ui);font-size:15px;color:var(--ink)}
+  .routing select,.routing input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 11px;
+    font-size:12px;font-family:var(--font-mono);color:var(--ink-2);background:var(--ground-2)}
+  .routing .add{align-self:flex-start;display:inline-flex;align-items:center;gap:5px;border:0;background:var(--blue-wash);
+    color:var(--blue-deep);border-radius:var(--r-pill);padding:7px 14px;font-size:12px;font-weight:700;font-family:var(--font-ui)}
+  .routing .empty{color:var(--ink-3);font-size:11.5px;font-family:var(--font-mono)}
+
+  /* ==================== highlight pulse ==================== */
   .pulse{position:relative;z-index:5}
-  .pulse::after{content:"";position:absolute;inset:-5px;border-radius:16px;
-    box-shadow:0 0 0 3px var(--blue);animation:pz 1.1s ease-out infinite;pointer-events:none}
-  @keyframes pz{0%{box-shadow:0 0 0 2px rgba(11,92,255,.9)}70%{box-shadow:0 0 0 9px rgba(11,92,255,0)}100%{box-shadow:0 0 0 9px rgba(11,92,255,0)}}
+  .pulse::after{content:"";position:absolute;inset:-4px;border-radius:12px;pointer-events:none;
+    animation:pz 1.1s ease-out infinite}
+  @keyframes pz{0%{box-shadow:0 0 0 2px rgba(11,92,255,.9)}70%{box-shadow:0 0 0 8px rgba(11,92,255,0)}100%{box-shadow:0 0 0 8px rgba(11,92,255,0)}}
 
-  /* ---------- invite modal ---------- */
+  /* ==================== invite / hire modal ==================== */
   .scrim{position:fixed;inset:0;background:rgba(20,20,26,.34);backdrop-filter:blur(2px);
     display:none;align-items:center;justify-content:center;z-index:40}
   .scrim.on{display:flex}
@@ -159,7 +162,6 @@
   .stage{display:none}
   .stage.on{display:block;animation:fu .3s ease}
   @keyframes fu{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-
   .kinds{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   .kind{border:1.5px solid var(--line);border-radius:var(--r-md);padding:18px;cursor:pointer;transition:.15s;background:var(--card)}
   .kind:hover{border-color:var(--blue);box-shadow:var(--shadow-sm)}
@@ -169,7 +171,6 @@
   .kind.a .ki{background:var(--jade)}
   .kind .kt{font-weight:700;font-size:15px;font-family:var(--font-ui)}
   .kind .kd{color:var(--ink-3);font-size:12px;margin-top:4px;line-height:1.5}
-
   .presets{display:flex;flex-direction:column;gap:11px}
   .preset{border:1.5px solid var(--line);border-radius:var(--r-md);padding:14px 16px;cursor:pointer;
     display:flex;gap:14px;align-items:flex-start;transition:.15s;background:var(--card)}
@@ -179,10 +180,8 @@
   .preset .pt{font-weight:700;font-size:14.5px;font-family:var(--font-ui)}
   .preset .pd{color:var(--ink-2);font-size:12px;margin:3px 0 8px;line-height:1.5}
   .chips{display:flex;flex-wrap:wrap;gap:6px}
-  .chip{font-size:10.5px;font-family:var(--font-mono);background:var(--ground-2);color:var(--ink-2);
-    border-radius:var(--r-pill);padding:3px 9px}
+  .chip{font-size:10.5px;font-family:var(--font-mono);background:var(--ground-2);color:var(--ink-2);border-radius:var(--r-pill);padding:3px 9px}
   .chip.cap{background:var(--jade-wash);color:var(--jade-deep)}
-
   .field{margin-bottom:16px}
   .field label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;font-family:var(--font-ui)}
   .field input{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;font-size:14px;font-family:var(--font-mono);color:var(--ink);background:var(--ground-2)}
@@ -196,17 +195,17 @@
   .cta{border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);padding:11px 22px;font-weight:700;font-family:var(--font-ui);font-size:13.5px}
   .note{font-size:11px;color:var(--ink-3);margin-top:14px;font-family:var(--font-mono)}
 
-  /* settings overlay */
-  .settings{position:fixed;inset:0;background:var(--ground);display:none;z-index:45;flex-direction:column}
+  /* ==================== Agents (advanced) overlay ==================== */
+  .settings{position:fixed;inset:var(--topbar-h) 0 var(--footer-h);background:var(--ground);display:none;z-index:15;flex-direction:column}
   .settings.on{display:flex}
-  .set-head{padding:16px 26px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:12px}
+  .set-head{padding:14px 24px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;gap:12px}
   .set-head .crumb{color:var(--ink-3);font-size:12px;font-family:var(--font-mono)}
-  .set-head h2{margin:0;font-family:var(--font-cn);font-size:18px;font-weight:600}
-  .set-body{flex:1;overflow:auto;padding:26px;display:grid;grid-template-columns:200px 1fr;gap:24px}
+  .set-head h2{margin:0;font-family:var(--font-cn);font-size:17px;font-weight:600}
+  .set-body{flex:1;overflow:auto;padding:24px;display:grid;grid-template-columns:190px 1fr;gap:22px}
   .set-nav{display:flex;flex-direction:column;gap:3px}
-  .set-nav a{padding:9px 13px;border-radius:10px;font-size:13px;color:var(--ink-2);text-decoration:none;font-family:var(--font-ui)}
+  .set-nav a{padding:9px 13px;border-radius:9px;font-size:13px;color:var(--ink-2);text-decoration:none;font-family:var(--font-ui);cursor:pointer}
   .set-nav a.on{background:var(--blue-wash);color:var(--blue-deep);font-weight:600}
-  .console{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;box-shadow:var(--shadow-sm)}
+  .console{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:22px 24px;box-shadow:var(--shadow-sm);max-width:640px}
   .console .ovl{font-size:11px;font-family:var(--font-mono);color:var(--ink-3);letter-spacing:.05em}
   .console h3{margin:2px 0 4px;font-family:var(--font-cn);font-size:19px;font-weight:600}
   .console .desc{color:var(--ink-3);font-size:12.5px;margin-bottom:18px;line-height:1.6}
@@ -215,171 +214,227 @@
   .gfield .val{border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:12.5px;font-family:var(--font-mono);color:var(--ink-2);background:var(--ground-2)}
   .set-close{margin-left:auto;border:1px solid var(--line);background:var(--card);border-radius:var(--r-pill);padding:7px 15px;font-size:12.5px;font-family:var(--font-ui);font-weight:600}
 
+  /* ==================== recruiting components ==================== */
+  /* Hire 一等按钮（入口③） */
+  .hire-btn{display:inline-flex;align-items:center;gap:6px;border:0;background:var(--blue);color:#fff;
+    border-radius:var(--r-pill);padding:7px 14px;font-size:12.5px;font-weight:700;font-family:var(--font-ui);transition:.15s}
+  .hire-btn:hover{background:#1466FF}
+  /* 花名册空位（入口②） */
+  .seat{margin:8px 12px 6px;border:1.5px solid var(--blue);border-radius:11px;padding:12px 13px;
+    display:flex;align-items:center;gap:11px;cursor:pointer;color:var(--blue-deep);transition:.15s;background:var(--blue-wash)}
+  .seat:hover{background:#DCE7FF;box-shadow:var(--shadow-accent)}
+  .seat .plus-c{width:28px;height:28px;border-radius:8px;background:var(--blue);color:#fff;display:grid;place-items:center;flex:none}
+  .seat .st{font-size:13px;font-weight:700;font-family:var(--font-ui);color:var(--blue-deep)}
+  .seat .sd{font-size:10.5px;color:var(--blue-deep);opacity:.72;font-family:var(--font-mono);margin-top:1px}
+
+  /* hire 阶段 */
+  .hstage{display:none}
+  .hstage.on{display:block;animation:fu .3s ease}
+
+  /* 描述框（流程A · search-as-CTA） */
+  .describe-box{border:1.5px solid var(--line);border-radius:var(--r-md);padding:14px 16px;background:var(--card);transition:.15s}
+  .describe-box:focus-within,.describe-box.hot{border-color:var(--blue);box-shadow:var(--shadow-sm)}
+  .describe-box textarea{width:100%;border:0;resize:none;outline:0;font-family:var(--font-cn-ui);font-size:15px;color:var(--ink);background:transparent;min-height:56px;line-height:1.5}
+  .describe-box textarea::placeholder{color:var(--ink-4)}
+  .pop{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .pop .lab{font-size:11px;color:var(--ink-3);font-family:var(--font-mono)}
+  .pchip{border:1px solid var(--line);background:var(--ground-2);color:var(--ink-2);border-radius:var(--r-pill);
+    padding:5px 12px;font-size:12px;font-family:var(--font-ui);cursor:pointer;transition:.15s}
+  .pchip:hover{border-color:var(--blue);color:var(--blue);background:var(--blue-wash)}
+
+  /* 物色中 skeleton */
+  .sourcing{display:flex;flex-direction:column;align-items:center;gap:14px;padding:34px 0}
+  .sourcing .sk{width:100%;height:78px;border-radius:var(--r-md);background:linear-gradient(90deg,var(--ground-2),var(--ground-hover),var(--ground-2));background-size:200% 100%;animation:sh 1.2s linear infinite}
+  @keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .sourcing .txt{font-family:var(--font-mono);font-size:12.5px;color:var(--ink-3)}
+
+  /* 候选人 profile 卡（核心） */
+  .cand{border:1px solid var(--line);border-radius:var(--r-md);background:var(--card);box-shadow:var(--shadow-sm);padding:18px 20px;animation:fu .35s ease}
+  .cand + .cand{margin-top:12px}
+  .cand-top{display:flex;align-items:center;gap:13px}
+  .cand-av{width:46px;height:46px;flex:none;border-radius:50%;background:var(--blueink);color:#fff;
+    display:grid;place-items:center;font-family:var(--font-ui);font-weight:800;font-size:18px}
+  .cand-id{flex:1;min-width:0}
+  .cand-name{font-family:var(--font-cn);font-weight:600;font-size:17px;color:var(--ink)}
+  .cand-role{font-size:12px;color:var(--ink-3);font-family:var(--font-mono);margin-top:1px}
+  .cand-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-family:var(--font-ui);font-weight:600;color:var(--jade-deep)}
+  .cand-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--jade)}
+  .cand-say{margin:13px 0;font-size:13.5px;line-height:1.6;color:var(--ink-2);
+    border-left:3px solid var(--jade);background:var(--jade-wash);border-radius:0 8px 8px 0;padding:10px 13px}
+  .cand-skills{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+  .cand-skills .lab{font-size:10.5px;color:var(--ink-3);font-family:var(--font-mono);margin-right:2px}
+  .cand-foot{display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .cand .swap{border:0;background:transparent;color:var(--ink-3);font-size:12.5px;font-family:var(--font-ui)}
+  .cand .onboard{border:0;background:var(--blue);color:#fff;border-radius:var(--r-pill);padding:10px 20px;font-weight:700;font-family:var(--font-ui);font-size:13.5px}
+  /* 会话内联候选卡（入口①） */
+  .msg.card{max-width:64%}
+  .msg.card .cand{width:100%}
+
+  /* 发职位（流程B） */
+  .jobpost .field label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;font-family:var(--font-ui)}
+  .jobpost .field{margin-bottom:14px}
+  .jobpost input,.jobpost textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 14px;
+    font-size:14px;font-family:var(--font-cn-ui);color:var(--ink);background:var(--ground-2);resize:none}
+  .jobpost textarea{min-height:70px;line-height:1.5}
+  .applicants-head{font-size:13px;color:var(--ink-2);font-family:var(--font-ui);font-weight:600;margin-bottom:12px}
+
   /* caption pill */
-  .caption{position:fixed;left:50%;bottom:74px;transform:translateX(-50%);
+  .caption{position:fixed;left:50%;bottom:calc(var(--footer-h) + 12px);transform:translateX(-50%);
     background:var(--ink);color:#F4F2EC;padding:10px 20px;border-radius:var(--r-pill);
-    font-size:13px;font-family:var(--font-cn-ui);max-width:80vw;text-align:center;
+    font-size:13px;font-family:var(--font-cn-ui);max-width:78vw;text-align:center;
     box-shadow:var(--shadow-card);z-index:50;opacity:0;transition:.25s;pointer-events:none}
   .caption.show{opacity:1}
   .caption b{color:#7FB0FF}
-
-  .brandline{position:fixed;top:0;left:0;right:0;height:3px;
-    background:var(--blue);z-index:60}
 </style>
 </head>
 <body>
 
-<div class="app" id="app">
-  <!-- icon rail -->
-  <nav class="rail">
+<!-- ==================== TOP BAR ==================== -->
+<header class="topbar">
+  <div class="tb-left">
     <div class="logo">ez</div>
-    <button class="ic on" title="Chat" id="ic-chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
-    <button class="ic" title="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
-    <button class="ic" title="New"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
-    <div class="spacer"></div>
-    <button class="ic" title="Settings" id="ic-gear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <button class="ws"><svg class="hex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2z"/></svg> ezagent / <b>system</b> ▾</button>
+  </div>
+  <nav class="tabs">
+    <button class="tab on">Chat</button>
+    <button class="tab" id="tab-agents">Agents</button>
+    <button class="tab">Manage</button>
   </nav>
+  <div class="tb-right">
+    <button class="newchat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>New chat</button>
+    <button class="admin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Admin ▾</button>
+  </div>
+</header>
 
-  <!-- session column -->
+<div class="app" id="app">
+  <!-- ---- Sessions ---- -->
   <section class="sessions">
-    <div class="ws-switch"><span class="dot"></span> ezagent / system ▾</div>
-    <div class="sessions-head">
-      <div><h2>Chat</h2><div class="sub">当前 workspace</div></div>
-      <button class="newbtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>New</button>
+    <div class="s-head">
+      <div><h2>Sessions</h2><div class="sub">Current workspace only</div></div>
+      <button class="plus"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg></button>
     </div>
-    <div class="filter">筛选 session…</div>
+    <div class="filter">Filter sessions, template, status</div>
     <div class="slist">
-      <div class="srow on"><div class="t"><span class="live"></span>GTM 冲刺 · Q3 出海</div><div class="u">session://system/default/gtm-sprint</div></div>
-      <div class="srow"><div class="t">客户 onboarding</div><div class="u">session://system/default/onboarding</div></div>
-      <div class="srow"><div class="t">kanban 交接</div><div class="u">session://system/default/kanban</div></div>
+      <div class="srow on"><span class="sic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><div><div class="t">/default/gtm-sprint</div><div class="u">session://system/default/gtm-sprint</div></div></div>
+      <div class="srow"><span class="sic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><div><div class="t">/default/onboarding</div><div class="u">session://system/default/onboarding</div></div></div>
+      <div class="srow"><span class="sic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><div><div class="t">/default/kanban-handoff</div><div class="u">session://system/default/kanban-handoff</div></div></div>
     </div>
   </section>
 
-  <!-- conversation + members -->
-  <div class="convo-col">
-    <div class="conversation">
-      <div class="cv-head">
-        <div>
-          <h1>GTM 冲刺 · Q3 出海</h1>
-          <div class="uri">session://system/default/gtm-sprint</div>
-        </div>
+  <!-- ---- Conversation ---- -->
+  <div class="conversation">
+    <div class="cv-head">
+      <div><h1>gtm-sprint</h1><div class="uri">session://system/default/gtm-sprint</div></div>
+      <div class="cv-actions">
         <div class="seg"><button class="on">Chat</button><button>PTY</button></div>
+        <button class="iconbtn" title="刷新"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        <button class="iconbtn" title="展开"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
       </div>
-      <div class="timeline" id="timeline">
-        <div class="msg me"><div class="who">Admin · 你 · 10:24</div><div class="bubble">Q3 要做海外落地页 + 投放追踪，团队里没人专职盯这个。</div></div>
-        <div class="msg agent"><div class="who">world-bot · AGENT · 10:24</div><div class="bubble">要不要给这个 workspace 招一个 GTM 工程的岗位？在右边成员区就能邀请。</div></div>
-      </div>
-      <div class="composer"><div class="box">说点什么… @ 提及成员</div><button class="send">发送</button></div>
     </div>
-
-    <!-- members rail (常驻) -->
-    <aside class="members" id="members">
-      <div class="mem-head">
-        <div class="ttl">MEMBERS<b>成员 · <span id="mcount">2</span></b></div>
-        <button class="invite" id="inviteBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>邀请</button>
-      </div>
-      <div class="mlist" id="mlist">
-        <div class="mcard"><div class="av human">A</div><div class="mi"><div class="mn">Admin</div><div class="ms">你 · owner</div></div></div>
-        <div class="mcard"><div class="av agent">W</div><div class="mi"><div class="mn">world-bot <span class="tag">AGENT</span></div><div class="ms">routing 协作</div></div></div>
-      </div>
-    </aside>
+    <div class="timeline" id="timeline">
+      <div class="msg me"><div class="who"><span class="lbl">YOU</span> Admin · 10:24</div><div class="bubble">Q3 要做海外落地页 + 投放追踪，团队里没人专职盯这个。</div></div>
+      <div class="msg agent"><div class="who"><span class="lbl">AGENT</span> world-bot · 10:24</div><div class="bubble">要不要给这个 workspace 招一个 GTM 工程的岗位？右边成员区点 Invite 就能招。</div></div>
+    </div>
+    <div class="composer"><div class="box" id="composerBox">Type a message…  试试「@hire 我需要一个能做…的人」</div><button class="attach"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.4 11.05 12.2 20.3a5 5 0 0 1-7.1-7.1l9.2-9.2a3 3 0 1 1 4.3 4.2l-9.2 9.2a1 1 0 0 1-1.4-1.4l8.5-8.5"/></svg></button><button class="send"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>Send</button></div>
   </div>
+
+  <!-- ---- Members + Routing ---- -->
+  <aside class="members">
+    <div class="mem-head">
+      <div class="ttl">MEMBERS <span class="cnt" id="mcount">3</span></div>
+      <button class="invite" id="inviteBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3 2.5-5 5.5-5s5.5 2 5.5 5M18 8v6M15 11h6"/></svg>Invite</button>
+    </div>
+    <div class="mlist" id="mlist">
+      <div class="mcard"><span class="dot on"></span><span class="mn">Admin</span><span class="role">USER</span><span class="mi"></span></div>
+      <div class="mcard"><span class="dot on"></span><span class="mn">world-bot</span><span class="role">AGENT</span><span class="mi"></span></div>
+      <div class="mcard"><span class="dot"></span><span class="mn">py_default</span><span class="role">AGENT</span><span class="mi"></span></div>
+    </div>
+    <div class="seat" id="seat">
+      <div class="plus-c"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg></div>
+      <div><div class="st">招聘新 agent</div><div class="sd">点此描述你要的角色</div></div>
+    </div>
+    <div class="routing">
+      <div class="rt-head">ROUTING <span class="cnt">0</span></div>
+      <select><option>Always</option><option>On match</option></select>
+      <input placeholder="No matcher argument">
+      <input value="entity://system/user/admin" readonly>
+      <button class="add"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>Add</button>
+      <div class="empty">No session routing rules.</div>
+    </div>
+  </aside>
 </div>
 
-<!-- ============ invite / hire modal ============ -->
+<!-- ==================== invite / hire modal ==================== -->
 <div class="scrim" id="scrim">
   <div class="modal">
-    <h3 id="mTitle">邀请成员 · Invite member</h3>
-    <p class="lede" id="mLede">给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。</p>
+    <h3 id="mTitle">招聘 · Hire a teammate</h3>
+    <p class="lede" id="mLede">描述你想要的角色，我们为你物色一位候选人加入这个 session。</p>
 
-    <!-- stage: kind -->
-    <div class="stage on" data-stage="kind" id="stg-kind">
-      <div class="kinds">
-        <div class="kind h" id="kind-human">
-          <div class="ki"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
-          <div class="kt">邀请人 · Invite a person</div>
-          <div class="kd">发邮件邀请一位同事加入这个 workspace。</div>
-        </div>
-        <div class="kind a" id="kind-agent">
-          <div class="ki"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 7V4M9 13h.01M15 13h.01"/></svg></div>
-          <div class="kt">招一个 agent · Hire an agent</div>
-          <div class="kd">选一个岗位，命名，即刻上岗——它作为成员加入对话。</div>
-        </div>
+    <!-- 流程A · 描述 -->
+    <div class="hstage on" data-hstage="describe" id="hs-describe">
+      <div class="describe-box" id="describeBox">
+        <textarea id="describeInput" placeholder="描述你想要的角色…&#10;比如：一个能做海外落地页和投放追踪的人"></textarea>
+      </div>
+      <div class="pop">
+        <span class="lab">热门角色</span>
+        <button class="pchip" data-who="gtm">GTM 工程</button>
+        <button class="pchip" data-who="cs">客服</button>
+        <button class="pchip" data-who="dev">研发助手</button>
+      </div>
+      <div class="modal-foot" style="margin-top:18px">
+        <span class="note">越具体，候选人越合适</span>
+        <button class="cta" id="sourceBtn">开始物色 →</button>
       </div>
     </div>
 
-    <!-- stage: presets -->
-    <div class="stage" data-stage="presets" id="stg-presets">
-      <div class="presets">
-        <div class="preset" id="ps-gtm">
-          <div class="pi">G</div>
-          <div><div class="pt">GTM 工程 · GTM engineering</div>
-            <div class="pd">做落地页、埋点、投放追踪与增长实验。</div>
-            <div class="chips"><span class="chip">市场调研</span><span class="chip">落地页</span><span class="chip">数据追踪</span><span class="chip cap">web.read</span><span class="chip cap">analytics</span></div>
-          </div>
-        </div>
-        <div class="preset" id="ps-cs">
-          <div class="pi">客</div>
-          <div><div class="pt">客服 · Customer support</div>
-            <div class="pd">跑客户会话、查知识库、开工单（贴 autoservice）。</div>
-            <div class="chips"><span class="chip">会话</span><span class="chip">知识库</span><span class="chip">工单</span><span class="chip cap">chat.send</span><span class="chip cap">kb.read</span></div>
-          </div>
-        </div>
-        <div class="preset" id="ps-dev">
-          <div class="pi">研</div>
-          <div><div class="pt">研发助手 · Dev assistant</div>
-            <div class="pd">读代码、发 PR、跑测试（cc / codex flavor）。</div>
-            <div class="chips"><span class="chip">代码</span><span class="chip">PR</span><span class="chip">测试</span><span class="chip cap">repo.read</span><span class="chip cap">ci.run</span></div>
-          </div>
-        </div>
-      </div>
-      <div class="modal-foot"><button class="back" id="back-1">← 返回</button><span class="note">选一个岗位继续</span></div>
+    <!-- 物色中 -->
+    <div class="hstage" data-hstage="sourcing" id="hs-sourcing">
+      <div class="sourcing"><div class="sk"></div><div class="txt">正在为你物色候选人…</div></div>
     </div>
 
-    <!-- stage: naming -->
-    <div class="stage" data-stage="naming" id="stg-naming">
-      <div class="field">
-        <label>给这个岗位起个名字 · Name</label>
-        <input id="nameInput" value="gtm-engineer" readonly>
-      </div>
-      <details class="adv">
-        <summary><span>高级配置 · Advanced（原 Agent Console，可后调）</span><span id="advcaret">▾</span></summary>
-        <div class="advbody">
-          <div>flavor · cc</div><div>model · —（岗位默认）</div>
-          <div>tools · web, analytics</div><div>caps · web.read, analytics</div>
-          <div>project_cwd · /srv/system</div><div>With PTY · off</div>
-        </div>
-      </details>
-      <div class="modal-foot">
-        <button class="back" id="back-2">← 换岗位</button>
-        <button class="cta" id="hireBtn">招入 · Hire →</button>
-      </div>
-      <p class="note">岗位 = <b class="serif">skills + prompt + caps</b> 的 preset；技术细节收进「高级配置」。</p>
+    <!-- 候选人 profile 卡 -->
+    <div class="hstage" data-hstage="candidate" id="hs-candidate">
+      <div id="candSlot"></div>
     </div>
 
-    <!-- stage: human -->
-    <div class="stage" data-stage="human" id="stg-human">
-      <div class="field"><label>邮箱 · Email</label><input id="emailInput" value="lily@acme.com" readonly></div>
-      <div class="modal-foot"><button class="back" id="back-3">← 返回</button><button class="cta" id="sendInvite">发送邀请 · Send →</button></div>
+    <!-- 流程B · 发职位 -->
+    <div class="hstage" data-hstage="jobpost" id="hs-jobpost">
+      <div class="jobpost">
+        <div class="field"><label>职位名称 · Role title</label><input id="jobTitle" value="GTM 工程师"></div>
+        <div class="field"><label>职位描述 · Brief</label><textarea id="jobBrief">Q3 海外出海：做落地页、埋点、投放追踪，跑增长实验。</textarea></div>
+      </div>
+      <div class="modal-foot"><span class="note">发布后候选人会来应聘</span><button class="cta" id="postBtn">发布职位 →</button></div>
+    </div>
+
+    <!-- 流程B · 应聘者 -->
+    <div class="hstage" data-hstage="applicants" id="hs-applicants">
+      <div class="applicants-head" id="applicantsHead">2 位候选人应聘了「GTM 工程师」— 选一个录用：</div>
+      <div id="applicantSlot"></div>
+    </div>
+
+    <!-- 邀请人（Invite，人不是 agent） -->
+    <div class="hstage" data-hstage="human" id="hs-human">
+      <div class="jobpost"><div class="field"><label>邮箱 · Email</label><input id="emailInput" value="lily@acme.com"></div></div>
+      <div class="modal-foot"><span class="note">邀请一位同事加入 workspace</span><button class="cta" id="sendInvite">发送邀请 · Send →</button></div>
     </div>
   </div>
 </div>
 
-<!-- ============ settings overlay (Agent Console 高级) ============ -->
+<!-- ==================== Agents (advanced) overlay ==================== -->
 <div class="settings" id="settings">
   <div class="set-head">
-    <span class="crumb">Settings ›</span><h2>Agent Console · 高级配置</h2>
+    <span class="crumb">Agents ›</span><h2>gtm-engineer · 高级配置</h2>
     <button class="set-close" id="setClose">← 回到 Chat</button>
   </div>
   <div class="set-body">
     <nav class="set-nav">
-      <a>Workspace</a><a>Routing</a><a class="on">Agents（高级）</a><a>Plugins</a><a>Snapshots</a><a>Authz audit</a>
+      <a>Overview</a><a class="on">Config（高级）</a><a>Keys</a><a>Caps</a><a>Extensions</a><a>Terminal</a>
     </nav>
     <div>
       <div class="console">
         <div class="ovl">PROVISION（ADVANCED）</div>
         <h3>gtm-engineer</h3>
-        <div class="desc">岗位「GTM 工程」的底层 agent 配置。端用户走「招一个 agent」即可，这层是给需要精调的人。</div>
+        <div class="desc">岗位「GTM 工程」的底层 agent 配置。端用户走「招一个 agent」即可；这层留给需要精调的人——就是原 Agent Console，降级为「高级」。</div>
         <div class="grid2">
           <div class="gfield"><label>flavor</label><div class="val">cc</div></div>
           <div class="gfield"><label>岗位 preset</label><div class="val">gtm-engineering</div></div>
@@ -390,7 +445,7 @@
           <div class="gfield"><label>project_cwd</label><div class="val">/srv/system</div></div>
           <div class="gfield"><label>With PTY</label><div class="val">off</div></div>
         </div>
-        <p class="note">上游 <b class="serif">Ezagent.Role</b>（skills / prompt / caps）+ AgentTemplate 承接；这个页面就是原 Agent Console，降级为「高级」。</p>
+        <p class="note">上游 Ezagent.Role（skills / prompt / caps）+ AgentTemplate 承接。</p>
       </div>
     </div>
   </div>
@@ -398,7 +453,7 @@
 
 <div class="caption" id="caption"></div>
 
-<!-- ============ scenario playback footer ============ -->
+<!-- ==================== scenario playback footer ==================== -->
 <footer class="spt-footer" id="spt-footer">
   <span class="spt-control-label">场景</span>
   <div id="spt-scenario-btns" style="display: contents;"></div>
@@ -412,133 +467,152 @@
 
 <script src="step-engine.js"></script>
 <script>
-/* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const cap = t => { const c=$('#caption'); c.innerHTML=t; c.classList.add('show'); };
-function setStage(name){
-  document.querySelectorAll('.stage').forEach(s=>s.classList.toggle('on', s.dataset.stage===name));
-}
-function openModal(title,lede){ $('#mTitle').textContent=title; $('#mLede').textContent=lede; $('#scrim').classList.add('on'); }
-function closeModal(){ $('#scrim').classList.remove('on'); }
-function selKind(id){ document.querySelectorAll('.kind').forEach(k=>k.classList.remove('sel')); if(id) $(id).classList.add('sel'); }
-function selPreset(id){ document.querySelectorAll('.preset').forEach(p=>p.classList.remove('sel')); if(id) $(id).classList.add('sel'); }
-function clearHi(){ document.querySelectorAll('.pulse').forEach(e=>e.classList.remove('pulse')); }
-function hi(sel){ clearHi(); const e=$(sel); if(e) e.classList.add('pulse'); }
-function addMember(html){ $('#mlist').insertAdjacentHTML('beforeend', html); $('#mcount').textContent = document.querySelectorAll('#mlist .mcard').length; }
-function addSys(html){ $('#timeline').insertAdjacentHTML('beforeend', `<div class="sys">${html}</div>`); }
-function addMsg(cls,who,text){ $('#timeline').insertAdjacentHTML('beforeend', `<div class="msg ${cls}"><div class="who">${who}</div><div class="bubble">${text}</div></div>`); $('#timeline').scrollTop=1e6; }
+const closeModal = ()=> $('#scrim').classList.remove('on');
+const setHStage = name => document.querySelectorAll('.hstage').forEach(s=>s.classList.toggle('on', s.dataset.hstage===name));
+const clearHi = ()=> document.querySelectorAll('.pulse').forEach(e=>e.classList.remove('pulse'));
+const hi = sel => { clearHi(); const e=$(sel); if(e) e.classList.add('pulse'); };
+const addMember = html => { $('#mlist').insertAdjacentHTML('beforeend', html); $('#mcount').textContent = document.querySelectorAll('#mlist .mcard').length; };
+const addSys = html => $('#timeline').insertAdjacentHTML('beforeend', `<div class="sys">${html}</div>`);
+const addMsg = (cls,who,text)=>{ $('#timeline').insertAdjacentHTML('beforeend', `<div class="msg ${cls}"><div class="who"><span class="lbl">${cls==='me'?'YOU':'AGENT'}</span> ${who}</div><div class="bubble">${text}</div></div>`); $('#timeline').scrollTop=1e6; };
+const memberRow = (name,role) =>
+  `<div class="mcard"><span class="dot on"></span><span class="mn">${name}</span><span class="pill">${role}</span><span class="role">AGENT</span><span class="mi"></span></div>`;
 
-/* ---------- base reset ---------- */
+/* 候选人（人名，强化"招一个人"的感觉） */
+const CAND = {
+  gtm: {name:'Nova Wei', role:'GTM 工程', tag:'Growth engineer', av:'N',
+        say:'我能在这个 session 帮你：做海外落地页、埋点与投放追踪、跑增长实验。',
+        skills:['落地页','数据追踪','A/B 实验'], greet:'我上岗了 —— 落地页和投放追踪交给我，先拉一版竞品调研？'},
+  gtm2:{name:'Leo Fang', role:'GTM 工程', tag:'Growth engineer', av:'L',
+        say:'我擅长内容驱动增长与 SEO 落地页，跑过几个出海项目。',
+        skills:['SEO','内容','落地页'], greet:'交给我 —— 我先从关键词和内容框架切入。'},
+  dev: {name:'Kai Ren', role:'研发助手', tag:'Dev assistant', av:'K',
+        say:'我能帮你：读代码、发 PR、跑测试与修 CI。',
+        skills:['代码','PR','测试'], greet:'我上岗了 —— 把要改的地方发我，我开条 PR。'},
+  cs:  {name:'Mia Sun', role:'客服', tag:'Support', av:'M',
+        say:'我能帮你：跑客户会话、查知识库、开工单。',
+        skills:['会话','知识库','工单'], greet:'我上岗了 —— 客户消息我先接，拿不准的升级给你。'},
+};
+const candHTML = (who,{swap=true}={}) => { const c=CAND[who]; return `<div class="cand" data-who="${who}">
+  <div class="cand-top"><div class="cand-av">${c.av}</div>
+    <div class="cand-id"><div class="cand-name">${c.name}</div><div class="cand-role">${c.role} · ${c.tag}</div></div>
+    <div class="cand-status">可上岗</div></div>
+  <div class="cand-say">"${c.say}"</div>
+  <div class="cand-skills"><span class="lab">技能</span>${c.skills.map(s=>`<span class="chip">${s}</span>`).join('')}</div>
+  <div class="cand-foot">${swap?'<button class="swap">换一个候选人</button>':'<span></span>'}<button class="onboard" data-who="${who}">招入 · Onboard →</button></div></div>`; };
+
+let curCand='gtm';
+const renderCandidate = who => { curCand=who; $('#candSlot').innerHTML=candHTML(who); setHStage('candidate'); };
+const renderApplicants = list => { $('#applicantSlot').innerHTML=list.map(w=>candHTML(w,{swap:false})).join(''); setHStage('applicants'); };
+function openHire(stage){
+  const M={ describe:['招聘新 agent · Hire an agent','描述你想要的角色，我们为你物色一位候选人加入这个 session。'],
+            jobpost:['发布一个职位 · Post a role','写下你要招的角色，候选人会来应聘。'],
+            human:['邀请人 · Invite a person','发邮件邀请一位同事加入这个 workspace。'] };
+  const m=M[stage]||M.describe; $('#mTitle').textContent=m[0]; $('#mLede').textContent=m[1];
+  $('#scrim').classList.add('on'); setHStage(stage);
+}
+function onboard(who){
+  const c=CAND[who]; closeModal();
+  document.querySelectorAll('#timeline .msg.card').forEach(n=>n.remove());
+  addMember(memberRow(c.name,c.role)); hi('#mlist .mcard:last-child');
+  addSys(`<b>${c.name}</b> 已入职 —— ${c.role}`);
+  addMsg('agent', `${c.name} · 现在`, c.greet);
+}
+
 function resetDom(){
-  closeModal(); $('#settings').classList.remove('on');
-  setStage('kind'); selKind(null); selPreset(null); clearHi();
-  $('#nameInput').value='gtm-engineer';
-  // remove any hired/invited members (keep first 2)
-  const cards=[...document.querySelectorAll('#mlist .mcard')]; cards.slice(2).forEach(c=>c.remove());
-  $('#mcount').textContent=2;
-  // remove appended timeline nodes (keep first 2 msgs)
-  const tl=[...$('#timeline').children]; tl.slice(2).forEach(n=>n.remove());
+  closeModal(); $('#settings').classList.remove('on'); clearHi();
+  setHStage('describe'); $('#describeInput').value=''; $('#describeBox').classList.remove('hot');
+  $('#candSlot').innerHTML=''; $('#applicantSlot').innerHTML='';
+  [...document.querySelectorAll('#mlist .mcard')].slice(3).forEach(c=>c.remove());
+  $('#mcount').textContent=3;
+  [...$('#timeline').children].slice(2).forEach(n=>n.remove());
 }
 
-/* ---------- shared flow builders ---------- */
-const agentSteps = (presetSel, name, initial, desc) => ([
-  { t:'act', act:'hlInvite', cap:'Admin 想给团队加个人手 —— 点右上角 <b>邀请</b>' },
-  { t:'wait', ms:500 },
-  { t:'act', act:'openInvite', cap:'邀请面板：一个人，或<b>招一个 agent</b>' },
-  { t:'wait', ms:400 },
-  { t:'act', act:'pickAgent', cap:'选「招一个 agent」—— 像给群里加个成员，不进开发者控制台' },
-  { t:'wait', ms:450 },
-  { t:'act', act:'showPresets', cap:'挑一个<b>岗位</b>（不是选 flavor / 配 caps）' },
-  { t:'wait', ms:450 },
-  { t:'act', act:'pickPreset', preset:presetSel, name, cap:`选「${desc}」—— 岗位自带默认 skills / caps` },
-  { t:'wait', ms:450 },
-  { t:'act', act:'showNaming', cap:'命名即可；技术细节收在<b>高级配置</b>里，可后调' },
-  { t:'wait', ms:500 },
-  { t:'act', act:'hire', name, initial, desc, cap:`点「招入」—— <b>${name}</b> 作为成员加入对话` },
-]);
-
+const DESC = '能做海外落地页和投放追踪的人';
 const SCENARIOS = {
-  gtm:  { steps: agentSteps('#ps-gtm','gtm-engineer','G','GTM 工程').concat([
-            { t:'wait', ms:500 },
-            { t:'act', act:'peekSettings', cap:'想精调？原 Agent Console 降级为岗位里的<b>高级配置</b>' },
-          ]) },
-  dev:  { steps: agentSteps('#ps-dev','dev-assistant','研','研发助手') },
-  human:{ steps: [
-            { t:'act', act:'hlInvite', cap:'对比：邀请<b>一个人</b>也是同一个入口' },
-            { t:'wait', ms:500 },
-            { t:'act', act:'openInvite', cap:'邀请面板' },
-            { t:'wait', ms:400 },
-            { t:'act', act:'pickHuman', cap:'选「邀请人」→ 填邮箱' },
-            { t:'wait', ms:450 },
-            { t:'act', act:'inviteHuman', cap:'发送邀请 —— 人以 <b>pending</b> 成员出现' },
-          ] },
+  seatB: { steps: [
+    { t:'act', act:'hl', sel:'#seat', cap:'★ 推荐路径 · 花名册空位「招聘新 agent」（主色蓝，醒目）' },
+    { t:'wait', ms:600 },
+    { t:'act', act:'openHire', stage:'jobpost', cap:'点空位 → 发布一个职位（流程B）' },
+    { t:'wait', ms:600 },
+    { t:'act', act:'post', cap:'发布「GTM 工程师」…' },
+    { t:'wait', ms:800 },
+    { t:'act', act:'applicants', list:['gtm','gtm2'], cap:'2 位候选人来应聘 —— 对比 profile' },
+    { t:'wait', ms:650 },
+    { t:'act', act:'hl', sel:'#applicantSlot .cand:first-child .onboard', cap:'挑中意的一个' },
+    { t:'wait', ms:450 },
+    { t:'act', act:'onboard', who:'gtm', cap:'录用 <b>Nova Wei</b>，入职这个 session' },
+  ]},
+  conv: { steps: [
+    { t:'act', act:'hl', sel:'#composerBox', cap:'备选入口 · 对话召唤 —— 在对话里直接说' },
+    { t:'wait', ms:500 },
+    { t:'act', act:'convType', text:`@hire 我需要一个${DESC}`, cap:'像发消息一样描述角色' },
+    { t:'wait', ms:500 },
+    { t:'act', act:'convThinking', cap:'world 为你物色候选人…' },
+    { t:'wait', ms:600 },
+    { t:'act', act:'convCard', who:'gtm', cap:'候选人卡直接出现在对话里' },
+    { t:'wait', ms:500 },
+    { t:'act', act:'hl', sel:'#timeline .cand .onboard', cap:'点 <b>Onboard</b>' },
+    { t:'wait', ms:500 },
+    { t:'act', act:'onboard', who:'gtm', cap:'<b>Nova Wei</b> 入职' },
+  ]},
+  flowA: { steps: [
+    { t:'act', act:'openHire', stage:'describe', cap:'备选流程 · 描述→候选人（对照发职位应聘）' },
+    { t:'wait', ms:450 },
+    { t:'act', act:'typeDescribe', text:DESC, cap:'自然语言描述' },
+    { t:'wait', ms:500 },
+    { t:'act', act:'source', cap:'物色中…' },
+    { t:'wait', ms:750 },
+    { t:'act', act:'candidate', who:'gtm', cap:'直接给一位候选人 —— 不合适可「换一个」' },
+    { t:'wait', ms:650 },
+    { t:'act', act:'onboard', who:'gtm', cap:'Onboard 入职' },
+  ]},
 };
 
 async function executeStepCustom(step){
   if(step.cap!=null) cap(step.cap);
   switch(step.act){
-    case 'hlInvite': hi('#inviteBtn'); break;
-    case 'openInvite': clearHi(); openModal('邀请成员 · Invite member','给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。'); setStage('kind'); break;
-    case 'pickAgent': selKind('#kind-agent'); break;
-    case 'showPresets': selKind(null); setStage('presets'); break;
-    case 'pickPreset': selPreset(step.preset); $('#nameInput').value=step.name; break;
-    case 'showNaming': setStage('naming'); break;
-    case 'hire':
-      closeModal();
-      addMember(`<div class="mcard"><div class="av agent">${step.initial}</div><div class="mi"><div class="mn">${step.name} <span class="tag">AGENT</span></div><div class="ms">岗位 · ${step.desc}</div></div></div>`);
-      hi('#mlist .mcard:last-child');
-      addSys(`<b>${step.name}</b>（${step.desc}）已加入 workspace`);
-      addMsg('agent', `${step.name} · AGENT · 现在`, '我上岗了 👋 —— 落地页和投放追踪交给我，先拉一版竞品调研？');
-      break;
-    case 'pickHuman': selKind('#kind-human'); setStage('human'); break;
-    case 'inviteHuman':
-      closeModal();
-      addMember(`<div class="mcard"><div class="av human pending">L</div><div class="mi"><div class="mn">lily@acme.com <span class="tag pending">PENDING</span></div><div class="ms">已发邀请</div></div></div>`);
-      hi('#mlist .mcard:last-child');
-      addSys(`已向 <b>lily@acme.com</b> 发送邀请`);
-      break;
-    case 'peekSettings': clearHi(); $('#settings').classList.add('on'); break;
+    case 'hl': hi(step.sel); break;
+    case 'convType': clearHi(); addMsg('me','Admin · 现在', step.text); break;
+    case 'convThinking': addSys('world 正在为你物色候选人…'); break;
+    case 'convCard': $('#timeline').insertAdjacentHTML('beforeend', `<div class="msg card"><div class="who"><span class="lbl" style="color:var(--jade-deep)">HIRE</span> world 为你物色到候选人</div>${candHTML(step.who,{swap:false})}</div>`); $('#timeline').scrollTop=1e6; break;
+    case 'openHire': clearHi(); openHire(step.stage); break;
+    case 'typeDescribe': $('#describeInput').value=step.text; $('#describeBox').classList.add('hot'); break;
+    case 'source': setHStage('sourcing'); break;
+    case 'candidate': renderCandidate(step.who); break;
+    case 'post': setHStage('sourcing'); break;
+    case 'applicants': renderApplicants(step.list); break;
+    case 'onboard': onboard(step.who); break;
   }
 }
 
 scenarioPlayback.init({
   scenarios: SCENARIOS,
   scenarioButtons: [
-    { id:'gtm',   label:'① 招 GTM 工程',  colorDot:'green' },
-    { id:'dev',   label:'② 招 研发助手',  colorDot:'blue'  },
-    { id:'human', label:'③ 邀请一个人',   colorDot:'gray'  },
+    { id:'seatB', label:'★ 推荐 · 空位→发职位应聘', colorDot:'blue'  },
+    { id:'conv',  label:'备选入口 · 对话召唤',     colorDot:'green' },
+    { id:'flowA', label:'备选流程 · 描述→候选人',   colorDot:'gray'  },
   ],
   microStepTypes: ['wait'],
   executeStepCustom,
-  onReset: () => { resetDom(); cap('▶ 播放，或按 <b>→</b> 单步 —— 看在 world 里怎么 hire 一个 agent。也可以直接点「邀请」自己走一遍'); },
+  onReset: () => { resetDom(); cap('▶ ★推荐路径：蓝色「招聘新 agent」空位 → 发职位 → 应聘 → 录用。另两条备选供对比。也可自己点空位走一遍'); },
 });
 
-/* ---------- 手动点击（与播放并行，方便自己走一遍）---------- */
-const PRESET = {
-  '#ps-gtm':{name:'gtm-engineer',initial:'G',desc:'GTM 工程'},
-  '#ps-cs' :{name:'cs-agent',    initial:'客',desc:'客服'},
-  '#ps-dev':{name:'dev-assistant',initial:'研',desc:'研发助手'},
-};
-function hireAgentDom(name,initial,desc){
-  closeModal();
-  addMember(`<div class="mcard"><div class="av agent">${initial}</div><div class="mi"><div class="mn">${name} <span class="tag">AGENT</span></div><div class="ms">岗位 · ${desc}</div></div></div>`);
-  hi('#mlist .mcard:last-child');
-  addSys(`<b>${name}</b>（${desc}）已加入 workspace`);
-  addMsg('agent', `${name} · AGENT · 现在`, '我上岗了 👋 —— 这个岗位的活交给我，先给你拉一版方案？');
-}
-let curPreset='#ps-gtm';
-$('#inviteBtn').onclick=()=>{ openModal('邀请成员 · Invite member','给这个 workspace 加一个成员——一个人，或招一个 agent 岗位。'); setStage('kind'); selKind(null); clearHi(); };
-$('#kind-agent').onclick=()=>{ selKind('#kind-agent'); setTimeout(()=>{selKind(null); setStage('presets');},180); };
-$('#kind-human').onclick=()=>{ selKind('#kind-human'); setStage('human'); };
-Object.keys(PRESET).forEach(sel=>{ $(sel).onclick=()=>{ curPreset=sel; selPreset(sel); $('#nameInput').value=PRESET[sel].name; setStage('naming'); }; });
-$('#hireBtn').onclick=()=>{ const p=PRESET[curPreset]; hireAgentDom(p.name,p.initial,p.desc); };
-$('#sendInvite').onclick=()=>{ executeStepCustom({act:'inviteHuman'}); };
-$('#back-1').onclick=()=>setStage('kind');
-$('#back-2').onclick=()=>{ selPreset(null); setStage('presets'); };
-$('#back-3').onclick=()=>setStage('kind');
+/* 手动点击（与播放并行） */
+$('#inviteBtn').onclick=()=>openHire('human');
+$('#seat').onclick=()=>openHire('jobpost');
+$('#sourceBtn').onclick=()=>{ setHStage('sourcing'); setTimeout(()=>renderCandidate('gtm'),700); };
+$('#postBtn').onclick=()=>{ setHStage('sourcing'); setTimeout(()=>renderApplicants(['gtm','gtm2']),800); };
+$('#sendInvite').onclick=()=>{ closeModal(); addMember(`<div class="mcard"><span class="dot"></span><span class="mn">lily@acme.com</span><span class="pill pending">邀请中</span><span class="role">PENDING</span></div>`); hi('#mlist .mcard:last-child'); addSys('已向 <b>lily@acme.com</b> 发送邀请'); };
+document.querySelectorAll('.pchip').forEach(b=>b.onclick=()=>{ $('#describeInput').value=`一个${b.textContent}相关的角色`; $('#describeBox').classList.add('hot'); });
 $('#scrim').onclick=e=>{ if(e.target===$('#scrim')) closeModal(); };
-$('#ic-gear').onclick=()=>$('#settings').classList.add('on');
+$('#tab-agents').onclick=()=>$('#settings').classList.add('on');
 $('#setClose').onclick=()=>$('#settings').classList.remove('on');
+document.addEventListener('click', e=>{
+  const ob=e.target.closest('.onboard'); if(ob){ onboard(ob.dataset.who); return; }
+  const sw=e.target.closest('.swap'); if(sw){ renderCandidate(curCand==='gtm'?'gtm2':'gtm'); }
+});
 </script>
 </body>
 </html>
