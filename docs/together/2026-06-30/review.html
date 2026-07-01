@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-06-30</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.hold{background:#fee2e2;color:#991b1b}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-06-30</h1>
+<p>回顾时间：2026-07-01。来源：<code>docs/together/2026-06-30/stack.md</code>、GitHub PR 状态、Feishu returns。这个页面按 0625 review 的形式整理：先看产品大局，再看合并结果、未合并风险和流程沉淀。</p>
+
+<div>
+  <span class="kpi"><b>6</b>工作 PR 已合入</span>
+  <span class="kpi"><b>3</b>close/docs PR 已合入</span>
+  <span class="kpi"><b>2</b>PR 保持 open</span>
+  <span class="kpi"><b>7</b>returns/PR 被清点</span>
+</div>
+
+<div class="big">
+<b>产品大局：</b>0630 的主线不是单点功能，而是把“可上线的产品面”从几个方向推到可收口状态：
+<b>AutoService</b> 证明当前架构能跑完 customer → agent → kb → reply 的端到端链路；
+<b>World UI</b> 从工程界面向 IM-like shell 靠拢；
+<b>Website/Hello</b> 开始接上官网生产路径；
+<b>Agent Console</b> 从“小缺口修补”转为 IA/UX 设计问题；
+<b>Kanban/dev-together</b> 暴露了大集成分支不能直接作为合并单元的问题。
+</div>
+
+<h2>§1 昨日工作统计（按任务）</h2>
+<table>
+<tr><th>任务 / PR</th><th>开发者</th><th>合并状态</th><th>产品结果</th><th>review 结论</th></tr>
+<tr>
+  <td><b>#1106 AutoService answer-soul E2E</b></td>
+  <td>gaga</td>
+  <td><span class="pill ok">merged</span><br><code>b73cb247165d6841e9d61df084ffc377728481a4</code></td>
+  <td>客户自然提问 → agent 自动查 KB → 取回答案 → 回复客户，当前架构端到端跑通。</td>
+  <td>修复集中在 seed/persona/session wiring，没有回到 core 做 dispatch registry local 这类高复杂度方案，符合“解决 X，不钻 Y”的方向。</td>
+</tr>
+<tr>
+  <td><b>#1105 Admin user management UI</b></td>
+  <td>zyli</td>
+  <td><span class="pill ok">merged</span><br><code>8a8e0b688ca68b8f56bef11a77e2f95c2565364d</code></td>
+  <td>生产 bootstrap 用户管理能力落地，支撑 dev-team 账号初始化。</td>
+  <td>可合。后续继续收敛 World/Console 的入口一致性。</td>
+</tr>
+<tr>
+  <td><b>#1103 Website demo/design archive</b></td>
+  <td>ruihua</td>
+  <td><span class="pill ok">merged</span><br><code>0d20fa191f9135420e6b9b2187aacde1250d55dd</code></td>
+  <td>保留官网设计/demo 记忆，给 zhaomato 的官网实现提供方向。</td>
+  <td>文档/设计记忆可合，但 0701 必须把 ruihua 作为统一设计源，不再并行发散。</td>
+</tr>
+<tr>
+  <td><b>#1107 Website hello support</b></td>
+  <td>zhaomato</td>
+  <td><span class="pill ok">merged</span><br><code>602d7c7e154c93a7f7b1576ad9f0d0af43ec6549</code></td>
+  <td>Hello/world website 支撑资产和 refresh 脚本落地。</td>
+  <td>rebase 后合并。后续重点不是再做 demo，而是在本地和生产路径验证 hello ↔ backend/world 联通。</td>
+</tr>
+<tr>
+  <td><b>#1104 World UI redesign prototype/refactor</b></td>
+  <td>zyli</td>
+  <td><span class="pill ok">merged</span><br><code>5eb82d4280645353d5899bc67ed40c2fc9d2a93e</code></td>
+  <td>World shell 开始向 IM-like 产品界面重构。</td>
+  <td>CI 绿只是底线；UI PR 还需要产品验收。0701 继续做 post-merge polish，而不是开新一轮宽泛重构。</td>
+</tr>
+<tr>
+  <td><b>#1112 Agent Console completeness / IA</b></td>
+  <td>fatnine</td>
+  <td><span class="pill warn">open</span></td>
+  <td>F1-F6 小缺口已收敛；剩余主要是 session delete/archive 等 IA/语义问题。</td>
+  <td>评论已给：做一个 prototype，实现一个；不要做 n 个 prototype，最后实现 0 个。0701 只允许收敛到一个完整路径。</td>
+</tr>
+<tr>
+  <td><b>#1020 / #1110 Kanban workflow agent</b></td>
+  <td>jjkysy</td>
+  <td><span class="pill hold">do not merge whole</span></td>
+  <td>#1020 被 #1110 的 rebase/整合分支替代为当前分析对象。</td>
+  <td>#1110 混合 runtime substrate、plugin UI、业务 persona、CLI、E2E docs，CI 红。作为 salvage/source branch 保留，必须按功能拆 PR。</td>
+</tr>
+</table>
+
+<h2>§2 合并结果与未合并状态</h2>
+<table>
+<tr><th>类别</th><th>结果</th><th>说明</th></tr>
+<tr><td>已合工作 PR</td><td>#1106 / #1105 / #1103 / #1107 / #1104</td><td>其中 #1106 是架构风险最高项，已确认没有把 AutoService 业务逻辑漏回 core。</td></tr>
+<tr><td>已合 close/docs</td><td>#1109 / #1111 / #1113</td><td>补齐 0630 stack、kanban rebase 分析、FatNine late return。</td></tr>
+<tr><td>保留 open</td><td>#1110 / #1112</td><td>#1110 拆分后再看；#1112 收敛一个可验证 prototype path。</td></tr>
+<tr><td>superseded</td><td>#1020</td><td>合并机制上由 #1110 继承，但功能边界需要重新拆分。</td></tr>
+</table>
+
+<h2>§3 质量与风险判断</h2>
+<ul>
+<li><b>AutoService 风险已降级：</b>#1106 的修复在 seed/config/persona/session wiring 层，没有新增 core dispatch 旁路，也没有把客服业务规则写入 core/domain。</li>
+<li><b>UI 风险从“能不能跑”变成“是否像产品”：</b>#1104/#1107 解决了入口和支撑，但 0701 需要统一设计源，否则 World、Hello、Console、Socialware 会继续各自长出一套体验。</li>
+<li><b>#1110 是过程资产，不是合并资产：</b>它证明 kanban workflow 的方向有价值，但也复现了上周的大 PR 纪律问题。必须拆成 runtime、plugin UI、persona/recipe、E2E docs 等边界清楚的小 PR。</li>
+<li><b>#1112 的剩余问题是设计问题：</b>session delete/archive 不是“顺手补一个按钮”，它牵涉状态、审计、恢复、权限和 destructive action 语义。</li>
+</ul>
+
+<h2>§4 流程沉淀</h2>
+<blockquote><b>return 必须落文档。</b> Feishu return 对协作速度很重要，但 close 不能只靠聊天记录。每个 return 要么进 <code>returns/*.md</code>，要么在 <code>stack.md</code> 标注 late/out-of-scope。</blockquote>
+<blockquote><b>大集成分支不能直接合并。</b> #1110 以后按“证明路径”和“合并单元”分开管理：前者可以大，后者必须小、可 review、可回滚。</blockquote>
+<blockquote><b>UI 原型必须收敛。</b> prototype 的 DoD 不是截图数量，而是一个路径可用、可验证、能进入产品。</blockquote>
+
+<h2>§5 对 2026-07-01 的建议</h2>
+<ol>
+<li>0701 做 convergence day，不再发散探索。</li>
+<li>以 ruihua 的设计/IA 方向作为 Website、Hello、World UI、Agent Console、Socialware 的共同 review gate。</li>
+<li>每个 surface 一个 owner：zhaomato 负责 Website/Hello，zyli 负责 World shell，fatnine 负责 Agent Console 一个完整 prototype，gaga 负责 Socialware/AutoService，jjkysy 负责拆 #1110。</li>
+<li>lead 只合小而清晰的 PR；UI PR 除 CI 外必须给截图和产品验收口径。</li>
+</ol>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">对应 Markdown：<code>docs/together/2026-06-30/review.md</code>。本 HTML 参考 2026-06-25 review 页面结构撰写。</p>
+</body>
+</html>
