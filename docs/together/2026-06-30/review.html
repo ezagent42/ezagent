@@ -49,7 +49,7 @@
   <td>gaga</td>
   <td><span class="pill ok">merged</span><br><code>b73cb247165d6841e9d61df084ffc377728481a4</code></td>
   <td>客户自然提问 → agent 自动查 KB → 取回答案 → 回复客户，当前架构端到端跑通。</td>
-  <td>修复集中在 seed/persona/session wiring，没有回到 core 做 dispatch registry local 这类高复杂度方案，符合“解决 X，不钻 Y”的方向。</td>
+  <td>没有把 AutoService 业务逻辑写进 core/domain；但 Tier-1 persona、KB corpus、session/orchestrator wiring 目前在 seed 脚本里，适合作为 harness，不适合作为长期产品承载。</td>
 </tr>
 <tr>
   <td><b>#1105 Admin user management UI</b></td>
@@ -107,6 +107,7 @@
 <h2>§3 质量与风险判断</h2>
 <ul>
 <li><b>AutoService 风险已降级：</b>#1106 的修复在 seed/config/persona/session wiring 层，没有新增 core dispatch 旁路，也没有把客服业务规则写入 core/domain。</li>
+<li><b>但 seed 不是产品：</b>#1106 把 AutoService Tier-1 作为 seed/harness 合入 main，里面确实包含 persona、KB 语料和 wiring。下一步必须把业务内容移到 AgentTemplate / soul markdown / resource fixture / SessionTemplate / socialware definition，seed 只做安装器/验收器。</li>
 <li><b>UI 风险从“能不能跑”变成“是否像产品”：</b>#1104/#1107 解决了入口和支撑，但 0701 需要统一设计源，否则 World、Hello、Console、Socialware 会继续各自长出一套体验。</li>
 <li><b>#1110 是过程资产，不是合并资产：</b>它证明 kanban workflow 的方向有价值，但也复现了上周的大 PR 纪律问题。必须拆成 runtime、plugin UI、persona/recipe、E2E docs 等边界清楚的小 PR。</li>
 <li><b>#1112 的剩余问题是设计问题：</b>session delete/archive 不是“顺手补一个按钮”，它牵涉状态、审计、恢复、权限和 destructive action 语义。</li>
@@ -116,12 +117,14 @@
 <blockquote><b>return 必须落文档。</b> Feishu return 对协作速度很重要，但 close 不能只靠聊天记录。每个 return 要么进 <code>returns/*.md</code>，要么在 <code>stack.md</code> 标注 late/out-of-scope。</blockquote>
 <blockquote><b>大集成分支不能直接合并。</b> #1110 以后按“证明路径”和“合并单元”分开管理：前者可以大，后者必须小、可 review、可回滚。</blockquote>
 <blockquote><b>UI 原型必须收敛。</b> prototype 的 DoD 不是截图数量，而是一个路径可用、可验证、能进入产品。</blockquote>
+<blockquote><b>Seed 不能成为产品功能。</b> 业务 persona、语料、routing policy 应进入定义数据/fixture/socialware package；seed 只负责安装、ingest、授权和启动受支持路径。详见 <code>docs/together/contributing/seed-vs-product-boundary.md</code>。</blockquote>
 
 <h2>§5 对 2026-07-01 的建议</h2>
 <ol>
 <li>0701 做 convergence day，不再发散探索。</li>
 <li>以 ruihua 的设计/IA 方向作为 Website、Hello、World UI、Agent Console、Socialware 的共同 review gate。</li>
 <li>每个 surface 一个 owner：zhaomato 负责 Website/Hello，zyli 负责 World shell，fatnine 负责 Agent Console 一个完整 prototype，gaga 负责 Socialware/AutoService，jjkysy 负责拆 #1110。</li>
+<li>新增 gaga 提交、jjkysy 审核的 AutoService seed/product boundary 任务：把 #1106 的 seed-as-product 改为“seed 安装数据化产品定义”。</li>
 <li>lead 只合小而清晰的 PR；UI PR 除 CI 外必须给截图和产品验收口径。</li>
 </ol>
 

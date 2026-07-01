@@ -8,7 +8,7 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
 
 | PR | Owner | Merge SHA | Result |
 |---|---|---|---|
-| #1106 AutoService answer-soul E2E | gaga | `b73cb247165d6841e9d61df084ffc377728481a4` | Current architecture E2E validated; seed/persona/session wiring fixed without core rewrite. |
+| #1106 AutoService answer-soul E2E | gaga | `b73cb247165d6841e9d61df084ffc377728481a4` | Current architecture E2E validated; AutoService Tier-1 landed as seed/harness content, not core/domain business logic. |
 | #1105 Admin user management UI | zyli | `8a8e0b688ca68b8f56bef11a77e2f95c2565364d` | Production bootstrap user management landed. |
 | #1103 Website demo/design archive | ruihua | `0d20fa191f9135420e6b9b2187aacde1250d55dd` | Website design/demo memory preserved before implementation branches. |
 | #1107 Website hello support | zhaomato | `602d7c7e154c93a7f7b1576ad9f0d0af43ec6549` | Hello/world website support assets and refresh script landed after rebase. |
@@ -38,6 +38,10 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
    bugs"; the remaining work is IA and destructive-action semantics.
 5. CI green was necessary but not sufficient for UI PRs. #1104 needed product
    acceptance, not only tests.
+6. #1106 did not leak AutoService business logic into core/domain, but it did
+   put AutoService persona, KB corpus, and session/orchestrator wiring into a
+   seed script. That is acceptable as an E2E proof, not as the long-term product
+   carrier.
 
 ## Open PR State
 
@@ -59,6 +63,12 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
    proof and salvage branch. It must be split by ownership boundary before merge.
 4. **Design source of truth must be declared before parallel UI implementation.**
    For 0701, ruihua is the design anchor across UI/hello/console/socialware.
+5. **Seed is not the product.** #1106 should be recorded as a successful
+   AutoService Tier-1 harness, but AutoService product content must move to
+   definition data: AgentTemplate/soul markdown, resource fixtures,
+   SessionTemplate/socialware definition, and supported product/API install
+   paths. The rule is now captured in
+   `docs/together/contributing/seed-vs-product-boundary.md`.
 
 ## Next-Day Suggestions
 
@@ -71,5 +81,8 @@ Source: `docs/together/2026-06-30/stack.md`, GitHub PR state, Feishu returns
    - fatnine: Agent Console one complete prototype
    - gaga: AutoService/socialware flow validation and gaps
    - jjkysy: split #1110
-4. Keep ruihua in the review gate: each surface should show how it follows the
+4. Add a gaga-owned, jjkysy-reviewed task to move AutoService Tier-1 out of
+   seed-as-product: seed remains installer/verifier; persona/corpus/routing
+   become data/package artifacts.
+5. Keep ruihua in the review gate: each surface should show how it follows the
    shared IA/visual direction before merging more UI code.

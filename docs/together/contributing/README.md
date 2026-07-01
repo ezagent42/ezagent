@@ -39,3 +39,13 @@ agent = **角色（role，决定内容）× 风味（flavor，决定形式）**�
 
 ### P5 · flake 不得长期靠 admin-merge 绕过
 **现象**：PluginIsolation/AnonUserGC flake 反复偶发红，多个干净 PR 被 admin-merge 绕过 CI 闸。**原则**：admin-merge 仅用于"已本地验证干净 + 红仅为已知无关 flake"的临时兜底，且**必须立项根治**（#108）；不得让 flake 成为常态绕过。**适用**：任何反复出现的 CI flake。
+
+### P6 · seed 只能做安装器/验收器，不能成为产品功能本身
+**现象**：#1106 把 AutoService Tier-1 场景跑通，但 `scripts/autoservice_tier1_seed.exs`
+同时承载了 support persona、KB 语料、session/routing/orchestrator wiring。**判断**：
+这可以作为短期 E2E harness，不能作为 AutoService 功能的长期形态。**原则**：
+业务内容必须数据化（AgentTemplate / soul markdown / resource fixture /
+SessionTemplate / socialware definition）；seed 只负责安装、ingest、授权和启动受支持路径。
+如果 seed 需要长期手写 `McpRegistry.register/2`、`SessionManager.ensure_started/1`
+或 session working copy 绑定，说明缺少产品/API 路径。展开版：
+`docs/together/contributing/seed-vs-product-boundary.md`。

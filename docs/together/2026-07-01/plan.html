@@ -36,6 +36,7 @@
 <div class="big">
 <b>0701 目标一句话：</b>把 Website / Hello / World UI / Agent Console / Socialware 这几条线从“各自能跑”收敛成一个产品方向。
 今天的重点不是多开 prototype，而是每条线拿出一个可验证的产品路径：能截图、能本地测、能说明是否可上线。
+同时把 #1106 暴露出的 AutoService seed/product boundary 固化为今日任务：seed 只做安装器/验收器，业务 persona/corpus/routing 要走定义数据。
 </div>
 
 <h2>§1 昨日遗留与今日缺口</h2>
@@ -43,6 +44,7 @@
 <div class="gap"><b>Website/Hello 仍需生产路径验证：</b>#1107 已合，但需要本地验证 hello 能和 backend/world 联通，再评估 app.ezagent.chat 上线。</div>
 <div class="gap"><b>Agent Console 不能继续多原型发散：</b>#1112 应收敛一个 prototype path，而不是堆更多 demo。</div>
 <div class="gap"><b>AutoService/Socialware 需要 current main dogfood：</b>#1106 已证明架构链路，0701 要看客户侧流程、内容和 UI 是否真的像产品。</div>
+<div class="gap"><b>AutoService 不能长期放在 seed 里：</b>#1106 的 persona、KB 语料、session/orchestrator wiring 目前在 seed 脚本中。今日需要 gaga 提交、jjkysy 审核一个第一步拆分：seed 保留安装/验收，业务内容进入 definition data / fixture / socialware package。</div>
 <div class="gap"><b>#1110 不能整包合并：</b>它是 kanban/dev-together 的整合来源分支，需要按功能拆小 PR。</div>
 
 <h2>§2 今日 feature points（按开发者）</h2>
@@ -98,6 +100,14 @@
 </tr>
 <tr>
   <td>T7</td>
+  <td><b>AutoService seed/product boundary</b>：把 #1106 的教训转成第一步产品化拆分。seed 只能安装/验收；support persona、KB corpus、routing/session package 应转向定义数据，不再长期作为 Elixir seed 常量。</td>
+  <td><b>gaga submit / jjkysy review</b></td>
+  <td><code>feat/autoservice-seed-product-boundary-0701</code></td>
+  <td>gaga 开 PR，jjkysy blocking review；persona 或 KB corpus 至少一项移出 seed code；seed 仍能验证 Tier-1。</td>
+  <td>18:00</td>
+</tr>
+<tr>
+  <td>T8</td>
   <td><b>Lead integration</b>：review 返回 PR，守住设计 gate，保持 main green，避免 UI 文件冲突。</td>
   <td><b>allen / lead</b></td>
   <td><code>lead/0701-stack-review</code></td>
@@ -116,6 +126,7 @@
 <tr><td>Website demo/docs</td><td>zhaomato + ruihua</td><td>zhaomato implement，ruihua review direction；避免重开 #1103/#1107 冲突。</td></tr>
 <tr><td>Agent Console</td><td>fatnine</td><td>一个 prototype path only；不要 parallel IA branches。</td></tr>
 <tr><td>Socialware / AutoService</td><td>gaga</td><td>验证 current main；窄修；不得重新引入 core dispatch/local registry 方案。</td></tr>
+<tr><td>AutoService seed/product boundary</td><td>gaga / jjkysy</td><td>gaga 提交，jjkysy 审核。seed 可安装/验收；业务 persona/corpus/routing 必须转向定义数据。不得把业务逻辑放进 core/domain。</td></tr>
 <tr><td>#1110 split</td><td>jjkysy</td><td>按 ownership boundary 拆；runtime、business plugin、UI、persona、docs 不混一个 PR。</td></tr>
 </table>
 
@@ -124,7 +135,8 @@
 <li><b>T1 ruihua design convergence first</b>：其他 UI track 可准备，但最终 UI 决策等这条 gate。</li>
 <li><b>T2/T3/T4/T5 并行</b>：设计 gate 后各 surface 独立推进。</li>
 <li><b>T6 独立拆分</b>：#1110 拆分可并行，但今天不合整包；小 PR 必须 green + reviewed。</li>
-<li><b>T7 全程运行</b>：lead 负责 review、排序、避免 main 被大分支污染。</li>
+<li><b>T7 并行推进</b>：gaga 提交 AutoService seed/product boundary 第一片，jjkysy 审核。</li>
+<li><b>T8 全程运行</b>：lead 负责 review、排序、避免 main 被大分支污染。</li>
 </ol>
 
 <h2>§5 开工 prompt（复制给对应 dev agent）</h2>
@@ -136,6 +148,7 @@
 <tr><td><b>fatnine</b></td><td>T4 Agent Console</td><td><button class="cp" onclick="cp('fatnine')">复制开工 prompt</button></td></tr>
 <tr><td><b>gaga</b></td><td>T5 Socialware / AutoService</td><td><button class="cp" onclick="cp('gaga')">复制开工 prompt</button></td></tr>
 <tr><td><b>jjkysy</b></td><td>T6 Split #1110</td><td><button class="cp" onclick="cp('jjkysy')">复制开工 prompt</button></td></tr>
+<tr><td><b>gaga + jjkysy</b></td><td>T7 AutoService seed boundary</td><td><button class="cp" onclick="cp('autoserviceBoundary')">复制开工 prompt</button></td></tr>
 </table>
 
 <h2>§6 Required Reading</h2>
@@ -144,6 +157,8 @@
 <li><code>docs/together/2026-06-30/stack.md</code></li>
 <li><code>docs/together/2026-06-30/kanban-rebase-merge-analysis.md</code></li>
 <li><code>docs/together/2026-07-01/handoffs/jjkysy-split-pr-1110.md</code>（jjkysy 必读）</li>
+<li><code>docs/together/2026-07-01/handoffs/autoservice-seed-product-boundary.md</code>（gaga / jjkysy 必读）</li>
+<li><code>docs/together/contributing/seed-vs-product-boundary.md</code></li>
 <li><code>docs/guide/world-coordination.md</code>（所有 World UI work 必读）</li>
 </ul>
 
@@ -180,7 +195,14 @@ jjkysy:`jjkysy — T6 Split #1110。
 
 #1110 今天留作 source branch，不整包合并。请按功能拆 PR：优先 PR A World UI surface substrate、PR B generic role-agent materialization。明确 excluded scope，保持小 PR、可 review、可回滚。
 
-DoD：至少开一个小 PR，说明从 #1110 拆出了什么、排除了什么、CI 状态如何。未来注意开发纪律：证明路径可以大，合并单元必须小。`
+DoD：至少开一个小 PR，说明从 #1110 拆出了什么、排除了什么、CI 状态如何。未来注意开发纪律：证明路径可以大，合并单元必须小。`,
+autoserviceBoundary:`gaga + jjkysy — T7 AutoService seed/product boundary。
+
+gaga 负责提交，jjkysy 负责 blocking review。目标：把 #1106 证明出的 Tier-1 AutoService 从 seed-as-product 改成 seed-as-installer 的第一片。
+
+必读：docs/together/contributing/seed-vs-product-boundary.md、docs/together/2026-07-01/handoffs/autoservice-seed-product-boundary.md、scripts/autoservice_tier1_seed.exs。
+
+要求：support persona 或 KB corpus 至少一项移出 scripts/autoservice_tier1_seed.exs，进入 definition data / fixture / resource / socialware package；seed 仍负责安装、ingest、授权、启动受支持路径并能验证 Tier-1。不要把 AutoService 业务逻辑放进 core/domain。`
 };
 function cp(k){
   navigator.clipboard.writeText(P[k]).then(()=>{
