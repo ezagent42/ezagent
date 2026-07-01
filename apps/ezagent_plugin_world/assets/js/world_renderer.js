@@ -26,6 +26,7 @@ export const WorldRenderer = {
       this._worldUnmount = mod.mountWorld(this.el, {
         layout: parseJson(this.el.dataset.layout, {}),
         state: parseJson(this.el.dataset.worldState, {}),
+        pluginNav: parseJson(this.el.dataset.pluginNav, []),
         caller: parseJson(this.el.dataset.caller, {}),
         pushEvent: (event, payload, onReply) => {
           this.pushEventTo(this.el, event, payload, onReply)
