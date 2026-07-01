@@ -44,17 +44,10 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
   # The corpus fact that excludes the model prior: an invented support access
   # code. A correct S3 answer MUST contain this token, which no LLM could know
-  # without retrieving the seeded corpus.
+  # without retrieving the seeded corpus. The token is the SOUL ANCHOR the test
+  # asserts on; the corpus TEXT that carries it is now DEFINITION DATA in the
+  # AutoService socialware package (priv/socialware/autoservice/kb), not code.
   @kb_fact_token "ZEPHYR-7731"
-  @kb_corpus """
-  AutoService Tier-1 internal knowledge base.
-
-  Emergency escalation procedure for tier-one customers:
-  The support hotline access code for tier-one customers is #{@kb_fact_token}.
-  Agents MUST quote this access code verbatim when a customer asks how to reach
-  the priority support hotline. The code rotates quarterly and is published only
-  in this knowledge base, never to the model.
-  """
   @kb_probe_query "support hotline access code"
 
   @doc "The fact token a correct S3 answer must contain (soul anchor)."
@@ -354,11 +347,23 @@ defmodule Ezagent.AutoService.Tier1Seed do
     end
   end
 
+  # ── package data (definition-data boundary) ─────────────────────────────
+  # The AutoService socialware app's DEFINITION DATA (support persona + KB
+  # corpus) lives as package files under `priv/socialware/autoservice/`, not
+  # hardcoded in this installer. This seed is the installer/harness that reads
+  # them (docs/together/contributing/socialware-data-deployment-boundary.md).
+  @package_app :ezagent_domain_session
+  @package_rel "priv/socialware/autoservice"
+
+  defp package_dir, do: Application.app_dir(@package_app, @package_rel)
+
+  defp kb_corpus, do: File.read!(Path.join(package_dir(), "kb/tier1-corpus.md"))
+
   defp ingest_corpus(kb_uri, ws, admin_ctx) do
     source_name = "tier1-corpus"
     dir = Path.join([Ezagent.Home.path("kb-sources"), ws])
     File.mkdir_p!(dir)
-    File.write!(Path.join(dir, source_name), @kb_corpus)
+    File.write!(Path.join(dir, source_name), kb_corpus())
     source_uri = "resource://#{ws}/kb-source/#{source_name}"
 
     cmd =
@@ -606,22 +611,13 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
   defp write_support_persona(_cwd, _kb_agent), do: :ok
 
+  # The support persona is DEFINITION DATA (a package file), templated with the
+  # kb-agent name at install time. `{{kb_agent}}` is the only placeholder.
   defp support_persona(kb_agent) do
-    """
-    # AutoService Tier-1 Support Agent
-
-    You are a **tier-1 customer support agent** for AutoService. Customers chat with
-    you to get help with their account and support needs.
-
-    You have a `kb_query` tool (exposed by the `esr-orchestrator` MCP server) backed
-    by this workspace's knowledge base. The knowledge-base agent is named **`#{kb_agent}`**.
-
-    When a customer asks a support question — for example, how to reach the priority
-    support hotline — you MUST call `kb_query` with `kb_agent_name: "#{kb_agent}"` to
-    look up the answer in the knowledge base, then answer the customer using exactly
-    what you retrieved. Do not answer support questions from memory and do not tell
-    the customer you lack access; always consult `#{kb_agent}` via `kb_query` first.
-    """
+    package_dir()
+    |> Path.join("persona/support-agent.md")
+    |> File.read!()
+    |> String.replace("{{kb_agent}}", kb_agent)
   end
 
   # Grant the AutoService orchestrator the `kb.query` cap INTO ITS OWN identity
