@@ -1,8 +1,8 @@
-defmodule Ezagent.Behavior.Session.RouteProvisioner do
+defmodule Ezagent.ActionSet.Session.RouteProvisioner do
   @moduledoc false
 
   alias Ezagent.KindRegistry
-  alias Ezagent.Behavior.Session.{Members, Membership}
+  alias Ezagent.ActionSet.Session.{Members, Membership}
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam
 
   @doc false

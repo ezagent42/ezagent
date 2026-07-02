@@ -17,8 +17,8 @@ defmodule Ezagent.Credential.GrantCap do
   workspace-URI equality (codex: a raw `"team-a"` string would NOT match → read
   denied).
 
-  Built as `Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source, ws)`:
-  `Ezagent.Behavior.Sandbox` serves the `:read` action on the Agent Kind
+  Built as `Capability.cap(:agent, Ezagent.ActionSet.Sandbox, :read, source, ws)`:
+  `Ezagent.ActionSet.Sandbox` serves the `:read` action on the Agent Kind
   (`required_caps[:read] = cap(:agent, Sandbox, :read)`), so this derived cap
   `matches?/2` the needed-cap the dispatch builds via
   `Capability.cap_for_action(<AgentKind>, :read, source)`.
@@ -28,6 +28,6 @@ defmodule Ezagent.Credential.GrantCap do
     # %URI{scheme: "workspace"} — the structural workspace of the source.
     ws_uri = Ezagent.Capability.workspace_of(source_uri)
 
-    Ezagent.Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source_uri, ws_uri)
+    Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Sandbox, :read, source_uri, ws_uri)
   end
 end

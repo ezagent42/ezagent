@@ -8,9 +8,9 @@ defmodule EzagentDomainInstanceMessage.Application do
      before spawning any Kind so dispatch routes correctly on first
      message:
 
-         Ezagent.Entity.Session  → :send | :join | :leave  → Ezagent.Behavior.Session
-         Ezagent.Entity.User     → :receive               → Ezagent.Behavior.User.Receive
-         Ezagent.Entity.Agent    → :receive               → Ezagent.Behavior.Agent.Receive
+         Ezagent.Entity.Session  → :send | :join | :leave  → Ezagent.ActionSet.Session
+         Ezagent.Entity.User     → :receive               → Ezagent.ActionSet.User.Receive
+         Ezagent.Entity.Agent    → :receive               → Ezagent.ActionSet.Agent.Receive
 
      PR #141 (SPEC v2): User+Agent merged into the `entity://` scheme;
      `Kind` modules are unchanged (`Ezagent.Entity.User` /
@@ -47,7 +47,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   Per the same reasoning, `Ezagent.Entity.User.behaviors/0` returns `[]`
   — Chat is wired in via per-Kind `BehaviorRegistry.register` rather
   than via `behaviors/0`, so ezagent_core stays free of any
-  `Ezagent.Behavior.Session` reference.
+  `Ezagent.ActionSet.Session` reference.
   """
 
   use Application
@@ -98,7 +98,7 @@ defmodule EzagentDomainInstanceMessage.Application do
       # §8 + Decision Log #93 — fan out `Ezagent.Presence` diffs into
       # per-session `:events` topics. Subscribes to
       # `esr:session_membership:changes` (broadcast by
-      # `Ezagent.Behavior.Session.broadcast_membership/2`) to maintain a
+      # `Ezagent.ActionSet.Session.broadcast_membership/2`) to maintain a
       # reverse `user_uri → MapSet(session_uri)` index.
       EzagentDomainInstanceMessage.PresenceFanout,
       # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
@@ -762,7 +762,7 @@ defmodule EzagentDomainInstanceMessage.Application do
         # (ETS is in-memory). Without rebinding here, a rehydrated
         # session that's referenced via a bare `SpawnRegistry.spawn`
         # (not `create_session/2`) would have no workspace binding →
-        # `Ezagent.Behavior.Session.invoke(:send)` resolves
+        # `Ezagent.ActionSet.Session.invoke(:send)` resolves
         # `workspace_uri: nil` and workspace-scoped routing rules
         # silently never fire. Per Phase 9 PR-7 the workspace is in
         # the 3-segment session URI, so the binding is derived

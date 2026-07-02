@@ -12,7 +12,7 @@ defmodule EzagentPluginHello.App do
   """
 
   alias Ezagent.{Capability, Invocation, WorkspaceRegistry}
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
@@ -63,12 +63,12 @@ defmodule EzagentPluginHello.App do
       %{
         name: name,
         bases: [
-          Ezagent.Behavior.Session,
-          Ezagent.Behavior.Publisher.SessionImpl
+          Ezagent.ActionSet.Session,
+          Ezagent.ActionSet.Publisher.SessionImpl
         ],
         shape: [
-          Ezagent.Behavior.Turn,
-          Ezagent.Behavior.Surface
+          Ezagent.ActionSet.Turn,
+          Ezagent.ActionSet.Surface
         ],
         members: [],
         routing_rules: [],

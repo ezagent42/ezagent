@@ -31,7 +31,7 @@ defmodule Ezagent.EventSubscriber do
   `subscribe/1` is the declarative declaration; `interested?/1` is the
   per-event filter (cheap, runs on every event in the subscribed scope);
   `handle_event/2` is the action (returns effects from the same
-  EFFECT vocabulary as `Ezagent.Behavior`, so the framework applies
+  EFFECT vocabulary as `Ezagent.ActionSet`, so the framework applies
   them through the Router pipeline — no direct PubSub / dispatch calls
   from inside the subscriber).
 
@@ -116,7 +116,7 @@ defmodule Ezagent.EventSubscriber do
   its prior call (Phase 1: framework passes `nil` as initial state;
   Phase 2 introduces explicit `init/0`).
 
-  Effects use the same vocabulary as `Ezagent.Behavior` (`{:dispatch,
+  Effects use the same vocabulary as `Ezagent.ActionSet` (`{:dispatch,
   ...}`, `{:emit, ...}`, `{:notify, ...}`, etc.); the framework
   applies them through the Router pipeline. Phase 1 documents the
   callback shape; Phase 2 wires the dispatch path.

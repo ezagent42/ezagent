@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
+defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
   @moduledoc """
   Contract-surface tests for the dispatch-backed
-  `Ezagent.Behavior.WorkspaceUserAdmin` — the codex PR #356 r1 CRIT
+  `Ezagent.ActionSet.WorkspaceUserAdmin` — the codex PR #356 r1 CRIT
   fix that carves `:create_user` out of `Behavior.Workspace` so the
   cap subject is distinct.
 
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.WorkspaceUserAdmin, as: WUA
+  alias Ezagent.ActionSet.WorkspaceUserAdmin, as: WUA
 
   defp empty_ctx do
     %{
@@ -48,8 +48,8 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
 
       %Ezagent.Capability{kind: kind, behavior: behavior} = caps[:create_user]
       assert kind == :workspace
-      assert behavior == Ezagent.Behavior.WorkspaceUserAdmin
-      refute behavior == Ezagent.Behavior.Workspace
+      assert behavior == Ezagent.ActionSet.WorkspaceUserAdmin
+      refute behavior == Ezagent.ActionSet.Workspace
     end
 
     test "state_slice/0 is :workspace_user_admin (distinct from :workspace)" do

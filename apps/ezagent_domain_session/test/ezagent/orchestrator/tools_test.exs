@@ -271,7 +271,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
         MapSet.new([
           %Ezagent.Capability{
             kind: :session_template,
-            behavior: Ezagent.Behavior.Template,
+            behavior: Ezagent.ActionSet.Template,
             instance: {:within_workspace, ws},
             workspace_uri: ws,
             granted_by: URI.new!("entity://system/user/admin"),

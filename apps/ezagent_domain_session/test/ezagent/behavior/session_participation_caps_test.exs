@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.SessionParticipationCapsTest do
+defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
   @moduledoc """
   no-unowned-caps north star PR-甲-2 (Decision #154 / capbac.md §6 / spec
   `2026-06-19-membership-mount-anon-model-design.md` §3.1) — per-CLASS
@@ -7,7 +7,7 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
   Ported + adapted from the prior `feat/per-session-default-caps@e5b51888`
   integration test. The KEY DIFFERENCE from that branch: participation is no
   longer granted INSIDE `handle_join` — it is MOUNTED CALLER-SIDE by the trusted
-  access points via `Ezagent.Behavior.Session.Membership.mount_participation_caps/2`
+  access points via `Ezagent.ActionSet.Session.Membership.mount_participation_caps/2`
   AFTER a successful join. So these tests drive the REAL access-point flow
   (provision join authority → dispatch join → mount the tier), not a raw
   `chat.join` dispatch (which fires neither and would green a fiction).
@@ -28,7 +28,7 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
 
   # NOTE: spawned Session / User Kinds run in their own processes and read the
   # rows this test inserts (the 甲-1 lesson — the mount runs CALLER-SIDE).
@@ -127,13 +127,13 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
 
       :ok = access_point_join(session_uri, anon)
 
-      assert wait_cap(anon, Ezagent.Behavior.Publisher.SessionImpl, :subscribe_from, session_uri),
+      assert wait_cap(anon, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
              "an unconfirmed member must hold the read-only :subscribe_from tier"
 
-      refute has_cap?(anon, Ezagent.Behavior.Session, :send, session_uri),
+      refute has_cap?(anon, Ezagent.ActionSet.Session, :send, session_uri),
              "an unconfirmed (anon) member must NOT hold :send"
 
-      refute has_cap?(anon, Ezagent.Behavior.Session, :leave, session_uri),
+      refute has_cap?(anon, Ezagent.ActionSet.Session, :leave, session_uri),
              "an unconfirmed (anon) member must NOT hold :leave"
     end
 
@@ -144,13 +144,13 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
 
       :ok = access_point_join(session_uri, member)
 
-      assert wait_cap(member, Ezagent.Behavior.Session, :send, session_uri),
+      assert wait_cap(member, Ezagent.ActionSet.Session, :send, session_uri),
              "a confirmed member must hold :send"
 
-      assert has_cap?(member, Ezagent.Behavior.Session, :leave, session_uri),
+      assert has_cap?(member, Ezagent.ActionSet.Session, :leave, session_uri),
              "a confirmed member must hold :leave"
 
-      assert has_cap?(member, Ezagent.Behavior.Publisher.SessionImpl, :subscribe_from, session_uri),
+      assert has_cap?(member, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
              "a confirmed member must hold :subscribe_from"
     end
 
@@ -161,9 +161,9 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
       member = confirmed_user("member")
 
       :ok = access_point_join(session_uri, member)
-      assert wait_cap(member, Ezagent.Behavior.Session, :send, session_uri)
+      assert wait_cap(member, Ezagent.ActionSet.Session, :send, session_uri)
 
-      refute has_cap?(member, Ezagent.Behavior.Session, :send, other_session),
+      refute has_cap?(member, Ezagent.ActionSet.Session, :send, other_session),
              "the per-session tier must not authorize a session the member never joined"
     end
 
@@ -173,13 +173,13 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
       member = confirmed_user("member")
 
       :ok = access_point_join(session_uri, member)
-      assert wait_cap(member, Ezagent.Behavior.Session, :send, session_uri)
+      assert wait_cap(member, Ezagent.ActionSet.Session, :send, session_uri)
 
       send_cap =
         member
         |> Ezagent.Identity.list_caps_for()
         |> Enum.find(fn cap ->
-          match?(%Capability{}, cap) and cap.behavior == Ezagent.Behavior.Session and
+          match?(%Capability{}, cap) and cap.behavior == Ezagent.ActionSet.Session and
             Capability.action_of(cap) == :send and cap.instance == session_uri
         end)
 
@@ -201,10 +201,10 @@ defmodule Ezagent.Behavior.SessionParticipationCapsTest do
       assert :ok = Membership.mount_participation_caps(session_uri, agent_uri)
       Process.sleep(50)
 
-      refute has_cap?(agent_uri, Ezagent.Behavior.Session, :send, session_uri),
+      refute has_cap?(agent_uri, Ezagent.ActionSet.Session, :send, session_uri),
              "agents carry their own caps — the per-session USER mount must not fire"
 
-      refute has_cap?(agent_uri, Ezagent.Behavior.Publisher.SessionImpl, :subscribe_from, session_uri),
+      refute has_cap?(agent_uri, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
              "agents receive no user participation tier"
     end
   end

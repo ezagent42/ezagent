@@ -58,7 +58,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   require Logger
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Ecto.KindSnapshot
 
   # Slice keys that POSITIVELY mark a snapshot as socialware-shaped. Sourced
@@ -97,9 +97,9 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # them here, so referencing them creates NO compile dependency on the domain
   # apps (same pattern as BehaviorSet.@slice_owners, which lives in core).
   @instance_message_set [
-    Ezagent.Behavior.Session,
-    Ezagent.Behavior.Publisher.SessionImpl,
-    Ezagent.Behavior.ExternalMirror
+    Ezagent.ActionSet.Session,
+    Ezagent.ActionSet.Publisher.SessionImpl,
+    Ezagent.ActionSet.ExternalMirror
   ]
 
   # Order matches the former socialware-session Kind's behavior set exactly —
@@ -109,11 +109,11 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # invariant compares the raw captured list, not just the (reorder-normalized)
   # effective set. (codex LOW)
   @socialware_set [
-    Ezagent.Behavior.Session,
-    Ezagent.Behavior.Turn,
-    Ezagent.Behavior.Surface,
-    Ezagent.Behavior.SupervisorApproval,
-    Ezagent.Behavior.Publisher.SessionImpl
+    Ezagent.ActionSet.Session,
+    Ezagent.ActionSet.Turn,
+    Ezagent.ActionSet.Surface,
+    Ezagent.ActionSet.SupervisorApproval,
+    Ezagent.ActionSet.Publisher.SessionImpl
   ]
 
   @type classification :: :instance_message | :socialware

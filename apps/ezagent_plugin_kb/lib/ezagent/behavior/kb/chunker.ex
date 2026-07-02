@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Kb.Chunker do
+defmodule Ezagent.ActionSet.Kb.Chunker do
   @moduledoc """
   The MVP source chunker (SPEC §4.4: "simple size/overlap chunker for MVP").
 

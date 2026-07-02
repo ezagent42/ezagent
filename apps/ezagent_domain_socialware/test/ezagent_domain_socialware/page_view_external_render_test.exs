@@ -11,7 +11,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Behavior.Surface
+  alias Ezagent.ActionSet.Surface
   alias EzagentDomainSocialware.PageView
 
   defp session_uri do

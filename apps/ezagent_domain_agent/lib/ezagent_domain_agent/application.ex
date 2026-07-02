@@ -2,7 +2,7 @@ defmodule EzagentDomainAgent.Application do
   @moduledoc """
   The agent domain (`im → session → agent`, PR-9a #53). Owns the Agent Kind
   (`Ezagent.Entity.Agent`), its Template Kind (`Ezagent.Entity.AgentTemplate`),
-  the `agent.receive` transport seam (`Ezagent.Behavior.Agent.Receive` →
+  the `agent.receive` transport seam (`Ezagent.ActionSet.Agent.Receive` →
   `Ezagent.AgentBridge`), and the two Agent DynamicSupervisors.
 
   ## Frozen supervisor names (brief D1a)
@@ -19,7 +19,7 @@ defmodule EzagentDomainAgent.Application do
 
   alias Ezagent.CapabilityRegistry
   alias Ezagent.Entity.Agent
-  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
+  alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
 
   @impl Application
   def start(_type, _args) do

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Pty do
+defmodule Ezagent.ActionSet.Pty do
   @moduledoc """
   Pty Behavior — `:write` action for an Agent Kind backed by a local
   `Ezagent.Domain.Pty.Server`.
@@ -20,9 +20,9 @@ defmodule Ezagent.Behavior.Pty do
   PtyServer (now `Ezagent.Domain.Pty.Server`) moved out of the cc
   plugin into the Tier-2 `ezagent_domain_pty` app in PR-A. PR-B
   (this PR) moves this Behavior module into the same app — the
-  module atom name `Ezagent.Behavior.Pty` is unchanged, so all
+  module atom name `Ezagent.ActionSet.Pty` is unchanged, so all
   existing DB cap grants (`caps_json` references the string
-  `"Elixir.Ezagent.Behavior.Pty"`) continue to resolve.
+  `"Elixir.Ezagent.ActionSet.Pty"`) continue to resolve.
 
   The Behavior MODULE lives in `ezagent_domain_pty`; the
   REGISTRATION (binding Agent Kind → :write → this module) happens
@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.Pty do
   ## Cap shape
 
   - `kind: :agent`
-  - `behavior: Ezagent.Behavior.Pty`
+  - `behavior: Ezagent.ActionSet.Pty`
   - `instance: entity://agent/<flavor>_<name>` (per-agent) or `:any`
 
   Admin's triple-`:any` passes. Grant per-agent for non-admin users.
@@ -48,8 +48,8 @@ defmodule Ezagent.Behavior.Pty do
   ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
 
   Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
-  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
-  `use Ezagent.Behavior` + `action/3` + `handle_write/2`.
+  migrated from `@behaviour Ezagent.ActionSet` + `invoke/4` to
+  `use Ezagent.ActionSet` + `action/3` + `handle_write/2`.
 
   Semantically equivalent — the PtyServer write call stays inline
   in the handler body because its return value (`:ok` vs error)
@@ -59,13 +59,13 @@ defmodule Ezagent.Behavior.Pty do
   pure side effects but cannot also abort the action on failure.
   Inline keeps the failure-propagation contract identical to the
   legacy contract clause (matches the pattern documented in
-  `Ezagent.Behavior.Session`'s moduledoc — "result-dependent in-handler
+  `Ezagent.ActionSet.Session`'s moduledoc — "result-dependent in-handler
   dispatches stay as direct calls in the handler body").
 
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the
   ## NO-TRANSIENTS case, like example A `CurlAgent`)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`
   (the two-container `%{state, transients}` developer API).
 
   ### Why NO transients
@@ -96,11 +96,11 @@ defmodule Ezagent.Behavior.Pty do
   equals the historical snapshot key, so NO `state_slice:` override is
   needed (SPEC §5 step 2 / §7 OQ-7).
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Pty` — a domain
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Pty` — a domain
   module (`apps/ezagent_domain_pty`) naming its own domain concept
   (`Pty`), single `:write` action whose intent the name tracks exactly.
   NO violation; kept as-is (a rename would touch the `:pty` snapshot
-  slice key + every DB cap grant referencing `"Elixir.Ezagent.Behavior.Pty"`
+  slice key + every DB cap grant referencing `"Elixir.Ezagent.ActionSet.Pty"`
   for no clarity gain).
   """
 
@@ -124,7 +124,7 @@ defmodule Ezagent.Behavior.Pty do
     }
   end
 
-  # The auto-derived slice key for `Ezagent.Behavior.Pty` is the
+  # The auto-derived slice key for `Ezagent.ActionSet.Pty` is the
   # underscored last segment `Pty` → `:pty`, which is EXACTLY the
   # pre-Lifecycle `state_slice/0`. The snapshot-compat key is preserved
   # with no explicit override needed (SPEC §3 / §7 OQ-7).

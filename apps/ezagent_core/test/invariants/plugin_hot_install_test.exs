@@ -68,14 +68,14 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
     test "the py plugin's :receive + :configure Behaviors resolve through BehaviorRegistry" do
       # `EzagentPluginPy.Application.behaviors/0` declares
       # `{Ezagent.Entity.Agent, :receive|:reset|:configure} →
-      # Ezagent.Behavior.PyAgent`. After `Ezagent.Plugin.boot/1` these MUST
+      # Ezagent.ActionSet.PyAgent`. After `Ezagent.Plugin.boot/1` these MUST
       # be resolvable via `BehaviorRegistry.lookup/2` — that IS "reachable
       # without restart".
-      assert {:ok, Ezagent.Behavior.PyAgent} =
+      assert {:ok, Ezagent.ActionSet.PyAgent} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :py_sync_result),
              "the plugin's declared :receive Behavior must be in BehaviorRegistry"
 
-      assert {:ok, Ezagent.Behavior.PyAgent} =
+      assert {:ok, Ezagent.ActionSet.PyAgent} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :py_configure),
              "the plugin's declared :configure Behavior must be in BehaviorRegistry"
     end

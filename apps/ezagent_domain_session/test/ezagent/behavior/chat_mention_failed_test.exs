@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session.MentionFailedTest do
+defmodule Ezagent.ActionSet.Session.MentionFailedTest do
   @moduledoc """
   Allen 2026-05-26 directive — `chat.send` MUST surface a
   `:mention_failed` notification to the sender when an @-mention's
@@ -136,7 +136,7 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
   end
 
   defp join_session(session_uri, member_uri, caller_uri) do
-    caps = [Capability.cap(:any, Ezagent.Behavior.Session, :join)]
+    caps = [Capability.cap(:any, Ezagent.ActionSet.Session, :join)]
 
     inv = %Invocation{
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
@@ -164,15 +164,15 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
 
   defp send_message(session_uri, msg, caller_uri) do
     caps = [
-      Capability.cap(:any, Ezagent.Behavior.Session, :send),
+      Capability.cap(:any, Ezagent.ActionSet.Session, :send),
       # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is now
       # `Behavior.User.Receive` / `Behavior.Agent.Receive` per Kind. The
       # the actual fan-out mints a per-recipient `:receive` cap itself
       # (#154 甲-4 — not the caller's caps; the former system://chat-router
       # wildcard is gone), so this defensive grant is vestigial — but keep
       # it shaped to the post-split behaviors for correctness.
-      Capability.cap(:any, Ezagent.Behavior.User.Receive, :receive),
-      Capability.cap(:any, Ezagent.Behavior.Agent.Receive, :receive)
+      Capability.cap(:any, Ezagent.ActionSet.User.Receive, :receive),
+      Capability.cap(:any, Ezagent.ActionSet.Agent.Receive, :receive)
     ]
 
     inv = %Invocation{

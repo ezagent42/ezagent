@@ -12,7 +12,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
        `EzagentPluginFeishu.InboundChatLookup.resolve/2` (PR-EM-6 —
        replaces the retired `SessionBinding.resolve/1` reverse-lookup
        and reads from the generic `external_mirror_bindings` table
-       maintained by `Ezagent.Behavior.ExternalMirror`). The message's
+       maintained by `Ezagent.ActionSet.ExternalMirror`). The message's
        `@`-mentions are passed in so a chat bound to multiple sessions
        routes to the session the mentioned agent is a member of
        (2026-06-01).
@@ -34,7 +34,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
 
   ## Dispatch mode: `:call`, not `:cast` (Decision #134)
 
-  `Ezagent.Behavior.Session.@interface[:send]` declares `:send` as `:cast`
+  `Ezagent.ActionSet.Session.@interface[:send]` declares `:send` as `:cast`
   (fire-and-forget). This module dispatches with `mode: :call`
   anyway, so cap-denial or other dispatch failures return
   synchronously as `{:error, _}` and can be surfaced to the human

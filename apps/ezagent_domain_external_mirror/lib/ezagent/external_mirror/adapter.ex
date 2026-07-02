@@ -204,7 +204,7 @@ defmodule Ezagent.ExternalMirror.Adapter do
   facade checks before dispatching `:bind` to the Session.
 
   Convention: name the Behavior module
-  `Ezagent.Behavior.ExternalAdapter.<AdapterId>.Allow` so admin LV
+  `Ezagent.ActionSet.ExternalAdapter.<AdapterId>.Allow` so admin LV
   cap listings group naturally.
   """
   @callback cap_subject() :: cap_subject()

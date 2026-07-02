@@ -65,7 +65,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
      present).
   3. Every declared kind / behavior / template module exists and
      implements its own behaviour (`Ezagent.Kind` /
-     `Ezagent.Behavior` / `Ezagent.Kind.Template`).
+     `Ezagent.ActionSet` / `Ezagent.Kind.Template`).
   4. Every `agent_flavors/0` entry's `kind` implements `Ezagent.Kind`
      and `template_class` implements `Ezagent.Kind.Template`
      (codex PR-5 MEDIUM-4).
@@ -236,7 +236,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> check_modules(plugin_module.kinds(), Ezagent.Kind, "kinds/0")
       |> check_modules(
         Enum.map(plugin_module.behaviors(), fn {_kind, _action, b} -> b end),
-        Ezagent.Behavior,
+        Ezagent.ActionSet,
         "behaviors/0"
       )
       |> check_modules(
@@ -294,11 +294,11 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> List.flatten()
 
     cond do
-      # Phase 3 deletion (2026-05-28): the `@behaviour Ezagent.Behavior`
+      # Phase 3 deletion (2026-05-28): the `@behaviour Ezagent.ActionSet`
       # alternative is no longer accepted. Every Behavior MUST opt in
-      # via `use Ezagent.Behavior`, which emits the `__behavior__?/0`
+      # via `use Ezagent.ActionSet`, which emits the `__behavior__?/0`
       # marker the gate consults below.
-      behaviour == Ezagent.Behavior ->
+      behaviour == Ezagent.ActionSet ->
         new_style_behavior?(module)
 
       behaviour in behaviours ->
@@ -782,7 +782,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       true ->
         declared = behavior_module.actions()
         cap_keys = Map.keys(behavior_module.required_caps())
-        exempt = Ezagent.Behavior.cap_exempt_actions_of(behavior_module)
+        exempt = Ezagent.ActionSet.cap_exempt_actions_of(behavior_module)
 
         if MapSet.new(declared) == MapSet.new(cap_keys ++ exempt) do
           diagnostics

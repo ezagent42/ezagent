@@ -19,7 +19,7 @@ defmodule Ezagent.KindExtensionsTest do
 
   defmodule BehaviorA do
     @moduledoc false
-    use Ezagent.Behavior
+    use Ezagent.ActionSet
 
     action(:a_action,
       args: %{},
@@ -32,7 +32,7 @@ defmodule Ezagent.KindExtensionsTest do
 
   defmodule BehaviorB do
     @moduledoc false
-    use Ezagent.Behavior
+    use Ezagent.ActionSet
 
     action(:b_action,
       args: %{x: :integer},
@@ -45,7 +45,7 @@ defmodule Ezagent.KindExtensionsTest do
 
   defmodule BehaviorACollide do
     @moduledoc false
-    use Ezagent.Behavior
+    use Ezagent.ActionSet
 
     # Same action name as BehaviorA — used to test OQ-5 collision
     # check at Kind-attach time.
@@ -204,7 +204,7 @@ defmodule Ezagent.KindExtensionsTest do
     # Kind-level read-graph DSL was an unused planned path. Canonical
     # source for cross-Behavior read permissions is the per-Behavior
     # `reads_sibling_slices/0` callback (resolved via
-    # `Ezagent.Behavior.reads_sibling_slices_of/1`).
+    # `Ezagent.ActionSet.reads_sibling_slices_of/1`).
 
     test "Kind.new_style?/1 detects new-style Kinds" do
       assert Kind.new_style?(SessionKind)

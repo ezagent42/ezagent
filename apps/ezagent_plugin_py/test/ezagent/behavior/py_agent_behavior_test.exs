@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.PyAgentTest do
+defmodule Ezagent.ActionSet.PyAgentTest do
   @moduledoc """
   `Behavior.PyAgent` (py-agent P4b) — the STATE half of the py flavor folded
   onto the unified `Entity.Agent` Kind. The script round-trip moved to
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.PyAgentTest do
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.Behavior.PyAgent
+  alias Ezagent.ActionSet.PyAgent
   alias Ezagent.Cmd
 
   # ctx mock matching the Lifecycle test harness (lifecycle.md §Testing).

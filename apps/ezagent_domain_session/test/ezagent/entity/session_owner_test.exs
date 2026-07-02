@@ -21,16 +21,16 @@ defmodule Ezagent.Entity.SessionOwnerTest do
       session_uri =
         Ezagent.URI.new!("session://generic/team-alpha/dead-#{uniq()}")
 
-      assert :no_owner = Ezagent.Behavior.Session.data_owner(session_uri)
+      assert :no_owner = Ezagent.ActionSet.Session.data_owner(session_uri)
     end
 
     test ":any input returns :any (class-wide query)" do
-      assert :any = Ezagent.Behavior.Session.data_owner(:any)
+      assert :any = Ezagent.ActionSet.Session.data_owner(:any)
     end
 
     test "non-session URI returns :no_owner (Chat only owns Session caps)" do
       user_uri = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
-      assert :no_owner = Ezagent.Behavior.Session.data_owner(user_uri)
+      assert :no_owner = Ezagent.ActionSet.Session.data_owner(user_uri)
     end
   end
 

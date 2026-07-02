@@ -1,7 +1,7 @@
 defmodule Ezagent.Session.MembershipTest do
   @moduledoc """
   The SHARED live, fail-closed chat owner/member predicate — extracted from
-  `Ezagent.Behavior.SocialwarePublisherRead` (P3-3) so BOTH that behavior's
+  `Ezagent.ActionSet.SocialwarePublisherRead` (P3-3) so BOTH that behavior's
   read authz AND the P4 chat_feed external read call ONE predicate (no
   copy-paste drift on a security boundary).
 

@@ -5,7 +5,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
 
   ## The concurrency edge this pins
 
-  `agent.receive` (`Ezagent.Behavior.Agent.Receive`) runs the curl HTTP
+  `agent.receive` (`Ezagent.ActionSet.Agent.Receive`) runs the curl HTTP
   round-trip SYNCHRONOUSLY but persists the conversation via a SEPARATE
   re-dispatched `:sync_result` `:cast`. That `:cast` is a post-commit DEFERRED
   dispatch (`Kind.DeferredDispatch` → `send(self(), {:ezagent_run_deferred, …})`),
@@ -19,7 +19,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
   `@tag :known_limitation` reproduction of the stale-snapshot read. The
   synchronous-ordering fix is blocked by the single-slice commit model
   (`agent.receive` owns `:session`; the conversation lives in `:curl_agent`),
-  documented in `Ezagent.Behavior.Agent.Receive`'s "KNOWN LIMITATION" moduledoc
+  documented in `Ezagent.ActionSet.Agent.Receive`'s "KNOWN LIMITATION" moduledoc
   section with the three redesign options. When a follow-up lands one of those,
   the `@tag :known_limitation` reproduction flips to a passing invariant.
   """
@@ -27,7 +27,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Kind, KindRegistry, SnapshotStore}
-  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
+  alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias EzagentPluginCurlAgent.BridgeAdapter
   alias Ezagent.AgentBridge.Payload
   alias Ezagent.Message
@@ -83,8 +83,8 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
       # emit a {:set, :conversation, …} into :curl_agent within its own cycle.
       # This is the precise blocker for a same-dispatch synchronous persist.
       assert AgentReceive.state_slice() == :session
-      assert Ezagent.Behavior.CurlAgent.state_slice() == :curl_agent
-      refute AgentReceive.state_slice() == Ezagent.Behavior.CurlAgent.state_slice()
+      assert Ezagent.ActionSet.CurlAgent.state_slice() == :curl_agent
+      refute AgentReceive.state_slice() == Ezagent.ActionSet.CurlAgent.state_slice()
     end
 
     test "the curl :in_process_sync persist is an ASYNC re-dispatched :sync_result :cast" do

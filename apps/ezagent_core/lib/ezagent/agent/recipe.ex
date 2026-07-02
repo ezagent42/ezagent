@@ -212,9 +212,9 @@ defmodule Ezagent.Agent.Recipe do
   # (`{:not_a_behavior, mod}`) and the behavior-set intersection drops it, so a
   # recipe listing `String` (or any non-Behavior) must fail at THIS boundary,
   # not degrade silently later (codex). `new_style?/1` reads the `__behavior__?/0`
-  # marker `use Ezagent.Behavior` injects.
+  # marker `use Ezagent.ActionSet` injects.
   defp behavior_module?(mod) do
-    Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+    Code.ensure_loaded?(mod) and Ezagent.ActionSet.new_style?(mod)
   end
 
   defp caps_field(value) when is_list(value) do

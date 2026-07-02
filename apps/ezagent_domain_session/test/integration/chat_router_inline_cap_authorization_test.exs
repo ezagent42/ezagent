@@ -28,7 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
   # shadowing the struct module). Mirrors the sibling
   # agent_reply_inline_cap_authorization_test (甲-3).
   alias Ezagent.{BehaviorRegistry, Capability, Message}
-  alias Ezagent.Behavior.Session.Delivery
+  alias Ezagent.ActionSet.Session.Delivery
 
   # --- (1) receive fan-out -------------------------------------------------
 
@@ -52,14 +52,14 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
 
   describe "BehaviorRegistry resolution (the pinned receive behavior axis)" do
     test "Entity.User resolves :receive → Behavior.User.Receive" do
-      assert {:ok, Ezagent.Behavior.User.Receive} =
+      assert {:ok, Ezagent.ActionSet.User.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :receive),
              "user.receive must resolve to Behavior.User.Receive — the needed-cap " <>
                "behavior axis the per-recipient inline cap must field-match."
     end
 
     test "Entity.Agent resolves :receive → Behavior.Agent.Receive" do
-      assert {:ok, Ezagent.Behavior.Agent.Receive} =
+      assert {:ok, Ezagent.ActionSet.Agent.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive),
              "agent.receive must resolve to Behavior.Agent.Receive."
     end
@@ -221,7 +221,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
       # substituted at dispatch. Build a representative concrete needed-map.
       needed = %{
         kind: :agent,
-        behavior: Ezagent.Behavior.Agent.Receive,
+        behavior: Ezagent.ActionSet.Agent.Receive,
         action: :sync_result,
         instance: Ezagent.URI.instance(self_uri),
         workspace_uri: Capability.workspace_of(self_uri)
@@ -239,7 +239,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
 
       needed_configure = %{
         kind: :agent,
-        behavior: Ezagent.Behavior.Agent.Receive,
+        behavior: Ezagent.ActionSet.Agent.Receive,
         action: :configure,
         instance: Ezagent.URI.instance(self_uri),
         workspace_uri: Capability.workspace_of(self_uri)
@@ -257,7 +257,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
 
       needed_other = %{
         kind: :agent,
-        behavior: Ezagent.Behavior.Agent.Receive,
+        behavior: Ezagent.ActionSet.Agent.Receive,
         action: :sync_result,
         instance: Ezagent.URI.instance(other),
         workspace_uri: Capability.workspace_of(other)

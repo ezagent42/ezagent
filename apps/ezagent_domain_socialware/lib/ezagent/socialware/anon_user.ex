@@ -142,7 +142,7 @@ defmodule Ezagent.Socialware.AnonUser do
   defp join_cap(%URI{} = session_uri) do
     %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :join,
       instance: Ezagent.URI.instance(session_uri),
       workspace_uri: Ezagent.Capability.workspace_of(session_uri),

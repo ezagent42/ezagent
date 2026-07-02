@@ -24,7 +24,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   defmodule ProbeBehavior do
     # Migrated to the current `use Ezagent.Lifecycle` developer surface
     # (post-lifecycle remediation 2026-05-30). The legacy
-    # `@behaviour Ezagent.Behavior` + state_slice/init_slice/invoke form
+    # `@behaviour Ezagent.ActionSet` + state_slice/init_slice/invoke form
     # no longer carries the `__behavior__?/0` marker the runtime
     # requires, so `Ezagent.Kind.Runtime` would REFUSE to dispatch to it.
     use Ezagent.Lifecycle, state_slice: :probe_cli

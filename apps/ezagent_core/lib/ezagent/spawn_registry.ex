@@ -3,7 +3,7 @@ defmodule Ezagent.SpawnRegistry do
   Registry mapping a URI scheme to a spawn function.
 
   Phase 4c: the Workspace Loader holds a list of `{:member, URI}` tuples
-  (returned by `Ezagent.Behavior.Workspace.invoke(:instantiate, ...)`) and
+  (returned by `Ezagent.ActionSet.Workspace.invoke(:instantiate, ...)`) and
   needs to bring each member URI back to life. It has no idea which
   plugin owns which Kind's supervisor — that's the **plugin isolation
   north star** at the boundary.

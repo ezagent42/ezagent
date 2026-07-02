@@ -4,7 +4,7 @@ defmodule Ezagent.Invariants.WorkerPublishCapsTest do
 
   HISTORY: this test originally pinned the `system://worker-publish`
   principal's two caps (the e2e blocker fix of 2026-05-26). That principal
-  is now ELIMINATED — the `Ezagent.Behavior.ExternalMirrorWorker`'s two
+  is now ELIMINATED — the `Ezagent.ActionSet.ExternalMirrorWorker`'s two
   internal self-dispatches (the `publisher.subscribe_from` subscribe + the
   `:publish` self-dispatch) carry their OWN inline authorizer caps in
   `ctx.caps` (with `caller: self_uri`), instead of borrowing an ambient
@@ -21,7 +21,7 @@ defmodule Ezagent.Invariants.WorkerPublishCapsTest do
   ExternalMirrorWorker, :publish)` + `(:session, PublisherSI,
   :subscribe_from)`) are pinned in the external_mirror app, where the
   Behavior module is loaded:
-  `Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest`. The live publish +
+  `Ezagent.ActionSet.ExternalMirrorWorkerSelfCapsTest`. The live publish +
   subscribe behavior is exercised end-to-end in
   `Ezagent.ExternalMirror.WorkerPublishTest`.
 
@@ -41,7 +41,7 @@ defmodule Ezagent.Invariants.WorkerPublishCapsTest do
            `#{@principal}` reappeared in the Catalog. The north star is to
            ELIMINATE system principals — the ExternalMirrorWorker's internal
            dispatches now carry their own inline authorizer caps (see
-           `Ezagent.Behavior.ExternalMirrorWorker.worker_publish_caps/1` +
+           `Ezagent.ActionSet.ExternalMirrorWorker.worker_publish_caps/1` +
            `worker_subscribe_caps/0`). Do not re-add the principal.
            """
   end

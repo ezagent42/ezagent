@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
+defmodule Ezagent.ActionSet.UserTokensMigrationParityTest do
   @moduledoc """
   P2-b migration parity test (SPEC #445 §7.3 Level 1 — dispatch
   parity).
 
-  Validates that the migrated `Ezagent.Behavior.UserTokens` produces
+  Validates that the migrated `Ezagent.ActionSet.UserTokens` produces
   the same dispatch-visible outcome via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_<action>/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration:
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.UserTokens
+  alias Ezagent.ActionSet.UserTokens
   alias Ezagent.Entity.{Token, User}
   alias Ezagent.Invocation
   alias Ezagent.Users

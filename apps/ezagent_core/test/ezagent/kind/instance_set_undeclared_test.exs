@@ -39,7 +39,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
   end
 
   defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-  defp with_probe, do: [Ezagent.Behavior.Session, UndeclaredProbe, Ezagent.Behavior.KindBase]
+  defp with_probe, do: [Ezagent.ActionSet.Session, UndeclaredProbe, Ezagent.ActionSet.KindBase]
 
   test "(A) BLOCKER-1: an UNDECLARED recipe-loaded behavior materializes its slice (init_set/effective_set keep it)" do
     uri =
@@ -73,7 +73,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
 
   test "(C) a sibling instance that did NOT load it resolves :unknown_action (no crash, no shadow)" do
     uri = Ezagent.URI.session(:system, :default, :"isu-sib-#{System.unique_integer([:positive])}")
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=undeclared_probe.undeclared_poke")

@@ -5,7 +5,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   `:events` topics.
 
   These tests broadcast the membership-change events directly (rather
-  than going through `Ezagent.Behavior.Session.invoke(:join)` end-to-end)
+  than going through `Ezagent.ActionSet.Session.invoke(:join)` end-to-end)
   to keep the test fast + isolated. The chat-behavior integration is
   exercised via existing chat tests.
   """
@@ -17,7 +17,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   # also brings the P6 owner-exit Kind drain.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Presence
   alias EzagentDomainInstanceMessage.PresenceFanout
 

@@ -1,6 +1,6 @@
 defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest do
   @moduledoc """
-  Phase 7 completion PR-1 (SPEC §1.0 + §1.2) — `Ezagent.Behavior.Template`
+  Phase 7 completion PR-1 (SPEC §1.0 + §1.2) — `Ezagent.ActionSet.Template`
   exercised through the production dispatch path.
 
   Drives `Ezagent.Invocation.dispatch/1` against real spawned Template
@@ -12,7 +12,7 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
   - `:write` on a `{:snapshot, :on_change}` Template Kind writes a
     `kind_snapshots` row;
   - `cap_for_action(AgentTemplate, :write, uri)` yields
-    `behavior == Ezagent.Behavior.Template`, `kind == :agent_template`;
+    `behavior == Ezagent.ActionSet.Template`, `kind == :agent_template`;
   - SessionTemplate `:write` is write-once: a second divergent write →
     `:immutable_version`; a hash-mismatched write → `:hash_mismatch`;
   - SessionTemplate `:instantiate` → `{:error, :use_generator}`;
@@ -114,20 +114,20 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
   end
 
   describe "BehaviorRegistry resolution" do
-    test "both Template Kinds resolve all 3 actions to Ezagent.Behavior.Template" do
+    test "both Template Kinds resolve all 3 actions to Ezagent.ActionSet.Template" do
       for kind <- [AgentTemplate, SessionTemplate], action <- [:read, :write, :instantiate] do
-        assert {:ok, Ezagent.Behavior.Template} = BehaviorRegistry.lookup(kind, action),
-               "#{inspect(kind)} must resolve #{action} → Ezagent.Behavior.Template"
+        assert {:ok, Ezagent.ActionSet.Template} = BehaviorRegistry.lookup(kind, action),
+               "#{inspect(kind)} must resolve #{action} → Ezagent.ActionSet.Template"
       end
     end
   end
 
   describe "cap_for_action/3" do
-    test "AgentTemplate :write derives behavior == Ezagent.Behavior.Template, kind :agent_template" do
+    test "AgentTemplate :write derives behavior == Ezagent.ActionSet.Template, kind :agent_template" do
       uri = URI.new!("template://team-alpha/agent/cap-probe-#{uniq()}")
       needed = Capability.cap_for_action(AgentTemplate, :write, uri)
 
-      assert needed.behavior == Ezagent.Behavior.Template
+      assert needed.behavior == Ezagent.ActionSet.Template
       assert needed.kind == :agent_template
     end
   end

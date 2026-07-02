@@ -4,9 +4,9 @@ defmodule Ezagent.Kind.Runtime do
 
   ## New-contract effect execution order (Phase 1.5b)
 
-  When the dispatched Behavior is new-style (`use Ezagent.Behavior`),
+  When the dispatched Behavior is new-style (`use Ezagent.ActionSet`),
   the handler's `{:ok, result, effects}` return runs through
-  `Ezagent.Behavior.apply_effects/2` and then THIS module executes
+  `Ezagent.ActionSet.apply_effects/2` and then THIS module executes
   each effect bucket against the rest of the system in the following
   fixed order:
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Kind.Runtime do
     against the still-live Kind. Idempotent via
     `Ezagent.Kind.terminate/1` (no-op when the URI is already gone).
 
-  The handler return + effect grammar live in `Ezagent.Behavior` —
+  The handler return + effect grammar live in `Ezagent.ActionSet` —
   this module is the EXECUTOR; the SCHEMA is over there.
 
   ## Original dispatch flow
@@ -288,7 +288,7 @@ defmodule Ezagent.Kind.Runtime do
   #     for every Kind by construction and are never in `behaviors/0`.
   #   * Registry-only behaviors — privileged / cross-domain Behaviors registered
   #     for a Kind at app boot WITHOUT being in its `behaviors/0` (codex
-  #     register/lookup-parity class): `Ezagent.Behavior.IdentityAdmin`
+  #     register/lookup-parity class): `Ezagent.ActionSet.IdentityAdmin`
   #     (`identity.grant_cap`/`revoke_cap`), `UserDefaultCredentialSource`
   #     (`set_default_credential_source`), etc. These are a separate, always-
   #     available dispatch surface, orthogonal to the per-instance subset; they
@@ -350,7 +350,7 @@ defmodule Ezagent.Kind.Runtime do
   # reading its own slice would deadlock — see perf note below). ctx.caps =
   # caps PRESENTED with the call; holds_cap? = caps held in the slice. OR'd.
   defp authz_check(kind_module, behavior_module, action, target, ctx) do
-    cap_exempt? = action in Ezagent.Behavior.cap_exempt_actions_of(behavior_module)
+    cap_exempt? = action in Ezagent.ActionSet.cap_exempt_actions_of(behavior_module)
 
     if cap_exempt? do
       :telemetry.execute([:ezagent, :authz, :exempt], %{}, %{
@@ -381,7 +381,7 @@ defmodule Ezagent.Kind.Runtime do
         # ONLY via the grep-gated `Ezagent.Identity.Grant` `{:rule,…}` tag;
         # scoped here to IdentityAdmin grant/revoke so nothing else rides it.
         is_map_key(ctx, :authorization_rule) and
-          behavior_module == Ezagent.Behavior.IdentityAdmin and
+          behavior_module == Ezagent.ActionSet.IdentityAdmin and
             action in [:grant_cap, :revoke_cap] ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_rule, true))
           :ok
@@ -652,7 +652,7 @@ defmodule Ezagent.Kind.Runtime do
     # out of workspace isolation (default: `true`). When `false`, the
     # check is a no-op (e.g. Lifecycle admin termination, pure-data
     # read actions whose target is workspace-agnostic).
-    if Ezagent.Behavior.workspace_scoped?(behavior_module) do
+    if Ezagent.ActionSet.workspace_scoped?(behavior_module) do
       do_workspace_isolation_check(target, ctx)
     else
       :ok
@@ -752,7 +752,7 @@ defmodule Ezagent.Kind.Runtime do
   # contract (`handle_<action>/2` + `apply_effects/2`).
   #
   # New-contract Behaviors carry a `__behavior__?/0` marker injected by
-  # `use Ezagent.Behavior`. The runtime resolves the action's handler
+  # `use Ezagent.ActionSet`. The runtime resolves the action's handler
   # atom (`:handle_<action>`), invokes it with `(args, ctx)` (slice
   # exposed to the handler via `ctx[:read]/1-2`), applies the returned
   # effects against the slice, and lifts the result back into the
@@ -766,12 +766,12 @@ defmodule Ezagent.Kind.Runtime do
   # at dispatch time via the `{:error, {:not_a_behavior, ...}}` guard
   # in `invoke_behavior/5`.
   defp invoke_behavior(behavior_module, action, slice, args, ctx) do
-    if Ezagent.Behavior.new_style?(behavior_module) do
+    if Ezagent.ActionSet.new_style?(behavior_module) do
       invoke_new_contract(behavior_module, action, slice, args, ctx)
     else
       Logger.error(
         "Behavior #{inspect(behavior_module)} is not a new-style Behavior " <>
-          "(missing `use Ezagent.Behavior` / `__behavior__?/0`). Dispatch refused."
+          "(missing `use Ezagent.ActionSet` / `__behavior__?/0`). Dispatch refused."
       )
 
       {:error, {:not_a_behavior, behavior_module}}
@@ -803,7 +803,7 @@ defmodule Ezagent.Kind.Runtime do
   # the legacy path.
   defp invoke_new_contract(behavior_module, action, slice, args, ctx) do
     cond do
-      action not in Ezagent.Behavior.action_names(behavior_module) ->
+      action not in Ezagent.ActionSet.action_names(behavior_module) ->
         {:error, {:unknown_action, action}}
 
       true ->
@@ -813,7 +813,7 @@ defmodule Ezagent.Kind.Runtime do
           invoke_new_contract_handler(behavior_module, action, handler_name, slice, args, ctx)
         else
           # `@before_compile` should prevent this — a missing handler is
-          # a compile-time error in `use Ezagent.Behavior`. Guard
+          # a compile-time error in `use Ezagent.ActionSet`. Guard
           # defensively so a manually-crafted (e.g. test-time) module
           # without the macro doesn't crash the dispatcher.
           {:error, {:missing_handler, behavior_module, handler_name}}
@@ -949,7 +949,7 @@ defmodule Ezagent.Kind.Runtime do
   #   - `ctx.transients` → the volatile container (read view), so a
   #     handler reads a PID/ref/handle via `ctx.transients[:monitors]`.
   # The `:set` / `:set_transient` effects the handler returns are routed
-  # to the matching sub-map by `Ezagent.Behavior.apply_effects/2`.
+  # to the matching sub-map by `Ezagent.ActionSet.apply_effects/2`.
   defp build_handler_ctx(%{state: st, transients: tr} = _slice, ctx)
        when is_map(st) and is_map(tr) do
     ctx
@@ -964,7 +964,7 @@ defmodule Ezagent.Kind.Runtime do
 
   @spec apply_signal_effects(
           %{state: map(), transients: map()},
-          [Ezagent.Behavior.effect()],
+          [Ezagent.ActionSet.effect()],
           map()
         ) ::
           {:ok, %{state: map(), transients: map()}} | :ignore
@@ -975,7 +975,7 @@ defmodule Ezagent.Kind.Runtime do
   end
 
   defp handler_atom_for(action) when is_atom(action) do
-    # Use `to_existing_atom/1` — `use Ezagent.Behavior` already
+    # Use `to_existing_atom/1` — `use Ezagent.ActionSet` already
     # compiled the `:handle_<action>` atom into the BEAM via the
     # `def handle_<action>` clause `@before_compile` enforced. A
     # genuinely missing handler is the `function_exported?/3` guard

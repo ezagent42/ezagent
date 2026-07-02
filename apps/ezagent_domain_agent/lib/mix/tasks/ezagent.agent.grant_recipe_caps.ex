@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   # A role resolves here IFF some booted plugin registered it via `roles/0`. This
   # list is a RUNTIME atom set (no compile dep) — kanban owns `kanban-manager` (and
   # the `pm-coordinator` product recipe) via its own `roles/0`, and loads
-  # `Ezagent.Behavior.Kanban` for the cap-resolve loaded-check. Any role NOT
+  # `Ezagent.ActionSet.Kanban` for the cap-resolve loaded-check. Any role NOT
   # registered by a booted plugin fails closed at `lookup_recipe/1`
   # (`{:role_not_registered, role}`) — this task never seeds a role itself.
   @role_plugins [:ezagent_plugin_kanban]
@@ -168,7 +168,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
     ensure_behavior_loaded(module, prefix)
   end
 
-  # A recipe STRING name (`"Ezagent.Behavior.Github"`/…) — resolve to the existing
+  # A recipe STRING name (`"Ezagent.ActionSet.Github"`/…) — resolve to the existing
   # module atom, then LOUD-check it is loaded. A name that resolves to no existing
   # atom (plugin not built) fails loud, NOT a silent drop.
   defp resolve_behavior(name, prefix) when is_binary(name) do

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ExternalMirrorTest do
+defmodule Ezagent.ActionSet.ExternalMirrorTest do
   @moduledoc """
   PR-EM-3 acceptance tests (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
   §9 PR-EM-3 — tests (a) … (k)).
@@ -484,7 +484,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         MapSet.new([
           %Capability{
             kind: :session,
-            behavior: Ezagent.Behavior.ExternalMirror,
+            behavior: Ezagent.ActionSet.ExternalMirror,
             instance: ws_b_session,
             workspace_uri: ws_a_uri,
             granted_by: User.admin_uri(),
@@ -1003,7 +1003,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         MapSet.new([
           %Capability{
             kind: :session,
-            behavior: Ezagent.Behavior.ExternalMirror,
+            behavior: Ezagent.ActionSet.ExternalMirror,
             instance: session_uri,
             workspace_uri: @workspace_uri,
             granted_by: User.admin_uri(),
@@ -1224,7 +1224,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         MapSet.new([
           %Capability{
             kind: :session,
-            behavior: Ezagent.Behavior.ExternalMirror,
+            behavior: Ezagent.ActionSet.ExternalMirror,
             instance: session_b,
             workspace_uri: @workspace_uri,
             granted_by: User.admin_uri(),
@@ -1896,7 +1896,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   defp session_bind_cap(%URI{} = session_uri, %URI{} = workspace_uri) do
     %Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       instance: session_uri,
       workspace_uri: workspace_uri,
       granted_by: User.admin_uri(),

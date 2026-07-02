@@ -19,7 +19,7 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Socialware.{AnonUser, ExternalFeed}
   alias EzagentWeb.Socialware.FeedEncoding
 

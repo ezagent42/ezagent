@@ -17,7 +17,7 @@ defmodule Ezagent.Socialware.ConfigProjection do
        *it* being the new immutable config object). Because the agent's cascade
        layer URI names a specific immutable object, the steps order so that no
        single-step failure leaves harmful uncompensated state (see
-       `Ezagent.Behavior.ConfigUpdate.handle_apply_delta/2`). The object is
+       `Ezagent.ActionSet.ConfigUpdate.handle_apply_delta/2`). The object is
        immutable, so `resolve_config_dir/1` can never observe a stale or
        half-written body — there is no read/write race.
 

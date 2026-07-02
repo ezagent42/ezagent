@@ -72,8 +72,8 @@ defmodule Ezagent.Kind.Server do
   ## Post-init continuation hook (PR-EM-CORE)
 
   The `post_init/2` + `handle_continue/3` callbacks on
-  `Ezagent.Behavior` let a Behavior schedule deferred work that runs
-  after `:announce_ready`. See `Ezagent.Behavior` moduledoc + the
+  `Ezagent.ActionSet` let a Behavior schedule deferred work that runs
+  after `:announce_ready`. See `Ezagent.ActionSet` moduledoc + the
   ExternalMirror SPEC (`docs/superpowers/specs/2026-05-24-external-mirror-domain.md`)
   §6.1 split-init pattern for the canonical use case (Worker Kind
   subscribes to a Session Publisher AFTER `Kind.spawn/2` returns,
@@ -944,7 +944,7 @@ defmodule Ezagent.Kind.Server do
 
     # PR-EM-2 codex round-1 HIGH-1 fix (2026-05-25): drain
     # per-Behavior `terminate/3` callbacks so Behaviors with
-    # owned resources (e.g. `Ezagent.Behavior.ExternalMirrorWorker`
+    # owned resources (e.g. `Ezagent.ActionSet.ExternalMirrorWorker`
     # whose `binding_module.terminate/2` releases transport state)
     # actually get a chance to clean up on graceful shutdown.
     #

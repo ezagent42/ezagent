@@ -6,7 +6,7 @@ defmodule EzagentPluginCurlAgent.BridgeAdapter do
 
   curl is STATEFUL; the adapter is NOT. SPEC
   `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
-  §3.5 / §OQ-1 splits the old `Ezagent.Behavior.CurlAgent` into:
+  §3.5 / §OQ-1 splits the old `Ezagent.ActionSet.CurlAgent` into:
 
     * the **STATE** half — REPARENTED onto `Ezagent.Entity.Agent` for the
       `curl` flavor: the `:curl_agent` slice + `reset_conversation` /

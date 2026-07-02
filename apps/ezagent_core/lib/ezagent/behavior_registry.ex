@@ -2,14 +2,14 @@ defmodule Ezagent.BehaviorRegistry do
   @moduledoc """
   BehaviorRegistry — `{kind_module, action_atom}` → behavior_module.
 
-  Resolves which `Ezagent.Behavior` implementation handles a given Kind +
+  Resolves which `Ezagent.ActionSet` implementation handles a given Kind +
   action pair during `Ezagent.Invocation.dispatch/1`. Bare ETS (not stdlib
   Registry) because the key shape is a tuple and we don't need
   process monitoring.
 
   Owned by `EzagentCore.EtsOwner`. A flavor plugin's boot wires its
   Behaviors here — e.g. the py plugin registers
-  `{Ezagent.Entity.Agent, :py_sync_result} → Ezagent.Behavior.PyAgent`.
+  `{Ezagent.Entity.Agent, :py_sync_result} → Ezagent.ActionSet.PyAgent`.
 
   ## Phase 1 scope
 
@@ -51,7 +51,7 @@ defmodule Ezagent.BehaviorRegistry do
         {:ok, behavior}
 
       [] ->
-        # #533 §3.4 — universal behaviors (e.g. Ezagent.Behavior.Manage)
+        # #533 §3.4 — universal behaviors (e.g. Ezagent.ActionSet.Manage)
         # resolve for EVERY Kind by construction, with no per-Kind
         # registration. A per-Kind entry above always wins; this fallback
         # only fires on a miss.

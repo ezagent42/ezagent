@@ -41,7 +41,7 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
             }} = Ezagent.AgentFlavorRegistry.lookup("cc-headless")
 
     assert is_function(instance_behaviors, 0)
-    assert Ezagent.Behavior.CcHeadlessAgent in instance_behaviors.()
+    assert Ezagent.ActionSet.CcHeadlessAgent in instance_behaviors.()
     assert EzagentPluginCc.CcHeadlessBridgeAdapter.transport_class() == :in_process_sync
   end
 

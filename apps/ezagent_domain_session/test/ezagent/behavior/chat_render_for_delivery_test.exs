@@ -1,11 +1,11 @@
-defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
+defmodule Ezagent.ActionSet.ChatRenderForDeliveryTest do
   @moduledoc """
   Pure unit tests for the PR-4b delivery transform (team-routing-unification
   §3.4): `Session.render_for_delivery/4` + `Session.message_vars/2`. No DB / no full
   runtime — these are pure functions over a message + ctx + templates map.
   """
   use ExUnit.Case, async: true
-  alias Ezagent.{Behavior.Session, Message}
+  alias Ezagent.{ActionSet.Session, Message}
 
   @session URI.new!("session://system/default/main")
 

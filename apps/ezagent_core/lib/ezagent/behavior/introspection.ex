@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Introspection do
+defmodule Ezagent.ActionSet.Introspection do
   @moduledoc false
 
   @spec new_style?(module()) :: boolean()
@@ -40,11 +40,11 @@ defmodule Ezagent.Behavior.Introspection do
   Look up the `data_owner/1` URI for the given Behavior + instance
   via the CapabilityRegistry.
 
-  Re-exported on `Ezagent.Behavior` so plugin Behavior modules can
+  Re-exported on `Ezagent.ActionSet` so plugin Behavior modules can
   introspect data ownership WITHOUT depending on
   `Ezagent.CapabilityRegistry` directly — that direct dependency
   is banned by SPEC #445 §11 Gate 6 (plugin Behaviors only talk to
-  the public `Ezagent.Behavior` surface; the registry is an
+  the public `Ezagent.ActionSet` surface; the registry is an
   implementation detail of the runtime).
 
   Returns the same shape `CapabilityRegistry.data_owner_of/2`

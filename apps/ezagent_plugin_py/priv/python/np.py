@@ -13,7 +13,7 @@ Re-homed VERBATIM from `ezagent_plugin_np/priv/python/np_compute_server.py`
 `_SAFE_NAMES`, `compute`, `compute_latex`, `_to_python_number` are byte-for-byte
 the np plugin's. The ONLY addition is the `receive` entrypoint (below): the np
 flavor's chat→method heuristic (the former BEAM-side
-`Ezagent.Behavior.NpAgent.pick_method` backslash rule) moves INTO the script,
+`Ezagent.ActionSet.NpAgent.pick_method` backslash rule) moves INTO the script,
 because the `py` flavor dispatches exactly ONE JSON-RPC method, `"receive"`
 (py-agent spec §1). `np` is now `py` flavor + this script delivered via the
 role-script channel (`Role.script` → `sandbox_content` → config_dir `agent.py`).

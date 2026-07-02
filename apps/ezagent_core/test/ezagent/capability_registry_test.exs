@@ -35,7 +35,7 @@ defmodule Ezagent.CapabilityRegistryTest do
   # cap-only tests, override `dispatchable?/0` from the test cases that
   # need it dispatchable.
   defmodule MockDispatchableBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     def actions, do: [:mock_test_action_d, :mock_test_action_d2]
 
@@ -54,7 +54,7 @@ defmodule Ezagent.CapabilityRegistryTest do
   end
 
   defmodule MockCapOnlyBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     def actions, do: [:mock_test_action_co]
     def cap_subjects, do: [{:mock_test_action_co, "mock cap-only test action"}]
@@ -66,7 +66,7 @@ defmodule Ezagent.CapabilityRegistryTest do
   end
 
   defmodule MockBehaviorWithoutAction do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     def actions, do: [:declared_action]
     def cap_subjects, do: [{:declared_action, "declared in cap_subjects"}]
@@ -129,7 +129,7 @@ defmodule Ezagent.CapabilityRegistryTest do
       # Both behaviors declare :declared_action, so we trip the conflict
       # path (not the action-not-declared path).
       defmodule SecondBehaviorWithSameAction do
-        @behaviour Ezagent.Behavior
+        @behaviour Ezagent.ActionSet
         def actions, do: [:declared_action]
         def cap_subjects, do: [{:declared_action, "alt description"}]
         def state_slice, do: :second_mock
@@ -252,7 +252,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     # :receive. Rev 4 keeps per-action arg so subsets are preserved.
 
     defmodule MockMultiActionBehavior do
-      @behaviour Ezagent.Behavior
+      @behaviour Ezagent.ActionSet
 
       def actions, do: [:full_action_a, :full_action_b, :full_action_c]
 

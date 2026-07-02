@@ -125,7 +125,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     {:ok, state} = KindSnapshot.decode_state(default_template)
     template_slice = Map.get(state, :template) || Map.get(state, "template") || %{}
 
-    # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+    # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
     # now `use Ezagent.Lifecycle`, so the PERSISTED `:template` slice is
     # the two-container `%{state: %{content: ...}}` shape (the framework
     # persists only `:state`; `:transients` is stripped at the serialize

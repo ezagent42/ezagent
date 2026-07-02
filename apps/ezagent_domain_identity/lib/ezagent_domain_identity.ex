@@ -4,7 +4,7 @@ defmodule EzagentDomainIdentity do
 
   Public surface:
   - `Ezagent.Entity.User` — User Kind
-  - `Ezagent.Behavior.Identity` — list_caps / has_cap? actions
+  - `Ezagent.ActionSet.Identity` — list_caps / has_cap? actions
   - `Ezagent.Identity` — facade for CapBAC checks
   - `Ezagent.Users` — SQLite provisioning (login lookup, bcrypt)
 

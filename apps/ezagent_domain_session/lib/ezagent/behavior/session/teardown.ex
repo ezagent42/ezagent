@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session.Teardown do
+defmodule Ezagent.ActionSet.Session.Teardown do
   @moduledoc false
   #
   # F7 PR-B — the shared participant-resource teardown for the session
@@ -36,7 +36,7 @@ defmodule Ezagent.Behavior.Session.Teardown do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.RoutingPrune
+  alias Ezagent.ActionSet.Session.RoutingPrune
   alias Ezagent.Invocation
 
   @typedoc "Reap mode: strict fails closed; best_effort falls back to the VM primitive."
@@ -121,7 +121,7 @@ defmodule Ezagent.Behavior.Session.Teardown do
   def cascade_teardown(%URI{} = session_uri, state) when is_map(state) do
     members = Map.get(state, :members, %{})
     owner_uri = Map.get(state, :owner_uri)
-    wc = Ezagent.Behavior.Session.ConfigActions.template_working_copy(state)
+    wc = Ezagent.ActionSet.Session.ConfigActions.template_working_copy(state)
     orchestrator_uri = Map.get(wc, :orchestrator_uri)
 
     # 1. tear down every member (skip the owner — never reap the owner).

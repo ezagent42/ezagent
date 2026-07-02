@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.CurlAgentTest do
+defmodule Ezagent.ActionSet.CurlAgentTest do
   @moduledoc """
   Phase 2-g r3 migration: tests exercise the new-contract
   `handle_<action>/2` + effects vocabulary instead of `invoke/4`.
@@ -6,7 +6,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.CurlAgent
+  alias Ezagent.ActionSet.CurlAgent
 
   describe "macro-derived metadata" do
     # PR-6 (im/session/agent decomposition §3.5) — `:receive` is GONE
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
     end
 
     test "Behavior.new_style?/1 detects the new contract" do
-      assert Ezagent.Behavior.new_style?(CurlAgent)
+      assert Ezagent.ActionSet.new_style?(CurlAgent)
     end
   end
 

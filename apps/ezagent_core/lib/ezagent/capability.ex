@@ -7,7 +7,7 @@ defmodule Ezagent.Capability do
   `action` / `instance` / `workspace_uri`):
 
   - `kind` — Kind type atom (e.g. `:py_agent`); `:any` matches all
-  - `behavior` — Behavior module ref (e.g. `Ezagent.Behavior.PyAgent`);
+  - `behavior` — Behavior module ref (e.g. `Ezagent.ActionSet.PyAgent`);
     `:any` matches all
   - `action` — the action atom (e.g. `:send`, `:add_member`); `:any`
     matches all. NEW per SPEC 2026-05-27 (capability-action-axis).
@@ -100,8 +100,8 @@ defmodule Ezagent.Capability do
   ## Examples
 
       # required_caps/0 declaration
-      Capability.cap(:session, Ezagent.Behavior.Session, :send)
-      # => %Capability{kind: :session, behavior: Ezagent.Behavior.Session, action: removed,
+      Capability.cap(:session, Ezagent.ActionSet.Session, :send)
+      # => %Capability{kind: :session, behavior: Ezagent.ActionSet.Session, action: removed,
       #                instance: :any, workspace_uri: :any,
       #                granted_by: :plugin_declared,
       #                granted_at: :compile_time}

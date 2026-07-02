@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation do
+defmodule Ezagent.ActionSet.Workspace.AgentCreate.FlavorValidation do
   @moduledoc false
 
   # Per-flavor create-arg validators, factored out of `agent_create.ex` so that

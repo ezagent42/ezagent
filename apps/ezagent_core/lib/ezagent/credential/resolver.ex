@@ -24,7 +24,7 @@ defmodule Ezagent.Credential.Resolver do
 
     * `authorize_and_mint_grant!/1` (spec §5.1) — at agent CREATE (human caller w/ caps):
       cap-check the chosen source's `sandbox.read` against the caller's caps (the existing
-      `sandbox.read` seam — see `Ezagent.Behavior.Workspace.resolve_source_config_dir/2`),
+      `sandbox.read` seam — see `Ezagent.ActionSet.Workspace.resolve_source_config_dir/2`),
       then mint a durable `Ezagent.Credential.GrantRow` recording
       `{agent, source, approved_by, approved_scope, version}`. NEVER mints a grant under
       ANY `system://` principal's caps (codex H1 — privilege-escalation leak; a system
@@ -295,7 +295,7 @@ defmodule Ezagent.Credential.Resolver do
   Cap-check helper (exposed for the create chokepoint + tests): is `sandbox.read` on
   `source` authorized by `caps`? Builds the needed-cap the SAME way the dispatch does for
   the `sandbox.read` action on an Agent Kind — `%{kind: :agent, behavior:
-  Ezagent.Behavior.Sandbox, action: :read, instance: <source>, workspace_uri: <ws>}` —
+  Ezagent.ActionSet.Sandbox, action: :read, instance: <source>, workspace_uri: <ws>}` —
   mirroring `Ezagent.Credential.GrantCap.read_cap_for/1` (the authoritative derived-cap
   shape) rather than `cap_for_action/3` (which would force a cross-app reference to
   `Ezagent.Entity.Agent`, a downstream app from core). Checks any held cap `matches?/2`.
@@ -305,7 +305,7 @@ defmodule Ezagent.Credential.Resolver do
   def source_read_authorized?(%URI{} = source, caps) when is_list(caps) do
     needed = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(source),
       workspace_uri: Capability.workspace_of(source)

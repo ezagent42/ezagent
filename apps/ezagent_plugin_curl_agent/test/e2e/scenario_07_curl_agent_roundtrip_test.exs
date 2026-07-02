@@ -37,7 +37,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
   @moduletag scenario: "07-curl-agent-deepseek"
   @moduletag :e2e
 
-  alias Ezagent.Behavior.CurlAgent
+  alias Ezagent.ActionSet.CurlAgent
 
   # ---------------------------------------------------------------
   # 1. Greenfield contract surface
@@ -114,7 +114,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       }
 
       assert {:ok, %{ok: true}, effects} = CurlAgent.handle_configure(args, ctx)
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, slice)
 
       assert new_state.provider == "openai"
       assert new_state.api_url == "https://api.openai.com/v1/chat/completions"
@@ -149,7 +149,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
         |> Map.put(:last_error, {:http, 429, "rate limited"})
 
       assert {:ok, _, effects} = CurlAgent.handle_reset_conversation(%{}, %{})
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, slice)
 
       assert new_state.conversation == []
       assert new_state.last_error == nil

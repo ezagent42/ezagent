@@ -1,20 +1,20 @@
 defmodule Ezagent.BehaviorTest do
   @moduledoc """
-  Tests for the new `use Ezagent.Behavior` macro per SPEC §2.2 +
+  Tests for the new `use Ezagent.ActionSet` macro per SPEC §2.2 +
   §4.4 effect grammar.
   """
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.{Behavior, Cmd}
+  alias Ezagent.{ActionSet, Cmd}
 
   # ---------------------------------------------------------------
-  # Fixture: a new-style Behavior used by the action-declaration tests
+  # Fixture: a new-style ActionSet used by the action-declaration tests
   # ---------------------------------------------------------------
 
   defmodule SimpleBehavior do
     @moduledoc false
-    use Ezagent.Behavior
+    use Ezagent.ActionSet
 
     action(:greet,
       args: %{name: :string},
@@ -45,7 +45,7 @@ defmodule Ezagent.BehaviorTest do
     end
   end
 
-  describe "use Ezagent.Behavior — declaration" do
+  describe "use Ezagent.ActionSet — declaration" do
     test "__action_names__/0 returns declared action atoms" do
       assert :greet in SimpleBehavior.__action_names__()
       assert :bump in SimpleBehavior.__action_names__()
@@ -83,8 +83,8 @@ defmodule Ezagent.BehaviorTest do
     end
 
     test "new_style?/1 detects the new contract" do
-      assert Behavior.new_style?(SimpleBehavior)
-      refute Behavior.new_style?(Enum)
+      assert ActionSet.new_style?(SimpleBehavior)
+      refute ActionSet.new_style?(Enum)
     end
   end
 
@@ -93,7 +93,7 @@ defmodule Ezagent.BehaviorTest do
       assert_raise CompileError, ~r/missing.*handle_undeclared/, fn ->
         Code.compile_string("""
         defmodule TestMissingHandler do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :undeclared, args: %{}, returns: :ok, caps: [:x]
         end
         """)
@@ -104,7 +104,7 @@ defmodule Ezagent.BehaviorTest do
       assert_raise CompileError, ~r/missing required key :args/, fn ->
         Code.compile_string("""
         defmodule TestNoArgs do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :foo, returns: :ok
           def handle_foo(_a, _c), do: {:ok, :ok, []}
         end
@@ -116,7 +116,7 @@ defmodule Ezagent.BehaviorTest do
       assert_raise CompileError, ~r/missing required key :returns/, fn ->
         Code.compile_string("""
         defmodule TestNoReturns do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :foo, args: %{}
           def handle_foo(_a, _c), do: {:ok, :ok, []}
         end
@@ -133,7 +133,7 @@ defmodule Ezagent.BehaviorTest do
         {:set, :a, 3}
       ]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
       assert result.state == %{a: 3, b: 2}
     end
 
@@ -143,21 +143,21 @@ defmodule Ezagent.BehaviorTest do
         {:emit, :second, %{n: 2}}
       ]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
       assert result.events == [{:emit, :first, %{n: 1}}, {:emit, :second, %{n: 2}}]
     end
 
     test ":dispatch effects collect into dispatches bucket" do
       cmd = Cmd.new("entity://test/agent/x", :ping, %{}, %{caller: :vm_internal})
 
-      assert {:ok, result} = Behavior.apply_effects([{:dispatch, cmd}], %{})
+      assert {:ok, result} = ActionSet.apply_effects([{:dispatch, cmd}], %{})
       assert [{:dispatch, ^cmd}] = result.dispatches
     end
 
     test ":notify effects collect into notifies bucket" do
       effects = [{:notify, "topic", %{msg: "x"}}]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
       assert [{:notify, "topic", %{msg: "x"}}] = result.notifies
     end
 
@@ -168,7 +168,7 @@ defmodule Ezagent.BehaviorTest do
         {:set, :b, 2}
       ]
 
-      assert {:halt, :test_halt, partial} = Behavior.apply_effects(effects, %{starting: true})
+      assert {:halt, :test_halt, partial} = ActionSet.apply_effects(effects, %{starting: true})
       # Pre-halt :set DID apply to in-memory state per Phase 1 simple
       # reducer; the caller (Router) must NOT persist it. This is the
       # contract — the {:halt, _, partial} return is the signal to
@@ -178,7 +178,7 @@ defmodule Ezagent.BehaviorTest do
 
     test "unknown effect raises ArgumentError" do
       assert_raise ArgumentError, ~r/unknown effect/, fn ->
-        Behavior.apply_effects([{:nonsense, :foo}], %{})
+        ActionSet.apply_effects([{:nonsense, :foo}], %{})
       end
     end
   end
@@ -191,7 +191,7 @@ defmodule Ezagent.BehaviorTest do
         {:emit, :stored_event, %{body: {:ref, :stored, [:body]}}}
       ]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
       # :set ran in phase 1 (before :effect_returning) — but at
       # phase-1 time the ref didn't substitute yet, so the
       # in-state value is the literal {:ref, ...} tuple.
@@ -211,7 +211,7 @@ defmodule Ezagent.BehaviorTest do
         {:notify, "t", {:ref, :r, [:value]}}
       ]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
       assert [{:notify, "t", 7}] = result.notifies
     end
   end
@@ -236,7 +236,7 @@ defmodule Ezagent.BehaviorTest do
         {:dispatch_returning, cmd2, bind_as: :bob}
       ]
 
-      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+      assert {:ok, result} = ActionSet.apply_effects(effects, %{})
 
       # apply_effects/2 is pure — it bucketises but does NOT execute
       # the returning dispatches (the executor runs them via Router).
@@ -258,7 +258,7 @@ defmodule Ezagent.BehaviorTest do
         })
 
       assert_raise ArgumentError, ~r/dispatch_returning requires.*bind_as/, fn ->
-        Behavior.apply_effects([{:dispatch_returning, cmd, []}], %{})
+        ActionSet.apply_effects([{:dispatch_returning, cmd, []}], %{})
       end
     end
 
@@ -266,7 +266,7 @@ defmodule Ezagent.BehaviorTest do
       # Shape doesn't match the dispatch_returning bucket pattern
       # (no %Cmd{}) — falls through to the unknown-effect raise.
       assert_raise ArgumentError, ~r/unknown effect/, fn ->
-        Behavior.apply_effects(
+        ActionSet.apply_effects(
           [{:dispatch_returning, :not_a_cmd, [bind_as: :x]}],
           %{}
         )
@@ -274,24 +274,24 @@ defmodule Ezagent.BehaviorTest do
     end
   end
 
-  describe "Behavior.action_names/1 + action_spec/2 introspection" do
+  describe "ActionSet.action_names/1 + action_spec/2 introspection" do
     test "action_names/1 lists actions of a new-style module" do
-      names = Behavior.action_names(SimpleBehavior)
+      names = ActionSet.action_names(SimpleBehavior)
       assert :greet in names
     end
 
     test "action_names/1 returns [] for a legacy module" do
-      # Use any module that doesn't `use Ezagent.Behavior` — Enum suffices.
-      assert Behavior.action_names(Enum) == []
+      # Use any module that doesn't `use Ezagent.ActionSet` — Enum suffices.
+      assert ActionSet.action_names(Enum) == []
     end
 
     test "action_spec/2 returns the full spec" do
-      spec = Behavior.action_spec(SimpleBehavior, :greet)
+      spec = ActionSet.action_spec(SimpleBehavior, :greet)
       assert spec.description == "say hello"
     end
   end
 
-  describe "Behavior.data_owner_of/2 — re-export (SPEC 2026-05-29 §2b)" do
+  describe "ActionSet.data_owner_of/2 — re-export (SPEC 2026-05-29 §2b)" do
     defmodule DataOwnerBehavior do
       @moduledoc false
       def data_owner(%URI{} = uri), do: %URI{uri | path: "/owner"}
@@ -300,16 +300,16 @@ defmodule Ezagent.BehaviorTest do
 
     test "delegates to behavior.data_owner/1 for concrete instances" do
       uri = Ezagent.URI.new!("entity://team-alpha/agent/foo")
-      assert %URI{path: "/owner"} = Behavior.data_owner_of(DataOwnerBehavior, uri)
+      assert %URI{path: "/owner"} = ActionSet.data_owner_of(DataOwnerBehavior, uri)
     end
 
     test "returns :no_owner for non-URI instances" do
-      assert Behavior.data_owner_of(DataOwnerBehavior, :any) == :no_owner
+      assert ActionSet.data_owner_of(DataOwnerBehavior, :any) == :no_owner
     end
 
     test "returns :no_owner when behavior doesn't export data_owner/1" do
-      # `Enum` doesn't `use Ezagent.Behavior` + has no data_owner/1.
-      assert Behavior.data_owner_of(Enum, :any) == :no_owner
+      # `Enum` doesn't `use Ezagent.ActionSet` + has no data_owner/1.
+      assert ActionSet.data_owner_of(Enum, :any) == :no_owner
     end
   end
 end

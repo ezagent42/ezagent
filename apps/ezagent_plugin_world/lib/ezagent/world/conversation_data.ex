@@ -224,7 +224,7 @@ defmodule Ezagent.World.ConversationData do
          %URI{} = workspace_uri
        ) do
     cap_field?(cap.kind, :session) and
-      cap_field?(cap.behavior, Ezagent.Behavior.Session) and
+      cap_field?(cap.behavior, Ezagent.ActionSet.Session) and
       cap_field?(Map.get(cap, :action, :any), :read_unfiltered) and
       cap_instance?(cap.instance, session_uri, workspace_uri) and
       cap_workspace?(cap.workspace_uri, workspace_uri)

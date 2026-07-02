@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.SandboxColdRestartTest do
+defmodule Ezagent.ActionSet.SandboxColdRestartTest do
   @moduledoc """
   THE FLAGSHIP cold-restart invariant test for the Lifecycle migration —
-  the reference TRANSIENTS module (`Ezagent.Behavior.Sandbox`, SPEC §2.3B).
+  the reference TRANSIENTS module (`Ezagent.ActionSet.Sandbox`, SPEC §2.3B).
 
   SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6 +
   AC-4: this is the architectural-goal gate. It drives the Sandbox to a
@@ -23,7 +23,7 @@ defmodule Ezagent.Behavior.SandboxColdRestartTest do
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.Sandbox
+  alias Ezagent.ActionSet.Sandbox
 
   # Test Kind hosting the single Sandbox Lifecycle module. `{:snapshot,
   # :on_change}` so the durable `state` survives a brutal kill and the

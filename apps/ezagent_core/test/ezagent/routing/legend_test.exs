@@ -31,7 +31,7 @@ defmodule Ezagent.Routing.LegendTest do
   defp uri(s), do: URI.new!(s)
 
   # A role_name → URI resolver closure over a members map, matching the
-  # contract of `Ezagent.Behavior.Session.role_name_to_uri/2` (domain) WITHOUT
+  # contract of `Ezagent.ActionSet.Session.role_name_to_uri/2` (domain) WITHOUT
   # taking a core→domain dep — `fold_members/3` accepts any such closure, so
   # core stays pure. The real domain wiring uses Chat.role_name_to_uri/2.
   defp role_resolver(members) do

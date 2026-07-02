@@ -4,7 +4,7 @@ defmodule EzagentDomainInstanceMessage.DefaultRules do
   chat plugin's RoutingRegistry tables.
 
   Previously (Phase 3): default fan-out (send to in-session members)
-  was hardcoded in `Ezagent.Behavior.Session.invoke(:send, ...)` as a
+  was hardcoded in `Ezagent.ActionSet.Session.invoke(:send, ...)` as a
   fall-through branch — a leak per "no scattered routing logic"
   principle (Allen 2026-05-16).
 

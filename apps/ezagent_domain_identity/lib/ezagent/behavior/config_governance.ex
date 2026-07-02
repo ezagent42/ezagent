@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.ConfigGovernance do
+defmodule Ezagent.ActionSet.ConfigGovernance do
   @moduledoc """
   Minimal CR (change-request) config governance on the Agent Kind — a Lifecycle
-  sibling to `Ezagent.Behavior.ConfigEvolve` (SPEC
+  sibling to `Ezagent.ActionSet.ConfigEvolve` (SPEC
   `docs/together/2026-06-26/specs/cr-config-governance.md`, rev 3).
 
   A thin EXTENSION of the shipped `ConfigStore` + sandbox-materialization
@@ -39,7 +39,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
 
   use Ezagent.Lifecycle
 
-  alias Ezagent.Behavior.ConfigEvolve
+  alias Ezagent.ActionSet.ConfigEvolve
   alias Ezagent.Socialware.{ConfigChangeStore, ConfigProjection}
 
   # Read the agent's OWN Sandbox + Identity siblings — IDENTICAL to ConfigEvolve.
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.ConfigGovernance do
   # instance: agent)` with action :any matches any of these). publish REUSES the
   # agent's MANAGE cap (lead decision OQ-4) — no separate publish/reviewer cap.
   def required_caps do
-    manage = Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any)
+    manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 
     %{
       open_cr: manage,

@@ -22,7 +22,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
   ## Mutation path (SPEC v2 §5.7)
 
   - Add → dispatch to `<session_uri>?action=routing.add_rule` against
-    the Session Kind's `Ezagent.Behavior.Routing` (registered in
+    the Session Kind's `Ezagent.ActionSet.Routing` (registered in
     `EzagentDomainInstanceMessage.Application`).
   - Toggle enable/disable → dispatch to the same target with
     `routing.disable_rule` / `routing.enable_rule`.

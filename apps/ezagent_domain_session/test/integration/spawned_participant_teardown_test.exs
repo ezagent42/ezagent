@@ -20,7 +20,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentLineage, Invocation, KindRegistry}
-  alias Ezagent.Behavior.Session.Teardown
+  alias Ezagent.ActionSet.Session.Teardown
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Session.Participants
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
@@ -91,7 +91,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
     cap = %Ezagent.Capability{
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :remove_participant,
         Ezagent.URI.instance(session_uri),
         Ezagent.Capability.workspace_of(session_uri)
@@ -354,7 +354,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
         Enum.find(caps, fn
           %Ezagent.Capability{
             kind: :agent,
-            behavior: Ezagent.Behavior.Sandbox,
+            behavior: Ezagent.ActionSet.Sandbox,
             instance: {:spawned_by, %URI{} = p}
           } = c ->
             URI.to_string(p) == URI.to_string(owner) and

@@ -304,7 +304,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   # `%{}` on any failure so the caller surfaces
   # `:orchestrator_template_not_populated`.
   #
-  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
   # now uses `use Ezagent.Lifecycle`, so the `:template` slice is the
   # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
   # framework persists only `:state`; `:content` is fully persistent).
@@ -470,14 +470,14 @@ defmodule Ezagent.Entity.Session.Orchestrator do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Ezagent.Behavior.Session.state_slice(), %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
 
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
 
-        Ezagent.Behavior.Session.template_working_copy(chat_persistent)
+        Ezagent.ActionSet.Session.template_working_copy(chat_persistent)
 
       :error ->
-        Ezagent.Behavior.Session.default_template_working_copy()
+        Ezagent.ActionSet.Session.default_template_working_copy()
     end
   end
 
@@ -500,7 +500,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Ezagent.Behavior.Session.state_slice(), %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
 
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
 
@@ -532,10 +532,10 @@ defmodule Ezagent.Entity.Session.Orchestrator do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Ezagent.Behavior.Session.state_slice(), %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
 
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
-        Ezagent.Behavior.Session.legends_of(chat_persistent)
+        Ezagent.ActionSet.Session.legends_of(chat_persistent)
 
       :error ->
         %{}

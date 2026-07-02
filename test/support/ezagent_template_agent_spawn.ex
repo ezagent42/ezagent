@@ -148,7 +148,7 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
                %Ezagent.Capability{
                  Ezagent.Capability.cap(
                    :agent,
-                   Ezagent.Behavior.Sandbox,
+                   Ezagent.ActionSet.Sandbox,
                    :update_config,
                    Ezagent.URI.instance(agent_uri),
                    Ezagent.Capability.workspace_of(agent_uri)

@@ -1,14 +1,14 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorker.SendKeyTest do
+defmodule Ezagent.ActionSet.ExternalMirrorWorker.SendKeyTest do
   @moduledoc """
-  Unit tests for `Ezagent.Behavior.ExternalMirrorWorker.SendKey` — the
+  Unit tests for `Ezagent.ActionSet.ExternalMirrorWorker.SendKey` — the
   pure send-key derivation extracted from
-  `Ezagent.Behavior.ExternalMirrorWorker` (#25 Phase-3, PR-3O).
+  `Ezagent.ActionSet.ExternalMirrorWorker` (#25 Phase-3, PR-3O).
 
   Pure functions only: no process, no DB, no sandbox.
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.ExternalMirrorWorker.SendKey
+  alias Ezagent.ActionSet.ExternalMirrorWorker.SendKey
   alias Ezagent.Publisher.Event
 
   defp chat_event(new_slice) do

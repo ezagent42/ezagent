@@ -329,7 +329,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
   operator-seeded role MAY carry a `script` as trusted CODE — it flows through
   `seed_role_if_absent/2` (which uses `validate_recipe/1`, NOT this guard).
 
-  This is the enforcement PRIMITIVE the next-phase `Ezagent.Behavior.RoleGovernance`
+  This is the enforcement PRIMITIVE the next-phase `Ezagent.ActionSet.RoleGovernance`
   calls at `stage_item` so a script-carrying role-CR is rejected at the authoring
   boundary, BEFORE any inert object is staged. It also runs the full `Recipe.new/1`
   validation (flavor-field reject, cap-axis reject, behaviors-must-be-loaded), so

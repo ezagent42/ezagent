@@ -145,7 +145,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       wrong_cap =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Routing,
+          behavior: Ezagent.ActionSet.Routing,
           action: :add_rule,
           instance: :any,
           workspace_uri: URI.new!("workspace://system")
@@ -165,7 +165,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       wrong_action_cap =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :join,
           instance: :any,
           workspace_uri: URI.new!("workspace://system")
@@ -196,7 +196,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       send_cap =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: :any,
           workspace_uri: :any
@@ -239,7 +239,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       target =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: :any,
           workspace_uri: URI.new!("workspace://team-alpha")
@@ -293,7 +293,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       narrow_ws_cap =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: :any,
           workspace_uri: URI.new!("workspace://team-alpha")
@@ -303,7 +303,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       needed_for_system =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: URI.new!("session://system/default/main"),
           workspace_uri: URI.new!("workspace://system")

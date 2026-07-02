@@ -10,7 +10,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
   alias Ezagent.Routing.Matcher

@@ -420,7 +420,7 @@ defmodule Ezagent.Socialware.ConfigStore do
   cascade layer). Thin wrapper over `resolve/4` keyed by the agent's
   workspace + the standard cascade key, returning just the object id.
 
-  Used by `Ezagent.Behavior.ConfigEvolve`'s step-2 projection + boot
+  Used by `Ezagent.ActionSet.ConfigEvolve`'s step-2 projection + boot
   reconciliation to read the durable pointer the Sandbox cache must mirror.
   Returns `{:ok, object_id}` or `:none` (no user-layer pointer yet).
   """
@@ -477,7 +477,7 @@ defmodule Ezagent.Socialware.ConfigStore do
   intact (objects are append-only), so `object_for_turn(A)` still resolves A's
   historical id even after the pointer has advanced off A onto B.
 
-  Used by `Ezagent.Behavior.ConfigEvolve` to make `apply_config_delta`
+  Used by `Ezagent.ActionSet.ConfigEvolve` to make `apply_config_delta`
   idempotent on BOTH the serial pre-check AND the unique-constraint conflict
   path: re-dispatching ANY already-applied turn (current OR superseded) returns
   that turn's historical object id (a string) instead of minting a new object —

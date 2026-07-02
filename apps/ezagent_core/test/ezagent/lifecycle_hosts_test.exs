@@ -4,7 +4,7 @@ defmodule Ezagent.LifecycleHostsTest do
 
   test "hosts_lifecycle?/2 reflects the instance set, not the module superset" do
     # Instance set with KindBase (a Lifecycle behavior) → true.
-    lc_set = %{kind_base: %{state: %{behaviors: [Ezagent.Behavior.KindBase]}, transients: %{}}}
+    lc_set = %{kind_base: %{state: %{behaviors: [Ezagent.ActionSet.KindBase]}, transients: %{}}}
     assert Ezagent.Lifecycle.hosts_lifecycle?(SupersetSessionKind, lc_set)
 
     # Legacy sentinel (nil captured) → falls back to declared list (still has Lifecycle).

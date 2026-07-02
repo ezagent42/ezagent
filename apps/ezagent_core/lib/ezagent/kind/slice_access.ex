@@ -36,7 +36,7 @@ defmodule Ezagent.Kind.SliceAccess do
   A Behavior converted to `use Ezagent.Lifecycle` stores its slice as the
   two-container shape `%{state: persistent, transients: volatile}` (SPEC
   2026-05-29 §0.1). Cross-module callers (`Ezagent.Identity`,
-  `Ezagent.Behavior.ApiKeys`, `Ezagent.Behavior.ExternalMirror`,
+  `Ezagent.ActionSet.ApiKeys`, `Ezagent.ActionSet.ExternalMirror`,
   `Ezagent.Entity.Session`, the admin LVs, …) read a converted producer's
   slice via FLAT field access — e.g. `get_slice(uri, :session).owner_uri`.
   Returning the raw two-container map would make every such field resolve

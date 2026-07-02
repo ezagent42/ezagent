@@ -69,10 +69,10 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
       prompt: persona(),
       behaviors: [],
       requested_caps: [
-        %{behavior: Ezagent.Behavior.Template, action: :read},
-        %{behavior: Ezagent.Behavior.Template, action: :write},
-        %{behavior: Ezagent.Behavior.Template, action: :instantiate},
-        %{behavior: Ezagent.Behavior.Template, action: :fork}
+        %{behavior: Ezagent.ActionSet.Template, action: :read},
+        %{behavior: Ezagent.ActionSet.Template, action: :write},
+        %{behavior: Ezagent.ActionSet.Template, action: :instantiate},
+        %{behavior: Ezagent.ActionSet.Template, action: :fork}
       ],
       session_template: nil
     }

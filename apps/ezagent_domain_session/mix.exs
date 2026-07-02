@@ -42,7 +42,7 @@ defmodule EzagentDomainInstanceMessage.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       # ExternalMirror PR-EM-0 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-      # §9): chat depends on external_mirror for the `Ezagent.Behavior.Publisher`
+      # §9): chat depends on external_mirror for the `Ezagent.ActionSet.Publisher`
       # contract module + `Ezagent.Publisher.Event` struct. The dep is
       # unidirectional — external_mirror NEVER depends on chat
       # (Publisher is duck-typed against any publishing Kind URI via
@@ -51,7 +51,7 @@ defmodule EzagentDomainInstanceMessage.MixProject do
       # of references to the publishing Kinds it serves.
       {:ezagent_domain_external_mirror, in_umbrella: true},
       # Domain.Pty PR-B (2026-05-21 SPEC v1): Chat's Application
-      # registers `Ezagent.Behavior.Pty` against `Ezagent.Entity.Agent`
+      # registers `Ezagent.ActionSet.Pty` against `Ezagent.Entity.Agent`
       # — the Kind ↔ Behavior binding belongs in the app that defines
       # the Kind. Behavior module itself lives in ezagent_domain_pty.
       # Tier-2 sibling dep (no cycle: domain_pty → core only).

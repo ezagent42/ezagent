@@ -40,19 +40,19 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   test "Ezagent.Kind.Runtime references Behavior.workspace_scoped?/1" do
     source = File.read!(runtime_path())
 
-    assert source =~ "Ezagent.Behavior.workspace_scoped?",
+    assert source =~ "Ezagent.ActionSet.workspace_scoped?",
            "runtime.ex must consult Behavior.workspace_scoped?/1 at step 5.6"
   end
 
   test "every production Behavior implements required_caps/0" do
     # SPEC 2026-05-29 (lifecycle migration): developer Behaviors are now
     # authored via `use Ezagent.Lifecycle` (or the engine `use
-    # Ezagent.Behavior`), which EMITS `@behaviour Ezagent.Behavior`
+    # Ezagent.ActionSet`), which EMITS `@behaviour Ezagent.ActionSet`
     # inside the macro's `__using__` quote — so a static source-grep for
-    # a line-anchored `@behaviour Ezagent.Behavior` literal no longer
+    # a line-anchored `@behaviour Ezagent.ActionSet` literal no longer
     # finds production Behaviors (only the macro source itself). Discover
     # via runtime reflection instead: every loaded module that declares
-    # the `Ezagent.Behavior` behaviour is a production Behavior, and the
+    # the `Ezagent.ActionSet` behaviour is a production Behavior, and the
     # macro's @before_compile injects `required_caps/0` for it. This
     # check verifies the function is actually exported (catches a
     # regression where the macro stops injecting it, or a hand-rolled
@@ -69,10 +69,10 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
 
     behavior_modules =
       for {module, _file} <- :code.all_loaded(),
-          Ezagent.Behavior in module_behaviours(module),
+          Ezagent.ActionSet in module_behaviours(module),
           # The engine macro module + the Lifecycle macro module declare
           # the behaviour on themselves but are not production Behaviors.
-          module not in [Ezagent.Behavior, Ezagent.Lifecycle],
+          module not in [Ezagent.ActionSet, Ezagent.Lifecycle],
           # PRODUCTION only — the original source-scan deliberately
           # excluded `test/`. Reflection over `:code.all_loaded` also sees
           # test-fixture mock Behaviors (e.g. CapabilityRegistryTest's

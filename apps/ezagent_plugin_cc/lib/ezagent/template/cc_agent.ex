@@ -784,7 +784,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp valid_extension_id?(_), do: false
 
   # `destroy_config_dir/2` — `rm -rf <config_dir>`. Called at agent
-  # teardown by `Ezagent.Behavior.Sandbox.invoke(:destroy, ...)`.
+  # teardown by `Ezagent.ActionSet.Sandbox.invoke(:destroy, ...)`.
   #
   # Defense-in-depth (PR-3 DD-5): the path MUST equal the canonical TARGET for
   # this agent_uri — checked by the core authority `Ezagent.Sandbox.ConfigDir`
@@ -810,7 +810,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   # --- PTY-orphan-restart 2026-05-26 — re-spawn the claude PTY on boot ------
   #
-  # Invoked by `Ezagent.Behavior.Sandbox`'s post_init/2 continuation
+  # Invoked by `Ezagent.ActionSet.Sandbox`'s post_init/2 continuation
   # after the Agent Kind has been rehydrated from snapshot on a phx
   # restart. We check whether the PtyServer (which OWNS the claude TUI
   # subprocess) is alive for this agent_uri; if absent, we re-run the

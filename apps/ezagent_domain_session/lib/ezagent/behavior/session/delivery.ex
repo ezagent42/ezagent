@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session.Delivery do
+defmodule Ezagent.ActionSet.Session.Delivery do
   @moduledoc false
 
   require Logger
@@ -47,7 +47,7 @@ defmodule Ezagent.Behavior.Session.Delivery do
         rescue
           e ->
             Logger.warning(
-              "Ezagent.Behavior.Session: notify mention_failed raised for " <>
+              "Ezagent.ActionSet.Session: notify mention_failed raised for " <>
                 "#{URI.to_string(dropped_uri)}: #{Exception.message(e)}"
             )
         end
@@ -97,7 +97,7 @@ defmodule Ezagent.Behavior.Session.Delivery do
       })
     else
       Logger.warning(
-        "Ezagent.Behavior.Session: refusing cross-WORKSPACE session forward " <>
+        "Ezagent.ActionSet.Session: refusing cross-WORKSPACE session forward " <>
           "#{URI.to_string(source_session_uri)} -> #{URI.to_string(target_session_uri)} " <>
           "(no designed use case; #154 甲-4 same-workspace guard)"
       )
@@ -276,7 +276,7 @@ defmodule Ezagent.Behavior.Session.Delivery do
   # System-principal elimination (#154 甲-4) — the cross-session forward
   # presents a narrow `session.send` cap on the CONCRETE target session,
   # granted_by the SOURCE session (a real entity; provenance-only). The
-  # behavior axis IS concrete (`Ezagent.Behavior.Session`, the registered
+  # behavior axis IS concrete (`Ezagent.ActionSet.Session`, the registered
   # `:send` Behavior in THIS app — same as the merged 甲-3 chat-reply
   # pattern) so the cap is least-privilege on every axis: only `session.send`
   # into this exact target session.
@@ -286,7 +286,7 @@ defmodule Ezagent.Behavior.Session.Delivery do
       %Ezagent.Capability{
         Ezagent.Capability.cap(
           :session,
-          Ezagent.Behavior.Session,
+          Ezagent.ActionSet.Session,
           :send,
           Ezagent.URI.instance(target_session_uri),
           Ezagent.Capability.workspace_of(target_session_uri)

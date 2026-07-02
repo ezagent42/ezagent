@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Manage do
+defmodule Ezagent.ActionSet.Manage do
   @moduledoc """
   Uniform management surface registered on EVERY Kind (#533 §3.4/§3.5).
 
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.Manage do
     `Lifecycle.destroy/2` REJECTS self-destroy, the handler returns its reply
     and schedules the destroy on a detached Task (an EXTERNAL caller → passes
     the self-destroy guard) — the same "terminate-after-reply" pattern as
-    `Ezagent.Behavior.Terminable`.
+    `Ezagent.ActionSet.Terminable`.
   - **`:reconfigure`** — live re-materialize from new `template_data`
     (#533 §3.5). It writes the new data to this behaviour's own `:spec`
     slice and runs the Kind's Template Class `reconfigure/4` hook. The
@@ -122,7 +122,7 @@ defmodule Ezagent.Behavior.Manage do
 
           {:error, reason} ->
             Logger.warning(
-              "Ezagent.Behavior.Manage: Lifecycle.destroy(#{URI.to_string(self_uri)}) " <>
+              "Ezagent.ActionSet.Manage: Lifecycle.destroy(#{URI.to_string(self_uri)}) " <>
                 "returned #{inspect(reason)} after manage.delete"
             )
         end

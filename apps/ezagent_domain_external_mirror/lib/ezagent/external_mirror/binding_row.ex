@@ -5,7 +5,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
 
   **Pure data module.** The Session Kind's `:external_mirror` slice
   is the source of truth per P3; rows here are the durable projection
-  written by `Ezagent.Behavior.ExternalMirror.invoke(:bind, ...)` and
+  written by `Ezagent.ActionSet.ExternalMirror.invoke(:bind, ...)` and
   deleted by `:unbind`. Read at boot by `init_slice/1` (Session-side
   rehydration) AND by `Ezagent.ExternalMirror.BootReconciler`
   (cross-session safety net).
@@ -67,7 +67,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   @doc """
   Insert a binding row. Caller passes already-derived fields; this
   function does not re-derive workspace / IDs (the action body owns
-  that — see `Ezagent.Behavior.ExternalMirror.invoke(:bind, ...)`).
+  that — see `Ezagent.ActionSet.ExternalMirror.invoke(:bind, ...)`).
 
   Returns `{:ok, row}` on fresh insert, `{:error, changeset}` on
   natural-key collision (the action body MAPS that to `:ok` per the
@@ -174,7 +174,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   The new contract surfaces both cases. Action bodies that expect
   the row to exist (because they just saw it in slice) MUST treat
   `{:ok, :not_found}` as a desync — see
-  `Ezagent.Behavior.ExternalMirror.do_unbind/4`.
+  `Ezagent.ActionSet.ExternalMirror.do_unbind/4`.
   """
   @spec delete_by_id(String.t()) ::
           {:ok, :deleted | :not_found} | {:error, Ecto.Changeset.t()}
@@ -193,7 +193,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
 
   @doc """
   List every binding row for `session_uri`. Used by
-  `Ezagent.Behavior.ExternalMirror.init_slice/1` to rebuild the slice
+  `Ezagent.ActionSet.ExternalMirror.init_slice/1` to rebuild the slice
   on Session Kind init.
   """
   @spec list_for_session(URI.t() | String.t()) :: [t()]
@@ -368,7 +368,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
 
   @doc """
   Canonical stringifier for an adapter target id (binary | atom |
-  integer | other). Public so `Ezagent.Behavior.ExternalMirror` reuses
+  integer | other). Public so `Ezagent.ActionSet.ExternalMirror` reuses
   this one copy instead of carrying a byte-identical fork (#25 Phase-3
   FF-1 dedup, PR-3N).
   """

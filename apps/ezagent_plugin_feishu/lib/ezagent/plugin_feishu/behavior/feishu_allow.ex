@@ -39,7 +39,7 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
 
   ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  Migrated from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`
   per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (the simple,
   no-transients, cap-only case). This is a marker Behavior:
   `dispatchable?/0 == false`, a raising handler, no state mutation,
@@ -98,7 +98,7 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
   def create(_args), do: {:ok, %{}}
 
   # Cap-only marker — must define `handle_allow_feishu/2` to satisfy the
-  # `use Ezagent.Behavior` macro's @before_compile invariant (every
+  # `use Ezagent.ActionSet` macro's @before_compile invariant (every
   # declared action requires a matching handler). Raises identically
   # to the legacy contract clause; `dispatchable?/0 == false`
   # prevents the framework dispatcher from ever routing here.

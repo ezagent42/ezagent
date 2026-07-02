@@ -4,7 +4,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6 —
   "session-members-survive-restart").
 
-  This is the architectural-goal invariant test for `Ezagent.Behavior.Session`
+  This is the architectural-goal invariant test for `Ezagent.ActionSet.Session`
   after its conversion to `use Ezagent.Lifecycle` (Phase B, representative
   example C — the RICH case). It pins the two-container `state` / `transients`
   split on a real cold restart and proves the **latent stale-monitor-ref
@@ -32,14 +32,14 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
   (orchestrator admin / template / publisher / …) whose boot drags in
   flavor resolution + orchestrator spawn — orthogonal to the chat
   state/transient split this gate targets. A dedicated Kind composing
-  ONLY `Ezagent.Behavior.Session` isolates the migration's invariant exactly,
+  ONLY `Ezagent.ActionSet.Session` isolates the migration's invariant exactly,
   mirroring the SPEC Phase A fixture pattern
   (`Ezagent.TestSupport.LifecycleFixtureKind`).
   """
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Entity.User
 
@@ -60,7 +60,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
     def type_name, do: :session
 
     @impl Ezagent.Kind
-    def behaviors, do: [Ezagent.Behavior.Session]
+    def behaviors, do: [Ezagent.ActionSet.Session]
 
     @impl Ezagent.Kind
     def persistence, do: {:snapshot, :on_change}

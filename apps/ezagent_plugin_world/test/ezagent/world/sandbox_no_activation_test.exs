@@ -9,7 +9,7 @@ defmodule Ezagent.World.SandboxNoActivationTest do
   needs >5s to launch claude, blowing the ReadyGate budget → the detail page
   showed `:activate_timeout`. The fix reads the agent's sandbox state from the
   durable `:sandbox` slice via the OWNER's non-activating reader
-  (`Ezagent.Behavior.Sandbox.read_persisted_state/1` — live registry lookup
+  (`Ezagent.ActionSet.Sandbox.read_persisted_state/1` — live registry lookup
   first, then the persisted snapshot) WITHOUT activation, after preserving the
   `:sandbox/:read` cap gate via `Ezagent.Identity.caps_authorize?/2`.
 
@@ -94,7 +94,7 @@ defmodule Ezagent.World.SandboxNoActivationTest do
 
   test "the OWNER reader resolves the cold sandbox state directly without activation",
        %{agent: agent, config_dir: config_dir} do
-    state = Ezagent.Behavior.Sandbox.read_persisted_state(agent)
+    state = Ezagent.ActionSet.Sandbox.read_persisted_state(agent)
 
     assert is_map(state)
     assert state.config_dir_path == config_dir
@@ -112,7 +112,7 @@ defmodule Ezagent.World.SandboxNoActivationTest do
 
     wrong_cap = %Ezagent.Capability{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: other_agent,
       workspace_uri: Ezagent.Capability.workspace_of(other_agent),
@@ -134,7 +134,7 @@ defmodule Ezagent.World.SandboxNoActivationTest do
 
     right_cap = %Ezagent.Capability{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(agent),
       workspace_uri: Ezagent.Capability.workspace_of(agent),

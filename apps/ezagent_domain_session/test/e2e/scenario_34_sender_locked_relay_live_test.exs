@@ -37,7 +37,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario34_SenderLockedRelayLiveTest 
        deterministic test GATE (b) `from(relay-codex) → relay-curl`), AND
     2. evidence the body was rendered with the `telephone_hop` prompt template:
        the delivered body text carries the template's literal wrapper text
-       (`Ezagent.Behavior.Session.render_for_delivery/4` injects it at every hop
+       (`Ezagent.ActionSet.Session.render_for_delivery/4` injects it at every hop
        via `Ezagent.Routing.PromptTemplate.render/2`).
 
   Both facts are read via `Ezagent.MessageStore.recent_in_session/2` — the
@@ -252,7 +252,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario34_SenderLockedRelayLiveTest 
 
   # Body text comes back atom-keyed in-process and string-keyed after the
   # Ecto :map round-trip (MessageStore.load) — handle both (mirrors
-  # Ezagent.Behavior.Session.body_text/1).
+  # Ezagent.ActionSet.Session.body_text/1).
   defp body_text(%{text: t}) when is_binary(t), do: t
   defp body_text(%{"text" => t}) when is_binary(t), do: t
   defp body_text(_), do: nil

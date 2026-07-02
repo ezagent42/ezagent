@@ -7,7 +7,7 @@ defmodule EzagentDomainPty.Test.PtyAgentKind do
   def type_name, do: :agent
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Pty]
+  def behaviors, do: [Ezagent.ActionSet.Pty]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

@@ -5,7 +5,7 @@ defmodule EzagentPluginKb.Store do
   repo). This module is pure: it knows nothing about agents, dispatch, or the
   framework — it opens a file path, runs FTS5 SQL, and closes. The framework
   half (path resolution, transient lifecycle, caps) lives in
-  `Ezagent.Behavior.Kb`.
+  `Ezagent.ActionSet.Kb`.
 
   ## What the constraint demands (SPEC rev 3)
 

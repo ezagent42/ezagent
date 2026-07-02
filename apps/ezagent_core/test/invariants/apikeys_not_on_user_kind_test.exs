@@ -3,7 +3,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
   Invariant test for the 2026-05-26 ApiKeys-to-Agent flip.
 
   Allen directive: agents hold their own outbound API credentials;
-  users do NOT. Re-introducing `Ezagent.Behavior.ApiKeys` on the User
+  users do NOT. Re-introducing `Ezagent.ActionSet.ApiKeys` on the User
   Kind would resurrect the per-user credential bag the flip
   dismantled — every CurlAgent would again default to
   `entity://system/user/admin`'s key, every workspace clone would
@@ -13,7 +13,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
 
   This test fails LOUD on any of the structural backslides:
 
-  1. `Ezagent.Behavior.ApiKeys` listed in `Ezagent.Entity.User.behaviors/0`
+  1. `Ezagent.ActionSet.ApiKeys` listed in `Ezagent.Entity.User.behaviors/0`
   2. `CapabilityRegistry.subjects_for_kind(Ezagent.Entity.User)` includes
      an `ApiKeys` subject
   3. `BehaviorRegistry.lookup(Ezagent.Entity.User, :get_api_key)`
@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
   @moduletag :umbrella_only
 
   alias Ezagent.{BehaviorRegistry, CapabilityRegistry}
-  alias Ezagent.Behavior.ApiKeys
+  alias Ezagent.ActionSet.ApiKeys
   alias Ezagent.Entity.User
 
   test "User.behaviors/0 must NOT list Behavior.ApiKeys" do
@@ -103,7 +103,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
       assert {:ok, ApiKeys} = BehaviorRegistry.lookup(kind, action),
              "Post-flip wiring missing: " <>
                "`BehaviorRegistry.lookup(#{inspect(kind)}, #{inspect(action)})` " <>
-               "must return `{:ok, Ezagent.Behavior.ApiKeys}`. Allen 2026-05-26 — " <>
+               "must return `{:ok, Ezagent.ActionSet.ApiKeys}`. Allen 2026-05-26 — " <>
                "ApiKeys moved from User Kind to every agent-flavor Kind. Check " <>
                "EzagentDomainIdentity.Application.register_identity_behaviors/0 " <>
                "(the unified Entity.Agent Kind; curl folded on in PR-6+7)."
@@ -123,7 +123,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
     for kind <- expected_kinds do
       assert ApiKeys in kind.behaviors(),
              "Post-flip slice-init missing: `#{inspect(kind)}.behaviors/0` must " <>
-               "include `Ezagent.Behavior.ApiKeys` so the `:api_keys` slice is " <>
+               "include `Ezagent.ActionSet.ApiKeys` so the `:api_keys` slice is " <>
                "initialised at spawn. Without this, `data_owner/1` resolves to " <>
                ":no_owner for every instance of this Kind and the non-admin " <>
                "creator-grant path silently fails."

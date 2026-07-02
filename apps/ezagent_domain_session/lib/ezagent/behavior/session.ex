@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session do
+defmodule Ezagent.ActionSet.Session do
   @moduledoc """
   Chat Behavior — Decision P2-D2 K-path: 4 actions, registered per-Kind
   subset to realize Decision #61 "Ezagent is router not req/resp app".
@@ -27,14 +27,14 @@ defmodule Ezagent.Behavior.Session do
   on `ctx.kind_module`) into TWO first-class Behaviors, each registered
   for `:receive` on its own Kind:
 
-  - `Ezagent.Behavior.User.Receive` (`user.receive`, on `Entity.User`) —
+  - `Ezagent.ActionSet.User.Receive` (`user.receive`, on `Entity.User`) —
     the passive inbox: records `:last_received` + the cursor-ring
     `:recent_messages` slice; the SliceChange hook emits the notification.
-  - `Ezagent.Behavior.Agent.Receive` (`agent.receive`, on `Entity.Agent`)
+  - `Ezagent.ActionSet.Agent.Receive` (`agent.receive`, on `Entity.Agent`)
     — active live-process delivery: builds a flavor-neutral
     `Ezagent.AgentBridge.Payload` and delivers it via
     `Ezagent.AgentBridge` (the shared
-    `Ezagent.Behavior.Session.Delivery.deliver_agent_receive/2` helper).
+    `Ezagent.ActionSet.Session.Delivery.deliver_agent_receive/2` helper).
 
   The internal `case ctx.kind_module` is RETIRED — dispatch routes
   `:receive` to the right Behavior by Kind via the BehaviorRegistry.
@@ -71,7 +71,7 @@ defmodule Ezagent.Behavior.Session do
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3C — representative
   ## example C: the RICH case)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle` (the
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle` (the
   two-container `%{state, transients}` developer API). The natural split:
 
   - **STATE (persistent — survives restart):** `members`, `owner_uri`,
@@ -100,14 +100,14 @@ defmodule Ezagent.Behavior.Session do
   (drop the dead ref) + `{:set, :last_seen, ...}` (persisted) + the
   `online → false` member flip via `{:set, :members, ...}`.
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Session` — a domain
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Session` — a domain
   module (`apps/ezagent_domain_session`) naming its own domain concept
   (`Chat`), with five actions whose intent the name closely tracks. NO
   violation; kept as-is (a rename would touch the `:chat` snapshot slice
   key + every call site for no clarity gain).
   """
 
-  # The `:session` slice key is AUTO-DERIVED from `Ezagent.Behavior.Session`
+  # The `:session` slice key is AUTO-DERIVED from `Ezagent.ActionSet.Session`
   # (last module segment "Session" → `:session`), so NO `state_slice:`
   # override is needed. The chat→session rename (Allen 2026-06-12, NO
   # back-compat) renamed the slice key from `:chat` to `:session`
@@ -121,7 +121,7 @@ defmodule Ezagent.Behavior.Session do
 
   alias Ezagent.{KindRegistry, Message, MessageStore}
 
-  alias Ezagent.Behavior.Session.{
+  alias Ezagent.ActionSet.Session.{
     ConfigActions,
     Delivery,
     Legends,
@@ -134,7 +134,7 @@ defmodule Ezagent.Behavior.Session do
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 ring depth + `recent_messages_ring_depth/0` MOVED to
-  # `Ezagent.Behavior.User.Receive` (PR-2 split) — the `:recent_messages`
+  # `Ezagent.ActionSet.User.Receive` (PR-2 split) — the `:recent_messages`
   # ring is owned by `user.receive` now, so the SPEC-pinned constant
   # lives with it. Session no longer touches the receive slice.
 
@@ -437,7 +437,7 @@ defmodule Ezagent.Behavior.Session do
   @doc """
   The empty/default `template_working_copy` shape (Phase 7 completion
   SPEC §1.3 / §1.6). Thin delegator to
-  `Ezagent.Behavior.Session.ConfigActions.default_template_working_copy/0`.
+  `Ezagent.ActionSet.Session.ConfigActions.default_template_working_copy/0`.
   """
   @spec default_template_working_copy() :: map()
   defdelegate default_template_working_copy, to: ConfigActions
@@ -446,7 +446,7 @@ defmodule Ezagent.Behavior.Session do
   Read the durable `template_working_copy` field from a `:chat` slice,
   defaulting to `default_template_working_copy/0` when the key is
   absent. Thin delegator to
-  `Ezagent.Behavior.Session.ConfigActions.template_working_copy/1`.
+  `Ezagent.ActionSet.Session.ConfigActions.template_working_copy/1`.
   """
   @spec template_working_copy(map()) :: map()
   defdelegate template_working_copy(chat_slice), to: ConfigActions
@@ -603,10 +603,10 @@ defmodule Ezagent.Behavior.Session do
   #
   # SPLIT OUT (PR-2, im/session/agent decomposition §OQ-4 / §3.3). The old
   # `handle_receive/2` branched internally on `ctx.kind_module`:
-  #   - `Entity.User` → inbox slice → now `Ezagent.Behavior.User.Receive`.
-  #   - `Entity.Agent` → AgentBridge → now `Ezagent.Behavior.Agent.Receive`.
+  #   - `Entity.User` → inbox slice → now `Ezagent.ActionSet.User.Receive`.
+  #   - `Entity.Agent` → AgentBridge → now `Ezagent.ActionSet.Agent.Receive`.
   # The Agent branch's delivery mechanics remain in the shared
-  # `Ezagent.Behavior.Session.Delivery.deliver_agent_receive/2` helper
+  # `Ezagent.ActionSet.Session.Delivery.deliver_agent_receive/2` helper
   # (reused by `Agent.Receive`). The internal `case kind_module` is gone —
   # dispatch routes `:receive` to the right Behavior by Kind.
 
@@ -776,7 +776,7 @@ defmodule Ezagent.Behavior.Session do
   @doc """
   System-internal path to write the durable `template_working_copy`
   field (HIGH-2 hardening). Thin delegator to
-  `Ezagent.Behavior.Session.ConfigActions.system_set_working_copy/2`.
+  `Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy/2`.
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_working_copy(session_uri, working_copy), to: ConfigActions
@@ -821,14 +821,14 @@ defmodule Ezagent.Behavior.Session do
 
   @doc """
   Read the session-scoped legend registry from a `:chat` slice. Thin
-  delegator to `Ezagent.Behavior.Session.Legends.legends_of/1`.
+  delegator to `Ezagent.ActionSet.Session.Legends.legends_of/1`.
   """
   @spec legends_of(map()) :: Legend.registry()
   defdelegate legends_of(chat_slice), to: Legends
 
   @doc """
   Resolve a legend NAME against a `:chat` slice's registry to its entry. Thin
-  delegator to `Ezagent.Behavior.Session.Legends.resolve_legend/2`.
+  delegator to `Ezagent.ActionSet.Session.Legends.resolve_legend/2`.
   """
   @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
   defdelegate resolve_legend(chat_slice, name), to: Legends
@@ -836,7 +836,7 @@ defmodule Ezagent.Behavior.Session do
   @doc """
   Member-list rows with folded legends collapsed (team-routing-unification
   §3.6 fold, PR-6, GATE c). Thin delegator to
-  `Ezagent.Behavior.Session.Legends.fold_members/1`.
+  `Ezagent.ActionSet.Session.Legends.fold_members/1`.
   """
   @spec fold_members(map()) :: [
           {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
@@ -845,7 +845,7 @@ defmodule Ezagent.Behavior.Session do
 
   @doc """
   System-internal path to install the legend registry. Thin delegator to
-  `Ezagent.Behavior.Session.Legends.system_set_legends/2`.
+  `Ezagent.ActionSet.Session.Legends.system_set_legends/2`.
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_legends(session_uri, legends), to: Legends
@@ -870,7 +870,7 @@ defmodule Ezagent.Behavior.Session do
   @doc """
   System-internal path to install the session-scoped named prompt-template map.
   Thin delegator to
-  `Ezagent.Behavior.Session.ConfigActions.system_set_prompt_templates/2`.
+  `Ezagent.ActionSet.Session.ConfigActions.system_set_prompt_templates/2`.
   """
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_prompt_templates(session_uri, prompt_templates), to: ConfigActions

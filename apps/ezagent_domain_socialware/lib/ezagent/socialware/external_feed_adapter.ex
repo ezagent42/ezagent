@@ -5,24 +5,24 @@ defmodule Ezagent.Socialware.ExternalFeedAdapter.Allow do
 
   use Ezagent.Lifecycle
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def actions, do: [:allow_external_feed]
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_subjects,
     do: [{:allow_external_feed, "Authorize the external-feed pull adapter on this session."}]
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def dispatchable?, do: false
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def interface, do: %{}
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def required_caps,
     do: %{allow_external_feed: Ezagent.Capability.cap(:session, __MODULE__, :allow_external_feed)}
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def data_owner(_), do: :any
 end
 
@@ -36,7 +36,7 @@ defmodule Ezagent.Socialware.ExternalFeedAdapter do
 
   @behaviour Ezagent.ExternalMirror.Adapter
 
-  alias Ezagent.Behavior.Session.Delivery
+  alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.Session.ExternalDelivery
   alias Ezagent.Socialware.ExternalFeed
 

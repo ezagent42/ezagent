@@ -61,7 +61,7 @@ defmodule Ezagent.BehaviorRequiredCapsActionInvariantTest do
     _, _ -> %{}
   end
 
-  # Discover every loaded module implementing the `Ezagent.Behavior`
+  # Discover every loaded module implementing the `Ezagent.ActionSet`
   # behaviour. Walks `:code.all_loaded/0` and filters on the
   # `@behaviour` attribute. Same approach the no-wildcard-system-
   # principals invariant test uses to iterate the umbrella.
@@ -77,7 +77,7 @@ defmodule Ezagent.BehaviorRequiredCapsActionInvariantTest do
       {:module, ^mod} ->
         attrs = mod.module_info(:attributes) || []
         behaviours = Keyword.get_values(attrs, :behaviour) |> List.flatten()
-        Ezagent.Behavior in behaviours
+        Ezagent.ActionSet in behaviours
 
       _ ->
         false

@@ -1,7 +1,7 @@
 defmodule Ezagent.Credential.WorkspaceSharedCredentialSourceBehaviorTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.WorkspaceSharedCredentialSource
+  alias Ezagent.ActionSet.WorkspaceSharedCredentialSource
   alias Ezagent.Credential.WorkspaceSharedSource
 
   @workspace_uri URI.new!("workspace://team-a")

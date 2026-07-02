@@ -101,7 +101,7 @@ defmodule EzagentPluginFeishu.MentionParser do
   `legend_triggers`, and the typed token is removed from the URI-mention scan.
 
   `legends` is the session-scoped legend registry (`name => entry`), read off
-  the Chat slice via `Ezagent.Behavior.Session.legends_of/1` by the caller.
+  the Chat slice via `Ezagent.ActionSet.Session.legends_of/1` by the caller.
   Passing `%{}` yields `{extract_agent_mentions(text), []}`.
   """
   @spec extract_mentions(String.t(), map()) :: {[URI.t()], [String.t()]}

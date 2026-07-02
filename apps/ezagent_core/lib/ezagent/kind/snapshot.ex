@@ -706,7 +706,7 @@ defmodule Ezagent.Kind.Snapshot do
   # sentinel nil) drives the effective set. This is the deploy-safety
   # guarantee: reload args can NEVER re-drive a legacy instance's behavior set.
   defp seed_legacy_kind_base(loaded_state) do
-    kind_base_key = Ezagent.Behavior.KindBase.state_slice()
+    kind_base_key = Ezagent.ActionSet.KindBase.state_slice()
 
     if Map.has_key?(loaded_state, kind_base_key) do
       loaded_state

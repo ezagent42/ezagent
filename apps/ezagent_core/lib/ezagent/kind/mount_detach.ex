@@ -51,7 +51,7 @@ defmodule Ezagent.Kind.MountDetach do
 
   require Logger
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Kind.BehaviorSet
 
   @doc """
@@ -380,7 +380,7 @@ defmodule Ezagent.Kind.MountDetach do
   end
 
   defp real_behavior?(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
-    Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+    Code.ensure_loaded?(mod) and Ezagent.ActionSet.new_style?(mod)
   end
 
   defp real_behavior?(_), do: false

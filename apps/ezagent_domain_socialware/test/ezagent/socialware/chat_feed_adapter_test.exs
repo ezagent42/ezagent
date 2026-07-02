@@ -111,7 +111,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
 
     test "live_topics returns the session events topic", %{session: session} do
       assert ChatFeedAdapter.live_topics(session) == [
-               Ezagent.Behavior.Session.Delivery.session_events_topic(session)
+               Ezagent.ActionSet.Session.Delivery.session_events_topic(session)
              ]
     end
 

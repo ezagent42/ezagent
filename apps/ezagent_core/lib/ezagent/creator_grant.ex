@@ -4,7 +4,7 @@ defmodule Ezagent.CreatorGrant do
 
   Creation entries inject business semantics by passing the concrete Kind
   type (`:session`, `:agent`, ...). This module only builds the abstract
-  creator-management authority for `Ezagent.Behavior.Manage`; it does not
+  creator-management authority for `Ezagent.ActionSet.Manage`; it does not
   dispatch or mutate Identity state, keeping core free of identity-domain
   dependencies.
   """
@@ -21,7 +21,7 @@ defmodule Ezagent.CreatorGrant do
       when is_atom(kind) do
     %Ezagent.Capability{
       kind: kind,
-      behavior: Ezagent.Behavior.Manage,
+      behavior: Ezagent.ActionSet.Manage,
       action: :any,
       instance: instance_uri,
       workspace_uri: workspace_uri,

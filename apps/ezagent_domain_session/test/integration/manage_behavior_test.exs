@@ -1,13 +1,13 @@
 defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
   @moduledoc """
-  PR-5b (#533 §3.4/§3.5) — the uniform `Ezagent.Behavior.Manage` surface:
+  PR-5b (#533 §3.4/§3.5) — the uniform `Ezagent.ActionSet.Manage` surface:
   registered on every Kind, `:delete` tears down via `Lifecycle.destroy`,
   `:reconfigure` is the immutable-default until the Template-Class registry
   (PR-5e) provides per-Class hooks.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Manage
+  alias Ezagent.ActionSet.Manage
   alias Ezagent.CapabilityRegistry
   alias Ezagent.{KindRegistry, SpawnRegistry}
   alias Ezagent.Ecto.KindSnapshot
@@ -75,7 +75,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
 
     test "lookup_subject resolves Manage :delete + :reconfigure for every Kind" do
       for kind <- @kinds, action <- [:delete, :reconfigure] do
-        assert {:ok, %{behavior: Ezagent.Behavior.Manage}} =
+        assert {:ok, %{behavior: Ezagent.ActionSet.Manage}} =
                  CapabilityRegistry.lookup_subject(kind, action),
                "Manage #{action} did not resolve for #{inspect(kind)}"
       end
@@ -83,7 +83,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
 
     test "BehaviorRegistry.lookup resolves Manage (dispatch handler) for every Kind" do
       for kind <- @kinds, action <- [:delete, :reconfigure] do
-        assert {:ok, Ezagent.Behavior.Manage} =
+        assert {:ok, Ezagent.ActionSet.Manage} =
                  Ezagent.BehaviorRegistry.lookup(kind, action),
                "Manage #{action} dispatch handler did not resolve for #{inspect(kind)}"
       end

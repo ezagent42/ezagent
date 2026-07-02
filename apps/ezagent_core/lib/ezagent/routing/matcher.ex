@@ -98,7 +98,7 @@ defmodule Ezagent.Routing.Matcher do
   a session — `in_session(session) → [feishu://oc_X]`. The
   `feishu://` Receiver Kind was deleted (SPEC §5.8). Post-PR-EM-6
   the binding lives in the generic `external_mirror_bindings`
-  projection table maintained by `Ezagent.Behavior.ExternalMirror`;
+  projection table maintained by `Ezagent.ActionSet.ExternalMirror`;
   the outbound mirror is a per-binding Worker Kind (one per
   session × adapter × target) — not a routing rule.)
   """

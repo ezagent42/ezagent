@@ -7,7 +7,7 @@ defmodule Ezagent.ExternalMirror.TestSupport.MockPublishAdapter.Allow do
   `Ezagent.Entity.Session` with action `:allow_mock_publish` by
   `EzagentDomainExternalMirror.Application.start/2`.
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_mock_publish]

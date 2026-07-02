@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Template do
+defmodule Ezagent.ActionSet.Template do
   @moduledoc """
   Template Behavior — the dispatchable template-CONTENT Behavior for the
   AgentTemplate + SessionTemplate Kinds (Phase 7 completion SPEC §1.0,
@@ -9,20 +9,20 @@ defmodule Ezagent.Behavior.Template do
   rev 3's persistence plan dispatched `identity.update_slice` to persist
   a template version and routed `add_agent_slot` to a bare
   `template.instantiate` callback. Both targeted **non-existent dispatch
-  actions** — `Ezagent.Behavior.Identity` exposes only
+  actions** — `Ezagent.ActionSet.Identity` exposes only
   `list_caps/has_cap?/grant_cap/revoke_cap` (and its `:identity` slice
   holds CAPS, not template content), and `Ezagent.Kind.Template` is a
   callback-module contract, not a `BehaviorRegistry`-registered action.
 
-  `Ezagent.Behavior.Template` is the fix: a real Behavior carrying the
+  `Ezagent.ActionSet.Template` is the fix: a real Behavior carrying the
   persistent template-CONTENT slice with dispatchable `:read` / `:write`
   / `:instantiate` actions, registered on BOTH Template Kinds.
 
   ## State slice — `:template`
 
   A NEW slice, separate from `:identity`. Both Template Kinds
-  (AgentTemplate / SessionTemplate) carry `Ezagent.Behavior.Identity`
-  for the cap policy AND `Ezagent.Behavior.Template` for the content:
+  (AgentTemplate / SessionTemplate) carry `Ezagent.ActionSet.Identity`
+  for the cap policy AND `Ezagent.ActionSet.Template` for the content:
 
   - `:identity` — the cap policy (`default_caps`, owner-grant caps)
   - `:template` — `%{content: map() | nil}` — the template CONTENT
@@ -119,7 +119,7 @@ defmodule Ezagent.Behavior.Template do
   `Ezagent.Kind.Template` (`template_name/0` + `validate/1` +
   `instantiate/3`) keeps its existing role — the **Template-CLASS**
   contract plugin Template Classes implement (`CcAgent` implements it).
-  `Ezagent.Behavior.Template` is a different thing: a **Behavior on the
+  `Ezagent.ActionSet.Template` is a different thing: a **Behavior on the
   Template KIND** that holds + serves the persistent content slice and
   routes dispatchable actions. The `:instantiate` action *delegates to*
   a `Ezagent.Kind.Template` Class — it does not replace it.
@@ -137,7 +137,7 @@ defmodule Ezagent.Behavior.Template do
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the
   ## pure-state, no-transients case)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. The
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`. The
   `:template` slice is ENTIRELY persistent — its one field `:content` is
   the durable template record that MUST survive a restart (both Template
   Kinds are `{:snapshot, :on_change}`). There are NO transients (no PID /
@@ -149,7 +149,7 @@ defmodule Ezagent.Behavior.Template do
   - `activate/2` is the macro-injected no-op default (nothing transient
     to rebuild).
   - The hand-rolled `def state_slice` is gone — the macro auto-derives
-    `Ezagent.Behavior.Template` → `:template`, the pre-Lifecycle key, so
+    `Ezagent.ActionSet.Template` → `:template`, the pre-Lifecycle key, so
     no `state_slice:` override is needed (SPEC §5 step 2 / §7 OQ-7).
 
   Handlers are unchanged: `:read` / `:write` / `:instantiate` / `:fork`
@@ -158,7 +158,7 @@ defmodule Ezagent.Behavior.Template do
   (the canonical "result-dependent in-handler dispatch" pattern §10 /
   `Chat.handle_send/2`). `data_owner/1` passes through unchanged.
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Template` — a
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Template` — a
   domain module naming its own domain concept (`Template`), four actions
   whose intent the name tracks. NO violation; a rename would touch the
   `:template` snapshot key + every dispatch call site for no gain.
@@ -592,7 +592,7 @@ defmodule Ezagent.Behavior.Template do
           # persisted) but the operator must be able to debug
           # "user forked a template, never got notified".
           Logger.warning(
-            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+            "Ezagent.ActionSet.Template: :agent_template_forked notify to " <>
               "#{URI.to_string(owner_uri)} raised #{inspect(error)}; " <>
               "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
           )
@@ -601,7 +601,7 @@ defmodule Ezagent.Behavior.Template do
       catch
         kind, reason ->
           Logger.warning(
-            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+            "Ezagent.ActionSet.Template: :agent_template_forked notify to " <>
               "#{URI.to_string(owner_uri)} threw #{inspect({kind, reason})}; " <>
               "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
           )

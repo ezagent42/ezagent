@@ -2,7 +2,7 @@ defmodule Ezagent.AgentFlavorResolver do
   @moduledoc """
   Deadlock-safe agent-flavor resolution shared by the session domain's
   `:flavor` UriQuery resolver and the agent domain's delivery seam
-  (`Ezagent.Behavior.Agent.Delivery`).
+  (`Ezagent.ActionSet.Agent.Delivery`).
 
   Lives in `ezagent_domain_agent` so both the session and agent domains reach the
   flavor cluster through the agent domain. Reads only ETS

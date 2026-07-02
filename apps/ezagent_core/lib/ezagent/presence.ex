@@ -101,7 +101,7 @@ defmodule Ezagent.Presence do
   chokepoint, which serves external callers; this helper is reached
   only from trusted in-VM code, so a secondary cap check here was
   dormant (its sole callers passed the trusted bypass) and was removed.
-  The cap-only `Ezagent.Behavior.Presence` marker that the dormant check
+  The cap-only `Ezagent.ActionSet.Presence` marker that the dormant check
   consumed was deleted in the #154 cleanup (2026-06-20).
 
   The URI scheme is still validated: only `entity://user/...` and

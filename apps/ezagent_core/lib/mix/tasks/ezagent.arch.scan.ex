@@ -63,7 +63,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   ]
 
   @spawn_fresh_sanctioned [
-    # PR-2 config-evolve — shifted +6 by adding `Ezagent.Behavior.ConfigEvolve`
+    # PR-2 config-evolve — shifted +6 by adding `Ezagent.ActionSet.ConfigEvolve`
     # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
     # PR-6 (im/session/agent decomposition) — shifted +41/+40 by splitting
     # `Agent.behaviors/0` into `base_behaviors/0` + `curl_behaviors/0` +
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # rewording on `Agent.behaviors/0` (standalone curl Kind now DELETED). SAME
     # sanctioned defs/call, one line lower.
     # PR-A (#53 agent→session decouple) — shifted -1 by removing
-    # `Ezagent.Behavior.Session` from `Agent.base_behaviors/0`. SAME sanctioned
+    # `Ezagent.ActionSet.Session` from `Agent.base_behaviors/0`. SAME sanctioned
     # `spawn_fresh/4` call site + `@spec` + `def`, one line higher.
     # PR-9a (#53 physical split) — `entity/agent.ex` relocated VERBATIM to the
     # new `ezagent_domain_agent` app (module name FROZEN); content unchanged so
@@ -81,7 +81,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
     # anchors lower; the spawn-fresh ownership boundary is unchanged.
     # CR-governance (SPEC 2026-06-26 rev 3) — shifted +6 by adding
-    # `Ezagent.Behavior.ConfigGovernance` (+ its comment block) to
+    # `Ezagent.ActionSet.ConfigGovernance` (+ its comment block) to
     # `Agent.base_behaviors/0`, the same kind of insertion config-evolve made.
     # SAME sanctioned `spawn_fresh/4` call site + `@spec` + `def`, six lines
     # lower; the spawn-fresh ownership boundary is unchanged.
@@ -114,7 +114,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 169},
     # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
     # the echo worked-example moduledoc line was condensed to a
-    # `Ezagent.Behavior.PyAgent` reference (net -1 line ABOVE this comment).
+    # `Ezagent.ActionSet.PyAgent` reference (net -1 line ABOVE this comment).
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 453}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
@@ -192,7 +192,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "Schema" => [{:changeset, 2}],
     "Ecto" => [{:changeset, 2}],
     "Lifecycle" => [{:create, 1}, {:activate, 2}, {:deactivate, 2}, {:destroy, 1}],
-    "Behavior" => [{:required_caps, 0}],
+    "ActionSet" => [{:required_caps, 0}],
     # `use Mix.Task` obligates `run/1` (the `@impl Mix.Task` callback). Two
     # one-shot snapshot-migration tasks sharing the SAME thin `run/1` dispatch
     # skeleton (parse switches → `cond` → `Ezagent.Migration.RepoOnly.run/1`) is

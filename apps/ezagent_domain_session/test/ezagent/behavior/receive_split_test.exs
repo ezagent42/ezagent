@@ -1,12 +1,12 @@
-defmodule Ezagent.Behavior.ReceiveSplitTest do
+defmodule Ezagent.ActionSet.ReceiveSplitTest do
   @moduledoc """
   PR-2 (im/session/agent decomposition §OQ-4 / §3.3) — the architectural
   gate for splitting the single `:receive` action (which used to branch
-  internally on `ctx.kind_module` inside `Ezagent.Behavior.Session`) into
+  internally on `ctx.kind_module` inside `Ezagent.ActionSet.Session`) into
   TWO first-class Behaviors registered per-Kind:
 
-    - `Ezagent.Behavior.User.Receive`  (`user.receive`,  on `Entity.User`)
-    - `Ezagent.Behavior.Agent.Receive` (`agent.receive`, on `Entity.Agent`)
+    - `Ezagent.ActionSet.User.Receive`  (`user.receive`,  on `Entity.User`)
+    - `Ezagent.ActionSet.Agent.Receive` (`agent.receive`, on `Entity.Agent`)
 
   These tests FAIL if the split regresses: if `:receive` reappears on
   `Behavior.Session`, if the internal `case kind_module` is reintroduced,
@@ -18,9 +18,9 @@ defmodule Ezagent.Behavior.ReceiveSplitTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.{BehaviorRegistry, Message}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
-  alias Ezagent.Behavior.User.Receive, as: UserReceive
-  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.User.Receive, as: UserReceive
+  alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
   describe "registry routes :receive per-Kind to the two new Behaviors" do

@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Ezagent.Credential.AdoptStartupTest do
   `:set_default_credential_source` Behavior. That dispatch needs TWO registrations that
   only land when their owning apps boot:
 
-    * the `Ezagent.Behavior.UserDefaultCredentialSource` action registered on the User
+    * the `Ezagent.ActionSet.UserDefaultCredentialSource` action registered on the User
       Kind — owned by `:ezagent_domain_identity`;
     * the `:flavor` `Ezagent.UriQuery` resolver (source-flavor validation) — owned by
       `:ezagent_domain_session`.
@@ -51,7 +51,7 @@ defmodule Mix.Tasks.Ezagent.Credential.AdoptStartupTest do
     # `:ezagent_domain_identity` registered the action on the User Kind. The registry
     # resolves the action → Behavior module; a missing registration returns `:error`
     # (the same lookup the dispatch runtime performs at step 6).
-    assert {:ok, Ezagent.Behavior.UserDefaultCredentialSource} =
+    assert {:ok, Ezagent.ActionSet.UserDefaultCredentialSource} =
              Ezagent.BehaviorRegistry.lookup(
                Ezagent.Entity.User,
                :set_default_credential_source

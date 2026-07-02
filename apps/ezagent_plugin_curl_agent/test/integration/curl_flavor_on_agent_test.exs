@@ -23,7 +23,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Kind, KindRegistry}
-  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
+  alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias Ezagent.Message
 
   defp wait_until(fun, attempts \\ 100)
@@ -263,8 +263,8 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
     test "the curl behavior binding lives on Entity.Agent (standalone curl Kind deleted)" do
       # PR-6+7 — the standalone curl Kind is DELETED; curl actions resolve on
       # the UNIFIED Entity.Agent Kind, the sole curl path (no rollback window).
-      for action <- Ezagent.Behavior.CurlAgent.actions() do
-        assert {:ok, Ezagent.Behavior.CurlAgent} =
+      for action <- Ezagent.ActionSet.CurlAgent.actions() do
+        assert {:ok, Ezagent.ActionSet.CurlAgent} =
                  Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, action)
       end
     end

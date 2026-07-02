@@ -500,7 +500,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
   end
 
   # PTY-orphan-restart 2026-05-26 — `ensure_subprocess_alive/2` is the
-  # respawn hook `Ezagent.Behavior.Sandbox.post_init/2` calls after a
+  # respawn hook `Ezagent.ActionSet.Sandbox.post_init/2` calls after a
   # phx restart when the Agent Kind has been rehydrated but the
   # claude PtyServer has not been re-spawned.
   describe "ensure_subprocess_alive/2 — PTY-orphan-restart 2026-05-26" do

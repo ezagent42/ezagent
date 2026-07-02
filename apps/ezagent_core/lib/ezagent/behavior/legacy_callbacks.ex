@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.LegacyCallbacks do
+defmodule Ezagent.ActionSet.LegacyCallbacks do
   @moduledoc false
 
   def inject(env, action_names, interface, cap_subjects, actions) do

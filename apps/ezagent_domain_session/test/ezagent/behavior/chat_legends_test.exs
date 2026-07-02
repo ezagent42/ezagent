@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ChatLegendsTest do
+defmodule Ezagent.ActionSet.ChatLegendsTest do
   @moduledoc """
   team-routing-unification §3.6 (PR-6) — the domain seam between the Chat
   session slice (where the session-scoped legend registry lives, alongside
@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.Legend
 
   defp uri(s), do: URI.new!(s)

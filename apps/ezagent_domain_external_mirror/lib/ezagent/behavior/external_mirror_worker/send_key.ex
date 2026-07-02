@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorker.SendKey do
+defmodule Ezagent.ActionSet.ExternalMirrorWorker.SendKey do
   @moduledoc """
-  Pure send-key derivation for `Ezagent.Behavior.ExternalMirrorWorker`
+  Pure send-key derivation for `Ezagent.ActionSet.ExternalMirrorWorker`
   — extracts the composite dedupe key `{message_id, send_cursor}` from a
   publisher event's chat slice (#25 Phase-3, PR-3O).
 

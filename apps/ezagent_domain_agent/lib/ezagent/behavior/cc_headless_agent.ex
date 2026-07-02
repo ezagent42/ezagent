@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.CcHeadlessAgent do
+defmodule Ezagent.ActionSet.CcHeadlessAgent do
   @moduledoc """
   Stateful `cc-headless` behavior on the unified Agent Kind.
 

@@ -33,12 +33,12 @@ defmodule Ezagent.Entity.AgentTest do
       # active only on instances that capture the matching explicit
       # `:behaviors` set; legacy nil-`:kind_base` agents resolve to BASE.
       base = [
-        Ezagent.Behavior.Identity,
-        Ezagent.Behavior.Sandbox,
-        Ezagent.Behavior.ApiKeys,
-        Ezagent.Behavior.CredentialGrant,
-        Ezagent.Behavior.ConfigEvolve,
-        Ezagent.Behavior.ConfigGovernance
+        Ezagent.ActionSet.Identity,
+        Ezagent.ActionSet.Sandbox,
+        Ezagent.ActionSet.ApiKeys,
+        Ezagent.ActionSet.CredentialGrant,
+        Ezagent.ActionSet.ConfigEvolve,
+        Ezagent.ActionSet.ConfigGovernance
       ]
 
       assert Agent.base_behaviors() == base
@@ -58,8 +58,8 @@ defmodule Ezagent.Entity.AgentTest do
 
       assert MapSet.new(Agent.behaviors()) == expected_behaviors
 
-      assert Agent.curl_behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
-      assert Agent.cc_headless_behaviors() == base ++ [Ezagent.Behavior.CcHeadlessAgent]
+      assert Agent.curl_behaviors() == base ++ [Ezagent.ActionSet.CurlAgent]
+      assert Agent.cc_headless_behaviors() == base ++ [Ezagent.ActionSet.CcHeadlessAgent]
     end
 
     test "persistence/0 is {:snapshot, :on_change} (CLI persistence fix 2026-05-25)" do

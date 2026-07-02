@@ -6,7 +6,7 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
   §9 PR-EM-2 acceptance bar (test 7):
 
   - `Ezagent.Entity.ExternalMirrorWorker.behaviors/0` includes
-    `Ezagent.Behavior.ExternalMirrorWorker`.
+    `Ezagent.ActionSet.ExternalMirrorWorker`.
   - Plus structural cap-shape pins:
     - `Behavior.ExternalMirrorWorker.cap_subjects/0` includes the
       `:publish` action with a non-empty description.
@@ -22,9 +22,9 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
   use ExUnit.Case, async: true
 
   describe "ExternalMirrorWorker Kind composition" do
-    test "behaviors/0 returns [Ezagent.Behavior.ExternalMirrorWorker]" do
+    test "behaviors/0 returns [Ezagent.ActionSet.ExternalMirrorWorker]" do
       assert Ezagent.Entity.ExternalMirrorWorker.behaviors() ==
-               [Ezagent.Behavior.ExternalMirrorWorker]
+               [Ezagent.ActionSet.ExternalMirrorWorker]
     end
 
     test "type_name/0 is :external_mirror_worker" do
@@ -53,26 +53,26 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
 
   describe "ExternalMirrorWorker Behavior shape" do
     test "actions/0 is [:publish]" do
-      assert Ezagent.Behavior.ExternalMirrorWorker.actions() == [:publish]
+      assert Ezagent.ActionSet.ExternalMirrorWorker.actions() == [:publish]
     end
 
     test "state_slice/0 is :external_mirror_worker" do
-      assert Ezagent.Behavior.ExternalMirrorWorker.state_slice() == :external_mirror_worker
+      assert Ezagent.ActionSet.ExternalMirrorWorker.state_slice() == :external_mirror_worker
     end
 
     test "cap_subjects/0 includes :publish with a non-empty description" do
-      subjects = Ezagent.Behavior.ExternalMirrorWorker.cap_subjects()
+      subjects = Ezagent.ActionSet.ExternalMirrorWorker.cap_subjects()
       assert {:publish, desc} = List.keyfind(subjects, :publish, 0)
       assert is_binary(desc) and byte_size(desc) > 0
     end
 
     test "data_owner/1 on a worker URI returns :no_owner (SPEC §4.3 — framework-internal)" do
       worker_uri = Ezagent.URI.new!("entity://default/worker/em_deadbeefcafe")
-      assert Ezagent.Behavior.ExternalMirrorWorker.data_owner(worker_uri) == :no_owner
+      assert Ezagent.ActionSet.ExternalMirrorWorker.data_owner(worker_uri) == :no_owner
     end
 
     test "data_owner/1 on :any returns :no_owner (bootstrap-admin grant only)" do
-      assert Ezagent.Behavior.ExternalMirrorWorker.data_owner(:any) == :no_owner
+      assert Ezagent.ActionSet.ExternalMirrorWorker.data_owner(:any) == :no_owner
     end
 
     test "post_init/2 schedules the Lifecycle :ezagent_activate continuation" do
@@ -80,7 +80,7 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       # emits `post_init(_, _), do: {:continue, :ezagent_activate}`; the
       # engine drains it → handle_continue runs activate/2 (which resolves
       # the adapter/binding modules, opens the transport, and subscribes).
-      assert Ezagent.Behavior.ExternalMirrorWorker.post_init(%{}, %{}) ==
+      assert Ezagent.ActionSet.ExternalMirrorWorker.post_init(%{}, %{}) ==
                {:continue, :ezagent_activate}
     end
   end
@@ -194,7 +194,7 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
                  :publish
                )
 
-      assert subject.behavior == Ezagent.Behavior.ExternalMirrorWorker
+      assert subject.behavior == Ezagent.ActionSet.ExternalMirrorWorker
     end
   end
 end

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
+defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
   @moduledoc """
   Bug 2 regression (Allen 2026-05-26) — `invoke_shim(:grant_cap, ...)`
   used to store the input `cap` arg as-is into the slice MapSet. Three
@@ -18,7 +18,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.IdentityAdmin
+  alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://system")
@@ -91,13 +91,13 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   # All three input shapes encode the same logical capability:
   #
   #   kind:           :session
-  #   behavior:       Ezagent.Behavior.ExternalMirror
+  #   behavior:       Ezagent.ActionSet.ExternalMirror
   #   instance:       session://system/default/main
   #   workspace_uri:  workspace://system
   defp shape_struct do
     %Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       instance: @session_uri,
       workspace_uri: @workspace_uri,
       granted_by: @granter,
@@ -108,7 +108,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   defp shape_atom_keyed_map do
     %{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       instance: @session_uri,
       workspace_uri: @workspace_uri
     }
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   defp shape_string_keyed_map do
     %{
       "kind" => "session",
-      "behavior" => "Ezagent.Behavior.ExternalMirror",
+      "behavior" => "Ezagent.ActionSet.ExternalMirror",
       "instance" => "session://system/default/main",
       "workspace_uri" => "workspace://system"
     }
@@ -148,7 +148,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert MapSet.size(new_slice.caps) == 1
       assert is_struct(stored, Capability)
       assert stored.kind == :session
-      assert stored.behavior == Ezagent.Behavior.ExternalMirror
+      assert stored.behavior == Ezagent.ActionSet.ExternalMirror
       assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
@@ -165,7 +165,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
              "expected a %Ezagent.Capability{} struct in the slice, got #{inspect(stored)}"
 
       assert stored.kind == :session
-      assert stored.behavior == Ezagent.Behavior.ExternalMirror
+      assert stored.behavior == Ezagent.ActionSet.ExternalMirror
       assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
@@ -186,7 +186,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
                "Got: #{inspect(stored)}"
 
       assert stored.kind == :session
-      assert stored.behavior == Ezagent.Behavior.ExternalMirror
+      assert stored.behavior == Ezagent.ActionSet.ExternalMirror
       assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
@@ -222,7 +222,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       [stored] = caps
       assert is_struct(stored, Capability)
       assert stored.kind == :session
-      assert stored.behavior == Ezagent.Behavior.ExternalMirror
+      assert stored.behavior == Ezagent.ActionSet.ExternalMirror
     end
   end
 
@@ -320,7 +320,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: @session_uri,
         workspace_uri: @workspace_uri
       }
@@ -339,7 +339,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: @session_uri,
         workspace_uri: @workspace_uri
       }
@@ -355,7 +355,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     end
 
     test "rejects atom-keyed map missing :workspace_uri (no silent default)" do
-      bad_input = %{kind: :session, behavior: Ezagent.Behavior.ExternalMirror, instance: :any}
+      bad_input = %{kind: :session, behavior: Ezagent.ActionSet.ExternalMirror, instance: :any}
 
       assert_raise ArgumentError, ~r/missing required `:workspace_uri`/, fn ->
         Capability.normalize!(bad_input, @granter)
@@ -391,7 +391,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       # the grant chokepoint raises.
       bad = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "instance" => "session://system/default/main"
       }
 
@@ -403,7 +403,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "string-keyed map missing \"instance\" raises (codex HIGH-2)" do
       bad = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "workspace_uri" => "workspace://system"
       }
 
@@ -417,7 +417,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       # failures to `:any` — a typoed kind silently became a wildcard cap.
       bad = %{
         "kind" => "totally_made_up_kind_that_no_module_uses_99999",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
@@ -430,7 +430,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "string-keyed map with unknown module \"behavior\" raises (codex HIGH-2)" do
       bad = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.TotallyMadeUpBehavior999",
+        "behavior" => "Ezagent.ActionSet.TotallyMadeUpBehavior999",
         "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
@@ -466,7 +466,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "atom-keyed map propagates :action into the canonical struct" do
       input = %{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         action: :bind,
         instance: @session_uri,
         workspace_uri: @workspace_uri
@@ -487,7 +487,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "string-keyed map propagates \"action\" into the canonical struct" do
       input = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "action" => "bind",
         "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
@@ -501,7 +501,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "string-keyed map with \"action\" => \"any\" stays as :any wildcard" do
       input = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "action" => "any",
         "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
@@ -522,7 +522,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       # reflect the input action.
       input = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "behavior" => "Ezagent.ActionSet.ExternalMirror",
         "action" => "bind",
         "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
@@ -532,7 +532,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       needed_unbind = %{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         action: :unbind,
         instance: @session_uri,
         workspace_uri: @workspace_uri
@@ -550,7 +550,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       cap_at_t1 = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: @session_uri,
         workspace_uri: @workspace_uri,
         granted_by: @granter,
@@ -575,7 +575,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       held_cap = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: @session_uri,
         workspace_uri: @workspace_uri,
         granted_by: @granter,
@@ -608,7 +608,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       cap_bind = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         action: :bind,
         instance: @session_uri,
         workspace_uri: @workspace_uri,
@@ -625,7 +625,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     test "revoke/2 with a :bind-action target leaves a :unbind-action cap intact" do
       cap_bind = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         action: :bind,
         instance: @session_uri,
         workspace_uri: @workspace_uri,

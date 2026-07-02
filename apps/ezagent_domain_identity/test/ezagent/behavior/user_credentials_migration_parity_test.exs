@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
+defmodule Ezagent.ActionSet.UserCredentialsMigrationParityTest do
   @moduledoc """
   P2-b migration parity test (SPEC #445 §7.3 Level 1 — dispatch
   parity).
 
-  Validates that the migrated `Ezagent.Behavior.UserCredentials`
+  Validates that the migrated `Ezagent.ActionSet.UserCredentials`
   produces the same dispatch-visible outcome via the new-contract
   path (`Kind.Runtime.handle_dispatch/4` → `handle_set_password/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration:
@@ -22,7 +22,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.UserCredentials
+  alias Ezagent.ActionSet.UserCredentials
   alias Ezagent.Entity.User
   alias Ezagent.Invocation
   alias Ezagent.Users

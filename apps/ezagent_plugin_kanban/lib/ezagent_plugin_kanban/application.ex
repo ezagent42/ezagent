@@ -51,7 +51,7 @@ defmodule EzagentPluginKanban.Application do
   # `native`。本 `roles/0` code-seed 该 role recipe，`Ezagent.Plugin.boot/1` 经
   # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
-  #   * `behaviors: [Ezagent.Behavior.Kanban]` —— **仅** Kanban。`Connectors`
+  #   * `behaviors: [Ezagent.ActionSet.Kanban]` —— **仅** Kanban。`Connectors`
   #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 24 个动作（含 9 个
   #     连接器动作）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、薄转发给
   #     `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
@@ -68,14 +68,14 @@ defmodule EzagentPluginKanban.Application do
 
   Public so the role test + future create wiring can assert the exact recipe
   without re-deriving the action list (single source of truth =
-  `Ezagent.Behavior.Kanban.actions/0`).
+  `Ezagent.ActionSet.Kanban.actions/0`).
 
   ## `config` — the 9-stage product-dev chain as LAYER-2 DATA (taxonomy §4.1)
 
   The specific 9-stage product-development relay chain + its CI/import defaults
   are BUSINESS semantics — they live HERE as recipe `config` data (layer 2), NOT
   hardcoded in `Behavior.Kanban` (layer 1). The Behavior reads them at runtime
-  via `RecipeRegistry.lookup/1` (see `Ezagent.Behavior.Kanban.Shared.stages/1`).
+  via `RecipeRegistry.lookup/1` (see `Ezagent.ActionSet.Kanban.Shared.stages/1`).
   The Behavior itself stays generic board MECHANISM (columns/cards/stage/claim/
   PR actions + the state machine) with ZERO specific stage names.
 
@@ -89,10 +89,10 @@ defmodule EzagentPluginKanban.Application do
     %{
       name: "kanban-manager",
       passive: true,
-      behaviors: [Ezagent.Behavior.Kanban],
+      behaviors: [Ezagent.ActionSet.Kanban],
       requested_caps:
-        for action <- Ezagent.Behavior.Kanban.actions() do
-          %{behavior: Ezagent.Behavior.Kanban, action: action}
+        for action <- Ezagent.ActionSet.Kanban.actions() do
+          %{behavior: Ezagent.ActionSet.Kanban, action: action}
         end,
       # Layer-2 business semantics (taxonomy red line 1+2): the specific 9-stage
       # product-dev chain + CI/import defaults. Data, NOT Behavior.Kanban code.

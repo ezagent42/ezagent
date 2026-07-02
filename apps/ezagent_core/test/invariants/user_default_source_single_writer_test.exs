@@ -5,7 +5,7 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
 
   After the H2 fix there is NO exported cap-less mutator anywhere: the validate-and-
   persist body (including the `EzagentCore.Repo.insert`) lives INSIDE the cap-checked +
-  audited handler `Ezagent.Behavior.UserDefaultCredentialSource`. The core store
+  audited handler `Ezagent.ActionSet.UserDefaultCredentialSource`. The core store
   `Ezagent.Credential.UserDefaultSource` is a pure data + read module (schema,
   `resolve/3`, a pure `changeset/2` builder, and the `set_via_dispatch/3` dispatch
   helper — none of which write).
@@ -92,7 +92,7 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
            #{Enum.join(violations, "\n")}
 
            The user default-source pointer MUST be persisted ONLY by the cap-checked +
-           audited Behavior `Ezagent.Behavior.UserDefaultCredentialSource`
+           audited Behavior `Ezagent.ActionSet.UserDefaultCredentialSource`
            (:set_default_credential_source). A direct Repo.insert/update/delete here
            bypasses the cap-check + the {:emit, ...} audit. If you need to set the
            pointer, dispatch the action (see `UserDefaultSource.set_via_dispatch/3`).
@@ -174,7 +174,7 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
 
            The workspace-shared source pointer MUST be persisted ONLY by the
            cap-checked + audited Behavior
-           `Ezagent.Behavior.WorkspaceSharedCredentialSource`
+           `Ezagent.ActionSet.WorkspaceSharedCredentialSource`
            (:set_workspace_shared_credential_source). A direct Repo.insert/update/delete
            here bypasses the workspace-admin cap-check and audit effect.
            """

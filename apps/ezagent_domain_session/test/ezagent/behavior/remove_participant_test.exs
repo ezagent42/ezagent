@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.RemoveParticipantTest do
+defmodule Ezagent.ActionSet.RemoveParticipantTest do
   @moduledoc """
   F7 PR-A — `session.remove_participant` (the isomorphic Session primitive),
   NON-spawned slice only. Direct handler invoke tests (no live dispatch
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.RemoveParticipantTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
   setup do

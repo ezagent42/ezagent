@@ -277,19 +277,19 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
 
   describe "wildcard-shaped grant-minter detection (codex P2)" do
     test "exact cap(:user, IdentityAdmin, :grant_cap) is a minter" do
-      assert grant_minting_cap?(Capability.cap(:user, Ezagent.Behavior.IdentityAdmin, :grant_cap))
+      assert grant_minting_cap?(Capability.cap(:user, Ezagent.ActionSet.IdentityAdmin, :grant_cap))
     end
 
     test "exact cap(:user, IdentityAdmin, :revoke_cap) is a minter" do
       assert grant_minting_cap?(
-               Capability.cap(:user, Ezagent.Behavior.IdentityAdmin, :revoke_cap)
+               Capability.cap(:user, Ezagent.ActionSet.IdentityAdmin, :revoke_cap)
              )
     end
 
     test "action-wildcard cap(:user, IdentityAdmin, :any) is a minter (the codex-P2 miss)" do
       # Old exact-match predicate missed this; held :any action matches the
       # concrete :grant_cap need at runtime.
-      assert grant_minting_cap?(Capability.cap(:user, Ezagent.Behavior.IdentityAdmin, :any))
+      assert grant_minting_cap?(Capability.cap(:user, Ezagent.ActionSet.IdentityAdmin, :any))
     end
 
     test "behavior-wildcard cap(:user, :any, :grant_cap) is a minter" do
@@ -297,7 +297,7 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     end
 
     test "kind-wildcard cap(:any, IdentityAdmin, :grant_cap) is a minter" do
-      assert grant_minting_cap?(Capability.cap(:any, Ezagent.Behavior.IdentityAdmin, :grant_cap))
+      assert grant_minting_cap?(Capability.cap(:any, Ezagent.ActionSet.IdentityAdmin, :grant_cap))
     end
 
     test "full bootstrap-wildcard sentinel is NOT counted (governed by no_wildcard gate)" do
@@ -318,12 +318,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     end
 
     test "an unrelated narrow cap (Sandbox :update_config) is NOT a minter" do
-      refute grant_minting_cap?(Capability.cap(:agent, Ezagent.Behavior.Sandbox, :update_config))
+      refute grant_minting_cap?(Capability.cap(:agent, Ezagent.ActionSet.Sandbox, :update_config))
     end
 
     test "a non-IdentityAdmin grant_cap action (different behavior) is NOT a minter" do
       # action axis alone is not enough — the behavior must resolve to IdentityAdmin.
-      refute grant_minting_cap?(Capability.cap(:user, Ezagent.Behavior.Identity, :grant_cap))
+      refute grant_minting_cap?(Capability.cap(:user, Ezagent.ActionSet.Identity, :grant_cap))
     end
   end
 
@@ -349,7 +349,7 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   @grant_needs (for action <- [:grant_cap, :revoke_cap] do
                   %{
                     kind: :user,
-                    behavior: Ezagent.Behavior.IdentityAdmin,
+                    behavior: Ezagent.ActionSet.IdentityAdmin,
                     action: action,
                     instance: Ezagent.URI.new!("entity://system/user/some-user"),
                     workspace_uri: Ezagent.URI.new!("workspace://system")

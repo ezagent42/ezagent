@@ -56,7 +56,7 @@ defmodule Ezagent.NotificationSubscriptions do
 
   Round-1 `has_admin_cap?` matched ANY `workspace_uri: :any` cap.
   Codex round-2: a narrow cross-workspace Chat.send cap would
-  qualify. Now requires `behavior == Ezagent.Behavior.Notifications
+  qualify. Now requires `behavior == Ezagent.ActionSet.Notifications
   AND workspace_uri == :any` — i.e., specifically a notifications-
   admin cap. Tested.
 
@@ -497,7 +497,7 @@ defmodule Ezagent.NotificationSubscriptions do
   defp check_subscribe_cap(%URI{} = stream_uri, %{caps: caps}) do
     needed = %{
       kind: :user,
-      behavior: Ezagent.Behavior.Notifications,
+      behavior: Ezagent.ActionSet.Notifications,
       # SPEC 2026-05-27 capability-action-axis — the action this site
       # gates is `:subscribe` (matches `Notifications.required_caps[:subscribe]`).
       action: :subscribe,
@@ -548,7 +548,7 @@ defmodule Ezagent.NotificationSubscriptions do
     |> normalize_caps()
     |> Enum.any?(fn
       %Ezagent.Capability{
-        behavior: Ezagent.Behavior.Notifications,
+        behavior: Ezagent.ActionSet.Notifications,
         action: :subscribe,
         workspace_uri: :any
       } ->

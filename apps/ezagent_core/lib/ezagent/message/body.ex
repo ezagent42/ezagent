@@ -2,8 +2,8 @@ defmodule Ezagent.Message.Body do
   @moduledoc """
   Pure accessors over a `Ezagent.Message` `body` map and its attachment list.
 
-  Shared by the session render path (`Ezagent.Behavior.Session.Delivery.message_vars/2`)
-  and the agent-delivery payload build (`Ezagent.Behavior.Agent.Delivery`). Lives in
+  Shared by the session render path (`Ezagent.ActionSet.Session.Delivery.message_vars/2`)
+  and the agent-delivery payload build (`Ezagent.ActionSet.Agent.Delivery`). Lives in
   `ezagent_core` so both the session domain and the agent domain reach these helpers
   without a cross-domain compile edge — keeping the `im → session → agent` dependency
   graph acyclic (the PR-9 domain split).

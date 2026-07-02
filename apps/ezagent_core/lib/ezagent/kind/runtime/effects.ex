@@ -8,7 +8,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
 
   Runs the SAME full effect pipeline as the action path
   (`apply_new_contract_effects/4`) for a `handle_signal/2` effect list:
-  `Ezagent.Behavior.apply_effects/2` (state + transient reduced pre-commit,
+  `Ezagent.ActionSet.apply_effects/2` (state + transient reduced pre-commit,
   R10-2 atomicity) → `execute_buckets/2` (Saga → DispatchesReturning →
   Dispatches → Notifies → Events → Terminations, identical order).
 
@@ -35,11 +35,11 @@ defmodule Ezagent.Kind.Runtime.Effects do
   """
   @spec apply_signal_effects(
           %{state: map(), transients: map()},
-          [Ezagent.Behavior.effect()],
+          [Ezagent.ActionSet.effect()],
           map()
         ) :: {:ok, %{state: map(), transients: map()}} | :ignore
   def apply_signal_effects(slice, effects, ctx) when is_list(effects) do
-    case Ezagent.Behavior.apply_effects(effects, slice) do
+    case Ezagent.ActionSet.apply_effects(effects, slice) do
       {:ok, buckets} ->
         case execute_buckets(buckets, ctx) do
           # P2.5c — `execute_buckets/2` now returns the resolved
@@ -73,7 +73,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
   end
 
   # Phase 1.5b — execute the full effect grammar produced by
-  # `Ezagent.Behavior.apply_effects/2`.
+  # `Ezagent.ActionSet.apply_effects/2`.
   #
   # Execution order: State → Halt-check → Saga → Dispatches → Notifies
   # → Events → Terminations. See the moduledoc + SPEC §4.4 for the
@@ -88,7 +88,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
   # both EventLog and re-dispatched Cmds), and the aggregate URI for
   # events (the dispatching Kind's `:self_uri`).
   def apply_new_contract_effects(slice, result, effects, ctx) do
-    case Ezagent.Behavior.apply_effects(effects, slice) do
+    case Ezagent.ActionSet.apply_effects(effects, slice) do
       {:ok, buckets} ->
         case execute_buckets(buckets, ctx) do
           # P2.5c — `execute_buckets/2` returns the RESOLVED + ENRICHED
@@ -149,9 +149,9 @@ defmodule Ezagent.Kind.Runtime.Effects do
       # `:dispatch_returning` bindings without losing the earlier ones
       # (same module, same predicate — idempotent on already-
       # substituted leaves).
-      dispatches = Enum.map(buckets.dispatches, &Ezagent.Behavior.substitute_refs(&1, returning2))
-      notifies = Enum.map(buckets.notifies, &Ezagent.Behavior.substitute_refs(&1, returning2))
-      events = Enum.map(buckets.events, &Ezagent.Behavior.substitute_refs(&1, returning2))
+      dispatches = Enum.map(buckets.dispatches, &Ezagent.ActionSet.substitute_refs(&1, returning2))
+      notifies = Enum.map(buckets.notifies, &Ezagent.ActionSet.substitute_refs(&1, returning2))
+      events = Enum.map(buckets.events, &Ezagent.ActionSet.substitute_refs(&1, returning2))
 
       with :ok <- execute_dispatches(dispatches, ctx) do
         execute_notifies(notifies)
@@ -170,7 +170,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
         deferred =
           buckets
           |> Map.get(:dispatches_after_commit, [])
-          |> Enum.map(&Ezagent.Behavior.substitute_refs(&1, returning2))
+          |> Enum.map(&Ezagent.ActionSet.substitute_refs(&1, returning2))
           |> Enum.map(&enrich_dispatch_cmd(&1, ctx))
 
         {:ok, deferred}
@@ -207,7 +207,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
     # `cmd.target`, `cmd.args`, and `cmd.ctx` all get the substitution.
     resolved_cmd =
       cmd
-      |> Ezagent.Behavior.substitute_refs(returning_acc)
+      |> Ezagent.ActionSet.substitute_refs(returning_acc)
       |> enrich_dispatch_cmd(ctx)
 
     case Ezagent.Router.dispatch(resolved_cmd) do

@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.Workspace.AgentCreate do
+defmodule Ezagent.ActionSet.Workspace.AgentCreate do
   @moduledoc """
-  `:create_agent` provisioning machinery for `Ezagent.Behavior.Workspace`
+  `:create_agent` provisioning machinery for `Ezagent.ActionSet.Workspace`
   (SPEC `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`).
 
-  Extracted VERBATIM from `Ezagent.Behavior.Workspace` (PR-3V, gt_1000
+  Extracted VERBATIM from `Ezagent.ActionSet.Workspace` (PR-3V, gt_1000
   burn-down) to keep the #685 member-CapBAC handlers + revoke sweep and the
   create-agent provisioning concern in separate modules. The Behavior's
   `handle_create_agent/2` engine callback delegates here; the bodies below are
@@ -13,9 +13,9 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   `grant_agent_creator_manage_cap/3` / `resolve_source_config_dir/2`).
   """
 
-  alias Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation
-  alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
-  alias Ezagent.Behavior.Workspace.AgentCreate.RoleStep
+  alias Ezagent.ActionSet.Workspace.AgentCreate.FlavorValidation
+  alias Ezagent.ActionSet.Workspace.AgentCreate.PyTemplate
+  alias Ezagent.ActionSet.Workspace.AgentCreate.RoleStep
 
   # ===================================================================
   # Entry point — the `:create_agent` handler body (delegated to from the
@@ -29,7 +29,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     with {:ok, flavor, name, cwd, with_pty?, from_uri, role} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
          {:ok, flavor_config} <-
-           Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig.coerce(flavor, args),
+           Ezagent.ActionSet.Workspace.AgentCreate.FlavorConfig.coerce(flavor, args),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
          :ok <- validate_from_for_flavor(flavor, from_uri),
@@ -921,7 +921,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   end
 
   defp cascade_flavor_config(flavor, tmpl) do
-    Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig.from_template(flavor, tmpl)
+    Ezagent.ActionSet.Workspace.AgentCreate.FlavorConfig.from_template(flavor, tmpl)
   end
 
   defp require_spawn_caller(spawn_opts) do

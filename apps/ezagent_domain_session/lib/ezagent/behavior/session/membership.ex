@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.Session.Membership do
+defmodule Ezagent.ActionSet.Session.Membership do
   @moduledoc false
   #
-  # Join machinery extracted VERBATIM from `Ezagent.Behavior.Session`
+  # Join machinery extracted VERBATIM from `Ezagent.ActionSet.Session`
   # (PR-3R helper extraction). These functions run in the same Session
   # Kind GenServer process whether defined here or in `Behavior.Session` —
   # the effect lists they BUILD (`{:set, ...}` / `{:set_transient, ...}` /
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.Session.Membership do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.{Delivery, Members}
+  alias Ezagent.ActionSet.Session.{Delivery, Members}
 
   @doc """
   Add a member to the session — the `:join` handler body. Builds the
@@ -497,7 +497,7 @@ defmodule Ezagent.Behavior.Session.Membership do
     # provision), skip — avoids re-grant slice churn on every navigation.
     if already_authorized?(
          Ezagent.Identity.list_caps_for(joiner_uri),
-         Ezagent.Behavior.Session,
+         Ezagent.ActionSet.Session,
          :join,
          session_uri,
          workspace_uri
@@ -633,7 +633,7 @@ defmodule Ezagent.Behavior.Session.Membership do
     # The worker reap (`:strict`) is the AUTHORITY GATE and the only irreversible
     # step. Run it BEFORE the routing prune so a missing teardown cap fails
     # CLOSED with ZERO mutation (the "owner without destroy cap denied" case).
-    case Ezagent.Behavior.Session.Teardown.teardown_participant_resources(
+    case Ezagent.ActionSet.Session.Teardown.teardown_participant_resources(
            participant_uri,
            participant_meta,
            owner_uri,
@@ -665,7 +665,7 @@ defmodule Ezagent.Behavior.Session.Membership do
       {:ok, :membership_only} ->
         # Nothing irreversible happened → the prune is fail-closed/atomic: the
         # member drops ONLY if the prune commits (PR-A behavior preserved).
-        case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+        case Ezagent.ActionSet.Session.RoutingPrune.prune_routing_rules_for(
                session_uri,
                participant_uri
              ) do
@@ -691,7 +691,7 @@ defmodule Ezagent.Behavior.Session.Membership do
   # rows for a now-dead member are harmless and get cleaned out-of-band) rather
   # than aborting the leave into a zombie-member orphan.
   defp prune_after_irreversible_reap(%URI{} = session_uri, %URI{} = participant_uri) do
-    case Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(
+    case Ezagent.ActionSet.Session.RoutingPrune.prune_routing_rules_for(
            session_uri,
            participant_uri
          ) do
@@ -727,7 +727,7 @@ defmodule Ezagent.Behavior.Session.Membership do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :remove_participant,
         session_uri,
         Ezagent.Capability.workspace_of(session_uri)
@@ -741,7 +741,7 @@ defmodule Ezagent.Behavior.Session.Membership do
     cap =
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :join,
         session_uri,
         workspace_uri
@@ -831,10 +831,10 @@ defmodule Ezagent.Behavior.Session.Membership do
 
     actions =
       if confirmed? do
-        Enum.map(@member_chat_actions, &{Ezagent.Behavior.Session, &1}) ++
-          Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+        Enum.map(@member_chat_actions, &{Ezagent.ActionSet.Session, &1}) ++
+          Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
       else
-        Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+        Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
       end
 
     held = Ezagent.Identity.list_caps_for(member_uri)

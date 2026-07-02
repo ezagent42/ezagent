@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
   > **DEPRECATED 2026-05-26 (HIGH-2 completion).**
   >
   > The dispatch-backed equivalents now exist via the new
-  > `Ezagent.Behavior.UserTokens` registered on User Kind. New
+  > `Ezagent.ActionSet.UserTokens` registered on User Kind. New
   > callers should use the auto-derived `mix ezagent` commands; they go
   > through `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC →
   > step 5.6 cross-workspace iso → audit telemetry.

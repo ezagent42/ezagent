@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
+defmodule Ezagent.ActionSet.Publisher.SessionImplMigrationParityTest do
   @moduledoc """
   Phase 2-a r3 (2026-05-28) — migration parity tests for
-  `Ezagent.Behavior.Publisher.SessionImpl` after the SPEC 2026-05-28
+  `Ezagent.ActionSet.Publisher.SessionImpl` after the SPEC 2026-05-28
   new-action-grammar migration.
 
   Covers the three actions (:subscribe_from / :snapshot / :history)
@@ -14,7 +14,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
 
   ## Lifecycle migration (SPEC 2026-05-29) — accessor updates
 
-  After the `use Ezagent.Behavior` → `use Ezagent.Lifecycle` migration:
+  After the `use Ezagent.ActionSet` → `use Ezagent.Lifecycle` migration:
   - `init_slice/1` now returns the two-container `%{state:, transients:}`
     shape; persistent fields (`ring`/`cursor`/`retention`) live under
     `.state`, the transient maps (`subscribers`/`monitors`) under
@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Publisher.SessionImpl
+  alias Ezagent.ActionSet.Publisher.SessionImpl
   alias Ezagent.Publisher.Event
 
   defp empty_slice(extras \\ %{}) do

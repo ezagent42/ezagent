@@ -42,7 +42,7 @@ defmodule Ezagent.UsersTest do
 
       cap = %Ezagent.Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         instance: :any,
         # Phase 9 PR-3 (SPEC v3 §4): caps are now workspace-scoped.
         workspace_uri: URI.new!("workspace://team-alpha"),
@@ -53,7 +53,7 @@ defmodule Ezagent.UsersTest do
       {:ok, decoded} = Users.create(uri, "x", [cap])
 
       assert Enum.any?(decoded.caps, fn c ->
-               c.kind == :workspace and c.behavior == Ezagent.Behavior.Workspace
+               c.kind == :workspace and c.behavior == Ezagent.ActionSet.Workspace
              end)
 
       # PR-甲-2: default_caps is [], so the ONLY cap is the caller-supplied one

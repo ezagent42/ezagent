@@ -25,9 +25,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.{Surface, Turn}
-  alias Ezagent.Behavior.Publisher.SessionImpl
-  alias Ezagent.Behavior.{ExternalMirror, Session, KindBase}
+  alias Ezagent.ActionSet.{Surface, Turn}
+  alias Ezagent.ActionSet.Publisher.SessionImpl
+  alias Ezagent.ActionSet.{ExternalMirror, Session, KindBase}
   alias Ezagent.Entity.Session, as: SessionKind
   alias Ezagent.Entity.User
   alias Ezagent.Invocation
@@ -76,7 +76,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
              ExternalMirror,
              Turn,
              Surface,
-             Ezagent.Behavior.SupervisorApproval
+             Ezagent.ActionSet.SupervisorApproval
            ]
   end
 
@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
              Session,
              Turn,
              Surface,
-             Ezagent.Behavior.SupervisorApproval,
+             Ezagent.ActionSet.SupervisorApproval,
              SessionImpl
            ]
 

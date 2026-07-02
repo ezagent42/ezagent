@@ -200,7 +200,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   `{:error, reason}`. A plain (no-orchestrator) template is a no-op success.
 
   Cap-gated by the caller: the LV's `restart_orchestrator` path checks
-  `Ezagent.Behavior.OrchestratorAdmin :restart` BEFORE dispatching here.
+  `Ezagent.ActionSet.OrchestratorAdmin :restart` BEFORE dispatching here.
   """
   @spec repair_orchestrator(URI.t()) ::
           {:ok, URI.t(), create_session_meta()} | {:error, term()}

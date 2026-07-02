@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.WorkspaceTest do
+defmodule Ezagent.ActionSet.WorkspaceTest do
   # Task #55 round-2 codex (2026-05-27) — `async: false` + `DataCase`
   # because the post-task-#46 `add_member` action now pre-spawns the
   # member's User Kind via `SpawnRegistry.spawn/1`, which expects the
@@ -6,16 +6,16 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   # non-admin URI must seed the user.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Workspace, as: WB
+  alias Ezagent.ActionSet.Workspace, as: WB
 
   # ---------------------------------------------------------------
-  # Test helpers — bridge the new `use Ezagent.Behavior` contract
+  # Test helpers — bridge the new `use Ezagent.ActionSet` contract
   # (handler/2 + effects) back to the legacy `invoke/4` return
   # shape these tests originally expressed. Phase 2-c migration
   # (SPEC 2026-05-28 PR #445) replaced `def invoke(:action, slice,
   # args, ctx)` with `def handle_action(args, ctx)` returning
   # `{:ok, result, effects}`. The runtime applies effects against
-  # the slice in `Ezagent.Behavior.apply_effects/2`; we replicate
+  # the slice in `Ezagent.ActionSet.apply_effects/2`; we replicate
   # that here so the existing test assertions (which compare
   # slices + result maps) keep working without each test having to
   # learn the effect grammar.
@@ -42,7 +42,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     case apply(WB, handler, [args, ctx_with_read]) do
       {:ok, result, effects} when is_list(effects) ->
-        case Ezagent.Behavior.apply_effects(effects, slice) do
+        case Ezagent.ActionSet.apply_effects(effects, slice) do
           {:ok, %{state: new_slice}} ->
             cond do
               # No mutation + handler returned a result map → legacy
@@ -523,7 +523,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
       # `:create_session` as the 11th (PR #408 unified CLI + LV).
       # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
-      # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
+      # and then moved out to `Ezagent.ActionSet.WorkspaceUserAdmin` to
       # give it a distinct cap subject (the Capability struct has no
       # action axis, so co-locating privileged actions with
       # member-management ones is an escalation surface).

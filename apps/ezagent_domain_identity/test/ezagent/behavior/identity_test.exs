@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.IdentityTest do
+defmodule Ezagent.ActionSet.IdentityTest do
   @moduledoc """
   P2-b migration (2026-05-28): rewritten to exercise the new-contract
   `handle_list_caps/2` and `handle_has_cap?/2` handlers. Dispatch
@@ -6,7 +6,7 @@ defmodule Ezagent.Behavior.IdentityTest do
   `identity_migration_parity_test.exs`.
   """
   use ExUnit.Case, async: true
-  alias Ezagent.Behavior.Identity
+  alias Ezagent.ActionSet.Identity
   alias Ezagent.Capability
 
   defp ctx_with_caps(caps) do
@@ -76,7 +76,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
@@ -103,7 +103,7 @@ defmodule Ezagent.Behavior.IdentityTest do
       # PR-OWN-3: split — Identity holds only safe actions;
       # :grant_cap and :revoke_cap moved to IdentityAdmin.
       assert Identity.actions() == [:list_caps, :has_cap?]
-      assert Ezagent.Behavior.IdentityAdmin.actions() == [:grant_cap, :revoke_cap]
+      assert Ezagent.ActionSet.IdentityAdmin.actions() == [:grant_cap, :revoke_cap]
     end
 
     test "state_slice/0" do
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
     test "new-contract markers" do
       assert Identity.__behavior__?() == true
-      assert Ezagent.Behavior.IdentityAdmin.__behavior__?() == true
+      assert Ezagent.ActionSet.IdentityAdmin.__behavior__?() == true
     end
   end
 

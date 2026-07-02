@@ -30,7 +30,7 @@ defmodule Ezagent.SliceChange do
 
   **Nothing else.** No `old_slice`, no `new_slice`, no `result` map,
   no `caller`, no `kind_module`, no `action`. The pre-fix envelope
-  leaked sensitive slice content (e.g. `Ezagent.Behavior.ApiKeys`'s
+  leaked sensitive slice content (e.g. `Ezagent.ActionSet.ApiKeys`'s
   plaintext keys) to any same-VM subscriber of the public-derivable
   topic — bypassing Behavior cap gates like `identity:api_keys:read`.
   Codex r2 (PR #328) flagged this as HIGH-1; Allen approved the

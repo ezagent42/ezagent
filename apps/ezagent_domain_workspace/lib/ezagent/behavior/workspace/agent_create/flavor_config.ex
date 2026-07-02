@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Workspace.AgentCreate.FlavorConfig do
+defmodule Ezagent.ActionSet.Workspace.AgentCreate.FlavorConfig do
   @moduledoc false
 
   # RF-5a — `role` is a create-control key (the role NAME), not flavor config;

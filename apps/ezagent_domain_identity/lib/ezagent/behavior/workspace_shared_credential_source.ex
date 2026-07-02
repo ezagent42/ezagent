@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.WorkspaceSharedCredentialSource do
+defmodule Ezagent.ActionSet.WorkspaceSharedCredentialSource do
   @moduledoc """
   Cap-checked workspace-admin chokepoint for workspace-shared credential sources.
 

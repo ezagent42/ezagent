@@ -27,7 +27,7 @@ defmodule Ezagent.World.KanbanDataTest do
   setup do
     # world has NO dep on the kanban plugin (it dispatches by URI). Under the
     # umbrella the kanban MODULES are in the code path; this test needs only the
-    # `kanban-manager` recipe + the `Ezagent.Behavior.Kanban` module (both
+    # `kanban-manager` recipe + the `Ezagent.ActionSet.Kanban` module (both
     # available without starting the kanban OTP app), so we register the recipe
     # manually below rather than `ensure_all_started(:ezagent_plugin_kanban)`
     # (whose `.app` is absent in a per-app `mix test` context).

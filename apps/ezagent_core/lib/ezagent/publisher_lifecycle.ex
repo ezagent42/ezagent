@@ -1,7 +1,7 @@
 defmodule Ezagent.PublisherLifecycle do
   @moduledoc """
   `Ezagent.PublisherLifecycle` — lifecycle-event primitive for a
-  Kind that implements `Ezagent.Behavior.Publisher`.
+  Kind that implements `Ezagent.ActionSet.Publisher`.
 
   ## Why this exists (task #49 — 2026-05-27)
 
@@ -53,7 +53,7 @@ defmodule Ezagent.PublisherLifecycle do
      in the framework — putting that call site in core keeps the gate
      intact and centralises the framework's PubSub primitives next
      to `Ezagent.SliceChange`.
-  2. The Publisher CONTRACT (`Ezagent.Behavior.Publisher`) lives in
+  2. The Publisher CONTRACT (`Ezagent.ActionSet.Publisher`) lives in
      `ezagent_domain_external_mirror/` for historical reasons (the
      V1 implementer + consumer were both in that domain). The
      lifecycle primitive applies to ANY future Publisher Kind, in
@@ -69,7 +69,7 @@ defmodule Ezagent.PublisherLifecycle do
 
   ## Producer wiring
 
-  `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` calls
+  `Ezagent.ActionSet.Publisher.SessionImpl.on_ready/2` calls
   `broadcast_alive/1` AFTER `Ezagent.ReadyGate.mark_ready/1` has
   flipped this Session to `:ready` and the `PendingDelivery` buffer
   has been drained — every Session reaching `:ready` (boot OR
@@ -88,7 +88,7 @@ defmodule Ezagent.PublisherLifecycle do
 
   ## Consumer wiring
 
-  `Ezagent.Behavior.ExternalMirrorWorker.handle_continue/3` calls
+  `Ezagent.ActionSet.ExternalMirrorWorker.handle_continue/3` calls
   `subscribe/1` against the worker's `session_uri`. On receipt
   of `{:publisher_alive, ^session_uri}` it re-runs
   `subscribe_to_session_publisher/2` — re-attaching the (still-live)

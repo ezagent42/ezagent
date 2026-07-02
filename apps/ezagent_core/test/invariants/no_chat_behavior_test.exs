@@ -4,7 +4,7 @@ defmodule Ezagent.Invariants.NoChatBehaviorTest do
   backward compatibility").
 
   The internal "Chat" Behavior concept does NOT exist any more — it was renamed
-  to `Ezagent.Behavior.Session` (behavior module + nested modules), its `:chat`
+  to `Ezagent.ActionSet.Session` (behavior module + nested modules), its `:chat`
   state-slice key to `:session`, and every `chat.<action>` public spelling to
   `session.<action>`. This invariant locks that in: it scans every production
   (`apps/*/lib`) source file and FAILS if any OUR-behavior "Chat" spelling
@@ -54,7 +54,7 @@ defmodule Ezagent.Invariants.NoChatBehaviorTest do
         "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
         "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.session.migrate_grants.ex"
       ],
-      guidance: "Use `Ezagent.Behavior.Session` — the Chat Behavior was renamed."
+      guidance: "Use `Ezagent.ActionSet.Session` — the Chat Behavior was renamed."
     },
     %{
       name: "the :chat action spelling via with_action/3",

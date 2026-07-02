@@ -7,7 +7,7 @@ defmodule Ezagent.ExternalMirror.TestSupport.MockAdapter.Allow do
   Registered against `Ezagent.Entity.Session` with action
   `:allow_mock_em` by `EzagentDomainExternalMirror.Application.start/2`.
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_mock_em]
@@ -44,7 +44,7 @@ end
 
 defmodule Ezagent.ExternalMirror.TestSupport.OtherAdapter.Allow do
   @moduledoc "Paired with `OtherAdapter` (collision tests share the adapter_id so this is functionally identical to MockAdapter.Allow above, but kept distinct for module-identity tests)."
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_mock_em]
@@ -206,7 +206,7 @@ defmodule Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow do
   adapter still declares a `cap_subject/0` so the per-adapter authorization
   cap shape exists.
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_pull_em]

@@ -1,8 +1,8 @@
-defmodule Ezagent.Behavior.Agent.Delivery do
+defmodule Ezagent.ActionSet.Agent.Delivery do
   @moduledoc false
 
   # Agent-domain delivery seam. Owns the agent-branch `:receive` delivery that
-  # `Ezagent.Behavior.Agent.Receive` drives. Relocated (PR-A, #53) out of the
+  # `Ezagent.ActionSet.Agent.Receive` drives. Relocated (PR-A, #53) out of the
   # session-side delivery helper so the agent domain no longer compile-depends
   # on any session Behavior — the prerequisite for the `im → session → agent`
   # acyclic domain split. Builds a flavor-neutral

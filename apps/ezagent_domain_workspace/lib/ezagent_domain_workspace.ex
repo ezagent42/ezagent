@@ -8,7 +8,7 @@ defmodule EzagentDomainWorkspace do
   - `Ezagent.Workspace.Loader` — boot-time re-spawn
   - `Ezagent.Workspace.Store` — Ecto schema
   - `Ezagent.Entity.Workspace` — Kind
-  - `Ezagent.Behavior.Workspace` — Behavior
+  - `Ezagent.ActionSet.Workspace` — Behavior
 
   Phase 6 PR 2: extracted from ezagent_core. See SPEC.
   """

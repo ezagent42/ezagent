@@ -1,8 +1,8 @@
 defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
   @moduledoc """
   Invariant gate (Allen 2026-05-24 PR1) — fork is a GENERIC
-  `Ezagent.Behavior.Template` concern, not a Kind-specific feature. Any
-  Template Kind that lists `Behavior.Template` in its `behaviors/0` MUST
+  `Ezagent.ActionSet.Template` concern, not a Kind-specific feature. Any
+  Template Kind that lists `ActionSet.Template` in its `behaviors/0` MUST
   produce a fork whose `parent_template_uri` points back at the source.
 
   Specifically asserts:
@@ -11,7 +11,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
     `template://agent/<ws>/<new_name>` URI; its `:template` slice carries
     `parent_template_uri == parent_uri`.
   - **SessionTemplate fork lineage** — same invariant via
-    `SessionTemplate.fork/3` (regression — the lift-to-Behavior preserved
+    `SessionTemplate.fork/3` (regression — the lift-to-ActionSet preserved
     the existing contract).
   - **Cap denial — AgentTemplate** — a caller with no AgentTemplate cap
     is denied with `:unauthorized` via dispatch CapBAC.
@@ -24,7 +24,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Behavior, Capability, Invocation, KindRegistry, SpawnRegistry}
+  alias Ezagent.{ActionSet, Capability, Invocation, KindRegistry, SpawnRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate, User}
 
@@ -122,11 +122,11 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
     })
   end
 
-  # A `Behavior.Template` cap on `:agent_template` workspace-bounded.
+  # A `ActionSet.Template` cap on `:agent_template` workspace-bounded.
   defp agent_template_cap do
     %Capability{
       kind: :agent_template,
-      behavior: Behavior.Template,
+      behavior: ActionSet.Template,
       instance: {:within_workspace, @workspace_uri},
       workspace_uri: @workspace_uri,
       granted_by: User.admin_uri(),
@@ -144,7 +144,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
     owner_uri
   end
 
-  describe "AgentTemplate fork lineage (PR1 — fork lifted to Behavior.Template)" do
+  describe "AgentTemplate fork lineage (PR1 — fork lifted to ActionSet.Template)" do
     test "fork records parent_template_uri = the parent's URI" do
       {parent_uri, parent_content} = persist_agent_template("at-fl-parent-#{uniq()}")
       owner_uri = spawn_owner([agent_template_cap()])
@@ -216,7 +216,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
     end
 
     test "fork notifies the fork-owner when owner is a user URI (med-batch MED-3)" do
-      # `Behavior.Template.fork_agent_template/3` MUST surface a
+      # `ActionSet.Template.fork_agent_template/3` MUST surface a
       # `:agent_template_forked` notification to the fork-owner so the
       # user who initiated the fork learns about the new template's URI.
       # Gated by user_uri?/1 — agent-owned forks generate no
@@ -244,19 +244,19 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
                           parent_template_uri: ^parent_uri,
                           new_template_uri: ^fork_uri
                         },
-                        source: Ezagent.Behavior.Template
+                        source: Ezagent.ActionSet.Template
                       }},
                      1_000
     end
   end
 
-  describe "SessionTemplate fork lineage (PR1 regression — shim through Behavior)" do
+  describe "SessionTemplate fork lineage (PR1 regression — shim through ActionSet)" do
     test "fork still records parent_template_uri = the parent's hash URI" do
       {parent_uri, _} = persist_session_parent("st-fl-parent-#{uniq()}")
 
       session_cap = %Capability{
         kind: :session_template,
-        behavior: Behavior.Template,
+        behavior: ActionSet.Template,
         instance: {:within_workspace, @workspace_uri},
         workspace_uri: @workspace_uri,
         granted_by: User.admin_uri(),

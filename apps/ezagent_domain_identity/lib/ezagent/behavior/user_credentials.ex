@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.UserCredentials do
+defmodule Ezagent.ActionSet.UserCredentials do
   @moduledoc """
   User-credential Behavior — operator-facing password mutation on the
   `users` SQLite table.
@@ -60,7 +60,7 @@ defmodule Ezagent.Behavior.UserCredentials do
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`
   §4 + §6.2. The legacy `invoke/4` shim is replaced by
   `handle_set_password/2` returning effects. Slice machinery
@@ -99,7 +99,7 @@ defmodule Ezagent.Behavior.UserCredentials do
   # Explicit `required_caps/0` — the new `caps:` macro grammar
   # accepts `kind: :user` per SPEC §4.3 form 2, but the Phase 1.5
   # macro's auto-derived `required_caps/0` hardcodes the kind axis to
-  # `:any` (see `Ezagent.Behavior.build_required_cap_ast/3`). Keeping
+  # `:any` (see `Ezagent.ActionSet.build_required_cap_ast/3`). Keeping
   # an explicit `def required_caps` overrides the macro derivation
   # (see `maybe_inject_legacy_callbacks` — it skips injection when
   # the callback is already defined) and preserves the historical

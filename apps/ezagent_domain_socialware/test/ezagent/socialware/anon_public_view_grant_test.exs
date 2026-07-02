@@ -28,7 +28,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.{Capability, KindRegistry}
   alias Ezagent.Socialware.{AnonUser, ChatFeed, DefinitionRegistry, Installation}
@@ -87,8 +87,8 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
   defp definition(name, web_anon_access) do
     %{
       name: name,
-      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
-      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
+      shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
       visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
     }
   end
@@ -124,7 +124,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
     %{caps: caps} = Ezagent.Users.get_by_uri(anon_uri)
 
     Enum.find(caps, fn
-      %Capability{behavior: Ezagent.Behavior.Session, action: :join} -> true
+      %Capability{behavior: Ezagent.ActionSet.Session, action: :join} -> true
       _ -> false
     end)
   end
@@ -133,7 +133,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
   defp join_need(session_uri) do
     %{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :join,
       instance: Ezagent.URI.instance(session_uri),
       workspace_uri: Capability.workspace_of(session_uri)

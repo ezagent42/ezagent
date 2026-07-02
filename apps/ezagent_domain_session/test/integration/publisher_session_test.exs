@@ -1,6 +1,6 @@
 defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   @moduledoc """
-  Integration test for the Session Kind as a `Ezagent.Behavior.Publisher`
+  Integration test for the Session Kind as a `Ezagent.ActionSet.Publisher`
   implementer — drives the production path:
 
       Kind.spawn(Session) → post_init/2 subscribes to SliceChange topic →

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.SocialwarePublisherRead do
+defmodule Ezagent.ActionSet.SocialwarePublisherRead do
   @moduledoc """
   Socialware publisher READ API — the scoped, fail-closed boundary that lets
   a socialware session's owner/members follow its internal publisher trunk
@@ -38,8 +38,8 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   never `init_slice`/materializes the slice — exactly ONE behavior per Kind
   (the trunk) owns `:publisher`. The handlers READ the slice via
   `ctx.read.(...)` and return it UNCHANGED (no `{:set, ...}` effects). Same
-  registry-only pattern as `Ezagent.Behavior.IdentityAdmin` /
-  `Ezagent.Behavior.UserDefaultCredentialSource`.
+  registry-only pattern as `Ezagent.ActionSet.IdentityAdmin` /
+  `Ezagent.ActionSet.UserDefaultCredentialSource`.
 
   ## `subscribe_from` is DEFERRED (codex rev5 HIGH — post-leave leak)
 
@@ -116,7 +116,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # The reads are EXEMPT from the CapBAC layer (no held cap). The handler
   # below is the SOLE, fail-closed authority. MUST equal `actions/0` (the
   # plugin-check invariant asserts `required_caps keys ∪ cap_exempt == actions`).
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:snapshot, :history]
 
   # `data_owner/1` — grant authority for this behavior's cap subjects.
@@ -135,7 +135,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # nothing, and the cap is never consulted at dispatch because the actions
   # are exempt). `:no_owner` documents "no grantable authority" — exactly
   # correct here.
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def data_owner(_), do: :no_owner
 
   # ----- Handlers (cap-exempt; the live check is the boundary) ----------

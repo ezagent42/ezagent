@@ -117,7 +117,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
       }
 
       assert {:error, {:passive_actor_cannot_join, ^agent_uri}} =
-               Ezagent.Behavior.Session.handle_join(%{member: agent_uri}, join_ctx)
+               Ezagent.ActionSet.Session.handle_join(%{member: agent_uri}, join_ctx)
 
       # (2b) routing resolver universal final-output gate — drops the passive
       # kanban-manager from recipients, using the REAL passive predicate.
@@ -144,7 +144,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
       # Two distinct non-admin users, each holding the kanban member cap on the
       # :agent kind axis (the host is Entity.Agent → required-cap kind resolves
       # to :agent; a :kanban-kind cap would NOT match → false-pass trap).
-      member_cap = Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kanban, :any)
+      member_cap = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kanban, :any)
 
       alice = %{
         caller: URI.new!("entity://#{ws_name}/user/alice"),

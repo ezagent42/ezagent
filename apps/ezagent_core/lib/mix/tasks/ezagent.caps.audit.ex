@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Ezagent.Caps.Audit do
   end
 
   # Collect every loaded module matching `Ezagent.*.Behavior.*` pattern,
-  # plus the bare `Ezagent.Behavior.*` namespace.
+  # plus the bare `Ezagent.ActionSet.*` namespace.
   defp collect do
     :code.all_loaded()
     |> Enum.map(&elem(&1, 0))
@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Ezagent.Caps.Audit do
   defp behavior_module?(module) when is_atom(module) do
     s = Atom.to_string(module)
 
-    String.starts_with?(s, "Elixir.Ezagent.Behavior.") or
+    String.starts_with?(s, "Elixir.Ezagent.ActionSet.") or
       String.contains?(s, ".Behavior.")
   end
 

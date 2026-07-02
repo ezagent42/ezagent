@@ -116,13 +116,13 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
       %Definition{
         name: "socialware",
         bases: [
-          Ezagent.Behavior.Session,
-          Ezagent.Behavior.Publisher.SessionImpl
+          Ezagent.ActionSet.Session,
+          Ezagent.ActionSet.Publisher.SessionImpl
         ],
         shape: [
-          Ezagent.Behavior.Turn,
-          Ezagent.Behavior.Surface,
-          Ezagent.Behavior.SupervisorApproval
+          Ezagent.ActionSet.Turn,
+          Ezagent.ActionSet.Surface,
+          Ezagent.ActionSet.SupervisorApproval
         ],
         adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true}

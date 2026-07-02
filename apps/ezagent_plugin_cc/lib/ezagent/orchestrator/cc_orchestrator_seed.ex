@@ -27,7 +27,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   The seed is boot-time + best-effort. It spawns the AgentTemplate Kind
   (or finds it alive), writes the sandbox files if absent, and dispatches
-  `Ezagent.Behavior.Template` `:write` to populate the `:template`
+  `Ezagent.ActionSet.Template` `:write` to populate the `:template`
   slice. AgentTemplate `:write` is a mutable replace (versionless URI),
   so re-running the seed is harmless.
 
@@ -178,7 +178,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
   # via :sys.get_state on a live AgentTemplate pid).
   #
-  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
   # now `use Ezagent.Lifecycle`, so the `:template` slice is the
   # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
   # framework persists only `:state`; `:content` is fully persistent).
@@ -404,7 +404,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     |> Path.join(@bridge_script)
   end
 
-  # Dispatch `Ezagent.Behavior.Template` `:write` to populate the
+  # Dispatch `Ezagent.ActionSet.Template` `:write` to populate the
   # AgentTemplate's `:template` slice — the canonical persistence path
   # (§1.7 (a)). AgentTemplate `:write` is a mutable replace, so the
   # re-seed on the next boot is idempotent.

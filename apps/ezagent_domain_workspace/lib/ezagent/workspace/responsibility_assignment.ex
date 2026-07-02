@@ -121,12 +121,12 @@ defmodule Ezagent.Workspace.ResponsibilityAssignment do
   @spec supervisor_caps(URI.t()) :: [Capability.t()]
   def supervisor_caps(%URI{} = workspace_uri) do
     [
-      cap(:session, Ezagent.Behavior.Session, :read_unfiltered, workspace_uri),
-      cap(:session, Ezagent.Behavior.Turn, :claim, workspace_uri),
-      cap(:session, Ezagent.Behavior.Turn, :settle, workspace_uri),
-      cap(:session, Ezagent.Behavior.Surface, :approve, workspace_uri),
-      cap(:session, Ezagent.Behavior.Surface, :commit_settlement, workspace_uri),
-      cap(:session, Ezagent.Behavior.SupervisorApproval, :submit_verdict, workspace_uri)
+      cap(:session, Ezagent.ActionSet.Session, :read_unfiltered, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Turn, :claim, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Turn, :settle, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Surface, :approve, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Surface, :commit_settlement, workspace_uri),
+      cap(:session, Ezagent.ActionSet.SupervisorApproval, :submit_verdict, workspace_uri)
     ]
   end
 

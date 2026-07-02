@@ -72,7 +72,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         :"isd-firstinit-#{System.unique_integer([:positive])}"
       )
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
 
@@ -81,14 +81,14 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute Map.has_key?(fresh, :surface)
     assert Map.has_key?(fresh, :session)
     assert Map.has_key?(fresh, :kind_base)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(fresh[:kind_base]) == chat_only
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(fresh[:kind_base]) == chat_only
   end
 
   test "reload prune: a slice for a now-out-of-set behavior is dropped on load (E6/E7 defense-in-depth)" do
     uri =
       Ezagent.URI.session(:system, :default, :"isd-init-#{System.unique_integer([:positive])}")
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
     :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
@@ -110,7 +110,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         :"isd-reload-scope-#{System.unique_integer([:positive])}"
       )
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
     :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
 
@@ -123,10 +123,10 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     reloaded =
       Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{
         behaviors: [
-          Ezagent.Behavior.Session,
-          Ezagent.Behavior.Surface,
+          Ezagent.ActionSet.Session,
+          Ezagent.ActionSet.Surface,
           ProbeBehavior,
-          Ezagent.Behavior.KindBase
+          Ezagent.ActionSet.KindBase
         ]
       })
 
@@ -135,7 +135,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute_received {:probe, :init_slice}
     assert Map.has_key?(reloaded, :session)
     assert Map.has_key?(reloaded, :kind_base)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == chat_only
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded[:kind_base]) == chat_only
 
     assert Ezagent.Kind.BehaviorSet.effective_set(SupersetSessionKind, reloaded) ==
              Enum.uniq(chat_only ++ Ezagent.Kind.BehaviorSet.base_behaviors())
@@ -149,20 +149,20 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         :"isd-reload-bogus-#{System.unique_integer([:positive])}"
       )
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
     :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
 
     reloaded =
       Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{
-        behaviors: [Ezagent.Behavior.Turn]
+        behaviors: [Ezagent.ActionSet.Turn]
       })
 
     assert Map.has_key?(reloaded, :session)
     assert Map.has_key?(reloaded, :kind_base)
     refute Map.has_key?(reloaded, :turns)
     refute Map.has_key?(reloaded, :surface)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == chat_only
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded[:kind_base]) == chat_only
   end
 
   test "LEGACY (pre-P1) snapshot reload: :kind_base-less row keeps ALL declared slices; reload args do NOT prune; :kind_base seeded as legacy sentinel (codex CRITICAL)" do
@@ -181,13 +181,13 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     reloaded =
       Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{
-        behaviors: [Ezagent.Behavior.Session]
+        behaviors: [Ezagent.ActionSet.Session]
       })
 
     assert Map.has_key?(reloaded, :session)
     assert Map.has_key?(reloaded, :surface)
 
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == nil
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded[:kind_base]) == nil
 
     declared = Ezagent.Kind.behaviors_of(SupersetSessionKind)
     effective = Ezagent.Kind.BehaviorSet.effective_set(SupersetSessionKind, reloaded)
@@ -200,7 +200,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     assert Map.has_key?(reloaded2, :session)
     assert Map.has_key?(reloaded2, :surface)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded2[:kind_base]) == nil
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded2[:kind_base]) == nil
   end
 
   test "FIRST spawn with EXPLICIT empty list: NO declared behavior runs create/init_slice, ONLY base slices materialize (E8, codex CRITICAL)" do
@@ -218,7 +218,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute Map.has_key?(fresh, :session)
     refute_received {:probe, :init_slice}
     assert Map.has_key?(fresh, :kind_base)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(fresh[:kind_base]) == []
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(fresh[:kind_base]) == []
   end
 
   test "RELOAD with EXPLICIT empty list: the captured [] is read back as base-only, NOT re-expanded to declared (E8 reload, codex CRITICAL)" do
@@ -238,7 +238,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute Map.has_key?(reloaded, :surface)
     refute Map.has_key?(reloaded, :session)
     assert Map.has_key?(reloaded, :kind_base)
-    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == []
+    assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded[:kind_base]) == []
 
     assert Ezagent.Kind.BehaviorSet.effective_set(SupersetSessionKind, reloaded) ==
              Ezagent.Kind.BehaviorSet.base_behaviors()
@@ -255,10 +255,10 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     uri_str = URI.to_string(uri)
 
     unclosed = [
-      Ezagent.Behavior.Session,
-      Ezagent.Behavior.Turn,
+      Ezagent.ActionSet.Session,
+      Ezagent.ActionSet.Turn,
       ProbeBehavior,
-      Ezagent.Behavior.KindBase
+      Ezagent.ActionSet.KindBase
     ]
 
     err =
@@ -266,7 +266,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: unclosed})
       end
 
-    assert err.missing == [{Ezagent.Behavior.Turn, :surface}]
+    assert err.missing == [{Ezagent.ActionSet.Turn, :surface}]
     assert err.message =~ "Turn"
     assert err.message =~ "surface"
 
@@ -283,7 +283,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         :"isd-optclosed-#{System.unique_integer([:positive])}"
       )
 
-    set = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    set = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: set})
 
@@ -305,7 +305,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
         :"isd-probe-ok-#{System.unique_integer([:positive])}"
       )
 
-    full = [Ezagent.Behavior.Session, ProbeBehavior, Ezagent.Behavior.KindBase]
+    full = [Ezagent.ActionSet.Session, ProbeBehavior, Ezagent.ActionSet.KindBase]
 
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: full})
 
@@ -327,7 +327,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     uri =
       Ezagent.URI.session(:system, :default, :"isd-disp-#{System.unique_integer([:positive])}")
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
@@ -347,7 +347,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "dispatch: the UNIVERSAL Manage behavior still dispatches on a subset instance (E9 exemption)" do
     uri = Ezagent.URI.session(:system, :default, :"isd-mng-#{System.unique_integer([:positive])}")
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
@@ -372,7 +372,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "signal: an out-of-set behavior does NOT run handle_signal/handle_kind_message (E4)" do
     uri = Ezagent.URI.session(:system, :default, :"isd-sig-#{System.unique_integer([:positive])}")
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
@@ -388,7 +388,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     uri =
       Ezagent.URI.session(:system, :default, :"isd-term-#{System.unique_integer([:positive])}")
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
     ref = Process.monitor(pid)
@@ -402,7 +402,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     uri =
       Ezagent.URI.session(:system, :default, :"isd-dstr-#{System.unique_integer([:positive])}")
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
     :ok = GenServer.call(pid, {:ezagent_lifecycle_destroy, :test})
@@ -416,7 +416,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     uri =
       Ezagent.URI.session(:system, :default, :"isd-ready-#{System.unique_integer([:positive])}")
 
-    chat_only = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+    chat_only = [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
     _ = :sys.get_state(pid)

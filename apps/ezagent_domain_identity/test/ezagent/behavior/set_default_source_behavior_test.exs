@@ -32,7 +32,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
   defp set_cap(owner_uri) do
     %Capability{
       kind: :user,
-      behavior: Ezagent.Behavior.UserDefaultCredentialSource,
+      behavior: Ezagent.ActionSet.UserDefaultCredentialSource,
       action: :set_default_credential_source,
       instance: Ezagent.URI.instance(owner_uri),
       workspace_uri: Capability.workspace_of(owner_uri),

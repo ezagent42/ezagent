@@ -51,9 +51,9 @@ defmodule EzagentPluginKb.Application do
   The `kb` role recipe (also the recipe-parity gate's subject).
 
   Public so the role test asserts the exact recipe without re-deriving the
-  action list (single source of truth = `Ezagent.Behavior.Kb`).
+  action list (single source of truth = `Ezagent.ActionSet.Kb`).
 
-    * `behaviors: [Ezagent.Behavior.Kb]` — the sqlite/FTS5 state half
+    * `behaviors: [Ezagent.ActionSet.Kb]` — the sqlite/FTS5 state half
       (actions `:query` + `:ingest`).
     * `requested_caps` = one `%{behavior:, action:}` cap-template per action —
       NOT a bare atom (`Recipe.new/1` rejects non-maps), NOT carrying a `kind`
@@ -68,10 +68,10 @@ defmodule EzagentPluginKb.Application do
     %{
       name: "kb",
       passive: true,
-      behaviors: [Ezagent.Behavior.Kb],
+      behaviors: [Ezagent.ActionSet.Kb],
       requested_caps: [
-        %{behavior: Ezagent.Behavior.Kb, action: :query},
-        %{behavior: Ezagent.Behavior.Kb, action: :ingest}
+        %{behavior: Ezagent.ActionSet.Kb, action: :query},
+        %{behavior: Ezagent.ActionSet.Kb, action: :ingest}
       ]
     }
   end

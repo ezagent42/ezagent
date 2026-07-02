@@ -24,7 +24,7 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
   process tree from the one this test inspects.
   """
   use EzagentCore.DataCase, async: false
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
 
   setup do

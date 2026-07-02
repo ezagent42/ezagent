@@ -146,7 +146,7 @@ defmodule EzagentCli.TreeBuilder do
     #
     # Option key is `:instance_class` (long flag `--instance-class`) to
     # avoid colliding with existing action args named `:template_class`
-    # (e.g. `Ezagent.Behavior.Sandbox.update_config` carries
+    # (e.g. `Ezagent.ActionSet.Sandbox.update_config` carries
     # `template_class:` in its `args` map). The flag is added to every
     # action subcommand uniformly — Optimus rejects conditional-by-
     # scheme options at the spec level.

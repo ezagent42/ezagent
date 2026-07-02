@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.CurlAgent do
+defmodule Ezagent.ActionSet.CurlAgent do
   @moduledoc """
   CurlAgent Behavior — the curl flavor's STATE half on the unified
   `Ezagent.Entity.Agent` Kind.
@@ -26,7 +26,7 @@ defmodule Ezagent.Behavior.CurlAgent do
   agent → plugin allowlist reaches 0). The curl plugin still owns the curl
   flavor WIRING (binds the actions to this Behavior, plus the template /
   adapter / flavor); it now depends on this domain to reference the module.
-  The module name `Ezagent.Behavior.CurlAgent` is frozen (snapshot keys + the
+  The module name `Ezagent.ActionSet.CurlAgent` is frozen (snapshot keys + the
   plugin's binding registration). It depends only on core symbols.
 
   It keeps:
@@ -41,7 +41,7 @@ defmodule Ezagent.Behavior.CurlAgent do
   What it SHEDS is the in-process HTTP round-trip (`run_completion/6` +
   `ApiClient`) — that moved to the adapter. The old `:receive` action is
   GONE: receive now flows through `agent.receive`
-  (`Ezagent.Behavior.Agent.Receive`) → `AgentBridge.deliver` → the curl
+  (`Ezagent.ActionSet.Agent.Receive`) → `AgentBridge.deliver` → the curl
   adapter (the `:in_process_sync` HTTP round-trip).
 
   ## The `:sync_result` seam (the post-HTTP persist step)
@@ -314,7 +314,7 @@ defmodule Ezagent.Behavior.CurlAgent do
             # the step-5.5 authorizer (`granted_via_ctx_caps?`), never routed
             # through `Ezagent.Identity.Grant`.
             #
-            # `behavior: :any` (NOT a literal `Ezagent.Behavior.Session`): this
+            # `behavior: :any` (NOT a literal `Ezagent.ActionSet.Session`): this
             # module lives in the AGENT domain, and a literal session-Behavior
             # reference would violate the im → session → agent acyclic gate
             # (`im_session_agent_acyclic_test`). The needed `:send` behavior is

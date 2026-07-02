@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ApiKeysTest do
+defmodule Ezagent.ActionSet.ApiKeysTest do
   @moduledoc """
   P2-b migration (2026-05-28): rewritten to exercise the new-contract
   `handle_<action>/2` handlers. Dispatch parity via Kind.Runtime lives
@@ -6,7 +6,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.ApiKeys
+  alias Ezagent.ActionSet.ApiKeys
 
   defp ctx_with_keys(keys) do
     %{
@@ -140,7 +140,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
                  "(Agent / CurlAgent / Echo) — required_caps/0 MUST use :any " <>
                  "so a granted cap on any flavor matches. Got: #{inspect(cap)}"
 
-        assert cap.behavior == Ezagent.Behavior.ApiKeys
+        assert cap.behavior == Ezagent.ActionSet.ApiKeys
       end
     end
   end

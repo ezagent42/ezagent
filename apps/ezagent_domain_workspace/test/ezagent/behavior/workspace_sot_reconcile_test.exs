@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
+defmodule Ezagent.ActionSet.WorkspaceSotReconcileTest do
   @moduledoc """
   SoT-load + cold-restart invariant gate for the
-  `Ezagent.Behavior.Workspace` Lifecycle migration (Phase B, SPEC
+  `Ezagent.ActionSet.Workspace` Lifecycle migration (Phase B, SPEC
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6) — the
   EXTERNAL-SoT, NO-TRANSIENTS shape.
 
@@ -31,7 +31,7 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.Workspace, as: WB
+  alias Ezagent.ActionSet.Workspace, as: WB
 
   # Workspace-Behavior-only test Kind. `:ephemeral` mirrors the production
   # `Ezagent.Entity.Workspace`. `uri_from_args/1` lets `Ezagent.Kind.spawn/2`

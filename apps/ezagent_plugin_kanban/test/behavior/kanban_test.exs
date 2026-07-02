@@ -1,11 +1,11 @@
-defmodule Ezagent.Behavior.KanbanTest do
+defmodule Ezagent.ActionSet.KanbanTest do
   @moduledoc """
   Kanban Behavior handler 单元测试（直接调 handler，桩 ctx）。
   增量3：节点扩字段 + 认领/状态/挂载/指标 + per-node 授权 + 不变式。
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Kanban
+  alias Ezagent.ActionSet.Kanban
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @admin_cap Ezagent.Capability.admin_genesis_cap()

@@ -11,7 +11,7 @@
   #   PR-3S: 4 → 3 (extracted Orchestrator.Tools.MemberTemplate, tools.ex 1498 → 938)
   #   PR-3T: 3 → 2 (extracted CcAgent.Spawn, cc_agent.ex 1340 → 917)
   #   PR-3U: 2 → 1 (extracted Workspace.Listing, workspace.ex facade 1055 → 938)
-  # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
+  # Final remaining entrant: `Ezagent.ActionSet.Workspace` (1498) — the
   # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
   #   PR-3V: 1 → 0 (extracted Behavior.Workspace.AgentCreate, behavior/workspace.ex 1498 → 786) — CAMPAIGN COMPLETE
   #   PR-6 (im/session/agent decomposition §3.5): 0 → 1 — the
@@ -169,8 +169,8 @@
   # copy-paste fork of business logic.
   # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
   # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 31 → 30: the legacy
-  # `:curl_agent`-axis companion `Ezagent.Behavior.CurlAgentLegacyConfig` (whose
-  # reset/configure bodies mirrored `Ezagent.Behavior.CurlAgent`) is DELETED with
+  # `:curl_agent`-axis companion `Ezagent.ActionSet.CurlAgentLegacyConfig` (whose
+  # reset/configure bodies mirrored `Ezagent.ActionSet.CurlAgent`) is DELETED with
   # the standalone curl Kind. No rollback window (Allen) — the unified Entity.Agent
   # is the sole curl path, so the duplicate group is gone.
   # PR-6+7 RATCHET-DOWN 31 → 29: (a) the legacy `CurlAgentLegacyConfig` mirror is
@@ -258,9 +258,9 @@
   # own :config_evolve slice).
   # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 135 → 121: both legacy
   # curl shims are DELETED with the standalone curl Kind (no rollback window —
-  # Allen). `Ezagent.Behavior.CurlAgentLegacyReceive` (−7 `{:set,
+  # Allen). `Ezagent.ActionSet.CurlAgentLegacyReceive` (−7 `{:set,
   # :conversation/:last_error/:last_tokens}` sites) and
-  # `Ezagent.Behavior.CurlAgentLegacyConfig` (−7 `{:set}` sites across
+  # `Ezagent.ActionSet.CurlAgentLegacyConfig` (−7 `{:set}` sites across
   # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.

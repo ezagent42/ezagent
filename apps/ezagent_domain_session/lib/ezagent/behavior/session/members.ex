@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session.Members do
+defmodule Ezagent.ActionSet.Session.Members do
   @moduledoc false
 
   alias Ezagent.Routing.Legend

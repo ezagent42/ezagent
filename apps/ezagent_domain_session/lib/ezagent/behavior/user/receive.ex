@@ -1,16 +1,16 @@
-defmodule Ezagent.Behavior.User.Receive do
+defmodule Ezagent.ActionSet.User.Receive do
   @moduledoc """
   `user.receive` — the User Kind's passive-inbox `:receive` Behavior.
 
   ## Why this exists (im/session/agent decomposition — PR-2)
 
-  The single `Ezagent.Behavior.Session.handle_receive/2` used to branch
+  The single `Ezagent.ActionSet.Session.handle_receive/2` used to branch
   internally on `ctx[:kind_module]` (`Entity.User` → inbox slice;
   `Entity.Agent` → AgentBridge). SPEC
   `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
   §OQ-4 / §3.3 splits that one action into TWO first-class Behaviors —
   `user.receive` (this module, passive inbox) and `agent.receive`
-  (`Ezagent.Behavior.Agent.Receive`, active live-process delivery) — each
+  (`Ezagent.ActionSet.Agent.Receive`, active live-process delivery) — each
   registered for `:receive` on its own Kind. They are genuinely different
   (passive inbox vs active process delivery) and are NOT merged. The
   internal `case kind_module` is retired.
@@ -46,7 +46,7 @@ defmodule Ezagent.Behavior.User.Receive do
   This Behavior OWNS the User Kind's receive-state slice. The slice key
   is pinned to `:session` (NOT the auto-derived `:receive`) so the data
   lands in the SAME slice the User Kind's `:receive` wrote to before the
-  split (when it ran under `Ezagent.Behavior.Session`, whose auto-derived
+  split (when it ran under `Ezagent.ActionSet.Session`, whose auto-derived
   slice key is `:session`). Keeping the key avoids a snapshot migration —
   a pre-split User snapshot's `:session` slice (with `:last_received` /
   `:recent_messages`) round-trips unchanged through cold restart. The
@@ -68,7 +68,7 @@ defmodule Ezagent.Behavior.User.Receive do
 
   ## Naming (§11 NP-1/NP-2/NP-3 audit)
 
-  `Ezagent.Behavior.User.Receive` — a domain module
+  `Ezagent.ActionSet.User.Receive` — a domain module
   (`apps/ezagent_domain_session`, the session/im domain) naming
   its own concept; the name tracks the single action's intent
   (`receive`) at the narrowest accurate scope (NP-1), in its own layer's
@@ -86,7 +86,7 @@ defmodule Ezagent.Behavior.User.Receive do
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
   # the `:recent_messages` ring. SPEC-pinned (NOT a runtime config knob —
   # per `feedback_let_it_crash_no_workarounds`). Mirrors the constant that
-  # lived on `Ezagent.Behavior.Session` before the PR-2 split; the ring is
+  # lived on `Ezagent.ActionSet.Session` before the PR-2 split; the ring is
   # now owned here, so the constant moves here with it.
   #
   # Why 20: AdminLive's flash bridge re-fetches the slice on each
@@ -133,7 +133,7 @@ defmodule Ezagent.Behavior.User.Receive do
   @doc """
   Record an inbound session message into the User's inbox slice
   (extracted VERBATIM from the User branch of
-  `Ezagent.Behavior.Session.handle_receive/2`).
+  `Ezagent.ActionSet.Session.handle_receive/2`).
 
   Mutates `:last_received` (message id + arrival timestamp) and pushes a
   `{cursor, msg_id}` tuple onto the cursor-indexed `:recent_messages`

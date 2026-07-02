@@ -6,7 +6,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   The single combined gate (`Recipe.new(recipe)` succeeds with the discriminating
   fields) catches the three plan-folded review corrections at once:
 
-    * BLOCKER-1 — `behaviors: [Ezagent.Behavior.Kanban]` ONLY (NOT `Connectors`,
+    * BLOCKER-1 — `behaviors: [Ezagent.ActionSet.Kanban]` ONLY (NOT `Connectors`,
       which is not a Behavior); all 24 actions resolve through `Behavior.Kanban`.
     * HIGH-1   — `requested_caps` are cap-template MAPS `%{behavior:, action:}`,
       not bare atoms (`Recipe.new/1` `canon_cap` rejects non-maps).
@@ -16,7 +16,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.Recipe
-  alias Ezagent.{Agent.RecipeRegistry, Behavior.Kanban}
+  alias Ezagent.{Agent.RecipeRegistry, ActionSet.Kanban}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @recipe_name "kanban-manager"

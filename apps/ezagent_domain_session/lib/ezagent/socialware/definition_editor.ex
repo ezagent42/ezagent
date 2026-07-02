@@ -392,7 +392,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Ezagent.Behavior.Session.state_slice(), %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
 
         Map.get(chat_slice, :state, chat_slice)
 

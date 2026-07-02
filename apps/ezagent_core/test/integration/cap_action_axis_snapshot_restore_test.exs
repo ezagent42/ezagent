@@ -27,7 +27,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     fresh =
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         action: :any,
         instance: :any,
         workspace_uri: :any,
@@ -53,7 +53,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     # which matches any concrete needed action).
     needed = %{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :send,
       instance: URI.new!("session://team-alpha/default/main"),
       workspace_uri: URI.new!("workspace://team-alpha")
@@ -83,7 +83,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     legacy =
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         action: :any,
         instance: :any,
         workspace_uri: :any,
@@ -106,7 +106,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     legacy =
       %Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
@@ -118,7 +118,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     # Same workspace — match.
     needed_same_ws = %{
       kind: :workspace,
-      behavior: Ezagent.Behavior.Workspace,
+      behavior: Ezagent.ActionSet.Workspace,
       action: :create_session,
       instance: URI.new!("workspace://team-alpha"),
       workspace_uri: URI.new!("workspace://team-alpha")
@@ -130,7 +130,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     # Different workspace — no match (workspace_uri narrowing holds).
     needed_other_ws = %{
       kind: :workspace,
-      behavior: Ezagent.Behavior.Workspace,
+      behavior: Ezagent.ActionSet.Workspace,
       action: :create_session,
       instance: URI.new!("workspace://team-beta"),
       workspace_uri: URI.new!("workspace://team-beta")

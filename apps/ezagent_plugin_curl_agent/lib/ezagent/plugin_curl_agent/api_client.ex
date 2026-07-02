@@ -5,7 +5,7 @@ defmodule Ezagent.PluginCurlAgent.ApiClient do
   DeepSeek's API is OpenAI-shape (`POST /chat/completions` with
   `{model, messages, ...}`) so the same client serves both. To add
   a provider with a different schema, branch in
-  `Ezagent.Behavior.CurlAgent` on `:provider`.
+  `Ezagent.ActionSet.CurlAgent` on `:provider`.
 
   Uses `:httpc` (Erlang stdlib) — same choice as the Feishu plugin
   (Ezagent.PluginFeishu.Client) to avoid adding a top-level HTTP

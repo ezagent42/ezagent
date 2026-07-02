@@ -83,7 +83,7 @@ defmodule Ezagent.Plugin.BootTest do
 
       # PR-5 MEDIUM-4: `boot/1` now behaviour-checks every
       # `agent_flavors/0` entry — `kind` must @behaviour Ezagent.Kind
-      # and `behavior` must @behaviour Ezagent.Behavior. Create real
+      # and `behavior` must @behaviour Ezagent.ActionSet. Create real
       # minimal modules (these registrations land in the global
       # *Registry ETS tables — see the on_exit cleanup below).
       Module.create(
@@ -100,14 +100,14 @@ defmodule Ezagent.Plugin.BootTest do
         Macro.Env.location(__ENV__)
       )
 
-      # `Behavior1` is a real Ezagent.Behavior — including `interface/0`
+      # `Behavior1` is a real Ezagent.ActionSet — including `interface/0`
       # — so anything that enumerates BehaviorRegistry (e.g. the CLI
       # TreeBuilder) never crashes on it even before the on_exit
       # cleanup runs.
       Module.create(
         behavior,
         quote do
-          @behaviour Ezagent.Behavior
+          @behaviour Ezagent.ActionSet
           @impl true
           def actions, do: [:do_thing]
           @impl true
@@ -269,7 +269,7 @@ defmodule Ezagent.Plugin.BootTest do
   end
 
   defmodule OrderBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
     def actions, do: [:ordered_action]
     def required_caps, do: %{}
     def cap_subjects, do: [{:ordered_action, "test fixture — ordering probe"}]

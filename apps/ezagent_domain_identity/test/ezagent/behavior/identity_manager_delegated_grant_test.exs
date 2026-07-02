@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.IdentityManagerDelegatedGrantTest do
+defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
   @moduledoc """
   PR-a (SPEC `docs/superpowers/specs/2026-06-16-dynamic-mount-unmount-entity-model.md`
   §1, Decision #88) — the creator/manager-delegated `grant_cap` path.
@@ -26,7 +26,7 @@ defmodule Ezagent.Behavior.IdentityManagerDelegatedGrantTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.IdentityAdmin
+  alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://team-alpha")

@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.ConfigGovernanceTest do
+defmodule Ezagent.ActionSet.ConfigGovernanceTest do
   @moduledoc """
   Minimal CR (change-request) config governance (SPEC
   `docs/together/2026-06-26/specs/cr-config-governance.md`, rev 3 §9 test plan).
 
-  Drives `Ezagent.Behavior.ConfigGovernance` in isolation by dispatching the CR
+  Drives `Ezagent.ActionSet.ConfigGovernance` in isolation by dispatching the CR
   actions to a spawned Agent Kind, mirroring `config_evolve_test.exs`. Covers the
   lifecycle round-trip (stage → preview → publish → rollback), publish
   idempotency (status-gated), reserved-prefix guard, scope guard, base-drift,

@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Ezagent.Session.MigrateGrants do
   @moduledoc """
   chat→session rename (Allen 2026-06-12, NO back-compat) — one-shot rewrite of
   every persisted capability grant whose `behavior` is the OLD
-  `Ezagent.Behavior.Chat` to the NEW `Ezagent.Behavior.Session`, in both
+  `Ezagent.ActionSet.Chat` to the NEW `Ezagent.ActionSet.Session`, in both
   persisted homes: `users.caps_json` (the SSOT) and the `:identity` slice in
   `kind_snapshots` (the cache).
 

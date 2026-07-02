@@ -12,7 +12,7 @@ defmodule Ezagent.Agent.Recipe.ComposeTest do
   # step (PR-1b).
   #
   # NB: behavior modules used here must be loadable in ezagent_core's own test
-  # context — `Ezagent.Behavior.Sandbox` is core; domain behaviors (Identity,
+  # context — `Ezagent.ActionSet.Sandbox` is core; domain behaviors (Identity,
   # ApiKeys, …) are not loaded here.
 
   defp role do
@@ -21,8 +21,8 @@ defmodule Ezagent.Agent.Recipe.ComposeTest do
         skills: ["orchestrator"],
         plugins: ["np"],
         prompt: "persona",
-        behaviors: [Ezagent.Behavior.Sandbox],
-        requested_caps: [%{behavior: Ezagent.Behavior.Pty, action: :drive}]
+        behaviors: [Ezagent.ActionSet.Sandbox],
+        requested_caps: [%{behavior: Ezagent.ActionSet.Pty, action: :drive}]
       })
 
     role
@@ -31,10 +31,10 @@ defmodule Ezagent.Agent.Recipe.ComposeTest do
   describe "materialize/2" do
     test "composes role behaviors with the flavor's behaviors (union, deduped)" do
       out =
-        Compose.materialize(role(), %{flavor_behaviors: [Ezagent.Behavior.Sandbox, :flavor_b]})
+        Compose.materialize(role(), %{flavor_behaviors: [Ezagent.ActionSet.Sandbox, :flavor_b]})
 
       # role's [Sandbox] ∪ flavor's [Sandbox, :flavor_b], deduped
-      assert Enum.sort(out.behaviors) == Enum.sort([Ezagent.Behavior.Sandbox, :flavor_b])
+      assert Enum.sort(out.behaviors) == Enum.sort([Ezagent.ActionSet.Sandbox, :flavor_b])
     end
 
     test "sandbox CONTENTS are flavor-independent (same role → same content)" do

@@ -30,12 +30,12 @@ defmodule EzagentDomainInstanceMessage.Test.BehaviorInvoker do
       alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
       assert {:ok, new_slice, %{stored: true}} =
-               Invoker.invoke(Ezagent.Behavior.Session, :send, slice, %{message: msg}, ctx)
+               Invoker.invoke(Ezagent.ActionSet.Session, :send, slice, %{message: msg}, ctx)
 
   Or with effect introspection:
 
       assert {:ok, new_slice, result, effects} =
-               Invoker.invoke_with_effects(Ezagent.Behavior.Session, :send, slice, %{message: msg}, ctx)
+               Invoker.invoke_with_effects(Ezagent.ActionSet.Session, :send, slice, %{message: msg}, ctx)
   """
 
   @doc """

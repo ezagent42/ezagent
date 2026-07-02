@@ -66,7 +66,7 @@ defmodule Ezagent.Agent.Recipe.CapMint do
   end
 
   defp behavior_module?(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod),
-    do: Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+    do: Code.ensure_loaded?(mod) and Ezagent.ActionSet.new_style?(mod)
 
   defp behavior_module?(_), do: false
 

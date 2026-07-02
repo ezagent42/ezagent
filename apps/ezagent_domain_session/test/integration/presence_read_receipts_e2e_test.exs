@@ -167,7 +167,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       # Subscribe to session events topic to observe broadcasts
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Session.session_events_topic(session_uri)
+        Ezagent.ActionSet.Session.session_events_topic(session_uri)
       )
 
       # ---------- Phase 1: cc-demo "comes online" via Presence ----------

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Workspace.AgentCreate.PyTemplate do
+defmodule Ezagent.ActionSet.Workspace.AgentCreate.PyTemplate do
   @moduledoc false
 
   # py-agent Task 1.4 — build the persisted `py.agent` template for the

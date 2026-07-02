@@ -51,7 +51,7 @@ defmodule Ezagent.Kind.SnapshotTest do
 
     assert MapSet.size(caps) == 1
     [self_cap] = MapSet.to_list(caps)
-    assert self_cap.behavior == Ezagent.Behavior.Identity
+    assert self_cap.behavior == Ezagent.ActionSet.Identity
     assert self_cap.instance == uri
   end
 
@@ -167,8 +167,8 @@ defmodule Ezagent.Kind.SnapshotTest do
     # onto the loaded state. The saved :identity slice survives; every
     # other Behavior contributes its `init_slice` default.
     #
-    # 2026-05-26: PR #356 (HIGH-2) added `Ezagent.Behavior.UserCredentials`
-    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Allen
+    # 2026-05-26: PR #356 (HIGH-2) added `Ezagent.ActionSet.UserCredentials`
+    # + `Ezagent.ActionSet.UserTokens`, so the merged shape grew. Allen
     # 2026-05-26 ApiKeys-to-Agent flip then REMOVED `:api_keys` from User.
     # Asserting the full structure here keeps the invariant tight —
     # adding a new User-Behavior should force this assertion to be

@@ -55,7 +55,7 @@ defmodule EzagentPluginCc.Application do
   (2026-05-21). cc plugin now spawns its claude PTY by building the
   full cmd string and calling `Ezagent.Domain.Pty.start/2`.
 
-  `Ezagent.Behavior.Pty` Agent-Kind registration moved to
+  `Ezagent.ActionSet.Pty` Agent-Kind registration moved to
   `EzagentDomainInstanceMessage.Application.start/2` in PR-B; `EzagentPluginCc`
   has no PTY-Behavior registration of its own — hence `behaviors/0`
   keeps the `use Ezagent.Plugin` default `[]`.
@@ -64,7 +64,7 @@ defmodule EzagentPluginCc.Application do
   use Application
   use Ezagent.Plugin
 
-  alias Ezagent.Behavior.CcHeadlessAgent, as: CcHeadlessBehavior
+  alias Ezagent.ActionSet.CcHeadlessAgent, as: CcHeadlessBehavior
 
   # --- OTP Application -------------------------------------------------
 

@@ -7,14 +7,14 @@ defmodule Ezagent.Lifecycle do
   SPEC: `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`.
   This module is the Phase A foundation — the macro + the engine wiring.
   Phase B migrates the 23 developer Behaviors; Phase C flips the grep
-  gates. Phase A is **additive**: `Ezagent.Behavior` stays as the
+  gates. Phase A is **additive**: `Ezagent.ActionSet` stays as the
   internal engine contract (§10-R3) and every existing Behavior keeps
   working through the old surface unchanged.
 
   ## Compile-down (SPEC §3 / §10-R3)
 
   `use Ezagent.Lifecycle` is a thin code generator over `use
-  Ezagent.Behavior`. It emits `@behaviour Ezagent.Behavior` + the engine
+  Ezagent.ActionSet`. It emits `@behaviour Ezagent.ActionSet` + the engine
   callbacks UNDERNEATH so the engine (`Kind.Server` / `Kind.Runtime` /
   `SnapshotStore`) sees exactly the shape it sees today. The developer
   never names a slice, an invocation, or a snapshot.
@@ -57,7 +57,7 @@ defmodule Ezagent.Lifecycle do
   # ---------------------------------------------------------------
   # Developer-facing callbacks (the Lifecycle contract — SPEC §2).
   # All OPTIONAL except `handle_<action>/2` (enforced by the
-  # `Ezagent.Behavior` `action/3` @before_compile). The macro injects
+  # `Ezagent.ActionSet` `action/3` @before_compile). The macro injects
   # overridable defaults for every coarse + fine hook so a module that
   # omits one compiles cleanly.
   # ---------------------------------------------------------------
@@ -144,7 +144,7 @@ defmodule Ezagent.Lifecycle do
   :last_seen, ...}`). Successor to the engine's `handle_kind_message/3`.
   """
   @callback handle_signal(message :: term(), ctx :: ctx()) ::
-              {:ok, [Ezagent.Behavior.effect()]} | :ignore
+              {:ok, [Ezagent.ActionSet.effect()]} | :ignore
 
   @doc """
   `pre_handle/3` — fine interception BEFORE the matched
@@ -160,9 +160,9 @@ defmodule Ezagent.Lifecycle do
   @callback post_handle(
               action :: atom(),
               result :: term(),
-              effects :: [Ezagent.Behavior.effect()],
+              effects :: [Ezagent.ActionSet.effect()],
               ctx :: ctx()
-            ) :: {:ok, term(), [Ezagent.Behavior.effect()]} | :cont
+            ) :: {:ok, term(), [Ezagent.ActionSet.effect()]} | :cont
 
   @optional_callbacks [
     create: 1,
@@ -193,17 +193,17 @@ defmodule Ezagent.Lifecycle do
 
     quote do
       # The engine contract — compile-down target (§10-R3). `use
-      # Ezagent.Behavior` injects `action/3`, `@before_compile
-      # Ezagent.Behavior`, and the `__behavior__?/0` marker the runtime
+      # Ezagent.ActionSet` injects `action/3`, `@before_compile
+      # Ezagent.ActionSet`, and the `__behavior__?/0` marker the runtime
       # dispatches through.
-      use Ezagent.Behavior
-      @behaviour Ezagent.Behavior
+      use Ezagent.ActionSet
+      @behaviour Ezagent.ActionSet
       @behaviour Ezagent.Lifecycle
 
       # The Lifecycle-surface sibling-read declaration (SPEC §2.2). A
       # converted module writes `reads_siblings [:api_keys]`; this emits
       # `def reads_siblings, do: [:api_keys]` which the runtime reads via
-      # `Ezagent.Behavior.reads_siblings_of/1` to surface `ctx.siblings`.
+      # `Ezagent.ActionSet.reads_siblings_of/1` to surface `ctx.siblings`.
       import Ezagent.Lifecycle, only: [reads_siblings: 1]
 
       # Auto-derive `state_slice/0` from the module name unless an
@@ -211,7 +211,7 @@ defmodule Ezagent.Lifecycle do
       # override path is overridable so the author may still hand-roll it.
       @ezagent_lifecycle_state_slice_override unquote(state_slice_override)
 
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def state_slice do
         Ezagent.Lifecycle.__derive_state_slice__(
           __MODULE__,
@@ -230,7 +230,7 @@ defmodule Ezagent.Lifecycle do
       # `transients` container always starts EMPTY here and is filled by
       # activate/2 in the post_init continuation — that is the structural
       # guarantee that a transient is rebuilt on every start.
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def init_slice(args) do
         Ezagent.Lifecycle.__init_slice__(__MODULE__, args)
       end
@@ -238,13 +238,13 @@ defmodule Ezagent.Lifecycle do
       # post_init/2 schedules the unified activate step. Always emitted
       # (the engine probes function_exported?/3) so EVERY Lifecycle
       # module rebuilds transients on every start with no author opt-in.
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def post_init(_args, _slice), do: {:continue, :ezagent_activate}
 
       # handle_continue/3 runs the author's activate/2 and writes the
       # rebuilt transients (+ any reconciled state) back into the
       # two-container slice. Runs PRE-`:ready` (§10-R1).
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def handle_continue(:ezagent_activate, slice, ctx) do
         Ezagent.Lifecycle.__run_activate__(__MODULE__, slice, ctx)
       end
@@ -267,7 +267,7 @@ defmodule Ezagent.Lifecycle do
       # ever-created marker. This is the engine's destroy-vs-deactivate
       # signal (§2 + §OTP): graceful stop → `terminate/3` → `deactivate`;
       # permanent deletion → explicit destroy call → `destroy`.
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def terminate(reason, slice, ctx) do
         Ezagent.Lifecycle.__run_deactivate__(__MODULE__, reason, slice, ctx)
       end
@@ -287,13 +287,13 @@ defmodule Ezagent.Lifecycle do
       #
       # NOTE: `handle_kind_message/3` is a convention probed by
       # `Kind.Server` via `function_exported?/3`, NOT a formal
-      # `@callback` on `Ezagent.Behavior`, so no `@impl` annotation.
+      # `@callback` on `Ezagent.ActionSet`, so no `@impl` annotation.
       def handle_kind_message(message, slice, ctx) do
         Ezagent.Lifecycle.__run_signal__(__MODULE__, message, slice, ctx)
       end
 
       # on_ready/2 → activated/2 (§9 OQ-5, post-`:ready`).
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def on_ready(slice, ctx) do
         Ezagent.Lifecycle.__run_activated__(__MODULE__, slice, ctx)
       end
@@ -302,7 +302,7 @@ defmodule Ezagent.Lifecycle do
       # the author's `detached/2` hook (side-effecting cleanup of TRANSIENT
       # handles) when this behavior is detached from a LIVE instance. The
       # framework drops the slice afterward, so the return is :ok-only.
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def on_detach(slice, ctx) do
         Ezagent.Lifecycle.__run_detached__(__MODULE__, slice, ctx)
       end
@@ -335,7 +335,7 @@ defmodule Ezagent.Lifecycle do
   """
   defmacro reads_siblings(keys) do
     quote do
-      @impl Ezagent.Behavior
+      @impl Ezagent.ActionSet
       def reads_siblings, do: unquote(keys)
     end
   end

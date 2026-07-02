@@ -15,9 +15,9 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
 
   But Behaviors store sensitive material in slices:
 
-  - `Ezagent.Behavior.ApiKeys` slice — plaintext API keys
+  - `Ezagent.ActionSet.ApiKeys` slice — plaintext API keys
     (`apps/ezagent_domain_identity/lib/ezagent/behavior/api_keys.ex`)
-  - `Ezagent.Behavior.Identity` slice — cap grants
+  - `Ezagent.ActionSet.Identity` slice — cap grants
   - Future: any credential, token, secret stored on a Kind
 
   With slice content in the broadcast envelope, ANY subscriber bypasses
@@ -77,7 +77,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
       :ok =
         SliceChange.emit(%{
           self_uri: uri,
-          kind_module: Ezagent.Behavior.ApiKeys,
+          kind_module: Ezagent.ActionSet.ApiKeys,
           action: :put_api_key,
           slice_key: :api_keys,
           # The canary — if this string ever lands in a subscriber's
@@ -146,7 +146,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
       :ok =
         SliceChange.emit(%{
           self_uri: uri,
-          kind_module: Ezagent.Behavior.ApiKeys,
+          kind_module: Ezagent.ActionSet.ApiKeys,
           action: :put_api_key,
           slice_key: :api_keys,
           old_slice: %{},

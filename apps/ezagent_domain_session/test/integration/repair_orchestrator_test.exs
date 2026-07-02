@@ -37,7 +37,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
         |> Map.put(:member_declarations, [])
         |> Map.put(:session_template_uri, nil)
 
-      {:ok, _} = Ezagent.Behavior.Session.system_set_working_copy(session_uri, cleared)
+      {:ok, _} = Ezagent.ActionSet.Session.system_set_working_copy(session_uri, cleared)
 
       assert [] == Map.get(Session.read_template_working_copy(session_uri), :member_declarations)
 

@@ -2,7 +2,7 @@ defmodule Ezagent.ExternalMirror.FacadeNonceTable do
   @moduledoc """
   `Ezagent.ExternalMirror.FacadeNonceTable` — forgery-proof handoff between
   `Ezagent.ExternalMirror.bind/5` (the facade) and
-  `Ezagent.Behavior.ExternalMirror.invoke(:bind, ...)` (the action body).
+  `Ezagent.ActionSet.ExternalMirror.invoke(:bind, ...)` (the action body).
 
   ## Why this exists (codex r3 CRIT fix, 2026-05-25)
 

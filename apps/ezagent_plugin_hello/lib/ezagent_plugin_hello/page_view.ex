@@ -19,7 +19,7 @@ defmodule EzagentPluginHello.PageView do
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
 
-  alias Ezagent.Behavior.Surface
+  alias Ezagent.ActionSet.Surface
 
   @impl true
   def id, do: :hello_page

@@ -44,7 +44,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   # ---------------------------------------------------------------
 
   defmodule ProbeBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     @impl true
     def actions, do: [:ping]
@@ -52,7 +52,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     @impl true
     def cap_subjects, do: [{:ping, "test fixture"}]
 
-    # #108 — required-callback parity with the live `Ezagent.Behavior` contract
+    # #108 — required-callback parity with the live `Ezagent.ActionSet` contract
     # (`required_caps/0` is NOT in `@optional_callbacks`). The keys-equal-actions
     # invariant (`keys(required_caps) ∪ cap_exempt_actions == actions`) requires
     # the single `:ping` action to carry a cap declaration. Previously omitted —

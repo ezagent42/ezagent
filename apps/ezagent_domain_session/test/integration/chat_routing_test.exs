@@ -21,7 +21,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   # DBConnection.OwnershipError, dropping the :chat_message broadcast.
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.{Session, User}
 
   setup do

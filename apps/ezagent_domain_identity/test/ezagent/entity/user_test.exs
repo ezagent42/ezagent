@@ -58,12 +58,12 @@ defmodule Ezagent.Entity.UserTest do
     assert User.type_name() == :user
 
     assert User.behaviors() == [
-             Ezagent.Behavior.Identity,
-             Ezagent.Behavior.UserCredentials,
-             Ezagent.Behavior.UserTokens
+             Ezagent.ActionSet.Identity,
+             Ezagent.ActionSet.UserCredentials,
+             Ezagent.ActionSet.UserTokens
            ]
 
-    refute Ezagent.Behavior.ApiKeys in User.behaviors(),
+    refute Ezagent.ActionSet.ApiKeys in User.behaviors(),
            "ApiKeys MUST live on Agent Kind only (Allen 2026-05-26 flip); " <>
              "re-introducing it on User Kind would resurrect the per-user " <>
              "credential bag the flip dismantled."

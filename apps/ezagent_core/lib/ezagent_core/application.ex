@@ -135,14 +135,14 @@ defmodule EzagentCore.Application do
     # window).
 
     # PR #146 (SPEC v2 §5.7) — synthetic singleton `routing-admin://default`
-    # dissolved. `Ezagent.Behavior.Routing` is registered against the
+    # dissolved. `Ezagent.ActionSet.Routing` is registered against the
     # scope-owning Kinds (Workspace + Session + System) in their respective
     # domain Applications and here for System. Global rules dispatch to
     # `system://routing/default`, spawned below.
     :ok = register_system_kind()
 
     # #154 cleanup (2026-06-20) — register the cap-only
-    # `Ezagent.Behavior.Notifications` `:subscribe` cap against User. This
+    # `Ezagent.ActionSet.Notifications` `:subscribe` cap against User. This
     # is the ONE live cap-only subject: `Ezagent.NotificationSubscriptions`
     # authorizes cross-entity subscribe/admin against it. `Behavior.Presence`
     # and the dead `:notify` action were deleted — presence is VM-internal
@@ -224,7 +224,7 @@ defmodule EzagentCore.Application do
   # sentinels (`system://bootstrap/default`, `system://migration-<id>`)
   # spawn through the standard SpawnRegistry path.
   defp register_system_kind do
-    alias Ezagent.Behavior.Routing, as: RB
+    alias Ezagent.ActionSet.Routing, as: RB
     alias Ezagent.CapabilityRegistry
     alias Ezagent.Entity.System, as: SK
 
@@ -282,7 +282,7 @@ defmodule EzagentCore.Application do
     # unified user-notifications inbox. Registered ONLY against User Kind
     # (agents don't have an inbox; they receive via chat.receive dispatch).
     # CapabilityRegistry handles the `dispatchable?: false` sentinel: the
-    # subjects table gets a `(User, :subscribe, Ezagent.Behavior.Notifications)`
+    # subjects table gets a `(User, :subscribe, Ezagent.ActionSet.Notifications)`
     # entry, but BehaviorRegistry is NOT touched.
     #
     # #154 cleanup (2026-06-20): only `:subscribe` is registered now. It is
@@ -291,7 +291,7 @@ defmodule EzagentCore.Application do
     # action was deleted: notification-push is VM-internal under #154
     # (`Ezagent.Notifications.notify/2` has no cap check), so nothing
     # consumed the `:notify` cap.
-    alias Ezagent.Behavior.Notifications, as: NB
+    alias Ezagent.ActionSet.Notifications, as: NB
 
     :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :subscribe, NB)
 
