@@ -19,7 +19,7 @@ AgentBridge domain facade。
   declared bridge adapter。
 - 新增 `EzagentPluginCc.BridgeAdapter`。
 - 在 `EzagentPluginCc.Application.agent_flavors/0` 中声明 cc adapter。
-- 将 `Ezagent.Behavior.Chat` 的 Agent receive 分支改为调用
+- 将 `Ezagent.ActionSet.Chat` 的 Agent receive 分支改为调用
   `Ezagent.AgentBridge.deliver/2`。
 
 兼容性：

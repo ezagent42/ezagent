@@ -222,7 +222,7 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
   `:create_user` into the same Behavior as `:add_member`/`:list_members`
   meant any holder of any Workspace cap could also create users.
   PR #356 worked around by carving `:create_user` into its OWN
-  Behavior (`Ezagent.Behavior.WorkspaceUserAdmin`) — but the underlying
+  Behavior (`Ezagent.ActionSet.WorkspaceUserAdmin`) — but the underlying
   cap-shape limitation persists for every multi-action Behavior in
   the codebase (Routing, ApiKeys, UserTokens, Feishu UserBinding, …
   PR #355 Feishu UserBinding has the same flaw at lower stakes).
@@ -480,7 +480,7 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   `cli-sweep/deprecate-bypass-tasks`):**
 
   - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
-    `Ezagent.Behavior.Routing` exists; `mix ezagent routing add_rule`
+    `Ezagent.ActionSet.Routing` exists; `mix ezagent routing add_rule`
     dispatches against `system://routing/default`). **DELETED in
     cleanup-4 (2026-06-08)** — the deprecation stub was a pure
     `Mix.raise` no-op with no remaining function; its replacement has
@@ -506,10 +506,10 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
     | `mix ezagent.feishu.list` | `mix ezagent workspace list_feishu_bindings --workspace <name>` | ✅ **DONE.** Same Behavior, `:list_feishu_bindings` (read-only). |
     | ~~`mix ezagent.feishu.chat.bind`~~ | ~~`mix ezagent feishu chat_bind`~~ | **OBSOLETE.** Removed in PR-EM-6; chat→session bindings now go via `mix ezagent.external_mirror.bind <session-uri> feishu <chat_id>` (generic ExternalMirror Domain). |
     | ~~`mix ezagent.feishu.chat.unbind`~~ | ~~`mix ezagent feishu chat_unbind`~~ | **OBSOLETE.** Same as above; use `mix ezagent.external_mirror.unbind`. |
-    | `mix ezagent.user.create` | `mix ezagent workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.Behavior.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
-    | `mix ezagent.user.set_password` | `mix ezagent user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix ezagent`). |
+    | `mix ezagent.user.create` | `mix ezagent workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.ActionSet.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
+    | `mix ezagent.user.set_password` | `mix ezagent user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.ActionSet.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix ezagent`). |
     | `mix ezagent.agent.create` | `mix ezagent workspace create_agent --workspace <name> --flavor … --name …` | ✅ **ACTION EXISTS** (PR #344 / `Behavior.Workspace :create_agent`); legacy task still calls the action body directly (single-path invariant test enforces). Auto-derived `mix ezagent workspace create_agent` already wired. |
-    | `mix ezagent.user.token mint` | `mix ezagent user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
+    | `mix ezagent.user.token mint` | `mix ezagent user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.ActionSet.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
     | `mix ezagent.user.token list` | `mix ezagent user list_tokens --user <uri>` | ✅ **DONE (2026-05-26).** Same Behavior, `:list_tokens` action. Returns id / label / timestamps only — NEVER plain (regression test asserts the response shape has no `:plain` or `:token_hash` keys). |
     | `mix ezagent.user.token revoke` | `mix ezagent user revoke_token --user <uri> --token-id …` | ✅ **DONE (2026-05-26).** Same Behavior, `:revoke_token` action. Idempotent (legacy `Token.revoke/1` returns `:ok` for unknown ids). |
 
@@ -1192,7 +1192,7 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   `docs/superpowers/specs/2026-06-01-unified-kind-creation-via-templates.md`.
 
 - **#24 narrow default user session cap (§3.11) — PROD/#21 ADJACENT BLOCKER.**
-  This gates a production Docker image because `Ezagent.Behavior.Manage` makes
+  This gates a production Docker image because `Ezagent.ActionSet.Manage` makes
   session management depend on narrowing the current broad default session cap.
   Keep it visible for the #21 prod-image review, but do not fold it into
   Dockerize or merge to `main` from this handoff branch without explicit scope.
