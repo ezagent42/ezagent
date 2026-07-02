@@ -46,7 +46,7 @@
 
 **gate 完整性 = 方案完整性的证明**（Allen 方法论）：v2 时 views 卡住 → 暴露 views 未设计；v3 views-as-behavior 后，7 条全塌缩成"引用可解析"，gate 清晰 = 设计收口。
 
-## 5. Behavior → ActionHandlerSet 改名（pre-prod 窗口，本 SPEC 纳入）
+## 5. Behavior → ActionSet 改名（pre-prod 窗口，本 SPEC 纳入）
 
 **为什么现在**：Behavior 名不副实——它是"某领域的一组 action handler"（moduledoc `behavior.ex:1` 自述），不是单个行为；且撞 Elixir 内建 `@behaviour`。**下周上生产后 cap 身份进生产数据，迁移代价高 → 现在是最后窗口。**
 
@@ -57,13 +57,13 @@
 2. **`:kind_base` 存 behavior 模块 atom**（快照/DB）。pre-prod 的 dev 数据可重建 → 现在改无痛。
 3. 撞名 `@behaviour`：改名**消除**歧义（好事）。
 
-**做法**：全局 `Ezagent.Behavior.X` → `Ezagent.ActionHandlerSet.X`（机械）+ 更新 `required_caps` 三元组 + `:kind_base` 重建 + arch gate 的 `"Behavior" => [{:required_caps, 0}]`（`arch.scan.ex:184`）等元数据同步。**在 pre-prod 一次性做，无迁移。**
+**做法**：全局 `Ezagent.Behavior.X` → `Ezagent.ActionSet.X`（机械）+ 更新 `required_caps` 三元组 + `:kind_base` 重建 + arch gate 的 `"Behavior" => [{:required_caps, 0}]`（`arch.scan.ex:184`）等元数据同步。**在 pre-prod 一次性做，无迁移。**
 
 ## 6. 分 PR（依赖序）
 
-- **PR-0 Behavior→ActionHandlerSet 改名**（pre-prod 窗口，**最先做**，纯机械+元数据，无功能变更）。**先做因为它动 777 处，越晚越冲突。**
+- **PR-0 Behavior→ActionSet 改名**（pre-prod 窗口，**最先做**，纯机械+元数据，无功能变更）。**先做因为它动 777 处，越晚越冲突。**
 - **PR-1 `roles` 字段** + gate 骨架（roles/caps/adapters 可解析校验）。
-- **PR-2 `views` = view-behavior** + Definition.views 字段 + 可见性从 ui_surface_provider 迁到 CapBAC。
+- **PR-2 `views` = view-behavior** + Definition.views 字段（**后端**：view-behavior + cap；ui_surface_provider→Definition.views 的**前端可见性迁移拆独立 PR**，依赖 #1118）。
 - **PR-3 `mix ezagent.socialware.check` conformance gate**（7 条引用可解析，挂 CI）。
 - **PR-4 package.yaml → Definition loader**（YAML decode → 校验 → 写 Definition；现无 loader，从零写）。
 
@@ -77,8 +77,12 @@
 - **改名零迁移**：必须在 pre-prod 窗口完成（PR-0），上线前 merge。
 - **views 可见性单一权威**：Definition.views + CapBAC，退役 ui_surface_provider push+condition。
 
-## 8. 剩余开放点
+## 8. 决策（Allen 2026-07-02 定）
 
-1. 改名目标词：**`ActionHandlerSet`** 确认？还是更短的（`Handler` / `ActionSet` / `Domain`）？（777 处，词越短越好敲，但要够准。）
-2. views 迁移：`ui_surface_provider`（World 前端 tab/nav）改读 Definition.views 是 PR-2 内做，还是拆独立前端 PR（依赖 #1118）？
-3. package.yaml loader（PR-4）：本轮我们做，还是交 gaga T7 主线（他起的 package.yaml）？
+1. **改名目标词 = `ActionSet`**（`Ezagent.Behavior.X` → `Ezagent.ActionSet.X`）。准 + 短（777 处手敲）。
+2. **views 可见性迁移 = 独立 PR 实施**：PR-2 只落后端 `Definition.views` + view-behavior + cap；`ui_surface_provider`（World 前端 tab/nav）改读 Definition.views 拆成独立前端 PR（依赖 #1118 定稿）。
+3. **package.yaml loader（PR-4）= 我们和 gaga 一起做完**（他的文件格式 + 我们的 Definition/校验）。
+
+## 9. 评审门
+
+SPEC 定稿后 → **先 codex 对抗性评审**（带 ezagent skill + 架构上下文）→ 通过再实施 PR-0。（feedback_spec_codex_adversarial_review）
