@@ -129,6 +129,9 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 
 ## 4. Scenario index — flat list
 
+> Cluster overview: [`homesite-journey.md`](./homesite-journey.md) maps the homesite
+> user journey (stages 0–5) across scenarios 36–39.
+
 | # | Title | Cat | Status | Test path |
 |---|---|---|---|---|
 | 01 | [Magic-link email login](./01-magic-link-login/scenario.md) | 1 | ⚠️ | `magic_link_invariants_test.exs` |
