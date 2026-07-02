@@ -4,7 +4,7 @@ defmodule Ezagent.Socialware.DefinitionTest do
   alias Ezagent.Socialware.Definition
 
   # A real new-style ActionSet module, used as a stand-in view behavior.
-  @view_mod Ezagent.Behavior.Surface
+  @view_mod Ezagent.ActionSet.Surface
 
   describe "agents field (T2-1, shape-only validation)" do
     test "accepts a list of %{recipe, role_name} with atom keys" do
@@ -84,14 +84,14 @@ defmodule Ezagent.Socialware.DefinitionTest do
         Definition.new(%{
           name: "hello",
           views: [@view_mod],
-          shape: [Ezagent.Behavior.Session]
+          shape: [Ezagent.ActionSet.Session]
         })
 
       behaviors = Definition.behaviors(d)
-      assert Ezagent.Behavior.Session in behaviors
+      assert Ezagent.ActionSet.Session in behaviors
       assert @view_mod in behaviors
       # Session is first; the view precedes remaining shape/bases.
-      assert hd(behaviors) == Ezagent.Behavior.Session
+      assert hd(behaviors) == Ezagent.ActionSet.Session
     end
 
     test "rejects a non-loaded / non-behavior view module" do

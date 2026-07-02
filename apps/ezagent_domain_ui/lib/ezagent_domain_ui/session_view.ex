@@ -87,7 +87,7 @@ defmodule Ezagent.UI.SessionView do
   T2-2b — the backing **view read ActionSet** whose `<sw>_render` cap gates this
   view's visibility, or `nil` for a view that is NOT cap-gated (legacy/operator
   views). A cap-gated socialware view (hello page, kanban board) returns its
-  cap-only render ActionSet module (e.g. `EzagentPluginHello.Behavior.HelloRender`).
+  cap-only render ActionSet module (e.g. `Ezagent.ActionSet.HelloRender`).
 
   Optional — a view that does not implement this callback is treated as
   non-cap-gated (`authorize_view/3` returns `true` for it). A view that returns a

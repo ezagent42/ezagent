@@ -25,7 +25,7 @@ defmodule EzagentPluginHello.PageView do
   # the `{Session, :hello_render}` cap (declared by HelloRender). The unified
   # `SessionView.authorize_view/3` reads this to gate applicable/render.
   @impl true
-  def view_behavior, do: EzagentPluginHello.Behavior.HelloRender
+  def view_behavior, do: Ezagent.ActionSet.HelloRender
 
   @impl true
   def id, do: :hello_page

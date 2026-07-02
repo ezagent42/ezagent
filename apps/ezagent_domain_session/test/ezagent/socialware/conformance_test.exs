@@ -33,7 +33,7 @@ defmodule Ezagent.Socialware.ConformanceTest do
     {:ok, _} =
       RecipeRegistry.seed_role_if_absent(%{
         name: name,
-        requested_caps: [%{behavior: Ezagent.Behavior.Identity, action: :list_caps}]
+        requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}]
       })
 
     name

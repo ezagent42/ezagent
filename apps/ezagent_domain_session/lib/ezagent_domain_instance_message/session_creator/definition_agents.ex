@@ -35,15 +35,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   `list_caps_for_materialization/1`, and the join/cleanup dispatch under the
   genesis admin entity with an inline least-priv cap.
 
-  > **Rebase note (T1):** `agents[].recipe` is accepted as a PLAIN recipe name
-  > here (T1's structured-subject `recipe:<name>` prefix has not landed). After
-  > T1, normalize a single leading `recipe:` prefix before lookup.
+  > **Rebase note (T1, reconciled):** T1's structured `recipe:<name>` subject has
+  > landed. `agents[].recipe` accepts EITHER a plain recipe name (`guide`) or the
+  > structured subject (`recipe:guide`); `lookup_ref/1` strips a single leading
+  > `recipe:` prefix so both resolve identically through `RecipeRegistry.lookup/2`
+  > (which itself takes a plain name and re-derives the subject).
   """
 
   require Logger
 
   alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry, SessionAgentMaterialize}
-  alias Ezagent.Behavior.Session.Members
+  alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Invocation
   alias EzagentDomainInstanceMessage.SessionCreator
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
@@ -94,7 +96,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   def materialize_definition_agents(_session, _ws, _granted_by, _agents), do: :ok
 
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
-    recipe_name = recipe_of(agent)
+    recipe_name = lookup_ref(recipe_of(agent))
     role_name = role_name_of(agent)
     planned_uri = planned_agent_uri(role_name, session_uri, workspace_uri)
 
@@ -134,6 +136,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       :error -> {:error, {:unknown_agent_recipe, recipe_name}}
     end
   end
+
+  # T1 rebase reconciliation: recipe subjects are the structured `recipe:<name>`
+  # form (T1 project B). `RecipeRegistry.lookup/2` takes a PLAIN recipe name and
+  # re-derives the `recipe:<name>` subject internally, and the same plain name is
+  # reused as the AgentTemplate name — so normalize a single leading `recipe:`
+  # prefix here so both a bare `guide` and a prefixed `recipe:guide` in
+  # `agents[].recipe` resolve identically. Idempotent: strips at most one prefix.
+  defp lookup_ref("recipe:" <> rest) when rest != "", do: rest
+  defp lookup_ref(name), do: name
 
   # --- spawn + join ---------------------------------------------------------
 
@@ -287,7 +298,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp read_members(%URI{} = session_uri) do
-    slice_module = Ezagent.Behavior.Session.state_slice()
+    slice_module = Ezagent.ActionSet.Session.state_slice()
 
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} ->
