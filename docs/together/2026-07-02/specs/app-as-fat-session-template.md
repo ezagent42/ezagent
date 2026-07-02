@@ -1,50 +1,67 @@
-# SPEC (½页 · 讨论稿): app = 变胖的 SessionTemplate
+# SPEC (v2 · 讨论稿): socialware package → 变胖的 SessionTemplate
 
 > **Date:** 2026-07-02 · **Owner:** Allen (lead) + Claude · **Base:** main `adf5fad5` · **分支:** `integration/app-package`
-> **Status:** 讨论稿 —— 定字段形态 + 分 PR，供 Allen grill。**先定形态再动代码。**
+> **Status:** 讨论稿 v2 —— 已经过 Allen grill 收敛。**先定形态再动代码。**
 
-## 1. 目标
+## 1. 三层模型（Allen 认同）
 
-不新建概念。把 SessionTemplate 从"瘪的会话形态（永远只有 default）"扩成"完整产品定义"，最后机械改名 `App`。app = 加载了完整声明的 SessionTemplate。
+vscode 类比，三层各自寻址、各自命名：
 
-## 2. 现有 schema 已有什么（核过 main `adf5fad5`）
+| 层 | 是什么 | vscode 类比 | 寻址 | 用户可见? |
+|---|---|---|---|---|
+| **socialware package**（`package.yaml`）| **可发布/上传的打包物**（发布单元）| `.vsix` 扩展包 | 文件/上传物 | 否（发布/开发者层）|
+| **SessionTemplate**（变胖后，**保留原名**）| package 装进 workspace 后的 DB 形态 | 已安装的扩展 | `template://session/<ws>/<名>` | 否（建会话时选的"类型"）|
+| **session** | 运行实例 = **左栏 Session List item** | 打开的编辑器窗口 | `session://<ws>/<名>` | **是**（具名对话：AutoService/官网）|
 
-`session_template.ex:34-77` 的 content slice **已携带**：
-- `members: [%{uri, role_name, source_template_uri, in_session_template}]` —— 已含"哪些 agent + 什么 role + 从哪个 template recreate"
-- `installs: [String.t()]` —— 已含 socialware definition 组合（`config://<ws>/socialware/<名>` refs）
-- `routing_rules: [%{matcher, receivers, rule_set, ...}]` —— 已含 agent 接力规则
-- `prompt_templates` / `legends` / `orchestrator_template_uri` / 版本 / lineage
+**命名定论**：
+- **用户面**：左栏永远是**具名对话**（AutoService / 官网 / kanban），IM 体感不破，**不引入 "app" 字眼**。
+- **代码符号**：**保留 `SessionTemplate`**（当前一切基于 Template 概念）。不改名 App——app 会误导（发布单元是 socialware、打开的是 session，都不是 template）。
+- **发布单元**：**socialware package**（`package.yaml` 正式化）。
 
-→ **"三载体"里的 definition-data 引用（recipe/socialware/routing）绝大部分已经在了。** 之前以为要加的 `agents`/`routing` 其实是现有 `members`/`routing_rules` 的复用。
+## 2. package.yaml ↔ SessionTemplate 是同一 schema 的两种表示
 
-## 3. 真正缺的字段（诚实的差距 —— 只有 3 个新增）
+gaga 已合的 AutoService `package.yaml`（#1120）是**文件格式**；SessionTemplate 是**安装后的 Kind 形态**。本轮 = 让 SessionTemplate 能表示 package.yaml 声明的一切。现有 package.yaml 结构：
+```yaml
+name / persona / kb          # 定义数据（引用）
+session: {public_view, web_anon_access}   # ← 开放性
+routing: [...]               # 接力规则
+roles: {autoservice: {requested_caps}}    # recipe 引用（agent 配置在 agent 内部）
+surface: {customer: /socialware/chat}     # ← 具体视图
+```
 
-| 新字段 | 是什么 | 为什么现在没有 | 引用式? |
-|--------|--------|----------------|---------|
-| `uses: [plugin_id]` | 这个 app 引用哪些能力 plugin（校验 `installs`/`members` 的依赖存在） | 现在 plugin 依赖是隐式的（installs 里的 def 假设 plugin 在） | 是（plugin id 列表） |
-| `public_face: %{anon_actions, visibility}` | 匿名/公开面能做什么（CapBAC policy） | 现在从 installed socialware def 的 `visibility_policy` 读（`:767` 注释），**散在 def 里、不在 template 顶层** | 引用/内联小策略 |
-| `views: %{embedded, public}` | app 的两种视图声明（对齐 #1118 dual-surface） | 现在视图横跨 Surface/@json-render/ExternalFeed 三处、无统一声明 | 是（surface refs） |
+## 3. SessionTemplate 现有 schema 已覆盖的（核过 main `adf5fad5`）
 
-**注意 `agents`**：不新增字段——复用现有 `members`（spawned-agent 成员已带 role_name + source_template_uri）。若要"recipe ref 直接声明"，是给 `members` 项加一个可选 `recipe_ref` 键，不是新顶层字段。→ **待讨论：members 够用，还是要独立 `agents:[recipe_ref]`？**
+`session_template.ex:34-77` 已带：`members`（agent+role+recreate-from）· `installs`（socialware refs）· `routing_rules` · `prompt_templates` · `legends` · `orchestrator` · 版本 · lineage。
 
-## 4. 分 PR（每个独立可测）
+→ **members / routing 复用**（agent 配置回 agent 内部，template 只引用）。
 
-- **PR-1 `uses` 字段** + 校验（materialize 时 `uses` 引用的 plugin 不存在 → fail-closed）。invariant test: 声明不存在的 plugin → 拒绝。
-- **PR-2 `public_face` 字段** —— 把 socialware def 的 visibility_policy 提升为 template 顶层可声明（向后兼容：无 `public_face` 时回落读 def）。invariant test: public_face 声明的 anon_action 未在 CapBAC 注册 → 拒绝。
-- **PR-3 `views` 字段** —— 声明 embedded/public，对齐 #1118（依赖 ruihua #1118 定稿，可最后做）。
-- **PR-4 机械改名** `SessionTemplate` → `App`（32 文件/165 处），**URI 段 `template://session/` 保留**（零迁移）。GLOSSARY 记 decision。
+## 4. 真正要加的字段（3 个）
 
-依赖：PR-1/2 独立并行 → PR-3 等 #1118 → PR-4 最后（改名在字段稳定后）。
+| 字段 | 是什么 | 归属 | 现状 |
+|--------|--------|------|------|
+| **`openness: :public \| :internal`** | 能否加入非-workspace 用户（匿名/外部）| **session 配置** | 现散在 socialware def 的 `visibility_policy.web_anon_access`（`public_view.ex`）→ 提到 SessionTemplate 顶层 |
+| **`views: [view_name]`** | **具体**视图列表（hello / kanban / conversation）——非抽象分类 | socialware 对外面 | 现散在 Surface / @json-render / ExternalFeed；package.yaml 里是 `surface:` |
+| **`uses: [plugin_id]`** | 引用哪些能力 plugin（依赖校验）| package 顶层 | 现在 plugin 依赖是隐式的 |
 
-## 5. 不变式（别破）
+**不加 `agents`**（复用 members）。**不叫 `public_face`**（用 `openness` 枚举）。**不分 `views:{embedded,public}`**（views 是具体视图列表；开放性由 `openness` 单独管，正交）。
 
-- **引用不内联**（role-as-data）：`uses`/`views` 是 ref。
-- **URI 段不动**：改名只动代码符号，`template://session/` 持久化段保留（含 reflow 生产数据）。
-- **向后兼容**：3 个新字段都可选；无声明时回落现有行为（default template 不受影响）。
+## 5. 分 PR
 
-## 6. 开放讨论点（给 Allen）
+- **PR-1 `openness` 枚举** —— `:public | :internal`，提升 socialware def 的 anon-access 到 SessionTemplate 顶层（向后兼容：无 openness 回落读 def）。invariant test: `:public` template 允许 anon join、`:internal` 拒绝。
+- **PR-2 `uses` + 依赖校验** —— materialize 时 `uses` 引用的 plugin 不存在 → fail-closed。invariant test: 声明不存在 plugin → 拒绝。
+- **PR-3 `views: [view_name]`** —— 具体视图列表（对齐 package.yaml `surface:` + #1118 具体视图）。可最后做（#1118 相关）。
+- **PR-4 package.yaml schema + CI 校验** —— 把 package.yaml 从"松散 yaml"正式化成"有 schema 的 socialware package 定义"（gaga T7B/T7C）；installer 读它 → 写成 SessionTemplate。
 
-1. **`agents`**：复用 `members`（+ 可选 `recipe_ref`），还是独立 `agents:[recipe_ref]` 字段？（我倾向复用 members——已有，避免重复。）
-2. **`public_face`**：提升到 template 顶层，还是保持读 socialware def？（提升=app 自洽声明；保持=少改动。我倾向提升——app 应自带公开面声明。）
-3. **改名时机**：PR-4 现在做，还是等阶段1 字段全稳（PR-1/2/3 合完）再做？（我倾向最后——改名是纯机械收尾。）
-4. **`views` 是否 defer**：#1118 未定稿，PR-3 是否推到官网上线后？
+依赖：PR-1/2 独立并行 → PR-3（#1118）→ PR-4（package↔template 双向，可与 PR-1/2 并行设计）。
+
+## 6. 不变式
+
+- **引用不内联**（role-as-data）：uses/views/members 都是 ref。
+- **不改名**：SessionTemplate 保留；URI 段 `template://session/` 不动。
+- **向后兼容**：3 字段全可选，无声明回落现有行为（default template 不受影响）。
+- **openness 与 views 正交**：一个管开放性、一个管渲染，不互相分类。
+
+## 7. 剩余开放点
+
+1. `openness` 放 SessionTemplate 顶层 vs `session:` 子 map？（package.yaml 里在 `session:` 下；SessionTemplate 里建议顶层字段，materialize 时映射。）
+2. PR-4 的 package.yaml schema 归谁：本轮我们做，还是 gaga T7 主线？（Allen：本轮=给 SessionTemplate 加字段，则 PR-1/2/3 我们做，PR-4 可协同 gaga。）
