@@ -152,7 +152,12 @@ defmodule EzagentCore.Umbrella.MixProject do
         "ecto.create --quiet",
         "ecto.migrate --quiet",
         "precommit",
-        "ezagent.check_invariants"
+        "ezagent.check_invariants",
+        # T2-3 — socialware Definition conformance gate. Runs from the umbrella
+        # root with a full app boot (every plugin's adapters/recipes/view caps
+        # registered), so a definition naming a nonexistent recipe / view /
+        # adapter / prompt_template_ref goes RED.
+        "ezagent.socialware.check"
       ]
     ]
   end

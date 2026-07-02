@@ -124,7 +124,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
           Ezagent.Behavior.Surface,
           Ezagent.Behavior.SupervisorApproval
         ],
-        adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
+        adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true}
       }
     ]
