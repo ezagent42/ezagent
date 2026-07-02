@@ -1,0 +1,9 @@
+Ezagent
+Copyright (c) 2024-2026 ezagent42 contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+This product includes third-party software dependencies. Their respective
+copyright notices and license terms are provided by their upstream projects,
+package metadata, and distribution artifacts. Dependency declarations for this
+source distribution are maintained in mix.exs files and mix.lock.

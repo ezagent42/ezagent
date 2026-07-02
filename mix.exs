@@ -5,6 +5,7 @@ defmodule EzagentCore.Umbrella.MixProject do
     [
       apps_path: "apps",
       version: "0.1.0",
+      package: package(),
       name: "Ezagent",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -12,6 +13,12 @@ defmodule EzagentCore.Umbrella.MixProject do
       docs: docs(),
       releases: releases(),
       listeners: [Phoenix.CodeReloader]
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 

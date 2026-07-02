@@ -5,6 +5,7 @@ defmodule EzagentDomainIdentity.MixProject do
     [
       app: :ezagent_domain_identity,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -21,6 +22,12 @@ defmodule EzagentDomainIdentity.MixProject do
   # (not pluggable). Extracted from ezagent_core so plugins that need user
   # references depend only on this domain app, not on the entire core
   # mechanism stack.
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
+    ]
+  end
+
   def application do
     [
       mod: {EzagentDomainIdentity.Application, []},
