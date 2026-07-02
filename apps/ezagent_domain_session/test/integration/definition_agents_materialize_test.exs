@@ -15,7 +15,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.KindRegistry
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
@@ -53,7 +53,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       RecipeRegistry.seed_role_if_absent(%{
         name: name,
         requested_caps: [
-          %{behavior: Ezagent.Behavior.Identity, action: :list_caps}
+          %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
         ]
       })
 
@@ -92,7 +92,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     caps = Ezagent.Identity.list_caps_for(planned)
 
     assert Enum.any?(caps, fn cap ->
-             cap.behavior == Ezagent.Behavior.Identity and cap.action == :list_caps
+             cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end)
   end
 

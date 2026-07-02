@@ -15,38 +15,38 @@ defmodule Ezagent.Socialware.AnonViewCapsTest do
   defmodule PublicRender do
     @moduledoc false
     use Ezagent.Lifecycle
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def actions, do: [:pub_render]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def cap_subjects, do: [{:pub_render, "public view render"}]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def dispatchable?, do: false
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def interface, do: %{}
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def required_caps,
       do: %{pub_render: Ezagent.Capability.cap(:session, __MODULE__, :pub_render)}
 
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def data_owner(_), do: :any
   end
 
   defmodule PrivateRender do
     @moduledoc false
     use Ezagent.Lifecycle
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def actions, do: [:priv_render]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def cap_subjects, do: [{:priv_render, "private view render"}]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def dispatchable?, do: false
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def interface, do: %{}
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def required_caps,
       do: %{priv_render: Ezagent.Capability.cap(:session, __MODULE__, :priv_render)}
 
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def data_owner(_), do: :any
   end
 

@@ -12,19 +12,19 @@ defmodule Ezagent.UI.AuthorizeViewTest do
   defmodule TestRender do
     @moduledoc false
     use Ezagent.Lifecycle
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def actions, do: [:test_render]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def cap_subjects, do: [{:test_render, "test render"}]
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def dispatchable?, do: false
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def interface, do: %{}
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def required_caps,
       do: %{test_render: Ezagent.Capability.cap(:session, __MODULE__, :test_render)}
 
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def data_owner(_), do: :any
   end
 
