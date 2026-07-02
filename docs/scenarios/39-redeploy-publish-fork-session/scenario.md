@@ -65,8 +65,10 @@ Standard preconditions (README §1.1), plus:
    C**, with C's own fresh page.
 4. **C talks** — C sends messages in C's new session's page; the conversation is
    C's own (fresh, none of A's history).
-5. **Owner sees it in world** — C opens world → sees C's new session's conversation
-   in world (the owner can observe/configure it in the Word IM backend).
+5. **Owner sees their new session** — C opens **their own forked homesite page** and
+   its `查看会话` panel → sees C's new session's conversation there. (The Word IM
+   backend is where a tenant/developer configures replies internally, but the
+   customer-facing observation stays on the homesite.)
 
 ## Expected outcomes
 
@@ -77,8 +79,9 @@ mechanics cross-ref scenario 21):
   **not** part of it.
 - Step 3: the forked `session_uri` is **new** (≠ A's session); C holds **owner /
   tenant** caps on it.
-- Step 4–5: C's conversation is fresh and is visible to C in world; publish created
-  a **new** session, not a join (the deploy/publish distinction holds).
+- Step 4–5: C's conversation is fresh and is visible to C **in the `查看会话` panel
+  of C's own page**; publish created a **new** session, not a join (the
+  deploy/publish distinction holds).
 
 ## Failure modes to test
 

@@ -35,8 +35,11 @@ Standard preconditions (README §1.1), plus:
   world session (reference: `data-session-uri="session://system/hello/web"` in
   `~/Desktop/Socialware.html`). Each opened hello page == one session (product
   decision, 2026-07-02).
-- **World surface** — the same session is observable in world/Word (IM backend),
-  e.g. `/admin/sessions/<session-uri>` or `app.ezagent.chat` world session view.
+- **The homesite is the only user-facing surface** — the visitor observes the
+  session **only** through the composer bar's `查看会话` panel
+  (`.previewbar-toggle` → `.previewbar-chat`), never a separate world/Word/`/admin`
+  UI. `world` is the backend session substrate; `/admin/sessions/<session-uri>` is
+  an **engineering-assertion** surface only (verified out-of-band, not a user step).
 
 ## Actors
 
@@ -49,42 +52,49 @@ Standard preconditions (README §1.1), plus:
 
 ## Steps
 
-### Outbound — page → world
+### Outbound — page → session (via the composer)
 
-1. **Send from the page** — in the homesite composer (enabled post-login), type a
-   message and send *(`.previewbar-input` + `.previewbar-action`, now in the
-   signed-in state)*.
-2. **Observe in world** — open the same session in world/Word.
-   → the message posted on the page **appears in the world session**, attributed to
-   the signed-in visitor, in the **same** `session_uri` the page is bound to.
+1. **Type + send** — in the homesite composer (enabled post-login), type a message
+   into `.previewbar-input` and click `.previewbar-action` (now **send**, not the
+   pre-login `登录`).
+2. **Confirm it landed — on the homesite** — click `.previewbar-toggle`
+   (**▴ 查看会话**) to expand `.previewbar-chat`.
+   → the message just sent **appears in the `查看会话` panel** (`.previewbar-msg`),
+   attributed to the signed-in visitor. This panel *is* the world session viewed
+   from the homesite — it is the user's proof the message entered the session, with
+   no separate world UI. (Engineering assertion, out-of-band: one row exists on the
+   bound `session_uri` — the backend truth, not a user step.)
 
-### Inbound — world → page
+### Inbound — session → page (same panel, live)
 
-3. **Reply from world** — in the world session, produce a reply (an agent answers,
-   or another member sends a message from Word).
-4. **Observe on the page** — return to the homesite page (do not reload).
-   → the world-side reply **propagates back and renders on the homesite page**
-   feed, live, without a manual refresh.
+3. **A reply is produced in the session** — an agent on the session answers, or
+   another member sends a message from the Word IM side (internal, not a homesite
+   step).
+4. **Observe live in the panel** — with `查看会话` open, the reply **renders live in
+   the same `.previewbar-chat` panel** (the `.previewbar-tick` counter advances), no
+   manual refresh, without ever leaving the homesite.
 
 ## Expected outcomes
 
 Behavior layer (the CapBAC/membership substrate is asserted in scenario 35,
 cross-referenced, not re-proven):
 
-- Step 1–2: exactly one message is written to the bound world session; its
-  `session_uri` == the page's `data-session-uri` (no drift to another session).
-- Step 3–4: the world-side reply renders on the page feed live; the page and world
-  show **one shared conversation**, not two copies.
-- Round-trip identity: a message sent on the page and a reply from world are both
-  members of the **same** session timeline.
+- Step 1–2: the sent message shows in the `查看会话` panel; exactly one message is
+  written to the bound world session; its `session_uri` == the page's
+  `data-session-uri` (no drift to another session).
+- Step 3–4: the session's reply renders live **in the same `查看会话` panel**; the
+  panel shows **one shared conversation**, not two copies.
+- Round-trip identity: a message sent from the composer and a reply from the session
+  are both members of the **same** session timeline, both visible in the one panel.
 
 ## Failure modes to test
 
-- **Page message never reaches world** — the composer "sends" but no world session
-  row appears. "If it fails, who knows?" → must surface an error, never a silent
-  no-op.
-- **World reply never reaches the page** — the page never subscribed to the session
-  publisher, so world-side replies are invisible until a manual reload.
+- **Message never reaches the session** — the composer "sends" but nothing appears
+  in the `查看会话` panel (and no session row is written). "If it fails, who knows?"
+  → must surface an error, never a silent no-op.
+- **Reply never reaches the panel** — the page never subscribed to the session
+  publisher, so the session's replies stay invisible in `查看会话` until a manual
+  reload.
 - **Wrong-session drift** — the page writes to a different session than its binding
   (e.g. a fresh session per keystroke), breaking the "page == one session" invariant.
 - **Anon write leak** — an anonymous visitor manages to write into the session
@@ -107,11 +117,12 @@ cross-referenced, not re-proven):
 ## Notes
 
 - **Backend dialog wiring is NOT connected yet** (2026-07-02 sync: "对话交互还没
-  接"). Until the world↔page bridge is built, the **inbound (world→page) reply
+  接"). Until the world↔page bridge is built, the **inbound (session→panel) reply
   surface is recorded against an unimplemented blank-HTML placeholder** — the
-  scenario asserts "a world reply renders on the page", and the placeholder stands
-  in for the not-yet-built propagation. Outbound (page→world) can be recorded
-  against the `docs/website-demo/v1` mock's `mock-ezagent-api.js` when available.
+  scenario asserts "a session reply renders live in the `查看会话` panel", and the
+  placeholder stands in for the not-yet-built propagation. Outbound (composer→session)
+  can be recorded against the `docs/website-demo/v1` mock's `mock-ezagent-api.js`
+  when available.
 - **cookie caveat** — a homesite login currently rides a fornax-cookie override
   across `*.ezagent.chat` (2026-07-02 sync); this is a system-level issue, recorded
   but not fixed here. The signed-in precondition may need a real per-domain login

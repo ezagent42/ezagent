@@ -53,8 +53,9 @@ deploy = 同一 session、成员、保留历史。** 把这一对展示出来是
 2. **Fork 者找到模板** —— C 打开插件市场 / 模板列表，找到 A 已发布的模板（下拉 / 列表项）。
 3. **Fork** —— C 选中它 → 从模板 spawn 出一个**新 session**，**归 C 所有**，配 C 自己全新的页面。
 4. **C 说话** —— C 在 C 的新 session 页面里发消息；对话是 C 自己的（全新，无 A 的任何历史）。
-5. **Owner 在 world 看到** —— C 打开 world → 在 world 里看到 C 新 session 的对话
-   （owner 能在 Word IM 后端观察/配置它）。
+5. **Owner 看到自己的新 session** —— C 打开**自己那个 fork 出来的官网页面**及其
+   `查看会话` 面板 → 在那里看到 C 新 session 的对话。（Word IM 后端是租户/开发者内部配回复
+   的地方，但面向客户的观察仍留在官网。）
 
 ## 实测结果 vs 预期
 
@@ -62,8 +63,8 @@ deploy = 同一 session、成员、保留历史。** 把这一对展示出来是
 
 - 步骤 1：一个 session template 存在且在列表可发现；A 的历史**不**属于它。
 - 步骤 3：fork 出的 `session_uri` 是**新的**（≠ A 的 session）；C 对其持有 **owner / 租户** caps。
-- 步骤 4–5：C 的对话是全新的、且 C 能在 world 看到；publish 创建了一个**新** session、
-  而非加入（deploy/publish 区分成立）。
+- 步骤 4–5：C 的对话是全新的、且 C 能在**自己页面的 `查看会话` 面板**里看到；publish 创建了
+  一个**新** session、而非加入（deploy/publish 区分成立）。
 
 ## 失败模式（需测试）
 

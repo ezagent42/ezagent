@@ -59,9 +59,9 @@ Standard preconditions (README §1.1), plus:
    (cross-ref scenario 36) → B logs in.
 4. **B joins as a member** — after login, B is added as a **read/write member of
    A's SAME session** (not a new session).
-5. **Group chat** — B sends a message; it appears in A's session; A sees B's
-   message on A's page / in world. Both talk in one conversation; history from
-   before B joined is preserved.
+5. **Group chat** — B sends a message; it appears in the shared session; A sees B's
+   message **in A's `查看会话` panel** on the homesite (not a separate world UI).
+   Both talk in one conversation; history from before B joined is preserved.
 
 ## Expected outcomes
 
