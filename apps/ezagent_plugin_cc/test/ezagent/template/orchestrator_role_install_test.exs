@@ -121,7 +121,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # exercises the real ConfigStore-sourced path.
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
-      assert {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+
+      assert {:ok, _} =
+               Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
 
       assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_role()
       assert "ezagent-session-orchestrator" in sandbox_content.skills
@@ -141,6 +143,78 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
 
       assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
                Bootstrap.resolve_orchestrator_role()
+    end
+  end
+
+  # Phase 3 ③ T2 (2026-06-28) — the install gate is generalized over the agent's
+  # ACTUAL role, not hardcoded to `orchestrator`. A cc-headless agent whose
+  # template carries ANY registered role (pm coordinator, dev-together
+  # methodology, …) must get that role's skills copied into its `config_dir`.
+  describe "bootstrap/2 — generalized over the agent's role (T2)" do
+    setup %{config_dir: config_dir} do
+      # A NON-orchestrator role with its OWN skill ref, sourced via the generic
+      # per-ref override (mirrors the orchestrator-specific override) so the test
+      # exercises a genuinely distinct role + skill, not the orchestrator one.
+      suffix = System.unique_integer([:positive])
+      role_name = "pm-fixture-#{suffix}"
+      skill_ref = "pm-coordinator-fixture-#{suffix}"
+
+      fixture_root = Path.join(System.tmp_dir!(), "t2-skill-#{suffix}")
+      skill_src = Path.join(fixture_root, skill_ref)
+      File.mkdir_p!(skill_src)
+      File.write!(Path.join(skill_src, "SKILL.md"), "pm coordinator fixture skill\n")
+      Application.put_env(:ezagent_plugin_cc, :role_skill_sources, %{skill_ref => skill_src})
+
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+
+      {:ok, _} =
+        Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{
+          name: role_name,
+          skills: [skill_ref],
+          prompt: "you are pm",
+          behaviors: [],
+          requested_caps: [],
+          session_template: nil
+        })
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_plugin_cc, :role_skill_sources)
+        _ = File.rm_rf(fixture_root)
+      end)
+
+      {:ok, config_dir: config_dir, role_name: role_name, skill_ref: skill_ref}
+    end
+
+    test "a NON-orchestrator role's skill is copied into config_dir/skills/<ref>",
+         %{config_dir: config_dir, role_name: role_name, skill_ref: skill_ref} do
+      # Pre-T2 this was a no-op (bootstrap gated on `orchestrator_role?/1`) and the
+      # skill never landed — this is the regression-earning assertion.
+      assert :ok = Bootstrap.bootstrap(%{"role" => role_name}, config_dir)
+
+      assert File.regular?(Path.join([config_dir, "skills", skill_ref, "SKILL.md"]))
+
+      # The orchestrator-specific CLAUDE.md hint is derived from the orchestrator
+      # skill ref, so a different role leaves no stale orchestrator hint.
+      claude_md = Path.join(config_dir, "CLAUDE.md")
+      refute File.exists?(claude_md) and File.read!(claude_md) =~ @hint
+    end
+
+    test "an absent / default role stays a no-op (legacy cc agents unaffected)",
+         %{config_dir: config_dir} do
+      assert :ok = Bootstrap.bootstrap(%{"role" => "default"}, config_dir)
+      assert :ok = Bootstrap.bootstrap(%{}, config_dir)
+      refute File.dir?(Path.join(config_dir, "skills"))
+    end
+
+    test "role_name/1 extracts the installable role name (nil for absent/default)" do
+      assert "orchestrator" = Bootstrap.role_name(%{"role" => "orchestrator"})
+      assert "orchestrator" = Bootstrap.role_name(%{"role" => :orchestrator})
+      assert "pm" = Bootstrap.role_name(%{"role" => "pm"})
+      assert nil == Bootstrap.role_name(%{"role" => "default"})
+      assert nil == Bootstrap.role_name(%{"role" => :default})
+      assert nil == Bootstrap.role_name(%{"role" => ""})
+      assert nil == Bootstrap.role_name(%{})
     end
   end
 end

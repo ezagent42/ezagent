@@ -1,41 +1,265 @@
 /* ============================================================================
- * tokens.css · ezagent-design 设计 token（单一来源）
+ * tokens.css · ezagent 官网品牌 token（本地拷贝）
  * ----------------------------------------------------------------------------
- * 自 index.html 的 :root（light）+ :root[data-theme="dark"]（dark）逐字提取。
- * index.html 是真理之源 — 改 token 改这里 + index.html，勿令两者漂移。
- * site-nav.js 依赖此处完整 token 集（glass / ground / accent-variant 等）。
+ * 唯一权威源 = ezagent-design-system 远程库 rev `ebce041`
+ *   github.com/ezagent42/design-system · tokens/{colors,typography,spacing,effects,fonts}.css
+ * 本文件对齐上游、不另立标准。改品牌 token 改上游、再同步此处;勿在此改值。
+ * 官网页面专用扩展(非上游品牌 token)集中在文件末尾「WEBSITE EXTENSIONS」段。
  * ========================================================================== */
-:root{
-  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
-  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
-  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
-  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
-  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
-  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);
-  --accent-wash:var(--blue-wash);--on-accent:#FFFFFF;--focus-ring:rgba(11,92,255,.45);
-  --success:var(--jade);--danger:var(--red);--warning:var(--orange);--stage:#14131C;
-  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
-  --font-cn:'Noto Serif SC','Songti SC',serif;
-  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
-  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
-  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
-  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
-  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 13.4px 17.9px rgba(15,15,15,.045),0 7.5px 10px rgba(15,15,15,.04),0 4px 5.3px rgba(15,15,15,.03),0 1.7px 2.2px rgba(15,15,15,.022);
-  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
-  --glass-blur:blur(14px) saturate(1.4);--glass-bg:rgba(255,255,255,.55);--glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);
-  --ease-out:cubic-bezier(.16,1,.3,1);--dur-base:250ms;--dur-enter:500ms;
-  --gap-grid:22px;--pad-page-x:44px;--container:1280px;
-  --desk:#FFFFFF;--desk-edge:#E9E9ED;--screen-dark:#14131C;--seat:#2A2832;  /* 办公室：桌面/屏/小人 */
+
+/* Ezagent · Webfonts
+   Inter (UI / display) · Noto Serif SC (CN headings) · Noto Sans SC (CN UI) · Space Mono (data / code)
+   Delivered via Google Fonts CDN. Consumers online get the binaries automatically. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+/* ============================================================
+   Ezagent · Color tokens
+   三原色为轴，柔软为形 — De Stijl primaries from the logo as the
+   brand axis; no gradients. Light-gray ground, white cards, ink text.
+   ============================================================ */
+:root {
+  /* ---- ground & neutrals · soft surfaces ---- */
+  --ground:   #E8E8EB;   /* app background · hsl(240 4% 91%) */
+  --ground-2: #EFEFF1;   /* recessed wells, inputs, tracks */
+  --ground-hover: #E4E4E8; /* hover on neutral surfaces */
+  --card:     #FFFFFF;   /* floating surfaces */
+  --ink:      #17171B;   /* primary foreground */
+  --ink-2:    #56565E;   /* secondary text */
+  --ink-3:    #8A8A92;   /* tertiary / captions */
+  --ink-4:    #B6B6BC;   /* disabled / faint */
+  --line:     #E2E2E6;   /* hairline dividers */
+
+  /* ---- 主轴 · logo 三原色 + 翠 (De Stijl primaries) ---- */
+  --red:      #D81830;   /* 红 · logo primary */
+  --blueink:  #0048A8;   /* 墨蓝 · structural logo blue */
+  --yellow:   #FFD400;   /* 黄 · logo primary */
+  --jade:     #0FA06E;   /* 翠 · extension / success */
+
+  /* ---- interactive / bright accents ---- */
+  --blue:      #0B5CFF;  /* 钴蓝 · bright · interactive primary action */
+  --blue-deep: #0040C4;  /* pressed / on-wash text */
+  --blue-wash: #E7EEFF;  /* tint surface for blue */
+  --orange:    #FF8A1E;  /* 暖橙 · vivid accent */
+
+  /* ---- semantic tint surfaces ---- */
+  --jade-wash: #DCF1E8;
+  --jade-deep: #0A7A52;
+  --red-wash:  #FAE0E3;
+  --red-deep:  #B01228;
+  --yellow-wash: #FFF4CC;
+  --orange-wash: #FFEBD6;
+
+  /* ============ semantic aliases ============ */
+  --surface-ground:   var(--ground);
+  --surface-sunken:   var(--ground-2);
+  --surface-card:     var(--card);
+  --text-strong:      var(--ink);
+  --text-body:        var(--ink-2);
+  --text-muted:       var(--ink-3);
+  --text-faint:       var(--ink-4);
+  --border-hairline:  var(--line);
+
+  --accent:        var(--blue);       /* primary interactive */
+  --accent-hover:  #1466FF;
+  --accent-press:  var(--blue-deep);
+  --accent-wash:   var(--blue-wash);
+  --on-accent:     #FFFFFF;
+
+  --success:       var(--jade);
+  --success-wash:  var(--jade-wash);
+  --success-text:  var(--jade-deep);
+  --danger:        var(--red);
+  --danger-wash:   var(--red-wash);
+  --danger-text:   var(--red-deep);
+  --warning:       var(--orange);
+  --warning-wash:  var(--orange-wash);
+  --focus-ring:    rgba(11,92,255,.45);
 }
-:root[data-theme="dark"]{
-  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
-  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
-  --red:#FF5A4D;--blueink:#4D8DF0;--yellow:#FFD84D;--jade:#34D6A0;
-  --blue:#5AA2FF;--blue-deep:#A9CBFF;--blue-wash:#1E2A40;--orange:#FFA94D;
-  --jade-wash:#173A2E;--red-wash:#3E211E;--yellow-wash:#3A3416;--orange-wash:#3A2A16;
-  --accent-hover:#74B2FF;--on-accent:#0E1A2E;--focus-ring:rgba(90,162,255,.5);
-  --glass-bg:rgba(42,41,54,.5);--glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
-  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
-  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
-  --desk:#272531;--desk-edge:#332F3B;--screen-dark:#0C0B12;--seat:#3C3A45;
+
+/* ================ DARK · 夜 ================
+   Brightened axis to read on near-black; same roles. */
+:root[data-theme="dark"] {
+  --ground:   #16151C;
+  --ground-2: #211F2A;
+  --ground-hover: #2A2834;
+  --card:     #1E1C26;
+  --ink:      #F4F2EC;
+  --ink-2:    #B6B4AC;
+  --ink-3:    #85837B;
+  --ink-4:    #56544D;
+  --line:     #332F3B;
+
+  --red:      #FF5A4D;
+  --blueink:  #4D8DF0;
+  --yellow:   #FFD84D;
+  --jade:     #34D6A0;
+
+  --blue:      #5AA2FF;
+  --blue-deep: #A9CBFF;
+  --blue-wash: #1E2A40;
+  --orange:    #FFA94D;
+
+  --jade-wash: #173A2E;
+  --jade-deep: #34D6A0;
+  --red-wash:  #3E211E;
+  --red-deep:  #FF8A7E;
+  --yellow-wash: #3A3416;
+  --orange-wash: #3A2A16;
+
+  --accent-hover: #74B2FF;
+  --on-accent:    #0E1A2E;
+  --focus-ring:   rgba(90,162,255,.5);
+}
+
+/* ============================================================
+   Ezagent · Typography tokens
+   Inter (Latin UI/display) · Noto Serif SC (CN headings) ·
+   Noto Sans SC (CN UI) · Space Mono (data/code).
+   Display is tight & heavy; CN headings are serif; data is mono.
+   ============================================================ */
+:root {
+  /* ---- families ---- */
+  --font-ui:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-cn:    'Noto Serif SC', 'Songti SC', serif;          /* CN headings */
+  --font-cn-ui: 'Noto Sans SC', 'PingFang SC', sans-serif;    /* CN body / UI */
+  --font-mono:  'Space Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ---- weights ---- */
+  --fw-regular: 400; /* @kind font */
+  --fw-book:    450; /* @kind font */
+  --fw-medium:  500; /* @kind font */
+  --fw-semibold:600; /* @kind font */
+  --fw-bold:    700; /* @kind font */
+  --fw-black:   800; /* @kind font */
+
+  /* ---- type scale (px) ---- */
+  --fs-display: 50px;   /* hero · CN serif 600 or Inter 800 */
+  --fs-h1:      40px;
+  --fs-h2:      30px;
+  --fs-h3:      22px;
+  --fs-title:   18px;
+  --fs-body:    16px;
+  --fs-ui:      14px;
+  --fs-sm:      13px;
+  --fs-xs:      12px;
+  --fs-micro:   11px;   /* mono labels / overlines */
+  --fs-nano:    10px;
+
+  /* ---- line heights ---- */
+  --lh-tight:  1.14; /* @kind font */
+  --lh-snug:   1.3;  /* @kind font */
+  --lh-normal: 1.55; /* @kind font */
+  --lh-relaxed:1.65; /* @kind font */
+
+  /* ---- letter spacing ---- */
+  --ls-display: -0.02em;  /* @kind font */
+  --ls-cn:       0.01em;  /* @kind font */
+  --ls-ui:      -0.01em;  /* @kind font */
+  --ls-over:     0.14em;  /* @kind font */
+  --ls-mono:     0.02em;  /* @kind font */
+}
+
+/* ============================================================
+   Ezagent · Spacing & layout tokens
+   4px base rhythm. Generous gutters; cards breathe on the ground.
+   ============================================================ */
+:root {
+  --space-0:  0;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  30px;   /* card inner padding (vertical) */
+  --space-8:  32px;   /* card inner padding (horizontal) */
+  --space-9:  44px;
+  --space-10: 60px;
+  --space-12: 80px;
+  --space-16: 120px;
+
+  /* gaps */
+  --gap-grid:  22px;   /* between floating cards */
+  --gap-row:   14px;   /* inline component rows */
+  --gap-tight: 9px;
+
+  /* layout */
+  --container:    1340px;
+  --container-sm: 760px;
+  --pad-page-x:   44px;
+  --pad-page-y:   60px;
+  --pad-card:     30px 32px; /* @kind spacing */
+}
+
+/* ============================================================
+   Ezagent · Radii, elevation & motion tokens
+   Signature elevation: floating white cards lifted by huge layered
+   soft shadows — "edges made of light, not lines". No gradients.
+   ============================================================ */
+:root {
+  /* ---- radii ---- */
+  --r-sm:   10px;
+  --r-md:   16px;
+  --r-lg:   22px;
+  --r-icon: 18px;   /* squircle app icons */
+  --r-pill: 999px;
+
+  /* ---- elevation ---- */
+  --edge: 0 0 0 1px rgba(15,15,15,.04); /* @kind shadow */
+  --shadow-sm: 0 1px 2px rgba(15,15,15,.04),
+               0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card: 0 60px 80px rgba(15,15,15,.07),
+                 0 25px 33px rgba(15,15,15,.05),
+                 0 13.4px 17.9px rgba(15,15,15,.045),
+                 0 7.5px 10px rgba(15,15,15,.04),
+                 0 4px 5.3px rgba(15,15,15,.03),
+                 0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent: 0 10px 24px -8px rgba(11,92,255,.5);
+  --shadow-pop:    0 20px 40px -16px rgba(15,15,15,.2),
+                   inset 0 0 0 1px rgba(255,255,255,.65);  /* frosted glass */
+
+  /* ---- motion ---- */
+  --ease-out: cubic-bezier(.16,1,.3,1);   /* @kind other */
+  --ease-in-out: cubic-bezier(.65,0,.35,1); /* @kind other */
+  --dur-fast:  150ms;  /* @kind other */
+  --dur-base:  250ms;  /* @kind other */
+  --dur-enter: 500ms;  /* @kind other */
+
+  /* ---- glass ---- */
+  --glass-blur: blur(14px) saturate(1.4); /* @kind other */
+  --glass-bg:   rgba(255,255,255,.55); /* @kind color */
+  --glass-edge: inset 0 0 0 1px rgba(255,255,255,.65); /* @kind shadow */
+}
+
+:root[data-theme="dark"] {
+  --edge: inset 0 0 0 1px rgba(244,242,236,.1); /* @kind shadow */
+  --shadow-sm: inset 0 0 0 1px rgba(244,242,236,.06),
+               0 10px 26px -12px rgba(0,0,0,.6);
+  --shadow-card: inset 0 0 0 1px rgba(244,242,236,.07),
+                 0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-accent: 0 10px 24px -8px rgba(90,162,255,.4);
+  --shadow-pop:    0 20px 40px -16px rgba(0,0,0,.6),
+                   inset 0 0 0 1px rgba(244,242,236,.13);
+  --glass-bg:   rgba(42,41,54,.5);
+  --glass-edge: inset 0 0 0 1px rgba(244,242,236,.13); /* @kind shadow */
+}
+
+/* ---- FadeUpBlur entrance · opt-in via .fade-up, gated on motion pref ---- */
+@keyframes ez-fade-up-blur {
+  from { opacity: 0; transform: translateY(20px); filter: blur(8px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ez-fade-up { animation: ez-fade-up-blur var(--dur-enter) var(--ease-out) both; }
+}
+
+/* ============================================================================
+ * WEBSITE EXTENSIONS · 官网页面专用(非上游品牌 token)
+ * 仅官网插画(办公室桌面/屏/小人)用;不属于跨面统一品牌层。
+ * ========================================================================== */
+:root {
+  --desk: #FFFFFF; --desk-edge: #E9E9ED; --screen-dark: #14131C; --seat: #2A2832;
+}
+:root[data-theme="dark"] {
+  --desk: #272531; --desk-edge: #332F3B; --screen-dark: #0C0B12; --seat: #3C3A45;
 }

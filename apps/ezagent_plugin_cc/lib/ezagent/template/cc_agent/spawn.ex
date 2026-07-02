@@ -36,6 +36,19 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # correct. (codex final-review Q1.)
   @compile_env Mix.env()
 
+  # Phase 3 ③ T7h — transport-join gate timeout, now operator-configurable.
+  # The cc ReadyGate flips `:ready` only AFTER the claude sidecar JOINs the
+  # bridge (PTY → claude → esr-bridge MCP → channel bind, via
+  # `Ezagent.Agent.TransportReadiness`). On a loaded host claude cold-start to
+  # JOIN measured 50–85s, well past this default — so the gate fired
+  # `mark_failed` before readiness and rolled the spawn back. Keep the default
+  # at the historical 30s (no behavior change) but let operators / e2e raise it
+  # via `config :ezagent_plugin_cc, :transport_join_timeout_ms, <ms>`.
+  # SURFACE (Allen): 30s is generally tight for cc cold-start under load — a
+  # higher default (or a documented requirement to configure it) may be
+  # warranted; left to Allen's budget call. See t7b-evidence act4 发现 1.
+  @default_transport_join_timeout_ms 30_000
+
   # V1 fix Allen 2026-05-21: template instantiate PRODUCES the Kind.
   # Before this fix, instantiate started only PtyServer and assumed
   # someone else (AgentNewLive's direct SpawnRegistry.spawn call) had
@@ -444,10 +457,27 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
   defp require_transport_join(%URI{} = agent_uri) do
     unless @compile_env == :test do
-      :ok = Ezagent.Agent.TransportReadiness.require_transport_join(agent_uri, timeout_ms: 30_000)
+      :ok =
+        Ezagent.Agent.TransportReadiness.require_transport_join(agent_uri,
+          timeout_ms: transport_join_timeout_ms()
+        )
     end
 
     :ok
+  end
+
+  @doc """
+  Transport-join gate timeout in ms. Defaults to
+  #{@default_transport_join_timeout_ms}ms; override with
+  `config :ezagent_plugin_cc, :transport_join_timeout_ms`.
+  """
+  @spec transport_join_timeout_ms() :: pos_integer()
+  def transport_join_timeout_ms do
+    Application.get_env(
+      :ezagent_plugin_cc,
+      :transport_join_timeout_ms,
+      @default_transport_join_timeout_ms
+    )
   end
 
   defp start_pty(agent_uri, params) do
