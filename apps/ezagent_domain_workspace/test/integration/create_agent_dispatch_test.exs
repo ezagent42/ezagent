@@ -3,7 +3,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   Acceptance test for SPEC 2026-05-25-agent-create-cli-gui-parity:
   the unified `Ezagent.Workspace.create_agent/3` facade — what BOTH the CLI
   (`mix ezagent.agent.create`) and the operator UI call — dispatches the
-  `Behavior.Workspace.:create_agent` action.
+  `ActionSet.Workspace.:create_agent` action.
 
   Focused on the action's contract surface (validation + early-exit
   shapes) without needing real plugin Template Classes. The full
@@ -15,7 +15,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     cc/py Template Class instantiate behaviour.
 
   This test verifies the unification's WIRING: the dispatched action
-  routes through `Behavior.Workspace.:create_agent` and returns the
+  routes through `ActionSet.Workspace.:create_agent` and returns the
   shapes the CLI + LV both consume.
   """
 
@@ -100,7 +100,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     test "file flavors accept empty cwd so the config_dir default can apply" do
       for flavor <- ~w(cc cc-headless codex codex-remote) do
         assert :ok =
-                 Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation.validate_cwd_for_flavor(
+                 Ezagent.ActionSet.Workspace.AgentCreate.FlavorValidation.validate_cwd_for_flavor(
                    flavor,
                    false,
                    ""
@@ -120,7 +120,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         )
 
       tmpl =
-        Ezagent.Behavior.Workspace.__file_flavor_template_for_test__(
+        Ezagent.ActionSet.Workspace.__file_flavor_template_for_test__(
           "cc",
           "cc.agent",
           agent_uri,
