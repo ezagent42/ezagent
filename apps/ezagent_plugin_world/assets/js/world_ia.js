@@ -2,6 +2,7 @@ const PRIMARY_NAV_ITEMS = [
   {label: "Chat", href: "/sessions"},
   {label: "Agents", href: "/identities/agents"},
   {label: "Manage", href: "/workspaces"},
+  {label: "Overview", href: "/overview"},
 ]
 
 export function primaryNavItems() {
@@ -12,7 +13,12 @@ export function isPrimaryNavActive(path, href) {
   const currentPath = pathOnly(path)
 
   if (href === "/sessions") {
+    // Chat is the default landing: `/` and `/sessions` both highlight Chat.
     return currentPath === "/" || currentPath === "/sessions"
+  }
+
+  if (href === "/overview") {
+    return currentPath === "/overview"
   }
 
   if (href === "/identities/agents") {
@@ -53,6 +59,7 @@ export function sectionRoot(path) {
 export function pageTitleForComponent(component) {
   switch (component) {
     case "overview":
+      return "Overview"
     case "sessions_table":
     case "conversation":
       return "Chat"
