@@ -17,13 +17,13 @@
 ### PR-T1-A1 · Behavior → ActionSet 机械改名
 - **改**：`Ezagent.Behavior.*` → `Ezagent.ActionSet.*`（212 文件/777 处 module 定义 + 引用）；`use Ezagent.Behavior`/`@behaviour Ezagent.Behavior`（`lifecycle.ex:195-200`）；`Module.concat([:Ezagent,:Behavior,...])`（`ezagent.stress.ex:95`）;`Ezagent.Behavior.new_style?`（`runtime.ex:768`）;arch 元数据 `"Behavior"→"ActionSet"`（`arch.scan.ex:184`）。
 - **不改**：cap 里 `behavior` 字段名（那是 struct 字段,不是模块名）——只改它的**值**（模块名字符串）见 A2。
-- **验证**：`mix compile -w-a-e` 0 warning；全套 arch+precommit 绿。
-- **DoD**：`grep "Ezagent.Behavior\b" apps test docs` = 0（除迁移注释）。
+- **验证**：`mix compile -w-a-e` 0 warning；全套 arch+precommit 绿。**A1 含全部源码树 `Ezagent.Behavior` 改名(含 test/integration + 全 test + 非 scenario docs 的 committed fixture,codex plan #4)——不只 apps。**
+- **DoD**：`grep "Ezagent.Behavior\b" apps test docs` = 0（**唯一权威范围;历史设计文档(`docs/together/2026-06-*/specs/`)的 `Ezagent.Behavior` 示例要么改、要么进 gate allowlist**）。
 
 ### PR-T1-A2 · stale-string 迁移 + grep gate（依赖 A1）
-- **迁移**（Repo 级扫描重写）：`users.caps_json`（`normalize.ex:7,17`）+ `kind_snapshots` **全 term 解码**（含 identity 切片 caps,参 `grant_migration.ex:16,162`）+ `socialware_config_objects.body`（recipe & definition body 的 behavior 字符串,`recipe_registry.ex:361`/`definition.ex:75`）。旧 `Ezagent.Behavior.*` → `Ezagent.ActionSet.*`。**pre-prod dev 直接 wipe+reseed 兜底**。
-- **grep gate**（防回归,挂 CI）：拒绝 `Ezagent.Behavior\b` + `:Behavior` atom + `Module.concat([:Ezagent,:Behavior` + 持久化 body/caps 字符串;扫 `apps`+`test/support`+`docs/scenarios`。
-- **DoD**：Repo 扫描 3 表无 `Ezagent.Behavior.` 字符串;grep gate 绿。
+- **迁移**（Repo 级扫描重写）：`users.caps_json`（`normalize.ex:7,17`）+ `kind_snapshots` **全 term 解码**（含 identity 切片 caps,参 `grant_migration.ex:16,162`）+ `socialware_config_objects.body`（recipe & definition body 的 behavior 字符串,`recipe_registry.ex:361`/`definition.ex:75`）。旧 `Ezagent.Behavior.*` → `Ezagent.ActionSet.*`。**pre-prod dev 直接 wipe+reseed 兜底**（DB 数据）。
+- **grep gate scope 与 A1 一致（codex plan #4）**：拒绝 `Ezagent.Behavior\b` + `:Behavior` atom + `Module.concat([:Ezagent,:Behavior` + 持久化 body/caps 字符串;**范围 = `apps` + 全 `test`（不只 test/support）+ `docs`（历史设计文档用明确 allowlist,不靠 wipe）**。⚠️ wipe+reseed 只盖 DB 数据,**盖不到源码树的 committed fixture/docs**——这些必须在 PR 里手改或 allowlist。
+- **DoD**：Repo 扫描 3 表 + 源码树（apps/test/docs)无 `Ezagent.Behavior.` 字符串（除 allowlist 历史文档）;grep gate 绿。
 
 ### PR-T1-B · config:// → 结构化 subject + 迁移（独立于 A）
 - **scope**：**仅 definition/recipe 的伪 URI subject**（`definition_registry.definition_subject_uri` + recipe registry 对应函数）→ `"<kind>:<name>"`（冒号串,opaque）。**agent/session 用真 entity URI 当 subject 的不碰**（`agent/config.ex:197`/`installation.ex:177,230`）。
@@ -37,10 +37,11 @@
 - **DoD**：未知 `foo://bar` → CI 红;7 个外部 scheme 不误报;加新 scheme 必须同进 registry+allowlist。
 
 ### PR-T1-D · role(配方义) → recipe 收尾改名（独立）
-- **改**：`Ezagent.Role` 模块退役→并入/别名 `Ezagent.Agent.Recipe`;`template://<ws>/role/<name>`→`template://<ws>/recipe/<name>`（持久化段,存量 kind_snapshots/template 迁移）;`orchestrator_role.ex`→`orchestrator_recipe.ex`+符号;配方义变量 `role`→`recipe`。
-- **不改**：路由义 `role_name`/`{:role,name}`/`$role:`（`receiver.ex:9`）+ per-session 唯一 role_name（`membership.ex:31-35`）。
-- **grep gate**：无 `Ezagent.Role`/`template://.../role/`/`config://.../role/`;保留 `role_name`/`{:role`/`$role:`。
-- **DoD**：配方义 role 清零;路由义保留;`template://.../recipe/` 迁移无丢失。
+- **前提纠正（codex plan #3）**：`Ezagent.Role` 模块**已不存在**（#127 已改名 `Ezagent.Agent.Recipe`,`recipe.ex:1-4`）——**无模块退役步**。剩的是 URI 段 + 命名残留。
+- **改**：`template://<ws>/role/<name>`→`template://<ws>/recipe/<name>`（持久化段,存量 kind_snapshots/template 迁移 + pointer id 若含则重建）;`orchestrator_role.ex`→`orchestrator_recipe.ex`+符号;配方义变量 `role`→`recipe`。
+- **不改（路由义 role 机制,全保留）**：`role_name`/`{:role,name}`/`$role:`（`receiver.ex:9`）+ per-session 唯一 role_name（`membership.ex:31-35`）+ `RoleResolver`(`session/role_resolver.ex`)+ `role_seed_hook`/`role_step`。
+- **grep gate**：禁 `template://.../role/`/`config://.../role/`/`orchestrator_role`;放行路由义 `role_name`/`{:role`/`$role:`/`RoleResolver`/`role_seed`/`role_step` + #127 历史注释。
+- **DoD**：配方义 URI/命名清零;路由义机制保留;`template://.../recipe/` 迁移无丢失。
 
 ### PR-T1-Skill · skill 同步（收尾，全 T1 落地后）
 - `ezagent-developer` 全 references：`Ezagent.Behavior`→`Ezagent.ActionSet`、配方义 `role`→`recipe`、`config://`→结构化 subject 表述。
@@ -51,13 +52,15 @@
 ## 2. T2 — app-package（rebase 到 T1 上）
 
 ### PR-T2-1 · `agents:[%{recipe,role_name}]` 字段 + gate 骨架
-- Definition struct（`definition.ex:11`）+ `new/1`（`:37`,校验 recipe ref 可解析 + role_name 非空）+ `body/1`（`:77` JSON 序列化）加 `agents`。
-- gate 骨架（`mix ezagent.socialware.check`）：recipe 解析/caps 注册/adapters/URI-parse/routing-receiver/prompt_template_ref/role_name 唯一。
-- **DoD**：坏 definition（不存在 recipe / 重复 role_name / 坏 prompt_ref）→ gate 红。
+- Definition struct（`definition.ex:11`）+ `new/1`（`:37`）**只做 shape 校验**（`agents` 是 list of `%{recipe: str, role_name: str}`、两者非空）——**recipe 存在性 NOT 在 new/1**（codex plan #2:`new/1` 无 workspace,recipe 解析是 workspace-sensitive `recipe_registry.lookup/2`）。+ `body/1`（`:77` JSON 序列化）加 `agents`。
+- **recipe ref 存在性校验放 gate**：`mix ezagent.socialware.check` 或新 `Definition.validate_refs(def, workspace_uri)`（workspace-aware）。
+- gate 骨架（`mix ezagent.socialware.check`）：recipe 解析（workspace-aware）/caps 注册/adapters/URI-parse/routing-receiver/prompt_template_ref/role_name 唯一。
+- **DoD**：坏 definition（不存在 recipe / 重复 role_name / 坏 prompt_ref）→ gate 红;`new/1` 只挡 shape 错。
 
 ### PR-T2-1b · agents 物化消费者（§4b，依赖 T2-1）
-- materialize（`definition_editor.ex:250` reduce + `materializer.ex`）新增 `agents` 分支：每项 → RecipeRegistry 解析 recipe → `SessionAgentMaterialize.materialize`（`session_agent_materialize.ex:144`,分配 role_name,per-session 唯一）→ `GrantRecipeCaps` 授 recipe.requested_caps。
-- **DoD**：Definition.agents → 活的 per-session agent（带 role_name）+ caps 授予,测试证明。
+- **materialize API 新路径（codex plan #1）**：现 `SessionAgentMaterialize.materialize/1` 只吃**一个 `:role`**（既当 agent URI 又当 recipe 名,`session_agent_materialize.ex:103,116,173`);而我们 recipe/role_name 已 split。→ **需扩 API 或新 materializer 路径吃 `%{recipe_ref, role_name}`**:(1) 用 workspace 解析 recipe_ref → recipe;(2) 用 recipe/template 身份 spawn agent;(3) **显式用 `%{role_name: role_name}` facet join**（role_name 只从 join facet 来,不从 recipe——`membership.ex:31`);(4) role_name 唯一性对**既有 members + 本次 agents 批**双重 enforce。
+- materialize（`definition_editor.ex:250` reduce + `materializer.ex`）新增 `agents` 分支 → 上述新路径 → `GrantRecipeCaps` 授 recipe.requested_caps。
+- **DoD**：Definition.agents → 活的 per-session agent（带 role_name,唯一)+ caps 授予,测试证明（含 role_name 冲突拒绝)。
 
 ### PR-T2-2a · views = view-ActionSet（后端字段 + 唯一动作）
 - Definition `views: [view_actionset]` 字段（进 `Definition.behaviors/1` = `[Session]++views++shape++bases`,codex T2 v3 #1——保证 view 真进 behavior set）。
