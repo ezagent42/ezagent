@@ -363,6 +363,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri, agent},
                   })
                 },
+                onForkConfig: (sessionUri) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.fork_config",
+                    args: {session_uri: sessionUri},
+                  })
+                },
                 onRestartOrchestrator: (sessionUri) => {
                   pushEvent?.("world:dispatch", {
                     action: "session.orchestrator.restart",
