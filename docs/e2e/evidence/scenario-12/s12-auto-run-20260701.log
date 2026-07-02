@@ -1,0 +1,53 @@
+
+[1m▶ 0 preflight[0m
+[32m  ✅ PASS: server health 200[0m
+
+[1m▶ 01 登录[0m
+[32m  ✅ PASS: 登录跳转 /sessions[0m
+[32m  ✅ PASS: 主面板 sessions_table 渲染[0m
+
+[1m▶ 02 建 agent (e2e-native)[0m
+   e2e-native 已存在,跳过创建
+[32m  ✅ PASS: e2e-native 在 agents 列表[0m
+
+[1m▶ 03 建 session (e2e-auto) + 加成员[0m
+   e2e-auto 已存在,跳过创建
+[32m  ✅ PASS: e2e-native 加入即 online[0m
+[32m  ✅ PASS: py_default 在线(供往返)[0m
+
+[1m▶ 04 py 往返 (@py_default)[0m
+[32m  ✅ PASS: py_default 逐字回显 ping-120558 (回复含 'ping-120558')[0m
+
+[1m▶ 05 cc 回归守卫 (@claude-bot,预期 FAIL=不回)[0m
+[32m  ✅ PASS: cc(claude-bot)如已知 bug 不回 (确认 15s 内无回复含 'cc-120558')[0m
+
+[1m▶ 09 @autocomplete 只列成员[0m
+[32m  ✅ PASS: autocomplete 列成员(含 py_default,排除非成员)[0m
+
+[1m▶ 07 curl/DeepSeek 往返 (需 DEEPSEEK_API_KEY)[0m
+[33m  ⏭️  SKIP: 07 curl — 未设 DEEPSEEK_API_KEY(注入后可跑:DEEPSEEK_API_KEY=sk-... bash run.sh)[0m
+
+[1m▶ 08 @mention 门控(只回被 @ 者)[0m
+[33m  ⏭️  SKIP: 08 门控 — 需 2 个能回的 agent(py_default + e2e-curl),后者需 DEEPSEEK_API_KEY[0m
+
+[1m▶ 11 feishu 入站(POST /api/feishu/webhook 合成注入)[0m
+[32m  ✅ PASS: webhook 端点活性(challenge 回显)[0m
+   已建合成绑定(open_id+chat→e2e-auto)
+   合成入站事件已 POST(HTTP 200)
+[32m  ✅ PASS: feishu 入站经路由 → py_default 在会话回显 f9inbound-120558(完整入站链) (回复含 'f9inbound-120558')[0m
+
+[1m▶ 12 dispatch 审计 (CLI)[0m
+
+▶ 12 dispatch 审计 (CLI/PG, 近 120min)
+   invocations=579  send=20  receive=6  ungranted-receive=0  dlq表=0
+  ✅ PASS: dispatch 在 invocations 留痕(579 行,近 120min)
+  ✅ PASS: py_default 有 agent.receive(6)— UI 往返在 dispatch 层坐实
+  ✅ PASS: 所有 agent.receive 均 granted(无越权投递)
+  ℹ️  P22 DLQ-on-zero-match:dlq 表 0 行 — 零匹配消息无 DLQ 兜底(GLOSSARY 待裁决:P22 设计 no-op 还是缺口)
+
+══ audit 结果 ══ PASS
+[32m  ✅ PASS: 审计:dispatch 轨迹 granted 可追溯(详见上)[0m
+
+[1m══ 结果 ══[0m
+[32mPASS=12[0m
+[33mSKIP=2[0m
