@@ -33,7 +33,11 @@ defmodule EzagentCore.Invariants.NoConfigSchemeSubjectTest do
   # unknown-scheme catch-all (T1-C) flags a retired `config://` literal.
   @sanctioned [
     "apps/ezagent_core/test/invariants/no_config_scheme_subject_test.exs",
-    "apps/ezagent_core/test/ezagent/uri_query/scan_test.exs"
+    "apps/ezagent_core/test/ezagent/uri_query/scan_test.exs",
+    # The T1-D recipe-sense-role gate legitimately names the retired
+    # config-scheme role URI segment in its forbidden-pattern regex to enforce
+    # its OWN elimination.
+    "apps/ezagent_core/test/invariants/no_recipe_sense_role_test.exs"
   ]
 
   test "no apps source references the retired config:// pseudo-URI subject" do

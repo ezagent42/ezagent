@@ -28,7 +28,7 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
 - **Role-materialization foundation (#54 follow-on)** — the role×flavor spawn
   path does not exist yet (verified 2026-06-25): `Workspace.AgentCreate` ignores
   Role; `Role.Compose.materialize` is only called by `OrchestratorRole` for cc's
-  CLAUDE.md content (not a spawn); no `template://<ws>/role/<name>` resolver
+  CLAUDE.md content (not a spawn); no `template://<ws>/recipe/<name>` resolver
   branch + no RoleTemplate Kind. Build: role Template subtype + `template://role`
   resolver branch + role-driven agent create + `Role.CapMint` integration into
   create. Prerequisite for kanban-as-role AND for orchestrator (which is also
