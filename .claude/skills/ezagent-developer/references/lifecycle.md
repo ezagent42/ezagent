@@ -6,7 +6,7 @@ This file is REQUIRED reading before writing any Behavior, modifying an existing
 
 ## The one rule
 
-**Developer code uses `use Ezagent.Lifecycle`. It NEVER uses `use Ezagent.Behavior`, never declares `state_slice/0`, never implements `init_slice/1` / `invoke/4` / `post_init/2` / `handle_continue/3` / `on_ready/2` / `reconcile_after_load/2`.** Router / Behavior / Kind (R/B/K) are the *internal engine*; Lifecycle is the *public API* it compiles down to (R10-3). The Phase C grep gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI if a developer-tier file re-introduces the old surface.
+**Developer code uses `use Ezagent.Lifecycle`. It NEVER uses `use Ezagent.ActionSet`, never declares `state_slice/0`, never implements `init_slice/1` / `invoke/4` / `post_init/2` / `handle_continue/3` / `on_ready/2` / `reconcile_after_load/2`.** Router / Behavior / Kind (R/B/K) are the *internal engine*; Lifecycle is the *public API* it compiles down to (R10-3). The Phase C grep gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI if a developer-tier file re-introduces the old surface.
 
 ## Why the change
 
@@ -91,7 +91,7 @@ end
 
 - **R10-1 — self-deferred boot work.** If your old `handle_continue/3` did `send(self(), msg)` to defer work PAST `:ready` (canonical: `ExternalMirror` worker-spawn — the workers' `subscribe_from` `:call` hits `:not_ready` if spawned pre-ready), that body does NOT go in `activate` (which is pre-`:ready`). It goes in `activated/2` OR the `activate → send(self(), msg) → handle_signal(msg, ctx)` pattern. `activate` may only do the `send`; `handle_signal` does the deferred work after the mailbox drains (post-`:ready`).
 - **R10-2 — commit atomicity.** `{:set, ...}` and `{:set_transient, ...}` in one handler return are pure pre-commit map reductions: both new maps are computed BEFORE `Snapshot.commit`; only `state` is snapshotted; if commit fails NEITHER advances. A `transients` change never triggers a snapshot write.
-- **R10-3 — engine contract stays.** `Ezagent.Behavior` is the macro's compile target. Don't delete it, its callback definitions, or `Kind.Runtime`'s use of it. "No shims" (AC-5) means no developer-facing back-compat, NOT removal of the engine.
+- **R10-3 — engine contract stays.** `Ezagent.ActionSet` is the macro's compile target. Don't delete it, its callback definitions, or `Kind.Runtime`'s use of it. "No shims" (AC-5) means no developer-facing back-compat, NOT removal of the engine.
 - **R10-4 — wipe cutover is ordered.** Snapshot cutover = stop ALL nodes → deploy → DELETE `kind_snapshots` (confirm empty) → restart (create/activate rebuild from durable SoT). Never start a new-code node against a DB holding old merged-slice rows.
 
 ## Bug-fix-by-construction (the three historical cases)
@@ -124,7 +124,7 @@ In all three the developer writes one obvious line in `activate`; the container 
 
 ## Action macro grammar + effect vocabulary (UNCHANGED)
 
-The `action :name, args:, returns:, caps:, modes:, description:, data_owner:, workspace_scoped?:` grammar is VERBATIM the engine's `Ezagent.Behavior.action/3`. The effect vocabulary is VERBATIM, plus one additive effect:
+The `action :name, args:, returns:, caps:, modes:, description:, data_owner:, workspace_scoped?:` grammar is VERBATIM the engine's `Ezagent.ActionSet.action/3`. The effect vocabulary is VERBATIM, plus one additive effect:
 
 | Effect | Shape | Meaning |
 |---|---|---|
@@ -163,7 +163,7 @@ The lint (in `mix ezagent.check_invariants.lifecycle`): (1) layer-vocab — flag
 - Use the `state_slice:` macro option + `# lifecycle:state_slice_override` marker ONLY when snapshot-key stability requires it.
 
 ### DON'T
-- Don't `use Ezagent.Behavior` (engine-only). Don't declare `state_slice/0` as a `def` (use the macro option). Don't implement `init_slice/1` / `invoke/4` / `post_init/2` / `handle_continue/3` / `on_ready/2` / `reconcile_after_load/2`.
+- Don't `use Ezagent.ActionSet` (engine-only). Don't declare `state_slice/0` as a `def` (use the macro option). Don't implement `init_slice/1` / `invoke/4` / `post_init/2` / `handle_continue/3` / `on_ready/2` / `reconcile_after_load/2`.
 - Don't put a PID/ref/ETS/port in `state` — it gets snapshotted then rehydrated as a dead reference.
 - Don't do self-deferred (`send(self(), …)`) post-`:ready` work in `activate` (R10-1) — use `activated`/`handle_signal`.
 - Don't `Phoenix.PubSub.broadcast` / `Ezagent.Invocation.dispatch/1` / `Ezagent.SnapshotStore.*` / `Ezagent.EventLog.append` from inside a handler — emit `{:notify, ...}` / `{:dispatch, %Cmd{}}` / `{:set, ...}` / `{:emit, ...}` effects.

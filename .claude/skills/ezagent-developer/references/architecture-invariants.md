@@ -2,7 +2,7 @@
 
 The Design Principles (references/design-principles.md) capture *what / why*; the numbered invariants below are the *operational specifics + CI gate names*. Pre-existing numbering preserved — each maps back to a principle.
 
-> **2026-05-28 — Router/Behavior/Kind migration impact**: SPEC PR #445 (Phase 1-4 migration PRs #451-#469) rewrote the plugin contract — Behaviors now use `use Ezagent.Behavior` + `action/3` macro + `handle_<action>(args, ctx)` returning effects. The invariants below remain CI-enforced and unchanged in intent; what shifted is that **plugin code can no longer accidentally violate them by reaching for framework internals**. SPEC §11 added 7 grep gates against `Ezagent.Plugin.*` / `ezagent_plugin_*` / `ezagent_domain_*` importing `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.EventSubscriber` / `Ezagent.Router` internals / `Ezagent.SagaRunner.execute/2`. Invariants 18 (sibling slices), 19 (cap normalize), 20 (reconcile_after_load) are unchanged by the migration — they remain Behavior-author-facing concerns. See `references/new-contract.md` for the operational contract.
+> **2026-05-28 — Router/Behavior/Kind migration impact**: SPEC PR #445 (Phase 1-4 migration PRs #451-#469) rewrote the plugin contract — Behaviors now use `use Ezagent.ActionSet` + `action/3` macro + `handle_<action>(args, ctx)` returning effects. The invariants below remain CI-enforced and unchanged in intent; what shifted is that **plugin code can no longer accidentally violate them by reaching for framework internals**. SPEC §11 added 7 grep gates against `Ezagent.Plugin.*` / `ezagent_plugin_*` / `ezagent_domain_*` importing `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.EventSubscriber` / `Ezagent.Router` internals / `Ezagent.SagaRunner.execute/2`. Invariants 18 (sibling slices), 19 (cap normalize), 20 (reconcile_after_load) are unchanged by the migration — they remain Behavior-author-facing concerns. See `references/new-contract.md` for the operational contract.
 
 ## Table of contents
 
@@ -41,7 +41,7 @@ CI gate: any module that `import`s `Phoenix.PubSub` AND writes to an external AP
 
 ## 2. **Capabilities are module references, not atoms** (Decision #137, plus the AtomShorthand trap)
 
-`Ezagent.Capability.behavior` field is a `module()` (e.g. `Ezagent.Behavior.Chat`), NOT an atom shorthand (`:chat`). Atom mismatch silently denies because `Capability.matches?/2` requires exact equality on `behavior`. The parser converts string "chat" → `Ezagent.Behavior.Chat` at parse time; programmatic cap construction MUST use the module reference.
+`Ezagent.Capability.behavior` field is a `module()` (e.g. `Ezagent.ActionSet.Chat`), NOT an atom shorthand (`:chat`). Atom mismatch silently denies because `Capability.matches?/2` requires exact equality on `behavior`. The parser converts string "chat" → `Ezagent.ActionSet.Chat` at parse time; programmatic cap construction MUST use the module reference.
 
 If your code path can't import the module reference (circular dep), use `:any` and scope by `:kind` instead — but document this as a trade-off, NOT an idiom (see forensic note `docs/notes/phase-7-handoff.md` §"Three trade-offs not to cargo-cult").
 
@@ -53,7 +53,7 @@ CI gate: `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude p
 
 ## 4. **Workspace scoping is enforced via Ezagent.WorkspaceRegistry** (Decision #135)
 
-`Ezagent.Behavior.Chat.invoke(:send, ...)` calls `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. Without this plumbing, workspace-scoped routing rules silently never fire. New plugin Template Classes that spawn sessions MUST call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn`.
+`Ezagent.ActionSet.Chat.invoke(:send, ...)` calls `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. Without this plumbing, workspace-scoped routing rules silently never fire. New plugin Template Classes that spawn sessions MUST call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn`.
 
 CI gate: `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs`.
 
@@ -193,7 +193,7 @@ CI gates: `apps/ezagent_domain_external_mirror/test/invariants/` (8 invariants �
 
 ## 16. **No Phoenix.PubSub.subscribe in ExternalMirror Domain or any Binding module** (SPEC §10 (f), PR-EM-FINAL invariant 4)
 
-Bindings receive slice changes via `Ezagent.Behavior.Publisher.subscribe_from/3` ONLY. Direct `Phoenix.PubSub.subscribe` from a Binding module (or anywhere under `apps/ezagent_domain_external_mirror/`) bypasses the per-binding crash boundary AND the Worker `:publish` CapBAC gate — the P11 escape PR-EM was designed to close.
+Bindings receive slice changes via `Ezagent.ActionSet.Publisher.subscribe_from/3` ONLY. Direct `Phoenix.PubSub.subscribe` from a Binding module (or anywhere under `apps/ezagent_domain_external_mirror/`) bypasses the per-binding crash boundary AND the Worker `:publish` CapBAC gate — the P11 escape PR-EM was designed to close.
 
 CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_pubsub_bypass_in_external_mirror_test.exs` (grep gate on Domain lib + every loaded module declaring `@behaviour Ezagent.ExternalMirror.Binding`).
 
@@ -208,7 +208,7 @@ CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_dispatch_in_ta
 A Behavior on Kind K can read OTHER Behaviors' slices on the same Kind instance **only** if it declares the keys it wants:
 
 ```elixir
-@impl Ezagent.Behavior
+@impl Ezagent.ActionSet
 def reads_sibling_slices, do: [:api_keys]
 ```
 
@@ -222,7 +222,7 @@ def reads_sibling_slices, do: [:api_keys]
 
 Any cap that lands in a slice MUST be a `%Ezagent.Capability{}` struct with atom keys. Bare maps (JSON-parsed with string keys) cause `BadMap` / `Protocol.UndefinedError` downstream in `Capability.matches?/2`. The normalizer is the single chokepoint that converts struct / atom-keyed / string-keyed inputs into the canonical struct.
 
-`Ezagent.Behavior.Identity.invoke(:grant_cap, ...)` calls `normalize!/2`. New non-LV cap-granting paths MUST also pipe through `normalize!/2` before writing to `slice.caps`. Direct `MapSet.put(slice.caps, raw_map)` is the anti-pattern.
+`Ezagent.ActionSet.Identity.invoke(:grant_cap, ...)` calls `normalize!/2`. New non-LV cap-granting paths MUST also pipe through `normalize!/2` before writing to `slice.caps`. Direct `MapSet.put(slice.caps, raw_map)` is the anti-pattern.
 
 Revoke matching uses `Capability.identity_key/1` (4-tuple `{kind, behavior, instance, workspace_uri}` ignoring `granted_by`/`granted_at` provenance) — `Capability.revoke/2` is the canonical revoke. Symmetric to grant: bypassing it (manual `MapSet.delete`) is the anti-pattern that causes the "revoke silently no-ops because `granted_at` differs" bug class.
 
@@ -230,9 +230,9 @@ CI gates: `apps/ezagent_domain_identity/test/ezagent/behavior/identity_grant_cap
 
 ## 20. **Behaviors with DB projections implement `reconcile_after_load/2`** (Decision #129 / task #34, PR #403)
 
-`Ezagent.Kind.Snapshot.load_or_init/3` merges snapshot state OVER `init_slice/1` fresh state — so any Behavior whose slice is backed by a DB projection table (e.g. `Ezagent.Behavior.ExternalMirror.bindings` ← `external_mirror_bindings`) loses DB rows inserted between the last snapshot and the next Kind restart.
+`Ezagent.Kind.Snapshot.load_or_init/3` merges snapshot state OVER `init_slice/1` fresh state — so any Behavior whose slice is backed by a DB projection table (e.g. `Ezagent.ActionSet.ExternalMirror.bindings` ← `external_mirror_bindings`) loses DB rows inserted between the last snapshot and the next Kind restart.
 
-The fix: implement the optional `Ezagent.Behavior.reconcile_after_load/2` callback. Snapshot calls it after `Map.merge(fresh, loaded)`; the Behavior re-reads its DB projection and unions/dedupes into the merged slice.
+The fix: implement the optional `Ezagent.ActionSet.reconcile_after_load/2` callback. Snapshot calls it after `Map.merge(fresh, loaded)`; the Behavior re-reads its DB projection and unions/dedupes into the merged slice.
 
 **Required for**: any Behavior where a DB row outside the dispatch path can legitimately exist (SQL fix-ups, race recovery, plugin authors bypassing the canonical bind/insert API). **NOT required for**: Behaviors whose slice is purely in-memory or fully owned by the dispatch path (the default identity is correct for them).
 

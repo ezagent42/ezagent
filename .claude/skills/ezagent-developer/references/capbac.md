@@ -44,7 +44,7 @@ accountable entities **must not be the granter**.
 fields:
 
 - `kind` — the Kind axis (`:session`, `:user`, `:agent`, `:workspace`, `:session_template`, …) or `:any`
-- `behavior` — the Behavior module (`Ezagent.Behavior.Session`, …) or `:any`
+- `behavior` — the Behavior module (`Ezagent.ActionSet.Session`, …) or `:any`
 - `action` — IS a struct field (`defstruct` default `:any`), but it is **not in `@enforce_keys`**, so a cap built without it defaults to `action: :any` (wildcard). It is matched as a real axis: a held cap authorizes the dispatched action when `action_of(held) == needed_action` or `held` is `:any` (`capability/match.ex`). The **needed** action is the concrete dispatched action, substituted at dispatch time (`runtime.ex` `resolve_required_cap`); a *required* action is declared as the map key in a Behavior's `required_caps/0` — that's how you DECLARE a needed action, not how the held cap stores it. (History note: putting action in the struct/identity-tuple is the NEWER change — SPEC 2026-05-27 capability-action-axis — not the historical state. Some moduledocs still say "no action field"; they're stale.)
 - `instance` — a concrete `%URI{}`, `:any`, or a **scope tuple** `{:within_session, %URI{}}` / `{:within_workspace, %URI{}}` / `{:spawned_by, %URI{}}`
 - `workspace_uri` — a concrete `%URI{}` or `:any`

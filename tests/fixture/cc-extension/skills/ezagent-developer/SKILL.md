@@ -144,7 +144,7 @@ Every actor-to-actor message goes through `Ezagent.Invocation.dispatch/1`. Never
 
 #### **P15. Capabilities are module references, not atom shorthands; scope-bounded shapes narrow.**
 
-`Ezagent.Capability.behavior` is a `module()` (e.g. `Ezagent.Behavior.Chat`), NOT an atom (`:chat`). Atom mismatch silently denies (`matches?/2` requires exact equality). Scope-bounded instance shapes (`{:within_session, _}` / `{:spawned_by, _}`) are MORE specific than URI caps, never less — they narrow, never broaden. `:any` is the only true wildcard and is reserved for the bootstrap admin + documented circular-dep workarounds (User default cap on `:session`).
+`Ezagent.Capability.behavior` is a `module()` (e.g. `Ezagent.ActionSet.Chat`), NOT an atom (`:chat`). Atom mismatch silently denies (`matches?/2` requires exact equality). Scope-bounded instance shapes (`{:within_session, _}` / `{:spawned_by, _}`) are MORE specific than URI caps, never less — they narrow, never broaden. `:any` is the only true wildcard and is reserved for the bootstrap admin + documented circular-dep workarounds (User default cap on `:session`).
 *Why*: silent denial is the worst failure mode; the cap shape that "almost matched" but didn't is invisible without an audit. The scope-bounded shape preserves CapBAC's checkability while letting orchestrators delegate.
 *CI gates*: `apps/ezagent_core/test/esr/capability_test.exs` ("scope-bounded instance tuples"); `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` (`default_caps/0`).
 *See also*: ARCHITECTURE.md §7 + §17.6 + Decision Log #133, #137; invariants 2, 5, 6 below.
@@ -309,7 +309,7 @@ CI gate: any module that `import`s `Phoenix.PubSub` AND writes to an external AP
 
 ### 2. **Capabilities are module references, not atoms** (Decision #137, plus the AtomShorthand trap)
 
-`Ezagent.Capability.behavior` field is a `module()` (e.g. `Ezagent.Behavior.Chat`), NOT an atom shorthand (`:chat`). Atom mismatch silently denies because `Capability.matches?/2` requires exact equality on `behavior`. The parser converts string "chat" → `Ezagent.Behavior.Chat` at parse time; programmatic cap construction MUST use the module reference.
+`Ezagent.Capability.behavior` field is a `module()` (e.g. `Ezagent.ActionSet.Chat`), NOT an atom shorthand (`:chat`). Atom mismatch silently denies because `Capability.matches?/2` requires exact equality on `behavior`. The parser converts string "chat" → `Ezagent.ActionSet.Chat` at parse time; programmatic cap construction MUST use the module reference.
 
 If your code path can't import the module reference (circular dep), use `:any` and scope by `:kind` instead — but document this as a trade-off, NOT an idiom (see forensic note `docs/notes/phase-7-handoff.md` §"Three trade-offs not to cargo-cult").
 
@@ -321,7 +321,7 @@ CI gate: `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` 
 
 ### 4. **Workspace scoping is enforced via Ezagent.WorkspaceRegistry** (Decision #135)
 
-`Ezagent.Behavior.Chat.invoke(:send, ...)` calls `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. Without this plumbing, workspace-scoped routing rules silently never fire. New plugin Template Classes that spawn sessions MUST call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn`.
+`Ezagent.ActionSet.Chat.invoke(:send, ...)` calls `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. Without this plumbing, workspace-scoped routing rules silently never fire. New plugin Template Classes that spawn sessions MUST call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn`.
 
 CI gate: `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs`.
 
@@ -464,7 +464,7 @@ Every contribution lives in one of three tiers. Knowing which tier you're in tel
 Includes:
 - URI parser + `Ezagent.URI.SchemeRegistry` (`apps/ezagent_core/lib/ezagent/uri.ex`, `apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex`)
 - Registries: `KindRegistry`, `BehaviorRegistry`, `SpawnRegistry`, `TemplateRegistry`, `RoutingRegistry`, `WorkspaceRegistry`
-- Dispatch: `Ezagent.Invocation`, `Ezagent.Kind.Runtime`, `Ezagent.Kind`, `Ezagent.Behavior`
+- Dispatch: `Ezagent.Invocation`, `Ezagent.Kind.Runtime`, `Ezagent.Kind`, `Ezagent.ActionSet`
 - Capability: `Ezagent.Capability`, `Ezagent.Capability.*`
 - Persistence infra: `Ezagent.EtsOwner` (`apps/ezagent_core/lib/ezagent_core/ets_owner.ex`), `Ezagent.Audit`, `Ezagent.MessageStore`, `Ezagent.Message`, `Ezagent.ReadyGate`, `Ezagent.PendingDelivery`, `Ezagent.Snapshot.*`
 - Routing infra: `Ezagent.Routing.Resolver`, `Ezagent.Routing.RuleStore`, `Ezagent.Routing.Matcher`
@@ -551,7 +551,7 @@ Refuse. `admin_caps()` is the bootstrap principal's structural cap, NOT a goto f
 
 ### Anti-pattern: "I'll write the behavior as :chat in the cap struct"
 
-Refuse. `Capability.behavior` is a module reference; the atom `:chat` is structurally different from `Ezagent.Behavior.Chat` and `matches?/2` will return false. Use the module reference. If a circular dep prevents that, use `:any` + narrow `:kind` (invariant 2 / forensic note).
+Refuse. `Capability.behavior` is a module reference; the atom `:chat` is structurally different from `Ezagent.ActionSet.Chat` and `matches?/2` will return false. Use the module reference. If a circular dep prevents that, use `:any` + narrow `:kind` (invariant 2 / forensic note).
 
 ### Anti-pattern: "I'll put structured data into channel notification meta"
 
@@ -611,7 +611,7 @@ Pre-built examples:
 1. Create `apps/<your_domain_or_plugin>/lib/<your>/entity/<your_kind>.ex`. New first-class Kinds usually go in `domain_*`; plugin-specific agent flavors live in their plugin app.
 2. Implement `@behaviour Ezagent.Kind` with three callbacks:
    - `type_name/0 → :your_kind` (snake atom; appears in cap `kind` field)
-   - `behaviors/0 → [Ezagent.Behavior.X, ...]` (what `init_slice` runs at boot; per-Kind `BehaviorRegistry.register` decides what actions dispatch)
+   - `behaviors/0 → [Ezagent.ActionSet.X, ...]` (what `init_slice` runs at boot; per-Kind `BehaviorRegistry.register` decides what actions dispatch)
    - `persistence/0 → :ephemeral | :on_terminate | {:snapshot, :on_change}`
 3. The URI shape is fixed by SPEC v2 §5.1: `<scheme>://<type>/<name>`. If your Kind is a new entity sub-kind, that's a parser allowlist change (rare — `entity://`'s axis is the closed set `{user, agent}`). More commonly: your Kind extends an existing scheme's type axis via free-form name prefix (agent flavor) or is a Behavior on an existing Kind (plugin side-channel).
 4. If your Kind carries an Identity slice for caps, document the `init_slice/1` args shape (typically `%{initial_caps: MapSet.t()}`).
@@ -624,7 +624,7 @@ Reference Kinds:
 ### How-to: add a Behavior
 
 1. Create `apps/<your_domain_or_plugin>/lib/<your>/behavior/<your_behavior>.ex`.
-2. `@behaviour Ezagent.Behavior`.
+2. `@behaviour Ezagent.ActionSet`.
 3. Implement `state_slice/0`, `init_slice/1`, `interface/0` (action schema), `invoke/4`.
 4. Register per-Kind in the plugin's `register_<X>_behaviors()`:
    `:ok = BehaviorRegistry.register(SomeKind, :action, YourBehavior)`.
@@ -684,7 +684,7 @@ In order of likelihood:
 
 1. **URI shape mismatch — non-canonical input.** Per SPEC v2 §5.1, 2-segment authority `<scheme>://<type>/<name>` is mandatory; old 1-segment forms like `user://admin` return parse error from `Ezagent.URI.parse!/1`. Check the URI string at the call site — it must be `entity://user/admin`, not `user://admin`. Same for `entity://agent/cc_X` (not `agent://cc/X` per SPEC v2 §5.12 + §5.14).
 2. **Channel notification meta has non-string value** (Decision #132). Grep `meta = ...` in your push path; ensure every value is `String.t()`. Run `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
-3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.Behavior.Chat` (module).
+3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.ActionSet.Chat` (module).
 4. **Workspace scope not plumbed** (invariant 4). Check `WorkspaceRegistry.lookup(session_uri)` returns `{:ok, _}` for the session involved. If `:error`, the session was spawned without `bind` (custom Template Class missed step 3 of how-to add a Template Class).
 5. **Inbound transport using `:cast`** (Decision #134). For Feishu/Slack/etc inbound, verify the dispatch uses `mode: :call` and decomposes the result.
 6. **Action syntax wrong** — per SPEC v2 §5.2, actions use query string `?action=behavior.action`. Old path-style `/behavior/X/Y` is removed (PR #146); if anything still constructs it, dispatch silently misses.
@@ -695,7 +695,7 @@ In order of likelihood:
 2. Verify cap struct shape (invariant 2 — module vs atom on `behavior`).
 3. For scope-tuple caps, verify the scope dimension matches the needed action's context — e.g. `{:within_session, A}` won't match an action targeted at session B (Decision #137).
 4. For `{:spawned_by, _}` caps: until PR 40 ships the lineage registry, this shape returns false (deny-by-default placeholder, Decision #137 forensic note).
-5. SQL spot-check: `select * from caps where principal_uri = 'entity://user/admin' and behavior = 'Elixir.Ezagent.Behavior.Chat'` — `behavior` column stores the module's string form, not the atom shorthand.
+5. SQL spot-check: `select * from caps where principal_uri = 'entity://user/admin' and behavior = 'Elixir.Ezagent.ActionSet.Chat'` — `behavior` column stores the module's string form, not the atom shorthand.
 
 ### Symptom: orphan node sidecar after phx restart
 

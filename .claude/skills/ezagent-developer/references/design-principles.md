@@ -117,7 +117,7 @@ Every actor-to-actor message goes through `Ezagent.Invocation.dispatch/1`. Never
 
 ### **P15. Capabilities are module references, not atom shorthands; scope-bounded shapes narrow.**
 
-`Ezagent.Capability.behavior` is a `module()` (e.g. `Ezagent.Behavior.Chat`), NOT an atom (`:chat`). Atom mismatch silently denies (`matches?/2` requires exact equality). Scope-bounded instance shapes (`{:within_session, _}` / `{:spawned_by, _}`) are MORE specific than URI caps, never less — they narrow, never broaden. `:any` is the only true wildcard and is reserved for the bootstrap admin + documented circular-dep workarounds (User default cap on `:session`).
+`Ezagent.Capability.behavior` is a `module()` (e.g. `Ezagent.ActionSet.Chat`), NOT an atom (`:chat`). Atom mismatch silently denies (`matches?/2` requires exact equality). Scope-bounded instance shapes (`{:within_session, _}` / `{:spawned_by, _}`) are MORE specific than URI caps, never less — they narrow, never broaden. `:any` is the only true wildcard and is reserved for the bootstrap admin + documented circular-dep workarounds (User default cap on `:session`).
 *Why*: silent denial is the worst failure mode; the cap shape that "almost matched" but didn't is invisible without an audit. The scope-bounded shape preserves CapBAC's checkability while letting orchestrators delegate.
 *CI gates*: `apps/ezagent_core/test/esr/capability_test.exs` ("scope-bounded instance tuples"); `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` (`default_caps/0`).
 *See also*: ARCHITECTURE.md §7 + §17.6 + Decision Log #133, #137; invariants 2, 5, 6 in references/architecture-invariants.md.

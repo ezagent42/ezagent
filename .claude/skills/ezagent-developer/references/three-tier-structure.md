@@ -11,7 +11,7 @@ Every contribution lives in one of three tiers. Knowing which tier you're in tel
 Includes:
 - URI parser + `Ezagent.URI.SchemeRegistry` (`apps/ezagent_core/lib/ezagent/uri.ex`, `apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex`)
 - Registries: `KindRegistry`, `BehaviorRegistry`, `SpawnRegistry`, `TemplateRegistry`, `RoutingRegistry`, `WorkspaceRegistry`
-- Dispatch: `Ezagent.Invocation`, `Ezagent.Kind.Runtime`, `Ezagent.Kind`, `Ezagent.Behavior`
+- Dispatch: `Ezagent.Invocation`, `Ezagent.Kind.Runtime`, `Ezagent.Kind`, `Ezagent.ActionSet`
 - Capability: `Ezagent.Capability`, `Ezagent.Capability.*`
 - Persistence infra: `Ezagent.EtsOwner` (`apps/ezagent_core/lib/ezagent_core/ets_owner.ex`), `Ezagent.Audit`, `Ezagent.MessageStore`, `Ezagent.Message`, `Ezagent.ReadyGate`, `Ezagent.PendingDelivery`, `Ezagent.Snapshot.*`
 - Routing infra: `Ezagent.Routing.Resolver`, `Ezagent.Routing.RuleStore`, `Ezagent.Routing.Matcher`
@@ -27,8 +27,8 @@ Includes:
 **First-class domain Kinds + Behaviors.** Load-bearing — you cannot uninstall a domain app without breaking the system. The vocabulary that ezagent is FOR.
 
 Apps:
-- `ezagent_domain_session` — Session Kind, Chat Behavior, SessionTemplate, AgentTemplate, GenericSession Template Class, orchestrator tools, FeishuOutbound Behavior, **socialware substrate** (`Ezagent.Socialware.Installation` — the install relation; `Ezagent.Socialware.DefinitionRegistry` resolves `config://<ws>/socialware/<name>` ConfigObjects). (The old `ezagent_domain_chat` app was renamed/merged into `ezagent_domain_session` — chat Behavior moved; `Ezagent.World.ConversationActions` lives in `ezagent_plugin_world`.)
-- `ezagent_domain_agent` — Agent Kind, `Ezagent.Agent.RecipeRegistry` (resolves `config://<ws>/recipe/<name>` ConfigObjects, key `"recipe"`; the `Ezagent.Role`→`Ezagent.Agent.Recipe` rename landed in #127/#1071)
+- `ezagent_domain_session` — Session Kind, Chat Behavior, SessionTemplate, AgentTemplate, GenericSession Template Class, orchestrator tools, FeishuOutbound Behavior, **socialware substrate** (`Ezagent.Socialware.Installation` — the install relation; `Ezagent.Socialware.DefinitionRegistry` resolves `the structured subject `socialware:<name>`` ConfigObjects). (The old `ezagent_domain_chat` app was renamed/merged into `ezagent_domain_session` — chat Behavior moved; `Ezagent.World.ConversationActions` lives in `ezagent_plugin_world`.)
+- `ezagent_domain_agent` — Agent Kind, `Ezagent.Agent.RecipeRegistry` (resolves `the structured subject `recipe:<name>`` ConfigObjects, key `"recipe"`; the `Ezagent.Role`→`Ezagent.Agent.Recipe` rename landed in #127/#1071)
 - `ezagent_domain_agent_bridge` — agent bridge substrate (shared executor + bridge-token seams, flavor-blind)
 - `ezagent_domain_identity` — User Kind, Identity Behavior, ApiKeys Behavior, UserCredentials Behavior (set_password), UserTokens Behavior (mint/list/revoke), Entity facade (`Ezagent.Entity.authenticate/2`), Users provisioning, Token + ApiKey tables, `Ezagent.Socialware.ConfigProjection` (renders autoservice `soul_md` verbatim). Feishu UserBinding + SessionBinding Behaviors live here as per-Kind chokepoints (PR #355 case study).
 - `ezagent_domain_workspace` — Workspace Kind, Workspace Loader, DefaultRules, WorkspaceUserAdmin Behavior (privileged `:create_user` carved out from generic Workspace per PR #356 codex r1 CRIT), `role_step` (`lookup_role_recipe/1`)

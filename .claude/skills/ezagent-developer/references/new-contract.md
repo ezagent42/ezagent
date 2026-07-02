@@ -1,6 +1,6 @@
 # Router / Behavior / Kind — the INTERNAL engine (post 2026-05-28)
 
-> **⚠️ SUPERSEDED AS THE DEVELOPER SURFACE (2026-05-29).** Since the Lifecycle migration (Phase A/B/C), `use Ezagent.Behavior` + `action/3` + hand-rolled `state_slice`/`init_slice` is the **INTERNAL ENGINE**, NOT what plugin/domain authors write. **If you are writing or modifying a Behavior, read `references/lifecycle.md` FIRST** — you write `use Ezagent.Lifecycle`. This file remains the reference for the engine the Lifecycle macro compiles down to (Router, Behavior macro, Kind, effect executor) — consult it when working on the engine ITSELF, the effect grammar, or the dispatch pipeline. The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI if developer-tier code uses `use Ezagent.Behavior` directly.
+> **⚠️ SUPERSEDED AS THE DEVELOPER SURFACE (2026-05-29).** Since the Lifecycle migration (Phase A/B/C), `use Ezagent.ActionSet` + `action/3` + hand-rolled `state_slice`/`init_slice` is the **INTERNAL ENGINE**, NOT what plugin/domain authors write. **If you are writing or modifying a Behavior, read `references/lifecycle.md` FIRST** — you write `use Ezagent.Lifecycle`. This file remains the reference for the engine the Lifecycle macro compiles down to (Router, Behavior macro, Kind, effect executor) — consult it when working on the engine ITSELF, the effect grammar, or the dispatch pipeline. The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI if developer-tier code uses `use Ezagent.ActionSet` directly.
 
 > **Authoritative source**: SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` (PR #445, r3) for the engine; `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` for the developer surface that wraps it. ARCHITECTURE.md §6.0 (engine) + §6.0.7 (Lifecycle) are the load-bearing project docs; Decision Log #147-#153.
 
@@ -25,7 +25,7 @@ The `Behavior.invoke/4` callback is retired (`@optional_callbacks` only since Ph
 | Primitive | Owns | Plugin-author touches |
 |---|---|---|
 | **Router** (`Ezagent.Router`) | dispatch envelope `%Ezagent.Cmd{}`, URI canonicalisation, idempotency, cap check, workspace isolation, audit, effect application | NEVER calls directly; transport adapters (LV / CLI / Channel) build `%Cmd{}` and hand to `Router.dispatch/1` |
-| **Behavior** (`use Ezagent.Behavior`) | action namespace + how each action's effects are computed | declares `action :foo, args: %{...}, returns: ..., caps: [...]` macro + writes `def handle_foo(args, ctx) → {:ok, result, [effects]}` |
+| **Behavior** (`use Ezagent.ActionSet`) | action namespace + how each action's effects are computed | declares `action :foo, args: %{...}, returns: ..., caps: [...]` macro + writes `def handle_foo(args, ctx) → {:ok, result, [effects]}` |
 | **Kind** (`@behaviour Ezagent.Kind`) | URI identity, process lifecycle, attached Behavior list, composition pattern | declares Kind module + attaches Behaviors |
 
 ## The 3 composition patterns
@@ -42,8 +42,8 @@ A Kind picks one — declared via `pattern:` (`:session | {:resource, :hot} | {:
 ## Minimal new-contract Behavior
 
 ```elixir
-defmodule Ezagent.Behavior.EntitySend do
-  use Ezagent.Behavior
+defmodule Ezagent.ActionSet.EntitySend do
+  use Ezagent.ActionSet
 
   action :send,
     args:        %{recipient: :uri, body: :string},
@@ -151,7 +151,7 @@ These are SPEC §11 grep gates; CI fails if a plugin module (under `apps/ezagent
 
 ### DO
 
-- `use Ezagent.Behavior` for any new Behavior; declare via `action/3` macro.
+- `use Ezagent.ActionSet` for any new Behavior; declare via `action/3` macro.
 - Write pure `handle_<action>/2` functions; return `{:ok, result, [effect]}` for side-effecting actions.
 - Read slice via `ctx[:read].(key, default)`; write via `{:set, key, value}` effects.
 - Use `{:notify, topic, payload}` for view fan-out (LV chat stream, presence updates).
@@ -165,14 +165,14 @@ These are SPEC §11 grep gates; CI fails if a plugin module (under `apps/ezagent
 - Don't implement `invoke/4` callback (Phase 3 PR #464 retired it to `@optional_callbacks`; production code never consults it).
 - Don't import `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.Router` internals — SPEC §11 grep gate fails CI.
 - Don't `Phoenix.PubSub.broadcast` from inside a handler — use `{:notify, _, _}` effect.
-- Don't `Ezagent.Invocation.dispatch/1` from inside a handler — use `{:dispatch, %Cmd{}}` effect (exception: result-dependent in-handler dispatch where you need the dispatch return value, e.g. `ReadMarker.mark` after successful chat.receive — see `Ezagent.Behavior.Chat.handle_send/2` for the pattern).
+- Don't `Ezagent.Invocation.dispatch/1` from inside a handler — use `{:dispatch, %Cmd{}}` effect (exception: result-dependent in-handler dispatch where you need the dispatch return value, e.g. `ReadMarker.mark` after successful chat.receive — see `Ezagent.ActionSet.Chat.handle_send/2` for the pattern).
 - Don't tune snapshot policy per Behavior — framework decides via `SnapshotStore` (every N events + on-terminate). Legacy `Kind.persistence/0` enum still exists for Phase 2 migrated Kinds in coexistence, but Phase 2+ new Kinds don't declare it.
 - Don't manually plumb `ctx[:self_uri]` or `ctx[:kind_module]` — `Kind.Runtime` injects them immediately before handler firing.
 
 ## Testing a new-contract Behavior
 
 ```elixir
-defmodule Ezagent.Behavior.EntitySendTest do
+defmodule Ezagent.ActionSet.EntitySendTest do
   use ExUnit.Case, async: true
 
   test "handle_send returns effects in declared order" do
@@ -184,7 +184,7 @@ defmodule Ezagent.Behavior.EntitySendTest do
       reply: :none
     }
 
-    assert {:ok, %{ok: true}, effects} = Ezagent.Behavior.EntitySend.handle_send(args, ctx)
+    assert {:ok, %{ok: true}, effects} = Ezagent.ActionSet.EntitySend.handle_send(args, ctx)
 
     assert [
              {:set, :sends, 1},
@@ -196,7 +196,7 @@ defmodule Ezagent.Behavior.EntitySendTest do
 end
 ```
 
-Handlers are pure — directly callable in ExUnit. The bucketiser `Ezagent.Behavior.apply_effects/2` is also pure + testable without process/IO setup. Integration tests through `Ezagent.Router.dispatch/1` cover the full pipeline.
+Handlers are pure — directly callable in ExUnit. The bucketiser `Ezagent.ActionSet.apply_effects/2` is also pure + testable without process/IO setup. Integration tests through `Ezagent.Router.dispatch/1` cover the full pipeline.
 
 ## OQ decisions (the 8 OQs from SPEC §8)
 

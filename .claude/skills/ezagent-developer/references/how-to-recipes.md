@@ -22,7 +22,7 @@ Pre-built examples:
 1. Create `apps/<your_domain_or_plugin>/lib/<your>/entity/<your_kind>.ex`. New first-class Kinds usually go in `domain_*`; plugin-specific agent flavors live in their plugin app.
 2. Implement `@behaviour Ezagent.Kind` with three callbacks:
    - `type_name/0 → :your_kind` (snake atom; appears in cap `kind` field)
-   - `behaviors/0 → [Ezagent.Behavior.X, ...]` (what `init_slice` runs at boot; per-Kind `BehaviorRegistry.register` decides what actions dispatch)
+   - `behaviors/0 → [Ezagent.ActionSet.X, ...]` (what `init_slice` runs at boot; per-Kind `BehaviorRegistry.register` decides what actions dispatch)
    - `persistence/0 → :ephemeral | :on_terminate | {:snapshot, :on_change}`
 3. The URI shape is fixed by SPEC v3 §5.15 (Amendment 2, **workspace-first**): `<scheme>://<workspace>/<type>/<name>` for per-tenant schemes (authoritative `uri.ex` `per_tenant(scheme, workspace, type, name)`). If your Kind is a new entity sub-kind, that's a parser allowlist change (rare — `entity://`'s axis is the closed set `{user, agent}`). More commonly: your Kind extends an existing scheme's type axis via free-form name prefix (agent flavor) or is a Behavior on an existing Kind (plugin side-channel).
 4. **`holds_cap?/2` is OPTIONAL** (PR-CC-2-v2 chokepoint callback — 2026-05-25). Signature: `holds_cap?(entity_uri, needed :: Capability.t()) :: boolean()`. Override only for Kind-specific bypass (e.g. `:system` caller). Otherwise leave it out — `Ezagent.Kind.default_holds_cap?/2` reads caps via `Ezagent.Identity.list_caps_for/1` and tests with `Capability.matches?/2`. The dispatch step 5.5 calls `Ezagent.Kind.holds_cap?/3` (the dispatcher) — do NOT cap-check elsewhere.
@@ -39,7 +39,7 @@ Reference Kinds:
 
 1. Read `references/new-contract.md` first — the 9-effect vocabulary, the `action/3` macro grammar, and the bucket execution order are normative.
 2. Create `apps/<your_domain_or_plugin>/lib/<your>/behavior/<your_behavior>.ex`.
-3. `use Ezagent.Behavior` (opts into the new contract — injects `action/3` macro + `@before_compile` invariants + derived `actions/0` / `interface/0` / `required_caps/0` / `cap_subjects/0`).
+3. `use Ezagent.ActionSet` (opts into the new contract — injects `action/3` macro + `@before_compile` invariants + derived `actions/0` / `interface/0` / `required_caps/0` / `cap_subjects/0`).
 4. Declare each action with the `action/3` macro:
 
    ```elixir
@@ -72,13 +72,13 @@ Reference Kinds:
 
 **Multi-action Behaviors and the action-axis limitation**: per docs/futures/todo.md "Capability struct lacks an action axis", `Capability` matches on kind+behavior+instance+workspace — NOT on action. Any holder of cap-on-Behavior holds all of the Behavior's actions. The new `caps: [list]` per-action declaration captures multi-cap intent (SPEC HIGH-7 closure) but the underlying `Capability.matches?/2` axes are unchanged. **Workaround until SPEC lands**: carve privileged actions into their own Behavior module (PR #356 pattern — `WorkspaceUserAdmin` for privileged `:create_user`, separate from generic `Workspace`).
 
-**Result-dependent in-handler dispatch**: if you need the dispatch return value (e.g. `ReadMarker.mark` only after successful chat.receive cast), call `Ezagent.Router.dispatch/1` directly from inside the handler body — the `{:dispatch, _}` effect discards return values. See `Ezagent.Behavior.Chat.handle_send/2` for the canonical example.
+**Result-dependent in-handler dispatch**: if you need the dispatch return value (e.g. `ReadMarker.mark` only after successful chat.receive cast), call `Ezagent.Router.dispatch/1` directly from inside the handler body — the `{:dispatch, _}` effect discards return values. See `Ezagent.ActionSet.Chat.handle_send/2` for the canonical example.
 
 Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex new-contract Behavior, well-commented).
 
-### Legacy — `@behaviour Ezagent.Behavior` + `invoke/4` (HISTORICAL, do NOT use for new code)
+### Legacy — `@behaviour Ezagent.ActionSet` + `invoke/4` (HISTORICAL, do NOT use for new code)
 
-Pre-2026-05-28 Behaviors implemented `@behaviour Ezagent.Behavior` + module attribute `@interface` + `invoke(action, slice, args, ctx)` callback. Phase 3 (PR #464) deleted `LegacyBehaviorAdapter` and retired the `invoke/4` callback to `@optional_callbacks`. **No runtime path consults `invoke/4` post-Phase 3.** If you find a Behavior still using `invoke/4`, it's a Phase 2 migration leftover — open a PR migrating it to the new contract. The legacy callback declaration is kept in `Ezagent.Behavior` purely to surface CompileError on stale references (rather than silent dispatch failure).
+Pre-2026-05-28 Behaviors implemented `@behaviour Ezagent.ActionSet` + module attribute `@interface` + `invoke(action, slice, args, ctx)` callback. Phase 3 (PR #464) deleted `LegacyBehaviorAdapter` and retired the `invoke/4` callback to `@optional_callbacks`. **No runtime path consults `invoke/4` post-Phase 3.** If you find a Behavior still using `invoke/4`, it's a Phase 2 migration leftover — open a PR migrating it to the new contract. The legacy callback declaration is kept in `Ezagent.ActionSet` purely to surface CompileError on stale references (rather than silent dispatch failure).
 
 ## How-to: add a Template Class
 
@@ -108,8 +108,8 @@ Three modules + one declaration. The Domain owns everything else.
 
 1. **Allow Behavior** (per-adapter cap subject) — `apps/ezagent_plugin_<name>/lib/ezagent/behavior/external_adapter/<name>/allow.ex`:
    ```elixir
-   defmodule Ezagent.Behavior.ExternalAdapter.MyName.Allow do
-     @behaviour Ezagent.Behavior
+   defmodule Ezagent.ActionSet.ExternalAdapter.MyName.Allow do
+     @behaviour Ezagent.ActionSet
      @impl true; def actions, do: [:allow_myname]
      @impl true; def cap_subjects, do: [{:allow_myname, "Authorize binding myname adapter."}]
      @impl true; def dispatchable?, do: false       # cap-only — never dispatched
@@ -130,7 +130,7 @@ Three modules + one declaration. The Domain owns everything else.
      @impl true; def description, do: "Mirror sessions to My Name."
      @impl true; def binding_module, do: Ezagent.Plugin.MyName.Binding
      @impl true; def cap_subject,
-       do: %{behavior_module: Ezagent.Behavior.ExternalAdapter.MyName.Allow, description: "…"}
+       do: %{behavior_module: Ezagent.ActionSet.ExternalAdapter.MyName.Allow, description: "…"}
      @impl true
      def target_ownership_check(%URI{} = caller, target_id) do
        # External API call ALLOWED here. Re-entry to Ezagent.Invocation.dispatch

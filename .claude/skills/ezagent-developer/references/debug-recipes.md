@@ -8,7 +8,7 @@ In order of likelihood:
 
 1. **URI shape mismatch — non-canonical input.** Per SPEC v3 §5.15 (Amendment 2, **workspace-first**), per-tenant schemes use 3-segment authority `<scheme>://<workspace>/<type>/<name>` (authoritative `uri.ex` `per_tenant(scheme, workspace, type, name)`). 2-segment forms (`entity://user/admin`, `session://default/main`) RAISE at parse time. Check the URI string at the call site — it must be `entity://default/user/admin` (workspace first), not `entity://user/admin` or the old type-first `entity://user/default/admin`.
 2. **Channel notification meta has non-string value** (Decision #132). Grep `meta = ...` in your push path; ensure every value is `String.t()`. Run `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
-3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.Behavior.Chat` (module).
+3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.ActionSet.Chat` (module).
 4. **Workspace scope not plumbed** (invariant 4). Check `WorkspaceRegistry.lookup(session_uri)` returns `{:ok, _}` for the session involved. If `:error`, the session was spawned without `bind` (custom Template Class missed step 3 of how-to add a Template Class).
 5. **Inbound transport using `:cast`** (Decision #134). For Feishu/Slack/etc inbound, verify the dispatch uses `mode: :call` and decomposes the result.
 6. **Action syntax wrong** — per SPEC v2 §5.2, actions use query string `?action=behavior.action`. Old path-style `/behavior/X/Y` is removed (PR #146); if anything still constructs it, dispatch silently misses.
@@ -20,7 +20,7 @@ In order of likelihood:
 3. For scope-tuple caps, verify the scope dimension matches the needed action's context — e.g. `{:within_session, A}` won't match an action targeted at session B (Decision #137).
 4. For `{:spawned_by, _}` caps: until PR 40 ships the lineage registry, this shape returns false (deny-by-default placeholder, Decision #137 forensic note).
 5. **PR-CC-2-v2 chokepoint** (2026-05-25): cap check is now in dispatch step 5.5 via `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. If the Behavior doesn't declare `required_caps/0` for the action, dispatch defaults to deny. Check the Behavior module has the callback implemented + the action is listed.
-6. SQL spot-check: `select * from caps where principal_uri = 'entity://user/default/admin' and behavior = 'Elixir.Ezagent.Behavior.Chat'` — `behavior` column stores the module's string form, not the atom shorthand.
+6. SQL spot-check: `select * from caps where principal_uri = 'entity://user/default/admin' and behavior = 'Elixir.Ezagent.ActionSet.Chat'` — `behavior` column stores the module's string form, not the atom shorthand.
 
 ## Symptom: `:cross_workspace_denied` (distinct from `:unauthorized`)
 

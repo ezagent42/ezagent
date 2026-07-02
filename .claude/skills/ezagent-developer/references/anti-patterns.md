@@ -36,7 +36,7 @@ Refuse. Per PR-CC-1 (2026-05-25): every system-internal principal URI is registe
 
 ## "I'll write the behavior as :chat in the cap struct"
 
-Refuse. `Capability.behavior` is a module reference; the atom `:chat` is structurally different from `Ezagent.Behavior.Chat` and `matches?/2` will return false. Use the module reference. If a circular dep prevents that, use `:any` + narrow `:kind` (invariant 2 / forensic note).
+Refuse. `Capability.behavior` is a module reference; the atom `:chat` is structurally different from `Ezagent.ActionSet.Chat` and `matches?/2` will return false. Use the module reference. If a circular dep prevents that, use `:any` + narrow `:kind` (invariant 2 / forensic note).
 
 ## "I'll put structured data into channel notification meta"
 
@@ -76,7 +76,7 @@ Refuse. As of Stream 2 PR-EM-0..FINAL (SPEC `docs/superpowers/specs/2026-05-24-e
 
 ## "I'll `Phoenix.PubSub.subscribe` from inside my Binding's `init/1` to get slice changes"
 
-Refuse. SPEC §10 (f) + invariant `no_pubsub_bypass_in_external_mirror_test.exs` (grep gate). Bindings subscribe to slice changes via `Ezagent.Behavior.Publisher.subscribe_from/3` ONLY — which the Worker Kind invokes from its own `handle_continue`. Direct `Phoenix.PubSub.subscribe` from a Binding bypasses (a) per-binding crash boundary (the Worker's PerBindingSupervisor catches the publish failure; a raw PubSub consumer in some other process does not), (b) the Worker `:publish` CapBAC gate (step 5.5 enforces against the Worker Kind, not against the Binding GenServer), and (c) Publisher retention + cursor semantics. The structural enforcement is the grep gate — any binding module whose source carries `Phoenix.PubSub.subscribe` fails CI.
+Refuse. SPEC §10 (f) + invariant `no_pubsub_bypass_in_external_mirror_test.exs` (grep gate). Bindings subscribe to slice changes via `Ezagent.ActionSet.Publisher.subscribe_from/3` ONLY — which the Worker Kind invokes from its own `handle_continue`. Direct `Phoenix.PubSub.subscribe` from a Binding bypasses (a) per-binding crash boundary (the Worker's PerBindingSupervisor catches the publish failure; a raw PubSub consumer in some other process does not), (b) the Worker `:publish` CapBAC gate (step 5.5 enforces against the Worker Kind, not against the Binding GenServer), and (c) Publisher retention + cursor semantics. The structural enforcement is the grep gate — any binding module whose source carries `Phoenix.PubSub.subscribe` fails CI.
 
 ## "I'll call `Ezagent.Invocation.dispatch` from inside `target_ownership_check/2` to look up the session's chat slice"
 
@@ -86,9 +86,9 @@ Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.ex
 
 Refuse. Per PR-CC-2-v2 (2026-05-25): cap-checking is a Behavior × Entity boundary concern, performed exactly once at **dispatch step 5.5** via the chokepoint callback `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. LV `handle_event` calls dispatch → step 5.5 fires → result propagates back. Pre-dispatch cap checks inside the LV are a defence-in-depth pattern only (e.g. to hide a button); they MUST NOT be the source of authority. The `cap_check_only_at_chokepoint` invariant test fails any module under `apps/ezagent_*` (except the chokepoint itself) that calls `Capability.matches?/2` in production code.
 
-## "I'll write a new Behavior using `@behaviour Ezagent.Behavior` + `invoke/4`" — OR even `use Ezagent.Behavior` directly
+## "I'll write a new Behavior using `@behaviour Ezagent.ActionSet` + `invoke/4`" — OR even `use Ezagent.ActionSet` directly
 
-Refuse for any developer Behavior. Two layers of obsolescence: (1) `Behavior.invoke/4` is `@optional_callbacks` only since Phase 3 PR #464 — no runtime path consults it. (2) Since the Lifecycle migration (2026-05-29), `use Ezagent.Behavior` itself is the **INTERNAL ENGINE** — developer code uses **`use Ezagent.Lifecycle`** (read `references/lifecycle.md`). The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI on a developer-tier `use Ezagent.Behavior` / `def init_slice` / `def state_slice` / `def invoke(_,_,_,_)` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load`. Engine allowlist: `behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`.
+Refuse for any developer Behavior. Two layers of obsolescence: (1) `Behavior.invoke/4` is `@optional_callbacks` only since Phase 3 PR #464 — no runtime path consults it. (2) Since the Lifecycle migration (2026-05-29), `use Ezagent.ActionSet` itself is the **INTERNAL ENGINE** — developer code uses **`use Ezagent.Lifecycle`** (read `references/lifecycle.md`). The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI on a developer-tier `use Ezagent.ActionSet` / `def init_slice` / `def state_slice` / `def invoke(_,_,_,_)` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load`. Engine allowlist: `behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`.
 
 ## "I'll put this PID / ETS handle / port / monitor ref in `create`'s state"
 
@@ -106,7 +106,7 @@ Refuse. §11 naming principles, enforced by the `mix ezagent.check_invariants.li
 
 Refuse. Per SPEC PR #445 + §11 grep gate: new-contract handlers MUST emit a `{:notify, topic, payload}` effect for fire-and-forget broadcasts; framework calls `Phoenix.PubSub.broadcast/3` from inside `Kind.Runtime.apply_new_contract_effects/4` in the declared bucket order. Direct calls bypass (a) the bucket ordering invariant (notifies fire after dispatches), (b) the effect substitution for `{:ref, ...}` references, (c) the audit + trace correlation. Same applies to `Ezagent.Invocation.dispatch/1` (→ `{:dispatch, %Cmd{}}` effect) and `Ezagent.Kind.terminate/1` (→ `{:terminate, target}` effect).
 
-Exception: result-dependent in-handler dispatch (where you need the dispatch return value, e.g. `ReadMarker.mark` only on successful chat.receive cast) — stay in-handler with `Ezagent.Router.dispatch/1` because the effect grammar discards dispatch return values. See `Ezagent.Behavior.Chat.handle_send/2` for the canonical pattern.
+Exception: result-dependent in-handler dispatch (where you need the dispatch return value, e.g. `ReadMarker.mark` only on successful chat.receive cast) — stay in-handler with `Ezagent.Router.dispatch/1` because the effect grammar discards dispatch return values. See `Ezagent.ActionSet.Chat.handle_send/2` for the canonical pattern.
 
 ## "I'll import `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.SagaRunner` from my plugin"
 
