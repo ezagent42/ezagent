@@ -95,6 +95,15 @@ Two authorization styles coexist; know which gates a given action:
 - **membership-gated, cap-exempt** — a live `ChatMembership` owner/member check is the SOLE
   authority, no held cap consulted. (e.g. `Behavior.SocialwarePublisherRead`
   `:snapshot`/`:history`.)
+- **view-cap-gated** (T2 app-package, 2026-07-02) — a socialware VIEW's visibility is a
+  read cap on a view ActionSet's `<sw>_render` action (e.g. `{session, HelloRender,
+  :hello_render, <session>}`). The cap check is NOT step 5.5 (a view read is a projection
+  bypass, not a dispatch) but the unified `Ezagent.UI.SessionView.authorize_view/3` gate,
+  which every render entry routes through (`SessionViewRegistry.applicable_views/2` /
+  `external_renderers/2`). This EXTENDS cap-gating from write actions to view READS: the
+  old membership-only "whole session visible/invisible" model is retired in favor of
+  per-view caps. An anon is minted the `<sw>_render` caps of PUBLIC installed definitions'
+  views only (`Installation.anon_view_caps/1`). See architecture-invariants.md §23.
 - A handler may ALSO impose a precondition that is not authorization — e.g. `Session.handle_join`
   returns `{:error, {:member_not_registered, _}}` if the member Kind isn't live. That is a
   liveness gate, distinct from the cap check.
