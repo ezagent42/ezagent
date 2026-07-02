@@ -24,6 +24,13 @@ defmodule Ezagent.UriQuery.Scan do
 
   @affected_schemes ~w(entity session template resource workspace system)
   @per_tenant_schemes ~w(entity session template resource)
+  # External transport / protocol URL schemes legitimately in use (NOT ezagent
+  # addressing). This is the SINGLE authoritative allowlist — adding a new
+  # external URL scheme must be a deliberate edit here (forcing the author to
+  # declare "this is an external URL, not an ezagent URI"). The deleted
+  # `feishu://` scheme is intentionally EXCLUDED: feishu is reached via its
+  # `https://` API, not a `feishu://` URI (T1 project C).
+  @external_url_allowlist ~w(postgresql unix http https ws test cc-bridge)
   @agent_flavor_prefixes ~w(cc_ codex_ curl_ echo_ np_)
   @known_categories [
     :flavor_prefix_dependency,
@@ -34,6 +41,7 @@ defmodule Ezagent.UriQuery.Scan do
     :raw_cross_cutting_uri_construction,
     :raw_uri_construction,
     :tenant_derivation,
+    :unknown_scheme_construction,
     :uri_string_key
   ]
 
@@ -661,27 +669,68 @@ defmodule Ezagent.UriQuery.Scan do
     end)
   end
 
+  # Catch-all (T1 project C): every `<scheme>://` literal on a (non-doc,
+  # non-comment) line is classified. The gate flipped from "enumerate 6 known
+  # schemes" (default-ALLOW everything else) to "block any scheme not on an
+  # allowlist" (default-BLOCK, fail-closed — P2 let-it-crash):
+  #
+  #   * an ezagent per-tenant scheme  → :raw_uri_construction        (use a builder)
+  #   * an ezagent cross-cutting scheme → :raw_cross_cutting_uri_construction
+  #   * a registered external-URL scheme → no violation              (@external_url_allowlist)
+  #   * anything else (ezagent-like unknown scheme) → :unknown_scheme_construction
+  #
+  # Adding a real ezagent scheme requires registering it in BOTH
+  # `Ezagent.URI.SchemeRegistry` AND `@affected_schemes`; adding an external URL
+  # requires an explicit `@external_url_allowlist` edit — no silent bypass.
   defp raw_uri_line_findings(path, line_no, text) do
-    schemes =
-      @affected_schemes
-      |> Enum.filter(&String.contains?(text, &1 <> "://"))
+    ~r/([a-z][a-z0-9+.-]*):\/\//
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.flat_map(&scheme_finding(&1, path, line_no, text))
+  end
 
-    Enum.map(schemes, fn scheme ->
-      category =
-        if scheme in @per_tenant_schemes do
-          :raw_uri_construction
-        else
-          :raw_cross_cutting_uri_construction
-        end
+  defp scheme_finding(scheme, path, line_no, text) do
+    cond do
+      scheme in @per_tenant_schemes ->
+        [
+          violation(
+            :raw_uri_construction,
+            path,
+            line_no,
+            "raw #{scheme}:// string construction must move behind Ezagent.URI typed builders or test sigil",
+            text
+          )
+        ]
 
-      violation(
-        category,
-        path,
-        line_no,
-        "raw #{scheme}:// string construction must move behind Ezagent.URI typed builders or test sigil",
-        text
-      )
-    end)
+      scheme in @affected_schemes ->
+        [
+          violation(
+            :raw_cross_cutting_uri_construction,
+            path,
+            line_no,
+            "raw #{scheme}:// string construction must move behind Ezagent.URI typed builders or test sigil",
+            text
+          )
+        ]
+
+      scheme in @external_url_allowlist ->
+        []
+
+      true ->
+        [
+          violation(
+            :unknown_scheme_construction,
+            path,
+            line_no,
+            "unknown scheme #{scheme}:// — an ezagent URI must use one of the six registered " <>
+              "schemes (entity/session/template/resource/workspace/system) via Ezagent.URI; a " <>
+              "genuine external URL must be registered in the uri_query scan external-URL " <>
+              "allowlist (currently postgresql/unix/http/https/ws/test/cc-bridge).",
+            text
+          )
+        ]
+    end
   end
 
   defp uri_string_key_findings(source, path, doc_lines) do

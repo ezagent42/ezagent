@@ -651,7 +651,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
                 "(invariant 8). All six URI schemes are core/domain-owned; " <>
                 "spawns/0 is reserved and must return []. Extend a scheme via your " <>
                 "Kind's type/name prefix, or register a Behavior on a core Kind " <>
-                "(SPEC §5.8 — the feishu:// deletion / codex PR-5 HIGH-1)."
+                "(SPEC §5.8 — the feishu scheme deletion / codex PR-5 HIGH-1)."
             )
             | diagnostics
           ]

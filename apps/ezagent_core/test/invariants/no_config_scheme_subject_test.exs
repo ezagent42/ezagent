@@ -28,7 +28,13 @@ defmodule EzagentCore.Invariants.NoConfigSchemeSubjectTest do
 
   use ExUnit.Case, async: true
 
-  @self_path "apps/ezagent_core/test/invariants/no_config_scheme_subject_test.exs"
+  # This gate + the uri_query scan test legitimately NAME `config://` as a
+  # fixture: the gate to describe what it forbids, the scan test to prove the
+  # unknown-scheme catch-all (T1-C) flags a retired `config://` literal.
+  @sanctioned [
+    "apps/ezagent_core/test/invariants/no_config_scheme_subject_test.exs",
+    "apps/ezagent_core/test/ezagent/uri_query/scan_test.exs"
+  ]
 
   test "no apps source references the retired config:// pseudo-URI subject" do
     root = repo_root()
@@ -39,7 +45,7 @@ defmodule EzagentCore.Invariants.NoConfigSchemeSubjectTest do
       |> Enum.reject(&String.contains?(&1, "/_build/"))
       |> Enum.reject(&String.contains?(&1, "/deps/"))
       |> Enum.map(&Path.relative_to(&1, root))
-      |> Enum.reject(&(&1 == @self_path))
+      |> Enum.reject(&(&1 in @sanctioned))
       |> Enum.filter(fn rel -> File.read!(Path.join(root, rel)) =~ "config://" end)
       |> Enum.uniq()
       |> Enum.sort()
