@@ -35,7 +35,14 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
   @impl Mix.Task
   def run(args) do
     {opts, positional, _} = OptionParser.parse(args, strict: [workspace: :string])
-    workspace_uri = Ezagent.URI.new!(Keyword.get(opts, :workspace, "workspace://system"))
+
+    # No silent default-workspace STRING fallback (#324): build the admin/system
+    # workspace STRUCTURALLY when `--workspace` is omitted.
+    workspace_uri =
+      case Keyword.get(opts, :workspace) do
+        nil -> Ezagent.URI.workspace(:system)
+        ws when is_binary(ws) -> Ezagent.URI.new!(ws)
+      end
 
     for app <- @reference_apps, do: _ = Application.ensure_all_started(app)
     _ = seed_builtins()
@@ -62,8 +69,11 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
 
   defp resolve_definitions([name | _], workspace_uri) do
     case DefinitionRegistry.lookup(workspace_uri, name) do
-      {:ok, %Definition{} = definition, _obj} -> [{name, definition}]
-      :error -> Mix.raise("no socialware definition #{inspect(name)} in #{URI.to_string(workspace_uri)}")
+      {:ok, %Definition{} = definition, _obj} ->
+        [{name, definition}]
+
+      :error ->
+        Mix.raise("no socialware definition #{inspect(name)} in #{URI.to_string(workspace_uri)}")
     end
   end
 

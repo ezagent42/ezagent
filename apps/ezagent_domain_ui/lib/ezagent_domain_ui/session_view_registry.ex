@@ -64,7 +64,9 @@ defmodule Ezagent.UI.SessionViewRegistry do
   Each view's `applies_to?/1` callback is wrapped in try/catch so a
   buggy plugin can't tear down the whole render.
   """
-  @spec applicable_views(URI.t()) :: [%{id: atom(), label: String.t(), icon: String.t(), module: module()}]
+  @spec applicable_views(URI.t()) :: [
+          %{id: atom(), label: String.t(), icon: String.t(), module: module()}
+        ]
   def applicable_views(%URI{} = session_uri) do
     @table
     |> :ets.tab2list()

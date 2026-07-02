@@ -42,7 +42,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
-  alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry}
+  alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry, SessionAgentMaterialize}
   alias Ezagent.Behavior.Session.Members
   alias Ezagent.Invocation
   alias EzagentDomainInstanceMessage.SessionCreator
@@ -273,28 +273,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   @doc """
   The deterministic per-session agent URI for `role_name`
-  (`entity://<workspace>/agent/<role_name>-<session-disc>`). Mirrors
-  `SessionAgentMaterialize.planned_agent_uri/3` but keyed on `role_name` (which
-  is per-session unique) so two socialware agents sharing a recipe get distinct
-  URIs.
+  (`entity://<workspace>/agent/<role_name>-<session-disc>`). Delegates to
+  `SessionAgentMaterialize.planned_agent_uri/3` (the same session-discriminator
+  shape) keyed on `role_name` (per-session unique) so two socialware agents
+  sharing a recipe get distinct URIs.
   """
   @spec planned_agent_uri(String.t(), URI.t(), URI.t()) :: URI.t()
-  def planned_agent_uri(role_name, %URI{} = session_uri, %URI{} = workspace_uri)
-      when is_binary(role_name) do
-    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-
-    Ezagent.URI.agent(
-      workspace_name,
-      "#{role_name}-#{session_discriminator(session_uri)}"
-    )
-  end
-
-  defp session_discriminator(%URI{} = session_uri) do
-    case Ezagent.URI.name(session_uri) do
-      {:ok, name} -> name
-      :error -> session_uri.host || "session"
-    end
-  end
+  defdelegate planned_agent_uri(role_name, session_uri, workspace_uri),
+    to: SessionAgentMaterialize
 
   defp existing_member_for_role(%URI{} = session_uri, role_name) do
     Members.role_name_to_uri(read_members(session_uri), role_name)
@@ -318,21 +304,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
+  # The per-agent `project_cwd` the recipe DECLARES (atom/string-key tolerant),
+  # else the generic sandbox default. Inlined (no shared `config_get`) so the
+  # body stays distinct from `SessionAgentMaterialize`'s by-role variant.
   defp recipe_project_cwd(recipe, role) do
-    case config_get(Map.get(recipe, :config) || %{}, :project_cwd) do
+    config = Map.get(recipe, :config) || Map.get(recipe, "config") || %{}
+
+    case Map.get(config, :project_cwd) || Map.get(config, "project_cwd") do
       cwd when is_binary(cwd) -> cwd
       _ -> DefaultAgentSeed.default_project_cwd(role)
     end
   end
-
-  defp config_get(config, key) when is_map(config) do
-    case Map.fetch(config, key) do
-      {:ok, value} -> value
-      :error -> Map.get(config, Atom.to_string(key))
-    end
-  end
-
-  defp config_get(_config, _key), do: nil
 
   defp valid_agent?(%{} = agent),
     do: is_binary(recipe_of(agent)) and is_binary(role_name_of(agent))
