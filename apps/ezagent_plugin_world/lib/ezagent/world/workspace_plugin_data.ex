@@ -169,9 +169,47 @@ defmodule Ezagent.World.WorkspacePluginData do
   @doc "List SessionTemplate rows for a workspace detail surface."
   @spec session_template_rows(String.t()) :: [map()]
   def session_template_rows(workspace_name) when is_binary(workspace_name) do
-    workspace_name
-    |> live_session_template_rows()
+    live = live_session_template_rows(workspace_name)
+    live_uris = MapSet.new(live, & &1["uri"])
+
+    (live ++ persisted_session_template_rows(workspace_name, live_uris))
     |> Enum.sort_by(&{&1["name"], &1["uri"] || ""})
+  end
+
+  # Durable session templates from snapshots (not currently live in the registry)
+  # — the substrate does NOT respawn every template Kind on boot, so the live
+  # registry alone drops published templates after a cold restart. Name is parsed
+  # from the URI (`template://session/<ws>/<name>@<hash>`); content isn't read
+  # (that needs a live Kind), which is fine — the dropdown only needs the name,
+  # and creating from it revives the template via the DB-scanning resolver.
+  defp persisted_session_template_rows(workspace_name, exclude_uris) do
+    Ezagent.Ecto.KindSnapshot.list_all()
+    |> Enum.flat_map(fn snap ->
+      uri_str = Map.get(snap, :uri)
+
+      with "session_template" <- Map.get(snap, :kind_type),
+           true <- is_binary(uri_str) and not MapSet.member?(exclude_uris, uri_str),
+           {:ok, %URI{} = uri} <- Ezagent.URI.parse(uri_str),
+           true <- session_template_for_workspace?(uri, workspace_name) do
+        [
+          %{
+            "name" => template_family_name(uri, %{}),
+            "source" => "session_template",
+            "uri" => uri_str,
+            "alive" => false,
+            "description" => "",
+            "members_count" => 0,
+            "web_anon_access" => false,
+            "status" => "session_template",
+            "body" => %{}
+          }
+        ]
+      else
+        _ -> []
+      end
+    end)
+  rescue
+    _ -> []
   end
 
   defp template_rows(templates, workspace_name) when is_map(templates) do

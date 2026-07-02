@@ -67,6 +67,14 @@ defmodule EzagentPluginHello.Application do
         flavor: "hello_builder",
         kind: Ezagent.Entity.HelloBuilder,
         template_class: nil
+      },
+      # Same revival registration for the read-only concierge, so a cold
+      # `entity://<ws>/agent/concierge_<name>` (kind_type "hello_concierge")
+      # revives after a restart and keeps answering non-owner visitors.
+      %{
+        flavor: "hello_concierge",
+        kind: Ezagent.Entity.HelloConcierge,
+        template_class: nil
       }
     ]
   end
@@ -94,15 +102,22 @@ defmodule EzagentPluginHello.Application do
     # Identity for the `User`/`Agent` Kinds, done here via the plugin contract for
     # the hello-owned Kind.
     identity_decls =
-      for {behavior, actions} <- [
+      for kind <- [Ezagent.Entity.HelloBuilder, Ezagent.Entity.HelloConcierge],
+          {behavior, actions} <- [
             {Ezagent.Behavior.Identity, Ezagent.Behavior.Identity.actions()},
             {Ezagent.Behavior.IdentityAdmin, Ezagent.Behavior.IdentityAdmin.actions()}
           ],
           action <- actions do
-        {Ezagent.Entity.HelloBuilder, action, behavior}
+        {kind, action, behavior}
       end
 
-    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder} | identity_decls]
+    [
+      {Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder},
+      # The concierge's read-only `:receive` hook so the session's chat fan-out
+      # (mention-routed to it for non-owner senders) reaches it.
+      {Ezagent.Entity.HelloConcierge, :receive, Ezagent.Behavior.HelloConcierge}
+      | identity_decls
+    ]
   end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),

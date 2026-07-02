@@ -73,6 +73,11 @@ defmodule Ezagent.World.ConversationActions do
     create_session(socket, short_name, Map.get(args, "template_name", "default"))
   end
 
+  def handle_dispatch(socket, "session.publish_template", %{"session_uri" => sid, "name" => name})
+      when is_binary(name) do
+    with_session(socket, sid, &publish_template(socket, &1, name))
+  end
+
   def handle_dispatch(socket, "session.view.switch", %{"session_uri" => sid, "view" => view})
       when is_binary(view) do
     with_session(socket, sid, &switch_view(socket, &1, view))
@@ -269,6 +274,13 @@ defmodule Ezagent.World.ConversationActions do
                &Ezagent.Workspace.create_session/3
              ) do
           {:ok, %URI{} = session_uri} ->
+            # A session created from a PUBLISHED hello template needs its @hello
+            # builder — the generic create path installs the socialware behaviours
+            # + seeds the captured page, but does not spawn the per-session
+            # builder. hello no-ops for a non-page session; best-effort so it
+            # never blocks the create.
+            _ = ensure_hello_builder(session_uri)
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
@@ -277,6 +289,61 @@ defmodule Ezagent.World.ConversationActions do
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
         end
+    end
+  end
+
+  defp ensure_hello_builder(%URI{} = session_uri) do
+    # Owner-facing page builder (@hello) AND the read-only concierge (non-owner
+    # visitors). Both no-op for a non-page session; best-effort.
+    _ = EzagentPluginHello.App.ensure_session_builder(session_uri)
+    _ = EzagentPluginHello.App.ensure_session_concierge(session_uri)
+    :ok
+  rescue
+    e ->
+      Logger.warning(
+        "world: hello builder/concierge ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
+      )
+
+      :error
+  end
+
+  # Publish the current session as a reusable SessionTemplate (via the orchestrator
+  # `save_template_as` tool, which snapshots the socialware definition + config and
+  # — through `capture_seed_surface` — the current page, but NOT the chat history).
+  # The template lands in the SESSION's workspace so its socialware definition
+  # resolves; it then appears in the New-session Template dropdown.
+  @spec publish_template(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  defp publish_template(socket, %URI{} = session_uri, name) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    trimmed = String.trim(name)
+
+    if trimmed == "" do
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "error:template_name_required")
+       |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
+    else
+      case Ezagent.Orchestrator.Tools.Templates.save_template_as(trimmed,
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             caller: caller,
+             caps: caps
+           ) do
+        {:ok, %URI{}} ->
+          {:noreply,
+           socket
+           |> assign(:last_dispatch_status, "ok")
+           |> push_event("world:state", %{"publish_notice" => "已发布为模板"})}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+           |> push_event("world:state", %{"publish_error" => "发布失败：#{reason(reason)}"})}
+      end
     end
   end
 

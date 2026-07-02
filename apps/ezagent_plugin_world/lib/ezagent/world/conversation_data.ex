@@ -45,8 +45,28 @@ defmodule Ezagent.World.ConversationData do
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => member_options(session_uri),
       "routing_rules" => list_session_routing_rules(session_uri),
-      "sessions" => sessions
+      "sessions" => sessions,
+      # Whether to show the right-side rendered-Page pane. A hello/socialware page
+      # session is detected by its `:surface` slice — NOT by a `/hello/` URI
+      # segment, so a session created from a PUBLISHED hello template (whose URI
+      # carries the template's name, e.g. `session://ws/my-template/1`) is still
+      # recognized as a page session and gets the Page tab.
+      "is_hello" => page_session?(session_uri)
     }
+  end
+
+  # A page (hello/socialware) session carries a `:surface` slice (the
+  # `Behavior.Surface` state). Falls back to the legacy `/hello/` URI check when
+  # the session Kind isn't live to read. Core-only (no socialware dependency).
+  defp page_session?(%URI{} = session_uri) do
+    has_surface_slice?(session_uri) or String.contains?(URI.to_string(session_uri), "/hello/")
+  end
+
+  defp has_surface_slice?(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, slice} when is_map(slice) and map_size(slice) > 0 -> true
+      _ -> false
+    end
   end
 
   @doc """

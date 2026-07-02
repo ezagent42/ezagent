@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.App do
 
   alias Ezagent.{Capability, Invocation, WorkspaceRegistry}
   alias Ezagent.Behavior.Session.ConfigActions
-  alias Ezagent.Entity.{HelloBuilder, Session, SessionTemplate, User}
+  alias Ezagent.Entity.{HelloBuilder, HelloConcierge, Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
   @doc """
@@ -45,9 +45,81 @@ defmodule EzagentPluginHello.App do
          {:ok, _} <-
            ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
          :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}),
-         {:ok, _} <- join(session_uri, builder_uri) do
+         {:ok, _} <- join(session_uri, builder_uri),
+         # The read-only concierge (non-owner visitors talk to it; owner talks to
+         # the builder). Best-effort — a concierge hiccup must not fail app create.
+         _ <- ensure_session_concierge(session_uri) do
       {:ok, session_uri, builder_uri}
     end
+  end
+
+  @doc """
+  Idempotently ensure a hello session has its read-only `HelloConcierge` member
+  (`entity://<ws>/agent/concierge_<name>`), joined with role `"concierge"`. This
+  is the agent non-owner visitors' messages are routed to (see
+  `EzagentWeb.Socialware.SessionFeedChannel` — owner → builder, others →
+  concierge). No-op (`:ignore`) for a session with no Surface (not a hello / page
+  session); tolerant of an already-joined concierge.
+  """
+  @spec ensure_session_concierge(URI.t()) :: {:ok, URI.t()} | :ignore | {:error, term()}
+  def ensure_session_concierge(%URI{} = session_uri) do
+    if page_session?(session_uri) do
+      ws = Ezagent.URI.workspace_name!(session_uri)
+      name = session_name(session_uri)
+      concierge_uri = Ezagent.URI.entity(ws, :agent, "concierge_#{name}")
+
+      with :ok <- spawn_kind(HelloConcierge, %{uri: concierge_uri}) do
+        _ = join_as(session_uri, concierge_uri, "concierge")
+        {:ok, concierge_uri}
+      end
+    else
+      :ignore
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  @doc """
+  Idempotently ensure a hello session has its `HelloBuilder` member (so `@hello`
+  page-editing works). Needed for a session created from a PUBLISHED hello
+  template via the substrate's generic create path — that path installs the
+  socialware behaviours + seeds the captured page, but (unlike `ensure_app/2` /
+  the `session.hello` class) does NOT spawn the per-session builder.
+
+  The builder URI matches the `@hello` mention-routing convention
+  (`entity://<ws>/agent/hello_<session-name>`), so the new session's `@hello`
+  resolves to it. No-op (`:ignore`) for a session with no Surface (not a hello /
+  page session); tolerant of an already-joined builder.
+  """
+  @spec ensure_session_builder(URI.t()) :: {:ok, URI.t()} | :ignore | {:error, term()}
+  def ensure_session_builder(%URI{} = session_uri) do
+    if page_session?(session_uri) do
+      ws = Ezagent.URI.workspace_name!(session_uri)
+      name = session_name(session_uri)
+      builder_uri = Ezagent.URI.entity(ws, :agent, "hello_#{name}")
+
+      with :ok <- spawn_kind(HelloBuilder, %{uri: builder_uri}) do
+        _ = join(session_uri, builder_uri)
+        {:ok, builder_uri}
+      end
+    else
+      :ignore
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # A hello/page session carries a `:surface` slice; a plain chat session does
+  # not, so we never attach a builder where there's no page to edit.
+  defp page_session?(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, slice} when is_map(slice) and map_size(slice) > 0 -> true
+      _ -> false
+    end
+  end
+
+  defp session_name(session_uri) do
+    session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
   end
 
   @doc "Synchronously run one generation turn (seed/test convenience)."
@@ -103,11 +175,13 @@ defmodule EzagentPluginHello.App do
     end
   end
 
-  defp join(session_uri, member_uri) do
+  defp join(session_uri, member_uri), do: join_as(session_uri, member_uri, "builder")
+
+  defp join_as(session_uri, member_uri, role_name) when is_binary(role_name) do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
-      args: %{member: member_uri, role_name: "builder"},
+      args: %{member: member_uri, role_name: role_name},
       ctx: %{
         caller: User.admin_uri(),
         caps: MapSet.new([Capability.admin_genesis_cap()]),

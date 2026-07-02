@@ -39,6 +39,61 @@ defmodule EzagentPluginHello.Generator do
     end)
   end
 
+  @doc "Spawn a supervised Task that answers a visitor question as the CONCIERGE — a read-only navigation/Q&A assistant that NEVER touches the Surface."
+  @spec concierge_start(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  def concierge_start(%URI{} = session_uri, user_text, %URI{} = concierge_uri)
+      when is_binary(user_text) do
+    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+      concierge_answer(session_uri, user_text, concierge_uri)
+    end)
+  end
+
+  @doc """
+  Answer a visitor's question grounded ONLY in the current page content, and post
+  the reply as a chat message from `concierge_uri`. Read-only BY CONSTRUCTION: it
+  reads the approved Surface tree + calls the LLM, but writes NOTHING back to the
+  Surface — the concierge can never edit / generate / publish the page.
+  """
+  @spec concierge_answer(URI.t(), String.t(), URI.t()) :: :ok
+  def concierge_answer(%URI{} = session_uri, user_text, %URI{} = concierge_uri)
+      when is_binary(user_text) do
+    Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
+    page = current_body_tree(session_uri)
+
+    case call_llm(Prompts.concierge_system(), concierge_user_prompt(page, user_text)) do
+      {:ok, %{content: content}} when is_binary(content) and content != "" ->
+        TurnDriver.say(session_uri, concierge_uri, String.trim(content))
+
+      other ->
+        Logger.warning("hello.Generator: concierge answer failed: #{inspect(other)}")
+
+        TurnDriver.say(
+          session_uri,
+          concierge_uri,
+          gettext("Sorry — I can't answer that right now.")
+        )
+    end
+
+    :ok
+  end
+
+  defp concierge_user_prompt(page, user_text) when is_map(page) do
+    """
+    The website's current page content (json-render spec — answer ONLY from this;
+    it includes the products, the world.cup progress data, and the team):
+
+    ```json
+    #{Jason.encode!(page)}
+    ```
+
+    Visitor's question:
+
+    #{user_text}
+    """
+  end
+
+  defp concierge_user_prompt(_page, user_text), do: user_text
+
   @doc """
   Generate a page and land it on `session_uri`'s Surface. Every request goes
   through the single-page path (`generate_simple/4`): a FRESH session builds the

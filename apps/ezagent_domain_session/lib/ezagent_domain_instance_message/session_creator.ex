@@ -558,6 +558,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                workspace_uri,
                effective_owner,
                template_content
+             ),
+           # Seed the Surface from a "published" template's captured page
+           # (`content.seed_surface`) so the new session renders the same page as
+           # the one it was published from — no conversation history. Best-effort:
+           # `SurfaceSeed.seed/3` always returns `:ok`, so a seed hiccup never
+           # rolls back an otherwise-valid session.
+           :ok <-
+             Ezagent.Session.SurfaceSeed.seed(
+               session_uri,
+               seed_surface_of(template_content),
+               effective_owner
              ) do
         {:ok, session_uri, %{}}
       end
@@ -580,6 +591,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         {:error, reason}
     end
   end
+
+  # The captured page a "published" template carries (nil for ordinary templates).
+  defp seed_surface_of(content) when is_map(content),
+    do: Map.get(content, :seed_surface) || Map.get(content, "seed_surface")
+
+  defp seed_surface_of(_), do: nil
 
   defp workspace_name_of!(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 
@@ -614,6 +631,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
   @spec list_sessions(URI.t()) :: [URI.t()]
   defdelegate list_sessions(workspace_uri), to: Listing
+
+  @spec list_persisted_sessions(URI.t()) :: [URI.t()]
+  defdelegate list_persisted_sessions(workspace_uri), to: Listing
 
   @doc """
   Return live sessions in the agent's workspace whose chat membership includes

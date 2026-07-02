@@ -259,6 +259,16 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     }
   }, [sessionUri, token, socketPath, topicPrefix])
 
+  // Publish the server-derived viewer identity (logged_in / member / name) so the
+  // json-render nav's auth button can reflect it. A catalog component can't see
+  // this React state, so it reads `window.__ezViewer` + the `jr-viewer` event —
+  // the SAME decoupling `jr-tab-switch` uses for the nav tabs.
+  useEffect(() => {
+    const v = (snapshot && snapshot.viewer) || {logged_in: false, member: false}
+    window.__ezViewer = v
+    window.dispatchEvent(new CustomEvent("jr-viewer", {detail: v}))
+  }, [snapshot])
+
   // Element-picking mode: hover outlines the element under the cursor; a click
   // captures it as `selected` and exits. Capture-phase listeners so a click
   // selects instead of activating the underlying button/link.
@@ -407,6 +417,7 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
       ? null
       : React.createElement(PreviewBar, {
       viewer,
+      sessionUri,
       messages,
       chatOpen,
       setChatOpen,
@@ -453,10 +464,26 @@ body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-o
 //
 // Anon viewers are read-only BY CONSTRUCTION (the anon-User's caps deny
 // chat.send), so a disabled input is the honest affordance, not a security gate.
-function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
+function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
   const [draft, setDraft] = useState("")
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
+  // Unread hint on the open-session button: the chat panel no longer expands
+  // inline, so a new reply (from @hello / the concierge) lights a red dot to tell
+  // the member to open the session. Baseline = the message count at mount (so the
+  // already-loaded history is NOT counted as unread); a later increase lights it;
+  // opening the session clears it. Only members get replies / can open.
+  const msgCount = Array.isArray(messages) ? messages.length : 0
+  const prevMsgCount = React.useRef(msgCount)
+  const [unread, setUnread] = useState(false)
+  React.useEffect(() => {
+    if (member && msgCount > prevMsgCount.current) setUnread(true)
+    prevMsgCount.current = msgCount
+  }, [msgCount, member])
+  const openSession = () => {
+    setUnread(false)
+    window.open("/sessions?session=" + encodeURIComponent(sessionUri), "_blank", "noopener,noreferrer")
+  }
   const submit = () => {
     const t = draft.trim()
     if (!t || !member) return
@@ -508,10 +535,27 @@ function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, on
     React.createElement(
       "div",
       {className: "previewbar"},
+      // Open the full session (world console conversation view) in a new tab —
+      // NOT an inline panel. Enabled only for a joined member (login + join); an
+      // anon/guest sees it disabled (their speak/join rules are unchanged).
       React.createElement(
         "button",
-        {type: "button", className: "previewbar-toggle", onClick: () => setChatOpen((v) => !v), title: "查看会话", "aria-label": "查看会话"},
-        chatOpen ? "▾" : "▴"
+        {
+          type: "button",
+          className: "previewbar-toggle",
+          disabled: !member,
+          onClick: member ? openSession : undefined,
+          title: member
+            ? unread
+              ? "有新消息 · Open session (new reply)"
+              : "打开会话 · Open session (new tab)"
+            : "登录并加入后可打开会话",
+          "aria-label": "打开会话",
+        },
+        "↗",
+        unread && member
+          ? React.createElement("span", {className: "previewbar-dot", "aria-hidden": "true"})
+          : null,
       ),
       React.createElement("input", {
         className: "previewbar-input",
@@ -627,8 +671,10 @@ function shortSender(uri) {
 const PREVIEWBAR_CSS = `
 .previewbar-wrap{position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);z-index:60;width:min(40rem,calc(100vw - 1.5rem));display:flex;flex-direction:column;gap:.5rem;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 .previewbar{display:flex;align-items:center;gap:.5rem;padding:.4rem .45rem .4rem .65rem;border-radius:999px;background:rgba(255,255,255,.72);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.65);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 16px 44px rgba(0,0,0,.16)}
-.previewbar-toggle{flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#444;cursor:pointer;font-size:.85rem;line-height:1;transition:background .15s}
-.previewbar-toggle:hover{background:rgba(0,0,0,.1)}
+.previewbar-toggle{position:relative;flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#444;cursor:pointer;font-size:.85rem;line-height:1;transition:background .15s}
+.previewbar-toggle:hover:not(:disabled){background:rgba(0,0,0,.1)}
+.previewbar-toggle:disabled{opacity:.4;cursor:not-allowed}
+.previewbar-dot{position:absolute;top:.18rem;right:.18rem;width:.5rem;height:.5rem;border-radius:999px;background:#e5484d;box-shadow:0 0 0 2px rgba(255,255,255,.92)}
 .previewbar-input{flex:1;min-width:0;border:none;background:transparent;outline:none;font-size:.95rem;color:#181818;height:2.4rem;padding:0 .25rem}
 .previewbar-input:disabled{color:#8a8a8a;cursor:not-allowed}
 .previewbar-input::placeholder{color:#9a9a9a}

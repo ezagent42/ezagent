@@ -242,6 +242,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {short_name: shortName, template_name: templateName},
                   })
                 },
+                onPublishTemplate: (sessionUri, name) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.publish_template",
+                    args: {session_uri: sessionUri, name},
+                  })
+                },
                 onManageLayout: (nextLayout) => {
                   setCurrentLayout(nextLayout)
                   pushEvent?.("world:dispatch", {
@@ -795,6 +801,7 @@ type RenderContext = {
   state: WorldState
   onJoin: (sessionUri: string) => void
   onCreateSession: (shortName: string, templateName: string) => void
+  onPublishTemplate: (sessionUri: string, name: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
   onCreateUser: (user: Record<string, unknown>) => void
@@ -864,6 +871,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}
+          onPublishTemplate={context.onPublishTemplate}
         />
       )
 

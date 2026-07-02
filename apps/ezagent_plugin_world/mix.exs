@@ -38,6 +38,11 @@ defmodule EzagentPluginWorld.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
+      # Operator console ensures a hello session created from a PUBLISHED template
+      # gets its @hello builder (the generic create path installs behaviours + the
+      # seeded page but not the per-session builder). world already integrates the
+      # hello vertical on the frontend (Page pane); this is the backend counterpart.
+      {:ezagent_plugin_hello, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:jason, "~> 1.2"}

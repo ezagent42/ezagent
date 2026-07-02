@@ -302,10 +302,23 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   defp viewer(socket) do
     case signed_in_principal(socket) do
       %URI{} = principal ->
-        %{logged_in: true, member: member?(socket.assigns.session_uri, principal)}
+        %{
+          logged_in: true,
+          member: member?(socket.assigns.session_uri, principal),
+          name: principal_name(principal)
+        }
 
       _ ->
         %{logged_in: false, member: false}
+    end
+  end
+
+  # The short username the nav shows when logged in (the identity name segment,
+  # e.g. entity://system/user/ruihua → "ruihua"); falls back to the full URI.
+  defp principal_name(%URI{} = principal) do
+    case Ezagent.URI.name(principal) do
+      {:ok, name} -> name
+      _ -> URI.to_string(principal)
     end
   end
 
@@ -317,7 +330,10 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   end
 
   defp member?(session_uri, %URI{} = principal) do
-    match?({:ok, _}, ExternalFeed.snapshot(session_uri, principal))
+    # STRICT membership — not `snapshot/2`, which now also succeeds for a
+    # public_view non-member reader. A non-member must read `member: false` so the
+    # surface offers "加入" (join) rather than the "发送" composer.
+    ExternalFeed.member?(session_uri, principal)
   end
 
   defp dispatch_join(session_uri, %URI{} = principal) do
@@ -336,7 +352,7 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   defp dispatch_post(session_uri, %URI{} = principal, text) do
     msg =
       Ezagent.Message.new(principal, %{text: text, attachments: []},
-        mentions: [builder_uri(session_uri)]
+        mentions: [target_agent(session_uri, principal)]
       )
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -347,10 +363,40 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     })
   end
 
-  defp builder_uri(session_uri) do
+  # Route by WHO is speaking: the session OWNER's messages go to the page BUILDER
+  # (@hello — generates/edits the page); ANY other member's messages go to the
+  # read-only CONCIERGE (Q&A + navigation, no page edit). The chat fan-out is
+  # mention-gated (`Behavior.Session` §:send), so mentioning exactly one of them
+  # is the whole routing. Unknown / ownerless session → builder (legacy behaviour).
+  defp target_agent(session_uri, %URI{} = principal) do
+    case session_owner(session_uri) do
+      %URI{} = owner ->
+        if same_uri?(owner, principal),
+          do: builder_uri(session_uri),
+          else: concierge_uri(session_uri)
+
+      _ ->
+        builder_uri(session_uri)
+    end
+  end
+
+  defp session_owner(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
+      {:ok, slice} when is_map(slice) -> Map.get(slice, :owner_uri) || Map.get(slice, "owner_uri")
+      _ -> nil
+    end
+  end
+
+  defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp same_uri?(_, _), do: false
+
+  defp builder_uri(session_uri), do: hello_agent_uri(session_uri, "hello_")
+  defp concierge_uri(session_uri), do: hello_agent_uri(session_uri, "concierge_")
+
+  defp hello_agent_uri(session_uri, prefix) do
     ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
-    Ezagent.URI.entity(ws, :agent, "hello_#{name}")
+    Ezagent.URI.entity(ws, :agent, "#{prefix}#{name}")
   end
 
   defp push_viewer_snapshot(socket) do
