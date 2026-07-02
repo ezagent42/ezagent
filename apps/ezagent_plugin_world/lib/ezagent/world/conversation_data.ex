@@ -40,6 +40,7 @@ defmodule Ezagent.World.ConversationData do
     sessions = Map.fetch!(opts, :sessions)
     caller_caps = Map.get(opts, :caller_caps, MapSet.new())
     messages = load_messages(session_uri, caller_caps)
+    members = member_options(session_uri)
 
     %{
       "component" => "conversation",
@@ -47,10 +48,14 @@ defmodule Ezagent.World.ConversationData do
       "current_session_uri" => encode_uri(session_uri),
       "workspace_uri" => encode_uri(workspace_uri),
       "caller_uri" => encode_uri(caller_uri),
+      "create_error" => nil,
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
-      "members" => member_options(session_uri),
+      "members" => members,
       "human_role_slots" => human_role_slots(session_uri),
+      "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
+      "routing_entity_candidates" =>
+        routing_entity_candidates(caller_uri, workspace_uri, members),
       "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions,
       # Registry-driven view tabs (Ezagent.UI.SessionViewRegistry). Each entry is
@@ -217,6 +222,55 @@ defmodule Ezagent.World.ConversationData do
   rescue
     _ -> []
   end
+
+  @doc """
+  Entity rows the current caller can invite into `session_uri`.
+
+  The option source combines the caller/workspace-authorized live picker rows
+  with provisioned users and agent snapshots in the same workspace. This layer
+  narrows those visible entities to useful session invite choices: only when the
+  caller is currently in the session, and never entities that are already
+  members.
+  """
+  @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil) :: [map()]
+  def invite_candidates(%URI{} = session_uri, caller_uri, workspace_uri) do
+    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(session_uri))
+  end
+
+  @doc false
+  @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil, [map()]) :: [map()]
+  def invite_candidates(_session_uri, caller_uri, workspace_uri, members) when is_list(members) do
+    member_uris = MapSet.new(members, &Map.get(&1, "uri"))
+    caller_uri_str = encode_uri(caller_uri)
+
+    if is_binary(caller_uri_str) and MapSet.member?(member_uris, caller_uri_str) do
+      caller_uri
+      |> entity_candidate_options(workspace_uri)
+      |> Enum.flat_map(&invite_candidate_row/1)
+      |> Enum.reject(&MapSet.member?(member_uris, &1["uri"]))
+      |> sort_candidate_rows()
+    else
+      []
+    end
+  end
+
+  def invite_candidates(_session_uri, _caller_uri, _workspace_uri, _members), do: []
+
+  @doc """
+  Entity rows the current caller can use in session routing controls.
+
+  Unlike `invite_candidates/4`, this includes current members because routing
+  rules usually target entities that are already in the conversation.
+  """
+  @spec routing_entity_candidates(URI.t() | nil, URI.t() | nil, [map()]) :: [map()]
+  def routing_entity_candidates(caller_uri, workspace_uri, members) when is_list(members) do
+    (entity_candidate_options(caller_uri, workspace_uri) ++ member_candidate_options(members))
+    |> Enum.flat_map(&invite_candidate_row/1)
+    |> Enum.uniq_by(& &1["uri"])
+    |> sort_candidate_rows()
+  end
+
+  def routing_entity_candidates(_caller_uri, _workspace_uri, _members), do: []
 
   @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`

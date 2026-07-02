@@ -843,9 +843,24 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
+          members = ConversationData.member_options(session_uri)
+
           push_event(socket, "members:update", %{
-            "members" => ConversationData.member_options(session_uri),
-            "human_role_slots" => ConversationData.human_role_slots(session_uri)
+            "members" => members,
+            "human_role_slots" => ConversationData.human_role_slots(session_uri),
+            "invite_candidates" =>
+              ConversationData.invite_candidates(
+                session_uri,
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              ),
+            "routing_entity_candidates" =>
+              ConversationData.routing_entity_candidates(
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              )
           })
 
         _ ->

@@ -222,11 +222,11 @@ const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
     {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
     {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
   ],
-  py: [{key: "script", type: "text", label: "script"}],
+  py: [{key: "script", type: "text", label: "script", required: true}],
   curl: [
-    {key: "provider", type: "string", label: "provider"},
-    {key: "api_url", type: "string", label: "api_url"},
-    {key: "model", type: "string", label: "model"},
+    {key: "provider", type: "string", label: "provider", required: true},
+    {key: "api_url", type: "string", label: "api_url", required: true},
+    {key: "model", type: "string", label: "model", required: true},
   ],
   native: [{key: "role", type: "string", label: "role"}],
 }
@@ -852,7 +852,6 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   // F6: py requires a `script` config field. Mark it `*` and block Create when
   // empty, so the operator never submits and hits the raw `:missing_script` error.
   const scriptRequired = (state.script_required_flavors || []).includes(form.flavor)
-  const scriptMissing = scriptRequired && !(form.configFields["script"] || "").trim()
   const allowedCwdRoots = state.allowed_project_cwd_roots || []
   const customCwdDisabled = allowedCwdRoots.length === 0
   const customCwdUnavailable = form.cwdMode === "custom" && customCwdDisabled
@@ -860,6 +859,12 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
 
   // M4: flavor-specific schema for dynamic create fields
   const flavorSchema = createSchemaForFlavor(form.flavor, (state.config_schemas || {})[form.flavor])
+  const requiredConfigKeys = Array.from(new Set([
+    ...flavorSchema.filter((f) => f.required).map((f) => f.key),
+    ...(scriptRequired ? ["script"] : []),
+  ]))
+  const missingRequiredConfigKeys = requiredConfigKeys.filter((key) => !(form.configFields[key] || "").trim())
+  const configFieldRequired = (key: string) => requiredConfigKeys.includes(key)
 
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
@@ -908,7 +913,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
         </label>
         <label className={fieldLabel}>
           <span>Name *</span>
-          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="storefront-greeter" />
+          <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="zhang san" />
         </label>
         <div className={`${fieldLabel} sm:col-span-2`} data-world-project-cwd-mode>
           <div className="flex items-center justify-between gap-3">
@@ -1012,7 +1017,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                 <label className={fieldLabel} key={f.key}>
                   <span className="font-mono text-xs">
                     {f.label || f.key}
-                    {scriptRequired && f.key === "script" && <span className="text-destructive"> *</span>}
+                    {configFieldRequired(f.key) && <span className="text-destructive"> *</span>}
                     {f.help && <span className="ml-1 text-[10px] text-muted-foreground">({f.help})</span>}
                   </span>
                   {f.type === "enum" && f.options ? (
@@ -1062,7 +1067,16 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
         </label>
         <div className="flex items-center justify-between gap-3 sm:col-span-2">
           <code className={codeClass}>{preview}</code>
-          <Button type="submit" disabled={!form.name || scriptMissing || capsInvalid || customCwdUnavailable || customCwdMissing}>
+          <Button
+            type="submit"
+            disabled={
+              !form.name ||
+              capsInvalid ||
+              customCwdUnavailable ||
+              customCwdMissing ||
+              missingRequiredConfigKeys.length > 0
+            }
+          >
             <Plus aria-hidden="true" />
             Create
           </Button>
