@@ -24,7 +24,9 @@ defmodule Ezagent.Socialware.AnonViewCapsTest do
     @impl Ezagent.Behavior
     def interface, do: %{}
     @impl Ezagent.Behavior
-    def required_caps, do: %{pub_render: Ezagent.Capability.cap(:session, __MODULE__, :pub_render)}
+    def required_caps,
+      do: %{pub_render: Ezagent.Capability.cap(:session, __MODULE__, :pub_render)}
+
     @impl Ezagent.Behavior
     def data_owner(_), do: :any
   end
@@ -43,6 +45,7 @@ defmodule Ezagent.Socialware.AnonViewCapsTest do
     @impl Ezagent.Behavior
     def required_caps,
       do: %{priv_render: Ezagent.Capability.cap(:session, __MODULE__, :priv_render)}
+
     @impl Ezagent.Behavior
     def data_owner(_), do: :any
   end

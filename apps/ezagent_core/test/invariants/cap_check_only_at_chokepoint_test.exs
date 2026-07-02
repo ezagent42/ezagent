@@ -59,7 +59,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_session/lib/ezagent/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
-        "apps/ezagent_core/lib/mix/tasks/"
+        "apps/ezagent_core/lib/mix/tasks/",
+        # T2-2b — `SessionView.authorize_view/3` matches a caller's held caps
+        # against a view's `<sw>_render` need. This is the SPEC-designed view-cap
+        # authorization: a PROJECTION-BYPASS read (render is not a dispatch —
+        # SPEC §3.2.1 "保留投影旁路读, 只把授权维度升级"), NOT a cap-gate on the
+        # dispatch chokepoint. Contained to the SessionView contract file.
+        "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex"
       ]
     },
     %{
@@ -82,7 +88,12 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # with the adapter (plugin-isolation: the adapter owns its own bind cap).
         # Precise file allowlist keeps the cap shape contained.
         "apps/ezagent_domain_socialware/lib/ezagent/socialware/chat_feed_adapter.ex",
-        "apps/ezagent_domain_socialware/lib/ezagent/socialware/external_feed_adapter.ex"
+        "apps/ezagent_domain_socialware/lib/ezagent/socialware/external_feed_adapter.ex",
+        # T2-2a — the hello socialware's cap-only view read ActionSet
+        # (`HelloRender`, declaring `cap_subjects/0` for `:hello_render`) — a
+        # normal Behavior impl co-located under the plugin's behavior dir, same
+        # class as every other ActionSet listed above.
+        "apps/ezagent_plugin_hello/lib/ezagent/behavior/"
       ]
     },
     %{
@@ -124,6 +135,11 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # as that call: a read of the owner's authority to feed the credential
         # cascade, NOT a cap-gate decision outside the dispatch chokepoint.
         "apps/ezagent_domain_agent/lib/ezagent/agent/session_agent_materialize.ex",
+        # T2-2b — `SessionView.authorize_view/3` reads the caller's held caps to
+        # decide view visibility (a SPEC-designed projection-bypass view-cap
+        # check, SPEC §3.2.1 — NOT a dispatch-chokepoint gate). Contained to the
+        # SessionView contract file (same class as the session-entity read above).
+        "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex",
         # RFC #402 (Allen 2026-05-26) — the internal session creator
         # reads the creator's caps to skip a duplicate OrchestratorAdmin
         # :restart cap grant when an equivalent one already exists.
