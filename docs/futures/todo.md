@@ -12,68 +12,16 @@
 > one-line status. Conservative rule applied: RESOLVED only with concrete
 > code/PR/test evidence; otherwise left open.
 
+## 2026-07-03 plan — 官网上线剩余缺口 (Allen 2026-07-02 eve, AFK)
+
+website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起来是 orchestrator 机制", defer to 0703:
+- **导游 agent (guide/greeter)** — default-joins EVERY user-created session, greets + explains features. Lives at SessionTemplate default layer (global default, NOT socialware-scoped). Configure at session creation.
+- **客服 agent fallback** — website session: unanswered user messages backstopped by a 客服 recipe. = website socialware's routing rule + a 客服 recipe. After T2 lands = `Definition.agents` declaration on the website socialware. VERIFY first whether #1134's concierge already covers fallback routing (avoid dup).
+- **team members → website session** — one-time seed/ops: add team.md roster to the website session.
+- These three are the "configure guide/support agent at session creation" question → orchestrator mechanism (导游=SessionTemplate default, 客服=Definition.agents). Design 0703.
+- **DONE 0702**: SessionTemplate fork user-flow ("一键复制 session 配置建新会话", journey segment 5) — subagent on `feat/session-template-fork`.
+
 ## Active follow-ups (post-2026-05-24 batch)
-
-### CI flake determinism (#108, fix/ci-flake-determinism 2026-06-27)
-
-- **`mix ci.local` is the pre-push gate** — mirrors the CI `precommit +
-  check_invariants` job end-to-end against a private partitioned DB. Run
-  `MIX_TEST_PARTITION=$USER mix ci.local` before pushing (documented in
-  CONTRIBUTING "Pre-push" section). Root-cause diagnosis:
-  `docs/together/2026-06-27/notes/ci-flake-diagnosis.md`.
-- **What landed** — (1) `Loader.load_all/0` no longer swallows
-  `DBConnection.OwnershipError`/`ConnectionError` into a silent `[]` in `:test`
-  (it re-raises, so a broken sandbox connection names its own cause instead of
-  masquerading as "workspace never appeared with children"); (2) `ProbeBehavior`
-  `required_caps/0` parity (was a compile-warning-only contract drift); (3) the
-  `ci.local` alias + docs; (4) the corrupted shared `ezagent_pg_compat_test` was
-  rebuilt (operational).
-- **STILL OPEN — central acceptance criterion NOT met** — the task's bar was
-  "seed/GC suites DETERMINISTICALLY green". In final verification on this branch
-  (`MIX_TEST_PARTITION=ciflake mix test --seed 979933 --max-cases 8`),
-  `DefaultSessionTemplateSeedTest` flaked: its `setup` raised `{:error,
-  :no_such_actor}` from `seed_default_session_template_now/0` — a SPAWN-READINESS
-  race (the seeded Session/Agent Kind not registered when queried), a DISTINCT
-  class from the sandbox-revert root cause this change set targets. No causal path
-  from this change set (the unmask never fired — `DB unavailable at boot` = 0 and
-  no loader reraise in the log; the test-only ProbeBehavior is structurally
-  isolated from the session app; the workspace app was 179/0 WITH `required_caps`
-  in the same run). FOLLOW-UP needed, scoped to seed-setup spawn-readiness (e.g.
-  await Kind `:ready` before the seed assertion / allow the spawned Kinds onto the
-  test owner). Lead to triage.
-- **Local ubuntu-CI repro harness (chore/ci-docker-local 2026-06-27)** — closes the
-  "not-darwin-reproducible" gap below: `make ci.docker` boots the *same* linux/OTP/
-  postgres-16 env CI uses in a CPU-constrained container, and `make ci.repro` hunts the
-  ubuntu-only timing race that `mix ci.local` is green on. Files:
-  `docker/Dockerfile.ci`, `docker/docker-compose.ci.yml`, `docker/ci-runner.sh`,
-  `Makefile`; guide: `docs/guide/ci-docker-local.md`. The deeper flake *fix* (Sandbox
-  shared-mode stabilisation / seed spawn-readiness) is the separate follow-up above;
-  this harness is the place to reproduce + verify it off-runner.
-- **Residual / not-darwin-reproducible** — the underlying sandbox-revert timing
-  race (Sandbox shared-mode under the FULL ubuntu umbrella at `max_cases: 8`) is
-  GREEN on macOS / RED on the runner (diagnosis §3), so it is not locally
-  reproducible on bare macOS and not provably "fixed" from a dev box — **use the
-  `make ci.repro` ubuntu-docker harness above to surface it locally.** The unmask converts the
-  whole *class* of silent-`[]` paths into a loud, diagnosable failure — the
-  durable lever, NOT a cure. If the flake recurs on CI, the unmasked error now
-  names the exact failing query/Kind. (The DataCase "stabilize shared mode" fix
-  the diagnosis proposed was deliberately NOT shipped: a probe proved `Sandbox.allow/3`
-  is a no-op under active shared mode and the revert cannot hit an `async: false`
-  test mid-body, so it would be theater.)
-- **NOT done (deliberately, evidence-backed)** — (a) FsResolver `Registry`
-  kill/restart isolation: audited — no `async: true` test in the `ezagent_core`
-  BEAM reaches `Ezagent.Resource.FsResolver.resolve` (directly or via
-  `ConfigDir.path` / `Uploads`) during the kill window, so the contracted
-  private-Registry machinery was NOT added (would be speculative). (b) The
-  contracted "on_exit unregister the probe scheme" was prototyped then REMOVED:
-  pristine main carries the leaked `probe` scheme and is 242/0 green, so the
-  leak is benign; scrubbing the scheme (but not the still-alive probe Kind in
-  `KindRegistry`) made `ezagent_web`'s `DemoSmokeTest`/`AutoDerive` raise
-  `URI scheme "probe" not registered` — a NEW deterministic failure. YAGNI:
-  the cleanup fixed a non-problem and introduced a real one.
-
-### Cross-workspace session join (2026-06-25 research, NOT yet implemented)
-- **Cross-workspace join for logged-in users** — research in `docs/together/2026-06-25/research/cross-workspace-join.md`. Blocker = `do_workspace_isolation_check` (runtime.ex:664) derives caller's ws from the caller URI → `:cross_workspace_denied`; the anon→login takeover shares the same gap. **Recommended: M2** (mint a guest principal in the session's workspace linked to the home account; generalizes the existing anon mint/binding/merge — isolation-preserving, multi-host-safe). Lead decisions pending: write-participation policy gate; guest history inheritance; whether takeover's cross-ws failure is accepted vs a bug; scope into hello vs a socialware-identity epic. hello (#982) stands on the same-workspace assumption for now.
 
 ### Role-materialization + kanban-as-role (2026-06-25, Allen "do it right")
 
@@ -1425,31 +1373,3 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > kill the facade test's owner connection. NOT a close regression (no merge touched
 > `apps/ezagent_domain_external_mirror`). Fix: same `EzagentCore.DataCase` / `async:
 > false` hardening pg applied to `repair_orchestrator_test`. Owner: external_mirror/pg.
-
----
-
-## 2026-06-29 session — active tasks (post-restart补录)
-
-> Session TaskList 是内存态(session-scoped),重启清空;补录进此文件(持久 source of truth)。
-
-### #146 — Week 2026-06-29: 官网上线 + 内测 + 自举 + design system (IN PROGRESS)
-- FP1 官网(ezagent-served socialware, app.ezagent.chat path) → zhaomato.
-- FP2 内测 → gaga + allen (#110 DONE).
-- FP3 自举(PR-E2E trigger, B路线) → allen/zyli.
-- FP4 DS 升级(手写→shadcn) → zyli(主前端).
-- FP5 kanban #1020 → jjkysy.
-- FP6 官网 demo → ruihua.
-- FP7 leak gate → FatNine.
-- FP8 carry-in → allen.
-- plan.html v3 on main #1081(含 §4 复制开工prompt按钮 + Allen decisions).
-
-### #147 — world host-scope config-driven (IN PROGRESS, codex done, CI+merge pending)
-- Fix: router.ex host:"world." config-driven(dev/test="world." / prod=nil→apex). Handoff #1084.
-
-### #148 — reflow Phase-1 full-data rehearsal incl credentials (PENDING, codex dispatched)
-- Harden reflow.sh: FULL data reflow incl credentials. verify-rehearsal.sh 6 gates. deploy.yml wired. Handoff #1087.
-
-### DONE this session
-- #110 ✅ three-env deploy on current main (755b2a9b).
-- #1082 ✅ cross-env data-sync SPEC.
-- #1085 ✅ migration-rehearsal Phase-1 draft.
