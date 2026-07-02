@@ -12,6 +12,7 @@ defmodule Ezagent.Socialware.Definition do
   defstruct name: nil,
             bases: [],
             shape: [],
+            views: [],
             agents: [],
             members: [],
             routing_rules: [],
@@ -32,6 +33,7 @@ defmodule Ezagent.Socialware.Definition do
           name: String.t(),
           bases: [module()],
           shape: [module()],
+          views: [module()],
           agents: [agent_spec()],
           members: [map()],
           routing_rules: [map()],
@@ -48,6 +50,7 @@ defmodule Ezagent.Socialware.Definition do
     with {:ok, name} <- required_string(attrs, :name),
          {:ok, bases} <- behavior_list(attrs, :bases),
          {:ok, shape} <- behavior_list(attrs, :shape),
+         {:ok, views} <- behavior_list(attrs, :views),
          {:ok, agents} <- agents_list(attrs),
          {:ok, visibility_policy} <- visibility_policy(attrs) do
       {:ok,
@@ -55,6 +58,7 @@ defmodule Ezagent.Socialware.Definition do
          name: name,
          bases: bases,
          shape: shape,
+         views: views,
          agents: agents,
          members: list(attrs, :members),
          routing_rules: list(attrs, :routing_rules),
@@ -77,10 +81,13 @@ defmodule Ezagent.Socialware.Definition do
   while still deriving the set from definition data.
   """
   @spec behaviors(t()) :: [module()]
-  def behaviors(%__MODULE__{bases: bases, shape: shape}) do
+  def behaviors(%__MODULE__{bases: bases, shape: shape, views: views}) do
     session = Ezagent.ActionSet.Session
 
-    ([session] ++ shape ++ Enum.reject(bases, &(&1 == session)))
+    # views are render ActionSets (each declares a UNIQUE `<sw>_render` cap-only
+    # read action) — they MUST enter the spawned behavior set so the render cap
+    # is registered on the Session Kind and `authorize_view` can check it.
+    ([session] ++ views ++ shape ++ Enum.reject(bases, &(&1 == session)))
     |> Enum.uniq()
   end
 
@@ -91,6 +98,7 @@ defmodule Ezagent.Socialware.Definition do
       name: definition.name,
       bases: Enum.map(definition.bases, &Atom.to_string/1),
       shape: Enum.map(definition.shape, &Atom.to_string/1),
+      views: Enum.map(definition.views, &Atom.to_string/1),
       agents: json_safe(definition.agents),
       members: json_safe(definition.members),
       routing_rules: json_safe(definition.routing_rules),
