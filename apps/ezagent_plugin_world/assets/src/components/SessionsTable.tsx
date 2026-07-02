@@ -53,7 +53,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
 
   return (
     <section
-      className="grid h-[666px] min-h-0 min-w-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
+      className="grid h-full min-h-0 min-w-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
       aria-labelledby="sessions-title"
       data-world-chat-default
       data-world-component="sessions_table"

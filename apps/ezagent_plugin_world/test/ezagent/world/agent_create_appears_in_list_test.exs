@@ -109,17 +109,24 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
     end
   end
 
-  describe "cwd-required failure path is real (not silently ignored)" do
-    test "cc flavor with empty cwd returns {:error, :cwd_required_for_cc}",
+  describe "project_cwd default path is real (not blocked by stale UI-only validation)" do
+    test "cc flavor with empty cwd creates through the workspace facade",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      # This proves the cc cwd-guard is a HARD server-side check, not a
-      # UI-only hint. A stub that returns {:ok, _} for any args would fail here.
-      assert {:error, :cwd_required_for_cc} =
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_cc)
+
+      assert {:ok, %{agent_uri: %URI{} = agent_uri}} =
                Workspace.create_agent(
                  workspace_uri,
-                 %{flavor: "cc", name: "no-cwd-probe-#{System.unique_integer([:positive])}", cwd: "", with_pty: false},
+                 %{
+                   flavor: "cc",
+                   name: "no-cwd-probe-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false
+                 },
                  admin_ctx
                )
+
+      assert agent_uri.path =~ "/agent/no-cwd-probe-"
     end
   end
 end

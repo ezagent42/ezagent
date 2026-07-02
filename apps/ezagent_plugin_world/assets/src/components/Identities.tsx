@@ -1,5 +1,5 @@
 import React from "react"
-import {Ban, KeyRound, Plus, RotateCcw, Save, UserRound, UsersRound} from "lucide-react"
+import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Save, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -141,6 +141,7 @@ export type IdentitiesState = {
   disabled_reason?: string | null
   cap_count?: number
   workspace_uri?: string | null
+  allowed_project_cwd_roots?: string[]
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
   script_required_flavors?: string[]
@@ -182,7 +183,7 @@ const actionLinkClass =
 const secondaryActionLinkClass =
   "inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted"
 const agentShellClass =
-  "grid h-[666px] min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(520px,1fr)]"
+  "grid h-full min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(520px,1fr)]"
 const agentPanelClass = "min-h-0 overflow-y-auto bg-background p-4"
 const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions", "Terminal"] as const
 const defaultAgentFlavors = ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"]
@@ -802,6 +803,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     flavor: state.default_flavor || flavors[0] || "cc",
     name: "",
     cwd: "",
+    cwdMode: "default" as "default" | "custom",
     caps: "",
     with_pty: false,
     configFields: {} as Record<string, string>,
@@ -809,13 +811,17 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   const preview = form.name ? previewAgentUri(state.workspace_uri, form.name) : state.preview_uri || "<agent-uri>"
 
   const cwdRequired =
-    (state.cwd_required_flavors || ["cc", "codex"]).includes(form.flavor) ||
+    (state.cwd_required_flavors || []).includes(form.flavor) ||
     (form.with_pty && (state.cwd_required_with_pty_flavors || []).includes(form.flavor))
 
   // F6: py requires a `script` config field. Mark it `*` and block Create when
   // empty, so the operator never submits and hits the raw `:missing_script` error.
   const scriptRequired = (state.script_required_flavors || []).includes(form.flavor)
   const scriptMissing = scriptRequired && !(form.configFields["script"] || "").trim()
+  const allowedCwdRoots = state.allowed_project_cwd_roots || []
+  const customCwdDisabled = allowedCwdRoots.length === 0
+  const customCwdUnavailable = form.cwdMode === "custom" && customCwdDisabled
+  const customCwdMissing = form.cwdMode === "custom" && !form.cwd.trim()
 
   // M4: flavor-specific schema for dynamic create fields
   const flavorSchema = createSchemaForFlavor(form.flavor, (state.config_schemas || {})[form.flavor])
@@ -832,7 +838,15 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     for (const [k, v] of Object.entries(cf)) {
       if (v != null && v !== "") filteredFields[k] = v
     }
-    onCreateAgent?.({...form, config_fields: filteredFields})
+    onCreateAgent?.({
+      flavor: form.flavor,
+      name: form.name,
+      cwd: form.cwdMode === "default" ? "" : form.cwd.trim(),
+      caps: form.caps,
+      with_pty: form.with_pty,
+      configFields: form.configFields,
+      config_fields: filteredFields,
+    })
   }
 
   return (
@@ -861,10 +875,96 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <span>Name *</span>
           <Input value={form.name} onChange={(event) => setForm({...form, name: event.target.value})} placeholder="storefront-greeter" />
         </label>
-        <label className={fieldLabel}>
-          <span>project_cwd {cwdRequired ? "*" : "(optional for this flavor)"}</span>
-          <Input value={form.cwd} onChange={(event) => setForm({...form, cwd: event.target.value})} placeholder="/srv/acme/storefront" />
-        </label>
+        <div className={`${fieldLabel} sm:col-span-2`} data-world-project-cwd-mode>
+          <div className="flex items-center justify-between gap-3">
+            <span>project_cwd {cwdRequired ? "*" : "(optional for this flavor)"}</span>
+            <span className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              推荐默认
+            </span>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              data-world-project-cwd-card
+              aria-pressed={form.cwdMode === "default"}
+              className={[
+                "grid min-h-[96px] grid-cols-[32px_minmax(0,1fr)_20px] gap-3 rounded-md border p-3 text-left transition",
+                form.cwdMode === "default"
+                  ? "border-primary/60 bg-primary/5 text-foreground shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-muted/30 hover:text-foreground",
+              ].join(" ")}
+              onClick={() => setForm({...form, cwdMode: "default", cwd: ""})}
+            >
+              <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/40">
+                <HardDrive className="size-4" aria-hidden="true" />
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <span className="text-sm font-semibold text-foreground">使用系统默认目录（推荐）</span>
+                <span className="text-xs leading-5 text-muted-foreground">
+                  系统会绑定独立 config_dir，无需填写路径。
+                </span>
+              </span>
+              {form.cwdMode === "default" && <CheckCircle2 className="mt-0.5 size-4 text-primary" aria-hidden="true" />}
+            </button>
+
+            <button
+              type="button"
+              data-world-project-cwd-card
+              aria-pressed={form.cwdMode === "custom"}
+              disabled={customCwdDisabled}
+              className={[
+                "grid min-h-[96px] grid-cols-[32px_minmax(0,1fr)_20px] gap-3 rounded-md border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
+                form.cwdMode === "custom"
+                  ? "border-primary/60 bg-primary/5 text-foreground shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-muted/30 hover:text-foreground",
+              ].join(" ")}
+              onClick={() => setForm({...form, cwdMode: "custom"})}
+            >
+              <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/40">
+                {customCwdDisabled ? (
+                  <Ban className="size-4" aria-hidden="true" />
+                ) : (
+                  <FolderLock className="size-4" aria-hidden="true" />
+                )}
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <span className="text-sm font-semibold text-foreground">使用自定义项目目录</span>
+                <span className="text-xs leading-5 text-muted-foreground">
+                  {customCwdDisabled
+                    ? "当前未开放自定义项目目录。"
+                    : "选择 ezagent 服务所在机器上的项目路径。"}
+                </span>
+              </span>
+              {form.cwdMode === "custom" && <CheckCircle2 className="mt-0.5 size-4 text-primary" aria-hidden="true" />}
+            </button>
+          </div>
+
+          {form.cwdMode === "custom" && allowedCwdRoots.length > 0 && (
+            <div className="grid gap-2 rounded-md border border-border bg-muted/20 p-3">
+              <label className={fieldLabel}>
+                <span>允许的目录根</span>
+                <Select
+                  value={allowedCwdRoots.includes(form.cwd) ? form.cwd : ""}
+                  onChange={(event) => setForm({...form, cwd: event.target.value})}
+                >
+                  <option value="">选择一个可用目录作为参考</option>
+                  {allowedCwdRoots.map((root) => (
+                    <option key={root} value={root}>{root}</option>
+                  ))}
+                </Select>
+              </label>
+              <Input
+                value={form.cwd}
+                onChange={(event) => setForm({...form, cwd: event.target.value})}
+                placeholder={allowedCwdRoots[0] || "/srv/acme/storefront"}
+              />
+              <span className="text-xs text-muted-foreground">
+                自定义 project_cwd 必须是 ezagent 服务所在机器上的路径，并且位于上面允许的目录范围内。
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* M4: Flavor-specific config fields from schema (A4/A7 enabled) */}
         {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
@@ -927,7 +1027,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
         </label>
         <div className="flex items-center justify-between gap-3 sm:col-span-2">
           <code className={codeClass}>{preview}</code>
-          <Button type="submit" disabled={!form.name || (cwdRequired && !form.cwd) || scriptMissing || capsInvalid}>
+          <Button type="submit" disabled={!form.name || scriptMissing || capsInvalid || customCwdUnavailable || customCwdMissing}>
             <Plus aria-hidden="true" />
             Create
           </Button>

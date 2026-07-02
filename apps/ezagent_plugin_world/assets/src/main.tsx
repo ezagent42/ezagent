@@ -30,6 +30,8 @@ type SlotManifest = {
 }
 
 const SLOTS = (slotManifest as SlotManifest).slots
+const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "kanban", "pty", "sessions", "workspace_plugins"])
+const FULL_BLEED_TYPES = new Set(["agents_table"])
 
 function rendererFamily(type: string): string {
   const spec = SLOTS[type]
@@ -149,13 +151,16 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
     (a, b) => (a.placement?.y || 0) - (b.placement?.y || 0),
   )
   const renderedComponents = components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]
-  const hasConversation = renderedComponents.some((component) => rendererFamily(component.type) === "conversation")
+  const fullBleed = renderedComponents.some((component) => {
+    const family = rendererFamily(component.type)
+    return FULL_BLEED_FAMILIES.has(family) || FULL_BLEED_TYPES.has(component.type)
+  })
   const topAction = topActionForSection(state.path)
 
   if (components.length > 0 || state.component === "sessions_table") {
     return (
       <div
-        className="grid min-h-screen grid-rows-[auto_minmax(0,1fr)] bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
+        className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
         data-world-shell="prototype"
       >
         <header
@@ -206,8 +211,8 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
           </div>
         </header>
 
-        <main className={hasConversation ? "min-h-0 min-w-0 overflow-hidden" : "min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
-          {!hasConversation && (
+        <main className={fullBleed ? "h-full min-h-0 min-w-0 overflow-hidden" : "h-full min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
+          {!fullBleed && (
             <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1 sm:flex-none">
                 <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
@@ -220,7 +225,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
             onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
           />
 
-          <div className={hasConversation ? "min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
+          <div className={fullBleed ? "h-full min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
             {renderedComponents.map((component) =>
               renderLayoutComponent(component, {
                 layout: currentLayout,

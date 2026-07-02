@@ -324,7 +324,7 @@ export function Conversation({
 
   return (
     <div
-      className="grid h-[666px] min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
+      className="grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
       data-world-component="conversation"
       data-world-chat-layout="im"
       data-expanded={expanded ? "true" : "false"}

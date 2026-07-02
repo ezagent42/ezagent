@@ -8,23 +8,22 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation do
   # `validate_from_for_flavor/2` here.
 
   @doc """
-  cwd is required for cc / cc-headless / codex / codex-remote. curl + py +
-  future flavors tolerate an empty cwd.
+  Empty cwd is accepted for cc / cc-headless / codex / codex-remote so the
+  file-flavor template builder can default project_cwd to the per-agent
+  config_dir. Non-empty cwd values must still point to an existing directory.
   """
   @spec validate_cwd_for_flavor(String.t(), boolean(), String.t()) :: :ok | {:error, term()}
-  def validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
+  def validate_cwd_for_flavor("cc", _with_pty?, ""), do: :ok
   def validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
-  def validate_cwd_for_flavor("cc-headless", _with_pty?, ""),
-    do: {:error, :cwd_required_for_cc_headless}
+  def validate_cwd_for_flavor("cc-headless", _with_pty?, ""), do: :ok
 
   def validate_cwd_for_flavor("cc-headless", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
-  def validate_cwd_for_flavor("codex", _with_pty?, ""), do: {:error, :cwd_required_for_codex}
+  def validate_cwd_for_flavor("codex", _with_pty?, ""), do: :ok
   def validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
-  def validate_cwd_for_flavor("codex-remote", _with_pty?, ""),
-    do: {:error, :cwd_required_for_codex_remote}
+  def validate_cwd_for_flavor("codex-remote", _with_pty?, ""), do: :ok
 
   def validate_cwd_for_flavor("codex-remote", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 

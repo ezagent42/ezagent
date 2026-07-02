@@ -109,7 +109,7 @@ export function AdminSurface({
   }
 
   return (
-    <section className="grid h-[666px] min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[232px_minmax(0,1fr)]" data-world-manage-layout>
+    <section className="grid h-full min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[232px_minmax(0,1fr)]" data-world-manage-layout>
       <aside className="min-h-0 overflow-y-auto border-b border-border bg-card p-3 lg:border-b-0 lg:border-r" aria-label="Manage sections">
         <div className="mb-3 px-1">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Manage</p>

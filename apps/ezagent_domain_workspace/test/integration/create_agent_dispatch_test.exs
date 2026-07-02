@@ -97,16 +97,38 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                )
     end
 
-    test "cc flavor missing cwd returns {:error, :cwd_required_for_cc}", %{
-      workspace_uri: workspace_uri,
-      admin_ctx: admin_ctx
+    test "file flavors accept empty cwd so the config_dir default can apply" do
+      for flavor <- ~w(cc cc-headless codex codex-remote) do
+        assert :ok =
+                 Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation.validate_cwd_for_flavor(
+                   flavor,
+                   false,
+                   ""
+                 )
+      end
+    end
+
+    test "file flavor template defaults empty project_cwd to the per-agent config_dir", %{
+      ws_name: ws_name
     } do
-      assert {:error, :cwd_required_for_cc} =
-               Workspace.create_agent(
-                 workspace_uri,
-                 %{flavor: "cc", name: "demo", cwd: "", with_pty: false},
-                 admin_ctx
-               )
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_cc)
+
+      agent_uri =
+        Ezagent.URI.agent(
+          ws_name,
+          "cc_default-cwd-#{System.unique_integer([:positive])}"
+        )
+
+      tmpl =
+        Ezagent.Behavior.Workspace.__file_flavor_template_for_test__(
+          "cc",
+          "cc.agent",
+          agent_uri,
+          ""
+        )
+
+      assert tmpl["project_cwd"] == tmpl["config_dir"]
+      assert String.contains?(tmpl["project_cwd"], "/cc-agents/#{ws_name}/cc_default-cwd-")
     end
 
     test "cc flavor nonexistent cwd returns {:error, {:cwd_not_a_dir, _}}", %{
@@ -476,7 +498,11 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
            "entity" not in Ezagent.SpawnRegistry.registered_schemes() or
            :error == Ezagent.AgentFlavorRegistry.lookup("native") do
-        IO.puts(:stderr, "SKIP: entity scheme / native flavor not registered (bootstrap incomplete)")
+        IO.puts(
+          :stderr,
+          "SKIP: entity scheme / native flavor not registered (bootstrap incomplete)"
+        )
+
         :ok
       else
         name = "native-#{System.unique_integer([:positive])}"
