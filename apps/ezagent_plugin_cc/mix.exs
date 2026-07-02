@@ -5,6 +5,7 @@ defmodule EzagentPluginCc.MixProject do
     [
       app: :ezagent_plugin_cc,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -18,6 +19,12 @@ defmodule EzagentPluginCc.MixProject do
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       start_permanent: Mix.env() == :prod,
       deps: deps()
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 

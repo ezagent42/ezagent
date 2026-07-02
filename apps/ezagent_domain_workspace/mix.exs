@@ -5,6 +5,7 @@ defmodule EzagentDomainWorkspace.MixProject do
     [
       app: :ezagent_domain_workspace,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -19,6 +20,12 @@ defmodule EzagentDomainWorkspace.MixProject do
   # Phase 6 PR 2: workspace domain — Workspace Kind + Workspace
   # Behavior + the loader/store that lift persisted Workspaces back
   # into running Kinds at boot. Owned by core team.
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
+    ]
+  end
+
   def application do
     [
       mod: {EzagentDomainWorkspace.Application, []},
