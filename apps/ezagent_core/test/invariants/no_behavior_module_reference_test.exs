@@ -69,10 +69,19 @@ defmodule EzagentCore.Invariants.NoBehaviorModuleReferenceTest do
     "apps/*/test/**/*.ex",
     "apps/*/test/**/*.exs",
     "test/**/*.ex",
-    "test/**/*.exs"
+    "test/**/*.exs",
+    # Runtime seed scripts (loaded by E2E harnesses — real code, not built into
+    # the app tree, so easy to miss; a stale ActionSet name here surfaces only
+    # at E2E run time as `{:invalid_socialware_behavior, Ezagent.Behavior.*}`).
+    "scripts/**/*.ex",
+    "scripts/**/*.exs",
+    "scripts/**/*.sh"
   ]
 
   @doc_globs [
+    # Root living reference docs (ARCHITECTURE / GLOSSARY / IMPLEMENTATION_ROADMAP
+    # / CLAUDE) — kept current, scanned.
+    "*.md",
     "docs/**/*.md",
     "docs/**/*.html"
   ]

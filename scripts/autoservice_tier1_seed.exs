@@ -229,7 +229,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
   ingests at runtime.
   """
   def orchestrator_kb_caps do
-    MapSet.new([Capability.cap(:agent, Ezagent.Behavior.Kb, :query)])
+    MapSet.new([Capability.cap(:agent, Ezagent.ActionSet.Kb, :query)])
   end
 
   # The kb recipe + kb flavor + AutoService flavor. On the live node these are
@@ -274,7 +274,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
           name: autosvc_role,
           passive: false,
           behaviors: [],
-          requested_caps: [%{behavior: Ezagent.Behavior.Kb, action: :query}]
+          requested_caps: [%{behavior: Ezagent.ActionSet.Kb, action: :query}]
         })
     end
 
@@ -521,7 +521,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
       |> Map.put(:orchestrator_template_uri, orch_template_uri)
       |> Map.put(:orchestrator_uri, autosvc_uri)
 
-    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} ->
         Logger.info("autosvc-seed: bound session→orchestrator #{URI.to_string(autosvc_uri)}")
         :ok
@@ -630,7 +630,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
   # ingests at runtime). Idempotent (grant_cap upserts the cap).
   @doc false
   def grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx) do
-    cap = Capability.cap(:agent, Ezagent.Behavior.Kb, :query, :any, workspace_uri)
+    cap = Capability.cap(:agent, Ezagent.ActionSet.Kb, :query, :any, workspace_uri)
 
     case Ezagent.Identity.grant_cap(autosvc_uri, cap, admin_ctx.caller) do
       :ok ->
@@ -653,8 +653,8 @@ defmodule Ezagent.AutoService.Tier1Seed do
       Ezagent.Socialware.DefinitionRegistry.seed_definition_if_absent(
         %{
           name: definition_name,
-          bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
-          shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+          bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
+          shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
           visibility_policy: %{publish_policy: :auto, web_anon_access: true}
         },
         workspace_uri: Ezagent.URI.workspace(ws)
@@ -691,7 +691,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
       )
 
     {:ok, _} =
-      Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+      Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
         session_template_uri: tmpl
       })
 
@@ -710,7 +710,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     cap = fn action ->
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         action: action,
         instance: session_uri,
         workspace_uri: ws,
@@ -733,7 +733,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
         ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore}
       })
 
-    _ = Ezagent.Behavior.Session.Membership.mount_participation_caps(session_uri, member_uri)
+    _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
     Logger.info("autosvc-seed: joined #{class} #{URI.to_string(member_uri)}")
     :ok
   rescue

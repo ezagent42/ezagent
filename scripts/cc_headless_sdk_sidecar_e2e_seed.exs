@@ -154,7 +154,7 @@ chat_join = fn member_uri ->
     %Capability{
       Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :join,
         Ezagent.URI.instance(session_uri),
         Capability.workspace_of(session_uri)
@@ -172,7 +172,7 @@ chat_join = fn member_uri ->
     })
   )
 
-  Ezagent.Behavior.Session.Membership.mount_participation_caps(session_uri, member_uri)
+  Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
 end
 
 chat_join.(admin_uri)
@@ -185,7 +185,7 @@ send_cap =
   %Capability{
     Capability.cap(
       :session,
-      Ezagent.Behavior.Session,
+      Ezagent.ActionSet.Session,
       :send,
       Ezagent.URI.instance(session_uri),
       Capability.workspace_of(session_uri)

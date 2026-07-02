@@ -3,7 +3,7 @@
 # Seeds a known session with joined members so the world conversation surface
 # (members panel, @mention autocomplete) and later write-path PRs have real
 # targets to render + dispatch against. Membership is persistent state
-# (`Ezagent.Behavior.Session` moduledoc: "STATE persistent — survives restart:
+# (`Ezagent.ActionSet.Session` moduledoc: "STATE persistent — survives restart:
 # members"), so seeding once and restarting the dev server is enough — the
 # members show on the cold session after boot.
 #
@@ -26,7 +26,7 @@ session = EzUri.new!("session://system/default/main")
 cap = fn member_uri, action ->
   %Capability{
     kind: :session,
-    behavior: Ezagent.Behavior.Session,
+    behavior: Ezagent.ActionSet.Session,
     action: action,
     instance: session,
     workspace_uri: ws,
@@ -77,7 +77,7 @@ ensure_member = fn uri_str, label ->
   end
 
   # 4. mount the per-class participation tier (parity with Invite.ex).
-  Ezagent.Behavior.Session.Membership.mount_participation_caps(session, uri)
+  Ezagent.ActionSet.Session.Membership.mount_participation_caps(session, uri)
 
   Logger.info("seed: #{label} (#{uri_str}) joined #{URI.to_string(session)}")
 end
