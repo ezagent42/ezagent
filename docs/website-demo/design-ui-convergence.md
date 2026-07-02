@@ -52,7 +52,7 @@
 - **本质:** **hello 生成的一个页面**，不是静态 HTML 站（zhaomaota #1107 走的路线）。
 - **技术栈:** `@json-render` body（36 组件 catalog）+ 自由 CSS theme，跑在 socialware 上。
 - **打开方式:**
-  - zhaomaota 实现（真渲染）: `http://localhost:10042/socialware/chat?session_uri=session://system/hello/site`（需 `:10042` 栈）
+  - zhaomaota 实现（真渲染）: `http://localhost:8088/socialware/external?session_uri=session://system/hello/web`（session 已从 `site` 迁到 `web`；10042 被 tailscale 占，本机 viewer 落 8088）
   - ruihua 设计参照（静态）: `http://127.0.0.1:8080/index.html`（`docs/website-demo/`，`python3 -m http.server 8080`）
 - **域名:** 官网**尚无独立域名**，计划绑到 `app.ezagent.chat`（上生产前须与 Allen/T6 协调）。
 - **文档:** `docs/together/2026-06-30/returns/t4-ruihua-website-content.md`、`website-demo/vx/version/2026-06-30-website-roadmap-v1.md`、zhaomaota `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`。
@@ -62,7 +62,7 @@
 - **本质:** 跑在 socialware 上的 plugin，`application.ex` 定义为 "AI-generated UI pages (@json-render) on the socialware substrate"。
 - **builder = world 控制台里 hello session 的 Conversation 视图**（见 `docs/together/2026-07-01/evidence/hello-ui.jpg`）：左「Conversation」跟 `hello_web` agent 对话（"ruihua v3: exact tokens + CSS animations + live github"）→ 右「live preview」实时出页；右栏 MEMBERS（hello_web AGENT + users）+ ROUTING。
 - **三种编辑模式**（`prompts.ex`）: ① **整页生成** page_gen（一棵 json-render 树，37 组件 catalog）② **局部 patch 编辑** edit（set/replace/insert/remove by id，支持**点选元素再指令**）③ **主题 CSS** set_shell（另一步写 free CSS）。
-- **session/agent:** `session://system/hello/site`（system workspace），agent = `hello_web`；驱动脚本 `scripts/refresh_hello_site.exs`（拉真 GitHub 数据 → drive body + set_shell theme，可 cron 半动态）。
+- **session/agent:** `session://system/hello/web`（system workspace；`site` 曾坏、已迁 `web`），agent = `hello_web`；驱动脚本 `scripts/refresh_hello_site.exs`（已对齐 `web`；拉真 GitHub 数据 → drive body + set_shell theme，可 cron 半动态）。
 - **文档:** `apps/ezagent_plugin_hello/`（`prompts.ex` 三 prompt / `spec.ex` catalog / `generator.ex`）、zhaomaota `docs/together/2026-06-30/t4-handwrite-ruihua-NOTES.md`。
 
 ### ③ World UI · 连接层 / 操作者控制台
@@ -251,7 +251,15 @@
 4. **留资页面**：字段（必填=姓名+一联系方式+同意）+ intent 预填 + 按 intent 路由收件人（销售/founder/HR）——怎么落？
 5. 范围外 fallback 话术（如定价→开留资）在 system prompt / routing 如何落实？
 
-回来回填本节 + §4 Hello 行。
+#### ✅ zhaomato 已回（2026-07-01，return `docs/together/2026-07-01/returns/zhaomato-hello-website.md`；PR #1121）
+- **定位落地：门户助手 = 新起一个 concierge behavior**（`hello_concierge`），**不复用 page builder**——只发 chat message（可带 render_card 卡 + 导航动作），**CapBAC 层面没有 drive/patch/发布 cap** → E3/E4/E6 即使话术被绕过也执行不了（硬闸门）。
+- **① 主题清单**：认可，不增删。
+- **② grounding 三源**：concierge 每 turn 的 system prompt 拼 4 段 = persona/scope 白名单 + ①页面 approved tree slice（`get_slice(:surface)`，页面改文案助手自动跟）+ ②world.cup 真数据（把 `refresh_hello_site.exs` 的 fetch 抽成共享 `Hello.SiteData`，一处取数两处用）+ ③`team.md`（中文名从数据文件读，避 `CjkLiteralGate`）；范围外一律 fallback。
+- **③ 导航动作**：词表 `scroll_to / switch_tab / highlight / open_url / open_lead_form`；**复用 render_card 的 `on` 传输**（#1035）——扩 action 枚举，viewer 本地执行，改动最小；agent 只产白名单动作 = 无越权动作面。
+- **④ 留资**：**独立 lead-capture behavior**（真提交后端 + 服务端校验 + 反滥用），非 hello 生成；字段照 §5.2（必填=姓名+一联系方式+隐私同意）；`intent → recipient` 路由表（投资→founder / 求职→HR / 其余→销售商务），submit 出 `{:notify, recipient, payload}` effect。
+- **⑤ fallback 双层**：prompt 白名单（软，管话术）+ cap/动作枚举（硬，保证被注入也没能力做坏事）。
+- **⚠️ 官网 session 已从 `.../hello/site` 迁到 `.../hello/web`**（site 坏过；`refresh_hello_site.exs` 已对齐 web）。
+- **prod readiness（zhaomato 结论）：先上静态骨架、对话框后置。** Step1=当前 `web` session 静态页（hero+两产品+world.cup 真数据+团队）上 `app.ezagent.chat`，只等 Allen/T6 配域名+HTTPS+反代（10042 被 tailscale 占，本机 viewer 落 8088；实时数据需 `GITHUB_TOKEN`）；Step2=对话框+留资后端（多天，独立排期）。
 
 ### 5.3 Agent Console → 创建岗位 · with FatNine & gaga 〔本轮讨论〕
 
@@ -346,6 +354,6 @@
 
 ## 仍待确认
 
-- **Q2 ✅ 已答:** hello builder = world 控制台里 hello session 的 Conversation 面板，agent `hello_web`，session `session://system/hello/site`（截图 `docs/together/2026-07-01/evidence/hello-ui.jpg`）。已回填 §1②。
-- **§5.2 待 zhaomato 确认:** 权限/发布模型 · theme 强制 token base · provision 方式（见 §5.2 讨论待办）。
+- **Q2 ✅ 已答:** hello builder = world 控制台里 hello session 的 Conversation 面板，agent `hello_web`，session `session://system/hello/web`（`site` 已迁 `web`；截图 `docs/together/2026-07-01/evidence/hello-ui.jpg`）。已回填 §1②。
+- **§5.2 ✅ zhaomato 已回**（#1121 return）：concierge 新 behavior + 三源 grounding + render_card `on` 导航 + 独立留资 behavior + prompt/cap 双层 fallback；官网先上静态骨架、对话框多天后置。详见 §5.2 回填。
 - **§5.3 ✅ ruihua 已定:** 入口 = A（并入 org 成员邀请）；preset 岗位 = GTM 工程/客服/研发助手；今天 Agent Console 按现状上线。**待 FatNine&gaga 落技术**（Role/AgentTemplate preset、邀请成员扩 agent、UI 迁移步骤）。
