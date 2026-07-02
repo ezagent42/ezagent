@@ -57,10 +57,11 @@ Standard preconditions (README §1.1), plus:
 
 ### Re-create a new owned session
 
-2. **Re-create from the homesite session** — in world, U re-creates a **NEW
-   session based on the homesite session** (spawn a new session from the source's
-   config).
-   → a new session is created, **owned by U**; its `session_uri` ≠ the source's.
+2. **One-click copy config → new session** — in world, viewing the 官网 session, U
+   clicks **copy this session's config to create a new session** (the world feature:
+   一键复制当前 session 配置、创建新 session).
+   → a new session is created from the copied config, **owned by U**; its
+   `session_uri` ≠ the source's.
 3. **Fresh conversation** — U talks in the new session; the conversation is U's own
    and **fresh** — none of the source homesite session's history is carried.
 4. **Owner works in world** — U, now in world, sees and configures the new session

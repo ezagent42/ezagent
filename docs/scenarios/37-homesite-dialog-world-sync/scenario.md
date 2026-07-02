@@ -35,11 +35,10 @@ Standard preconditions (README §1.1), plus:
   world session (reference: `data-session-uri="session://system/hello/web"` in
   `~/Desktop/Socialware.html`). Each opened hello page == one session (product
   decision, 2026-07-02).
-- **The homesite is the only user-facing surface** — the visitor observes the
-  session **only** through the composer bar's `查看会话` panel
-  (`.previewbar-toggle` → `.previewbar-chat`), never a separate world/Word/`/admin`
-  UI. `world` is the backend session substrate; `/admin/sessions/<session-uri>` is
-  an **engineering-assertion** surface only (verified out-of-band, not a user step).
+- **How the user observes** — the composer's **查看当前session** button carries a red
+  new-message count (badge); clicking it **enters world's 官网 session** to read the
+  full conversation. There is no inline panel. `world` is the backend session
+  substrate; the homesite shows only the badge + the jump.
 
 ## Actors
 
@@ -52,49 +51,48 @@ Standard preconditions (README §1.1), plus:
 
 ## Steps
 
-### Outbound — page → session (via the composer)
+### Send — page → session (via the composer)
 
-1. **Type + send** — in the homesite composer (enabled post-login), type a message
-   into `.previewbar-input` and click `.previewbar-action` (now **send**, not the
-   pre-login `登录`).
-2. **Confirm it landed — on the homesite** — click `.previewbar-toggle`
-   (**▴ 查看会话**) to expand `.previewbar-chat`.
-   → the message just sent **appears in the `查看会话` panel** (`.previewbar-msg`),
-   attributed to the signed-in visitor. This panel *is* the world session viewed
-   from the homesite — it is the user's proof the message entered the session, with
-   no separate world UI. (Engineering assertion, out-of-band: one row exists on the
-   bound `session_uri` — the backend truth, not a user step.)
+1. **Type + send** — in the homesite composer (enabled post-login), type into
+   `.previewbar-input` and click `.previewbar-action` (now **send**, not the
+   pre-login `登录`). → the message is written to the bound 官网 session.
 
-### Inbound — session → page (same panel, live)
+### New-message badge (how the user knows)
 
-3. **A reply is produced in the session** — an agent on the session answers, or
-   another member sends a message from the Word IM side (internal, not a homesite
-   step).
-4. **Observe live in the panel** — with `查看会话` open, the reply **renders live in
-   the same `.previewbar-chat` panel** (the `.previewbar-tick` counter advances), no
-   manual refresh, without ever leaving the homesite.
+2. **Badge bumps on every new message** — each new message in the 官网 session — the
+   user's own send **and** any reply (an agent, or another member) — adds a red count
+   to the **查看当前session** button. This is how the user learns their message
+   landed and a reply arrived, **without leaving the homesite**.
+
+### See the full session
+
+3. **Click 查看当前session** → enter world's 官网 session and read the full
+   conversation (the user's message + replies). The badge clears. The full session
+   view lives in world; the homesite shows only the badge + the jump.
 
 ## Expected outcomes
 
 Behavior layer (the CapBAC/membership substrate is asserted in scenario 35,
 cross-referenced, not re-proven):
 
-- Step 1–2: the sent message shows in the `查看会话` panel; exactly one message is
-  written to the bound world session; its `session_uri` == the page's
-  `data-session-uri` (no drift to another session).
-- Step 3–4: the session's reply renders live **in the same `查看会话` panel**; the
-  panel shows **one shared conversation**, not two copies.
-- Round-trip identity: a message sent from the composer and a reply from the session
-  are both members of the **same** session timeline, both visible in the one panel.
+- Step 1: exactly one message is written to the bound 官网 session; its `session_uri`
+  == the page's `data-session-uri` (no drift to another session).
+- Step 2: each new message (user **or** agent) bumps the **查看当前session** badge by
+  one; the badge reflects the session's new-message count for this viewer.
+- Step 3: clicking **查看当前session** enters world's 官网 session showing the shared
+  conversation (the sent message + replies); the badge clears.
 
 ## Failure modes to test
 
-- **Message never reaches the session** — the composer "sends" but nothing appears
-  in the `查看会话` panel (and no session row is written). "If it fails, who knows?"
-  → must surface an error, never a silent no-op.
-- **Reply never reaches the panel** — the page never subscribed to the session
-  publisher, so the session's replies stay invisible in `查看会话` until a manual
-  reload.
+- **Message never reaches the session** — the composer "sends" but no session row is
+  written and the badge never bumps. "If it fails, who knows?" → must surface an
+  error, never a silent no-op.
+- **Badge never updates on a reply** — the homesite isn't subscribed to the session's
+  new-message signal, so the user never learns a reply arrived.
+- **查看当前session opens the wrong session** — the deep-link resolves to a different
+  session than the page's binding.
+- **Badge doesn't clear** — after the user views the session in world, the count
+  persists, so it always looks like there's unread activity.
 - **Wrong-session drift** — the page writes to a different session than its binding
   (e.g. a fresh session per keystroke), breaking the "page == one session" invariant.
 - **Anon write leak** — an anonymous visitor manages to write into the session
@@ -116,13 +114,12 @@ cross-referenced, not re-proven):
 
 ## Notes
 
-- **Backend dialog wiring is NOT connected yet** (2026-07-02 sync: "对话交互还没
-  接"). Until the world↔page bridge is built, the **inbound (session→panel) reply
-  surface is recorded against an unimplemented blank-HTML placeholder** — the
-  scenario asserts "a session reply renders live in the `查看会话` panel", and the
-  placeholder stands in for the not-yet-built propagation. Outbound (composer→session)
-  can be recorded against the `docs/website-demo/v1` mock's `mock-ezagent-api.js`
-  when available.
+- **Two backend deps are NOT built yet** (2026-07-02 sync): (1) world→homesite
+  **new-message count push** that feeds the badge, and (2) the **deep-link** that
+  opens world's 官网 session from 查看当前session. Both are world/backend features
+  (see handoff → zyli). Until built, record against **unimplemented blank-HTML
+  placeholders**; the send (composer→session) can run against the
+  `docs/website-demo/v1` mock's `mock-ezagent-api.js`.
 - **cookie caveat** — a homesite login currently rides a fornax-cookie override
   across `*.ezagent.chat` (2026-07-02 sync); this is a system-level issue, recorded
   but not fixed here. The signed-in precondition may need a real per-domain login

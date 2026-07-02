@@ -49,7 +49,7 @@ Standard preconditions (README §1.1), plus:
 
 ### Share
 
-1. **Owner shares** — A clicks the share/deploy affordance on the page.
+1. **Owner shares** — A clicks share — **from the homesite composer, or from world**.
    → a share link for A's session is produced.
 
 ### Invited visitor joins the same session
@@ -60,9 +60,9 @@ Standard preconditions (README §1.1), plus:
    (cross-ref scenario 36) → B logs in.
 4. **B joins as a member** — after login, B is added as a **read/write member of
    A's SAME session** (not a new session).
-5. **Group chat** — B sends a message; it appears in the shared session; A sees B's
-   message **in A's `查看会话` panel** on the homesite (not a separate world UI).
-   Both talk in one conversation; history from before B joined is preserved.
+5. **Group chat** — B sends a message; it appears in the shared session; A's
+   **查看当前session** badge bumps (and B's for A's messages). Both talk in one
+   conversation; history from before B joined is preserved.
 
 ## Expected outcomes
 

@@ -27,10 +27,9 @@ session 内部产生的回复**（由 agent 或另一个成员）会流回并**�
 - **页面 ↔ session 绑定** —— 官网页面是绑定到一个 world session 的 hello 产物
   （参考 `~/Desktop/Socialware.html` 里的 `data-session-uri="session://system/hello/web"`）。
   每个打开的 hello 页面 == 一个 session（2026-07-02 产品决策）。
-- **官网是唯一的用户界面** —— 访客**只**通过 composer bar 的 `查看会话` 面板
-  （`.previewbar-toggle` → `.previewbar-chat`）观察 session，绝不去单独的
-  world/Word/`/admin` UI。`world` 是后端 session 基质；`/admin/sessions/<session-uri>`
-  仅是**工程断言**面（旁路验证，非用户步骤）。
+- **用户怎么观察** —— composer 的 **查看当前session** 按钮带一个红色新消息计数（红点）；
+  点它**进入 world 的官网 session** 读完整对话。没有内联面板。`world` 是后端 session 基质；
+  官网只显示红点 + 跳转。
 
 ## 角色
 
@@ -42,39 +41,40 @@ session 内部产生的回复**（由 agent 或另一个成员）会流回并**�
 
 ## 步骤
 
-### 出站 — 页面 → session（经 composer）
+### 发送 — 页面 → session（经 composer）
 
-1. **输入 + 发送** —— 在官网 composer（登录后可用）向 `.previewbar-input` 输入一条消息，
-   点 `.previewbar-action`（现在是**发送**，不再是未登录的 `登录`）。
-2. **在官网确认已落入** —— 点 `.previewbar-toggle`（**▴ 查看会话**）展开 `.previewbar-chat`。
-   → 刚发的消息**出现在 `查看会话` 面板里**（`.previewbar-msg`），归属该已登录访客。
-   这个面板*就是*从官网看到的 world session —— 它是用户"消息进了 session"的证据，无需任何
-   单独的 world UI。（工程断言，旁路：绑定的 `session_uri` 上存在一行 —— 后端真相，非用户步骤。）
+1. **输入 + 发送** —— 在官网 composer（登录后可用）向 `.previewbar-input` 输入，点
+   `.previewbar-action`（现在是**发送**，不再是未登录的 `登录`）。→ 消息写入绑定的官网 session。
 
-### 入站 — session → 页面（同一面板，实时）
+### 新消息红点（用户怎么知道）
 
-3. **session 里产生一条回复** —— session 上的 agent 应答，或另一成员从 Word IM 侧发消息
-   （内部，非官网步骤）。
-4. **在面板里实时观察** —— `查看会话` 打开着，回复**实时渲染到同一个 `.previewbar-chat`
-   面板**（`.previewbar-tick` 计数递增），无需手动刷新，全程不离开官网。
+2. **每来一条新消息，红点 +1** —— 官网 session 每多一条消息 —— 用户自己发的**以及**任何
+   回复（agent 或另一成员）—— 都给 **查看当前session** 按钮加一个红点计数。这就是用户不离开
+   官网、也能知道"话进了、有回复"的方式。
+
+### 看完整 session
+
+3. **点 查看当前session** → 进入 world 的官网 session，读完整对话（用户的消息 + 回复）。
+   红点清零。完整 session 视图在 world，官网只显示红点 + 跳转。
 
 ## 实测结果 vs 预期
 
 行为层（CapBAC/成员资格基元在场景 35 断言，此处 cross-ref、不重证）：
 
-- 步骤 1–2：发出的消息显示在 `查看会话` 面板；恰好一条消息写入绑定的 world session；
-  其 `session_uri` == 页面的 `data-session-uri`（不漂到别的 session）。
-- 步骤 3–4：session 的回复实时渲染到**同一个 `查看会话` 面板**；面板展示**同一条共享对话**，
-  不是两份拷贝。
-- 往返同一性：composer 发出的消息与 session 的回复，都属于**同一个** session 时间线，
-  都在这一个面板里可见。
+- 步骤 1：恰好一条消息写入绑定的官网 session；其 `session_uri` == 页面的 `data-session-uri`
+  （不漂到别的 session）。
+- 步骤 2：每来一条新消息（用户**或** agent）让 **查看当前session** 红点 +1；红点反映该访客
+  的新消息计数。
+- 步骤 3：点 **查看当前session** 进入 world 的官网 session，展示共享对话（发出的消息 + 回复）；
+  红点清零。
 
 ## 失败模式（需测试）
 
-- **消息永不到达 session** —— 对话框"发送"了但 `查看会话` 面板里什么都没出现（且无 session
-  行写入）。"失败了谁会知道？" → 必须报错，绝不静默 no-op。
-- **回复永不到达面板** —— 页面从未订阅 session publisher，导致 session 的回复在手动刷新前
-  一直不出现在 `查看会话` 里。
+- **消息永不到达 session** —— 对话框"发送"了但无 session 行写入、红点也不 +1。"失败了谁会
+  知道？" → 必须报错，绝不静默 no-op。
+- **回复来了红点不更新** —— 官网未订阅 session 的新消息信号，用户永远不知道有回复到了。
+- **查看当前session 打开了错的 session** —— 深链解析到了与页面绑定不同的 session。
+- **红点不清零** —— 用户在 world 看过 session 后计数仍在，永远像有未读。
 - **串 session 漂移** —— 页面写到了绑定之外的另一个 session（例如每次输入新建一个 session），
   破坏"页面 == 一个 session"不变式。
 - **匿名写入泄漏** —— 匿名访客竟能写入 session（必须按场景 36 保持门控）。
@@ -94,10 +94,10 @@ session 内部产生的回复**（由 agent 或另一个成员）会流回并**�
 
 ## 备注
 
-- **后端对话对接尚未连通**（2026-07-02 会："对话交互还没接"）。在 world↔页面桥建成前，
-  **入站（session→面板）回复面用未实现的空白 HTML 占位录制** —— scenario 断言"session 回复
-  实时渲染到 `查看会话` 面板"，占位页替代尚未构建的传播。出站（composer→session）在
-  `docs/website-demo/v1` mock 的 `mock-ezagent-api.js` 可用时对其录制。
+- **两个后端依赖尚未构建**（2026-07-02 会）：(1) world→官网的**新消息计数推送**（喂红点），
+  (2) 从 查看当前session 打开 world 官网 session 的**深链**。二者都是 world/后端功能
+  （见 handoff → zyli）。建成前用**未实现的空白 HTML 占位**录制；发送（composer→session）
+  可在 `docs/website-demo/v1` mock 的 `mock-ezagent-api.js` 上跑。
 - **cookie 注意** —— 官网登录当前借道一个覆盖 `*.ezagent.chat` 的 fornax-cookie
   （2026-07-02 会）；这是系统级问题，此处记录不修。override 移除后，已登录前置可能需要
   真实的按域登录。

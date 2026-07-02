@@ -52,9 +52,9 @@ HTML 占位**录制。未 ✅（无测试 + 未签收）。
 
 ### 重建一个自有的新 session
 
-2. **基于官网 session 重建** —— 在 world 里，U **基于官网 session 重新创建一个新 session**
-   （从源的配置 spawn 一个新 session）。
-   → 创建出一个新 session，**归 U 所有**；其 `session_uri` ≠ 源的。
+2. **一键复制配置 → 新 session** —— 在 world 里查看官网 session 时，U 点**复制当前 session
+   配置、创建新 session**（world 功能：一键复制当前 session 配置、创建新 session）。
+   → 从复制的配置创建出一个新 session，**归 U 所有**；其 `session_uri` ≠ 源的。
 3. **全新对话** —— U 在新 session 里说话；对话是 U 自己的、**全新的** —— 不带源官网 session
    的任何历史。
 4. **Owner 在 world 里操作** —— U 现在在 world 里，在那里看/配置这个新 session（world 是

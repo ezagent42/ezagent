@@ -27,45 +27,35 @@ homesite page = a hello product bound to ONE world session (a front face of that
 > web page — it is talking inside the world session the page is bound to.* The page
 > is just one face of that session.
 
-> **The only interface we present is the homesite.** The customer never navigates to
-> a separate Word / `/admin` / world UI. `world` is the **backend session substrate**
-> (the `session_uri`, the IM the owner uses internally); the customer's **only
-> window into it is the composer bar on the homesite** (next section). Every
-> user-facing "see the conversation" step below happens **on the homesite**, not in
-> world. (The `try world` CTA in scenario 36 is a separate opt-in for visitors who
-> choose to go deeper and build — not part of this observe-the-session flow.)
+> **The homesite is the customer's primary surface** — where they browse and talk.
+> `world` is the backend session substrate + the full session/IM view. Two explicit
+> buttons bridge the homesite into world: **查看当前session** (view the full session)
+> and **Try world** (own a new session). The customer talks on the homesite; a red
+> badge tells them when there's new activity; they enter world only by clicking one
+> of those two buttons.
 
-## The composer bar — the only window into the session
+## The composer bar — talk here, jump to the session
 
 The bottom composer bar on the homesite (`.previewbar` in the reference
-`~/Desktop/Socialware.html`) is where the page and the world session meet. It has
-three affordances, and together they answer both "which button?" and "how does the
-user know their message landed in the session?":
+`~/Desktop/Socialware.html`) is where the user talks into the bound world session.
 
 ```
-┌─ homesite composer bar (.previewbar) ───────────────────────────────┐
-│  [▴ 查看会话]      [ type here… (登录后参与) ]      [ 登录 / send ]   │
-│  .previewbar-toggle   .previewbar-input             .previewbar-action │
-└──────────────────────────────────────────────────────────────────────┘
-        │ click to expand ↓
-┌─ .previewbar-chat  (session conversation panel) ────────────────────┐
-│  查看会话                                                 [× close]  │
-│  你   我想要一个……          ← the message you just sent (.previewbar-msg)│
-│  AGENT  好的，正在生成……    ← the session's reply, live               │
-│                                              .previewbar-tick (activity)│
-└──────────────────────────────────────────────────────────────────────┘
+┌─ homesite composer bar (.previewbar) ─────────────────────────────────┐
+│  [ type here… (登录后参与) ]   [ 登录 / send ]   [查看当前session ⑤]   │
+│   .previewbar-input             .previewbar-action    (red count badge) │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Which button to talk**: type into `.previewbar-input`, then click
-  `.previewbar-action` — pre-login it reads `登录` (the write-gate, stage 2);
-  post-login it becomes **send**.
-- **How the user knows it landed in the session**: click **`.previewbar-toggle`
-  (▴ 查看会话)** to expand `.previewbar-chat` — **the message they just sent is in
-  the panel** (`.previewbar-msg`), and any reply from the session (an agent, or
-  another member) appears **live in the same panel** (with the `.previewbar-tick`
-  activity counter). The `查看会话` panel *is* the session; it is the customer's
-  proof that "talking here == talking in the world session", without ever leaving
-  the homesite.
+- **Talk**: type into `.previewbar-input`, click `.previewbar-action` — pre-login it
+  reads `登录` (write-gate, stage 2); post-login it becomes **send**.
+- **New-activity badge**: every new message in the 官网 session (from the user **or**
+  an agent) adds a red count on **查看当前session**; it clears when the user opens the
+  session. This is how the user knows their message landed and that a reply arrived,
+  without leaving the homesite.
+- **See the full session**: click **查看当前session** → enter world's 官网 session
+  (the full conversation lives in world; the homesite shows the badge).
+- **Removed**: the composer's old `选择` button and the inline `查看会话` panel are
+  gone — replaced by the single `查看当前session` button + badge.
 
 ## The journey (6 stages)
 
@@ -74,8 +64,8 @@ user know their message landed in the session?":
 | **0 page == session** | open the homesite page | page = a hello product bound to one world session; anon sees that session's external face | anonymous viewer | premise, cross-ref 35 |
 | **1 anonymous browse** | GitHub / See progress | pure display, no session write | none | 36 |
 | **2 write-gate → login** | write in the bottom composer | anon cannot write the session → gated | anon → login → signed-in | 36 |
-| **3 dialog == talking in world** | type + send in the composer, open `▴ 查看会话` | the sent message lands in the world session and shows in the `查看会话` panel; agent/other-member replies appear **live in the same panel** | becomes a session member | **37** |
-| **4 share → same session** | share the link, invite others | invitees join the **SAME** session; everyone's messages appear in each other's `查看会话` panel (group chat, history kept) | invitee = end user / member | **38** |
+| **3 dialog == talking in world** | type + send in the composer; **查看当前session** badge +1 on each new message; click it to enter world | the message lands in the 官网 session; new messages (user **or** agent) bump the badge; clicking enters world to read | becomes a session member | **37** |
+| **4 share → same session** | share (from the homesite **or** from world) | invitees join the **SAME** session (group chat, history kept); each new message bumps everyone's badge | invitee = end user / member | **38** |
 | **5 enter world → re-create as a new owned session** | click **Try world** (opt-in to build) → enter world | based on the homesite session, **re-create a NEW session** in world; the user becomes its **owner** (no history carried) | user = new owner / tenant | **39** |
 
 ## The decisive fork: two propagation paths (stages 4 & 5)

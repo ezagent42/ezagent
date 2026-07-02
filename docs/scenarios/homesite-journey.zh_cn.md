@@ -23,39 +23,31 @@ world    = IM / session 后端  对话真正所在;owner 在这里看它
 > **一句话锚点**：*在官网页面说话不是在网页上留言 —— 而是在页面绑定的那个 world session
 > 里说话。* 页面只是那个 session 的一张脸。
 
-> **我们表达产品的界面只有这个官网。** 客户**不会**跳到单独的 Word / `/admin` / world
-> 后台。`world` 是**后端 session 基质**（`session_uri`、owner 内部用的 IM）；客户对它的
-> **唯一窗口是官网底部的 composer bar**（见下节）。下文所有用户视角的"看对话"步骤都发生在
-> **官网上**，不在 world。（scenario 36 里的 `try world` CTA 是给愿意深入去搭建的访客的另一
-> 条 opt-in 路径 —— 不属于这条"观察 session"的流程。）
+> **官网是客户的主界面** —— 浏览和对话都在这里。`world` 是后端 session 基质 + 完整的
+> session/IM 视图。两个明确的按钮把官网桥接进 world：**查看当前session**（看完整 session）
+> 和 **Try world**（拥有一个新 session）。客户在官网说话；红点提示有新动静；只有点这两个
+> 按钮才进入 world。
 
-## 官网 composer bar —— session 的唯一窗口
+## 官网 composer bar —— 在这里说话，跳去看 session
 
-官网底部那条 composer bar（参考 `~/Desktop/Socialware.html` 里的 `.previewbar`）是页面与
-world session 相遇之处。它有三个 affordance，合起来同时回答"点哪个按钮？"和"用户怎么知道
-自己的话进了 session？"：
+官网底部那条 composer bar（参考 `~/Desktop/Socialware.html` 里的 `.previewbar`）是用户往
+绑定的 world session 说话的地方。
 
 ```
-┌─ 官网 composer bar (.previewbar) ───────────────────────────────────┐
-│  [▴ 查看会话]      [ 在这里输入…（登录后参与） ]      [ 登录 / 发送 ]  │
-│  .previewbar-toggle   .previewbar-input               .previewbar-action │
-└──────────────────────────────────────────────────────────────────────┘
-        │ 点击展开 ↓
-┌─ .previewbar-chat  （会话面板） ────────────────────────────────────┐
-│  查看会话                                                 [× 关闭]   │
-│  你   我想要一个……          ← 你刚发出的话 (.previewbar-msg)          │
-│  AGENT  好的，正在生成……    ← session 的回复，实时                   │
-│                                              .previewbar-tick（活动计数）│
-└──────────────────────────────────────────────────────────────────────┘
+┌─ 官网 composer bar (.previewbar) ─────────────────────────────────────┐
+│  [ 在这里输入…（登录后参与） ]   [ 登录 / 发送 ]   [查看当前session ⑤]  │
+│   .previewbar-input             .previewbar-action    （红点计数）      │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **点哪个按钮说话**：在 `.previewbar-input` 输入，然后点 `.previewbar-action` —— 未登录时
-  显示 `登录`（写操作门控，段 2）；登录后变为**发送**。
-- **用户怎么知道话进了 session**：点 **`.previewbar-toggle`（▴ 查看会话）**展开
-  `.previewbar-chat` —— **自己刚发的话就在面板里**（`.previewbar-msg`），而 session 里的任何
-  回复（agent 或另一成员）**实时出现在同一面板**（带 `.previewbar-tick` 活动计数）。
-  `查看会话` 面板*就是* session；它是客户"在这里说话 == 在 world session 里说话"的证据，
-  且全程不离开官网。
+- **说话**：在 `.previewbar-input` 输入，点 `.previewbar-action` —— 未登录显示 `登录`
+  （写操作门控，段 2）；登录后变为**发送**。
+- **新动静红点**：官网 session 每多一条消息（用户**或** agent），**查看当前session** 上加一个
+  红点计数；用户打开 session 后清零。这就是用户不离开官网、也能知道"话进了、有回复"的方式。
+- **看完整 session**：点 **查看当前session** → 进入 world 的官网 session（完整对话在 world，
+  官网只显示红点）。
+- **已移除**：composer 原来的 `选择` 按钮和内联 `查看会话` 面板都去掉了 —— 由单个
+  `查看当前session` 按钮 + 红点取代。
 
 ## 旅程（6 段）
 
@@ -64,8 +56,8 @@ world session 相遇之处。它有三个 affordance，合起来同时回答"点
 | **0 页面 == session** | 打开官网页面 | 页面 = 绑定一个 world session 的 hello 产物;匿名看到该 session 的外部脸 | 匿名 viewer | 前提，cross-ref 35 |
 | **1 匿名浏览** | GitHub / 看看进度 | 纯展示,不写 session | 无 | 36 |
 | **2 写操作门控 → 登录** | 在底部对话框写 | 匿名不能写 session → 门控 | 匿名 → 登录 → 已登录 | 36 |
-| **3 对话 == 在 world 说话** | 在 composer 输入+发送,点 `▴ 查看会话` | 发出的消息落入 world session 并显示在 `查看会话` 面板;agent/其他成员的回复**实时出现在同一面板** | 成为 session 成员 | **37** |
-| **4 分享 → 同一 session** | 分享链接、邀请他人 | 被邀者加入**同一个** session;各自消息出现在彼此的 `查看会话` 面板（群聊,留历史） | 被邀者 = end user / 成员 | **38** |
+| **3 对话 == 在 world 说话** | 在 composer 输入+发送;每来一条新消息 **查看当前session** 红点 +1;点它进入 world | 消息落入官网 session;新消息（用户**或** agent）让红点 +1;点击进 world 阅读 | 成为 session 成员 | **37** |
+| **4 分享 → 同一 session** | 分享（从官网**或**从 world） | 被邀者加入**同一个** session（群聊,留历史）;每条新消息让各方红点 +1 | 被邀者 = end user / 成员 | **38** |
 | **5 进入 world → 重建为新的自有 session** | 点 **Try world**（opt-in 去搭建）→ 进入 world | 基于官网 session **重新创建一个新 session**;用户成为它的 **owner**（不带历史） | 用户 = 新 owner / 租户 | **39** |
 
 ## 胜负手：两条传播路径（第 4、5 段）

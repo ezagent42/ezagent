@@ -130,7 +130,8 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 ## 4. Scenario index — flat list
 
 > Cluster overview: [`homesite-journey.md`](./homesite-journey.md) maps the homesite
-> user journey (stages 0–5) across scenarios 36–39.
+> user journey (stages 0–5) across scenarios 36–39. Task split:
+> [`homesite-handoff.md`](./homesite-handoff.md) (官网/hello → zhaomato, world → zyli).
 
 | # | Title | Cat | Status | Test path |
 |---|---|---|---|---|
