@@ -65,7 +65,6 @@ defmodule Ezagent.Socialware.DefinitionTest do
       body = Definition.body(definition)
       assert body.agents == [%{"recipe" => "hello-greeter", "role_name" => "greeter"}]
     end
-
   end
 
   describe "views field (T2-2a, views-as-behavior)" do

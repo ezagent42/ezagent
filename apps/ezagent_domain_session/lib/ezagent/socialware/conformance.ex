@@ -43,7 +43,10 @@ defmodule Ezagent.Socialware.Conformance do
       |> add(:agent_recipes_resolve, check_agent_recipes(definition.agents, ws))
       |> add(:agent_caps_and_role_uniqueness, check_agent_caps_and_roles(definition.agents, ws))
       |> add(:adapters_registered, check_adapters(definition.adapters))
-      |> add(:orchestrator_uri_parses, check_orchestrator_uri(definition.orchestrator_template_uri))
+      |> add(
+        :orchestrator_uri_parses,
+        check_orchestrator_uri(definition.orchestrator_template_uri)
+      )
       |> add(:install_resolves, check_install_resolves(definition, ws))
       |> add(:routing_receivers_resolve, check_routing_receivers(definition))
       |> add(:prompt_template_refs_valid, check_prompt_template_refs(definition))

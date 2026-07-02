@@ -23,6 +23,7 @@ defmodule Ezagent.UI.AuthorizeViewTest do
     @impl Ezagent.Behavior
     def required_caps,
       do: %{test_render: Ezagent.Capability.cap(:session, __MODULE__, :test_render)}
+
     @impl Ezagent.Behavior
     def data_owner(_), do: :any
   end

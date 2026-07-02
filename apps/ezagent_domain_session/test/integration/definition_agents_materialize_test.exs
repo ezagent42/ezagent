@@ -124,7 +124,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
 
     members = members_of(session_uri)
-    assert map_size(Enum.filter(members, fn {_uri, m} -> m[:role_name] == role_name end) |> Map.new()) == 1
+
+    assert map_size(
+             Enum.filter(members, fn {_uri, m} -> m[:role_name] == role_name end)
+             |> Map.new()
+           ) == 1
   end
 
   test "rejects a duplicate role_name within the same agents batch" do

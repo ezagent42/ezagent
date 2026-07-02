@@ -89,7 +89,11 @@ defmodule Ezagent.Socialware.ConformanceTest do
       })
 
     assert {:error, failures} = Conformance.check(definition, @workspace_uri)
-    assert Enum.any?(failures, &match?({:prompt_template_refs_valid, {:unknown_prompt_template_ref, _}}, &1))
+
+    assert Enum.any?(
+             failures,
+             &match?({:prompt_template_refs_valid, {:unknown_prompt_template_ref, _}}, &1)
+           )
   end
 
   test "duplicate agent role_names fail agent_caps_and_role_uniqueness" do

@@ -24,8 +24,14 @@ defmodule EzagentCore.Architecture.ViewAuthorizeGateTest do
   @moduletag :umbrella_only
 
   @umbrella_root Path.expand("../../../..", __DIR__)
-  @session_view Path.join(@umbrella_root, "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex")
-  @registry Path.join(@umbrella_root, "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view_registry.ex")
+  @session_view Path.join(
+                  @umbrella_root,
+                  "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex"
+                )
+  @registry Path.join(
+              @umbrella_root,
+              "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view_registry.ex"
+            )
 
   # SessionView implementations that read the `:surface` slice but are NOT yet
   # routed through a declared `view_behavior/0`. TARGET: empty. Each entry is a
@@ -34,13 +40,18 @@ defmodule EzagentCore.Architecture.ViewAuthorizeGateTest do
     # socialware's degraded internal PageView still reads :surface directly and
     # has no backing render ActionSet yet (needs a socialware `*_render` view
     # ActionSet before it can declare view_behavior/0 — T2-2b follow-up).
-    Path.join(@umbrella_root, "apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/page_view.ex")
+    Path.join(
+      @umbrella_root,
+      "apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/page_view.ex"
+    )
   ]
 
   test "SessionView contract exposes authorize_view/3 + the view_behavior caller dimension" do
     src = File.read!(@session_view)
     assert src =~ ~r/def authorize_view\(/, "SessionView must expose the unified authorize_view/3"
-    assert src =~ ~r/@callback view_behavior\(\)/, "SessionView must declare the view_behavior/0 caller dimension"
+
+    assert src =~ ~r/@callback view_behavior\(\)/,
+           "SessionView must declare the view_behavior/0 caller dimension"
   end
 
   test "registry caller-aware render entries route through authorize_view" do
