@@ -8,7 +8,7 @@ defmodule Ezagent.Socialware.ConfigProjection do
 
     1. `object_uri/2` gives an immutable `ConfigObject` a **stable resolvable
        URI** in the `resource://` scheme (one of the six allowed schemes —
-       invariant #11; a `config://` scheme would be rejected by
+       invariant #11; an ad-hoc non-registered scheme would be rejected by
        `Ezagent.URI.new!/1`). The URI keys a SPECIFIC immutable object by its id,
        NOT the mutable pointer.
 

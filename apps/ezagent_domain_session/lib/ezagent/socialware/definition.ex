@@ -2,9 +2,10 @@ defmodule Ezagent.Socialware.Definition do
   @moduledoc """
   Config-as-data socialware definition.
 
-  P4 stores definitions as `ConfigObject`s at
-  `config://<workspace>/socialware/<name>` with key `"socialware"`. This module
-  is the validation/rehydration boundary for that body.
+  P4 stores definitions as `ConfigObject`s under the structured non-URI subject
+  `socialware:<name>` (workspace is a separate ConfigStore field) with key
+  `"socialware"`. This module is the validation/rehydration boundary for that
+  body.
   """
 
   @enforce_keys [:name]

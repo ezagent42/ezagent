@@ -29,7 +29,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
 
   # ---- §8.1 role is its OWN subject; seed writes CONFIG (not just ETS) -------
 
-  test "seed_role_if_absent writes a role ConfigObject resolvable at config://<sys>/recipe/<name>",
+  test "seed_role_if_absent writes a role ConfigObject resolvable at subject recipe:<name>",
        %{name: name, system_ws: ws} do
     assert {:ok, :seeded} =
              RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "hello", skills: ["s1"]})
