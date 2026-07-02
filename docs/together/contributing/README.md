@@ -39,3 +39,13 @@ agent = **角色（role，决定内容）× 风味（flavor，决定形式）**�
 
 ### P5 · flake 不得长期靠 admin-merge 绕过
 **现象**：PluginIsolation/AnonUserGC flake 反复偶发红，多个干净 PR 被 admin-merge 绕过 CI 闸。**原则**：admin-merge 仅用于"已本地验证干净 + 红仅为已知无关 flake"的临时兜底，且**必须立项根治**（#108）；不得让 flake 成为常态绕过。**适用**：任何反复出现的 CI flake。
+
+### P6 · socialware 要区分定义数据、运行时基座、安装/部署流程
+**现象**：#1106 把 AutoService Tier-1 场景跑通，但 seed 承载了 persona、
+KB 语料、session/routing/orchestrator wiring；#1110 则把 kanban workflow、
+runtime substrate、UI、GitHub gateway、persona 和证据文档混成一个集成分支。**判断**：
+这两个都是 socialware 数据切分与部署方式的问题，不是某个 seed 的局部问题。**原则**：
+socialware app 必须拆成 1) 定义数据（persona/soul、KB/resource、SessionTemplate、
+routing、role recipe、cap 请求、surface 声明），2) 通用运行时基座，3) 安装/部署/验证流程。
+seed 只能作为 installer/harness；集成分支只能作为证明路径，不能作为合并单元。展开版：
+`docs/together/contributing/socialware-data-deployment-boundary.md`。
