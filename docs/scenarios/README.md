@@ -164,6 +164,8 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 32 | [Feishu @-mention → orchestrator dispatch](./32-feishu-mention-orchestrator-dispatch/scenario.md) | 3 | 🚧 | `scenario_32_mention_orchestrator_dispatch_test.exs` (deterministic) + live runbook |
 | 33 | [Full-star — orchestrator dispatches ALL flavors (cc + codex + curl)](./33-full-star-orchestrator-all-flavors/scenario.md) | 3 | 🚧 | `scenario_33_full_star_test.exs` (deterministic) + live runbook |
 | 34 | [Sender-locked relay (传话游戏) — legend + rule-set + prompt-template, no baton](./34-sender-locked-relay/scenario.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs` (deterministic, 8 tests green) + `scenario_34_*_live_test.exs` (live runbook, `@tag :live`) |
+| 35 | [External-user anonymous access (membership-only)](./35-external-user-anon-access/scenario.md) | 1 | 🚧 | deterministic tier PARTIAL + live agent-browser runbook — see scenario doc (issue #51) |
+| 36 | [Homesite visitor journey — browse → login-gate → gated CTAs](./36-homesite-browse/scenario.md) | 1 | 🚧 | design spec — recordable vs `docs/website-demo/v1` mock; live recorder + test pending |
 
 ---
 
