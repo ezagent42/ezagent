@@ -21,7 +21,7 @@ face of a world session, and the sync is **bidirectional**.
 This is journey **stage 3** — the spine the whole product demo hangs on. It is the
 prerequisite for scenario [38](../38-share-deploy-same-session/scenario.md) (share
 → same session) and [39](../39-redeploy-publish-fork-session/scenario.md)
-(re-deploy → fork). It builds on scenario
+(Try world → re-create a new owned session). It builds on scenario
 [36](../36-homesite-browse/scenario.md) (the visitor is already signed in after
 36's login-gate).
 

@@ -16,7 +16,7 @@ session 内部产生的回复**（由 agent 或另一个成员）会流回并**�
 
 这是旅程**第 3 段** —— 整个产品 demo 挂在其上的主线。它是场景
 [38](../38-share-deploy-same-session/scenario.zh_cn.md)（分享 → 同一 session）与
-[39](../39-redeploy-publish-fork-session/scenario.zh_cn.md)（重新部署 → fork）的前置，
+[39](../39-redeploy-publish-fork-session/scenario.zh_cn.md)（Try world → 重建自有 session）的前置，
 并承接场景 [36](../36-homesite-browse/scenario.zh_cn.md)（访客在 36 的登录门控后已登录）。
 
 ## 前置条件

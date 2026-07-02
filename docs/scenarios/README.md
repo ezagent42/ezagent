@@ -171,7 +171,7 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 36 | [Homesite visitor journey — browse → login-gate → gated CTAs](./36-homesite-browse/scenario.md) | 1 | 🚧 | design spec — recordable vs `docs/website-demo/v1` mock; live recorder + test pending |
 | 37 | [Homesite dialog ↔ world session (bidirectional sync)](./37-homesite-dialog-world-sync/scenario.md) | 3 | 🚧 | design spec (journey stage 3) — backend dialog wiring not connected; world→page via placeholder |
 | 38 | [Share / deploy — invite others into the SAME session (group chat)](./38-share-deploy-same-session/scenario.md) | 3 | 🚧 | design spec (journey stage 4) — deploy = same session, member, history kept |
-| 39 | [Re-deploy / publish — fork a NEW session, become its owner](./39-redeploy-publish-fork-session/scenario.md) | 3 | 🚧 | design spec (journey stage 5) — publish = new session, owner, no history |
+| 39 | [Try world → re-create the homesite session as a new owned session](./39-redeploy-publish-fork-session/scenario.md) | 3 | 🚧 | design spec (journey stage 5) — enter world, re-create a new owned session, no history |
 
 ---
 

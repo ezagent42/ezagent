@@ -13,9 +13,9 @@
 **加入同一个 session** —— 所有人落到**一条共享对话**里（群聊），既有对话历史保留。被邀访客
 是**end user / 群成员**，**不是**新 owner。这是"你和我在同一个群"的关系。
 
-与场景 [39](../39-redeploy-publish-fork-session/scenario.zh_cn.md)（重新部署 / publish）
-对照：那里访客**fork 出一个新 session** 并成为其 owner。**deploy = 同一个 session；
-publish = 新的 session。** 把这个区分展示出来正是第 4、5 段的全部意义。
+与场景 [39](../39-redeploy-publish-fork-session/scenario.zh_cn.md)（Try world → 重建）
+对照：那里访客**进入 world 并重建一个自己拥有的新 session**。**deploy = 同一个 session、
+留在官网；段 5 = 新的 session、进入 world。** 把这个区分展示出来正是第 4、5 段的全部意义。
 
 这是旅程**第 4 段**，承接场景
 [37](../37-homesite-dialog-world-sync/scenario.zh_cn.md)（owner 已有一个活的页面↔session）。
@@ -63,8 +63,8 @@ publish = 新的 session。** 把这个区分展示出来正是第 4、5 段的�
 
 ## 失败模式（需测试）
 
-- **fork 而非加入** —— B 得到一个自己的新 session 而非加入 A 的。那是场景 39（publish）的行为；
-  对 deploy 而言是 bug。
+- **重建而非加入** —— B 得到一个自己的新 session 而非加入 A 的。那是场景 39（Try world → 重建）
+  的行为；对 deploy 而言是 bug。
 - **B 成了 owner** —— B 被授予 owner/租户 caps 而非成员 caps（必须保持 end-user，按租户/
   end-user 区分，2026-07-02 line 409）。
 - **历史丢失** —— B（或 A）看不到 B 加入前的对话。
@@ -75,7 +75,7 @@ publish = 新的 session。** 把这个区分展示出来正是第 4、5 段的�
 - 场景 [37](../37-homesite-dialog-world-sync/scenario.zh_cn.md) —— 本 scenario 共享的
   活页面↔session。
 - 场景 [39](../39-redeploy-publish-fork-session/scenario.zh_cn.md) —— **另一条**传播路径
-  （publish/fork → 新 session）；38 与 39 是 deploy-vs-publish 这一对。
+  （Try world → 进入 world → 重建一个自有的新 session）；38 与 39 是 同一 session vs 新 session 这一对。
 - 场景 [35](../35-external-user-anon-access/scenario.zh_cn.md) —— 匿名→成员加入基元
   （B 的加入是一次成员资格授权）。
 - 场景 [36](../36-homesite-browse/scenario.zh_cn.md) —— B 的写操作门控→登录。
@@ -84,8 +84,8 @@ publish = 新的 session。** 把这个区分展示出来正是第 4、5 段的�
 
 ## 备注
 
-- **术语** —— 会上定：今天的 `share` == `deploy`（直接用一个 app、群聊、保留历史）。该控件
-  未来可能拆成 `publish`（场景 39）与 `deploy`。本 scenario 是 **deploy** 那一半。
+- **术语** —— 会上定：今天的 `share` == `deploy`（直接用一个 app、群聊、保留历史、留在官网）。
+  这是 同一 session 那一半；新 session 的拥有路径（Try world → 进入 world → 重建）是场景 39。
 - **录制占位** —— 分享/deploy 控件与 B 的加入流尚未构建；分享动作在真实控件上线前用
   **未实现的空白 HTML 占位**录制。成员加入可在 scenario 35 的 匿名→成员 基元可用处对其演练。
 - **状态 🚧。** 在确定性/实景测试 + runbook + agent-browser 录屏存在且 ruihua/Allen

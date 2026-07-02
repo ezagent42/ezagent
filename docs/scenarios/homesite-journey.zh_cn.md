@@ -8,7 +8,7 @@
 ## 这是什么
 
 官网 E2E 群组的连接地图。一个匿名访客走一条连续旅程：从落地 ezagent 官网，到发布自己
-fork 出的 session —— 每一段都被写成一条 1:1 scenario（36–39）。本文是**总览**，scenario 是
+进入 world、拥有自己重建的 session —— 每一段都被写成一条 1:1 scenario（36–39）。本文是**总览**，scenario 是
 **细节**。它的存在是为了让读者在读任何单条 scenario 前先看到整个产品故事，也让录屏
 （agent-browser / Playwright）有一条统一叙事可循。
 
@@ -66,42 +66,44 @@ world session 相遇之处。它有三个 affordance，合起来同时回答"点
 | **2 写操作门控 → 登录** | 在底部对话框写 | 匿名不能写 session → 门控 | 匿名 → 登录 → 已登录 | 36 |
 | **3 对话 == 在 world 说话** | 在 composer 输入+发送,点 `▴ 查看会话` | 发出的消息落入 world session 并显示在 `查看会话` 面板;agent/其他成员的回复**实时出现在同一面板** | 成为 session 成员 | **37** |
 | **4 分享 → 同一 session** | 分享链接、邀请他人 | 被邀者加入**同一个** session;各自消息出现在彼此的 `查看会话` 面板（群聊,留历史） | 被邀者 = end user / 成员 | **38** |
-| **5 重新部署 → fork 新 session** | 重新部署（publish）session + 页面 | 存为 session template → fork 一个**新** session → fork 者成 owner,在**自己页面的 `查看会话` 面板**看新 session 的对话 | fork 者 = 新 owner / 租户 | **39** |
+| **5 进入 world → 重建为新的自有 session** | 点 **Try world**（opt-in 去搭建）→ 进入 world | 基于官网 session **重新创建一个新 session**;用户成为它的 **owner**（不带历史） | 用户 = 新 owner / 租户 | **39** |
 
 ## 胜负手：两条传播路径（第 4、5 段）
 
 这里才是旅程真正展示产品关系的地方 —— 同一个页面，分享 vs 重新部署，意味着两种完全不同的产品语义：
 
 ```
-┌─ 第4段  分享 / deploy ────────┐   ┌─ 第5段  重新部署 / publish(fork) ─┐
+┌─ 第4段  分享 / deploy ────────┐   ┌─ 第5段  Try world → 重建 ──────────┐
 │ 同一个 session                │   │ 新的 session                       │
-│ 多人,一条对话                 │   │ fork 者另起炉灶                     │
-│ 保留对话历史                  │   │ 不带原历史(publish)                │
-│ 被邀者 = end user(成员)       │   │ fork 者 = 租户 / owner             │
-│ 「你和我在同一个群」          │   │ 「他复制了我的模板」               │
+│ 留在官网                      │   │ 进入 world（opt-in 去搭建）        │
+│ 多人,一条对话                 │   │ 基于官网 session 重建              │
+│ 保留对话历史                  │   │ 不带原历史                         │
+│ 被邀者 = end user(成员)       │   │ 用户 = 租户 / owner                │
+│ 「你和我在同一个群」          │   │ 「我喜欢它 —— 现在拥有我自己的」   │
 └───────────────────────────────┘   └────────────────────────────────────┘
         end-user 视角                        租户 / owner 视角
-        = deploy(保留历史)                   = publish → session template(fork)
+        留在官网                             经 Try world 进入 world
 ```
 
-deploy 与 publish 写成 **scenario 38 与 39** —— 各自是对方的失败模式（38 断言"fork 而非加入 = bug";39 断言"加入而非 fork = bug"），以此逼后端的 session 语义必须精确。
+第 4、5 段写成 **scenario 38 与 39** —— 各自是对方的失败模式（38 断言"新建 session 而非加入 = bug";39 断言"加入同一 session 而非重建新的 = bug"），以此逼后端的 session 语义必须精确。
 
 ## Scenario 映射
 
 - **36** —— 段 0–2：匿名浏览 + 登录门控。
 - **37** —— 段 3：官网对话 ↔ world session（双向同步）。主线;38、39 的前置。
 - **38** —— 段 4：分享 / deploy → 同一 session（群聊,end-user 成员）。
-- **39** —— 段 5：重新部署 / publish → fork 新 session（新 owner / 租户）。
+- **39** —— 段 5：Try world → 进入 world → 基于官网 session 重建为新的自有 session
+  （新 owner / 租户）。
 
 ## 录制备注
 
-第 2 段之后的一切都依赖**尚未连通**的后端对接（2026-07-02 会）。在建成前，未实现的面（world→页面回复传播、分享/publish 控件、插件市场列表）用**未实现的空白 HTML 占位**录制—— scenario 断言预期行为,占位页替代缺失部件。录制脚本仿`scripts/demo/agent-create-record.js`（Playwright `recordVideo`），由每条 scenario 指定的角色/文案 selector 驱动。
+第 2 段之后的一切都依赖**尚未连通**的后端对接（2026-07-02 会）。在建成前，未实现的面（world→页面回复传播、分享控件、Try-world 进入 world 的入口、重建新 session 的流程）用**未实现的空白 HTML 占位**录制—— scenario 断言预期行为,占位页替代缺失部件。录制脚本仿`scripts/demo/agent-create-record.js`（Playwright `recordVideo`），由每条 scenario 指定的角色/文案 selector 驱动。
 
 ## 本旅程编码的产品决策（2026-07-02 会）
 
 - 每个打开的 hello 页面 == 一个 session。
 - world = IM 后端（owner 看/配回复）;hello = 展示面。
-- `deploy`/`share` = 同一 session、保留历史、end-user 成员。
-- `publish` = 存为 session template + fork、新 owner、不带历史。
-- 插件市场 = session-template 列表。
-- 租户（owner）vs end-user（成员）是两条传播路径之间的承重区分。
+- `deploy`/`share` = 同一 session、留在官网、保留历史、end-user 成员。
+- 段 5 拥有 = **Try world → 进入 world → 基于官网 session 重建一个新 session**；新 owner
+  （租户）、不带历史。（后端机制可能是 存为 session template + spawn；cross-ref scenario 21。）
+- 租户（owner，进 world 去搭建）vs end-user（成员，留在官网）是两条路径之间的承重区分。

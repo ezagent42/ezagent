@@ -8,8 +8,9 @@ product sync + ruihua's product-relationship model.
 ## What this is
 
 The connective map for the homesite E2E cluster. A single anonymous visitor walks
-one continuous journey from landing on the ezagent homesite to publishing their own
-forked session — and each leg is codified as one 1:1 scenario (36–39). This doc is
+one continuous journey from landing on the ezagent homesite to entering world and
+owning their own re-created session — and each leg is codified as one 1:1 scenario
+(36–39). This doc is
 the **overview**; the scenarios are the **detail**. It exists so a reader sees the
 whole product story before reading any single scenario, and so the recording
 (agent-browser / Playwright) has one narrative to follow.
@@ -75,7 +76,7 @@ user know their message landed in the session?":
 | **2 write-gate → login** | write in the bottom composer | anon cannot write the session → gated | anon → login → signed-in | 36 |
 | **3 dialog == talking in world** | type + send in the composer, open `▴ 查看会话` | the sent message lands in the world session and shows in the `查看会话` panel; agent/other-member replies appear **live in the same panel** | becomes a session member | **37** |
 | **4 share → same session** | share the link, invite others | invitees join the **SAME** session; everyone's messages appear in each other's `查看会话` panel (group chat, history kept) | invitee = end user / member | **38** |
-| **5 re-deploy → fork new session** | re-deploy (publish) session + page | saved as session template → fork a **NEW** session → forker becomes owner and sees the new session's conversation in **their own page's `查看会话` panel** | forker = new owner / tenant | **39** |
+| **5 enter world → re-create as a new owned session** | click **Try world** (opt-in to build) → enter world | based on the homesite session, **re-create a NEW session** in world; the user becomes its **owner** (no history carried) | user = new owner / tenant | **39** |
 
 ## The decisive fork: two propagation paths (stages 4 & 5)
 
@@ -83,20 +84,22 @@ This is where the journey actually demonstrates the product relationships — th
 page, shared vs re-deployed, means two completely different product semantics:
 
 ```
-┌─ stage 4  share / deploy ─────┐   ┌─ stage 5  re-deploy / publish(fork) ┐
+┌─ stage 4  share / deploy ─────┐   ┌─ stage 5  Try world → re-create ────┐
 │ the SAME session              │   │ a NEW session                        │
-│ many people, one conversation │   │ forker starts their own              │
-│ history preserved             │   │ no original history (publish)        │
-│ invitee = end user (member)   │   │ forker = tenant / owner              │
-│ "you and I are in one group"  │   │ "he copied my template"              │
+│ stay on the homesite          │   │ enter world (opt-in to build)        │
+│ many people, one conversation │   │ re-create from the homesite session  │
+│ history preserved             │   │ no history carried                   │
+│ invitee = end user (member)   │   │ user = tenant / owner                │
+│ "you and I are in one group"  │   │ "I liked it — now I own my own"      │
 └───────────────────────────────┘   └──────────────────────────────────────┘
         end-user view                          tenant / owner view
-        = deploy (keeps history)               = publish → session template (fork)
+        stays on the homesite                  enters world via Try world
 ```
 
-deploy and publish are written as **scenarios 38 and 39** — each is the other's
-failure mode (38 asserts "fork instead of join = bug"; 39 asserts "join instead of
-fork = bug"), which forces the backend's session semantics to be exact.
+stage 4 and stage 5 are written as **scenarios 38 and 39** — each is the other's
+failure mode (38 asserts "spawn a new session instead of joining = bug"; 39 asserts
+"join the same session instead of re-creating a new one = bug"), which forces the
+backend's session semantics to be exact.
 
 ## Scenario mapping
 
@@ -104,14 +107,16 @@ fork = bug"), which forces the backend's session semantics to be exact.
 - **37** — stage 3: homesite dialog ↔ world session (bidirectional sync). The spine;
   prerequisite for 38 and 39.
 - **38** — stage 4: share / deploy → same session (group chat, end-user member).
-- **39** — stage 5: re-deploy / publish → fork a new session (new owner / tenant).
+- **39** — stage 5: Try world → enter world → re-create the homesite session as a
+  new owned session (new owner / tenant).
 
 ## Recording note
 
 Everything downstream of stage 2 depends on backend wiring that is **not yet
 connected** (2026-07-02 sync). Until built, the not-yet-implemented surfaces
-(world→page reply propagation, the share/publish affordances, the plugin-market
-list) are recorded against **unimplemented blank-HTML placeholders** — the scenarios
+(world→page reply propagation, the share affordance, the Try-world entry into world,
+the re-create-a-new-session flow) are recorded against **unimplemented blank-HTML
+placeholders** — the scenarios
 assert the intended behavior, the placeholders stand in for the missing pieces. The
 recorder is modelled on `scripts/demo/agent-create-record.js` (Playwright
 `recordVideo`), driven by the role/text selectors each scenario specifies.
@@ -120,8 +125,9 @@ recorder is modelled on `scripts/demo/agent-create-record.js` (Playwright
 
 - Each opened hello page == one session.
 - world = IM backend (owner watches / configures replies); hello = display face.
-- `deploy`/`share` = same session, keeps history, end-user member.
-- `publish` = save-as session template + fork, new owner, no history carried.
-- plugin-market = session-template list.
-- tenant (owner) vs end-user (member) is the load-bearing distinction between the
-  two propagation paths.
+- `deploy`/`share` = same session, stay on the homesite, keeps history, end-user member.
+- Stage-5 ownership = **Try world → enter world → re-create a new session from the
+  homesite session**; new owner (tenant), no history carried. (Backend mechanism may
+  be save-as session template + spawn; cross-ref scenario 21.)
+- tenant (owner, enters world to build) vs end-user (member, stays on the homesite)
+  is the load-bearing distinction between the two paths.

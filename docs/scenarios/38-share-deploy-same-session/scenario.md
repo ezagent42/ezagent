@@ -17,9 +17,10 @@ existing history preserved. The invited visitor is an **end user / group member*
 NOT a new owner. This is the "you and I are in the same group" relationship.
 
 Contrast with scenario [39](../39-redeploy-publish-fork-session/scenario.md)
-(re-deploy / publish), where the visitor **forks a NEW session** and becomes its
-owner. **deploy = same session; publish = new session.** Getting this distinction
-visible is the whole point of stages 4 and 5.
+(Try world → re-create), where the visitor **enters world and re-creates a NEW
+session** they own. **deploy = same session, stay on the homesite; stage 5 = a new
+session, enter world.** Getting this distinction visible is the whole point of
+stages 4 and 5.
 
 This is journey **stage 4**, built on scenario
 [37](../37-homesite-dialog-world-sync/scenario.md) (the owner already has a live
@@ -77,7 +78,7 @@ Behavior layer (membership/CapBAC substrate asserted in scenario 35):
 ## Failure modes to test
 
 - **Fork instead of join** — B gets a NEW session of their own instead of joining
-  A's. That is the scenario 39 (publish) behavior; for deploy it is a bug.
+  A's. That is the scenario 39 (Try world → re-create) behavior; for deploy it is a bug.
 - **B becomes owner** — B is granted owner/tenant caps instead of member caps
   (must stay end-user per the tenant/end-user distinction, 2026-07-02 line 409).
 - **History lost** — B (or A) no longer sees the conversation from before B joined.
@@ -88,8 +89,8 @@ Behavior layer (membership/CapBAC substrate asserted in scenario 35):
 - Scenario [37](../37-homesite-dialog-world-sync/scenario.md) — the live page↔session
   this scenario shares.
 - Scenario [39](../39-redeploy-publish-fork-session/scenario.md) — the **other**
-  propagation path (publish/fork → new session); 38 and 39 are the deploy-vs-publish
-  pair.
+  propagation path (Try world → enter world → re-create a new owned session); 38 and
+  39 are the same-session-vs-new-session pair.
 - Scenario [35](../35-external-user-anon-access/scenario.md) — anon→member join
   substrate (B's join is a membership authorize).
 - Scenario [36](../36-homesite-browse/scenario.md) — B's write-gate→login.
@@ -99,8 +100,9 @@ Behavior layer (membership/CapBAC substrate asserted in scenario 35):
 ## Notes
 
 - **Terminology** — the meeting settled: `share` today == `deploy` (direct use of an
-  app, group chat, history kept). The affordance may later be split into
-  `publish` (scenario 39) and `deploy`. This scenario is the **deploy** half.
+  app, group chat, history kept, stay on the homesite). This is the same-session
+  half; the new-session ownership path (Try world → enter world → re-create) is
+  scenario 39.
 - **Recording placeholder** — the share/deploy affordance and B's join flow are not
   yet built; record against an **unimplemented blank-HTML placeholder** for the
   share action until the real control ships. The membership join can be exercised
