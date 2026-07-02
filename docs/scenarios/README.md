@@ -166,6 +166,9 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 34 | [Sender-locked relay (传话游戏) — legend + rule-set + prompt-template, no baton](./34-sender-locked-relay/scenario.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs` (deterministic, 8 tests green) + `scenario_34_*_live_test.exs` (live runbook, `@tag :live`) |
 | 35 | [External-user anonymous access (membership-only)](./35-external-user-anon-access/scenario.md) | 1 | 🚧 | deterministic tier PARTIAL + live agent-browser runbook — see scenario doc (issue #51) |
 | 36 | [Homesite visitor journey — browse → login-gate → gated CTAs](./36-homesite-browse/scenario.md) | 1 | 🚧 | design spec — recordable vs `docs/website-demo/v1` mock; live recorder + test pending |
+| 37 | [Homesite dialog ↔ world session (bidirectional sync)](./37-homesite-dialog-world-sync/scenario.md) | 3 | 🚧 | design spec (journey stage 3) — backend dialog wiring not connected; world→page via placeholder |
+| 38 | [Share / deploy — invite others into the SAME session (group chat)](./38-share-deploy-same-session/scenario.md) | 3 | 🚧 | design spec (journey stage 4) — deploy = same session, member, history kept |
+| 39 | [Re-deploy / publish — fork a NEW session, become its owner](./39-redeploy-publish-fork-session/scenario.md) | 3 | 🚧 | design spec (journey stage 5) — publish = new session, owner, no history |
 
 ---
 
