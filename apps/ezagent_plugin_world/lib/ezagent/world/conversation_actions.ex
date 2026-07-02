@@ -73,6 +73,10 @@ defmodule Ezagent.World.ConversationActions do
     create_session(socket, short_name, Map.get(args, "template_name", "default"))
   end
 
+  def handle_dispatch(socket, "session.fork_config", %{"session_uri" => sid} = args) do
+    with_session(socket, sid, &Ezagent.World.SessionForkAction.fork_config(socket, &1, args))
+  end
+
   def handle_dispatch(socket, "session.view.switch", %{"session_uri" => sid, "view" => view})
       when is_binary(view) do
     with_session(socket, sid, &switch_view(socket, &1, view))
