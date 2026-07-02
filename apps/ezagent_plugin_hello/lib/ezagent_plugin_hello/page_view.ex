@@ -21,6 +21,12 @@ defmodule EzagentPluginHello.PageView do
 
   alias Ezagent.Behavior.Surface
 
+  # T2-2b — this view is cap-gated: its visibility requires the caller to hold
+  # the `{Session, :hello_render}` cap (declared by HelloRender). The unified
+  # `SessionView.authorize_view/3` reads this to gate applicable/render.
+  @impl true
+  def view_behavior, do: EzagentPluginHello.Behavior.HelloRender
+
   @impl true
   def id, do: :hello_page
 
