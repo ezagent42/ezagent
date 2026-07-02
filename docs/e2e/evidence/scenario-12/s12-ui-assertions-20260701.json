@@ -1,0 +1,11 @@
+{
+  "ccReplies": 0,
+  "hasFeishu": true,
+  "hasPing": true,
+  "members": [
+    "e2e-nativeagent",
+    "py_defaultagent",
+    "Adminuser"
+  ],
+  "url": "http://world.localhost:10043/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fe2e-auto"
+}
