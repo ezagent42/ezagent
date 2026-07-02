@@ -24,7 +24,7 @@ Permanent delete should remain a separate, narrower admin/retention operation af
 
 The existing system already contains a permanent destroy path:
 
-- `Ezagent.Behavior.Session.destroy/2` delegates to `Ezagent.Behavior.Session.Teardown.cascade_teardown/2`.
+- `Ezagent.ActionSet.Session.destroy/2` delegates to `Ezagent.ActionSet.Session.Teardown.cascade_teardown/2`.
 - `cascade_teardown/2` best-effort reaps spawned participants, reaps the orchestrator agent, prunes session-created routing rows, and stops the per-orchestrator `Ezagent.Session.SessionManager`.
 - `apps/ezagent_domain_session/test/integration/spawned_participant_teardown_test.exs` covers `Lifecycle.destroy(session)` tearing down spawned workers, config dirs, routing, and lineage.
 - World UI already exposes participant removal through `Ezagent.Session.Participants.remove_participant/3`, sharing the CLI/domain path.
@@ -100,7 +100,7 @@ Archive must stop outbound mirrors. Do not rely only on process termination; the
 The archive implementation needs one of:
 
 - unbind every `external_mirror_bindings` row for the session through `Ezagent.ExternalMirror.unbind/4`; or
-- add a lifecycle-aware binding state so the BootReconciler and `Behavior.ExternalMirror.activate/2` skip archived sessions.
+- add a lifecycle-aware binding state so the BootReconciler and `ActionSet.ExternalMirror.activate/2` skip archived sessions.
 
 Recommendation for first slice: unbind all rows during archive and assert no worker is recreated after restart.
 
@@ -154,9 +154,9 @@ Open CapBAC decision for Allen:
 
 Should archive use a new session lifecycle cap, for example:
 
-`cap(:session, Ezagent.Behavior.SessionLifecycle, :archive, <session_uri>, <workspace>)`
+`cap(:session, Ezagent.ActionSet.SessionLifecycle, :archive, <session_uri>, <workspace>)`
 
-or should it extend `Ezagent.Behavior.Session` with an `:archive` action/cap?
+or should it extend `Ezagent.ActionSet.Session` with an `:archive` action/cap?
 
 Recommendation: add a small domain behavior or clearly named Session action only after naming review. Do not expose generic `manage.delete` as the Agent Console authority; `manage.delete` is too destructive and not product-specific enough for archive semantics.
 
@@ -204,7 +204,7 @@ Execution authority should not be "reconstructed orchestrator authority." The op
 2. Should archive be reversible? If yes, routing rows and external bindings need disabled/tombstoned state instead of deletion.
 3. Is public/socialware archive supposed to eagerly reap anon users, or only block future access and rely on GC?
 4. What is the retention policy for permanent delete of messages/audit/config?
-5. Which CapBAC subject should own archive authority: a new lifecycle behavior or `Ezagent.Behavior.Session` action?
+5. Which CapBAC subject should own archive authority: a new lifecycle behavior or `Ezagent.ActionSet.Session` action?
 6. Should workspace admins archive any session in workspace, or only owners plus system admins?
 
 ## Merge Guidance
