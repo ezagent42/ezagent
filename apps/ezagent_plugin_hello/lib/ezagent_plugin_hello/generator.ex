@@ -62,7 +62,8 @@ defmodule EzagentPluginHello.Generator do
 
     case call_llm(Prompts.concierge_system(), concierge_user_prompt(page, user_text)) do
       {:ok, %{content: content}} when is_binary(content) and content != "" ->
-        TurnDriver.say(session_uri, concierge_uri, String.trim(content))
+        {say, nav} = parse_concierge(content)
+        TurnDriver.say_nav(session_uri, concierge_uri, say, nav)
 
       other ->
         Logger.warning("hello.Generator: concierge answer failed: #{inspect(other)}")
@@ -76,6 +77,34 @@ defmodule EzagentPluginHello.Generator do
 
     :ok
   end
+
+  # Parse the concierge model's `{"say","nav"}` JSON (lenient — grab the outermost
+  # `{...}`, which also strips any stray reasoning the backend prepends). On any
+  # failure fall back to the raw text with no nav. `nav` is WHITELISTED here — the
+  # viewer only ever receives a known action type + a value, never arbitrary code.
+  defp parse_concierge(content) do
+    json =
+      case Regex.run(~r/\{.*\}/s, content) do
+        [match] -> match
+        _ -> ""
+      end
+
+    case Jason.decode(json) do
+      {:ok, %{"say" => say} = obj} when is_binary(say) and say != "" ->
+        {String.trim(say), sanitize_nav(Map.get(obj, "nav"))}
+
+      _ ->
+        {String.trim(content), nil}
+    end
+  end
+
+  defp sanitize_nav(%{"type" => type, "value" => value})
+       when is_binary(value) and value != "" and
+              type in ["switch_tab", "scroll_to", "open_url"] do
+    %{"type" => type, "value" => value}
+  end
+
+  defp sanitize_nav(_), do: nil
 
   defp concierge_user_prompt(page, user_text) when is_map(page) do
     """

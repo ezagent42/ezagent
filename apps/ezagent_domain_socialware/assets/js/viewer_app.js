@@ -192,6 +192,23 @@ const IS_EMBEDDED = (() => {
   }
 })()
 
+// Execute a concierge navigation action on the page. The action is WHITELISTED
+// server-side (type ∈ switch_tab/scroll_to/open_url), so this only ever does one
+// of these three safe, local things.
+function execNav(nav) {
+  if (!nav || typeof nav !== "object") return
+  const value = nav.value ? String(nav.value) : ""
+  if (!value) return
+  if (nav.type === "switch_tab") {
+    window.dispatchEvent(new CustomEvent("jr-tab-switch", {detail: {value}}))
+  } else if (nav.type === "open_url") {
+    window.open(value, "_blank", "noopener,noreferrer")
+  } else if (nav.type === "scroll_to") {
+    const el = document.querySelector("." + value) || document.getElementById(value)
+    if (el && el.scrollIntoView) el.scrollIntoView({behavior: "smooth", block: "start"})
+  }
+}
+
 function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -205,10 +222,44 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState(null)
   const channelRef = useRef(null)
+  // Concierge navigation-first replies: a short answer bubble + a local nav action
+  // (switch_tab / scroll_to / open_url). `conciergeSeen` baselines the existing
+  // history on first load so only NEW concierge replies act.
+  const [conciergeBubble, setConciergeBubble] = useState(null)
+  const conciergeSeen = useRef(null)
+  const bubbleTimer = useRef(null)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
     return () => document.body.classList.remove("jr-highlight")
   }, [jrHighlight])
+
+  // On each snapshot, act on the newest UNSEEN concierge reply: show its answer as
+  // a transient bubble and execute its nav action on the page. (The chat panel is
+  // not shown inline, so this is how a member sees + follows the concierge here.)
+  useEffect(() => {
+    const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
+    const isConcierge = (m) =>
+      m && typeof m.sender === "string" && m.sender.indexOf("/agent/concierge") !== -1
+    if (conciergeSeen.current === null) {
+      conciergeSeen.current = new Set(msgs.filter(isConcierge).map((m) => m.id))
+      return
+    }
+    let latest = null
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (isConcierge(msgs[i])) {
+        latest = msgs[i]
+        break
+      }
+    }
+    if (!latest || conciergeSeen.current.has(latest.id)) return
+    conciergeSeen.current.add(latest.id)
+    if (latest.text) {
+      setConciergeBubble(String(latest.text))
+      window.clearTimeout(bubbleTimer.current)
+      bubbleTimer.current = window.setTimeout(() => setConciergeBubble(null), 9000)
+    }
+    execNav(latest.nav)
+  }, [snapshot])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -413,6 +464,9 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     null,
     React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
+    !IS_EMBEDDED && conciergeBubble
+      ? React.createElement("div", {className: "concierge-bubble", key: "cb"}, conciergeBubble)
+      : null,
     IS_EMBEDDED
       ? null
       : React.createElement(PreviewBar, {
@@ -675,6 +729,8 @@ const PREVIEWBAR_CSS = `
 .previewbar-toggle:hover:not(:disabled){background:rgba(0,0,0,.1)}
 .previewbar-toggle:disabled{opacity:.4;cursor:not-allowed}
 .previewbar-dot{position:absolute;top:.18rem;right:.18rem;width:.5rem;height:.5rem;border-radius:999px;background:#e5484d;box-shadow:0 0 0 2px rgba(255,255,255,.92)}
+.concierge-bubble{position:fixed;left:50%;bottom:5.2rem;transform:translateX(-50%);z-index:61;max-width:min(34rem,calc(100vw - 2rem));padding:.7rem 1rem;border-radius:1rem;background:rgba(255,255,255,.94);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.7);box-shadow:0 12px 34px rgba(0,0,0,.16);font-size:.9rem;line-height:1.5;color:#1a1a1a;animation:cb-in .2s cubic-bezier(.16,1,.3,1)}
+@keyframes cb-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
 .previewbar-input{flex:1;min-width:0;border:none;background:transparent;outline:none;font-size:.95rem;color:#181818;height:2.4rem;padding:0 .25rem}
 .previewbar-input:disabled{color:#8a8a8a;cursor:not-allowed}
 .previewbar-input::placeholder{color:#9a9a9a}

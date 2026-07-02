@@ -23,9 +23,16 @@ defmodule EzagentWeb.Socialware.FeedEncoding do
         text: message_text(message),
         sender: URI.to_string(message.sender),
         render: message_render(message),
-        render_css: message_render_css(message)
+        render_css: message_render_css(message),
+        nav: message_nav(message)
       }
     end)
+  end
+
+  @doc "The optional concierge navigation action carried in a message body, or nil."
+  @spec message_nav(Ezagent.Message.t()) :: term()
+  def message_nav(message) do
+    Map.get(message.body, "nav") || Map.get(message.body, :nav)
   end
 
   @doc "Extract a message's display text from a string- or atom-keyed body."

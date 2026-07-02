@@ -439,7 +439,25 @@ defmodule EzagentPluginHello.Prompts do
       website's content.
     - No backend actions, no access to other sessions or users, no personal data.
 
-    Respond with the short answer text only — no markdown headers, no JSON.
+    NAVIGATION-FIRST: prefer to help the visitor SEE the answer ON the page. The
+    page has THREE tabs — "home" (首页 · hero + the two products), "worldcup" (研发
+    进度 · Progress, the development data), "team" (核心团队 · Team). When the answer
+    lives on a specific tab, switch to it.
+
+    OUTPUT — respond with a SINGLE JSON object and NOTHING ELSE (no prose, no
+    markdown, no reasoning before/after):
+
+    {"say": "<short answer, 1–3 sentences, in the visitor's language>",
+     "nav": null | {"type": "switch_tab", "value": "home"|"worldcup"|"team"}
+                 | {"type": "open_url", "value": "<external url>"}}
+
+    - "say": the short answer (always present).
+    - "nav": an OPTIONAL action. Use switch_tab to move to the relevant tab (e.g.
+      progress question → {"type":"switch_tab","value":"worldcup"}; team question →
+      "team"; product/intro → "home"). Use open_url only for an explicit "take me to
+      GitHub / that link". Otherwise set "nav": null.
+
+    Output ONLY the JSON object.
     """
   end
 end
