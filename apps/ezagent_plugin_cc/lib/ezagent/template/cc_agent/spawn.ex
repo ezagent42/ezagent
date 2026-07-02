@@ -11,7 +11,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
     * Calls to functions that STAYED on `CcAgent` are qualified with the
       `CcAgent` alias (`try_role_bootstrap/3`, `handle_spawn_failure/2`,
-      `ensure_subprocess_alive/2`, `orchestrator_role?/1`,
+      `ensure_subprocess_alive/2`, `orchestrator_recipe?/1`,
       `reject_stale_config_dir_data_key!/1`).
     * The two `__MODULE__` references inside `create_agent_config_dir_with_grant/2`
       are the **CredentialAdapter identity** the cascade keys on — they MUST
@@ -145,7 +145,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
           # for role=orchestrator, ALSO load the
           # `ezagent-session-orchestrator` skill into the per-agent
-          # config dir (`apply_orchestrator_role_bootstrap/2`) BEFORE
+          # config dir (`apply_orchestrator_recipe_bootstrap/2`) BEFORE
           # PTY launch so claude reads it from `CLAUDE_CONFIG_DIR` on
           # its first start. Idempotent (re-copies / re-appends only if
           # absent).

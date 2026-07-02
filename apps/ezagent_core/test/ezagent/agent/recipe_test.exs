@@ -4,7 +4,7 @@ defmodule Ezagent.Agent.RecipeTest do
   alias Ezagent.Agent.Recipe
 
   # Task #54 PR-1 §2.1 — a Role is the FLAVOR-AGNOSTIC sandbox-content recipe
-  # (the content of a `template://<ws>/role/<name>` Template). It names skills,
+  # (the content of a `template://<ws>/recipe/<name>` Template). It names skills,
   # plugins, a prompt persona, the behavior subset, REQUESTED caps (authorized
   # fail-closed at materialization — §2.3.1, never copied), and a
   # session-template REFERENCE. None of its fields may name a flavor

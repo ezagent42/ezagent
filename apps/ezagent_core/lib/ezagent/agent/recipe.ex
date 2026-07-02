@@ -6,7 +6,7 @@ defmodule Ezagent.Agent.Recipe do
   > **The CONTENTS of the sandbox are the RECIPE; HOW the sandbox is loaded is
   > the FLAVOR.** (Allen 2026-06-14)
 
-  A Recipe is the content of a forkable `template://<ws>/role/<name>` Template
+  A Recipe is the content of a forkable `template://<ws>/recipe/<name>` Template
   subtype: what fills an agent's `config_dir` sandbox — skills, plugins, a
   system-prompt persona, an optional operator-authored `script` (the RF-5b
   content→config_dir channel — py-agent P4: a py-role carries its python script
@@ -73,7 +73,7 @@ defmodule Ezagent.Agent.Recipe do
         }
 
   @doc """
-  Build a `%Recipe{}` from a recipe map (the `template://…/role/…` content).
+  Build a `%Recipe{}` from a recipe map (the `template://…/recipe/…` content).
 
   Absent fields default empty/`nil` (`skills`/`plugins`/`behaviors`/
   `requested_caps` → `[]`; `prompt`/`session_template` → `nil`). Returns
@@ -85,7 +85,7 @@ defmodule Ezagent.Agent.Recipe do
           {:ok, t()}
           | {:error, {:flavor_field_in_role, atom()} | {:invalid_role_field, atom(), term()}}
   def new(recipe) when is_map(recipe) do
-    # A persisted role recipe (a `template://…/role/…` content slice) round-trips
+    # A persisted role recipe (a `template://…/recipe/…` content slice) round-trips
     # through JSON/snapshot as STRING keys, so the flavor-field rejection AND the
     # field reads must be symmetric over atom + string keys — otherwise
     # `%{"flavor" => "cc"}` would slip past the flavor-agnostic boundary (codex).

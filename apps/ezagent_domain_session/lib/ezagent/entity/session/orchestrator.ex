@@ -45,7 +45,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   Pre-fix this branch called `Agent.spawn_fresh/4` directly, which goes
   through the spawn-registry detailed path → `Kind.spawn(Agent,
   ...)` and NEVER reaches `Template.instantiate`. The cc Template Class's
-  `apply_orchestrator_role_bootstrap/2` therefore never ran on the
+  `apply_orchestrator_recipe_bootstrap/2` therefore never ran on the
   auto-spawn path. Result: orchestrator agents created via
   `ensure_orchestrator` got no skill copy, no CLAUDE.md hint, and no
   `EZAGENT_AGENT_ROLE` env var — entire SPEC Gap B was dead.

@@ -415,7 +415,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `@impl ensure_subprocess_alive/2` callbacks STAY here and delegate the
   # orchestration steps into that module. `handle_spawn_failure/2`,
   # `create_agent_config_dir/2`, `try_role_bootstrap/3`,
-  # `orchestrator_role?/1` and `reject_stale_config_dir_data_key!/1` stay
+  # `orchestrator_recipe?/1` and `reject_stale_config_dir_data_key!/1` stay
   # here (CredentialAdapter `__MODULE__` identity / shared-helper dedup /
   # external callers) and `Spawn` calls back into them.
   # ────────────────────────────────────────────────────────────────────────
@@ -451,13 +451,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # Skipped when `config_dir` is `nil` (template has no
   # `config_dir` reference; nowhere to copy the skill).
   @doc false
-  @spec apply_orchestrator_role_bootstrap(map(), String.t() | nil) ::
+  @spec apply_orchestrator_recipe_bootstrap(map(), String.t() | nil) ::
           :ok | {:error, term()}
-  def apply_orchestrator_role_bootstrap(tmpl, config_dir) do
+  def apply_orchestrator_recipe_bootstrap(tmpl, config_dir) do
     Ezagent.PluginCc.Template.OrchestratorBootstrap.bootstrap(tmpl, config_dir)
   end
 
-  # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_role_bootstrap/2`
+  # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_recipe_bootstrap/2`
   # so a role-bootstrap failure DOES NOT tear down the agent. The agent
   # is allowed to spawn as a plain cc agent (the SKILL is UX, not
   # load-bearing for claude itself).
@@ -478,9 +478,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   @doc false
-  @spec orchestrator_role?(map()) :: boolean()
-  def orchestrator_role?(tmpl),
-    do: Ezagent.PluginCc.Template.OrchestratorBootstrap.orchestrator_role?(tmpl)
+  @spec orchestrator_recipe?(map()) :: boolean()
+  def orchestrator_recipe?(tmpl),
+    do: Ezagent.PluginCc.Template.OrchestratorBootstrap.orchestrator_recipe?(tmpl)
 
   # Resolve the on-disk source of the `ezagent-session-orchestrator`
   # skill. Defaults to walking upward from this plugin's priv_dir looking
