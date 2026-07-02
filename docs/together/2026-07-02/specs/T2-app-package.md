@@ -1,4 +1,4 @@
-# SPEC T2 · app-package: fatten socialware Definition (roles + views-as-behavior)
+# SPEC T2 · app-package: fatten socialware Definition (agents + views-as-behavior)
 
 > **Date:** 2026-07-02 · **Owner:** Allen (lead) + Claude · **Base:** origin/main `adf5fad5`, **rebased on T1**
 > **依赖 T1**（pre-prod 基建：ActionSet 改名 + config→结构化 subject + gate 兜底）。T2 在 T1 之上做，`definition_registry` 已是新 subject 格式。
@@ -26,8 +26,12 @@
 
 ## 3. 要加的 2 个字段
 
-### 3.1 `roles: [recipe_ref]`
-这个 socialware 带哪些 agent 配方（引用 RecipeRegistry 按名解析，#1116 已有 fail-closed；agent 配置在 agent 内部，Definition 只引用）。含每个 role 的 `requested_caps`。**现在 package.yaml 有、Definition 和 SessionTemplate 都无家 → 真正的缺口。**
+### 3.1 `agents: [%{recipe: ref, role_name: name}]`（正名 —— Allen 定，两义分清）
+这个 socialware 自带哪些 agent。每项 = **recipe(配置义)+ role_name(路由义)**,两个词各就各位:
+- **`recipe`** = 配方引用（`config://<ws>/recipe/<name>`,T1 后 subject 结构化 → `recipe:<name>`），经 RecipeRegistry 按名解析（#1116 fail-closed）。**agent 能干什么 + `requested_caps` 全在 recipe 里**（`recipe.ex:54`）;Definition **不覆盖不追加 caps**（caps 唯一来源 = recipe,Allen 定）。
+- **`role_name`** = 这个 agent 在 session 里的**路由标识符**（`{:role, name}` receiver 用它规划路由、不指定 agent id;**per-session 唯一**,现有 `membership.ex:31-35` 已 enforce）。无 caps、无配置,纯标识符。
+- **为什么不叫 `roles`**：避免与"配方义 role"（T1 已改名 recipe）+"路由义 role_name"混淆。`agents` = "这个 socialware 带哪些 agent",每个 agent 用哪个 recipe（配置）担任哪个 role_name（路由身份）。
+- **现在 package.yaml 有（`roles:` 段）、Definition 和 SessionTemplate 都无家 → 真正的缺口。**
 
 ### 3.2 `views: [view_actionset]` —— views-as-behavior（核心设计，Allen 定 + 2 轮 codex 验证）
 - **view = 渲染类 ActionSet**（T1 改名后；沿用现有 `ActionSet.Surface`/`ActionSet.HelloBuilder` 那一类）。声明一个 view → 它进 `shape` 成为一个 render ActionSet。
@@ -57,8 +61,8 @@
 `mix ezagent.socialware.check <definition>` —— 一条规则：**所有声明的引用都能解析**：
 1. `bases`/`shape` ActionSet 模块存在（编译期）
 2. `views` 每个 view-ActionSet 存在 + 其 `required_caps` 已在 CapabilityRegistry 注册
-3. `roles` recipe 经 RecipeRegistry 按名解析（#1116 fail-closed）
-4. `roles.requested_caps` 每个 cap 已注册
+3. `agents[].recipe` 经 RecipeRegistry 按名解析（#1116 fail-closed）
+4. `agents[].recipe` 的 `requested_caps` 每个 cap 已注册 + `agents[].role_name` per-session 唯一（不与已有 member role_name 冲突）
 5. `adapters` 在 AdapterRegistry 注册
 6. `orchestrator_template_uri` 可 `Ezagent.URI.new!` 解析（**codex #7**：会 raise，要 catch）
 7. `Installation.resolve_definitions` 能物化（现有 `{:unknown_socialware_install}`）
@@ -66,13 +70,13 @@
 9. **每个 view 渲染入口都过 `authorize_view`**（§3.2.1）—— arch gate 断言：没有任何 view 渲染路径直读 `:surface` slice 而绕过 view-cap 检查（消灭直读绕过）。
 10. **`routing_rules[].prompt_template_ref` 校验**（codex T2 v2 #4）：每个非-nil `prompt_template_ref` 必须命中 `prompt_templates` 的 key，且经 `PromptTemplate.validate/1`（现在 materialize 只存不验、delivery 缺模板静默降级 `session.ex:966-970`）。
 
-## 4b. roles 物化（补 —— codex T2 v2 #3：roles 不能只存不用）
-`roles` 字段光加不物化 = 死字段。**物化规则**：session materialize 时,合入 `Definition.roles` → 经 RecipeRegistry 在 session workspace 解析 recipe → 调**已有的 fail-closed `SessionAgentMaterialize`**（`session_agent_materialize.ex:144-215`,#1116 那个通用机制）逐个物化 per-session role-agent → 经 `GrantRecipeCaps` 卡点授 `requested_caps`。**明确 roles 与 members 关系**：roles = "这个 socialware 自带的 agent 配方"（socialware 侧声明);materialize 后成为 session 的 spawned member。**不重复 members**——members 是"已在 session 里的成员声明",roles 是"socialware 定义要带进来的 agent"。（现 materialize 只 reduce `members/routing/prompt/legend/orchestrator`,`definition_editor.ex:250-268` —— 要新增 roles 分支。）
+## 4b. agents 物化（补 —— codex T2 v2 #3：agents 不能只存不用）
+`agents` 字段光加不物化 = 死字段。**物化规则**：session materialize 时,合入 `Definition.agents` → 每项经 RecipeRegistry 在 session workspace 解析 `recipe` → 调**已有的 fail-closed `SessionAgentMaterialize`**（`session_agent_materialize.ex:144-215`,#1116 那个通用机制,它已按 recipe 名解析）逐个物化 per-session agent、分配其 `role_name`（per-session 唯一,复用 `membership.ex:31-35` enforce）→ 经 `GrantRecipeCaps` 卡点授该 recipe 的 `requested_caps`。**明确 agents 与 members 关系**：`agents` = "这个 socialware 自带、要 spawn 进来的 agent"（socialware 侧声明);materialize 后成为 session 的 spawned member（带其 role_name)。**不重复 members**——members 是"已在 session 里的成员声明"（可能是 user 或既有 agent),`agents` 是"socialware 定义要新带进来的 agent"。（现 materialize 只 reduce `members/routing/prompt/legend/orchestrator`,`definition_editor.ex:250-268` —— 要新增 `agents` 分支。）
 
 ## 5. 分 PR
 
-- **PR-1 `roles` 字段** + gate 骨架（roles/caps/adapters/URI-parse/routing-receiver/prompt_template_ref 可解析校验）。
-- **PR-1b roles 物化消费者**（§4b）：materialize 合入 Definition.roles → RecipeRegistry 解析 → `SessionAgentMaterialize` → `GrantRecipeCaps`。
+- **PR-1 `agents: [%{recipe, role_name}]` 字段** + gate 骨架（recipe/caps/adapters/URI-parse/routing-receiver/prompt_template_ref 可解析校验 + role_name 唯一）。
+- **PR-1b agents 物化消费者**（§4b）：materialize 合入 Definition.agents → RecipeRegistry 解析 recipe → `SessionAgentMaterialize`（分配 role_name）→ `GrantRecipeCaps`。
 - **PR-2a `views` = view-ActionSet**（后端字段 + 唯一动作名 `<sw>_render` + required_caps）：Definition.views + render ActionSet 新增受 cap 门控的 `<sw>_render` 动作（决策1=a）。
 - **PR-2b 统一 `authorize_view` 下沉 SessionView 契约**（§3.2.1，决策2）：SessionView 契约扩 caller 维度 + `SessionViewRegistry.applicable_views/render/external_render` 全经 `authorize_view` + anon mint 时授 view read-cap + arch gate 扫 Registry 路径断言无直读绕过。
 - **PR-3 `mix ezagent.socialware.check` conformance gate**（10 条，挂 CI）。
@@ -80,10 +84,10 @@
 - **PR-5 skill 同步**（见 §9）：更新 ezagent-socialware + ezagent-developer skill 反映新模型。
 - **（独立前端 PR）** ui_surface_provider → 读 Definition.views（依赖 #1118）。
 
-依赖：PR-1 → PR-1b（需 roles 字段）// PR-2a → PR-2b（需 view 动作 + SessionView 契约改）→ PR-3（需字段+授权就位）→ PR-4（与 gaga）→ PR-5（收尾）。前端 PR 最后。
+依赖：PR-1 → PR-1b（需 agents 字段）// PR-2a → PR-2b（需 view 动作 + SessionView 契约改）→ PR-3（需字段+授权就位）→ PR-4（与 gaga）→ PR-5（收尾）。前端 PR 最后。
 
 ## 6. 不变式
-- 引用不内联（role-as-data）：roles/views 都是 ref。
+- 引用不内联（role-as-data）：agents(recipe ref)/views 都是 ref。
 - openness 留 Definition.visibility_policy（per-socialware，不回退 P4）。
 - SessionTemplate 不动。
 - **view 可见性单一授权点**：所有渲染入口过 `authorize_view`(view-cap)，**无直读 slice 绕过**；退役 ui_surface_provider push+condition + 旧 membership-only 整体可见模型。
@@ -102,12 +106,12 @@
 **第二轮（钉 main,真发现）:**
 - **v2#1 多 view 撞 `{kind,action}`** → §3.2 决策1=(a) 唯一动作名 `<sw>_render`。
 - **v2#2 authorize_view 覆盖面（真契约是 SessionView）** → §3.2.1 决策2=下沉 SessionView 契约 + Registry。
-- **v2#3 roles 无物化消费者** → §4b roles 物化（RecipeRegistry→SessionAgentMaterialize→GrantRecipeCaps）。
+- **v2#3 agents 无物化消费者** → §4b agents 物化（RecipeRegistry→SessionAgentMaterialize→GrantRecipeCaps）。
 - **v2#4 gate 漏 prompt_template_ref** → §4 gate 第 10 条。
 
 ## 8. DoD
-- [ ] Definition 有 roles + views 字段（ref 式）；`body/1` JSON 序列化 + `new/1` 校验覆盖。
-- [ ] **roles 物化跑通**：Definition.roles → per-session role-agent（`SessionAgentMaterialize`）+ requested_caps 经 `GrantRecipeCaps` 授予（测试证明）。
+- [ ] Definition 有 agents + views 字段（ref 式）；`body/1` JSON 序列化 + `new/1` 校验覆盖。
+- [ ] **agents 物化跑通**：Definition.agents → per-session agent(带 role_name)（`SessionAgentMaterialize`）+ requested_caps 经 `GrantRecipeCaps` 授予（测试证明）。
 - [ ] **view 动作唯一**（`<sw>_render`）；多 view 注册无 `{kind,action}` 冲突。
 - [ ] anon 打开 public socialware 能看被授权的 view、看不到未授权 view（cap-gated，测试证明）。
 - [ ] **`authorize_view` 下沉 SessionView 契约**：所有 SessionView/external renderer/adapter 经它；arch gate 扫 Registry 路径断言无直读 slice 绕过。
@@ -120,7 +124,7 @@
 
 改动落地后必须更新的 skill（否则未来 dev/agent 照旧模型开发）：
 
-- **`ezagent-socialware/SKILL.md` + `references/local-e2e-recipe.md`**：socialware Definition 现含 `roles` + `views`；**view = 渲染 ActionSet，可见性走 `authorize_view`(view-cap)**，不再是 membership-only 整体可见；openness(visibility_policy) 与 view-cap 两层门；config subject 不再是 `config://`（T1）。
+- **`ezagent-socialware/SKILL.md` + `references/local-e2e-recipe.md`**：socialware Definition 现含 `agents`(recipe+role_name) + `views`；**view = 渲染 ActionSet，可见性走 `authorize_view`(view-cap)**，不再是 membership-only 整体可见；openness(visibility_policy) 与 view-cap 两层门；config subject 不再是 `config://`（T1）。
 - **`ezagent-developer/references/architecture-invariants.md`**：新增不变式"view 渲染必过 `authorize_view`、无直读 slice 绕过"；"config subject 非 URI"；"未知 scheme 默认被 gate 拦"。
 - **`ezagent-developer/references/capbac.md`**：view 可见性 = view-ActionSet 的 read cap（cap 门控从写动作扩到 view 读）。
 - **`ezagent-developer/SKILL.md` + 全 references**：`Ezagent.Behavior` → `Ezagent.ActionSet` 全文更新（T1 改名，skill 里的示例/引用同步）。

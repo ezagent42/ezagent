@@ -86,18 +86,44 @@ ConfigStore 按 `(layer, workspace_uri, subject_uri, key)` 四元组定位（`co
 - **PR-A2 stale-cap/snapshot 迁移 + grep gate**（依赖 A1）
 - **PR-B config:// → 结构化 subject + 数据迁移**（独立于 A）
 - **PR-C URI gate 兜底**（依赖 B 落地后，config 已非 `://`）
+- **PR-D role(配方义)→recipe 收尾改名**（独立；见项目 D）
 
-依赖：A1→A2；B→C；A 与 B 并行。全部 pre-prod 窗口内完成、上线前 merge。
+依赖：A1→A2；B→C；A/B/D 并行。全部 pre-prod 窗口内完成、上线前 merge。
+
+## 项目 D · role(配方义) → recipe 收尾改名（补 #127/#141 遗漏）
+
+### D.1 为什么
+role→recipe 那轮改名（#127/#141）**只改了存储层、漏了代码符号层**：ConfigStore 已用 `config://<ws>/recipe/<name>` + key `"recipe"`（`recipe_registry.ex:8`），但"配方义"的 `role` 还残留：
+- **`Ezagent.Role` 整个旧模块还在**（`apps/ezagent_core/lib/ezagent/role.ex:8` moduledoc："A Role is the content of a forkable template..."）= recipe 的旧名。
+- **`template://<ws>/role/<name>` URI 段**还是 `role/`（`role.ex:8`、`orchestrator_role.ex:19`、`orchestrator_bootstrap.ex:19`）。
+- `orchestrator_role.ex` 模块名 + 变量名 `role`。
+
+### D.2 关键区分（两个 role 用法，只改一个）
+- **改：配方义 role** → `recipe`（配置载体）。
+- **不改：路由义 role_name / `{:role, name}`**（`receiver.ex:11`、session per-session 唯一 role_name `membership.ex:31-35`）—— 这是**路由标识符**，Allen 定：保留 `role` 这个词专指此义。
+
+### D.3 做法
+1. `Ezagent.Role` 模块退役 → 并入/别名到 `Ezagent.Agent.Recipe`（消除重复的配方模块）。
+2. `template://<ws>/role/<name>` → `template://<ws>/recipe/<name>`（**持久化 URI 段** → 存量 kind_snapshots/template 数据迁移 + pointer/id 若含也重建）。
+3. `orchestrator_role.ex` → `orchestrator_recipe.ex` + 符号；配方义变量 `role`→`recipe`。
+4. **保留**全部路由义 `role_name` / `{:role,name}` / `$role:` 前缀（`receiver.ex:9`）。
+5. grep gate：代码无"配方义"裸 `role`（用法：允许 `role_name`/`{:role`/`$role:`，禁止 `Ezagent.Role`/`template://.../role/`/`config://.../role/`）。
+
+### D.4 不变式
+- 配方义 role 清零（→recipe）；路由义 role_name 保留。
+- `template://.../recipe/` 段迁移零丢失（存量快照）。
 
 ## DoD
-- [ ] `grep -rn "Ezagent.Behavior\b" apps` = 0（含 `defmodule`/`@behaviour`/`use`/字符串/测试 fixture；不只 `apps/*/lib`）；grep gate 绿。
-- [ ] cap/ConfigObject-body/snapshot 里无残留 `Ezagent.Behavior.` 字符串（含 `users.caps_json` / recipe & definition body / `:kind_base`）。
-- [ ] `grep -rn "config://" apps` = 0；subject 全为结构化格式；`socialware_config_objects.body` 内嵌的 subject 也已迁移；`ConfigPointer.id` 已重建（碰撞预检）。
-- [ ] URI gate：未知 `foo://bar` ezagent-like 裸串 → CI 红；现有外部 URL（postgresql/unix/http/https/feishu/cc-bridge）在白名单、不误报。
-- [ ] **skill 同步**：`ezagent-developer` skill 全 references 的 `Ezagent.Behavior` → `Ezagent.ActionSet`；grep skill 目录无残留（config:// / Behavior 旧引用）。
+- [ ] `grep -rn "Ezagent.Behavior\b" apps test docs` = 0（含 `defmodule`/`@behaviour`/`use`/字符串/测试 fixture/docs 示例；**范围含 apps + test/support + docs/scenarios**，codex T1 v3 #2）；grep gate 绿。
+- [ ] **持久化 stale-string 清零（Repo 级扫描,codex T1 v3 #3）**：`users.caps_json` / `kind_snapshots`（**全 term 解码,不只 `:kind_base`**——含 identity 切片 caps,参考 `grant_migration.ex:16,162`）/ `socialware_config_objects.body`（recipe & definition body）里无 `Ezagent.Behavior.` 字符串。
+- [ ] `grep -rn "config://" apps` = 0；subject 全为结构化格式；`socialware_config_objects.body` 内嵌 subject + `socialware_config_change_requests`/staged objects（codex T1 v3 迁移补）已迁移；`ConfigPointer.id` 已重建（碰撞预检）。
+- [ ] **role(配方义)清零**：`grep` 无 `Ezagent.Role` / `template://.../role/` / `config://.../role/`；路由义 `role_name`/`{:role`/`$role:` 保留;`template://.../recipe/` 存量迁移无丢失。
+- [ ] URI gate：未知 `foo://bar` ezagent-like 裸串 → CI 红；**外部 URL 白名单精确列（唯一权威表）= `postgresql`/`unix`/`http`/`https`/`ws`/`test`/`cc-bridge`；明确排除已删的 `feishu://`（要的是 feishu 的 `https://` API,codex T1 v3 #1）**；这些不误报。
+- [ ] **skill 同步**：`ezagent-developer` skill 全 references 的 `Ezagent.Behavior`→`Ezagent.ActionSet`、配方义 `role`→`recipe`；grep skill 目录无残留（config:// / Behavior / 配方义 role 旧引用）。
 - [ ] 全套 arch gate + precommit 绿（300s timeout 跑 arch）。
 - [ ] dev 数据 wipe+reseed 后系统正常（cc/socialware/recipe 都能起）。
 
-## 开放点
-1. snapshot(`:kind_base`) 处理：wipe+rebuild dev vs boot-time loud 扫描？（我倾向 pre-prod wipe+reseed，最简。）
-2. subject 分隔符：`"socialware:autoservice"`（冒号）vs `{kind, name}` 结构 map？（冒号串更省改动，map 更类型安全。）
+## 决策（Allen 定）
+1. snapshot 处理：**pre-prod wipe+reseed**（最简；无生产数据）。
+2. subject 格式：`"<kind>:<name>"` 冒号串（opaque,不解析——storage 按 exact string,`config_store.ex:338`）。
+3. role→recipe 收尾 + Behavior→ActionSet + config 去 URI 全收入本 T1（pre-prod 窗口一次性）。
