@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.ConfigEvolveTest do
+defmodule Ezagent.ActionSet.ConfigEvolveTest do
   @moduledoc """
-  PR-2 — `Ezagent.Behavior.ConfigEvolve` on the Agent (spec 2026-06-11 rev 4,
+  PR-2 — `Ezagent.ActionSet.ConfigEvolve` on the Agent (spec 2026-06-11 rev 4,
   §7 tests). The behavior is NOT yet wired into Turn (PR-3); the old
   `ConfigUpdate` path still runs. These tests drive ConfigEvolve in isolation
   by dispatching `config_evolve.apply_config_delta` directly to a spawned

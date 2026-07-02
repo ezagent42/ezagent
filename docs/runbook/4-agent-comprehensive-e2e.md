@@ -184,7 +184,7 @@ Please integrate x dx from 0 to 1 and tell me the value
 
 ```elixir
 # Confirm np's reply landed
-session_topic = Ezagent.Behavior.Chat.session_events_topic(session_uri)
+session_topic = Ezagent.ActionSet.Chat.session_events_topic(session_uri)
 :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 # (the events stream already has the reply if you watched it live)
 

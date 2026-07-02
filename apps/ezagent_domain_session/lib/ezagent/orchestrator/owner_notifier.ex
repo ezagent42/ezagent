@@ -59,7 +59,7 @@ defmodule Ezagent.Orchestrator.OwnerNotifier do
       try do
         _ =
           Ezagent.Notifications.notify(owner_uri, %{
-            type: :orchestrator_role_degraded,
+            type: :orchestrator_recipe_degraded,
             body: %{
               text:
                 "Orchestrator agent started but the orchestrator skill failed to load. " <>
@@ -74,7 +74,7 @@ defmodule Ezagent.Orchestrator.OwnerNotifier do
       rescue
         error ->
           Logger.warning(
-            "Ezagent.Orchestrator.OwnerNotifier (session create):notify(:orchestrator_role_degraded) to " <>
+            "Ezagent.Orchestrator.OwnerNotifier (session create):notify(:orchestrator_recipe_degraded) to " <>
               "#{URI.to_string(owner_uri)} raised #{inspect(error)} — the orchestrator " <>
               "is still alive; this is the notification path failing, not the spawn."
           )

@@ -3,7 +3,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   Acceptance test for SPEC 2026-05-25-agent-create-cli-gui-parity:
   the unified `Ezagent.Workspace.create_agent/3` facade — what BOTH the CLI
   (`mix ezagent.agent.create`) and the operator UI call — dispatches the
-  `Behavior.Workspace.:create_agent` action.
+  `ActionSet.Workspace.:create_agent` action.
 
   Focused on the action's contract surface (validation + early-exit
   shapes) without needing real plugin Template Classes. The full
@@ -15,7 +15,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     cc/py Template Class instantiate behaviour.
 
   This test verifies the unification's WIRING: the dispatched action
-  routes through `Behavior.Workspace.:create_agent` and returns the
+  routes through `ActionSet.Workspace.:create_agent` and returns the
   shapes the CLI + LV both consume.
   """
 
@@ -100,7 +100,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     test "file flavors accept empty cwd so the config_dir default can apply" do
       for flavor <- ~w(cc cc-headless codex codex-remote) do
         assert :ok =
-                 Ezagent.Behavior.Workspace.AgentCreate.FlavorValidation.validate_cwd_for_flavor(
+                 Ezagent.ActionSet.Workspace.AgentCreate.FlavorValidation.validate_cwd_for_flavor(
                    flavor,
                    false,
                    ""
@@ -120,7 +120,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         )
 
       tmpl =
-        Ezagent.Behavior.Workspace.__file_flavor_template_for_test__(
+        Ezagent.ActionSet.Workspace.__file_flavor_template_for_test__(
           "cc",
           "cc.agent",
           agent_uri,
@@ -188,7 +188,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       granted_cap =
         Ezagent.Capability.cap(
           :session,
-          Ezagent.Behavior.Session,
+          Ezagent.ActionSet.Session,
           :send,
           Ezagent.URI.new!("session://#{ws_name}/default/main"),
           workspace_uri
@@ -203,7 +203,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       assert agent_uri
              |> Ezagent.Identity.list_caps_for()
              |> Enum.any?(fn
-               %Ezagent.Capability{behavior: Ezagent.Behavior.Session, granted_by: gb} = c ->
+               %Ezagent.Capability{behavior: Ezagent.ActionSet.Session, granted_by: gb} = c ->
                  Ezagent.Capability.action_of(c) == :send and gb == User.admin_uri()
 
                _ ->
@@ -394,7 +394,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         assert curl_slice.conversation == []
 
         # (2) the curl public actions resolve to Behavior.CurlAgent on this Kind.
-        assert {:ok, Ezagent.Behavior.CurlAgent} =
+        assert {:ok, Ezagent.ActionSet.CurlAgent} =
                  Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :reset_conversation)
 
         # (3) the base credential slice is present (api_keys is in the curl set).
@@ -540,7 +540,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         create_cap =
           Ezagent.Capability.cap(
             :workspace,
-            Ezagent.Behavior.Workspace,
+            Ezagent.ActionSet.Workspace,
             :create_agent,
             workspace_uri,
             workspace_uri
@@ -575,7 +575,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     |> Enum.any?(fn
       %Ezagent.Capability{} = cap ->
         cap.kind == kind and
-          cap.behavior == Ezagent.Behavior.Manage and
+          cap.behavior == Ezagent.ActionSet.Manage and
           cap.action == :any and
           URI.to_string(cap.instance) == URI.to_string(instance_uri) and
           URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and

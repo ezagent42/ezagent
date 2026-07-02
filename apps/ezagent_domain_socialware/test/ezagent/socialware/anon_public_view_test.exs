@@ -7,7 +7,7 @@ defmodule Ezagent.Socialware.PublicViewTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation, PublicView}
 
@@ -53,8 +53,8 @@ defmodule Ezagent.Socialware.PublicViewTest do
   defp definition(name, web_anon_access) do
     %{
       name: name,
-      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
-      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
+      shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
       visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
     }
   end

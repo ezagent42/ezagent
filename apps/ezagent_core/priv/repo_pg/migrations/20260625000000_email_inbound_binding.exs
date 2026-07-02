@@ -7,7 +7,7 @@ defmodule EzagentCore.Repo.Migrations.EmailInboundBinding do
 
   Spec §6 describes `local_address` + `verification_status` as columns on
   the GENERIC `external_mirror_bindings` projection row. But that row is
-  written by the GENERIC `Ezagent.Behavior.ExternalMirror.do_bind/3` (a
+  written by the GENERIC `Ezagent.ActionSet.ExternalMirror.do_bind/3` (a
   fixed-column path shared by Feishu + protocol_api + email) with no
   adapter-callback seam — adding email-specific columns there is a generic
   domain-contract change touching the other adapters (against the North

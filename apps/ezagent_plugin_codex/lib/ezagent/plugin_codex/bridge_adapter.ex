@@ -131,7 +131,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
               %Ezagent.Capability{
                 Ezagent.Capability.cap(
                   :session,
-                  Ezagent.Behavior.Session,
+                  Ezagent.ActionSet.Session,
                   :send,
                   Ezagent.URI.instance(session_uri),
                   Ezagent.Capability.workspace_of(session_uri)

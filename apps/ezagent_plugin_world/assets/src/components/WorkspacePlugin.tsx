@@ -268,8 +268,8 @@ function SessionTemplatePanel({
               installs: [socialwareName],
               socialware: {
                 name: socialwareName,
-                bases: ["Ezagent.Behavior.Session", "Ezagent.Behavior.Publisher.SessionImpl"],
-                shape: ["Ezagent.Behavior.Turn", "Ezagent.Behavior.Surface"],
+                bases: ["Ezagent.ActionSet.Session", "Ezagent.ActionSet.Publisher.SessionImpl"],
+                shape: ["Ezagent.ActionSet.Turn", "Ezagent.ActionSet.Surface"],
                 members: [
                   {
                     uri: "entity://system/agent/bot",

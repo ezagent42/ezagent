@@ -2,8 +2,10 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   @moduledoc """
   ConfigStore-backed resolver for socialware definitions.
 
-  Definitions live at `config://<workspace>/socialware/<name>` with ConfigObject
-  key `"socialware"`, mirroring role-as-data's `config://.../recipe/...` pattern.
+  Definitions live under the structured non-URI ConfigStore subject
+  `socialware:<name>` with ConfigObject key `"socialware"`, mirroring recipe
+  storage's `recipe:<name>` subject. Workspace is a SEPARATE ConfigStore field,
+  so it is not embedded in the subject (T1 project B).
   """
 
   alias Ezagent.Entity.Session
@@ -16,17 +18,16 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   @spec definition_key() :: String.t()
   def definition_key, do: @definition_key
 
-  @doc "Return the opaque ConfigStore subject URI for a workspace socialware name."
+  @doc """
+  Return the structured non-URI ConfigStore subject for a socialware `name`:
+  `socialware:<name>` (T1 project B — an opaque subject, NOT a `<scheme>://`
+  URI; workspace is a separate ConfigStore field). The `workspace_uri` argument
+  is retained for call-site symmetry but is not part of the subject.
+  """
   @spec definition_subject_uri(String.t() | URI.t(), String.t()) :: String.t()
-  def definition_subject_uri(workspace_uri, name)
+  def definition_subject_uri(_workspace_uri, name)
       when is_binary(name) and name != "" do
-    workspace =
-      workspace_uri
-      |> uri_string()
-      |> Ezagent.URI.new!()
-      |> Ezagent.URI.workspace_name!()
-
-    "config://#{workspace}/socialware/#{name}"
+    "socialware:#{name}"
   end
 
   @doc "Resolve a socialware definition through ConfigStore with system fallback."
@@ -116,13 +117,13 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
       %Definition{
         name: "socialware",
         bases: [
-          Ezagent.Behavior.Session,
-          Ezagent.Behavior.Publisher.SessionImpl
+          Ezagent.ActionSet.Session,
+          Ezagent.ActionSet.Publisher.SessionImpl
         ],
         shape: [
-          Ezagent.Behavior.Turn,
-          Ezagent.Behavior.Surface,
-          Ezagent.Behavior.SupervisorApproval
+          Ezagent.ActionSet.Turn,
+          Ezagent.ActionSet.Surface,
+          Ezagent.ActionSet.SupervisorApproval
         ],
         adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true}

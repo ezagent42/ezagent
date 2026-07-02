@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.TerminableColdLoadTest do
+defmodule Ezagent.ActionSet.TerminableColdLoadTest do
   @moduledoc """
   Phase B cold-load proof for the three no-transient core Behaviors
   migrated to `use Ezagent.Lifecycle` (SPEC `2026-05-29-lifecycle-hooks-design.md`
@@ -6,9 +6,9 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
   test").
 
   These three —
-    - `Ezagent.Behavior.Terminable` (persistent `%{terminations: N}`)
-    - `Ezagent.Behavior.Notifications` (cap-only, empty state)
-    - `Ezagent.Behavior.Routing` (persistent `%{calls: N}`)
+    - `Ezagent.ActionSet.Terminable` (persistent `%{terminations: N}`)
+    - `Ezagent.ActionSet.Notifications` (cap-only, empty state)
+    - `Ezagent.ActionSet.Routing` (persistent `%{calls: N}`)
   — hold NO transients (no PIDs/refs/handles), so the
   `Ezagent.LifecycleCase.assert_transients_rebuilt/2` gate (which requires
   a non-empty transient container) does NOT apply. The relevant invariant
@@ -32,7 +32,7 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.{Notifications, Routing, Terminable}
+  alias Ezagent.ActionSet.{Notifications, Routing, Terminable}
   alias Ezagent.Ecto.KindSnapshot
 
   # A minimal Kind that lists Terminable in behaviors/0 so the engine's
@@ -48,7 +48,7 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
     def type_name, do: :terminable_cold_load_host
 
     @impl Ezagent.Kind
-    def behaviors, do: [Ezagent.Behavior.Terminable]
+    def behaviors, do: [Ezagent.ActionSet.Terminable]
 
     @impl Ezagent.Kind
     def persistence, do: {:snapshot, :on_change}

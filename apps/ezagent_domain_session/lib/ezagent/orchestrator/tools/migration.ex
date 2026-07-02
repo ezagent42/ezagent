@@ -1,7 +1,7 @@
 defmodule Ezagent.Orchestrator.Tools.Migration do
   @moduledoc false
 
-  alias Ezagent.Behavior.Session
+  alias Ezagent.ActionSet.Session
   alias Ezagent.Entity.Session, as: SessionEntity
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Resolver, RuleStore}
@@ -362,7 +362,7 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
 
     needed = %{
       kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       action: :any,
       instance: representative,
       workspace_uri: workspace_uri

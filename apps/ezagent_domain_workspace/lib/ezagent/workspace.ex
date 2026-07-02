@@ -638,7 +638,7 @@ defmodule Ezagent.Workspace do
 
   # The workspace's OWN self-authority cap for the dispatched Workspace
   # Behavior `action`, the step-5.5 authorizer for `workspace_self_ctx/2`.
-  # Shape mirrors `Ezagent.Behavior.Workspace.required_caps/0[action]` =
+  # Shape mirrors `Ezagent.ActionSet.Workspace.required_caps/0[action]` =
   # `cap(:workspace, Workspace, action)` but SCOPED to the concrete workspace
   # (`instance`/`workspace_uri` derived from `workspace_uri`) for tightest
   # least-privilege — the runtime substitutes the same concrete instance from
@@ -651,7 +651,7 @@ defmodule Ezagent.Workspace do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :workspace,
-        Ezagent.Behavior.Workspace,
+        Ezagent.ActionSet.Workspace,
         action,
         Ezagent.URI.instance(workspace_uri),
         Ezagent.Capability.workspace_of(workspace_uri)
@@ -888,7 +888,7 @@ defmodule Ezagent.Workspace do
   def create_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     # Codex PR #356 r1 CRIT fix: `:create_user` lives on the new
-    # `Ezagent.Behavior.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
+    # `Ezagent.ActionSet.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
     # NOT on `Behavior.Workspace` — so the cap subject is distinct.
     target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :create_user)
 

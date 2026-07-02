@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.IdentityGrantTest do
+defmodule Ezagent.ActionSet.IdentityGrantTest do
   @moduledoc """
   Phase 6 PR 6 — grant_cap / revoke_cap behavior actions.
 
@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.{Identity, IdentityAdmin}
+  alias Ezagent.ActionSet.{Identity, IdentityAdmin}
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://team-alpha")
@@ -111,7 +111,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
                       %{
                         type: :cap_granted,
                         body: %{text: text, cap_summary: cap_summary},
-                        source: Ezagent.Behavior.IdentityAdmin
+                        source: Ezagent.ActionSet.IdentityAdmin
                       }},
                      1_000
 
@@ -143,7 +143,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
                       %{
                         type: :cap_revoked,
                         body: %{text: _, cap_summary: _},
-                        source: Ezagent.Behavior.IdentityAdmin
+                        source: Ezagent.ActionSet.IdentityAdmin
                       }},
                      1_000
     end

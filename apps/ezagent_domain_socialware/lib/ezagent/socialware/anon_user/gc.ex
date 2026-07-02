@@ -302,7 +302,7 @@ defmodule Ezagent.Socialware.AnonUser.GC do
             %Ezagent.Capability{
               Ezagent.Capability.cap(
                 :session,
-                Ezagent.Behavior.Session,
+                Ezagent.ActionSet.Session,
                 :leave,
                 Ezagent.URI.instance(target),
                 Ezagent.Capability.workspace_of(target)

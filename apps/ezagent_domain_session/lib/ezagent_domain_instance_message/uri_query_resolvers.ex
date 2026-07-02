@@ -7,7 +7,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   live/durable Kind state owned by this domain.
   """
 
-  alias Ezagent.Behavior.Session
+  alias Ezagent.ActionSet.Session
 
   @doc "Register the instance-message UriQuery resolvers."
   @spec register() :: :ok | {:error, term()}

@@ -16,7 +16,7 @@ defmodule Ezagent.World.ConversationActions do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
   alias EzagentDomainInstanceMessage.Routing.MentionRouting

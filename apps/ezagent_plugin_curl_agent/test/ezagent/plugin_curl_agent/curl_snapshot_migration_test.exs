@@ -15,7 +15,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.PluginCurlAgent.CurlSnapshotMigration, as: Migration
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.{Kind, KindRegistry}
@@ -102,7 +102,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       assert %{state: %{behaviors: behaviors}, transients: %{}} = migrated[kind_base_key]
       # exactly the live curl per-instance set → effective_set picks curl on load
       assert behaviors == Ezagent.Entity.Agent.curl_behaviors()
-      assert Ezagent.Behavior.CurlAgent in behaviors
+      assert Ezagent.ActionSet.CurlAgent in behaviors
     end
 
     test "sets flavor: \"curl\" on the :curl_agent slice (O-2 stored field)" do
@@ -132,10 +132,10 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     end
 
     test "rewrites every :curl_agent cap-axis subject to :agent (deep, in any slice)" do
-      reset_cap = Capability.cap(:curl_agent, Ezagent.Behavior.CurlAgent, :reset_conversation)
-      configure_cap = Capability.cap(:curl_agent, Ezagent.Behavior.CurlAgent, :configure)
+      reset_cap = Capability.cap(:curl_agent, Ezagent.ActionSet.CurlAgent, :reset_conversation)
+      configure_cap = Capability.cap(:curl_agent, Ezagent.ActionSet.CurlAgent, :configure)
       # a non-curl cap must be left untouched
-      other_cap = Capability.cap(:agent, Ezagent.Behavior.Identity, :list_caps)
+      other_cap = Capability.cap(:agent, Ezagent.ActionSet.Identity, :list_caps)
 
       migrated =
         migrate(legacy_curl_state(caps: [reset_cap, configure_cap, other_cap]))
@@ -269,12 +269,12 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       # config-evolve self-dispatch is unauthorized.
       assert {:ok, %{caps: identity_caps}} = Kind.get_slice(uri, :identity)
       self_caps = identity_caps |> MapSet.to_list() |> Enum.map(&{&1.behavior, &1.action})
-      assert {Ezagent.Behavior.Sandbox, :update_config} in self_caps
-      assert {Ezagent.Behavior.ConfigEvolve, :reconcile_cascade} in self_caps
+      assert {Ezagent.ActionSet.Sandbox, :update_config} in self_caps
+      assert {Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade} in self_caps
 
       # The reparented curl Behavior is in the effective set (its public action
       # resolves on Entity.Agent), and :receive is NOT a curl action.
-      assert {:ok, Ezagent.Behavior.CurlAgent} =
+      assert {:ok, Ezagent.ActionSet.CurlAgent} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :reset_conversation)
 
       Kind.terminate(uri)

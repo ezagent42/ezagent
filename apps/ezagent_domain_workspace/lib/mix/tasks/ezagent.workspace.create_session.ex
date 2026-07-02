@@ -65,7 +65,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
         %Ezagent.Capability{
           Ezagent.Capability.cap(
             :workspace,
-            Ezagent.Behavior.Workspace,
+            Ezagent.ActionSet.Workspace,
             :create_session,
             Ezagent.URI.instance(workspace_uri),
             Ezagent.Capability.workspace_of(workspace_uri)

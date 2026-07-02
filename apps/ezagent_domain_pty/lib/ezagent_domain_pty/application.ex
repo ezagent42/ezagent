@@ -19,7 +19,7 @@ defmodule EzagentDomainPty.Application do
   2. `EzagentDomainPty.Supervisor` — `DynamicSupervisor` parenting the
      PtyServer GenServers.
 
-  No other state. PR-B (2026-05-21) moved `Ezagent.Behavior.Pty` into
+  No other state. PR-B (2026-05-21) moved `Ezagent.ActionSet.Pty` into
   this app — the Behavior module lives here, but its Agent-Kind
   registration runs from `EzagentDomainInstanceMessage.Application.start/2`
   (where `Ezagent.Entity.Agent` is defined). View registration moves

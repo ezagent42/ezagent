@@ -17,7 +17,7 @@ defmodule Ezagent.UI.SessionView do
 
   ## Namespacing
 
-  Lives under `Ezagent.UI.*` deliberately — `Ezagent.Behavior` is the
+  Lives under `Ezagent.UI.*` deliberately — `Ezagent.ActionSet` is the
   dispatch-side Kind behaviour contract (totally different shape). The
   UI namespace keeps the two extension points unambiguous.
   """
@@ -79,7 +79,7 @@ defmodule Ezagent.UI.SessionView do
   P2 NOTE: this is the per-app DECLARATION of the external render. It does
   NOT change the customer-delivery pipeline (ExternalFeed / ExternalFeedChannel)
   — that is P2.5/P3. An implementation reuses the app's existing projection
-  (e.g. socialware delegates to `Ezagent.Behavior.Surface.external_tree/1`).
+  (e.g. socialware delegates to `Ezagent.ActionSet.Surface.external_tree/1`).
   """
   @callback external_render(session_uri :: URI.t()) :: map() | nil
 

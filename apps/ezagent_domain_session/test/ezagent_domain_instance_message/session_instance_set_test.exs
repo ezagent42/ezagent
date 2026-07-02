@@ -5,7 +5,7 @@ defmodule Ezagent.SessionInstanceSetTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.{Session, User}
 
   setup do
@@ -44,7 +44,7 @@ defmodule Ezagent.SessionInstanceSetTest do
     # Every declared behavior is preserved, in declaration order.
     assert Enum.take(effective, length(declared)) == declared
     # The universal Manage (not in behaviors/0) is appended as a base behavior.
-    assert Ezagent.Behavior.Manage in effective
+    assert Ezagent.ActionSet.Manage in effective
   end
 
   test "REAL chat join + send round-trips through dispatch on the default Session (unchanged)" do

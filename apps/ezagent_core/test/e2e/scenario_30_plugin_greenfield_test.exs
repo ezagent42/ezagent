@@ -1,25 +1,25 @@
 defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   @moduledoc """
-  Scenario 30 — Plugin author DX: write a new Behavior with effects.
+  Scenario 30 — Plugin author DX: write a new ActionSet with effects.
 
   Cross-reference: `docs/scenarios/30-plugin-author-behavior/scenario.md`
   + SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`.
 
   ## What this proves
 
-  A freshly-written plugin Behavior using ONLY the new contract
-  (`use Ezagent.Behavior` + `action/3` + `handle_<action>/2` + the
+  A freshly-written plugin ActionSet using ONLY the new contract
+  (`use Ezagent.ActionSet` + `action/3` + `handle_<action>/2` + the
   effect vocabulary) works end-to-end with no core knowledge:
 
   - `:set` effects update the slice
   - `:emit` effects are buckets the framework hands to EventLog
   - `:notify` effects broadcast via Phoenix.PubSub
-  - `:dispatch` effects invoke another Behavior on another Kind
+  - `:dispatch` effects invoke another ActionSet on another Kind
   - Cap check at the Router boundary blocks an unauthorised caller
   - Compile-time invariants (missing handler / missing args / missing
     returns) prevent malformed Behaviors from ever booting
 
-  Per `feedback_north_star_plugin_isolation` — the fixture Behavior in
+  Per `feedback_north_star_plugin_isolation` — the fixture ActionSet in
   this file touches ZERO `Ezagent.EventLog` / `Ezagent.SnapshotStore`
   / `Ezagent.SagaRunner` modules. It returns effects only.
   """
@@ -33,7 +33,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   @moduletag scenario: "30-plugin-author-behavior"
   @moduletag :e2e
 
-  alias Ezagent.{Behavior, BehaviorRegistry, Cmd, ReadyGate, Router}
+  alias Ezagent.{ActionSet, BehaviorRegistry, Cmd, ReadyGate, Router}
 
   # ---------------------------------------------------------------
   # Fixture Kind — uses the new-contract macro
@@ -54,15 +54,15 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   end
 
   # ---------------------------------------------------------------
-  # Fixture Behavior — greenfield (NO @behaviour Ezagent.Behavior;
-  # purely uses `use Ezagent.Behavior` + per-action declarations +
+  # Fixture ActionSet — greenfield (NO @behaviour Ezagent.ActionSet;
+  # purely uses `use Ezagent.ActionSet` + per-action declarations +
   # `handle_<action>/2` + effects).
   # ---------------------------------------------------------------
 
   defmodule WidgetBehavior do
     @moduledoc false
-    use Ezagent.Behavior
-    @behaviour Ezagent.Behavior
+    use Ezagent.ActionSet
+    @behaviour Ezagent.ActionSet
 
     action(:greet,
       args: %{name: :string},
@@ -101,7 +101,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     def init_slice(_args), do: %{count: 0, last_input: nil, last_message: nil}
 
     # Legacy-contract shim — required while invoke/4 is mandatory on
-    # @behaviour Ezagent.Behavior. The new Router dispatches via
+    # @behaviour Ezagent.ActionSet. The new Router dispatches via
     # handle_<action>/2 instead.
     def invoke(_action, _slice, _args, _ctx), do: {:error, :legacy_shim}
 
@@ -159,7 +159,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   end
 
   # ---------------------------------------------------------------
-  # setup — register Behavior + spawn a fresh instance per test
+  # setup — register ActionSet + spawn a fresh instance per test
   # ---------------------------------------------------------------
 
   setup do
@@ -203,8 +203,8 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert spec.description == "process input and emit a widget_processed event"
     end
 
-    test "Behavior.new_style?/1 detects the new contract" do
-      assert Behavior.new_style?(WidgetBehavior)
+    test "ActionSet.new_style?/1 detects the new contract" do
+      assert ActionSet.new_style?(WidgetBehavior)
     end
 
     test "derived legacy callback `interface/0` was synthesised" do
@@ -286,7 +286,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     end
   end
 
-  describe ":dispatch effect invokes another Behavior on another Kind" do
+  describe ":dispatch effect invokes another ActionSet on another Kind" do
     test "handler returns a {:dispatch, %Cmd{}} effect with the correct target+action shape" do
       # Unit-level proof of the :dispatch effect contract: handle_forward
       # constructs a %Cmd{} envelope addressed to ANOTHER target and
@@ -308,7 +308,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert inner_cmd.args == %{input: "fwd-payload"}
     end
 
-    test "framework applies :dispatch effects via `Behavior.apply_effects/2`" do
+    test "framework applies :dispatch effects via `ActionSet.apply_effects/2`" do
       # Companion to the shape-level test above: prove that the
       # framework's effect-applier correctly buckets the
       # `{:dispatch, %Cmd{}}` effect into the `dispatches` list
@@ -328,7 +328,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
         {:emit, :forward_emitted, %{}}
       ]
 
-      assert {:ok, buckets} = Behavior.apply_effects(effects, %{})
+      assert {:ok, buckets} = ActionSet.apply_effects(effects, %{})
 
       # The :set effect was applied to the slice.
       assert buckets.state.forwarded_marker == true
@@ -399,7 +399,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert_raise CompileError, ~r/missing.*handle_dangling/, fn ->
         Code.compile_string("""
         defmodule TestDanglingAction do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :dangling, args: %{}, returns: %{ok: :boolean}, caps: [:x]
         end
         """)
@@ -410,7 +410,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert_raise CompileError, ~r/missing required key :args/, fn ->
         Code.compile_string("""
         defmodule TestNoArgs do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :bad, returns: %{ok: :boolean}
           def handle_bad(_a, _c), do: {:ok, %{ok: true}, []}
         end
@@ -422,7 +422,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert_raise CompileError, ~r/missing required key :returns/, fn ->
         Code.compile_string("""
         defmodule TestNoReturns do
-          use Ezagent.Behavior
+          use Ezagent.ActionSet
           action :bad, args: %{}
           def handle_bad(_a, _c), do: {:ok, %{ok: true}, []}
         end
@@ -436,7 +436,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   # ---------------------------------------------------------------
 
   describe "plugin-isolation grep gate (per SPEC §11)" do
-    test "fixture Behavior compiles WITHOUT depending on core-only modules" do
+    test "fixture ActionSet compiles WITHOUT depending on core-only modules" do
       # The structural proof: the fixture WidgetBehavior compiles +
       # boots + dispatches above WITHOUT declaring `@behaviour`
       # against the framework-internal Kinds listed in SPEC §11
@@ -449,19 +449,19 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
         |> List.flatten()
 
       refute Ezagent.EventLog in behaviours,
-             "plugin Behavior MUST NOT declare @behaviour Ezagent.EventLog (SPEC §11)"
+             "plugin ActionSet MUST NOT declare @behaviour Ezagent.EventLog (SPEC §11)"
 
       refute Ezagent.SnapshotStore in behaviours,
-             "plugin Behavior MUST NOT declare @behaviour Ezagent.SnapshotStore (SPEC §11)"
+             "plugin ActionSet MUST NOT declare @behaviour Ezagent.SnapshotStore (SPEC §11)"
 
       refute Ezagent.SagaRunner in behaviours,
-             "plugin Behavior MUST NOT declare @behaviour Ezagent.SagaRunner (SPEC §11)"
+             "plugin ActionSet MUST NOT declare @behaviour Ezagent.SagaRunner (SPEC §11)"
 
-      # Structural invariant: the fixture declares Ezagent.Behavior
+      # Structural invariant: the fixture declares Ezagent.ActionSet
       # (the contract) and nothing else from the framework's
       # internal store layer.
-      assert Ezagent.Behavior in behaviours,
-             "fixture MUST declare @behaviour Ezagent.Behavior"
+      assert Ezagent.ActionSet in behaviours,
+             "fixture MUST declare @behaviour Ezagent.ActionSet"
     end
 
     test "framework-internal modules ARE available — proves the SPEC §11 grep gate is about CALLERS, not visibility" do

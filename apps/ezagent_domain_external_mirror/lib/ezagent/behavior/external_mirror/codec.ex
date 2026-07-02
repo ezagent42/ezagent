@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.ExternalMirror.Codec do
+defmodule Ezagent.ActionSet.ExternalMirror.Codec do
   @moduledoc """
   Pure data-mapping / opts-codec helpers for the external-mirror binding
-  projection. Extracted verbatim from `Ezagent.Behavior.ExternalMirror`
+  projection. Extracted verbatim from `Ezagent.ActionSet.ExternalMirror`
   (#25 Phase-3, PR-3N) to keep the Behavior focused on the Lifecycle
   contract + effect grammar.
 

@@ -10,7 +10,7 @@
 
 ## 1. 项目定位
 
-**Ezagent 是一个 socialware platform** —— 它的 runtime 是一个 message router,在 router 之上 host 可 install 的 **socialware**(human+program hybrid FLOW)。一个 session 是一个 host;它 **installs** 一个或多个 socialware definitions(config-as-data,`config://<ws>/socialware/<name>`),socialware 把 **bases**(capability substrates)+ 一个 **shape**(flow-specific behavior+recipe)compose 进 session 的 `:kind_base` union。Operator 打开一个 socialware(不是"打开 base"),在 shared、observed 的 turn surface 内跟 agents 协作,可 hold / settle / approve / take over program output 在它到达 external audience 之前 —— human-in-the-loop gating 是 first-class,不是 add-on。
+**Ezagent 是一个 socialware platform** —— 它的 runtime 是一个 message router,在 router 之上 host 可 install 的 **socialware**(human+program hybrid FLOW)。一个 session 是一个 host;它 **installs** 一个或多个 socialware definitions(config-as-data,`socialware:<name>`),socialware 把 **bases**(capability substrates)+ 一个 **shape**(flow-specific behavior+recipe)compose 进 session 的 `:kind_base` union。Operator 打开一个 socialware(不是"打开 base"),在 shared、observed 的 turn surface 内跟 agents 协作,可 hold / settle / approve / take over program output 在它到达 external audience 之前 —— human-in-the-loop gating 是 first-class,不是 add-on。
 
 Router 层把五件事正交拆开——**寻址 / 调用 / 执行 / 行为 / 权限**——用 Phoenix 的 transport 层作为外部入口,Registry 作为内部路由,把它们缝合。**系统形状是 IRC-style multi-tenant message bus over Phoenix transport**——actor 间通过 Message 通信,routing rules 决定每条 Message 的 receivers,Behavior 处理 Invocation 做出反应。Session = routing context owner(类似 IRC channel);Agent / User = Principal(类似 IRC nickname);Message = Entity-Entity 通信的 envelope。
 
@@ -149,14 +149,14 @@ Fixture             — a seeded instance/use of a socialware for a business (au
                       concept/schema layer.
 Recipe (axis A)     — flavor-agnostic sandbox-content recipe (what an agent is built
                       from). Ezagent.Agent.Recipe (apps/ezagent_core/.../agent/recipe.ex);
-                      ConfigObject config://<ws>/recipe/<name>, key "recipe";
+                      ConfigObject recipe:<name>, key "recipe";
                       resolved by Ezagent.Agent.RecipeRegistry (apps/ezagent_domain_agent/...).
 Responsibility (B)  — the function a principal serves in a session (role_name:
                       bot/reviewer/orchestrator/supervisor), routed via {:role, name}.
                       "role" word stays ONLY in this responsibility sense.
 Definition          — L2 ConfigObject (config-as-data): reusable/forkable/content-addressed
                       config bundle (recipe or socialware definition).
-                      config://<ws>/{recipe|socialware}/<name>; NOT a Kind URI.
+                      recipe:<name> / socialware:<name>; NOT a Kind URI.
 Runtime state       — L3 per-instance dynamic slice of a Kind's Behavior state
                       (kind_snapshots; rehydrated on restart).
 Shape               — flow-specific behavior(s)+recipe making composed bases into a
@@ -240,11 +240,11 @@ Kind module 可在 `use Ezagent.Kind` 里 override 这些默认值。
 
 ### 3.2 Behavior
 
-**整个系统唯一可调用的东西。** Action 模块,声明 actions + 编写 `handle_<action>/2` 处理器,处理器返回 effects(§6.0)。Behavior 通过 `use Ezagent.Behavior` 接入新合约;`action/3` 宏自动派生 schema(`interface/0`)+ cap 声明(`required_caps/0` + `cap_subjects/0`)。
+**整个系统唯一可调用的东西。** Action 模块,声明 actions + 编写 `handle_<action>/2` 处理器,处理器返回 effects(§6.0)。Behavior 通过 `use Ezagent.ActionSet` 接入新合约;`action/3` 宏自动派生 schema(`interface/0`)+ cap 声明(`required_caps/0` + `cap_subjects/0`)。
 
 ```elixir
-defmodule Ezagent.Behavior.Movable do
-  use Ezagent.Behavior   # post-2026-05-28 new contract opt-in
+defmodule Ezagent.ActionSet.Movable do
+  use Ezagent.ActionSet   # post-2026-05-28 new contract opt-in
 
   action :move,
     args:    %{position: {:tuple, :integer, :integer}},
@@ -275,7 +275,7 @@ end
 
 `action/3` 宏接受 `args / returns / caps / modes / description / data_owner / workspace_scoped?` keyword 列表,在编译期生成 `__actions__/0` + 派生 `interface/0`,所有 adapter(CLI、Slash、HTTP、MCP、LiveView)从这一份声明自动生成。这是 Ezagent 与 OpenAPI 类比的关键——**URI = operationId,`action` 宏 = schema**。
 
-> **Implementation**:`use Ezagent.Behavior` + `action/3` defmacro + `@before_compile` 派生 + handler 编译期校验(`def handle_<action>(args, ctx)` 必须存在,否则 CompileError)。Phase 3 PR #464 之前的 `@interface` module attribute + `invoke/4` callback 模式见 §6.1 — 那是历史形态,新代码不再写。
+> **Implementation**:`use Ezagent.ActionSet` + `action/3` defmacro + `@before_compile` 派生 + handler 编译期校验(`def handle_<action>(args, ctx)` 必须存在,否则 CompileError)。Phase 3 PR #464 之前的 `@interface` module attribute + `invoke/4` callback 模式见 §6.1 — 那是历史形态,新代码不再写。
 
 ### 3.3 Plugin
 
@@ -288,7 +288,7 @@ OTP application,启动时向 Registry 注册 Kind 或 attach Behavior。详见 �
 ```elixir
 %Ezagent.Capability{
   kind:       Ezagent.Entity.Agent,
-  behavior:   Ezagent.Behavior.Movable,
+  behavior:   Ezagent.ActionSet.Movable,
   instance:   URI.t() | :any | {:within_session, URI.t()},
   granted_by: URI.t(),
   granted_at: DateTime.t()
@@ -429,9 +429,9 @@ Kind 声明时只是"列出"它支持的 Behavior:
 defmodule Ezagent.Entity.Agent do
   use Ezagent.Kind,
     behaviors: [
-      Ezagent.Behavior.Identity,
-      Ezagent.Behavior.Movable,
-      Ezagent.Behavior.Spawnable
+      Ezagent.ActionSet.Identity,
+      Ezagent.ActionSet.Movable,
+      Ezagent.ActionSet.Spawnable
     ],
     template: Ezagent.Entity.Agent.Template,
     persistence: {:snapshot, :on_change}
@@ -443,11 +443,11 @@ Plugin 在 `Application.start/2` 里把 Behavior 注册到 ETS:
 ```elixir
 Ezagent.BehaviorRegistry.register(
   kind: Ezagent.Entity.Agent,
-  behavior: Ezagent.Behavior.Movable
+  behavior: Ezagent.ActionSet.Movable
 )
 # ETS:
-#   {Ezagent.Entity.Agent, :move} → Ezagent.Behavior.Movable
-#   {Ezagent.Entity.Agent, :stop} → Ezagent.Behavior.Movable
+#   {Ezagent.Entity.Agent, :move} → Ezagent.ActionSet.Movable
+#   {Ezagent.Entity.Agent, :stop} → Ezagent.ActionSet.Movable
 ```
 
 > **Implementation**:**ETS**(微秒级 lookup)+ ~50 行 wrapper。
@@ -809,11 +809,11 @@ end
 
 #### 5.5.6 编辑就是普通 Invocation
 
-`/set-default A`、`/route mention B also-to A`、`/invite agent` 这些**不是特权 API**,而是 `Ezagent.Behavior.SessionRouting` 上的标准 actions。走完整 dispatch / CapBAC / audit / telemetry 链路——**编辑路径本身也有权限和审计**。
+`/set-default A`、`/route mention B also-to A`、`/invite agent` 这些**不是特权 API**,而是 `Ezagent.ActionSet.SessionRouting` 上的标准 actions。走完整 dispatch / CapBAC / audit / telemetry 链路——**编辑路径本身也有权限和审计**。
 
 ```elixir
-defmodule Ezagent.Behavior.SessionRouting do
-  @behaviour Ezagent.Behavior
+defmodule Ezagent.ActionSet.SessionRouting do
+  @behaviour Ezagent.ActionSet
 
   @interface %{
     set_default:    %{args: %{agent: :string}, ...},
@@ -923,7 +923,7 @@ property 等价或更强(用户写不出 wrong init,因为没 init 可写)。
 defmodule Ezagent.Entity.Echo do
   @behaviour Ezagent.Kind
   def type_name, do: :echo
-  def behaviors, do: [Ezagent.Behavior.Echo]
+  def behaviors, do: [Ezagent.ActionSet.Echo]
   def persistence, do: :ephemeral
 end
 
@@ -1021,8 +1021,8 @@ end
 | Topic 模板 | 谁广播 | 谁订阅 | 用途 |
 |---|---|---|---|
 | `esr:audit:stream` | `Ezagent.Audit` | LiveView /admin audit log + telemetry 观察者 | invocation 流式 |
-| `esr:session:<session_uri>:events` | `Ezagent.Behavior.Chat` (Session 侧) | LiveView /admin chat stream + 成员状态;Feishu/CLI adapter 渲染 | Chat 消息 + 成员 join/leave/offline |
-| `esr:user:<user_uri>:events` | `Ezagent.Behavior.Chat` (:receive 在 User Kind) | 该 User 的 inbox 渲染(LV 多个 view 共享 admin User) | 个人 inbox 通知 |
+| `esr:session:<session_uri>:events` | `Ezagent.ActionSet.Chat` (Session 侧) | LiveView /admin chat stream + 成员状态;Feishu/CLI adapter 渲染 | Chat 消息 + 成员 join/leave/offline |
+| `esr:user:<user_uri>:events` | `Ezagent.ActionSet.Chat` (:receive 在 User Kind) | 该 User 的 inbox 渲染(LV 多个 view 共享 admin User) | 个人 inbox 通知 |
 | `esr:bridge_v1:events` / `esr:bridge_v1:to_claude:<bridge_id>` | `Ezagent.Bridge.V1Prototype.Server` | LV bridge 状态 + SSE endpoint | v1_prototype bridge 协议(Phase 5 替换) |
 
 新增 view fan-out topic 走 `:events` 后缀;`mix ezagent.check_invariants` #1 的 allowlist 列源文件(audit.ex / invocation.ex / chat.ex / ...),新加 broadcast 源码必须同步更新 allowlist。
@@ -1041,7 +1041,7 @@ end
 > The plugin authoring contract has been rewritten per SPEC PR #445
 > (`docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`).
 > Plugin Behaviors now opt into the new per-action declarative
-> contract via `use Ezagent.Behavior` + `action/3` macro +
+> contract via `use Ezagent.ActionSet` + `action/3` macro +
 > `handle_<action>/2` handlers returning effects. The legacy
 > `Behavior.invoke/4` callback is `@optional_callbacks` only (no
 > runtime path consults it after Phase 3 PR #464); plugin authors
@@ -1050,7 +1050,7 @@ end
 > and Decision Log archaeology.
 >
 > Phase chronology (all merged to main):
-> - **Phase 1 (#451)** — `Ezagent.Router` + `Ezagent.Behavior` (new contract) + `Ezagent.Kind` + `LegacyBehaviorAdapter` primitives
+> - **Phase 1 (#451)** — `Ezagent.Router` + `Ezagent.ActionSet` (new contract) + `Ezagent.Kind` + `LegacyBehaviorAdapter` primitives
 > - **Phase 1.5 (#453) + 1.5b (#454)** — `Ezagent.Kind.Runtime` wires new-contract dispatch; effect executor complete
 > - **Phase 2 (#462)** — 28+ domain Behaviors migrated to new contract (chat / identity / external-mirror / workspace / plugins)
 > - **Phase 2.5 (#463)** — 6 remaining core Behaviors migrated
@@ -1066,7 +1066,7 @@ Three primitives. Plugin authors touch only Behavior + Kind; the Router and the 
 | Primitive | Owns | Plugin-author touches |
 |---|---|---|
 | **Router** (`Ezagent.Router`) | dispatch envelope `%Ezagent.Cmd{}`, URI canonicalisation, idempotency, cap check, workspace isolation, audit, effect application | NEVER calls directly; transport adapters (LV / CLI / Channel) construct `%Cmd{}` and hand to `Router.dispatch/1` |
-| **Behavior** (`use Ezagent.Behavior`) | the action namespace + how each action's effects are computed | declares `action :foo, args: %{...}, returns: ..., caps: [...]` + writes `def handle_foo(args, ctx) → {:ok, result, [effects]}` |
+| **Behavior** (`use Ezagent.ActionSet`) | the action namespace + how each action's effects are computed | declares `action :foo, args: %{...}, returns: ..., caps: [...]` + writes `def handle_foo(args, ctx) → {:ok, result, [effects]}` |
 | **Kind** (`@behaviour Ezagent.Kind`) | URI identity, process lifecycle, attached Behavior list, composition pattern (Session / Entity / Resource) | declares Kind module + attaches Behaviors |
 
 #### 6.0.1 Dispatch flow (ASCII)
@@ -1113,7 +1113,7 @@ Three primitives. Plugin authors touch only Behavior + Kind; the Router and the 
 
 #### 6.0.2 Effects vocabulary
 
-The handler's return contract is `{:ok, result, [effect]} | {:ok, result} | {:error, reason}`. The effect list grammar (SPEC §4.4 — see `Ezagent.Behavior` moduledoc for the executable @type):
+The handler's return contract is `{:ok, result, [effect]} | {:ok, result} | {:error, reason}`. The effect list grammar (SPEC §4.4 — see `Ezagent.ActionSet` moduledoc for the executable @type):
 
 | Effect | Shape | Meaning |
 |---|---|---|
@@ -1132,8 +1132,8 @@ Ordering is normative: within each phase effects fire in declared order. Across 
 #### 6.0.3 Minimal Behavior — new contract example
 
 ```elixir
-defmodule Ezagent.Behavior.EntitySend do
-  use Ezagent.Behavior      # — new contract opt-in
+defmodule Ezagent.ActionSet.EntitySend do
+  use Ezagent.ActionSet      # — new contract opt-in
 
   action :send,
     args:        %{recipient: :uri, body: :string},
@@ -1142,7 +1142,7 @@ defmodule Ezagent.Behavior.EntitySend do
     modes:       [:cast],
     description: "Send a message to another entity."
 
-  # Required by `use Ezagent.Behavior` — every declared action MUST
+  # Required by `use Ezagent.ActionSet` — every declared action MUST
   # have a matching `def handle_<action>(args, ctx)`. Enforced at
   # compile time (raises CompileError otherwise).
   def handle_send(%{recipient: r, body: b}, ctx) do
@@ -1196,15 +1196,15 @@ The SPEC's open questions resolved as follows (see SPEC §8 for full rationale):
 
 #### 6.0.6 LegacyBehaviorAdapter — DELETED (Phase 3 PR #464)
 
-For git archaeology purposes: `Ezagent.LegacyBehaviorAdapter` existed in Phase 1 (PR #451) and Phase 2 (PR #462) as a dispatch-equivalent (NOT replay-equivalent) bridge from the new `Cmd` / handler-effects pipeline to legacy `invoke/4` Behaviors. Phase 3 (PR #464) **deleted the adapter** + **retired `invoke/4` to `@optional_callbacks`** once every concrete Behavior had migrated. The `@callback invoke/4` declaration is kept in `Ezagent.Behavior` only so a stale Behavior referencing it surfaces a precise CompileError rather than a silent dispatch failure. No runtime path consults `invoke/4` post-Phase-3.
+For git archaeology purposes: `Ezagent.LegacyBehaviorAdapter` existed in Phase 1 (PR #451) and Phase 2 (PR #462) as a dispatch-equivalent (NOT replay-equivalent) bridge from the new `Cmd` / handler-effects pipeline to legacy `invoke/4` Behaviors. Phase 3 (PR #464) **deleted the adapter** + **retired `invoke/4` to `@optional_callbacks`** once every concrete Behavior had migrated. The `@callback invoke/4` declaration is kept in `Ezagent.ActionSet` only so a stale Behavior referencing it surfaces a precise CompileError rather than a silent dispatch failure. No runtime path consults `invoke/4` post-Phase-3.
 
 If you find a tutorial / blog post / forensic note referencing `Behavior.invoke/4` as the dispatch entry point, it predates 2026-05-28 and is stale.
 
 #### 6.0.7 Lifecycle API — the SOLE developer surface (SPEC 2026-05-29, Phase A/B/C)
 
-**`use Ezagent.Lifecycle` is the only developer-facing way to author a Behavior.** The `use Ezagent.Behavior` + hand-rolled `state_slice/0` / `init_slice/1` surface described in §6.0 is now **INTERNAL ENGINE only** — the Lifecycle macro compiles down to it (R10-3). The §11 naming principles + the Phase C grep gates (`mix ezagent.check_invariants.lifecycle`) HARD-fail CI if a developer-tier file re-introduces the old surface.
+**`use Ezagent.Lifecycle` is the only developer-facing way to author a Behavior.** The `use Ezagent.ActionSet` + hand-rolled `state_slice/0` / `init_slice/1` surface described in §6.0 is now **INTERNAL ENGINE only** — the Lifecycle macro compiles down to it (R10-3). The §11 naming principles + the Phase C grep gates (`mix ezagent.check_invariants.lifecycle`) HARD-fail CI if a developer-tier file re-introduces the old surface.
 
-R/B/K (Router / Behavior / Kind) are the **internal engine**; Lifecycle is the **public API**. A plugin or domain author never writes `use Ezagent.Behavior`, never declares `state_slice`, never implements `init_slice` / `invoke/4` / `post_init` / `handle_continue` / `on_ready` / `reconcile_after_load`.
+R/B/K (Router / Behavior / Kind) are the **internal engine**; Lifecycle is the **public API**. A plugin or domain author never writes `use Ezagent.ActionSet`, never declares `state_slice`, never implements `init_slice` / `invoke/4` / `post_init` / `handle_continue` / `on_ready` / `reconcile_after_load`.
 
 **Two-container state model** (the core idea — kills the cold-restart bug class by construction):
 
@@ -1232,7 +1232,7 @@ A transient **cannot** be accidentally persisted (no serialization path) and **c
 | `deactivate(reason, ctx)` | graceful stop, entity PERSISTS (OTP terminate; best-effort) | `:ok` only | side-effecting external cleanup; CANNOT mutate persisted state (F5) |
 | `destroy(reason, ctx)` | PERMANENT deletion; framework clears `state` + the ever-created marker (best-effort) | `:ok` | cleanup that must also be self-healed in the next `activate` |
 
-**§10 binding rules** baked in: R10-1 self-deferred (`send(self(), …)`) boot work goes in `activated`/`handle_signal`, NOT `activate` (which is pre-`:ready`). R10-2 `{:set,…}` + `{:set_transient,…}` are pure pre-commit map reductions — only `state` is snapshotted; a `transients` change never triggers a snapshot write. R10-3 the engine `Ezagent.Behavior` contract STAYS (the macro's compile target). R10-4 the snapshot WIPE cutover is a verified ordered sequence (stop all nodes → deploy → delete `kind_snapshots` → restart).
+**§10 binding rules** baked in: R10-1 self-deferred (`send(self(), …)`) boot work goes in `activated`/`handle_signal`, NOT `activate` (which is pre-`:ready`). R10-2 `{:set,…}` + `{:set_transient,…}` are pure pre-commit map reductions — only `state` is snapshotted; a `transients` change never triggers a snapshot write. R10-3 the engine `Ezagent.ActionSet` contract STAYS (the macro's compile target). R10-4 the snapshot WIPE cutover is a verified ordered sequence (stop all nodes → deploy → delete `kind_snapshots` → restart).
 
 Minimal Lifecycle Behavior:
 
@@ -1257,7 +1257,7 @@ The `state_slice` snapshot-compat hatch: `use Ezagent.Lifecycle, state_slice: :l
 ### 6.1 Legacy Behavior callback (retired — `@optional_callbacks` only)
 
 ```elixir
-defmodule Ezagent.Behavior do
+defmodule Ezagent.ActionSet do
   # — superseded by §6.0 new contract.
   # Retained here purely as @optional_callbacks for grep-ability +
   # legacy-callsite CompileError surfacing. No runtime path consults
@@ -1310,32 +1310,32 @@ Phase 2 加 `:uri` primitive(Decision #92):匹配 `%URI{}` struct,**拒绝裸字
 
 `ezagent_core` 不强制依赖任何具体 Behavior。但 Ezagent 提供一组**标准 Behavior**,分布在 `ezagent_domain_*` 和 `ezagent_plugin_*` 里。
 
-**Post-2026-05-28 (Phase 1-4 migration完成)**:每个 Behavior 通过 `use Ezagent.Behavior` 声明,用 `action :foo, args: %{...}, returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx)` 处理器 + effect 返回(§6.0)。`state_slice/0` + `init_slice/1` + `required_caps/0` + `cap_subjects/0` + `interface/0` 由宏在 `@before_compile` 自动派生,plugin 作者不再手写。`invoke/4` callback 是 `@optional_callbacks`(Phase 3 PR #464 后无 runtime 路径调用),保留只为 grep + 撞墙 CompileError。
+**Post-2026-05-28 (Phase 1-4 migration完成)**:每个 Behavior 通过 `use Ezagent.ActionSet` 声明,用 `action :foo, args: %{...}, returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx)` 处理器 + effect 返回(§6.0)。`state_slice/0` + `init_slice/1` + `required_caps/0` + `cap_subjects/0` + `interface/0` 由宏在 `@before_compile` 自动派生,plugin 作者不再手写。`invoke/4` callback 是 `@optional_callbacks`(Phase 3 PR #464 后无 runtime 路径调用),保留只为 grep + 撞墙 CompileError。
 
 #### Domain Behaviors (load-bearing — 不能卸载)
 
-下表为 2026-05-26 时点 `find apps/ezagent_domain_*/ -name '*.ex' -exec grep -l '@behaviour Ezagent.Behavior'` 的实际产出 — 运行时 SoT 仍是 `Ezagent.BehaviorRegistry.list_all/0`,本表只作 orientation。
+下表为 2026-05-26 时点 `find apps/ezagent_domain_*/ -name '*.ex' -exec grep -l '@behaviour Ezagent.ActionSet'` 的实际产出 — 运行时 SoT 仍是 `Ezagent.BehaviorRegistry.list_all/0`,本表只作 orientation。
 
 | Domain | Behavior 模块 | 用途 |
 |---|---|---|
-| `ezagent_domain_instance_message` | `Ezagent.Behavior.Chat` | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior;`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex`) |
-| `ezagent_domain_instance_message` | `Ezagent.Behavior.Template` | Template lifecycle(`:fork` / 材料化) |
-| `ezagent_domain_instance_message` | `Ezagent.Behavior.Publisher.SessionImpl` | Publisher 的 Session-specific 实现(slice-change 流的下行 sink) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.Identity` | principal_id、display_name、cap 管理(grant/revoke) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.ApiKeys` | API key issuance + revocation |
-| `ezagent_domain_identity` | `Ezagent.Behavior.UserCredentials` | `:set_password`(PR #356 拆分) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.UserTokens` | `:mint` / `:list` / `:revoke` token lifecycle(PR #356 拆分) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.WorkspaceUserAdmin` | `:create_user` 特权 action carve(PR #356 codex r1 CRIT 修复)— 注意 carve 后落在 `domain_identity` 不是 `domain_workspace` |
-| `ezagent_domain_workspace` | `Ezagent.Behavior.Workspace` | `:add_member` / `:remove_member` / `:list_members` |
-| `ezagent_domain_pty` | `Ezagent.Behavior.Pty` | PTY 子进程驱动(底层 `:ex_pty`) |
-| `ezagent_domain_external_mirror` | `Ezagent.Behavior.ExternalMirror` | bind/unbind 外部目标的 facade Behavior |
-| `ezagent_domain_external_mirror` | `Ezagent.Behavior.ExternalMirrorWorker` | per-binding Worker Kind 的 `:publish` Behavior |
-| `ezagent_domain_external_mirror` | `Ezagent.Behavior.Publisher` | slice-change 流订阅入口(binding 通过 `subscribe_from/3` 订阅) |
-| `ezagent_core` | `Ezagent.Behavior.Lifecycle` | 注册到 Session / Agent — terminate / spawn 状态机 |
-| `ezagent_core` | `Ezagent.Behavior.Routing` | 注册到 routing 作用域的 Kind — routing rules 编辑 |
-| `ezagent_core` | `Ezagent.Behavior.Presence` | LV 在线状态 |
-| `ezagent_core` | `Ezagent.Behavior.Sandbox` | 受控 sandbox 操作 |
-| `ezagent_core` | `Ezagent.Behavior.Notifications` | cap-only(`dispatchable?/0 → false`)— `:subscribe` cap subject;Boot 时为每个新建 User 默认授予自己 URI 上的 cap |
+| `ezagent_domain_instance_message` | `Ezagent.ActionSet.Chat` | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior;`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex`) |
+| `ezagent_domain_instance_message` | `Ezagent.ActionSet.Template` | Template lifecycle(`:fork` / 材料化) |
+| `ezagent_domain_instance_message` | `Ezagent.ActionSet.Publisher.SessionImpl` | Publisher 的 Session-specific 实现(slice-change 流的下行 sink) |
+| `ezagent_domain_identity` | `Ezagent.ActionSet.Identity` | principal_id、display_name、cap 管理(grant/revoke) |
+| `ezagent_domain_identity` | `Ezagent.ActionSet.ApiKeys` | API key issuance + revocation |
+| `ezagent_domain_identity` | `Ezagent.ActionSet.UserCredentials` | `:set_password`(PR #356 拆分) |
+| `ezagent_domain_identity` | `Ezagent.ActionSet.UserTokens` | `:mint` / `:list` / `:revoke` token lifecycle(PR #356 拆分) |
+| `ezagent_domain_identity` | `Ezagent.ActionSet.WorkspaceUserAdmin` | `:create_user` 特权 action carve(PR #356 codex r1 CRIT 修复)— 注意 carve 后落在 `domain_identity` 不是 `domain_workspace` |
+| `ezagent_domain_workspace` | `Ezagent.ActionSet.Workspace` | `:add_member` / `:remove_member` / `:list_members` |
+| `ezagent_domain_pty` | `Ezagent.ActionSet.Pty` | PTY 子进程驱动(底层 `:ex_pty`) |
+| `ezagent_domain_external_mirror` | `Ezagent.ActionSet.ExternalMirror` | bind/unbind 外部目标的 facade Behavior |
+| `ezagent_domain_external_mirror` | `Ezagent.ActionSet.ExternalMirrorWorker` | per-binding Worker Kind 的 `:publish` Behavior |
+| `ezagent_domain_external_mirror` | `Ezagent.ActionSet.Publisher` | slice-change 流订阅入口(binding 通过 `subscribe_from/3` 订阅) |
+| `ezagent_core` | `Ezagent.ActionSet.Lifecycle` | 注册到 Session / Agent — terminate / spawn 状态机 |
+| `ezagent_core` | `Ezagent.ActionSet.Routing` | 注册到 routing 作用域的 Kind — routing rules 编辑 |
+| `ezagent_core` | `Ezagent.ActionSet.Presence` | LV 在线状态 |
+| `ezagent_core` | `Ezagent.ActionSet.Sandbox` | 受控 sandbox 操作 |
+| `ezagent_core` | `Ezagent.ActionSet.Notifications` | cap-only(`dispatchable?/0 → false`)— `:subscribe` cap subject;Boot 时为每个新建 User 默认授予自己 URI 上的 cap |
 
 #### Plugin Behaviors (可选)
 
@@ -1343,19 +1343,19 @@ Phase 2 加 `:uri` primitive(Decision #92):匹配 `%URI{}` struct,**拒绝裸字
 |---|---|---|
 | `ezagent_plugin_feishu` | `EzagentPluginFeishu.Behavior.UserBinding` | feishu_open_id ↔ user URI 绑定(PR #355 case study — per-Kind chokepoint;模块位于 `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/user_binding.ex`) |
 | `ezagent_plugin_feishu` | `EzagentPluginFeishu.Behavior.FeishuAllow` | cap-only — 授权 session 被 Feishu adapter bind |
-| `ezagent_plugin_echo` | `Ezagent.Behavior.Echo` | 注册到 echo-flavor Agent — 测试 / 参考 stub |
-| `ezagent_plugin_curl_agent` | `Ezagent.Behavior.CurlAgent` | 注册到 curl-flavor Agent — HTTP API agent |
-| `ezagent_plugin_np` | `Ezagent.Behavior.NpAgent` | 注册到 NpAgent 测试 agent flavor |
+| `ezagent_plugin_echo` | `Ezagent.ActionSet.Echo` | 注册到 echo-flavor Agent — 测试 / 参考 stub |
+| `ezagent_plugin_curl_agent` | `Ezagent.ActionSet.CurlAgent` | 注册到 curl-flavor Agent — HTTP API agent |
+| `ezagent_plugin_np` | `Ezagent.ActionSet.NpAgent` | 注册到 NpAgent 测试 agent flavor |
 
-**`ezagent_plugin_cc` 不导出 Behavior**:CC 集成走 Template Class(`Ezagent.Template.CcAgent`)+ `Ezagent.PluginCc.Channel` 通道,**不通过 Behavior 模块**。cc-flavored agent 在 `entity://agent/<workspace>/cc_<name>` 形态下注册,但其 chat-routing 落在共享的 `Ezagent.Behavior.Chat`(在 Agent Kind 上注册的 `:receive` action)。
+**`ezagent_plugin_cc` 不导出 Behavior**:CC 集成走 Template Class(`Ezagent.Template.CcAgent`)+ `Ezagent.PluginCc.Channel` 通道,**不通过 Behavior 模块**。cc-flavored agent 在 `entity://agent/<workspace>/cc_<name>` 形态下注册,但其 chat-routing 落在共享的 `Ezagent.ActionSet.Chat`(在 Agent Kind 上注册的 `:receive` action)。
 
 完整 Behavior list 维护在 `Ezagent.BehaviorRegistry.list_all/0` 运行时 ETS — 是 SoT。
 
 **OSProcess 的例子**(原 v0.2 `os-process` Process impl 的归位):
 
 ```elixir
-defmodule Ezagent.Behavior.OSProcess do
-  use Ezagent.Behavior   # post-2026-05-28 new contract
+defmodule Ezagent.ActionSet.OSProcess do
+  use Ezagent.ActionSet   # post-2026-05-28 new contract
 
   action :spawn,
     args:    %{cmd: :string, args: {:list, :string}, env: :map},
@@ -1402,7 +1402,7 @@ end
 - `EZAGENT_SPAWN_TOKEN` 注入子进程 env,防野生 worker 绑回
 - Per-boot orphan cleanup:`Application.start/2` 扫一次 `/tmp/esr-worker-*.pid` 杀掉残留
 
-`Ezagent.Behavior.Pty` 同构,只是底层是 `:ex_pty`。
+`Ezagent.ActionSet.Pty` 同构,只是底层是 `:ex_pty`。
 
 ### 6.4 三条 Behavior 设计纪律
 
@@ -1416,7 +1416,7 @@ end
 
 ### 7.1 模型
 
-- **粒度**:Behavior × action 级。持有 `cap(Kind, Behavior, action)` 即可在该 Kind 上调用该 Behavior 的某 action。多 action 的 Behavior 当前(2026-05-26)在 `Capability` 上仅匹配 kind+behavior+instance+workspace,**没有 action 轴** — 多 action Behavior 用"特权 action 单拆 Behavior"模式 (e.g. `Ezagent.Behavior.WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出 — PR #356 codex r1 CRIT 修复)
+- **粒度**:Behavior × action 级。持有 `cap(Kind, Behavior, action)` 即可在该 Kind 上调用该 Behavior 的某 action。多 action 的 Behavior 当前(2026-05-26)在 `Capability` 上仅匹配 kind+behavior+instance+workspace,**没有 action 轴** — 多 action Behavior 用"特权 action 单拆 Behavior"模式 (e.g. `Ezagent.ActionSet.WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出 — PR #356 codex r1 CRIT 修复)
 - **携带方式**:Push。Caller 在 `ctx.caps` 装 `MapSet<Capability>`
 - **校验点**:Kind instance,Invocation flow **step 5.5** — `Ezagent.Kind.holds_cap?/3` chokepoint(三参数 dispatcher,内部走 Kind 的可选回调 `holds_cap?/2` 或 `Ezagent.Kind.default_holds_cap?/2`)(PR-CC-2-v2, 2026-05-25)
 - **校验函数**:dispatcher 对 `Behavior.required_caps()[action]` 中每个 cap 模板调一次 `Ezagent.Kind.holds_cap?(entity_uri, kind_module, needed_cap) :: boolean()`;Behavior 通过 `required_caps/0` 声明所需 cap 模板,Kind 通过(可选)`holds_cap?/2` 回调或缺省的 `Ezagent.Identity.list_caps_for/1` + `Capability.matches?/2` 决定 caller 是否持有该 cap (Behavior × Entity 边界关切)
@@ -1432,7 +1432,7 @@ cap 检查是 **Behavior × Entity 边界关切**,**严格只在 dispatch step 5
 每个 Behavior 实现 `required_caps/0 :: %{required(action :: atom()) => Ezagent.Capability.t()}` — 每个 action 对应**单个** cap 模板(不是 list):
 
 ```elixir
-@impl Ezagent.Behavior
+@impl Ezagent.ActionSet
 def required_caps do
   %{
     send:  Ezagent.Capability.cap(:session, __MODULE__, :send),
@@ -1442,7 +1442,7 @@ def required_caps do
 end
 ```
 
-若某 action 不需 cap-gate(只读 inspection / `:status` probe 等),Behavior 通过可选 `cap_exempt_actions/0 :: [atom()]` 显式声明 — 编译时 `:ezagent_plugin_check` 验证 `keys(required_caps) ∪ cap_exempt_actions == actions`。`dispatch_uses_required_caps_struct_test.exs` invariant 验证 `Ezagent.Kind.Runtime` 实际 consult `behavior_module.required_caps()` + `Ezagent.Kind.holds_cap?` + `Ezagent.Behavior.workspace_scoped?` 在 step 5.5 / 5.6,并要求生产 Behavior 都实现 `required_caps/0`。
+若某 action 不需 cap-gate(只读 inspection / `:status` probe 等),Behavior 通过可选 `cap_exempt_actions/0 :: [atom()]` 显式声明 — 编译时 `:ezagent_plugin_check` 验证 `keys(required_caps) ∪ cap_exempt_actions == actions`。`dispatch_uses_required_caps_struct_test.exs` invariant 验证 `Ezagent.Kind.Runtime` 实际 consult `behavior_module.required_caps()` + `Ezagent.Kind.holds_cap?` + `Ezagent.ActionSet.workspace_scoped?` 在 step 5.5 / 5.6,并要求生产 Behavior 都实现 `required_caps/0`。
 
 #### 构造帮手:`Capability.cap/3` 和 `cap/5`
 
@@ -1470,7 +1470,7 @@ n×n 场景:Session 内的 agents 默认互通,逐条 grant 太碎,用 `{:within
 | Plugin 注册 KindType 时声明 default_caps | scope 必为 `:self`(最小权限) |
 | Creator 创建实例 | 自动获得该实例所有 Behavior 的 cap(全权) |
 | Session 内 agent 加入 | 自动获得 `{:within_session, session_uri}` 的标准 cap 集 |
-| User 创建(任意路径:LV / `mix ezagent.user.create` / Feishu bind) | 自动获得 `Ezagent.Entity.User.default_caps()` 返回的结构性基线 cap;当前是 `kind=:session behavior=:any instance=:any granted_by=system://bootstrap`(Decision #133, Phase 6 PR 27)。**`:any` 是循环依赖妥协**(`ezagent_domain_identity` 不能引用 `ezagent_domain_instance_message` 的 `Ezagent.Behavior.Chat` 模块),不是"默认 cap 该用通配符"的 idiom。`Ezagent.Domain.Identity.Users.create/3` prepend 到 caller caps;`EzagentPluginFeishu.BindingPolicy.apply/2` 对 pre-PR-27 user 在 bind 时 idempotent 补齐 |
+| User 创建(任意路径:LV / `mix ezagent.user.create` / Feishu bind) | 自动获得 `Ezagent.Entity.User.default_caps()` 返回的结构性基线 cap;当前是 `kind=:session behavior=:any instance=:any granted_by=system://bootstrap`(Decision #133, Phase 6 PR 27)。**`:any` 是循环依赖妥协**(`ezagent_domain_identity` 不能引用 `ezagent_domain_instance_message` 的 `Ezagent.ActionSet.Chat` 模块),不是"默认 cap 该用通配符"的 idiom。`Ezagent.Domain.Identity.Users.create/3` prepend 到 caller caps;`EzagentPluginFeishu.BindingPolicy.apply/2` 对 pre-PR-27 user 在 bind 时 idempotent 补齐 |
 | 其他获取方式 | 必须显式 grant(v0 不支持 delegation) |
 
 `:self` 在 grant 时立即解析成具体 URI(**grant-time resolution**)——cap 内容凝固不变。
@@ -1599,7 +1599,7 @@ end
 def start(_, _) do
   Ezagent.BehaviorRegistry.attach(
     target_kind: Ezagent.Entity.Agent,
-    behavior:    Ezagent.Behavior.AuditLog,
+    behavior:    Ezagent.ActionSet.AuditLog,
     on_attach:   :rehydrate
   )
   Supervisor.start_link([], strategy: :one_for_one)
@@ -1722,10 +1722,10 @@ defmodule Ezagent.Resource.Workspace do
   ]
   
   # 标准 Behavior 集:
-  # - Ezagent.Behavior.WorkspaceFolders  (add-folder / list-folders / remove-folder)
-  # - Ezagent.Behavior.WorkspaceMetadata (rename / edit / describe / set-default)
-  # - Ezagent.Behavior.WorkspaceBindings (bind-chat 通过 RoutingRegistry)
-  # - Ezagent.Behavior.WorkspaceRepos    (import-repo / forget-repo)
+  # - Ezagent.ActionSet.WorkspaceFolders  (add-folder / list-folders / remove-folder)
+  # - Ezagent.ActionSet.WorkspaceMetadata (rename / edit / describe / set-default)
+  # - Ezagent.ActionSet.WorkspaceBindings (bind-chat 通过 RoutingRegistry)
+  # - Ezagent.ActionSet.WorkspaceRepos    (import-repo / forget-repo)
 end
 ```
 
@@ -1786,10 +1786,10 @@ V0.4 spec **不创建** AgentPreset / ToolPreset Kind,仅留下 framing 兼容�
 
 ### 9.6 Socialware definition ≠ Template Kind
 
-Socialware unification(2026-06-26/28)引入的 **socialware definition 不是一种 Template Kind** —— 它是一个 **opaque `config://<ws>/socialware/<name>` ConfigObject**(L2 definition data,sibling of the recipe on the same `ConfigStore`/`ConfigObject` substrate),**不是** spawnable Template Kind。
+Socialware unification(2026-06-26/28)引入的 **socialware definition 不是一种 Template Kind** —— 它是一个 **opaque `socialware:<name>` ConfigObject**(L2 definition data,sibling of the recipe on the same `ConfigStore`/`ConfigObject` substrate),**不是** spawnable Template Kind。
 
-- **存处**:`Ezagent.Socialware.DefinitionRegistry`(`apps/ezagent_domain_session/lib/ezagent/socialware/definition_registry.ex`,moduledoc "Definitions live at `config://<workspace>/socialware/<name>` with ConfigObject key `\"socialware\"`")。`config://` 是 ConfigStore-internal opaque subject,**不在** 6 个 Kind URI scheme 集合内(`entity session template resource workspace system`,`apps/ezagent_core/lib/ezagent/plugin.ex:88` `@core_schemes`)。当前 template spawn 只支持 `agent` 和 `session` type;`template://.../socialware` 会暗示一个不存在的 hidden Template Kind。
-- **对称物**:recipe —— `Ezagent.Agent.Recipe` 同样是 `config://<ws>/recipe/<name>` ConfigObject(key `"recipe"`),不是 Template Kind。两者是 ConfigStore 上的 sibling opaque subjects。
+- **存处**:`Ezagent.Socialware.DefinitionRegistry`(`apps/ezagent_domain_session/lib/ezagent/socialware/definition_registry.ex`,moduledoc "Definitions live at `socialware:<name>` with ConfigObject key `\"socialware\"`")。`<kind>:<name>`(recipe:/socialware:)是 ConfigStore-internal opaque subject,**不在** 6 个 Kind URI scheme 集合内(`entity session template resource workspace system`,`apps/ezagent_core/lib/ezagent/plugin.ex:88` `@core_schemes`)。当前 template spawn 只支持 `agent` 和 `session` type;`template://.../socialware` 会暗示一个不存在的 hidden Template Kind。
+- **对称物**:recipe —— `Ezagent.Agent.Recipe` 同样是 `recipe:<name>` ConfigObject(key `"recipe"`),不是 Template Kind。两者是 ConfigStore 上的 sibling opaque subjects。
 - **SessionTemplate 的角色**:SessionTemplate 是 **plugin-composition** —— 它持一个 `installs: [{socialware-ref, seed-overrides}]` 字段(`Ezagent.Socialware.Installation.installs_from_template/1`),命名 *which* socialware-defs 装到 session;它 **不** 是 socialware definition 本身。Socialware definition 承载 bases/shape/members/routing_rules/adapters/visibility_policy;SessionTemplate 只持 generic composition + lineage。
 - **install relation**(landed P4):`Ezagent.Socialware.Installation`(`apps/ezagent_domain_session/lib/ezagent/socialware/installation.ex`,`@install_key_prefix "install:"`)写 per-session ConfigObject record + 把 socialware 的 bases+shape thread 进 Session 的 `:kind_base` union。
 
@@ -1998,7 +1998,7 @@ end
 
 **为什么不用 `Application.spec/2` env**:`:env` 是**编译期静态**——运维改 Feishu app credentials 时不可能 recompile + restart 全系统。类型 A 持久化提供运行时可变性。
 
-> **Cross-ref**:reusable / forkable / content-addressed 的定义(recipe、socialware definition、responsibility assignment)优先住 L2 ConfigObject(`config://<ws>/{recipe|socialware}/<name>`,见 §9.6 + GLOSSARY §2 "Definition")。本节 A 类 plugin-owned Ecto 表是 plugin *runtime* 配置(app credentials 等),跟 L2 definition data 是不同 home —— definition 是 cross-instance reusable 的 config-as-data,runtime 配置是 per-plugin operational secret。
+> **Cross-ref**:reusable / forkable / content-addressed 的定义(recipe、socialware definition、responsibility assignment)优先住 L2 ConfigObject(`recipe:<name> / socialware:<name>`,见 §9.6 + GLOSSARY §2 "Definition")。本节 A 类 plugin-owned Ecto 表是 plugin *runtime* 配置(app credentials 等),跟 L2 definition data 是不同 home —— definition 是 cross-instance reusable 的 config-as-data,runtime 配置是 per-plugin operational secret。
 
 ### 10.7 feishu-cc 切片参考表(v0 第一个垂直切片)
 
@@ -2198,14 +2198,14 @@ Ezagent 的 transport adapter 在 subprocess 层有两种 driver 关系,**对称
 
 #### A. Ezagent-driven(Feishu / Slack 等)
 
-Ezagent 主动通过 `Ezagent.Behavior.OSProcess` 拉起 subprocess。subprocess 启动后建立到 Ezagent 的 WS 连接,双向桥接外部协议。
+Ezagent 主动通过 `Ezagent.ActionSet.OSProcess` 拉起 subprocess。subprocess 启动后建立到 Ezagent 的 WS 连接,双向桥接外部协议。
 
 ```
 [Feishu server]
     │
     │ WS(Feishu 协议)
     ▼
-[Python feishu_adapter.py]   ← Ezagent.Behavior.OSProcess 拉起
+[Python feishu_adapter.py]   ← Ezagent.ActionSet.OSProcess 拉起
     │
     │ WS to Ezagent.Web.UserSocket on /socket
     ▼
@@ -2565,7 +2565,7 @@ Ezagent.<Category>.<KindType>            — Kind 声明
 Ezagent.<Category>.<KindType>.Server     — 单实例 GenServer
 Ezagent.<Category>.<KindType>.Supervisor — DynamicSupervisor
 
-Ezagent.Behavior.<Name>                  — Behavior 模块
+Ezagent.ActionSet.<Name>                  — Behavior 模块
 
 :ezagent_plugin_<name>                   — OTP app atom
 EsrPlugin<Name>                      — Plugin 模块前缀
@@ -2583,10 +2583,10 @@ apps/esr_plugin_<name>/              — Umbrella 目录
 
 | Plugin | 类型 | 内容 |
 |---|---|---|
-| `esr_behavior_identity` | 单 Behavior | 注册 `Ezagent.Behavior.Identity` |
-| `esr_behavior_os_process` | 单 Behavior | 注册 `Ezagent.Behavior.OSProcess`(底层 `:erlexec`) |
-| `esr_behavior_pty` | 单 Behavior | 注册 `Ezagent.Behavior.Pty`(底层 `:ex_pty`) |
-| `esr_behavior_chat` | 单 Behavior | 注册 `Ezagent.Behavior.Chat` |
+| `esr_behavior_identity` | 单 Behavior | 注册 `Ezagent.ActionSet.Identity` |
+| `esr_behavior_os_process` | 单 Behavior | 注册 `Ezagent.ActionSet.OSProcess`(底层 `:erlexec`) |
+| `esr_behavior_pty` | 单 Behavior | 注册 `Ezagent.ActionSet.Pty`(底层 `:ex_pty`) |
+| `esr_behavior_chat` | 单 Behavior | 注册 `Ezagent.ActionSet.Chat` |
 | `esr_adapter_cli` | 单侧 adapter | CLI 工具,从 BehaviorRegistry 自动生成命令 |
 | `ezagent_web` | Phoenix 入口 | Endpoint/Socket/Plug/auth boundary + `home_live`(`ezagent_web_liveview` 已并入此 + `ezagent_plugin_world`) |
 | `ezagent_plugin_world` | 复合 plugin | world Conversation surface(`Ezagent.World.ConversationActions`/`ConversationData`)+ kanban UI + admin/world LiveView surface |
@@ -2683,7 +2683,7 @@ Plugin 不在此 budget 内——plugin 想多大都行,但应该自己有内部
 
 **v0.4 target 与实测差距的根因**:
 - v0.4 budget 只算"光纯逻辑 SLOC"(不含 `@moduledoc` / `@doc` / 空行 / 单行结构) — 工程师习惯写法多 40-60% 的注释/空行,等量逻辑实际 file 行数翻倍
-- v0.4 budget 漏算了 `behaviour` 模块本身的 callback boilerplate(`Ezagent.Kind` / `Ezagent.Behavior` 各 ~80 LOC 的 callback 声明 + typespec)
+- v0.4 budget 漏算了 `behaviour` 模块本身的 callback boilerplate(`Ezagent.Kind` / `Ezagent.ActionSet` 各 ~80 LOC 的 callback 声明 + typespec)
 - v0.4 budget 漏算了 `mix ezagent.*` 任务(Phase 3-4 增加 4 个,共 ~250 LOC)— 严格说不是 ezagent_core 模块库,但放在 `apps/ezagent_core/lib/mix/` 下计入了
 
 **结论**:v0.4 target 920 应理解为 "**纯逻辑 SLOC 的设计估算**",而不是 "file LOC 上限"。Phase 5 不建议追逐 920 数字本身;追的应该是:
@@ -3136,7 +3136,7 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 96 | **Matcher AST 5 leaf + JSON serde**(Decision #41/#42/#70 落地)— `Ezagent.Routing.Matcher` 5 个 leaf(`mention/from/text_contains/text_matches/always`);plain tuple 形态无 macro;`to_json/1` + `from_json/1` 让 matcher 进 SQLite `routing_rules.matcher_data` 列。组合子(and/or/not)Phase 4+(P3-D3 决定单层规则 + 多条规则 additive 已覆盖 demo)| impl |
 | 97 | **Resolver 双层 fan-out:cross-session 走规则 + in-session 走 members fall-through**(P3-D impl 决策 b)— `Chat.invoke(:send)` 先调 `Resolver.resolve/2` 拿 cross-session targets,再 always 加上 in-session members。Recursion guard:不 re-dispatch 到 current session。router 真正能"在 main 发的 urgent 消息同时落 oncall" | impl |
 | 98 | **`message_routings` 关联表保 Decision #40 identity invariant + 多 session 持久化**(#P1-4 spec review 修复)— `messages.uri` 是 PK,Phase 3 D8 reply 可同时 target N session → PK 冲突。新 `message_routings` 复合 PK `(message_uri, session_uri)`:messages 保 1 行/uri,per-session 路由信息走 routings 表。MessageStore.write/2 transaction upsert messages + insert message_routings + 新加 sessions_for_message/1 给 ref 一致性 soft warn 用 | impl |
-| 99 | **Identity Behavior in slice + admin_caps 注入 init_slice**(Phase 3d step 1 / Decision #24 落地)— admin_caps 从 module function 硬编码迁到 slice state;`Ezagent.Behavior.Identity` 加 User Kind.behaviors;chat plugin spawn admin User 传 `extra_args: %{initial_caps: User.admin_caps()}`(per #B1 — kind_server_spec/4 加 extra_args 参数)。caps 现在在 `:sys.get_state(admin_user_pid).state.identity.caps` 可观测 | impl |
+| 99 | **Identity Behavior in slice + admin_caps 注入 init_slice**(Phase 3d step 1 / Decision #24 落地)— admin_caps 从 module function 硬编码迁到 slice state;`Ezagent.ActionSet.Identity` 加 User Kind.behaviors;chat plugin spawn admin User 传 `extra_args: %{initial_caps: User.admin_caps()}`(per #B1 — kind_server_spec/4 加 extra_args 参数)。caps 现在在 `:sys.get_state(admin_user_pid).state.identity.caps` 可观测 | impl |
 | 100 | **`Ezagent.Capability.cap_for_action/3` helper**(#P1-8)— dispatch step 5.5 需要的"action → cap_needed" 反查,签名加 `target_uri`(必填)以从中提取 `instance`(via Ezagent.URI.instance/1)。返 `%{kind, behavior, instance}` 喂 matches?/2 | impl |
 | 101 | **Phase 3d hard flip:`:stub_grant` 永久死亡 + check_invariants #9 #10 invariant test gate**(P3-D6 落地)— authz_stub/4 整个删除,替换 authz_check/4(真 Capability.matches? + `:granted`/`:denied` telemetry)。`:stub_grant` atom 全 codebase 清空(audit.ex/telemetry.ex/admin_live.ex 全改 granted/denied)。runtime invariant test 是 #10 的语义 gate(grep 只是 tripwire,per `feedback_completion_requires_invariant_test`)| impl |
 | 102 | **Reply 契约 D8:`{session_uris: [URI], text, ref?}`** — Python bridge `reply` MCP tool 三字段;session_uris 是 list;ref optional 支持 proactive reply。Agent.handle_kind_message 用同一 envelope dispatch chat/send per session_uri(identity invariant 配合 #98)。ref + session_uris 不一致 emit `[:ezagent, :chat, :reply_session_mismatch]` 但仍按 session_uris 路由(soft warn,信任 claude)| impl |
@@ -3144,7 +3144,7 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 104 | **push_to_claude meta 必含 `"session"` 字段 + reply dispatch failure 可见**(real-claude e2e hotfix)— Chat.invoke(:receive) Agent 分支构造 push_to_claude meta 时必须包含 `"session" => URI.to_string(ctx.caller)`(源 session URI),claude 才能正确填 reply 的 session_uris。配 Chat.handle_kind_message dispatch chat/send 返 `{:error, _}` 时 emit `[:ezagent, :chat, :reply_dispatch_failed]` telemetry(以前静默 drop) | impl |
 | 105 | **admin_live Phase 4a 用 Phoenix.Component 拆分(stateless)而非 LiveComponent**(Phase 4 D2 文档化 vs 实际落地差异)— D2 原话推 LiveComponent,但 admin_live 状态紧耦合(session 选择驱动 chat + members + sidebar),LiveComponent 的 `send_update` 跨组件协调比直接 parent assign 多绕一层。Phoenix.Component 拿到 file-boundary split(主目标 — 4b/c/d 新增 surface 进新文件不进 admin_live),不付协调成本。promote 到 LiveComponent 推迟到具体 surface 真需要 own state(4d Workspace member-picker 候选,但 4d 也仍单文件 LV)。详见 `apps/ezagent_web_liveview/lib/ezagent_web_liveview/admin_live.ex` 文件顶部 moduledoc | impl |
 | 106 | **Workspace Kind + Behavior lives in ezagent_core**(Phase 4b)— Workspace 是 cross-plugin 基础(plugin 用 Workspace 声明自己的 Kind 模板),放 plugin 会循环依赖。`Ezagent.Entity.Workspace` 平 `Ezagent.Entity.User`;`EzagentCore.Application.start` 注册 Workspace Behavior 的 9 个 action(第一次 EzagentCore 注册 Behavior,但 Workspace 是 cross-plugin 基础概念,例外合理)。`Ezagent.Workspace.Supervisor` DynamicSupervisor 也在 EzagentCore.Application children 第 ⑦ 项 | impl |
-| 107 | **`Ezagent.Behavior.Workspace.invoke(:instantiate)` 返回 children 数据不做 side-effects**(Phase 4 D5)— plugin isolation 在 boundary:ezagent_core 不知道哪个 plugin 拥有哪个 Kind 的 supervisor。`:instantiate` 返 `{:ok, slice, %{children: [{:member, URI}]}}` 纯数据;Loader walk + call `SpawnRegistry.spawn/1`。Decision #70 Workspace 薄 Resource 形态的运行时落地 — "薄"= 行为 declarative + actual effect 由调用者注入(DI at boundary) | impl |
+| 107 | **`Ezagent.ActionSet.Workspace.invoke(:instantiate)` 返回 children 数据不做 side-effects**(Phase 4 D5)— plugin isolation 在 boundary:ezagent_core 不知道哪个 plugin 拥有哪个 Kind 的 supervisor。`:instantiate` 返 `{:ok, slice, %{children: [{:member, URI}]}}` 纯数据;Loader walk + call `SpawnRegistry.spawn/1`。Decision #70 Workspace 薄 Resource 形态的运行时落地 — "薄"= 行为 declarative + actual effect 由调用者注入(DI at boundary) | impl |
 | 108 | **`Ezagent.SpawnRegistry`:URI scheme → spawn fn 的 ETS 表(plugin DI 原语)**(Phase 4c)— plugin Application 在 `start/2` 调 `Ezagent.SpawnRegistry.register("agent", fn uri -> ... end)`。chat plugin 注册 `agent`/`session`/`user` 三个 scheme。Loader 看 `agent://cc-builder` 时 lookup scheme → call 注册的 fn,ezagent_core 永远不引用 `EsrPluginChat.AgentSupervisor`。`spawn/1` 先 `KindRegistry.lookup`(idempotent re-spawn safe)再 fall back ETS。`{:already_started, pid}` 透明 unwrap 为 `{:ok, pid}`。`EtsOwner` 拥有该表(与 ReadyGate/Idempotency 等并列第 ⑥ 张表)| impl |
 | 109 | **Workspace 持久化分层:config 持久化(Store)≠ Kind state snapshot**(Phase 4 D7)— Workspace Kind `persistence/0` 仍 `:ephemeral`;config(members/templates/routing_rules)经 `Ezagent.Workspace.Store` 写 SQLite `workspaces` 表(JSON-text 列,SQLite 无 native JSON column);Loader 从 DB rehydrate live Kind 时把 config 灌进 init_slice。per-Kind state snapshot(运行时 slice 状态)是 Phase 5+ SnapshotStrategy framework 的事,推后。混淆这两个会让 restart 慢且脆 | impl |
 | 110 | **Workspace facade dual-write 模式**(Phase 4c)— `Ezagent.Workspace.add_member/2` 等 mutation 先 `Store.update_members`(durable DB)再 `dispatch(:add_member)`(live Kind)。两步非事务:crash 后 Loader 在下次 boot 用 DB 状态重建 live Kind — **Loader 是 resync 真相**。read 走 live Kind only(`list_members` 等),DB 是 recovery snapshot,不是 read source。Phase 5 可能 wrap transactional path 但 v0 接受简单实现(失败恢复路径有 Loader 兜底) | impl |
@@ -3162,17 +3162,17 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 122 | **Phase 5 PR 1: Workspace LV 加 add-template 表单(hybrid form/JSON)**(2026-05-16)— `/admin/workspaces/<name>` 加 form mode(4 标准字段:class_name + agent_uri + system_prompt + greeting)+ JSON mode(完整 attrs map paste);submit 既写 Workspace.config.templates 又同步 fire `Class.instantiate` spawn Session。**operator 不再需要 mix ezagent.workspace.add_template** | impl |
 | 123 | **Phase 5 PR 2: /admin/users LV(list / create / set-password)**(2026-05-16 P5-D2/D3)— UI 完整 CRUD;cap-edit 用 text input(`Capability.Parser` 解析 comma-separated)而不是 per-cap form;refuse `*` caps via UI(必须 mix --allow-allcaps);create 后 live-spawn User Kind via `SpawnRegistry.spawn/1` | impl |
 | 124 | **Phase 5 PR 3: /admin/snapshots LV + mix ezagent.snapshot.{list,dump,clear}**(2026-05-16 P5-D4/D5)— read-only LV(table + Dump JSON modal + Clear button per-row),3 mix tools 是 LV 之外的脚本入口。`KindSnapshot.list_all/0` 按 updated_at desc 列所有 snapshot rows | impl |
-| 125 | **Phase 5 PR 4: 每-rule cap-check via synthetic `Ezagent.Entity.RoutingAdmin` Kind**(2026-05-16 落地 Decision #120(b) defer 项 + P5-D6)— `routing-admin://default` 单例(persistence `:ephemeral`),`Ezagent.Behavior.RoutingAdmin` 4 actions(add/delete/disable/enable);RoutingLive 不再直接 call `RuleStore`,改 `Invocation.dispatch` 走 CapBAC step 5.5;non-admin without `routing_admin` cap → `:unauthorized` + audit row。Behavior interface 用 `matcher_json: :map`(tuple 会被 InterfaceValidator 拒)— caller 预先 `Matcher.to_json/1`,Behavior 内部 `Matcher.from_json/1`(模式适用任何需要传 AST 跨 interface 边界的场景) | impl |
+| 125 | **Phase 5 PR 4: 每-rule cap-check via synthetic `Ezagent.Entity.RoutingAdmin` Kind**(2026-05-16 落地 Decision #120(b) defer 项 + P5-D6)— `routing-admin://default` 单例(persistence `:ephemeral`),`Ezagent.ActionSet.RoutingAdmin` 4 actions(add/delete/disable/enable);RoutingLive 不再直接 call `RuleStore`,改 `Invocation.dispatch` 走 CapBAC step 5.5;non-admin without `routing_admin` cap → `:unauthorized` + audit row。Behavior interface 用 `matcher_json: :map`(tuple 会被 InterfaceValidator 拒)— caller 预先 `Matcher.to_json/1`,Behavior 内部 `Matcher.from_json/1`(模式适用任何需要传 AST 跨 interface 边界的场景) | impl |
 | 126 | **Phase 5 PR 5: MessageStore 反向分页 + LV "↑ Load older" 按钮**(2026-05-16 P5-D7/D8)— `MessageStore.older_than(session_uri, cursor, limit)` 用 `inserted_at` cursor(P5-D8:`id` 不保证 multi-node 单调,timestamp 是 canonical order);AdminLive `:oldest_cursor` 跟踪 currently-oldest 行,`load_older_messages` handler `stream_insert(at: 0)` prepend(并丢弃 `:messages` stream 的 `limit:` 否则 prepend 立即被 evict)。**`ScrollOnUpdate` hook 升级**:加 `beforeUpdate` capture first-child id;`updated` 比较——first-child 变化即 prepend → `scrollTop = grew` 让 newly-prepended 内容可见(否则 hook 把用户保持在底部就看不到新加载的旧 message)。**Spec gate test**:发 100 message → mount 看 51-100 → click reveals 1-50 + no duplicates → 再 click no-op | impl |
-| 127 | **Receiver Kind contract for external integrations**(post-Phase-5 Plan B,2026-05-17,落地 Allen "feishu 实现 drift 了一条 work 但不是 arch-align 的路径" 反馈)— 任何 plugin 想把消息送出 Ezagent（HTTP/file/external），**必须**把外部目的地建模成 `<scheme>://<external_id>` Receiver Kind，实现 `Ezagent.Behavior.Chat`(或等价 Behavior) 的 `:receive` action，通过 routing_rules 接收。**禁止** PubSub.subscribe + 直接外部写。理由:绕开 dispatch 等于绕开 CapBAC + audit + idempotency。**Drift defenses**:Layer 1 doc `docs/notes/plugin-receiver-kind-contract.md` + Layer 2 CI invariant `receiver_kind_pattern_test.exs`(grep plugin handle_info 中 chat_message + 外部写 API,fail) + Layer 4 SPEC_REVIEW checklist 项 + Layer 5 memory `feedback_plugin_external_integration_is_receiver_kind`。Reference impl: `apps/ezagent_plugin_feishu/`(`Ezagent.Entity.FeishuChat` + `EzagentPluginFeishu.Behavior.FeishuReceive`)| impl |
+| 127 | **Receiver Kind contract for external integrations**(post-Phase-5 Plan B,2026-05-17,落地 Allen "feishu 实现 drift 了一条 work 但不是 arch-align 的路径" 反馈)— 任何 plugin 想把消息送出 Ezagent（HTTP/file/external），**必须**把外部目的地建模成 `<scheme>://<external_id>` Receiver Kind，实现 `Ezagent.ActionSet.Chat`(或等价 Behavior) 的 `:receive` action，通过 routing_rules 接收。**禁止** PubSub.subscribe + 直接外部写。理由:绕开 dispatch 等于绕开 CapBAC + audit + idempotency。**Drift defenses**:Layer 1 doc `docs/notes/plugin-receiver-kind-contract.md` + Layer 2 CI invariant `receiver_kind_pattern_test.exs`(grep plugin handle_info 中 chat_message + 外部写 API,fail) + Layer 4 SPEC_REVIEW checklist 项 + Layer 5 memory `feedback_plugin_external_integration_is_receiver_kind`。Reference impl: `apps/ezagent_plugin_feishu/`(`Ezagent.Entity.FeishuChat` + `EzagentPluginFeishu.Behavior.FeishuReceive`)| impl |
 | 128 | **`in_session(session_uri)` matcher — 把路由规则范围限定到单一 session**(post-Phase-5 Plan B,2026-05-17)— 老 Matcher 集合(mention/from/text_contains/always 等)都是消息内容匹配,没有"消息来自哪个 session" 的概念。Feishu binding 需要"`session://main` 的消息送到 `feishu://oc_xxx`,但 `session://other` 不发"——globally-scoped 的 `always() → [feishu://oc_xxx]` 会全 session 都发。新 matcher `{:in_session, session_uri_str}` 读 `msg.session_uri` 字段。注意:**Chat.invoke(:send) 必须用 MessageStore.write 返回的 stamped_msg(带 session_uri)给 Resolver**,否则 in_session matcher 永远返回 false(Decision #129) | impl |
 | 129 | **Chat.invoke(:send) 用 stored_msg 给 Resolver,不用原始 msg**(post-Phase-5 bug fix PR #46,2026-05-17)— `MessageStore.write` stamps session_uri on the returned struct;原代码把原始 msg(`session_uri=nil`)传给 Resolver,新 in_session matcher(Decision #128)永远 false。Fix: `case MessageStore.write(msg, session_uri) do {:ok, stored_msg} -> msg = stored_msg; ...`。这是 in_session matcher 引入后浮现的 bug——matcher 设计本身没问题,数据流上游忘了 stamp 同步 | impl |
 | 130 | **CLI is distributed-Erlang RPC client to the running runtime,not HTTP**(post-Phase-5 第二次 pivot,2026-05-17 Allen)— `mix esr` 启动一个短暂的 short-name node,`Node.connect(ezagent_runtime@127.0.0.1) + :rpc.call(EzagentCli.Exec, :exec, [argv])`。runtime 端 `Ezagent.Runtime.configure_for_runtime!` 在 phx.server 启动时调 `:net_kernel.start([ezagent_runtime@127.0.0.1, :longnames])`。**单机假设**:CLI 永远只跟 local runtime 通信;远程操作通过 runtime↔runtime federation(Decision #48 形态 A,Phase 6+)。**不变式**:任何 LV 能做的事 CLI 必须能做,且**必须在同一 BEAM 里执行**(`apps/ezagent_cli/test/integration/cli_lv_same_server_invariant_test.exs` 是 CI gate)。Cookie 在 `$EZAGENT_HOME/<profile>/runtime/cookie`,auto-mint,chmod 600 | impl |
 | 131 | **PtyServer 通过 mcp.json 把 `agent_uri` 传给 Python bridge,不靠 env-var 链式继承**(post-Phase-5 PR #49,2026-05-17 Allen)— 老路径:PtyServer 把 `EZAGENT_AGENT_URI` 设到 erlexec 的 env list → claude 子进程继承 → Python MCP bridge 子子进程继承。任一环节 dropping env var 就 broken,且不可见(silent bare-bridge)。Fix: `McpConfigWriter.write!(agent_uri: ...)` 把 `EZAGENT_AGENT_URI` 写进 mcp.json 的 `env` 字段;claude 启动 bridge 时按 mcp config 设的 env 给它。**单一确定性传输**,operator-shell env 仍作为 fallback。模式可推广:任何要"PtyServer 喂参数给 Python/外部子进程"的场景,优先 mcp.json 而不是 env-var 链 | impl |
 | 132 | **Channel `meta` schema 强制 `Record<string, string>`,非字符串值 silently drop**(Phase 6 PR 26,2026-05-18 Allen)— `notifications/claude/channel` 的 `meta` 字段由 Anthropic channels-reference spec 定义为 `Record<string, string>`,任何 non-string value(list / map / nested object)会让 claude TUI 整条 notification silently drop,**没有错误返回到任何一侧**。PR 14 把 attachment list 塞进 `meta.attachments` 违反了这条,inbound 链路坏了 3 周才发现。**Fix**:`apps/ezagent_domain_instance_message/lib/esr/behavior/chat.ex` Agent receive 分支只允许 string-valued meta keys;附件信息在 `content` 文本里以 breadcrumb 形式出现(`[attachment: type=file name=x]`);可选 `meta.file_path: <abs-path>` 字符串(仿 cc-openclaw `channel_server` 约定),由 claude `Read` tool 拉取实际内容。**Invariant test**:`apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings (no list/map smuggling)"——任何 PR 重新引入非字符串 meta value 必须挂 CI。**未来不变式**:扩展 channel adapter(v3, derivatives)时禁止把结构化数据塞 meta;结构化数据走 `content` 或 `tools/call` 显式拉取。详细 forensic record:[docs/notes/phase-6-architecture-closeout.md](docs/notes/phase-6-architecture-closeout.md) §2.3 | impl |
-| 133 | **`Ezagent.Entity.User.default_caps/0` — 每个 user 创建时自动获得 `kind=:session behavior=:any` 基线 cap**(Phase 6 PR 27,2026-05-18 Allen)— Phase 6 前 `Ezagent.Domain.Identity.Users.create/3` 不注入任何默认 cap,Feishu 绑定路径 silently `:unauthorized`(SenderResolver 解析到 user URI 但该 user 没 `kind=:session` 任何 cap → CapBAC deny)。**Fix**:`Ezagent.Entity.User.default_caps/0` 返回 `[%Capability{kind: :session, behavior: :any, instance: :any, granted_by: system://bootstrap}]`;`Users.create/3` prepend 到 caller 提供的 caps;`EzagentPluginFeishu.BindingPolicy.apply/2` 在 bind 时 idempotent 重新 grant(MapSet 语义保证),覆盖 pre-PR-27 已创建 user。**关键 trade-off**:`behavior: :any` 而不是 `behavior: Ezagent.Behavior.Chat`,因为 `ezagent_domain_identity` 不能反向依赖 `ezagent_domain_instance_message`(后者已经依赖前者,会循环)。这是**循环依赖的妥协,不是"默认 cap 该用通配符"的 idiom**。未来 plugin authors 看到 `:any` 不要 cargo-cult 到自己的 default cap——能用模块引用就用模块引用,narrower scope 永远更安全。**Drift defenses**:`apps/ezagent_domain_identity/test/esr/entity/user_test.exs` `describe "default_caps/0 (PR 27)"` 锁 invariants(包含 `kind=:session`、`granted_by=system://bootstrap`、不含 admin wildcard);docs/notes/phase-6-architecture-closeout.md §2.1 记录 forensic | impl |
-| 134 | **`EzagentPluginFeishu.InboundDispatcher.do_dispatch` dispatch mode 从 `:cast` 改 `:call`,把 deny 错误同步回原 chat**(Phase 6 PR 27,2026-05-18 Allen "silent down 不可接受")— `Ezagent.Behavior.Chat.@interface[:send]` 声明 `:send` 为 `:cast`(fire-and-forget,无返回值);但 Feishu inbound transport 现在 `mode: :call` dispatch,拿到 `{:error, :unauthorized}` 后 `Client.send_text(chat_id, "❌ Ezagent: 没有权限...")` + THUMBSDOWN react,让人类操作员看到失败原因而不是 silently drop。**关键设计点**:`Ezagent.Invocation.dispatch/1` 接受 caller 传入的任何 mode,`@interface` 的 mode 声明是**默认传输行为提示,不是硬契约**。Feishu transport 选择 :call 覆盖 :cast 是合法的——为获得错误回执路径。**未来 transport(Slack / Discord / email)**实现 inbound 时应复用这个 pattern:`mode: :call` + 解构返回 + 显式错误回执到原 channel。**不要做的事**:不要从别的 `:cast` call site 复制 mode 设置到 Feishu inbound;不要假设 `@interface` mode 是 transport 必须遵守的。**Drift defenses**:Decision Log 这条 + `EzagentPluginFeishu.InboundDispatcher` moduledoc + docs/notes/phase-6-architecture-closeout.md §2.2 | impl |
-| 135 | **`Ezagent.WorkspaceRegistry` — 第 5 个 ETS Registry,session→workspace 反向 lookup**(Phase 7 PR 31 / IMPL-7-1)— `Ezagent.Behavior.Chat.invoke(:send)` at chat.ex:116 调 `Ezagent.Routing.Resolver.resolve/3` 时丢了 workspace_uri 上下文(workspace-scoped routing rules 不 fire,Phase 6 PR 8 的 workspace 字段实际上没人喂)。**Fix**:新加 `Ezagent.WorkspaceRegistry`(`apps/ezagent_core/lib/esr/workspace_registry.ex`),`bind(session_uri, workspace_uri)` / `lookup(session_uri)` ETS-backed,跟 Kind/Behavior/Routing/Spawn/Template Registry 平级第五个。`Ezagent.Workspace.Loader.invoke_template` 在 spawn 每个 session 后调 `bind`。chat.ex:116 读 lookup 再传 `workspace_uri:` 给 `Resolver.resolve/4`。Unbound 返 `:error` → fallback `nil` → 跟 pre-PR-31 全局行为兼容(零 migration)。**为什么用 Registry 而不是改 Chat slice**:(a) `SpawnRegistry.spawn/1` URI-only Decision #65 不能破;(b) Chat slice 跟 workspace 概念正交;(c) 不需要 migration。**Drift defense**:invariant test `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` 4 个用例驱动 production 路径,任何破坏 workspace 隔离的改动挂 CI | impl |
+| 133 | **`Ezagent.Entity.User.default_caps/0` — 每个 user 创建时自动获得 `kind=:session behavior=:any` 基线 cap**(Phase 6 PR 27,2026-05-18 Allen)— Phase 6 前 `Ezagent.Domain.Identity.Users.create/3` 不注入任何默认 cap,Feishu 绑定路径 silently `:unauthorized`(SenderResolver 解析到 user URI 但该 user 没 `kind=:session` 任何 cap → CapBAC deny)。**Fix**:`Ezagent.Entity.User.default_caps/0` 返回 `[%Capability{kind: :session, behavior: :any, instance: :any, granted_by: system://bootstrap}]`;`Users.create/3` prepend 到 caller 提供的 caps;`EzagentPluginFeishu.BindingPolicy.apply/2` 在 bind 时 idempotent 重新 grant(MapSet 语义保证),覆盖 pre-PR-27 已创建 user。**关键 trade-off**:`behavior: :any` 而不是 `behavior: Ezagent.ActionSet.Chat`,因为 `ezagent_domain_identity` 不能反向依赖 `ezagent_domain_instance_message`(后者已经依赖前者,会循环)。这是**循环依赖的妥协,不是"默认 cap 该用通配符"的 idiom**。未来 plugin authors 看到 `:any` 不要 cargo-cult 到自己的 default cap——能用模块引用就用模块引用,narrower scope 永远更安全。**Drift defenses**:`apps/ezagent_domain_identity/test/esr/entity/user_test.exs` `describe "default_caps/0 (PR 27)"` 锁 invariants(包含 `kind=:session`、`granted_by=system://bootstrap`、不含 admin wildcard);docs/notes/phase-6-architecture-closeout.md §2.1 记录 forensic | impl |
+| 134 | **`EzagentPluginFeishu.InboundDispatcher.do_dispatch` dispatch mode 从 `:cast` 改 `:call`,把 deny 错误同步回原 chat**(Phase 6 PR 27,2026-05-18 Allen "silent down 不可接受")— `Ezagent.ActionSet.Chat.@interface[:send]` 声明 `:send` 为 `:cast`(fire-and-forget,无返回值);但 Feishu inbound transport 现在 `mode: :call` dispatch,拿到 `{:error, :unauthorized}` 后 `Client.send_text(chat_id, "❌ Ezagent: 没有权限...")` + THUMBSDOWN react,让人类操作员看到失败原因而不是 silently drop。**关键设计点**:`Ezagent.Invocation.dispatch/1` 接受 caller 传入的任何 mode,`@interface` 的 mode 声明是**默认传输行为提示,不是硬契约**。Feishu transport 选择 :call 覆盖 :cast 是合法的——为获得错误回执路径。**未来 transport(Slack / Discord / email)**实现 inbound 时应复用这个 pattern:`mode: :call` + 解构返回 + 显式错误回执到原 channel。**不要做的事**:不要从别的 `:cast` call site 复制 mode 设置到 Feishu inbound;不要假设 `@interface` mode 是 transport 必须遵守的。**Drift defenses**:Decision Log 这条 + `EzagentPluginFeishu.InboundDispatcher` moduledoc + docs/notes/phase-6-architecture-closeout.md §2.2 | impl |
+| 135 | **`Ezagent.WorkspaceRegistry` — 第 5 个 ETS Registry,session→workspace 反向 lookup**(Phase 7 PR 31 / IMPL-7-1)— `Ezagent.ActionSet.Chat.invoke(:send)` at chat.ex:116 调 `Ezagent.Routing.Resolver.resolve/3` 时丢了 workspace_uri 上下文(workspace-scoped routing rules 不 fire,Phase 6 PR 8 的 workspace 字段实际上没人喂)。**Fix**:新加 `Ezagent.WorkspaceRegistry`(`apps/ezagent_core/lib/esr/workspace_registry.ex`),`bind(session_uri, workspace_uri)` / `lookup(session_uri)` ETS-backed,跟 Kind/Behavior/Routing/Spawn/Template Registry 平级第五个。`Ezagent.Workspace.Loader.invoke_template` 在 spawn 每个 session 后调 `bind`。chat.ex:116 读 lookup 再传 `workspace_uri:` 给 `Resolver.resolve/4`。Unbound 返 `:error` → fallback `nil` → 跟 pre-PR-31 全局行为兼容(零 migration)。**为什么用 Registry 而不是改 Chat slice**:(a) `SpawnRegistry.spawn/1` URI-only Decision #65 不能破;(b) Chat slice 跟 workspace 概念正交;(c) 不需要 migration。**Drift defense**:invariant test `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` 4 个用例驱动 production 路径,任何破坏 workspace 隔离的改动挂 CI | impl |
 | 136 | **AgentTemplate + SessionTemplate 是 `Ezagent.Kind.Template` umbrella 下的两个 Template Class,不需要新命名空间**(Phase 7 PR 37+38 / D7-2)— Allen 2026-05-18 round 2 brainstorm 中纠正:`Ezagent.Kind.Template` 早就在 `apps/ezagent_core/lib/esr/kind/template.ex` 作为 umbrella behaviour 存在(callbacks `template_name/0`/`validate/1`/`instantiate/3`),Workspace 只是当前最大用户(`session_templates` map 引用 Template Class 名字)。新加的 **AgentTemplate**(`template://agent/<name>`)+ **SessionTemplate**(`template://session/<name>@<hash>`)都是该 umbrella 下的新 Template Class 实现,跟 `Ezagent.Template.CcChannelInstance` 和 `Ezagent.Template.GenericSession` 同级。**`template://` scheme** SpawnRegistry 注册一次,spawn fn 根据 URI.host 分派:`"agent"` → AgentTemplate Kind,`"session"` → SessionTemplate Kind。**关键反向决策**:之前考虑过把 AgentTemplate 改名 `AgentBlueprint` 避开 "template" 词冲突,实证是没冲突——`Ezagent.Kind.Template` 本就是 umbrella,SessionTemplate 是 template 的一种是天然的(Allen "Session Template 不是 template 的一种吗?")。**Drift defense**:GLOSSARY AgentTemplate / SessionTemplate / Template umbrella 三个条目清楚分层 | impl |
 | 137 | **`Ezagent.Capability` instance 字段加 scope-tuple shapes,v0 "no delegation" 升 v1 bounded delegation**(Phase 7 PR 42 / D7-3,Ezagent v1 release marker)— Phase 7 之前 ARCHITECTURE §17.6 baseline "v0 不支持 delegation"。Phase 7 闭幕 = Ezagent v1 release(Allen "phase 7 结束后我们实际上进入了 v1,该加上了")。新加两种 instance shape:`{:within_session, session_uri}` 和 `{:spawned_by, principal_uri}`,在 `matches?/2` 通过 `instance_match?/2` 处理。**`:any` 仍然是唯一真正的通配符**;tuple shapes 只**收窄**,不**放宽**(orchestrator 持 `{:within_session, A}` cap 只能在 session A 内 grant_cap,不能扩到 session B)。**关键设计**:不在 CapBAC step 5.5 里 dispatch lookup 来 resolve lineage(会无限递归);PR 40 用一个独立的 ETS 注册表存 Agent.spawned_by lineage,`instance_match?` 单 ETS 读。PR 42 ship `{:spawned_by, _}` deny-by-default placeholder,PR 40 接 lineage 数据后转 real match。**Drift defense**:`apps/ezagent_core/test/esr/capability_test.exs` "scope-bounded instance tuples" describe block 6 个测试覆盖 within_session 通过/拒、prefix boundary、spawned_by 默认拒、kind 错配仍拒;`Ezagent.Capability` moduledoc + `t.instance` typespec 都声明新 shapes 是 first-class | impl |
 | 138 | **Federation 显式从 Phase 7 scope drop,留 dev team 后续判断**(Phase 7 / D7-4)— Allen 2026-05-18: "Federation 可以完全不做,我后续再开"。Phase 7 是 Allen 亲手驱动的最后一个 phase + Ezagent v1 release,完整 handoff 给 dev team 假设(Allen 完全离开)。Federation(Decision #48 形态 A,runtime↔runtime cross-node)既不在 SPEC 也不在 PLAN,也不留 prep hook("in case")。Roadmap §9b non-goals 显式标记 "Federation — Allen reopens later"。**Drift defense**:Phase 7 任何 PR 引入 federation hook 应在 review 被拒(SPEC_REVIEW Layer 4 checklist 项) | impl |
@@ -3184,13 +3184,13 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 144 | **CC channel `meta` schema(Decision #132)+ User.default_caps `:session:any` baseline(Decision #133)+ session→workspace `WorkspaceRegistry`(Decision #135)+ scope-tuple cap(Decision #137)— Phase 6/7 累计形成的"production-grade Ezagent v1"基本不变式集合**(Phase 7 closeout / cross-PR meta-decision)— Ezagent v1 release(Phase 7 闭幕)的 promise 不止是"功能完整",更是"这些不变式 in code + in CI + in skill 三层都守住":(a) channel meta 全 string(CI gate `chat_test.exs` "to_claude payload meta values are all strings");(b) 每个 user 创建必有 session.chat 基线 cap(CI gate `user_test.exs default_caps/0`);(c) session.send 调 Resolver 必带 workspace_uri 上下文(CI gate `workspace_isolation_test.exs`);(d) scope-bounded delegation 严格收窄不可放宽(CI gate `capability_test.exs` "scope-bounded instance tuples");(e) Feishu inbound deny 必回写到 chat 不 silent(CI gate `feishu_inbound_cap_denial_feedback_test.exs`);(f) v1 prototype 全删(CI gate `no_v1_bridge_after_cutover_test.exs`,PR 32 ship 后);(g) ws sidecar EOF reap(CI gate `sidecar_orphan_reap_test.exs`);(h) workspace 隔离 cross-PR 共识(workspace://A rule 不在 workspace://B 触发,CI gate `workspace_isolation_test.exs`)。**为什么单独立一条 meta-decision**:dev team 接手时这 8 条是"系统级别约定",不该任何单 PR 能 silently 破。`esr-developer` skill 把这条 + 它们对应的 CI gate 名字列在 Architecture invariants 区,新 dev 改任何这些 area 时 skill 主动 surfaces 风险 | impl |
 | 145 | **Phase 9: workspace = deployment unit(URI SPEC v3 + cap workspace 维度 + dispatch isolation + tenant auth + 数据隔离 + Keycloak system workspace)— Ezagent 完整租户隔离 cross-PR meta-decision**(Phase 9 closeout 2026-05-21,14 PR 合并 #158-#171)— `docs/notes/workspace-as-deployment-unit.md` 定义的"30% gap"被关闭:workspace 从 Phase 8c 的"配置 bundle(members + session_templates + routing_rules)"升级到完整部署单元。**4 维度的隔离**(全部 in code + in CI + in skill 三层守住):(a) **URI 携带 workspace** —— SPEC v3:`entity/session/template/resource://<type>/<workspace>/<name>`,3-segment 强制,2-segment raise(CI gates: `entities_have_workspace_test.exs` + `all_per_tenant_uris_have_workspace_test.exs`);(b) **Capability 加 `workspace_uri` 字段** —— `@enforce_keys`,matcher `workspace_match?/2` 严格检查,cross-workspace cap = `workspace_uri: :any` 结构标记(CI gate `cap_has_workspace_test.exs`);(c) **Dispatch step 5.6 跨 workspace 隔离** —— caller workspace == target workspace OR caller 是 system 成员 OR cap workspace=:any,否则 `:cross_workspace_denied`(distinct from `:unauthorized`,inbound transport 差异化 surface;CI gate `cross_workspace_isolation_test.exs` —— 临时禁 5.6 → 2/6 测试失败,true gate);(d) **数据列 + 读写过滤** —— 6 张 per-tenant 物理表(messages/invocations/users/kind_snapshots/entity_tokens/entity_profiles)加 `workspace_uri` NOT NULL 列(SQLite ALTER COLUMN 不支持 → CREATE-NEW/INSERT-SELECT/DROP/RENAME 模式),`Ezagent.Persistence.scope_by_workspace/2` helper 统一读路径过滤,changeset 强制非空,grep gate 拒绝 nil 写入(CI gates: `per_tenant_tables_have_workspace_column_test.exs` + `no_nil_workspace_writes_test.exs`)。**Keycloak realm-admin 模型(§13)**:`workspace://system`(visible: false)是真实 workspace;成员通过**身份**而非 ad-hoc cap grant 持跨 workspace 权限(`Capability.cross_workspace?/2` arity-2 检 caller workspace == "workspace://system");admin 从 `entity://user/default/admin` 迁到 `entity://user/system/admin`;workspace 选择器**权限分支**(SPEC §6.4 amendment 3)—— system 成员 click → 上下文切换(no logout);普通 user click → 拒绝 + "登录到 X" 提示(不静默登出)。**Tenant-aware auth**:`SessionPrincipal.put/2` 同时写 `:current_entity_uri` + `:current_workspace_uri`,§6.5 invariant 强制 `current_workspace_uri == entity_workspace_uri(current_entity_uri)`(system 成员放宽);LiveAuth on_mount assigns 都进 socket。**Test pool 配置**(PR #165):Phase 9 把 dispatch concurrency 提到 pool 5 瓶颈以上 → 调到 20 + `queue_target: 1000` / `queue_interval: 5000`,根因不是"sandbox bug"是"集成测试 Repo concurrency 上升"。**为什么单独立一条 meta-decision**:Phase 9 14 个 PR 落地 1-2 周内不可能由单一 review 覆盖;dev team 接手时必须明白"workspace = deployment unit"不只是术语,是 4 个隔离维度的结构性约定,任何**单**PR 破任一维度就违反 V1 promise。`ezagent-developer` skill invariant 11 已扩展到所有 per-tenant scheme;新 invariant 13("跨 workspace dispatch 需要 system 成员身份或显式 cross-workspace cap")守住 PR-4 + PR-8 的合约。完整记录见 `docs/superpowers/specs/2026-05-21-phase-9-tenant-isolation-design.md` + 3 个 amendment + `docs/notes/phase-9-demo-2026-05-21.md`(7 截图 demo) | impl |
 | 146 | **嵌套 shell:一个外层 shell 拥有通用 chrome,两个内层 perspective(workspace / admin)**(2026-05-22 V1 验收期,Allen)— UI 层曾有**两个平级 shell**:`ide_shell`(~13 个 workflow 页)+ `AdminSettingsShell`(7 个 config 页),各画各的 header,通用 chrome(avatar / 通知 / 搜索+⌘K)只活在 `ide_shell` 里 → 7 个 admin 页没有 avatar、收不到通知、按不了 ⌘K。Allen 的模型:一个 app 级 shell 拥有"每个用户永远需要的"东西,内层再分 workspace 视角(session/agent)和 admin 视角(挂 `workspace://system` 的全局 runtime 配置)。**重构后**(3 PR #208-#210):`AppShell.app_shell`(Tier-3,接 CmdK 一次)→ `IdeShell.ide_shell_outer`(Tier-2 外层 chrome,带 `perspective :: :workspace | :admin` 类型化 context 契约)→ `:body` slot 装 `workspace_shell` 或 `admin_shell`(Tier-2 内层)。旧 `ide_shell/1` + `AdminSettingsShell` 删除,通用 chrome 现在**只定义一次**。**为什么 Tier-3 `app_shell` 包装器**:命令面板是有状态 `LiveComponent`(Tier-3),展示 shell 是无状态 atom(Tier-2,UI Contract 的零-LV-依赖层)—— 把 LiveComponent 塞 Tier-2 违反契约;Tier-3 wrapper 是让两条规则同时成立的接缝,CmdK 在此**只接线一次**而非每个 LV 一次。两道 codex review(rescue + adversarial)把"CmdK 上移 Tier-2"等 BLOCKER 挡在实施前。同期 V1 UI 验收:`uri_picker` 组件 + `UriOptions`(caller-authorized 工作区作用域)替换 5 处裸 URI 输入,`@interface` 加 `description:` 键(CLI / CmdK / 未来 slash 共享的 action 描述单一源)。完整记录:`docs/superpowers/specs/2026-05-22-nested-shell-refactor.md` + `2026-05-22-v1-uri-pickers-and-cmdk.md` | impl |
-| 147 | **Router / Behavior / Kind self-built architecture(SPEC PR #445,2026-05-28)— full plugin contract rewrite** — Allen 2026-05-28 10:30 directive "router, behavior, kind 三个" 是 core architectural insight:plugin authors 写 `handle_<action>(args, ctx)` 返 effects,**永不**见 slice 或 snapshot。SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` r3 定稿(1341 EN / 1329 ZH 行,8 OQs 全部 closed,r2 codex 7 HIGH + 4 MED + 2 LOW 全部 addressed,r3 基于 8 个历史 migration 的 GitHub PR 速度数据 recalibrated 进度估计)。3 个核心 primitives:**Router**(dispatch 入口 + cap + audit + idempotency,~200 LOC,peer of Behavior + Kind)、**Behavior**(per-action declarative contract via `use Ezagent.Behavior` + `action/3` 宏 + `handle_<action>/2` 处理器 + effects 返回)、**Kind**(URI + lifecycle + 3 个 composition patterns:Session / Entity / Resource — Resource 分 `:cold_resource` default `on_change` / `:hot_resource` default `:ephemeral` + opt-in periodic,r2 HIGH-3 closure)。Effects 词汇 9 件:`:set` / `:emit` / `:dispatch` / `:notify` / `:effect` / `:effect_returning`(with `bind_as:` + `{:ref, _, _}` substitution,r2 HIGH-1 closure)/ `:saga` / `:terminate` / `:halt`。Framework 8 个 plugin-invisible 模块:Router / EventLog / SnapshotStore(framework-decided every-N + on-terminate,**NOT** per-Behavior,r2 HIGH-3 closure)/ StateRebuilder(lazy-on-first-load per OQ-8) / SagaRunner(best-effort partial restore,**NOT** atomic rollback,r2 HIGH-5 closure)/ EventSubscriber(declarative,subscriber 用同一 effect 词汇)/ Caps.Engine / Kind.Host。**LOC 目标**:plugin 11,000 → ≤5,500(≥50% reduction)+ framework ~2,480 LOC(from ~5,000 scattered today)。**Acceptance**:10 CI-enforced criteria,含 7 grep-gates 防止 plugin 代码 regress 进 framework internals。**Drift defense**:SPEC §11 的 grep gates 永久绑死 plugin code MUST NOT import EventLog / SnapshotStore / StateRebuilder / EventSubscriber / Router internals | impl |
-| 148 | **Phase 1 ship — Router + Behavior(new) + Kind + LegacyBehaviorAdapter primitives**(PR #451,2026-05-28)— SPEC §6 Phase 1 落地。新模块:`Ezagent.Router`(~140 LOC,wraps existing `Ezagent.Invocation.dispatch/1` + `Kind.Runtime.handle_dispatch/4` via `%Cmd{}` → `%Invocation{}` 翻译;Phase 1 keep additive,Phase 2 加 direct handler invocation)、`Ezagent.Cmd`(dispatch envelope struct,target + action + args + ctx;`action` 是 atom 不再编码在 URI 的 `?action=` query string —— SPEC §2.1 分离 identity 跟 intent)、`Ezagent.Behavior` 加新合约面(`use Ezagent.Behavior` + `action/3` defmacro + `apply_effects/2` pure bucketiser,§4.4 phase order: State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations)。**LegacyBehaviorAdapter**:Phase 1 + 2 期 dispatch-equivalent bridge,**NOT replay-equivalent**(r2 HIGH-2 closure 显式标记 + parity test set 不验证 replay for adapted Behaviors)。子 PRs:#447(EventLog Phase 1B)、#448(SnapshotStore)、#449(SagaRunner)、#450(Router + Behavior + Kind + LegacyAdapter integration)。`Behavior.Echo` 是 Phase 1 唯一 new-contract reference plugin。**Drift defense**:SPEC §11 grep gate 守 plugin code 不 import framework internals;`Behavior.apply_effects/2` 是 PURE function,可单测 without process/IO setup | impl |
-| 149 | **Phase 1.5 / 1.5b ship — Kind.Runtime new-contract dispatch + effect executor wiring**(PR #453 + PR #454,2026-05-28)— Phase 1 让 `Ezagent.Behavior.apply_effects/2` 跑通 pure bucketiser,但 buckets 的 side effects(SnapshotStore write / EventLog append / Router dispatch / Phoenix.PubSub broadcast / SagaRunner / `Kind.terminate`)需要 caller 执行。Phase 1.5 把 `Kind.Runtime.apply_new_contract_effects/4` 接 PURE bucketiser 跟实际 framework 操作:固定顺序 **State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations**(Runtime moduledoc 是 normative source)。Phase 1.5b 完成 effect executor:`:set` 早在 `apply_effects/2` 内 applied(让 downstream `{:ref, ...}` substitution 看见 new values),`:effect_returning` execute 后 bind 到 `returning` map,`:ref` substitution walks 任何 nested term(maps / lists / tuples / 非-URI 非-MapSet structs)。`{:halt, reason}` short-circuits → 映射到 `{:error, {:halt, reason}}`,SnapshotStore 永远不见 would-be new slice。**Drift defense**:`apply_effects/2` 单测 + `Kind.Runtime` integration 测覆盖 bucket order + halt 行为 + `:ref` substitution shape | impl |
-| 150 | **Phase 2 / 2.5 ship — 28+ domain + 6 core Behaviors 全部 migrate 到 new contract**(PR #462 + PR #463,2026-05-28)— Phase 2 整合 7 个子 PR(p2a chat / p2b identity / p2c workspace / p2d external-mirror / p2e cc plugin verify-only / p2f feishu / p2g small plugins echo+np+curl_agent)。每个 Behavior 从 `@behaviour Ezagent.Behavior` + `invoke/4` 切到 `use Ezagent.Behavior` + `action/3` + `handle_<action>/2` + effects 返回。Slice 突变全走 `{:set, key, value}` effect;PubSub 广播全走 `{:notify, topic, payload}` effect;cross-Kind dispatch 全走 `{:dispatch, %Cmd{}}` effect;result-dependent in-handler dispatch(e.g. ReadMarker.mark after successful chat.receive cast)仍直接调 `Router.dispatch/1`(effect 词汇丢 dispatch 返回值)。Phase 2.5 PR #463 收尾 core 6 个 Behavior:Lifecycle / Routing / Presence / Sandbox / Notifications + 一些 cap-only(`dispatchable?/0 == false`)。**Migration parity policy**(r2 MED-3 closure):"dispatch parity"(legacy adapter mode — same reply, same PubSub)vs "replay parity"(new-design only — events fold to same state);新 EventLog rows 是 **intentional incompatibility** 不是 equivalence。**Drift defense**:per-Behavior 集成测 覆盖 same-as-legacy semantics;`Behavior.@interface` 仍由 `action/3` 宏自动派生,所有 adapter(CLI / LV / Channel)无感知 | impl |
-| 151 | **Phase 3 ship — LegacyBehaviorAdapter DELETED + `invoke/4` retired to `@optional_callbacks`**(PR #464,2026-05-28)— Phase 2 完成 28+6 Behaviors 全数 migrate 后,无 production 路径再用 `Behavior.invoke/4`。Phase 3 物理删除 `Ezagent.LegacyBehaviorAdapter` 模块 + 所有引用;`@callback invoke/4` declaration 在 `Ezagent.Behavior` 标记 `@optional_callbacks`(grep-able + 让 stale Behavior 见 precise CompileError 而非 silent dispatch failure)。`Kind.Runtime.handle_dispatch/4` 旧 step 7 `behavior.invoke(action, slice, args, ctx)` 路径被 new-contract `behavior.handle_<action>(args, ctx)` 完全取代。**Phase 1 + 2 grace window 关闭**:任何遗漏的 legacy Behavior 会在 compile time 撞 missing-handler CompileError(SPEC §4.3 `@before_compile` invariant — 每个 declared action MUST have matching `def handle_<action>/2`)。**Drift defense**:codex r2 HIGH-2 closure(adapter NOT replay-equivalent)被 Phase 3 deletion 物理保证 ——adapter 不在了,replay parity 仅适用 new-contract Behaviors。`docs/scenarios/README.md` Category 18 同步更新,反映"LegacyAdapter Phase 1 引入 / Phase 3 删除"git archaeology trail | impl |
+| 147 | **Router / Behavior / Kind self-built architecture(SPEC PR #445,2026-05-28)— full plugin contract rewrite** — Allen 2026-05-28 10:30 directive "router, behavior, kind 三个" 是 core architectural insight:plugin authors 写 `handle_<action>(args, ctx)` 返 effects,**永不**见 slice 或 snapshot。SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` r3 定稿(1341 EN / 1329 ZH 行,8 OQs 全部 closed,r2 codex 7 HIGH + 4 MED + 2 LOW 全部 addressed,r3 基于 8 个历史 migration 的 GitHub PR 速度数据 recalibrated 进度估计)。3 个核心 primitives:**Router**(dispatch 入口 + cap + audit + idempotency,~200 LOC,peer of Behavior + Kind)、**Behavior**(per-action declarative contract via `use Ezagent.ActionSet` + `action/3` 宏 + `handle_<action>/2` 处理器 + effects 返回)、**Kind**(URI + lifecycle + 3 个 composition patterns:Session / Entity / Resource — Resource 分 `:cold_resource` default `on_change` / `:hot_resource` default `:ephemeral` + opt-in periodic,r2 HIGH-3 closure)。Effects 词汇 9 件:`:set` / `:emit` / `:dispatch` / `:notify` / `:effect` / `:effect_returning`(with `bind_as:` + `{:ref, _, _}` substitution,r2 HIGH-1 closure)/ `:saga` / `:terminate` / `:halt`。Framework 8 个 plugin-invisible 模块:Router / EventLog / SnapshotStore(framework-decided every-N + on-terminate,**NOT** per-Behavior,r2 HIGH-3 closure)/ StateRebuilder(lazy-on-first-load per OQ-8) / SagaRunner(best-effort partial restore,**NOT** atomic rollback,r2 HIGH-5 closure)/ EventSubscriber(declarative,subscriber 用同一 effect 词汇)/ Caps.Engine / Kind.Host。**LOC 目标**:plugin 11,000 → ≤5,500(≥50% reduction)+ framework ~2,480 LOC(from ~5,000 scattered today)。**Acceptance**:10 CI-enforced criteria,含 7 grep-gates 防止 plugin 代码 regress 进 framework internals。**Drift defense**:SPEC §11 的 grep gates 永久绑死 plugin code MUST NOT import EventLog / SnapshotStore / StateRebuilder / EventSubscriber / Router internals | impl |
+| 148 | **Phase 1 ship — Router + Behavior(new) + Kind + LegacyBehaviorAdapter primitives**(PR #451,2026-05-28)— SPEC §6 Phase 1 落地。新模块:`Ezagent.Router`(~140 LOC,wraps existing `Ezagent.Invocation.dispatch/1` + `Kind.Runtime.handle_dispatch/4` via `%Cmd{}` → `%Invocation{}` 翻译;Phase 1 keep additive,Phase 2 加 direct handler invocation)、`Ezagent.Cmd`(dispatch envelope struct,target + action + args + ctx;`action` 是 atom 不再编码在 URI 的 `?action=` query string —— SPEC §2.1 分离 identity 跟 intent)、`Ezagent.ActionSet` 加新合约面(`use Ezagent.ActionSet` + `action/3` defmacro + `apply_effects/2` pure bucketiser,§4.4 phase order: State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations)。**LegacyBehaviorAdapter**:Phase 1 + 2 期 dispatch-equivalent bridge,**NOT replay-equivalent**(r2 HIGH-2 closure 显式标记 + parity test set 不验证 replay for adapted Behaviors)。子 PRs:#447(EventLog Phase 1B)、#448(SnapshotStore)、#449(SagaRunner)、#450(Router + Behavior + Kind + LegacyAdapter integration)。`Behavior.Echo` 是 Phase 1 唯一 new-contract reference plugin。**Drift defense**:SPEC §11 grep gate 守 plugin code 不 import framework internals;`Behavior.apply_effects/2` 是 PURE function,可单测 without process/IO setup | impl |
+| 149 | **Phase 1.5 / 1.5b ship — Kind.Runtime new-contract dispatch + effect executor wiring**(PR #453 + PR #454,2026-05-28)— Phase 1 让 `Ezagent.ActionSet.apply_effects/2` 跑通 pure bucketiser,但 buckets 的 side effects(SnapshotStore write / EventLog append / Router dispatch / Phoenix.PubSub broadcast / SagaRunner / `Kind.terminate`)需要 caller 执行。Phase 1.5 把 `Kind.Runtime.apply_new_contract_effects/4` 接 PURE bucketiser 跟实际 framework 操作:固定顺序 **State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations**(Runtime moduledoc 是 normative source)。Phase 1.5b 完成 effect executor:`:set` 早在 `apply_effects/2` 内 applied(让 downstream `{:ref, ...}` substitution 看见 new values),`:effect_returning` execute 后 bind 到 `returning` map,`:ref` substitution walks 任何 nested term(maps / lists / tuples / 非-URI 非-MapSet structs)。`{:halt, reason}` short-circuits → 映射到 `{:error, {:halt, reason}}`,SnapshotStore 永远不见 would-be new slice。**Drift defense**:`apply_effects/2` 单测 + `Kind.Runtime` integration 测覆盖 bucket order + halt 行为 + `:ref` substitution shape | impl |
+| 150 | **Phase 2 / 2.5 ship — 28+ domain + 6 core Behaviors 全部 migrate 到 new contract**(PR #462 + PR #463,2026-05-28)— Phase 2 整合 7 个子 PR(p2a chat / p2b identity / p2c workspace / p2d external-mirror / p2e cc plugin verify-only / p2f feishu / p2g small plugins echo+np+curl_agent)。每个 Behavior 从 `@behaviour Ezagent.ActionSet` + `invoke/4` 切到 `use Ezagent.ActionSet` + `action/3` + `handle_<action>/2` + effects 返回。Slice 突变全走 `{:set, key, value}` effect;PubSub 广播全走 `{:notify, topic, payload}` effect;cross-Kind dispatch 全走 `{:dispatch, %Cmd{}}` effect;result-dependent in-handler dispatch(e.g. ReadMarker.mark after successful chat.receive cast)仍直接调 `Router.dispatch/1`(effect 词汇丢 dispatch 返回值)。Phase 2.5 PR #463 收尾 core 6 个 Behavior:Lifecycle / Routing / Presence / Sandbox / Notifications + 一些 cap-only(`dispatchable?/0 == false`)。**Migration parity policy**(r2 MED-3 closure):"dispatch parity"(legacy adapter mode — same reply, same PubSub)vs "replay parity"(new-design only — events fold to same state);新 EventLog rows 是 **intentional incompatibility** 不是 equivalence。**Drift defense**:per-Behavior 集成测 覆盖 same-as-legacy semantics;`Behavior.@interface` 仍由 `action/3` 宏自动派生,所有 adapter(CLI / LV / Channel)无感知 | impl |
+| 151 | **Phase 3 ship — LegacyBehaviorAdapter DELETED + `invoke/4` retired to `@optional_callbacks`**(PR #464,2026-05-28)— Phase 2 完成 28+6 Behaviors 全数 migrate 后,无 production 路径再用 `Behavior.invoke/4`。Phase 3 物理删除 `Ezagent.LegacyBehaviorAdapter` 模块 + 所有引用;`@callback invoke/4` declaration 在 `Ezagent.ActionSet` 标记 `@optional_callbacks`(grep-able + 让 stale Behavior 见 precise CompileError 而非 silent dispatch failure)。`Kind.Runtime.handle_dispatch/4` 旧 step 7 `behavior.invoke(action, slice, args, ctx)` 路径被 new-contract `behavior.handle_<action>(args, ctx)` 完全取代。**Phase 1 + 2 grace window 关闭**:任何遗漏的 legacy Behavior 会在 compile time 撞 missing-handler CompileError(SPEC §4.3 `@before_compile` invariant — 每个 declared action MUST have matching `def handle_<action>/2`)。**Drift defense**:codex r2 HIGH-2 closure(adapter NOT replay-equivalent)被 Phase 3 deletion 物理保证 ——adapter 不在了,replay parity 仅适用 new-contract Behaviors。`docs/scenarios/README.md` Category 18 同步更新,反映"LegacyAdapter Phase 1 引入 / Phase 3 删除"git archaeology trail | impl |
 | 152 | **Phase 4 ship — Kind.Server attach metadata + `read_graph` cleanup + audit fix**(PR #469,2026-05-28)— Phase 4 polish:`Kind.behaviors_of/1` + `persistence_of/1` 新 helpers 优先于 `__attached_behaviors__/0`(plugin authors 用 这些)。`Audit.uri_to_str(:system)` 修复返回 `"system://anonymous"`(原来某些 boot path 传 `:system` atom 直接给 audit 写入,SQL 接受不了非 string)。`read_graph` 函数清理 stale code paths。**E2E test suite (#465-#468) ship**:Category 5 + 10(CapBAC + routing)/ scenarios #24 + #25(destroy cascade + state rebuild)/ Categories 4 + 7 + 17(Feishu + PTY + admin LV)/ scenarios #30 + #5-7(plugin DX + cross-flavor agent roundtrip)— 共 165 个 passing E2E tests 覆盖 SPEC §7 全部 acceptance criteria。**E2E scenarios catalog (#452)** 同期 ship,30 个 scenarios 文档化在 `docs/scenarios/`,bilingual lockstep,作为 Phase 1-4 migration 的 acceptance gate。**Drift defense**:165 个 E2E tests 是 Phase 1-4 完成的 actual gate(per `feedback_completion_requires_invariant_test` —— invariant test 失败 = 架构目标未达,**这是** completion claim 的 gate,不是 PR-merge 或 unit-tests-pass);`docs/scenarios/README.md` §5 "Phase 1-4 migration shipped" 是 dev team 接手时的 single-source-of-truth | impl |
-| 153 | **Lifecycle API = SOLE developer surface;R/B/K = internal engine**(SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`,Phase A/B/C,2026-05-29)— Allen 的 core 决策:把 §6.0 的 CQRS 机制(slice / invocation / snapshot / persistence-strategy / 四个 boot hooks)全部藏在 `use Ezagent.Lifecycle` 后面。**两容器状态模型**:`state`(PERSISTENT — framework auto-snapshot)+ `transients`(NEVER persisted — 没有序列化路径;PIDs / refs / ETS / ports / subprocess / monitor refs)。一个 transient **结构上不可能**被意外持久化(无序列化路径),也**不可能**在重启时被遗忘(只能在 `activate/2` 里建,而 `activate` 每次 start 都跑 —— fresh + cold-load 同路径)。这就**by construction** 杀掉了 cold-restart bug class(#110 orchestrator MCP ETS / #113 codex bridge subprocess / #114 AgentLineage ETS — 全是"fresh works, restart doesn't")。**五个 coarse hooks**:`create/1`(首次存在,gated by `ever_created` 列 OQ-1)/ `activate/2`(每次 start,pre-`:ready`,重建所有 transients + reconcile DB-projection state)/ `handle_<action>/2`(不变的 effect 语法 + 新增 `{:set_transient, k, v}` OQ-2)/ `deactivate/2`(优雅停,`:ok`-only F5)/ `destroy/2`(永久删除)。**两个 fine hooks**:`pre_handle/3` + `post_handle/4`(横切关注:authz / audit / effect 注入)。**两个补充 hooks**:`handle_signal/2`(非-action 消息 `:DOWN` / PubSub / 自延迟 mailbox — `handle_kind_message/3` 后继,OQ-3)/ `activated/2`(post-`:ready` reachability broadcast,`on_ready/2` 改名,OQ-5)。**§10 codex binding rules**:R10-1 自延迟(`send(self(), …)`)boot work 进 `activated`/`handle_signal` **不进** `activate`(pre-`:ready`)。R10-2 `{:set}` + `{:set_transient}` 是纯 pre-commit map reductions,只 `state` snapshot,transient 变更永不触发 snapshot write。R10-3 **engine `Ezagent.Behavior` 契约保留**(macro 的 compile target;Phase C 只删 developer-tier 旧表面 + provably-dead carve-outs,**不删** engine 契约 / callback 定义 / `Kind.Runtime` 对它的使用)。R10-4 snapshot WIPE cutover 是 verified ordered sequence(停所有 node → deploy → 删 `kind_snapshots` → 重启)。**§11 三条命名原则**(NP-1 按职责命名最窄准确范围 / NP-2 用本层词汇,`ezagent_core` 模块名不得含上层概念 `Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`/ NP-3 名字语义宽度 = action 集合宽度)—— 由 `Behavior.Lifecycle → Behavior.Terminable` 的命名旅程提炼(OQ-6;`Terminable` 是 Kind-generic 能力名,`Enumerable`/`Collectable` 风格)。**Phase C HARD gates**:新 task `mix ezagent.check_invariants.lifecycle`(8 个 grep gate + NP-2/NP-3 lint),developer-tier 文件再现旧表面(`use Ezagent.Behavior` / `def init_slice` / `def state_slice` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` / `invoke/4` callback / Lifecycle handler 里直调 `Invocation.dispatch`/`SnapshotStore`/`EventLog.append`)即 CI 红。engine allowlist:`behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`。**Drift defense**:gate 本身**就是** invariant test(`feedback_completion_requires_invariant_test`);clean 时绿、故意违规时红(已验证)。docs:ARCHITECTURE §6.0.7 + GLOSSARY Behavior/Lifecycle 条目 + `ezagent-developer` skill `references/lifecycle.md` | impl |
+| 153 | **Lifecycle API = SOLE developer surface;R/B/K = internal engine**(SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`,Phase A/B/C,2026-05-29)— Allen 的 core 决策:把 §6.0 的 CQRS 机制(slice / invocation / snapshot / persistence-strategy / 四个 boot hooks)全部藏在 `use Ezagent.Lifecycle` 后面。**两容器状态模型**:`state`(PERSISTENT — framework auto-snapshot)+ `transients`(NEVER persisted — 没有序列化路径;PIDs / refs / ETS / ports / subprocess / monitor refs)。一个 transient **结构上不可能**被意外持久化(无序列化路径),也**不可能**在重启时被遗忘(只能在 `activate/2` 里建,而 `activate` 每次 start 都跑 —— fresh + cold-load 同路径)。这就**by construction** 杀掉了 cold-restart bug class(#110 orchestrator MCP ETS / #113 codex bridge subprocess / #114 AgentLineage ETS — 全是"fresh works, restart doesn't")。**五个 coarse hooks**:`create/1`(首次存在,gated by `ever_created` 列 OQ-1)/ `activate/2`(每次 start,pre-`:ready`,重建所有 transients + reconcile DB-projection state)/ `handle_<action>/2`(不变的 effect 语法 + 新增 `{:set_transient, k, v}` OQ-2)/ `deactivate/2`(优雅停,`:ok`-only F5)/ `destroy/2`(永久删除)。**两个 fine hooks**:`pre_handle/3` + `post_handle/4`(横切关注:authz / audit / effect 注入)。**两个补充 hooks**:`handle_signal/2`(非-action 消息 `:DOWN` / PubSub / 自延迟 mailbox — `handle_kind_message/3` 后继,OQ-3)/ `activated/2`(post-`:ready` reachability broadcast,`on_ready/2` 改名,OQ-5)。**§10 codex binding rules**:R10-1 自延迟(`send(self(), …)`)boot work 进 `activated`/`handle_signal` **不进** `activate`(pre-`:ready`)。R10-2 `{:set}` + `{:set_transient}` 是纯 pre-commit map reductions,只 `state` snapshot,transient 变更永不触发 snapshot write。R10-3 **engine `Ezagent.ActionSet` 契约保留**(macro 的 compile target;Phase C 只删 developer-tier 旧表面 + provably-dead carve-outs,**不删** engine 契约 / callback 定义 / `Kind.Runtime` 对它的使用)。R10-4 snapshot WIPE cutover 是 verified ordered sequence(停所有 node → deploy → 删 `kind_snapshots` → 重启)。**§11 三条命名原则**(NP-1 按职责命名最窄准确范围 / NP-2 用本层词汇,`ezagent_core` 模块名不得含上层概念 `Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`/ NP-3 名字语义宽度 = action 集合宽度)—— 由 `Behavior.Lifecycle → Behavior.Terminable` 的命名旅程提炼(OQ-6;`Terminable` 是 Kind-generic 能力名,`Enumerable`/`Collectable` 风格)。**Phase C HARD gates**:新 task `mix ezagent.check_invariants.lifecycle`(8 个 grep gate + NP-2/NP-3 lint),developer-tier 文件再现旧表面(`use Ezagent.ActionSet` / `def init_slice` / `def state_slice` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` / `invoke/4` callback / Lifecycle handler 里直调 `Invocation.dispatch`/`SnapshotStore`/`EventLog.append`)即 CI 红。engine allowlist:`behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`。**Drift defense**:gate 本身**就是** invariant test(`feedback_completion_requires_invariant_test`);clean 时绿、故意违规时红(已验证)。docs:ARCHITECTURE §6.0.7 + GLOSSARY Behavior/Lifecycle 条目 + `ezagent-developer` skill `references/lifecycle.md` | impl |
 | 154 | **Architecture fitness functions = Phase-2 debt counters,Phase-3+ ratchet source of truth**(#25 architecture deepening Phase 2,2026-06-07)— Phase 2 不是重构,而是 executable architecture gate:`mix ezagent.arch.scan` + `apps/ezagent_core/test/architecture/` + `arch_baseline_manifest.exs`。每个 fitness function 量化一个 debt/invariant surface(oversized modules,def-counts,SpawnRegistry writers,create_session callers,duplicated `resolve_template_class`,cc/codex Template Class LOC,raw `Home.path`,`Path.expand("~")`,`spawn_fresh`,`:all_slices`,`{:set}` effects,cap-check presence,Kind.Runtime ordering/reentry,cold-restart respawn round-trip)。Tests assert **count <= cap**,so Phase 2 lands green-at-baseline and freezes current debt;Phase 3+ PRs lower a count and lower the cap to match. Any cap raise is review-blocking unless the manifest line includes `# arch-cap-bump: <reason>`. Human-readable baseline lives at `docs/notes/2026-06-07-arch-fitness-baseline.md`. **Drift defense**:new architecture debt fails CI instead of silently growing;objective refactor acceptance is "count and cap moved",not subjective cleanup prose | impl |
 
 ---
@@ -3409,8 +3409,8 @@ LiveView 没有"手写命令解析",CLI 没有"手写参数列表"——**两侧
 #### D.3.3 命名映射规则
 
 LiveView slash 命令格式:`/<behavior-short-name>:<action>`,如:
-- `/agent:set-default` → `Ezagent.Behavior.SessionRouting.set_default`
-- `/chat:send` → `Ezagent.Behavior.Chat.send`
+- `/agent:set-default` → `Ezagent.ActionSet.SessionRouting.set_default`
+- `/chat:send` → `Ezagent.ActionSet.Chat.send`
 
 CLI 命令格式:`esr <behavior-short-name> <action>`(下划线/连字符互转):
 - `esr agent set-default` ↔ `set_default` action

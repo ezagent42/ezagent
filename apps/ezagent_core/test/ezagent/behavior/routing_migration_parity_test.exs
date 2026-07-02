@@ -1,10 +1,10 @@
-defmodule Ezagent.Behavior.RoutingMigrationParityTest do
+defmodule Ezagent.ActionSet.RoutingMigrationParityTest do
   @moduledoc """
-  Phase 2.5 migration parity test for `Ezagent.Behavior.Routing` per
+  Phase 2.5 migration parity test for `Ezagent.ActionSet.Routing` per
   SPEC `2026-05-28-router-behavior-kind-architecture.md` §7.3 Level 1
   (dispatch parity).
 
-  Validates that the migrated `Ezagent.Behavior.Routing` produces the
+  Validates that the migrated `Ezagent.ActionSet.Routing` produces the
   same dispatch-visible outcomes via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_<action>/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration
@@ -35,7 +35,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.Routing
+  alias Ezagent.ActionSet.Routing
   alias Ezagent.Routing.RuleStore
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
     @impl true
     def type_name, do: :routing_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Routing]
+    def behaviors, do: [Ezagent.ActionSet.Routing]
     @impl true
     def persistence, do: :ephemeral
   end
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Routing)
+      assert Ezagent.ActionSet.new_style?(Routing)
     end
 
     test "__action_names__/0 lists all four actions" do

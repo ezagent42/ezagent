@@ -9,7 +9,7 @@ defmodule Ezagent.Session.Participants do
   authorization or the dispatch.
 
   `remove_participant/3` dispatches the isomorphic `session.remove_participant`
-  action (`Ezagent.Behavior.Session`) under the CALLER's ctx (`%{caller, caps}`),
+  action (`Ezagent.ActionSet.Session`) under the CALLER's ctx (`%{caller, caps}`),
   authorized at the chokepoint by `ctx.caps`. The surfaces own ctx CONSTRUCTION
   (the UI passes its live caps; the CLI builds an operator cap) — this module
   does NO persisted-caps read (cap_check_only_at_chokepoint p6). For a self-leave
@@ -24,7 +24,7 @@ defmodule Ezagent.Session.Participants do
   PR-B cap-model change).
   """
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
 
   @typedoc "Caller dispatch context: the acting entity + its caps."

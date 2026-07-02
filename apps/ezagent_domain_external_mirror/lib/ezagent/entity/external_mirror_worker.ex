@@ -35,7 +35,7 @@ defmodule Ezagent.Entity.ExternalMirrorWorker do
 
   ## Behaviors
 
-  One Behavior — `Ezagent.Behavior.ExternalMirrorWorker` — owns the
+  One Behavior — `Ezagent.ActionSet.ExternalMirrorWorker` — owns the
   `:external_mirror_worker` slice + the `:publish` action +
   the post-init split-init pattern (SPEC §6.1 r4 HIGH-1 deadlock
   fix): `init_slice/1` returns minimal state with
@@ -65,7 +65,7 @@ defmodule Ezagent.Entity.ExternalMirrorWorker do
   def type_name, do: :external_mirror_worker
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.ExternalMirrorWorker]
+  def behaviors, do: [Ezagent.ActionSet.ExternalMirrorWorker]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

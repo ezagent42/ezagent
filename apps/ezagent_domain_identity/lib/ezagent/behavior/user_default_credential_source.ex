@@ -1,11 +1,11 @@
-defmodule Ezagent.Behavior.UserDefaultCredentialSource do
+defmodule Ezagent.ActionSet.UserDefaultCredentialSource do
   @moduledoc """
   #17 cascade PR-0 (spec §5.2) — the cap-checked, audited chokepoint for writing a
   user's default credential source pointer.
 
   ## Why a separate Behavior (own cap subject)
 
-  Same rationale as `Ezagent.Behavior.WorkspaceUserAdmin`: the Capability struct's
+  Same rationale as `Ezagent.ActionSet.WorkspaceUserAdmin`: the Capability struct's
   action axis is not always enforced at the cap level, so each privileged action gets
   its OWN Behavior + cap subject. `:set_default_credential_source` is registered on the
   User Kind with the distinct cap:
@@ -20,7 +20,7 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
   table BOTH live in THIS handler — there is NO exported cap-less mutator in core
   (`Ezagent.Credential.UserDefaultSource` keeps only the schema, `resolve/3`, a pure
   `changeset/2` builder, and the dispatch helper `set_via_dispatch/3`). This mirrors how
-  `Ezagent.Behavior.ExternalMirror` does the cross-app `Repo.insert` on the core-owned
+  `Ezagent.ActionSet.ExternalMirror` does the cross-app `Repo.insert` on the core-owned
   `Ezagent.ExternalMirror.BindingRow` schema. Because the persistence is structurally
   coupled to this cap-checked + audited dispatch handler, an in-VM caller cannot write a
   victim's pointer. That single-writer invariant is enforced structurally by
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
   # audited handler (codex H2). There is NO exported cap-less writer in core: the
   # cross-source validations AND the cross-app `EzagentCore.Repo.insert` against the
   # core-owned `user_default_credential_sources` table both run here, structurally
-  # coupled to the dispatch chokepoint — exactly like `Ezagent.Behavior.ExternalMirror`
+  # coupled to the dispatch chokepoint — exactly like `Ezagent.ActionSet.ExternalMirror`
   # writes the core-owned `Ezagent.ExternalMirror.BindingRow`. The core store provides
   # only the PURE `changeset/2` builder (no Repo write of its own).
   #

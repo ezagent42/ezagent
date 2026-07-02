@@ -37,7 +37,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Orchestrator.{McpRegistry, McpServer}
   alias Ezagent.Test.SnapshotFixtures

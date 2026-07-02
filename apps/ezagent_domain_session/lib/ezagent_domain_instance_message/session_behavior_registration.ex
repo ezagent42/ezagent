@@ -17,7 +17,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
 
   alias Ezagent.CapabilityRegistry
   alias Ezagent.Entity.{Agent, AgentTemplate, Session, SessionTemplate, User}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
 
   @doc """
   Register every chat-plugin Kind ↔ Behavior binding in `CapabilityRegistry`.
@@ -47,7 +47,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # PR-9a (#53) — `{Agent, :receive}` moved to `EzagentDomainAgent.Application`
     # (the Agent Kind now lives in the agent domain); `{User, :receive}` stays
     # here (User Kind / inbox is the session domain's concern).
-    :ok = CapabilityRegistry.register(User, :receive, Ezagent.Behavior.User.Receive)
+    :ok = CapabilityRegistry.register(User, :receive, Ezagent.ActionSet.User.Receive)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.
@@ -55,7 +55,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # dispatch to `session://<name>?action=routing.<action>` against
     # the Session Kind. The synthetic `routing-admin://default`
     # singleton is dissolved; rules naturally cap-scope to their session.
-    alias Ezagent.Behavior.Routing, as: RB
+    alias Ezagent.ActionSet.Routing, as: RB
 
     Enum.each(RB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Session, action, RB)
@@ -69,20 +69,20 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # the PTY runtime is no longer plugin-cc-specific (any flavor whose
     # template `spawns_with: [Ezagent.Domain.Pty.Server]` reuses the
     # same dispatch path).
-    alias Ezagent.Behavior.Pty, as: PtyB
+    alias Ezagent.ActionSet.Pty, as: PtyB
 
     Enum.each(PtyB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Agent, action, PtyB)
     end)
 
     # Phase 7 completion PR-1 (SPEC §1.0) — register the new
-    # `Ezagent.Behavior.Template` Behavior's three actions
+    # `Ezagent.ActionSet.Template` Behavior's three actions
     # (`:read` / `:write` / `:instantiate`) on BOTH Template Kinds.
     # After this, `?action=template.read` / `template.write` /
     # `template.instantiate` resolve through `BehaviorRegistry` on
     # either Template Kind and are dispatch-invocable; CapBAC step
-    # 5.5 derives `behavior == Ezagent.Behavior.Template`.
-    alias Ezagent.Behavior.Template, as: TemplateB
+    # 5.5 derives `behavior == Ezagent.ActionSet.Template`.
+    alias Ezagent.ActionSet.Template, as: TemplateB
 
     Enum.each(TemplateB.actions(), fn action ->
       :ok = CapabilityRegistry.register(AgentTemplate, action, TemplateB)
@@ -98,8 +98,8 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # self-sufficient. P5-1b: these are the UNIFIED `Entity.Session`'s only
     # publisher regs — the former standalone socialware-session Kind (deleted
     # in P5-3) no longer carries any duplicate regs.
-    alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
-    alias Ezagent.Behavior.SocialwarePublisherRead
+    alias Ezagent.ActionSet.Publisher.SessionImpl, as: PublisherSI
+    alias Ezagent.ActionSet.SocialwarePublisherRead
 
     :ok = CapabilityRegistry.register(Session, :subscribe_from, PublisherSI)
 
@@ -108,11 +108,11 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     end)
 
     # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register the
-    # `Ezagent.Behavior.ExternalMirror` (bind / unbind / list_bindings) Behavior
+    # `Ezagent.ActionSet.ExternalMirror` (bind / unbind / list_bindings) Behavior
     # on `Entity.Session`. Per `feedback_register_lookup_key_parity` / SPEC §5.1
     # step 7, Kind ↔ Behavior wiring lives in the app that DEFINES the Kind
     # (here), even though the module ships from `:ezagent_domain_external_mirror`.
-    alias Ezagent.Behavior.ExternalMirror, as: ExternalMirrorBehavior
+    alias Ezagent.ActionSet.ExternalMirror, as: ExternalMirrorBehavior
 
     Enum.each(ExternalMirrorBehavior.actions(), fn action ->
       :ok = CapabilityRegistry.register(Session, action, ExternalMirrorBehavior)
@@ -126,20 +126,20 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # instance's `:kind_base` (`Session.chat_behaviors/0`) excludes Turn/Surface
     # → `instance_set_gate` (runtime E9) DENIES `turn.*`/`surface.*` on it; a
     # socialware instance (`socialware_behaviors/0`) includes them → allowed.
-    Enum.each(Ezagent.Behavior.Turn.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, Ezagent.Behavior.Turn)
+    Enum.each(Ezagent.ActionSet.Turn.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, Ezagent.ActionSet.Turn)
     end)
 
-    Enum.each(Ezagent.Behavior.Surface.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, Ezagent.Behavior.Surface)
+    Enum.each(Ezagent.ActionSet.Surface.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, Ezagent.ActionSet.Surface)
     end)
 
-    Enum.each(Ezagent.Behavior.SupervisorApproval.actions(), fn action ->
+    Enum.each(Ezagent.ActionSet.SupervisorApproval.actions(), fn action ->
       :ok =
         CapabilityRegistry.register(
           Session,
           action,
-          Ezagent.Behavior.SupervisorApproval
+          Ezagent.ActionSet.SupervisorApproval
         )
     end)
 
@@ -151,7 +151,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # would bypass CapBAC). The orchestrator's cap #2 (`{:spawned_by, orch}`)
     # permits terminating only ITS OWN workers. (`lifecycle.terminate` is a
     # cosmetic label; resolution is by the `:terminate` atom.)
-    alias Ezagent.Behavior.Terminable, as: TerminableB
+    alias Ezagent.ActionSet.Terminable, as: TerminableB
 
     Enum.each(TerminableB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Agent, action, TerminableB)
@@ -161,7 +161,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # extension-management actions. In `Agent.behaviors/0` (init_slice fires);
     # ALSO registered so dispatch (read / update_config / destroy) goes through
     # CapBAC. Same pattern as Terminable above.
-    alias Ezagent.Behavior.Sandbox, as: SandboxB
+    alias Ezagent.ActionSet.Sandbox, as: SandboxB
 
     Enum.each(SandboxB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Agent, action, SandboxB)
@@ -173,7 +173,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
     # via `:any`); `OrchestratorHealthCard` consults it to gate the Restart
     # button. `dispatchable?: false` → writes ONLY the subject row, no dispatch
     # path can invoke `:restart` (same pattern as `Behavior.Notifications`).
-    alias Ezagent.Behavior.OrchestratorAdmin, as: OrchAdminB
+    alias Ezagent.ActionSet.OrchestratorAdmin, as: OrchAdminB
 
     Enum.each(OrchAdminB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)

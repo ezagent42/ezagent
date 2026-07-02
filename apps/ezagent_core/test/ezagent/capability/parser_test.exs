@@ -14,7 +14,7 @@ defmodule Ezagent.Capability.ParserTest do
     test "single kind.behavior spec" do
       {:ok, [cap]} = Parser.parse("workspace.workspace", @granter, @now)
       assert cap.kind == :workspace
-      assert cap.behavior == Ezagent.Behavior.Workspace
+      assert cap.behavior == Ezagent.ActionSet.Workspace
       assert cap.instance == :any
       assert cap.granted_by == @granter
     end

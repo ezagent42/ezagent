@@ -1,6 +1,6 @@
 defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
   @moduledoc """
-  Integration test for `Ezagent.Behavior.Sandbox` (PR2 2026-05-24, Allen)
+  Integration test for `Ezagent.ActionSet.Sandbox` (PR2 2026-05-24, Allen)
   — exercises the full dispatch path against a real spawned Agent Kind.
 
   Asserts:
@@ -19,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, KindRegistry}
-  alias Ezagent.Behavior.Sandbox
+  alias Ezagent.ActionSet.Sandbox
   alias Ezagent.Entity.{Agent, User}
 
   defp uniq, do: System.unique_integer([:positive])

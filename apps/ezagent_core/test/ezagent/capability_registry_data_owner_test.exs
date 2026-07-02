@@ -53,7 +53,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
 
     test "returns :no_owner when Behavior does not export data_owner/1" do
       defmodule UnownedBehavior do
-        @behaviour Ezagent.Behavior
+        @behaviour Ezagent.ActionSet
         def actions, do: [:noop]
         def state_slice, do: :u
         def init_slice(_), do: %{}
@@ -207,7 +207,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
   describe "default_grants_from_data_owner/2 — non-URI owner returns no entry" do
     test ":any / :no_owner / {:scope, _, _} produce empty list" do
       defmodule AnyOwnerBehavior do
-        @behaviour Ezagent.Behavior
+        @behaviour Ezagent.ActionSet
         def actions, do: [:do_thing]
         def state_slice, do: :any_o
         def init_slice(_), do: %{}

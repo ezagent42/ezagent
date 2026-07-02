@@ -521,7 +521,7 @@ defmodule Ezagent.Workspace.Loader do
   # `:instantiate` self-authority cap, the step-5.5 authorizer for the boot
   # re-spawn dispatch (replaces the deleted `system://workspace-loader`
   # principal). Shape mirrors
-  # `Ezagent.Behavior.Workspace.required_caps/0[:instantiate]` =
+  # `Ezagent.ActionSet.Workspace.required_caps/0[:instantiate]` =
   # `cap(:workspace, Workspace, :instantiate)` but SCOPED to the concrete
   # workspace (`instance`/`workspace_uri` from `workspace_uri`) for tightest
   # least-privilege — the runtime substitutes the same concrete instance from
@@ -534,7 +534,7 @@ defmodule Ezagent.Workspace.Loader do
       %Ezagent.Capability{
         Ezagent.Capability.cap(
           :workspace,
-          Ezagent.Behavior.Workspace,
+          Ezagent.ActionSet.Workspace,
           :instantiate,
           Ezagent.URI.instance(workspace_uri),
           Ezagent.Capability.workspace_of(workspace_uri)

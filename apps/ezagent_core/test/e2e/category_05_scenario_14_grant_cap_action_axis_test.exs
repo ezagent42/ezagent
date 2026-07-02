@@ -43,7 +43,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -52,7 +52,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -66,7 +66,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -75,7 +75,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :join,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -89,7 +89,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -98,7 +98,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :receive,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -113,7 +113,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -122,7 +122,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_b,
           workspace_uri: @tenant_ws
@@ -136,7 +136,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: :any,
           workspace_uri: @tenant_ws
@@ -146,7 +146,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
         needed =
           needed(
             kind: :session,
-            behavior: Ezagent.Behavior.Session,
+            behavior: Ezagent.ActionSet.Session,
             action: :send,
             instance: inst,
             workspace_uri: @tenant_ws
@@ -163,7 +163,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -172,7 +172,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Routing,
+          behavior: Ezagent.ActionSet.Routing,
           action: :add_rule,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -188,7 +188,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -198,7 +198,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @system_ws
@@ -230,10 +230,10 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       # Sample 5 distinct (kind, behavior, action, instance, workspace) tuples
       # — admin must authorize every one.
       cases = [
-        {:session, Ezagent.Behavior.Session, :send, @session_a, @tenant_ws},
-        {:session, Ezagent.Behavior.Routing, :add_rule, @session_b, @system_ws},
-        {:workspace, Ezagent.Behavior.Workspace, :add_member, @tenant_ws, @tenant_ws},
-        {:user, Ezagent.Behavior.Identity, :grant_cap, @session_a, @system_ws},
+        {:session, Ezagent.ActionSet.Session, :send, @session_a, @tenant_ws},
+        {:session, Ezagent.ActionSet.Routing, :add_rule, @session_b, @system_ws},
+        {:workspace, Ezagent.ActionSet.Workspace, :add_member, @tenant_ws, @tenant_ws},
+        {:user, Ezagent.ActionSet.Identity, :grant_cap, @session_a, @system_ws},
         {:any, :any, :any, @session_b, :any}
       ]
 
@@ -267,7 +267,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       held_cap =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws,
@@ -280,7 +280,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       revoke_target =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws,
@@ -300,7 +300,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       target =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -313,7 +313,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       keeper =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :join,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -322,7 +322,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       victim =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -341,7 +341,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       original =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -353,14 +353,14 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       restored = Capability.from_map(json_map)
       assert restored.action == :send
       assert restored.kind == :session
-      assert restored.behavior == Ezagent.Behavior.Session
+      assert restored.behavior == Ezagent.ActionSet.Session
 
       # Behavioral equivalence — the restored cap must match the same
       # needed shapes as the original.
       needed =
         needed(
           kind: :session,
-          behavior: Ezagent.Behavior.Session,
+          behavior: Ezagent.ActionSet.Session,
           action: :send,
           instance: @session_a,
           workspace_uri: @tenant_ws
@@ -373,7 +373,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       # Pre-action-axis caps_json rows lack the field; from_map defaults to "any".
       legacy_map = %{
         "kind" => "session",
-        "behavior" => "Ezagent.Behavior.Session",
+        "behavior" => "Ezagent.ActionSet.Session",
         "instance" => URI.to_string(@session_a),
         "workspace_uri" => URI.to_string(@tenant_ws),
         "granted_by" => "entity://system/user/admin",

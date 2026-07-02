@@ -164,7 +164,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       pts ->
-        case Ezagent.Behavior.Session.system_set_prompt_templates(session_uri, pts) do
+        case Ezagent.ActionSet.Session.system_set_prompt_templates(session_uri, pts) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_prompt_templates_failed, reason}}
         end
@@ -177,7 +177,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       legends ->
-        case Ezagent.Behavior.Session.system_set_legends(session_uri, legends) do
+        case Ezagent.ActionSet.Session.system_set_legends(session_uri, legends) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_legends_failed, reason}}
         end

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Workspace.Members do
+defmodule Ezagent.ActionSet.Workspace.Members do
   @moduledoc false
 
   @spec read_members(map()) :: MapSet.t()

@@ -112,7 +112,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     admin = admin_uri()
     # All stress sessions live in `workspace://system` (see scenario builders).
     ws = Ezagent.URI.workspace("system")
-    session_behavior = Module.concat([:Ezagent, :Behavior, :Session])
+    session_behavior = Module.concat([:Ezagent, :ActionSet, :Session])
 
     Enum.map([:send, :join], fn action ->
       %Ezagent.Capability{

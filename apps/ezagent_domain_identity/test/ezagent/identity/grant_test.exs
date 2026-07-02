@@ -30,7 +30,7 @@ defmodule Ezagent.Identity.GrantTest do
   defp concrete_cap do
     %Capability{
       kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       action: :any,
       instance: {:within_workspace, ws()},
       workspace_uri: ws(),
@@ -172,7 +172,7 @@ defmodule Ezagent.Identity.GrantTest do
   # `{:rule, …}` callers) make the path reachable (teach step 5.5 to
   # honor `ctx[:authorization_rule]`, or route via `trusted_slice_update/3`).
   describe "IdentityAdmin.rule_cap_bounded?/1 — the §3.3 structural bound (pure predicate)" do
-    alias Ezagent.Behavior.IdentityAdmin
+    alias Ezagent.ActionSet.IdentityAdmin
 
     test "a scope-bounded concrete cap is bounded (accepted)" do
       assert IdentityAdmin.rule_cap_bounded?(concrete_cap())
@@ -214,7 +214,7 @@ defmodule Ezagent.Identity.GrantTest do
       caps = Ezagent.Identity.list_caps_for(grantee)
 
       assert Enum.any?(caps, fn c ->
-               c.behavior == Ezagent.Behavior.Template and c.granted_by == @admin_uri
+               c.behavior == Ezagent.ActionSet.Template and c.granted_by == @admin_uri
              end)
     end
   end

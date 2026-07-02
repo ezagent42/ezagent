@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Notifications do
+defmodule Ezagent.ActionSet.Notifications do
   @moduledoc """
   Cap-only Behavior for the unified user-notifications inbox.
 
@@ -28,8 +28,8 @@ defmodule Ezagent.Behavior.Notifications do
   ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
 
   Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
-  this Behavior is migrated from the legacy `@behaviour Ezagent.Behavior`
-  contract to the new `use Ezagent.Behavior` macro + per-action
+  this Behavior is migrated from the legacy `@behaviour Ezagent.ActionSet`
+  contract to the new `use Ezagent.ActionSet` macro + per-action
   `action/3` declarations + `handle_<action>/2` handlers. Semantics
   unchanged — `dispatchable?/0 == false` keeps the marker behaviour
   identical (handlers raise if ever reached as defence in depth).
@@ -76,12 +76,12 @@ defmodule Ezagent.Behavior.Notifications do
   def create(_args), do: {:ok, %{}}
 
   # Cap-only marker — must define `handle_<action>/2` to satisfy the
-  # `use Ezagent.Behavior` macro's @before_compile invariant (every
+  # `use Ezagent.ActionSet` macro's @before_compile invariant (every
   # declared action requires a matching handler). Raises identically
   # to the legacy contract clause; `dispatchable?/0 == false`
   # prevents the framework dispatcher from ever routing here.
   def handle_subscribe(_args, _ctx) do
-    raise "Ezagent.Behavior.Notifications.:subscribe is cap-only — " <>
+    raise "Ezagent.ActionSet.Notifications.:subscribe is cap-only — " <>
             "use Ezagent.Notifications.subscribe/1 instead of dispatching."
   end
 

@@ -237,7 +237,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     }
 
     assert {:ok, effects} =
-             Ezagent.Behavior.Turn.handle_signal({:ezagent_recover_settlements}, signal_ctx)
+             Ezagent.ActionSet.Turn.handle_signal({:ezagent_recover_settlements}, signal_ctx)
 
     assert effects != []
     assert Enum.all?(effects, &match?({:dispatch, _}, &1))

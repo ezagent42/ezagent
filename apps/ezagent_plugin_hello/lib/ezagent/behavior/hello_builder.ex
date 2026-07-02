@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.HelloBuilder do
+defmodule Ezagent.ActionSet.HelloBuilder do
   @moduledoc """
   The hello builder agent Behavior — the session member that turns a user's
   request into a generated `@json-render` page.

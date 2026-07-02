@@ -62,7 +62,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
         state: %{
           caps:
             MapSet.new([
-              %{kind: :agent, behavior: Ezagent.Behavior.Sandbox, action: :read}
+              %{kind: :agent, behavior: Ezagent.ActionSet.Sandbox, action: :read}
             ])
         }
       }
@@ -151,7 +151,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     assert {:ok, decoded_user} = KindSnapshot.decode_state(user_row)
     caps = decoded_user.identity.state.caps
     assert MapSet.size(caps) == 1
-    assert Enum.any?(caps, &(&1.behavior == Ezagent.Behavior.Sandbox and &1.action == :read))
+    assert Enum.any?(caps, &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read))
 
     # 2. Sandbox config_dir_path REWRITTEN A → B (the portability fix).
     config_dir_b = Path.join([profile_dir_b, "cc-agents", workspace, agent_name])

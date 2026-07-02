@@ -21,8 +21,8 @@ defmodule EzagentPluginCurlAgent.Application do
   ## What this plugin declares
 
   - `behaviors/0` — `{Ezagent.Entity.Agent, :reset_conversation |
-    :configure | :sync_result}` → `Ezagent.Behavior.CurlAgent`
-    (the action list comes from `Ezagent.Behavior.CurlAgent.actions/0`).
+    :configure | :sync_result}` → `Ezagent.ActionSet.CurlAgent`
+    (the action list comes from `Ezagent.ActionSet.CurlAgent.actions/0`).
     PR-6+7 (curl-as-flavor) folded curl into the unified `Entity.Agent`
     Kind and DELETED the standalone curl Kind + its legacy
     `:receive` / `:reset_conversation` / `:configure` shim bindings — the
@@ -60,7 +60,7 @@ defmodule EzagentPluginCurlAgent.Application do
   use Application
   use Ezagent.Plugin
 
-  alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
+  alias Ezagent.ActionSet.CurlAgent, as: CurlAgentBehavior
   alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.PluginCurlAgent.Template, as: CurlAgentTemplate
 

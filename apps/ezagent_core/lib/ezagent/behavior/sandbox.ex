@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Sandbox do
+defmodule Ezagent.ActionSet.Sandbox do
   @moduledoc """
   Sandbox Lifecycle module — per-agent config dir + extension-management
   scaffolding (Allen 2026-05-24 PR2). Migrated to the Lifecycle API
@@ -190,7 +190,7 @@ defmodule Ezagent.Behavior.Sandbox do
     }
   end
 
-  # The auto-derived slice key for `Ezagent.Behavior.Sandbox` is the
+  # The auto-derived slice key for `Ezagent.ActionSet.Sandbox` is the
   # underscored last segment `Sandbox` → `:sandbox`, which is EXACTLY the
   # pre-Lifecycle `state_slice/0`. The snapshot-compat key is preserved
   # with no explicit override needed (SPEC §3 / §7 OQ-7).
@@ -398,7 +398,7 @@ defmodule Ezagent.Behavior.Sandbox do
   #        and retry out-of-band. Losing the path would orphan FS state
   #        with no recoverable pointer (cc sandboxes hold credentials).
   #   3. Schedule the supervised-child termination in a detached Task
-  #      (mirrors Ezagent.Behavior.Lifecycle's 20ms-sleep pattern so the
+  #      (mirrors Ezagent.ActionSet.Lifecycle's 20ms-sleep pattern so the
   #      dispatch reply wins the race against process death).
   #
   # The process-dict gate is GONE (SPEC §2.3B). The `:destroyed`-gate
@@ -535,7 +535,7 @@ defmodule Ezagent.Behavior.Sandbox do
       {:ok, [{:set, :pty_phase, phase}]}
     else
       Logger.warning(
-        "Ezagent.Behavior.Sandbox.handle_signal: pty_phase " <>
+        "Ezagent.ActionSet.Sandbox.handle_signal: pty_phase " <>
           "agent_uri=#{URI.to_string(agent_uri)} != self_uri=" <>
           "#{inspect(self_uri)}; dropping (topic-collision defense)"
       )
@@ -589,7 +589,7 @@ defmodule Ezagent.Behavior.Sandbox do
     catch
       kind, reason ->
         Logger.warning(
-          "Ezagent.Behavior.Sandbox.activate: PubSub.subscribe failed " <>
+          "Ezagent.ActionSet.Sandbox.activate: PubSub.subscribe failed " <>
             "(#{inspect(kind)}, #{inspect(reason)}) for #{URI.to_string(self_uri)}; " <>
             "phase tracking disabled for this incarnation"
         )
@@ -667,7 +667,7 @@ defmodule Ezagent.Behavior.Sandbox do
 
   defp log_cleanup_failure(self_uri, config_dir, template_class, failure) do
     Logger.warning(
-      "Ezagent.Behavior.Sandbox.destroy: " <>
+      "Ezagent.ActionSet.Sandbox.destroy: " <>
         "#{inspect(template_class)}.destroy_config_dir/2 failed for " <>
         "#{uri_to_string(self_uri)} (config_dir=#{config_dir}): " <>
         "#{inspect(failure)} (continuing process termination; " <>
@@ -682,7 +682,7 @@ defmodule Ezagent.Behavior.Sandbox do
 
   # --- internals: termination scheduling --------------------------------------
 
-  # Mirrors `Ezagent.Behavior.Lifecycle.schedule_termination/2` — detached
+  # Mirrors `Ezagent.ActionSet.Lifecycle.schedule_termination/2` — detached
   # Task + 20ms sleep so the dispatch reply wins the race against the
   # supervisor terminating this GenServer.
   #
@@ -730,7 +730,7 @@ defmodule Ezagent.Behavior.Sandbox do
   rescue
     error ->
       Logger.warning(
-        "Ezagent.Behavior.Sandbox.destroy: terminate of #{URI.to_string(self_uri)} " <>
+        "Ezagent.ActionSet.Sandbox.destroy: terminate of #{URI.to_string(self_uri)} " <>
           "raised #{inspect(error)}; treating as terminated"
       )
 
@@ -769,7 +769,7 @@ defmodule Ezagent.Behavior.Sandbox do
 
       {:error, reason} ->
         Logger.error(
-          "Ezagent.Behavior.Sandbox.activate: " <>
+          "Ezagent.ActionSet.Sandbox.activate: " <>
             "#{inspect(template_class)}.ensure_subprocess_alive/2 failed " <>
             "for #{inspect(self_uri)}: #{inspect(reason)}. " <>
             "Kind stays alive in DEGRADED state (no subprocess); " <>

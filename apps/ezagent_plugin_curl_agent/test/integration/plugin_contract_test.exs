@@ -47,8 +47,8 @@ defmodule EzagentPluginCurlAgent.Integration.PluginContractTest do
     # its legacy :receive / :reset_conversation / :configure shim bindings are
     # DELETED, no rollback window). ALL of the curl behavior's actions resolve
     # to Behavior.CurlAgent on Entity.Agent.
-    for action <- Ezagent.Behavior.CurlAgent.actions() do
-      assert {:ok, Ezagent.Behavior.CurlAgent} =
+    for action <- Ezagent.ActionSet.CurlAgent.actions() do
+      assert {:ok, Ezagent.ActionSet.CurlAgent} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, action),
              "expected (Entity.Agent, #{inspect(action)}) → Behavior.CurlAgent"
     end
@@ -56,10 +56,10 @@ defmodule EzagentPluginCurlAgent.Integration.PluginContractTest do
     # :receive is NOT a curl action — it flows through agent.receive
     # (Behavior.Agent.Receive) → AgentBridge → the curl :in_process_sync
     # adapter, NOT a curl-owned :receive binding.
-    refute :receive in Ezagent.Behavior.CurlAgent.actions()
+    refute :receive in Ezagent.ActionSet.CurlAgent.actions()
 
     assert {:ok, mod} = Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
-    assert mod == Ezagent.Behavior.Agent.Receive
+    assert mod == Ezagent.ActionSet.Agent.Receive
   end
 
   test "curl's curl.agent Template Class was published to TemplateRegistry" do

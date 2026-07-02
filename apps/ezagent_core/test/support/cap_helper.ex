@@ -58,7 +58,7 @@ defmodule Ezagent.Test.CapHelper do
 
   ## Examples
 
-      cap(kind: :session, behavior: Ezagent.Behavior.Session,
+      cap(kind: :session, behavior: Ezagent.ActionSet.Session,
           instance: URI.new!("session://system/default/main"))
 
       cap(kind: :any, behavior: :any, instance: :any,
@@ -97,7 +97,7 @@ defmodule Ezagent.Test.CapHelper do
 
   ## Examples
 
-      needed(kind: :session, behavior: Ezagent.Behavior.Session,
+      needed(kind: :session, behavior: Ezagent.ActionSet.Session,
              instance: URI.new!("session://system/default/main"))
   """
   @spec needed(keyword() | map()) :: %{

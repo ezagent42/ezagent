@@ -32,7 +32,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       assert {:ok, %{members: returned}} =
                Dispatch.run_action(
                  Ezagent.Entity.Workspace,
-                 Ezagent.Behavior.Workspace,
+                 Ezagent.ActionSet.Workspace,
                  :list_members,
                  parsed
                )
@@ -60,7 +60,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       assert {:ok, _} =
                Dispatch.run_action(
                  Ezagent.Entity.Workspace,
-                 Ezagent.Behavior.Workspace,
+                 Ezagent.ActionSet.Workspace,
                  :add_member,
                  parsed
                )
@@ -120,10 +120,10 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
 
       # tree_builder.action_about/2 reads interface[action][:description]
       # directly — no Code.fetch_docs scrape, no generic fallback.
-      expected = Ezagent.Behavior.Workspace.interface()[:add_member][:description]
+      expected = Ezagent.ActionSet.Workspace.interface()[:add_member][:description]
       assert is_binary(expected)
       assert add_member.about == expected
-      refute add_member.about == "add_member action on #{Ezagent.Behavior.Workspace}"
+      refute add_member.about == "add_member action on #{Ezagent.ActionSet.Workspace}"
     end
 
     test "workspace subcommand includes :create facade op (registered by EzagentCore.Application)" do

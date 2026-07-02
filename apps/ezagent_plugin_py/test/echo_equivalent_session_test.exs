@@ -18,7 +18,7 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, Message, Workspace}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Domain.Python
   alias Ezagent.Entity.User
 

@@ -49,25 +49,25 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     needed_read =
       Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :read_unfiltered,
         session_uri,
         workspace_uri
       )
 
     needed_claim =
-      Capability.cap(:session, Ezagent.Behavior.Turn, :claim, session_uri, workspace_uri)
+      Capability.cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri)
 
     needed_settle =
-      Capability.cap(:session, Ezagent.Behavior.Turn, :settle, session_uri, workspace_uri)
+      Capability.cap(:session, Ezagent.ActionSet.Turn, :settle, session_uri, workspace_uri)
 
     needed_approve =
-      Capability.cap(:session, Ezagent.Behavior.Surface, :approve, session_uri, workspace_uri)
+      Capability.cap(:session, Ezagent.ActionSet.Surface, :approve, session_uri, workspace_uri)
 
     needed_commit =
       Capability.cap(
         :session,
-        Ezagent.Behavior.Surface,
+        Ezagent.ActionSet.Surface,
         :commit_settlement,
         session_uri,
         workspace_uri
@@ -76,7 +76,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     needed_verdict =
       Capability.cap(
         :session,
-        Ezagent.Behavior.SupervisorApproval,
+        Ezagent.ActionSet.SupervisorApproval,
         :submit_verdict,
         session_uri,
         workspace_uri
@@ -104,7 +104,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     assign_cap =
       Capability.cap(
         :workspace,
-        Ezagent.Behavior.Workspace,
+        Ezagent.ActionSet.Workspace,
         :assign_role,
         workspace_uri,
         workspace_uri
@@ -122,7 +122,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
              )
 
     session_uri = Ezagent.URI.session(name, :default, "delegated")
-    needed = Capability.cap(:session, Ezagent.Behavior.Turn, :claim, session_uri, workspace_uri)
+    needed = Capability.cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri)
 
     assert has_cap?(Ezagent.Identity.list_caps_for(holder), needed)
   end
@@ -143,7 +143,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     needed =
       Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :read_unfiltered,
         session_uri,
         workspace_uri

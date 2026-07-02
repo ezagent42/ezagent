@@ -4,7 +4,7 @@ defmodule Ezagent.Entity.AgentBehaviorDerivationTest do
   alias Ezagent.Entity.Agent
 
   defmodule ExtraBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     @impl true
     def actions, do: [:agent_behavior_derivation_probe]

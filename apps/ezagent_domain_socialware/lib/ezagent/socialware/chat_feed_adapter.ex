@@ -17,24 +17,24 @@ defmodule Ezagent.Socialware.ChatFeedAdapter.Allow do
   # Check-2 cap subject for `allow_chat_feed`.
   use Ezagent.Lifecycle
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def actions, do: [:allow_chat_feed]
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_subjects,
     do: [{:allow_chat_feed, "Authorize the chat-feed pull adapter on this session."}]
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def dispatchable?, do: false
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def interface, do: %{}
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def required_caps,
     do: %{allow_chat_feed: Ezagent.Capability.cap(:session, __MODULE__, :allow_chat_feed)}
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def data_owner(_), do: :any
 end
 
@@ -74,7 +74,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   """
   @behaviour Ezagent.ExternalMirror.Adapter
 
-  alias Ezagent.Behavior.Session.Delivery
+  alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.Socialware.ChatFeed
 
   @adapter_id "chat_feed"

@@ -213,7 +213,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
         %Ezagent.Capability{
           Ezagent.Capability.cap(
             :workspace,
-            Ezagent.Behavior.Workspace,
+            Ezagent.ActionSet.Workspace,
             :create_agent,
             Ezagent.URI.instance(workspace_uri),
             Ezagent.Capability.workspace_of(workspace_uri)

@@ -3,7 +3,7 @@ defmodule Ezagent.Session.Membership do
   The SHARED, live, fail-closed chat owner/member authorization predicate.
 
   This is the SINGLE source of truth for "may `caller` read a chat session's
-  `:chat` slice?" — extracted from `Ezagent.Behavior.SocialwarePublisherRead`
+  `:chat` slice?" — extracted from `Ezagent.ActionSet.SocialwarePublisherRead`
   (P3-3) so that BOTH that behavior's read authz AND the P4 chat_feed external
   read (`ChatFeedAdapter` / `ChatFeed`) call ONE predicate. A security boundary
   must not be copy-pasted: extracting it here makes the chat_feed authz

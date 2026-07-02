@@ -14,7 +14,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest 
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Entity.Session
 
   defp unique(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"

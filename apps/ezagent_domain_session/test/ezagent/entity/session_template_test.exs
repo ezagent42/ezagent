@@ -16,11 +16,11 @@ defmodule Ezagent.Entity.SessionTemplateTest do
   end
 
   test "behaviors/0 includes Identity (caps + slice edit dispatch)" do
-    assert Ezagent.Behavior.Identity in SessionTemplate.behaviors()
+    assert Ezagent.ActionSet.Identity in SessionTemplate.behaviors()
   end
 
   test "behaviors/0 includes Behavior.Template (Phase 7 completion PR-1 — content slice)" do
-    assert Ezagent.Behavior.Template in SessionTemplate.behaviors(),
+    assert Ezagent.ActionSet.Template in SessionTemplate.behaviors(),
            "SessionTemplate must carry Behavior.Template so the versioned " <>
              ":template content slice has dispatchable actions (SPEC §1.0)"
   end

@@ -6,7 +6,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   Exercises the full life-cycle of an admin-authored routing rule:
 
-  - Add a rule via the `Ezagent.Behavior.Routing` dispatch path.
+  - Add a rule via the `Ezagent.ActionSet.Routing` dispatch path.
   - List confirms the new rule is present.
   - The rule loads into the live `RoutingRegistry` ETS table
     (`load_into_registry/1` runs after each mutation per PR #127).

@@ -1,7 +1,7 @@
 defmodule Ezagent.TestSupport.LifecycleFixture do
   @moduledoc """
   Trivial `use Ezagent.Lifecycle` fixture proving the Phase A macro emits
-  a working `@behaviour Ezagent.Behavior` under the two-container model.
+  a working `@behaviour Ezagent.ActionSet` under the two-container model.
 
   SPEC: `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`
   Phase A acceptance gate — "the macro can emit a working Behavior for a
@@ -36,12 +36,12 @@ defmodule Ezagent.TestSupport.LifecycleFixture do
   # This fixture is workspace-agnostic (system-scoped URI) — opt out of
   # the dispatch workspace-isolation check so the cold-restart test can
   # dispatch :bump without plumbing a workspace cap.
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
 
   # The :bump action is cap-exempt for the fixture (Phase A foundation
   # is not exercising CapBAC — the migration of real caps is Phase B).
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:bump]
 
   # ---- Lifecycle developer hooks ----
@@ -114,7 +114,7 @@ defmodule Ezagent.TestSupport.LifecycleFixtureOverride do
 
   action(:noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "no-op")
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:noop]
 
   @impl Ezagent.Lifecycle
@@ -136,9 +136,9 @@ defmodule Ezagent.TestSupport.TransientOnlyFixture do
 
   action(:tick, args: %{}, returns: %{}, caps: [:tick], modes: [:call], description: "tick")
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:tick]
 
   @impl Ezagent.Lifecycle
@@ -181,9 +181,9 @@ defmodule Ezagent.TestSupport.LifecycleDestroyFixture do
     description: "touch"
   )
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:touch]
 
   @impl Ezagent.Lifecycle
@@ -259,9 +259,9 @@ defmodule Ezagent.TestSupport.SelfDestroyFixture do
     description: "attempt to self-destroy from inside the handler (F2 footgun)"
   )
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:boom]
 
   @impl Ezagent.Lifecycle
@@ -322,9 +322,9 @@ defmodule Ezagent.TestSupport.LifecycleInterceptFixture do
     description: "guarded"
   )
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:run, :guarded]
 
   @impl Ezagent.Lifecycle
@@ -386,7 +386,7 @@ end
 
 defmodule Ezagent.TestSupport.LegacySibling do
   @moduledoc false
-  use Ezagent.Behavior
+  use Ezagent.ActionSet
 
   # Force a stable slice key (snapshot-compat); legacy-flat shape.
   def state_slice, do: :legacy_sibling
@@ -424,9 +424,9 @@ defmodule Ezagent.TestSupport.SiblingReader do
     description: "read siblings"
   )
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:read]
 
   @impl Ezagent.Lifecycle
@@ -498,9 +498,9 @@ defmodule Ezagent.TestSupport.LifecycleSignalFixture do
   # lifecycle:state_slice_override
   action(:noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "noop")
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def workspace_scoped?, do: false
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:noop]
 
   @impl Ezagent.Lifecycle

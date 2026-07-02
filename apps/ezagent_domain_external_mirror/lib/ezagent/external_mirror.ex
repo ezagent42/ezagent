@@ -226,7 +226,7 @@ defmodule Ezagent.ExternalMirror do
   `Ezagent.Invocation.dispatch/1` with action
   `external_mirror.list_bindings` so CapBAC step 5.5 enforces the
   session-level `:list_bindings` cap (declared in
-  `Ezagent.Behavior.ExternalMirror.cap_subjects/0`) AND step 5.6
+  `Ezagent.ActionSet.ExternalMirror.cap_subjects/0`) AND step 5.6
   enforces cross-workspace isolation.
 
   Returns:
@@ -418,7 +418,7 @@ defmodule Ezagent.ExternalMirror do
 
     needed = %{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       # SPEC 2026-05-27 capability-action-axis — the gated action is
       # `:list_bindings` (matches `ExternalMirror.required_caps[:list_bindings]`).
       action: :list_bindings,
@@ -464,7 +464,7 @@ defmodule Ezagent.ExternalMirror do
   end
 
   # An "admin wildcard" cap = a Capability with `:any` workspace
-  # against the `Ezagent.Behavior.ExternalMirror` Behavior's
+  # against the `Ezagent.ActionSet.ExternalMirror` Behavior's
   # `:list_bindings` action (or the `:any/:any` bootstrap admin cap).
   # When the caller holds one of these, sessions_for_adapter/2 skips
   # the workspace filter — admin tooling needs the unfiltered view.
@@ -494,7 +494,7 @@ defmodule Ezagent.ExternalMirror do
 
   defp cap_admin_shape?(%{
          kind: :session,
-         behavior: Ezagent.Behavior.ExternalMirror,
+         behavior: Ezagent.ActionSet.ExternalMirror,
          action: :any,
          instance: :any
        }),
@@ -502,7 +502,7 @@ defmodule Ezagent.ExternalMirror do
 
   defp cap_admin_shape?(%{
          kind: :session,
-         behavior: Ezagent.Behavior.ExternalMirror,
+         behavior: Ezagent.ActionSet.ExternalMirror,
          action: :list_bindings,
          instance: :any
        }),

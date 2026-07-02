@@ -22,7 +22,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   defp notifications_admin_cap do
     %Ezagent.Capability{
       kind: :user,
-      behavior: Ezagent.Behavior.Notifications,
+      behavior: Ezagent.ActionSet.Notifications,
       action: :subscribe,
       instance: :any,
       workspace_uri: :any,
@@ -41,7 +41,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   defp notify_only_cap do
     %Ezagent.Capability{
       kind: :user,
-      behavior: Ezagent.Behavior.Notifications,
+      behavior: Ezagent.ActionSet.Notifications,
       action: :notify,
       instance: :any,
       workspace_uri: :any,
@@ -53,7 +53,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   defp narrow_cross_workspace_cap do
     %Ezagent.Capability{
       kind: :user,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       instance: :any,
       workspace_uri: :any,
       granted_by: Ezagent.URI.new!("entity://system/user/test"),
@@ -754,7 +754,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
       narrow_stream_cap = %Ezagent.Capability{
         kind: :user,
-        behavior: Ezagent.Behavior.Notifications,
+        behavior: Ezagent.ActionSet.Notifications,
         instance: :any,
         # NOT `:any` — scoped to this specific workspace, so it's
         # NOT an admin cap.

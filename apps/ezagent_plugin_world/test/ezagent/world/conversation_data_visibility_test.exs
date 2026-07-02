@@ -39,7 +39,7 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
   defp read_unfiltered_cap(session_uri) do
     Capability.cap(
       :session,
-      Ezagent.Behavior.Session,
+      Ezagent.ActionSet.Session,
       :read_unfiltered,
       session_uri,
       @workspace_uri

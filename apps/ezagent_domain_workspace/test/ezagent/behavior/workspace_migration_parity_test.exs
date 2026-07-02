@@ -1,10 +1,10 @@
-defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
+defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
   @moduledoc """
   Phase 2-c migration parity test (SPEC 2026-05-28 PR #445 §6.2).
 
-  `Ezagent.Behavior.Workspace` was migrated from the legacy
-  `@behaviour Ezagent.Behavior` + `invoke/4` contract to the new
-  `use Ezagent.Behavior` + per-action `handle_<action>/2` + effect
+  `Ezagent.ActionSet.Workspace` was migrated from the legacy
+  `@behaviour Ezagent.ActionSet` + `invoke/4` contract to the new
+  `use Ezagent.ActionSet` + per-action `handle_<action>/2` + effect
   grammar. This test pins the semantic surface so a regression
   during downstream Phase-2/3 work surfaces here, BEFORE the
   dispatch-level integration tests catch it (where the diff is
@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
   Each test drives the handler with a small ctx + the legacy slice
   shape, then applies the returned effects via
-  `Ezagent.Behavior.apply_effects/2`. This bypasses the runtime
+  `Ezagent.ActionSet.apply_effects/2`. This bypasses the runtime
   (no Kind.Server, no Router, no CapBAC, no PubSub) so the
   assertions focus on the HANDLER CONTRACT: given args + slice +
   ctx, what effects + result does the action produce? The runtime
@@ -66,7 +66,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # `Ecto.Adapters.SQL.Sandbox.OwnershipError`.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Workspace, as: WB
+  alias Ezagent.ActionSet.Workspace, as: WB
 
   # ---------------------------------------------------------------
   # Fake `EzagentDomainInstanceMessage` facade — recorded calls go via
@@ -126,7 +126,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
     case apply(WB, handler, [args, ctx_with_read]) do
       {:ok, result, effects} when is_list(effects) ->
-        case Ezagent.Behavior.apply_effects(effects, slice) do
+        case Ezagent.ActionSet.apply_effects(effects, slice) do
           {:ok, %{state: new_slice} = buckets} ->
             {:ok, %{result: result, slice: new_slice, buckets: buckets}}
 
@@ -230,7 +230,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       # legacy code achieved via inline Invocation.dispatch.
       assert %{cap: %Ezagent.Capability{} = cap} = cmd.args
       assert cap.kind == :workspace
-      assert cap.behavior == Ezagent.Behavior.Workspace
+      assert cap.behavior == Ezagent.ActionSet.Workspace
       assert cap.action == :create_session
       assert cap.instance == workspace_uri
       assert cap.workspace_uri == workspace_uri
@@ -557,9 +557,9 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   # Behavior contract surface — the macro-derived legacy callbacks
   # ---------------------------------------------------------------
-  describe "Behavior contract surface (use Ezagent.Behavior)" do
+  describe "Behavior contract surface (use Ezagent.ActionSet)" do
     test "new_style?/1 detects the migrated module" do
-      assert Ezagent.Behavior.new_style?(WB)
+      assert Ezagent.ActionSet.new_style?(WB)
     end
 
     test "actions/0 lists the 14 declared actions" do

@@ -4,12 +4,12 @@ defmodule EzagentDomainExternalMirror.Application do
 
   ## PR-EM-0 scope (Publisher contract only)
 
-  - `Ezagent.Behavior.Publisher` — the `@behaviour` contract (4
+  - `Ezagent.ActionSet.Publisher` — the `@behaviour` contract (4
     callbacks) any publishing Kind declares it implements.
   - `Ezagent.Publisher.Event` — the typed event struct subscribers
     receive on `{:publisher_event, _}`.
 
-  The Session-side IMPLEMENTATION (`Ezagent.Behavior.Publisher.SessionImpl`
+  The Session-side IMPLEMENTATION (`Ezagent.ActionSet.Publisher.SessionImpl`
   + the `subscribe_from/3`/`snapshot/1`/`history/3` module functions
   on `Ezagent.Entity.Session`) lives in `apps/ezagent_domain_session/`
   (chat depends on this Domain for the contract; external_mirror
@@ -56,10 +56,10 @@ defmodule EzagentDomainExternalMirror.Application do
     Session + Worker Kinds. Application-boot safety net for the
     multi-node case (V1 single-node = no-op).
 
-  Worker Behavior (`Ezagent.Behavior.ExternalMirrorWorker`) was
+  Worker Behavior (`Ezagent.ActionSet.ExternalMirrorWorker`) was
   registered on `Ezagent.Entity.ExternalMirrorWorker` in PR-EM-2.
 
-  The bind/unbind Behavior (`Ezagent.Behavior.ExternalMirror`) is
+  The bind/unbind Behavior (`Ezagent.ActionSet.ExternalMirror`) is
   registered against `Ezagent.Entity.Session` from
   `EzagentDomainInstanceMessage.Application` per the convention that
   Kind ↔ Behavior wiring lives in the app that DEFINES the Kind.
@@ -95,7 +95,7 @@ defmodule EzagentDomainExternalMirror.Application do
       # DEFERRED initial Publisher subscribe. The subscribe is a synchronous
       # `:call` to the Session Kind; running it OFF the Worker's GenServer
       # keeps the Worker responsive to a concurrent unbind→terminate (which
-      # otherwise deadlocks). See `Ezagent.Behavior.ExternalMirrorWorker.activate/2`.
+      # otherwise deadlocks). See `Ezagent.ActionSet.ExternalMirrorWorker.activate/2`.
       {Task.Supervisor, name: Ezagent.ExternalMirror.SubscribeTaskSup},
       # PR-EM-3 + r3: one-shot reconciliation that ensures the
       # SESSION Kind exists for every persisted binding row. Worker
@@ -151,7 +151,7 @@ defmodule EzagentDomainExternalMirror.Application do
       CapabilityRegistry.register(
         Ezagent.Entity.ExternalMirrorWorker,
         :publish,
-        Ezagent.Behavior.ExternalMirrorWorker
+        Ezagent.ActionSet.ExternalMirrorWorker
       )
 
     :ok

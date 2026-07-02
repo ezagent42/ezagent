@@ -640,7 +640,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   defp session_join_cap(caller_uri, session_uri) do
     %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :join,
       instance: session_uri,
       workspace_uri: Ezagent.URI.workspace(:system),
@@ -665,7 +665,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   defp holds_join_cap?(caller_uri, session_uri) do
     Enum.any?(Ezagent.Identity.list_caps_for(caller_uri), fn
       %Ezagent.Capability{} = cap ->
-        cap.kind == :session and cap.behavior == Ezagent.Behavior.Session and
+        cap.kind == :session and cap.behavior == Ezagent.ActionSet.Session and
           Ezagent.Capability.action_of(cap) == :join and cap.instance == session_uri
 
       _ ->

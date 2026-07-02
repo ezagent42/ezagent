@@ -90,35 +90,35 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # from non-loaded apps (e.g. plugin Behaviors during a core-only
   # build) don't break.
   #
-  # Allen 2026-05-26 — `alias Ezagent.Behavior.ApiKeys` removed (and
+  # Allen 2026-05-26 — `alias Ezagent.ActionSet.ApiKeys` removed (and
   # the `cap(:user, ApiKeys, :get_api_key)` Catalog entry it served):
   # post ApiKeys-to-Agent flip CurlAgent reads its own `:api_keys`
   # slice in-process via `ctx[:sibling_slices]`, so no system principal
   # dispatches `identity.get_api_key` anymore.
-  # `alias Ezagent.Behavior.Session` removed 2026-06-20 — its last use
+  # `alias Ezagent.ActionSet.Session` removed 2026-06-20 — its last use
   # (the `session-internal` Catalog cap `cap(:any, Session, :any)`) was
   # eliminated (#154); only `system://bootstrap` genesis remains.
-  # `alias Ezagent.Behavior.ExternalMirror` removed — its last consumer
+  # `alias Ezagent.ActionSet.ExternalMirror` removed — its last consumer
   # (`boot-reconciler`/`adapter-install` ExternalMirror caps) was eliminated.
-  # System-principal elimination — `alias Ezagent.Behavior.ExternalMirrorWorker`
+  # System-principal elimination — `alias Ezagent.ActionSet.ExternalMirrorWorker`
   # removed with the `system://worker-publish` entry (its only consumer); and
-  # `alias Ezagent.Behavior.Identity` removed 2026-06-19 with `orchestrator-tools`
+  # `alias Ezagent.ActionSet.Identity` removed 2026-06-19 with `orchestrator-tools`
   # (its only use was that principal's `cap(:agent, Identity, :list_caps)`).
-  # no-unowned-caps PR-1: `alias Ezagent.Behavior.IdentityAdmin` removed —
+  # no-unowned-caps PR-1: `alias Ezagent.ActionSet.IdentityAdmin` removed —
   # its only use was `feishu-binding-policy`'s now-deleted
   # `cap(:user, IdentityAdmin, :grant_cap)` (the last grant-minter).
-  # System-principal elimination — `alias Ezagent.Behavior.Publisher.SessionImpl,
+  # System-principal elimination — `alias Ezagent.ActionSet.Publisher.SessionImpl,
   # as: PublisherSI` removed with the `system://worker-publish` entry (its only
   # consumer). The ExternalMirrorWorker now carries its own inline
   # `(:session, PublisherSI, :subscribe_from)` authorizer cap.
   # System-principal elimination (#154, 2026-06-19) — `alias
-  # Ezagent.Behavior.Sandbox` removed with the `system://agent-internal` entry
+  # Ezagent.ActionSet.Sandbox` removed with the `system://agent-internal` entry
   # (its only consumer, `cap(:agent, Sandbox, :update_config)`). The agent now
   # carries its own inline `sandbox.update_config` self-authority cap at the
   # `Agent.TemplateSpawn` dispatch site.
-  # `alias Ezagent.Behavior.Template` removed 2026-06-20 — its last use
+  # `alias Ezagent.ActionSet.Template` removed 2026-06-20 — its last use
   # (the `template-materialize` Catalog cap) was eliminated (#154).
-  # `alias Ezagent.Behavior.Workspace` removed 2026-06-20 — its last use
+  # `alias Ezagent.ActionSet.Workspace` removed 2026-06-20 — its last use
   # (the `session-internal` Catalog cap `cap(:workspace, Workspace, :any)`)
   # was eliminated (#154).
 
@@ -217,7 +217,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # dispatches already used `caller: self_uri`. They now carry the worker's
       # OWN inline caps in `ctx.caps` (the step-5.5 authorizer) instead of
       # borrowing this ambient principal — see
-      # `Ezagent.Behavior.ExternalMirrorWorker.worker_publish_caps/1` +
+      # `Ezagent.ActionSet.ExternalMirrorWorker.worker_publish_caps/1` +
       # `worker_subscribe_caps/0`. The publish cap's `granted_by` is the worker
       # itself (genuine self-authority); the subscribe cap's is
       # `entity://system/user/admin` (authority over the session — the formal
@@ -286,7 +286,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # worker_uri`) — same play as the eliminated `system://worker-publish`.
       # The vestigial `grant_cap` (no live caller) was already dropped 2026-06-16;
       # the cross-entity `Sandbox:read` (#607 self-evolve) became agent-owned
-      # in-process (`Ezagent.Behavior.ConfigEvolve`, 2026-06-11); the
+      # in-process (`Ezagent.ActionSet.ConfigEvolve`, 2026-06-11); the
       # `ApiKeys:get_api_key` cap moved to the agent's own slice (ApiKeys-to-Agent
       # flip, 2026-05-26). With its last cap re-attributed to the agent, the
       # principal has no remaining authority and leaves the closed Catalog.

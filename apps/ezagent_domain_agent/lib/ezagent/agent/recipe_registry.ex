@@ -5,7 +5,8 @@ defmodule Ezagent.Agent.RecipeRegistry do
   §3/§4).
 
   A **role** is a flavor-agnostic sandbox-content recipe (see `Ezagent.Agent.Recipe`)
-  stored UNIFORMLY as a `ConfigObject`: `subject_uri = config://<ws>/recipe/<name>`,
+  stored UNIFORMLY as a `ConfigObject`: `subject_uri = recipe:<name>` (a
+  structured non-URI subject; workspace is a separate ConfigStore field),
   `key = "recipe"`, `body =` the recipe map. A built-in role is **not** a special
   code recipe — it is the SAME data shape as a user-authored role; only the
   *seeding origin* differs (§0).
@@ -22,7 +23,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
   Resolution (within caller workspace `ws`):
 
     1. ETS hit for `(ws, name)` → return cached `%Recipe{}`.
-    2. else `ConfigStore.resolve("workspace", ws, config://<ws>/recipe/<name>, "recipe")`.
+    2. else `ConfigStore.resolve("workspace", ws, "recipe:<name>", "recipe")`.
     3. if `:none` → fall back to `(system_ws, name)` (the cross-ws fallback that
        delivers "workspace-scoped + forkable": a tenant sees the system built-in
        until it forks its own; §3 OQ-2). This fallback lives HERE, not in
@@ -80,16 +81,17 @@ defmodule Ezagent.Agent.RecipeRegistry do
   def system_workspace_uri, do: :system |> Ezagent.URI.workspace() |> URI.to_string()
 
   @doc """
-  The role's OWN ConfigStore subject STRING for `(workspace, name)`:
-  `config://<ws>/recipe/<name>` (workspace-first to match the `entity://`
-  convention, but NOT an `entity://` principal — `Ezagent.URI.entity/3` rejects
-  non-`user|agent|worker` types; ConfigStore string-matches this opaquely; §2.2).
+  The recipe's OWN ConfigStore subject STRING for `name`: the structured
+  non-URI identifier `recipe:<name>` (T1 project B — an opaque subject, NOT a
+  `<scheme>://` URI; workspace is a SEPARATE ConfigStore field, so it is not
+  embedded here). ConfigStore string-matches the subject exactly (§2.2). The
+  `workspace_uri` argument is retained for call-site symmetry but is not part
+  of the subject.
   """
   @spec recipe_subject_uri(String.t(), String.t()) :: String.t()
-  def recipe_subject_uri(workspace_uri, name)
-      when is_binary(workspace_uri) and is_binary(name) and name != "" do
-    workspace = workspace_uri |> Ezagent.URI.new!() |> Ezagent.URI.workspace_name!()
-    "config://#{workspace}/recipe/#{name}"
+  def recipe_subject_uri(_workspace_uri, name)
+      when is_binary(name) and name != "" do
+    "recipe:#{name}"
   end
 
   @doc """
@@ -235,7 +237,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
 
   @doc """
   Seed `recipe` as a role ConfigObject in the SYSTEM workspace IFF no pointer yet
-  exists for its `(system_ws, config://<ws>/recipe/<name>, "recipe")` — the atomic
+  exists for its `(system_ws, "recipe:<name>", "recipe")` — the atomic
   seed-once-if-no-pointer primitive (§4.1/§4.2).
 
   - First boot: no pointer → writes object + points. The built-in is now config.
@@ -329,7 +331,7 @@ defmodule Ezagent.Agent.RecipeRegistry do
   operator-seeded role MAY carry a `script` as trusted CODE — it flows through
   `seed_role_if_absent/2` (which uses `validate_recipe/1`, NOT this guard).
 
-  This is the enforcement PRIMITIVE the next-phase `Ezagent.Behavior.RoleGovernance`
+  This is the enforcement PRIMITIVE the next-phase `Ezagent.ActionSet.RoleGovernance`
   calls at `stage_item` so a script-carrying role-CR is rejected at the authoring
   boundary, BEFORE any inert object is staged. It also runs the full `Recipe.new/1`
   validation (flavor-field reject, cap-axis reject, behaviors-must-be-loaded), so

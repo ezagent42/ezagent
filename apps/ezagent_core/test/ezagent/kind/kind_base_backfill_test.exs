@@ -2,7 +2,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Kind.KindBaseBackfill
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Test.SnapshotFixtures
 
@@ -18,10 +18,10 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
     @impl true
     def behaviors,
       do: [
-        Ezagent.Behavior.Session,
-        Ezagent.Behavior.Publisher.SessionImpl,
-        Ezagent.Behavior.ExternalMirror,
-        Ezagent.Behavior.KindBase
+        Ezagent.ActionSet.Session,
+        Ezagent.ActionSet.Publisher.SessionImpl,
+        Ezagent.ActionSet.ExternalMirror,
+        Ezagent.ActionSet.KindBase
       ]
 
     @impl true
@@ -137,19 +137,19 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   describe "target_behaviors/1" do
     test "chat set" do
       assert KindBaseBackfill.target_behaviors(:instance_message) == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Publisher.SessionImpl,
-               Ezagent.Behavior.ExternalMirror
+               Ezagent.ActionSet.Session,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               Ezagent.ActionSet.ExternalMirror
              ]
     end
 
     test "socialware set matches Session.socialware_behaviors/0 order exactly" do
       assert KindBaseBackfill.target_behaviors(:socialware) == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Turn,
-               Ezagent.Behavior.Surface,
-               Ezagent.Behavior.SupervisorApproval,
-               Ezagent.Behavior.Publisher.SessionImpl
+               Ezagent.ActionSet.Session,
+               Ezagent.ActionSet.Turn,
+               Ezagent.ActionSet.Surface,
+               Ezagent.ActionSet.SupervisorApproval,
+               Ezagent.ActionSet.Publisher.SessionImpl
              ]
     end
   end
@@ -160,7 +160,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       refute Map.has_key?(%{}, :kind_base)
       assert KindBaseBackfill.kind_base_missing?(%{})
 
-      present = %{kind_base: %{state: %{behaviors: [Ezagent.Behavior.Session]}, transients: %{}}}
+      present = %{kind_base: %{state: %{behaviors: [Ezagent.ActionSet.Session]}, transients: %{}}}
       refute KindBaseBackfill.kind_base_missing?(present)
     end
   end
@@ -211,11 +211,11 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       slice_state = decode(uri)
 
       effective = Ezagent.Kind.BehaviorSet.effective_set(ChatSessionLikeKind, slice_state)
-      assert Ezagent.Behavior.Session in effective
-      assert Ezagent.Behavior.Publisher.SessionImpl in effective
+      assert Ezagent.ActionSet.Session in effective
+      assert Ezagent.ActionSet.Publisher.SessionImpl in effective
       # ExternalMirror is in BOTH the backfilled chat set and the declared set,
       # so it is retained — the chat set is its own declared list (no over/under).
-      assert Ezagent.Behavior.ExternalMirror in effective
+      assert Ezagent.ActionSet.ExternalMirror in effective
     end
 
     test "legacy JSON-column row is CLEARED (run does not abort) so the gate reaches zero" do
@@ -265,7 +265,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
     test "already-backfilled row is skipped (idempotent)" do
       already =
         Map.put(chat_state(), :kind_base, %{
-          state: %{behaviors: [Ezagent.Behavior.Session]},
+          state: %{behaviors: [Ezagent.ActionSet.Session]},
           transients: %{}
         })
 

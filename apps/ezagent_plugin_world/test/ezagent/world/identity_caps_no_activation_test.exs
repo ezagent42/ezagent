@@ -29,7 +29,7 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
 
     cap = %Ezagent.Capability{
       kind: :agent,
-      behavior: Ezagent.Behavior.Chat,
+      behavior: Ezagent.ActionSet.Chat,
       action: :send,
       instance: agent,
       workspace_uri: workspace,

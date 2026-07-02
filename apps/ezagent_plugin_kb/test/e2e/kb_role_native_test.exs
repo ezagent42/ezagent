@@ -144,7 +144,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       # Entity.Agent; a :kb-kind cap would be a false-pass trap).
       query_only = %{
         caller: URI.new!("entity://#{ws_name}/user/reader"),
-        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :query)])
+        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query)])
       }
 
       # Positive control: the cap authorizes query.
@@ -246,8 +246,8 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
 
       caps =
         MapSet.new([
-          Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :query),
-          Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :ingest)
+          Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query),
+          Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :ingest)
         ])
 
       opts = [caller: orch, caps: caps, workspace_uri: workspace_uri]
@@ -265,7 +265,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       # An orchestrator WITHOUT the kb.ingest cap is denied (fail-closed).
       read_only = [
         caller: orch,
-        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.Behavior.Kb, :query)]),
+        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query)]),
         workspace_uri: workspace_uri
       ]
 

@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.Kanban.Connectors do
+defmodule Ezagent.ActionSet.Kanban.Connectors do
   @moduledoc """
   Kanban Behavior 的**出站连接器动作实现体**（df-tech 下沉：原在 world kanban_actions.ex，
-  先搬进 `Ezagent.Behavior.Kanban` 收口，再从该 Behavior 主模块拆出实现体到本模块——
+  先搬进 `Ezagent.ActionSet.Kanban` 收口，再从该 Behavior 主模块拆出实现体到本模块——
   主模块只留 `action/3` 宏声明 + `def handle_<x>(a,c), do: Connectors.<x>(a,c)` 薄转发，
   契约/宏不变，仅把实现体搬来此处压主模块 LOC）。
 
@@ -19,7 +19,7 @@ defmodule Ezagent.Behavior.Kanban.Connectors do
     `tree set-effect（经 commit/1 收口）` 收口点**。
   """
 
-  alias Ezagent.Behavior.Kanban.Shared
+  alias Ezagent.ActionSet.Kanban.Shared
   alias EzagentPluginKanban.BoardConfig
   alias EzagentPluginKanban.Ci
   alias EzagentPluginKanban.Github

@@ -111,7 +111,7 @@ defmodule Ezagent.Socialware.AnonAdmission do
   defp mount_participation(session_uri, anon_uri, opts) do
     fun =
       Keyword.get(opts, :mount_participation, fn session, anon ->
-        Ezagent.Behavior.Session.Membership.mount_participation_caps(session, anon)
+        Ezagent.ActionSet.Session.Membership.mount_participation_caps(session, anon)
       end)
 
     try do

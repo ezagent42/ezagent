@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
+defmodule Ezagent.ActionSet.ExternalMirror.ReconcileAfterLoadTest do
   @moduledoc """
   Task #34 — `reconcile_after_load/2` unions DB binding rows with
   the slice after snapshot restore.
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.ExternalMirror
+  alias Ezagent.ActionSet.ExternalMirror
   alias Ezagent.ExternalMirror.BindingRow
 
   defp session_uri(name \\ "reconcile-test"),

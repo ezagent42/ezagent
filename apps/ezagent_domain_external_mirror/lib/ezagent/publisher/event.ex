@@ -6,7 +6,7 @@ defmodule Ezagent.Publisher.Event do
   Built from the underlying `Ezagent.SliceChange` envelope by the
   publishing Kind's slice-change handler. Each event is appended to
   the publisher's bounded ring (V1 default 100; see
-  `Ezagent.Behavior.Publisher.history_retention/0`) with a
+  `Ezagent.ActionSet.Publisher.history_retention/0`) with a
   monotonically-increasing per-publisher cursor.
 
   ## Fields

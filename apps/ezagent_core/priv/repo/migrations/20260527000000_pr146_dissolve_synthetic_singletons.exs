@@ -29,10 +29,10 @@ defmodule EzagentCore.Repo.Migrations.Pr146DissolveSyntheticSingletons do
 
   - `routing-admin://default` synthetic Kind deleted
   - `pty-input://default` synthetic Kind deleted
-  - `Ezagent.Behavior.RoutingAdmin` renamed/generalized →
-    `Ezagent.Behavior.Routing`, registered on Workspace + Session +
+  - `Ezagent.ActionSet.RoutingAdmin` renamed/generalized →
+    `Ezagent.ActionSet.Routing`, registered on Workspace + Session +
     new `Ezagent.Entity.System` Kind
-  - `Ezagent.Behavior.Pty` registered on `Ezagent.Entity.Agent`;
+  - `Ezagent.ActionSet.Pty` registered on `Ezagent.Entity.Agent`;
     dispatch target is the agent URI itself
   - `routing-admin` + `pty-input` removed from
     `Ezagent.URI.@known_schemes`

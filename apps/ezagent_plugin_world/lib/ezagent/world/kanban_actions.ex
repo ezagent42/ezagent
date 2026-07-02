@@ -16,7 +16,7 @@ defmodule Ezagent.World.KanbanActions do
   （role × native，RF-5a），不再合成 `resource://` URI。
 
   本模块退成**纯 dispatcher**：连接器逻辑（Github / Miro / BoardConfig / Ci 等）全部住在
-  `Ezagent.Behavior.Kanban` 的动作里（sync_github / push_pr / register_pr /
+  `Ezagent.ActionSet.Kanban` 的动作里（sync_github / push_pr / register_pr /
   attach_code_file / sync_prs / sync_miro / set_board_config / save_github_creds /
   save_miro_creds）。world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
   passive kanban-manager 经 `KanbanData.ensure_spawned/1` 从快照 rehydrate 起活。

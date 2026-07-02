@@ -1,10 +1,10 @@
-defmodule Ezagent.Behavior.PtyMigrationParityTest do
+defmodule Ezagent.ActionSet.PtyMigrationParityTest do
   @moduledoc """
-  Phase 2.5 migration parity test for `Ezagent.Behavior.Pty` per
+  Phase 2.5 migration parity test for `Ezagent.ActionSet.Pty` per
   SPEC `2026-05-28-router-behavior-kind-architecture.md` §7.3 Level 1
   (dispatch parity).
 
-  Validates that the migrated `Ezagent.Behavior.Pty` produces the
+  Validates that the migrated `Ezagent.ActionSet.Pty` produces the
   same dispatch-visible outcome via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_write/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration.
@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.Pty
+  alias Ezagent.ActionSet.Pty
 
   defmodule StubAgentKind do
     @moduledoc false
@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
     @impl true
     def type_name, do: :pty_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Pty]
+    def behaviors, do: [Ezagent.ActionSet.Pty]
     @impl true
     def persistence, do: :ephemeral
   end
@@ -77,7 +77,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Pty)
+      assert Ezagent.ActionSet.new_style?(Pty)
     end
 
     test "__action_names__/0 lists [:write]" do

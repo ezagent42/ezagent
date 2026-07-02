@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.TemplateMigrationParityTest do
+defmodule Ezagent.ActionSet.TemplateMigrationParityTest do
   @moduledoc """
   Phase 2-a r3 (2026-05-28) — migration parity tests for
-  `Ezagent.Behavior.Template` after the SPEC 2026-05-28
+  `Ezagent.ActionSet.Template` after the SPEC 2026-05-28
   new-action-grammar migration.
 
   Covers the four actions (:read / :write / :instantiate / :fork)
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Template
+  alias Ezagent.ActionSet.Template
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
 
   defp ctx_with_slice(content, extras \\ %{}) do

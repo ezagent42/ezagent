@@ -87,7 +87,7 @@ defmodule EzagentPluginHello.Application do
   # `EzagentPluginHello.App`; the agent-flavor/Template create path is a follow-up.)
   @impl Ezagent.Plugin
   def behaviors do
-    # The builder's own page-gen `:receive` hook, PLUS every `Ezagent.Behavior.Identity`
+    # The builder's own page-gen `:receive` hook, PLUS every `Ezagent.ActionSet.Identity`
     # action registered for the `HelloBuilder` Kind — so the orchestrator can
     # RECEIVE its granted within-session caps (`:grant_cap`) and dispatch resolves
     # the action. This mirrors `EzagentDomainIdentity.Application`'s registration of
@@ -95,14 +95,14 @@ defmodule EzagentPluginHello.Application do
     # the hello-owned Kind.
     identity_decls =
       for {behavior, actions} <- [
-            {Ezagent.Behavior.Identity, Ezagent.Behavior.Identity.actions()},
-            {Ezagent.Behavior.IdentityAdmin, Ezagent.Behavior.IdentityAdmin.actions()}
+            {Ezagent.ActionSet.Identity, Ezagent.ActionSet.Identity.actions()},
+            {Ezagent.ActionSet.IdentityAdmin, Ezagent.ActionSet.IdentityAdmin.actions()}
           ],
           action <- actions do
         {Ezagent.Entity.HelloBuilder, action, behavior}
       end
 
-    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder} | identity_decls]
+    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.ActionSet.HelloBuilder} | identity_decls]
   end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),

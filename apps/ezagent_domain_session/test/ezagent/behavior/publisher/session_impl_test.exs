@@ -1,13 +1,13 @@
-defmodule Ezagent.Behavior.Publisher.SessionImplTest do
+defmodule Ezagent.ActionSet.Publisher.SessionImplTest do
   @moduledoc """
-  Unit tests for `Ezagent.Behavior.Publisher.SessionImpl` — direct
+  Unit tests for `Ezagent.ActionSet.Publisher.SessionImpl` — direct
   handler + `handle_signal/2` exercises against synthetic flat slices. No
   live KindRegistry / SliceChange wiring (covered by the integration tests
   in `EzagentDomainInstanceMessage.Integration.PublisherSessionTest`).
 
   ## Lifecycle migration (SPEC 2026-05-29) — accessor updates
 
-  After `use Ezagent.Behavior` → `use Ezagent.Lifecycle`:
+  After `use Ezagent.ActionSet` → `use Ezagent.Lifecycle`:
   - `init_slice/1` returns the two-container `%{state:, transients:}`
     shape; `fresh_slice/1` returns a FLAT working slice (persistent +
     transient co-located) for the direct-handler unit tests, the same
@@ -26,7 +26,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Publisher.SessionImpl
+  alias Ezagent.ActionSet.Publisher.SessionImpl
   alias Ezagent.Publisher.Event
 
   defp ctx(self_uri \\ Ezagent.URI.new!("session://team-alpha/default/unit-test")) do
@@ -97,15 +97,15 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
   # another Kind" without updating Session would otherwise leave
   # SessionImpl orphaned, tests passing, invariant silently broken.
   describe "INVARIANT: Session is the V1 Publisher" do
-    test "Ezagent.Entity.Session declares @behaviour Ezagent.Behavior.Publisher" do
+    test "Ezagent.Entity.Session declares @behaviour Ezagent.ActionSet.Publisher" do
       behaviours =
         :attributes
         |> Ezagent.Entity.Session.__info__()
         |> Keyword.get_values(:behaviour)
         |> List.flatten()
 
-      assert Ezagent.Behavior.Publisher in behaviours,
-             "Session must declare @behaviour Ezagent.Behavior.Publisher " <>
+      assert Ezagent.ActionSet.Publisher in behaviours,
+             "Session must declare @behaviour Ezagent.ActionSet.Publisher " <>
                "(SPEC §2.1 'first implementer'). Got: #{inspect(behaviours)}"
     end
 
@@ -129,7 +129,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       assert Ezagent.Entity.Session.history_retention() == 100
     end
 
-    test "Session.behaviors/0 includes Ezagent.Behavior.Publisher.SessionImpl" do
+    test "Session.behaviors/0 includes Ezagent.ActionSet.Publisher.SessionImpl" do
       # Without SessionImpl in behaviors/0, the :publisher slice is
       # never initialized at Kind spawn — silent breakage.
       assert SessionImpl in Ezagent.Entity.Session.behaviors()
@@ -374,7 +374,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, new_slice, %{cursor: 3}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: task.pid, cursor: :latest},
@@ -412,7 +412,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, _new_slice, %{cursor: 3}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: pid, cursor: :earliest},
@@ -446,7 +446,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           assert_receive {:DOWN, ^ref, :process, ^dead_pid, _}, 200
 
           {:ok, new, _} =
-            EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+            EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
               :subscribe_from,
               acc,
               %{subscriber_pid: dead_pid, cursor: :latest},
@@ -468,7 +468,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       {:ok, final_slice, _} =
-        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
           :subscribe_from,
           slice,
           %{subscriber_pid: live_task.pid, cursor: :latest},
@@ -513,7 +513,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # cursor=2 → replay 3, 4, 5
       assert {:ok, _new_slice, %{cursor: 5}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: pid, cursor: 2},
@@ -540,7 +540,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # Asking from cursor=1 — older than oldest (4) by far.
       assert {:error, :cursor_out_of_window} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: self(), cursor: 1},
@@ -563,7 +563,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end
 
       assert {:ok, ^slice, %{cursor: 1, state: state}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, :snapshot, slice, %{}, ctx(self_uri))
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, :snapshot, slice, %{}, ctx(self_uri))
 
       # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — `build_payload/2`
       # re-fetches the slice via `Kind.get_slice/2`. In this unit
@@ -580,7 +580,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       slice = fresh_slice()
 
       assert {:ok, ^slice, %{cursor: 0, state: nil}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, :snapshot, slice, %{}, ctx())
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, :snapshot, slice, %{}, ctx())
     end
   end
 
@@ -600,7 +600,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # history(1, 3) — from exclusive, to inclusive → cursors 2, 3
       assert {:ok, _slice, %{events: events}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{from: 1, to: 3}, ctx(self_uri))
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, :history, slice, %{from: 1, to: 3}, ctx(self_uri))
 
       assert Enum.map(events, & &1.cursor) == [2, 3]
     end
@@ -619,7 +619,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, _slice, %{events: events}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{}, ctx(self_uri))
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, :history, slice, %{}, ctx(self_uri))
 
       assert Enum.map(events, & &1.cursor) == [1, 2, 3]
     end
@@ -638,7 +638,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:error, :cursor_out_of_window} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{from: 1, to: :latest}, ctx(self_uri))
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Publisher.SessionImpl, :history, slice, %{from: 1, to: :latest}, ctx(self_uri))
     end
   end
 

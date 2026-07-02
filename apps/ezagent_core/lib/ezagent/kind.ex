@@ -16,7 +16,7 @@ defmodule Ezagent.Kind do
   - `type_name/0`: stable type atom (e.g. `:echo`, `:user`, `:agent`).
     Stored in snapshots — used to rehydrate, so renaming the module
     must not require a migration. Per Decision #62.
-  - `behaviors/0`: list of `Ezagent.Behavior` modules this Kind composes.
+  - `behaviors/0`: list of `Ezagent.ActionSet` modules this Kind composes.
   - `persistence/0`: snapshot strategy.
 
   ## Optional callbacks
@@ -727,7 +727,7 @@ defmodule Ezagent.Kind do
   @doc """
   Attach a Behavior to this Kind.
 
-      attach Ezagent.Behavior.Session,
+      attach Ezagent.ActionSet.Session,
         actions: [:send, :receive],
         init_state: %{members: %{}}
 
@@ -748,7 +748,7 @@ defmodule Ezagent.Kind do
   # codebase used it (rg `read_graph %{` returns only this file), and
   # the runtime authoritatively read sibling-slice permissions via the
   # per-Behavior `reads_sibling_slices/0` callback resolved by
-  # `Ezagent.Behavior.reads_sibling_slices_of/1`. The dual path was the
+  # `Ezagent.ActionSet.reads_sibling_slices_of/1`. The dual path was the
   # codex r3 finding on PR #458 ("two sources of truth, one of them
   # unused"). Macro + accessor removed; `reads_sibling_slices_of/1` is
   # the canonical and only source of truth. A future PR can re-add a

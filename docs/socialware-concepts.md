@@ -45,11 +45,11 @@ Verified bases:
 
 | Base | Code | Role |
 | --- | --- | --- |
-| orchestrator | `Ezagent.Behavior.Template` recipe content + `Orchestrator.Tools` + `SessionManager` | The existing orchestration combo. No new `Behavior.Orchestrator`, and no `Behavior.Template` refit. |
-| surface | `Ezagent.Behavior.Surface` | Render/external-surface substrate, immutable page versions, approved pointer, settlement commit. |
-| pty | `Ezagent.Behavior.Pty` | Terminal/PTY substrate. |
-| sandbox | `Ezagent.Behavior.Sandbox` | Per-agent config directory and plugin-extension substrate. |
-| cc-headless-agent | `Ezagent.Behavior.CcHeadlessAgent` | Claude Code SDK/headless-agent substrate. |
+| orchestrator | `Ezagent.ActionSet.Template` recipe content + `Orchestrator.Tools` + `SessionManager` | The existing orchestration combo. No new `Behavior.Orchestrator`, and no `Behavior.Template` refit. |
+| surface | `Ezagent.ActionSet.Surface` | Render/external-surface substrate, immutable page versions, approved pointer, settlement commit. |
+| pty | `Ezagent.ActionSet.Pty` | Terminal/PTY substrate. |
+| sandbox | `Ezagent.ActionSet.Sandbox` | Per-agent config directory and plugin-extension substrate. |
+| cc-headless-agent | `Ezagent.ActionSet.CcHeadlessAgent` | Claude Code SDK/headless-agent substrate. |
 
 The orchestrator base is conceptual shorthand for the existing recipe + tools +
 executor combo. `Behavior.Template` remains template-content storage on
@@ -87,15 +87,15 @@ A shape is the flow-specific behavior and recipe that make bases into a
 particular flow.
 
 For chat, the shape is the conversation turn protocol,
-`Ezagent.Behavior.Turn`. Turn owns the `:turns` slice and is specific to
+`Ezagent.ActionSet.Turn`. Turn owns the `:turns` slice and is specific to
 conversation flows, so it is a shape, not a base.
 
 For kanban, the shape is the board/task protocol,
-`Ezagent.Behavior.Kanban`: nodes, stages, claims, statuses, artifacts, metrics,
+`Ezagent.ActionSet.Kanban`: nodes, stages, claims, statuses, artifacts, metrics,
 GitHub/Miro sync, and board configuration.
 
 Surface is different: a rendered external surface can be reused by unrelated
-flows, so `Ezagent.Behavior.Surface` is a base.
+flows, so `Ezagent.ActionSet.Surface` is a base.
 
 ## How Bases Compose Into Socialware
 

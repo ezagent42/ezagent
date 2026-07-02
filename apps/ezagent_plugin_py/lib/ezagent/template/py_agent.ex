@@ -133,7 +133,7 @@ defmodule Ezagent.Template.PyAgent do
         # Behavior.PyAgent (the :py_sync_result / :py_reset / :py_configure
         # handlers). Without this the instance captures only the base set and
         # the re-dispatched :py_sync_result has no handler (no reply).
-        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.Behavior.PyAgent],
+        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.ActionSet.PyAgent],
         # P4b — DURABLE flavor record (cc/codex precedent). py now routes inbound
         # chat through AgentBridge, which resolves the agent's flavor to pick the
         # `:in_process_sync` transport. ETS `AgentFlavorAttributes` is volatile;

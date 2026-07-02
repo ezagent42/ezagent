@@ -61,8 +61,8 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
     %{
       name: "t7g-role",
       requested_caps: [
-        %{behavior: Ezagent.Behavior.ApiKeys, action: :put_api_key},
-        %{behavior: Ezagent.Behavior.Identity, action: :list_caps}
+        %{behavior: Ezagent.ActionSet.ApiKeys, action: :put_api_key},
+        %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
       ]
     }
   end
@@ -82,10 +82,10 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       self_instance = Ezagent.URI.instance(agent_uri)
 
       assert %Ezagent.Capability{instance: ^self_instance} =
-               cap_for(caps, Ezagent.Behavior.ApiKeys)
+               cap_for(caps, Ezagent.ActionSet.ApiKeys)
 
       assert %Ezagent.Capability{instance: ^self_instance} =
-               cap_for(caps, Ezagent.Behavior.Identity)
+               cap_for(caps, Ezagent.ActionSet.Identity)
     end
   end
 
@@ -99,7 +99,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                  agent_uri,
                  recipe(),
                  @telemetry_prefix,
-                 %{Ezagent.Behavior.ApiKeys => board_uri}
+                 %{Ezagent.ActionSet.ApiKeys => board_uri}
                )
 
       caps = caps_for(agent_uri)
@@ -110,16 +110,16 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       board_ws = Ezagent.Capability.workspace_of(board_uri)
 
       assert %Ezagent.Capability{instance: ^board_instance, workspace_uri: ^board_ws} =
-               cap_for(caps, Ezagent.Behavior.ApiKeys)
+               cap_for(caps, Ezagent.ActionSet.ApiKeys)
 
       # least-priv: a CONCRETE board instance, NOT a wildcard (not the (b) :any form).
-      refute cap_for(caps, Ezagent.Behavior.ApiKeys).instance == :any
+      refute cap_for(caps, Ezagent.ActionSet.ApiKeys).instance == :any
 
       # the non-overridden behavior stays scoped to the grantee's OWN instance.
       self_instance = Ezagent.URI.instance(agent_uri)
 
       assert %Ezagent.Capability{instance: ^self_instance} =
-               cap_for(caps, Ezagent.Behavior.Identity)
+               cap_for(caps, Ezagent.ActionSet.Identity)
     end
   end
 end

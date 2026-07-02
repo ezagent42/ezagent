@@ -3,13 +3,13 @@ defmodule EzagentDomainSocialware.PageView do
   Internal SessionView for the socialware page surface.
 
   Renders the latest retained page version. External rendering is a later
-  React/json-render surface and follows `Ezagent.Behavior.Surface.external_tree/1`.
+  React/json-render surface and follows `Ezagent.ActionSet.Surface.external_tree/1`.
   """
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
 
-  alias Ezagent.Behavior.Surface
+  alias Ezagent.ActionSet.Surface
 
   @impl true
   def id, do: :page

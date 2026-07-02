@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.ChatMemberFacetsTest do
+defmodule Ezagent.ActionSet.ChatMemberFacetsTest do
   @moduledoc """
   team-routing-unification §3.1 (PR-5a) — pure unit coverage for the member
-  facet read accessor `Ezagent.Behavior.Session.role_name_to_uri/2`. The threading
+  facet read accessor `Ezagent.ActionSet.Session.role_name_to_uri/2`. The threading
   that POPULATES member meta (handle_join → do_join → meta), the role_name
   uniqueness guard, and facet-preservation on rejoin are covered end-to-end in
   the integration suite (session_auto_join_test.exs).
@@ -12,7 +12,7 @@ defmodule Ezagent.Behavior.ChatMemberFacetsTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
 
   defp uri(s), do: URI.new!(s)
 

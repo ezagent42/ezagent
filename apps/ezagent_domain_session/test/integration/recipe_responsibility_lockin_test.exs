@@ -32,7 +32,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentFlavorAttributes, AgentRoleAttributes, Capability, Invocation, KindRegistry}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.Tools
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam

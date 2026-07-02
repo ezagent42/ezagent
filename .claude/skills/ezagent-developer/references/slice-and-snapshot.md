@@ -75,11 +75,11 @@ Closest commercial analog: **Akka Persistent Actor** (snapshot + journal) or **M
 Default: **a Behavior's `invoke/4` receives ONLY its own slice** (the `slice` arg). Reading another Behavior's slice on the same Kind requires explicit opt-in via the `reads_sibling_slices/0 :: [atom()]` callback (PR #389 / invariant #18):
 
 ```elixir
-defmodule Ezagent.Behavior.CurlAgent do
-  @impl Ezagent.Behavior
+defmodule Ezagent.ActionSet.CurlAgent do
+  @impl Ezagent.ActionSet
   def reads_sibling_slices, do: [:api_keys]  # explicit declaration
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def invoke(:receive, slice, args, ctx) do
     api_key = ctx[:sibling_slices][:api_keys][:providers]["deepseek"]
     # ... use api_key ...
@@ -97,9 +97,9 @@ Some Behaviors' slices are projections of an SSOT DB table:
 
 | Behavior | Slice key | DB SSOT |
 |---|---|---|
-| `Ezagent.Behavior.Chat` | `:chat.recent_messages` | `messages` table |
-| `Ezagent.Behavior.ExternalMirror` | `:external_mirror.bindings` | `external_mirror_bindings` table |
-| `Ezagent.Behavior.Identity` | `:identity.caps` | `users.caps_json` column |
+| `Ezagent.ActionSet.Chat` | `:chat.recent_messages` | `messages` table |
+| `Ezagent.ActionSet.ExternalMirror` | `:external_mirror.bindings` | `external_mirror_bindings` table |
+| `Ezagent.ActionSet.Identity` | `:identity.caps` | `users.caps_json` column |
 
 The snapshot is a CACHE of these tables. Three things can go wrong:
 
@@ -128,13 +128,13 @@ Concrete walk-through to make slice/snapshot tangible.
 ### The Behavior
 
 ```elixir
-defmodule Ezagent.Behavior.EntitySend do
-  @behaviour Ezagent.Behavior
+defmodule Ezagent.ActionSet.EntitySend do
+  @behaviour Ezagent.ActionSet
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def state_slice, do: :outbox
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def init_slice(_args), do: %{
     pending: [],        # retry queue
     sends_in_60s: [],   # rate-limit window
@@ -142,7 +142,7 @@ defmodule Ezagent.Behavior.EntitySend do
     total_sent: 0
   }
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def invoke(:send, slice, %{recipient_uri: r, body: b}, ctx) do
     cond do
       length(slice.sends_in_60s) > 10 ->

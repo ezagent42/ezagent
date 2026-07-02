@@ -150,7 +150,7 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
       held = Ezagent.Identity.list_caps_for(autosvc_uri)
 
       assert Enum.any?(held, fn c ->
-               Map.get(c, :behavior) == Ezagent.Behavior.Kb and Map.get(c, :action) == :query
+               Map.get(c, :behavior) == Ezagent.ActionSet.Kb and Map.get(c, :action) == :query
              end),
              "the seeded AutoService agent must HOLD kb.query in its identity slice " <>
                "(the live orchestrator's cap source). Held: #{inspect(MapSet.to_list(held))}"

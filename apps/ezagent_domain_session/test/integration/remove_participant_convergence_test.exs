@@ -15,7 +15,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry}
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Session.Participants
 
@@ -54,7 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     cap = %Ezagent.Capability{
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :remove_participant,
         Ezagent.URI.instance(session_uri),
         Ezagent.Capability.workspace_of(session_uri)

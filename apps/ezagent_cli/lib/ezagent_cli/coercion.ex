@@ -1,6 +1,6 @@
 defmodule EzagentCli.Coercion do
   @moduledoc """
-  Convert `Ezagent.Behavior.interface/0` type declarations into Optimus
+  Convert `Ezagent.ActionSet.interface/0` type declarations into Optimus
   option specs.
 
   Per Spec 02 §2.C type-mapping table — every type in

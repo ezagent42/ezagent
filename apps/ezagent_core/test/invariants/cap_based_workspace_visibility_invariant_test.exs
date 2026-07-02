@@ -78,7 +78,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
 
     %Capability{
       kind: :workspace,
-      behavior: Ezagent.Behavior.Workspace,
+      behavior: Ezagent.ActionSet.Workspace,
       action: :list_members,
       instance: ws_uri,
       workspace_uri: ws_uri,

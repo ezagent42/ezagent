@@ -4,7 +4,7 @@ defmodule Ezagent.Agent.CredentialNotifier do
 
   Subscribes ONCE to the shared `Ezagent.Domain.Pty.Server.auth_failed_all_topic/0`
   (`{:pty_auth_failed, agent_uri, observer}` for every agent). On each event it resolves
-  the agent's OWNER via `Ezagent.Behavior.ApiKeys.data_owner/1` (the durable creator_uri
+  the agent's OWNER via `Ezagent.ActionSet.ApiKeys.data_owner/1` (the durable creator_uri
   model — NOT lineage-parent) and notifies them through `Ezagent.Notifications.notify/3`
   with a clickable terminal URL so they can re-`/login`.
 
@@ -52,7 +52,7 @@ defmodule Ezagent.Agent.CredentialNotifier do
   defp resolve_user_owner(_uri, 0), do: :no_owner
 
   defp resolve_user_owner(%URI{} = uri, depth) do
-    case Ezagent.Behavior.ApiKeys.data_owner(uri) do
+    case Ezagent.ActionSet.ApiKeys.data_owner(uri) do
       %URI{scheme: "entity"} = owner -> resolve_entity_owner(owner, depth)
       _ -> :no_owner
     end

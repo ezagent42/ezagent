@@ -22,7 +22,7 @@ defmodule Ezagent.AgentPassiveAttributes do
   This table is the **volatile ETS fast path**, exactly like
   `AgentFlavorAttributes`'s first-spawn launch bridge. The *durable* source of
   truth is the agent's `:sandbox` slice `:passive` field (written at create by
-  `Ezagent.Behavior.Workspace.AgentCreate`'s role step, snapshot-persisted by the
+  `Ezagent.ActionSet.Workspace.AgentCreate`'s role step, snapshot-persisted by the
   Agent Kind's `{:snapshot, :on_change}` policy). RF-5a made the
   `:passive` UriQuery resolver (`EzagentDomainInstanceMessage.UriQueryResolvers`)
   layer **ETS → kind-slice → durable snapshot**, mirroring `resolve_flavor`'s

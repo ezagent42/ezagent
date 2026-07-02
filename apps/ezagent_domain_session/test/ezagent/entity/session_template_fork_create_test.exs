@@ -5,7 +5,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   `Ezagent.Entity.SessionTemplate.create/3`.
 
   Both wrap `persist_version/2` + the §1.7 (e) owner-cap grant, and both
-  require a `Behavior.Template` `:session_template` cap as a preflight
+  require a `ActionSet.Template` `:session_template` cap as a preflight
   (§1.4). Covers:
 
   - **fork lineage** — the forked template's `parent_template_uri`
@@ -20,7 +20,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Behavior, Capability, Invocation, Identity, KindRegistry}
+  alias Ezagent.{ActionSet, Capability, Invocation, Identity, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
 
@@ -94,11 +94,11 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
     content
   end
 
-  # A `Behavior.Template` `:session_template` cap, workspace-bounded.
+  # A `ActionSet.Template` `:session_template` cap, workspace-bounded.
   defp session_template_cap do
     %Capability{
       kind: :session_template,
-      behavior: Behavior.Template,
+      behavior: ActionSet.Template,
       instance: {:within_workspace, @workspace_uri},
       workspace_uri: @workspace_uri,
       granted_by: User.admin_uri(),
@@ -308,7 +308,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   end
 
   describe "owner-cap grant (SPEC §1.7 (e))" do
-    test "fork grants the owner a Behavior.Template SessionTemplate cap" do
+    test "fork grants the owner a ActionSet.Template SessionTemplate cap" do
       parent_uri = persist_parent("fc-grant-parent-#{uniq()}")
       owner_uri = spawn_owner([session_template_cap()])
 
@@ -325,12 +325,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       owner_caps = Identity.list_caps_for(owner_uri)
 
       assert Enum.any?(owner_caps, fn cap ->
-               cap.kind == :session_template and cap.behavior == Behavior.Template
+               cap.kind == :session_template and cap.behavior == ActionSet.Template
              end),
-             "fork must grant the owner a Behavior.Template :session_template cap (§1.7 (e))"
+             "fork must grant the owner a ActionSet.Template :session_template cap (§1.7 (e))"
     end
 
-    test "create grants the owner a Behavior.Template SessionTemplate cap" do
+    test "create grants the owner a ActionSet.Template SessionTemplate cap" do
       owner_uri = spawn_owner([session_template_cap()])
 
       assert {:ok, root_uri} =
@@ -345,9 +345,9 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       owner_caps = Identity.list_caps_for(owner_uri)
 
       assert Enum.any?(owner_caps, fn cap ->
-               cap.kind == :session_template and cap.behavior == Behavior.Template
+               cap.kind == :session_template and cap.behavior == ActionSet.Template
              end),
-             "create must grant the owner a Behavior.Template :session_template cap (§1.7 (e))"
+             "create must grant the owner a ActionSet.Template :session_template cap (§1.7 (e))"
     end
   end
 end

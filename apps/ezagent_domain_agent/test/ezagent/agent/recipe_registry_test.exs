@@ -29,7 +29,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
 
   # ---- §8.1 role is its OWN subject; seed writes CONFIG (not just ETS) -------
 
-  test "seed_role_if_absent writes a role ConfigObject resolvable at config://<sys>/recipe/<name>",
+  test "seed_role_if_absent writes a role ConfigObject resolvable at subject recipe:<name>",
        %{name: name, system_ws: ws} do
     assert {:ok, :seeded} =
              RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "hello", skills: ["s1"]})
@@ -76,8 +76,8 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
     # so a built-in and a user role instantiate identically (SPEC §10).
     recipe = %{
       name: name,
-      behaviors: [Ezagent.Behavior.Terminable],
-      requested_caps: [%{behavior: Ezagent.Behavior.Terminable, action: :terminate}]
+      behaviors: [Ezagent.ActionSet.Terminable],
+      requested_caps: [%{behavior: Ezagent.ActionSet.Terminable, action: :terminate}]
     }
 
     {:ok, in_memory} = Ezagent.Agent.Recipe.new(recipe)
@@ -89,22 +89,22 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
     # Byte-identical to the in-memory recipe — caps carry MODULE + ATOM values.
     assert rehydrated == in_memory
 
-    assert [%{behavior: Ezagent.Behavior.Terminable, action: :terminate}] =
+    assert [%{behavior: Ezagent.ActionSet.Terminable, action: :terminate}] =
              rehydrated.requested_caps
   end
 
   test "behaviors round-trip through ConfigStore (atom → string → loaded module)",
        %{name: name, system_ws: ws} do
     {:ok, :seeded} =
-      RecipeRegistry.seed_role_if_absent(%{name: name, behaviors: [Ezagent.Behavior.Terminable]})
+      RecipeRegistry.seed_role_if_absent(%{name: name, behaviors: [Ezagent.ActionSet.Terminable]})
 
     # Stored as a module-name STRING (JSON-safe).
-    assert {:ok, %ConfigObject{body: %{"behaviors" => ["Elixir.Ezagent.Behavior.Terminable"]}}} =
+    assert {:ok, %ConfigObject{body: %{"behaviors" => ["Elixir.Ezagent.ActionSet.Terminable"]}}} =
              resolve_role_object(ws, name)
 
     :ok = RecipeRegistry.flush_cache()
     # Rehydrated back to the loaded module atom by Recipe.new/1.
-    assert {:ok, %Ezagent.Agent.Recipe{behaviors: [Ezagent.Behavior.Terminable]}} =
+    assert {:ok, %Ezagent.Agent.Recipe{behaviors: [Ezagent.ActionSet.Terminable]}} =
              RecipeRegistry.lookup(ws, name)
   end
 
@@ -152,10 +152,10 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
     recipe = %{
       name: name,
       prompt: "p",
-      behaviors: [Ezagent.Behavior.Template],
+      behaviors: [Ezagent.ActionSet.Template],
       requested_caps: [
-        %{behavior: Ezagent.Behavior.Template, action: :read},
-        %{behavior: Ezagent.Behavior.Template, action: :write}
+        %{behavior: Ezagent.ActionSet.Template, action: :read},
+        %{behavior: Ezagent.ActionSet.Template, action: :write}
       ]
     }
 

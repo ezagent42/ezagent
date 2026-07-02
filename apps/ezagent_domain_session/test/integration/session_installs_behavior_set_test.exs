@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.KindRegistry

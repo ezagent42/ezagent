@@ -32,7 +32,7 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   ## `:template` slice content schema (Phase 7 completion PR-1, SPEC §1.0)
 
-  The schema below is the real `Ezagent.Behavior.Template` `:template`
+  The schema below is the real `Ezagent.ActionSet.Template` `:template`
   slice content map — no longer moduledoc-only. `flavor` (SPEC §1.1)
   names the plugin Template Class the `:instantiate` action delegates
   to (`"cc"` → `Ezagent.PluginCc.Template.CcAgent`).
@@ -164,10 +164,10 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   # Phase 7 completion PR-1 (SPEC §1.0): AgentTemplate carries TWO
   # slices — `:identity` (the cap policy) and `:template` (the
-  # template CONTENT, served via `Ezagent.Behavior.Template`'s
+  # template CONTENT, served via `Ezagent.ActionSet.Template`'s
   # dispatchable `:read` / `:write` / `:instantiate` actions).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.Template]
+  def behaviors, do: [Ezagent.ActionSet.Identity, Ezagent.ActionSet.Template]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
@@ -578,7 +578,7 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   ## What it does
 
-  Delegates entirely to `Ezagent.Behavior.Template.invoke(:fork, ...)`
+  Delegates entirely to `Ezagent.ActionSet.Template.invoke(:fork, ...)`
   via dispatch — the real fork orchestration (parent content read, fork
   content build, persist, owner-cap grant) lives there. This module
   function exists for API symmetry with `SessionTemplate.fork/3` and to

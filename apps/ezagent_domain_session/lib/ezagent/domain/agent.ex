@@ -30,7 +30,7 @@ defmodule Ezagent.Domain.Agent do
 
   Per `docs/futures/v2-feedback-log.md` (Architecture gap — No
   auto-trigger from URI registration to associated template
-  instantiate): the V2 path is a generic `Ezagent.Behavior.Terminable`
+  instantiate): the V2 path is a generic `Ezagent.ActionSet.Terminable`
   contract carried by every "running" Kind, dispatched via
   `?action=lifecycle.phase`. For V1 the facade reads flavor through
   `Ezagent.UriQuery`; flavor is stored agent metadata, not a URI name
@@ -111,7 +111,7 @@ defmodule Ezagent.Domain.Agent do
   # reads stay in their owning, already-non-activating facades —
   #   config  → Ezagent.Agent.Config.read_cascade/4  (pure-DB ConfigEvolve)
   #   caps    → Ezagent.Identity.read_entity_caps/1   (live slice → snapshot)
-  #   sandbox → Ezagent.Behavior.Sandbox.read_persisted_state/1 (live → snapshot)
+  #   sandbox → Ezagent.ActionSet.Sandbox.read_persisted_state/1 (live → snapshot)
   #   status  → lifecycle_status/1 (KindRegistry.lookup + guarded Domain.Pty)
   # so the de-activation machinery is DRY at one site per slice and every
   # sensitive slice read stays at its allowlisted owner. Domain.Agent adds the
@@ -167,7 +167,7 @@ defmodule Ezagent.Domain.Agent do
   def read_caps(%URI{} = entity_uri, %{caller: _} = ctx) do
     needed = %{
       kind: entity_kind_type(entity_uri),
-      behavior: Ezagent.Behavior.Identity,
+      behavior: Ezagent.ActionSet.Identity,
       action: :list_caps,
       instance: Ezagent.URI.instance(entity_uri),
       workspace_uri: Ezagent.Capability.workspace_of(entity_uri)
@@ -188,20 +188,20 @@ defmodule Ezagent.Domain.Agent do
   Preserves the `:sandbox/:read` dispatch gate (`cap(:agent, Sandbox, :read)`,
   instance-scoped, PURE cap check — NO self/data-owner disjunct, unlike caps) via
   the two-route authz. Delegates the read to the owner's non-activating reader
-  `Ezagent.Behavior.Sandbox.read_persisted_state/1`.
+  `Ezagent.ActionSet.Sandbox.read_persisted_state/1`.
   """
   @spec read_sandbox(URI.t(), read_ctx()) :: {:ok, map()} | {:error, term()}
   def read_sandbox(%URI{} = agent_uri, %{caller: _} = ctx) do
     needed = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(agent_uri),
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
     }
 
     if authorized?(needed, ctx) do
-      case Ezagent.Behavior.Sandbox.read_persisted_state(agent_uri) do
+      case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
         state when is_map(state) -> {:ok, state}
         _ -> {:error, :not_found}
       end

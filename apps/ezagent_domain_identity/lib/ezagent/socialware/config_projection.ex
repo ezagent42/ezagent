@@ -8,7 +8,7 @@ defmodule Ezagent.Socialware.ConfigProjection do
 
     1. `object_uri/2` gives an immutable `ConfigObject` a **stable resolvable
        URI** in the `resource://` scheme (one of the six allowed schemes —
-       invariant #11; a `config://` scheme would be rejected by
+       invariant #11; an ad-hoc non-registered scheme would be rejected by
        `Ezagent.URI.new!/1`). The URI keys a SPECIFIC immutable object by its id,
        NOT the mutable pointer.
 
@@ -17,7 +17,7 @@ defmodule Ezagent.Socialware.ConfigProjection do
        *it* being the new immutable config object). Because the agent's cascade
        layer URI names a specific immutable object, the steps order so that no
        single-step failure leaves harmful uncompensated state (see
-       `Ezagent.Behavior.ConfigUpdate.handle_apply_delta/2`). The object is
+       `Ezagent.ActionSet.ConfigUpdate.handle_apply_delta/2`). The object is
        immutable, so `resolve_config_dir/1` can never observe a stale or
        half-written body — there is no read/write race.
 

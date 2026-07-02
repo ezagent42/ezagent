@@ -82,7 +82,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
 
     old_snapshot_cap = %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Publisher.SessionImpl,
+      behavior: Ezagent.ActionSet.Publisher.SessionImpl,
       action: :snapshot,
       instance: :any,
       workspace_uri: Ezagent.Capability.workspace_of(session_uri),

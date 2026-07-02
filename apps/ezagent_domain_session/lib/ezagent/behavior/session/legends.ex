@@ -1,17 +1,17 @@
-defmodule Ezagent.Behavior.Session.Legends do
+defmodule Ezagent.ActionSet.Session.Legends do
   @moduledoc false
   #
   # Session-scoped legend-registry machinery extracted VERBATIM from
-  # `Ezagent.Behavior.Session` (PR-3R helper extraction). The authorization
+  # `Ezagent.ActionSet.Session` (PR-3R helper extraction). The authorization
   # predicates run in the same Session Kind process as the
   # `handle_set_legends/2` / `handle_set_prompt_templates/2` callbacks (the
   # legend write-gate is shared by both); the legend readers are pure
-  # delegations to `Ezagent.Behavior.Session.Members`; `system_set_legends/2`
+  # delegations to `Ezagent.ActionSet.Session.Members`; `system_set_legends/2`
   # is an `Ezagent.Router.dispatch` round-trip identical to running in
   # `Behavior.Session`.
 
   alias Ezagent.Cmd
-  alias Ezagent.Behavior.Session.{ConfigActions, Members}
+  alias Ezagent.ActionSet.Session.{ConfigActions, Members}
   alias Ezagent.Routing.Legend
 
   # The trusted-principal allowlist for `set_legends` — installing a legend is

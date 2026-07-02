@@ -27,7 +27,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   The seed is boot-time + best-effort. It spawns the AgentTemplate Kind
   (or finds it alive), writes the sandbox files if absent, and dispatches
-  `Ezagent.Behavior.Template` `:write` to populate the `:template`
+  `Ezagent.ActionSet.Template` `:write` to populate the `:template`
   slice. AgentTemplate `:write` is a mutable replace (versionless URI),
   so re-running the seed is harmless.
 
@@ -178,7 +178,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
   # via :sys.get_state on a live AgentTemplate pid).
   #
-  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
   # now `use Ezagent.Lifecycle`, so the `:template` slice is the
   # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
   # framework persists only `:state`; `:content` is fully persistent).
@@ -270,7 +270,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   its content DIFFERS from `persona`.
 
   The persona is single-sourced from the orchestrator ROLE recipe
-  (`Ezagent.Orchestrator.OrchestratorRole.persona/0`). A write-once guard would
+  (`Ezagent.Orchestrator.OrchestratorRecipe.persona/0`). A write-once guard would
   leave an upgraded install reading a STALE persona while the role recipe moved
   on (codex PR-2 review). The seed sandbox `CLAUDE.md` is fully managed
   (operators override per-template in production), so rewrite-on-diff is safe.
@@ -404,7 +404,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     |> Path.join(@bridge_script)
   end
 
-  # Dispatch `Ezagent.Behavior.Template` `:write` to populate the
+  # Dispatch `Ezagent.ActionSet.Template` `:write` to populate the
   # AgentTemplate's `:template` slice — the canonical persistence path
   # (§1.7 (a)). AgentTemplate `:write` is a mutable replace, so the
   # re-seed on the next boot is idempotent.
@@ -423,7 +423,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
       # carrying `role: "orchestrator"` on the AgentTemplate content
       # threads through `AgentTemplate.to_template_data/2` into the cc
-      # Template Class data, which triggers `apply_orchestrator_role_bootstrap`:
+      # Template Class data, which triggers `apply_orchestrator_recipe_bootstrap`:
       # copy the `ezagent-session-orchestrator` skill into the spawned
       # agent's per-agent config_dir + append the CLAUDE.md hint +
       # set `EZAGENT_AGENT_ROLE=orchestrator` in the claude process env.
@@ -576,7 +576,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # so a live `claude` orchestrator reads it on startup. Single-sourced from
   # the orchestrator ROLE recipe (task #54 PR-2): the persona is the role's
   # `prompt`, so the seed sandbox and the role recipe never drift.
-  defp system_prompt, do: Ezagent.Orchestrator.OrchestratorRole.persona()
+  defp system_prompt, do: Ezagent.Orchestrator.OrchestratorRecipe.persona()
 
   defp test_env? do
     Code.ensure_loaded?(Mix) and Mix.env() == :test

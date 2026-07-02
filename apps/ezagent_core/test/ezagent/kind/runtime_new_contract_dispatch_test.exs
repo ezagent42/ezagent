@@ -1,7 +1,7 @@
 defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   @moduledoc """
   `Ezagent.Kind.Runtime.handle_dispatch/4` must detect new-contract
-  Behaviors (via `__behavior__?/0` injected by `use Ezagent.Behavior`)
+  Behaviors (via `__behavior__?/0` injected by `use Ezagent.ActionSet`)
   and dispatch through the `handle_<action>/2` + `apply_effects/2`
   pipeline.
 
@@ -26,7 +26,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   Earlier revisions of this file also tested the LEGACY `invoke/4`
   contract running alongside the new contract on a single Kind. The
   legacy dispatch path was removed in Phase 3 r3 (the only
-  Runtime-visible contract is now `use Ezagent.Behavior` /
+  Runtime-visible contract is now `use Ezagent.ActionSet` /
   `handle_<action>/2`), so the mixed-contract assertions + the
   `LegacyContractBehavior` fixture were deleted with that phase.
   Phase 3's structural invariant — that the Runtime refuses to
@@ -51,7 +51,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   # effects that mutate its own slice.
   defmodule NewContractBehavior do
     @moduledoc false
-    use Ezagent.Behavior
+    use Ezagent.ActionSet
 
     action(:bump,
       args: %{},

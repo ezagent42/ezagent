@@ -1,7 +1,7 @@
 defmodule Ezagent.Entity.HelloBuilder do
   @moduledoc """
   Hello builder Kind — a session-member agent that generates `@json-render`
-  pages. Composes only `Ezagent.Behavior.HelloBuilder` (the `:receive`
+  pages. Composes only `Ezagent.ActionSet.HelloBuilder` (the `:receive`
   page-generation hook); the smallest Kind that drives an LLM and lands a page
   on the session's `Behavior.Surface`.
 
@@ -17,20 +17,20 @@ defmodule Ezagent.Entity.HelloBuilder do
 
   @behaviour Ezagent.Kind
 
-  attach(Ezagent.Behavior.HelloBuilder)
+  attach(Ezagent.ActionSet.HelloBuilder)
 
   # The builder is a narrow hello-owned member, not a cc-style orchestrator.
   # Keep identity behaviors so tests/tools can inspect any explicit caps granted
   # to the builder without composing the broader Entity.Agent behavior set.
-  attach(Ezagent.Behavior.Identity)
-  attach(Ezagent.Behavior.IdentityAdmin)
+  attach(Ezagent.ActionSet.Identity)
+  attach(Ezagent.ActionSet.IdentityAdmin)
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors,
     do: [
-      Ezagent.Behavior.HelloBuilder,
-      Ezagent.Behavior.Identity,
-      Ezagent.Behavior.IdentityAdmin
+      Ezagent.ActionSet.HelloBuilder,
+      Ezagent.ActionSet.Identity,
+      Ezagent.ActionSet.IdentityAdmin
     ]
 
   # The builder can hold durable identity state; snapshot on change so any

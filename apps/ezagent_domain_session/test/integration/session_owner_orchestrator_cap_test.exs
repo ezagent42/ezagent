@@ -78,7 +78,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
         Enum.filter(caps, fn cap ->
           match?(%Ezagent.Capability{}, cap) and
             cap.kind == :session and
-            cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
+            cap.behavior == Ezagent.ActionSet.OrchestratorAdmin and
             cap.instance == session_uri_1
         end)
 
@@ -260,7 +260,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
   defp orchestrator_admin_cap?(cap, session_uri) do
     match?(%Ezagent.Capability{}, cap) and
       cap.kind == :session and
-      cap.behavior == Ezagent.Behavior.OrchestratorAdmin and
+      cap.behavior == Ezagent.ActionSet.OrchestratorAdmin and
       cap.instance == session_uri
   end
 end

@@ -182,7 +182,7 @@ defmodule Ezagent.Capability.Normalize do
         raise ArgumentError,
               "Ezagent.Capability.normalize!/2: `\"#{key}\"` field must be a " <>
                 "string (atom name like `\"session\"` or module name like " <>
-                "`\"Ezagent.Behavior.Session\"`) or `\"any\"`. Got: #{inspect(other)}"
+                "`\"Ezagent.ActionSet.Session\"`) or `\"any\"`. Got: #{inspect(other)}"
 
       :error ->
         raise ArgumentError,

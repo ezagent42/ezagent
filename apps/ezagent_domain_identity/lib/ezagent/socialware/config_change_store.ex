@@ -10,7 +10,7 @@ defmodule Ezagent.Socialware.ConfigChangeStore do
   The lifecycle (open → published, + rejected, rolled_back) is enforced here as
   pure functions; authorization (the agent's manage-cap) + CE-1 self-binding +
   sandbox materialization live in the dispatched behavior
-  `Ezagent.Behavior.ConfigGovernance`. This module performs NO authorization —
+  `Ezagent.ActionSet.ConfigGovernance`. This module performs NO authorization —
   it is the durable lifecycle engine the behavior drives.
 
   ## Stage = write an inert object now, point NO layer (§4.2)

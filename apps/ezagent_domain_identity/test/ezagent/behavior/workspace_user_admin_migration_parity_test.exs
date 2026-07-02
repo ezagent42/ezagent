@@ -1,8 +1,8 @@
-defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
+defmodule Ezagent.ActionSet.WorkspaceUserAdminMigrationParityTest do
   @moduledoc """
   P2-b migration parity test (SPEC #445 §7.3 Level 1).
 
-  Validates that the migrated `Ezagent.Behavior.WorkspaceUserAdmin`
+  Validates that the migrated `Ezagent.ActionSet.WorkspaceUserAdmin`
   produces the same dispatch-visible outcome via the new-contract
   path (`Kind.Runtime.handle_dispatch/4` → `handle_create_user/2`)
   as the legacy `invoke/4` did pre-migration.
@@ -16,7 +16,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.WorkspaceUserAdmin
+  alias Ezagent.ActionSet.WorkspaceUserAdmin
 
   defmodule StubWorkspaceKind do
     @moduledoc false
@@ -25,7 +25,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
     @impl true
     def type_name, do: :wua_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.WorkspaceUserAdmin]
+    def behaviors, do: [Ezagent.ActionSet.WorkspaceUserAdmin]
     @impl true
     def persistence, do: :ephemeral
   end

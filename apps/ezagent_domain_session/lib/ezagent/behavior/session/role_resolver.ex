@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.Session.RoleResolver do
+defmodule Ezagent.ActionSet.Session.RoleResolver do
   @moduledoc false
 
-  alias Ezagent.Behavior.Session.RouteProvisioner
+  alias Ezagent.ActionSet.Session.RouteProvisioner
 
   @doc false
   @spec resolve(String.t(), URI.t() | nil, map(), term(), module()) :: URI.t() | [URI.t()] | nil

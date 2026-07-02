@@ -412,7 +412,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
       # file-flavor (config_dir is always present), and that to_cascade_content
       # rejects a missing config_dir.
       assert {:error, :missing_config_dir} =
-               Ezagent.Behavior.Workspace.__cascade_content_for_test__(%{
+               Ezagent.ActionSet.Workspace.__cascade_content_for_test__(%{
                  "class" => "cc.agent",
                  "flavor" => "cc",
                  "project_cwd" => System.tmp_dir!()
@@ -420,7 +420,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
       # And the builder for a real create ALWAYS includes config_dir:
       tmpl =
-        Ezagent.Behavior.Workspace.__file_flavor_template_for_test__(
+        Ezagent.ActionSet.Workspace.__file_flavor_template_for_test__(
           "cc",
           "cc.agent",
           agent_uri,

@@ -5,7 +5,7 @@ defmodule EzagentDomainPty.Test.PtyAgentFixture do
 
   @spec spawn(URI.t()) :: {:ok, pid()} | {:error, term()}
   def spawn(%URI{} = uri) do
-    :ok = Ezagent.BehaviorRegistry.register(PtyAgentKind, :write, Ezagent.Behavior.Pty)
+    :ok = Ezagent.BehaviorRegistry.register(PtyAgentKind, :write, Ezagent.ActionSet.Pty)
 
     case Ezagent.Kind.spawn(PtyAgentKind, %{uri: uri}) do
       {:ok, pid} -> {:ok, pid}

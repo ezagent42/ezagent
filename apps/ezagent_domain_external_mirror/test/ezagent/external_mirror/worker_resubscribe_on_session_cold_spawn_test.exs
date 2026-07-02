@@ -31,20 +31,20 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
   - `Ezagent.PublisherLifecycle` (in `:ezagent_core`) provides a
     per-publisher-URI lifecycle topic.
-  - `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` broadcasts
+  - `Ezagent.ActionSet.Publisher.SessionImpl.on_ready/2` broadcasts
     `{:publisher_alive, self_uri}` AFTER `Ezagent.ReadyGate.mark_ready/1`
     has flipped (codex round-1 FAIL #6 — pre-fix this lived in
     `handle_continue/3` and raced peer `:call` re-subscribes against
     the not-yet-flipped ReadyGate).
-  - `Ezagent.Behavior.Publisher.SessionImpl.reconcile_after_load/2`
+  - `Ezagent.ActionSet.Publisher.SessionImpl.reconcile_after_load/2`
     clears the transient `:subscribers` + `:monitors` maps on
     snapshot load (codex round-1 CONCERN #3 — stale pids/refs from
     a previous BEAM cannot be routable / demonitorable; clearing
     them on load makes the transient nature of subscribership
     explicit and forces the lifecycle handshake on every cold spawn).
-  - `Ezagent.Behavior.ExternalMirrorWorker.handle_continue/3`
+  - `Ezagent.ActionSet.ExternalMirrorWorker.handle_continue/3`
     subscribes to the lifecycle topic.
-  - `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
+  - `Ezagent.ActionSet.ExternalMirrorWorker.handle_kind_message/3`
     `{:publisher_alive, _}` clause re-runs
     `subscribe_to_session_publisher/2`; on `{:error, :not_ready}`
     it schedules a bounded retry (defence-in-depth — the on_ready
@@ -284,10 +284,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
                        "did NOT reach the Worker. The Worker subscribed pre-vanish, the " <>
                        "Session vanished + cold-spawned, and no event flowed. The expected " <>
                        "fix is `Ezagent.PublisherLifecycle.broadcast_alive/1` in " <>
-                       "`Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` (fires AFTER " <>
+                       "`Ezagent.ActionSet.Publisher.SessionImpl.on_ready/2` (fires AFTER " <>
                        "ReadyGate flip per codex r1 FAIL #6) + the matching " <>
                        "`:publisher_alive` clause in " <>
-                       "`Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`."
+                       "`Ezagent.ActionSet.ExternalMirrorWorker.handle_kind_message/3`."
     end
   end
 

@@ -212,7 +212,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
 
       cap1 = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: session_uri,
         workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
         granted_by: User.admin_uri(),

@@ -10,7 +10,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Workspace
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Ecto.KindSnapshot

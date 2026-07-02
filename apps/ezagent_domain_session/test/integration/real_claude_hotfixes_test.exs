@@ -8,7 +8,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
   ## Fix #1: source session in to_claude meta
 
-  EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Session, :receive) on Agent Kind must include `"session"` in the
+  EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Session, :receive) on Agent Kind must include `"session"` in the
   meta map so claude can fill `session_uris` correctly on reply.
   Previously claude guessed (badly) from sender URI. The fix
   populates `meta["session"]` from `ctx.caller` before sending the
@@ -32,7 +32,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Message}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.User
 
   setup do
@@ -78,7 +78,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
       assert {:ok, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Agent.Receive,
+                 Ezagent.ActionSet.Agent.Receive,
                  :receive,
                  %{},
                  %{message: msg},

@@ -19,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
   ## State machine
 
   - **Subscribes to** `esr:session_membership:changes` (global topic
-    broadcast by `Ezagent.Behavior.Session.broadcast_membership/2`):
+    broadcast by `Ezagent.ActionSet.Session.broadcast_membership/2`):
     - `{:session_membership_change, session_uri, {:member_joined, member_uri}}`
       → add `(session_uri ↔ member_uri)` to index; on FIRST mapping
       for `member_uri`, `Presence.subscribe(member_uri)`.
@@ -35,7 +35,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
 
       Phoenix.PubSub.broadcast(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Session.session_events_topic(session_uri),
+        Ezagent.ActionSet.Session.session_events_topic(session_uri),
         {:member_presence, session_uri, member_uri,
          %{online?: current != %{}}}
       )
@@ -56,7 +56,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
 
   require Logger
 
-  alias Ezagent.Behavior.Session
+  alias Ezagent.ActionSet.Session
   alias Ezagent.Presence
 
   @membership_topic "esr:session_membership:changes"

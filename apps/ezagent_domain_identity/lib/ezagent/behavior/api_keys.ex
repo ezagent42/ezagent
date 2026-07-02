@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ApiKeys do
+defmodule Ezagent.ActionSet.ApiKeys do
   @moduledoc """
   ApiKeys Behavior — per-Agent secret storage for outbound API
   credentials (DeepSeek, OpenAI, Anthropic, etc.).
@@ -48,7 +48,7 @@ defmodule Ezagent.Behavior.ApiKeys do
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
   `handle_<action>/2`. All actions are pure slice mutations / reads —
   no DB / PubSub side effects — so effects are limited to `:set`

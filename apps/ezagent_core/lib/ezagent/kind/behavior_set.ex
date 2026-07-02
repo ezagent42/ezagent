@@ -65,7 +65,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   expand to the declared superset (codex CRITICAL).**
   """
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
 
   # SPEC §3.1 "universal-behavior fallback policy" — behaviors that are
   # ALWAYS in the instance set regardless of the spawn-args subset:
@@ -241,7 +241,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   # undeclared recipe-loaded behaviors; declared behaviors are unaffected. authz
   # (`required_caps()` + caller caps) remains the independent privilege gate.
   defp real_behavior?(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
-    Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+    Code.ensure_loaded?(mod) and Ezagent.ActionSet.new_style?(mod)
   end
 
   defp real_behavior?(_), do: false
@@ -325,28 +325,28 @@ defmodule Ezagent.Kind.BehaviorSet do
   # source of truth for the closure resolver. Derived from each
   # session-relevant Behavior's `state_slice/0`.
   @slice_owners %{
-    chat: Ezagent.Behavior.Session,
-    turns: Ezagent.Behavior.Turn,
-    surface: Ezagent.Behavior.Surface,
-    config_evolve: Ezagent.Behavior.ConfigEvolve,
-    identity: Ezagent.Behavior.Identity,
-    publisher: Ezagent.Behavior.Publisher.SessionImpl,
-    sandbox: Ezagent.Behavior.Sandbox,
-    api_keys: Ezagent.Behavior.ApiKeys,
-    cc_headless_agent: Ezagent.Behavior.CcHeadlessAgent,
-    external_mirror: Ezagent.Behavior.ExternalMirror,
-    kind_base: Ezagent.Behavior.KindBase
+    chat: Ezagent.ActionSet.Session,
+    turns: Ezagent.ActionSet.Turn,
+    surface: Ezagent.ActionSet.Surface,
+    config_evolve: Ezagent.ActionSet.ConfigEvolve,
+    identity: Ezagent.ActionSet.Identity,
+    publisher: Ezagent.ActionSet.Publisher.SessionImpl,
+    sandbox: Ezagent.ActionSet.Sandbox,
+    api_keys: Ezagent.ActionSet.ApiKeys,
+    cc_headless_agent: Ezagent.ActionSet.CcHeadlessAgent,
+    external_mirror: Ezagent.ActionSet.ExternalMirror,
+    kind_base: Ezagent.ActionSet.KindBase
   }
 
   # Per-reader required-vs-optional classification of each `reads_siblings`
   # key. A key absent from a reader's entry defaults to :optional (preserves
   # the soft `%{}` default the runtime injects today — `context.ex`).
   @required_reads %{
-    Ezagent.Behavior.Turn => %{surface: :required},
-    Ezagent.Behavior.ConfigEvolve => %{sandbox: :required, identity: :required},
-    Ezagent.Behavior.ExternalMirror => %{publisher: :required},
-    Ezagent.Behavior.Session => %{sandbox: :optional},
-    Ezagent.Behavior.CurlAgent => %{api_keys: :optional}
+    Ezagent.ActionSet.Turn => %{surface: :required},
+    Ezagent.ActionSet.ConfigEvolve => %{sandbox: :required, identity: :required},
+    Ezagent.ActionSet.ExternalMirror => %{publisher: :required},
+    Ezagent.ActionSet.Session => %{sandbox: :optional},
+    Ezagent.ActionSet.CurlAgent => %{api_keys: :optional}
   }
 
   @type closure_error ::

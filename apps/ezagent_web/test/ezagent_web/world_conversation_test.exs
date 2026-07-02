@@ -14,7 +14,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
   import Phoenix.LiveViewTest
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.Matcher
   alias Ezagent.Routing.RuleStore
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -1047,12 +1047,12 @@ defmodule EzagentWeb.WorldConversationTest do
           "socialware" => %{
             "name" => socialware_name,
             "bases" => [
-              "Ezagent.Behavior.Session",
-              "Ezagent.Behavior.Publisher.SessionImpl"
+              "Ezagent.ActionSet.Session",
+              "Ezagent.ActionSet.Publisher.SessionImpl"
             ],
             "shape" => [
-              "Ezagent.Behavior.Turn",
-              "Ezagent.Behavior.Surface"
+              "Ezagent.ActionSet.Turn",
+              "Ezagent.ActionSet.Surface"
             ],
             "members" => [
               %{
@@ -1215,7 +1215,7 @@ defmodule EzagentWeb.WorldConversationTest do
   defp session_cap(caller_uri, session_uri, action) do
     %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: action,
       instance: session_uri,
       workspace_uri: Ezagent.URI.workspace(:system),

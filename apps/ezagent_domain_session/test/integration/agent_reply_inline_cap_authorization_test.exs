@@ -11,10 +11,10 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
   (`granted_via_ctx_caps?`).
 
   The narrowing pins the cap's `behavior` axis from `:any` to the concrete
-  `Ezagent.Behavior.Session`. A wildcard `behavior: :any` matched ANY runtime
+  `Ezagent.ActionSet.Session`. A wildcard `behavior: :any` matched ANY runtime
   needed-behavior; a CONCRETE behavior only authorizes if the dispatch path's
   `cap_for_action(Entity.Session, :send, target)` derives EXACTLY
-  `Ezagent.Behavior.Session` via `BehaviorRegistry.lookup/2`. If that runtime
+  `Ezagent.ActionSet.Session` via `BehaviorRegistry.lookup/2`. If that runtime
   resolution ever drifts, all bridge reply paths silently stop authorizing and
   replies are dropped — a production break that no shape-only bridge test
   catches. This test is that gate.
@@ -39,7 +39,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
     %Capability{
       Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :send,
         Ezagent.URI.instance(session),
         Capability.workspace_of(session)
@@ -50,10 +50,10 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentReplyInlineCapAuthorizat
   end
 
   describe "BehaviorRegistry resolution (the pinned behavior axis)" do
-    test "Entity.Session resolves :send → Ezagent.Behavior.Session" do
-      assert {:ok, Ezagent.Behavior.Session} =
+    test "Entity.Session resolves :send → Ezagent.ActionSet.Session" do
+      assert {:ok, Ezagent.ActionSet.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :send),
-             "session.send must resolve to Ezagent.Behavior.Session — the behavior " <>
+             "session.send must resolve to Ezagent.ActionSet.Session — the behavior " <>
                "axis the inline reply cap pins. If this drifts, all bridge reply " <>
                "paths stop authorizing."
     end

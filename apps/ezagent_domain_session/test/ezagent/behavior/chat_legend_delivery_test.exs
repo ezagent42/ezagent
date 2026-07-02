@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
+defmodule Ezagent.ActionSet.ChatLegendDeliveryTest do
   @moduledoc """
   team-routing-unification §3.6 (PR-6, codex-redesign) — proves the REDESIGNED
   legend resolution path end-to-end at the routing+delivery seam (no DB / no
@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{Message, RoutingRegistry}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.{Matcher, Resolver}
 
   setup do

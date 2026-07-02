@@ -26,7 +26,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, Invocation, KindRegistry, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Matcher, Resolver}
@@ -134,7 +134,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     # PR-8 (transport #53): `Tools` is now driven directly with the
     # orchestrator's caller `opts` — the exact context the session-side
-    # `Ezagent.Behavior.OrchestratorTools` action reconstructs. (The cc
+    # `Ezagent.ActionSet.OrchestratorTools` action reconstructs. (The cc
     # `McpServer` value-form / `tool_opts/1` helper is gone — it is a thin
     # transport that DISPATCHES into this op layer.)
     mcp = [
@@ -312,7 +312,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
         mcp[:caps],
         %Capability{
           kind: :session_template,
-          behavior: Ezagent.Behavior.Template,
+          behavior: Ezagent.ActionSet.Template,
           action: :any,
           instance: {:within_workspace, @workspace_uri},
           workspace_uri: @workspace_uri,

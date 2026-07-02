@@ -29,7 +29,7 @@ If meta_keys includes anything other than known string keys, that's likely the b
 
 ### Cause 2: Cap shape mismatch on `behavior` field (atom vs module)
 
-`Capability.matches?/2` requires exact equality on `behavior`. The atom `:chat` is structurally different from `Ezagent.Behavior.Chat` (a module reference). Atom-shorthand cap silently denies.
+`Capability.matches?/2` requires exact equality on `behavior`. The atom `:chat` is structurally different from `Ezagent.ActionSet.Chat` (a module reference). Atom-shorthand cap silently denies.
 
 **Diagnose:**
 ```elixir
@@ -40,7 +40,7 @@ caps |> MapSet.to_list() |> Enum.each(fn c ->
 end)
 ```
 
-If `behavior` shows an atom like `:chat` (not `Ezagent.Behavior.Chat`), that's the bug.
+If `behavior` shows an atom like `:chat` (not `Ezagent.ActionSet.Chat`), that's the bug.
 
 **Fix:** revoke + re-grant the cap with the module reference. Or if your code constructed it with `:any` and a narrow `:kind` (the documented workaround per `docs/notes/phase-7-handoff.md` §"Three trade-offs"), verify the kind matches.
 
@@ -49,7 +49,7 @@ If `behavior` shows an atom like `:chat` (not `Ezagent.Behavior.Chat`), that's t
 
 ### Cause 3: Workspace scope not plumbed
 
-`Ezagent.Behavior.Chat.invoke(:send)` at chat.ex:116 must call `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt — derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. If the session is unbound (custom Template Class spawned it without `WorkspaceRegistry.bind`), workspace-scoped routing rules never fire.
+`Ezagent.ActionSet.Chat.invoke(:send)` at chat.ex:116 must call `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt — derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. If the session is unbound (custom Template Class spawned it without `WorkspaceRegistry.bind`), workspace-scoped routing rules never fire.
 
 **Diagnose:**
 ```elixir

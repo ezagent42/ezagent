@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   @moduledoc """
-  Phase 7 completion PR-5 (SPEC §1.6b) — `Ezagent.Behavior.Terminable`
-  (renamed from `Ezagent.Behavior.Lifecycle` in the Phase B Lifecycle
+  Phase 7 completion PR-5 (SPEC §1.6b) — `Ezagent.ActionSet.Terminable`
+  (renamed from `Ezagent.ActionSet.Lifecycle` in the Phase B Lifecycle
   migration; the `lifecycle.terminate` action namespace is unchanged)
   is dispatch-routed + CapBAC-gated agent termination.
 
@@ -20,7 +20,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentLineage, BehaviorRegistry, Capability, KindRegistry}
-  alias Ezagent.Behavior.Terminable
+  alias Ezagent.ActionSet.Terminable
   alias Ezagent.Entity.{Agent, User}
 
   defp uniq, do: System.unique_integer([:positive])
@@ -146,7 +146,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
                       %{
                         type: :agent_terminated,
                         body: %{text: _, agent_uri: ^worker_uri},
-                        source: Ezagent.Behavior.Terminable
+                        source: Ezagent.ActionSet.Terminable
                       }},
                      1_000
     end

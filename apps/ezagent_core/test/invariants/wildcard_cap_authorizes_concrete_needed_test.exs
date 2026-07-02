@@ -53,14 +53,14 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       held =
         cap(
           kind: :user,
-          behavior: Ezagent.Behavior.Identity,
+          behavior: Ezagent.ActionSet.Identity,
           instance: held_instance,
           workspace_uri: Ezagent.URI.new!("workspace://system")
         )
 
       needed = %{
         kind: :user,
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :any,
         instance: needed_instance,
         workspace_uri: Ezagent.URI.new!("workspace://system")
@@ -74,14 +74,14 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       held =
         cap(
           kind: :session,
-          behavior: Ezagent.Behavior.Identity,
+          behavior: Ezagent.ActionSet.Identity,
           instance: URI.new!("session://system/default/main"),
           workspace_uri: URI.new!("workspace://system")
         )
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :any,
         # Different instance — different name part.
         instance: URI.new!("session://system/default/other"),
@@ -107,7 +107,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
         kind: :workspace,
         # Use a real Behavior module so the kind/behavior axes carry
         # production-shape values; the wildcard cap must match regardless.
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :create_agent,
         instance: URI.new!("workspace://system"),
         workspace_uri: URI.new!("workspace://system")
@@ -129,7 +129,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
 
       needed = %{
         kind: :user,
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :list_caps,
         instance: user_uri,
         workspace_uri: URI.new!("workspace://system")
@@ -158,7 +158,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
 
       needed = %{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :list_caps,
         instance: URI.new!("workspace://system"),
         workspace_uri: URI.new!("workspace://system")
@@ -170,9 +170,9 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
 
   describe "self-Identity cap pairing (invariant 3)" do
     test "the slice's self-Identity cap matches the dispatch-substituted needed cap for :list_caps" do
-      # Mirror the construction in `Ezagent.Behavior.Identity.add_owner_identity_cap/2`:
+      # Mirror the construction in `Ezagent.ActionSet.Identity.add_owner_identity_cap/2`:
       # - kind is derived from the URI's entity host (:user / :agent)
-      # - behavior is `Ezagent.Behavior.Identity`
+      # - behavior is `Ezagent.ActionSet.Identity`
       # - instance is `Ezagent.URI.instance(uri)`
       # - workspace_uri is `Ezagent.Capability.workspace_of(uri)`
       #
@@ -188,7 +188,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       held_from_parse_path =
         cap(
           kind: :user,
-          behavior: Ezagent.Behavior.Identity,
+          behavior: Ezagent.ActionSet.Identity,
           instance: Ezagent.URI.instance(user_uri_parse),
           workspace_uri: Ezagent.Capability.workspace_of(user_uri_parse)
         )
@@ -196,7 +196,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       held_from_new_path =
         cap(
           kind: :user,
-          behavior: Ezagent.Behavior.Identity,
+          behavior: Ezagent.ActionSet.Identity,
           instance: Ezagent.URI.instance(user_uri_new),
           workspace_uri: Ezagent.Capability.workspace_of(user_uri_new)
         )
@@ -208,7 +208,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
 
       needed = %{
         kind: :user,
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         action: :list_caps,
         instance: Ezagent.URI.instance(target),
         workspace_uri: Ezagent.Capability.workspace_of(target)

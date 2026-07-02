@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
+defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   @moduledoc """
-  P3-3 authz-boundary GATE for `Ezagent.Behavior.SocialwarePublisherRead`.
+  P3-3 authz-boundary GATE for `Ezagent.ActionSet.SocialwarePublisherRead`.
 
   The read actions (`:snapshot` / `:history`) are **cap-exempt** at the
   CapBAC layer, so the handler is the SOLE fail-closed authority. These
@@ -31,7 +31,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.SocialwarePublisherRead, as: SPR
+  alias Ezagent.ActionSet.SocialwarePublisherRead, as: SPR
   alias Ezagent.Publisher.Event
 
   @owner Ezagent.URI.entity(:team_alpha, :user, "owner-spr")

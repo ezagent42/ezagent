@@ -105,8 +105,8 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
 
   test "the unified Session composes Publisher.SessionImpl (the trunk) in its socialware subset" do
     # P5-1b: the trunk is in the union declaration AND in the socialware subset.
-    assert Ezagent.Behavior.Publisher.SessionImpl in Ezagent.Kind.behaviors_of(Session)
-    assert Ezagent.Behavior.Publisher.SessionImpl in Ezagent.Entity.Session.socialware_behaviors()
+    assert Ezagent.ActionSet.Publisher.SessionImpl in Ezagent.Kind.behaviors_of(Session)
+    assert Ezagent.ActionSet.Publisher.SessionImpl in Ezagent.Entity.Session.socialware_behaviors()
 
     slice_keys = Enum.map(Ezagent.Entity.Session.socialware_behaviors(), & &1.state_slice())
     assert :publisher in slice_keys

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Turn do
+defmodule Ezagent.ActionSet.Turn do
   @moduledoc """
   Socialware orchestration state machine.
 
@@ -228,7 +228,7 @@ defmodule Ezagent.Behavior.Turn do
 
   @spec data_owner(URI.t() | :any | term()) :: URI.t() | :any | :no_owner
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    Ezagent.Behavior.Session.data_owner(session_uri)
+    Ezagent.ActionSet.Session.data_owner(session_uri)
   end
 
   def data_owner(:any), do: :any

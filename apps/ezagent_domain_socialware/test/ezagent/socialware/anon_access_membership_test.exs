@@ -174,7 +174,7 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
   end
 
   describe "codex P1 — an anon-User NEVER claims ownership on first-join" do
-    alias Ezagent.Behavior.Session.Membership
+    alias Ezagent.ActionSet.Session.Membership
 
     test "anon_member?/1 recognizes the reserved anon naming convention" do
       assert Membership.anon_member?(Ezagent.URI.entity(:team_alpha, :user, "anon-deadbeef"))

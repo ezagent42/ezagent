@@ -1,14 +1,14 @@
-defmodule Ezagent.Behavior.Workspace do
+defmodule Ezagent.ActionSet.Workspace do
   @moduledoc """
   Workspace Behavior — declarative cluster-shape state for the
   Workspace Kind (Phase 4 D3/D5).
 
   ## SPEC 2026-05-28 (PR #445) Router/Behavior/Kind migration
 
-  This Behavior is migrated to the new `use Ezagent.Behavior` per-action
+  This Behavior is migrated to the new `use Ezagent.ActionSet` per-action
   declarative contract (Phase 2-c). The semantic surface (action names,
   args/returns, slice shape, cap subjects, cross-domain dispatch) is
-  identical to the pre-migration legacy `@behaviour Ezagent.Behavior`
+  identical to the pre-migration legacy `@behaviour Ezagent.ActionSet`
   module. The wire-level changes are:
 
     - `actions/0`, `interface/0`, `cap_subjects/0`, `required_caps/0`
@@ -77,7 +77,7 @@ defmodule Ezagent.Behavior.Workspace do
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §5 + §9 OQ-8 — the
   ## EXTERNAL-SoT case: state reconciled from a foreign source of truth)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle` (the
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle` (the
   two-container `%{state, transients}` developer API). The Workspace Kind
   is `persistence :ephemeral` (`Ezagent.Entity.Workspace`) — the
   `kind_snapshots` BLOB is NEVER the source of truth. The `workspaces`
@@ -141,7 +141,7 @@ defmodule Ezagent.Behavior.Workspace do
   `:workspace`) equals the historical snapshot key, so NO `state_slice:`
   override is needed (SPEC §5 step 2 / §7 OQ-7).
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Workspace` — a
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Workspace` — a
   domain module (`apps/ezagent_domain_workspace`) naming its own domain
   concept (`Workspace`), whose actions (`list_members` / `add_member` /
   `create_session` / …) track the cluster-shape intent directly. NO
@@ -152,7 +152,7 @@ defmodule Ezagent.Behavior.Workspace do
 
   use Ezagent.Lifecycle
 
-  alias Ezagent.Behavior.Workspace.Members
+  alias Ezagent.ActionSet.Workspace.Members
 
   # ---------------------------------------------------------------
   # Action declarations (SPEC §4.3 — per-action grammar)
@@ -302,7 +302,7 @@ defmodule Ezagent.Behavior.Workspace do
   # does not redeclare these)
   # ---------------------------------------------------------------
 
-  # The auto-derived slice key for `Ezagent.Behavior.Workspace` is the
+  # The auto-derived slice key for `Ezagent.ActionSet.Workspace` is the
   # underscored last segment `Workspace` → `:workspace`, which is EXACTLY
   # the pre-Lifecycle `state_slice/0`. Snapshot-compat key preserved with
   # no explicit override (SPEC §3 / §7 OQ-7).
@@ -337,7 +337,7 @@ defmodule Ezagent.Behavior.Workspace do
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Workspace is registered on the Workspace Kind only — kind axis is
-  # `:workspace`. The `use Ezagent.Behavior` engine macro (emitted under
+  # `:workspace`. The `use Ezagent.ActionSet` engine macro (emitted under
   # `use Ezagent.Lifecycle`) derives a legacy `required_caps/0` from
   # `action :name, caps: [...]` decls, but its derivation always emits the
   # `:any` kind axis (the macro cannot know the Behavior's intended Kind
@@ -569,12 +569,12 @@ defmodule Ezagent.Behavior.Workspace do
   #             site for `entity://agent/` URIs per the invariant test
   #             `agent_create_single_path_test.exs`).
   # PR-3V (gt_1000 burn-down): the `:create_agent` provisioning machinery
-  # was extracted VERBATIM to `Ezagent.Behavior.Workspace.AgentCreate`
+  # was extracted VERBATIM to `Ezagent.ActionSet.Workspace.AgentCreate`
   # (a separate concern from the #685 member-CapBAC handlers). This engine
   # callback stays here (the runtime dispatches by module) and delegates the
   # full `with` chain body to `AgentCreate.handle_create_agent/2`.
-  @doc "Provision an agent in the workspace (unified CLI/LV path): coerce/validate args, optionally read a `--from` source agent's config, and per-flavor either register a Template Class (cc/echo/codex) or directly `SpawnRegistry.spawn` (curl/np/other). Delegates the full chain to `Ezagent.Behavior.Workspace.AgentCreate`."
-  defdelegate handle_create_agent(args, ctx), to: Ezagent.Behavior.Workspace.AgentCreate
+  @doc "Provision an agent in the workspace (unified CLI/LV path): coerce/validate args, optionally read a `--from` source agent's config, and per-flavor either register a Template Class (cc/echo/codex) or directly `SpawnRegistry.spawn` (curl/np/other). Delegates the full chain to `Ezagent.ActionSet.Workspace.AgentCreate`."
+  defdelegate handle_create_agent(args, ctx), to: Ezagent.ActionSet.Workspace.AgentCreate
 
   # --- create_session (unified CLI/LV session provisioning) -----------
   #
@@ -784,15 +784,15 @@ defmodule Ezagent.Behavior.Workspace do
 
   # PR-3V (gt_1000 burn-down) — test-only accessors into the extracted
   # `:create_agent` machinery. The provisioning helpers moved VERBATIM to
-  # `Ezagent.Behavior.Workspace.AgentCreate`; these `@doc false` delegates
-  # preserve the public `Ezagent.Behavior.Workspace.__*_for_test__` surface
+  # `Ezagent.ActionSet.Workspace.AgentCreate`; these `@doc false` delegates
+  # preserve the public `Ezagent.ActionSet.Workspace.__*_for_test__` surface
   # the cc unified-create cascade test calls (no test ref change needed).
   @doc false
   defdelegate __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd),
-    to: Ezagent.Behavior.Workspace.AgentCreate
+    to: Ezagent.ActionSet.Workspace.AgentCreate
 
   @doc false
-  defdelegate __cascade_content_for_test__(tmpl), to: Ezagent.Behavior.Workspace.AgentCreate
+  defdelegate __cascade_content_for_test__(tmpl), to: Ezagent.ActionSet.Workspace.AgentCreate
 
   # codex PR #408 review round-2 MED-2 — grant the workspace
   # `:create_session` cap to a newly-added user member via a

@@ -90,7 +90,7 @@ defmodule Ezagent.SagaRunner do
   ## Note on `:ref` substitution
 
   The SagaRunner does NOT interpret `{:ref, ...}` placeholders or apply
-  `bind_as` semantics. That is the `Ezagent.Behavior` macro's effect-applier
+  `bind_as` semantics. That is the `Ezagent.ActionSet` macro's effect-applier
   concern. The SagaRunner just shuttles the `[effect]` list forward.
   """
 

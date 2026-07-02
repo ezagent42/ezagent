@@ -41,7 +41,7 @@ Ezagent(Session Router)— Elixir/OTP message router runtime,multi-channel → m
 写任何 Behavior / Kind 代码前必读:`.claude/skills/ezagent-developer/references/new-contract.md`(Router / Behavior / Kind self-built architecture,SPEC PR #445)。
 
 短结论:
-- `use Ezagent.Behavior` + `action :foo, args: ..., returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx) → {:ok, result, [effect]}` —— **不再写** `invoke/4`(Phase 3 PR #464 后是 `@optional_callbacks`,无 runtime 路径用)
+- `use Ezagent.ActionSet` + `action :foo, args: ..., returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx) → {:ok, result, [effect]}` —— **不再写** `invoke/4`(Phase 3 PR #464 后是 `@optional_callbacks`,无 runtime 路径用)
 - 9 个 effects:`:set` / `:emit` / `:dispatch` / `:notify` / `:effect` / `:effect_returning` / `:saga` / `:terminate` / `:halt`
 - Plugin author **永远不见** `slice` 或 `snapshot`(framework 通过 `ctx[:read]` reader 注入读;`{:set, key, value}` effect 写)
 - Plugin code 禁止 import `Ezagent.EventLog` / `SnapshotStore` / `StateRebuilder` / `EventSubscriber` / `Router internals` / `SagaRunner.execute/2`(SPEC §11 grep gate)
@@ -106,7 +106,7 @@ grep -rn "def init/1" lib/ | grep -v "use Ezagent.Kind"   # 手写 init 跳过�
 
 ```
 Ezagent.<Category>.<KindType>            — Kind 声明
-Ezagent.Behavior.<Name>                  — Behavior 模块
+Ezagent.ActionSet.<Name>                  — Behavior 模块
 :ezagent_plugin_<name>                   — OTP app atom
 EsrPlugin<Name>                      — Plugin 模块前缀
 :ezagent_behavior_<name>                 — 单 Behavior plugin
@@ -125,7 +125,7 @@ Ezagent 跟外部世界有很多同名概念,**用错术语会让架构理解漂
 | **channel** | Claude Code Channel(MCP 协议) | Phoenix.Channel(WS 抽象) |
 | **session** | Ezagent Session(routing context owner) | Phoenix session(cookie/web session) |
 | **registry** | KindRegistry(URI→pid)或 RoutingRegistry(routing rules) | Elixir Registry(底层 module) |
-| **behavior** | Ezagent.Behavior(action 处理者) | Elixir behaviour(callback 契约) |
+| **behavior** | Ezagent.ActionSet(action 处理者) | Elixir behaviour(callback 契约) |
 | **template** | Template Class(模块级)或 Template Instance(运行时 Resource) | Phoenix template(.heex 文件) |
 | **plugin** | OTP app 形式的 Ezagent 扩展 | Mix.Project plugin(完全不同) |
 | **dispatch** | `Ezagent.Invocation.dispatch/1`(消息分发) | Phoenix.Router.dispatch(HTTP 路由) |

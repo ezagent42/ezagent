@@ -82,7 +82,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
   import Phoenix.ChannelTest
 
-  alias Ezagent.{Behavior, Capability}
+  alias Ezagent.{ActionSet, Capability}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{CcOrchestratorSeed, McpChannel, McpRegistry, McpServer}
   alias Ezagent.AgentBridge.TokenStore
@@ -135,7 +135,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
   defp template_cap(kind, workspace_uri) do
     %Capability{
       kind: kind,
-      behavior: Behavior.Template,
+      behavior: ActionSet.Template,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: User.admin_uri(),
@@ -337,7 +337,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # materialization does, so this end-to-end wire test exercises the real
       # session-side token gate + cap reconstruction.
       {:ok, _} =
-        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
           orchestrator_uri: orchestrator_uri,
           orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
         })
@@ -496,7 +496,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # so the session-side token gate + structural caller-is-our-orchestrator
       # gate pass for the forwarded tools/call.
       {:ok, _} =
-        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
           orchestrator_uri: orchestrator_uri,
           orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
         })

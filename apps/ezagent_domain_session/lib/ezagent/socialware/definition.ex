@@ -2,9 +2,10 @@ defmodule Ezagent.Socialware.Definition do
   @moduledoc """
   Config-as-data socialware definition.
 
-  P4 stores definitions as `ConfigObject`s at
-  `config://<workspace>/socialware/<name>` with key `"socialware"`. This module
-  is the validation/rehydration boundary for that body.
+  P4 stores definitions as `ConfigObject`s under the structured non-URI subject
+  `socialware:<name>` (workspace is a separate ConfigStore field) with key
+  `"socialware"`. This module is the validation/rehydration boundary for that
+  body.
   """
 
   @enforce_keys [:name]
@@ -66,7 +67,7 @@ defmodule Ezagent.Socialware.Definition do
   """
   @spec behaviors(t()) :: [module()]
   def behaviors(%__MODULE__{bases: bases, shape: shape}) do
-    session = Ezagent.Behavior.Session
+    session = Ezagent.ActionSet.Session
 
     ([session] ++ shape ++ Enum.reject(bases, &(&1 == session)))
     |> Enum.uniq()
@@ -125,7 +126,7 @@ defmodule Ezagent.Socialware.Definition do
   end
 
   defp behavior_module(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
-    if Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod) do
+    if Code.ensure_loaded?(mod) and Ezagent.ActionSet.new_style?(mod) do
       {:ok, mod}
     else
       {:error, {:invalid_socialware_behavior, mod}}

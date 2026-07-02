@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Surface
+  alias Ezagent.ActionSet.Surface
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
   defp session_uri do

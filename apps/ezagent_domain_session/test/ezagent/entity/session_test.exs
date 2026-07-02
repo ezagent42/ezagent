@@ -15,26 +15,26 @@ defmodule Ezagent.Entity.SessionTest do
       # `socialware_behaviors/0`); the P1 per-instance denial keeps a chat
       # instance from invoking the socialware-only Turn/Surface actions.
       assert Session.behaviors() == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Publisher.SessionImpl,
-               Ezagent.Behavior.ExternalMirror,
-               Ezagent.Behavior.Turn,
-               Ezagent.Behavior.Surface,
-               Ezagent.Behavior.SupervisorApproval
+               Ezagent.ActionSet.Session,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               Ezagent.ActionSet.ExternalMirror,
+               Ezagent.ActionSet.Turn,
+               Ezagent.ActionSet.Surface,
+               Ezagent.ActionSet.SupervisorApproval
              ]
 
       assert Session.chat_behaviors() == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Publisher.SessionImpl,
-               Ezagent.Behavior.ExternalMirror
+               Ezagent.ActionSet.Session,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               Ezagent.ActionSet.ExternalMirror
              ]
 
       assert Session.socialware_behaviors() == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Turn,
-               Ezagent.Behavior.Surface,
-               Ezagent.Behavior.SupervisorApproval,
-               Ezagent.Behavior.Publisher.SessionImpl
+               Ezagent.ActionSet.Session,
+               Ezagent.ActionSet.Turn,
+               Ezagent.ActionSet.Surface,
+               Ezagent.ActionSet.SupervisorApproval,
+               Ezagent.ActionSet.Publisher.SessionImpl
              ]
     end
 

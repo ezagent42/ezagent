@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Agent.Receive do
+defmodule Ezagent.ActionSet.Agent.Receive do
   @moduledoc """
   `agent.receive` — the Agent Kind's active live-process delivery
   `:receive` Behavior.
@@ -10,7 +10,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
   `Entity.Agent` → AgentBridge). SPEC
   `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
   §OQ-4 / §3.3 splits that one action into TWO first-class Behaviors —
-  `user.receive` (`Ezagent.Behavior.User.Receive`, passive inbox) and
+  `user.receive` (`Ezagent.ActionSet.User.Receive`, passive inbox) and
   `agent.receive` (this module, active live-process delivery) — each
   registered for `:receive` on its own Kind. They are genuinely different
   (passive inbox vs active process delivery) and are NOT merged. The
@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
   `domain.agent`; the extraction in PR-2 was the action split, not the app
   move. PR-A (#53) then relocated the delivery mechanics into the agent
   domain — they now live in
-  `Ezagent.Behavior.Agent.Delivery.deliver_agent_receive/2` (no longer a
+  `Ezagent.ActionSet.Agent.Delivery.deliver_agent_receive/2` (no longer a
   session Behavior), cutting the last agent→session compile edge so PR-9
   can move `domain.agent` as a leaf. Pure message-body accessors are shared
   via `Ezagent.Message.Body` (core).
@@ -52,7 +52,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   ## Naming (§11 NP-1/NP-2/NP-3 audit)
 
-  `Ezagent.Behavior.Agent.Receive` — a domain module naming its own
+  `Ezagent.ActionSet.Agent.Receive` — a domain module naming its own
   concept; the name tracks the single action's intent (`receive`) at the
   narrowest accurate scope (NP-1), in its own layer's vocabulary (NP-2),
   with a width that matches its one action (NP-3). No violation.
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias Ezagent.Behavior.Agent.Delivery
+  alias Ezagent.ActionSet.Agent.Delivery
   alias Ezagent.Message.Body
 
   action(:receive,
@@ -97,7 +97,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   @doc """
   Deliver an inbound session message to the live agent via AgentBridge
-  (delegates to `Ezagent.Behavior.Agent.Delivery.deliver_agent_receive/2`).
+  (delegates to `Ezagent.ActionSet.Agent.Delivery.deliver_agent_receive/2`).
 
   Builds the flavor-neutral payload and pushes it through AgentBridge
   (self-healing a vanished bridge); a same-process side effect.
@@ -205,7 +205,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
       {:ok, %{ignored: :self_message}, []}
     else
       # AgentBridge PR-D / PR-6: keep receive flavor-neutral. Payload build +
-      # self-healing bridge delivery live in `Ezagent.Behavior.Agent.Delivery`
+      # self-healing bridge delivery live in `Ezagent.ActionSet.Agent.Delivery`
       # (agent domain). The CLASS-TAGGED delivery result decides whether we re-dispatch.
       case Delivery.deliver_agent_receive(msg, ctx) do
         :ok ->

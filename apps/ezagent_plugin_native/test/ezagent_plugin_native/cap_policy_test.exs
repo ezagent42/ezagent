@@ -21,8 +21,8 @@ defmodule EzagentPluginNative.CapPolicyTest do
   describe "for_recipe/1 as a CapMint policy" do
     test "GRANTS exactly the recipe's requested_caps under native" do
       recipe = [
-        %{behavior: Ezagent.Behavior.Sandbox, action: :read},
-        %{behavior: Ezagent.Behavior.Sandbox, action: :write}
+        %{behavior: Ezagent.ActionSet.Sandbox, action: :read},
+        %{behavior: Ezagent.ActionSet.Sandbox, action: :write}
       ]
 
       policy = CapPolicy.for_recipe(recipe)
@@ -31,15 +31,15 @@ defmodule EzagentPluginNative.CapPolicyTest do
       assert length(minted) == 2
       actions = minted |> Enum.map(& &1.action) |> Enum.sort()
       assert actions == [:read, :write]
-      assert Enum.all?(minted, &match?(%Capability{behavior: Ezagent.Behavior.Sandbox}, &1))
+      assert Enum.all?(minted, &match?(%Capability{behavior: Ezagent.ActionSet.Sandbox}, &1))
     end
 
     test "REJECTS an out-of-recipe cap fail-closed (not in the recipe → dropped)" do
-      recipe = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      recipe = [%{behavior: Ezagent.ActionSet.Sandbox, action: :read}]
       policy = CapPolicy.for_recipe(recipe)
 
       # A cap the recipe did NOT request — same behavior, different action.
-      out_of_recipe = [%{behavior: Ezagent.Behavior.Sandbox, action: :write}]
+      out_of_recipe = [%{behavior: Ezagent.ActionSet.Sandbox, action: :write}]
       assert [] = CapMint.mint(out_of_recipe, ctx(), policy)
 
       # A cap the recipe DID request still mints (proves the drop is selective).
@@ -49,28 +49,28 @@ defmodule EzagentPluginNative.CapPolicyTest do
     test "FAIL-CLOSED default: an empty recipe grants nothing" do
       policy = CapPolicy.for_recipe([])
 
-      requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      requested = [%{behavior: Ezagent.ActionSet.Sandbox, action: :read}]
       assert [] = CapMint.mint(requested, ctx(), policy)
     end
 
     test "predicate matches on {behavior, action}, not behavior alone" do
-      recipe = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      recipe = [%{behavior: Ezagent.ActionSet.Sandbox, action: :read}]
       policy = CapPolicy.for_recipe(recipe)
 
       # same action different behavior → reject
-      refute policy.(%{behavior: Ezagent.Behavior.ApiKeys, action: :read})
+      refute policy.(%{behavior: Ezagent.ActionSet.ApiKeys, action: :read})
       # exact pair → grant
-      assert policy.(%{behavior: Ezagent.Behavior.Sandbox, action: :read})
+      assert policy.(%{behavior: Ezagent.ActionSet.Sandbox, action: :read})
     end
 
     test "tolerates string-keyed / string-valued recipe entries (persisted recipe)" do
-      recipe = [%{"behavior" => "Ezagent.Behavior.Sandbox", "action" => "read"}]
+      recipe = [%{"behavior" => "Ezagent.ActionSet.Sandbox", "action" => "read"}]
       policy = CapPolicy.for_recipe(recipe)
 
       # CapMint canonicalizes the needed-cap to {module, atom}; the policy must
       # match it against the string-valued recipe entry.
-      assert [%Capability{behavior: Ezagent.Behavior.Sandbox, action: :read}] =
-               CapMint.mint([%{behavior: Ezagent.Behavior.Sandbox, action: :read}], ctx(), policy)
+      assert [%Capability{behavior: Ezagent.ActionSet.Sandbox, action: :read}] =
+               CapMint.mint([%{behavior: Ezagent.ActionSet.Sandbox, action: :read}], ctx(), policy)
     end
   end
 end

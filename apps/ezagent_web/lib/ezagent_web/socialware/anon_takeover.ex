@@ -12,7 +12,7 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Socialware.{AnonBinding, AnonUser}
   alias EzagentWeb.Socialware.AnonCookie
 
@@ -120,7 +120,7 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
     cap =
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :join,
         session_uri,
         Ezagent.Capability.workspace_of(session_uri)
@@ -175,7 +175,7 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :session,
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         :merge_member,
         Ezagent.URI.instance(session_uri),
         Ezagent.Capability.workspace_of(session_uri)

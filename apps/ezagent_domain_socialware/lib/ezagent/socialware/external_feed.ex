@@ -25,7 +25,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
 
   import Ecto.Query
 
-  alias Ezagent.{Behavior.Surface, MessageStore}
+  alias Ezagent.{ActionSet.Surface, MessageStore}
   alias Ezagent.Session.ExternalDelivery
   alias Ezagent.Session.Membership
   alias Ezagent.Socialware.DeliveryOutbox

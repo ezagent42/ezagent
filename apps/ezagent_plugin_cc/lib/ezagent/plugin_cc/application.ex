@@ -55,7 +55,7 @@ defmodule EzagentPluginCc.Application do
   (2026-05-21). cc plugin now spawns its claude PTY by building the
   full cmd string and calling `Ezagent.Domain.Pty.start/2`.
 
-  `Ezagent.Behavior.Pty` Agent-Kind registration moved to
+  `Ezagent.ActionSet.Pty` Agent-Kind registration moved to
   `EzagentDomainInstanceMessage.Application.start/2` in PR-B; `EzagentPluginCc`
   has no PTY-Behavior registration of its own — hence `behaviors/0`
   keeps the `use Ezagent.Plugin` default `[]`.
@@ -64,7 +64,7 @@ defmodule EzagentPluginCc.Application do
   use Application
   use Ezagent.Plugin
 
-  alias Ezagent.Behavior.CcHeadlessAgent, as: CcHeadlessBehavior
+  alias Ezagent.ActionSet.CcHeadlessAgent, as: CcHeadlessBehavior
 
   # --- OTP Application -------------------------------------------------
 
@@ -123,11 +123,11 @@ defmodule EzagentPluginCc.Application do
   # orchestrator is the load-bearing existing role and the `roles/0` exemplar —
   # registering it here makes it a first-class named role
   # (`RecipeRegistry.lookup("orchestrator")`) consumed by the cc-flavor loader
-  # (`OrchestratorBootstrap.resolve_orchestrator_role/0`) at agent-spawn time,
+  # (`OrchestratorBootstrap.resolve_orchestrator_recipe/0`) at agent-spawn time,
   # AND the re-point target for the future persisted
-  # `template://system/role/orchestrator` Template subtype.
+  # `template://system/recipe/orchestrator` Template subtype.
   @impl Ezagent.Plugin
-  def roles, do: [Ezagent.Orchestrator.OrchestratorRole.recipe()]
+  def roles, do: [Ezagent.Orchestrator.OrchestratorRecipe.recipe()]
 
   @impl Ezagent.Plugin
   def config_surface do

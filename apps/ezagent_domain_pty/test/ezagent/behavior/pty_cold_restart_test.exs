@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.PtyColdRestartTest do
+defmodule Ezagent.ActionSet.PtyColdRestartTest do
   @moduledoc """
-  Cold-restart invariant gate for the `Ezagent.Behavior.Pty` Lifecycle
+  Cold-restart invariant gate for the `Ezagent.ActionSet.Pty` Lifecycle
   migration (Phase B, SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`
   §6) — the NO-TRANSIENTS shape (like example A `CurlAgent`).
 
@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.PtyColdRestartTest do
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.Pty
+  alias Ezagent.ActionSet.Pty
 
   # Pty-only test Kind that LISTS Pty in behaviors/0 (so the two-container
   # slice is created via Pty.create/1) + `{:snapshot, :on_change}` so the

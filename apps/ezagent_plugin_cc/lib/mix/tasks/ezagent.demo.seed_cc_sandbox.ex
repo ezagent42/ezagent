@@ -193,7 +193,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   # --- optional AgentTemplate seed ----------------------------------------
 
   # When --seed-template <s> is supplied, dispatch the chat domain's
-  # `Ezagent.Behavior.Template` `:write` to populate the `:template`
+  # `Ezagent.ActionSet.Template` `:write` to populate the `:template`
   # slice for `template://agent/system/cc-<s>`. Same pattern as
   # `Ezagent.Orchestrator.CcOrchestratorSeed.write_template_slice/2`.
   defp maybe_seed_template(nil, _sandbox_dir, _source), do: :ok
@@ -271,7 +271,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
           %Ezagent.Capability{
             Ezagent.Capability.cap(
               :any,
-              Ezagent.Behavior.Template,
+              Ezagent.ActionSet.Template,
               :write,
               Ezagent.URI.instance(uri),
               :any

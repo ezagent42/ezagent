@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
+defmodule Ezagent.ActionSet.CurlAgentColdLoadTest do
   @moduledoc """
   Phase B (2026-05-29) Lifecycle migration — cold-load round-trip gate
-  for `Ezagent.Behavior.CurlAgent` (representative example A, the simple
+  for `Ezagent.ActionSet.CurlAgent` (representative example A, the simple
   no-transients case).
 
   SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6:
@@ -35,7 +35,7 @@ defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
   # written at spawn is isolated + rolled back per test.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.CurlAgent
+  alias Ezagent.ActionSet.CurlAgent
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.{Kind, KindRegistry}
 

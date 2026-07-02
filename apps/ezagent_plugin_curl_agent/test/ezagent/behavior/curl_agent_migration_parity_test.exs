@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
+defmodule Ezagent.ActionSet.CurlAgentMigrationParityTest do
   @moduledoc """
-  Phase 2-g r3 migration parity test for `Ezagent.Behavior.CurlAgent`.
+  Phase 2-g r3 migration parity test for `Ezagent.ActionSet.CurlAgent`.
 
   Asserts the new-contract Behavior preserves the OUTCOMES the
   legacy `invoke/4`-based implementation provided:
@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.CurlAgent
+  alias Ezagent.ActionSet.CurlAgent
 
   describe ":reset_conversation parity" do
     test "produces effects that, when applied, clear conversation + last_error" do
@@ -29,7 +29,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
       assert {:ok, %{ok: true}, effects} =
                CurlAgent.handle_reset_conversation(%{}, %{})
 
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, slice)
       assert new_state.conversation == []
       assert new_state.last_error == nil
     end
@@ -50,7 +50,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
 
       assert {:ok, %{ok: true}, effects} = CurlAgent.handle_configure(args, ctx)
 
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, slice)
       assert new_state.provider == "openai"
       assert new_state.model == "gpt-4o"
       assert new_state.system_prompt == "concise"
@@ -70,7 +70,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
       }
 
       assert {:ok, %{ok: true}, effects} = CurlAgent.handle_configure(args, ctx)
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, slice)
       refute Map.has_key?(new_state, :owner_uri)
     end
   end
@@ -125,7 +125,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
       }
 
       assert {:ok, %{ok: true, tokens: 3}, effects} = CurlAgent.handle_sync_result(args, ctx)
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, base)
+      assert {:ok, %{state: new_state}} = Ezagent.ActionSet.apply_effects(effects, base)
 
       assert new_state.conversation == [
                %{role: "user", content: "hello"},

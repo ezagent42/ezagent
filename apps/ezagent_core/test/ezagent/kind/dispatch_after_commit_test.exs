@@ -88,7 +88,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       modes: [:call, :cast]
     )
 
-    @impl Ezagent.Behavior
+    @impl Ezagent.ActionSet
     def cap_exempt_actions,
       do: [:trigger, :probe, :trigger_bad, :trigger_self_fail, :probe_fail]
 

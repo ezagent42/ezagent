@@ -16,7 +16,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Orchestrator.Tools
@@ -26,7 +26,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     MapSet.new([
       %Ezagent.Capability{
         kind: :session_template,
-        behavior: Ezagent.Behavior.Template,
+        behavior: Ezagent.ActionSet.Template,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: workspace_uri,
         granted_by: Ezagent.URI.new!("entity://system/user/admin"),

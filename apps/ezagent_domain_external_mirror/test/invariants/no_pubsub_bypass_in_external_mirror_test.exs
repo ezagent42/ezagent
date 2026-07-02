@@ -7,7 +7,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
   > **(f) No `Phoenix.PubSub.subscribe` in any module under
   > `apps/ezagent_domain_external_mirror/` or under a plugin-declared
   > binding module's transitive deps.** Grep gate. Bindings use
-  > `Ezagent.Behavior.Publisher.subscribe_from/3` — never PubSub
+  > `Ezagent.ActionSet.Publisher.subscribe_from/3` — never PubSub
   > directly. This is the structural enforcement that closes the P11
   > escape.
 
@@ -95,7 +95,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
            """
            Phoenix.PubSub.subscribe found in ExternalMirror Domain — violates
            SPEC §10 (f) / Invariant 4. Bindings MUST use
-           `Ezagent.Behavior.Publisher.subscribe_from/3` so the per-binding
+           `Ezagent.ActionSet.Publisher.subscribe_from/3` so the per-binding
            Worker Kind is the only path between Session slice changes and
            adapter publish — preserving crash isolation + CapBAC enforcement.
 

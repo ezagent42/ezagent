@@ -1,4 +1,4 @@
-defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
+defmodule Ezagent.PluginCc.Template.OrchestratorRecipeTest do
   @moduledoc """
   Acceptance tests for SPEC
   `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
@@ -8,7 +8,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
   Maps to the SPEC's Acceptance Criteria table:
 
     * B1: Orchestrator agent's `<config_dir>/skills/ezagent-session-orchestrator/SKILL.md`
-      exists after `apply_orchestrator_role_bootstrap`.
+      exists after `apply_orchestrator_recipe_bootstrap`.
     * B2: Orchestrator agent's `<config_dir>/CLAUDE.md` contains the
       skill-load hint line (verbatim per `orchestrator_hint_line/0`).
     * B3: Default-role cc agent (role omitted) does NOT get the skill
@@ -16,7 +16,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     * B4: Idempotent re-application doesn't duplicate the CLAUDE.md
       hint line.
 
-  We exercise `apply_orchestrator_role_bootstrap/2` directly because the
+  We exercise `apply_orchestrator_recipe_bootstrap/2` directly because the
   full `instantiate/3` path requires a PtyServer + claude executable
   on PATH, which the e2e suite covers. Bootstrap is a pure
   filesystem helper — unit-testable in a tmp dir.
@@ -29,19 +29,19 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
   # is skipped in `:test`; we seed explicitly in `setup` inside the sandbox.)
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Orchestrator.OrchestratorRole
+  alias Ezagent.Orchestrator.OrchestratorRecipe
   alias Ezagent.PluginCc.Template.CcAgent
 
   @hint CcAgent.orchestrator_hint_line()
 
   setup do
     # role-as-data: seed the orchestrator role into the test's sandbox so the
-    # bootstrap's `resolve_orchestrator_role/0` read-through resolves it. Flush
+    # bootstrap's `resolve_orchestrator_recipe/0` read-through resolves it. Flush
     # the ETS cache first so a prior test's cached entry can't mask the
     # ConfigStore-sourced path (ETS is process-global; the sandbox is per-test).
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
-    {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+    {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
 
     # ETS is process-global but the seeded ConfigStore row is rolled back with
     # the per-test sandbox. Flush on exit too so a role cached by this test's
@@ -81,7 +81,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
          %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       assert File.regular?(
                Path.join([
@@ -96,7 +96,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "every file from the source tree is copied", %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       assert File.regular?(
                Path.join([
@@ -113,7 +113,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "creates CLAUDE.md if absent + appends the hint", %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       assert {:ok, content} = File.read(Path.join(config_dir, "CLAUDE.md"))
       assert String.contains?(content, @hint)
@@ -123,7 +123,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       File.write!(Path.join(config_dir, "CLAUDE.md"), "operator preamble\n")
 
       tmpl = %{"role" => "orchestrator"}
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       content = File.read!(Path.join(config_dir, "CLAUDE.md"))
       assert String.starts_with?(content, "operator preamble\n")
@@ -136,7 +136,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       File.write!(Path.join(config_dir, "CLAUDE.md"), "operator preamble (no trailing nl)")
 
       tmpl = %{"role" => "orchestrator"}
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       content = File.read!(Path.join(config_dir, "CLAUDE.md"))
       # The hint should be on its own line, not concatenated to the
@@ -148,7 +148,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
   describe "B3 — default-role agent gets NO skill / NO hint" do
     test "role omitted = no skills dir created", %{config_dir: config_dir} do
       tmpl = %{}
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       refute File.dir?(Path.join(config_dir, "skills"))
       refute File.exists?(Path.join(config_dir, "CLAUDE.md"))
@@ -156,7 +156,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
 
     test "role=\"default\" explicit = no skills dir created", %{config_dir: config_dir} do
       tmpl = %{"role" => "default"}
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       refute File.dir?(Path.join(config_dir, "skills"))
     end
@@ -166,7 +166,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       # When the template has no `config_dir` reference,
       # `create_agent_config_dir/2` returns `{:ok, nil}` and the
       # bootstrap is skipped.
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, nil)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, nil)
     end
   end
 
@@ -174,9 +174,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "re-running does NOT duplicate the CLAUDE.md hint", %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       content = File.read!(Path.join(config_dir, "CLAUDE.md"))
 
@@ -193,7 +193,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "re-running with skill dir already present is a no-op", %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
 
       # Touch a sentinel file inside the skill dir; if the second
       # call re-copied (overwriting), the sentinel would disappear.
@@ -202,7 +202,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
 
       File.write!(sentinel, "local edit\n")
 
-      assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      assert :ok = CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
       assert File.regular?(sentinel)
     end
   end
@@ -215,7 +215,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       tmpl = %{"role" => "orchestrator"}
 
       assert {:error, {:skill_source_missing, "/nope/does/not/exist"}} =
-               CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+               CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
     end
 
     # codex PR #408 review HIGH-2 — when there is no override AND the
@@ -257,7 +257,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
         Application.put_env(:ezagent_plugin_cc, :orchestrator_skill_source, tmp_file)
 
         assert {:error, {:skill_source_missing, ^tmp_file}} =
-                 CcAgent.apply_orchestrator_role_bootstrap(tmpl, config_dir)
+                 CcAgent.apply_orchestrator_recipe_bootstrap(tmpl, config_dir)
       after
         File.rm_rf(tmp_root)
       end
@@ -337,27 +337,27 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     end
   end
 
-  describe "orchestrator_role?/1 helper" do
+  describe "orchestrator_recipe?/1 helper" do
     test "true for role=orchestrator (string)" do
-      assert CcAgent.orchestrator_role?(%{"role" => "orchestrator"})
+      assert CcAgent.orchestrator_recipe?(%{"role" => "orchestrator"})
     end
 
     # codex PR #408 review LOW — atom-form role under string-key "role"
     # also reads true. This is the ingress-normalization shape.
     test "true for role=:orchestrator (atom value under string key)" do
-      assert CcAgent.orchestrator_role?(%{"role" => :orchestrator})
+      assert CcAgent.orchestrator_recipe?(%{"role" => :orchestrator})
     end
 
     test "false for absent / default / unrelated" do
-      refute CcAgent.orchestrator_role?(%{})
-      refute CcAgent.orchestrator_role?(%{"role" => "default"})
-      refute CcAgent.orchestrator_role?(%{"role" => :default})
-      refute CcAgent.orchestrator_role?(%{"role" => "unknown"})
+      refute CcAgent.orchestrator_recipe?(%{})
+      refute CcAgent.orchestrator_recipe?(%{"role" => "default"})
+      refute CcAgent.orchestrator_recipe?(%{"role" => :default})
+      refute CcAgent.orchestrator_recipe?(%{"role" => "unknown"})
       # Atom-keyed map (`%{role: :orchestrator}`) is NOT the canonical
       # template shape — templates are string-keyed maps post-validate.
       # We deliberately do not coerce atom-key lookups to keep the
       # canonical shape sharp.
-      refute CcAgent.orchestrator_role?(%{role: :orchestrator})
+      refute CcAgent.orchestrator_recipe?(%{role: :orchestrator})
     end
   end
 

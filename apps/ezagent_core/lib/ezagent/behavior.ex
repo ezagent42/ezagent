@@ -1,11 +1,11 @@
-defmodule Ezagent.Behavior do
+defmodule Ezagent.ActionSet do
   @moduledoc """
   Behavior — contract for a piece of action-handling logic.
 
   > **Phase 3 deletion (2026-05-28).** The legacy
   > `Behavior.invoke/4` dispatch entry point has been retired. New
   > Behaviors opt into the per-action declarative contract via
-  > `use Ezagent.Behavior` and implement one `handle_<action>(args,
+  > `use Ezagent.ActionSet` and implement one `handle_<action>(args,
   > ctx)` clause per declared action. `invoke/4` is preserved only
   > as an `@optional_callback` (no runtime path consults it) so
   > legacy callers see a precise CompileError rather than a silent
@@ -19,13 +19,13 @@ defmodule Ezagent.Behavior do
   - exposes its `@interface` for adapter generation and arg validation
     (`interface/0`)
 
-  A worked example is `Ezagent.Behavior.PyAgent` (in `ezagent_plugin_py`); the
+  A worked example is `Ezagent.ActionSet.PyAgent` (in `ezagent_plugin_py`); the
   contract is defined here in `ezagent_core` so any plugin can implement it.
 
   ## Why no macros
 
   Per Decision #84 / DECISIONS P1-D2, Phase 1 picks the
-  `@behaviour Ezagent.Behavior` + callback pattern over a `use Ezagent.Behavior`
+  `@behaviour Ezagent.ActionSet` + callback pattern over a `use Ezagent.ActionSet`
   macro. The trade-off is identical to the Kind one (compile-time vs
   runtime isolation); same rationale applies (single Behavior in Phase 1,
   re-evaluate Phase 2+).
@@ -109,7 +109,7 @@ defmodule Ezagent.Behavior do
   This callback was the original dispatch entry point in Phase 1.
   It is now an `@optional_callback` retained only to keep the
   callback declaration grep-able. New-style Behaviors (`use
-  Ezagent.Behavior`) MUST instead define `handle_<action>(args,
+  Ezagent.ActionSet`) MUST instead define `handle_<action>(args,
   ctx)` per action and let `Ezagent.Kind.Runtime` route through
   the new contract.
 
@@ -156,7 +156,7 @@ defmodule Ezagent.Behavior do
   and audit/forensic queries.
 
   Cap-only Behaviors (`dispatchable?/0 == false`, e.g.
-  `Ezagent.Behavior.Notifications`) still list their actions here — that
+  `Ezagent.ActionSet.Notifications`) still list their actions here — that
   is HOW cap-only auth gates get their cap shape into
   `Ezagent.CapabilityRegistry`.
 
@@ -179,7 +179,7 @@ defmodule Ezagent.Behavior do
   Is this Behavior dispatchable? Default `true` — most Behaviors
   expose `invoke/4` for action dispatch. Set to `false` for
   cap-only Behaviors (the cap shape exists for auth but there is
-  no dispatchable action) — e.g. `Ezagent.Behavior.Notifications`'s
+  no dispatchable action) — e.g. `Ezagent.ActionSet.Notifications`'s
   `:subscribe` action is an auth gate, not a dispatch target.
 
   When `dispatchable?/0 == false`, `Ezagent.CapabilityRegistry.register/3`
@@ -384,7 +384,7 @@ defmodule Ezagent.Behavior do
 
   Use this for per-Behavior resource cleanup that needs to run
   before the process exits — e.g. closing transport handles owned
-  by `Ezagent.Behavior.ExternalMirrorWorker`'s bound
+  by `Ezagent.ActionSet.ExternalMirrorWorker`'s bound
   `Ezagent.ExternalMirror.Binding.terminate/2` callback.
 
   Each Behavior's `terminate/3` runs in `behaviors/0` declaration
@@ -452,7 +452,7 @@ defmodule Ezagent.Behavior do
 
   Same opt-in, same scoping, same `:all_slices`-is-banned rule
   (invariant 18) as the legacy `reads_sibling_slices/0`. Optional
-  callback — `Ezagent.Behavior.reads_siblings_of/1` reads the UNION of
+  callback — `Ezagent.ActionSet.reads_siblings_of/1` reads the UNION of
   this and the legacy callback so a Kind mixing legacy + Lifecycle
   Behaviors is correct.
   """
@@ -468,7 +468,7 @@ defmodule Ezagent.Behavior do
   `Ezagent.Kind.Snapshot.load_or_init/3` merges the snapshot's
   loaded state OVER the `init_slice/1` fresh state. For Behaviors
   whose slice is backed by a DB projection table (e.g.
-  `Ezagent.Behavior.ExternalMirror.bindings` reads from
+  `Ezagent.ActionSet.ExternalMirror.bindings` reads from
   `external_mirror_bindings`), this means: rows inserted AFTER
   the last snapshot write but BEFORE the next Kind restart are
   silently lost from the live slice. The Kind's
@@ -616,20 +616,20 @@ defmodule Ezagent.Behavior do
   # ---------------------------------------------------------------
   #
   # Everything BELOW this comment is the per-action declarative
-  # contract. Modules opt-in via `use Ezagent.Behavior` instead of
-  # `@behaviour Ezagent.Behavior`. (Phase 3 deletion 2026-05-28
+  # contract. Modules opt-in via `use Ezagent.ActionSet` instead of
+  # `@behaviour Ezagent.ActionSet`. (Phase 3 deletion 2026-05-28
   # removed the legacy adapter module that bridged the two contracts
   # during Phase 1 + Phase 2 migration.)
 
   @doc """
-  `use Ezagent.Behavior` — opt into the new per-action declarative
+  `use Ezagent.ActionSet` — opt into the new per-action declarative
   contract per SPEC §2.2.
 
   ## Injects
 
   - `Module.register_attribute(__MODULE__, :ezagent_actions, accumulate: true)`
   - The `action/3` macro for declaring an action's args/returns/caps
-  - `@before_compile Ezagent.Behavior` to aggregate `@ezagent_actions`
+  - `@before_compile Ezagent.ActionSet` to aggregate `@ezagent_actions`
     into `__actions__/0`, `__action_spec__/1`, and the legacy
     derived callbacks (`actions/0`, `interface/0`, `required_caps/0`,
     `cap_subjects/0`) so a single Behavior can be discovered by the
@@ -650,9 +650,9 @@ defmodule Ezagent.Behavior do
     quote do
       Module.register_attribute(__MODULE__, :ezagent_actions, accumulate: true)
 
-      import Ezagent.Behavior, only: [action: 2, action: 3]
+      import Ezagent.ActionSet, only: [action: 2, action: 3]
 
-      @before_compile Ezagent.Behavior
+      @before_compile Ezagent.ActionSet
 
       @doc false
       def __behavior__?, do: true
@@ -740,13 +740,13 @@ defmodule Ezagent.Behavior do
       unless is_list(modes) do
         raise CompileError,
           description:
-            "Ezagent.Behavior action :#{unquote(name)} :modes must be a list (got #{inspect(modes)})"
+            "Ezagent.ActionSet action :#{unquote(name)} :modes must be a list (got #{inspect(modes)})"
       end
 
       unless is_binary(description) do
         raise CompileError,
           description:
-            "Ezagent.Behavior action :#{unquote(name)} :description must be a string (got #{inspect(description)})"
+            "Ezagent.ActionSet action :#{unquote(name)} :description must be a string (got #{inspect(description)})"
       end
 
       @ezagent_actions {unquote(name),
@@ -828,7 +828,7 @@ defmodule Ezagent.Behavior do
       end
 
     legacy_ast =
-      Ezagent.Behavior.LegacyCallbacks.inject(
+      Ezagent.ActionSet.LegacyCallbacks.inject(
         env,
         action_names,
         interface,
@@ -846,15 +846,15 @@ defmodule Ezagent.Behavior do
   # Effect applier + Behavior introspection delegators
   # ---------------------------------------------------------------
 
-  @type mfa_or_fun :: Ezagent.Behavior.Effects.mfa_or_fun()
-  @type effect :: Ezagent.Behavior.Effects.effect()
+  @type mfa_or_fun :: Ezagent.ActionSet.Effects.mfa_or_fun()
+  @type effect :: Ezagent.ActionSet.Effects.effect()
 
   @type handler_return ::
           {:ok, term(), [effect()]}
           | {:ok, term()}
           | {:error, term()}
 
-  @doc "Apply a handler's effect list against `state`, returning the effects sorted into their buckets (state/events/dispatches/notifies/terminations/saga/returning) for the runtime to commit, or `{:halt, …}`. Delegates to `Ezagent.Behavior.Effects`."
+  @doc "Apply a handler's effect list against `state`, returning the effects sorted into their buckets (state/events/dispatches/notifies/terminations/saga/returning) for the runtime to commit, or `{:halt, …}`. Delegates to `Ezagent.ActionSet.Effects`."
   @spec apply_effects([effect()], map()) ::
           {:ok,
            %{
@@ -868,41 +868,41 @@ defmodule Ezagent.Behavior do
              returning: map()
            }}
           | {:halt, term(), map()}
-  defdelegate apply_effects(effects, state), to: Ezagent.Behavior.Effects
+  defdelegate apply_effects(effects, state), to: Ezagent.ActionSet.Effects
 
   @doc false
-  defdelegate substitute_refs(term, bound), to: Ezagent.Behavior.Effects
+  defdelegate substitute_refs(term, bound), to: Ezagent.ActionSet.Effects
 
-  @doc "Whether `mod` is a new-contract (action-based) Behavior rather than a legacy `invoke/4` one — the branch the runtime takes when dispatching. Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "Whether `mod` is a new-contract (action-based) Behavior rather than a legacy `invoke/4` one — the branch the runtime takes when dispatching. Delegates to `Ezagent.ActionSet.Introspection`."
   @spec new_style?(module()) :: boolean()
-  defdelegate new_style?(mod), to: Ezagent.Behavior.Introspection
+  defdelegate new_style?(mod), to: Ezagent.ActionSet.Introspection
 
-  @doc "The action atoms a Behavior module declares (via `action/2`). Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "The action atoms a Behavior module declares (via `action/2`). Delegates to `Ezagent.ActionSet.Introspection`."
   @spec action_names(module()) :: [atom()]
-  defdelegate action_names(mod), to: Ezagent.Behavior.Introspection
+  defdelegate action_names(mod), to: Ezagent.ActionSet.Introspection
 
-  @doc "The spec map for one `action` of a Behavior (args/returns/caps/modes/data_owner/…), or `nil` if undeclared. Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "The spec map for one `action` of a Behavior (args/returns/caps/modes/data_owner/…), or `nil` if undeclared. Delegates to `Ezagent.ActionSet.Introspection`."
   @spec action_spec(module(), atom()) :: map() | nil
-  defdelegate action_spec(mod, action), to: Ezagent.Behavior.Introspection
+  defdelegate action_spec(mod, action), to: Ezagent.ActionSet.Introspection
 
-  @doc "Resolve a Behavior's cap data-owner for a given instance (entity URI / `:any` / scoped tuple) — used by the CapBAC chokepoint to find who owns the subject. Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "Resolve a Behavior's cap data-owner for a given instance (entity URI / `:any` / scoped tuple) — used by the CapBAC chokepoint to find who owns the subject. Delegates to `Ezagent.ActionSet.Introspection`."
   @spec data_owner_of(module(), URI.t() | :any | {atom(), URI.t()}) ::
           URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
-  defdelegate data_owner_of(behavior, instance), to: Ezagent.Behavior.Introspection
+  defdelegate data_owner_of(behavior, instance), to: Ezagent.ActionSet.Introspection
 
-  @doc "The LEGACY sibling-slice keys a Behavior reads (the pre-Lifecycle `reads_sibling_slices/0`). Delegates to `Ezagent.Behavior.Introspection`; prefer `reads_siblings_of/1` for the union."
+  @doc "The LEGACY sibling-slice keys a Behavior reads (the pre-Lifecycle `reads_sibling_slices/0`). Delegates to `Ezagent.ActionSet.Introspection`; prefer `reads_siblings_of/1` for the union."
   @spec reads_sibling_slices_of(module()) :: [atom()]
-  defdelegate reads_sibling_slices_of(behavior_module), to: Ezagent.Behavior.Introspection
+  defdelegate reads_sibling_slices_of(behavior_module), to: Ezagent.ActionSet.Introspection
 
-  @doc "The UNION of sibling state keys a Behavior reads (`reads_siblings/0` + the legacy `reads_sibling_slices/0`) — surfaced read-only on the handler ctx. Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "The UNION of sibling state keys a Behavior reads (`reads_siblings/0` + the legacy `reads_sibling_slices/0`) — surfaced read-only on the handler ctx. Delegates to `Ezagent.ActionSet.Introspection`."
   @spec reads_siblings_of(module()) :: [atom()]
-  defdelegate reads_siblings_of(behavior_module), to: Ezagent.Behavior.Introspection
+  defdelegate reads_siblings_of(behavior_module), to: Ezagent.ActionSet.Introspection
 
-  @doc "The action atoms a Behavior marks cap-exempt (run without a CapBAC check — a deliberate, audited escape). Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "The action atoms a Behavior marks cap-exempt (run without a CapBAC check — a deliberate, audited escape). Delegates to `Ezagent.ActionSet.Introspection`."
   @spec cap_exempt_actions_of(module()) :: [atom()]
-  defdelegate cap_exempt_actions_of(behavior_module), to: Ezagent.Behavior.Introspection
+  defdelegate cap_exempt_actions_of(behavior_module), to: Ezagent.ActionSet.Introspection
 
-  @doc "Whether a Behavior's required caps are workspace-scoped (the cap must match the instance's workspace). Delegates to `Ezagent.Behavior.Introspection`."
+  @doc "Whether a Behavior's required caps are workspace-scoped (the cap must match the instance's workspace). Delegates to `Ezagent.ActionSet.Introspection`."
   @spec workspace_scoped?(module()) :: boolean()
-  defdelegate workspace_scoped?(behavior_module), to: Ezagent.Behavior.Introspection
+  defdelegate workspace_scoped?(behavior_module), to: Ezagent.ActionSet.Introspection
 end

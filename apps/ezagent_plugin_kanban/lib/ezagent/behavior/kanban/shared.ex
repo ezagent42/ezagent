@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.Kanban.Shared do
+defmodule Ezagent.ActionSet.Kanban.Shared do
   @moduledoc """
-  Kanban Behavior 的共享原语——`Ezagent.Behavior.Kanban`（拓扑/认领/读写动作）与
-  `Ezagent.Behavior.Kanban.Connectors`（出站连接器动作）共用的小函数集。
+  Kanban Behavior 的共享原语——`Ezagent.ActionSet.Kanban`（拓扑/认领/读写动作）与
+  `Ezagent.ActionSet.Kanban.Connectors`（出站连接器动作）共用的小函数集。
 
   抽出来纯粹是为了让两个 handler 模块复用同一套读/写/授权/归一逻辑，**不引入新语义**：
   - 读：`tree/1`（经 `ctx[:read]`）；

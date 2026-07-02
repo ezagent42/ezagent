@@ -23,7 +23,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
        unified Kind) instead of the deleted standalone curl Kind.
     2. **`:kind_base` slice** ← the curl per-instance behavior SET
        (`Ezagent.Entity.Agent.curl_behaviors/0`), in the two-container shape
-       `Ezagent.Behavior.KindBase.create/1` persists — so
+       `Ezagent.ActionSet.KindBase.create/1` persists — so
        `Ezagent.Kind.BehaviorSet.effective_set/2` selects the curl subset on
        cold-load, identical to a freshly-spawned curl agent.
     3. **`flavor: "curl"`** set on the durable `:curl_agent` slice (O-2: flavor
@@ -56,7 +56,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
 
   require Logger
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Ecto.KindSnapshot
 
   # The pre-fold standalone-curl-Kind `kind_type` (its `type_name` was
@@ -67,7 +67,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
   # Written into the migrated row so cold-load resolves `Entity.Agent`.
   @unified_kind_type "agent"
 
-  # The durable slice the reparented `Ezagent.Behavior.CurlAgent` owns.
+  # The durable slice the reparented `Ezagent.ActionSet.CurlAgent` owns.
   @curl_slice_key :curl_agent
 
   # Slices the PRE-FOLD standalone curl Kind already owned. They MUST be present

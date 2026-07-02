@@ -31,10 +31,10 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Identity, KindRegistry, SpawnRegistry, Workspace}
-  alias Ezagent.Behavior.Workspace, as: WB
+  alias Ezagent.ActionSet.Workspace, as: WB
 
   # Phase 2-c migration (SPEC 2026-05-28 PR #445) — `Behavior.Workspace`
-  # uses the new `use Ezagent.Behavior` contract. Direct callers of
+  # uses the new `use Ezagent.ActionSet` contract. Direct callers of
   # `WB.invoke/4` route through this helper, which drives the
   # `handle_<action>/2` + `apply_effects/2` pipeline and returns the
   # legacy `{:ok, new_slice}` shape these integration assertions expect.
@@ -60,7 +60,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
   end
 
   defp execute_handler_return({:ok, result, effects}, slice) do
-    case Ezagent.Behavior.apply_effects(effects, slice) do
+    case Ezagent.ActionSet.apply_effects(effects, slice) do
       {:ok, %{state: new_slice, dispatches: dispatches}} ->
         # Mirror `Ezagent.Kind.Runtime.execute_dispatches/2` — sequential
         # Router dispatch. Failure logs + aborts subsequent dispatches.
@@ -216,7 +216,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
         Enum.any?(caps, fn cap ->
           match?(%Ezagent.Capability{}, cap) and
             cap.kind == :workspace and
-            cap.behavior == Ezagent.Behavior.Workspace and
+            cap.behavior == Ezagent.ActionSet.Workspace and
             cap.action == :create_session and
             match?(%URI{}, cap.instance) and
             URI.to_string(cap.instance) == workspace_uri_str

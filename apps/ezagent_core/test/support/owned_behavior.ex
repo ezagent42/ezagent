@@ -10,7 +10,7 @@ defmodule Ezagent.TestSupport.OwnedBehavior do
   Behavior would lookup the owning entity (e.g.
   `Session.owner(target_uri)`).
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:read, :write]
@@ -61,7 +61,7 @@ defmodule Ezagent.TestSupport.OwnedCapOnlyBehavior do
   `subjects_for_kind/1` — not the wrong abstraction that round-1
   used (`BehaviorRegistry.behaviors_for/1` skips cap-only).
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:subscribe]

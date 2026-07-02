@@ -5,7 +5,7 @@ defmodule Ezagent.Test.TestBehavior do
   `mix.exs` `elixirc_paths(:test)`).
 
   Migrated to the new per-action declarative contract (`use
-  Ezagent.Behavior`) as part of Phase 3 r3 (2026-05-28); the legacy
+  Ezagent.ActionSet`) as part of Phase 3 r3 (2026-05-28); the legacy
   `invoke/4` dispatch path is gone, so every Behavior the Runtime
   sees MUST be new-style.
 
@@ -13,8 +13,8 @@ defmodule Ezagent.Test.TestBehavior do
   returns `{:error, :test_failure}`; action `:raise` raises.
   """
 
-  use Ezagent.Behavior
-  @behaviour Ezagent.Behavior
+  use Ezagent.ActionSet
+  @behaviour Ezagent.ActionSet
 
   action(:noop,
     args: %{msg: :string},
@@ -37,10 +37,10 @@ defmodule Ezagent.Test.TestBehavior do
     description: "Always raise — exercises the crash path"
   )
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def state_slice, do: :test
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def init_slice(_args), do: %{count: 0, last_msg: nil}
 
   def handle_noop(%{msg: msg}, ctx) do

@@ -100,7 +100,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
        ) do
     cap = %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      behavior: Ezagent.ActionSet.OrchestratorAdmin,
       action: :restart,
       instance: session_uri,
       workspace_uri: workspace_uri,

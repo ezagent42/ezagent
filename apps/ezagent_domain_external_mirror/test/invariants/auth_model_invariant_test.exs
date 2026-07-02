@@ -190,7 +190,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
 
       bind_cap = %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: session_uri,
         workspace_uri: @workspace_uri,
         granted_by: User.admin_uri(),
@@ -243,7 +243,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
           MapSet.new([
             %Capability{
               kind: :session,
-              behavior: Ezagent.Behavior.ExternalMirror,
+              behavior: Ezagent.ActionSet.ExternalMirror,
               instance: session_uri,
               workspace_uri: @workspace_uri,
               granted_by: User.admin_uri(),
@@ -505,7 +505,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
           MapSet.new([
             %Capability{
               kind: :session,
-              behavior: Ezagent.Behavior.ExternalMirror,
+              behavior: Ezagent.ActionSet.ExternalMirror,
               instance: session_uri,
               workspace_uri: @workspace_uri,
               granted_by: User.admin_uri(),
@@ -1037,7 +1037,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
 
   defmodule DenyAdapter.Allow do
     @moduledoc false
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     @impl true
     def actions, do: [:allow_deny_em]
@@ -1098,7 +1098,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
 
   defmodule SlowAdapter.Allow do
     @moduledoc false
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     @impl true
     def actions, do: [:allow_slow_em]

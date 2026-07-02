@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.OrchestratorAdminMigrationParityTest do
+defmodule Ezagent.ActionSet.OrchestratorAdminMigrationParityTest do
   @moduledoc """
   Phase 2-a r3 (2026-05-28) — migration parity tests for
-  `Ezagent.Behavior.OrchestratorAdmin` after the SPEC 2026-05-28
+  `Ezagent.ActionSet.OrchestratorAdmin` after the SPEC 2026-05-28
   new-action-grammar migration.
 
   OrchestratorAdmin is a cap-only Behavior: its `:restart` handler is
@@ -16,10 +16,10 @@ defmodule Ezagent.Behavior.OrchestratorAdminMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.OrchestratorAdmin
+  alias Ezagent.ActionSet.OrchestratorAdmin
 
   describe "new-contract surface" do
-    test "is a new-style Behavior (declared via use Ezagent.Behavior)" do
+    test "is a new-style Behavior (declared via use Ezagent.ActionSet)" do
       assert OrchestratorAdmin.__behavior__?() == true
     end
 
