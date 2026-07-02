@@ -3,12 +3,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.DefinitionEditor
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
   def materialize_template_team(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
-        %URI{} = _granted_by,
+        %URI{} = granted_by,
         template_content
       )
       when is_map(template_content) do
@@ -24,6 +25,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
                workspace_uri,
                socialware_config,
                declared_roles
+             ),
+           # T2-1b — materialize the installed socialware Definitions' `agents`
+           # (`%{recipe, role_name}`) as spawned session members with recipe
+           # caps. Runs on BOTH the fresh-create and repair paths (idempotent).
+           :ok <-
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               workspace_uri,
+               granted_by,
+               Map.get(socialware_config, :agents, [])
              ) do
         :ok
       end

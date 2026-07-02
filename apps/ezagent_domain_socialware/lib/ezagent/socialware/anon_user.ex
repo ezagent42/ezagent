@@ -121,7 +121,17 @@ defmodule Ezagent.Socialware.AnonUser do
       with {:ok, workspace_name} <- workspace_name(session_uri) do
         anon_uri = Ezagent.URI.entity(workspace_name, :user, anon_name())
 
-        case Users.create_read_only(anon_uri, [join_cap(session_uri)]) do
+        # T2-2b — born with the narrow session.join grant PLUS the view read-caps
+        # for PUBLIC installed definitions' declared views only
+        # (`Installation.anon_view_caps/1`). A view of a non-public installed
+        # definition contributes no cap → the anon cannot render it
+        # (`SessionView.authorize_view/3` denies). Two-layer gate: openness admits
+        # the anon; view-caps decide which views it sees.
+        born_with = [
+          join_cap(session_uri) | Ezagent.Socialware.Installation.anon_view_caps(session_uri)
+        ]
+
+        case Users.create_read_only(anon_uri, born_with) do
           {:ok, _row} -> {:ok, anon_uri}
           {:error, _} = err -> err
         end

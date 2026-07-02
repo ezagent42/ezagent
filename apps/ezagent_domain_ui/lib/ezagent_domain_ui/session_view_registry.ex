@@ -64,11 +64,37 @@ defmodule Ezagent.UI.SessionViewRegistry do
   Each view's `applies_to?/1` callback is wrapped in try/catch so a
   buggy plugin can't tear down the whole render.
   """
-  @spec applicable_views(URI.t()) :: [%{id: atom(), label: String.t(), icon: String.t(), module: module()}]
+  @spec applicable_views(URI.t()) :: [
+          %{id: atom(), label: String.t(), icon: String.t(), module: module()}
+        ]
   def applicable_views(%URI{} = session_uri) do
     @table
     |> :ets.tab2list()
     |> Enum.filter(fn {_id, mod} -> safe_applies_to(mod, session_uri) end)
+    |> Enum.map(fn {_id, mod} ->
+      %{id: mod.id(), label: mod.label(), icon: mod.icon(), module: mod}
+    end)
+    |> Enum.sort_by(& &1.id)
+  end
+
+  @doc """
+  T2-2b — caller-aware `applicable_views`: the views that apply to `session_uri`
+  AND that `caller` is authorized to see (`SessionView.authorize_view/3`).
+
+  This is the gated path (decision 2): every render entry uses the caller-aware
+  arity so a cap-gated view (e.g. kanban-private) is dropped for a caller lacking
+  its render cap, even in the same session as a view they CAN see. `applicable_views/1`
+  is retained for callers with no caller dimension (it does NOT apply the cap gate).
+  """
+  @spec applicable_views(URI.t(), URI.t() | nil) :: [
+          %{id: atom(), label: String.t(), icon: String.t(), module: module()}
+        ]
+  def applicable_views(%URI{} = session_uri, caller) do
+    @table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_id, mod} ->
+      safe_applies_to(mod, session_uri) and safe_authorize_view(mod, caller, session_uri)
+    end)
     |> Enum.map(fn {_id, mod} ->
       %{id: mod.id(), label: mod.label(), icon: mod.icon(), module: mod}
     end)
@@ -81,6 +107,14 @@ defmodule Ezagent.UI.SessionViewRegistry do
     catch
       _, _ -> false
     end
+  end
+
+  defp safe_authorize_view(mod, caller, session_uri) do
+    Ezagent.UI.SessionView.authorize_view(mod, caller, session_uri)
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
   @doc """
@@ -127,6 +161,27 @@ defmodule Ezagent.UI.SessionViewRegistry do
     |> :ets.tab2list()
     |> Enum.filter(fn {_id, mod} ->
       external_render?(mod) and safe_applies_to(mod, session_uri)
+    end)
+    |> Enum.map(fn {_id, mod} ->
+      %{id: mod.id(), label: mod.label(), icon: mod.icon(), module: mod}
+    end)
+    |> Enum.sort_by(& &1.id)
+  end
+
+  @doc """
+  T2-2b — caller-aware external renderers: `external_renderers/1` additionally
+  gated by `SessionView.authorize_view/3`, so the customer/anon external-render
+  path only exposes views the caller holds the render cap for.
+  """
+  @spec external_renderers(URI.t(), URI.t() | nil) :: [
+          %{id: atom(), label: String.t(), icon: String.t(), module: module()}
+        ]
+  def external_renderers(%URI{} = session_uri, caller) do
+    @table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_id, mod} ->
+      external_render?(mod) and safe_applies_to(mod, session_uri) and
+        safe_authorize_view(mod, caller, session_uri)
     end)
     |> Enum.map(fn {_id, mod} ->
       %{id: mod.id(), label: mod.label(), icon: mod.icon(), module: mod}

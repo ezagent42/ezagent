@@ -102,7 +102,16 @@ defmodule EzagentPluginHello.Application do
         {Ezagent.Entity.HelloBuilder, action, behavior}
       end
 
-    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.ActionSet.HelloBuilder} | identity_decls]
+    # T2-2a — register the hello view read ActionSet's `<sw>_render` action on
+    # the Session Kind. Cap-only (dispatchable? false) so this writes only the
+    # `{Session, :hello_render}` cap subject; there is no dispatch route. This is
+    # the cap `authorize_view/3` (T2-2b) checks for a hello page view.
+    view_decls = [
+      {Ezagent.Entity.Session, :hello_render, Ezagent.ActionSet.HelloRender}
+    ]
+
+    [{Ezagent.Entity.HelloBuilder, :receive, Ezagent.ActionSet.HelloBuilder} | identity_decls] ++
+      view_decls
   end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),

@@ -124,6 +124,70 @@ defmodule Ezagent.Socialware.Installation do
 
   def web_anon_access?(_), do: false
 
+  @doc """
+  T2-2b — the view read-caps an anonymous visitor is minted with for
+  `session_uri`: for every PUBLIC installed definition
+  (`visibility_policy.web_anon_access == true`), one `<sw>_render` cap per action
+  of each of the definition's declared `views` ActionSets.
+
+  This is the fine-grained half of the two-layer gate: openness
+  (`web_anon_access`) decides whether an anon is minted at all; these caps decide
+  which VIEWS that anon can see. A view of a NON-public installed definition
+  (e.g. kanban-private in a hello-public session) contributes NO cap, so the anon
+  cannot render it (`SessionView.authorize_view/3` denies).
+
+  The cap shape is exactly what `SessionView.render_needed_caps/2` checks
+  (`cap(:session, view_actionset, action, <session>, <ws>)`), so the mint and the
+  gate agree by construction. `granted_by` = the session owner (the configurer of
+  the public_view rule), falling back to the admin entity — Decision #154's named
+  granter, never a `system://` principal. JSON-serializable (concrete instance) so
+  it lands in the anon's `caps_json`.
+  """
+  @spec anon_view_caps(URI.t()) :: [Ezagent.Capability.t()]
+  def anon_view_caps(%URI{scheme: "session"} = session_uri) do
+    granter = anon_view_granter(session_uri)
+    instance = Ezagent.URI.instance(session_uri)
+    workspace = Ezagent.Capability.workspace_of(session_uri)
+
+    session_uri
+    |> installed_definitions()
+    |> Enum.filter(fn %Definition{visibility_policy: policy} ->
+      Map.get(policy, :web_anon_access, false) == true
+    end)
+    |> Enum.flat_map(fn %Definition{views: views} -> views end)
+    |> Enum.uniq()
+    |> Enum.flat_map(&view_render_caps(&1, instance, workspace, granter))
+  end
+
+  def anon_view_caps(_), do: []
+
+  defp view_render_caps(view_module, instance, workspace, granter) when is_atom(view_module) do
+    for action <- view_actions(view_module) do
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(:session, view_module, action, instance, workspace)
+        | granted_by: granter,
+          granted_at: DateTime.utc_now()
+      }
+    end
+  end
+
+  defp view_actions(view_module) do
+    if Code.ensure_loaded?(view_module) and function_exported?(view_module, :actions, 0) do
+      view_module.actions()
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp anon_view_granter(%URI{} = session_uri) do
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} -> owner
+      _ -> Ezagent.Entity.User.admin_uri()
+    end
+  end
+
   @doc "Return the effective publish policy for a session's installed socialwares."
   @spec publish_policy(URI.t()) :: :auto | :supervised
   def publish_policy(%URI{scheme: "session"} = session_uri) do
