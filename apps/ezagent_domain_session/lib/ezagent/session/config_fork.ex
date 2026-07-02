@@ -18,7 +18,7 @@ defmodule Ezagent.Session.ConfigFork do
        → fail-closed `{:error, :no_source_template}` (no silent default,
        `feedback_let_it_crash_no_workarounds`).
 
-    2. **Fork that template** via the existing `Behavior.Template :fork` action
+    2. **Fork that template** via the existing `ActionSet.Template :fork` action
        (`SessionTemplate.fork/3`) with `owner: caller` — a config-only copy
        (Invariant #10) whose `parent_template_uri` points back at the source.
 
@@ -35,7 +35,7 @@ defmodule Ezagent.Session.ConfigFork do
 
   - **Copy authority (fork the source's config)** — the "you can view this
     session, so you may copy its config" authorization is minted here as a
-    caller-scoped `Behavior.Template` `session_template` cap for the SOURCE
+    caller-scoped `ActionSet.Template` `session_template` cap for the SOURCE
     template's workspace, `granted_by: caller` (the same self-mint the world
     `save_session_template` action does for `SessionTemplate.create/3`). It is
     intra-workspace only (see §Cross-workspace below), so the mint is safe: the
@@ -51,7 +51,7 @@ defmodule Ezagent.Session.ConfigFork do
   ## Cross-workspace (KNOWN LIMIT — surfaced, not silently handled)
 
   `SessionTemplate.fork/3` derives the new template's workspace from the PARENT
-  URI (`Behavior.Template.fork_session_template/2` ignores any `:workspace`
+  URI (`ActionSet.Template.fork_session_template/2` ignores any `:workspace`
   override) and the Invariant-13 dispatch gate denies forking a template in a
   foreign workspace. So copying an **official / cross-tenant** session (source
   template in workspace S) into the caller's OWN tenant (workspace U ≠ S) is
@@ -179,14 +179,14 @@ defmodule Ezagent.Session.ConfigFork do
   # --- caps + naming -----------------------------------------------------
 
   # Mirror of `Ezagent.World.WorkspacePluginActions.session_template_write_cap/2`
-  # — a caller-scoped, workspace-bounded `Behavior.Template` cap authorizing the
+  # — a caller-scoped, workspace-bounded `ActionSet.Template` cap authorizing the
   # config copy (fork). `granted_by: caller` (self-authorized for own workspace);
   # the Invariant-13 gate keeps it intra-workspace.
   defp template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :session_template,
-        Ezagent.Behavior.Template,
+        Ezagent.ActionSet.Template,
         :any,
         {:within_workspace, workspace_uri},
         workspace_uri
