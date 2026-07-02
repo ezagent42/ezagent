@@ -1,6 +1,6 @@
 # Dev Together Team
 
-_Last checked: 2026-06-25_
+_Last checked: 2026-07-02_
 
 The durable roster for `dev-together`. **Row identity = `github_username`** (the
 canonical key; it joins to PR authorship). `dev-together plan` reads this file,
@@ -15,12 +15,12 @@ it exists so the long GitHub key joins to the short name plans cite.
 | github_username | short_name | role | feishu_name | current_track | latest_return | timezone | github_lookup |
 |---|---|---|---|---|---|---|---|
 | `zyli-developer` | zyli | human-dev | 李震宇 | 0701 World UI shell polish aligned to ruihua direction | `2026-06-30/stack.md` | GMT+8 | verified org member |
-| `gagameow` | gaga | human-dev | 黄佳佳 | 0701 Socialware / AutoService public-flow validation on current main | `2026-06-30/stack.md` | GMT+8 | verified |
-| `zhaomaota97` | zhaomato | human-dev | 张宁 | 0701 Website / Hello production path aligned to ruihua direction | `2026-06-30/stack.md` | GMT+8 | verified org member |
+| `gagameow` | gaga | human-dev | 黄佳佳 | 0703 Agent Console /overview + lifecycle + route tests (#1131/#1132/#1133) — rebase onto post-T1/T2 main, fix #1132 ActionSet prose, stack in author order | `2026-06-30/stack.md` | GMT+8 | verified |
+| `zhaomaota97` | zhaomato | human-dev | 张宁 | 0703 Hello concierge + publish-template (#1134) — BLOCKED on 导游/客服 design; then rename-migrate off pre-T1 symbols + merge | `2026-06-30/stack.md` | GMT+8 | verified org member |
 | `FatNine` | fatnine | human-dev | 戴明 | 0701 Agent Console one complete prototype path | `2026-06-30/returns/fatnine-agent-console-completeness-ia.md` | GMT+8 | verified |
 | `allenwoods` | allen | lead | 林懿伦 | dev-together lead (plan/handoff/close/review) + own tracks | n/a | GMT+9 | verified |
 | `jjkysy` | jjkysy | human-dev | 姚升悦 | 0701 split #1110 into reviewable PRs | `2026-07-01/handoffs/jjkysy-split-pr-1110.md` | GMT+8 | verified |
-| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | (no active track) | n/a | GMT+8 | verified |
+| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0703 官网 journey scenarios (#1129) — rebase onto post-T1/T2 main + merge | n/a | GMT+8 | verified |
 | `claude` | claude | agent | — | off-plan support (orchestration / fixes on request) | n/a | — | n/a |
 | `codex` | codex | agent | — | off-plan support (bounded verifiable sub-tasks) | n/a | — | n/a |
 
