@@ -1,67 +1,84 @@
-# SPEC (v2 · 讨论稿): socialware package → 变胖的 SessionTemplate
+# SPEC (v3 · 讨论稿): socialware app 收口 — fatten Definition + Behavior 改名
 
 > **Date:** 2026-07-02 · **Owner:** Allen (lead) + Claude · **Base:** main `adf5fad5` · **分支:** `integration/app-package`
-> **Status:** 讨论稿 v2 —— 已经过 Allen grill 收敛。**先定形态再动代码。**
+> **Status:** 讨论稿 v3 —— 经多轮 Allen grill + 代码调研收敛。**先定形态再动代码。**
+> **窗口:** 下周上生产 → 这是**最后能改基础概念命名**的时间（cap 身份一旦铸进生产数据，迁移代价高）。
 
-## 1. 三层模型（Allen 认同）
+## 1. 结论（已定）
 
-vscode 类比，三层各自寻址、各自命名：
+**不新建 "app" 概念。** 三层模型（emacs 类比）：
 
-| 层 | 是什么 | vscode 类比 | 寻址 | 用户可见? |
+| 层 | 是什么 | emacs 类比 | 寻址 | 用户可见 |
 |---|---|---|---|---|
-| **socialware package**（`package.yaml`）| **可发布/上传的打包物**（发布单元）| `.vsix` 扩展包 | 文件/上传物 | 否（发布/开发者层）|
-| **SessionTemplate**（变胖后，**保留原名**）| package 装进 workspace 后的 DB 形态 | 已安装的扩展 | `template://session/<ws>/<名>` | 否（建会话时选的"类型"）|
-| **session** | 运行实例 = **左栏 Session List item** | 打开的编辑器窗口 | `session://<ws>/<名>` | **是**（具名对话：AutoService/官网）|
+| **socialware Definition**（发布单元，**变胖**）| 一个可发布的对外交付单元 | 一个 major/minor mode | `config://<ws>/socialware/<名>` | 否 |
+| **SessionTemplate**（**不动**）| 这个 session 装哪些 socialware | "这个文件加载哪些 mode" | `template://session/<ws>/<名>` | 否（建会话选的类型）|
+| **session** | 运行实例 | 打开的 buffer | `session://<ws>/<名>` | **是**（具名对话）|
 
-**命名定论**：
-- **用户面**：左栏永远是**具名对话**（AutoService / 官网 / kanban），IM 体感不破，**不引入 "app" 字眼**。
-- **代码符号**：**保留 `SessionTemplate`**（当前一切基于 Template 概念）。不改名 App——app 会误导（发布单元是 socialware、打开的是 session，都不是 template）。
-- **发布单元**：**socialware package**（`package.yaml` 正式化）。
+- **发布单元 = socialware Definition**（不是 SessionTemplate、不是 app）。
+- **fatten 的是 Definition**，SessionTemplate 保持原名/原状（它已能 `installs` 多个 def）。
+- **用户面**：左栏永远是具名对话（AutoService/官网/kanban），不引入 "app" 字眼。
 
-## 2. package.yaml ↔ SessionTemplate 是同一 schema 的两种表示
+## 2. Definition 现状（核过 main）
 
-gaga 已合的 AutoService `package.yaml`（#1120）是**文件格式**；SessionTemplate 是**安装后的 Kind 形态**。本轮 = 让 SessionTemplate 能表示 package.yaml 声明的一切。现有 package.yaml 结构：
-```yaml
-name / persona / kb          # 定义数据（引用）
-session: {public_view, web_anon_access}   # ← 开放性
-routing: [...]               # 接力规则
-roles: {autoservice: {requested_caps}}    # recipe 引用（agent 配置在 agent 内部）
-surface: {customer: /socialware/chat}     # ← 具体视图
-```
+`definition.ex:11-20` 已有 10 字段：`name · bases · shape · members · routing_rules · prompt_templates · legends · orchestrator_template_uri · adapters · visibility_policy`。`behaviors/0`（`:67`）= `[Session] ++ shape ++ bases`（加载的 mode 集）。**开放性已在 `visibility_policy`（per-socialware，不提到 template —— P4 决定，Allen 确认：hello 对外 / kanban 对内 diverse）。**
 
-## 3. SessionTemplate 现有 schema 已覆盖的（核过 main `adf5fad5`）
+## 3. 要加的 2 个字段 + views-as-behavior 模型
 
-`session_template.ex:34-77` 已带：`members`（agent+role+recreate-from）· `installs`（socialware refs）· `routing_rules` · `prompt_templates` · `legends` · `orchestrator` · 版本 · lineage。
+**`roles: [recipe_ref]`** —— 这个 socialware 带哪些 agent 配方（引用 RecipeRegistry；agent 配置在 agent 内部，Definition 只引用）。含 `requested_caps`。**现在 package.yaml 有、Definition 和 SessionTemplate 都无家 —— 真正的缺口。**
 
-→ **members / routing 复用**（agent 配置回 agent 内部，template 只引用）。
+**`views: [view_behavior]`** —— **具体视图 = 渲染类 Behavior**（声明式）。核心设计（Allen 定）：
+- view 声明成 Behavior（沿用现有 `Behavior.Surface`/`Behavior.HelloBuilder` 那一类）。声明一个 view → 它进 `shape` 成为一个 render behavior。
+- **该 behavior 就是权限 handler**：它的 `required_caps` 决定谁能看/操作这个 view。对外 view（hello）的 cap 对匿名开放；对内 view（kanban）的 cap 只给内部成员。
+- **不走隐式推导**（弃用现 `ui_surface_provider` 的 plugin-push + condition）；**可见性权威从 plugin 收归 Definition.views + CapBAC**。
 
-## 4. 真正要加的字段（3 个）
+**为什么这补上了 gate 的洞**：view 塌缩成"一个 behavior"，其校验 = "behavior 可解析 + 其 cap 已注册" —— 与其余字段同一种断言。views 不再是特例。
 
-| 字段 | 是什么 | 归属 | 现状 |
-|--------|--------|------|------|
-| **`openness: :public \| :internal`** | 能否加入非-workspace 用户（匿名/外部）| **session 配置** | 现散在 socialware def 的 `visibility_policy.web_anon_access`（`public_view.ex`）→ 提到 SessionTemplate 顶层 |
-| **`views: [view_name]`** | **具体**视图列表（hello / kanban / conversation）——非抽象分类 | socialware 对外面 | 现散在 Surface / @json-render / ExternalFeed；package.yaml 里是 `surface:` |
-| **`uses: [plugin_id]`** | 引用哪些能力 plugin（依赖校验）| package 顶层 | 现在 plugin 依赖是隐式的 |
+## 4. Gate 定义（完整）
 
-**不加 `agents`**（复用 members）。**不叫 `public_face`**（用 `openness` 枚举）。**不分 `views:{embedded,public}`**（views 是具体视图列表；开放性由 `openness` 单独管，正交）。
+`mix ezagent.socialware.check <definition>` —— 一条规则：**所有声明的引用都能解析**：
+1. `bases`/`shape` behavior 模块存在（编译期）
+2. `views` 的每个 view-behavior 存在 + 其 `required_caps` 已在 CapabilityRegistry 注册
+3. `roles` recipe 经 RecipeRegistry 按名解析成功（#1116 fail-closed）
+4. `roles.requested_caps` 每个 cap 已注册
+5. `adapters` 在 AdapterRegistry 注册
+6. `orchestrator_template_uri` 可解析
+7. 可安装性：`Installation.resolve_definitions` 能物化（现有 `{:unknown_socialware_install}` 失败模式）
 
-## 5. 分 PR
+**gate 完整性 = 方案完整性的证明**（Allen 方法论）：v2 时 views 卡住 → 暴露 views 未设计；v3 views-as-behavior 后，7 条全塌缩成"引用可解析"，gate 清晰 = 设计收口。
 
-- **PR-1 `openness` 枚举** —— `:public | :internal`，提升 socialware def 的 anon-access 到 SessionTemplate 顶层（向后兼容：无 openness 回落读 def）。invariant test: `:public` template 允许 anon join、`:internal` 拒绝。
-- **PR-2 `uses` + 依赖校验** —— materialize 时 `uses` 引用的 plugin 不存在 → fail-closed。invariant test: 声明不存在 plugin → 拒绝。
-- **PR-3 `views: [view_name]`** —— 具体视图列表（对齐 package.yaml `surface:` + #1118 具体视图）。可最后做（#1118 相关）。
-- **PR-4 package.yaml schema + CI 校验** —— 把 package.yaml 从"松散 yaml"正式化成"有 schema 的 socialware package 定义"（gaga T7B/T7C）；installer 读它 → 写成 SessionTemplate。
+## 5. Behavior → ActionHandlerSet 改名（pre-prod 窗口，本 SPEC 纳入）
 
-依赖：PR-1/2 独立并行 → PR-3（#1118）→ PR-4（package↔template 双向，可与 PR-1/2 并行设计）。
+**为什么现在**：Behavior 名不副实——它是"某领域的一组 action handler"（moduledoc `behavior.ex:1` 自述），不是单个行为；且撞 Elixir 内建 `@behaviour`。**下周上生产后 cap 身份进生产数据，迁移代价高 → 现在是最后窗口。**
 
-## 6. 不变式
+**改名面**：`Ezagent.Behavior` 在 lib 里 212 文件 / 777 处。
 
-- **引用不内联**（role-as-data）：uses/views/members 都是 ref。
-- **不改名**：SessionTemplate 保留；URI 段 `template://session/` 不动。
-- **向后兼容**：3 字段全可选，无声明回落现有行为（default template 不受影响）。
-- **openness 与 views 正交**：一个管开放性、一个管渲染，不互相分类。
+**关键坑（非纯机械）**：
+1. **cap 身份嵌 module**：cap = `{scope, module, action}`（`Capability.cap/3`）。改 behavior 模块名 → **所有 cap 身份变**。pre-prod 无存量生产 cap → **现在改零迁移成本**；上线后改要 cap 迁移。**这就是"最后窗口"的技术含义。**
+2. **`:kind_base` 存 behavior 模块 atom**（快照/DB）。pre-prod 的 dev 数据可重建 → 现在改无痛。
+3. 撞名 `@behaviour`：改名**消除**歧义（好事）。
 
-## 7. 剩余开放点
+**做法**：全局 `Ezagent.Behavior.X` → `Ezagent.ActionHandlerSet.X`（机械）+ 更新 `required_caps` 三元组 + `:kind_base` 重建 + arch gate 的 `"Behavior" => [{:required_caps, 0}]`（`arch.scan.ex:184`）等元数据同步。**在 pre-prod 一次性做，无迁移。**
 
-1. `openness` 放 SessionTemplate 顶层 vs `session:` 子 map？（package.yaml 里在 `session:` 下；SessionTemplate 里建议顶层字段，materialize 时映射。）
-2. PR-4 的 package.yaml schema 归谁：本轮我们做，还是 gaga T7 主线？（Allen：本轮=给 SessionTemplate 加字段，则 PR-1/2/3 我们做，PR-4 可协同 gaga。）
+## 6. 分 PR（依赖序）
+
+- **PR-0 Behavior→ActionHandlerSet 改名**（pre-prod 窗口，**最先做**，纯机械+元数据，无功能变更）。**先做因为它动 777 处，越晚越冲突。**
+- **PR-1 `roles` 字段** + gate 骨架（roles/caps/adapters 可解析校验）。
+- **PR-2 `views` = view-behavior** + Definition.views 字段 + 可见性从 ui_surface_provider 迁到 CapBAC。
+- **PR-3 `mix ezagent.socialware.check` conformance gate**（7 条引用可解析，挂 CI）。
+- **PR-4 package.yaml → Definition loader**（YAML decode → 校验 → 写 Definition；现无 loader，从零写）。
+
+依赖：**PR-0 先**（改名，避免后续 PR 全冲突）→ PR-1/PR-2 并行 → PR-3 gate（需 1/2 字段就位）→ PR-4（package loader，可与 3 并行）。
+
+## 7. 不变式
+
+- **引用不内联**（role-as-data）：roles/views 都是 ref。
+- **openness 留 Definition.visibility_policy**（per-socialware diverse，不提 template —— P4 决定不回退）。
+- **SessionTemplate 不动**（保留名 + URI 段）。
+- **改名零迁移**：必须在 pre-prod 窗口完成（PR-0），上线前 merge。
+- **views 可见性单一权威**：Definition.views + CapBAC，退役 ui_surface_provider push+condition。
+
+## 8. 剩余开放点
+
+1. 改名目标词：**`ActionHandlerSet`** 确认？还是更短的（`Handler` / `ActionSet` / `Domain`）？（777 处，词越短越好敲，但要够准。）
+2. views 迁移：`ui_surface_provider`（World 前端 tab/nav）改读 Definition.views 是 PR-2 内做，还是拆独立前端 PR（依赖 #1118）？
+3. package.yaml loader（PR-4）：本轮我们做，还是交 gaga T7 主线（他起的 package.yaml）？
