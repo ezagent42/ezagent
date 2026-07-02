@@ -11,6 +11,7 @@ defmodule Ezagent.Socialware.Definition do
   defstruct name: nil,
             bases: [],
             shape: [],
+            agents: [],
             members: [],
             routing_rules: [],
             prompt_templates: %{},
@@ -19,10 +20,18 @@ defmodule Ezagent.Socialware.Definition do
             adapters: [],
             visibility_policy: %{publish_policy: :auto, web_anon_access: false}
 
+  @typedoc """
+  A socialware-declared agent: the `recipe` (config义 — a RecipeRegistry name)
+  this agent runs, and its `role_name` (routing义 — the per-session unique
+  routing identifier, `{:role, name}` receiver). Both non-empty strings.
+  """
+  @type agent_spec :: %{recipe: String.t(), role_name: String.t()}
+
   @type t :: %__MODULE__{
           name: String.t(),
           bases: [module()],
           shape: [module()],
+          agents: [agent_spec()],
           members: [map()],
           routing_rules: [map()],
           prompt_templates: map(),
@@ -38,12 +47,14 @@ defmodule Ezagent.Socialware.Definition do
     with {:ok, name} <- required_string(attrs, :name),
          {:ok, bases} <- behavior_list(attrs, :bases),
          {:ok, shape} <- behavior_list(attrs, :shape),
+         {:ok, agents} <- agents_list(attrs),
          {:ok, visibility_policy} <- visibility_policy(attrs) do
       {:ok,
        %__MODULE__{
          name: name,
          bases: bases,
          shape: shape,
+         agents: agents,
          members: list(attrs, :members),
          routing_rules: list(attrs, :routing_rules),
          prompt_templates: map(attrs, :prompt_templates),
@@ -79,6 +90,7 @@ defmodule Ezagent.Socialware.Definition do
       name: definition.name,
       bases: Enum.map(definition.bases, &Atom.to_string/1),
       shape: Enum.map(definition.shape, &Atom.to_string/1),
+      agents: json_safe(definition.agents),
       members: json_safe(definition.members),
       routing_rules: json_safe(definition.routing_rules),
       prompt_templates: json_safe(definition.prompt_templates),
@@ -143,6 +155,47 @@ defmodule Ezagent.Socialware.Definition do
   end
 
   defp behavior_module(other), do: {:error, {:invalid_socialware_behavior, other}}
+
+  # SHAPE-ONLY validation for the `agents` field: a list of
+  # `%{recipe: <non-empty-string>, role_name: <non-empty-string>}` (atom OR
+  # string keys — persisted JSON round-trips as strings). Normalized to
+  # atom-keyed maps. Recipe EXISTENCE (`RecipeRegistry.lookup`) and role_name
+  # per-session uniqueness are NOT resolved here — `new/1` has no workspace and
+  # a Definition is authored/validated apart from any live session. Those checks
+  # live in the workspace-aware gate (`mix ezagent.socialware.check`) and at
+  # materialization/join time (`Members.role_name_conflict`).
+  defp agents_list(attrs) do
+    case get(attrs, :agents, []) do
+      list when is_list(list) ->
+        list
+        |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
+          case agent_spec(item) do
+            {:ok, spec} -> {:cont, {:ok, [spec | acc]}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, specs} -> {:ok, Enum.reverse(specs)}
+          error -> error
+        end
+
+      other ->
+        {:error, {:invalid_socialware_definition_field, :agents, other}}
+    end
+  end
+
+  defp agent_spec(item) when is_map(item) do
+    recipe = get(item, :recipe)
+    role_name = get(item, :role_name)
+
+    if is_binary(recipe) and recipe != "" and is_binary(role_name) and role_name != "" do
+      {:ok, %{recipe: recipe, role_name: role_name}}
+    else
+      {:error, {:invalid_socialware_agent, item}}
+    end
+  end
+
+  defp agent_spec(other), do: {:error, {:invalid_socialware_agent, other}}
 
   defp visibility_policy(attrs) do
     policy = map(attrs, :visibility_policy)
