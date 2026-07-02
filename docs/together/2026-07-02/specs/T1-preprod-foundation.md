@@ -24,10 +24,10 @@
 
 ### A.3 做法
 1. 全局 `Ezagent.Behavior.X` → `Ezagent.ActionSet.X`（module 定义 + 所有引用，212 文件）。
-2. **stale-cap 迁移/清洗**：扫 `users.caps_json` + seeds + fixtures + home data，把旧 `Ezagent.Behavior.*` 字符串重写成 `Ezagent.ActionSet.*`；pre-prod dev 数据可直接 wipe+reseed（无生产 cap）。
+2. **stale behavior-string 迁移/清洗（codex T1 #3 — 不只 caps_json）**：behavior 模块字符串**存在多处持久化**：`users.caps_json`（`normalize.ex:7,17`）+ **recipe body**（`recipe_registry.ex:361,367`，decoder 要已加载 atom `recipe.ex:200`）+ **socialware definition body**（`definition.ex:75,80,135`）+ seeds/fixtures/home data。全部重写 `Ezagent.Behavior.*` → `Ezagent.ActionSet.*`；pre-prod dev 可 wipe+reseed。
 3. **snapshot 处理**：`kind_snapshots.:kind_base` 里的旧模块 atom → 决定 **wipe+rebuild dev / 或 boot 时 loud stale-module 扫描**（不是静默）。
-4. **动态引用**：修 `Module.concat([:Ezagent,:Behavior,...])` + 字符串常量。
-5. **grep gate**（防回归）：CI 拒绝任何新的 `Ezagent.Behavior.`（module ref / 字符串 / `Module.concat([:Ezagent,:Behavior`）。arch gate 元数据 `"Behavior" => [{:required_caps,0}]`（`arch.scan.ex:184`）同步改 `"ActionSet"`。
+4. **动态引用**：修 `Module.concat([:Ezagent,:Behavior,...])`（`ezagent.stress.ex:95-104`）+ 字符串常量 + cap decoder 错误文案（`normalize.ex:181-185`）。
+5. **grep gate（codex T1 #4 — 扩大 pattern）**：CI 拒绝 `Ezagent.Behavior\b`（不只 `.` 后缀——含 `defmodule Ezagent.Behavior`/`@behaviour Ezagent.Behavior`/`use Ezagent.Behavior`，`lifecycle.ex:199-200`）+ `:Behavior`(atom) + `Module.concat([:Ezagent,:Behavior` + **持久化 body/caps_json 字符串** + 选定的 test/support/docs fixture（`scenario_30_..._test.exs:64-65`）。扫描范围 `apps`（不只 `apps/*/lib`）。arch gate 元数据 `"Behavior" => [{:required_caps,0}]`（`arch.scan.ex:184`）改 `"ActionSet"`。
 
 ### A.4 不变式
 - 改名零**生产**迁移（pre-prod 无生产 cap）；dev 数据 wipe+reseed。
@@ -44,9 +44,14 @@ ConfigStore 的 subject 现在写成 `config://<ws>/<kind>/<name>`（`definition
 ConfigStore 按 `(layer, workspace_uri, subject_uri, key)` 四元组定位（`config_pointer.ex:32` `id = join([...],"\|")`）。**subject = 被配置对象的身份**（哪个 socialware / 哪个 recipe），**key = 配置类别**（`"socialware"`/`"recipe"`/`"advisor.behavior"`）。workspace 已是独立字段 → subject 里不需再嵌 workspace。
 
 ### B.3 做法
-1. subject 从 `"config://<ws>/<kind>/<name>"` → **结构化非-URI 标识**：`"<kind>:<name>"`（如 `"socialware:autoservice"` / `"recipe:orchestrator"`），去掉 `config://` 前缀 + workspace 段（workspace 已单列）。
+**scope 收窄（codex T1 #1）**：ConfigStore 的 subject 是**通用**的——agent config 用 `agent_uri`、socialware install 用 `session_uri` 当 subject（`agent/config.ex:197`、`installation.ex:177,230`），这些**是真 entity URI、不能动**。B **只改 `config://<ws>/<kind>/<name>` 那类"伪 URI subject"**（socialware definition + recipe），不碰用真 URI 当 subject 的。
+1. subject 从 `"config://<ws>/<kind>/<name>"` → **结构化非-URI 标识**：`"<kind>:<name>"`（如 `"socialware:autoservice"` / `"recipe:orchestrator"`），去掉 `config://` 前缀 + workspace 段（workspace 已单列）。**仅限 definition/recipe 的 subject builder。**
 2. 改 subject builder：`DefinitionRegistry.definition_subject_uri` + recipe registry 的对应函数 → 生成新格式。
-3. **数据迁移**：`socialware_config_objects` + `socialware_config_pointers` 里的 `subject_uri` 列（存量 `config://...` 串）→ 迁移成新格式。pre-prod dev 可 wipe+reseed。
+3. **数据迁移（codex T1 #2 — 三处，非只列）**：
+   - `socialware_config_objects.subject_uri` + `socialware_config_pointers.subject_uri` 列的存量 `config://` 串。
+   - **`ConfigPointer.id` 把 subject 嵌进主键**（`config_pointer.ex:31-33`）→ 迁移要**重建 pointer id + 碰撞预检**（先例：`20260627..._rename_advisor_behavior_to_agent_soul.exs`）。
+   - **`socialware_config_objects.body` JSON 里内嵌的 `definition_subject_uri`**（`installation.ex:240,244`）→ 也要 rewrite,列迁移不够。
+   - pre-prod dev 可 wipe+reseed 规避大部分。
 4. 更新 moduledoc（去掉 "config://... mirroring role-as-data" 措辞）。
 
 ### B.4 不变式
@@ -63,8 +68,11 @@ ConfigStore 按 `(layer, workspace_uri, subject_uri, key)` 四元组定位（`co
 
 ### C.2 做法
 1. scan 从"只查 6 个已知 scheme"改成"**任何 `<scheme>://` 裸构造/解析都报**，除非该 scheme 在显式 allowlist"。即 default-block unknown（fail-closed，符合 let-it-crash）。
-2. allowlist = 6 个注册 scheme（走 Ezagent.URI）。**config 不在**（B 之后它已不是 `://` 形态，自然不触发）。
-3. 若未来要加真 scheme → 必须同时进 `scheme_registry` + gate allowlist，否则 CI 红。
+2. **两个 allowlist（codex T1 #5 — 防误伤）**：
+   - **ezagent 一等 URI scheme**（6 个：entity/session/template/resource/workspace/system）→ 必须走 Ezagent.URI。
+   - **外部传输/协议 URL 白名单**：`postgresql://`(`home/migration.ex:558`) / `unix://`(codex remote) / `http(s)://`(curl/feishu) / `cc-bridge://`(audit 合成 id) 等**现有在用的**→ 登记为"允许的外部 URL"，不报。
+   - **只对"ezagent-like 未知 scheme"硬拦**（既非一等 scheme、又非登记的外部 URL）。config 在 B 之后已非 `://`，自然不触发。
+3. 若未来要加真 scheme → 必须同时进 `scheme_registry` + gate allowlist，否则 CI 红。**加新外部 URL 也要显式进白名单**（逼作者声明"这是外部 URL 不是 ezagent 寻址"）。
 
 ### C.3 不变式
 - 未知 `<scheme>://` 默认被 gate 拦（翻转 default-allow → default-block）。
@@ -82,9 +90,11 @@ ConfigStore 按 `(layer, workspace_uri, subject_uri, key)` 四元组定位（`co
 依赖：A1→A2；B→C；A 与 B 并行。全部 pre-prod 窗口内完成、上线前 merge。
 
 ## DoD
-- [ ] `grep -rn "Ezagent.Behavior\." apps/*/lib` = 0（除迁移注释）；grep gate 绿。
-- [ ] `grep -rn "config://" apps/*/lib` = 0；subject 全为结构化格式。
-- [ ] URI gate：新增一个未知 `foo://bar` 裸串 → CI 红（证明兜底生效）。
+- [ ] `grep -rn "Ezagent.Behavior\b" apps` = 0（含 `defmodule`/`@behaviour`/`use`/字符串/测试 fixture；不只 `apps/*/lib`）；grep gate 绿。
+- [ ] cap/ConfigObject-body/snapshot 里无残留 `Ezagent.Behavior.` 字符串（含 `users.caps_json` / recipe & definition body / `:kind_base`）。
+- [ ] `grep -rn "config://" apps` = 0；subject 全为结构化格式；`socialware_config_objects.body` 内嵌的 subject 也已迁移；`ConfigPointer.id` 已重建（碰撞预检）。
+- [ ] URI gate：未知 `foo://bar` ezagent-like 裸串 → CI 红；现有外部 URL（postgresql/unix/http/https/feishu/cc-bridge）在白名单、不误报。
+- [ ] **skill 同步**：`ezagent-developer` skill 全 references 的 `Ezagent.Behavior` → `Ezagent.ActionSet`；grep skill 目录无残留（config:// / Behavior 旧引用）。
 - [ ] 全套 arch gate + precommit 绿（300s timeout 跑 arch）。
 - [ ] dev 数据 wipe+reseed 后系统正常（cc/socialware/recipe 都能起）。
 
