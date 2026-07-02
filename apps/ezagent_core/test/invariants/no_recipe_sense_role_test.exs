@@ -34,9 +34,12 @@ defmodule EzagentCore.Invariants.NoRecipeSenseRoleTest do
   use ExUnit.Case, async: true
 
   @forbidden [
-    {~r/orchestrator_role/i, "recipe-sense `orchestrator_role` identifier (use orchestrator_recipe)"},
-    {~r/template:\/\/[^\/\s]+\/role\//, "recipe-sense `template://.../role/` URI segment (use .../recipe/)"},
-    {~r/config:\/\/[^\/\s]+\/role\//, "recipe-sense `config://.../role/` URI segment (use .../recipe/)"}
+    {~r/orchestrator_role/i,
+     "recipe-sense `orchestrator_role` identifier (use orchestrator_recipe)"},
+    {~r/template:\/\/[^\/\s]+\/role\//,
+     "recipe-sense `template://.../role/` URI segment (use .../recipe/)"},
+    {~r/config:\/\/[^\/\s]+\/role\//,
+     "recipe-sense `config://.../role/` URI segment (use .../recipe/)"}
   ]
 
   @self_path "apps/ezagent_core/test/invariants/no_recipe_sense_role_test.exs"
@@ -105,8 +108,12 @@ defmodule EzagentCore.Invariants.NoRecipeSenseRoleTest do
 
   defp repo_root do
     case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
-      {top, 0} -> String.trim(top)
-      _ -> cwd = File.cwd!(); if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
+      {top, 0} ->
+        String.trim(top)
+
+      _ ->
+        cwd = File.cwd!()
+        if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
     end
   end
 end

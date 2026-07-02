@@ -149,7 +149,9 @@ defmodule Ezagent.Kind.Runtime.Effects do
       # `:dispatch_returning` bindings without losing the earlier ones
       # (same module, same predicate — idempotent on already-
       # substituted leaves).
-      dispatches = Enum.map(buckets.dispatches, &Ezagent.ActionSet.substitute_refs(&1, returning2))
+      dispatches =
+        Enum.map(buckets.dispatches, &Ezagent.ActionSet.substitute_refs(&1, returning2))
+
       notifies = Enum.map(buckets.notifies, &Ezagent.ActionSet.substitute_refs(&1, returning2))
       events = Enum.map(buckets.events, &Ezagent.ActionSet.substitute_refs(&1, returning2))
 

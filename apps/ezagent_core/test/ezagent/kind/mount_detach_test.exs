@@ -196,7 +196,11 @@ defmodule Ezagent.Kind.MountDetachTest do
 
     # Zero residue — Surface still present.
     assert live_slice(uri) == before
-    assert Ezagent.ActionSet.Surface in Kind.BehaviorSet.effective_set(SupersetSessionKind, before)
+
+    assert Ezagent.ActionSet.Surface in Kind.BehaviorSet.effective_set(
+             SupersetSessionKind,
+             before
+           )
   end
 
   test "RF-3: detaching a base behavior (KindBase) is refused" do

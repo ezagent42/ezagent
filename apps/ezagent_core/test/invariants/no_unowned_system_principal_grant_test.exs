@@ -277,7 +277,9 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
 
   describe "wildcard-shaped grant-minter detection (codex P2)" do
     test "exact cap(:user, IdentityAdmin, :grant_cap) is a minter" do
-      assert grant_minting_cap?(Capability.cap(:user, Ezagent.ActionSet.IdentityAdmin, :grant_cap))
+      assert grant_minting_cap?(
+               Capability.cap(:user, Ezagent.ActionSet.IdentityAdmin, :grant_cap)
+             )
     end
 
     test "exact cap(:user, IdentityAdmin, :revoke_cap) is a minter" do

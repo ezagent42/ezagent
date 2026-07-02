@@ -267,7 +267,12 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
 
   describe "owner_self_read?/1 (owner exemption is by MODULE, not filename)" do
     test "the owning Behavior module reading its own slice is exempt" do
-      read = %{file: "apps/x/lib/api_keys.ex", module: "Ezagent.ActionSet.ApiKeys", key: :api_keys}
+      read = %{
+        file: "apps/x/lib/api_keys.ex",
+        module: "Ezagent.ActionSet.ApiKeys",
+        key: :api_keys
+      }
+
       assert owner_self_read?(read)
     end
 
@@ -278,7 +283,11 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     end
 
     test "a dynamic-key read is never owner-exempt" do
-      refute owner_self_read?(%{file: "x", module: "Ezagent.ActionSet.ApiKeys", key: @dynamic_key})
+      refute owner_self_read?(%{
+               file: "x",
+               module: "Ezagent.ActionSet.ApiKeys",
+               key: @dynamic_key
+             })
     end
   end
 
