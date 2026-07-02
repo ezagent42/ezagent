@@ -19,6 +19,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+  alias Ezagent.World.ConversationSessionState
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
@@ -48,10 +49,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
-    with_session(socket, sid, fn uri ->
-      to = "/sessions?session=" <> URI.encode_www_form(URI.to_string(uri))
-      {:noreply, push_patch(socket, to: to)}
-    end)
+    with_session(socket, sid, &ConversationSessionState.switch_session(socket, &1))
   end
 
   def handle_dispatch(socket, "session.invite", %{"session_uri" => sid, "member" => member})
@@ -541,27 +539,36 @@ defmodule Ezagent.World.ConversationActions do
 
     case parse_member_uri(member_str) do
       {:ok, %URI{} = member_uri} ->
-        # `:join` requires a LIVE member Kind (`:member_not_registered` else); a
-        # registered-but-cold invitee (e.g. a user who hasn't logged in this
-        # boot) is spawned from its snapshot first. Best-effort — a never-created
-        # URI stays unspawned and the join below fails closed to an error status.
-        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+        if uri_options_valid_for?(
+             caller,
+             socket.assigns.current_workspace_uri,
+             URI.to_string(member_uri),
+             [:entity]
+           ) do
+          # `:join` requires a LIVE member Kind (`:member_not_registered` else); a
+          # registered-but-cold invitee (e.g. a user who hasn't logged in this
+          # boot) is spawned from its snapshot first. Best-effort — a never-created
+          # URI stays unspawned and the join below fails closed to an error status.
+          _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
 
-        result =
-          Invocation.dispatch(%Invocation{
-            target: Ezagent.URI.with_action(session_uri, :session, :join),
-            mode: :call,
-            args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore}
-          })
+          result =
+            Invocation.dispatch(%Invocation{
+              target: Ezagent.URI.with_action(session_uri, :session, :join),
+              mode: :call,
+              args: %{member: member_uri},
+              ctx: %{caller: caller, caps: caps, reply: :ignore}
+            })
 
-        case result do
-          r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            _ = Membership.mount_participation_caps(session_uri, member_uri)
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+          case result do
+            r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
+              _ = Membership.mount_participation_caps(session_uri, member_uri)
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
+        else
+          {:noreply, assign(socket, :last_dispatch_status, "error:invalid_invite_member")}
         end
 
       :error ->
@@ -579,9 +586,10 @@ defmodule Ezagent.World.ConversationActions do
   membership handler refreshes their panels). A malformed URI or an unauthorized
   remove degrades to an error status (the panel keeps the member).
 
-  Owner-gated: the session owner (or the participant itself, for self-leave) is
-  authorized; a non-owner non-participant viewer is denied. Removing a
-  session-SPAWNED worker returns the PR-B stub error.
+  Owner-gated for UI removals: the session owner can remove other participants,
+  but the world UI refuses self-removal so the operator cannot strand their
+  current session view. Removing a session-SPAWNED worker returns the PR-B stub
+  error.
   """
   @spec remove_participant(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -592,16 +600,20 @@ defmodule Ezagent.World.ConversationActions do
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
-        case Ezagent.Session.Participants.remove_participant(
-               session_uri,
-               participant_uri,
-               %{caller: caller, caps: caps}
-             ) do
-          {:ok, _result} ->
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+        if same_uri?(participant_uri, caller) do
+          {:noreply, assign(socket, :last_dispatch_status, "error:self_remove_not_allowed")}
+        else
+          case Ezagent.Session.Participants.remove_participant(
+                 session_uri,
+                 participant_uri,
+                 %{caller: caller, caps: caps}
+               ) do
+            {:ok, _result} ->
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
         end
 
       :error ->
@@ -628,8 +640,23 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
+          members = ConversationData.member_options(session_uri)
+
           push_event(socket, "members:update", %{
-            "members" => ConversationData.member_options(session_uri)
+            "members" => members,
+            "invite_candidates" =>
+              ConversationData.invite_candidates(
+                session_uri,
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              ),
+            "routing_entity_candidates" =>
+              ConversationData.routing_entity_candidates(
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              )
           })
 
         _ ->
@@ -911,6 +938,10 @@ defmodule Ezagent.World.ConversationActions do
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(_), do: nil
+
+  defp same_uri?(%URI{} = left, %URI{} = right), do: uri_string(left) == uri_string(right)
+  defp same_uri?(_, _), do: false
 
   defp jsonable(value) do
     cond do

@@ -12,6 +12,8 @@ assert.deepEqual(primaryNavItems().map((item) => item.href), ["/sessions", "/ide
 assert.equal(isPrimaryNavActive("/", "/sessions"), true)
 assert.equal(isPrimaryNavActive("/sessions", "/sessions"), true)
 assert.equal(isPrimaryNavActive("/sessions?session=x", "/sessions"), true)
+assert.equal(isPrimaryNavActive("/sessions?session=x", "/identities/agents"), false)
+assert.equal(isPrimaryNavActive("/sessions?session=x", "/workspaces"), false)
 assert.equal(isPrimaryNavActive("/identities/agents/new", "/identities/agents"), true)
 assert.equal(isPrimaryNavActive("/admin/routing", "/workspaces"), true)
 assert.equal(isPrimaryNavActive("/plugins/feishu/bindings", "/workspaces"), true)

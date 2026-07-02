@@ -11,7 +11,9 @@ defmodule Ezagent.World.IdentityDataTest do
       )
 
     assert "cc" in state["cwd_required_flavors"]
+    assert "cc-headless" in state["cwd_required_flavors"]
     assert "codex" in state["cwd_required_flavors"]
+    assert "codex-remote" in state["cwd_required_flavors"]
     # P2: echo (the only cwd-required-with-PTY flavor) retired into py, which has
     # no PTY-cwd rule — so no flavor requires cwd-with-PTY now.
     assert state["cwd_required_with_pty_flavors"] == []
@@ -46,7 +48,13 @@ defmodule Ezagent.World.IdentityDataTest do
   test "create_error_message maps backend reasons to operator-facing text" do
     assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_cc) =~ "project_cwd"
 
+    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_cc_headless) =~
+             "project_cwd"
+
     assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_codex) =~
+             "project_cwd"
+
+    assert Ezagent.World.IdentityData.create_error_message(:cwd_required_for_codex_remote) =~
              "project_cwd"
 
     assert Ezagent.World.IdentityData.create_error_message({:bad_name, "x y"}) =~ "name"

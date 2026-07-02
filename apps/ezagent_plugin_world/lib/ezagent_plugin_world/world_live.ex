@@ -12,6 +12,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.WorkspacePluginActions
   alias EzagentPluginWorld.{Layouts, WorldLoading}
 
@@ -22,7 +23,7 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
-    sessions = list_sessions(workspace)
+    sessions = ConversationSessionState.list_sessions(workspace)
     current_session_uri = List.first(sessions)
 
     socket = assign(socket, :subscribed_topics, MapSet.new())
@@ -93,7 +94,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
     socket
-    |> ensure_session_subscribed(uri)
+    |> ConversationSessionState.ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
     |> ConversationActions.self_join(uri)
@@ -549,19 +550,23 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp state_for_route(
-         %{component: "conversation", session_uri: %URI{} = session_uri},
+         %{component: "conversation", session_uri: %URI{} = session_uri} = route,
          socket,
          layout
        ) do
     session_uri
-    |> conversation_state(socket, layout)
+    |> ConversationSessionState.state_for(socket)
+    |> Map.put("path", route.path)
+    |> Map.put("title", route.title)
+    |> Map.put("layout", layout)
+    |> put_can_manage_layout("conversation", socket)
     |> put_command_palette(socket)
   end
 
   defp state_for_route(%{component: "sessions_table"}, socket, layout) do
     sessions =
       socket.assigns.current_workspace_uri
-      |> list_sessions()
+      |> ConversationSessionState.list_sessions()
 
     current_session_uri = socket.assigns.current_session_uri || List.first(sessions)
 
@@ -651,7 +656,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "templates" => session_template_names(workspace_uri),
-      "sessions" => Enum.map(sessions, &session_row/1),
+      "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
       # world:state ({...current, ...next}) and never remounts, so a previously
       # pushed create_error would otherwise linger as a phantom banner when the
@@ -720,17 +725,6 @@ defmodule EzagentPluginWorld.WorldLive do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
   end
 
-  defp session_row(%URI{} = session_uri) do
-    uri = URI.to_string(session_uri)
-    workspace = session_uri |> Ezagent.Capability.workspace_of() |> encode_uri()
-
-    %{
-      "uri" => uri,
-      "name" => session_uri.path || session_uri.host || uri,
-      "workspace_uri" => workspace
-    }
-  end
-
   defp caller_payload(caller, workspace, caps, system_member?) do
     %{
       "entity_uri" => encode_uri(caller),
@@ -760,14 +754,6 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp workspace_name(_), do: nil
 
-  defp list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
-    EzagentDomainInstanceMessage.list_sessions(workspace_uri)
-  rescue
-    _ -> []
-  end
-
-  defp list_sessions(_), do: []
-
   defp subscribe_global_inbound(caller_uri) do
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.AgentBridge.Registry.legacy_topic())
@@ -777,35 +763,6 @@ defmodule EzagentPluginWorld.WorldLive do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(caller_uri))
       :ok = Ezagent.Notifications.subscribe_slice_change(caller_uri)
     end
-  end
-
-  defp ensure_session_subscribed(socket, %URI{} = session_uri) do
-    topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
-    subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
-
-    if connected?(socket) and not MapSet.member?(subscribed, topic) do
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
-      assign(socket, :subscribed_topics, MapSet.put(subscribed, topic))
-    else
-      socket
-    end
-  end
-
-  defp conversation_state(%URI{} = session_uri, socket, layout) do
-    sessions =
-      socket.assigns.current_workspace_uri
-      |> list_sessions()
-      |> Enum.map(&session_row/1)
-
-    session_uri
-    |> Ezagent.World.ConversationData.state_for(%{
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
-      workspace_uri: socket.assigns.current_workspace_uri,
-      sessions: sessions
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout("conversation", socket)
   end
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()

@@ -117,9 +117,34 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
       assert {:error, :cwd_required_for_cc} =
                Workspace.create_agent(
                  workspace_uri,
-                 %{flavor: "cc", name: "no-cwd-probe-#{System.unique_integer([:positive])}", cwd: "", with_pty: false},
+                 %{
+                   flavor: "cc",
+                   name: "no-cwd-probe-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false
+                 },
                  admin_ctx
                )
+    end
+
+    for {flavor, reason} <- [
+          {"cc-headless", :cwd_required_for_cc_headless},
+          {"codex-remote", :cwd_required_for_codex_remote}
+        ] do
+      test "#{flavor} flavor with empty cwd returns #{inspect(reason)}",
+           %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+        assert {:error, unquote(reason)} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: unquote(flavor),
+                     name: "no-cwd-probe-#{System.unique_integer([:positive])}",
+                     cwd: "",
+                     with_pty: false
+                   },
+                   admin_ctx
+                 )
+      end
     end
   end
 end

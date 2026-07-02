@@ -30,6 +30,8 @@ type SlotManifest = {
 }
 
 const SLOTS = (slotManifest as SlotManifest).slots
+const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "kanban", "pty", "sessions", "workspace_plugins"])
+const FULL_BLEED_TYPES = new Set(["agents_table"])
 
 function rendererFamily(type: string): string {
   const spec = SLOTS[type]
@@ -87,11 +89,13 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   current_session_uri?: string | null
   inbound_events?: Array<Record<string, unknown>>
   layout?: WorldLayout
+  path?: string
   sessions?: Array<{
     uri: string
     name?: string | null
     workspace_uri?: string | null
   }>
+  title?: string
   workspace_uri?: string | null
 }
 
@@ -124,6 +128,11 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
       if (next.layout) setCurrentLayout(next.layout)
     })
 
+    onServerEvent("world:url", (payload) => {
+      const next = payload as {path?: string}
+      if (next.path && typeof window !== "undefined") window.history.pushState({}, "", next.path)
+    })
+
     return undefined
   }, [onServerEvent])
 
@@ -131,13 +140,17 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
     (a, b) => (a.placement?.y || 0) - (b.placement?.y || 0),
   )
   const renderedComponents = components.length > 0 ? components : [{id: "sessions-table", type: "sessions_table"}]
-  const hasConversation = renderedComponents.some((component) => rendererFamily(component.type) === "conversation")
+  const fullBleed = renderedComponents.some((component) => {
+    const family = rendererFamily(component.type)
+    return FULL_BLEED_FAMILIES.has(family) || FULL_BLEED_TYPES.has(component.type)
+  })
   const topAction = topActionForSection(state.path)
+  const shellTitle = state.title || pageTitle(state.component)
 
   if (components.length > 0 || state.component === "sessions_table") {
     return (
       <div
-        className="grid min-h-screen grid-rows-[auto_minmax(0,1fr)] bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
+        className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
         data-world-shell="prototype"
       >
         <header
@@ -162,23 +175,35 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             data-world-primary-nav
           >
             <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto">
-              {NAV_ITEMS.map(({label, href}) => (
-                <a className={navClass(state.path, href)} href={href} key={href}>
-                  {label}
-                </a>
-              ))}
+              {NAV_ITEMS.map((item) => {
+                const href = navHref(item.href, state)
+
+                return (
+                  <a
+                    className={navClass(state.path, item.href)}
+                    href={href}
+                    key={item.href}
+                    onClick={(event) => handleWorldNavClick(event, href, pushEvent)}
+                  >
+                    {item.label}
+                  </a>
+                )
+              })}
             </div>
           </nav>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
-            <a
-              data-world-top-action
-              className="inline-flex min-h-[34px] items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] border border-primary bg-primary px-3 text-[13px] font-semibold text-primary-foreground transition hover:opacity-90"
-              href={topAction.href}
-            >
-              {topAction.icon === "plus" && <Plus aria-hidden="true" className="h-4 w-4" />}
-              {topAction.label}
-            </a>
+            {topAction && (
+              <a
+                data-world-top-action
+                className="inline-flex min-h-[34px] items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] border border-primary bg-primary px-3 text-[13px] font-semibold text-primary-foreground transition hover:opacity-90"
+                href={topAction.href}
+                onClick={(event) => handleWorldNavClick(event, topAction.href, pushEvent)}
+              >
+                {topAction.icon === "plus" && <Plus aria-hidden="true" className="h-4 w-4" />}
+                {topAction.label}
+              </a>
+            )}
             <AccountMenu
               displayName={caller?.display_name}
               entityUri={caller?.entity_uri}
@@ -188,12 +213,14 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
           </div>
         </header>
 
-        <main className={hasConversation ? "min-h-0 min-w-0 overflow-hidden" : "min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
-          {!hasConversation && (
+        <main className={fullBleed ? "h-full min-h-0 min-w-0 overflow-hidden" : "h-full min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
+          {!fullBleed && (
             <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1 sm:flex-none">
-                <Breadcrumbs path={state.path} title={state.title || pageTitle(state.component)} />
-                <h1 className="mt-1 text-xl font-semibold leading-tight text-foreground">{state.title || pageTitle(state.component)}</h1>
+                <Breadcrumbs path={state.path} title={shellTitle} />
+                {showShellTitle(state.path) && (
+                  <h1 className="mt-1 text-xl font-semibold leading-tight text-foreground">{shellTitle}</h1>
+                )}
               </div>
             </header>
           )}
@@ -202,7 +229,7 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
             onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
           />
 
-          <div className={hasConversation ? "min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
+          <div className={fullBleed ? "h-full min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
             {renderedComponents.map((component) =>
               renderLayoutComponent(component, {
                 layout: currentLayout,
@@ -421,7 +448,7 @@ function Breadcrumbs({path, title}: {path?: string; title: string}) {
   )
 }
 
-function topActionForSection(path?: string): {label: string; href: string; icon?: "plus"} {
+function topActionForSection(path?: string): {label: string; href: string; icon?: "plus"} | null {
   const root = sectionRoot(path)
 
   if (root?.label === "Agents") {
@@ -432,7 +459,12 @@ function topActionForSection(path?: string): {label: string; href: string; icon?
     return {label: "View audit", href: "/admin/audit/authz"}
   }
 
-  return {label: "New chat", href: "/sessions", icon: "plus"}
+  return null
+}
+
+function showShellTitle(path?: string) {
+  const root = sectionRoot(path)
+  return !root || path === root.href
 }
 
 function ThemeToggle({variant = "icon"}: {variant?: "icon" | "menu"}) {
@@ -786,13 +818,12 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} onCreate={context.onCreateSession} />
 
     case "conversation":
-      // Key by session so a switch (push_patch → new state) remounts the
-      // island fresh from the server-pushed message stream.
       return (
         <Conversation
-          key={`conversation-${context.state.session_uri || "none"}`}
+          key={component.id}
           state={context.state}
           onAddRoutingRule={context.onAddRoutingRule}
+          onCreate={context.onCreateSession}
           onOpenPty={context.onOpenSessionPty}
           onRestartOrchestrator={context.onRestartOrchestrator}
           onSend={context.onChatSend}
@@ -869,12 +900,42 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 }
 
 function navClass(path: string | undefined, href: string) {
-  const currentPath = path ?? (typeof window !== "undefined" ? window.location.pathname : undefined)
+  const currentPath = typeof window !== "undefined" ? window.location.pathname : path
   const active = isPrimaryNavActive(currentPath, href)
 
   return active
     ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
     : "rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+}
+
+function navHref(href: string, state: WorldState) {
+  return href === "/sessions" ? sessionChatHref(state) : href
+}
+
+function sessionChatHref(state: WorldState) {
+  const sessionUri = state.session_uri || state.current_session_uri
+  return sessionUri ? `/sessions?session=${encodeURIComponent(sessionUri)}` : "/sessions"
+}
+
+function handleWorldNavClick(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  href: string,
+  pushEvent?: WorldMountOptions["pushEvent"],
+) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey ||
+    !pushEvent
+  ) {
+    return
+  }
+
+  event.preventDefault()
+  pushEvent?.("world:navigate", {to: href})
 }
 
 function pageTitle(component: string | undefined) {

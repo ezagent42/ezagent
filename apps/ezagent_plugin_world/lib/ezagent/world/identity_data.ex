@@ -11,6 +11,7 @@ defmodule Ezagent.World.IdentityData do
   alias Ezagent.Invocation
 
   @fallback_flavors ~w(cc cc-headless codex codex-remote py curl native)
+  @cwd_required_flavors ~w(cc cc-headless codex codex-remote)
 
   @type route :: %{
           component: String.t(),
@@ -134,9 +135,9 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("default_flavor", default_flavor)
     |> Map.put("config_schemas", schemas)
     |> Map.put("preview_uri", preview_agent_uri(workspace_uri, ""))
-    # Mirrors validate_cwd_for_flavor/3 in agent_create.ex:144-157 (UI hint only;
+    # Mirrors FlavorValidation.validate_cwd_for_flavor/3 (UI hint only;
     # the authoritative check is server-side on submit / fail-closed).
-    |> Map.put("cwd_required_flavors", ["cc", "codex"])
+    |> Map.put("cwd_required_flavors", @cwd_required_flavors)
     |> Map.put("cwd_required_with_pty_flavors", [])
     # F6: py's Template Class `validate/1` requires a `script` config field; mark
     # it required in the create form (the `*` + Create-button gate) so the
@@ -358,7 +359,12 @@ defmodule Ezagent.World.IdentityData do
   @doc "Map a create_agent/grant failure reason to an operator-facing message."
   @spec create_error_message(term()) :: String.t()
   def create_error_message(:cwd_required_for_cc), do: "cc 需要 project_cwd（工作目录）"
+  def create_error_message(:cwd_required_for_cc_headless), do: "cc-headless 需要 project_cwd（工作目录）"
   def create_error_message(:cwd_required_for_codex), do: "codex 需要 project_cwd（工作目录）"
+
+  def create_error_message(:cwd_required_for_codex_remote),
+    do: "codex-remote 需要 project_cwd（工作目录）"
+
   def create_error_message({:cwd_not_a_dir, cwd}), do: "project_cwd 不是有效目录：#{cwd}"
   def create_error_message(:flavor_required), do: "请选择 flavor"
   def create_error_message(:name_required), do: "请填写 name"
@@ -684,6 +690,7 @@ defmodule Ezagent.World.IdentityData do
     |> put_schema_string("label", Map.get(field, :label))
     |> put_schema_list("options", Map.get(field, :options))
     |> put_schema_any("default", Map.get(field, :default))
+    |> put_schema_any("required", Map.get(field, :required))
   end
 
   defp put_schema_string(acc, _k, nil), do: acc
