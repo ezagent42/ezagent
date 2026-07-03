@@ -1,38 +1,80 @@
 defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   @moduledoc """
-  # Phase 4 north-star invariant test
+  # Phase 4 north-star invariant test (decomposed — #108)
 
   Per memory `feedback_completion_requires_invariant_test`:
   Phase 4 cannot be declared done on merge + tests-pass alone — there
   must be a test that fails when the architectural goal is unmet.
 
   **The goal**: future plugin authors add new Kinds without
-  coordinating with core (and core never references plugin code).
+  coordinating with core (and core never references plugin code) — a
+  new Kind survives a node restart purely via runtime DI:
+  `Ezagent.SpawnRegistry` (scheme→spawn fn) + `Loader.load_all/0`
+  re-spawning from persisted Workspace state.
 
-  **The proof**: a fake Kind defined here in test/ (NOT in ezagent_core/lib/,
-  NOT in any plugin/lib/) — registered at runtime via
-  `Ezagent.SpawnRegistry` — is declared as a member of a persisted
-  Workspace, the Workspace is torn down + reloaded, and the fake Kind
-  comes back alive WITHOUT ezagent_core or any plugin needing to know
-  about it ahead of time.
+  **The proof**: fake types (`ProbeBehavior`, `ProbeKind`,
+  `ProbeTemplate`) defined here in test/ (NOT in ezagent_core/lib/, NOT
+  in any plugin/lib/), registered at runtime, come to life without
+  ezagent_core or any plugin knowing about `:probe` ahead of time. The
+  inline-in-test definitions ARE the "core doesn't reference plugin
+  code" proof — keep them out of `lib/`.
 
-  If this test breaks, plugin isolation is broken — investigate before
-  shipping.
+  ## Why this is split into (i) + (ii) — the #108 de-flake
+
+  The original invariant was one combined test:
+  `Workspace.create` (persist) → `Loader.load_all` (spawn) →
+  `DynamicSupervisor.terminate_child` (kill = "node down") →
+  `Loader.load_all` (reload). That combined chain is FLAKY under the
+  Postgres `Ecto.Adapters.SQL.Sandbox` shared-mode model: after the
+  teardown, the *reload's* `load_all` re-spawns the Workspace Kind in a
+  DynamicSupervisor child (a process OUTSIDE the test owner). If shared
+  mode transiently reverts, that child's DB work hits
+  `DBConnection.OwnershipError`, the reload finds nothing, and the test
+  flunks — a PG-sandbox artifact of doing teardown WITH a DB-backed
+  reload in ONE test.
+
+  So the composed invariant is proven by the CONJUNCTION of two
+  non-racing halves (a future reader needs BOTH — neither alone is the
+  full north star, and no single test now runs the end-to-end
+  persist→kill→reload chain):
+
+  - **(i) runtime-DI re-spawn survives teardown** — registered spawn
+    fn → `SpawnRegistry.spawn` → kill via `DynamicSupervisor` → spawn
+    again → alive with a NEW pid. This half proves the DI + registry
+    survival machinery across a "node down" WITHOUT touching the DB at
+    all (`probe://` has no workspace segment, so the owner gate is a
+    no-op, and `ProbeKind` is `:ephemeral` so `Kind.Server` writes no
+    snapshot). No sandbox → the teardown-during-reload race cannot
+    occur.
+
+  - **(ii) persisted state → Loader spawn (NO teardown)** —
+    `Workspace.create(members: [probe])` (and, for the EXT variant,
+    `session_templates:`) then a single `Loader.load_all` asserts the
+    probe spawned from persisted Workspace state. NO `terminate_child`
+    → `load_all` finds the Workspace Kind already-started and only
+    dispatches `:instantiate` + spawns the ephemeral probe; the sole DB
+    read (`Store.list_all`) runs IN the test process. A single
+    create+read the sandbox handles fine.
+
+  If EITHER half breaks, plugin isolation is broken — investigate
+  before shipping.
 
   ## What's verified
 
   1. A new URI scheme (`probe`) can be registered at runtime via
-     `Ezagent.SpawnRegistry.register/2`
-  2. A Workspace declaring `probe://X` as a member can be persisted
-     via `Ezagent.Workspace.create/2`
-  3. Killing the Workspace + its declared members simulates a node
-     restart's "everything gone" state
-  4. `Ezagent.Workspace.Loader.load_all/0` re-spawns the fake Kind
-     from persisted state, using the runtime-registered spawn fn
+     `Ezagent.SpawnRegistry.register/2` — (i) + (ii)
+  2. The runtime-registered spawn fn survives a `DynamicSupervisor`
+     teardown (node-down) and re-spawns with a fresh pid — (i)
+  3. A Workspace declaring `probe://X` as a member — or a
+     `ProbeTemplate` Class instance — can be persisted via
+     `Ezagent.Workspace.create/2` — (ii)
+  4. `Ezagent.Workspace.Loader.load_all/0` spawns the fake Kind from
+     persisted state, using the runtime-registered spawn fn /
+     TemplateRegistry — (ii)
 
-  ezagent_core never references `ProbeKind`, `ProbeBehavior`, or
-  `:probe`. The test enforces this by defining them in this module
-  (not in `lib/`).
+  ezagent_core never references `ProbeKind`, `ProbeBehavior`,
+  `ProbeTemplate`, or `:probe`. The test enforces this by defining them
+  in this module (not in `lib/`).
   """
 
   use EzagentCore.DataCase, async: false
@@ -126,7 +168,18 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   # The invariant
   # ---------------------------------------------------------------
 
-  test "PHASE 4 INVARIANT: plugin-defined Kind survives Workspace teardown + Loader rehydrate" do
+  # ---------------------------------------------------------------
+  # (i) Runtime-DI re-spawn survives teardown — ZERO DB.
+  #
+  # Proves the SpawnRegistry (scheme→spawn fn) + KindRegistry survival
+  # machinery across a "node down" WITHOUT any Workspace persistence.
+  # `probe://` has no workspace segment (owner gate is a no-op) and
+  # `ProbeKind` is `:ephemeral` (Kind.Server writes no snapshot), so the
+  # whole test body touches no DB — it cannot hit the #108
+  # teardown-during-reload sandbox race by construction.
+  # ---------------------------------------------------------------
+
+  test "PHASE 4 INVARIANT (i): runtime-registered Kind survives teardown + re-spawn purely via SpawnRegistry DI (no DB)" do
     # 1. Plugin-author work: declare a new URI scheme + register spawn fn.
     #    This is what a future plugin's Application.start would do.
     probe_uri = URI.new!("probe://invariant-#{System.unique_integer([:positive])}")
@@ -138,28 +191,76 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
       )
     end)
 
+    # 2. Spawn purely via the runtime-registered fn — no Workspace, no DB.
+    assert {:ok, probe_pid} = SpawnRegistry.spawn(probe_uri)
+    assert is_pid(probe_pid)
+    assert Process.alive?(probe_pid)
+    assert {:ok, ^probe_pid} = KindRegistry.lookup(probe_uri)
+
+    # 3. Tear down: terminate via DynamicSupervisor so it doesn't auto-restart.
+    #    (Process.exit would cause :one_for_one to immediately re-spawn,
+    #    which is the wrong simulation — we want "node went down".)
+    :ok = DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, probe_pid)
+
+    # Wait for Registry cleanup (Registry monitors its keys). Load-bearing
+    # for the `refute` below: while the old key is still registered,
+    # `SpawnRegistry.spawn/1` would adopt the (now-dead) pid as
+    # `:already_started` instead of starting a fresh worker.
+    wait_until(fn -> KindRegistry.lookup(probe_uri) == :error end)
+
+    # 4. The proof: re-spawn purely from the runtime-registered spawn fn —
+    #    the Kind comes back alive with a NEW pid, and ezagent_core / no
+    #    plugin ever referenced `:probe`.
+    assert {:ok, new_probe_pid} = SpawnRegistry.spawn(probe_uri)
+    assert is_pid(new_probe_pid)
+    assert Process.alive?(new_probe_pid)
+    assert {:ok, ^new_probe_pid} = KindRegistry.lookup(probe_uri)
+    refute new_probe_pid == probe_pid
+  end
+
+  # ---------------------------------------------------------------
+  # (ii) Persisted Workspace state → Loader spawn — NO teardown.
+  #
+  # Proves a plugin-defined Kind declared in a PERSISTED Workspace comes
+  # to life via `Loader.load_all/0` reading persisted state. No
+  # `terminate_child` → `load_all`'s `spawn_workspace` finds the
+  # Workspace Kind already-started and only dispatches `:instantiate` +
+  # spawns the ephemeral probe; the sole DB read (`Store.list_all`) runs
+  # in the test process. A single create+read — no teardown-during-reload
+  # race.
+  # ---------------------------------------------------------------
+
+  test "PHASE 4 INVARIANT (ii): plugin-defined Kind declared in a persisted Workspace spawns via Loader.load_all (no teardown)" do
+    # 1. Plugin-author work: declare a new URI scheme + register spawn fn.
+    probe_uri = URI.new!("probe://persist-#{System.unique_integer([:positive])}")
+
+    SpawnRegistry.register("probe", fn uri ->
+      DynamicSupervisor.start_child(
+        Ezagent.Workspace.Supervisor,
+        {Ezagent.Kind.Server, {ProbeKind, %{uri: uri}}}
+      )
+    end)
+
     # 2. Plugin-author work: persist a Workspace declaring the probe as a member.
-    workspace_name = "invariant-#{System.unique_integer([:positive])}"
+    workspace_name = "persist-#{System.unique_integer([:positive])}"
     {:ok, _pid} = Workspace.create(workspace_name, %{members: [probe_uri]})
 
     # Sanity: probe is not yet alive (create/2 only persists + spawns the
     # Workspace Kind itself; member spawning happens via Loader).
     assert :error = KindRegistry.lookup(probe_uri)
 
-    # 3. Run the Loader — this is what happens at app start. It should
-    #    walk every persisted Workspace, dispatch :instantiate, and call
+    # 3. Run the Loader — this is what happens at app start. It walks every
+    #    persisted Workspace, dispatches :instantiate, and calls
     #    SpawnRegistry for each declared child.
     #
-    # Under the full concurrent umbrella run, `load_all/0` can transiently
-    # return `[]` (its `agent_flavor_registry_unsealed?` seal-gate or its
-    # `DBConnection.{Ownership,Connection}Error -> []` rescue — see
-    # `Ezagent.Workspace.Loader.load_all/0` + EzagentCore.DataCase
-    # moduledoc). The Loader is idempotent (`load_one` adopts an
-    # already-started Workspace + re-dispatches `:instantiate`;
-    # `SpawnRegistry.spawn/1` is idempotent), so we poll it until our
-    # just-created workspace is present rather than hard-matching the first
-    # call's result. The isolation PROOF below (probe survives teardown +
-    # rehydrate) is unchanged and stays a hard assertion.
+    # `load_all/0` can transiently return `[]` (its
+    # `agent_flavor_registry_unsealed?` seal-gate — see
+    # `Ezagent.Workspace.Loader.load_all/0`). The Loader is idempotent
+    # (`load_one` adopts the already-started Workspace + re-dispatches
+    # `:instantiate`; `SpawnRegistry.spawn/1` is idempotent), so we poll
+    # it until our just-created workspace is present with children rather
+    # than hard-matching the first call's result. The PROOF (the probe
+    # spawns from persisted state) stays a hard assertion.
     {^workspace_name, children_results} = load_all_until_present(workspace_name)
 
     assert [{^probe_uri, {:ok, probe_pid}}] = children_results
@@ -167,41 +268,16 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     assert Process.alive?(probe_pid)
 
     # 4. The probe is now in KindRegistry under its URI — Loader truly
-    #    re-spawned it from persisted Workspace state.
+    #    spawned it from persisted Workspace state, no ezagent_core /
+    #    plugin code knowing about `:probe`.
     assert {:ok, ^probe_pid} = KindRegistry.lookup(probe_uri)
-
-    # 5. Tear down: terminate via DynamicSupervisor so it doesn't auto-restart.
-    #    (Process.exit would cause :one_for_one to immediately re-spawn,
-    #    which is the wrong simulation — we want "node went down".)
-    workspace_uri = Ezagent.Entity.Workspace.uri_for(workspace_name)
-    {:ok, workspace_pid} = KindRegistry.lookup(workspace_uri)
-
-    :ok = DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, probe_pid)
-    :ok = DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, workspace_pid)
-
-    # Wait briefly for Registry cleanup (Registry monitors its keys)
-    wait_until(fn -> KindRegistry.lookup(probe_uri) == :error end)
-    wait_until(fn -> KindRegistry.lookup(workspace_uri) == :error end)
-
-    # 6. The proof: Loader.load_all/0 re-runs and the probe is alive again
-    #    — purely from persisted state + runtime-registered spawn fn,
-    #    no ezagent_core / plugin code knows about :probe.
-    #    `reload_until_alive/1` re-runs the idempotent Loader until the
-    #    probe is back in KindRegistry, tolerating a transient empty
-    #    Loader pass without weakening the survival proof: the probe MUST
-    #    come back alive within the budget (flunks otherwise).
-    new_probe_pid = reload_until_alive(probe_uri)
-    assert is_pid(new_probe_pid)
-    assert Process.alive?(new_probe_pid)
-    refute new_probe_pid == probe_pid
   end
 
-  test "PHASE 4 INVARIANT EXT: plugin-defined Template Class survives Workspace teardown + Loader rehydrate" do
-    # Phase 4-completion (Spec 01): Decision #64 Class half landed.
-    # This test extends the original invariant: a fake Template Class
-    # defined ONLY in test/ (NOT lib/) must spawn its declared Kind
-    # purely via runtime TemplateRegistry + SpawnRegistry registration,
-    # then survive teardown + Loader.load_all/0.
+  test "PHASE 4 INVARIANT (ii) EXT: plugin-defined Template Class spawns its Kind via Loader.load_all (no teardown)" do
+    # Phase 4-completion (Spec 01): Decision #64 Class half. A fake
+    # Template Class defined ONLY in test/ (NOT lib/) must spawn its
+    # declared Kind purely via runtime TemplateRegistry + SpawnRegistry,
+    # driven from persisted Workspace state by Loader.load_all/0.
 
     # 1. Plugin-author work: register both the probe Kind's spawn fn
     #    AND the probe Template Class.
@@ -217,7 +293,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # 2. Plugin-author work: persist a Workspace whose session_templates
     #    declares a ProbeTemplate instance. No members — template alone
     #    must produce the probe Kind via Loader.
-    workspace_name = "tmpl-invariant-#{System.unique_integer([:positive])}"
+    workspace_name = "tmpl-persist-#{System.unique_integer([:positive])}"
     probe_name = "tmpl-probe-#{System.unique_integer([:positive])}"
     probe_uri = URI.new!("probe://#{probe_name}")
 
@@ -235,8 +311,8 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     assert :error = KindRegistry.lookup(probe_uri)
 
     # 3. Loader runs — instantiate the template. Poll past the transient
-    #    empty-return paths (seal-gate / sandbox OwnershipError rescue),
-    #    same as the first invariant test — `load_all/0` is idempotent.
+    #    empty-return path (seal-gate), same as (ii) — `load_all/0` is
+    #    idempotent.
     {^workspace_name, children_results} = load_all_until_present(workspace_name)
 
     # Children: 1 template entry, no member entries
@@ -245,27 +321,6 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     {:ok, probe_pid} = KindRegistry.lookup(probe_uri)
     assert is_pid(probe_pid)
     assert Process.alive?(probe_pid)
-
-    # 4. Tear down via supervisor (no auto-restart)
-    workspace_uri = Ezagent.Entity.Workspace.uri_for(workspace_name)
-    {:ok, workspace_pid} = KindRegistry.lookup(workspace_uri)
-
-    :ok = DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, probe_pid)
-    :ok = DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, workspace_pid)
-
-    wait_until(fn -> KindRegistry.lookup(probe_uri) == :error end)
-    wait_until(fn -> KindRegistry.lookup(workspace_uri) == :error end)
-
-    # 5. The proof: Loader.load_all/0 re-runs and the probe is alive
-    #    again — purely from persisted Workspace state + runtime
-    #    TemplateRegistry + SpawnRegistry, no ezagent_core / plugin code
-    #    knows about probe.template. Poll the idempotent Loader until the
-    #    probe is back (tolerates a transient empty pass; the probe MUST
-    #    rehydrate within budget or this flunks).
-    new_probe_pid = reload_until_alive(probe_uri)
-    assert is_pid(new_probe_pid)
-    assert Process.alive?(new_probe_pid)
-    refute new_probe_pid == probe_pid
   end
 
   test "Workspace.add_template/3 fail-fast: rejects template without registered Class" do
@@ -321,32 +376,6 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
       _ ->
         Process.sleep(20)
         load_all_until_present(workspace_name, attempts - 1)
-    end
-  end
-
-  # Re-run the idempotent `Loader.load_all/0` until `uri` is alive in
-  # KindRegistry, returning its pid. The survival proof: the Kind MUST
-  # rehydrate from persisted state — this only tolerates a transient
-  # empty Loader pass (seal-gate / sandbox rescue), it does NOT relax the
-  # requirement that the Kind comes back (flunks if it never does).
-  defp reload_until_alive(uri, attempts \\ 50)
-
-  defp reload_until_alive(uri, 0) do
-    flunk(
-      "reload_until_alive: #{inspect(URI.to_string(uri))} never rehydrated after Loader re-runs"
-    )
-  end
-
-  defp reload_until_alive(uri, attempts) when attempts > 0 do
-    _ = Ezagent.Workspace.Loader.load_all()
-
-    case KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        pid
-
-      :error ->
-        Process.sleep(20)
-        reload_until_alive(uri, attempts - 1)
     end
   end
 
