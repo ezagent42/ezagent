@@ -71,7 +71,7 @@ visibility_policy`.
 
 The shipped example is
 `apps/ezagent_domain_session/priv/socialware/autoservice/package.yaml`. It still
-uses the OLD shape (`roles:` with inline `requested_caps`, `Ezagent.Behavior.Kb`).
+uses the OLD shape (`roles:` with inline `requested_caps`, and the pre-T1 Behavior-namespaced Kb module — now `Ezagent.ActionSet.Kb`).
 Modernized to the `Definition` field shape it reads as data:
 
 ```yaml
