@@ -129,6 +129,10 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 
 ## 4. Scenario index — flat list
 
+> Cluster overview: [`homesite-journey.md`](./homesite-journey.md) maps the homesite
+> user journey (stages 0–5) across scenarios 36–39. Task split:
+> [`homesite-handoff.md`](./homesite-handoff.md) (官网/hello → zhaomato, world → zyli).
+
 | # | Title | Cat | Status | Test path |
 |---|---|---|---|---|
 | 01 | [Magic-link email login](./01-magic-link-login/scenario.md) | 1 | ⚠️ | `magic_link_invariants_test.exs` |
@@ -164,6 +168,11 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 32 | [Feishu @-mention → orchestrator dispatch](./32-feishu-mention-orchestrator-dispatch/scenario.md) | 3 | 🚧 | `scenario_32_mention_orchestrator_dispatch_test.exs` (deterministic) + live runbook |
 | 33 | [Full-star — orchestrator dispatches ALL flavors (cc + codex + curl)](./33-full-star-orchestrator-all-flavors/scenario.md) | 3 | 🚧 | `scenario_33_full_star_test.exs` (deterministic) + live runbook |
 | 34 | [Sender-locked relay (传话游戏) — legend + rule-set + prompt-template, no baton](./34-sender-locked-relay/scenario.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs` (deterministic, 8 tests green) + `scenario_34_*_live_test.exs` (live runbook, `@tag :live`) |
+| 35 | [External-user anonymous access (membership-only)](./35-external-user-anon-access/scenario.md) | 1 | 🚧 | deterministic tier PARTIAL + live agent-browser runbook — see scenario doc (issue #51) |
+| 36 | [Homesite visitor journey — browse → login-gate → gated CTAs](./36-homesite-browse/scenario.md) | 1 | 🚧 | design spec — recordable vs `docs/website-demo/v1` mock; live recorder + test pending |
+| 37 | [Homesite dialog ↔ world session (bidirectional sync)](./37-homesite-dialog-world-sync/scenario.md) | 3 | 🚧 | design spec (journey stage 3) — backend dialog wiring not connected; world→page via placeholder |
+| 38 | [Share / deploy — invite others into the SAME session (group chat)](./38-share-deploy-same-session/scenario.md) | 3 | 🚧 | design spec (journey stage 4) — deploy = same session, member, history kept |
+| 39 | [Try world → re-create the homesite session as a new owned session](./39-redeploy-publish-fork-session/scenario.md) | 3 | 🚧 | design spec (journey stage 5) — enter world, re-create a new owned session, no history |
 
 ---
 
