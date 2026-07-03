@@ -205,6 +205,14 @@
   # the `/cc_socket` endpoint mount — ratcheting this to 0. This cap MUST
   # stay at 0: the shim layer is gone and no lib file may reintroduce it.
   cc_bridge_shim_callers: 0,
+  # domain-only-Kinds gate: plugin-app files declaring a CONCRETE Kind
+  # (`@behaviour Ezagent.Kind` exactly, NOT `Ezagent.Kind.Template`) minus the
+  # sanctioned allowlist in ezagent.arch.scan (`@plugin_defined_kind_allowlist`).
+  # Kinds are a domain concern; plugins compose via Template/Behavior/View. This
+  # is TARGET-ZERO: the allowlist (currently just hello_builder, pending its
+  # socialware promotion; echo/np already retired) is a ratchet that must reach
+  # empty, and any NEW plugin Kind must fail this gate.
+  plugin_defined_kinds: 0,
   # #719 §5.B(c) re-provisions the source agent credential across its own respawn
   # (durable-credential bug fix). cc_agent.ex 917→930 (+13 net: the
   # `maybe_reprovision_source_from_respawn_data/2` chokepoint + the

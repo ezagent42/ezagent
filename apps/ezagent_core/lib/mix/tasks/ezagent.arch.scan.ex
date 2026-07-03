@@ -232,6 +232,26 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/token_store.ex"
   ]
 
+  # domain-only-Kinds gate — Kinds are a domain concern. A concrete Kind is a
+  # module declaring `@behaviour Ezagent.Kind` EXACTLY (NOT `Ezagent.Kind.Template`,
+  # which is a blueprint/Template Class plugins legitimately define). Plugin apps
+  # (`apps/ezagent_plugin_*`) compose via Template/Behavior/View; a plugin defining
+  # a concrete Kind is architectural debt — the concept must move to a domain app
+  # (or be promoted to domain). Counts plugin-app concrete-Kind files MINUS this
+  # sanctioned allowlist, which is a ratchet that shrinks to empty as the debt is
+  # retired. `plugin_defined_kinds` (target-zero) trips on any NEW plugin Kind or
+  # any re-add of an allowlisted concept elsewhere in a plugin.
+  #
+  # Original snapshot named three offenders; two had already been retired on
+  # origin/main (the ratchet advanced past the snapshot), so only one remains:
+  #   - echo    → RETIRED: `apps/ezagent_plugin_echo` deleted entirely.
+  #   - np/py   → RETIRED: folded to `apps/ezagent_plugin_py/lib/ezagent/template/
+  #               py_agent.ex`, now an `Ezagent.Kind.Template` (correctly NOT a Kind).
+  #   - hello   → PENDING: to be promoted to a socialware. Must reach 0.
+  @plugin_defined_kind_allowlist [
+    "apps/ezagent_plugin_hello/lib/ezagent/entity/hello_builder.ex"
+  ]
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.arch.scan — architecture fitness functions")
@@ -312,6 +332,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       # specific fork; FF-1 is the broad fitness function for fork accretion.
       cross_file_duplicate_fn_groups: cross_file_duplicate_fn_groups(),
       cc_bridge_shim_callers: cc_bridge_shim_callers(),
+      plugin_defined_kinds: plugin_defined_kinds(),
       cc_codex_template_class_combined_loc:
         @template_class_files |> Enum.map(&line_count/1) |> Enum.sum(),
       raw_home_path_outside_core: raw_home_path_outside_core(),
@@ -765,6 +786,23 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       file in @cc_bridge_shim_files or String.contains?(file, "/ezagent_domain_agent_bridge/")
     end)
     |> Enum.count(&file_references_shim?(&1, shim_set))
+  end
+
+  # domain-only-Kinds gate — plugin-app files declaring a CONCRETE Kind
+  # (`@behaviour Ezagent.Kind` exactly; `Ezagent.Kind.Template` is excluded by the
+  # negative-lookahead, so a plugin Template Class is NOT flagged) minus the
+  # sanctioned `@plugin_defined_kind_allowlist`. Path-prefix scope on
+  # `apps/ezagent_plugin_` so a NEW plugin app is covered automatically. Counted by
+  # rejection (never `offenders - length(allowlist)`) so the count can never go
+  # negative and mask a regression when the debt shrinks below the allowlist.
+  defp plugin_defined_kinds do
+    allow = MapSet.new(@plugin_defined_kind_allowlist)
+
+    grep(~r/^\s*@behaviour\s+Ezagent\.Kind(?![.\w])/)
+    |> unique_files()
+    |> Enum.filter(&String.starts_with?(&1, "apps/ezagent_plugin_"))
+    |> Enum.reject(&MapSet.member?(allow, &1))
+    |> length()
   end
 
   # True iff `file` references any shim module, whether fully-qualified, via a
