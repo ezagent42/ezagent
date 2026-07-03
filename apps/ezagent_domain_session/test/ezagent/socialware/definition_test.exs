@@ -14,7 +14,7 @@ defmodule Ezagent.Socialware.DefinitionTest do
                  agents: [%{recipe: "hello-greeter", role_name: "greeter"}]
                })
 
-      assert agents == [%{recipe: "hello-greeter", role_name: "greeter"}]
+      assert agents == [%{recipe: "hello-greeter", role_name: "greeter", flavor: "cc"}]
     end
 
     test "accepts string keys (persisted JSON round-trip) and normalizes to atom keys" do
@@ -24,7 +24,7 @@ defmodule Ezagent.Socialware.DefinitionTest do
                  "agents" => [%{"recipe" => "hello-greeter", "role_name" => "greeter"}]
                })
 
-      assert agents == [%{recipe: "hello-greeter", role_name: "greeter"}]
+      assert agents == [%{recipe: "hello-greeter", role_name: "greeter", flavor: "cc"}]
     end
 
     test "defaults to [] when absent" do
@@ -63,7 +63,58 @@ defmodule Ezagent.Socialware.DefinitionTest do
         })
 
       body = Definition.body(definition)
-      assert body.agents == [%{"recipe" => "hello-greeter", "role_name" => "greeter"}]
+
+      assert body.agents == [
+               %{"recipe" => "hello-greeter", "role_name" => "greeter", "flavor" => "cc"}
+             ]
+    end
+
+    test "accepts optional flavor and defaults it to cc" do
+      assert {:ok, %Definition{agents: agents}} =
+               Definition.new(%{
+                 name: "hello",
+                 agents: [
+                   %{recipe: "hello-greeter", role_name: "greeter"},
+                   %{recipe: "hello-worker", role_name: "worker", flavor: "py"}
+                 ]
+               })
+
+      assert agents == [
+               %{recipe: "hello-greeter", role_name: "greeter", flavor: "cc"},
+               %{recipe: "hello-worker", role_name: "worker", flavor: "py"}
+             ]
+    end
+  end
+
+  describe "manifest metadata and uses" do
+    test "accepts catalog fields and explicit plugin uses" do
+      assert {:ok, %Definition{} = definition} =
+               Definition.new(%{
+                 name: "hello",
+                 version: "1.2.3",
+                 title: "Hello Socialware",
+                 description: "Greets visitors",
+                 uses: ["hello"],
+                 visibility_policy: %{scope: :public}
+               })
+
+      assert definition.version == "1.2.3"
+      assert definition.title == "Hello Socialware"
+      assert definition.description == "Greets visitors"
+      assert definition.uses == ["hello"]
+      assert definition.visibility_policy.scope == :public
+
+      body = Definition.body(definition)
+      assert body.version == "1.2.3"
+      assert body.title == "Hello Socialware"
+      assert body.description == "Greets visitors"
+      assert body.uses == ["hello"]
+      assert body.visibility_policy["scope"] == "public"
+    end
+
+    test "defaults visibility scope to private" do
+      assert {:ok, %Definition{visibility_policy: policy}} = Definition.new(%{name: "hello"})
+      assert policy.scope == :private
     end
   end
 

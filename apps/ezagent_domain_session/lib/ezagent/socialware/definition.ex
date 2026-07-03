@@ -10,31 +10,41 @@ defmodule Ezagent.Socialware.Definition do
 
   @enforce_keys [:name]
   defstruct name: nil,
+            version: "0.1.0",
+            title: nil,
+            description: "",
+            uses: [],
             bases: [],
             shape: [],
             views: [],
             agents: [],
+            assets: [],
             members: [],
             routing_rules: [],
             prompt_templates: %{},
             legends: %{},
             orchestrator_template_uri: nil,
             adapters: [],
-            visibility_policy: %{publish_policy: :auto, web_anon_access: false}
+            visibility_policy: %{publish_policy: :auto, web_anon_access: false, scope: :private}
 
   @typedoc """
   A socialware-declared agent: the `recipe` (config义 — a RecipeRegistry name)
   this agent runs, and its `role_name` (routing义 — the per-session unique
   routing identifier, `{:role, name}` receiver). Both non-empty strings.
   """
-  @type agent_spec :: %{recipe: String.t(), role_name: String.t()}
+  @type agent_spec :: %{recipe: String.t(), role_name: String.t(), flavor: String.t()}
 
   @type t :: %__MODULE__{
           name: String.t(),
+          version: String.t(),
+          title: String.t() | nil,
+          description: String.t(),
+          uses: [String.t()],
           bases: [module()],
           shape: [module()],
           views: [module()],
           agents: [agent_spec()],
+          assets: [map()],
           members: [map()],
           routing_rules: [map()],
           prompt_templates: map(),
@@ -48,6 +58,10 @@ defmodule Ezagent.Socialware.Definition do
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
     with {:ok, name} <- required_string(attrs, :name),
+         {:ok, version} <- optional_string(attrs, :version, "0.1.0"),
+         {:ok, title} <- optional_string(attrs, :title, nil),
+         {:ok, description} <- optional_string(attrs, :description, ""),
+         {:ok, uses} <- string_list(attrs, :uses),
          {:ok, bases} <- behavior_list(attrs, :bases),
          {:ok, shape} <- behavior_list(attrs, :shape),
          {:ok, views} <- behavior_list(attrs, :views),
@@ -56,10 +70,15 @@ defmodule Ezagent.Socialware.Definition do
       {:ok,
        %__MODULE__{
          name: name,
+         version: version,
+         title: title,
+         description: description,
+         uses: uses,
          bases: bases,
          shape: shape,
          views: views,
          agents: agents,
+         assets: list(attrs, :assets),
          members: list(attrs, :members),
          routing_rules: list(attrs, :routing_rules),
          prompt_templates: map(attrs, :prompt_templates),
@@ -96,10 +115,15 @@ defmodule Ezagent.Socialware.Definition do
   def body(%__MODULE__{} = definition) do
     %{
       name: definition.name,
+      version: definition.version,
+      title: definition.title,
+      description: definition.description,
+      uses: definition.uses,
       bases: Enum.map(definition.bases, &Atom.to_string/1),
       shape: Enum.map(definition.shape, &Atom.to_string/1),
       views: Enum.map(definition.views, &Atom.to_string/1),
       agents: json_safe(definition.agents),
+      assets: json_safe(definition.assets),
       members: json_safe(definition.members),
       routing_rules: json_safe(definition.routing_rules),
       prompt_templates: json_safe(definition.prompt_templates),
@@ -120,6 +144,28 @@ defmodule Ezagent.Socialware.Definition do
     case get(attrs, key) do
       value when is_binary(value) and value != "" -> {:ok, value}
       other -> {:error, {:invalid_socialware_definition_field, key, other}}
+    end
+  end
+
+  defp optional_string(attrs, key, default) do
+    case get(attrs, key, default) do
+      nil -> {:ok, nil}
+      value when is_binary(value) -> {:ok, value}
+      other -> {:error, {:invalid_socialware_definition_field, key, other}}
+    end
+  end
+
+  defp string_list(attrs, key) do
+    case get(attrs, key, []) do
+      list when is_list(list) ->
+        if Enum.all?(list, &(is_binary(&1) and &1 != "")) do
+          {:ok, list}
+        else
+          {:error, {:invalid_socialware_definition_field, key, list}}
+        end
+
+      other ->
+        {:error, {:invalid_socialware_definition_field, key, other}}
     end
   end
 
@@ -196,9 +242,11 @@ defmodule Ezagent.Socialware.Definition do
   defp agent_spec(item) when is_map(item) do
     recipe = get(item, :recipe)
     role_name = get(item, :role_name)
+    flavor = get(item, :flavor, "cc")
 
-    if is_binary(recipe) and recipe != "" and is_binary(role_name) and role_name != "" do
-      {:ok, %{recipe: recipe, role_name: role_name}}
+    if is_binary(recipe) and recipe != "" and is_binary(role_name) and role_name != "" and
+         is_binary(flavor) and flavor != "" do
+      {:ok, %{recipe: recipe, role_name: role_name, flavor: flavor}}
     else
       {:error, {:invalid_socialware_agent, item}}
     end
@@ -218,21 +266,33 @@ defmodule Ezagent.Socialware.Definition do
         other -> other
       end
 
-    if publish_policy in [:auto, :supervised] do
+    scope =
+      case get(policy, :scope, :private) do
+        "private" -> :private
+        :private -> :private
+        "public" -> :public
+        :public -> :public
+        other -> other
+      end
+
+    if publish_policy in [:auto, :supervised] and scope in [:private, :public] do
       {:ok,
        %{
          publish_policy: publish_policy,
-         web_anon_access: get(policy, :web_anon_access, false) == true
+         web_anon_access: get(policy, :web_anon_access, false) == true,
+         scope: scope
        }}
     else
-      {:error, {:invalid_socialware_visibility_policy, publish_policy}}
+      {:error,
+       {:invalid_socialware_visibility_policy, %{publish_policy: publish_policy, scope: scope}}}
     end
   end
 
   defp stringify_visibility(policy) do
     %{
-      publish_policy: policy |> Map.fetch!(:publish_policy) |> Atom.to_string(),
-      web_anon_access: Map.get(policy, :web_anon_access, false) == true
+      "publish_policy" => policy |> Map.fetch!(:publish_policy) |> Atom.to_string(),
+      "web_anon_access" => Map.get(policy, :web_anon_access, false) == true,
+      "scope" => policy |> Map.get(:scope, :private) |> Atom.to_string()
     }
   end
 
