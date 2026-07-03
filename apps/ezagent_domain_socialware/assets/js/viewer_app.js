@@ -192,6 +192,18 @@ const IS_EMBEDDED = (() => {
   }
 })()
 
+// Count messages authored by an AGENT (sender `entity://…/agent/…`). Used to tell
+// a real reply apart from the member's OWN echoed message — only agent messages
+// count as "a reply arrived" (clears the typing indicator + lights the unread dot).
+function countAgents(msgs) {
+  if (!Array.isArray(msgs)) return 0
+  let n = 0
+  for (const m of msgs) {
+    if (m && typeof m.sender === "string" && m.sender.indexOf("/agent/") !== -1) n++
+  }
+  return n
+}
+
 // Execute a concierge navigation action on the page. The action is WHITELISTED
 // server-side (type ∈ switch_tab/scroll_to/open_url), so this only ever does one
 // of these three safe, local things.
@@ -222,24 +234,23 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState(null)
   const channelRef = useRef(null)
-  // Concierge navigation-first replies: a short answer bubble + a local nav action
-  // (switch_tab / scroll_to / open_url). `conciergeSeen` baselines the existing
-  // history on first load so only NEW concierge replies act.
-  const [conciergeBubble, setConciergeBubble] = useState(null)
+  // Concierge navigation actions (switch_tab / scroll_to / open_url): execute the
+  // newest UNSEEN concierge reply's nav on the page. NO inline answer bubble — the
+  // member reads the reply by opening the session (the unread dot points them
+  // there). `conciergeSeen` baselines existing history so only NEW replies act.
   const conciergeSeen = useRef(null)
-  const bubbleTimer = useRef(null)
-  // "Waiting for a reply" after the member sends — a small typing indicator so the
-  // wait (LLM round-trip) doesn't feel dead. Cleared when an agent responds.
+  // "Waiting for a reply" typing indicator; cleared only when a NEW agent message
+  // arrives — NOT the member's own echoed message. `awaitBaseAgent` = the agent
+  // message count captured at send time.
   const [awaiting, setAwaiting] = useState(false)
   const awaitTimer = useRef(null)
+  const awaitBaseAgent = useRef(0)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
     return () => document.body.classList.remove("jr-highlight")
   }, [jrHighlight])
 
-  // On each snapshot, act on the newest UNSEEN concierge reply: show its answer as
-  // a transient bubble and execute its nav action on the page. (The chat panel is
-  // not shown inline, so this is how a member sees + follows the concierge here.)
+  // Execute the newest unseen concierge reply's nav action on the page.
   useEffect(() => {
     const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
     const isConcierge = (m) =>
@@ -257,23 +268,15 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     }
     if (!latest || conciergeSeen.current.has(latest.id)) return
     conciergeSeen.current.add(latest.id)
-    if (latest.text) {
-      setConciergeBubble(String(latest.text))
-      window.clearTimeout(bubbleTimer.current)
-      bubbleTimer.current = window.setTimeout(() => setConciergeBubble(null), 9000)
-    }
     execNav(latest.nav)
   }, [snapshot])
 
-  // Clear the "awaiting reply" typing indicator once ANY agent (builder ack or
-  // concierge answer) posts — the newest message is from an /agent/.
+  // Clear the typing indicator once a NEW agent message arrives (agent count grows
+  // past the send-time baseline) — the member's own echoed message never clears it.
   useEffect(() => {
     if (!awaiting) return
     const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
-    const last = msgs[msgs.length - 1]
-    if (last && typeof last.sender === "string" && last.sender.indexOf("/agent/") !== -1) {
-      setAwaiting(false)
-    }
+    if (countAgents(msgs) > awaitBaseAgent.current) setAwaiting(false)
   }, [snapshot, awaiting])
 
   useEffect(() => {
@@ -468,7 +471,9 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     ch.push("post", {text: full})
       .receive("error", (e) => console.warn("[hello] post failed:", e))
     setSelected(null)
-    setConciergeBubble(null)
+    // Baseline the current agent-message count; the typing indicator clears only
+    // when a NEW agent message pushes the count past this (not on our own echo).
+    awaitBaseAgent.current = countAgents(messages)
     setAwaiting(true)
     window.clearTimeout(awaitTimer.current)
     awaitTimer.current = window.setTimeout(() => setAwaiting(false), 45000)
@@ -491,9 +496,7 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
           React.createElement("span", {className: "typing-dot"}),
           React.createElement("span", {className: "typing-dot"}),
         )
-      : !IS_EMBEDDED && conciergeBubble
-        ? React.createElement("div", {className: "concierge-bubble", key: "cb"}, conciergeBubble)
-        : null,
+      : null,
     IS_EMBEDDED
       ? null
       : React.createElement(PreviewBar, {
@@ -554,13 +557,15 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
   // the member to open the session. Baseline = the message count at mount (so the
   // already-loaded history is NOT counted as unread); a later increase lights it;
   // opening the session clears it. Only members get replies / can open.
-  const msgCount = Array.isArray(messages) ? messages.length : 0
-  const prevMsgCount = React.useRef(msgCount)
+  // Only an AGENT reply lights the unread dot — the member's OWN sent message must
+  // not (that was the "red dot appears the instant I send" bug).
+  const agentCount = countAgents(messages)
+  const prevAgentCount = React.useRef(agentCount)
   const [unread, setUnread] = useState(false)
   React.useEffect(() => {
-    if (member && msgCount > prevMsgCount.current) setUnread(true)
-    prevMsgCount.current = msgCount
-  }, [msgCount, member])
+    if (member && agentCount > prevAgentCount.current) setUnread(true)
+    prevAgentCount.current = agentCount
+  }, [agentCount, member])
   const openSession = () => {
     setUnread(false)
     window.open("/sessions?session=" + encodeURIComponent(sessionUri), "_blank", "noopener,noreferrer")
