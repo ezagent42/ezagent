@@ -248,7 +248,7 @@ session_uri = Ezagent.URI.new!("session://team-alpha/default/my-app-1")
   })
 
 :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
-{:ok, _} = Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(
+{:ok, _} = Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(
   session_uri,
   %{session_template_uri: template_uri}    # the @hash URI — no name resolution
 )
@@ -340,7 +340,7 @@ caveat). Read it when you need to validate author-flow changes end to end.
 - `Ezagent.TemplateTags` — git-style mutable refs over immutable hashes; `put/5`, `move/5`, `resolve/3`; the `"current"` tag = adopt-on-create pointer.
 - `Ezagent.Socialware.PublicView` — `public_view?/1`, the public ingress gate (live-slice based, fail-closed).
 - `Ezagent.Entity.Session` — `socialware_behaviors/0`; the session Kind.
-- `Ezagent.Behavior.Session.ConfigActions` — `system_set_working_copy/2` (bind session→template version).
+- `Ezagent.ActionSet.Session.ConfigActions` — `system_set_working_copy/2` (bind session→template version).
 - `Ezagent.Orchestrator.Tools.Migration` — `migrate_session/2` (resumable re-pin) and its `migration_ledger`.
 - `Ezagent.Orchestrator.Tools.Templates` — `update_template` / `save_template_as` / `publish_current/4`.
 - `EzagentWeb.Socialware.ChatFeedController` / `CustomerController` — the two public surfaces.
