@@ -31,6 +31,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.TurnPublishPolicyTest do
     assert {:ok, object} =
              DefinitionRegistry.write_definition(attrs,
                workspace_uri: @workspace_uri,
+               caller_workspace_uri: @workspace_uri,
                actor_uri: @caller
              )
 

@@ -379,6 +379,27 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
+  List currently-pointed objects for a layer/key across workspaces.
+
+  This follows current pointers, so retained immutable historical object
+  versions are not included in catalog/discovery reads.
+  """
+  @spec list_current_objects(atom() | String.t(), String.t()) :: [ConfigObject.t()]
+  def list_current_objects(layer, key) when is_binary(key) do
+    layer = normalize_layer!(layer)
+
+    Repo.all(
+      from(p in ConfigPointer,
+        join: o in ConfigObject,
+        on: o.id == p.config_id,
+        where: p.layer == ^layer and p.key == ^key,
+        order_by: [asc: p.workspace_uri, asc: p.subject_uri],
+        select: o
+      )
+    )
+  end
+
+  @doc """
   Read all currently-pointed layer objects for a subject/key.
 
   Returns entries keyed by canonical layer string (`"workspace"`, `"user"`,

@@ -20,6 +20,7 @@ defmodule Ezagent.Socialware.ConformanceTest do
     {:ok, _obj} =
       DefinitionRegistry.write_definition(definition,
         workspace_uri: @workspace_uri,
+        caller_workspace_uri: @workspace_uri,
         actor_uri: @actor
       )
 
