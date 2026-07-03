@@ -61,6 +61,9 @@ that remains design vocabulary, not code (see [§Future](#future-still-not-in-ma
 Pair this with the **ezagent-developer** skill — socialware sits on top of the
 same Behavior + Kind + URI + CapBAC machinery, and its invariants still apply.
 
+Authoring one **today (code + seed, before the upload channel/market)**? Follow
+the interim discipline in [`docs/guide/socialware-authoring-interim.md`](../../../docs/guide/socialware-authoring-interim.md).
+
 ## The socialware Definition is the publishable unit (T2 — fattened)
 
 > **2026-07-02 (T2 app-package).** The **publishable unit is the socialware
