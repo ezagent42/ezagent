@@ -70,7 +70,12 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
-    create_session(socket, short_name, Map.get(args, "template_name", "default"))
+    create_session(
+      socket,
+      short_name,
+      Map.get(args, "template_name", "default"),
+      Map.get(args, "socialware_ref")
+    )
   end
 
   def handle_dispatch(socket, "session.fork_config", %{"session_uri" => sid} = args) do
@@ -237,9 +242,9 @@ defmodule Ezagent.World.ConversationActions do
   Create a new session in the caller's current workspace via
   `Ezagent.Workspace.create_session/3`, then open its `?session=` deep-link.
   """
-  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t() | nil) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def create_session(socket, short_name, template_name)
+  def create_session(socket, short_name, template_name, socialware_ref \\ nil)
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
@@ -265,23 +270,112 @@ defmodule Ezagent.World.ConversationActions do
         {:noreply, push_session_create_error(socket, :invalid_workspace)}
 
       true ->
-        case create_session_result(
-               workspace_uri,
-               caller,
-               short_name,
-               template_name,
-               &Ezagent.Workspace.create_session/3
-             ) do
-          {:ok, %URI{} = session_uri} ->
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+        case prepare_create_template(workspace_uri, caller, template_name, socialware_ref) do
+          {:ok, create_template_name} ->
+            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
         end
     end
+  end
+
+  defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    case create_session_result(
+           workspace_uri,
+           caller,
+           short_name,
+           template_name,
+           &Ezagent.Workspace.create_session/3
+         ) do
+      {:ok, %URI{} = session_uri} ->
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok")
+         |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+
+      {:error, reason} ->
+        {:noreply, push_session_create_error(socket, reason)}
+    end
+  end
+
+  defp prepare_create_template(_workspace_uri, _caller, template_name, ref)
+       when ref in [nil, ""] do
+    {:ok, template_name}
+  end
+
+  defp prepare_create_template(%URI{} = workspace_uri, %URI{} = caller, template_name, ref)
+       when is_binary(ref) do
+    ref = String.trim(ref)
+
+    if ref == "" do
+      {:ok, template_name}
+    else
+      template_name = "socialware-install-#{sanitize_template_name(ref)}"
+
+      with {:ok, _definition, _object} <- lookup_installable_socialware(workspace_uri, ref),
+           {:ok, template_uri} <-
+             persist_install_template(workspace_uri, caller, template_name, ref),
+           :ok <- publish_current_template(workspace_uri, template_name, template_uri, caller) do
+        {:ok, template_name}
+      end
+    end
+  end
+
+  defp prepare_create_template(_workspace_uri, _caller, _template_name, _ref),
+    do: {:error, :invalid_socialware_ref}
+
+  defp lookup_installable_socialware(%URI{} = workspace_uri, ref) when is_binary(ref) do
+    case Ezagent.Socialware.DefinitionRegistry.lookup(workspace_uri, ref) do
+      {:ok, definition, object} -> {:ok, definition, object}
+      :error -> {:error, {:unknown_socialware_install, ref}}
+    end
+  end
+
+  defp persist_install_template(%URI{} = workspace_uri, %URI{} = caller, name, ref) do
+    workspace = Ezagent.URI.workspace_name!(workspace_uri)
+
+    content = %{
+      description: "Install #{ref}",
+      default_workspace_uri: workspace_uri,
+      parent_template_uri: nil,
+      installs: [ref]
+    }
+
+    Ezagent.Entity.SessionTemplate.create(name, content,
+      caller: caller,
+      caps: [session_template_write_cap(workspace_uri, caller)],
+      workspace: workspace
+    )
+  end
+
+  defp publish_current_template(
+         %URI{} = workspace_uri,
+         name,
+         %URI{} = template_uri,
+         %URI{} = caller
+       )
+       when is_binary(name) do
+    Ezagent.TemplateTags.put(workspace_uri, name, "current", template_hash!(template_uri), caller)
+  end
+
+  defp template_hash!(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.name!()
+    |> String.split("@", parts: 2)
+    |> List.last()
+  end
+
+  defp session_template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
+    %Ezagent.Capability{
+      kind: :session_template,
+      behavior: Ezagent.ActionSet.Template,
+      action: :any,
+      instance: {:within_workspace, workspace_uri},
+      workspace_uri: workspace_uri,
+      granted_by: caller,
+      granted_at: DateTime.utc_now()
+    }
   end
 
   # No silent drop (Invariant #9): surface a session-create failure on the
@@ -322,6 +416,17 @@ defmodule Ezagent.World.ConversationActions do
     name
     |> String.trim()
     |> String.replace(~r/\s+/u, "-")
+  end
+
+  defp sanitize_template_name(name) when is_binary(name) do
+    name
+    |> String.trim()
+    |> String.replace(~r/[^A-Za-z0-9._~-]+/u, "-")
+    |> String.trim("-")
+    |> case do
+      "" -> "manifest"
+      safe -> safe
+    end
   end
 
   # A session name is a URI path segment, and `Ezagent.URI.new!` parses STRICTLY —

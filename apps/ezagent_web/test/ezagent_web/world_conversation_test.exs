@@ -558,6 +558,46 @@ defmodule EzagentWeb.WorldConversationTest do
     assert new_uri in EzagentDomainInstanceMessage.list_sessions(Ezagent.URI.workspace(:system))
   end
 
+  test "PR-5: sessions state lists installable socialware definitions", %{conn: conn} do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+
+    {:ok, _view, html} = live(admin_conn(conn), "/sessions")
+
+    assert html =~ ~s(&quot;socialwares&quot;)
+    assert html =~ ~s(&quot;name&quot;:&quot;socialware&quot;)
+  end
+
+  test "PR-5: session.create with socialware_ref creates an install template and opens it", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+    short_name = "world-pr5-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => "socialware"
+      }
+    })
+
+    template_name = "socialware-install-socialware"
+    new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
+    encoded = new_uri |> URI.to_string() |> URI.encode_www_form()
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+
+    assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
+    assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+    assert Map.get(content, :installs) == ["socialware"]
+    assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+  end
+
   test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
@@ -1105,7 +1145,12 @@ defmodule EzagentWeb.WorldConversationTest do
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
     assert definition.prompt_templates == %{"answer" => "Use the KB context."}
     assert Map.has_key?(definition.legends, "support")
-    assert definition.visibility_policy == %{publish_policy: :supervised, web_anon_access: true}
+
+    assert definition.visibility_policy == %{
+             scope: :private,
+             publish_policy: :supervised,
+             web_anon_access: true
+           }
 
     assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
     assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
