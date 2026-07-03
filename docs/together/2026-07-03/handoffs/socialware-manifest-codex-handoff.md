@@ -18,9 +18,9 @@ An **E2E test** that authors a real socialware as pure config, publishes it (`Co
 
 ## Waves (sequencing per correction C-3 — the plan's "PR1-4 independent" claim is WRONG)
 - **Wave A (parallel):** PR-1 (name-ref resolver **+ add `uses` field to the `Definition` struct** — C-5) · PR-2 (`DefinitionRegistry.list` **+ write ownership ACL with a named authority boundary** — C-4).
-- **Wave B (both DISCUSS-FIRST — post a short design + self-run a codex adversarial review of that design before coding):**
-  - **PR-4 (flavor) — the load-bearing piece (C-1).** NOT a shallow `Recipe.Compose` swap. Route socialware agent materialization through / share the **world create-agent flavor pipeline** (`agent_create.ex:336` + `role_step.ex:159`) that already does flavor template-data + config validation + cap minting + role markers + config_dir + readiness. `Recipe.Compose` alone does NOT compose caps (`compose.ex:19,55`).
-  - **PR-3 (publish) — needs a NEW cap model (C-2).** `ConfigGovernance` is agent-bound (caps/subject/self/effects). Define a concrete **subject-owner + cap shape** for a `socialware:<name>` subject (a socialware is NOT an agent — who owns it? the creating user/workspace). Reusable machinery ≈ `ConfigChangeStore` (which does NO auth — you must add the auth). `.Agent` = today unchanged; `.Socialware` = new.
+- **Wave B (designs are SETTLED below — implement directly, NO discuss-first gate):**
+  - **PR-4 (flavor)** — implement per "SETTLED — PR-4" below.
+  - **PR-3 (publish)** — implement per "SETTLED — PR-3" below.
 - **Wave C:** PR-5 (new-session page — needs PR-1,2,**4**) · PR-6 (dogfood autoservice/hello as pure-config manifest + the acceptance-gate E2E — needs PR-1..4).
 
 ## Rules
@@ -29,6 +29,30 @@ An **E2E test** that authors a real socialware as pure config, publishes it (`Co
 - **PR-3 and PR-4 designs get a codex adversarial review before implementation** (they touch CapBAC/core + the materialization pipeline).
 - Keep `main` green discipline: rebase on `main`, run the affected suites (`MIX_TEST_PARTITION=<unique>` when running in a worktree).
 - Report back per wave: what landed on the branch, gates run, and any design decision that needs the lead/Allen (e.g. the PR-3 socialware-subject cap shape).
+
+## SETTLED DESIGNS (Allen 2026-07-03 — authoritative; implement directly)
+
+### SETTLED — PR-4: ONE unified agent-materialization pipeline
+- Do NOT keep a second cc-pinned path. **Extract the flavor-aware core of the world create-agent path** (`agent_create.ex:336` + `role_step.ex:159` — flavor template-data + config validation + cap minting + role markers + config_dir + readiness) into a shared function `create_agent_from_recipe(recipe, flavor, …)`.
+- **Socialware materialization (`materialize_definition_agents`, and the sibling `SessionAgentMaterialize.materialize_by_role`) call that shared core** per declared agent, then add the socialware/session-specific wrapper: per-session URI + assign `role_name` + `session.join` + grant the recipe's `requested_caps`.
+- Add optional `flavor` (default `cc`) to the `Definition.agents` `agent_spec`. `Recipe` still forbids a flavor field — flavor is the socialware's axis. Delete the `DefaultAgentSeed.template_content` shortcut for socialware.
+- **DoD:** a Definition declaring a **non-cc** agent (e.g. codex or py) materializes correctly (config + readiness + role + grants + join) proven by test; default (no flavor) stays cc; world-create path behavior unchanged. This is the load-bearing PR — its E2E is part of the acceptance gate.
+
+### SETTLED — PR-3: publish via `ConfigGovernance.{Agent, Socialware}` + owner/visibility model
+**Structure (the generic engine already exists):** `Ezagent.Socialware.ConfigChangeStore` is the subject-agnostic CR lifecycle engine (open→stage→published→rejected→rolled_back, NO auth) over `ConfigStore` (data+pointers). Keep both. Rename the current `Ezagent.ActionSet.ConfigGovernance` behavior to the **`.Agent`** fork (agent cap + self-binding + sandbox effect — unchanged). Add a **`.Socialware`** fork = a parallel thin dispatch behavior driving the SAME `ConfigChangeStore`, differing only in: cap + subject + post-publish effect.
+
+**Owner + cap:**
+- A socialware is **owned by its creating user** (grantable to teammates, like an agent). One cap: **`cap(:socialware, :manage, instance: "socialware:<name>", workspace: <ws>)`** — grants edit + version-publish (pointer flip) + rollback. Follows #1042's "no separate publisher cap".
+- Subject = the `socialware:<name>` ConfigStore subject (NOT self/agent). The `.Socialware` fork asserts the CR subject is a socialware the caller holds `:manage` on.
+
+**Visibility (a SCOPE, not a boolean):** extend `visibility_policy` with a scope: **`private`** (default; own workspace only) and **`public`** (global market; anon-visible). (`shared`-to-specific-workspaces is a designed-in **extension point — do NOT build it now**.)
+- Setting `private` = self-serve under the owner's `:manage` cap.
+- Setting **`public`** = crosses a governance boundary → **admin/moderation gate** (an admin cap or approval — NOT self-serve for arbitrary tenants). For this build, public listing is **admin-gated** (core-team curates); self-serve-public + a review queue is a later addition.
+
+**Discovery + cross-workspace install:**
+- `DefinitionRegistry.list(caller_ws)` returns: caller's own-ws definitions **+ public** definitions. (So B sees A's only if A's is `public`.)
+- **Install a public socialware from another ws** = **cross-ws READ-ONLY lookup** of the (public) Definition + **materialize a LOCAL copy in the installer's workspace** (agents spawn in the installer's ws, caps minted there per the recipe's `requested_caps`). npm-style: no write access to the owner; install never mutates the source.
+- **DoD:** owner publishes (private→public via admin gate) → appears in another ws's `list` → that ws installs → local materialization works; a non-owner cannot edit/publish; a non-public socialware is invisible cross-ws (tests, red-on-pre-change→green).
 
 ## Return
 When the acceptance gate is green on `integration/socialware-manifest`, return the branch + a summary (each wave's proof + the E2E transcript). Lead runs full gates + merges to `main`.
