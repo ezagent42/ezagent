@@ -171,11 +171,30 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         )
         |> case do
           {:ok, object} -> {:ok, object}
-          :none -> :error
+          :none -> public_object(name)
         end
 
       :none ->
-        :error
+        public_object(name)
+    end
+  end
+
+  defp public_object(name) do
+    @definition_layer
+    |> ConfigStore.list_current_objects(@definition_key)
+    |> Enum.find(fn %ConfigObject{subject_uri: subject} = object ->
+      subject == definition_subject_uri(object.workspace_uri, name) and public_object?(object)
+    end)
+    |> case do
+      %ConfigObject{} = object -> {:ok, object}
+      nil -> :error
+    end
+  end
+
+  defp public_object?(%ConfigObject{} = object) do
+    case Definition.new(object.body) do
+      {:ok, %Definition{} = definition} -> public?(definition)
+      _ -> false
     end
   end
 

@@ -71,6 +71,31 @@ defmodule Ezagent.Socialware.DefinitionRegistryTest do
              Enum.find(rows, &(&1.name == public_name))
   end
 
+  test "lookup resolves public definitions from another workspace for read-only install" do
+    n = uniq()
+    public_name = "lookup-public-other-#{n}"
+    private_name = "lookup-private-other-#{n}"
+
+    public_object =
+      write!(@team_b, %{
+        name: public_name,
+        title: "Public lookup",
+        visibility_policy: %{scope: :public}
+      })
+
+    write!(@team_b, %{
+      name: private_name,
+      title: "Private lookup",
+      visibility_policy: %{scope: :private}
+    })
+
+    assert {:ok, %Definition{name: ^public_name}, object} =
+             DefinitionRegistry.lookup(@team_a, public_name)
+
+    assert object.id == public_object.id
+    assert :error = DefinitionRegistry.lookup(@team_a, private_name)
+  end
+
   test "write_definition rejects a caller-forged cross-workspace write" do
     assert {:error, {:cross_workspace_socialware_definition_write_denied, _}} =
              DefinitionRegistry.write_definition(
