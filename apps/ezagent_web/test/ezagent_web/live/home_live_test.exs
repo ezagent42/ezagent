@@ -40,6 +40,82 @@ defmodule EzagentWeb.HomeLiveTest do
     assert {:error, {:live_redirect, %{to: "/sessions"}}} = live(conn, ~p"/")
   end
 
+  # W0 tenant-isolation regression. The landing判据 must be scoped to the
+  # CALLER's workspace, not the global registry. Here tenant-`w0iso`'s
+  # workspace owns ZERO sessions while the boot-seeded
+  # `session://system/default/main` lives in the DISTINCT `system`
+  # workspace. A tenant-`w0iso` operator must land on the WIZARD — never be
+  # bounced to `/sessions` (which would both mis-land them AND leak the
+  # existence of another tenant's session).
+  #
+  # On the OLD global `list_sessions/0` code this test FAILS: the system
+  # seed makes the global list non-empty → `{:error, {:live_redirect, ...}}`
+  # → the `{:ok, _lv, html}` match raises.
+  test "GET / scopes the landing judgment to the caller's workspace (no cross-tenant leak)",
+       %{conn: conn} do
+    # Precondition: some OTHER tenant (system) has a live session.
+    assert Enum.any?(EzagentDomainInstanceMessage.list_sessions(), fn uri ->
+             match?(%URI{scheme: "session", host: "system"}, uri)
+           end)
+
+    # …but the caller's own workspace (tenant `w0iso`) has none.
+    assert [] =
+             EzagentDomainInstanceMessage.list_sessions(URI.new!("workspace://w0iso"))
+
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => "entity://w0iso/user/alice"
+      })
+
+    # No redirect → wizard rendered inline (a redirect would return
+    # `{:error, {:live_redirect, ...}}` and fail this match).
+    {:ok, _lv, html} = live(conn, ~p"/")
+    assert html =~ "first-session-wizard"
+    assert html =~ "Welcome to ezagent"
+  end
+
+  # W0 — the landing scope PREFERS the session's selected
+  # `current_workspace_uri` over the entity's home workspace, so a system
+  # member who context-switched into an empty tenant lands on the wizard
+  # (matching what `/sessions` renders — §6.5/§13.2) even though their home
+  # `system` workspace owns the boot-seeded `main`.
+  test "GET / prefers the selected current_workspace_uri over the entity home workspace",
+       %{conn: conn} do
+    # Home workspace (system) HAS a session…
+    assert Enum.any?(EzagentDomainInstanceMessage.list_sessions(), fn uri ->
+             match?(%URI{scheme: "session", host: "system"}, uri)
+           end)
+
+    # …but the SELECTED workspace (w0iso) has none.
+    assert [] = EzagentDomainInstanceMessage.list_sessions(URI.new!("workspace://w0iso"))
+
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => "entity://system/user/admin",
+        "current_workspace_uri" => "workspace://w0iso"
+      })
+
+    {:ok, _lv, html} = live(conn, ~p"/")
+    assert html =~ "first-session-wizard"
+  end
+
+  # W0 — a malformed/non-workspace selected slot must not crash the mount;
+  # it falls back to the entity's home workspace (fail-safe). Here the
+  # fallback (system) has the boot-seeded session → redirect.
+  test "GET / tolerates a malformed current_workspace_uri (falls back to entity home)",
+       %{conn: conn} do
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => "entity://system/user/admin",
+        "current_workspace_uri" => "@@not-a-uri@@"
+      })
+
+    assert {:error, {:live_redirect, %{to: "/sessions"}}} = live(conn, ~p"/")
+  end
+
   describe "wizard (no sessions)" do
     setup do
       # PR-J — to exercise the empty-sessions branch, terminate every
