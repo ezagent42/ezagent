@@ -673,6 +673,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "socialwares" => socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
       # world:state ({...current, ...next}) and never remounts, so a previously
@@ -697,6 +698,26 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace
     }
   end
+
+  defp socialware_rows(%URI{} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.Socialware.DefinitionRegistry.list()
+    |> Enum.map(fn row ->
+      public? = Map.get(row, :public?, false)
+
+      %{
+        "name" => Map.get(row, :name),
+        "title" => Map.get(row, :title),
+        "description" => Map.get(row, :description),
+        "version" => Map.get(row, :version),
+        "scope" => Map.get(row, :scope, if(public?, do: "public", else: "private")),
+        "workspace_uri" => encode_uri(Map.get(row, :workspace_uri)),
+        "public" => public?
+      }
+    end)
+  end
+
+  defp socialware_rows(_), do: []
 
   defp caller_payload(caller, workspace, caps, system_member?) do
     %{

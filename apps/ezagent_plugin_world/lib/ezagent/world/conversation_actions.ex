@@ -70,7 +70,12 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
-    create_session(socket, short_name, Map.get(args, "template_name", "default"))
+    create_session(
+      socket,
+      short_name,
+      Map.get(args, "template_name", "default"),
+      Map.get(args, "socialware_ref")
+    )
   end
 
   def handle_dispatch(socket, "session.fork_config", %{"session_uri" => sid} = args) do
@@ -237,17 +242,14 @@ defmodule Ezagent.World.ConversationActions do
   Create a new session in the caller's current workspace via
   `Ezagent.Workspace.create_session/3`, then open its `?session=` deep-link.
   """
-  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t() | nil) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def create_session(socket, short_name, template_name)
+  def create_session(socket, short_name, template_name, socialware_ref \\ nil)
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    # A session name is a URI path segment (`session://<ws>/<template>/<name>`).
-    # Whitespace breaks `Ezagent.URI.new!` parsing ("URI parse failed at \":\""),
-    # so collapse internal whitespace to "-" (friendly: "hello world" → "hello-world")
-    # and reject the remaining URI-structural chars with a clear error instead of a
-    # raw ArgumentException. CJK / letters / digits / `-_.` are preserved.
+    # Session names are URI path segments, so collapse whitespace and reject
+    # remaining URI-structural chars with a clear error.
     short_name = sanitize_short_name(short_name)
     template_name = String.trim(template_name)
 
@@ -265,18 +267,14 @@ defmodule Ezagent.World.ConversationActions do
         {:noreply, push_session_create_error(socket, :invalid_workspace)}
 
       true ->
-        case create_session_result(
+        case Ezagent.World.SocialwareInstall.prepare_create_template(
                workspace_uri,
                caller,
-               short_name,
                template_name,
-               &Ezagent.Workspace.create_session/3
+               socialware_ref
              ) do
-          {:ok, %URI{} = session_uri} ->
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+          {:ok, create_template_name} ->
+            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
@@ -284,12 +282,25 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
-  # No silent drop (Invariant #9): surface a session-create failure on the
-  # sessions table via the SAME `world:state` channel the route renders from
-  # (the React `SessionsTable` reads `state.create_error` and shows a banner).
-  # F3: before this, a create error only set the `data-last-dispatch` attribute
-  # and the operator saw nothing. The success path push_patch-remounts with
-  # fresh server state, which carries no `create_error`, so the banner clears.
+  defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    case create_session_result(
+           workspace_uri,
+           caller,
+           short_name,
+           template_name,
+           &Ezagent.Workspace.create_session/3
+         ) do
+      {:ok, %URI{} = session_uri} ->
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok")
+         |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+
+      {:error, reason} ->
+        {:noreply, push_session_create_error(socket, reason)}
+    end
+  end
+
   defp push_session_create_error(socket, reason) do
     socket
     |> assign(:last_dispatch_status, "error:#{reason(reason)}")

@@ -21,7 +21,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        idempotent re-materialize (repair/restart) → skip.
     2. **resolve recipe by workspace** — `RecipeRegistry.lookup(workspace, name)`,
        fail-closed on `:error` (never a cap-less spawn; #1116).
-    3. **spawn** — recipe → cc AgentTemplate content (`DefaultAgentSeed`) →
+    3. **spawn** — recipe × declared flavor (default `cc`) →
        `Agent.spawn_from_template_content` at the deterministic per-session URI.
     4. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
        on join `{:error, _}` terminate the worker we just spawned.
@@ -44,7 +44,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
-  alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry, SessionAgentMaterialize}
+  alias Ezagent.Agent.{RecipeRegistry, SessionAgentMaterialize}
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Invocation
   alias EzagentDomainInstanceMessage.SessionCreator
@@ -98,6 +98,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
     recipe_name = lookup_ref(recipe_of(agent))
     role_name = role_name_of(agent)
+    flavor = flavor_of(agent)
     planned_uri = planned_agent_uri(role_name, session_uri, workspace_uri)
 
     case existing_member_for_role(session_uri, role_name) do
@@ -120,7 +121,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                  planned_uri,
                  recipe,
                  recipe_name,
-                 role_name
+                 role_name,
+                 flavor
                ),
              :ok <- grant_recipe_caps(planned_uri, recipe) do
           :ok
@@ -155,27 +157,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          planned_uri,
          recipe,
          recipe_name,
-         role_name
+         role_name,
+         flavor
        ) do
-    content =
-      DefaultAgentSeed.template_content(
-        recipe_name,
-        @agent_description,
-        recipe_project_cwd(recipe, recipe_name)
-      )
-
     source_template_uri = Ezagent.URI.template(:system, :agent, recipe_name)
 
-    case Ezagent.Entity.Agent.spawn_from_template_content(
-           content,
-           planned_uri,
-           granted_by,
-           workspace_uri,
+    case Ezagent.Agent.RecipeMaterializer.create_agent_from_recipe(%{
+           recipe: recipe,
+           recipe_name: recipe_name,
+           role_name: role_name,
+           flavor: flavor,
+           agent_uri: planned_uri,
+           workspace_uri: workspace_uri,
+           owner_uri: granted_by,
            caller: granted_by,
            caps: SessionCreator.list_caps_for_materialization(granted_by),
-           source_template_uri: source_template_uri
-         ) do
-      {:ok, %{}} ->
+           source_template_uri: source_template_uri,
+           description: @agent_description
+         }) do
+      {:ok, _outcome} ->
         join_or_cleanup(session_uri, planned_uri, role_name)
 
       {:error, reason} ->
@@ -315,18 +315,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  # The per-agent `project_cwd` the recipe DECLARES (atom/string-key tolerant),
-  # else the generic sandbox default. Inlined (no shared `config_get`) so the
-  # body stays distinct from `SessionAgentMaterialize`'s by-role variant.
-  defp recipe_project_cwd(recipe, role) do
-    config = Map.get(recipe, :config) || Map.get(recipe, "config") || %{}
-
-    case Map.get(config, :project_cwd) || Map.get(config, "project_cwd") do
-      cwd when is_binary(cwd) -> cwd
-      _ -> DefaultAgentSeed.default_project_cwd(role)
-    end
-  end
-
   defp valid_agent?(%{} = agent),
     do: is_binary(recipe_of(agent)) and is_binary(role_name_of(agent))
 
@@ -334,6 +322,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp recipe_of(agent), do: Map.get(agent, :recipe) || Map.get(agent, "recipe")
   defp role_name_of(agent), do: Map.get(agent, :role_name) || Map.get(agent, "role_name")
+
+  defp flavor_of(agent) do
+    case Map.get(agent, :flavor) || Map.get(agent, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" -> flavor
+      _ -> "cc"
+    end
+  end
 
   defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
 end

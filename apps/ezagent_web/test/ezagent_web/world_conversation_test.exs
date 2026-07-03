@@ -14,10 +14,14 @@ defmodule EzagentWeb.WorldConversationTest do
 
   import Phoenix.LiveViewTest
 
+  alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.Matcher
   alias Ezagent.Routing.RuleStore
+  alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
+  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   setup do
     prior_home = System.get_env("EZAGENT_HOME")
@@ -556,6 +560,46 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert pushed_uri == URI.to_string(new_uri)
     assert new_uri in EzagentDomainInstanceMessage.list_sessions(Ezagent.URI.workspace(:system))
+  end
+
+  test "PR-5: sessions state lists installable socialware definitions", %{conn: conn} do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+
+    {:ok, _view, html} = live(admin_conn(conn), "/sessions")
+
+    assert html =~ ~s(&quot;socialwares&quot;)
+    assert html =~ ~s(&quot;name&quot;:&quot;socialware&quot;)
+  end
+
+  test "PR-5: session.create with socialware_ref creates an install template and opens it", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+    short_name = "world-pr5-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => "socialware"
+      }
+    })
+
+    template_name = "socialware-install-socialware"
+    new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
+    encoded = new_uri |> URI.to_string() |> URI.encode_www_form()
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+
+    assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
+    assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+    assert Map.get(content, :installs) == ["socialware"]
+    assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
   end
 
   test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
@@ -1105,7 +1149,12 @@ defmodule EzagentWeb.WorldConversationTest do
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
     assert definition.prompt_templates == %{"answer" => "Use the KB context."}
     assert Map.has_key?(definition.legends, "support")
-    assert definition.visibility_policy == %{publish_policy: :supervised, web_anon_access: true}
+
+    assert definition.visibility_policy == %{
+             scope: :private,
+             publish_policy: :supervised,
+             web_anon_access: true
+           }
 
     assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
     assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
@@ -1123,7 +1172,266 @@ defmodule EzagentWeb.WorldConversationTest do
              )
   end
 
+  test "PR-6: pure-config hello manifest publishes, discovers, installs, materializes py agent, and renders",
+       %{conn: conn} do
+    :ok = ensure_manifest_reference_apps_started()
+    n = System.unique_integer([:positive])
+    owner_ws_name = "manifest-owner-#{n}"
+    installer_ws_name = "manifest-installer-#{n}"
+    manifest_name = "hello-manifest-#{n}"
+    recipe_name = "hello-manifest-py-#{n}"
+    role_name = "py-helper-#{n}"
+    short_name = "hello-run-#{n}"
+
+    {:ok, _} = Ezagent.Workspace.create(owner_ws_name, %{})
+    {:ok, _} = Ezagent.Workspace.create(installer_ws_name, %{})
+
+    owner_ws = Ezagent.URI.workspace(owner_ws_name)
+    installer_ws = Ezagent.URI.workspace(installer_ws_name)
+    installer_user = Ezagent.URI.entity(installer_ws_name, :user, "admin")
+    admin = Ezagent.Entity.User.admin_uri()
+    :ok = create_read_only_user(installer_user, [])
+    :ok = Ezagent.Workspace.add_member(installer_ws_name, installer_user)
+    :ok = seed_py_recipe(recipe_name)
+
+    raw_manifest =
+      hello_manifest_attrs(%{
+        name: manifest_name,
+        recipe_name: recipe_name,
+        role_name: role_name
+      })
+
+    assert {:ok, definition} = Ezagent.Socialware.ManifestResolver.resolve(raw_manifest)
+
+    manage_cap = SocialwareGovernance.manage_cap(manifest_name, owner_ws, admin)
+
+    owner_ctx = %{
+      caller: admin,
+      workspace_uri: owner_ws,
+      caps: MapSet.new([manage_cap, Ezagent.Capability.admin_genesis_cap()])
+    }
+
+    assert {:ok, %{cr_id: cr_id}} =
+             SocialwareGovernance.open_cr(%{name: manifest_name}, owner_ctx)
+
+    assert {:ok, _} = SocialwareGovernance.stage_definition(cr_id, definition, owner_ctx)
+    assert {:ok, %{status: "published"}} = SocialwareGovernance.publish_cr(cr_id, owner_ctx)
+
+    assert Enum.any?(Ezagent.Socialware.DefinitionRegistry.list(installer_ws), fn row ->
+             row.name == manifest_name and row.public? == true
+           end)
+
+    {:ok, view, html} = live(workspace_conn(conn, installer_ws_name, installer_user), "/sessions")
+    assert html =~ ~s(&quot;name&quot;:&quot;#{manifest_name}&quot;)
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => manifest_name
+      }
+    })
+
+    template_name = "socialware-install-#{manifest_name}"
+
+    session_uri =
+      Ezagent.URI.new!("session://#{installer_ws_name}/#{template_name}/#{short_name}")
+
+    assert_patch(view, "/sessions?session=#{URI.encode_www_form(URI.to_string(session_uri))}")
+
+    assert Ezagent.Socialware.Installation.installed?(session_uri, manifest_name)
+
+    planned_agent = DefinitionAgents.planned_agent_uri(role_name, session_uri, installer_ws)
+
+    on_exit(fn ->
+      _ = Ezagent.Domain.Python.stop(planned_agent)
+      _ = Ezagent.Kind.terminate(planned_agent)
+      _ = Ezagent.Kind.terminate(session_uri)
+    end)
+
+    # Core PR-6 assertion set: the socialware manifest materialized the py agent
+    # as a live, MATERIALIZED + joined session member — Kind alive, ReadyGate
+    # :ready (Kind readiness is independent of the Python subprocess), durable
+    # flavor/role markers, config_dir allocated. These all pass with `uv` ABSENT
+    # (e.g. CI): materialization is decoupled from subprocess-liveness (see
+    # `Ezagent.Template.PyAgent.instantiate/3` — a subprocess-start failure keeps
+    # the Kind materialized in a degraded state, next :receive surfaces
+    # :not_alive). The LIVE Python subprocess (`Python.alive?`) is NOT asserted
+    # here so the core E2E does not require uv; the identical materialize code
+    # path (`provision_and_instantiate` → `PyAgent.instantiate/3` → subprocess) is
+    # covered under `@tag :uv` by
+    # `apps/ezagent_plugin_py/test/ezagent/template/py_template_test.exs`.
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(planned_agent)
+    assert :ready = Ezagent.ReadyGate.status(planned_agent)
+    assert {:ok, "py"} = Ezagent.AgentFlavorAttributes.get(planned_agent)
+    assert {:ok, ^role_name} = Ezagent.AgentRoleAttributes.fetch(planned_agent)
+
+    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
+    sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
+    assert is_binary(Map.get(sandbox, :config_dir_path))
+
+    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
+    assert %{^planned_agent => %{role_name: ^role_name}} = members
+
+    caps = Ezagent.Identity.list_caps_for(planned_agent)
+
+    assert Enum.any?(caps, fn cap ->
+             cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
+           end)
+
+    page_spec = %{
+      "type" => "Stack",
+      "props" => %{"direction" => "vertical", "title" => "Manifest hello"},
+      "children" => [
+        %{
+          "type" => "Heading",
+          "props" => %{"text" => "Pure-config hello", "level" => 1},
+          "children" => []
+        }
+      ]
+    }
+
+    assert {:ok, ^page_spec} = EzagentPluginHello.Spec.validate(page_spec)
+
+    assert {:ok, _turn_id} =
+             EzagentPluginHello.TurnDriver.drive(session_uri, page_spec, "manifest page")
+
+    anon = mint_and_join_anon(session_uri)
+    snapshot = wait_for_page(session_uri, anon)
+    assert snapshot.page == page_spec
+
+    assert Enum.any?(Ezagent.UI.SessionViewRegistry.applicable_views(session_uri, anon), fn row ->
+             row.id == :hello_page
+           end)
+
+    rendered =
+      render_component(&EzagentPluginHello.PageView.render/1, session_uri: session_uri)
+
+    assert rendered =~ "hello-page-renderer"
+    assert rendered =~ "Pure-config hello"
+  end
+
   # --- helpers ----------------------------------------------------------
+
+  defp ensure_manifest_reference_apps_started do
+    with {:ok, _} <- Application.ensure_all_started(:ezagent_plugin_hello),
+         {:ok, _} <- Application.ensure_all_started(:ezagent_plugin_py) do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
+
+      :ok =
+        Ezagent.CapabilityRegistry.register(
+          Ezagent.Entity.Session,
+          :hello_render,
+          Ezagent.ActionSet.HelloRender
+        )
+
+      :ok
+    else
+      {:error, reason} -> flunk("failed to start manifest reference app: #{inspect(reason)}")
+    end
+  end
+
+  defp seed_py_recipe(recipe_name) do
+    base = EzagentPluginPy.Application.np_role_recipe()
+
+    recipe =
+      base
+      |> Map.put(:name, recipe_name)
+      |> Map.put(:requested_caps, [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}])
+
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), recipe_name)
+
+    case RecipeRegistry.seed_role_if_absent(recipe) do
+      {:ok, _} -> :ok
+      {:error, reason} -> flunk("failed to seed py recipe: #{inspect(reason)}")
+    end
+  end
+
+  defp hello_manifest_attrs(%{name: name, recipe_name: recipe_name, role_name: role_name}) do
+    %{
+      "name" => name,
+      "version" => "0.1.0",
+      "title" => "Pure-config hello",
+      "description" => "Hello socialware authored as a manifest.",
+      "uses" => ["hello"],
+      "bases" => [
+        "Elixir.Ezagent.ActionSet.Session",
+        "Elixir.Ezagent.ActionSet.Publisher.SessionImpl"
+      ],
+      "shape" => [
+        "Elixir.Ezagent.ActionSet.Turn",
+        "Elixir.Ezagent.ActionSet.Surface",
+        "Elixir.Ezagent.ActionSet.SupervisorApproval"
+      ],
+      "views" => ["hello_render"],
+      "agents" => [
+        %{"recipe" => recipe_name, "role_name" => role_name, "flavor" => "py"}
+      ],
+      "prompt_templates" => %{"hello" => "Say hello: {body}"},
+      "legends" => %{
+        "hello" => %{
+          "member_set" => [role_name],
+          "bound_rule_set" => "default",
+          "fold" => false
+        }
+      },
+      "routing_rules" => [
+        %{
+          "matcher" => %{"type" => "always"},
+          "receivers" => [role_name],
+          "rule_set" => "default",
+          "position" => 0,
+          "prompt_template_ref" => "hello"
+        }
+      ],
+      "visibility_policy" => %{
+        "scope" => "public",
+        "publish_policy" => "supervised",
+        "web_anon_access" => true
+      }
+    }
+  end
+
+  defp mint_and_join_anon(session_uri) do
+    {:ok, anon_uri} = AnonUser.mint_for_public_session(session_uri)
+    :ok = Ezagent.Entity.spawn_principal(anon_uri)
+    {:ok, _row} = AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now())
+
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: anon_uri},
+        ctx: %{caller: anon_uri, reply: :ignore}
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
+    anon_uri
+  end
+
+  defp wait_for_page(session, caller, attempts \\ 150)
+
+  defp wait_for_page(_session, _caller, 0),
+    do: flunk("external snapshot never exposed an approved page")
+
+  defp wait_for_page(session, caller, attempts) do
+    case ExternalFeed.snapshot(session, caller) do
+      {:ok, %{page: page} = snapshot} when not is_nil(page) ->
+        snapshot
+
+      _ ->
+        Process.sleep(20)
+        wait_for_page(session, caller, attempts - 1)
+    end
+  end
 
   defp find_session_template_uri!(template_name, workspace_name) do
     prefix =
@@ -1165,11 +1473,17 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   defp admin_conn(conn) do
+    workspace_conn(conn, "system")
+  end
+
+  defp workspace_conn(conn, workspace_name, entity_uri \\ nil) do
+    entity_uri = entity_uri || Ezagent.Entity.User.admin_uri()
+
     conn
     |> Map.put(:host, "world.ezagent.chat")
     |> Plug.Test.init_test_session(%{
-      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-      "current_workspace_uri" => "workspace://system"
+      "current_entity_uri" => URI.to_string(entity_uri),
+      "current_workspace_uri" => URI.to_string(Ezagent.URI.workspace(workspace_name))
     })
   end
 

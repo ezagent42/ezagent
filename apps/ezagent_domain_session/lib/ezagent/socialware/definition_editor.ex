@@ -51,6 +51,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, %ConfigObject{} = object} <-
            DefinitionRegistry.write_definition(definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ) do
       {:ok, definition, object}
@@ -108,6 +109,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, object} <-
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ),
          {:ok, _install_object} <-
@@ -141,6 +143,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, object} <-
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ),
          install = %{install | ref: name},

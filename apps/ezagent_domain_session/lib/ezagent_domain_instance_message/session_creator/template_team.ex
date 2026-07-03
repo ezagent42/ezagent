@@ -317,11 +317,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     do: {:error, {:unknown_rule_receiver, other}}
 
   defp declared_role_names(content) when is_map(content) do
-    content
-    |> template_members_of()
-    |> Enum.map(&member_field(&1, :role_name))
+    member_roles =
+      content
+      |> template_members_of()
+      |> Enum.map(&member_field(&1, :role_name))
+
+    agent_roles =
+      content
+      |> template_agents_of()
+      |> Enum.map(&member_field(&1, :role_name))
+
+    (member_roles ++ agent_roles)
     |> Enum.filter(&(is_binary(&1) and &1 != ""))
     |> Enum.uniq()
+  end
+
+  defp template_agents_of(content) when is_map(content) do
+    case Map.get(content, :agents) || Map.get(content, "agents") do
+      list when is_list(list) -> list
+      _ -> []
+    end
   end
 
   defp template_members_of(content) when is_map(content) do

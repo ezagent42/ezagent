@@ -38,7 +38,7 @@ defmodule EzagentPluginHello.PageView do
 
   @impl true
   def applies_to?(%URI{} = session_uri) do
-    Ezagent.URI.type?(session_uri, :hello) and
+    hello_session?(session_uri) and
       match?({:ok, surface} when is_map(surface), Ezagent.Kind.get_slice(session_uri, :surface))
   rescue
     _ -> false
@@ -47,6 +47,18 @@ defmodule EzagentPluginHello.PageView do
   end
 
   def applies_to?(_), do: false
+
+  defp hello_session?(%URI{} = session_uri) do
+    Ezagent.URI.type?(session_uri, :hello) or manifest_installed_hello?(session_uri)
+  end
+
+  defp manifest_installed_hello?(%URI{} = session_uri) do
+    session_uri
+    |> Ezagent.Socialware.Installation.installed_definitions()
+    |> Enum.any?(fn definition ->
+      "hello" in definition.uses or Ezagent.ActionSet.HelloRender in definition.views
+    end)
+  end
 
   @impl true
   def render(assigns) do

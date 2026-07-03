@@ -234,12 +234,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     # 1. Plugin-author work: declare a new URI scheme + register spawn fn.
     probe_uri = URI.new!("probe://persist-#{System.unique_integer([:positive])}")
 
-    SpawnRegistry.register("probe", fn uri ->
-      DynamicSupervisor.start_child(
-        Ezagent.Workspace.Supervisor,
-        {Ezagent.Kind.Server, {ProbeKind, %{uri: uri}}}
-      )
-    end)
+    SpawnRegistry.register("probe", allow_on_spawn_probe_fn())
 
     # 2. Plugin-author work: persist a Workspace declaring the probe as a member.
     workspace_name = "persist-#{System.unique_integer([:positive])}"
@@ -281,12 +276,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
     # 1. Plugin-author work: register both the probe Kind's spawn fn
     #    AND the probe Template Class.
-    SpawnRegistry.register("probe", fn uri ->
-      DynamicSupervisor.start_child(
-        Ezagent.Workspace.Supervisor,
-        {Ezagent.Kind.Server, {ProbeKind, %{uri: uri}}}
-      )
-    end)
+    SpawnRegistry.register("probe", allow_on_spawn_probe_fn())
 
     :ok = TemplateRegistry.register(ProbeTemplate)
 
@@ -369,6 +359,20 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   end
 
   defp load_all_until_present(workspace_name, attempts) when attempts > 0 do
+    # #108 (ii)/(ii)EXT de-flake — `Loader.load_all` SPAWNS the Workspace Kind's
+    # children (the probe) mid-test under `Ezagent.Workspace.Supervisor`. Those
+    # processes (and the freshly-created Workspace Kind, alive only AFTER this
+    # test's `setup` ran) sit OUTSIDE the test owner's `$callers` chain, so
+    # `EzagentCore.DataCase.allow_live_kinds/1` (which only allows Kinds alive AT
+    # setup) never covered them. Under a transiently reverted shared-mode window
+    # (heavy concurrent umbrella load), their DB access raises
+    # `DBConnection.OwnershipError`, the child never registers, and this poll
+    # never sees it → flaky flunk. Re-run the DataCase allow pattern over every
+    # CURRENT `KindRegistry` pid BEFORE each idempotent `load_all` so any Kind
+    # that came alive post-setup can reach this test's connection. Same
+    # invariant, TEST-infra only (probe stays defined in test/, core untouched).
+    allow_spawned_kinds()
+
     case Enum.find(Ezagent.Workspace.Loader.load_all(), fn {name, _} -> name == workspace_name end) do
       {^workspace_name, children} = found when children != [] ->
         found
@@ -377,6 +381,59 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
         Process.sleep(20)
         load_all_until_present(workspace_name, attempts - 1)
     end
+  end
+
+  # The probe spawn fn a plugin's `Application.start` would register, PLUS the
+  # #108 de-flake: `Sandbox.allow/3` the freshly-spawned probe pid onto this
+  # test's owner connection the instant it starts. The probe is started under
+  # `Ezagent.Workspace.Supervisor` (a global supervisor, never allowed at
+  # setup), so without this its own DB access (any post-init/activate read)
+  # could hit `DBConnection.OwnershipError` in a reverted shared-mode window.
+  # The spawn fn runs in the (owner-allowed) test process, so `self()` is a
+  # legitimate allow parent.
+  defp allow_on_spawn_probe_fn do
+    test_pid = self()
+
+    fn uri ->
+      case DynamicSupervisor.start_child(
+             Ezagent.Workspace.Supervisor,
+             {Ezagent.Kind.Server, {ProbeKind, %{uri: uri}}}
+           ) do
+        {:ok, pid} = ok ->
+          allow_kind_pid(test_pid, pid)
+          ok
+
+        {:error, {:already_started, pid}} = adopted ->
+          allow_kind_pid(test_pid, pid)
+          adopted
+
+        other ->
+          other
+      end
+    end
+  end
+
+  # Re-run the `EzagentCore.DataCase.allow_live_kinds/1` pattern over every
+  # currently-live Kind — for the ones that came alive AFTER `setup` (the
+  # Workspace Kind + Loader-spawned children). Best-effort + idempotent,
+  # mirroring DataCase: `Sandbox.allow/3` tolerates an already-owned/dead pid.
+  defp allow_spawned_kinds do
+    Enum.each(current_kind_pids(), fn pid -> allow_kind_pid(self(), pid) end)
+  end
+
+  defp current_kind_pids do
+    Ezagent.KindRegistry.list_all()
+    |> Enum.map(fn {_uri, pid} -> pid end)
+  rescue
+    _ -> []
+  end
+
+  defp allow_kind_pid(owner, pid) do
+    Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, owner, pid)
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   defp wait_until(fun, attempts \\ 50)

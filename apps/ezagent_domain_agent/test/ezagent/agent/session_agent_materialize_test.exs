@@ -260,6 +260,34 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
       assert spec.template_content.flavor == "cc"
     end
 
+    test "registered role + explicit flavor → spec carries that flavor, not the cc seed shortcut" do
+      flavor = register_stub_flavor()
+      role = "t7d-non-cc-by-role-#{uniq()}"
+      :ok = RecipeRegistry.flush_cache()
+
+      {:ok, :seeded} =
+        RecipeRegistry.seed_role_if_absent(%{
+          name: role,
+          behaviors: [],
+          requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
+          skills: []
+        })
+
+      assert {:ok, spec} =
+               SessionAgentMaterialize.by_role_spec(
+                 role,
+                 flavor,
+                 @session_uri,
+                 @workspace_uri,
+                 @owner_uri
+               )
+
+      assert spec.role == role
+      assert spec.template_content.role == role
+      assert spec.template_content.flavor == flavor
+      assert spec.template_content.project_cwd == DefaultAgentSeed.default_project_cwd(role)
+    end
+
     test "recipe config[:project_cwd] OVERRIDES the generic cwd (T7e CLI-reachability seam)" do
       role = "t7e-cwd-#{uniq()}"
       custom_cwd = "/srv/umbrella-root-#{uniq()}"
