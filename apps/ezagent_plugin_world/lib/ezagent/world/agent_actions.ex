@@ -124,6 +124,22 @@ defmodule Ezagent.World.AgentActions do
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         # AUTHZ GATE (must run BEFORE the live-sessions preflight below).
+         # `agent_live_sessions/1` resolves the workspace from the PASSED URI and
+         # lists there with no caller check, so a forged / cross-workspace agent
+         # URI would otherwise leak another tenant's session names + count through
+         # the `{:agent_bound_to_live_session, sessions}` error banner. Reuse the
+         # SAME instance-scoped `cap(:agent, Manage, :any)` gate the authoritative
+         # `manage.delete` dispatch (and the sibling `agents.config.*` actions via
+         # `Ezagent.Agent.Config`) enforce: `read_cascade/4` authorizes the caller's
+         # caps against THIS agent's manage-cap and is read-only (no dispatch, no
+         # cold-start). A caller lacking this agent's manage-cap — a forged URI, a
+         # cross-workspace URI, or a same-workspace non-owner — fails closed with
+         # `{:error, :unauthorized}` (or `:cross_workspace_denied`/`:invalid_agent_uri`),
+         # learning nothing about what exists. Anyone entitled to delete is
+         # equally entitled to read_cascade (same `Manage` behavior, same
+         # instance), so this never blocks a legitimate delete.
+         {:ok, _cascade} <- Ezagent.Agent.Config.read_cascade(agent_uri, caller, caps),
          {:ok, []} <- EzagentDomainInstanceMessage.agent_live_sessions(agent_uri),
          target = Ezagent.URI.with_action(agent_uri, :manage, :delete),
          {:ok, {:ok, :deleted}} <-
