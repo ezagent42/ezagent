@@ -228,6 +228,10 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [conciergeBubble, setConciergeBubble] = useState(null)
   const conciergeSeen = useRef(null)
   const bubbleTimer = useRef(null)
+  // "Waiting for a reply" after the member sends — a small typing indicator so the
+  // wait (LLM round-trip) doesn't feel dead. Cleared when an agent responds.
+  const [awaiting, setAwaiting] = useState(false)
+  const awaitTimer = useRef(null)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
     return () => document.body.classList.remove("jr-highlight")
@@ -260,6 +264,17 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     }
     execNav(latest.nav)
   }, [snapshot])
+
+  // Clear the "awaiting reply" typing indicator once ANY agent (builder ack or
+  // concierge answer) posts — the newest message is from an /agent/.
+  useEffect(() => {
+    if (!awaiting) return
+    const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
+    const last = msgs[msgs.length - 1]
+    if (last && typeof last.sender === "string" && last.sender.indexOf("/agent/") !== -1) {
+      setAwaiting(false)
+    }
+  }, [snapshot, awaiting])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -453,6 +468,10 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     ch.push("post", {text: full})
       .receive("error", (e) => console.warn("[hello] post failed:", e))
     setSelected(null)
+    setConciergeBubble(null)
+    setAwaiting(true)
+    window.clearTimeout(awaitTimer.current)
+    awaitTimer.current = window.setTimeout(() => setAwaiting(false), 45000)
   }
   const doLogin = () => {
     const back = window.location.pathname + window.location.search
@@ -464,9 +483,17 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     null,
     React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
-    !IS_EMBEDDED && conciergeBubble
-      ? React.createElement("div", {className: "concierge-bubble", key: "cb"}, conciergeBubble)
-      : null,
+    !IS_EMBEDDED && awaiting
+      ? React.createElement(
+          "div",
+          {className: "concierge-bubble concierge-loading", key: "cl", "aria-label": "正在回复"},
+          React.createElement("span", {className: "typing-dot"}),
+          React.createElement("span", {className: "typing-dot"}),
+          React.createElement("span", {className: "typing-dot"}),
+        )
+      : !IS_EMBEDDED && conciergeBubble
+        ? React.createElement("div", {className: "concierge-bubble", key: "cb"}, conciergeBubble)
+        : null,
     IS_EMBEDDED
       ? null
       : React.createElement(PreviewBar, {
@@ -731,6 +758,11 @@ const PREVIEWBAR_CSS = `
 .previewbar-dot{position:absolute;top:.18rem;right:.18rem;width:.5rem;height:.5rem;border-radius:999px;background:#e5484d;box-shadow:0 0 0 2px rgba(255,255,255,.92)}
 .concierge-bubble{position:fixed;left:50%;bottom:5.2rem;transform:translateX(-50%);z-index:61;max-width:min(34rem,calc(100vw - 2rem));padding:.7rem 1rem;border-radius:1rem;background:rgba(255,255,255,.94);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.7);box-shadow:0 12px 34px rgba(0,0,0,.16);font-size:.9rem;line-height:1.5;color:#1a1a1a;animation:cb-in .2s cubic-bezier(.16,1,.3,1)}
 @keyframes cb-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.concierge-loading{display:flex;gap:.32rem;align-items:center;padding:.7rem 1.05rem}
+.typing-dot{width:.42rem;height:.42rem;border-radius:999px;background:#9a9a9a;animation:typing 1.2s ease-in-out infinite}
+.typing-dot:nth-child(2){animation-delay:.18s}
+.typing-dot:nth-child(3){animation-delay:.36s}
+@keyframes typing{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-.18rem)}}
 .previewbar-input{flex:1;min-width:0;border:none;background:transparent;outline:none;font-size:.95rem;color:#181818;height:2.4rem;padding:0 .25rem}
 .previewbar-input:disabled{color:#8a8a8a;cursor:not-allowed}
 .previewbar-input::placeholder{color:#9a9a9a}
