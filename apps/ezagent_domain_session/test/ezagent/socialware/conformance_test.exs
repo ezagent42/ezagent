@@ -117,4 +117,21 @@ defmodule Ezagent.Socialware.ConformanceTest do
              &match?({:agent_caps_and_role_uniqueness, {:duplicate_agent_role_name, _}}, &1)
            )
   end
+
+  test "missing manifest uses plugin fails uses_plugins_installed" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-missing-plugin-#{n}",
+        uses: ["no-such-socialware-plugin-#{n}"]
+      })
+
+    assert {:error, failures} = Conformance.check(definition, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?({:uses_plugins_installed, {:missing_socialware_plugins, [_]}}, &1)
+           )
+  end
 end

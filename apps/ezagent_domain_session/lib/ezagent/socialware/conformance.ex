@@ -21,7 +21,7 @@ defmodule Ezagent.Socialware.Conformance do
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.CapabilityRegistry
   alias Ezagent.Routing.{PromptTemplate, Resolver}
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
 
   @session_kind Ezagent.Entity.Session
 
@@ -38,6 +38,7 @@ defmodule Ezagent.Socialware.Conformance do
 
     failures =
       []
+      |> add(:uses_plugins_installed, check_uses_plugins(definition.uses))
       |> add(:bases_shape_load, check_modules_load(definition.bases ++ definition.shape))
       |> add(:views_exist_caps_registered, check_views(definition.views))
       |> add(:agent_recipes_resolve, check_agent_recipes(definition.agents, ws))
@@ -48,6 +49,7 @@ defmodule Ezagent.Socialware.Conformance do
         check_orchestrator_uri(definition.orchestrator_template_uri)
       )
       |> add(:install_resolves, check_install_resolves(definition, ws))
+      |> add(:template_installable, check_template_installable(definition, ws))
       |> add(:routing_receivers_resolve, check_routing_receivers(definition))
       |> add(:prompt_template_refs_valid, check_prompt_template_refs(definition))
       |> add(:view_caps_gate_ready, check_view_caps_gate_ready(definition.views))
@@ -60,6 +62,7 @@ defmodule Ezagent.Socialware.Conformance do
   @spec assertions() :: [atom()]
   def assertions do
     [
+      :uses_plugins_installed,
       :bases_shape_load,
       :views_exist_caps_registered,
       :agent_recipes_resolve,
@@ -67,11 +70,30 @@ defmodule Ezagent.Socialware.Conformance do
       :adapters_registered,
       :orchestrator_uri_parses,
       :install_resolves,
+      :template_installable,
       :routing_receivers_resolve,
       :prompt_template_refs_valid,
       :view_caps_gate_ready
     ]
   end
+
+  # --- 0: uses[] plugins are installed ------------------------------------
+
+  defp check_uses_plugins(uses) when is_list(uses) do
+    case Enum.reject(uses, &plugin_installed?/1) do
+      [] -> :ok
+      missing -> {:error, {:missing_socialware_plugins, missing}}
+    end
+  end
+
+  defp plugin_installed?(slug) when is_binary(slug) do
+    not is_nil(Ezagent.PluginRegistry.info(slug)) or
+      match?({:ok, _}, Ezagent.PluginPackage.InstalledRegistry.lookup(slug))
+  rescue
+    _ -> false
+  end
+
+  defp plugin_installed?(_), do: false
 
   # --- 1: bases/shape ActionSet modules load -------------------------------
 
@@ -224,6 +246,18 @@ defmodule Ezagent.Socialware.Conformance do
     case DefinitionRegistry.lookup(ws, name) do
       {:ok, _def, _obj} -> :ok
       :error -> {:error, {:unknown_socialware_install, name}}
+    end
+  end
+
+  defp check_template_installable(%Definition{name: name}, ws) do
+    content = %{installs: [name]}
+
+    with {:ok, _resolved} <- Installation.resolved_template_installs(content, ws),
+         {:ok, _behaviors} <- Installation.behavior_set_for_template(content, ws) do
+      :ok
+    else
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_template_installability_result, other}}
     end
   end
 

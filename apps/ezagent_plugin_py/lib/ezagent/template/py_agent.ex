@@ -149,7 +149,7 @@ defmodule Ezagent.Template.PyAgent do
         {:ok, _pid} ->
           case start_python(agent_uri, script_path, config_dir) do
             :ok ->
-              {:ok, [agent_uri], %{fresh?: true}}
+              {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
 
             {:error, reason} ->
               _ = Ezagent.Kind.terminate(agent_uri)
@@ -160,7 +160,7 @@ defmodule Ezagent.Template.PyAgent do
           # Adopted — ensure the subprocess is alive, do NOT undo.
           case ensure_python_alive(agent_uri, script_path, config_dir) do
             :ok ->
-              {:ok, [agent_uri], %{fresh?: false}}
+              {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 
             {:error, _reason} = err ->
               err
