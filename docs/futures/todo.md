@@ -1373,3 +1373,75 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > kill the facade test's owner connection. NOT a close regression (no merge touched
 > `apps/ezagent_domain_external_mirror`). Fix: same `EzagentCore.DataCase` / `async:
 > false` hardening pg applied to `repair_orchestrator_test`. Owner: external_mirror/pg.
+
+---
+
+## Agent console QA findings (from #1027, triaged 2026-07-03)
+
+> Triage of the 7 QA findings (F1–F7) raised in PR #1027 / the QA branch
+> `qa/agent-console-findings-0626` (original report basis: main `6f123b8b`,
+> 2026-06-26), re-checked against `origin/main` @ `5a6dd484`. The agent-console
+> rework that followed (SessionTemplate directly-creatable filter, socialware
+> remove-participant, agent-delete guard + detail-route error) landed most of
+> these; the fix commits carry explicit `F#:` markers, traced end-to-end below.
+> Only ONE actionable residual survives (F7's missing session-delete/archive
+> control). #1027 can be closed once this residual is recorded here.
+
+### F7 (residual) — no session delete / archive control — OPEN (LOW-MID)
+
+> Session conversation page still has NO delete-session / archive-session /
+> end-session control (only Invite, Restart orchestrator, per-member Remove, and
+> routing rules). Evidence: exhaustive grep across `apps/ezagent_plugin_world/lib`
+> + `apps/ezagent_plugin_world/assets/src` finds no session delete/archive/end
+> action — `@conversation_actions` (`world_live.ex:262`) has no `session.delete`;
+> `Conversation.tsx` has no delete/archive button.
+> NOTE — the ORIGINAL HIGH-impact half of F7 ("占用中的 agent 根本删不掉" — an
+> occupied agent could not be deleted via the UI) is **RESOLVED**: a per-member
+> Remove control now exists (`Conversation.tsx:728-737` → `onRemoveParticipant`
+> → `main.tsx:350` `session.remove_participant` → `conversation_actions.ex:627`
+> → `Ezagent.Session.Participants.remove_participant/3`). Traced end-to-end:
+> removal mutates the `Session.session_member_uris` slice
+> (`participants.ex:88-95`), which is exactly what the agent-delete guard
+> `agent_live_sessions/1` counts (`.../session_creator/listing.ex:37-41`) — so
+> removing the agent from its sessions clears the guard and the delete proceeds.
+> Residual is therefore lower severity: you can move an agent out session-by-
+> session, but you still cannot delete/close the now-empty session itself.
+> Suggested fix: add a session delete/archive entry (owner-cap-gated, mirror the
+> `remove_participant` dispatch pattern) on the conversation page + sessions table.
+
+### Dropped as FIXED (verified against `origin/main` @ `5a6dd484`)
+
+- **F3 (was HIGH) — new-session default template `advisor` invalid + create
+  failure silently swallowed** — FIXED. `session_template_names/1` now always
+  leads with `"default"` (`workspace_plugin_data.ex:215`) and filters out
+  non-`directly_creatable?` classes like `advisor`
+  (`workspace_plugin_data.ex:188-231`); the React picker takes `templates[0]`
+  (`SessionsTable.tsx:29,33`). Create failures now push `create_error`
+  (`conversation_actions.ex:293-296`) which the table renders as a banner
+  (`SessionsTable.tsx:89-95`). Fix carries `F3:` markers.
+- **F4 (was MID-HIGH) — occupied-agent delete blocked correctly but banner
+  invisible (pushed to list route, not the detail page)** — FIXED. Delete error
+  now rebuilds the DETAIL route (`agent_actions.ex:188-210`, `F4:` comment) and
+  `AgentDetail` renders `action_error` where the Delete button lives
+  (`Identities.tsx:706-713`); backend guard intact (`agent_actions.ex:151`
+  `agent_live_sessions → {:ok, []}`). Banner text matches the suggested copy
+  ("…先从这些对话移出再删除").
+- **F6 (was MID) — py `script` not marked `*` / not enforced client-side; bare
+  `:missing_script` atom** — FIXED. Backend advertises
+  `script_required_flavors: ["py"]` (`identity_data.ex:155`); form marks `*` and
+  disables Create when empty (`Identities.tsx:819-820,980,1030`, `F6:` comment);
+  `:missing_script` now maps to a friendly message
+  (`identity_data.ex:369-370`).
+- **F1 (was LOW-MID) — agents list has no flavor filter** — FIXED. `AgentsTable`
+  is now wired to `FilterBar` (`Identities.tsx:552`, flavor links at 1616-1621)
+  AND has a free-text query filter whose haystack includes `agent.flavor`
+  (`Identities.tsx:526,551`).
+- **F2 (was LOW-MID) — deleted detail URL renders a hollow shell** — FIXED.
+  `AgentDetail` renders a clean not-found empty state on `agent_not_found`
+  (`Identities.tsx:672-685`, `F2:` comment); backend sets `agent_not_found`
+  when there is no live process and no snapshot (`identity_data.ex:114-133`).
+- **F5 (was LOW/cosmetic) — Entity Caps `instance` column dumped the raw
+  `%URI{}` struct** — FIXED. `CapData.instance_scope_display/1` renders the
+  canonical URI string (`cap_data.ex:31` → `encode_uri` → `URI.to_string/1`);
+  the `entity_caps` surface reads `CapData.list_entity_caps/3`
+  (`identity_data.ex:101`).
