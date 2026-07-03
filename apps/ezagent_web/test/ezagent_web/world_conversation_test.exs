@@ -1308,6 +1308,16 @@ defmodule EzagentWeb.WorldConversationTest do
   defp ensure_manifest_reference_apps_started do
     with {:ok, _} <- Application.ensure_all_started(:ezagent_plugin_hello),
          {:ok, _} <- Application.ensure_all_started(:ezagent_plugin_py) do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
+
+      :ok =
+        Ezagent.CapabilityRegistry.register(
+          Ezagent.Entity.Session,
+          :hello_render,
+          Ezagent.ActionSet.HelloRender
+        )
+
       :ok
     else
       {:error, reason} -> flunk("failed to start manifest reference app: #{inspect(reason)}")

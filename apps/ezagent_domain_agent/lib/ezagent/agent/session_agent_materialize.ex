@@ -181,6 +181,12 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
 
   @spec materialize_by_role(String.t(), String.t(), URI.t(), URI.t(), URI.t()) ::
           {:ok, URI.t(), :created | :already_present} | {:error, term()}
+  @doc """
+  Materialize `role` with an explicit agent flavor.
+
+  The legacy arity defaults to `"cc"`. Socialware manifests call this arity so
+  `flavor` stays a manifest axis while the role recipe remains flavor-free.
+  """
   def materialize_by_role(
         role,
         flavor,
@@ -213,6 +219,13 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
 
   @spec by_role_spec(String.t(), String.t(), URI.t(), URI.t(), URI.t()) ::
           {:ok, spec()} | {:error, term()}
+  @doc """
+  Build the by-role materialization spec with an explicit agent flavor.
+
+  This is the dispatch-free half of flavor-aware materialization: it resolves
+  the role recipe, asks `RecipeMaterializer` for the flavor-specific template
+  content, and leaves spawning/grants to `materialize/1`.
+  """
   def by_role_spec(
         role,
         flavor,

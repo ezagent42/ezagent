@@ -142,15 +142,12 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
   end
 
   defp authorize_admin(ctx) do
-    needed = %{
-      kind: :any,
-      behavior: :any,
-      action: :any,
-      instance: :any,
-      workspace_uri: :any
-    }
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.get(ctx, :caps, [])
 
-    if authorized?(ctx, needed), do: :ok, else: {:error, :public_socialware_requires_admin}
+    if Ezagent.Identity.AdminAuthority.admin?(caller, caps),
+      do: :ok,
+      else: {:error, :public_socialware_requires_admin}
   end
 
   defp authorized?(ctx, needed) do
@@ -193,7 +190,7 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
   defp workspace_uri(ctx), do: Map.fetch!(ctx, :workspace_uri) |> uri_string()
 
   defp workspace_uri_struct(%URI{} = uri), do: uri
-  defp workspace_uri_struct(uri) when is_binary(uri), do: URI.new!(uri)
+  defp workspace_uri_struct(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri

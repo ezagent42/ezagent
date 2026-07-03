@@ -77,7 +77,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     assert [%{"role_name" => "bot", "uri" => bot_uri_string}] = definition.members
     assert bot_uri_string == URI.to_string(bot_uri)
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
-    assert definition.visibility_policy == %{publish_policy: :supervised, web_anon_access: true}
+
+    assert definition.visibility_policy == %{
+             scope: :private,
+             publish_policy: :supervised,
+             web_anon_access: true
+           }
+
     assert is_binary(object.id)
 
     {:ok, %{session_uri: session_uri}} =
@@ -584,7 +590,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   defp grant_workspace_cap(holder, workspace_uri, action) do
     cap =
-      Capability.cap(:workspace, Ezagent.ActionSet.Workspace, action, workspace_uri, workspace_uri)
+      Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        action,
+        workspace_uri,
+        workspace_uri
+      )
 
     Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
   end
