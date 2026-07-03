@@ -57,7 +57,7 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
   agent + lands caps; whether the brain then behaves is proven separately.
   """
 
-  alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry}
+  alias Ezagent.Agent.{RecipeMaterializer, RecipeRegistry}
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
   # A generic placeholder description for a by-role materialize's AgentTemplate
@@ -123,12 +123,14 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
     cap_instance_overrides = Map.get(spec, :cap_instance_overrides, %{})
 
     with {:ok, outcome} <-
-           spawn_session_agent(
+           RecipeMaterializer.spawn_from_template_content(
              template_content,
              agent_uri,
              owner_uri,
              workspace_uri,
-             template_uri
+             caller: owner_uri,
+             caps: Ezagent.Identity.list_caps_for(owner_uri),
+             source_template_uri: template_uri
            ),
          :ok <-
            GrantRecipeCaps.grant_recipe_caps(
@@ -174,7 +176,20 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
           {:ok, URI.t(), :created | :already_present} | {:error, term()}
   def materialize_by_role(role, %URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri)
       when is_binary(role) do
-    with {:ok, spec} <- by_role_spec(role, session_uri, workspace_uri, owner_uri) do
+    materialize_by_role(role, "cc", session_uri, workspace_uri, owner_uri)
+  end
+
+  @spec materialize_by_role(String.t(), String.t(), URI.t(), URI.t(), URI.t()) ::
+          {:ok, URI.t(), :created | :already_present} | {:error, term()}
+  def materialize_by_role(
+        role,
+        flavor,
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = owner_uri
+      )
+      when is_binary(role) and is_binary(flavor) do
+    with {:ok, spec} <- by_role_spec(role, flavor, session_uri, workspace_uri, owner_uri) do
       materialize(spec)
     end
   end
@@ -193,23 +208,42 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
           {:ok, spec()} | {:error, {:role_not_registered, String.t()}}
   def by_role_spec(role, %URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri)
       when is_binary(role) do
+    by_role_spec(role, "cc", session_uri, workspace_uri, owner_uri)
+  end
+
+  @spec by_role_spec(String.t(), String.t(), URI.t(), URI.t(), URI.t()) ::
+          {:ok, spec()} | {:error, term()}
+  def by_role_spec(
+        role,
+        flavor,
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = owner_uri
+      )
+      when is_binary(role) and is_binary(flavor) do
     case RecipeRegistry.lookup(role) do
       {:ok, recipe} ->
-        {:ok,
-         %{
-           role: role,
-           session_uri: session_uri,
-           workspace_uri: workspace_uri,
-           owner_uri: owner_uri,
-           template_content:
-             DefaultAgentSeed.template_content(
-               role,
-               @by_role_description,
-               recipe_project_cwd(recipe, role)
-             ),
-           recipe: recipe,
-           telemetry_prefix: [:ezagent, :agent, :materialize_by_role]
-         }}
+        agent_uri = planned_agent_uri(role, session_uri, workspace_uri)
+
+        with {:ok, content} <-
+               RecipeMaterializer.template_content(recipe, %{
+                 recipe_name: role,
+                 role_name: role,
+                 flavor: flavor,
+                 agent_uri: agent_uri,
+                 description: @by_role_description
+               }) do
+          {:ok,
+           %{
+             role: role,
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             owner_uri: owner_uri,
+             template_content: content,
+             recipe: recipe,
+             telemetry_prefix: [:ezagent, :agent, :materialize_by_role]
+           }}
+        end
 
       :error ->
         {:error, {:role_not_registered, role}}
@@ -230,66 +264,6 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
       when is_binary(role) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
     Ezagent.URI.agent(workspace_name, "#{role}-#{session_discriminator(session_uri)}")
-  end
-
-  # The per-agent `project_cwd` a by-role recipe DECLARES, else the generic
-  # sandbox default. A recipe's `config` is opaque layer-2 business data (the
-  # owning Behavior reads its own keys, atom/string-key tolerant) — `project_cwd`
-  # is one such declared key (T7e: the CLI-reachability config seam, e.g. the
-  # umbrella root so the agent's `mix ezagent` resolves). Read atom-then-string
-  # (the persisted-content JSON round-trip范式, mirroring `Recipe`'s field reader +
-  # kanban `Shared.config_atom`); a non-string / absent value falls back to the
-  # UNCHANGED sandbox default. NOTE a role-owning plugin's board-scoping seed may
-  # carry its own `*_cwd` override in the spec it passes on the `materialize/1`
-  # path; this generic by-role path reads the value DECLARED in the registered
-  # recipe (`config[:project_cwd]`) instead.
-  defp recipe_project_cwd(recipe, role) do
-    case config_get(Map.get(recipe, :config) || %{}, :project_cwd) do
-      cwd when is_binary(cwd) -> cwd
-      _ -> DefaultAgentSeed.default_project_cwd(role)
-    end
-  end
-
-  # Read a recipe-config field by atom key, falling back to its string key
-  # (persisted JSON/snapshot content). Mirrors `Ezagent.Agent.Recipe`'s reader.
-  defp config_get(config, key) when is_map(config) do
-    case Map.fetch(config, key) do
-      {:ok, value} -> value
-      :error -> Map.get(config, Atom.to_string(key))
-    end
-  end
-
-  defp config_get(_config, _key), do: nil
-
-  # spawn_from_template_content/5 with the EXACT orchestrator credential-supply
-  # opts: the session owner is `spawned_by_uri` (the cascade's `owner_uri`) AND
-  # `caller` + `caps`, with `source_template_uri` so the default credential
-  # cascade can resolve the owner's `claude` creds into the per-agent config_dir.
-  defp spawn_session_agent(
-         content,
-         %URI{} = agent_uri,
-         %URI{} = owner_uri,
-         %URI{} = workspace_uri,
-         %URI{} = template_uri
-       ) do
-    opts = [
-      caller: owner_uri,
-      caps: Ezagent.Identity.list_caps_for(owner_uri),
-      source_template_uri: template_uri
-    ]
-
-    case Ezagent.Entity.Agent.spawn_from_template_content(
-           content,
-           agent_uri,
-           owner_uri,
-           workspace_uri,
-           opts
-         ) do
-      {:ok, %{fresh?: true}} -> {:ok, :created}
-      {:ok, %{fresh?: false}} -> {:ok, :already_present}
-      {:ok, %{}} -> {:ok, :already_present}
-      {:error, _} = err -> err
-    end
   end
 
   defp session_discriminator(%URI{} = session_uri) do

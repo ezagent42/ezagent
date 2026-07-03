@@ -20,10 +20,54 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.KindRegistry
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
+  defmodule StubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"class" => "definition_agents.stub", "agent_uri" => agent_uri, "cwd" => cwd})
+        when is_binary(agent_uri) and is_binary(cwd),
+        do: :ok
+
+    def validate(_), do: {:error, :invalid_definition_agents_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   @workspace_uri URI.new!("workspace://system")
   @owner_uri URI.new!("entity://system/user/admin")
 
   defp uniq, do: System.unique_integer([:positive])
+
+  defp register_stub_flavor(n) do
+    flavor = "definition_agents_stub_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: StubTemplate
+      })
+
+    flavor
+  end
 
   defp terminate(uri) do
     case KindRegistry.lookup(uri) do
@@ -89,6 +133,43 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, _pid} = KindRegistry.lookup(planned)
 
     # (2) recipe caps landed on the per-session agent URI
+    caps = Ezagent.Identity.list_caps_for(planned)
+
+    assert Enum.any?(caps, fn cap ->
+             cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
+           end)
+  end
+
+  test "materializes a declared non-cc flavor agent with config, readiness, role, grants, and join" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "greeter-non-cc-#{n}"
+    flavor = register_stub_flavor(n)
+
+    assert :ok =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
+             )
+
+    planned = DefinitionAgents.planned_agent_uri(role_name, session_uri, @workspace_uri)
+    on_exit(fn -> terminate(planned) end)
+
+    assert {:ok, _pid} = KindRegistry.lookup(planned)
+    assert :ready = Ezagent.ReadyGate.status(planned)
+    assert {:ok, ^flavor} = Ezagent.AgentFlavorAttributes.get(planned)
+    assert {:ok, ^role_name} = Ezagent.AgentRoleAttributes.fetch(planned)
+
+    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned, :sandbox)
+    sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
+    assert Map.has_key?(sandbox, :config_dir_path)
+
+    members = members_of(session_uri)
+    assert SessionBehavior.role_name_to_uri(members, role_name) == planned
+
     caps = Ezagent.Identity.list_caps_for(planned)
 
     assert Enum.any?(caps, fn cap ->
