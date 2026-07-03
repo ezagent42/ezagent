@@ -1,16 +1,15 @@
-# Notifications SPEC (stable contract)
+# Notifications SPEC (historical record — 2026-05-24)
 
-> **Status**: stable contract. The decisions / OQs / migration plan live in
-> the canonical v2 SPEC at
+> **Status**: historical point-in-time record (2026-05-24, from PR-N5). Lives in
+> the frozen `docs/superpowers/` tree — NOT maintained; module names/refs are as
+> of that date. The canonical v2 SPEC at
 > `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md`
-> (locked at PR-N5 close).
+> (locked at PR-N5 close) has the decisions / OQs / migration plan.
 >
-> This file is the **stable, non-rev-bumping** consumer-facing contract:
-> what Behaviors, LVs, plugins, and tests must do to interoperate with the
-> notifications system. Updated only when the public surface or invariants
-> change.
+> This captured the consumer-facing contract (what Behaviors, LVs, plugins, and
+> tests did to interoperate with the notifications system) as of that date.
 >
-> Bilingual mirror: `notifications.zh_cn.md`.
+> Bilingual mirror: `2026-05-24-notifications.zh_cn.md`.
 
 ## §1 Context
 

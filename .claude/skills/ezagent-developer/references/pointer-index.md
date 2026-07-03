@@ -18,7 +18,7 @@ When you (or a future contributor) need authoritative answers:
 | `docs/notes/entity-agnostic-architecture-reflection.md` | 8 entity-agnostic load-bearers in §2; 10 proposals S-1..S-10 in §4; foundation for PRs #141-#149 |
 | `docs/superpowers/specs/2026-05-19-phase-8-ide-shell-liveview.zh_cn.md` | Phase 8 IDE Shell spec (Activity Bar / Resource Panel / Main Window / Right Sidebar / Status Bar / CommandPalette IA) |
 | `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md` | Notifications v2 spec (single PubSub chokepoint + SubscriberFan) |
-| `docs/superpowers/specs/notifications.md` | Notifications stable contract (public surface, invariants, cap model) |
+| `docs/superpowers/specs/2026-05-24-notifications.md` | Notifications SPEC — historical record (2026-05-24); canonical = 2026-05-24-notification-architecture-v2.md |
 | `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md` | Caps-cleanup SPEC (PR-CC-1 ambient authority removal + PR-CC-2-v2 boundary concern model) |
 | `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` | **Router/Behavior/Kind self-built architecture SPEC (PR #445, r3 normative)** — 3 primitives + 3 composition patterns + 9-effect vocabulary + 8 framework-internal modules + 10-check acceptance criteria. The plugin contract rewritten 2026-05-28. |
 | `docs/scenarios/README.md` | E2E scenarios master catalog — 30 scenarios across UI/CLI/Feishu/agent flavors/persistence/recovery/plugin authoring. Bilingual lockstep. Scenario #30 is the canonical greenfield-Behavior end-to-end exercise. |

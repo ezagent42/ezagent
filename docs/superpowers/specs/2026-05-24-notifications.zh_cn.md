@@ -1,14 +1,14 @@
-# Notifications SPEC (稳定契约)
+# Notifications SPEC (历史存档 — 2026-05-24)
 
-> **状态**: 稳定契约文档。决策 / OQ / 迁移计划存档于规范的 v2 SPEC:
+> **状态**: 历史时点存档(2026-05-24,PR-N5 时)。位于冻结的 `docs/superpowers/`
+> 树 —— 不再维护;模块名/引用为当时状态。规范的 v2 SPEC:
 > `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md`
-> (在 PR-N5 收尾时锁定)。
+> (在 PR-N5 收尾时锁定)有决策 / OQ / 迁移计划。
 >
-> 本文件是**稳定的、非版本递增的**消费者契约: 描述 Behavior / LV /
-> Plugin / Test 必须如何与 notifications 系统协作。仅当 public surface
-> 或 invariants 变化时才更新。
+> 本文件记录了当时的消费者契约(Behavior / LV / Plugin / Test 如何与
+> notifications 系统协作)。
 >
-> 英文镜像: `notifications.md`。
+> 英文镜像: `2026-05-24-notifications.md`。
 
 ## §1 背景
 
