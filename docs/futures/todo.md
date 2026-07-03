@@ -1445,3 +1445,36 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   canonical URI string (`cap_data.ex:31` → `encode_uri` → `URI.to_string/1`);
   the `entity_caps` surface reads `CapData.list_entity_caps/3`
   (`identity_data.ex:101`).
+### arch-gate AST hardening — batch 2 (high-value, hard) — OPEN
+
+> Surfaced 2026-07 (arch-gate AST conversion, lead Claude). **Batch 1 DONE**
+> (branch `gate/ast-convert-batch1`): converted 6 grep-based counters to
+> AST-based matchers in `mix/tasks/ezagent.arch.scan.ex` — `plugin_defined_kinds`
+> (alias-resolved `@behaviour Ezagent.Kind` exactly), `spawn_registry_call_sites`/
+> `_modules`/`_off_chokepoint_modules` (alias-resolved `SpawnRegistry.spawn[_detailed]`
+> remote calls, parens-only), and `create_session_call_sites`/`_modules` (the
+> `create_session` facade call). Each has a `*_in_source` testable entry point + a
+> teeth-test proving the matcher fires on an ALIASED call a raw grep would miss
+> (`spawn_chokepoint_test.exs`, `plugin_defined_kinds_test.exs`). The conversion
+> also tightened 4 loose ratchets (grep had over-counted moduledoc/comment mentions
+> and a `&Mod.fun/arity` capture — all documented in `arch_baseline_manifest.exs`).
+>
+> **Batch 2 — convert these 3 to AST + teeth-tests** (harder: semantic, not just
+> module/call-site matching):
+> - `missing_cap_check_mutating_actions` — SECURITY invariant. Today it string-scans
+>   `kind/runtime.ex` for `behavior_module.required_caps()` + `Capability.matches?`
+>   presence. AST version: verify each MUTATING action handler actually reaches a
+>   cap-gate call on its path (not merely that the strings exist somewhere), so a
+>   new mutating action without a cap check trips the gate.
+> - `kind_runtime_ordering_violations` — dispatch-pipeline ORDER invariant
+>   (`authz_check` → `workspace_isolation_check` → `invoke_behavior`). Today it uses
+>   `:binary.match` byte offsets; AST version should assert the order structurally
+>   within the pipeline function so a reformat/refactor can't fool the byte scan.
+> - `kind_runtime_reentry_violations` — no `Invocation.dispatch(`/`Router.dispatch(`
+>   inside `target_ownership_check`/`event_to_payload`. Today it regex-slices the
+>   function body; AST version should walk the actual function clause bodies.
+>
+> Note: **AST + teeth-test are complementary** — AST cuts rename/formatting
+> false-negatives (an aliased or reformatted call can't slip past); the teeth-test
+> catches a TOOTHLESS gate regardless of cause (e.g. a matcher that silently matches
+> nothing after a refactor). Batch 2 needs both, same as batch 1.
