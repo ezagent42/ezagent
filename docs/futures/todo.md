@@ -679,7 +679,7 @@ Still open after PR #300 + the batch fix that includes this todo:
   keep working in parallel because both reporters subscribe to the
   same telemetry events).
 - **DONE (low-doc-batch 2026-05-26)** — SPEC for the notifications
-  system at `docs/superpowers/specs/notifications.md` is the stable-
+  system at `docs/superpowers/specs/2026-05-24-notifications.md` is the stable-
   contract index pointing at the canonical v2 SPEC
   (`2026-05-24-notification-architecture-v2.md`). Expanded in this
   batch to include §1-§9 (Context / Goals / Architecture / Cap model /
