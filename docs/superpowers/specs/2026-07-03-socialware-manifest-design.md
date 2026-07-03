@@ -57,7 +57,7 @@ Root cause (verified): session materialization calls the **cc-pinned** `DefaultA
 
 `create → publish → discover → install → use → govern`, all operating on the manifest:
 - **create** = author a `socialware:<name>` ConfigObject (manifest). Via ezagent, not code.
-- **publish** = CR-governance `stage → preview → publish_cr` (#1042) flips the pointer → materialization fires.
+- **publish** = **W1 GAP (correction).** There is **no** Definition-level publish/approval path today. `DefinitionRegistry.write_definition/2` → `ConfigStore.write_and_point` persists+points a Definition, but **CR-governance (#1042) is agent-subject-only / self-binding — it cannot `publish_cr` a whole socialware Definition** (it governs agent config *inside* the socialware). So "publish a socialware" = **build a Definition-level publish** (stage a draft → visibility/version pointer flip), either by extending CR-gov to Definition subjects or a dedicated publish action. jjkysy #1148 W1's "Definition into the CR line" assumed a path that isn't there.
 - **discover** = `DefinitionRegistry.list(workspace)` (❌ missing — add) → catalog / new-session checkboxes.
 - **install** = SessionTemplate `installs: [name]` → `Installation` materializes into a session (agents via §4, views cap-gated).
 - **use** = session runs; anon gated by `visibility_policy`, views by `authorize_view`.
