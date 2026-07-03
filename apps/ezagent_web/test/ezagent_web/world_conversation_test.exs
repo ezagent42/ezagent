@@ -1252,11 +1252,22 @@ defmodule EzagentWeb.WorldConversationTest do
       _ = Ezagent.Kind.terminate(session_uri)
     end)
 
+    # Core PR-6 assertion set: the socialware manifest materialized the py agent
+    # as a live, MATERIALIZED + joined session member — Kind alive, ReadyGate
+    # :ready (Kind readiness is independent of the Python subprocess), durable
+    # flavor/role markers, config_dir allocated. These all pass with `uv` ABSENT
+    # (e.g. CI): materialization is decoupled from subprocess-liveness (see
+    # `Ezagent.Template.PyAgent.instantiate/3` — a subprocess-start failure keeps
+    # the Kind materialized in a degraded state, next :receive surfaces
+    # :not_alive). The LIVE Python subprocess (`Python.alive?`) is NOT asserted
+    # here so the core E2E does not require uv; the identical materialize code
+    # path (`provision_and_instantiate` → `PyAgent.instantiate/3` → subprocess) is
+    # covered under `@tag :uv` by
+    # `apps/ezagent_plugin_py/test/ezagent/template/py_template_test.exs`.
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(planned_agent)
     assert :ready = Ezagent.ReadyGate.status(planned_agent)
     assert {:ok, "py"} = Ezagent.AgentFlavorAttributes.get(planned_agent)
     assert {:ok, ^role_name} = Ezagent.AgentRoleAttributes.fetch(planned_agent)
-    assert Ezagent.Domain.Python.alive?(planned_agent)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
