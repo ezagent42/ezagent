@@ -46,7 +46,7 @@ Today `bases / shape / views` are **`[module()]`** — compile-time code referen
 
 **This is the one-way door that makes "create a socialware via ezagent, not via code commit" real**: the socialware author picks from *already-registered* pieces; anything new = ship a plugin (separate code channel). It also cleanly explains the code/config split the team must follow *today* (interim guide, separate PR).
 
-**Open decision O-1:** do we (a) keep the struct fields as `module()` and add a *parallel* name-ref manifest that resolves to modules at load, or (b) change the fields themselves to name-refs (bigger, touches T2 code)? Recommendation: **(a)** — a manifest layer that resolves names → the existing Definition struct at install; least disruption, lets code+seed and runtime-authored socialwares converge on one resolved shape.
+**O-1 — DECIDED (Allen 2026-07-03): (a).** Keep the struct fields as `module()`; add a *thin resolver layer* — the manifest is authored with names/IDs and resolved (name → module) into the existing Definition struct at install. T2 code unchanged; code-authored (seed) and runtime-authored (form) socialwares converge on one resolved shape.
 
 ## 4. cc-flavor fix (from investigation, feeds `agents[].flavor`)
 
@@ -57,7 +57,7 @@ Root cause (verified): session materialization calls the **cc-pinned** `DefaultA
 
 `create → publish → discover → install → use → govern`, all operating on the manifest:
 - **create** = author a `socialware:<name>` ConfigObject (manifest). Via ezagent, not code.
-- **publish** = **W1 GAP (correction).** There is **no** Definition-level publish/approval path today. `DefinitionRegistry.write_definition/2` → `ConfigStore.write_and_point` persists+points a Definition, but **CR-governance (#1042) is agent-subject-only / self-binding — it cannot `publish_cr` a whole socialware Definition** (it governs agent config *inside* the socialware). So "publish a socialware" = **build a Definition-level publish** (stage a draft → visibility/version pointer flip), either by extending CR-gov to Definition subjects or a dedicated publish action. jjkysy #1148 W1's "Definition into the CR line" assumed a path that isn't there.
+- **publish** — DECIDED (Allen 2026-07-03): **`ConfigGovernance.{Agent, Socialware}` fork.** Today `ConfigGovernance` (#1042, `config_governance.ex`) does agent-config CR only (agent-subject / self-binding) — it can't publish a whole Definition. **Refactor:** extract the shared CR machinery (stage → preview → publish-pointer-flip → rollback) into a subject-agnostic **`ConfigGovernance`** parent; move today's agent path to **`ConfigGovernance.Agent`**; add **`ConfigGovernance.Socialware`** — publish a whole socialware (stage draft Definition → flip visibility/version pointer → discoverable+installable). This reuses the CR *pattern* but forks per subject, without twisting agent semantics (reconciles the earlier "extend CR-gov" vs "dedicated action" options). Task #158. GLOSSARY decision = Allen. (jjkysy #1148 W1's "Definition into the CR line" is exactly this `.Socialware` fork — which did NOT exist before.)
 - **discover** = `DefinitionRegistry.list(workspace)` (❌ missing — add) → catalog / new-session checkboxes.
 - **install** = SessionTemplate `installs: [name]` → `Installation` materializes into a session (agents via §4, views cap-gated).
 - **use** = session runs; anon gated by `visibility_policy`, views by `authorize_view`.
@@ -67,8 +67,12 @@ Root cause (verified): session materialization calls the **cc-pinned** `DefaultA
 
 Re-express **autoservice** (and/or hello) as a **pure-config manifest** referencing an `autoservice` plugin's registered pieces, and run `publish → discover → install → use` end to end. This proves the schema AND surfaces exactly which of today's code-baked bits (`Ezagent.Behavior.Kb`, personas, kb ingest) are declarable-config vs must live in a plugin.
 
-## 7. Open questions for Allen
-1. **O-1 (§3):** name-ref manifest resolving to the struct (a, recommended) vs changing struct fields to name-refs (b)?
+## 7. Decisions (Allen 2026-07-03) + remaining questions
+
+**Locked:** app = socialware (config bundle, VSCode extension-pack) · code lives in a plugin the socialware `uses` · O-1 = **(a)** name-ref resolver → existing Definition struct · publish = **`ConfigGovernance.{Agent, Socialware}`** shared-CR fork (task #158) · `agents[].flavor` (route via `Recipe.Compose`, not the cc-pinned seed) · `config://` dead, `socialware:<name>` stays an opaque catalog key.
+
+**Remaining questions:**
+0. ~~**O-1**~~ → decided (a). ~~publish~~ → decided (ConfigGovernance fork).
 2. **Manifest serialization:** YAML file (like autoservice `package.yaml`) as the authoring surface, resolved into the ConfigObject? Or author the ConfigObject directly (world editor)? (VSCode = a `package.json` file; autoservice already uses YAML.)
 3. **`uses` granularity:** reference whole plugins, or individual contribution IDs (finer)? (VSCode packs reference whole extensions.)
 4. **Scope for the FIRST build slice:** the create+manifest-schema (this doc) → then discover (`list`) → then the new-session UI? (matches jjkysy W1 + the 官网 page.)
