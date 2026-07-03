@@ -128,18 +128,26 @@ defmodule Ezagent.World.AgentActions do
          # `agent_live_sessions/1` resolves the workspace from the PASSED URI and
          # lists there with no caller check, so a forged / cross-workspace agent
          # URI would otherwise leak another tenant's session names + count through
-         # the `{:agent_bound_to_live_session, sessions}` error banner. Reuse the
-         # SAME instance-scoped `cap(:agent, Manage, :any)` gate the authoritative
-         # `manage.delete` dispatch (and the sibling `agents.config.*` actions via
-         # `Ezagent.Agent.Config`) enforce: `read_cascade/4` authorizes the caller's
-         # caps against THIS agent's manage-cap and is read-only (no dispatch, no
-         # cold-start). A caller lacking this agent's manage-cap — a forged URI, a
-         # cross-workspace URI, or a same-workspace non-owner — fails closed with
+         # the `{:agent_bound_to_live_session, sessions}` error banner.
+         #
+         # Authorize through the ONLY sanctioned surface read path,
+         # `Ezagent.Domain.Agent.read_config/3` (SPEC unified-non-activating-
+         # agent-read §2/§11): it is NON-ACTIVATING (no cold-start; the
+         # `no_surface_read_dispatch` gate forbids the surface from calling the
+         # `Agent.Config.read_cascade` facade directly) and applies the SAME
+         # instance-scoped `cap(:agent, Manage, :any)` gate as the authoritative
+         # `manage.delete` dispatch, via the SAME TWO-ROUTE authz (inline
+         # `ctx.caps` OR the caller's slice/snapshot caps) through the sanctioned
+         # `caps_authorize?/2` chokepoint — so a legitimate owner whose manage-cap
+         # is slice-backed (not inline) still passes, exactly as the delete does.
+         # A caller lacking THIS agent's manage-cap — a forged URI, a
+         # cross-workspace URI, or a same-workspace non-owner (including a holder
+         # of a DIFFERENT agent's manage-cap) — fails closed with
          # `{:error, :unauthorized}` (or `:cross_workspace_denied`/`:invalid_agent_uri`),
-         # learning nothing about what exists. Anyone entitled to delete is
-         # equally entitled to read_cascade (same `Manage` behavior, same
-         # instance), so this never blocks a legitimate delete.
-         {:ok, _cascade} <- Ezagent.Agent.Config.read_cascade(agent_uri, caller, caps),
+         # learning nothing about what exists. Anyone entitled to delete is equally
+         # entitled to this read, so it never blocks a legitimate delete.
+         {:ok, _cascade} <-
+           Ezagent.Domain.Agent.read_config(agent_uri, %{caller: caller, caps: caps}),
          {:ok, []} <- EzagentDomainInstanceMessage.agent_live_sessions(agent_uri),
          target = Ezagent.URI.with_action(agent_uri, :manage, :delete),
          {:ok, {:ok, :deleted}} <-
