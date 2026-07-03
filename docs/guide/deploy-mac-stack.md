@@ -176,17 +176,26 @@ FS:解 `fs-snapshot.tar.gz` 回 `*_home` 卷。跨域一致性快照(quiesce+LSN
 
 ## 6.1 数据回流(reflow:prod→beta/nightly,测迁移)
 
-把 **stable 数据单向回流**到低环境,验证(低环境的更新代码的)迁移能否成功跑过 prod 数据;
-**prod 真实凭据永不落到低环境**(回流后用目标环境自己的 credentials 盖回)。
+把 **stable 数据单向全量回流**到低环境,验证(低环境的更新代码的)迁移能否成功跑过 prod 数据。
+自 Phase-1(#1091)起是 **full-data rehearsal(含 credentials)**:DB、agent-FS、凭据授权、
+token、密码哈希、消息、凭据文件都随之落到目标 —— **无 scrub、无凭据盖回**(与早期 #1013
+的"prod 凭据永不落低环境"设计**已不同**,该旧描述已作废)。
 
 ```bash
 docker/reflow.sh <beta|nightly>     # source 固定 stable;拒绝 stable 作 target(单向)
 ```
-- **DB**:保存目标 11 张凭据表(data-only)→ stable 全量覆盖目标 DB → 目标 `Release.migrate()` → `DELETE`+`session_replication_role=replica` 盖回目标凭据(不 `TRUNCATE CASCADE`,避免误删 FK 依赖的非凭据表如 `email_thread_state`)。
-- **agent-FS**:stable `*_home` 覆盖目标 → 盖回目标的 `default/credentials` 子树。
-- 凭据表/FS 路径可用 `EZAGENT_CRED_TABLES` / `EZAGENT_CRED_FS_PATH` 覆盖。
-- 实测 stable→beta:stable 非凭据数据回流 ✓、beta 自己的 API key 存活 ✓、迁移后 healthy ✓。
+- **DB**:`DROP SCHEMA public CASCADE` → stable 全量 `pg_dump` 覆盖目标 → 目标 `Release.migrate()`。
+- **agent-FS**:`rm -rf` 目标卷 → `cp -a` stable `*_home` 全量覆盖(含 `credentials/` 子树)。
+- **例外(安全):不回流 `runtime/secret_key_base`** —— 它是每环境独有的 cookie 签名密钥
+  (Plug.Crypto MAC + `DownloadToken`),不是迁移数据。`cp -a` 后立即在目标上 `rm -f`,
+  `entrypoint.prod.sh` 下次启动重新生成一份**全新且独有**的并持久化。**若不剥离**,stable 的
+  密钥会随 cp 落到 beta/nightly,而 cookie domain=`.ezagent.chat` 跨子域共享、`require_entity`
+  只信签名不回查 DB → **stable 签发的会话 cookie 会在 beta/nightly 通过验签(跨域登录泄漏)**。
 - ⚠️ 会**覆盖目标环境全部数据**(beta/nightly 是测试环境,符合预期);定时回流可挂 launchd。
+- ⚠️ **未决安全项**:full-data 回流会把 stable 的**真实 prod 凭据**(feishu app 密钥、SMTP、
+  per-agent OAuth token、密码哈希)落到低环境卷 + DB。这是 #1091 有意为之的 rehearsal 决策,
+  但属"prod secrets at rest in lower env"暴露;是否收口(恢复目标凭据盖回 / 只 scrub 高危凭据)
+  留作后续安全决策,由 lead 定。本轮只修更急的 `secret_key_base` 跨域验签泄漏。
 
 ---
 
