@@ -2,8 +2,11 @@
 
 **To:** codex (development). **From:** lead (Allen + Claude). **Date:** 2026-07-03.
 
+## Mode: AUTONOMOUS — build the WHOLE track in one pass, no mid-flight questions
+This is a **pre-set goal**: develop **all six PRs end to end** to the acceptance gate **without asking the lead/Allen anything mid-flight**. If you hit an ambiguity or a blocker, **make the most reasonable default consistent with the spec + settled designs, keep going, and record the decision + any open question in the final return doc and the relevant PR comment.** Do not stall waiting for a human. The only communication back is at the END (the return doc + PR comments).
+
 ## Target branch model
-Develop on **`integration/socialware-manifest`** (already created off `main`). Each PR/wave: commit + push to that branch, self-merge your own increments **onto that branch** — do NOT merge to `main`, do NOT open PRs against `main`. When the track's acceptance gate is met, **return the branch** to the lead, who runs full gates and merges to `main`. Keep the branch rebased on `main`.
+Develop on **`integration/socialware-manifest`** (already created off `main`). Commit + push each PR increment and self-merge it **onto that branch** — do NOT merge to `main`, do NOT open PRs against `main`. Keep the branch rebased on `main`. When the acceptance gate is green, **return the branch** with the return doc; the lead runs full gates + merges to `main` (this is the ONLY acceptance checkpoint).
 
 ## Read first (both on this branch)
 - **Plan:** `docs/together/2026-07-03/plans/socialware-manifest-plan.md` — the 6 PRs, DoDs, **and the "Codex adversarial review — corrections that OVERRIDE" section (C-1..C-7): those corrections are authoritative.**
@@ -28,7 +31,7 @@ An **E2E test** that authors a real socialware as pure config, publishes it (`Co
 - **Fail-closed** everywhere: a manifest referencing an un-installed plugin/view must NOT produce a half-built socialware; write/publish must reject cross-workspace/forged subjects.
 - **PR-3 and PR-4 designs get a codex adversarial review before implementation** (they touch CapBAC/core + the materialization pipeline).
 - Keep `main` green discipline: rebase on `main`, run the affected suites (`MIX_TEST_PARTITION=<unique>` when running in a worktree).
-- Report back per wave: what landed on the branch, gates run, and any design decision that needs the lead/Allen (e.g. the PR-3 socialware-subject cap shape).
+- **No mid-flight check-ins.** Self-merge each wave onto the branch and continue to the next. Every design ambiguity → pick the spec-consistent default, note it in the return doc + PR comment, keep moving. All PR-3/PR-4 designs are already settled below — implement them directly.
 
 ## SETTLED DESIGNS (Allen 2026-07-03 — authoritative; implement directly)
 
@@ -54,5 +57,11 @@ An **E2E test** that authors a real socialware as pure config, publishes it (`Co
 - **Install a public socialware from another ws** = **cross-ws READ-ONLY lookup** of the (public) Definition + **materialize a LOCAL copy in the installer's workspace** (agents spawn in the installer's ws, caps minted there per the recipe's `requested_caps`). npm-style: no write access to the owner; install never mutates the source.
 - **DoD:** owner publishes (private→public via admin gate) → appears in another ws's `list` → that ws installs → local materialization works; a non-owner cannot edit/publish; a non-public socialware is invisible cross-ws (tests, red-on-pre-change→green).
 
-## Return
-When the acceptance gate is green on `integration/socialware-manifest`, return the branch + a summary (each wave's proof + the E2E transcript). Lead runs full gates + merges to `main`.
+## Return (the ONLY communication back — no mid-flight messages)
+When the acceptance gate is green on `integration/socialware-manifest`, write a **return handoff** at `docs/together/2026-07-03/returns/socialware-manifest-return.md` on the branch, covering:
+- **What landed** — each of the 6 PRs (commit shas on the branch), gates run per PR + the final full-suite result.
+- **The acceptance-gate E2E transcript** — the real create→publish→discover→install→use run with the non-cc agent.
+- **Decisions/defaults you made** — every ambiguity you resolved yourself (with your reasoning), so the lead can ratify or revise at acceptance.
+- **Open questions / risks / anything you couldn't fully close** — deferred here (and mirrored in the relevant PR comment), NOT asked mid-flight.
+- **Anything that needs Allen** (e.g. the admin/moderation gate for public listing, if it needs a policy call) — listed here as a post-acceptance decision, with your interim default.
+Then the lead runs full gates + merges the branch to `main`. That merge is the single acceptance checkpoint.
