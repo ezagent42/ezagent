@@ -112,13 +112,16 @@ The socialware definition is config-as-data. It names:
 - external adapters, such as web feed, Feishu, or Slack;
 - visibility policy, including anonymous web access and publish policy.
 
-The definition is addressed as a ConfigStore object:
+The definition lives under a structured, non-URI ConfigStore subject:
 
 ```text
-config://<workspace>/socialware/<name>
+socialware:<name>
 ```
 
-There is no `socialware://` scheme, and socialware is not a new Kind.
+The subject is an opaque identifier, not a `<scheme>://` URI. The workspace is
+a separate ConfigStore field, so it is not embedded in the subject (T1 project
+B); the ConfigObject key is `"socialware"`. There is no `socialware://` scheme,
+and socialware is not a new Kind.
 
 ## How To Author A Socialware
 

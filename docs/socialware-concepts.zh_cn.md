@@ -104,13 +104,15 @@ socialware definition 是 config-as-data。它定义：
 - 外部 adapters，例如 web feed、Feishu、Slack；
 - visibility policy，包括匿名 web access 和 publish policy。
 
-definition 使用 ConfigStore object 地址：
+definition 存放在结构化的非 URI ConfigStore subject 下：
 
 ```text
-config://<workspace>/socialware/<name>
+socialware:<name>
 ```
 
-不存在 `socialware://` scheme，socialware 也不是新的 Kind。
+该 subject 是一个不透明标识符，而非 `<scheme>://` URI。workspace 是独立的
+ConfigStore 字段，不嵌入 subject（T1 project B）；ConfigObject key 为
+`"socialware"`。不存在 `socialware://` scheme，socialware 也不是新的 Kind。
 
 ## 如何编写一个 Socialware
 
