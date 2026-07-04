@@ -199,23 +199,24 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
     refute Map.has_key?(read_pending(session), member), "a self-join must NOT pend"
   end
 
-  test "caller holding a covering cap over the member → MOUNTS (orchestrator spawn-authority, over-fire guard)" do
+  test "caller holding a {:spawned_by, caller} cap over a worker IT spawned → MOUNTS (orchestrator spawn-authority, over-fire guard)" do
     ws = new_ws()
     owner = confirmed_user(ws, "owner")
-    session = new_session(ws, "adm-cover", owner)
+    session = new_session(ws, "adm-spawn", owner)
+    controller = confirmed_user(ws, "controller")
     member = agent_member(ws, "spawned")
 
-    # An orchestrator-like controller holding a delegated agent-`:any` cap that
-    # COVERS the member instance — genuine control (the same authority that gates
-    # remove/terminate on a spawned worker), NOT a Manage cap. `manages?` is false
-    # (it only recognizes Manage/admin/workspace-admin), so this proves the
-    # covering-cap exemption (spec §C.1 (c) — orchestrator/team-template spawn).
-    controller = confirmed_user(ws, "controller")
-    covering = %Capability{
+    # Record the worker's lineage as spawned-by the controller, and give the
+    # controller the delegated `{:spawned_by, controller}` agent-`:any` cap the
+    # orchestrator holds (`session_manager.ex:375`). `manages?` is false (not a
+    # Manage cap), so the mount is via the `{:spawned_by, caller}` exemption ONLY.
+    :ok = Ezagent.AgentLineage.record(member, controller)
+
+    spawned_by_cap = %Capability{
       kind: :agent,
       behavior: :any,
       action: :any,
-      instance: member,
+      instance: {:spawned_by, controller},
       workspace_uri: Capability.workspace_of(member),
       granted_by: Ezagent.Entity.User.admin_uri(),
       granted_at: DateTime.utc_now()
@@ -224,21 +225,61 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         controller,
-        covering,
+        spawned_by_cap,
         {:genesis, Ezagent.Entity.User.admin_uri()},
         :sync
       )
 
     refute Authority.manages?(controller, member),
-           "precondition: a behavior:any covering cap is NOT a Manage cap → manages? false"
+           "precondition: a {:spawned_by} :any cap is NOT a Manage cap → manages? false"
 
     _ = dispatch_join(session, member, controller)
 
     assert wait_member_cap(member, session),
-           "a caller with a covering cap over the member must mount (orchestrator spawn-authority)"
+           "a caller holding {:spawned_by, caller} over the worker it spawned must mount"
 
-    refute Map.has_key?(read_pending(session), member),
-           "a covering-cap caller must NOT pend"
+    refute Map.has_key?(read_pending(session), member), "a spawned-by-caller add must NOT pend"
+  end
+
+  # 🔴 TEETH TEST (spec §C.1 / threat X) — the `{:spawned_by, caller}` exemption must
+  # NOT broaden to "any cap covering the member." A co-tenant B in the SAME workspace
+  # as A's agent, holding a broad `{:within_workspace, ws}` agent cap (which COVERS
+  # A's agent), is STILL a cross-owner puller — it must PEND. If the exemption were a
+  # general covering-cap check, this would mount and reopen threat X.
+  test "co-tenant with a {:within_workspace} agent cap does NOT exempt → still PENDS (teeth)" do
+    ws = new_ws()
+    b = confirmed_user(ws, "cotenant-b")
+    b_session = new_session(ws, "adm-teeth", b)
+    a_agent = agent_member(ws, "a-agent")
+
+    within_ws_cap = %Capability{
+      kind: :agent,
+      behavior: :any,
+      action: :any,
+      instance: {:within_workspace, Capability.workspace_of(a_agent)},
+      workspace_uri: Capability.workspace_of(a_agent),
+      granted_by: Ezagent.Entity.User.admin_uri(),
+      granted_at: DateTime.utc_now()
+    }
+
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        b,
+        within_ws_cap,
+        {:genesis, Ezagent.Entity.User.admin_uri()},
+        :sync
+      )
+
+    refute Authority.manages?(b, a_agent),
+           "precondition: a {:within_workspace} :any agent cap is not a Manage/admin cap → manages? false"
+
+    _ = dispatch_join(b_session, a_agent, b)
+
+    assert Map.has_key?(read_pending(b_session), a_agent),
+           "a co-tenant with only a broad within-workspace cap must still PEND (threat X closed)"
+
+    refute member_cap(a_agent, b_session), "no member-cap granted to a pended co-tenant add"
+    refute Map.has_key?(read_members(b_session), a_agent), "not mounted"
   end
 
   test "anon self-admission (caller == member) → MOUNTS, no pending (over-fire guard)" do

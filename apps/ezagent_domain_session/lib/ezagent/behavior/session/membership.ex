@@ -124,7 +124,18 @@ defmodule Ezagent.ActionSet.Session.Membership do
     members = ctx[:read].(:members, %{})
     caller = Map.get(ctx, :caller)
 
+    # Scope to CREDENTIAL-BEARING members (agents/workers), spec §C.2. STRUCTURAL,
+    # not a heuristic: the A2 receive-split routes `:receive` to `Agent.Receive`
+    # (active live-worker delivery via the bridge — THE OAuth spend) for agents and
+    # to `User.Receive` (a passive inbox write) for users. So the credential-spend
+    # surface this gate protects IS exactly the non-user receive path — a USER
+    # member cannot spend a credential on receive even if delivered. Pending an
+    # invited human (orchestrator `add_participant`, world invite) would therefore
+    # be a pure over-fire with no threat-X coverage; a human's data-read access is
+    # governed by the join-cap / invite-authority layer
+    # (`provision_invited_join_authority`), NOT this gate.
     not Map.has_key?(members, member_uri) and
+      not Ezagent.URI.type?(member_uri, :user) and
       Ezagent.URI.bare_principal?(caller) and
       not same_entity?(caller, member_uri) and
       not caller_controls_member?(caller, member_uri)
@@ -135,38 +146,60 @@ defmodule Ezagent.ActionSet.Session.Membership do
   #   * MANAGES the member (K2 `Authority.manages?/2` — a `Manage`-over-member cap,
   #     admin union, or workspace-admin; covers owner-adds-own-agent + the
   #     materializer's admin_uri caller via the genesis wildcard), OR
-  #   * holds ANY durable cap whose (kind, instance) scope COVERS the member entity
-  #     — the ORCHESTRATOR / team-template spawn exemption (spec §C.1 (c)): the
-  #     orchestrator dispatches the member-join under its OWN agent URI holding a
-  #     delegated `cap(:agent, :any, {:spawned_by, orchestrator})` over the worker
-  #     it just spawned (`orchestrator/tools.ex` `join_member`,
-  #     `session_manager.ex:375`). That is genuine control (the same authority that
-  #     gates `remove_member`/terminate on the worker), NOT a cross-owner pull — a
-  #     cross-owner B holds NO cap over A's agent, so it still pends.
+  #   * holds a delegated `{:spawned_by, caller}`-scoped cap covering the member —
+  #     the ORCHESTRATOR / team-template spawn exemption (spec §C.1 (c)): the
+  #     orchestrator dispatches the member-join under its OWN agent URI holding
+  #     `cap(:agent, :any, {:spawned_by, orchestrator})` over the worker it just
+  #     spawned (`orchestrator/tools.ex` `join_member`, `session_manager.ex:375`).
+  #     That is genuine control (the same `{:spawned_by}` authority that gates
+  #     `remove_member`/terminate on the worker), scoped to workers the CALLER
+  #     ITSELF spawned — NOT a cross-owner pull.
+  #
+  # ⚠️ SECURITY (spec §C.1 / threat X): the second branch is restricted to the
+  # `{:spawned_by, caller}` instance scope ONLY. It MUST NOT be a general "holds
+  # any cap covering the member" check — a co-tenant B (in the SAME workspace as
+  # A's agent, the threat setup) could hold a broad `{:within_workspace, ws}` /
+  # `:any`-instance agent cap that covers A's agent, which would re-exempt the
+  # cross-owner pull and REOPEN threat X. The `{:spawned_by, caller}` gate admits
+  # only the orchestrator's own-spawned workers. (Guarded by the teeth test
+  # `within_workspace cap does NOT exempt` in `admission_gate_test.exs`.)
   #
   # `manages?/2` is checked FIRST so the common mounts (owner-adds-own, admin) never
-  # take the second durable-caps read (short-circuit): the covering read runs only
+  # take the second durable-caps read (short-circuit): the spawned-by read runs only
   # when `manages?` is false (the cross-owner-looking minority).
   defp caller_controls_member?(%URI{} = caller, %URI{} = member_uri) do
     Ezagent.Identity.Authority.manages?(caller, member_uri) or
-      holds_cap_covering_member?(caller, member_uri)
+      holds_spawned_by_authority?(caller, member_uri)
   end
 
   defp caller_controls_member?(_, _), do: false
 
-  defp holds_cap_covering_member?(%URI{} = caller, %URI{} = member_uri) do
+  defp holds_spawned_by_authority?(%URI{} = caller, %URI{} = member_uri) do
     caller
     |> Ezagent.Identity.read_entity_caps()
-    |> Enum.any?(&cap_covers_instance?(&1, member_uri))
+    |> Enum.any?(&spawned_by_caller_cap_covers?(&1, caller, member_uri))
   end
 
-  # True iff `held`'s instance scope covers `member_uri`. Echoes the held cap's own
-  # kind/behavior/action/workspace axes into `needed` so those four match trivially
-  # (sidestepping the asymmetric-`:any` rule), leaving the INSTANCE axis as the only
-  # real constraint — the same technique as `Authority.held_instance_covers_target?/2`,
-  # but for ANY behavior (the orchestrator's `{:spawned_by}` cap is `behavior: :any`,
-  # not `Manage`). Resolves `{:spawned_by, orchestrator}` / `{:within_workspace, ws}`
-  # / concrete-URI scopes via `Capability.matches?/2`.
+  # True ONLY for a `{:spawned_by, caller}`-scoped cap that covers `member_uri`.
+  # The instance-scope guard (`{:spawned_by, %URI{} = sb}` with `sb == caller`) is
+  # load-bearing — see the security note above. `cap_covers_instance?/2` then lets
+  # `Capability.matches?/2` resolve member-spawned-in-caller's-lineage
+  # (`AgentLineage.spawned_in_lineage?/2`) for ANY behavior (the orchestrator's cap
+  # is `behavior: :any`, not `Manage`).
+  defp spawned_by_caller_cap_covers?(
+         %Ezagent.Capability{instance: {:spawned_by, %URI{} = sb}} = held,
+         %URI{} = caller,
+         %URI{} = member_uri
+       ) do
+    same_entity?(sb, caller) and cap_covers_instance?(held, member_uri)
+  end
+
+  defp spawned_by_caller_cap_covers?(_held, _caller, _member_uri), do: false
+
+  # Echoes the held cap's own kind/behavior/action/workspace axes into `needed` so
+  # those four match trivially (sidestepping the asymmetric-`:any` rule), leaving
+  # the INSTANCE axis as the only real constraint — the same technique as
+  # `Authority.held_instance_covers_target?/2`.
   defp cap_covers_instance?(%Ezagent.Capability{} = held, %URI{} = member_uri) do
     needed = %{
       kind: held.kind,
