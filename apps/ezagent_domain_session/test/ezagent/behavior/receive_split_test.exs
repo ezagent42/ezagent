@@ -17,11 +17,28 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.{BehaviorRegistry, Message}
+  alias Ezagent.{BehaviorRegistry, Capability, Message}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.ActionSet.User.Receive, as: UserReceive
   alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
+
+  # Membership-cap unification A2.2 — `:receive` now authorizes in-handler on the
+  # recipient's HELD member-cap over `ctx.caller`. These tests assert slice
+  # MECHANICS (the held-cap gate itself is proven in
+  # `Ezagent.Session.HeldCapReceiveTest`), so they grant the recipient the
+  # matching member-cap in the pre-loaded `:identity` sibling to clear the gate.
+  defp with_member_cap(ctx) do
+    caller = Map.fetch!(ctx, :caller)
+
+    cap = %Capability{
+      Capability.cap(:session, Ezagent.ActionSet.Session, :receive, caller, Capability.workspace_of(caller))
+      | granted_by: URI.new!("entity://system/user/owner"),
+        granted_at: DateTime.utc_now()
+    }
+
+    Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
+  end
 
   describe "registry routes :receive per-Kind to the two new Behaviors" do
     test "{User, :receive} → Behavior.User.Receive" do
@@ -66,7 +83,7 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
         slice_change_cursor: 7
       }
 
-      assert {:ok, new_slice} = Invoker.invoke(UserReceive, :receive, %{}, %{message: msg}, ctx)
+      assert {:ok, new_slice} = Invoker.invoke(UserReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
 
       assert new_slice.last_received.message_id == msg.id
       assert %DateTime{} = new_slice.last_received.at
@@ -98,7 +115,7 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
                  :receive,
                  %{recent_messages: prefill},
                  %{message: msg},
-                 ctx
+                 with_member_cap(ctx)
                )
 
       assert length(new_slice.recent_messages) == depth
@@ -128,7 +145,7 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
-      assert {:ok, %{}} = Invoker.invoke(AgentReceive, :receive, %{}, %{message: msg}, ctx)
+      assert {:ok, %{}} = Invoker.invoke(AgentReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
 
       # The flavor-neutral payload reached the bound bridge channel.
       assert_receive {:agent_bridge_push, "to_claude", %{"content" => content, "meta" => meta}},

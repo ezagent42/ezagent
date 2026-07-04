@@ -77,7 +77,11 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # emits NO effects, so it read-commits the slice UNCHANGED — no write, no
   # re-created orphan. Net: byte-identical-minus-empty-`:session`; no migration.
   use Ezagent.Lifecycle, state_slice: :session
-  reads_siblings([:sandbox])
+  # `:sandbox` — the delivery helper resolves the agent's flavor from it.
+  # `:identity` (A2.2, spec R1.1/R2.3) — pre-load the agent's OWN held caps so the
+  # in-handler `MemberReceive.authorize/1` reads the member-cap WITHOUT a
+  # `GenServer.call` (no self-slice deadlock, no per-message cross-process read).
+  reads_siblings([:sandbox, :identity])
 
   require Logger
 
@@ -192,6 +196,20 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   carries no in-process `:sync_result` re-dispatch.
   """
   def handle_receive(%{message: %Message{} = msg}, ctx) do
+    # Membership-cap unification A2.2 (spec R1.1/R2.3) — `:receive` is cap-EXEMPT;
+    # THIS held-cap check is the sole authority, placed at the TOP of the SINGLE
+    # entry for ALL agent flavors (cc / codex / hello / curl / native) — BEFORE
+    # the bridge short-circuit (`Delivery.deliver_agent_receive/2`), so every
+    # plugin agent is gated through one site (a plugin agent cannot bypass it —
+    # there is no separate plugin `{Kind, :receive}`). A revoked/pending agent
+    # holds no member-cap ⇒ denied IMMEDIATELY, its `:receive` never runs, its
+    # credential is never spent.
+    with :ok <- Ezagent.Session.MemberReceive.authorize(ctx) do
+      do_handle_receive(msg, ctx)
+    end
+  end
+
+  defp do_handle_receive(%Message{} = msg, ctx) do
     if self_message?(msg, ctx) do
       # codex P2 (PR-6) — loop guard. A routing rule targeting a curl agent by
       # LITERAL URI (not a magic token) skips the magic-token sender exclusion,
@@ -257,6 +275,11 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # data grant — so there is no owner to formalize.
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
+
+  # Membership-cap unification A2.2 (spec R1.1/R2.3) — `:receive` is EXEMPT from
+  # the CapBAC layer (no delivery-presented bearer cap). The in-handler
+  # `MemberReceive.authorize/1` held-cap check is the SOLE authority.
+  def cap_exempt_actions, do: [:receive]
 
   # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`
   # delivery result to the agent's own `:sync_result` action.

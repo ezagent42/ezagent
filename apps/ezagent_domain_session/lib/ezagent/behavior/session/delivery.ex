@@ -173,7 +173,13 @@ defmodule Ezagent.ActionSet.Session.Delivery do
         args: %{message: msg},
         ctx: %{
           caller: session_uri,
-          caps: member_receive_caps(recipient_uri),
+          # Membership-cap unification A2.2 (spec R1.1) — delivery presents NO
+          # receive cap. `:members` is a staleness-tolerant delivery ROSTER, not
+          # authority; receive AUTHORIZATION is the recipient's OWN held member-cap,
+          # checked in-handler via `MemberReceive.authorize/1`. The ephemeral
+          # `member_receive_caps/1` bearer token (a stale copy authorized whoever
+          # presented it — the R1.1 bug) is DELETED.
+          caps: MapSet.new(),
           reply: :ignore
         }
       })
@@ -234,43 +240,6 @@ defmodule Ezagent.ActionSet.Session.Delivery do
       {ref, ^member_uri}, {nil, acc} -> {ref, acc}
       {ref, uri}, {found_ref, acc} -> {found_ref, Map.put(acc, ref, uri)}
     end)
-  end
-
-  # System-principal elimination (#154 甲-4) — the receive fan-out presents
-  # the RECIPIENT's own narrow `<entity>.receive` cap on its OWN instance
-  # instead of borrowing the ambient `system://chat-router` WILDCARD. The
-  # grant traces to the member itself (`granted_by: recipient_uri`) — a real
-  # entity (#154-ok), the self-consent the member gave by joining the
-  # session. Inline = provenance-only, the step-5.5 authorizer
-  # (`granted_via_ctx_caps?`), never routed through Grant.
-  #
-  # `kind`/`behavior: :any`: the needed-cap (kind, behavior) pair for
-  # `:receive` varies across the OPEN plugin set — `(:user,
-  # Behavior.User.Receive)` for a user, `(:agent, Behavior.Agent.Receive)`
-  # for the unified agent, and a per-plugin Kind/Behavior for flavors with
-  # their own Kind (echo/np/…). Enumerating that set is exactly what the
-  # former `system://chat-router` wildcard avoided; `instance` (THIS one
-  # recipient) already uniquely identifies the target entity, so pinning
-  # `action: :receive` + `instance` keeps the cap least-privilege (it
-  # authorizes ONLY a receive into this exact member, nothing else) without
-  # the enumeration — and a literal ref to the cross-app
-  # `Behavior.Agent.Receive` would also trip the `undeclared_umbrella_dep_test`
-  # gate (allowlist `[]`).
-  @spec member_receive_caps(URI.t()) :: MapSet.t()
-  defp member_receive_caps(%URI{} = recipient_uri) do
-    MapSet.new([
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :any,
-          :any,
-          :receive,
-          Ezagent.URI.instance(recipient_uri),
-          Ezagent.Capability.workspace_of(recipient_uri)
-        )
-        | granted_by: recipient_uri,
-          granted_at: DateTime.utc_now()
-      }
-    ])
   end
 
   # System-principal elimination (#154 甲-4) — the cross-session forward
