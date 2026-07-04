@@ -272,67 +272,45 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     end
   end
 
+  # Built-in direct-write fast path applying the SHARED idempotency RULE (P0 §5,
+  # D-2): no CR at boot, but the SAME hash-comparison as the governance path —
+  # with the former `builtin_seed_object?` PROVENANCE GUARD DELETED (§5.2). An
+  # edited built-in manifest re-promotes purely on a content-hash difference;
+  # provenance no longer gates the upgrade.
   defp seed_builtin_definition(%Definition{} = definition, opts) do
     workspace_uri = opts |> Keyword.fetch!(:workspace_uri) |> uri_string()
     subject = definition_subject_uri(workspace_uri, definition.name)
-    body = Definition.body(definition)
-    normalized_body = json_normalize(body)
+    new_hash = Definition.content_hash(Definition.body(definition))
 
     case ConfigStore.resolve(@definition_layer, workspace_uri, subject, @definition_key) do
       :none ->
         seed_definition_if_absent(definition, workspace_uri: workspace_uri)
 
-      {:ok, %ConfigObject{body: ^normalized_body}} ->
-        {:ok, :exists}
-
       {:ok, %ConfigObject{} = object} ->
-        if builtin_seed_object?(object) do
+        if Definition.content_hash(object.body) == new_hash do
+          {:ok, :exists}
+        else
           write_definition(definition,
             workspace_uri: workspace_uri,
             actor_uri: default_seed_actor(),
             caller_workspace_uri: workspace_uri,
             authority: :system_seed,
-            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, body)
+            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
           )
           |> case do
             {:ok, _object} -> {:ok, :seeded}
             {:error, reason} -> {:error, reason}
           end
-        else
-          {:ok, :exists}
         end
     end
   end
-
-  defp builtin_seed_object?(%ConfigObject{source_turn_id: source_turn_id})
-       when is_binary(source_turn_id) do
-    String.starts_with?(source_turn_id, [
-      "socialware-definition-seed:",
-      "socialware-definition-seed-upgrade:"
-    ])
-  end
-
-  defp builtin_seed_object?(_), do: false
 
   defp default_seed_actor, do: Ezagent.URI.user(:system, :admin) |> URI.to_string()
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri
 
-  defp json_normalize(body) do
-    body
-    |> Jason.encode!()
-    |> Jason.decode!()
-  end
-
-  defp builtin_upgrade_source_turn_id(workspace_uri, name, body) do
-    hash =
-      body
-      |> json_normalize()
-      |> Jason.encode!()
-      |> then(&:crypto.hash(:sha256, &1))
-      |> Base.encode16(case: :lower)
-
+  defp builtin_upgrade_source_turn_id(workspace_uri, name, hash) do
     "socialware-definition-seed-upgrade:#{workspace_uri}:#{name}:#{hash}"
   end
 

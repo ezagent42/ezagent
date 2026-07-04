@@ -140,6 +140,21 @@ defmodule Ezagent.Socialware.Definition do
     end
   end
 
+  @doc """
+  Deterministic content hash of the definition body (P0 §3.2) — the artifact
+  identity. Env-independent: the same manifest bytes hash identically anywhere,
+  regardless of key order or atom-vs-string keys.
+
+  Single algorithm source: delegates to `Ezagent.Socialware.ContentHash.of/1`
+  (identity layer), which `config_store` also uses to populate the stored
+  `content_hash` column, so a fresh body and its persisted form agree.
+
+  Accepts a `Definition` struct (hashed via `body/1`) or a raw body map.
+  """
+  @spec content_hash(t() | map()) :: String.t()
+  def content_hash(%__MODULE__{} = definition), do: content_hash(body(definition))
+  def content_hash(body) when is_map(body), do: Ezagent.Socialware.ContentHash.of(body)
+
   defp required_string(attrs, key) do
     case get(attrs, key) do
       value when is_binary(value) and value != "" -> {:ok, value}

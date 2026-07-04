@@ -605,12 +605,18 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   defp object_attrs(attrs) do
+    # Hash the SAME stringified body that gets persisted, so the stored column,
+    # a later DB-read hash, and a fresh `Definition.content_hash/1` all coincide
+    # (P0 §3.2 round-trip stability).
+    body = attrs |> Map.fetch!(:body) |> stringify_keys()
+
     %{
       id: Map.get(attrs, :id) || Ecto.UUID.generate(),
       workspace_uri: attrs |> Map.fetch!(:workspace_uri) |> uri_string!(),
       subject_uri: attrs |> Map.fetch!(:subject_uri) |> uri_string!(),
       key: Map.fetch!(attrs, :key),
-      body: attrs |> Map.fetch!(:body) |> stringify_keys(),
+      body: body,
+      content_hash: Map.get(attrs, :content_hash) || Ezagent.Socialware.ContentHash.of(body),
       created_by: attrs |> Map.fetch!(:actor_uri) |> uri_string!(),
       source_turn_id: Map.fetch!(attrs, :source_turn_id)
     }

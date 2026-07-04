@@ -98,6 +98,47 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
     end
   end
 
+  @doc """
+  The shared idempotency RULE (P0 §5) on the GOVERNANCE write path — one
+  hash-comparison, NO provenance guard (§5.2):
+
+    1. none published for `(name, workspace)` → publish a first revision → `:published`
+    2. present, content-hash unchanged → `:exists` (no CR opened, no revision minted)
+    3. present, content-hash differs → publish a new revision → `:upgraded`
+
+  Publish/upgrade run the full `open_cr → stage_definition → publish_cr` flow, so
+  the public-scope admin gate and CR audit trail are preserved. This is the
+  primitive `Demo.Hello.publish/0` (and the P3 deploy-seed) call — an edited
+  first-party manifest re-promotes, killing R-2.
+  """
+  @spec publish_or_upgrade(Definition.t() | map(), ctx()) ::
+          {:ok, :published | :upgraded | :exists} | {:error, term()}
+  def publish_or_upgrade(definition_or_attrs, ctx) do
+    with {:ok, %Definition{} = definition} <- normalize_definition(definition_or_attrs) do
+      new_hash = Definition.content_hash(Definition.body(definition))
+
+      case DefinitionRegistry.lookup(workspace_uri(ctx), definition.name) do
+        {:ok, _current_def, current_object} ->
+          if Definition.content_hash(current_object.body) == new_hash do
+            {:ok, :exists}
+          else
+            publish_new_revision(definition, ctx, :upgraded)
+          end
+
+        :error ->
+          publish_new_revision(definition, ctx, :published)
+      end
+    end
+  end
+
+  defp publish_new_revision(%Definition{name: name} = definition, ctx, result) do
+    with {:ok, %{cr_id: cr_id}} <- open_cr(%{name: name}, ctx),
+         {:ok, _item} <- stage_definition(cr_id, definition, ctx),
+         {:ok, %{status: "published"}} <- publish_cr(cr_id, ctx) do
+      {:ok, result}
+    end
+  end
+
   @doc "Reject an open socialware CR."
   @spec reject_cr(String.t(), ctx()) :: {:ok, map()} | {:error, term()}
   def reject_cr(cr_id, ctx) when is_binary(cr_id) do

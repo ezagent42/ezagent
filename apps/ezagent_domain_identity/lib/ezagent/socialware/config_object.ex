@@ -18,6 +18,10 @@ defmodule Ezagent.Socialware.ConfigObject do
     field(:subject_uri, :string)
     field(:key, :string)
     field(:body, :map)
+    # P0 §3.2/§11.1 — first-class, queryable content-hash artifact identity
+    # (`sha256` of the canonical body). Nullable: legacy rows predate the column;
+    # every NEW write populates it via `Ezagent.Socialware.ContentHash.of/1`.
+    field(:content_hash, :string)
     field(:created_by, :string)
     field(:source_turn_id, :string)
 
@@ -29,7 +33,16 @@ defmodule Ezagent.Socialware.ConfigObject do
   @spec changeset(map()) :: Ecto.Changeset.t()
   def changeset(attrs) when is_map(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [:id, :workspace_uri, :subject_uri, :key, :body, :created_by, :source_turn_id])
+    |> cast(attrs, [
+      :id,
+      :workspace_uri,
+      :subject_uri,
+      :key,
+      :body,
+      :content_hash,
+      :created_by,
+      :source_turn_id
+    ])
     |> validate_required([
       :id,
       :workspace_uri,
