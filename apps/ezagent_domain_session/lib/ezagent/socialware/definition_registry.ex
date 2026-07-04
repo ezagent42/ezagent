@@ -220,25 +220,43 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
            definition_subject_uri(ws, name),
            @definition_key
          ) do
+      # P0 §6 — a RETRACTED same-workspace object is filtered here too, not just in
+      # the PUBLIC fallback: `lookup/2` is the NEW-install/new-selection route
+      # (`Installation.resolve_install/2` fallback), so an owning workspace must not
+      # be able to freshly install its own retracted def by ref. A retracted object
+      # falls through to the system/public fallback (which also filters retracted),
+      # keeping `lookup` uniformly retract-aware. EXISTING pinned installs are
+      # unaffected — they resolve via `ConfigStore.fetch_object(config_id)`, never
+      # through `lookup` (grandfathering, T-Ret-b).
       {:ok, object} ->
-        {:ok, object}
-
-      :none when ws != system_ws ->
-        ConfigStore.resolve(
-          @definition_layer,
-          system_ws,
-          definition_subject_uri(system_ws, name),
-          @definition_key
-        )
-        |> case do
-          {:ok, object} -> {:ok, object}
-          :none -> public_object(name)
+        if retracted?(ws, name) do
+          resolve_object_fallback(ws, name, system_ws)
+        else
+          {:ok, object}
         end
 
       :none ->
-        public_object(name)
+        resolve_object_fallback(ws, name, system_ws)
     end
   end
+
+  # The system → public fallback chain used when a `(name, caller_ws)` object is
+  # absent OR filtered out as retracted. The system branch is only consulted for a
+  # non-system caller; the PUBLIC fallback already filters retracted objects.
+  defp resolve_object_fallback(ws, name, system_ws) when ws != system_ws do
+    ConfigStore.resolve(
+      @definition_layer,
+      system_ws,
+      definition_subject_uri(system_ws, name),
+      @definition_key
+    )
+    |> case do
+      {:ok, object} -> {:ok, object}
+      :none -> public_object(name)
+    end
+  end
+
+  defp resolve_object_fallback(_ws, name, _system_ws), do: public_object(name)
 
   defp public_object(name) do
     @definition_layer

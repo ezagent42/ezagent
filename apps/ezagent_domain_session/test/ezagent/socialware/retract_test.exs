@@ -106,6 +106,35 @@ defmodule Ezagent.Socialware.RetractTest do
              Installation.behavior_set_for_template(%{installs: [name]}, @ws_b)
   end
 
+  test "T-Ret-d: retract blocks a NEW install by ref even in the def's OWNING workspace" do
+    name = "ret-d-#{uniq()}"
+    r1 = write!(name, [Ezagent.ActionSet.Session])
+
+    # BEFORE retract: the owning workspace resolves + can freshly install by ref.
+    assert {:ok, _def, obj} = DefinitionRegistry.lookup(@ws_a, name)
+    assert obj.id == r1.id
+
+    # A grandfathered install pinned WHILE LIVE — its record carries R1's config_id.
+    session_uri = Ezagent.URI.session("team-ret", "generic", name)
+    {:ok, frozen} = Installation.freeze_template_installs(%{installs: [name]}, @ws_a)
+    :ok = Installation.install_template_installs(session_uri, @ws_a, frozen, @actor)
+
+    assert {:ok, %{retracted: true}} = Governance.retract(name, admin_ctx(name))
+
+    # AFTER retract: the OWNING-workspace lookup no longer resolves it, so a fresh
+    # install-by-ref (freeze → lookup) is rejected — "no NEW install can select it"
+    # now holds in the def's own workspace, not just for consumers (T-Ret-a).
+    assert :error = DefinitionRegistry.lookup(@ws_a, name)
+
+    assert {:error, {:unknown_socialware_install, ^name}} =
+             Installation.freeze_template_installs(%{installs: [name]}, @ws_a)
+
+    # GRANDFATHER — the EXISTING pinned install still resolves its frozen revision
+    # (via fetch_object(config_id), which never re-runs the retract-aware lookup).
+    assert [%Definition{} = installed] = Installation.installed_definitions(session_uri)
+    assert installed.name == name
+  end
+
   test "T-Ret-c: restore reverses retract; revision id + content-hash preserved" do
     name = "ret-c-#{uniq()}"
     r1 = write!(name, [Ezagent.ActionSet.Session])
