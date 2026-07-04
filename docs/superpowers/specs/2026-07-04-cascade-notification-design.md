@@ -1,7 +1,17 @@
-# S1: Cascade Notification — Design Spec
+> **⚠️ SUPERSEDED (2026-07-04).** This S1-cascade-first spec is replaced by
+> **`2026-07-04-membership-cap-unification-cascade-design.md`** (the "S3-first"
+> approach). Codex adversarial review of this spec showed the cascade's whole
+> difficulty (affected-principal indirection, session-`:members` re-fetch, the
+> removal-notify gap, the reverse-lookup) is rooted in the **membership/capability
+> incoherence** this spec rides on top of rather than fixes. The lead chose to
+> unify membership into the capability model FIRST, after which cascade becomes a
+> trivial rider (`affected_principals` is always `[X]`, removal-notify falls out
+> symmetrically). Read this document ONLY for context and the carried-over codex
+> findings; implement the successor spec. Do NOT implement this one.
 
-**Status:** Design (brainstorm → **spec** → plan). This document is the spec-writing
-step; the plan and implementation follow separately.
+# S1: Cascade Notification — Design Spec (SUPERSEDED)
+
+**Status:** SUPERSEDED — see banner above. (Originally: Design brainstorm → **spec** → plan.)
 **Scope:** S1 ONLY (see §"Out of scope / future specs"). Single-implementation-plan
 sized.
 **Date:** 2026-07-04
