@@ -157,9 +157,97 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     flunk("Phase C — Task C.4")
   end
 
-  # §14.5(A) step 6 — cascade notify to X — added in Phase B (Task B.4).
-  @tag :skip
-  test "§14.5(A) step 6 [cascade]: member-cap slice-change notifies the manager (Phase B)" do
-    flunk("Phase B — Task B.4")
+  # §14.5(A) step 6 — cascade notify to X (Phase B / Task B.4). The GENERIC
+  # cascade: a member-cap grant/revoke to an arbitrary entity X notifies X's
+  # owner/manager Y (content-free). Y holds a Manage cap over X, so
+  # `managers_of(X) ∋ Y`; the member-cap grant at join (and the removal-revoke)
+  # each mutate X's `:identity` slice → the `{entity, :identity}` cascade fires →
+  # Y's inbox gets the content-free `entity_slice_changed` envelope. This closes
+  # the S1 removal-notify gap. (The cross-owner-add-goes-pending flow is Phase C.)
+  test "§14.5(A) step 6 [cascade]: member-cap grant AND revoke to X notify the owner/manager Y (13/14)" do
+    owner = confirmed_user("owner")
+    session = new_session("cascade", owner)
+    agent = owned_agent(session, "cc-agent")
+
+    # Y (= owner) holds manage-authority over X (= agent): grant a Manage cap over
+    # the agent into owner's durable identity so `managers_of(agent) ∋ owner`.
+    grant_manage_cap(owner, agent)
+    wait_until(fn -> owner in Ezagent.Identity.Cascade.managers_of(agent) end)
+
+    :ok = Ezagent.Notifications.subscribe(owner)
+
+    # --- test 13: member-cap GRANT (manage-authorized join) → Y notified -------
+    # NOTE: a join grants X *two* caps into its `:identity` slice — the member-cap
+    # (`:receive`) AND the join-authority cap (`membership.ex` provision) — each a
+    # separate commit → separate cascade. So ≥2 grant-era notifications queue.
+    _ = dispatch_join(session, agent)
+    :ok = wait_member_cap(agent, session)
+
+    assert_receive {:notification, ^owner, grant_notif}, 2_000
+    assert grant_notif.type == :entity_slice_changed
+    assert grant_notif.source == Ezagent.Identity.Cascade
+    assert grant_notif.body.uri == URI.to_string(agent)
+    assert grant_notif.body.slice_key == :identity
+    # Content-free: NO cap values, NO member list, NO caller.
+    assert Enum.sort(Map.keys(grant_notif.body)) == Enum.sort([:uri, :slice_key, :cursor, :event_at])
+
+    # Drain ALL remaining grant-era cascade notifications to quiescence, so the
+    # post-revoke assert below cannot be satisfied by a leftover grant notice
+    # (grant and revoke carry an identical content-free payload).
+    last_grant_cursor = drain_notifications(owner, grant_notif.body.cursor)
+
+    # --- test 14: member-cap REVOKE (removal) → Y notified (S1 gap closed) -----
+    assert {:ok, %{status: :removed}} =
+             Participants.remove_participant(session, agent, op_ctx(owner, session))
+
+    refute holds_member_cap?(agent, session), "remove must have revoked the member-cap"
+
+    assert_receive {:notification, ^owner, revoke_notif}, 2_000
+    assert revoke_notif.type == :entity_slice_changed
+    assert revoke_notif.body.uri == URI.to_string(agent)
+    assert revoke_notif.body.slice_key == :identity
+    # Provably POST-revoke: the mailbox was drained, and the revoke's cursor is
+    # strictly newer than every grant-era notification.
+    assert revoke_notif.body.cursor > last_grant_cursor
+  end
+
+  # Consume every queued cascade notification for `owner`, returning the highest
+  # cursor seen (≥ `seed`). Quiescent after 300ms of silence.
+  defp drain_notifications(owner, seed) do
+    receive do
+      {:notification, ^owner, %{cursor: c}} -> drain_notifications(owner, max(seed, c))
+    after
+      300 -> seed
+    end
+  end
+
+  # Grant a Manage-over-`target` cap into `holder`'s durable identity (admin).
+  defp grant_manage_cap(holder, target) do
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        target,
+        Capability.workspace_of(target),
+        holder
+      )
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(holder)}?action=identity.grant_cap"),
+      mode: :call,
+      args: %{cap: cap},
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  defp wait_until(fun, retries \\ 200) do
+    cond do
+      fun.() -> :ok
+      retries > 0 -> Process.sleep(10); wait_until(fun, retries - 1)
+      true -> flunk("condition never became true")
+    end
   end
 end

@@ -699,12 +699,10 @@ defmodule Ezagent.Kind.Server do
   # 2. Emit ONLY on `:ok` or `:not_durable`:
   #    - `:ok` — slice survives restart, subscribers safe to act
   #    - `:not_durable` — by-design no durability promise (e.g. an
-  #      `:ephemeral` Kind); in-memory slice IS the truth so notify
-  #      is correct
+  #      `:ephemeral` Kind); in-memory slice IS the truth so notify is correct
   #    - `{:error, _}` — GenServer holds state that won't survive
   #      crash. Ghost-notify would tell LV "Alice → Bob" but a
-  #      restart re-loads "Alice → Carol". Suppress emit. `commit/4`
-  #      has already logged + emitted `:failed` telemetry.
+  #      restart re-loads "Alice → Carol". Suppress emit (`commit/4` logged the `:failed` telemetry).
   # 3. Return the strict outcome (issue #342) so the dispatch
   #    reply path can propagate `{:error, {:persistence_failed, _}}`
   #    instead of falsely reporting success to the caller.
@@ -734,6 +732,8 @@ defmodule Ezagent.Kind.Server do
 
     if slice_change_event && commit_result in [:ok, :not_durable] do
       Ezagent.SliceChange.emit(slice_change_event)
+      # Membership-cap B.3 (spec §10/K3): cascade hook — enqueues a self-message.
+      Ezagent.Kind.CascadeHook.maybe_enqueue(slice_change_event)
     end
 
     commit_result

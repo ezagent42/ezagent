@@ -92,6 +92,31 @@ defmodule Ezagent.ActionSet.Identity do
     modes: [:call]
   )
 
+  # Membership-cap unification Phase B.3 (spec §10 / K3) — the post-commit
+  # cascade sink. `Kind.Server` synthesizes this self-targeted, fire-and-forget
+  # dispatch at the SINGLE emit chokepoint for an allowlisted `{scheme,
+  # slice_key}` (initially `{entity, :identity}` — a cap grant/revoke mutates the
+  # `:identity` slice). The handler resolves the entity's managers/owners and
+  # notifies them content-free. It is **cap-exempt** (`cap_exempt_actions/0`
+  # below): a VM-internal advisory dispatch under the same in-VM-trust model as
+  # `Ezagent.Notifications.notify/2`, mirroring the `:receive` cap-exempt
+  # precedent (A2). Read-only (no slice mutation) so it never re-triggers itself.
+  action(:cascade_notify_managers,
+    args: %{},
+    returns: %{},
+    caps: [{:cascade_notify_managers, kind: :any}],
+    description: "Post-commit cascade: content-free notify of this entity's managers/owners on an allowlisted slice change",
+    modes: [:cast]
+  )
+
+  @doc """
+  Membership-cap B.3 cap-exempt actions: the cascade sink is authorized in-VM
+  (self-dispatched at the emit chokepoint), NOT via a caller-scoped cap — the
+  `:receive` precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions ==
+  actions` (the `Ezagent.ActionSet` behaviour-contract parity check).
+  """
+  def cap_exempt_actions, do: [:cascade_notify_managers]
+
   # =================================================================
   # Explicit `required_caps/0` — preserved as `kind: :any` (Identity
   # is registered on multiple Kinds; see check 11(b) escape in
@@ -286,6 +311,40 @@ defmodule Ezagent.ActionSet.Identity do
     has? = Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
     {:ok, %{has: has?}, []}
   end
+
+  @doc """
+  Membership-cap B.3 cascade sink (spec §10 / K3). Resolve this entity's
+  managers/owners and notify them content-free of the slice change. Read-only
+  (emits NO effects → no re-trigger); best-effort inside `Cascade` (a failed
+  cascade is advisory and MUST NOT crash the post-commit turn).
+
+  ## Provenance gate (#161 Phase B, codex MED)
+
+  This action is `cap_exempt` AND production-reachable via
+  `POST /api/v1/:kind/:action`. Left ungated, an authenticated same-workspace
+  caller could invoke it directly to trigger a managers-scan + advisory
+  "caps changed" notify (notify-spam / false-signal vector). It is ONLY ever
+  meant to be self-dispatched by `Ezagent.Kind.CascadeHook` at the emit
+  chokepoint, which sets `ctx.caller = :vm_internal` — the trusted in-VM caller
+  marker (#154 VM-internal-trust). We proceed ONLY for that internal
+  provenance; any other caller is rejected with `{:error, :unauthorized}`
+  (no managers-scan, no notify — a clean reject, never a crash).
+
+  Why an external caller cannot forge it: `ctx.caller` is set by the transport,
+  NOT by user-supplied args. The `/api/v1` controller resolves it from the
+  bearer token (`resolve_caller/1`) to the authenticated entity's `%URI{}` — it
+  is never the atom `:vm_internal`. `:vm_internal` trusts all in-VM code (per
+  #154, that is the model), and `CascadeHook` is the sole in-VM producer of this
+  action; the security property the gate guarantees is that an EXTERNAL caller
+  can never present `:vm_internal`. Mirrors the `:receive` cap-exempt-then-
+  in-handler-check precedent (A2).
+  """
+  def handle_cascade_notify_managers(args, %{caller: :vm_internal} = ctx) do
+    Ezagent.Identity.Cascade.notify_managers(Map.get(ctx, :self_uri), args)
+    {:ok, %{}, []}
+  end
+
+  def handle_cascade_notify_managers(_args, _ctx), do: {:error, :unauthorized}
 end
 
 defmodule Ezagent.ActionSet.IdentityAdmin do
@@ -656,7 +715,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
           cond do
             caller == owner -> :ok
             holds_admin_caps?(ctx) -> :ok
-            holds_manage_over_target?(ctx, instance) -> check_delegable_by_caller(cap, ctx)
+            manages_target?(ctx, instance) -> check_delegable_by_caller(cap, ctx)
             true -> {:error, :grant_not_owner}
           end
 
@@ -687,7 +746,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
         %URI{} = owner ->
           Map.get(ctx, :caller) != owner and
             not holds_admin_caps?(ctx) and
-            holds_manage_over_target?(ctx, instance)
+            manages_target?(ctx, instance)
 
         _ ->
           false
@@ -700,64 +759,16 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp manager_delegated_grant?(_cap, _ctx), do: false
 
   # SPEC 2026-06-16 §1 (Decision #88) — "caller holds Manage over target".
-  # The manager of an instance is the principal holding a
-  # `Behavior.Manage`, `:any`-action cap scoped to that instance (the shape
-  # `Ezagent.CreatorGrant.manage_cap/4` mints at create — `cap(:<kind>,
-  # Manage, :any, instance, ws)`). We test the caller's caps (`ctx.caps`)
-  # with a DIRECT predicate (not `Capability.matches?` against a fixed
-  # `needed`): the `kind` axis of a Manage cap is the managed Kind's concrete
-  # type (`:agent`/`:session`/…), and `matches?`'s asymmetric rule means a
-  # `needed.kind: :any` would NOT match a concrete held kind — so a needed
-  # map cannot express "Manage over target, any kind" in one shot. The
-  # predicate instead pins `behavior == Manage` + `action_of == :any` (the
-  # Manage shape) and reuses the instance-scope match
-  # (`Capability.matches?` on a kind/behavior/action/workspace-wildcarded
-  # needed) so the held cap's instance-scope tuples
-  # (`:within_workspace`/`:spawned_by`/concrete instance/`:any`) are honored
-  # against the target. A generic cap cannot masquerade as Manage authority.
-  defp holds_manage_over_target?(ctx, instance) do
-    target = manage_target_instance(instance)
-
+  # Delegates to the extracted single-source predicate
+  # `Ezagent.Identity.Authority.holds_manage_over_target?/2` (membership-cap B.1 /
+  # K2), reading the caller's dispatch caps (`ctx.caps`). The URI-based
+  # `Authority.manages?/2` (durable identity caps) is the cascade/admission twin;
+  # both share the ONE predicate so a security boundary never drifts.
+  defp manages_target?(ctx, instance) do
     ctx
     |> caller_caps()
-    |> Enum.any?(fn
-      %Ezagent.Capability{behavior: Ezagent.ActionSet.Manage} = held ->
-        Ezagent.Capability.action_of(held) == :any and
-          held_instance_covers_target?(held, target)
-
-      _ ->
-        false
-    end)
+    |> Ezagent.Identity.Authority.holds_manage_over_target?(instance)
   end
-
-  # Does the held Manage cap's instance scope cover `target`? We reuse
-  # `Capability.matches?`'s instance-scope semantics by building a `needed`
-  # whose kind/behavior/action/workspace AXES ECHO the held cap's own values
-  # (so those four axes match trivially — sidestepping the asymmetric-`:any`
-  # rule which would reject a `needed.kind: :any` against a concrete held
-  # kind), leaving the INSTANCE axis as the only real constraint. This
-  # honors the held cap's `:within_workspace`/`:spawned_by`/concrete-URI/`:any`
-  # instance scopes against the target.
-  defp held_instance_covers_target?(%Ezagent.Capability{} = held, %URI{} = target) do
-    needed = %{
-      kind: held.kind,
-      behavior: held.behavior,
-      action: Ezagent.Capability.action_of(held),
-      instance: target,
-      workspace_uri: held.workspace_uri
-    }
-
-    Ezagent.Capability.matches?(held, needed)
-  end
-
-  defp held_instance_covers_target?(_held, _target), do: false
-
-  # The "target" a Manage cap must cover is the cap-to-grant's `instance`.
-  # When that instance is itself a scope tuple (e.g. `{:within_session, _}`),
-  # use the inner concrete URI as the managed target — a manager of the
-  # session/agent/workspace instance is what the Manage cap is scoped to.
-  defp manage_target_instance({_scope, %URI{} = uri}), do: uri
-  defp manage_target_instance(other), do: other
 
   # codex P1 (MANDATORY) — explicit held-cap delegation bound for the
   # MANAGER case only. The cap-to-grant must `Capability.matches?` a cap the
@@ -806,7 +817,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   end
 
   defp require_workspace_admin(ctx, %URI{} = cap_ws, _cap) do
-    if holds_admin_caps?(ctx) or holds_workspace_admin_cap?(ctx, cap_ws) do
+    if holds_admin_caps?(ctx) or
+         Ezagent.Identity.Authority.workspace_admin?(caller_caps(ctx), cap_ws) do
       :ok
     else
       {:error, :grant_workspace_admin_required}
@@ -854,31 +866,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
         false
     end)
   end
-
-  defp holds_workspace_admin_cap?(%{caps: caps}, %URI{} = ws_uri) do
-    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
-
-    Enum.any?(caps_list, fn
-      %Ezagent.Capability{
-        behavior: Ezagent.ActionSet.Workspace,
-        action: :any,
-        workspace_uri: ^ws_uri
-      } ->
-        true
-
-      %Ezagent.Capability{
-        behavior: Ezagent.ActionSet.Workspace,
-        action: :any,
-        workspace_uri: :any
-      } ->
-        true
-
-      _ ->
-        false
-    end)
-  end
-
-  defp holds_workspace_admin_cap?(_, _), do: false
 
   defp require_bootstrap_admin(ctx, error_tag) do
     if holds_admin_caps?(ctx) do
