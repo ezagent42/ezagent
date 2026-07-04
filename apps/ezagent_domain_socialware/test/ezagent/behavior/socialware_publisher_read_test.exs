@@ -29,7 +29,18 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     (g) a malformed caller is denied.
   """
 
-  use ExUnit.Case, async: true
+  # A2.3 tightened the read predicate: a non-owner ROSTER-MEMBER caller is now
+  # authorized on the LIVE held member-cap, so those handler paths do an
+  # in-process `Repo` read (`SnapshotStore.latest/1` → `KindSnapshot.get/1`) for
+  # the fabricated member's (empty) cap slice. Three tests reach it — "(c)
+  # snapshot", "(c) history", and "(e) …present" — while owner/stranger/nil/
+  # malformed/absent-roster callers short-circuit before the read. That read
+  # needs a sandbox connection; without one it passes in isolation but flakes
+  # with `DBConnection.OwnershipError` in the concurrent umbrella (#108) by
+  # borrowing (or missing) a leaked shared connection. Running as a NON-ASYNC
+  # `DataCase` establishes shared sandbox mode, so the in-handler cap read always
+  # finds an owner. The remaining pure predicate tests simply ignore the checkout.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.SocialwarePublisherRead, as: SPR
   alias Ezagent.Publisher.Event
@@ -118,11 +129,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   end
 
   # Membership-cap unification A2.3 (spec R1.1) — a non-owner reader must now HOLD
-  # the member-cap over the session, not merely appear in the roster. These
-  # predicate unit tests run WITHOUT a DB/live Kind, so the fabricated @member
-  # holds no cap ⇒ denied (the held-cap tightening). The POSITIVE path — a member
-  # that HOLDS the cap CAN read — is proven with a real member in the session-app
-  # `Ezagent.Session.SocialwareReadHeldCapTest`.
+  # the member-cap over the session, not merely appear in the roster. The
+  # fabricated @member was never spawned, so its LIVE cap read resolves to an
+  # empty snapshot slice (no live Kind → in-process `SnapshotStore.latest/1`
+  # returns []) ⇒ denied (the held-cap tightening). That in-handler `Repo` read is
+  # why this module runs as a NON-ASYNC `DataCase` (see the top-of-file note). The
+  # POSITIVE path — a member that HOLDS the cap CAN read — is proven with a real
+  # member in the session-app `Ezagent.Session.SocialwareReadHeldCapTest`.
   describe "(c) a non-owner roster-member WITHOUT the held member-cap is denied (A2.3)" do
     test "snapshot: roster presence alone no longer authorizes — held cap required" do
       chat = owned_chat(@owner, %{@member => %{online: true}})
