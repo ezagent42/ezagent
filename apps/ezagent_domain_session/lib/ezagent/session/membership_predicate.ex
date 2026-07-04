@@ -39,15 +39,47 @@ defmodule Ezagent.Session.Membership do
   session). Fail-closed: `{:error, :unauthorized}` on any unmet condition.
   """
   @spec authorize(chat_slice() | term(), URI.t() | term()) :: :ok | {:error, :unauthorized}
-  def authorize(chat, caller) do
+  def authorize(chat, caller), do: authorize(chat, caller, nil)
+
+  @doc """
+  Authorize `caller` to read `chat` — the HELD-CAP form (membership-cap
+  unification A2.3 / spec R1.1). Identical to `authorize/2` PLUS: a non-owner
+  caller must additionally HOLD the member-cap over `session_uri` (read LIVE via
+  `Ezagent.Identity.read_entity_caps/1`, provenance-filtered), so an ex-member
+  whose cap was revoked is denied IMMEDIATELY even if a stale roster entry lingers
+  (no "in-projection ⇒ authorized" window). `session_uri == nil` skips the held-cap
+  check (roster-only, backward-compatible with any caller lacking session context).
+  """
+  @spec authorize(chat_slice() | term(), URI.t() | term(), URI.t() | nil) ::
+          :ok | {:error, :unauthorized}
+  def authorize(chat, caller, session_uri) do
     with %URI{} = caller <- caller,
          true <- valid_caller_uri?(caller),
          %{} = chat <- chat,
-         true <- owner?(chat, caller) or member?(chat, caller) do
+         true <- owner?(chat, caller) or member_with_held_cap?(chat, caller, session_uri) do
       :ok
     else
       _ -> {:error, :unauthorized}
     end
+  end
+
+  # A non-owner reader must be in the roster AND HOLD the member-cap over the
+  # session (R1.1). The roster is the fast pre-filter; the held cap is the
+  # authority — a revoked ex-member with a stale roster entry is denied.
+  defp member_with_held_cap?(chat, %URI{} = caller, session_uri) do
+    member?(chat, caller) and holds_member_cap?(caller, session_uri)
+  end
+
+  # `nil` session → no session context → skip the held-cap check (roster-only,
+  # backward-compat). With a concrete session, require the LIVE held member-cap,
+  # via the ONE shared held-cap predicate (no drift vs the receive gate, K4
+  # provenance-filtered).
+  defp holds_member_cap?(_caller, nil), do: true
+
+  defp holds_member_cap?(%URI{} = caller, %URI{} = session_uri) do
+    caller
+    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.Session.MemberReceive.holds_member_cap_over?(session_uri)
   end
 
   @doc """

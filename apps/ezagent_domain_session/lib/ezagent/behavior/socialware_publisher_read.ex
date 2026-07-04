@@ -197,7 +197,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
   # A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
   # rejected up front. There is NO "allow if owner is nil" branch.
   defp authorize(ctx) do
-    Ezagent.Session.Membership.authorize(get_chat_sibling(ctx), Map.get(ctx, :caller))
+    # A2.3 (R1.1) — pass `ctx.self_uri` (this session S) so the read requires the
+    # caller to HOLD the member-cap over S, not merely appear in the roster.
+    Ezagent.Session.Membership.authorize(
+      get_chat_sibling(ctx),
+      Map.get(ctx, :caller),
+      Map.get(ctx, :self_uri)
+    )
   end
 
   defp get_chat_sibling(ctx) do

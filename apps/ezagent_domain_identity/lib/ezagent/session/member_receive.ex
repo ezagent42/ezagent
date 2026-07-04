@@ -86,12 +86,20 @@ defmodule Ezagent.Session.MemberReceive do
 
   def authorize(_), do: {:error, :unauthorized}
 
-  # True iff the recipient holds a real-entity-granted member-cap over `session`:
-  # `kind: :session`, `action: :receive`, concrete instance == `session`. The at-
-  # join grant is the sole minter of `{:session, :receive}` caps, so these fields
-  # + the instance uniquely identify the member-cap (see moduledoc — behavior is
-  # intentionally not pinned to avoid an identity→session compile edge).
-  defp holds_member_cap_over?(held, %URI{} = session) when is_list(held) do
+  @doc """
+  True iff `held` (a list of `%Capability{}`) contains a real-entity-granted
+  member-cap over `session`: `kind: :session`, `action: :receive`, concrete
+  instance == `session`. The at-join grant is the SOLE minter of any
+  `{:session, :receive}` cap, so these fields + the instance uniquely identify
+  the member-cap (behavior is intentionally not pinned — see moduledoc).
+
+  Public so the socialware READ predicate (`Ezagent.Session.Membership.authorize/3`)
+  shares this EXACT held-cap check with the receive predicate — one security
+  boundary, no copy-paste drift (R1.1: coherent "held-cap, not projection" story
+  across delivery AND read).
+  """
+  @spec holds_member_cap_over?([Ezagent.Capability.t()] | term(), URI.t()) :: boolean()
+  def holds_member_cap_over?(held, %URI{} = session) when is_list(held) do
     session_key = instance_key(session)
 
     Enum.any?(held, fn
@@ -105,7 +113,7 @@ defmodule Ezagent.Session.MemberReceive do
     end)
   end
 
-  defp holds_member_cap_over?(_held, _session), do: false
+  def holds_member_cap_over?(_held, _session), do: false
 
   # The comparable key for a cap instance. A concrete `%URI{}` instance (the
   # member-cap's shape) normalizes to its bare-instance string; a scope-tuple /
