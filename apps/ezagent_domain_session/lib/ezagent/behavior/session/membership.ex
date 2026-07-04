@@ -13,7 +13,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   require Logger
 
-  alias Ezagent.ActionSet.Session.{Delivery, Members}
+  alias Ezagent.ActionSet.Session.{Delivery, MemberCap, Members}
 
   @doc """
   Add a member to the session — the `:join` handler body. Builds the
@@ -46,8 +46,45 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
     # join leaks no monitor. A member rejoining with its OWN role_name is fine.
     case Members.role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
-      {:error, _} = err -> err
-      :ok -> do_join_apply(member_uri, member_pid, ctx, facets, source_module)
+      {:error, _} = err ->
+        err
+
+      :ok ->
+        # Membership-cap unification A1.2 (spec R1.3 / R2.1 JOIN sequence —
+        # grant-first, AFTER the zero-side-effect `role_name_conflict/3`
+        # preflight, compensate on a post-grant failure). The member-cap is the
+        # NEW universal base tier (§7): EVERY member (user, agent, anon) that
+        # clears the preflight is granted `cap(:session, Session, :receive, S)`
+        # into its OWN `:identity` slice, so receive/read AUTHORIZE on the held
+        # cap in A2 (never a bearer token). A1 is additive/behavior-preserving —
+        # the grant lands but delivery/receive still use the ephemeral mint.
+        #
+        # Placed here (in `do_join`, through the single `handle_join`
+        # chokepoint) so it covers ALL member kinds uniformly — every add path
+        # (World invite, orchestrator, materializer, anon admission, direct
+        # `session.join`) funnels through here. Unlike `mount_participation_caps/2`
+        # (the `Users.confirmed?/1` tier, kept caller-side for its Repo read) the
+        # member-cap is UNCONDITIONAL, so it needs no Repo read in the Session
+        # Kind — only the owner, read from `ctx` (never a self-call to
+        # `Session.owner`). The cross-Kind grant DISPATCH to the member's identity
+        # Kind is consistent with the existing at-join grant flow (spec §2.2) and
+        # runs on the cold join path. The at-join member-cap machinery lives in
+        # the sibling `Session.MemberCap` module.
+        granted? = MemberCap.grant_at_join(member_uri, ctx)
+
+        # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
+        # (monitor error, replay/notify raise, etc.) must not orphan the
+        # just-granted member-cap. `do_join_apply` returns `{:ok, _, _}` or
+        # RAISES (it has no `{:error}` return path), so the rescue is the sole
+        # compensation trigger; it revokes only what THIS call granted, then
+        # re-propagates (let-it-crash — the join still fails loudly).
+        try do
+          do_join_apply(member_uri, member_pid, ctx, facets, source_module)
+        rescue
+          e ->
+            if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)
+            reraise e, __STACKTRACE__
+        end
     end
   end
 
@@ -895,18 +932,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
     }
 
     held
-    |> caps_to_list()
+    |> MemberCap.caps_to_list()
     |> Enum.any?(fn
       %Ezagent.Capability{} = cap -> Ezagent.Capability.matches?(cap, needed)
       _ -> false
     end)
-  end
-
-  defp caps_to_list(caps) do
-    cond do
-      is_list(caps) -> caps
-      is_struct(caps, MapSet) -> MapSet.to_list(caps)
-      true -> List.wrap(caps)
-    end
   end
 end

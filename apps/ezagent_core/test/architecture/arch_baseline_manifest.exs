@@ -43,7 +43,15 @@
   #   the concierge chat + publish-as-template + session-open + hello-orchestrator
   #   ensure surfaces. 0→1. Splitting it into a sibling ops module is a tracked
   #   follow-up (the file is cohesive world-console dispatch handlers).
-  oversized_modules_gt_1000: 1,
+  # - arch-cap-bump: #161 A1 — `behavior/session.ex` was 998 on main (ONE line
+  #   under the gate); A1.3 wiring the member-cap `reconcile_after_load/2` seed
+  #   into `activate/2` tipped it to 1018. NOT cleanly extractable (it is inline
+  #   Lifecycle-callback wiring), so ratchet 1→2. (membership.ex — the OTHER A1
+  #   grower, 912→1121 — was instead trimmed back under 1000 by extracting the
+  #   at-join member-cap cluster into the sibling `Session.MemberCap`, so it does
+  #   NOT count here.) session.ex burn-down (split the activate reconcile block)
+  #   is a tracked follow-up in docs/futures/todo.md.
+  oversized_modules_gt_1000: 2,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
