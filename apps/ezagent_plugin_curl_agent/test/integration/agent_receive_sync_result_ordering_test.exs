@@ -26,11 +26,26 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Kind, KindRegistry, SnapshotStore}
+  alias Ezagent.{Capability, Kind, KindRegistry, SnapshotStore}
   alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias EzagentPluginCurlAgent.BridgeAdapter
   alias Ezagent.AgentBridge.Payload
   alias Ezagent.Message
+
+  # A2.2 — supply the runtime-preloaded member-cap the handler authorizes against
+  # (see curl_flavor_on_agent_test.exs for the full rationale). Behavior axis is
+  # `:any` (MemberReceive matches kind/action/instance/provenance only).
+  defp with_member_cap(ctx) do
+    caller = Map.fetch!(ctx, :caller)
+
+    cap = %Capability{
+      Capability.cap(:session, :any, :receive, caller, Capability.workspace_of(caller))
+      | granted_by: URI.new!("entity://system/user/owner"),
+        granted_at: DateTime.utc_now()
+    }
+
+    Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
+  end
 
   defp wait_until(fun, attempts \\ 100)
   defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
@@ -93,7 +108,9 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
       sender = Ezagent.URI.new!("entity://team-alpha/user/alice")
 
       msg = Message.new(sender, %{text: "first", attachments: []})
-      ctx = %{self_uri: uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
+
+      ctx =
+        with_member_cap(%{self_uri: uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
 
       assert {:ok, %{}, effects} = AgentReceive.handle_receive(%{message: msg}, ctx)
 
