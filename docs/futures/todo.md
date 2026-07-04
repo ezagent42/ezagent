@@ -12,6 +12,41 @@
 > one-line status. Conservative rule applied: RESOLVED only with concrete
 > code/PR/test evidence; otherwise left open.
 
+## 2026-07-05 — #161 A2 deferrals (membership-cap receive/read/removal cutover)
+
+A2 (receive/read/removal held-cap cutover) landed the load-bearing security
+property (§14.5 step-5: revoke ⇒ immediate receive-deny, no reconcile — green).
+Three refinements are DEFERRED with rationale; none is a security hole:
+
+- **Fail-closed at-join member-cap grant (§16 risk-4).** A1's at-join grant stays
+  `:async` best-effort. A sync/confirmed grant from inside `handle_join`
+  DEADLOCKS session creation (EMPIRICALLY VERIFIED — 5s `GenServer.call` timeout in
+  `Materializer.join_session_members`; the deadlock is materialization-confined —
+  an inline-sync REVOKE from `handle_remove_participant` on an ESTABLISHED member
+  does NOT hang). The only deadlock-free CONFIRMED grant is CALLER-SIDE (session
+  Kind not blocked — proven by `mount_participation_caps` + the established-member
+  revoke), which scatters across ~8 add-site chokepoints. R1.1 makes a failed/
+  missing grant SECURE (no cap ⇒ receive denied — the §14.5 gate proves it) and
+  self-healing (reconcile_after_load + `mix ezagent.migrate.member_caps`).
+  **Recommended:** a shared caller-side confirmed grant helper invoked at the add
+  sites (World LV, orchestrator participants, anon admission, SessionCreator),
+  abort/compensate on failure.
+- **Post-commit replay/notify (R3.2 / A2.5).** JOIN's `Delivery.replay_messages_since`
+  + `Ezagent.Notifications.notify` still run inline pre-commit in `do_join_apply`.
+  R1.1 already defangs the leak (a replayed receive to an uncommitted-join member
+  holds no member-cap ⇒ denied). Moving the multi-dispatch replay + the notify off
+  the inline path needs new effect plumbing (`dispatch_after_commit` is a single
+  fire-and-forget Cmd) on the join hot path. Cleanliness refinement, not the
+  security property. (The anon member-cap half of A2.5 is DONE by A1's universal
+  grant — `member_cap_join_test` test 3.)
+- **R3.1 destructive-teardown-after-revoke.** On REMOVE's `:worker` branch the
+  destructive `sandbox.destroy` still runs BEFORE the checked revoke (the teardown
+  fuses authority + destruction). A post-revoke-failure worker-dead+cap-held is a
+  RESOURCE leak (reconciled), NOT a security regression (§14.5 asserts revoke⇒deny,
+  never worker-destroyed). Fully splitting the authority preflight from destruction
+  needs a chokepoint-compatible authority query (cap-check outside the destroy
+  dispatch).
+
 ## 2026-07-03 plan — 官网上线剩余缺口 (Allen 2026-07-02 eve, AFK)
 
 website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起来是 orchestrator 机制", defer to 0703:

@@ -209,7 +209,11 @@ defmodule Ezagent.Socialware.AnonUser.GC do
       {:ok, slice} ->
         match?(
           {:error, _},
-          Ezagent.Session.Membership.authorize(slice, Ezagent.URI.new!(entity_uri))
+          Ezagent.Session.Membership.authorize(
+            slice,
+            Ezagent.URI.new!(entity_uri),
+            Ezagent.URI.new!(session_uri)
+          )
         )
 
       _ ->

@@ -398,7 +398,8 @@ defmodule Ezagent.Socialware.ExternalFeed do
   # (post-LEAVE) is denied because the slice is re-read live on every call; a
   # missing/unreadable slice fails closed.
   defp authorize(session_uri, caller) do
-    Membership.authorize(session_slice(session_uri), caller)
+    # A2.3 (R1.1) — require the caller to HOLD the member-cap over the session.
+    Membership.authorize(session_slice(session_uri), caller, session_uri)
   end
 
   # Page READ gate — deliberately BROADER than participation. A `public_view`

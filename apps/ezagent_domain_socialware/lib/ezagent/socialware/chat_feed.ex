@@ -132,7 +132,9 @@ defmodule Ezagent.Socialware.ChatFeed do
   # ex-member (post-LEAVE) is denied because the slice is re-read live on every
   # call; a missing/unreadable slice fails closed.
   defp authorize(session_uri, caller) do
-    Membership.authorize(chat_slice(session_uri), caller)
+    # A2.3 (R1.1) — require the caller to HOLD the member-cap over the session
+    # (revoked ex-member denied even with a stale roster entry).
+    Membership.authorize(chat_slice(session_uri), caller, session_uri)
   end
 
   defp chat_slice(session_uri) do

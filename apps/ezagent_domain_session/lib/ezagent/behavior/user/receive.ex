@@ -79,6 +79,12 @@ defmodule Ezagent.ActionSet.User.Receive do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :session
 
+  # Membership-cap unification A2.2 (spec R1.1/R2.3) — pre-load the recipient's
+  # OWN `:identity` slice so the in-handler `MemberReceive.authorize/1` reads its
+  # held caps WITHOUT a `GenServer.call` (no self-slice deadlock, no per-message
+  # cross-process read).
+  reads_siblings([:identity])
+
   require Logger
 
   alias Ezagent.Message
@@ -142,19 +148,26 @@ defmodule Ezagent.ActionSet.User.Receive do
   (PR-N3 producer pattern); this handler does NO broadcast.
   """
   def handle_receive(%{message: %Message{} = msg}, ctx) do
-    cursor = Map.get(ctx, :slice_change_cursor)
-    prior_ring = ctx[:read].(:recent_messages, [])
-    new_entry = {cursor, msg.id}
+    # Membership-cap unification A2.2 (spec R1.1) — `:receive` is cap-EXEMPT at
+    # the CapBAC layer; THIS in-handler held-cap check is the sole authority.
+    # Authorizes iff this User holds a member-cap over `ctx.caller` (the source
+    # session). A revoked member no longer holds it ⇒ denied IMMEDIATELY, no
+    # reconcile, no bearer window.
+    with :ok <- Ezagent.Session.MemberReceive.authorize(ctx) do
+      cursor = Map.get(ctx, :slice_change_cursor)
+      prior_ring = ctx[:read].(:recent_messages, [])
+      new_entry = {cursor, msg.id}
 
-    trimmed_ring =
-      [new_entry | prior_ring]
-      |> Enum.take(@recent_messages_ring_depth)
+      trimmed_ring =
+        [new_entry | prior_ring]
+        |> Enum.take(@recent_messages_ring_depth)
 
-    {:ok, %{},
-     [
-       {:set, :last_received, %{message_id: msg.id, at: DateTime.utc_now()}},
-       {:set, :recent_messages, trimmed_ring}
-     ]}
+      {:ok, %{},
+       [
+         {:set, :last_received, %{message_id: msg.id, at: DateTime.utc_now()}},
+         {:set, :recent_messages, trimmed_ring}
+       ]}
+    end
   end
 
   # caps-data-ownership-v2 (SPEC #306 §7) — a Behavior with caps MUST declare
@@ -164,4 +177,12 @@ defmodule Ezagent.ActionSet.User.Receive do
   def data_owner(%URI{scheme: "entity"} = uri), do: Ezagent.URI.instance(uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
+
+  # Membership-cap unification A2.2 (spec R1.1/R1.2) — `:receive` is EXEMPT from
+  # the CapBAC layer (no delivery-presented bearer cap; the `member_receive_caps/1`
+  # mint is deleted). The in-handler `MemberReceive.authorize/1` held-cap check is
+  # the SOLE authority. `keys(required_caps) ∪ cap_exempt == actions` still holds
+  # (`:receive` is in both — same shape as `SocialwarePublisherRead`).
+  @doc "`:receive` is cap-exempt (authorized in-handler on the held member-cap, A2.2)."
+  def cap_exempt_actions, do: [:receive]
 end

@@ -122,6 +122,96 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   end
 
   @doc """
+  SYNCHRONOUS, CHECKED revoke of the member-cap on LEAVE / REMOVE (A2.4, spec
+  R3.1). Returns `revoke_cap_via_router`'s `:ok | {:error, reason}`.
+
+  Unlike `revoke_at_join/2` (the `:async` at-join COMPENSATION, which must not
+  self-deadlock while `handle_join` is still resolving a materializing member),
+  this runs on the LEAVE/REMOVE path where the member is ESTABLISHED + live, so a
+  `:sync` revoke from inside the Session Kind returns cleanly (EMPIRICALLY
+  VERIFIED — a sync `revoke_cap_via_router` from `handle_remove_participant` on an
+  established member does NOT deadlock; the at-join deadlock is
+  materialization-confined). The caller decides abort-safety: REMOVE treats a
+  `{:error, _}` as ABORT (leave the member fully intact); LEAVE treats it as
+  best-effort (log; reconcile heals).
+  """
+  @spec revoke_membership(URI.t(), map()) :: :ok | {:error, term()}
+  def revoke_membership(%URI{} = member_uri, ctx) do
+    session_uri = ctx[:self_uri]
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    cap = member_cap(session_uri, workspace_uri)
+    granter = member_cap_granter(ctx)
+
+    Ezagent.Identity.Grant.revoke_cap_via_router(
+      member_uri,
+      cap,
+      {:rule, :session_participation, granter},
+      :sync
+    )
+  end
+
+  @doc """
+  LEAVE revoke wrapper (A2.4 / R3.1) — best-effort: a revoke failure is logged
+  (the member is de-escalating ITSELF and reconcile evicts any residue) and `:ok`
+  is returned so the self-leave still drops the roster.
+  """
+  @spec revoke_member_cap_best_effort(URI.t(), map()) :: :ok
+  def revoke_member_cap_best_effort(%URI{} = member_uri, ctx) do
+    case revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.MemberCap.leave: member-cap revoke failed for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} " <>
+            "(best-effort on self-leave; reconcile_after_load/2 evicts residue)."
+        )
+
+        :ok
+    end
+  end
+
+  @doc """
+  REMOVE revoke wrapper (A2.4 / R3.1) — CHECKED / abort-safe: a genuine revoke
+  failure on a LIVE member ABORTS the removal (`{:error, _}` → the member is left
+  FULLY INTACT — a loud error, never a silent partial). Placed by the caller AFTER
+  every rejecting check (teardown authority + routing prune) has passed, so a
+  rejected removal never reaches it and cap + roster stay intact (preserves test
+  11). A NOT-LIVE member (`:no_such_actor` / `:not_ready`) has no live cap to
+  revoke, so the removal PROCEEDS (mirrors the teardown's idempotent handling;
+  reconcile/migration are the backstop for any persisted snapshot cap).
+  """
+  @spec revoke_member_cap_checked(URI.t(), map()) :: :ok | {:error, term()}
+  def revoke_member_cap_checked(%URI{} = member_uri, ctx) do
+    case revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} when reason in [:no_such_actor, :not_ready] ->
+        Logger.warning(
+          "Session.MemberCap.remove_participant: member-cap revoke skipped for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} (member not live; no " <>
+            "live cap to revoke; removal proceeds, reconcile/migration backstop)."
+        )
+
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Session.MemberCap.remove_participant: member-cap revoke FAILED for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} — ABORTING the " <>
+            "removal (member left fully intact; let-it-crash, no silent partial)."
+        )
+
+        {:error, {:member_cap_revoke_failed, reason}}
+    end
+  end
+
+  @doc """
   Normalize a held-caps collection (list / `MapSet` / scalar) to a plain list.
   """
   @spec caps_to_list(term()) :: [term()]
