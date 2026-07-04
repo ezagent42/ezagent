@@ -1,5 +1,14 @@
 # 场景 05(执行记录):cc-agent(Claude Code)往返
 
+## 2026-07-02 World UI current retest note
+
+See world-scenario-05-cc-roundtrip.md for the World-specific run.
+
+- Current Invite UI uses the Invite member dropdown, not a full URI text input.
+- The retest invited claude-bot agent, verified data-kind=agent and data-online=true, selected @claude-bot through mention autocomplete, and sent @claude-bot cc-ping-world-0702.
+- The message was written with mention entity://system/agent/claude-bot and a delivered read marker, but no cc-agent reply appeared, so the World scenario is FAIL.
+- The same service log shows the Claude PTY process exited with error unknown option --dangerously-load-development-channels, while the UI still reported the member as online.
+
 | 字段 | 值 |
 |---|---|
 | **状态** | 🟥 确认 bug(**Allen 已确认**)—— cc PTY 慢激活(>10s)撞上 create_agent cascade 两层 5s ReadyGate(内层 `template_spawn:638`/`invocation:181` 真凶 + 外层 UI 无 deadline)→ `:activate_timeout` 回滚。临时改动已实测定位并**还原**,修复留别的分支。详见「✅✅ 确认 bug + 修复方法」 |
