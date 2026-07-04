@@ -49,6 +49,39 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
+  Classify a PAGE-OWNER message as page `:builder` (change/create the page) vs
+  read-only `:concierge` (question / navigation), via one cheap LLM round-trip
+  (`Prompts.route_system/0`). Fail-closed to `:builder` — the owner is here to
+  build, and a mis-route to the builder is recoverable (it just regenerates),
+  whereas losing a build request is not. Used by the `hello.orchestrator` router
+  for OWNER messages only; non-owner messages never reach here (they route to the
+  concierge by identity, before any LLM call).
+  """
+  @spec classify_intent(String.t()) :: :builder | :concierge
+  def classify_intent(user_text) when is_binary(user_text) do
+    case call_llm(Prompts.route_system(), user_text) do
+      {:ok, %{content: content}} when is_binary(content) ->
+        interpret_intent(content)
+
+      other ->
+        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → builder")
+        :builder
+    end
+  end
+
+  @doc """
+  Interpret the router model's one-word answer. `ASK` (anywhere in the reply) →
+  `:concierge`; anything else → `:builder` (fail-open to build, the owner default).
+  Pure — split out so the routing policy is unit-testable without the LLM.
+  """
+  @spec interpret_intent(String.t()) :: :builder | :concierge
+  def interpret_intent(content) when is_binary(content) do
+    if content |> String.upcase() |> String.contains?("ASK"),
+      do: :concierge,
+      else: :builder
+  end
+
+  @doc """
   Answer a visitor's question grounded ONLY in the current page content, and post
   the reply as a chat message from `concierge_uri`. Read-only BY CONSTRUCTION: it
   reads the approved Surface tree + calls the LLM, but writes NOTHING back to the

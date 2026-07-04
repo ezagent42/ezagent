@@ -352,7 +352,7 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   defp dispatch_post(session_uri, %URI{} = principal, text) do
     msg =
       Ezagent.Message.new(principal, %{text: text, attachments: []},
-        mentions: [target_agent(session_uri, principal)]
+        mentions: [orchestrator_uri(session_uri)]
       )
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -363,35 +363,14 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     })
   end
 
-  # Route by WHO is speaking: the session OWNER's messages go to the page BUILDER
-  # (@hello — generates/edits the page); ANY other member's messages go to the
-  # read-only CONCIERGE (Q&A + navigation, no page edit). The chat fan-out is
-  # mention-gated (`Behavior.Session` §:send), so mentioning exactly one of them
-  # is the whole routing. Unknown / ownerless session → builder (legacy behaviour).
-  defp target_agent(session_uri, %URI{} = principal) do
-    case session_owner(session_uri) do
-      %URI{} = owner ->
-        if same_uri?(owner, principal),
-          do: builder_uri(session_uri),
-          else: concierge_uri(session_uri)
-
-      _ ->
-        builder_uri(session_uri)
-    end
-  end
-
-  defp session_owner(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, slice} when is_map(slice) -> Map.get(slice, :owner_uri) || Map.get(slice, "owner_uri")
-      _ -> nil
-    end
-  end
-
-  defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
-  defp same_uri?(_, _), do: false
-
-  defp builder_uri(session_uri), do: hello_agent_uri(session_uri, "hello_")
-  defp concierge_uri(session_uri), do: hello_agent_uri(session_uri, "concierge_")
+  # EVERY user message goes to the invisible ORCHESTRATOR (the `hello.orchestrator`
+  # front-desk agent). It — not this web layer — decides per message, by intent ×
+  # identity, whether the message goes to the page builder or the read-only
+  # concierge (owner-vs-visitor is read from the session slice inside the
+  # orchestrator's `EzagentPluginHello.Router`). The chat fan-out is mention-gated
+  # (`Behavior.Session` §:send), so mentioning exactly the orchestrator is the whole
+  # ingress; builder/concierge never receive the user message directly.
+  defp orchestrator_uri(session_uri), do: hello_agent_uri(session_uri, "orch_")
 
   defp hello_agent_uri(session_uri, prefix) do
     ws = Ezagent.URI.workspace_name!(session_uri)

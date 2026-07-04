@@ -315,5 +315,9 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   defp sync_result_action("cc-headless"), do: :cc_headless_sync_result
   defp sync_result_action("py"), do: :py_sync_result
+  # hello's in-process router flavor — a UNIQUE action so it is not shadowed by the
+  # default `:sync_result` that `curl` claims globally on `Entity.Agent` (mirrors
+  # the py / cc-headless unique-action pattern). Owned by `Behavior.HelloOrchestrator`.
+  defp sync_result_action("hello"), do: :hello_sync_result
   defp sync_result_action(_), do: :sync_result
 end

@@ -1,23 +1,102 @@
 defmodule EzagentPluginHello.RegistrationTest do
-  use ExUnit.Case, async: true
+  @moduledoc """
+  hello-as-role acceptance — the `hello.builder` / `hello.concierge` role recipes
+  + `roles/0` registration (RF-4), the hello-agents-are-roles gate.
+
+  hello's two agents are ROLES on the unified `Ezagent.Entity.Agent` hosted by the
+  `native` flavor (Principle 1 — an agent type is a role × flavor, NEVER its own
+  Kind). The old custom Kinds `Ezagent.Entity.HelloBuilder` / `HelloConcierge` are
+  DELETED; their `:receive` hooks now load PER-INSTANCE via these recipes (RF-1
+  `BehaviorSet.resolve_action` on `Entity.Agent`).
+
+  Unlike `kanban-manager`, the hello agents are NOT `passive`: builder + concierge
+  are chat principals (they receive the session's `chat.receive` fan-out and are
+  `@`-mentionable / joinable).
+  """
+
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Agent.Recipe
+  alias Ezagent.Agent.RecipeRegistry
+  alias Ezagent.Behavior.{HelloBuilder, HelloConcierge, HelloOrchestrator}
+  alias EzagentPluginHello.Application, as: HelloApp
+
+  setup do
+    # role-as-data: the read-through registry lives in domain_agent (ETS cache +
+    # ConfigStore resolution); ensure it is up. DataCase checks out the DB sandbox.
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+    :ok
+  end
 
   test ":grant_cap lives on IdentityAdmin (the privileged write behavior)" do
     assert :grant_cap in Ezagent.Behavior.IdentityAdmin.actions()
     refute :grant_cap in Ezagent.Behavior.Identity.actions()
   end
 
-  test "the HelloBuilder Kind routes :grant_cap to the IdentityAdmin behavior" do
-    assert {:ok, Ezagent.Behavior.IdentityAdmin} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.HelloBuilder, :grant_cap)
+  test "all three hello role recipes are published in roles/0" do
+    assert HelloApp.hello_orchestrator_recipe() in HelloApp.roles()
+    assert HelloApp.hello_builder_recipe() in HelloApp.roles()
+    assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
   end
 
-  test "the HelloBuilder Kind routes :list_caps to the Identity behavior" do
-    assert {:ok, Ezagent.Behavior.Identity} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.HelloBuilder, :list_caps)
+  test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_orchestrator_recipe())
+
+    assert role.name == "hello.orchestrator"
+    assert role.behaviors == [HelloOrchestrator]
+    # NOT passive — the orchestrator is the chat front desk (receives the fan-out).
+    refute role.passive
+
+    # `:hello_sync_result` — the unique in-process-sync seam `Agent.Receive`
+    # re-dispatches chat into (the `"hello"` flavor adapter delivers, this action
+    # routes). Unique so it is not shadowed by curl's global `:sync_result`.
+    assert [%{behavior: HelloOrchestrator, action: :hello_sync_result} = cap] =
+             role.requested_caps
+
+    refute Map.has_key?(cap, :kind)
   end
 
-  test "the HelloBuilder Kind routes :receive to its own behavior" do
-    assert {:ok, Ezagent.Behavior.HelloBuilder} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.HelloBuilder, :receive)
+  test "hello.builder recipe — behaviors + caps + non-passive (combined gate)" do
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_builder_recipe())
+
+    assert role.name == "hello.builder"
+    # Behaviors is EXACTLY [Behavior.HelloBuilder] — its :receive page-gen hook.
+    assert role.behaviors == [HelloBuilder]
+    # NOT passive — the builder is a chat principal (receives fan-out, @-mentionable).
+    refute role.passive
+
+    # requested_caps: atom-keyed cap-template MAP {behavior, action}, no `kind`
+    # materialization axis (Recipe.CapMint injects `:agent` per the native flavor).
+    assert [%{behavior: HelloBuilder, action: :receive} = cap] = role.requested_caps
+    refute Map.has_key?(cap, :kind)
+  end
+
+  test "hello.concierge recipe — behaviors + caps + non-passive (combined gate)" do
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_concierge_recipe())
+
+    assert role.name == "hello.concierge"
+    assert role.behaviors == [HelloConcierge]
+    refute role.passive
+
+    assert [%{behavior: HelloConcierge, action: :receive} = cap] = role.requested_caps
+    refute Map.has_key?(cap, :kind)
+  end
+
+  test "role-as-data — roles/0 → seed_role_if_absent → read-through lookup round-trip" do
+    Enum.each(HelloApp.roles(), fn recipe ->
+      assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
+    end)
+
+    :ok = RecipeRegistry.flush_cache()
+
+    assert {:ok,
+            %Recipe{name: "hello.orchestrator", behaviors: [HelloOrchestrator], passive: false}} =
+             RecipeRegistry.lookup("hello.orchestrator")
+
+    assert {:ok, %Recipe{name: "hello.builder", behaviors: [HelloBuilder], passive: false}} =
+             RecipeRegistry.lookup("hello.builder")
+
+    assert {:ok, %Recipe{name: "hello.concierge", behaviors: [HelloConcierge], passive: false}} =
+             RecipeRegistry.lookup("hello.concierge")
   end
 end

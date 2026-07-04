@@ -53,6 +53,19 @@ defmodule EzagentPluginHello.MixProject do
       # `Ezagent.Workspace` (`create/2`) — the hello app's workspace home; used by
       # the demo seed task + the opt-in boot seed.
       {:ezagent_domain_workspace, in_umbrella: true},
+      # hello's builder + concierge are ROLES on the unified `Entity.Agent` hosted
+      # by the `native` flavor (Principle 1). `App.ensure_app` creates them via
+      # `Workspace.create_agent(flavor: "native", role: "hello.…")`, so the native
+      # flavor MUST be boot-registered wherever hello boots. The flavor is resolved
+      # by the runtime `AgentFlavorRegistry` (a string lookup, no compile coupling),
+      # but this dep guarantees `ezagent_plugin_native` starts in hello's app tree.
+      {:ezagent_plugin_native, in_umbrella: true},
+      # hello owns an agent FLAVOR ("hello") whose in-process AgentBridge adapter
+      # routes inbound chat `:receive` to `EzagentPluginHello.Router` — so the
+      # orchestrator (a role × "hello" flavor agent) can run custom Elixir on chat
+      # (native has no adapter → chat is dropped). Needs the Adapter behaviour +
+      # `Ezagent.AgentBridge.Payload`.
+      {:ezagent_domain_agent_bridge, in_umbrella: true},
       # i18n (#91, Allen 2026-06-23) — the builder narration (`Generator` turn
       # progress strings) is user-facing copy; it goes through the plugin-owned
       # `EzagentPluginHello.Gettext` backend (per-OTP-app translation namespace,

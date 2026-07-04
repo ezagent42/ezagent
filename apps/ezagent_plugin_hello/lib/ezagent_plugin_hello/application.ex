@@ -52,31 +52,64 @@ defmodule EzagentPluginHello.Application do
   @impl Ezagent.Plugin
   def template_classes, do: [EzagentPluginHello.Template.HelloSession]
 
-  # Register the builder Kind under a flavor so a cold `entity://<ws>/agent/
-  # hello_<name>` (kind_type "hello_builder") can be REVIVED from its snapshot
-  # after a restart. Without this, the agent-module resolver returns
-  # `{:no_kind_module_for_agent, ...}` and the session's fan-out `agent.receive`
-  # to the builder lands in PendingDelivery forever — @hello silently stops
-  # replying. `template_class: nil` — the builder has no agent Template Class
-  # (it is spawned by the session.hello session template, not an agent flavor),
-  # so it must not collide with class-name resolution.
+  # The `"hello"` agent FLAVOR — the host for hello's role agents that must RECEIVE
+  # chat and run custom Elixir (the orchestrator). Its in-process AgentBridge
+  # adapter (`BridgeAdapter`) is the seam `Agent.Receive` routes chat into; `native`
+  # has no adapter, so a native agent's chat is dropped. `cap_policy` reuses native's
+  # recipe-scoped fail-closed policy (mints exactly the role's requested caps).
   @impl Ezagent.Plugin
   def agent_flavors do
     [
       %{
-        flavor: "hello_builder",
-        kind: Ezagent.Entity.HelloBuilder,
-        template_class: nil
-      },
-      # Same revival registration for the read-only concierge, so a cold
-      # `entity://<ws>/agent/concierge_<name>` (kind_type "hello_concierge")
-      # revives after a restart and keeps answering non-owner visitors.
-      %{
-        flavor: "hello_concierge",
-        kind: Ezagent.Entity.HelloConcierge,
-        template_class: nil
+        flavor: "hello",
+        kind: Ezagent.Entity.Agent,
+        template_class: EzagentPluginHello.Template.HelloAgent,
+        bridge_adapter: EzagentPluginHello.BridgeAdapter,
+        cap_policy: &EzagentPluginNative.CapPolicy.for_recipe/1
       }
     ]
+  end
+
+  # hello's two agents are ROLES on the unified `Entity.Agent` (hosted by the
+  # `native` flavor), NOT own Kinds (Principle 1: an agent type is a role × flavor,
+  # never its own Kind). The behaviors load PER-INSTANCE via the recipe (RF-1
+  # `BehaviorSet.resolve_action` on `Entity.Agent`); cold-restart revival re-reads
+  # the durable `:role` marker from the sandbox slice and re-composes — so no
+  # `agent_flavors`/own-Kind revival registration is needed. Not `passive`: the
+  # builder/concierge are chat principals (@-mentionable + joinable).
+  @impl Ezagent.Plugin
+  def roles, do: [hello_orchestrator_recipe(), hello_builder_recipe(), hello_concierge_recipe()]
+
+  @doc "The `hello.orchestrator` role — the invisible per-session front-desk router (`Behavior.HelloOrchestrator`)."
+  @spec hello_orchestrator_recipe() :: map()
+  def hello_orchestrator_recipe do
+    %{
+      name: "hello.orchestrator",
+      behaviors: [Ezagent.Behavior.HelloOrchestrator],
+      requested_caps: [
+        %{behavior: Ezagent.Behavior.HelloOrchestrator, action: :hello_sync_result}
+      ]
+    }
+  end
+
+  @doc "The `hello.builder` role — the page-generating agent (`Behavior.HelloBuilder`)."
+  @spec hello_builder_recipe() :: map()
+  def hello_builder_recipe do
+    %{
+      name: "hello.builder",
+      behaviors: [Ezagent.Behavior.HelloBuilder],
+      requested_caps: [%{behavior: Ezagent.Behavior.HelloBuilder, action: :receive}]
+    }
+  end
+
+  @doc "The `hello.concierge` role — the read-only Q&A/navigation agent (`Behavior.HelloConcierge`)."
+  @spec hello_concierge_recipe() :: map()
+  def hello_concierge_recipe do
+    %{
+      name: "hello.concierge",
+      behaviors: [Ezagent.Behavior.HelloConcierge],
+      requested_caps: [%{behavior: Ezagent.Behavior.HelloConcierge, action: :receive}]
+    }
   end
 
   @impl Ezagent.Plugin
@@ -89,42 +122,50 @@ defmodule EzagentPluginHello.Application do
     }
   end
 
-  # Bind the builder's `:receive` page-gen hook on the `Ezagent.Entity.HelloBuilder`
-  # Kind so the session's chat fan-out (`chat.send` → `chat.receive` per member)
-  # reaches it. (Phase 0: the builder is spawned directly as a session member by
-  # `EzagentPluginHello.App`; the agent-flavor/Template create path is a follow-up.)
-  @impl Ezagent.Plugin
-  def behaviors do
-    # The builder's own page-gen `:receive` hook, PLUS every `Ezagent.Behavior.Identity`
-    # action registered for the `HelloBuilder` Kind — so the orchestrator can
-    # RECEIVE its granted within-session caps (`:grant_cap`) and dispatch resolves
-    # the action. This mirrors `EzagentDomainIdentity.Application`'s registration of
-    # Identity for the `User`/`Agent` Kinds, done here via the plugin contract for
-    # the hello-owned Kind.
-    identity_decls =
-      for kind <- [Ezagent.Entity.HelloBuilder, Ezagent.Entity.HelloConcierge],
-          {behavior, actions} <- [
-            {Ezagent.Behavior.Identity, Ezagent.Behavior.Identity.actions()},
-            {Ezagent.Behavior.IdentityAdmin, Ezagent.Behavior.IdentityAdmin.actions()}
-          ],
-          action <- actions do
-        {kind, action, behavior}
-      end
-
-    [
-      {Ezagent.Entity.HelloBuilder, :receive, Ezagent.Behavior.HelloBuilder},
-      # The concierge's read-only `:receive` hook so the session's chat fan-out
-      # (mention-routed to it for non-owner senders) reaches it.
-      {Ezagent.Entity.HelloConcierge, :receive, Ezagent.Behavior.HelloConcierge}
-      | identity_decls
-    ]
-  end
+  # NO `behaviors/0`: under the role model, hello's behaviors load PER-INSTANCE via
+  # the recipe (`roles/0`) on the generic `Entity.Agent` host — the recipe is the
+  # sole behavior declaration (kanban-as-role K5). The old static
+  # `{Entity.HelloBuilder, :receive, …}` rows keyed on the now-deleted own Kinds
+  # and are dead under this model.
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
   # plus an OPT-IN boot seed (off by default).
   @impl Ezagent.Plugin
   def children do
-    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++ demo_seed_children()
+    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
+      demo_seed_children() ++ migrate_children()
+  end
+
+  # `HELLO_MIGRATE_ORCHESTRATOR=1` → at boot (once the substrate settles), give every
+  # EXISTING hello session the orchestrator front desk it predates
+  # (`EzagentPluginHello.Migrate`). Idempotent + best-effort; a one-shot transient
+  # Task so it never blocks the supervisor. OFF by default.
+  defp migrate_children do
+    if System.get_env("HELLO_MIGRATE_ORCHESTRATOR") in ["1", "true"] do
+      [
+        Supervisor.child_spec({Task, &run_orchestrator_migration/0},
+          id: :hello_migrate,
+          restart: :transient
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  defp run_orchestrator_migration do
+    # Let the session / socialware / identity supervisors settle before reviving +
+    # joining across sessions.
+    Process.sleep(5_000)
+    report = EzagentPluginHello.Migrate.migrate_all()
+
+    Logger.info(
+      "hello orchestrator migration done — migrated=#{length(report.migrated)} " <>
+        "skipped=#{length(report.skipped)} failed=#{length(report.failed)}"
+    )
+
+    if report.failed != [],
+      do: Logger.warning("hello migration failures: #{inspect(report.failed)}")
   end
 
   # `HELLO_DEMO_SEED=1` → at boot, instantiate a `public_view` hello app and land

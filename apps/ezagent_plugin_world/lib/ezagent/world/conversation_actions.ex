@@ -274,12 +274,13 @@ defmodule Ezagent.World.ConversationActions do
                &Ezagent.Workspace.create_session/3
              ) do
           {:ok, %URI{} = session_uri} ->
-            # A session created from a PUBLISHED hello template needs its @hello
-            # builder — the generic create path installs the socialware behaviours
-            # + seeds the captured page, but does not spawn the per-session
-            # builder. hello no-ops for a non-page session; best-effort so it
-            # never blocks the create.
-            _ = ensure_hello_builder(session_uri)
+            # A session created from a PUBLISHED hello template needs its invisible
+            # ORCHESTRATOR front desk — the generic create path installs the
+            # socialware behaviours + seeds the captured page, but does not spawn
+            # the per-session orchestrator (which then lazily spawns builder /
+            # concierge on demand). hello no-ops for a non-page session;
+            # best-effort so it never blocks the create.
+            _ = ensure_hello_orchestrator(session_uri)
 
             {:noreply,
              socket
@@ -292,16 +293,16 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
-  defp ensure_hello_builder(%URI{} = session_uri) do
-    # Owner-facing page builder (@hello) AND the read-only concierge (non-owner
-    # visitors). Both no-op for a non-page session; best-effort.
-    _ = EzagentPluginHello.App.ensure_session_builder(session_uri)
-    _ = EzagentPluginHello.App.ensure_session_concierge(session_uri)
+  defp ensure_hello_orchestrator(%URI{} = session_uri) do
+    # The invisible front-desk orchestrator — ALL user messages route to it, and it
+    # spawns the owner-facing builder + read-only concierge on demand. No-op for a
+    # non-page session; best-effort.
+    _ = EzagentPluginHello.App.ensure_session_orchestrator(session_uri)
     :ok
   rescue
     e ->
       Logger.warning(
-        "world: hello builder/concierge ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
+        "world: hello orchestrator ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
       )
 
       :error

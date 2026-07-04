@@ -439,7 +439,7 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
         "data-empty": "true",
       },
       React.createElement("p", {className: "text-base font-medium text-foreground/70"}, "还没有页面"),
-      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
+      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里描述你想要的页面,生成的页面会显示在这里。")
     )
   }
 

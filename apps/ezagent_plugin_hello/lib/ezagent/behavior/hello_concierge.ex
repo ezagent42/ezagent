@@ -27,11 +27,10 @@ defmodule Ezagent.Behavior.HelloConcierge do
     description: "Answer a visitor question about the site (read-only)"
   )
 
-  # The concierge Kind is `Ezagent.Entity.HelloConcierge` (type_name
-  # :hello_concierge), so the cap subject keys on the `:hello_concierge` axis.
-  def required_caps do
-    %{receive: Ezagent.Capability.cap(:hello_concierge, __MODULE__, :receive)}
-  end
+  # No hand-written `required_caps`: this behavior now runs on the unified
+  # `Ezagent.Entity.Agent` (a `hello.concierge` role on the `native` flavor), so
+  # the Lifecycle macro derives the `:receive` cap on the `:agent` axis (RoleStep
+  # mints `kind: :agent`). Mirrors the kanban role behavior.
 
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
@@ -49,7 +48,7 @@ defmodule Ezagent.Behavior.HelloConcierge do
         EzagentPluginHello.Generator.concierge_start(
           session_uri,
           text,
-          concierge_uri(session_uri)
+          EzagentPluginHello.App.concierge_uri(session_uri)
         )
     end
 
@@ -78,11 +77,4 @@ defmodule Ezagent.Behavior.HelloConcierge do
   end
 
   defp session_from_ctx(_), do: nil
-
-  # session://<ws>/<tmpl>/<name> → entity://<ws>/agent/concierge_<name>
-  defp concierge_uri(%URI{} = session_uri) do
-    ws = Ezagent.URI.workspace_name!(session_uri)
-    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
-    Ezagent.URI.entity(ws, :agent, "concierge_#{name}")
-  end
 end

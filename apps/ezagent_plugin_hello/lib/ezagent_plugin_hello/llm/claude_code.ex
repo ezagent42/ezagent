@@ -44,7 +44,13 @@ defmodule EzagentPluginHello.LLM.ClaudeCode do
       # `claude -p` reads the prompt from STDIN when no positional arg is given.
       cmd = "#{claude} -p --output-format text #{model_flag()} < '#{pf}'"
 
-      case System.cmd("sh", ["-c", cmd], stderr_to_stdout: false) do
+      # CRITICAL: run claude IN the isolated temp dir (`cd: dir`), NOT the caller's
+      # CWD. Otherwise claude picks up the repo's `CLAUDE.md` + git context and
+      # answers as a DEV ASSISTANT on this project (referencing the branch, etc.)
+      # instead of following the hello page-generation system prompt — the output
+      # is prose, not the json-render spec, and `Spec.validate/1` fails. The temp
+      # dir has no `CLAUDE.md` up its tree, so only our prompt drives the model.
+      case System.cmd("sh", ["-c", cmd], stderr_to_stdout: false, cd: dir) do
         {out, 0} when is_binary(out) and out != "" ->
           {:ok, %{content: out}}
 

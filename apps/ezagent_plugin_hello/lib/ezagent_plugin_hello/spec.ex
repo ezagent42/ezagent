@@ -30,7 +30,10 @@ defmodule EzagentPluginHello.Spec do
     # layout containers
     "Stack" => %{props: ["direction", "gap", "align", "justify", "className"], container?: true},
     "Grid" => %{props: ["columns", "gap", "className"], container?: true},
-    "Card" => %{props: ["title", "description", "maxWidth", "centered", "className"], container?: true},
+    "Card" => %{
+      props: ["title", "description", "maxWidth", "centered", "className"],
+      container?: true
+    },
     # content leaves
     "Heading" => %{props: ["text", "level"], container?: false},
     "Text" => %{props: ["text", "variant"], container?: false},
@@ -162,7 +165,12 @@ defmodule EzagentPluginHello.Spec do
   def seed do
     %{
       "type" => "Stack",
-      "props" => %{"direction" => "vertical", "gap" => "md", "className" => "p-8", "title" => "Hello"},
+      "props" => %{
+        "direction" => "vertical",
+        "gap" => "md",
+        "className" => "p-8",
+        "title" => "Hello"
+      },
       "children" => [
         %{"type" => "Heading", "props" => %{"text" => "Hello 👋", "level" => 1}, "children" => []},
         %{

@@ -440,8 +440,8 @@ defmodule EzagentPluginHello.Prompts do
     - No backend actions, no access to other sessions or users, no personal data.
 
     NAVIGATION-FIRST: prefer to help the visitor SEE the answer ON the page. The
-    page has THREE tabs — "home" (首页 · hero + the two products), "worldcup" (研发
-    进度 · Progress, the development data), "team" (核心团队 · Team). When the answer
+    page has THREE tabs — "home" (the hero + the two products), "worldcup" (the
+    development-progress / roadmap data), "team" (the core team). When the answer
     lives on a specific tab, switch to it.
 
     OUTPUT — respond with a SINGLE JSON object and NOTHING ELSE (no prose, no
@@ -458,6 +458,29 @@ defmodule EzagentPluginHello.Prompts do
       GitHub / that link". Otherwise set "nav": null.
 
     Output ONLY the JSON object.
+    """
+  end
+
+  @doc """
+  The `hello.orchestrator` intent-classification system prompt. Given a message
+  from the page OWNER, decide whether it is a request to CHANGE / BUILD the page,
+  or a QUESTION / navigation about it. One-word answer so the round-trip is cheap.
+  (Non-owner messages never reach this — they are routed to the concierge by
+  identity, before any LLM call.)
+  """
+  def route_system do
+    """
+    You are a router for a website builder. The page OWNER sent one message. Decide
+    which handler it should go to. The message may be in any language.
+
+    - BUILD — the owner wants to create, change, restyle, add to, remove from, or
+      regenerate the PAGE itself (e.g. "make the title red", "add a pricing section",
+      "regenerate the home page", "delete the team block").
+    - ASK — the owner is asking a QUESTION about the page/site or wants to navigate
+      (e.g. "what's on this page", "who's on the team", "go to the progress tab").
+
+    Reply with EXACTLY ONE WORD — either BUILD or ASK — and nothing else. When in
+    doubt, prefer BUILD (the owner is here to build).
     """
   end
 end
