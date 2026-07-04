@@ -54,6 +54,96 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   end
 
   @doc """
+  Resolve a socialware definition by its EXACT revision id (`config_id`, the
+  immutable `ConfigObject.id`) for a content-hash-addressed INSTALL (P1 §O-1),
+  enforcing the SAME installable-scope gate as `list/1`/`lookup/2`.
+
+  The catalog is cross-workspace but bare-name `lookup/2` resolves
+  caller-workspace-first, so clicking a foreign PUBLIC card and installing could
+  silently install a SAME-NAMED LOCAL def. Installing by `config_id` bypasses
+  bare-name resolution and pins the EXACT revision the user saw (its env-stable
+  `content_hash` is the identity shown/verified in the UI; `config_id` is the
+  resolver key within THIS env's ConfigStore).
+
+  SECURITY — this is a hard gate, not a convenience: `ConfigStore.fetch_object/1`
+  alone returns ANY revision by id, including a PRIVATE foreign-workspace one, so
+  without re-applying scope a caller could install any def by supplying its
+  `config_id`. The revision MUST be **own-workspace, system, or public**
+  (`visible_to_workspace?/4`, the same predicate `list/1` uses) AND its def MUST
+  NOT be retracted (`retracted?/2`, consistent with the P0 retract fix — a
+  retracted def is non-installable even by exact id).
+
+  `expected_content_hash`, when supplied, must equal the resolved object's
+  `content_hash` — a cheap cross-check that `config_id` still names the revision
+  the UI displayed (defends against a stale pointer / UI drift).
+
+  Returns `{:ok, Definition.t(), ConfigObject.t()}` or a loud `{:error, reason}`:
+  `{:unknown_socialware_revision, id}`, `{:invalid_socialware_revision, id}`,
+  `{:socialware_revision_not_installable, name}`, `{:socialware_revision_retracted, name}`,
+  or `{:socialware_content_hash_mismatch, %{expected: _, got: _}}`.
+  """
+  @spec resolve_installable_revision(URI.t() | String.t(), String.t(), String.t() | nil) ::
+          {:ok, Definition.t(), ConfigObject.t()} | {:error, term()}
+  def resolve_installable_revision(workspace_uri, config_id, expected_content_hash \\ nil)
+      when is_binary(config_id) and config_id != "" do
+    ws = uri_string(workspace_uri)
+    system_ws = system_workspace_uri()
+
+    with {:ok, %ConfigObject{} = object} <- fetch_revision(config_id),
+         {:ok, %Definition{} = definition} <- parse_revision(object),
+         :ok <- authorize_installable_scope(definition, object, ws, system_ws),
+         :ok <- refute_retracted(object, definition),
+         :ok <- verify_content_hash(object, expected_content_hash) do
+      {:ok, definition, object}
+    end
+  end
+
+  defp fetch_revision(config_id) do
+    case ConfigStore.fetch_object(config_id) do
+      {:ok, %ConfigObject{} = object} -> {:ok, object}
+      :none -> {:error, {:unknown_socialware_revision, config_id}}
+    end
+  end
+
+  defp parse_revision(%ConfigObject{} = object) do
+    case Definition.new(object.body) do
+      {:ok, %Definition{} = definition} -> {:ok, definition}
+      _ -> {:error, {:invalid_socialware_revision, object.id}}
+    end
+  end
+
+  defp authorize_installable_scope(
+         %Definition{} = definition,
+         %ConfigObject{workspace_uri: object_ws},
+         ws,
+         system_ws
+       ) do
+    if visible_to_workspace?(definition, object_ws, ws, system_ws) do
+      :ok
+    else
+      {:error, {:socialware_revision_not_installable, definition.name}}
+    end
+  end
+
+  defp refute_retracted(%ConfigObject{workspace_uri: object_ws}, %Definition{name: name}) do
+    if retracted?(object_ws, name) do
+      {:error, {:socialware_revision_retracted, name}}
+    else
+      :ok
+    end
+  end
+
+  defp verify_content_hash(_object, nil), do: :ok
+
+  defp verify_content_hash(%ConfigObject{content_hash: hash}, expected) when is_binary(expected) do
+    if hash == expected do
+      :ok
+    else
+      {:error, {:socialware_content_hash_mismatch, %{expected: expected, got: hash}}}
+    end
+  end
+
+  @doc """
   True when `(name, workspace)` carries a RETRACT marker (P0 §6). Consulted by
   `list/1` (`list_entry_for/3`) and the `lookup/2` PUBLIC fallback
   (`public_object/1`), always keyed by the OBJECT's OWN `workspace_uri` so a
