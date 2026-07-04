@@ -14,6 +14,276 @@ review/merge checkpoint, not a scope fork.
 
 ---
 
+## R1 — Revision: codex round-1 fixes (2026-07-04)
+
+Codex adversarial review verdict: **SHIP-WITH-CHANGES**. It confirmed the sound
+core (O(1) hot-path **roster** read, presence needs session-side state,
+provenance filtering) and raised 5 must-fixes. This revision closes them with
+concrete, code-grounded designs. **Where a fix contradicts the original prose,
+this section is authoritative** and the affected sections (§3, §5, §6, §4.3,
+§4.4, §8, K1, §16) are patched inline to point here.
+
+The single most important change: **§5/§6 as originally written made the cached
+member-cap a bearer token** (delivery presented it in `ctx.caps`; the runtime's
+`granted_via_ctx_caps?` authorizes whatever is presented — `runtime.ex:376-411`,
+which checks `ctx.caps` BEFORE the held-cap path). R1.1 **removes authz from the
+presented-cap path entirely** and separates **roster** (staleness-tolerant
+delivery targeting) from **receive-authorization** (the recipient's *actually
+held* cap).
+
+### R1.1 — 🔴 CRITICAL: separate delivery ROSTER from receive AUTHORIZATION
+
+**The bug.** Original §6 said delivery caches the member-cap in the projection
+and presents it in `ctx.caps`; the runtime authorizes receive via
+`granted_via_ctx_caps?` (`runtime.ex:398-402`, `authorizes?/2` at `:547-566`).
+That is a **bearer token**: whoever presents the cached copy is authorized,
+*regardless of whether the recipient still holds the cap*. If revoke succeeds but
+the projection-drop fails (the §4.3 window), the stale cache still authorizes
+receive. Membership-as-authz would be *softer* than today, not harder.
+
+**The fix — two jobs, two mechanisms:**
+
+1. **`:members` projection = delivery ROSTER only.** `handle_send/2` still does
+   the O(1) local read `members_map = ctx[:read].(:members, %{})`
+   (`session.ex:497`) and `Map.keys` (`:498`) to decide *who to attempt delivery
+   to*. This read stays fast and is explicitly **staleness-tolerant**: a stale
+   roster entry causes at most a *wasted delivery attempt* that then FAILS authz
+   at the recipient — never an unauthorized receive. Roster staleness costs a
+   dispatch, not a breach. **The crux (O(1) roster read, no reverse scan per
+   message) is preserved unchanged.**
+
+2. **Receive AUTHORIZATION = the recipient's actually-held member-cap, checked
+   in-handler.** Delivery **presents NO receive cap** in `ctx.caps`
+   (`member_receive_caps/1` at `delivery.ex:259-274` is **deleted, not replaced
+   by a cache**). Instead each `:receive` behavior authorizes against the
+   recipient's OWN `:identity`/`:caps` slice — see R1.2 for the exact contract. A
+   revoked member no longer holds the cap ⇒ **denied immediately, before any
+   reconcile, with zero bearer window.**
+
+**Socialware read-auth (`socialware_publisher_read.ex` → `membership_predicate.ex:42-51`)
+must move to held-cap too.** Today `member?/2` (`membership_predicate.ex:82-84`)
+authorizes a read iff `Map.has_key?(members, caller)` — i.e. **"in the projection
+⇒ authorized."** That is safe *today* only because leave drops the projection
+synchronously. Under S3's revoke-first / projection-drop-may-lag (§4.3), "in
+projection" is no longer a sound authz signal. Fix: the read predicate additionally
+requires the caller to **HOLD the member-cap** — read the caller's live caps via
+`Ezagent.Identity.read_entity_caps/1` (`identity.ex:336-341`) and `Capability.matches?/2`
+(after the `granted_by_entity?/1` provenance filter, K4). The owner branch
+(`owner?/2`, `membership_predicate.ex:78-80`) is unchanged. Net: an ex-member is
+denied read immediately on revoke, matching the delivery-authz guarantee — one
+coherent "held-cap, not projection" story across delivery AND read.
+
+**Invariant (the security done-gate, R1.6):** for BOTH receive and read, a member
+whose member-cap has been revoked is denied **without waiting for reconcile**. The
+projection is never the authority for either path.
+
+### R1.2 — 🟠 HIGH: a REAL receive-authz contract (covers plugin receives)
+
+**Why K1 as written is not implementable by editing `User.Receive`/`Agent.Receive`.**
+Three code facts:
+
+- **Needed-cap instance is derived from the TARGET, not the sender.**
+  `resolve_required_cap/4` (`runtime.ex:423-492`) substitutes `instance: :any →
+  Ezagent.URI.instance(target)` (`:443-447`). For a `:receive` dispatch the target
+  is the **recipient**, so a behavior declaration can only yield `instance:
+  recipient` — never the source session S. There is **no path to substitute
+  `ctx.caller`** (the sending session). So "flip the needed-cap to
+  sender-session-scoped" cannot be expressed by a behavior's `required_caps/0`.
+- **The held-cap path checks the CALLER, not the recipient.**
+  `granted_via_holds_cap?/2` (`runtime.ex:516-534`) reads `caller = ctx.caller`
+  (the session) and calls `Kind.holds_cap?(caller_kind, caller, needed)`. The
+  member-cap is held by the **recipient**, not the session — so the generic
+  runtime path checks the wrong entity. Receive is *consent-inverted*: the TARGET
+  must hold a cap, not the caller.
+- **There are ≥4 receive behaviors, each declaring its own `caps: [:receive]`.**
+  `User.Receive` (`user/receive.ex:111`), `Agent.Receive` (`agent/receive.ex:88-91`),
+  and plugin receives `HelloBuilder` (`hello_builder.ex:32-35`) + `HelloConcierge`
+  (`hello_concierge.ex:22-25`). Editing only User/Agent silently misses plugin
+  receives — codex #2's exact point.
+
+**The contract — in-handler authorization, `:receive` cap-EXEMPT (CONFIRMED-precedent).**
+Mirror the socialware read-auth pattern that already exists and is proven
+(`socialware_publisher_read.ex:56-77, 116-139, 199-207`):
+
+1. **`:receive` becomes a `cap_exempt_action`** on every receive behavior (add
+   `:receive` to `cap_exempt_actions/0`), so the CapBAC layer does NOT gate it via
+   the caller-scoped mismatch above. The HANDLER is the sole authority.
+2. **A shared predicate `Ezagent.Session.MemberReceive.authorize(ctx)`** (new,
+   sibling to `membership_predicate.ex`) authorizes iff the recipient HOLDS a
+   member-cap whose instance matches `ctx.caller` (the source session S). It reads
+   the recipient's OWN caps from **`ctx[:siblings][:identity]`** — pre-loaded via
+   `reads_siblings([:identity])`, so there is **NO `GenServer.call` / no
+   self-slice deadlock** (the `runtime.ex:393-407` hazard is avoided by
+   construction) and **no per-message cross-process read** (the sibling is already
+   loaded for the dispatch). `agent.receive` already declares
+   `reads_siblings([:sandbox])` (`agent/receive.ex:80`), proving the receive path
+   supports sibling pre-load; we add `:identity`.
+3. **Every `{Kind, :receive}` behavior calls the ONE shared predicate** — no
+   per-behavior copy (the same "extracted predicate, no drift on a security
+   boundary" discipline as `membership_predicate`).
+
+**Blast-radius CONFIRMED (the tightening is safe).** R1.2 tightens receive from
+today's *self-consent bearer* (`delivery.ex:260-273`: a `cap(:any, :any, :receive,
+instance: recipient)` granted_by the recipient, matching regardless of
+`ctx.caller`) to "recipient holds a member-cap matching `ctx.caller`." That would
+wrongly deny any `:receive` whose caller is NOT a session the recipient belongs to
+— so we enumerated every dispatch site. **The ONLY `:receive` dispatch in `apps/`
+is `Delivery.dispatch_receive_call/3`** (grep: the sole `Router.dispatch(action:
+:receive)` at `delivery.ex:170-179`), called from exactly two session-scoped paths:
+the fan-out `session.ex:564` and `replay_messages_since` (`delivery.ex:205-213`),
+**both setting `ctx.caller = session_uri`.** No cross-session / external / direct
+receive path exists. **Invariant: every `:receive` dispatch is session fan-out;
+`ctx.caller` is always the source session.** A guard test asserts no other
+`:receive` dispatch site is introduced. (So `MemberReceive.authorize/1` may safely
+assume `ctx.caller` is a session; a future non-fan-out receive would fail the guard
+and force an explicit decision — not silently break.)
+
+**Invariant (codex #2: "an invariant that covers plugin receives, not just
+User/Agent").** A new parity test — `ReceiveAuthzParityTest` — asserts that for
+**every** behavior registered for `{_Kind, :receive}` (enumerated from the
+`BehaviorRegistry`, the same source the `BehaviorRequiredCapsParityTest` uses),
+`:receive ∈ cap_exempt_actions/0` AND the handler routes through
+`MemberReceive.authorize/1`. A new plugin receive that skips the helper fails the
+gate. This is the "REAL contract," not a two-module edit.
+
+*Rejected alternative (documented so review sees it was weighed):* a **runtime
+receive-inversion** (teach `resolve_required_cap` to substitute `ctx.caller` for
+`:receive` and add a target-held-cap branch to `granted_via_holds_cap?`). It gives
+the plugin-coverage invariant "for free" but requires the runtime to read the
+recipient's `:identity` mid-`:receive` — the **documented self-slice deadlock**
+(`runtime.ex:393-407`) for User recipients (whose `:identity` and `:session`
+receive slice share one Kind process), or N cross-process reads per message if run
+pre-routing. The in-handler/cap-exempt path avoids both and reuses a proven
+precedent. **In-handler is primary; runtime-inversion is rejected.**
+
+Least-privilege still improves exactly as original §5 claimed: the member-cap
+authorizes receiving **only from sessions the member belongs to**, replacing the
+old `cap(:any, :any, :receive, instance: recipient)` (`delivery.ex:260-273`) that
+authorized any receive into the recipient from anyone.
+
+### R1.3 — 🟠 HIGH: dual-write compensation + idempotent operations
+
+Making the cap authoritative turns today's *tolerated* drift (`membership.ex`
+grants participation caps LATER, best-effort) into **security** drift. R1.1
+already **defangs the revoke side** (a stale roster entry is not authz — receive
+reads the held cap), but the join side still needs ordered, compensating,
+idempotent operations. "Idempotent" here means **idempotent-by-construction**
+(skip-already-held grant, no-op revoke-of-absent, idempotent projection
+set/delete) — **NOT** a persisted saga/operation-log. Sequences:
+
+**JOIN (grant-first, preflight, compensate-on-failure):**
+1. **Preflight BEFORE any grant.** The role/facet check
+   `Members.role_name_conflict/3` runs at `membership.ex:48-50` **before**
+   `do_join_apply/5` — a role conflict returns `{:error, _}` with **zero side
+   effects**. Move the member-cap grant to AFTER this preflight so a role-conflict
+   rejection can never orphan a granted cap (codex's `membership.ex:48-50`
+   hazard).
+2. **Grant the member-cap** — idempotent: skip if already held via
+   `already_authorized?/5` (`membership.ex:888-903`).
+3. **`do_join_apply` → projection entry** (`{:set, :members, …}`,
+   `membership.ex:127-135`).
+4. **Compensation:** if `do_join_apply` fails AFTER the grant (monitor error,
+   etc.), **revoke the just-granted member-cap** (revoke is de-escalating and
+   needs no authz — `grant.ex:452-457`). Net: either a full member (cap +
+   roster) or nothing.
+
+**LEAVE / REMOVE (revoke-first, roster-drop, no authz window):**
+1. **Revoke the member-cap FIRST** (the authority).
+2. **Drop the projection entry** (`leave_effects/2`, `membership.ex:525-548`).
+3. If the roster-drop fails, **there is no authz window** — R1.1 means receive
+   and read both read the *held* cap, already revoked. The stale roster entry only
+   wastes a delivery attempt that fails at the recipient. `reconcile_after_load/2`
+   evicts it on next activate.
+
+**Tests for the three drift states (replaces "tolerated drift" with proven
+behavior):**
+- **cap-only** (cap granted, roster entry missing): reconcile ADDS the roster
+  entry; delivery is authz-correct regardless.
+- **roster-only** (roster entry present, cap absent — the dangerous one): the
+  recipient's `:receive` is **DENIED** at the in-handler predicate (no held cap);
+  reconcile EVICTS the roster entry. **No receive, ever.**
+- **stale-cached-cap** (the original bug): **N/A by construction** — no cap is
+  cached or presented anymore (R1.1). The test asserts `ctx.caps` on a receive
+  dispatch carries **no** member-cap.
+
+### R1.4 — 🟡 MED-HIGH: concrete agent enumeration API
+
+`Users.list_in_workspace/1` (`users.ex:411-417`) is User-only, and
+`mount_participation_caps/2` no-ops for non-users (catch-all
+`mount_participation_caps(_, _), do: :ok` at `membership.ex:814`) — contradicting
+"ALL members (users, agents, anon)." Specify a concrete enumerator, modeled
+**exactly** on the proven `AgentRoleResolver` snapshot scan
+(`agent_role_resolver.ex:35-64`):
+
+```
+Ezagent.Entity.Agent.list_in_workspace(ws) ::
+  KindSnapshot.list_in_workspace(ws)                          # repo, workspace-scoped
+  |> Enum.filter(& &1.kind_type == Atom.to_string(Entity.Agent.type_name()))  # type axis
+  |> Enum.map(& &1.uri) |> map to %URI{}                       # live AND dormant
+```
+
+- **Live + dormant:** snapshot-sourced (every created agent has a `kind_snapshots`
+  row), so a dormant agent member is still enumerated after a BEAM restart —
+  exactly why `AgentRoleResolver` sources its list from snapshots, not ETS
+  (`agent_role_resolver.ex:13-23`).
+- **Workspace-scoped + type-filtered:** `KindSnapshot.list_in_workspace/1`
+  (`kind_snapshot.ex:72-78`) bounds the tenant; the `kind_type == "agent"` filter
+  excludes users/sessions/templates.
+- **Used in THREE places:** (a) §4.4 reconcile candidate enumeration (union with
+  `Users.list_in_workspace/1`); (b) the R1.5 migration's agent members; (c) the
+  **agent-member-cap mount path** — replace the `membership.ex:814` non-user no-op
+  with an explicit agent member-cap grant.
+
+*(Naming caveat, flagged for the plan: `Entity.Agent` lives in
+`apps/ezagent_domain_agent`; if the reconcile caller is in `ezagent_core` /
+`ezagent_domain_session`, a direct module ref may trip
+`undeclared_umbrella_dep_test`. Resolve via an existing cross-app seam — e.g. a
+`UriQuery`-style enumerator or the identity layer — rather than a hard ref. This
+is a plan-time placement detail, not a design gap; the scan shape is confirmed.)*
+
+### R1.5 — 🟡 MED: bounded, paginated, snapshot-consistent migration
+
+Original §8 read all sessions via `KindSnapshot.list_all` (loads every row) with a
+live owner lookup. Replace with a **repo-only, paginated, snapshot-consistent**
+migration — a pure `Ezagent.Session.MemberCapMigration` module behind a
+`mix ezagent.migrate.member_caps` front door, mirroring the
+`GrantMigration` + `ezagent.session.migrate_grants` split
+(`grant_migration.ex`, `ezagent.session.migrate_grants.ex`):
+
+1. **DB-level filter, NOT load-all-then-filter.** Query
+   `from s in KindSnapshot, where: s.kind_type == "session"` — a WHERE clause so
+   only session rows load. (This is the concrete improvement over
+   `AgentRoleResolver`, which loads all rows then filters in Elixir —
+   `agent_role_resolver.ex:61`.)
+2. **Keyset pagination:** `order_by: s.uri, where: s.uri > ^last_uri, limit: @page`,
+   loop until empty. Bounded memory; no `list_all`.
+3. **Snapshot-consistent read:** decode ONCE per row via
+   `KindSnapshot.decode_state/1` (`kind_snapshot.ex:223-239`) and read BOTH
+   `members` AND `owner_uri` from the **same decoded persisted state** — never a
+   live/racing owner lookup.
+4. **Grant per member** (users AND agents — R1.4 gives the agent set for reconcile;
+   the migration reads members directly off the session state so it covers both):
+   member-cap `granted_by = owner_uri`; **ownerless fallback** → the #154 admin
+   granter (matching `public_view_granter/1`), with the fallback **LOGGED and the
+   count reported/admin-tagged** so provenance is auditable.
+5. **Idempotent:** skip already-held (`already_authorized?/5`), so re-run is a no-op.
+6. **Operator flags** (mirroring `migrate_grants`): `--dry-run` (report counts, no
+   writes), `--gate` (nonzero exit if any session lacks member-caps), and a report
+   of `{sessions_scanned, members_granted, skipped_already_held, ownerless_fallback}`.
+   Idempotent + non-destructive ⇒ safe on a live dev DB
+   (`feedback_destructive_migration_anti_pattern`).
+
+### R1.6 — Acceptance E2E (the done-gate) — see new §14.5
+
+A NEW end-to-end scenario proving the whole feature, including the CRITICAL
+security proof (immediate deny after revoke, no reconcile wait). Defined in
+full in **§14.5**. Split: the security done-gate is an **ExUnit integration test**
+(deterministic; no reconcile timing to flake); the cross-user cascade UX is a
+**world-UI agent-browser scenario in `docs/scenarios/`** (project convention —
+`feedback_esr_e2e_standards`).
+
+---
+
 ## 1. Problem & Goal
 
 ### Problem — two overlapping mechanisms for one concept
@@ -227,11 +497,14 @@ radius** of Part A.
    identity_key). Symmetric.
 4. **The session `:members` slice is retained as a derived projection** — the
    fast, session-local read-cache + reverse index + presence carrier (§4).
-5. **`member_receive_caps/1` is deleted.** Delivery no longer mints a per-delivery
-   `:receive` cap; it presents the standing member-cap from the projection (§6).
+5. **`member_receive_caps/1` is deleted** and **NOT replaced by a cache.** Delivery
+   presents NO receive cap; receive-authz reads the recipient's HELD member-cap
+   in-handler (**R1.1 / R1.2** — this supersedes the original "presents the cached
+   standing cap" design, which was a bearer token).
 6. **`:receive` authorization semantics flip** from "recipient-instance-scoped" to
    "sender-session-scoped": receiving a message *from S* now requires a member-cap
-   *over S* (§6, Key Decision K1). This is what lets one cap serve both roles
+   *over S*, checked at the recipient's own `:receive` chokepoint against its own
+   held caps (**R1.2**, Key Decision K1). This is what lets one cap serve both roles
    (membership marker AND receive authority) — see §5.
 
 ### 4. ⚠️ THE CRUX — member-lookup efficiency (the make-or-break)
@@ -320,12 +593,17 @@ projection (cache). Their coherence is the real risk. Resolution:
   (adds the receive member-cap; promotes it to source of truth) — it does **not**
   introduce a new dual-write topology. There is no new cross-Kind consistency
   surface; there is the same one, now with clearer ownership.
-- **Ordering + fail-closed.** Grant the member-cap FIRST (source of truth); only
-  on grant success update the projection. A failed grant ⇒ **abort, no projection
-  entry** — the entity is simply not a member. This mirrors the existing
+- **Ordering + fail-closed + compensation (see R1.3 for the full sequence).**
+  Preflight the role/facet check (`membership.ex:48-50`) BEFORE any grant; grant the
+  member-cap FIRST (source of truth); only on grant success update the projection.
+  A failed `do_join` AFTER the grant **compensates by revoking the just-granted
+  cap** (so a role conflict / monitor failure never orphans a cap). Symmetrically,
+  revoke FIRST, then drop the projection entry. This mirrors the existing
   leave-FIRST / fail-closed-teardown discipline in `handle_remove_participant`
-  (`.../membership.ex:624-687`, the "owner without destroy cap denied ⇒ zero
-  mutation" precedent). Symmetrically, revoke FIRST, then drop the projection entry.
+  (`.../membership.ex:624-687`). **R1.3 additionally specifies tests for the
+  cap-only / roster-only / stale-cached-cap drift states** — and note that R1.1
+  (held-cap authz) means a revoke-first roster-drop failure has **no authz
+  window**, only a wasted delivery attempt.
 - **`reconcile_after_load/2` is the steady-state coherence spine (invariant #20).**
   On session `activate/2` (which today already rebuilds `:monitors` from persisted
   `:members` — `session.ex:410-424`), the session **reconciles its projection
@@ -357,9 +635,10 @@ the live session process. Algorithm — **bounded, no global scan:**
 
 1. `ws = Ezagent.Capability.workspace_of(S)` — O(1) from the URI.
 2. Enumerate candidate holders = the workspace's identities. Users:
-   `Ezagent.Users.list_in_workspace(ws)` (`users.ex:411-417`). (Agents in the
-   workspace are enumerated via the workspace's entity registry — plan detail;
-   agents also hold `:identity` caps.)
+   `Ezagent.Users.list_in_workspace(ws)` (`users.ex:411-417`); Agents:
+   `Ezagent.Entity.Agent.list_in_workspace(ws)` (**R1.4** — the snapshot scan
+   modeled on `agent_role_resolver.ex:35-64`, covering live AND dormant agents).
+   Union the two sets.
 3. For each candidate, read **LIVE** caps via `Ezagent.Identity.read_entity_caps/1`
    (NOT `caps_json` — see K5) and test for a member-cap whose instance matches S via
    `Capability.matches?/2` (honoring scope tuples), AFTER the `granted_by_entity?/1`
@@ -381,9 +660,11 @@ chokepoint. Today's ephemeral receive cap is scoped `instance: recipient`
 **flip the `:receive` needed-cap to be sender-session-scoped** (K1):
 
 - Member-cap held by M: `cap(:session, Session, :receive, instance: S)`.
-- When S fans out to M, the dispatch to M's `:receive` action now requires a cap
-  whose `instance` matches **S** (the calling session), not M. M holds exactly that
-  cap. Delivery presents it from the projection cache (§6).
+- When S fans out to M, M's `:receive` handler authorizes the receive iff **M
+  itself HOLDS** a cap whose `instance` matches **S** (`ctx.caller`, the calling
+  session), read from M's own `:identity` sibling — **NOT** a cap presented by
+  delivery (**R1.1/R1.2**; the original "delivery presents it from the projection
+  cache" was the bearer-token bug R1.1 removes).
 - Reverse query "members of S" = holders of a cap with `instance` matching S. ✓
 - Least-privilege improves: the cap authorizes receiving **only from sessions M is
   a member of**, instead of the old `cap(:any, :any, :receive, instance: M)` which
@@ -395,21 +676,43 @@ declaration.
 
 ### 6. Delivery under S3 (staying fast)
 
+> **SUPERSEDED IN PART BY R1.1/R1.2.** The original §6 (below, struck) cached the
+> member-cap and PRESENTED it in `ctx.caps` for authz — a bearer token. R1.1
+> separates roster from authz. This section now describes ONLY the roster read;
+> authz moves to the recipient's in-handler held-cap check (R1.2).
+
 `handle_send/2` is **unchanged in shape**: `members_map = ctx[:read].(:members,
-%{})` (`session.ex:497`) still reads the projection; `Map.keys` still feeds the
-Resolver's `$session_members` expansion. What changes:
+%{})` (`session.ex:497`) still reads the projection as the **delivery ROSTER**;
+`Map.keys` (`:498`) still feeds the Resolver's `$session_members` expansion. This
+is the crux read — O(1), local, no reverse scan per message. **Unchanged.**
+
+What changes (R1.1/R1.2):
+
+- **`dispatch_receive_call/3` presents NO receive cap.** The `member_receive_caps/1`
+  mint (`delivery.ex:259-274`) is **deleted**; `ctx.caps` on the receive dispatch
+  carries no member-cap (the cast may still carry a `reply: :ignore` etc., but no
+  authz-bearing cap). Authz is NOT via `granted_via_ctx_caps?` anymore.
+- **The recipient authorizes its OWN receive in-handler** against its OWN held
+  member-cap (from `ctx[:siblings][:identity]`, `reads_siblings([:identity])`),
+  matching `ctx.caller` (S). A revoked member is denied immediately. `:receive` is
+  `cap_exempt` at the CapBAC layer; the shared `MemberReceive.authorize/1` predicate
+  is the sole authority (R1.2).
+- **Roster staleness is fail-safe:** a stale roster entry yields a delivery attempt
+  that FAILS the recipient's in-handler check — never an unauthorized receive.
+- **Net hot-path delta: neutral.** Roster read is identical to today; the recipient
+  reads its own already-loaded `:identity` sibling (no extra GenServer.call, no
+  reverse query). **Crux satisfied; bearer-token hole closed.**
+
+<details><summary>Original §6 (superseded — the bearer-token design)</summary>
 
 - The projection entry for each member caches the standing member-cap (or enough to
   reconstruct it — `{instance: S, ws}` is enough; behavior/action/kind are fixed).
 - `dispatch_receive_call/3` presents that **cached standing cap** in `ctx.caps`
-  instead of calling the now-deleted `member_receive_caps/1`. No per-delivery mint,
-  no per-delivery live-caps read. The runtime authorizes at the member's `:receive`
-  chokepoint via the unchanged `granted_via_ctx_caps?` path
-  (`runtime.ex:537-566`), which already applies `granted_by_entity?/1` before
-  `matches?/2`. The presented cap's `granted_by` is the granter recorded at join
-  (a real entity), so provenance passes.
-- **Net hot-path delta: neutral-to-faster** (a struct read from the cache vs. a
-  struct mint). No reverse query, no extra slice read. **Crux satisfied.**
+  instead of calling the now-deleted `member_receive_caps/1`. [SUPERSEDED — bearer
+  token: authorizes the presented copy regardless of whether the recipient still
+  holds the cap. See R1.1.]
+
+</details>
 
 ### 7. `:send` — stays a separate cap
 
@@ -446,17 +749,16 @@ universal base tier.
   slice-change on the leaver — which is exactly what closes the S1 removal-notify
   gap (§9, §11).
 - **Migration** of existing sessions (`:members` rows → member-cap grants). A
-  one-shot, **idempotent** migration task (`mix ezagent.migrate.member_caps`):
-  for each session, read its persisted `:members`, and for each member grant the
-  member-cap (skip if already held — reuse `already_authorized?/5` semantics,
-  `.../membership.ex:888-903`), `granted_by` = the session `:owner_uri` (admin
-  fallback for ownerless — the #154 named extreme-case granter, matching
-  `public_view_granter/1`). The `:members` projection rows are kept as-is (they
-  become the cache). `reconcile_after_load/2` (§4.3) is the steady-state mechanism;
-  the one-shot task is the initial seed. Per project convention dev DBs are often
-  wiped+rebuilt on structural changes — but this migration is written idempotent so
-  it is safe to run against a live dev DB (read-then-grant-if-absent, no destructive
-  step; respects `feedback_destructive_migration_anti_pattern`).
+  one-shot, **idempotent, bounded, paginated, snapshot-consistent** migration task
+  `mix ezagent.migrate.member_caps` — fully specified in **R1.5** (repo-only
+  `where kind_type == "session"` + keyset pagination; decode once and read
+  `members` + `owner_uri` from the SAME persisted state; ownerless #154 fallback
+  logged + counted; `--dry-run` / `--gate` / report). Supersedes the original
+  `KindSnapshot.list_all` + live-owner-lookup sketch. The `:members` projection
+  rows are kept as-is (they become the roster cache); `reconcile_after_load/2`
+  (§4.3) is the steady-state backstop, the task is the initial seed. Idempotent +
+  non-destructive ⇒ safe on a live dev DB
+  (`feedback_destructive_migration_anti_pattern`).
 
 ---
 
@@ -528,11 +830,19 @@ holders-of-manage-cap-over-X); do not blur them.
 
 ## 11. Key decisions (with carried-over codex fixes)
 
-**K1 — `:receive` needed-cap flips to sender-session-scoped.** One cap serves
-membership + receive-authz (§5). Touches the `:receive` action's cap declaration in
-`Behavior.User.Receive` / `Behavior.Agent.Receive`. **Confirmed-sound?** PROPOSED —
-the plan must verify the `:receive` chokepoint's `needed` map and adjust it to key
-`instance` on the calling session. This is the one authorization-semantics change.
+**K1 — receive-authz = the recipient's HELD member-cap over the source session,
+checked in-handler.** One cap serves membership + receive-authz (§5). **REVISED
+(R1.2):** NOT a `required_caps/0` edit on User/Agent.Receive (that path can only
+scope `instance` to the target, and the runtime held-cap path checks the *caller*,
+not the recipient — `runtime.ex:443-447, 516-534`). Instead: `:receive` becomes
+`cap_exempt` on every receive behavior and a **shared `MemberReceive.authorize/1`**
+predicate reads the recipient's own `ctx[:siblings][:identity]` caps and matches
+against `ctx.caller`. **Confirmed-sound?** CONFIRMED-precedent — mirrors the proven
+socialware cap-exempt in-handler read-auth (`socialware_publisher_read.ex:56-77`);
+`agent.receive` already declares `reads_siblings` (`agent/receive.ex:80`). A
+`ReceiveAuthzParityTest` invariant covers ALL `{Kind, :receive}` behaviors incl.
+plugin receives (R1.2). No runtime consent-inversion (rejected — self-slice
+deadlock).
 
 **K2 — Extract a PUBLIC `Ezagent.Identity.Authority`** with `manages?/2` and
 `workspace_admin?/2`. CONFIRMED it does NOT exist today; the predicates
@@ -586,11 +896,14 @@ all landing the same architecture. Phasing = review checkpoints, not scope forks
   ephemerally (the mint is deleted in A2), so this phase is behavior-preserving and
   purely additive. Member-caps now exist and are authoritative; nothing yet depends
   on them for delivery.
-- **A2 — delivery/presence cutover (the load-bearing phase).** Flip the `:receive`
-  needed-cap (K1); delete `member_receive_caps/1`; have delivery present the cached
-  standing cap; wire leave/remove to revoke the member-cap (revoke-first,
-  fail-closed); anon holds the member-cap. Presence/monitors untouched. This phase
-  carries the blast radius (delivery authz, anon, removal) and is where E2E lives.
+- **A2 — delivery/presence cutover (the load-bearing phase).** Make `:receive`
+  `cap_exempt` + add the shared `MemberReceive.authorize/1` in-handler predicate
+  (K1/R1.2) + the `ReceiveAuthzParityTest`; delete `member_receive_caps/1` (present
+  NO cap — R1.1); move the socialware read predicate to held-cap (R1.1); wire
+  leave/remove to revoke the member-cap with compensation (revoke-first,
+  fail-closed, R1.3); anon holds the member-cap. Presence/monitors untouched. This
+  phase carries the blast radius (receive authz, read authz, anon, removal) and is
+  where the §14.5 acceptance E2E lives.
 - **B — cascade rides on top (small, given A).** Extract `Ezagent.Identity.Authority`
   (K2); add the cascade hook at the emit chokepoint (K3); implement `managers_of/1`
   (K4/K5); content-free notify. `affected_principals` is always `[X]`.
@@ -640,9 +953,10 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
    not call the workspace enumeration (e.g. by asserting `Users.list_in_workspace`
    is not invoked during a send; a spy/telemetry probe). This is the invariant that
    fails if someone "simplifies" delivery into a reverse query.
-7. delivery presents the standing member-cap (not a freshly minted one) and the
-   member's `:receive` chokepoint authorizes on the sender-session-scoped cap (K1);
-   `member_receive_caps/1` is gone (grep-gate / no callers).
+7. delivery presents **no** receive cap (R1.1); the member's `:receive` chokepoint
+   authorizes in-handler on its OWN held member-cap matching the source session
+   (K1/R1.2); `member_receive_caps/1` is gone (grep-gate / no callers). (Held-cap
+   deny-on-revoke is test 20; parity invariant is test 24.)
 8. a non-member (no member-cap over S) is NOT delivered to (receive chokepoint
    denies) — proves membership==cap on the read side.
 9. presence: `:DOWN` flips `online: false` but the member RETAINS the member-cap
@@ -674,6 +988,77 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 19. cascade hook fires from the post-commit `DeferredDispatch` turn, off the mutating
     dispatch's critical path (K3); a raising resolver does not roll back the mutation.
 
+**R1 additions (held-cap authz + drift states — the security core)**
+20. **Held-cap receive-authz (R1.1/R1.2):** a receive dispatch carries **no**
+    member-cap in `ctx.caps` (assert absent); the recipient's `:receive` is
+    authorized ONLY by its own held member-cap (matching `ctx.caller`); revoke the
+    cap and the very next receive is DENIED — **without** running reconcile.
+21. **Roster-vs-authz separation (R1.1):** with a member-cap revoked but the
+    `:members` roster entry still present (simulate the projection-drop-failure
+    window), delivery ATTEMPTS the recipient but the receive is DENIED — proves a
+    stale roster is never authz.
+22. **Socialware read held-cap (R1.1):** an ex-member whose member-cap is revoked
+    but who is still in a stale `members` projection is DENIED
+    `socialware_publisher_read` — proves read-authz reads the held cap, not the
+    projection.
+23. **Drift-state matrix (R1.3):** cap-only ⇒ reconcile adds roster;
+    roster-only ⇒ receive denied + reconcile evicts; join role-conflict ⇒ NO
+    orphaned cap (preflight); join failure after grant ⇒ compensating revoke leaves
+    neither cap nor roster.
+24. **Receive-authz parity invariant (R1.2):** every `{Kind, :receive}` behavior
+    (User/Agent/HelloBuilder/HelloConcierge + any future) is `cap_exempt` for
+    `:receive` AND routes through `MemberReceive.authorize/1` — a new receive
+    behavior that skips the helper fails.
+25. **Migration bounded (R1.5):** `mix ezagent.migrate.member_caps` on a seeded set
+    scans only `kind_type == "session"` rows via keyset pages (assert no
+    `list_all`), grants per member from the same decoded state, reports ownerless
+    fallback count; `--dry-run` writes nothing; `--gate` exits nonzero pre-migration
+    and zero post.
+26. **Agent enumeration (R1.4):** `Entity.Agent.list_in_workspace/1` returns a
+    DORMANT agent (snapshot-only, not live) and excludes users/other workspaces.
+
+### 14.5 Acceptance E2E — the done-gate (NEW scenario)
+
+This scenario **does not exist today**; it is the feature's end-to-end done-gate.
+It proves the three properties the lead asked for. **Split by determinism:**
+
+**(A) Security done-gate → ExUnit integration test** (deterministic; the immediate
+deny must not depend on reconcile timing, which would flake in a browser test).
+Lives at `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs`
+(cross-app integration; the session domain owns membership + delivery). Steps:
+
+1. **Cross-user add.** User **B** adds user **A**'s cc agent to B's session **S** —
+   i.e. grants the member-cap `cap(:session, Session, :receive, instance: S)` to
+   **A's-agent's** `:identity` slice.
+2. **Cascade proof.** Assert **A receives a cascade notification** — the grant is a
+   slice-change on A's-agent → `managers_of(A's-agent)` = the creator holding
+   `CreatorGrant.manage_cap` = **A** → `Notifications.notify/2` to A (Part B / §9).
+3. **Membership-as-cap delivery.** B posts in S; assert A's-agent's `:receive`
+   fires (roster lists it AND it holds the member-cap → in-handler authz passes).
+4. **Grant/revoke cascade to an arbitrary X.** Grant a member-cap to some entity X
+   whose owner/manager is Y; assert Y is notified (and on revoke, Y is notified —
+   the S1-gap-closed removal-notify).
+5. **🔴 CRITICAL SECURITY PROOF (the done-gate).** B **removes** A's agent from S
+   (revoke the member-cap). Assert A's-agent can **NO LONGER receive** in S — B
+   posts again and A's-agent's `:receive` is DENIED — **proven WITHOUT running
+   `reconcile_after_load/2`** (the test never re-activates the session; it asserts
+   the in-handler held-cap check denies on the already-revoked cap). This is the
+   security done-gate: revoke ⇒ immediate loss of receive, no reconcile wait, no
+   bearer window.
+
+**(B) Cross-user cascade UX → world-UI agent-browser scenario** in
+`docs/scenarios/2026-07-04-member-cap-cascade.md` (project convention
+`feedback_esr_e2e_standards`: an agent-browser screenshot gate for user-facing
+flows). Drives the world UI: B opens S, adds A's cc agent via the roster/picker;
+capture (1) the roster showing A's agent as a member, (2) A's notification surface
+showing the cascade notice. This proves the human-visible cross-user path. The
+**security deny** stays ExUnit-only (not UI-visible / timing-sensitive).
+
+**Gate wording:** the feature is DONE when (A) passes in full — **especially step
+5** — and (B)'s two screenshots are captured. Step 5 is the single load-bearing
+assertion; if it cannot be made to pass without a reconcile, R1.1's roster/authz
+separation is not actually implemented and the feature is not done.
+
 ---
 
 ## 15. Out of scope
@@ -699,23 +1084,24 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 
 ## 16. Open risks (honest — what this spec could NOT fully close)
 
-1. **K1 (`:receive` needed-cap flip) is PROPOSED, not traced end-to-end.** The
-   crux design is sound, but the exact `needed`-map construction at the `:receive`
-   chokepoint (`Behavior.User.Receive` / `Behavior.Agent.Receive`) must be read and
-   adjusted in A2. If the chokepoint's needed instance cannot cleanly be made
-   sender-session-scoped, the fallback is: keep a recipient-scoped receive cap for
-   AUTHZ and a session-scoped member-cap for MEMBERSHIP (two caps, granted together
-   at join) — still eliminates the per-delivery mint, but weakens the "one cap"
-   elegance. Plan must confirm the single-cap path in A2 before committing.
+1. **K1 receive-authz — RESOLVED in R1.2 (was PROPOSED).** The in-handler /
+   `cap_exempt` design is CONFIRMED against a proven precedent (socialware
+   read-auth), not a runtime edit. Residual PROPOSED detail: whether **plugin
+   agent Kinds carry a readable `:identity` sibling** (Users/Agents do; the four
+   receive behaviors include `HelloBuilder`/`HelloConcierge`). If a plugin agent
+   member has no `:identity` slice, `MemberReceive.authorize/1` must resolve its
+   caps via `read_entity_caps/1` fallback rather than the pre-loaded sibling. The
+   `ReceiveAuthzParityTest` surfaces any behavior that skips the helper; the plan
+   must confirm each plugin receive's identity-slice availability in A2.
 2. **Cold reverse-scan cost at very large workspaces.** `reconcile_after_load/2`
    and `managers_of/1` do a bounded per-workspace live-cap scan. Bounded ≠ cheap if
    a workspace has thousands of identities. Mitigation is option (a); flagged, not
    built. Delivery is unaffected (never scans).
-3. **Agent enumeration in the reverse scan.** `list_in_workspace/1` returns Users;
-   agents also hold member-caps and must be enumerated for the Part A reconcile
-   (their membership) — the plan must confirm the workspace agent-enumeration API
-   (WorkspaceRegistry / entity registry). For Part B this is moot (recipients are
-   Users), but for Part A membership reconcile it is load-bearing.
+3. **Agent enumeration — RESOLVED in R1.4.** `Ezagent.Entity.Agent.list_in_workspace/1`
+   (snapshot scan modeled on `agent_role_resolver.ex:35-64`, live+dormant). Residual
+   PROPOSED detail: the cross-app module placement so the reconcile caller
+   (`ezagent_core`/`ezagent_domain_session`) references it without tripping
+   `undeclared_umbrella_dep_test` — a plan-time seam choice, not a design gap.
 4. **Behavior shift (§4.3, K6): failed member-cap grant ⇒ not a member.** A
    deliberate move from best-effort to fail-closed for the membership-defining cap.
    Cleaner, but a user-visible change (a transient grant failure now yields
