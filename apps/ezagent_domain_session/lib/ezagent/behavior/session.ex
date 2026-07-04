@@ -418,10 +418,30 @@ defmodule Ezagent.ActionSet.Session do
   # it rejoins). Members that ARE live get a fresh, REAL monitor — so the
   # `:DOWN` signal (`handle_signal/2`) can match again after a restart.
   @impl Ezagent.Lifecycle
-  def activate(state, _ctx) do
+  def activate(state, ctx) do
+    # Membership-cap unification A1.3 (spec §4.4) — SEED/HEAL the `:members`
+    # projection from the authoritative member-cap holder set BEFORE rebuilding
+    # the monitors, so a cap-only drift (member granted the cap but missing from
+    # the projection) is healed and immediately monitored. UNION semantics keep
+    # A1 additive/behavior-preserving (never evicts an existing member — eviction
+    # is an A2 concern). The reconcile never raises (§13); a scan failure returns
+    # the persisted projection unchanged, so `activate/2` cannot crash on it.
+    persisted_members = Map.get(state, :members, %{})
+
+    reconciled_members =
+      case ctx do
+        %{self_uri: %URI{} = session_uri} ->
+          Ezagent.ActionSet.Session.Reconcile.reconcile_after_load(
+            session_uri,
+            persisted_members
+          )
+
+        _ ->
+          persisted_members
+      end
+
     monitors =
-      state
-      |> Map.get(:members, %{})
+      reconciled_members
       |> Map.keys()
       |> Enum.flat_map(fn %URI{} = uri ->
         case KindRegistry.lookup(uri) do
@@ -431,7 +451,7 @@ defmodule Ezagent.ActionSet.Session do
       end)
       |> Map.new()
 
-    {:ok, %{monitors: monitors}}
+    {:ok, %{monitors: monitors, members: reconciled_members}}
   end
 
   @doc """
