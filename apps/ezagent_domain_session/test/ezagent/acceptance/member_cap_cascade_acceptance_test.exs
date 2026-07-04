@@ -177,6 +177,9 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     :ok = Ezagent.Notifications.subscribe(owner)
 
     # --- test 13: member-cap GRANT (manage-authorized join) → Y notified -------
+    # NOTE: a join grants X *two* caps into its `:identity` slice — the member-cap
+    # (`:receive`) AND the join-authority cap (`membership.ex` provision) — each a
+    # separate commit → separate cascade. So ≥2 grant-era notifications queue.
     _ = dispatch_join(session, agent)
     :ok = wait_member_cap(agent, session)
 
@@ -188,6 +191,11 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     # Content-free: NO cap values, NO member list, NO caller.
     assert Enum.sort(Map.keys(grant_notif.body)) == Enum.sort([:uri, :slice_key, :cursor, :event_at])
 
+    # Drain ALL remaining grant-era cascade notifications to quiescence, so the
+    # post-revoke assert below cannot be satisfied by a leftover grant notice
+    # (grant and revoke carry an identical content-free payload).
+    last_grant_cursor = drain_notifications(owner, grant_notif.body.cursor)
+
     # --- test 14: member-cap REVOKE (removal) → Y notified (S1 gap closed) -----
     assert {:ok, %{status: :removed}} =
              Participants.remove_participant(session, agent, op_ctx(owner, session))
@@ -198,6 +206,19 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     assert revoke_notif.type == :entity_slice_changed
     assert revoke_notif.body.uri == URI.to_string(agent)
     assert revoke_notif.body.slice_key == :identity
+    # Provably POST-revoke: the mailbox was drained, and the revoke's cursor is
+    # strictly newer than every grant-era notification.
+    assert revoke_notif.body.cursor > last_grant_cursor
+  end
+
+  # Consume every queued cascade notification for `owner`, returning the highest
+  # cursor seen (≥ `seed`). Quiescent after 300ms of silence.
+  defp drain_notifications(owner, seed) do
+    receive do
+      {:notification, ^owner, %{cursor: c}} -> drain_notifications(owner, max(seed, c))
+    after
+      300 -> seed
+    end
   end
 
   # Grant a Manage-over-`target` cap into `holder`'s durable identity (admin).
