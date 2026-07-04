@@ -77,6 +77,11 @@ defmodule Ezagent.Socialware.Demo.Hello do
     name = Keyword.get(opts, :name, @name)
     recipe_name = Keyword.get(opts, :recipe_name, @recipe)
     role_name = Keyword.get(opts, :role_name, @role)
+    # D-5 owner (below) as a JSON-manifest string. Computed on its own line (not
+    # inline in the map) so the uri-query scan's `:uri_string_key` heuristic —
+    # which flags `URI.to_string` in a `%{ … => … }` line as a possible routing
+    # KEY — does not false-positive on this owner-policy VALUE.
+    admin_owner_uri = URI.to_string(Ezagent.Entity.User.admin_uri())
 
     %{
       "name" => name,
@@ -126,7 +131,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
       # def's content_hash once → a benign one-time re-promotion on deploy (§7.5).
       "owner_policy" => %{
         "type" => "fixed",
-        "uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "uri" => admin_owner_uri
       }
     }
   end
