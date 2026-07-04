@@ -307,6 +307,34 @@ No new store; the pin is already persisted in the install record — P0 makes it
 per Decision A, also **freezes a copy into the local template content** so behavior resolution (which
 runs before the install record exists) reads the pinned revision.
 
+### 4.4 The freeze MUST cover EVERY production create path (codex round-2 BLOCKER)
+
+The freeze invariant only holds if **every** production path that calls
+`behavior_set_for_template/2` receives content whose `installs` are already pinned. The freeze
+(resolve-current-revision → bake `config_id` + `content_hash` into the content's `installs`) is
+therefore specified as a **single shared freeze step** (one helper) that MUST be applied at **every**
+such call site — not just `SessionCreator`. **Requirement:** any code path that builds session
+content from an unpinned `installs: [ref]` and then calls `behavior_set_for_template/2` must run the
+freeze step **first**; a call site that does not is a bug the acceptance test (T-Pin-a) must catch.
+
+Known production call sites at spec time (CONFIRMED — the implementer must re-grep for any others and
+apply the same helper):
+
+1. **`SessionCreator`** — resolves behaviors at `session_creator.ex:331-332`, before per-session
+   install records at `:548-553`. The primary path §4.1 was written against.
+2. **`EzagentPluginHello.App.ensure_app/3`** — the bespoke anon-homesite path, which builds
+   `content = %{..., installs: [socialware_name]}` and calls
+   `Installation.behavior_set_for_template(content, workspace)` **before** writing install records
+   (`app.ex:44,48,60`). This path is **NOT retired in P0** (its retirement is P2), so P0 MUST apply
+   the same freeze here — otherwise an unpinned hello install falls through to live
+   `DefinitionRegistry.lookup/2` (`installation.ex:313`) and a later publish silently changes the
+   running flagship, defeating the pin invariant on the exact surface it matters most for. (When P2
+   folds this path onto `SocialwareInstall`, the freeze travels with it.)
+
+The unpinned fallback in `resolve_definitions/2` (§4.2 item 2, `config_id == nil` → live lookup) is
+retained *only* for genuinely legacy/unpinned templates; it must never be reached from a production
+create path once the freeze helper is in place.
+
 ---
 
 ## 5. Unified idempotency RULE — the R-2 fix
@@ -544,6 +572,11 @@ invariant. **★** marks the invariant tests that directly kill R-2 and the pin 
   **assert** the running install still resolves R1 AND its `behavior_set_for_template` builds from R1
   (not R2) — i.e. a later publish does NOT change a running session's behaviors. *(Directly refutes
   the §2.3 split — fails today because `behavior_set_for_template` name-resolves current.)*
+- **T-Pin-a2 (the freeze covers the hello anon path — §4.4, codex round-2 BLOCKER):** create a
+  homesite session via `EzagentPluginHello.App.ensure_app/3` (the bespoke path NOT retired in P0);
+  `publish_or_upgrade` a new hello revision; **assert** the running homesite still resolves the
+  create-time revision — i.e. the freeze helper is applied at this call site too, not only in
+  `SessionCreator`. *(Guards the exact flagship surface the pin matters most for.)*
 - **T-Pin-b (explicit upgrade):** `repoint_template_installs` advances the install to R2; next spawn
   builds from R2.
 - **T-Pin-c (fresh-install records the pin):** a fresh `installs: [ref]` (no `config_id`) records the
