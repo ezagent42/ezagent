@@ -74,7 +74,8 @@ defmodule Ezagent.World.ConversationActions do
       socket,
       short_name,
       Map.get(args, "template_name", "default"),
-      Map.get(args, "socialware_ref")
+      Map.get(args, "socialware_ref"),
+      socialware_revision(args)
     )
   end
 
@@ -247,9 +248,14 @@ defmodule Ezagent.World.ConversationActions do
   Create a new session in the caller's current workspace via
   `Ezagent.Workspace.create_session/3`, then open its `?session=` deep-link.
   """
-  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t() | nil) ::
-          {:noreply, Phoenix.LiveView.Socket.t()}
-  def create_session(socket, short_name, template_name, socialware_ref \\ nil)
+  @spec create_session(
+          Phoenix.LiveView.Socket.t(),
+          String.t(),
+          String.t(),
+          String.t() | nil,
+          Ezagent.World.SocialwareInstall.revision() | nil
+        ) :: {:noreply, Phoenix.LiveView.Socket.t()}
+  def create_session(socket, short_name, template_name, socialware_ref \\ nil, revision \\ nil)
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
@@ -276,7 +282,8 @@ defmodule Ezagent.World.ConversationActions do
                workspace_uri,
                caller,
                template_name,
-               socialware_ref
+               socialware_ref,
+               revision
              ) do
           {:ok, create_template_name} ->
             do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
@@ -284,6 +291,21 @@ defmodule Ezagent.World.ConversationActions do
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
         end
+    end
+  end
+
+  # Content-hash-addressed install (P1 §O-1) — a catalog install intent may carry
+  # the def's EXACT revision identity so the install pins the revision the user
+  # saw, not a same-named local def. `socialware_config_id` is the revision
+  # resolver key; `socialware_content_hash` (optional) is the env-stable identity
+  # cross-checked at resolution. Absent → nil → the legacy bare-name path.
+  defp socialware_revision(args) when is_map(args) do
+    case Map.get(args, "socialware_config_id") do
+      config_id when is_binary(config_id) and config_id != "" ->
+        %{config_id: config_id, content_hash: Map.get(args, "socialware_content_hash")}
+
+      _ ->
+        nil
     end
   end
 
