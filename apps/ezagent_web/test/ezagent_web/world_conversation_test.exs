@@ -1314,7 +1314,57 @@ defmodule EzagentWeb.WorldConversationTest do
     assert rendered =~ "Pure-config hello"
   end
 
+  test "#162: Demo.Hello.publish/0 boot-publishes hello as PUBLIC, cross-workspace discoverable, materializable, idempotent" do
+    :ok = ensure_manifest_reference_apps_started()
+    # The demo references the stable `np` py-role recipe; `RoleSeedHook` skips
+    # in :test, so seed it explicitly (same as the acceptance test seeds its
+    # own recipe) so conformance/materialization resolve it.
+    :ok = seed_np_recipe()
+
+    system_ws = Ezagent.URI.workspace(:system)
+    n = System.unique_integer([:positive])
+    other_ws_name = "hello-discoverer-#{n}"
+    {:ok, _} = Ezagent.Workspace.create(other_ws_name, %{})
+    other_ws = Ezagent.URI.workspace(other_ws_name)
+
+    # DOGFOOD the real governance flow (open_cr → stage → publish).
+    assert {:ok, :published} = Ezagent.Socialware.Demo.Hello.publish()
+    assert Ezagent.Socialware.Demo.Hello.published?()
+
+    # PUBLIC + discoverable from a DIFFERENT workspace via the normal listing.
+    assert Enum.any?(Ezagent.Socialware.DefinitionRegistry.list(other_ws), fn row ->
+             row.name == "hello" and row.public? == true
+           end)
+
+    # Materializable: conformance (every declared ref resolves) is green — the
+    # same guarantee `mix ezagent.socialware.check` gives, proving install works.
+    assert {:ok, definition, _object} =
+             Ezagent.Socialware.DefinitionRegistry.lookup(system_ws, "hello")
+
+    assert :ok = Ezagent.Socialware.Conformance.check(definition, system_ws)
+
+    # Idempotent: a second publish opens NO new CR — it returns :exists via the
+    # already-public guard, so re-boots never accumulate duplicate CRs.
+    assert {:ok, :exists} = Ezagent.Socialware.Demo.Hello.publish()
+
+    # Still exactly one public `hello` entry (no duplicate definition).
+    hello_rows =
+      Enum.filter(Ezagent.Socialware.DefinitionRegistry.list(other_ws), &(&1.name == "hello"))
+
+    assert length(hello_rows) == 1
+  end
+
   # --- helpers ----------------------------------------------------------
+
+  defp seed_np_recipe do
+    recipe = EzagentPluginPy.Application.np_role_recipe()
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), recipe.name)
+
+    case RecipeRegistry.seed_role_if_absent(recipe) do
+      {:ok, _} -> :ok
+      {:error, reason} -> flunk("failed to seed np recipe: #{inspect(reason)}")
+    end
+  end
 
   defp ensure_manifest_reference_apps_started do
     with {:ok, _} <- Application.ensure_all_started(:ezagent_plugin_hello),
@@ -1351,49 +1401,16 @@ defmodule EzagentWeb.WorldConversationTest do
     end
   end
 
+  # One source of truth (task #162): the hello manifest shape now lives in
+  # `Ezagent.Socialware.Demo.Hello.manifest_attrs/1` (the lib demo constant the
+  # boot-publish path also uses). This test passes UNIQUE per-run names for
+  # parallel-test isolation; the boot path uses the stable demo defaults.
   defp hello_manifest_attrs(%{name: name, recipe_name: recipe_name, role_name: role_name}) do
-    %{
-      "name" => name,
-      "version" => "0.1.0",
-      "title" => "Pure-config hello",
-      "description" => "Hello socialware authored as a manifest.",
-      "uses" => ["hello"],
-      "bases" => [
-        "Elixir.Ezagent.ActionSet.Session",
-        "Elixir.Ezagent.ActionSet.Publisher.SessionImpl"
-      ],
-      "shape" => [
-        "Elixir.Ezagent.ActionSet.Turn",
-        "Elixir.Ezagent.ActionSet.Surface",
-        "Elixir.Ezagent.ActionSet.SupervisorApproval"
-      ],
-      "views" => ["hello_render"],
-      "agents" => [
-        %{"recipe" => recipe_name, "role_name" => role_name, "flavor" => "py"}
-      ],
-      "prompt_templates" => %{"hello" => "Say hello: {body}"},
-      "legends" => %{
-        "hello" => %{
-          "member_set" => [role_name],
-          "bound_rule_set" => "default",
-          "fold" => false
-        }
-      },
-      "routing_rules" => [
-        %{
-          "matcher" => %{"type" => "always"},
-          "receivers" => [role_name],
-          "rule_set" => "default",
-          "position" => 0,
-          "prompt_template_ref" => "hello"
-        }
-      ],
-      "visibility_policy" => %{
-        "scope" => "public",
-        "publish_policy" => "supervised",
-        "web_anon_access" => true
-      }
-    }
+    Ezagent.Socialware.Demo.Hello.manifest_attrs(
+      name: name,
+      recipe_name: recipe_name,
+      role_name: role_name
+    )
   end
 
   defp mint_and_join_anon(session_uri) do
