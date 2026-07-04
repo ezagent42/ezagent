@@ -99,6 +99,70 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     end
   end
 
+  # A BROAD action-wildcard cap over the session (`action: :any`). Under
+  # `Capability.matches?/2` it satisfies the concrete `:receive` need — the HIGH:
+  # an at-join idempotency keyed on `matches?/2` would treat a broad-cap member as
+  # "already authorized" and SKIP the concrete member-cap grant. Its
+  # `identity_key/1` differs from the concrete member-cap, so exact-identity
+  # idempotency must still grant the concrete cap.
+  defp broad_session_cap(session_uri) do
+    Capability.cap(:session, Ezagent.ActionSet.Session, :any, session_uri, Capability.workspace_of(session_uri))
+  end
+
+  # Grant a wildcard-action cap (needs ADMIN authority — the rule tag is rejected
+  # by the wildcard-grant gate), under the `{:genesis, admin}` authority — the
+  # admin-genesis provenance the HIGH is about.
+  defp grant_broad_cap(member_uri, cap) do
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        member_uri,
+        cap,
+        {:genesis, Ezagent.Entity.User.admin_uri()},
+        :sync
+      )
+  end
+
+  # The member's PERSISTED identity caps as the at-join idempotency reads them
+  # (`Membership.member_snapshot_caps/1` semantics: `SnapshotStore.latest`).
+  defp snapshot_identity_caps(member_uri) do
+    case Ezagent.SnapshotStore.latest(member_uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        state
+        |> Map.get(:identity, %{})
+        |> Ezagent.Kind.normalize_slice_view()
+        |> Map.get(:caps)
+        |> case do
+          caps when is_list(caps) -> caps
+          %MapSet{} = caps -> MapSet.to_list(caps)
+          other -> List.wrap(other)
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  # Poll until the member's SNAPSHOT (the idempotency source) contains `cap` —
+  # so the at-join idempotency read genuinely SEES the broad cap. Without this
+  # the test would be vacuous (a lagging snapshot reads `[]`, the buggy
+  # matches?-idempotency would then ALSO grant the concrete cap).
+  defp wait_snapshot_has(member_uri, cap, retries \\ 200) do
+    target = Capability.identity_key(cap)
+
+    present? =
+      snapshot_identity_caps(member_uri)
+      |> Enum.any?(fn
+        %Capability{} = c -> Capability.identity_key(c) == target
+        _ -> false
+      end)
+
+    cond do
+      present? -> :ok
+      retries > 0 -> Process.sleep(10); wait_snapshot_has(member_uri, cap, retries - 1)
+      true -> flunk("broad cap never appeared in #{URI.to_string(member_uri)} snapshot")
+    end
+  end
+
   test "join grants the member-cap into the member's identity caps (granted_by = owner) [test 1]" do
     owner = confirmed_user("owner")
     session = new_session("mc-user", owner)
@@ -133,6 +197,29 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
     refute Enum.any?(Ezagent.Identity.list_caps_for(anon), &send_cap_over?(&1, session)),
            "anon (unconfirmed) must NOT get :send from the member-cap grant (that is the mount tier)"
+  end
+
+  test "a member already holding a BROAD :any cap STILL gets the concrete member-cap at join [HIGH refutation]" do
+    owner = confirmed_user("owner")
+    session = new_session("mc-broad", owner)
+    member = confirmed_user("member")
+
+    # Pre-existing broad cap: `matches?/2` would consider the member "already
+    # authorized" for :receive → the buggy at-join idempotency SKIPS the grant.
+    grant_broad_cap(member, broad_session_cap(session))
+
+    # Make the test non-vacuous: ensure the broad cap is actually in the SNAPSHOT
+    # the at-join idempotency reads, so the skip-path is genuinely exercised.
+    wait_snapshot_has(member, broad_session_cap(session))
+
+    refute member_cap(member, session),
+           "precondition: member holds only the broad cap, not the concrete member-cap"
+
+    _ = dispatch_join(session, member)
+
+    assert wait_member_cap(member, session),
+           "a broad-:any-cap member must STILL receive the concrete " <>
+             "cap(:session, Session, :receive, S) — exact-identity idempotency, not matches?/2 (HIGH)"
   end
 
   test "join role-conflict preflight → NO orphaned member-cap [test 23 subset]" do

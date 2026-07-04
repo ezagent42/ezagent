@@ -88,9 +88,11 @@ defmodule Ezagent.ActionSet.Session.Membership do
   end
 
   # Grant the universal member-cap into the joining member's OWN `:identity`
-  # slice (A1.2). Best-effort + idempotent (§7): a skip-already-held (matches the
-  # runtime step-5.5 semantics via `already_authorized?/5`) returns `false` (this
-  # call granted nothing → compensation must NOT revoke a pre-existing cap); a
+  # slice (A1.2). Best-effort + idempotent (§7): a skip-already-held (EXACT
+  # member-cap identity via `holds_member_cap_exact?/3` — NOT the broad
+  # `matches?/2`, so a member holding only a wildcard cap STILL gets the concrete
+  # member-cap; codex HIGH) returns `false` (this call granted nothing →
+  # compensation must NOT revoke a pre-existing cap); a
   # `{:error}` grant is logged + telemetry'd and returns `false` (A1 is
   # behavior-preserving — a failed member-cap grant NEVER newly fails a join; the
   # §16-risk-#4 fail-closed shift is deferred to A2/lead). Returns `true` iff THIS
@@ -102,7 +104,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     held = member_snapshot_caps(member_uri)
 
-    if already_authorized?(held, Ezagent.ActionSet.Session, :receive, session_uri, workspace_uri) do
+    if holds_member_cap_exact?(held, session_uri, workspace_uri) do
       false
     else
       cap = member_cap(session_uri, workspace_uri)
@@ -1074,6 +1076,25 @@ defmodule Ezagent.ActionSet.Session.Membership do
     |> caps_to_list()
     |> Enum.any?(fn
       %Ezagent.Capability{} = cap -> Ezagent.Capability.matches?(cap, needed)
+      _ -> false
+    end)
+  end
+
+  # EXACT member-cap idempotency for the AT-JOIN grant (codex HIGH). True iff
+  # `held` already contains THIS concrete member-cap `cap(:session, Session,
+  # :receive, S)` by 5-tuple `identity_key/1` equality. Distinct from
+  # `already_authorized?/5` (which uses the BROAD `matches?/2` — correct for the
+  # `:join`/participation tiers, where admin's wildcard legitimately dedups a
+  # re-grant): a broad `:any` cap does NOT satisfy the member-cap need, so a
+  # member holding only a wildcard STILL gets the concrete cap granted (which A2
+  # authorizes receive on). Mirrors the migration's `holds_member_cap_exact?/2`.
+  defp holds_member_cap_exact?(held, %URI{} = session_uri, %URI{} = workspace_uri) do
+    target_key = Ezagent.Capability.identity_key(member_cap(session_uri, workspace_uri))
+
+    held
+    |> caps_to_list()
+    |> Enum.any?(fn
+      %Ezagent.Capability{} = cap -> Ezagent.Capability.identity_key(cap) == target_key
       _ -> false
     end)
   end
