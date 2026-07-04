@@ -139,6 +139,49 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
     end
   end
 
+  @doc """
+  Def-level RETRACT (P0 §6.2) — withdraw a published def from the catalog.
+
+  Sets a SEPARATE retract marker for `(name, workspace)` (NOT a field in the def
+  `body`, so the artifact's content-hash/identity is preserved — D-4). The def is
+  then filtered from `DefinitionRegistry.list/1` and the `lookup/2` public
+  fallback, so no NEW install can select it; EXISTING pinned installs are
+  grandfathered because freeze-pin (§4) baked the pinned revision into their local
+  template content (§9). The immutable revisions are never deleted.
+
+  Admin-gated exactly like a public publish: the caller needs manage authority
+  over the def AND admin authority.
+  """
+  @spec retract(String.t(), ctx()) :: {:ok, map()} | {:error, term()}
+  def retract(name, ctx) when is_binary(name) and name != "" do
+    set_retract(name, ctx, true)
+  end
+
+  @doc """
+  Reverse a retract (P0 §6.4) — clear the marker so the def is re-listed and
+  installable again. Because the marker is separate from `body`, the def resumes
+  at its last-published revision with its ORIGINAL `content_hash`. Same admin gate
+  as `retract/2`.
+  """
+  @spec restore(String.t(), ctx()) :: {:ok, map()} | {:error, term()}
+  def restore(name, ctx) when is_binary(name) and name != "" do
+    set_retract(name, ctx, false)
+  end
+
+  defp set_retract(name, ctx, retracted?) do
+    with :ok <- authorize_manage(name, ctx),
+         :ok <- authorize_admin(ctx),
+         {:ok, _object} <-
+           DefinitionRegistry.set_retracted(
+             workspace_uri(ctx),
+             name,
+             retracted?,
+             Map.fetch!(ctx, :caller)
+           ) do
+      {:ok, %{name: name, retracted: retracted?}}
+    end
+  end
+
   @doc "Reject an open socialware CR."
   @spec reject_cr(String.t(), ctx()) :: {:ok, map()} | {:error, term()}
   def reject_cr(cr_id, ctx) when is_binary(cr_id) do

@@ -14,6 +14,15 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   @definition_key "socialware"
   @definition_layer "workspace"
 
+  # P0 §6/§11.2 (D-4) — the def-level RETRACT marker. A SEPARATE ConfigStore key
+  # under the SAME `socialware:<name>` subject + `"workspace"` layer, keyed by
+  # `(name, workspace)`. Keeping it OUT of the def `body` (its own key) means a
+  # retract never enters the artifact's content-hash, so identity survives a
+  # retract/restore cycle (§6.4). It rides the existing append-only object +
+  # pointer machinery (no new table, no migration): set/clear is a `write_and_point`
+  # of `%{"retracted" => bool}`; the current pointer is the current marker state.
+  @retract_key "socialware_retract"
+
   @doc "The fixed ConfigObject key for socialware definition bodies."
   @spec definition_key() :: String.t()
   def definition_key, do: @definition_key
@@ -41,6 +50,53 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
       {:ok, definition, object}
     else
       _ -> :error
+    end
+  end
+
+  @doc """
+  True when `(name, workspace)` carries a RETRACT marker (P0 §6). Consulted by
+  `list/1` (`list_entry_for/3`) and the `lookup/2` PUBLIC fallback
+  (`public_object/1`), always keyed by the OBJECT's OWN `workspace_uri` so a
+  retract in one workspace never hides a foreign-workspace object of the same name.
+  """
+  @spec retracted?(URI.t() | String.t(), String.t()) :: boolean()
+  def retracted?(workspace_uri, name) when is_binary(name) and name != "" do
+    ws = uri_string(workspace_uri)
+
+    case ConfigStore.resolve(@definition_layer, ws, definition_subject_uri(ws, name), @retract_key) do
+      {:ok, %ConfigObject{body: body}} -> Map.get(body, "retracted") == true
+      :none -> false
+    end
+  end
+
+  @doc """
+  Set (or clear) the def-level retract marker for `(name, workspace)` (P0 §6.2/§6.4).
+
+  Writes a NEW immutable marker object via the append-only `ConfigStore` and
+  advances the `"socialware_retract"` pointer to it. The def's own revisions are
+  never touched, so restore (`retracted? == false`) resumes the def at its
+  last-published revision with its original `content_hash`. Admin-gating lives at
+  the `ConfigGovernance.Socialware.retract/2` boundary that calls this.
+  """
+  @spec set_retracted(URI.t() | String.t(), String.t(), boolean(), URI.t() | String.t()) ::
+          {:ok, ConfigObject.t()} | {:error, term()}
+  def set_retracted(workspace_uri, name, retracted?, actor_uri)
+      when is_binary(name) and name != "" and is_boolean(retracted?) do
+    ws = uri_string(workspace_uri)
+
+    ConfigStore.write_and_point(%{
+      layer: @definition_layer,
+      workspace_uri: ws,
+      subject_uri: definition_subject_uri(ws, name),
+      key: @retract_key,
+      body: %{"retracted" => retracted?},
+      actor_uri: uri_string(actor_uri),
+      source_turn_id:
+        "socialware-retract:#{ws}:#{name}:#{System.unique_integer([:positive, :monotonic])}"
+    })
+    |> case do
+      {:ok, %{object: object}} -> {:ok, object}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -183,7 +239,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     @definition_layer
     |> ConfigStore.list_current_objects(@definition_key)
     |> Enum.find(fn %ConfigObject{subject_uri: subject} = object ->
-      subject == definition_subject_uri(object.workspace_uri, name) and public_object?(object)
+      subject == definition_subject_uri(object.workspace_uri, name) and public_object?(object) and
+        not retracted?(object.workspace_uri, name)
     end)
     |> case do
       %ConfigObject{} = object -> {:ok, object}
@@ -203,7 +260,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
 
   defp list_entry_for(%ConfigObject{} = object, caller_ws, system_ws) do
     with {:ok, %Definition{} = definition} <- Definition.new(object.body),
-         true <- visible_to_workspace?(definition, object.workspace_uri, caller_ws, system_ws) do
+         true <- visible_to_workspace?(definition, object.workspace_uri, caller_ws, system_ws),
+         false <- retracted?(object.workspace_uri, definition.name) do
       [
         %{
           name: definition.name,
