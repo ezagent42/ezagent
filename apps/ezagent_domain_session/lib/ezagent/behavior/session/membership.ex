@@ -110,12 +110,24 @@ defmodule Ezagent.ActionSet.Session.Membership do
       cap = member_cap(session_uri, workspace_uri)
       granter = member_cap_granter(ctx)
 
-      # `:async` is REQUIRED here: this runs inside the Session Kind's
-      # `handle_join`, and a session-instance cap's grant resolves the session's
-      # data-owner — which re-enters THIS session Kind. A `:sync` call would
-      # self-deadlock; the cast defers the data-owner resolution to after
-      # `handle_join` returns (session free). The cap lands eventually
-      # (idempotent + reconcile backstop), which is exactly A1's additive model.
+      # `:async` is REQUIRED here — EMPIRICALLY VERIFIED (codex MED, A1). This
+      # runs inside the Session Kind's `handle_join`, and granting a
+      # session-instance cap re-enters THIS session Kind during grant
+      # ROUTING/dispatch, so a `:sync` call self-deadlocks: flipping to `:sync`
+      # hangs the session-creation join path (`SessionCreator` →
+      # `join_session_members` → `handle_join`) into a 5s `GenServer.call`
+      # timeout. (The rule-branch AUTHORIZATION alone is not the re-entry — it
+      # clears via `rule_cap_bounded?/1` — but the router still resolves the
+      # instance owner.) The cast defers that resolution to after `handle_join`
+      # returns (session free). The cap lands eventually (idempotent + reconcile
+      # backstop), which is exactly A1's additive model.
+      #
+      # CONSEQUENCE (codex MED — DEFERRED, NOT fixed in A1): `:async` returns
+      # `:ok` once the cast is BUFFERED, so `:ok` does NOT prove the grant
+      # committed — the confirmed grant that would make test 23's
+      # compensating-revoke fully verifiable needs the grant taken OFF the
+      # `handle_join` path (an A2 grant-path rework; §16 risk-4 fail-closed
+      # shift). A1 keeps the additive best-effort cast.
       case Ezagent.Identity.Grant.grant_cap_via_router(
              member_uri,
              cap,
