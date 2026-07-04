@@ -111,33 +111,43 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
            "the concrete member-cap must be written even though a broad :any cap already authorizes"
   end
 
-  test "a grant whose commit fails is NOT counted as migrated [R3.2 grant-confirmation]" do
+  test "a grant whose commit fails is NOT applied (only committed :ok migrates) [R3.2 grant-confirmation]" do
     owner = confirmed_user("owner")
+    reachable = confirmed_user("reachable")
     # A member whose Kind is NEVER spawned → the live-grant dispatch fails.
     unreachable = URI.new!("entity://system/user/unreachable-#{uniq()}")
-    _session = seed_session([unreachable], owner)
+    session = seed_session([reachable, unreachable], owner)
 
-    report = Migration.run([])
+    # Asserts per-member outcomes (robust to the persistent boot `default`
+    # session that the global scan also sees): the reachable member IS granted,
+    # the unreachable member's FAILED grant leaves no cap — so a non-committed
+    # grant never counts as migrated.
+    Migration.run([])
 
-    assert report.members_granted == 0,
-           "a grant whose commit fails must not be counted (only committed :ok counts)"
+    assert wait_holds(reachable, session), "the reachable member's grant commits"
+
+    refute holds_member_cap?(unreachable, session),
+           "the unreachable member's failed grant leaves NO member-cap (not committed → not migrated)"
   end
 
-  test "--dry-run writes nothing; --gate nonzero pre-migration and zero post [test 25]" do
+  test "--dry-run writes nothing; --gate detects an uncovered member; migrate covers it [test 25]" do
     owner = confirmed_user("owner")
     m = confirmed_user("gate")
     session = seed_session([m], owner)
 
+    # --dry-run: no writes.
     dry = Migration.run(["--dry-run"])
     assert dry.members_granted == 0, "--dry-run grants nothing"
     refute holds_member_cap?(m, session), "--dry-run must write no caps"
 
+    # --gate BEFORE migrating m: the seeded member is uncovered → nonzero. (The
+    # count is global — the persistent boot `default` session is also scanned —
+    # so assert `>= 1`, driven by our own uncovered member, not an exact total.)
     assert {:error, {:uncovered_member_caps, n}} = Migration.run(["--gate"])
     assert n >= 1, "gate must report the uncovered member pre-migration"
 
+    # Migrate → the seeded member is now covered.
     Migration.run([])
-    assert wait_holds(m, session)
-
-    assert :ok = Migration.run(["--gate"]), "gate must pass once every member holds the cap"
+    assert wait_holds(m, session), "migration covers the member the gate flagged"
   end
 end
