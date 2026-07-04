@@ -163,6 +163,19 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
 > run ALL gates (`arch.scan` + `check_invariants` + `doc.scan` + the invariant test dirs)
 > going forward, per [[feedback_run_check_invariants_gate]].
 
+### `behavior/session.ex` oversized (member-cap reconcile wiring) — OPEN (LOW, #161 A1)
+
+> **OPEN, surfaced 2026-07-04 (#161 A1 gate reconcile).** `oversized_modules_gt_1000`
+> was ratcheted **1 → 2** because `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex`
+> crossed 1000 (was **998** on main — one line under) when A1.3 wired the member-cap
+> `Session.Reconcile.reconcile_after_load/2` seed into the `activate/2` Lifecycle
+> callback (now **1018**). The other A1 grower, `behavior/session/membership.ex`
+> (912 → 1121), was NOT ratcheted — its at-join member-cap cluster was extracted into
+> the sibling `Session.MemberCap` (941 now). **Fix =** lift the `activate/2` reconcile
+> block into a small helper (or fold it into `Session.Reconcile`) to drop session.ex
+> back under 1000, then ratchet `oversized_modules_gt_1000` 2 → 1. Low priority — it is
+> a cohesive callback and 18 lines over.
+
 ### Routing explicit-URI receiver bypasses `valid_member?` — OPEN (LOW, pre-existing, audit)
 
 > **OPEN, carried from 甲-4 adversarial review (2026-06-20).** `Routing.Resolver.expand_receiver/5`
