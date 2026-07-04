@@ -14,8 +14,12 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
   so its `:receive` is denied at the in-handler `MemberReceive.authorize/1`
   check — with the session process NEVER re-activated (no reconcile).
 
-  §14.5(A) PRIMARY prevention (steps 1-4, Phase C) and the cascade (step 6,
-  Phase B) are `@tag :skip`-ed with pointers.
+  §14.5(A) PRIMARY prevention (steps 1-4, Phase C) is now LIVE: a co-tenant B's
+  cross-owner pull of A's agent goes PENDING (no member-cap ⇒ R1.1 receive denied),
+  so B posting into its session NEVER reaches A's agent's flavor bridge — proven at
+  the `AgentBridge` push boundary (the credential-spend surface), not process
+  liveness — until A (the manager) approves. The cascade (step 6, Phase B) is the
+  companion test below.
   """
 
   use EzagentCore.DataCase, async: false
@@ -148,13 +152,132 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
            "the deny must hold WITHOUT re-activating the session (no reconcile)"
   end
 
-  # §14.5(A) PRIMARY prevention flow (steps 1-4) — added in Phase C (Task C.4):
-  # B (no manage-authority) adds A's-agent → PENDING, no cap; B posts → A's-agent
-  # :receive DENIED, does NOT run, credential not spent (PRIMARY); A notified; A
-  # approves → mounts → receives.
-  @tag :skip
-  test "§14.5(A) steps 1-4 [PRIMARY prevention]: pending cannot receive → approve → mounts (Phase C)" do
-    flunk("Phase C — Task C.4")
+  # --- §14.5(A) PRIMARY prevention helpers (Phase C) ------------------------
+  #
+  # Entities live in a UNIQUE NON-system workspace: the `system` workspace is the
+  # admin workspace, so a `entity://system/user/…` caller would be a workspace-admin
+  # (`manages?` true) and NEVER pend. A plain team workspace makes B a genuine
+  # non-manager co-tenant — the real threat-X setup (B and A's agent SAME workspace).
+  defp primary_ws, do: "x161-#{uniq()}"
+
+  defp confirmed_user_in(ws, prefix) do
+    uri = URI.new!("entity://#{ws}/user/#{prefix}-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    uri
+  end
+
+  defp agent_in(ws, prefix) do
+    uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Capability.workspace_of(uri))
+    uri
+  end
+
+  # Grant `granter` durable manage-authority over `target` so `manages?/2` is true.
+  defp grant_manage(granter, target) do
+    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        granter,
+        cap,
+        {:genesis, Ezagent.Entity.User.admin_uri()},
+        :sync
+      )
+  end
+
+  # Drive the REAL `session.join` / `session.approve_admission` dispatch as `caller`.
+  # `ctx.caps` carries the admin genesis wildcard ONLY to clear the CapBAC gate — the
+  # admission decision reads the CALLER's DURABLE identity caps (`manages?/2`), NOT
+  # `ctx.caps`, so a genesis `ctx.caps` never suppresses the gate (a STRONGER proof:
+  # even genesis-in-ctx does not let B's cross-owner pull mount).
+  defp dispatch_as(session_uri, action, member_uri, caller) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.#{action}"),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        reply: :ignore
+      }
+    })
+  end
+
+  # §14.5(A) steps 1-4 — THE threat-X closure acceptance. Proven at the
+  # `AgentBridge` flavor-push boundary (the OAuth-spend surface), NOT process
+  # liveness: while PENDING, B posting into its session does NOT reach A's agent's
+  # flavor bridge ⇒ A's credential is NOT spent. Only after A (the manager) approves
+  # does the same receive reach the bridge.
+  test "§14.5(A) steps 1-4 [PRIMARY prevention]: cross-owner pull ⇒ pending ⇒ credential NOT spent → approve → mounts (Phase C)" do
+    ws = primary_ws()
+    # A owns the credentialed agent; B is a co-tenant in the SAME workspace who owns
+    # a session (its legitimate add-member reach) but does NOT manage A's agent.
+    a = confirmed_user_in(ws, "owner-a")
+    b = confirmed_user_in(ws, "cotenant-b")
+    b_session = new_session("b-session", b)
+    agent = agent_in(ws, "a-agent")
+
+    grant_manage(a, agent)
+    wait_until(fn -> a in Ezagent.Identity.Cascade.managers_of(agent) end)
+
+    refute Ezagent.Identity.Authority.manages?(b, agent),
+           "precondition: B must NOT manage A's agent (the cross-owner threat setup)"
+
+    # Bind the flavor bridge: an AUTHORIZED agent.receive surfaces as an
+    # `:agent_bridge_push` (the credential-spend surface — the OAuth-backed flavor
+    # turn); an UNAUTHORIZED (pending, no member-cap) receive produces NONE.
+    :ok = Ezagent.AgentBridge.Registry.bind(agent, self())
+    :ok = Ezagent.AgentFlavorAttributes.put(agent, "cc")
+    :ok = Ezagent.Notifications.subscribe(a)
+
+    on_exit(fn ->
+      Ezagent.AgentBridge.Registry.unbind(agent)
+      Ezagent.AgentFlavorAttributes.delete(agent)
+    end)
+
+    # --- steps 1-2: B (no manage-authority) pulls A's agent into B's session ---
+    _ = dispatch_as(b_session, "join", agent, b)
+
+    refute holds_member_cap?(agent, b_session),
+           "a cross-owner pull must grant NO member-cap (R1.1 ⇒ :receive is denied)"
+
+    # --- step 3 (🔴 THE PRIMARY assertion): B posts into its session → A's agent's
+    # :receive is DENIED (no held cap) ⇒ the flavor bridge is NEVER invoked ⇒ A's
+    # credential is NOT spent. This is the exact threat-X being closed. ----------
+    Delivery.dispatch_receive_call(
+      agent,
+      Message.new(b, %{text: "spend-your-cred", attachments: []}),
+      b_session
+    )
+
+    refute_receive {:agent_bridge_push, "to_claude", %{"content" => "spend-your-cred"}}, 500
+
+    # --- step 3b: A (the member's manager) is notified of the pending request,
+    # content-free (member + session + opaque ref only — no message body). --------
+    assert_receive {:notification, ^a, pend_notif}, 2_000
+    assert pend_notif.type == :pending_admission
+    assert pend_notif.body.member == URI.to_string(agent)
+    assert pend_notif.body.session == URI.to_string(b_session)
+    assert is_binary(pend_notif.body.request_ref)
+
+    # --- step 4: A approves under its OWN manage-authority (cap-exempt action,
+    # authorized in-handler by `manages?(A, agent)`) → the withheld grant+mount
+    # tail runs → agent holds the member-cap. --------------------------------------
+    _ = dispatch_as(b_session, "approve_admission", agent, a)
+    :ok = wait_member_cap(agent, b_session)
+
+    # ...and NOW the very same receive DOES reach the flavor bridge: the gate blocks
+    # the credential spend on an unapproved pull, it does not break legitimate
+    # delivery once the owner has admitted the agent.
+    Delivery.dispatch_receive_call(
+      agent,
+      Message.new(b, %{text: "now-admitted", attachments: []}),
+      b_session
+    )
+
+    assert_receive {:agent_bridge_push, "to_claude", %{"content" => "now-admitted"}}, 2_000
   end
 
   # §14.5(A) step 6 — cascade notify to X (Phase B / Task B.4). The GENERIC
