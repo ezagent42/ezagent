@@ -37,20 +37,55 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
   # Grant the member-cap directly (test process, so `:sync` is safe — the
   # session's data-owner resolution calls the live session Kind, no self-deadlock).
   defp grant_member_cap(member, session, granter) do
-    cap =
-      Capability.cap(
-        :session,
-        Ezagent.ActionSet.Session,
-        :receive,
-        session,
-        Capability.workspace_of(session)
-      )
+    grant_cap(member, member_cap_over(session), granter)
+  end
 
+  defp member_cap_over(session) do
+    Capability.cap(
+      :session,
+      Ezagent.ActionSet.Session,
+      :receive,
+      session,
+      Capability.workspace_of(session)
+    )
+  end
+
+  # A BROAD, action-wildcard cap over the session (`action: :any`). Under
+  # `Capability.matches?/2` this wildcard satisfies the concrete `:receive`
+  # need (the BLOCKER), but its `identity_key/1` differs from the concrete
+  # member-cap — so exact-identity reconcile must NOT treat it as a member-cap.
+  # It is `rule_cap_bounded?` (concrete kind/behavior/instance), so it grants
+  # via the ordinary participation rule.
+  defp broad_session_cap_over(session) do
+    Capability.cap(
+      :session,
+      Ezagent.ActionSet.Session,
+      :any,
+      session,
+      Capability.workspace_of(session)
+    )
+  end
+
+  defp grant_cap(member, cap, granter) do
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         member,
         cap,
         {:rule, :session_participation, granter},
+        :sync
+      )
+  end
+
+  # An `action: :any` cap is a wildcard grant → it needs ADMIN authority (the
+  # rule tag is rejected by `check_action_wildcard_grant_authorized/2`). This is
+  # exactly the admin-genesis provenance the BLOCKER is about: a broad cap that
+  # `matches?/2` admits. Grant it under the `{:genesis, admin}` authority.
+  defp grant_broad_cap(member, cap) do
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        member,
+        cap,
+        {:genesis, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
@@ -95,6 +130,47 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
 
     refute Map.has_key?(reconciled, noncap),
            "a ws user WITHOUT the member-cap must NOT be added to the projection"
+  end
+
+  test "reconcile uses EXACT member-cap identity — a BROAD :any cap holder is NOT reconciled, a concrete member-cap holder IS [BLOCKER refutation]" do
+    owner = confirmed_user("owner")
+    session = new_session("reconcile-exact", owner)
+
+    # Both candidates live in the same workspace so BOTH are enumerated by the
+    # candidate scan — proving the discrimination happens in the predicate, not
+    # by one holder simply never being reached.
+    broad_holder = confirmed_user("broad")
+    grant_broad_cap(broad_holder, broad_session_cap_over(session))
+
+    concrete_holder = confirmed_user("concrete")
+    grant_member_cap(concrete_holder, session, owner)
+
+    reconciled = Reconcile.reconcile_after_load(session, %{})
+
+    assert Map.has_key?(reconciled, concrete_holder),
+           "the EXACT member-cap holder must be reconciled into :members"
+
+    refute Map.has_key?(reconciled, broad_holder),
+           "a broad action-:any cap holder must NOT be reconciled — `matches?/2` " <>
+             "would wrongly admit it; exact `identity_key/1` must reject it (BLOCKER)"
+  end
+
+  test "member_cap_holder?/3 is exact — true for the concrete cap, false for a broad :any cap [BLOCKER unit]" do
+    owner = confirmed_user("owner")
+    session = new_session("holder-exact", owner)
+    ws = Capability.workspace_of(session)
+
+    concrete_holder = confirmed_user("concrete")
+    grant_member_cap(concrete_holder, session, owner)
+
+    broad_holder = confirmed_user("broad")
+    grant_broad_cap(broad_holder, broad_session_cap_over(session))
+
+    assert Reconcile.member_cap_holder?(concrete_holder, session, ws),
+           "holds the EXACT member-cap → true"
+
+    refute Reconcile.member_cap_holder?(broad_holder, session, ws),
+           "holds only a broad action-:any cap → false (exact identity, not matches?/2)"
   end
 
   test "activate/2 wires reconcile — returns the projection healed from the held cap [test 5 wiring]" do

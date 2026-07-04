@@ -28,8 +28,9 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
   #   1. `ws = workspace_of(S)` (O(1)).
   #   2. candidates = `Users.list_in_workspace(ws)` ∪ `Entity.Agent.list_in_workspace(ws)`.
   #   3. per candidate: read LIVE caps (`read_entity_caps/1`), apply the K4
-  #      `granted_by_entity?/1` provenance filter BEFORE `matches?/2` for a
-  #      member-cap whose instance matches S.
+  #      `granted_by_entity?/1` provenance filter BEFORE the EXACT-identity test
+  #      (`identity_key/1` equality, NOT `matches?/2` — see `member_cap_holder?/3`)
+  #      for the concrete member-cap over S.
   #   4. matching set ∪ persisted projection = the reconciled projection.
   #
   # ## Error handling (§13) — NEVER crash `activate/2`
@@ -83,24 +84,28 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
     Enum.uniq(users ++ agents)
   end
 
-  # True iff `candidate` HOLDS a member-cap over `session_uri` — LIVE caps,
-  # K4 provenance-filtered BEFORE `matches?/2`. Rescued per-candidate so a
-  # raising read is treated as "not a holder" (the persisted entry survives via
-  # the union) and never crashes `activate/2`.
+  # True iff `candidate` HOLDS the EXACT member-cap over `session_uri` — LIVE
+  # caps, K4 provenance-filtered BEFORE the identity test. Rescued per-candidate
+  # so a raising read is treated as "not a holder" (the persisted entry survives
+  # via the union) and never crashes `activate/2`.
+  #
+  # EXACT identity, NOT `matches?/2` (codex BLOCKER): the projection must be
+  # SEEDED only from the concrete member-cap `cap(:session, Session, :receive,
+  # S)`. `matches?/2`'s ASYMMETRIC wildcard semantics let a HELD `:any` cap
+  # (admin genesis is an all-`:any` cap) satisfy the concrete `:receive` need —
+  # which would re-add admin (and every broad-cap holder) into `:members` of
+  # EVERY session on reload, silently CHANGING live membership (A1 delivery +
+  # socialware still key off `:members`) and violating A1's additive contract.
+  # So we compare the 5-tuple `identity_key/1` for EXACT equality — the same
+  # exact-identity approach the migration's `holds_member_cap_exact?/2` uses.
   @spec member_cap_holder?(URI.t(), URI.t(), URI.t()) :: boolean()
   def member_cap_holder?(%URI{} = candidate, %URI{} = session_uri, %URI{} = ws) do
-    needed = %{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: :receive,
-      instance: Ezagent.URI.instance(session_uri),
-      workspace_uri: ws
-    }
+    target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
     candidate
     |> Ezagent.Identity.read_entity_caps()
     |> Enum.filter(&Ezagent.Capability.granted_by_entity?/1)
-    |> Enum.any?(fn cap -> Ezagent.Capability.matches?(cap, needed) end)
+    |> Enum.any?(fn cap -> Ezagent.Capability.identity_key(cap) == target_key end)
   rescue
     error ->
       Logger.warning(
@@ -110,5 +115,18 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
       )
 
       false
+  end
+
+  # The universal member-cap constructor: `cap(:session, Session, :receive, S,
+  # ws)`. Identical shape to `Membership.member_cap/2` and the migration's
+  # `member_cap/2` — the ONE concrete cap whose `identity_key/1` seeds `:members`.
+  defp member_cap(%URI{} = session_uri, %URI{} = ws) do
+    Ezagent.Capability.cap(
+      :session,
+      Ezagent.ActionSet.Session,
+      :receive,
+      session_uri,
+      ws
+    )
   end
 end
