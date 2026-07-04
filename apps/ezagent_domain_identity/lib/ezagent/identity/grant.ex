@@ -140,6 +140,43 @@ defmodule Ezagent.Identity.Grant do
     end
   end
 
+  @doc """
+  Revoke `cap` from `target` via `Ezagent.Router.dispatch/1` (a `%Cmd{}`) — the
+  router twin of `grant_cap_via_router/4`. `reply_mode` is `:async` (buffered
+  `:ignore`) or `:sync` (`{:caller_inbox, self()}`); default `:async`.
+
+  The `:async` form is REQUIRED for a revoke issued from INSIDE a Kind callback
+  (e.g. the at-join member-cap compensation in `handle_join`): a session-instance
+  cap's grant/revoke resolves the instance's data-owner, which re-enters the
+  session Kind — a `:sync` call from within that same blocked Kind self-deadlocks.
+  The cast is enqueued (FIFO) after any preceding grant cast to the same target,
+  so a grant-then-compensating-revoke pair settles deterministically to "absent".
+  Returns `:ok` or `{:error, reason}`.
+  """
+  @spec revoke_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
+          :ok | {:error, term()}
+  def revoke_cap_via_router(
+        %URI{} = target,
+        %Capability{} = cap,
+        authorization,
+        reply_mode \\ :async
+      ) do
+    case prepare(target, cap, authorization, :revoke_cap) do
+      {:ok, {target_uri, cap2, ctx}} ->
+        cmd = %Cmd{
+          target: target_uri,
+          action: :revoke_cap,
+          args: %{cap: cap2},
+          ctx: Map.put(ctx, :reply, reply_for(reply_mode))
+        }
+
+        normalize_dispatch_result(Router.dispatch(cmd))
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
   # ── effect-constructor wrappers (return effect tuples; RAISE on prepare error) ──
 
   @doc """
