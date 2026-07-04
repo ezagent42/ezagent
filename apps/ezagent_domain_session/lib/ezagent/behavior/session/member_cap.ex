@@ -122,6 +122,35 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   end
 
   @doc """
+  SYNCHRONOUS, CHECKED revoke of the member-cap on LEAVE / REMOVE (A2.4, spec
+  R3.1). Returns `revoke_cap_via_router`'s `:ok | {:error, reason}`.
+
+  Unlike `revoke_at_join/2` (the `:async` at-join COMPENSATION, which must not
+  self-deadlock while `handle_join` is still resolving a materializing member),
+  this runs on the LEAVE/REMOVE path where the member is ESTABLISHED + live, so a
+  `:sync` revoke from inside the Session Kind returns cleanly (EMPIRICALLY
+  VERIFIED — a sync `revoke_cap_via_router` from `handle_remove_participant` on an
+  established member does NOT deadlock; the at-join deadlock is
+  materialization-confined). The caller decides abort-safety: REMOVE treats a
+  `{:error, _}` as ABORT (leave the member fully intact); LEAVE treats it as
+  best-effort (log; reconcile heals).
+  """
+  @spec revoke_membership(URI.t(), map()) :: :ok | {:error, term()}
+  def revoke_membership(%URI{} = member_uri, ctx) do
+    session_uri = ctx[:self_uri]
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    cap = member_cap(session_uri, workspace_uri)
+    granter = member_cap_granter(ctx)
+
+    Ezagent.Identity.Grant.revoke_cap_via_router(
+      member_uri,
+      cap,
+      {:rule, :session_participation, granter},
+      :sync
+    )
+  end
+
+  @doc """
   Normalize a held-caps collection (list / `MapSet` / scalar) to a plain list.
   """
   @spec caps_to_list(term()) :: [term()]

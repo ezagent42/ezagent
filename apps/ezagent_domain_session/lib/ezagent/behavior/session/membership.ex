@@ -560,9 +560,58 @@ defmodule Ezagent.ActionSet.Session.Membership do
   """
   @spec leave_effects(URI.t(), map()) :: [term()]
   def leave_effects(%URI{} = member_uri, ctx) do
+    # Membership-cap unification A2.4 (spec R3.1 LEAVE) — self-leave has NO
+    # fallible follow-up step (`leave_effects_with_ref/2` is pure effect
+    # computation), so revoke the member-cap FIRST, then drop the projection.
+    # Best-effort: a revoke failure is logged (reconcile heals); R1.1 means a
+    # projection-drop failure has no authz window (receive reads the held cap).
+    _ = revoke_member_cap_best_effort(member_uri, ctx)
+
     {ref_to_remove, effects} = leave_effects_with_ref(member_uri, ctx)
     if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
     effects
+  end
+
+  # LEAVE revoke — best-effort (log on failure; the member is de-escalating
+  # itself, and reconcile evicts any residue).
+  defp revoke_member_cap_best_effort(%URI{} = member_uri, ctx) do
+    case MemberCap.revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.Membership.leave: member-cap revoke failed for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} " <>
+            "(best-effort on self-leave; reconcile_after_load/2 evicts residue)."
+        )
+
+        :ok
+    end
+  end
+
+  # REMOVE revoke — CHECKED / abort-safe (spec R3.1): a failed revoke ABORTS the
+  # removal (the caller returns `{:error, _}`, leaving the member FULLY INTACT —
+  # a loud error, never a silent partial proceed). Placed AFTER every rejecting
+  # check (teardown authority + routing prune) has passed, so a rejected removal
+  # never reaches the revoke and cap + roster stay intact (preserves test 11).
+  @spec revoke_member_cap_checked(URI.t(), map()) :: :ok | {:error, term()}
+  defp revoke_member_cap_checked(%URI{} = member_uri, ctx) do
+    case MemberCap.revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Session.Membership.remove_participant: member-cap revoke FAILED for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} — ABORTING the " <>
+            "removal (member left fully intact; let-it-crash, no silent partial)."
+        )
+
+        {:error, {:member_cap_revoke_failed, reason}}
+    end
   end
 
   @doc """
@@ -689,15 +738,26 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # (codex Q4 / SPEC §7 "Silent orphan"). So the prune is BEST-EFFORT once
         # the reap has happened.
         {deleted, repointed} = prune_after_irreversible_reap(session_uri, participant_uri)
-        if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
-        {:ok,
-         %{
-           status: :removed,
-           torn_down: :worker,
-           deleted_rules: deleted,
-           repointed_rules: repointed
-         }, leave}
+        # A2.4 (R3.1) — the security-critical member-cap REVOKE, CHECKED. Placed
+        # after the teardown authority + prune have run so a rejected removal
+        # never reaches it. NOTE (R3.1 destructive-teardown edge): the current
+        # teardown reaps the worker BEFORE this revoke, so a revoke failure here
+        # leaves worker-dead + cap-held — a RESOURCE leak (reconciled), not a
+        # security regression (§14.5 asserts revoke⇒deny, never worker-destroyed).
+        # Fully separating the destructive teardown to AFTER the revoke needs a
+        # chokepoint-compatible authority preflight (deferred; see final report).
+        with :ok <- revoke_member_cap_checked(participant_uri, ctx) do
+          if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+
+          {:ok,
+           %{
+             status: :removed,
+             torn_down: :worker,
+             deleted_rules: deleted,
+             repointed_rules: repointed
+           }, leave}
+        end
 
       {:ok, :membership_only} ->
         # Nothing irreversible happened → the prune is fail-closed/atomic: the
@@ -707,15 +767,21 @@ defmodule Ezagent.ActionSet.Session.Membership do
                participant_uri
              ) do
           {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
-            if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+            # A2.4 (R3.1) — checked, abort-safe member-cap revoke AFTER every
+            # rejecting check (teardown authority + prune) has passed. On failure
+            # the removal ABORTS and the member is left fully intact (cap +
+            # roster). No destructive step ran on this branch, so abort is clean.
+            with :ok <- revoke_member_cap_checked(participant_uri, ctx) do
+              if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
-            {:ok,
-             %{
-               status: :removed,
-               torn_down: :membership_only,
-               deleted_rules: deleted,
-               repointed_rules: repointed
-             }, leave}
+              {:ok,
+               %{
+                 status: :removed,
+                 torn_down: :membership_only,
+                 deleted_rules: deleted,
+                 repointed_rules: repointed
+               }, leave}
+            end
 
           {:error, _reason} = err ->
             err
