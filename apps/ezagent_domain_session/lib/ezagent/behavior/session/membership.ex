@@ -602,6 +602,22 @@ defmodule Ezagent.ActionSet.Session.Membership do
       :ok ->
         :ok
 
+      # The member's identity Kind is not live (cold / never-materialized) — there
+      # is NO live cap to revoke, so the removal PROCEEDS (mirrors the teardown's
+      # idempotent `:no_such_actor` handling). A persisted snapshot cap, if any, is
+      # reconciled/migrated out-of-band; R1.1 means a dropped-roster member is not
+      # fanned out. This is NOT the abort-worthy case (a LIVE member whose revoke
+      # genuinely fails to commit is).
+      {:error, reason} when reason in [:no_such_actor, :not_ready] ->
+        Logger.warning(
+          "Session.Membership.remove_participant: member-cap revoke skipped for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} (member not live; no " <>
+            "live cap to revoke; removal proceeds, reconcile/migration backstop)."
+        )
+
+        :ok
+
       {:error, reason} ->
         Logger.error(
           "Session.Membership.remove_participant: member-cap revoke FAILED for " <>
