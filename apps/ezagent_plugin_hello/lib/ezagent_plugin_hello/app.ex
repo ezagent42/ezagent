@@ -44,6 +44,14 @@ defmodule EzagentPluginHello.App do
     content = %{name: socialware_name, installs: [socialware_name]}
 
     with {:ok, _} <- seed_hello_definition(ws, socialware_name),
+         # SPEC §4.4 (Decision A) — the anon-homesite create path is the SECOND
+         # production behavior_set_for_template/2 call site and is NOT retired in
+         # P0, so it MUST apply the SAME freeze helper: resolve the hello def to
+         # its current revision and bake the pin into the content's installs
+         # BEFORE persisting the template, resolving behaviors, and writing install
+         # records. Without this a later hello publish would silently change the
+         # running flagship — the surface the pin matters most for.
+         {:ok, content} <- Installation.freeze_template_installs(content, workspace),
          {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <-
