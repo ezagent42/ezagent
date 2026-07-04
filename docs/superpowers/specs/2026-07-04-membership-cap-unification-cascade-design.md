@@ -697,9 +697,10 @@ touch R1.1/R2.3/R3.1 (it depends on them unchanged).
 
 Each claim is tagged **CONFIRMED** (verified against this worktree) or **PROPOSED**
 (design choice for the plan). The reused primitives —
-`provision_invited_join_authority/3` (`membership.ex:406`, the existing cross-owner
-add path), `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`) — are **CONFIRMED on
-main**; `Ezagent.Identity.Authority.manages?/2` + `managers_of/1` are **PLANNED**
+`provision_invited_join_authority/3` (`membership.ex:393`, **one** of several
+member-add paths, NOT the only one — see §C.1: the gate sits at the common
+`handle_join` chokepoint, not this function), `CreatorGrant.manage_cap/4`
+(`creator_grant.ex:20`) — are **CONFIRMED on main**; `Ezagent.Identity.Authority.manages?/2` + `managers_of/1` are **PLANNED**
 (K2/Part B, B.1/B.2); `:pending_members` + the approve/deny/withdraw actions are
 **NEW**; "R1.1 gives prevention for free" is **CONFIRMED-by-design once A2 lands**.
 
@@ -1280,46 +1281,123 @@ predicate. What is genuinely new is small (§C.6).
 boundary), but the add **does not mount** until A approves. The authority to *spend
 A's credential* stays with A; B gets a request, not a grant.
 
-### C.1 — The trigger: a cross-owner INVITE mounts only if the inviter manages the member
+### C.1 — The trigger: EVERY member-add path routes a cross-owner add through admission
 
-**The invariant (state it at this altitude):** *any grant of a member-cap to a member
-the granter does NOT manage must route through admission.* Everything else mounts
-immediately, unchanged.
+**The invariant (state it at this altitude):** *any caller-initiated grant of a
+member-cap to a member the caller does NOT manage must route through admission.*
+Everything else mounts immediately, unchanged.
 
-**Where that invariant bites — the cross-owner INVITE, and ONLY that.** The existing
-cross-owner add is `provision_invited_join_authority(session_uri, joiner_uri,
-inviter_uri)` (`membership.ex:406`, CONFIRMED) — inviter = **B**, joiner =
-**A's-agent**. Today it grants a `Session.:join` cap and proceeds straight to the
-mount (no admission gate). The trigger fires exactly when a **real, non-system
-inviter** reaches the member-cap grant seam **without** manage-authority over the
-joiner:
+> **🔴 CORRECTION (completeness review, 2026-07-04): the trigger was scoped too
+> narrowly and the PRIMARY user-facing path bypassed it.** The pre-correction text
+> scoped the gate to `provision_invited_join_authority/3` (`membership.ex:393`, the
+> orchestrator invite-authority path) and asserted "the invite path is the only
+> granter-≠-manager mount path." **That is false.** A review found **two** other ways a
+> non-managing B gets a member onto A's agent, one of which is the primary attack
+> surface. A single-function scope UNDER-FIRES. The trigger must be stated as a
+> **requirement over ALL member-add entry paths**, checked at the **common chokepoint**
+> they funnel through — NOT at one invite function.
 
-- **`manage-authority over the member`** := the inviter holds a `Manage`-over-member
-  cap OR is a workspace admin. `Ezagent.Identity.Authority.manages?(inviter, member)`
-  (K2 / B.1), backed by `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`, CONFIRMED:
-  minted into the creator's identity at entity-create, so `manages?(A, A's-agent)` is
-  true).
-- **Cross-owner invite, inviter does NOT manage the member → PENDING.** B pulling A's
-  agent: `manages?(B, A's-agent) = false` → record a pending request, grant **NO**
-  member-cap (§C.2).
-- **Everything else → mount immediately (CURRENT behavior, unchanged).** Explicitly:
-  (a) inviter MANAGES the member (own agent / admin); (b) **self-join** — the joiner
-  admits itself (`ctx.caller == member`; CONFIRMED anon self-admission sets
-  `caller: anon_uri`, `anon_admission.ex:107`); (c) **system / orchestrator / team-
-  template spawn** — the mount runs under `system://session-internal`
-  (`membership.ex:386`, CONFIRMED), which is not a cross-owner invite and MUST keep
-  mounting (spawning a team member is not "pulling someone else's credentialed
-  agent"). These paths do **not** arrive through `provision_invited_join_authority`
-  with a real non-system inviter, so scoping the gate to the invite path spares them.
+**The two bypass paths the review found:**
 
-> **⚠️ Do NOT put a bare `manages?(caller, member)` check on the universal
-> member-cap grant seam.** A system-internal spawn's caller
-> (`system://session-internal`) holds no `CreatorGrant.manage_cap`, is not self, and
-> is not admin → a bare check would send **every normal agent spawn to PENDING** and
-> stall it forever (no one approves a system spawn). The gate keys on **the invite
-> path with a real non-system inviter who lacks manage-authority**, NOT on the caller
-> of every join. Per the code, the invite path is the only granter-≠-manager mount
-> path, so scoping there both closes X and spares spawns.
+1. **🔴 BLOCKER — World `invite_member/3` (the world-UI invite button) bypasses
+   `provision_invited_join_authority/3` entirely (CONFIRMED).**
+   `Ezagent.World.ConversationActions.invite_member/3`
+   (`conversation_actions.ex:395-427`) reads B's own identity + caps
+   (`caller = socket.assigns.current_entity_uri`, `caps = …current_caps`, `:396-397`),
+   **directly dispatches `session.join` for an arbitrary `member_uri`** using B's
+   existing `:join` cap (`:408-413`), and on success calls
+   `Membership.mount_participation_caps/2` (`:417`). It **NEVER** calls
+   `provision_invited_join_authority/3`. And `handle_join/2` (`session.ex:588`,
+   CONFIRMED) checks only registry liveness + membership/monitor state (online / stale
+   ref) — **NOT owner/manage authority**. So the scoped trigger completely misses the
+   real world-UI invite. This is the primary real attack surface.
+2. **🟠 Cross-session routing (`delivery.ex:88`) — COVERED-BY-R1.1, NOT a bypass
+   (CONFIRMED).** `dispatch_cross_session_call/3`
+   (`session/delivery.ex:71-107`) same-workspace-forwards a message by injecting an
+   inline cap into the target session. Verified: `cross_session_send_caps/2`
+   (`session/delivery.ex:284-298`) mints **exactly one `session.:send` cap** on the
+   target session — **it confers SEND only, never a member-cap / `:receive`, and never
+   touches `:members`.** So a non-member A-agent in the target session still **cannot
+   RECEIVE** the forwarded message: R1.1 (receive reads the recipient's OWN held
+   member-cap) DENIES, so A's credential is not spent. This path is already gated by
+   R1.1 — no new admission logic needed, but it earns a regression test (§14 test 34).
+
+**The requirement (verbatim — this is the corrected trigger):**
+
+> **EVERY path that adds a member to a session — World `invite_member/3`,
+> `provision_invited_join_authority/3` (the orchestrator invite-authority path), the
+> materializer's member-join, and any direct `session.join` / `handle_join` caller —
+> MUST route a CROSS-OWNER add (a real, non-system caller who does NOT hold
+> `Authority.manages?(caller, member)` over the member, and is not the member itself)
+> through admission (PENDING + owner-approval). The check belongs at the COMMON
+> chokepoint all these funnel through — the member-cap grant seam in `do_join_apply`,
+> reached by `handle_join/2` (`session.ex:588`) from every entry path — keyed on
+> `ctx.caller`, NOT at one specific invite function. The implementer MUST verify the
+> chosen chokepoint is downstream of ALL member-add entry paths.**
+
+**Why `handle_join/2` is the chokepoint (CONFIRMED downstream of all four dispatchers).**
+Every runtime member-add funnels through a `session.join` dispatch → `handle_join/2` →
+`Membership.do_join/…` (the grant seam Part A folds the member-cap into):
+
+- World `invite_member/3` → `session.join` dispatch (`conversation_actions.ex:408`),
+  `ctx.caller = B` (the inviter). **CONFIRMED.**
+- Orchestrator `admit_participant` → `Tools.join_member/5` → `session.join` dispatch
+  (`tools.ex:330-337`), `ctx.caller` = the initiating caller. **CONFIRMED.** (This is
+  the path `provision_invited_join_authority/3` preflights — but the *mount* still runs
+  through `handle_join`, so the gate at the chokepoint covers it too.)
+- World `self_join/2` → `session.join` dispatch (`conversation_actions.ex:504-510`),
+  `ctx.caller == member`. **CONFIRMED.**
+- Materializer member-join → `session.join` dispatch
+  (`session_creator/materializer.ex:185-212`), `ctx.caller = admin_uri`. **CONFIRMED.**
+
+At `handle_join`, `ctx.caller` **IS** the inviter for the world path — so the old
+"thread `inviter_uri` from `provision_invited_join_authority` to the grant seam"
+concern is DISSOLVED: the caller is already in scope at the chokepoint. (The check
+must sit on the paths that reach the grant seam, i.e. AFTER the idempotent-rejoin
+early-return at `session.ex:630-642`, so a live member's rejoin is never spuriously
+pended.)
+
+**The predicate — the ONE gate, keyed on `ctx.caller`:** *fire PENDING iff `ctx.caller`
+is a real, non-system entity that is **not** the member and does **not** hold
+`Authority.manages?(ctx.caller, member)`.* `manages?/2` (K2 / B.1) := caller holds a
+`Manage`-over-member cap OR is a workspace admin — resolving the caller's **durable
+identity caps by URI** (backed by `CreatorGrant.manage_cap/4`, `creator_grant.ex:20`,
+CONFIRMED: minted into the creator's identity at entity-create, so
+`manages?(A, A's-agent)` is true). Everything else mounts immediately.
+
+**The over-fire exemptions (re-verified at the `handle_join` chokepoint — all still
+mount, do NOT pend):**
+
+- **(a) caller MANAGES the member** — owner-adds-own-agent (`manages?(A, A's-agent)`,
+  CONFIRMED) / workspace admin. Mount.
+- **(b) self-join / anon self-admission** — `ctx.caller == member` (CONFIRMED anon
+  self-admission sets `caller: anon_uri`, `anon_admission.ex:107`; world `self_join`
+  passes `caller == member`, `conversation_actions.ex:508-509`). Mount.
+- **(c) system / orchestrator / team-template spawn (materializer).** ⚠️ **CORRECTED:**
+  `system://session-internal` was **ELIMINATED** (#154 genesis collapse) — the stale
+  "runs under `system://session-internal`" claim is WRONG. The materializer now
+  dispatches the member-join under **`ctx.caller = Ezagent.Entity.User.admin_uri()`**
+  with a narrow inline `session.:join` cap (`materializer.ex:182-212`, CONFIRMED). Its
+  exemption therefore rests **entirely on `manages?(admin_uri, member) = true`** (the
+  workspace-admin branch of the K2 predicate). ⚠️ **PROPOSED — implementer MUST verify:**
+  `manages?/2` must resolve the caller's **durable identity caps by URI**, not
+  `ctx.caps` — the materializer's `ctx.caps` carries only the narrow inline join cap,
+  NOT the admin genesis wildcard (`materializer.ex:196-208`), so a predicate that read
+  `ctx.caps` would return `false` and **relocate the over-fire** (every team-template
+  spawn stalls at PENDING forever). `admin_uri` holds the genesis all-caps wildcard on
+  its **identity** (`user.ex:89`, `admin_genesis_cap/0`), which satisfies
+  `holds_workspace_admin_cap?/2` (`identity.ex:858-881`, CONFIRMED private predicate
+  K2 surfaces) **when read from the caller's identity**. The over-fire guard test
+  (§14 test 27) pins this: a **materializer / admin-caller add MOUNTS, not pends**.
+
+> **⚠️ Do NOT put a bare `manages?(caller, member)` check that ignores the
+> not-self / non-system carve-outs, and do NOT read `manages?` off `ctx.caps`.** A
+> materializer add's `ctx.caps` holds only a narrow inline join cap (not the admin
+> wildcard) → a `ctx.caps`-based check would pend **every team-template spawn** forever.
+> `manages?` MUST resolve the caller's durable identity caps by URI. The gate keys on
+> **a real non-system caller who is neither the member nor a manager of the member**,
+> at the grant seam reached from every entry path — NOT on one invite function (which
+> misses the world-UI invite, §C.1 bypass 1).
 
 The gate withholds the **member-cap (`:receive`)** only. It is **orthogonal to the
 existing join-cap provisioning** (`provision_invited_join_authority` may still grant
@@ -1327,12 +1405,15 @@ the `:join` cap / preflight invite authority at B's boundary) — do not conflat
 two layers: invite-authority answers "may B initiate an add?"; the admission gate
 answers "does that add mount now, or wait for A?".
 
-*(Plan-time seam, PROPOSED — flagged like the spec's other cross-app placement notes:
-the gate decision needs the **inviter identity** (and its non-system-ness) in scope at
-the **member-cap grant seam** in `do_join_apply` / A1.2, where the inviter is not
-currently threaded. Ensure `inviter_uri` flows from `provision_invited_join_authority`
-to the grant seam; system/self/spawn mounts arrive without a real invite inviter.
-This is placement, not a design gap.)*
+**Scope note — NOT caller-initiated adds (do NOT pend):** the migration task (A1.4)
+and `reconcile_after_load/2` seed member-caps under **system authority**, not a caller
+adding a member. These are outside "a caller adds a member" and MUST NOT route through
+admission (they carry no real non-system inviter and would otherwise stall).
+
+*(Plan-time seam, PROPOSED: the gate sits at the **member-cap grant seam** in
+`do_join_apply` (A1.2), reached by `handle_join/2` from all four entry paths, keyed on
+`ctx.caller` (already in scope — no `inviter_uri` threading needed). This is placement,
+not a design gap.)*
 
 ### C.2 — Pending state: recorded, NOT mounted, holds NO member-cap
 
@@ -1520,17 +1601,21 @@ regression. CONFIRMED atomicity precedent: `handle_remove_participant`
 (`.../membership.ex:624-687`). **See R3.1.**
 
 **K7 — admission = owner-approval-to-mount (R4, PREVENTS X).** A cross-owner add
-(caller lacks `Authority.manages?/2` over the member) does NOT grant the member-cap;
-it records a PENDING request and notifies `managers_of(member)`. The member holds no
-cap ⇒ R1.1 denies its receive ⇒ B's prompt never runs, A's credential never spent
-(prevention, not detection). Approve (by a manager of the member) performs the R3.1
-abort-safe grant + normal mount. A manage-authorized add (own agent / self-join /
-admin) mounts immediately, unchanged. **CONFIRMED reuse:**
-`provision_invited_join_authority/3` (`membership.ex:406`) is the cross-owner add
-path; `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`) backs `manages?`; R1.1 gives
-"pending cannot receive" for free. **NEW:** `:pending_members` slice + approve/deny/
-withdraw actions + the pending-member-as-subject notify. Depends on A2 (R1.1) + Part B
-(`managers_of`, notify) + K2 (`Authority`). **See Part C.**
+(a real non-system `ctx.caller` that is neither the member nor a manager of it —
+`Authority.manages?/2` false) does NOT grant the member-cap; it records a PENDING
+request and notifies `managers_of(member)`. The member holds no cap ⇒ R1.1 denies its
+receive ⇒ B's prompt never runs, A's credential never spent (prevention, not
+detection). Approve (by a manager of the member) performs the R3.1 abort-safe grant +
+normal mount. A manage-authorized add (own agent / self-join / admin) mounts
+immediately, unchanged. **The trigger is a requirement over ALL member-add entry paths
+(World `invite_member/3`, `provision_invited_join_authority/3`, the materializer, any
+direct `session.join`), checked at the COMMON chokepoint `handle_join/2`
+(`session.ex:588`) — NOT one invite function (which misses the world-UI invite, §C.1
+bypass 1).** **CONFIRMED reuse:** `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`)
+backs `manages?`; R1.1 gives "pending cannot receive" for free. **NEW:**
+`:pending_members` slice + approve/deny/withdraw actions + the pending-member-as-subject
+notify. Depends on A2 (R1.1) + Part B (`managers_of`, notify) + K2 (`Authority`).
+**See Part C.**
 
 **Confirmed-sound, do not re-litigate** (carried from S1 review): `do_join`
 mutates `:members` today (`.../membership.ex:127-135`); `slice_changed` is
@@ -1719,18 +1804,24 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
     DORMANT agent (snapshot-only, not live) and excludes users/other workspaces.
 
 **C — admission gate (owner-approval-to-mount, R4/K7)**
-27. **Trigger branch — non-invite / manage-authorized mounts immediately (unchanged);
-    over-fire guard:** an inviter who holds `Authority.manages?/2` over the member (own
-    agent / admin) mounts NOW, no pending entry. **AND the over-fire guard:** a
-    **system/orchestrator spawn** (`system://session-internal`) and a **self-join / anon
-    self-admission** (`caller == member`) **still MOUNT, do NOT go pending** — proves
-    the trigger is scoped to the cross-owner INVITE path, not a bare
-    `manages?(caller, member)` on the universal grant seam (which would stall every
-    agent spawn — §C.1 warning).
+27. **Trigger branch — non-add / manage-authorized mounts immediately (unchanged);
+    OVER-FIRE guard (re-verified at the `handle_join` chokepoint):** each of these
+    **still MOUNTS, does NOT go pending** — (a) a caller who holds
+    `Authority.manages?/2` over the member (own agent / admin); (b) **self-join / anon
+    self-admission** (`caller == member`); (c) the **materializer / team-template spawn
+    under `caller = admin_uri`** — ⚠️ CORRECTED: `system://session-internal` is
+    ELIMINATED (#154); the materializer runs under `Entity.User.admin_uri()` with a
+    narrow inline join cap, so this asserts an **admin-caller add MOUNTS** (its
+    exemption rests on `manages?(admin_uri, member) = true` resolving admin's DURABLE
+    identity caps, NOT `ctx.caps`). Proves the trigger keys on "a real non-system caller
+    who is neither the member nor a manager," at the grant seam reached from EVERY entry
+    path — not a bare `ctx.caps`-based check (which would stall every team-template
+    spawn — §C.1 warning).
 28. **Trigger branch — cross-owner add goes PENDING, no cap:** B (no manage-authority
-    over A's-agent) adds A's-agent → a `:pending_members` entry is recorded, **NO
-    member-cap is granted** (assert absent via `read_entity_caps/1`), and NO `:members`
-    projection entry exists.
+    over A's-agent) adds A's-agent **via the orchestrator/invite-authority path** → a
+    `:pending_members` entry is recorded, **NO member-cap is granted** (assert absent
+    via `read_entity_caps/1`), and NO `:members` projection entry exists. (The World-UI
+    invite bypass is the SEPARATE test 33, so both entry paths are covered.)
 29. **Pending notify targets the MEMBER's managers, not the session's:** the pending
     request notifies `managers_of(A's-agent) = A`, content-free (envelope carries
     `{member, session, request_ref}`, no message/cap content); asserts **A** is
@@ -1738,6 +1829,13 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 30. **Pending cannot receive (the prevention core, R1.1 reuse):** with A's-agent
     pending, B posts in S → A's-agent's `:receive` is DENIED (holds no member-cap) →
     it does NOT run → A's credential is NOT spent. Deterministic; no reconcile.
+    ⚠️ **Credential-non-spend is asserted at the FLAVOR-ADAPTER boundary, NOT process
+    liveness (Q3).** `dispatch_receive_call/3` calls `SpawnRegistry.ensure_live/1`
+    (`session/delivery.ex:163-165`, CONFIRMED) BEFORE the receive-authz dispatch — so
+    the agent process CAN be alive while the receive is still denied. The assertion
+    must therefore verify the **flavor adapter / bridge deliver call was never invoked**
+    (`AgentBridge.deliver_*` in `agent/delivery.ex:deliver_agent_receive/2` — the credential
+    spend), e.g. via a mock/telemetry on the bridge adapter — NOT `Process.alive?`.
 31. **Approve → mount:** A (holds manage-authority over A's-agent) approves the
     request → member-cap granted via the R3.1 abort-safe grant + normal mount →
     `:pending_members` entry removed → B's next post is delivered and A's-agent
@@ -1745,6 +1843,26 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 32. **Deny / withdraw / abort-safe:** A denies → pending entry dropped, no cap ever
     granted; B withdraws its own request → dropped; an approve whose grant COMMIT
     FAILS aborts and leaves the request PENDING (nothing mounted) — R3.1 abort-safe.
+33. **🔴 World `invite_member/3` bypass → PENDING (the primary-surface regression,
+    §C.1 bypass 1):** exercise the world-UI invite entry point specifically — B (no
+    manage-authority over A's-agent) invites A's-agent through
+    `Ezagent.World.ConversationActions.invite_member/3` (which dispatches `session.join`
+    directly with B's caps, NOT through `provision_invited_join_authority/3`,
+    `conversation_actions.ex:408`). Assert the add goes **PENDING** (a `:pending_members`
+    entry, **NO member-cap**, NO `:members` entry) — proving the gate at the
+    `handle_join` chokepoint catches the world invite, not only the orchestrator path. A
+    future regression that re-scopes the trigger to one invite function fails this test.
+    (World-plugin-level test — `invite_member/3` takes a `Phoenix.LiveView.Socket`; the
+    session-domain `handle_join` chokepoint may alternatively be asserted at the
+    `session.join` dispatch boundary with `caller = inviter`, inviter's caps, no
+    manage → PENDING.)
+34. **Cross-session routing cannot confer receive (§C.1 bypass 2 — covered by R1.1):**
+    a same-workspace cross-session forward (`dispatch_cross_session_call/3`) into a
+    target session containing a **non-member A-agent** injects the inline
+    `cross_session_send_caps/2` cap (`:send` only). Assert A's-agent (holding no
+    member-cap) **cannot RECEIVE** the forwarded message → `:receive` DENIED, credential
+    not spent — the inline cap confers SEND on the session, never `:receive` to a
+    non-member. Proves the forwarding path is gated by R1.1, not a member-add bypass.
 
 ### 14.5 Acceptance E2E — the done-gate (NEW scenario, R4-revised: PREVENTION is primary)
 
@@ -1778,6 +1896,13 @@ by owning phase:
    `:receive` is **DENIED** (it holds no member-cap → R1.1 in-handler check denies) →
    A's-agent **does NOT run**, **A's credential is NOT spent**. Deterministic: the cap
    was never granted, so no reconcile timing is involved.
+   ⚠️ **Assert credential-non-spend at the FLAVOR-ADAPTER boundary, NOT process
+   liveness (Q3).** `dispatch_receive_call/3` calls `SpawnRegistry.ensure_live/1`
+   (`session/delivery.ex:163-165`) BEFORE the receive-authz dispatch, so the agent
+   process may be alive even when the receive is denied. The load-bearing assertion is
+   that the **flavor adapter / bridge deliver call (`AgentBridge.deliver_*`) was NEVER
+   invoked** (mock/telemetry the adapter — that call IS the OAuth spend) — a
+   `Process.alive?`/`refute` on the worker is NOT sufficient.
 3. **[Phase C] Owner notified of the pending request.** Assert **A** receives the
    pending-admission notification — `managers_of(A's-agent) = A` (the creator holding
    `CreatorGrant.manage_cap`), content-free approvable envelope — and **B is NOT**
@@ -1882,15 +2007,21 @@ is the SAME R3.1 abort-safe grant. Prevention adds no new security path.
    multi-user / add-others'-agent collaboration flows**: any workflow that relied on
    silently mounting another owner's agent now stalls at pending. **Confirm this is
    intended and won't break a needed existing flow.** Inverse (blast-radius bound —
-   the trigger is scoped to the cross-owner **invite** path, §C.1, NOT the universal
-   grant seam): **behavior-preserving, current mount path unchanged** for (a) an
-   inviter who MANAGES the member (own agent / admin); (b) **self-join** (joiner
-   admits itself, incl. anon self-admission, `caller == member`); (c) **system /
-   orchestrator / team-template spawn** under `system://session-internal`
-   (`membership.ex:386`) — normal agent spawning is untouched. **Only a cross-owner
-   invite by a real non-system inviter who lacks manage-authority changes.** (A bare
-   `manages?(caller, member)` on the universal seam would wrongly pend system spawns —
-   see the §C.1 warning; the scoping to the invite path is load-bearing, not cosmetic.)
+   the trigger fires only on a **cross-owner add**, keyed on `ctx.caller` at the
+   `handle_join` chokepoint, §C.1, NOT on every grant): **behavior-preserving, current
+   mount path unchanged** for (a) a caller who MANAGES the member (own agent / admin);
+   (b) **self-join** (joiner admits itself, incl. anon self-admission, `caller ==
+   member`); (c) **system / orchestrator / team-template spawn (materializer)** — ⚠️
+   **CORRECTED: `system://session-internal` was ELIMINATED (#154);** the materializer
+   now dispatches under `ctx.caller = Entity.User.admin_uri()` with an inline join cap
+   (`materializer.ex:182-212`), so its exemption rests on `manages?(admin_uri, member)
+   = true` (workspace-admin), which the K2 predicate must resolve from admin's
+   **durable identity caps by URI** (NOT `ctx.caps`, which carries only the inline join
+   cap — PROPOSED, implementer-verify; see §C.1 (c)). Normal agent spawning is
+   untouched. **Only a cross-owner add by a real non-system caller who lacks
+   manage-authority changes.** (A `ctx.caps`-based check would wrongly pend materializer
+   spawns — see the §C.1 warning; keying on the caller's durable authority at the
+   chokepoint is load-bearing, not cosmetic.)
    *Minor, flag-don't-build (one-line open notes for the lead, not designed here):*
    (a) whether the requester **B** is told of the eventual approve/deny outcome;
    (b) whether **B's identity** appears in A's pending-request payload (a mild tension
