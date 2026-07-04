@@ -92,6 +92,31 @@ defmodule Ezagent.ActionSet.Identity do
     modes: [:call]
   )
 
+  # Membership-cap unification Phase B.3 (spec §10 / K3) — the post-commit
+  # cascade sink. `Kind.Server` synthesizes this self-targeted, fire-and-forget
+  # dispatch at the SINGLE emit chokepoint for an allowlisted `{scheme,
+  # slice_key}` (initially `{entity, :identity}` — a cap grant/revoke mutates the
+  # `:identity` slice). The handler resolves the entity's managers/owners and
+  # notifies them content-free. It is **cap-exempt** (`cap_exempt_actions/0`
+  # below): a VM-internal advisory dispatch under the same in-VM-trust model as
+  # `Ezagent.Notifications.notify/2`, mirroring the `:receive` cap-exempt
+  # precedent (A2). Read-only (no slice mutation) so it never re-triggers itself.
+  action(:cascade_notify_managers,
+    args: %{},
+    returns: %{},
+    caps: [{:cascade_notify_managers, kind: :any}],
+    description: "Post-commit cascade: content-free notify of this entity's managers/owners on an allowlisted slice change",
+    modes: [:cast]
+  )
+
+  @doc """
+  Membership-cap B.3 cap-exempt actions: the cascade sink is authorized in-VM
+  (self-dispatched at the emit chokepoint), NOT via a caller-scoped cap — the
+  `:receive` precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions ==
+  actions` (the `Ezagent.Behavior` parity contract).
+  """
+  def cap_exempt_actions, do: [:cascade_notify_managers]
+
   # =================================================================
   # Explicit `required_caps/0` — preserved as `kind: :any` (Identity
   # is registered on multiple Kinds; see check 11(b) escape in
@@ -285,6 +310,17 @@ defmodule Ezagent.ActionSet.Identity do
     caps = ctx[:read].(:caps, MapSet.new())
     has? = Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
     {:ok, %{has: has?}, []}
+  end
+
+  @doc """
+  Membership-cap B.3 cascade sink (spec §10 / K3). Resolve this entity's
+  managers/owners and notify them content-free of the slice change. Read-only
+  (emits NO effects → no re-trigger); best-effort inside `Cascade` (a failed
+  cascade is advisory and MUST NOT crash the post-commit turn).
+  """
+  def handle_cascade_notify_managers(args, ctx) do
+    Ezagent.Identity.Cascade.notify_managers(Map.get(ctx, :self_uri), args)
+    {:ok, %{}, []}
   end
 end
 

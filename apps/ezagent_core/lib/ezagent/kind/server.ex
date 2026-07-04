@@ -734,10 +734,49 @@ defmodule Ezagent.Kind.Server do
 
     if slice_change_event && commit_result in [:ok, :not_durable] do
       Ezagent.SliceChange.emit(slice_change_event)
+      maybe_enqueue_cascade(slice_change_event)
     end
 
     commit_result
   end
+
+  # Membership-cap unification Phase B.3 (spec §10 / K3) — the cascade hook at
+  # the SINGLE emit chokepoint. For an allowlisted `{scheme, slice_key}` slice
+  # change (initially `{"entity", :identity}` — a cap grant/revoke mutates an
+  # entity's `:identity` slice), enqueue a self-targeted, fire-and-forget
+  # `:cascade_notify_managers` dispatch on the post-commit `DeferredDispatch`
+  # turn — EXACTLY like `deferred_dispatch`, NOT a per-URI subscriber (per-URI
+  # subscription doesn't scale). The resolve + content-free notify then runs in
+  # the domain (`Ezagent.Identity.Cascade`) on the target's own Kind, keeping
+  # core layer-pure (the action is a plain atom — no compile edge). It stays OFF
+  # the mutating dispatch's critical path: a slow/failing cascade runs on a
+  # separate mailbox turn and can never roll back the mutation.
+  @cascade_allowlist [{"entity", :identity}]
+  @cascade_action :cascade_notify_managers
+
+  defp maybe_enqueue_cascade(%{self_uri: %URI{scheme: scheme} = self_uri, slice_key: slice_key} = ev)
+       when is_atom(slice_key) and is_binary(scheme) do
+    if {scheme, slice_key} in @cascade_allowlist do
+      # Content-free payload (spec §10): slice_key / cursor / event_at only —
+      # NO cap values, NO caller, NO member list.
+      cmd = %Ezagent.Cmd{
+        target: self_uri,
+        action: @cascade_action,
+        args: %{
+          slice_key: slice_key,
+          cursor: Map.get(ev, :cursor),
+          event_at: Map.get(ev, :at)
+        },
+        ctx: %{caller: self_uri, reply: :ignore}
+      }
+
+      Ezagent.Kind.DeferredDispatch.enqueue([cmd])
+    end
+
+    :ok
+  end
+
+  defp maybe_enqueue_cascade(_), do: :ok
 
   # Unified forwarder: any GenServer message a Kind's Behaviors might want
   # to react to (currently only `:DOWN` from Process.monitor; Phase 3+ may

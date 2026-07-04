@@ -102,7 +102,9 @@ defmodule Ezagent.ActionSet.IdentityTest do
     test "actions/0" do
       # PR-OWN-3: split — Identity holds only safe actions;
       # :grant_cap and :revoke_cap moved to IdentityAdmin.
-      assert Identity.actions() == [:list_caps, :has_cap?]
+      # Membership-cap B.3: :cascade_notify_managers added (cap-exempt post-commit
+      # cascade sink — spec §10/K3).
+      assert Identity.actions() == [:list_caps, :has_cap?, :cascade_notify_managers]
       assert Ezagent.ActionSet.IdentityAdmin.actions() == [:grant_cap, :revoke_cap]
     end
 
