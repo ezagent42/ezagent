@@ -29,23 +29,38 @@ defmodule SiteData do
   # static roster (docs/together/team.md) — gh -> {cn, role_badge, badge_variant, track, tz}
   def roster do
     %{
-      "allenwoods"          => {"林懿伦", "lead · 队长",     "default",   "dev-together lead · 架构地基 / 部署", "GMT+9"},
-      "jjkysy"              => {"姚升悦", "dev · 开发",      "secondary", "架构 / 原则把关 · kanban 插件原作",     "GMT+8"},
-      "gagameow"            => {"黄佳佳", "dev · 开发",      "secondary", "agent-config 后端契约",               "GMT+8"},
-      "zyli-developer"      => {"李震宇", "dev · 开发",      "secondary", "人肉 full-flow validation · E2E",      "GMT+8"},
-      "zhaomaota97"         => {"张宁",   "dev · 开发",      "secondary", "官网（@json-render 底座）",            "GMT+8"},
-      "FatNine"             => {"戴明",   "dev · 开发",      "secondary", "#84 Agent Console CRUD",              "GMT+8"},
-      "ruihuachen-designer" => {"陈瑞华", "designer · 设计", "default",   "产品 / 设计版式 · 可外发文档",         "GMT+8"},
-      "claude"              => {"Claude", "agent · AI",     "outline",   "off-plan support · 编排 / 修复",       "—"},
-      "codex"              => {"Codex",  "agent · AI",     "outline",   "off-plan support · 有界可验子任务",     "—"}
+      "allenwoods" => {"林懿伦", "lead · 队长", "default", "dev-together lead · 架构地基 / 部署", "GMT+9"},
+      "jjkysy" => {"姚升悦", "dev · 开发", "secondary", "架构 / 原则把关 · kanban 插件原作", "GMT+8"},
+      "gagameow" => {"黄佳佳", "dev · 开发", "secondary", "agent-config 后端契约", "GMT+8"},
+      "zyli-developer" =>
+        {"李震宇", "dev · 开发", "secondary", "人肉 full-flow validation · E2E", "GMT+8"},
+      "zhaomaota97" => {"张宁", "dev · 开发", "secondary", "官网（@json-render 底座）", "GMT+8"},
+      "FatNine" => {"戴明", "dev · 开发", "secondary", "#84 Agent Console CRUD", "GMT+8"},
+      "ruihuachen-designer" => {"陈瑞华", "designer · 设计", "default", "产品 / 设计版式 · 可外发文档", "GMT+8"},
+      "claude" => {"Claude", "agent · AI", "outline", "off-plan support · 编排 / 修复", "—"},
+      "codex" => {"Codex", "agent · AI", "outline", "off-plan support · 有界可验子任务", "—"}
     }
   end
 
-  def order, do: ~w(allenwoods jjkysy gagameow zyli-developer zhaomaota97 FatNine ruihuachen-designer claude codex)
+  def order,
+    do:
+      ~w(allenwoods jjkysy gagameow zyli-developer zhaomaota97 FatNine ruihuachen-designer claude codex)
 
   defp curl(path) do
     url = "https://api.github.com/repos/#{@repo}#{path}"
-    case System.cmd("curl", ["-s", "--max-time", "15", "-x", @proxy, "-H", "Accept: application/vnd.github+json", url], stderr_to_stdout: true) do
+
+    case System.cmd(
+           "curl",
+           [
+             "-s",
+             "--max-time",
+             "15",
+             "-x",
+             @proxy,
+             "-H",
+             "Accept: application/vnd.github+json",
+             url
+           ], stderr_to_stdout: true) do
       {out, 0} ->
         case Jason.decode(out) do
           {:ok, data} -> {:ok, data}
@@ -58,8 +73,13 @@ defmodule SiteData do
   end
 
   @snapshot_contrib [
-    {"allenwoods", 951}, {"gagameow", 14}, {"zyli-developer", 10}, {"FatNine", 5},
-    {"zhaomaota97", 5}, {"jjkysy", 1}, {"ruihuachen-designer", 1}
+    {"allenwoods", 951},
+    {"gagameow", 14},
+    {"zyli-developer", 10},
+    {"FatNine", 5},
+    {"zhaomaota97", 5},
+    {"jjkysy", 1},
+    {"ruihuachen-designer", 1}
   ]
   @snapshot_prs [
     {"1102", "close 0629 and plan 0630", "allenwoods", "docs"},
@@ -108,7 +128,8 @@ defmodule SiteData do
             |> Enum.filter(& &1["merged_at"])
             |> Enum.take(8)
             |> Enum.map(fn p ->
-              {to_string(p["number"]), clean_title(p["title"]), p["user"]["login"], kind(p["title"])}
+              {to_string(p["number"]), clean_title(p["title"]), p["user"]["login"],
+               kind(p["title"])}
             end)
 
           if merged == [], do: {@snapshot_prs, :snapshot}, else: {merged, :live}
@@ -122,7 +143,12 @@ defmodule SiteData do
         # only trust the repo payload when it carries real fields; a 403 rate-limit
         # / error body is also a map and would otherwise nil out issues/lang.
         {:ok, %{"stargazers_count" => stars} = d} when is_integer(stars) ->
-          {%{stars: stars, forks: d["forks_count"], issues: d["open_issues_count"], lang: d["language"]}, :live}
+          {%{
+             stars: stars,
+             forks: d["forks_count"],
+             issues: d["open_issues_count"],
+             lang: d["language"]
+           }, :live}
 
         _ ->
           {%{stars: 0, forks: 1, issues: 46, lang: "Elixir"}, :snapshot}
@@ -133,8 +159,17 @@ defmodule SiteData do
 end
 
 defmodule Build do
-  def n(type, props, children \\ []), do: %{"type" => type, "props" => props, "children" => children}
-  def stack(cls, opts, children), do: n("Stack", Map.merge(%{"direction" => "vertical", "gap" => "none", "className" => cls}, opts), children)
+  def n(type, props, children \\ []),
+    do: %{"type" => type, "props" => props, "children" => children}
+
+  def stack(cls, opts, children),
+    do:
+      n(
+        "Stack",
+        Map.merge(%{"direction" => "vertical", "gap" => "none", "className" => cls}, opts),
+        children
+      )
+
   def text(t, v), do: n("Text", %{"text" => t, "variant" => v})
   def heading(t, lvl), do: n("Heading", %{"text" => t, "level" => lvl})
   def badge(t, v), do: n("Badge", %{"text" => t, "variant" => v})
@@ -142,7 +177,11 @@ defmodule Build do
   def img(src, alt), do: n("Image", %{"src" => src, "alt" => alt, "width" => 24, "height" => 24})
 
   def subcard(eyebrow, h, body) do
-    stack("subcard", %{"gap" => "none"}, [text(eyebrow, "caption"), heading(h, "h4"), text(body, "muted")])
+    stack("subcard", %{"gap" => "none"}, [
+      text(eyebrow, "caption"),
+      heading(h, "h4"),
+      text(body, "muted")
+    ])
   end
 
   def product(extra_cls, glyph_src, eyebrow, h, lead, subs, btn, tags) do
@@ -152,31 +191,41 @@ defmodule Build do
       heading(h, "h3"),
       text(lead, "body"),
       stack("subcards", %{"gap" => "sm"}, Enum.map(subs, fn {e, hh, b} -> subcard(e, hh, b) end)),
-      stack("product-foot", %{"direction" => "horizontal", "gap" => "sm", "align" => "center"},
-        [button(btn, "default") | Enum.map(tags, &badge(&1, "outline"))])
+      stack("product-foot", %{"direction" => "horizontal", "gap" => "sm", "align" => "center"}, [
+        button(btn, "default") | Enum.map(tags, &badge(&1, "outline"))
+      ])
     ])
   end
 
   def member({gh, contrib_n}) do
-    {cn, role, variant, track, tz} = Map.get(SiteData.roster(), gh, {gh, "agent", "outline", "", "—"})
+    {cn, role, variant, track, tz} =
+      Map.get(SiteData.roster(), gh, {gh, "agent", "outline", "", "—"})
 
     avatar =
       if gh in ["claude", "codex"] do
         n("Avatar", %{"src" => nil, "name" => cn, "size" => "lg"})
       else
-        n("Avatar", %{"src" => "https://github.com/#{gh}.png?size=96", "name" => cn, "size" => "lg"})
+        n("Avatar", %{
+          "src" => "https://github.com/#{gh}.png?size=96",
+          "name" => cn,
+          "size" => "lg"
+        })
       end
 
     sub = if contrib_n, do: "@#{gh} · #{contrib_n} commits", else: "@#{gh} · #{tz}"
 
-    n("Card", %{"className" => "member#{if variant == "outline", do: " member-agent", else: ""}"}, [
-      stack("member-top", %{"direction" => "horizontal", "gap" => "sm", "align" => "center"}, [
-        avatar,
-        stack("member-id", %{"gap" => "none"}, [heading(cn, "h4"), text(sub, "caption")])
-      ]),
-      badge(role, variant),
-      text(track, "muted")
-    ])
+    n(
+      "Card",
+      %{"className" => "member#{if variant == "outline", do: " member-agent", else: ""}"},
+      [
+        stack("member-top", %{"direction" => "horizontal", "gap" => "sm", "align" => "center"}, [
+          avatar,
+          stack("member-id", %{"gap" => "none"}, [heading(cn, "h4"), text(sub, "caption")])
+        ]),
+        badge(role, variant),
+        text(track, "muted")
+      ]
+    )
   end
 end
 
@@ -202,107 +251,219 @@ src_label = if data.sources.contrib == :live, do: "实时拉取", else: "快照"
 # ── BODY (catalog-only, full-width band layout) ───────────────────────────────
 body =
   Build.stack("page-root", %{"gap" => "none"}, [
-    # nav (centered pill)
-    Build.stack("nav", %{"direction" => "horizontal", "align" => "center", "justify" => "between"}, [
+    # nav (centered glass pill): brand · 两个 section tab(研发进度/核心团队)· GitHub · 登录
+    # ruihua nav 布局:tab 紧跟 brand 右侧,GitHub/登录靠最右。两个 tab 现在住在 nav 里 —
+    # 每个是一个 Button 带 navTab=<value>:按下 dispatch jr-tab-switch {value}(下方 Tabs
+    # 面板监听并切换),同时监听同一事件反映当前激活项(nav ↔ 面板双向同步)。worldcup
+    # 初始激活(navActive),跟 Tabs defaultValue 一致。
+    Build.stack("nav", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
       Build.stack("brand", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
-        Build.n("Image", %{"src" => "/images/ezagent-logo.png", "alt" => "Ezagent", "width" => 20, "height" => 24}),
+        Build.n("Image", %{
+          "src" => "/images/ezagent-logo.png",
+          "alt" => "Ezagent",
+          "width" => 20,
+          "height" => 24
+        }),
         Build.text("EZAGENT", "body")
       ]),
-      Build.stack("navlinks", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
-        Build.n("Link", %{"label" => "↗ GitHub", "href" => "https://github.com/ezagent42"}),
-        Build.button("登录 · Login", "secondary")
-      ])
+      Build.stack("navtabs", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
+        Build.n("Button", %{
+          "label" => "首页 · Home",
+          "variant" => "ghost",
+          "className" => "navtab",
+          "onClickUrl" => "#home",
+          "navTab" => "home",
+          "navActive" => true
+        }),
+        Build.n("Button", %{
+          "label" => "研发进度 · Progress",
+          "variant" => "ghost",
+          "className" => "navtab",
+          "onClickUrl" => "#worldcup",
+          "navTab" => "worldcup"
+        }),
+        Build.n("Button", %{
+          "label" => "核心团队 · Team",
+          "variant" => "ghost",
+          "className" => "navtab",
+          "onClickUrl" => "#team",
+          "navTab" => "team"
+        })
+      ]),
+      Build.stack(
+        "navright",
+        %{"direction" => "horizontal", "align" => "center", "gap" => "sm"},
+        [
+          Build.n("Link", %{"label" => "↗ GitHub", "href" => "https://github.com/ezagent42"}),
+          # 登录 = 输入框那颗登录(→ /login?return_to=…);已登录时 ButtonNav 把 label 换成用户名。
+          Build.n("Button", %{
+            "label" => "登录 · Login",
+            "variant" => "secondary",
+            "className" => "navauth",
+            "onClickUrl" => "@login"
+          })
+        ]
+      )
     ]),
 
-    # hero (full-bleed white band)
-    Build.stack("hero", %{"gap" => "none"}, [
-      Build.badge("Organization IDE · 2026", "secondary"),
-      Build.heading("组织的 IDE。", "h1"),
-      Build.heading("Organization IDE.", "h2"),
-      Build.text("Ezagent 让你用一套柔软而清晰的界面，构建、运行并交付组织的 AI agent。把整个组织的复杂度变得在手、可搭建 — build, run, and ship agents. 纯色为轴，留白为形。", "lead"),
-      Build.stack("cta", %{"direction" => "horizontal", "gap" => "sm"}, [
-        # W3: 开始使用 → open the GitHub repo in a new tab (renderer honors onClickUrl)
-        Build.n("Button", %{"label" => "开始使用 · Get started →", "variant" => "default", "onClickUrl" => "https://github.com/ezagent42/ezagent"}),
-        # W4: 看看进度 → dispatch jr-tab-switch to the world.cup/Progress tab + scroll
-        Build.n("Button", %{"label" => "看看进度 · See progress", "variant" => "secondary", "onClickUrl" => "#worldcup"})
-      ])
-    ]),
-
-    # products (ground band)
-    Build.stack("section products-section", %{"gap" => "none"}, [
-      Build.text("OPEN SOURCE · 开源项目", "caption"),
-      Build.heading("一个底座，两个产品", "h2"),
-      Build.text("同一套 ezagent 地基之上 — world 让消息可靠流转，hello 让界面即问即生。", "muted"),
-      Build.n("Grid", %{"columns" => 2, "gap" => "lg", "className" => "product-grid"}, [
-        Build.product("product-world", "/images/ruihua-world.svg", "world · 连接层 · routing",
-          "让消息在工具、渠道、AI 之间顺畅流转",
-          "任意渠道接进来、每条消息都接得住、想换模型或后端配置一下就行——对客流水线不丢一条。",
-          [{"连接 · CONNECT", "接得住任意渠道", "飞书、webhook、自定义系统，连上就能用，新增渠道不用重做一遍。"},
-           {"稳定 · RELIABLE", "消息不丢、有兜底", "先落库再处理，重启自恢复；没人接的消息也有明确去处，不会悄悄消失。"},
-           {"灵活 · FLEXIBLE", "换 AI / 后端不重写", "模型、服务都可替换，配置代替改代码——换个大脑不动地基。"}],
-          "试玩 · Try world →", ["message-router", "no-drop"]),
-        Build.product("product-hello", "/images/ruihua-hello.svg", "hello · 生成层 · generation",
-          "用一句话，生成你要的界面",
-          "说清你想要什么，界面当场长出来，还会为每个客户实时重组——不写一行前端。",
-          [{"生成 · GENERATE", "一句话生成可用界面", "说清想要什么，界面当场长出来，不用排开发的期。"},
-           {"定制 · PER-CUSTOMER", "为每个客户实时重组", "同一会话，不同的人打开，看到的是为他重新组合的样子。"},
-           {"微调 · TWEAK", "细节随手可调", "生成完想改哪改哪，描述一句就变，不必从头再来。"}],
-          "试玩 · Try hello →", ["json-render", "say-it-grows"])
-      ])
-    ]),
-
-    # foundation (dark band)
-    Build.stack("foundation", %{"direction" => "horizontal", "gap" => "sm", "align" => "center"}, [
-      Build.badge("ezagent", "default"),
-      Build.text("一个底座，两个产品 · One substrate, two products", "body"),
-      Build.text("core · Kind / Behavior / dispatch / CapBAC / 可靠性原语", "code")
-    ]),
-
-    # section tabs — REAL content switching (ruihua W2). The two sections are the
-    # Tabs node's 2 CHILDREN (child[i] ↔ tabs[i]): TabsSwitch
-    # (catalog_jsonrender.mjs) renders ONLY the active child = true switch, not a
-    # decorative bar with both sections always visible. Order MUST match:
-    #   tab[0] worldcup → child[0] worldcup(研发进度)section
-    #   tab[1] team     → child[1] team(核心团队)section
-    # defaultValue "worldcup" shows 研发进度 first. W4 "看看进度" CTA
-    # (onClickUrl "#worldcup") dispatches jr-tab-switch → worldcup is a valid tab
-    # value, so it switches to the worldcup panel + scrolls the tab bar into view.
-    Build.stack("tabbar-band", %{"gap" => "none"}, [
-      Build.n("Tabs", %{"defaultValue" => "worldcup", "tabs" => [
-        %{"label" => "研发进度 · Progress", "value" => "worldcup"},
-        %{"label" => "核心团队 · Team", "value" => "team"}
-      ]}, [
-        # child[0] — worldcup (研发进度) panel (tinted band)
-        Build.stack("section worldcup", %{"gap" => "none"}, [
-          Build.stack("worldcup-head", %{"direction" => "horizontal", "align" => "center", "gap" => "sm"}, [
-            Build.n("Image", %{"src" => "/images/ruihua-ball.svg", "alt" => "world.cup", "width" => 30, "height" => 30}),
-            Build.text("PROGRESS · world.cup", "caption")
+    # ── content tabs — 首页 / 研发进度 / 核心团队, MUTUALLY EXCLUSIVE (用户 spec).
+    # ONE Tabs node with 3 children (child[i] ↔ tabs[i]). The triggers live in the
+    # nav (hideList → this node renders NO trigger row), so switching is driven by
+    # jr-tab-switch and ONLY ONE panel shows at a time. defaultValue "home" → 首页.
+    # Order MUST match the nav tabs / tabs[] entries:
+    #   tab[0] home     → child[0] 首页 (hero + products + foundation)
+    #   tab[1] worldcup → child[1] 研发进度
+    #   tab[2] team     → child[2] 核心团队
+    Build.n(
+      "Tabs",
+      %{
+        "hideList" => true,
+        "defaultValue" => "home",
+        "tabs" => [
+          %{"label" => "首页 · Home", "value" => "home"},
+          %{"label" => "研发进度 · Progress", "value" => "worldcup"},
+          %{"label" => "核心团队 · Team", "value" => "team"}
+        ]
+      },
+      [
+        # child[0] — 首页: hero + products + foundation (was the always-on top part)
+        Build.stack("tabpanel home", %{"gap" => "none"}, [
+          # hero (full-bleed white band)
+          Build.stack("hero", %{"gap" => "none"}, [
+            Build.badge("Organization IDE · 2026", "secondary"),
+            Build.heading("组织的 IDE。", "h1"),
+            Build.heading("Organization IDE.", "h2"),
+            Build.text(
+              "Ezagent 让你用一套柔软而清晰的界面，构建、运行并交付组织的 AI agent。把整个组织的复杂度变得在手、可搭建 — build, run, and ship agents. 纯色为轴，留白为形。",
+              "lead"
+            ),
+            Build.stack("cta", %{"direction" => "horizontal", "gap" => "sm"}, [
+              Build.n("Button", %{
+                "label" => "开始使用 · Get started →",
+                "variant" => "default",
+                "onClickUrl" => "https://github.com/ezagent42/ezagent"
+              }),
+              # 看看进度 → 切到「研发进度」tab(dispatch jr-tab-switch #worldcup)
+              Build.n("Button", %{
+                "label" => "看看进度 · See progress",
+                "variant" => "secondary",
+                "onClickUrl" => "#worldcup"
+              })
+            ])
           ]),
-          Build.heading("研发进度与公开路线图", "h2"),
-          Build.text("每一项进展都来自真实研发，可追溯至对应 PR、commit 与里程碑 — 不夸大、不造势。数据来自 github.com/ezagent42/ezagent（#{src_label}）。", "muted"),
-          Build.n("Grid", %{"columns" => 4, "gap" => "md", "className" => "stat-row"}, [
-            Build.n("Card", %{"className" => "stat"}, [Build.heading("##{latest_pr}", "h3"), Build.text("最新合并 PR", "caption")]),
-            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(length(data.contrib)), "h3"), Build.text("活跃贡献者", "caption")]),
-            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.issues), "h3"), Build.text("开放 issue", "caption")]),
-            Build.n("Card", %{"className" => "stat"}, [Build.heading(to_string(data.meta.lang), "h3"), Build.text("主语言 · OTP", "caption")])
+          # products (ground band)
+          Build.stack("section products-section", %{"gap" => "none"}, [
+            Build.text("OPEN SOURCE · 开源项目", "caption"),
+            Build.heading("一个底座，两个产品", "h2"),
+            Build.text("同一套 ezagent 地基之上 — world 让消息可靠流转，hello 让界面即问即生。", "muted"),
+            Build.n("Grid", %{"columns" => 2, "gap" => "lg", "className" => "product-grid"}, [
+              Build.product(
+                "product-world",
+                "/images/ruihua-world.svg",
+                "world · 连接层 · routing",
+                "让消息在工具、渠道、AI 之间顺畅流转",
+                "任意渠道接进来、每条消息都接得住、想换模型或后端配置一下就行——对客流水线不丢一条。",
+                [
+                  {"连接 · CONNECT", "接得住任意渠道", "飞书、webhook、自定义系统，连上就能用，新增渠道不用重做一遍。"},
+                  {"稳定 · RELIABLE", "消息不丢、有兜底", "先落库再处理，重启自恢复；没人接的消息也有明确去处，不会悄悄消失。"},
+                  {"灵活 · FLEXIBLE", "换 AI / 后端不重写", "模型、服务都可替换，配置代替改代码——换个大脑不动地基。"}
+                ],
+                "试玩 · Try world →",
+                ["message-router", "no-drop"]
+              ),
+              Build.product(
+                "product-hello",
+                "/images/ruihua-hello.svg",
+                "hello · 生成层 · generation",
+                "用一句话，生成你要的界面",
+                "说清你想要什么，界面当场长出来，还会为每个客户实时重组——不写一行前端。",
+                [
+                  {"生成 · GENERATE", "一句话生成可用界面", "说清想要什么，界面当场长出来，不用排开发的期。"},
+                  {"定制 · PER-CUSTOMER", "为每个客户实时重组", "同一会话，不同的人打开，看到的是为他重新组合的样子。"},
+                  {"微调 · TWEAK", "细节随手可调", "生成完想改哪改哪，描述一句就变，不必从头再来。"}
+                ],
+                "试玩 · Try hello →",
+                ["json-render", "say-it-grows"]
+              )
+            ])
           ]),
-          Build.heading("近期已合并 · Recently merged", "h4"),
-          Build.n("Table", %{"caption" => "实时 / 快照 · github.com/ezagent42/ezagent · merged PRs",
-            "columns" => ["PR", "进展", "作者", "类型"], "rows" => pr_rows}),
-          Build.heading("贡献榜 · Contributor leaderboard", "h4"),
-          Build.n("Table", %{"caption" => "contributions API · 按提交数排序",
-            "columns" => ["#", "贡献者", "提交数", "方向"], "rows" => contrib_rows})
+          # foundation (dark band)
+          Build.stack(
+            "foundation",
+            %{"direction" => "horizontal", "gap" => "sm", "align" => "center"},
+            [
+              Build.badge("ezagent", "default"),
+              Build.text("一个底座，两个产品 · One substrate, two products", "body"),
+              Build.text("core · Kind / Behavior / dispatch / CapBAC / 可靠性原语", "code")
+            ]
+          )
         ]),
 
-        # child[1] — team (核心团队) panel (ground band)
+        # child[1] — 研发进度 (worldcup, tinted band)
+        Build.stack("section worldcup", %{"gap" => "none"}, [
+          Build.stack(
+            "worldcup-head",
+            %{"direction" => "horizontal", "align" => "center", "gap" => "sm"},
+            [
+              Build.n("Image", %{
+                "src" => "/images/ruihua-ball.svg",
+                "alt" => "world.cup",
+                "width" => 30,
+                "height" => 30
+              }),
+              Build.text("PROGRESS · world.cup", "caption")
+            ]
+          ),
+          Build.heading("研发进度与公开路线图", "h2"),
+          Build.text(
+            "每一项进展都来自真实研发，可追溯至对应 PR、commit 与里程碑 — 不夸大、不造势。数据来自 github.com/ezagent42/ezagent（#{src_label}）。",
+            "muted"
+          ),
+          Build.n("Grid", %{"columns" => 4, "gap" => "md", "className" => "stat-row"}, [
+            Build.n("Card", %{"className" => "stat"}, [
+              Build.heading("##{latest_pr}", "h3"),
+              Build.text("最新合并 PR", "caption")
+            ]),
+            Build.n("Card", %{"className" => "stat"}, [
+              Build.heading(to_string(length(data.contrib)), "h3"),
+              Build.text("活跃贡献者", "caption")
+            ]),
+            Build.n("Card", %{"className" => "stat"}, [
+              Build.heading(to_string(data.meta.issues), "h3"),
+              Build.text("开放 issue", "caption")
+            ]),
+            Build.n("Card", %{"className" => "stat"}, [
+              Build.heading(to_string(data.meta.lang), "h3"),
+              Build.text("主语言 · OTP", "caption")
+            ])
+          ]),
+          Build.heading("近期已合并 · Recently merged", "h4"),
+          Build.n("Table", %{
+            "caption" => "实时 / 快照 · github.com/ezagent42/ezagent · merged PRs",
+            "columns" => ["PR", "进展", "作者", "类型"],
+            "rows" => pr_rows
+          }),
+          Build.heading("贡献榜 · Contributor leaderboard", "h4"),
+          Build.n("Table", %{
+            "caption" => "contributions API · 按提交数排序",
+            "columns" => ["#", "贡献者", "提交数", "方向"],
+            "rows" => contrib_rows
+          })
+        ]),
+
+        # child[2] — 核心团队 (team, ground band)
         Build.stack("section team", %{"gap" => "none"}, [
           Build.text("CONTRIBUTORS · 团队", "caption"),
           Build.heading("核心团队", "h2"),
           Build.text("用 AI agent 协作开发自身产品的核心团队 · 数据源 docs/together/team.md。", "muted"),
-          Build.n("Grid", %{"columns" => 3, "gap" => "lg", "className" => "team-wall"}, team_members)
+          Build.n(
+            "Grid",
+            %{"columns" => 3, "gap" => "lg", "className" => "team-wall"},
+            team_members
+          )
         ])
-      ])
-    ]),
+      ]
+    ),
 
     # footer
     Build.stack("footer", %{"gap" => "none", "align" => "center"}, [
@@ -313,7 +474,9 @@ body =
   ])
 
 case EzagentPluginHello.Spec.validate(body) do
-  {:ok, _} -> IO.puts("✓ body validates against catalog")
+  {:ok, _} ->
+    IO.puts("✓ body validates against catalog")
+
   {:error, reason} ->
     IO.puts("✗ INVALID: #{inspect(reason)}")
     System.halt(1)
@@ -347,29 +510,57 @@ theme_css = ~S"""
 }
 .page-root *{box-sizing:border-box}
 
-/* ── full-bleed bands: background spans viewport, content centered via padding ── */
-.page-root > .hero,
-.page-root > .products-section,
-.page-root > .foundation,
-.page-root > .tabbar-band,
-.page-root > .footer{padding-inline:var(--pad-x)}
-/* worldcup/team are NO LONGER page-root children — they live inside the Tabs as
-   .jr-tabs-content panels; their gutter is re-applied below via .jr-tabs-content. */
+/* ── full-bleed bands: background spans the viewport, content centered to --maxw
+   via the gutter. Every band now lives INSIDE a tab panel (首页 wraps
+   hero+products+foundation; worldcup/team are their own panels), so the gutter is
+   applied by band CLASS (descendant) rather than direct-child — content stays
+   centered at ANY nesting depth while each band's background still bleeds full
+   width. This is the "研发进度 卡片不居中" fix. ── */
+.page-root .hero,
+.page-root .products-section,
+.page-root .foundation,
+.page-root .worldcup,
+.page-root .team,
+.page-root .footer{padding-inline:var(--pad-x)}
 
-/* nav — centered floating glass pill */
+/* nav — centered floating glass pill: brand · section tabs · GitHub · 登录 */
 .page-root .nav{
   position:sticky;top:14px;z-index:50;width:calc(100% - 48px);max-width:var(--maxw);
-  margin:16px auto 0;padding:9px 12px 9px 16px;border-radius:var(--r-pill);
+  margin:16px auto 0;display:flex;align-items:center;gap:18px;
+  padding:9px 14px 9px 20px;border-radius:var(--r-pill);
   background:var(--glass);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);
   box-shadow:var(--shadow-sm),inset 0 0 0 1px rgba(255,255,255,.65);
 }
-.page-root .brand{gap:10px}
+.page-root .brand{gap:10px;flex:none}
 .page-root .brand img{height:24px;width:auto;display:block}
 .page-root .brand p{font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:16px;color:var(--ink);margin:0}
-.page-root .navlinks a{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);background:var(--ground-2);padding:9px 15px;border-radius:var(--r-pill);text-decoration:none}
-.page-root .navlinks a:hover{background:var(--ink);color:var(--card)}
-.page-root .navlinks [data-slot=button]{background:var(--blue-wash);color:var(--blue-deep);border:0;border-radius:var(--r-pill);font-family:var(--font-mono);font-weight:700;font-size:12px;height:auto;padding:9px 16px}
-.page-root .navlinks [data-slot=button]:hover{background:var(--accent);color:#fff}
+
+/* section tabs, right of the brand — the pill-group the user picked: a rounded
+   ground-2 track, transparent inactive pills, cobalt active pill. Rendered as
+   real tab-trigger buttons (.nav-tab-trigger) so there is no shadcn Button
+   variant fighting the theme. */
+.page-root .navtabs{display:inline-flex;gap:4px;margin-left:2px;background:var(--ground-2);border-radius:var(--r-pill);padding:5px}
+.page-root .nav-tab-trigger{appearance:none;border:0;background:transparent;box-shadow:none;cursor:pointer;
+  font-family:var(--font-ui);font-size:13px;font-weight:600;color:var(--ink-2);
+  padding:9px 18px;border-radius:var(--r-pill);white-space:nowrap;
+  transition:all 150ms var(--ease-out,cubic-bezier(.16,1,.3,1))}
+.page-root .nav-tab-trigger:hover{background:var(--ground-hover);color:var(--ink)}
+.page-root .nav-tab-trigger[data-state=active]{background:var(--accent);color:#fff;box-shadow:var(--shadow-accent)}
+
+/* right group pushed to the far end (ruihua .spacer → margin-left:auto) */
+.page-root .navright{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px}
+.page-root .navright a{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);background:var(--ground-2);padding:9px 15px;border-radius:var(--r-pill);text-decoration:none;transition:all 150ms}
+.page-root .navright a:hover{background:var(--ink);color:var(--card)}
+/* auth pill (rendered as .nav-auth, no shadcn variant): logged-out = a cobalt-wash
+   login pill; logged-in = a clean hairline pill showing the username. */
+.page-root .nav-auth{appearance:none;border:0;cursor:pointer;font-family:var(--font-mono);font-weight:700;font-size:12px;
+  color:var(--blue-deep);background:var(--blue-wash);padding:9px 16px;border-radius:var(--r-pill);white-space:nowrap;transition:all 150ms}
+.page-root .nav-auth:hover{background:var(--accent);color:#fff}
+.page-root .nav-auth.is-authed{font-family:var(--font-ui);font-weight:600;color:var(--ink);background:var(--card);box-shadow:inset 0 0 0 1px var(--line);cursor:default}
+.page-root .nav-auth.is-authed:hover{background:var(--card);color:var(--ink)}
+
+/* the section tabs now live in the nav → hide the Tabs node's own trigger row */
+.page-root .jr-tabs-list{display:none}
 
 /* hero — full-bleed white band */
 .page-root .hero{
@@ -425,16 +616,14 @@ theme_css = ~S"""
 .page-root [data-slot=tabs-trigger]{font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--ink-2);border-radius:var(--r-pill);padding:9px 18px;border:0}
 .page-root [data-slot=tabs-trigger][data-state=active]{background:var(--accent);color:#fff;box-shadow:var(--shadow-accent)}
 
-/* tab content panels (REAL switch). worldcup/team are the Tabs' 2 children;
-   TabsSwitch wraps each in .jr-tabs-content (hidden unless active). The wrapper
-   inherits tabbar-band's padding-inline, so: (a) enforce show/hide on [hidden];
-   (b) bleed the panel back to full viewport width (negative margin cancels the
-   tabbar gutter) so worldcup's tinted band stays full-bleed; (c) re-apply the
-   page gutter to the inner content so it never glues to the left edge (this is
-   the alignment fix the coordinator called out). */
+/* tab panels (REAL switch, hideList → triggers are in the nav). The Tabs node,
+   each panel, and the 首页 wrapper carry NO gutter and stay full width so band
+   backgrounds bleed edge-to-edge (the bands own the gutter above); only the
+   active panel shows. */
+.page-root .jr-tabs,
+.page-root .jr-tabs-content,
+.page-root .tabpanel{width:100%;margin:0;padding-inline:0}
 .page-root .jr-tabs-content[hidden]{display:none}
-.page-root .jr-tabs-content{margin-inline:calc(-1 * var(--pad-x))}
-.page-root .jr-tabs-content > *{padding-inline:var(--pad-x, max(28px, calc((100% - 1340px) / 2)))}
 
 /* world.cup — tinted band */
 .page-root .worldcup{background:#F1F0F4;padding-top:40px;padding-bottom:56px}
@@ -484,7 +673,14 @@ theme_css = ~S"""
 uri = Ezagent.URI.session("system", :hello, "web")
 {:ok, _s, builder} = EzagentPluginHello.App.ensure_app("system", "web")
 IO.puts("driving body + shell into session://system/hello/web ...")
-EzagentPluginHello.TurnDriver.drive(uri, body, "ruihua v2: full-width bands + ruihua SVGs + live github", builder)
+
+EzagentPluginHello.TurnDriver.drive(
+  uri,
+  body,
+  "ruihua v2: full-width bands + ruihua SVGs + live github",
+  builder
+)
+
 EzagentPluginHello.TurnDriver.set_shell(uri, builder, "", theme_css)
 IO.puts("waiting for async publish (13s)...")
 Process.sleep(13_000)

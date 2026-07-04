@@ -111,8 +111,21 @@ defmodule EzagentPluginHello.TurnDriver do
   builder identity. No-ops on blank text.
   """
   @spec say(URI.t(), URI.t(), String.t()) :: :ok | {:ok, term()} | {:error, term()}
-  def say(%URI{} = session_uri, %URI{} = actor, text) when is_binary(text) and text != "" do
-    msg = Ezagent.Message.new(actor, %{text: text, attachments: []})
+  def say(session_uri, actor, text), do: say_nav(session_uri, actor, text, nil)
+
+  @doc """
+  Like `say/3`, but the message body ALSO carries an optional `nav` action map
+  (`%{"type" => "switch_tab" | "scroll_to" | "open_url", "value" => ...}`) that
+  the viewer executes locally — the concierge's navigation-first replies (switch a
+  tab / scroll / open a link). No-ops on blank text; `nil` nav == a plain `say`.
+  """
+  @spec say_nav(URI.t(), URI.t(), String.t(), map() | nil) ::
+          :ok | {:ok, term()} | {:error, term()}
+  def say_nav(%URI{} = session_uri, %URI{} = actor, text, nav)
+      when is_binary(text) and text != "" do
+    body = %{text: text, attachments: []}
+    body = if is_map(nav), do: Map.put(body, "nav", nav), else: body
+    msg = Ezagent.Message.new(actor, body)
 
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.with_action(session_uri, :session, :send),
@@ -126,7 +139,7 @@ defmodule EzagentPluginHello.TurnDriver do
     })
   end
 
-  def say(_session_uri, _actor, _text), do: :ok
+  def say_nav(_session_uri, _actor, _text, _nav), do: :ok
 
   @doc """
   Store the (already-sanitised) HTML site-frame for the customer page, via the

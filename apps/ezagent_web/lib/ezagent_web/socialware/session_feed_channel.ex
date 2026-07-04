@@ -302,10 +302,23 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   defp viewer(socket) do
     case signed_in_principal(socket) do
       %URI{} = principal ->
-        %{logged_in: true, member: member?(socket.assigns.session_uri, principal)}
+        %{
+          logged_in: true,
+          member: member?(socket.assigns.session_uri, principal),
+          name: principal_name(principal)
+        }
 
       _ ->
         %{logged_in: false, member: false}
+    end
+  end
+
+  # The short username the nav shows when logged in (the identity name segment,
+  # e.g. entity://system/user/ruihua → "ruihua"); falls back to the full URI.
+  defp principal_name(%URI{} = principal) do
+    case Ezagent.URI.name(principal) do
+      {:ok, name} -> name
+      _ -> URI.to_string(principal)
     end
   end
 
@@ -317,7 +330,10 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   end
 
   defp member?(session_uri, %URI{} = principal) do
-    match?({:ok, _}, ExternalFeed.snapshot(session_uri, principal))
+    # STRICT membership — not `snapshot/2`, which now also succeeds for a
+    # public_view non-member reader. A non-member must read `member: false` so the
+    # surface offers "加入" (join) rather than the "发送" composer.
+    ExternalFeed.member?(session_uri, principal)
   end
 
   defp dispatch_join(session_uri, %URI{} = principal) do
@@ -336,7 +352,7 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   defp dispatch_post(session_uri, %URI{} = principal, text) do
     msg =
       Ezagent.Message.new(principal, %{text: text, attachments: []},
-        mentions: [builder_uri(session_uri)]
+        mentions: [orchestrator_uri(session_uri)]
       )
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -347,10 +363,19 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     })
   end
 
-  defp builder_uri(session_uri) do
+  # EVERY user message goes to the invisible ORCHESTRATOR (the `hello.orchestrator`
+  # front-desk agent). It — not this web layer — decides per message, by intent ×
+  # identity, whether the message goes to the page builder or the read-only
+  # concierge (owner-vs-visitor is read from the session slice inside the
+  # orchestrator's `EzagentPluginHello.Router`). The chat fan-out is mention-gated
+  # (`Behavior.Session` §:send), so mentioning exactly the orchestrator is the whole
+  # ingress; builder/concierge never receive the user message directly.
+  defp orchestrator_uri(session_uri), do: hello_agent_uri(session_uri, "orch_")
+
+  defp hello_agent_uri(session_uri, prefix) do
     ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
-    Ezagent.URI.entity(ws, :agent, "hello_#{name}")
+    Ezagent.URI.entity(ws, :agent, "#{prefix}#{name}")
   end
 
   defp push_viewer_snapshot(socket) do

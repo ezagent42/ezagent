@@ -1,7 +1,7 @@
 import React from "react"
-import {Bug, ChevronUp, Copy, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
 
-import {Button} from "./ui/primitives"
+import {Button, Modal} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 
@@ -69,6 +69,7 @@ export type ConversationState = {
   agent_uri?: string | null
   session_uri?: string | null
   caller_uri?: string | null
+  is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
   pty_alive?: boolean
@@ -96,6 +97,10 @@ type Props = {
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+  // Publish this (hello) session as a reusable SessionTemplate carrying the
+  // current page + agent (not the chat history). Operator-only; the button lives
+  // in the page-preview overlay, so it never shows on the public share page.
+  onPublishTemplate: (sessionUri: string, name: string) => void
 }
 
 // The conversation island is keyed by session_uri in `main.tsx`, so a session
@@ -120,6 +125,7 @@ export function Conversation({
   onPtyInput,
   onPtyResize,
   onServerEvent,
+  onPublishTemplate,
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
@@ -129,7 +135,10 @@ export function Conversation({
   // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the external surface. See HelloPagePreview below.
-  const isHelloSession = sessionUri.includes("/hello/")
+  // Server-detected (has a `:surface` slice) so a session from a PUBLISHED hello
+  // template — whose URI carries the template name, not `/hello/` — still gets the
+  // Page pane. Falls back to the URI check.
+  const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
@@ -622,7 +631,7 @@ export function Conversation({
             </div>
             {isHelloSession && (
               <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} />
+                <HelloPagePreview sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
               </div>
             )}
           </div>
@@ -884,21 +893,101 @@ function kindLabel(kind: string, mine: boolean) {
 // until then this is a clearly-labelled stopgap so an internal reader can see the page
 // without leaving the console. Hello sessions are `public_view`, so the customer
 // URL renders with no token/login.
-function HelloPagePreview({sessionUri}: {sessionUri: string}) {
+function HelloPagePreview({
+  sessionUri,
+  onPublishTemplate,
+}: {
+  sessionUri: string
+  onPublishTemplate: (sessionUri: string, name: string) => void
+}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
+  const [publishOpen, setPublishOpen] = React.useState(false)
+  const [name, setName] = React.useState("")
+  const [published, setPublished] = React.useState(false)
+
+  // Publish the current session as a template. The dispatch is fire-and-forget
+  // (world:dispatch), so confirm optimistically — the new template appears in the
+  // New-session dropdown once the server finishes.
+  const doPublish = () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    onPublishTemplate(sessionUri, trimmed)
+    setPublishOpen(false)
+    setName("")
+    setPublished(true)
+    window.setTimeout(() => setPublished(false), 3000)
+  }
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <a
-        href={src}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="absolute right-2.5 top-2.5 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
-        title="在新标签页打开公开页面 / Open public page in a new tab"
-        aria-label="Open public page in a new tab"
-      >
-        <ExternalLink aria-hidden="true" className="h-4 w-4" />
-      </a>
+      {/* operator-only overlay controls — never rendered on the public share page */}
+      <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
+        <a
+          href={src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
+          title="在新标签页打开公开页面 / Open public page in a new tab"
+          aria-label="Open public page in a new tab"
+        >
+          <ExternalLink aria-hidden="true" className="h-4 w-4" />
+        </a>
+        <button
+          type="button"
+          onClick={() => setPublishOpen(true)}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
+          title="发布为模板 / Publish as template"
+          aria-label="Publish as template"
+        >
+          <Upload aria-hidden="true" className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* antd `message.success`-style toast: page-wide, horizontally centered near
+          the top, white pill + green check + shadow, slides down. `fixed` so it
+          centers on the whole viewport (not tucked beside the publish button). */}
+      {published && (
+        <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
+          <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
+            <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
+            已发布为模板
+          </div>
+        </div>
+      )}
+
       <iframe title="Rendered page" src={src} className="min-h-0 flex-1 border-0 bg-white" />
+
+      <Modal
+        open={publishOpen}
+        title="发布为模板 / Publish as template"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPublishOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={doPublish} disabled={!name.trim()}>
+              发布
+            </Button>
+          </>
+        }
+      >
+        <label className="block text-sm">
+          <span className="mb-1.5 block text-muted-foreground">发布物名称 · Template name</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") doPublish()
+            }}
+            placeholder="例如 官网模板 v1"
+            className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+        </label>
+        <p className="mt-2 text-xs text-muted-foreground">
+          发布后可在新建 session 的 Template 下拉里选到它 — 会带上当前页面与 agent,不含历史对话。
+        </p>
+      </Modal>
     </div>
   )
 }

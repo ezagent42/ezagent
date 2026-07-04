@@ -82,6 +82,11 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &Ezagent.World.SessionForkAction.fork_config(socket, &1, args))
   end
 
+  def handle_dispatch(socket, "session.publish_template", %{"session_uri" => sid, "name" => name})
+      when is_binary(name) do
+    with_session(socket, sid, &publish_template(socket, &1, name))
+  end
+
   def handle_dispatch(socket, "session.view.switch", %{"session_uri" => sid, "view" => view})
       when is_binary(view) do
     with_session(socket, sid, &switch_view(socket, &1, view))
@@ -291,6 +296,13 @@ defmodule Ezagent.World.ConversationActions do
            &Ezagent.Workspace.create_session/3
          ) do
       {:ok, %URI{} = session_uri} ->
+        # A session created from a PUBLISHED hello template needs its invisible
+        # ORCHESTRATOR front desk — the generic create path installs the socialware
+        # behaviours + seeds the captured page, but does not spawn the per-session
+        # orchestrator (which then lazily spawns builder / concierge on demand).
+        # hello no-ops for a non-page session; best-effort so it never blocks create.
+        _ = ensure_hello_orchestrator(session_uri)
+
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
@@ -301,6 +313,67 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
+  defp ensure_hello_orchestrator(%URI{} = session_uri) do
+    # The invisible front-desk orchestrator — ALL user messages route to it, and it
+    # spawns the owner-facing builder + read-only concierge on demand. No-op for a
+    # non-page session; best-effort.
+    _ = EzagentPluginHello.App.ensure_session_orchestrator(session_uri)
+    :ok
+  rescue
+    e ->
+      Logger.warning(
+        "world: hello orchestrator ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
+      )
+
+      :error
+  end
+
+  # Publish the current session as a reusable SessionTemplate (via the orchestrator
+  # `save_template_as` tool, which snapshots the socialware definition + config and
+  # — through `capture_seed_surface` — the current page, but NOT the chat history).
+  # The template lands in the SESSION's workspace so its socialware definition
+  # resolves; it then appears in the New-session Template dropdown.
+  @spec publish_template(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  defp publish_template(socket, %URI{} = session_uri, name) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    trimmed = String.trim(name)
+
+    if trimmed == "" do
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "error:template_name_required")
+       |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
+    else
+      case Ezagent.Orchestrator.Tools.Templates.save_template_as(trimmed,
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             caller: caller,
+             caps: caps
+           ) do
+        {:ok, %URI{}} ->
+          {:noreply,
+           socket
+           |> assign(:last_dispatch_status, "ok")
+           |> push_event("world:state", %{"publish_notice" => "已发布为模板"})}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+           |> push_event("world:state", %{"publish_error" => "发布失败：#{reason(reason)}"})}
+      end
+    end
+  end
+
+  # No silent drop (Invariant #9): surface a session-create failure on the
+  # sessions table via the SAME `world:state` channel the route renders from
+  # (the React `SessionsTable` reads `state.create_error` and shows a banner).
+  # F3: before this, a create error only set the `data-last-dispatch` attribute
+  # and the operator saw nothing. The success path push_patch-remounts with
+  # fresh server state, which carries no `create_error`, so the banner clears.
   defp push_session_create_error(socket, reason) do
     socket
     |> assign(:last_dispatch_status, "error:#{reason(reason)}")

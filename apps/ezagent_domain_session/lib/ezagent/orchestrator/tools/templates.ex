@@ -62,6 +62,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
         |> Map.put(:name, new_name)
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
+        |> maybe_put_seed_surface(session_uri)
 
       case SessionTemplate.persist_version(content, workspace_uri,
              caller: caller_uri,
@@ -130,6 +131,35 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
       template_hash!(template_uri),
       caller_uri
     )
+  end
+
+  # Capture the session's CURRENT approved Surface page + theme into the template
+  # content as `seed_surface`, so a session created from this template renders the
+  # same page (see `Ezagent.Session.SurfaceSeed`). Core-only (reads the `:surface`
+  # slice via `Ezagent.Kind.get_slice`); a session with no surface / no approved
+  # version is left untouched. Never carries conversation history.
+  defp maybe_put_seed_surface(content, %URI{} = session_uri) do
+    case capture_seed_surface(session_uri) do
+      %{} = seed -> Map.put(content, :seed_surface, seed)
+      _ -> content
+    end
+  end
+
+  defp capture_seed_surface(session_uri) do
+    with {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(session_uri, :surface),
+         approved when not is_nil(approved) <-
+           Map.get(slice, :approved) || Map.get(slice, "approved"),
+         versions when is_map(versions) <- Map.get(slice, :versions) || Map.get(slice, "versions"),
+         %{} = version <- Map.get(versions, approved),
+         tree when is_map(tree) <- Map.get(version, :tree) || Map.get(version, "tree") do
+      %{
+        tree: tree,
+        shell: Map.get(slice, :shell) || Map.get(slice, "shell") || "",
+        shell_css: Map.get(slice, :shell_css) || Map.get(slice, "shell_css") || ""
+      }
+    else
+      _ -> nil
+    end
   end
 
   defp template_hash!(%URI{} = uri) do

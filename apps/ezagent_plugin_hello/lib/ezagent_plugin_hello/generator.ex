@@ -39,6 +39,123 @@ defmodule EzagentPluginHello.Generator do
     end)
   end
 
+  @doc "Spawn a supervised Task that answers a visitor question as the CONCIERGE — a read-only navigation/Q&A assistant that NEVER touches the Surface."
+  @spec concierge_start(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  def concierge_start(%URI{} = session_uri, user_text, %URI{} = concierge_uri)
+      when is_binary(user_text) do
+    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+      concierge_answer(session_uri, user_text, concierge_uri)
+    end)
+  end
+
+  @doc """
+  Classify a PAGE-OWNER message as page `:builder` (change/create the page) vs
+  read-only `:concierge` (question / navigation), via one cheap LLM round-trip
+  (`Prompts.route_system/0`). Fail-closed to `:builder` — the owner is here to
+  build, and a mis-route to the builder is recoverable (it just regenerates),
+  whereas losing a build request is not. Used by the `hello.orchestrator` router
+  for OWNER messages only; non-owner messages never reach here (they route to the
+  concierge by identity, before any LLM call).
+  """
+  @spec classify_intent(String.t()) :: :builder | :concierge
+  def classify_intent(user_text) when is_binary(user_text) do
+    case call_llm(Prompts.route_system(), user_text) do
+      {:ok, %{content: content}} when is_binary(content) ->
+        interpret_intent(content)
+
+      other ->
+        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → builder")
+        :builder
+    end
+  end
+
+  @doc """
+  Interpret the router model's one-word answer. `ASK` (anywhere in the reply) →
+  `:concierge`; anything else → `:builder` (fail-open to build, the owner default).
+  Pure — split out so the routing policy is unit-testable without the LLM.
+  """
+  @spec interpret_intent(String.t()) :: :builder | :concierge
+  def interpret_intent(content) when is_binary(content) do
+    if content |> String.upcase() |> String.contains?("ASK"),
+      do: :concierge,
+      else: :builder
+  end
+
+  @doc """
+  Answer a visitor's question grounded ONLY in the current page content, and post
+  the reply as a chat message from `concierge_uri`. Read-only BY CONSTRUCTION: it
+  reads the approved Surface tree + calls the LLM, but writes NOTHING back to the
+  Surface — the concierge can never edit / generate / publish the page.
+  """
+  @spec concierge_answer(URI.t(), String.t(), URI.t()) :: :ok
+  def concierge_answer(%URI{} = session_uri, user_text, %URI{} = concierge_uri)
+      when is_binary(user_text) do
+    Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
+    page = current_body_tree(session_uri)
+
+    case call_llm(Prompts.concierge_system(), concierge_user_prompt(page, user_text)) do
+      {:ok, %{content: content}} when is_binary(content) and content != "" ->
+        {say, nav} = parse_concierge(content)
+        TurnDriver.say_nav(session_uri, concierge_uri, say, nav)
+
+      other ->
+        Logger.warning("hello.Generator: concierge answer failed: #{inspect(other)}")
+
+        TurnDriver.say(
+          session_uri,
+          concierge_uri,
+          gettext("Sorry — I can't answer that right now.")
+        )
+    end
+
+    :ok
+  end
+
+  # Parse the concierge model's `{"say","nav"}` JSON (lenient — grab the outermost
+  # `{...}`, which also strips any stray reasoning the backend prepends). On any
+  # failure fall back to the raw text with no nav. `nav` is WHITELISTED here — the
+  # viewer only ever receives a known action type + a value, never arbitrary code.
+  defp parse_concierge(content) do
+    json =
+      case Regex.run(~r/\{.*\}/s, content) do
+        [match] -> match
+        _ -> ""
+      end
+
+    case Jason.decode(json) do
+      {:ok, %{"say" => say} = obj} when is_binary(say) and say != "" ->
+        {String.trim(say), sanitize_nav(Map.get(obj, "nav"))}
+
+      _ ->
+        {String.trim(content), nil}
+    end
+  end
+
+  defp sanitize_nav(%{"type" => type, "value" => value})
+       when is_binary(value) and value != "" and
+              type in ["switch_tab", "scroll_to", "open_url"] do
+    %{"type" => type, "value" => value}
+  end
+
+  defp sanitize_nav(_), do: nil
+
+  defp concierge_user_prompt(page, user_text) when is_map(page) do
+    """
+    The website's current page content (json-render spec — answer ONLY from this;
+    it includes the products, the world.cup progress data, and the team):
+
+    ```json
+    #{Jason.encode!(page)}
+    ```
+
+    Visitor's question:
+
+    #{user_text}
+    """
+  end
+
+  defp concierge_user_prompt(_page, user_text), do: user_text
+
   @doc """
   Generate a page and land it on `session_uri`'s Surface. Every request goes
   through the single-page path (`generate_simple/4`): a FRESH session builds the

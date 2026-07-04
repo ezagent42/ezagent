@@ -1055,7 +1055,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   defp count_calls_in_source(source, match_fun) when is_function(match_fun, 2) do
     case Code.string_to_quoted(source) do
       {:ok, ast} ->
-        collect_remote_call_lines(ast, module_alias_map(ast), allowed_lines_in_source(source), match_fun)
+        collect_remote_call_lines(
+          ast,
+          module_alias_map(ast),
+          allowed_lines_in_source(source),
+          match_fun
+        )
         |> length()
 
       {:error, _} ->

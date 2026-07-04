@@ -93,7 +93,11 @@ defmodule EzagentCore.Architecture.SpawnChokepointTest do
       end
       """
 
-      refute Enum.any?(String.split(source, "\n"), &Regex.match?(~r/Ezagent\.Workspace\.create_session\(/, &1))
+      refute Enum.any?(
+               String.split(source, "\n"),
+               &Regex.match?(~r/Ezagent\.Workspace\.create_session\(/, &1)
+             )
+
       assert Scan.count_create_session_calls_in_source(source) == 1
     end
 

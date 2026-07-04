@@ -2,7 +2,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   @moduledoc """
   The hello Phase-0 vertical slice, end to end on the substrate (no live LLM):
 
-      App.ensure_app (public_view session + joined builder member)
+      App.ensure_app (public_view session + joined orchestrator front desk)
         → TurnDriver.drive(session, spec)            # the page chokepoint
         → Behavior.Surface.put_version + approve     # via turn.compose/settle
         → ExternalFeed.snapshot(session, anon)       # what the anon visitor sees
@@ -24,13 +24,23 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
   setup do
+    # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
+    # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
+    # seeds it, but that write is outside this DataCase sandbox transaction (and the
+    # ETS cache can be flushed by another test) — so seed the roles here (idempotent).
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+
+    Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
+      {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
+    end)
+
     ws = "hello-e2e-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
-    {:ok, session_uri, builder_uri} = App.ensure_app(ws, "main")
+    {:ok, session_uri, orchestrator_uri} = App.ensure_app(ws, "main")
     anon = mint_and_join_anon(session_uri)
 
-    %{session: session_uri, builder: builder_uri, caller: anon}
+    %{session: session_uri, orchestrator: orchestrator_uri, caller: anon}
   end
 
   # The production anonymous ingress (ExternalFeedController.mint_fresh): mint a
@@ -93,13 +103,13 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Enum.any?(snapshot.messages, &(text_of(&1) == "Generated your page."))
   end
 
-  test "ensure_app joins the builder without minting an orchestrator cap", ctx do
-    builder = ctx.builder
+  test "ensure_app joins the orchestrator front desk without minting a within-session cap", ctx do
+    orchestrator = ctx.orchestrator
 
-    assert %{^builder => %{role_name: "builder"}} =
+    assert %{^orchestrator => %{role_name: "orchestrator"}} =
              Ezagent.Orchestrator.Tools.read_members(ctx.session)
 
-    {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(ctx.builder, :identity)
+    {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(ctx.orchestrator, :identity)
 
     refute Enum.any?(caps, fn
              %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->

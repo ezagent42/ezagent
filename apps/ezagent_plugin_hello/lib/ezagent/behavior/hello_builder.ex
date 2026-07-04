@@ -37,11 +37,11 @@ defmodule Ezagent.ActionSet.HelloBuilder do
     description: "Generate a page from an inbound user request"
   )
 
-  # The builder Kind is `Ezagent.Entity.HelloBuilder` (type_name :hello_builder),
-  # so the cap subject keys on the `:hello_builder` axis (mirrors echo's `:echo`).
-  def required_caps do
-    %{receive: Ezagent.Capability.cap(:hello_builder, __MODULE__, :receive)}
-  end
+  # No hand-written `required_caps`: this behavior now runs on the unified
+  # `Ezagent.Entity.Agent` (as a `hello.builder` role on the `native` flavor), so
+  # the Lifecycle macro derives the `:receive` cap on the `:agent` axis — the axis
+  # the role's minted caps use (RoleStep mints `kind: :agent`). Mirrors the kanban
+  # role behavior, which likewise declares only the `action/3` `caps:`.
 
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}

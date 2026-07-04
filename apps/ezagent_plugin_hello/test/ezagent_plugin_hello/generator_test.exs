@@ -13,7 +13,11 @@ defmodule EzagentPluginHello.GeneratorTest do
         "type" => "Stack",
         "props" => %{"direction" => "vertical", "className" => "page-root"},
         "children" => [
-          %{"type" => "Heading", "props" => %{"text" => "Old title", "level" => 1}, "children" => []},
+          %{
+            "type" => "Heading",
+            "props" => %{"text" => "Old title", "level" => 1},
+            "children" => []
+          },
           %{
             "type" => "Stack",
             "props" => %{"className" => "cta"},
@@ -30,13 +34,22 @@ defmodule EzagentPluginHello.GeneratorTest do
 
     test "set merges props on the addressed node, leaving the rest untouched", %{page: page} do
       patched =
-        Generator.apply_patch(page, [%{"op" => "set", "id" => "n1", "props" => %{"text" => "New title"}}])
+        Generator.apply_patch(page, [
+          %{"op" => "set", "id" => "n1", "props" => %{"text" => "New title"}}
+        ])
 
       assert get_in(patched, ["children", Access.at(0), "props", "text"]) == "New title"
       # level preserved (merge, not replace); the rest of the tree unchanged.
       assert get_in(patched, ["children", Access.at(0), "props", "level"]) == 1
 
-      assert get_in(patched, ["children", Access.at(1), "children", Access.at(0), "props", "label"]) ==
+      assert get_in(patched, [
+               "children",
+               Access.at(1),
+               "children",
+               Access.at(0),
+               "props",
+               "label"
+             ]) ==
                "Buy"
 
       # ids are stripped from the result.
@@ -45,9 +58,18 @@ defmodule EzagentPluginHello.GeneratorTest do
 
     test "set reaches a deeply nested node by id", %{page: page} do
       patched =
-        Generator.apply_patch(page, [%{"op" => "set", "id" => "n3", "props" => %{"label" => "Start free"}}])
+        Generator.apply_patch(page, [
+          %{"op" => "set", "id" => "n3", "props" => %{"label" => "Start free"}}
+        ])
 
-      assert get_in(patched, ["children", Access.at(1), "children", Access.at(0), "props", "label"]) ==
+      assert get_in(patched, [
+               "children",
+               Access.at(1),
+               "children",
+               Access.at(0),
+               "props",
+               "label"
+             ]) ==
                "Start free"
     end
 
@@ -66,7 +88,9 @@ defmodule EzagentPluginHello.GeneratorTest do
 
     test "insert adds a child at the parent (append when no index)", %{page: page} do
       new = %{"type" => "Text", "props" => %{"text" => "Sub"}, "children" => []}
-      patched = Generator.apply_patch(page, [%{"op" => "insert", "parent" => "n0", "node" => new}])
+
+      patched =
+        Generator.apply_patch(page, [%{"op" => "insert", "parent" => "n0", "node" => new}])
 
       kids = patched["children"]
       assert length(kids) == 3
@@ -77,7 +101,9 @@ defmodule EzagentPluginHello.GeneratorTest do
       new = %{"type" => "Text", "props" => %{"text" => "First"}, "children" => []}
 
       patched =
-        Generator.apply_patch(page, [%{"op" => "insert", "parent" => "n0", "index" => 0, "node" => new}])
+        Generator.apply_patch(page, [
+          %{"op" => "insert", "parent" => "n0", "index" => 0, "node" => new}
+        ])
 
       assert get_in(patched, ["children", Access.at(0), "props", "text"]) == "First"
     end
@@ -104,7 +130,14 @@ defmodule EzagentPluginHello.GeneratorTest do
 
       assert get_in(patched, ["children", Access.at(0), "props", "text"]) == "T2"
 
-      assert get_in(patched, ["children", Access.at(1), "children", Access.at(0), "props", "label"]) ==
+      assert get_in(patched, [
+               "children",
+               Access.at(1),
+               "children",
+               Access.at(0),
+               "props",
+               "label"
+             ]) ==
                "L2"
     end
   end

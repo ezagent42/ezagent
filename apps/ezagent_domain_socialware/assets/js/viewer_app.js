@@ -192,6 +192,35 @@ const IS_EMBEDDED = (() => {
   }
 })()
 
+// Count messages authored by an AGENT (sender `entity://…/agent/…`). Used to tell
+// a real reply apart from the member's OWN echoed message — only agent messages
+// count as "a reply arrived" (clears the typing indicator + lights the unread dot).
+function countAgents(msgs) {
+  if (!Array.isArray(msgs)) return 0
+  let n = 0
+  for (const m of msgs) {
+    if (m && typeof m.sender === "string" && m.sender.indexOf("/agent/") !== -1) n++
+  }
+  return n
+}
+
+// Execute a concierge navigation action on the page. The action is WHITELISTED
+// server-side (type ∈ switch_tab/scroll_to/open_url), so this only ever does one
+// of these three safe, local things.
+function execNav(nav) {
+  if (!nav || typeof nav !== "object") return
+  const value = nav.value ? String(nav.value) : ""
+  if (!value) return
+  if (nav.type === "switch_tab") {
+    window.dispatchEvent(new CustomEvent("jr-tab-switch", {detail: {value}}))
+  } else if (nav.type === "open_url") {
+    window.open(value, "_blank", "noopener,noreferrer")
+  } else if (nav.type === "scroll_to") {
+    const el = document.querySelector("." + value) || document.getElementById(value)
+    if (el && el.scrollIntoView) el.scrollIntoView({behavior: "smooth", block: "start"})
+  }
+}
+
 function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -205,10 +234,50 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState(null)
   const channelRef = useRef(null)
+  // Concierge navigation actions (switch_tab / scroll_to / open_url): execute the
+  // newest UNSEEN concierge reply's nav on the page. NO inline answer bubble — the
+  // member reads the reply by opening the session (the unread dot points them
+  // there). `conciergeSeen` baselines existing history so only NEW replies act.
+  const conciergeSeen = useRef(null)
+  // "Waiting for a reply" typing indicator; cleared only when a NEW agent message
+  // arrives — NOT the member's own echoed message. `awaitBaseAgent` = the agent
+  // message count captured at send time.
+  const [awaiting, setAwaiting] = useState(false)
+  const awaitTimer = useRef(null)
+  const awaitBaseAgent = useRef(0)
   useEffect(() => {
     document.body.classList.toggle("jr-highlight", jrHighlight)
     return () => document.body.classList.remove("jr-highlight")
   }, [jrHighlight])
+
+  // Execute the newest unseen concierge reply's nav action on the page.
+  useEffect(() => {
+    const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
+    const isConcierge = (m) =>
+      m && typeof m.sender === "string" && m.sender.indexOf("/agent/concierge") !== -1
+    if (conciergeSeen.current === null) {
+      conciergeSeen.current = new Set(msgs.filter(isConcierge).map((m) => m.id))
+      return
+    }
+    let latest = null
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (isConcierge(msgs[i])) {
+        latest = msgs[i]
+        break
+      }
+    }
+    if (!latest || conciergeSeen.current.has(latest.id)) return
+    conciergeSeen.current.add(latest.id)
+    execNav(latest.nav)
+  }, [snapshot])
+
+  // Clear the typing indicator once a NEW agent message arrives (agent count grows
+  // past the send-time baseline) — the member's own echoed message never clears it.
+  useEffect(() => {
+    if (!awaiting) return
+    const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
+    if (countAgents(msgs) > awaitBaseAgent.current) setAwaiting(false)
+  }, [snapshot, awaiting])
 
   useEffect(() => {
     const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
@@ -258,6 +327,16 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
       socket.disconnect()
     }
   }, [sessionUri, token, socketPath, topicPrefix])
+
+  // Publish the server-derived viewer identity (logged_in / member / name) so the
+  // json-render nav's auth button can reflect it. A catalog component can't see
+  // this React state, so it reads `window.__ezViewer` + the `jr-viewer` event —
+  // the SAME decoupling `jr-tab-switch` uses for the nav tabs.
+  useEffect(() => {
+    const v = (snapshot && snapshot.viewer) || {logged_in: false, member: false}
+    window.__ezViewer = v
+    window.dispatchEvent(new CustomEvent("jr-viewer", {detail: v}))
+  }, [snapshot])
 
   // Element-picking mode: hover outlines the element under the cursor; a click
   // captures it as `selected` and exits. Capture-phase listeners so a click
@@ -360,7 +439,7 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
         "data-empty": "true",
       },
       React.createElement("p", {className: "text-base font-medium text-foreground/70"}, "还没有页面"),
-      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里 @hello 描述你想要的页面,生成的页面会显示在这里。")
+      React.createElement("p", {className: "max-w-sm text-sm"}, "在聊天里描述你想要的页面,生成的页面会显示在这里。")
     )
   }
 
@@ -392,6 +471,12 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     ch.push("post", {text: full})
       .receive("error", (e) => console.warn("[hello] post failed:", e))
     setSelected(null)
+    // Baseline the current agent-message count; the typing indicator clears only
+    // when a NEW agent message pushes the count past this (not on our own echo).
+    awaitBaseAgent.current = countAgents(messages)
+    setAwaiting(true)
+    window.clearTimeout(awaitTimer.current)
+    awaitTimer.current = window.setTimeout(() => setAwaiting(false), 45000)
   }
   const doLogin = () => {
     const back = window.location.pathname + window.location.search
@@ -403,10 +488,20 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
     null,
     React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
+    !IS_EMBEDDED && awaiting
+      ? React.createElement(
+          "div",
+          {className: "concierge-bubble concierge-loading", key: "cl", "aria-label": "正在回复"},
+          React.createElement("span", {className: "typing-dot"}),
+          React.createElement("span", {className: "typing-dot"}),
+          React.createElement("span", {className: "typing-dot"}),
+        )
+      : null,
     IS_EMBEDDED
       ? null
       : React.createElement(PreviewBar, {
       viewer,
+      sessionUri,
       messages,
       chatOpen,
       setChatOpen,
@@ -453,10 +548,28 @@ body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-o
 //
 // Anon viewers are read-only BY CONSTRUCTION (the anon-User's caps deny
 // chat.send), so a disabled input is the honest affordance, not a security gate.
-function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
+function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
   const [draft, setDraft] = useState("")
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
+  // Unread hint on the open-session button: the chat panel no longer expands
+  // inline, so a new reply (from @hello / the concierge) lights a red dot to tell
+  // the member to open the session. Baseline = the message count at mount (so the
+  // already-loaded history is NOT counted as unread); a later increase lights it;
+  // opening the session clears it. Only members get replies / can open.
+  // Only an AGENT reply lights the unread dot — the member's OWN sent message must
+  // not (that was the "red dot appears the instant I send" bug).
+  const agentCount = countAgents(messages)
+  const prevAgentCount = React.useRef(agentCount)
+  const [unread, setUnread] = useState(false)
+  React.useEffect(() => {
+    if (member && agentCount > prevAgentCount.current) setUnread(true)
+    prevAgentCount.current = agentCount
+  }, [agentCount, member])
+  const openSession = () => {
+    setUnread(false)
+    window.open("/sessions?session=" + encodeURIComponent(sessionUri), "_blank", "noopener,noreferrer")
+  }
   const submit = () => {
     const t = draft.trim()
     if (!t || !member) return
@@ -508,10 +621,27 @@ function PreviewBar({viewer, messages, chatOpen, setChatOpen, onJoin, onPost, on
     React.createElement(
       "div",
       {className: "previewbar"},
+      // Open the full session (world console conversation view) in a new tab —
+      // NOT an inline panel. Enabled only for a joined member (login + join); an
+      // anon/guest sees it disabled (their speak/join rules are unchanged).
       React.createElement(
         "button",
-        {type: "button", className: "previewbar-toggle", onClick: () => setChatOpen((v) => !v), title: "查看会话", "aria-label": "查看会话"},
-        chatOpen ? "▾" : "▴"
+        {
+          type: "button",
+          className: "previewbar-toggle",
+          disabled: !member,
+          onClick: member ? openSession : undefined,
+          title: member
+            ? unread
+              ? "有新消息 · Open session (new reply)"
+              : "打开会话 · Open session (new tab)"
+            : "登录并加入后可打开会话",
+          "aria-label": "打开会话",
+        },
+        "↗",
+        unread && member
+          ? React.createElement("span", {className: "previewbar-dot", "aria-hidden": "true"})
+          : null,
       ),
       React.createElement("input", {
         className: "previewbar-input",
@@ -627,8 +757,17 @@ function shortSender(uri) {
 const PREVIEWBAR_CSS = `
 .previewbar-wrap{position:fixed;left:50%;bottom:1.25rem;transform:translateX(-50%);z-index:60;width:min(40rem,calc(100vw - 1.5rem));display:flex;flex-direction:column;gap:.5rem;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 .previewbar{display:flex;align-items:center;gap:.5rem;padding:.4rem .45rem .4rem .65rem;border-radius:999px;background:rgba(255,255,255,.72);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.65);box-shadow:0 1px 0 rgba(255,255,255,.9) inset,0 16px 44px rgba(0,0,0,.16)}
-.previewbar-toggle{flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#444;cursor:pointer;font-size:.85rem;line-height:1;transition:background .15s}
-.previewbar-toggle:hover{background:rgba(0,0,0,.1)}
+.previewbar-toggle{position:relative;flex-shrink:0;width:2.1rem;height:2.1rem;border-radius:999px;border:none;background:rgba(0,0,0,.05);color:#444;cursor:pointer;font-size:.85rem;line-height:1;transition:background .15s}
+.previewbar-toggle:hover:not(:disabled){background:rgba(0,0,0,.1)}
+.previewbar-toggle:disabled{opacity:.4;cursor:not-allowed}
+.previewbar-dot{position:absolute;top:.18rem;right:.18rem;width:.5rem;height:.5rem;border-radius:999px;background:#e5484d;box-shadow:0 0 0 2px rgba(255,255,255,.92)}
+.concierge-bubble{position:fixed;left:50%;bottom:5.2rem;transform:translateX(-50%);z-index:61;max-width:min(34rem,calc(100vw - 2rem));padding:.7rem 1rem;border-radius:1rem;background:rgba(255,255,255,.94);backdrop-filter:blur(20px) saturate(1.6);-webkit-backdrop-filter:blur(20px) saturate(1.6);border:1px solid rgba(255,255,255,.7);box-shadow:0 12px 34px rgba(0,0,0,.16);font-size:.9rem;line-height:1.5;color:#1a1a1a;animation:cb-in .2s cubic-bezier(.16,1,.3,1)}
+@keyframes cb-in{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+.concierge-loading{display:flex;gap:.32rem;align-items:center;padding:.7rem 1.05rem}
+.typing-dot{width:.42rem;height:.42rem;border-radius:999px;background:#9a9a9a;animation:typing 1.2s ease-in-out infinite}
+.typing-dot:nth-child(2){animation-delay:.18s}
+.typing-dot:nth-child(3){animation-delay:.36s}
+@keyframes typing{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-.18rem)}}
 .previewbar-input{flex:1;min-width:0;border:none;background:transparent;outline:none;font-size:.95rem;color:#181818;height:2.4rem;padding:0 .25rem}
 .previewbar-input:disabled{color:#8a8a8a;cursor:not-allowed}
 .previewbar-input::placeholder{color:#9a9a9a}

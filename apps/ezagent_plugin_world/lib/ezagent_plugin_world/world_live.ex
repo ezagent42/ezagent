@@ -259,7 +259,7 @@ defmodule EzagentPluginWorld.WorldLive do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.create session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
@@ -749,7 +749,9 @@ defmodule EzagentPluginWorld.WorldLive do
   defp workspace_name(_), do: nil
 
   defp list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
-    EzagentDomainInstanceMessage.list_sessions(workspace_uri)
+    # Durable listing (live + persisted) so sessions survive a cold server
+    # restart; a cold session revives on open (self_join → ensure_live).
+    EzagentDomainInstanceMessage.list_persisted_sessions(workspace_uri)
   rescue
     _ -> []
   end

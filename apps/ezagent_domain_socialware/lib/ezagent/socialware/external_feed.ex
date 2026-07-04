@@ -28,7 +28,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
   alias Ezagent.{ActionSet.Surface, MessageStore}
   alias Ezagent.Session.ExternalDelivery
   alias Ezagent.Session.Membership
-  alias Ezagent.Socialware.DeliveryOutbox
+  alias Ezagent.Socialware.{DeliveryOutbox, PublicView}
   alias Ezagent.URI, as: EzURI
   alias EzagentCore.Repo
 
@@ -45,7 +45,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
 
   @spec snapshot(URI.t(), URI.t() | term()) :: {:ok, map()} | {:error, :unauthorized}
   def snapshot(%URI{} = session_uri, caller) do
-    with :ok <- authorize(session_uri, caller) do
+    with :ok <- read_authorized(session_uri, caller) do
       {:ok,
        %{
          messages: MessageStore.committed_external_visible(session_uri, @history_limit),
@@ -77,7 +77,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
 
   @spec history(URI.t(), URI.t() | term()) :: {:ok, map()} | {:error, :unauthorized}
   def history(%URI{} = session_uri, caller) do
-    with :ok <- authorize(session_uri, caller) do
+    with :ok <- read_authorized(session_uri, caller) do
       {:ok, %{messages: MessageStore.committed_external_visible(session_uri, @history_limit)}}
     end
   end
@@ -92,7 +92,7 @@ defmodule Ezagent.Socialware.ExternalFeed do
   """
   @spec chat_messages(URI.t(), URI.t() | term()) :: {:ok, [map()]} | {:error, :unauthorized}
   def chat_messages(%URI{} = session_uri, caller) do
-    with :ok <- authorize(session_uri, caller) do
+    with :ok <- read_authorized(session_uri, caller) do
       {:ok, MessageStore.chat_visible_recent(session_uri, @history_limit)}
     end
   end
@@ -400,6 +400,33 @@ defmodule Ezagent.Socialware.ExternalFeed do
   defp authorize(session_uri, caller) do
     Membership.authorize(session_slice(session_uri), caller)
   end
+
+  # Page READ gate — deliberately BROADER than participation. A `public_view`
+  # session is readable by ANY caller (exactly the sessions where an anonymous
+  # visitor is admitted read-only at ingress), so a signed-in NON-member sees the
+  # same public page an anon visitor sees instead of a dead "无权限". A private
+  # (non-public) session stays strict member-only. This never grants write:
+  # posting, attachment downloads, and the `viewer.member` flag all keep using
+  # the strict `authorize/2` membership predicate (which is byte-equivalent with
+  # ChatFeed on the security boundary and is left untouched).
+  defp read_authorized(session_uri, caller) do
+    case authorize(session_uri, caller) do
+      :ok ->
+        :ok
+
+      {:error, _} = err ->
+        if PublicView.web_anon_access?(session_uri), do: :ok, else: err
+    end
+  end
+
+  @doc """
+  Strict live membership check (owner/member of the session), decoupled from the
+  page READ gate. A `public_view` reader who is NOT a member reads the public
+  page (`read_authorized/2`) but is `member?/2 == false`, so the surface shows
+  the "加入" affordance rather than the "发送" composer.
+  """
+  @spec member?(URI.t(), URI.t() | term()) :: boolean()
+  def member?(%URI{} = session_uri, caller), do: authorize(session_uri, caller) == :ok
 
   defp session_slice(session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do

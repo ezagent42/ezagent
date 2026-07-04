@@ -48,7 +48,11 @@ defmodule EzagentPluginHello.SpecTest do
         "children" => [
           %{"type" => "Heading", "props" => %{"text" => "H", "level" => 1}, "children" => []},
           %{"type" => "Text", "props" => %{"text" => "body"}, "children" => []},
-          %{"type" => "Button", "props" => %{"label" => "Go", "variant" => "primary"}, "children" => []}
+          %{
+            "type" => "Button",
+            "props" => %{"label" => "Go", "variant" => "primary"},
+            "children" => []
+          }
         ]
       }
 
