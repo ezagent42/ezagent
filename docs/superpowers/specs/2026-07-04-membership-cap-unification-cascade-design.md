@@ -325,6 +325,18 @@ Each claim below is grounded in code read in this worktree, tagged **CONFIRMED**
 
 ### R2.1 — 🔴 BLOCKER: REMOVE is NOT revoke-first — three distinct sequences (supersedes R1.3 LEAVE/REMOVE, §4.3, §8 removal)
 
+> **⚠️ ORDERING SUPERSEDED BY R3.1.** R2.1's ordering — "preflight the fail-closed
+> teardown/prune, revoke LAST, cap + roster + worker intact on any failure" — is
+> **impossible**: the teardown destructively runs `sandbox.destroy` on its accept
+> path *before* the revoke (`teardown.ex:90-94`), and the revoke is itself fallible
+> (`grant.ex:107-110`). R3.1 reframes it: the teardown's **authority** half stays in
+> the preflight (this is what still preserves test 11), but the **destructive** half
+> moves to best-effort *after* a confirmed, abort-safe revoke. New order:
+> `authority-preflight → revoke → best-effort destroy → roster-drop`. The
+> code-grounded analysis below (destructive teardown, fallible revoke, test-11
+> behavior) remains CONFIRMED and correct; only R2.1's *conclusion about ordering* is
+> replaced. **See R3.1.**
+
 **The bug in R1.3.** R1.3 wrote a single "LEAVE / REMOVE (revoke-first, roster-drop,
 no authz window)" sequence. That is **wrong for REMOVE**. `remove_participant` runs a
 **FALLIBLE, fail-closed teardown BEFORE any membership mutation**:
@@ -334,7 +346,7 @@ no authz window)" sequence. That is **wrong for REMOVE**. `remove_participant` r
 and the `:membership_only` branch additionally fail-closes on a routing-prune error
 (`membership.ex:668-685`). The spec's own **test 11** requires exactly this: a
 teardown-cap-denied removal leaves **BOTH the member-cap AND the projection entry
-intact** (spec §14 test 11, lines 966-967). **CONFIRMED.**
+intact** (spec §14 test 11). **CONFIRMED.**
 
 Under a naive "revoke-first" REMOVE, the member-cap would be revoked, then the
 teardown could reject — leaving the member **receive-denied / roster-dropped while
@@ -351,8 +363,8 @@ symmetry).**
    (`membership.ex:888`). CONFIRMED it exists.
 3. `do_join_apply` → projection `{:set, :members, …}` (`membership.ex:127-135`).
 4. Compensation: a commit failure AFTER the grant revokes the just-granted cap
-   (de-escalating, no authz — `grant.ex:108`). **See R2.4 for the pre-commit
-   replay/notify hazard this compensation cannot undo.**
+   (de-escalating, no authz — `grant.ex:108`). **See R3.2 (post-commit replay/notify)
+   for the pre-commit replay/notify hazard this compensation cannot undo.**
 
 **LEAVE (self-leave) — no fallible follow-up → revoke-then-drop is safe.**
 The self-leave path `leave_effects/2` has **NO fallible teardown/prune** — it is a
@@ -404,6 +416,15 @@ receive-deny, no reconcile" still holds: the removal goes through the teardown p
 the revoke lands (step 5 above), and R1.1's held-cap check denies the next receive.
 
 ### R2.2 — 🟠 HIGH: migration enumerates via repo (paginated read), mutates via the LIVE grant path (supersedes R1.5 write model + the "safe on a live dev DB" claim in R1.5/§8)
+
+> **⚠️ MECHANISM DEMOTED BY R3.2.** Round-3 flagged R2.2's naming of the idempotency
+> predicate (step 3) and the sync-grant flag (step 2) as over-specified — the wrong
+> predicate/flag was cited. The two *requirements* those steps were reaching for
+> survive as implementation constraints + acceptance tests in **R3.2** (idempotency
+> keyed on the exact member-cap identity; synchronous confirmed grants counted only on
+> committed `:ok`). The enumerate-via-repo / mutate-via-live-grant *shape* of R2.2
+> stands; the specific predicate/flag naming does not — the implementer picks it. **See
+> R3.2.**
 
 **The contradiction in R1.5.** R1.5 wanted the migration to be BOTH a repo-only
 write AND safe to run on live nodes. It cannot be both. The `GrantMigration`
@@ -507,28 +528,15 @@ returns its effects**: `Delivery.replay_messages_since/3` (`membership.ex:95`) a
 pre-commit. A compensating revoke can't un-replay a re-delivered message or un-send a
 "you joined" notification. **CONFIRMED.**
 
-**Resolution — PROPOSED (choose one in the plan; both bound the leak):**
-- **(preferred) Defer replay + notify to post-commit.** Emit them as post-commit
-  deferred work rather than inline, so they run only **after** the grant + join both
-  commit; a pre-commit failure that triggers the compensating revoke then has nothing
-  to un-replay/un-notify. The runtime already has a post-commit deferred path —
-  `Ezagent.Kind.DeferredDispatch.enqueue/1` (CONFIRMED precedent, documented at
-  `receive.ex:127-129`; the `{:dispatch, cmd}` effect is deferred to the back of the
-  mailbox, `receive.ex:227`). Note the effect grammar defers an **action dispatch**,
-  not a bare function call — so this means routing replay+notify through a minimal
-  post-commit `:post_join`-style dispatch, not returning `replay_messages_since` as
-  an effect directly. If that wiring reads clean, adopt it.
-- **(acceptable fallback) Bound the failure model explicitly.** If the deferred
-  wiring is architecturally awkward, state the bound: a join that commits the grant
-  then fails to commit the projection can leak **one message replay + one advisory
-  notification**. The notify is already best-effort/advisory and User-only
-  (`membership.ex:115` guards `user_uri?`), so its leak is benign; the **replay** is
-  the consequential one (a re-delivered message to a member who ends up not-joined).
-  This window is narrow (`do_join_apply` returns `{:ok, …}` unconditionally after
-  line 95 — the only failure is a runtime commit failure applying the effects), and
-  reconcile does not re-trigger it.
-
-**Prefer deferred.** The fallback is a documented bound, not a silent tolerance.
+**Resolution — DEMOTED to R3.2 (post-commit replay/notify as an implementation
+constraint).** Round-3 read R2.4's earlier "(acceptable fallback) bound the one-replay
+leak" branch as a *documented leak, not a closure* — so it is **DELETED**. The
+requirement is now singular and unconditional: replay + notify run **post-commit**,
+after BOTH the grant and the join commit, so a pre-commit failure has nothing to
+un-replay/un-notify and no replay reaches a member whose join never committed. The
+exact effect grammar (deferred dispatch vs inline) is the implementer's choice against
+the compiler — R3 does not name it. **See R3.2 (post-commit replay/notify) for the
+requirement + acceptance test.**
 
 ### R2.5 — 🟢 LOW: delete the stale bearer-token prose in §4.2 (finding #5)
 
@@ -547,6 +555,110 @@ R1.1 core (delete `member_receive_caps/1`, `:receive` `cap_exempt`,
 the R1.4 snapshot-scan shape (the session app already deps `ezagent_domain_agent`, so
 the placement is fine unless moved to core/identity) are **confirmed sound by codex
 round-2 and unchanged by R2.**
+
+---
+
+## R3 — Revision: codex round-3 fixes (2026-07-04)
+
+Codex round-3 confirmed the architecture SOUND — R1.1 core (roster⟂authz) and R2.3
+(two receive entry points) are NOT re-litigated and are NOT touched here. R3 does
+exactly two things: **(1)** applies the one real design fix round-3 found — the REMOVE
+invariant as stated in R2.1 is *impossible*, so it is reframed (R3.1); and **(2)**
+DEMOTES two over-specified R2 items to *implementation constraints + acceptance
+tests* (R3.2), stating WHAT MUST HOLD and the test that proves it, WITHOUT re-naming a
+predicate/flag/API (re-specifying mechanism is precisely what stalled rounds 2–3).
+**Precedence: R3 > R2 > R1 > original prose.**
+
+Each claim is tagged **CONFIRMED** (verified against this worktree) or **PROPOSED**
+(design choice for the plan).
+
+### R3.1 — 🔴 BLOCKER: the REMOVE invariant in R2.1 is impossible — reframe it (supersedes R2.1's ordering, §4.3 removal ordering, §8 removal, §11 K6, §12, §13)
+
+**Why R2.1 cannot hold.** R2.1 read `teardown_participant_resources/4` as a pure,
+fail-closed *authority preflight* and concluded REMOVE could "preflight all checks,
+revoke LAST, and leave cap + roster + worker intact on ANY failure." That is false:
+the teardown is **not** a pure permission check — it **destructively dispatches
+`sandbox.destroy` (irreversible worker termination)** on the accept path.
+`teardown_participant_resources/4` → `reap_spawned_worker/3` calls
+`owner_destroy_dispatch` and only *then* returns `{:ok, :worker}`
+(`teardown.ex:90-94`; the destroy + `config_dir` GC is documented at
+`teardown.ex:75-87`); it is invoked from the `:strict` remove path
+(`membership.ex:636-641`). And the revoke itself is **fallible**: `revoke_cap/3`
+returns `:ok | {:error, reason}` (`grant.ex:107-110`) and the commit can fail
+(`{:persistence_failed}`, `server.ex:620-630`). So on the accept path the worker is
+**already destroyed BEFORE the revoke runs**, and the revoke can then fail — which
+leaves *worker-dead + cap-held*. "Atomic remove; cap + roster + worker all intact on
+any failure" is therefore unachievable. **CONFIRMED** (fused destroy-before-revoke:
+`teardown.ex:90-94`; revoke fallible: `grant.ex:107-110`; commit fallible:
+`server.ex:620-630`).
+
+**The reframed REMOVE invariant (PROPOSED design; dissolves BOTH round-2's
+"revoke-first vs fail-closed teardown" AND round-3's "teardown is destructive" in one
+move).** Split the teardown's two fused concerns onto opposite sides of the revoke:
+
+- **teardown-AUTHORITY = a preflight** — a *pure permission check* (may this remover
+  tear this participant down?). On reject: **everything intact, zero mutation** (no
+  destroy, no revoke, no roster-drop). The current code **MIXES authority +
+  destruction** inside `teardown_participant_resources/4`; the requirement is that the
+  **authority check is separated OUT as a preflight** — the exact extraction (which
+  lines, what the pure check is named) is left to the implementer. This is what
+  **preserves test 11**: a teardown-cap-**denied** removal aborts *in the preflight,
+  before the revoke*, so cap + roster stay intact — exactly test 11's assertion.
+  (Authority/execution split: **PROPOSED**; currently fused: **CONFIRMED**.)
+- **security-critical member-cap REVOKE = synchronous, checked, ABORT-SAFE.** If the
+  revoke fails, the removal **ABORTS and the member is left FULLY INTACT** — a loud
+  error, never a silent partial proceed. This is let-it-crash aligned (Allen's hard
+  constraint: no silent partial state). The requirement is "synchronous + checked +
+  abort-on-failure"; do NOT prescribe a specific revoke-effect API. (Requirement:
+  **PROPOSED**; that revoke *can* fail and so MUST be checked: **CONFIRMED**,
+  `grant.ex:107-110`.)
+- **destructive teardown (`sandbox.destroy`) + roster-drop = best-effort, AFTER a
+  confirmed revoke,** with an explicitly-DEFINED lingering end-state. Once the cap is
+  revoked the member is **SECURE — it cannot receive** (R1.1: authz reads the held
+  cap, not the roster). A subsequently-failed worker-destroy or roster-drop is a
+  **RESOURCE leak, reconciled later — NOT a security regression.** Named reconcile
+  paths: a lingering **roster** entry whose backing cap is absent is dropped by
+  `reconcile_after_load/2` on next activate ("caps win", §4.3 / §13 — the coherence
+  spine, invariant #20); a lingering **worker** (revoke ok, `sandbox.destroy` failed)
+  is a **bounded** leak GC'd at session teardown via the best-effort
+  `cascade_teardown` reap plus the dead-orchestrator / junk-session
+  `Lifecycle.destroy` safety net (`teardown.ex:82-85, 120-150`) — there is no
+  continuous reaper, and R3 does not invent one.
+
+**Explicit ordering:** `authority-preflight → (confirmed) revoke → best-effort
+destructive teardown → roster-drop`. (Note this INVERTS R2.1, which placed the
+destructive teardown *before* the revoke; the destruction now moves *after* a
+confirmed revoke, and only the *authority* half stays in the preflight.)
+
+**§14.5 alignment (make it explicit).** The security done-gate (§14.5 step 5) asserts
+**revoke-happened → member cannot receive**, NOT worker-destroyed. So this reframed
+invariant is *exactly* what the done-gate already proves: the load-bearing property is
+the confirmed revoke (immediate receive-deny, no reconcile wait), and the destructive
+teardown is deliberately out of the security assertion. The reframe and the done-gate
+are the same claim. (§14.5 needs no assertion change — only a pointer note to R3.1.)
+
+### R3.2 — Implementation Constraints + Acceptance Tests (demotes R2.2 migration + R2.4 replay/notify from mechanism to requirement)
+
+Round-3 flagged three items in R2 as *over-specified* — they named the wrong
+predicate/flag/effect-grammar as the mechanism, which is what broke rounds 2–3. They
+are demoted here to **what must hold + the test that proves it, one sentence each**.
+The implementer picks the mechanism against the compiler; the spec does not.
+
+- **Migration idempotency** (round-3 HIGH; demotes R2.2 step 3). *Requirement:* the
+  migration keys on the **exact member-cap identity**, not on general authorization —
+  so a session whose owner already holds a broad `:any` cap **still gets its concrete
+  member-cap written**. *Test:* a session under an all-`:any` admin cap still receives
+  its concrete member-cap after migration.
+- **Migration grant confirmation** (round-3 HIGH; demotes R2.2 step 2). *Requirement:*
+  the migration uses **synchronous, CONFIRMED grants and counts only committed `:ok`
+  results**. *Test:* a grant whose commit fails is NOT counted as migrated.
+- **Post-commit replay / notify** (round-3 MED; supersedes R2.4). *Requirement:*
+  replay and notify run **POST-COMMIT — after BOTH the grant and the join have
+  committed**; no replay fires to a member whose join has not committed. *Test:* a
+  join that fails after the grant produces NO replay/notify to that member. (This
+  DELETES R2.4's "acceptable fallback / bound the one-replay leak" text — round-3
+  correctly read that as a *documented leak*, not a closure. Post-commit ordering is
+  now the requirement, not one option among two.)
 
 ---
 
@@ -868,10 +980,12 @@ projection (cache). Their coherence is the real risk. Resolution:
   A failed `do_join` AFTER the grant **compensates by revoking the just-granted
   cap** (so a role conflict / monitor failure never orphans a cap). For removal the
   ordering is NOT symmetric: **self-LEAVE** revokes then drops (no fallible
-  follow-up), but **REMOVE** preflights the fail-closed teardown/prune FIRST and
-  revokes only AFTER they pass (**R2.1 supersedes the earlier "symmetrically, revoke
-  FIRST" wording** — a revoke-first REMOVE would strand a receive-denied member on a
-  rejected removal). This mirrors the existing
+  follow-up), but **REMOVE** runs a pure teardown-**authority** preflight, then a
+  confirmed abort-safe revoke, then best-effort destructive teardown, then roster-drop
+  (**R3.1 supersedes R2.1's "revoke LAST after the destructive teardown" ordering** —
+  the destructive `sandbox.destroy` runs *after* the revoke, not before; only the
+  authority half stays in the preflight, which preserves test 11). This mirrors the
+  existing
   leave-FIRST / fail-closed-teardown discipline in `handle_remove_participant`
   (`.../membership.ex:624-687`). **R1.3 additionally specifies tests for the
   cap-only / roster-only / stale-cached-cap drift states** — and note that R1.1
@@ -1016,11 +1130,14 @@ universal base tier.
   *cleaner* (anon = holds member-cap, lacks send cap). The first-join owner-claim
   suppression for anon (`.../membership.ex:108`) is unaffected.
 - **Removal.** `:leave` and `:remove_participant` revoke the member-cap, plus the
-  existing routing-prune / worker-teardown. **Ordering per R2.1 (NOT uniform
+  existing routing-prune / worker-teardown. **Ordering per R3.1 (NOT uniform
   "revoke-first"):** self-`:leave` revokes then drops the projection (no fallible
-  follow-up); `:remove_participant` preflights the fail-closed teardown/prune and
-  revokes only AFTER they pass, then drops — so a rejected removal leaves cap + roster
-  intact (test 11). The `{:member_left}` broadcast still fires (convergence). Because
+  follow-up); `:remove_participant` runs the pure teardown-**authority** preflight
+  (reject ⇒ cap + roster intact, test 11), then a confirmed abort-safe revoke (revoke
+  fails ⇒ removal ABORTS, member fully intact), then best-effort destructive teardown
+  (`sandbox.destroy`) + roster-drop — a post-revoke destroy/drop failure is a resource
+  leak reconciled later (`reconcile_after_load/2` / session-teardown reap), never a
+  security regression. The `{:member_left}` broadcast still fires (convergence). Because
   revoke mutates the LEAVER's own `:identity` slice, removal now produces a
   slice-change on the leaver — which is exactly what closes the S1 removal-notify
   gap (§9, §11).
@@ -1153,11 +1270,14 @@ tuples (`{:within_workspace,_}` / `{:spawned_by,_}`) live in slices, not the JSO
 check reads live caps.) CONFIRMED.
 
 **K6 — member-cap is lifecycle-owned; grant-first (JOIN) / fail-closed removal**
-(§4.3). **REVISED (R2.1):** removal is NOT uniformly "revoke-first" — self-`:leave`
-revokes-then-drops, but `:remove_participant` preflights its fail-closed
-teardown/prune (`membership.ex:636-645, 668-685`) and revokes only AFTER they pass,
-so a rejected removal leaves cap + roster intact (test 11). CONFIRMED atomicity
-precedent: `handle_remove_participant` (`.../membership.ex:624-687`). **See R2.1.**
+(§4.3). **REVISED (R3.1, superseding R2.1):** removal is NOT uniformly "revoke-first" —
+self-`:leave` revokes-then-drops, and `:remove_participant` runs a pure teardown-
+**authority** preflight (reject ⇒ cap + roster intact, test 11), then a confirmed
+abort-safe revoke (revoke fails ⇒ ABORT, member intact), then best-effort destructive
+teardown + roster-drop (`membership.ex:636-645, 668-685`; `teardown.ex:90-94`). A
+post-revoke destroy/drop failure is a reconciled resource leak, not a security
+regression. CONFIRMED atomicity precedent: `handle_remove_participant`
+(`.../membership.ex:624-687`). **See R3.1.**
 
 **Confirmed-sound, do not re-litigate** (carried from S1 review): `do_join`
 mutates `:members` today (`.../membership.ex:127-135`); `slice_changed` is
@@ -1185,8 +1305,9 @@ all landing the same architecture. Phasing = review checkpoints, not scope forks
   (K1/R1.2) + the `ReceiveAuthzParityTest`; delete `member_receive_caps/1` (present
   NO cap — R1.1); move the socialware read predicate to held-cap (R1.1); wire
   leave/remove to revoke the member-cap with compensation (JOIN grant-first; LEAVE
-  revoke-then-drop; REMOVE preflight-then-revoke-last per **R2.1**); defer JOIN
-  replay+notify post-commit (**R2.4**); anon holds the member-cap. The receive-authz
+  revoke-then-drop; REMOVE authority-preflight → abort-safe revoke → best-effort
+  destroy → roster-drop per **R3.1**); run JOIN replay+notify post-commit (**R3.2**);
+  anon holds the member-cap. The receive-authz
   hook goes at the **two** real entry points, `Agent.Receive` before the bridge
   short-circuit (**R2.3**). Presence/monitors untouched. This
   phase carries the blast radius (receive authz, read authz, anon, removal) and is
@@ -1204,10 +1325,17 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 
 - **Grant failure at join (member-cap):** abort, no projection entry — fail-closed
   (§4.3, K6). Distinct from the best-effort `:send` grant (may degrade to observe).
-- **Revoke failure at leave:** do NOT drop the projection entry (revoke-first
-  discipline); log + telemetry; `reconcile_after_load/2` heals on next activate.
+- **Revoke failure at self-`:leave`:** do NOT drop the projection entry; log +
+  telemetry; `reconcile_after_load/2` heals on next activate (benign — the self-leaver
+  keeps access it was trying to shed, no security regression).
+- **Revoke failure at `:remove_participant` (security-critical):** per **R3.1** the
+  revoke is synchronous, checked, and **abort-safe** — a revoke failure **ABORTS the
+  removal, member left FULLY INTACT** (loud error, no partial proceed, no destructive
+  teardown run). This is the let-it-crash boundary: never silently proceed past a
+  failed security revoke. A destroy/roster-drop failure *after* a confirmed revoke is
+  the opposite case — best-effort, a reconciled resource leak, not an abort.
   Never leave a revoked cap with a live projection entry OR vice-versa silently —
-  reconcile is the backstop.
+  `reconcile_after_load/2` is the backstop.
 - **Reconcile reverse scan errors** (`list_in_workspace` / `read_entity_caps`
   raise): rescue per candidate, log `:warning`, keep the persisted projection entry
   (fail-safe toward existing membership rather than silently evicting a member on a
@@ -1350,6 +1478,13 @@ showing the cascade notice. This proves the human-visible cross-user path. The
 5** — and (B)'s two screenshots are captured. Step 5 is the single load-bearing
 assertion; if it cannot be made to pass without a reconcile, R1.1's roster/authz
 separation is not actually implemented and the feature is not done.
+
+**Alignment with R3.1 (reframed REMOVE invariant).** Step 5 asserts **revoke-happened
+→ member cannot receive**, NOT worker-destroyed. That is *exactly* the load-bearing
+property R3.1's reframe protects: the confirmed abort-safe revoke is the security
+boundary, and the destructive `sandbox.destroy` teardown is deliberately outside the
+assertion (a post-revoke resource concern, reconciled, not security). No assertion
+change is needed — the done-gate already proves the reframed invariant.
 
 ---
 
