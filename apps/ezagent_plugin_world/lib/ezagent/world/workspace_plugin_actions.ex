@@ -198,7 +198,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
          workspace_name <- Ezagent.URI.name!(workspace_uri),
          {:ok, socialware_definition} <- prepare_form_socialware(params),
          socialware_ref <- socialware_ref(socialware_definition),
-         content <- session_template_content(params, workspace_uri, socialware_ref),
+         {:ok, content} <- session_template_content(params, workspace_uri, socialware_ref),
          :ok <- authorize_template_save(workspace_uri, caller, name, content),
          {:ok, _saved_socialware_ref} <-
            save_prepared_socialware(socialware_definition, workspace_uri, caller),

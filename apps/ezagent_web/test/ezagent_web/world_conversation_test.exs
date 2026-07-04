@@ -602,6 +602,65 @@ defmodule EzagentWeb.WorldConversationTest do
     assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
   end
 
+  test "O-1: session.create with socialware_config_id pins the EXACT revision (content-hash-addressed install)",
+       %{conn: conn} do
+    # Proves the dispatch-glue (`socialware_config_id`/`socialware_content_hash`
+    # args → `socialware_revision/1` → `create_session/5` → `prepare_create_template/5`)
+    # threads the revision identity through to a BAKED pin — a silent-nil failure
+    # here would quietly revert to the name-keyed O-1 bug with no other test red.
+    system_ws = Ezagent.URI.workspace(:system)
+    ref = "cidglue-#{System.unique_integer([:positive])}"
+
+    {:ok, definition} =
+      Ezagent.Socialware.Definition.new(%{
+        name: ref,
+        title: "CID glue #{ref}",
+        bases: [Ezagent.ActionSet.Session],
+        shape: [],
+        visibility_policy: %{scope: :public, publish_policy: :auto, web_anon_access: false}
+      })
+
+    {:ok, object} =
+      Ezagent.Socialware.DefinitionRegistry.write_definition(definition,
+        workspace_uri: system_ws,
+        caller_workspace_uri: system_ws,
+        actor_uri: Ezagent.Entity.User.admin_uri()
+      )
+
+    short_name = "world-cid-#{System.unique_integer([:positive])}"
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    view
+    |> element("#world-root")
+    |> render_hook("world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => ref,
+        "socialware_config_id" => object.id,
+        "socialware_content_hash" => object.content_hash
+      }
+    })
+
+    template_name = "socialware-install-#{ref}"
+    new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
+    encoded = new_uri |> URI.to_string() |> URI.encode_www_form()
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+
+    assert %URI{} = template_uri = find_session_template_uri!(template_name, "system")
+    assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+
+    assert {:ok, [install]} =
+             Ezagent.Socialware.Installation.parsed_installs_from_template(content)
+
+    assert install.ref == ref
+    # The install template is PINNED to the exact revision the dispatch carried.
+    assert install.config_id == object.id
+    assert install.content_hash == object.content_hash
+  end
+
   test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()

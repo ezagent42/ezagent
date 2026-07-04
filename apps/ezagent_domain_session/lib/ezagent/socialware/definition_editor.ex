@@ -160,8 +160,25 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     end
   end
 
-  @doc "Template content containing only composition and lineage fields."
-  @spec composition_template_content(map(), URI.t() | nil, URI.t(), String.t() | nil) :: map()
+  @doc """
+  Template content containing only composition and lineage fields.
+
+  SECURITY (codex BLOCKER) — this is the user-facing template-author boundary. An
+  authored install is a BARE-NAME `ref` only. A pinned `config_id`/`content_hash`
+  is ONLY ever legitimately baked by the AUTHORIZED `World.SocialwareInstall`
+  flow (which resolves through the scope-gated
+  `DefinitionRegistry.resolve_installable_revision/3`), NEVER from user-supplied
+  template-save params. Were a user able to smuggle a `config_id` through here,
+  session materialization would resolve that pin via a raw
+  `ConfigStore.fetch_object/1` with NO installable-scope gate — installing a
+  PRIVATE foreign-workspace def by id. So any user-supplied install entry
+  carrying a `config_id` or `content_hash` is REJECTED loud with
+  `{:error, {:socialware_authored_pin_forbidden, offending_entry}}` (fail loud
+  over silent strip; the save path surfaces it as a template error). The
+  `install_ref` branch is always a bare name, so it is safe by construction.
+  """
+  @spec composition_template_content(map(), URI.t() | nil, URI.t(), String.t() | nil) ::
+          {:ok, map()} | {:error, term()}
   def composition_template_content(
         template_content,
         parent_uri,
@@ -169,19 +186,34 @@ defmodule Ezagent.Socialware.DefinitionEditor do
         install_ref \\ nil
       )
       when is_map(template_content) do
-    installs =
-      case install_ref do
-        ref when is_binary(ref) and ref != "" -> [ref]
-        _ -> Installation.installs_from_template(template_content)
-      end
-
-    %{
-      description: map_get(template_content, :description, ""),
-      default_workspace_uri: workspace_uri,
-      parent_template_uri: parent_uri,
-      installs: installs
-    }
+    with {:ok, installs} <- authored_installs(template_content, install_ref) do
+      {:ok,
+       %{
+         description: map_get(template_content, :description, ""),
+         default_workspace_uri: workspace_uri,
+         parent_template_uri: parent_uri,
+         installs: installs
+       }}
+    end
   end
+
+  defp authored_installs(_template_content, ref) when is_binary(ref) and ref != "",
+    do: {:ok, [ref]}
+
+  defp authored_installs(template_content, _install_ref) do
+    installs = Installation.installs_from_template(template_content)
+
+    case Enum.find(installs, &authored_install_pinned?/1) do
+      nil -> {:ok, installs}
+      offending -> {:error, {:socialware_authored_pin_forbidden, offending}}
+    end
+  end
+
+  defp authored_install_pinned?(entry) when is_map(entry) do
+    not is_nil(map_get(entry, :config_id)) or not is_nil(map_get(entry, :content_hash))
+  end
+
+  defp authored_install_pinned?(_entry), do: false
 
   defp template_content_for_session(%URI{} = session_uri, workspace_uri) do
     wc = Session.read_template_working_copy(session_uri)

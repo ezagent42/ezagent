@@ -9,6 +9,17 @@ defmodule Ezagent.World.SocialwareInstall do
   template.
   """
 
+  @typedoc """
+  Optional revision identity for a content-hash-addressed install (P1 §O-1). When
+  present, the install pins the EXACT `config_id` revision (scope-gated) instead
+  of resolving the bare `ref` name. `content_hash`, when set, is verified against
+  the resolved revision.
+  """
+  @type revision :: %{
+          required(:config_id) => String.t(),
+          optional(:content_hash) => String.t() | nil
+        }
+
   @doc """
   Return the template name that should be used for `session.create`.
 
@@ -16,15 +27,29 @@ defmodule Ezagent.World.SocialwareInstall do
   ref, this validates that the definition is visible/installable from the caller's
   workspace, writes a local install template, tags it `current`, and returns that
   local template name.
+
+  With a `revision` (`%{config_id: ...}`, P1 §O-1), the install is
+  content-hash-addressed: it pins the EXACT revision `config_id` names — resolved
+  through the scope-gated `DefinitionRegistry.resolve_installable_revision/3` (so
+  a foreign PUBLIC catalog card installs THAT revision, never a same-named local
+  def, and a PRIVATE foreign def can NOT be installed by supplying its
+  `config_id`). Without a revision the legacy bare-name path is unchanged.
   """
-  @spec prepare_create_template(URI.t(), URI.t(), String.t(), String.t() | nil) ::
-          {:ok, String.t()} | {:error, term()}
-  def prepare_create_template(_workspace_uri, _caller, template_name, ref)
+  @spec prepare_create_template(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          String.t() | nil,
+          revision() | nil
+        ) :: {:ok, String.t()} | {:error, term()}
+  def prepare_create_template(workspace_uri, caller, template_name, ref, revision \\ nil)
+
+  def prepare_create_template(_workspace_uri, _caller, template_name, ref, _revision)
       when ref in [nil, ""] do
     {:ok, template_name}
   end
 
-  def prepare_create_template(%URI{} = workspace_uri, %URI{} = caller, template_name, ref)
+  def prepare_create_template(%URI{} = workspace_uri, %URI{} = caller, template_name, ref, revision)
       when is_binary(ref) do
     ref = String.trim(ref)
 
@@ -33,17 +58,46 @@ defmodule Ezagent.World.SocialwareInstall do
     else
       template_name = "socialware-install-#{sanitize_template_name(ref)}"
 
-      with {:ok, _definition, _object} <- lookup_installable_socialware(workspace_uri, ref),
+      with {:ok, install_entry} <- resolve_install_entry(workspace_uri, ref, revision),
            {:ok, template_uri} <-
-             persist_install_template(workspace_uri, caller, template_name, ref),
+             persist_install_template(workspace_uri, caller, template_name, install_entry),
            :ok <- publish_current_template(workspace_uri, template_name, template_uri, caller) do
         {:ok, template_name}
       end
     end
   end
 
-  def prepare_create_template(_workspace_uri, _caller, _template_name, _ref),
+  def prepare_create_template(_workspace_uri, _caller, _template_name, _ref, _revision),
     do: {:error, :invalid_socialware_ref}
+
+  # Content-hash-addressed install (P1 §O-1): a revision identity resolves the
+  # EXACT immutable revision by its `config_id` through the scope-gated
+  # `resolve_installable_revision/3`, then bakes the pin (`config_id` +
+  # `content_hash`) into a MAP install entry. `Installation` freeze-pin honors it
+  # via `fetch_object/1`. Without a revision → the legacy bare-name entry.
+  defp resolve_install_entry(%URI{} = workspace_uri, _ref, %{config_id: config_id} = revision)
+       when is_binary(config_id) and config_id != "" do
+    expected_hash = Map.get(revision, :content_hash)
+
+    case Ezagent.Socialware.DefinitionRegistry.resolve_installable_revision(
+           workspace_uri,
+           config_id,
+           expected_hash
+         ) do
+      {:ok, definition, object} ->
+        {:ok, %{ref: definition.name, config_id: object.id, content_hash: object.content_hash}}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp resolve_install_entry(%URI{} = workspace_uri, ref, _revision) do
+    case lookup_installable_socialware(workspace_uri, ref) do
+      {:ok, _definition, _object} -> {:ok, ref}
+      {:error, _} = error -> error
+    end
+  end
 
   defp lookup_installable_socialware(%URI{} = workspace_uri, ref) when is_binary(ref) do
     case Ezagent.Socialware.DefinitionRegistry.lookup(workspace_uri, ref) do
@@ -52,14 +106,14 @@ defmodule Ezagent.World.SocialwareInstall do
     end
   end
 
-  defp persist_install_template(%URI{} = workspace_uri, %URI{} = caller, name, ref) do
+  defp persist_install_template(%URI{} = workspace_uri, %URI{} = caller, name, install_entry) do
     workspace = Ezagent.URI.workspace_name!(workspace_uri)
 
     content = %{
-      description: "Install #{ref}",
+      description: "Install #{install_ref(install_entry)}",
       default_workspace_uri: workspace_uri,
       parent_template_uri: nil,
-      installs: [ref]
+      installs: [install_entry]
     }
 
     Ezagent.Entity.SessionTemplate.create(name, content,
@@ -98,6 +152,9 @@ defmodule Ezagent.World.SocialwareInstall do
 
     %Ezagent.Capability{cap | granted_by: caller, granted_at: DateTime.utc_now()}
   end
+
+  defp install_ref(ref) when is_binary(ref), do: ref
+  defp install_ref(%{ref: ref}), do: ref
 
   defp sanitize_template_name(name) when is_binary(name) do
     name
