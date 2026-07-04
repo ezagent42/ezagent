@@ -25,7 +25,7 @@ defmodule Ezagent.Session.HeldCapReceiveTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp session_uri, do: URI.new!("session://system/sess-#{uniq()}")
+  defp session_uri, do: URI.new!("session://system/default/sess-#{uniq()}")
 
   # The universal member-cap `cap(:session, Session, :receive, S)`, granted_by a
   # real entity (the owner) — the shape the at-join grant mints.

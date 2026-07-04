@@ -151,6 +151,67 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   end
 
   @doc """
+  LEAVE revoke wrapper (A2.4 / R3.1) — best-effort: a revoke failure is logged
+  (the member is de-escalating ITSELF and reconcile evicts any residue) and `:ok`
+  is returned so the self-leave still drops the roster.
+  """
+  @spec revoke_member_cap_best_effort(URI.t(), map()) :: :ok
+  def revoke_member_cap_best_effort(%URI{} = member_uri, ctx) do
+    case revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.MemberCap.leave: member-cap revoke failed for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} " <>
+            "(best-effort on self-leave; reconcile_after_load/2 evicts residue)."
+        )
+
+        :ok
+    end
+  end
+
+  @doc """
+  REMOVE revoke wrapper (A2.4 / R3.1) — CHECKED / abort-safe: a genuine revoke
+  failure on a LIVE member ABORTS the removal (`{:error, _}` → the member is left
+  FULLY INTACT — a loud error, never a silent partial). Placed by the caller AFTER
+  every rejecting check (teardown authority + routing prune) has passed, so a
+  rejected removal never reaches it and cap + roster stay intact (preserves test
+  11). A NOT-LIVE member (`:no_such_actor` / `:not_ready`) has no live cap to
+  revoke, so the removal PROCEEDS (mirrors the teardown's idempotent handling;
+  reconcile/migration are the backstop for any persisted snapshot cap).
+  """
+  @spec revoke_member_cap_checked(URI.t(), map()) :: :ok | {:error, term()}
+  def revoke_member_cap_checked(%URI{} = member_uri, ctx) do
+    case revoke_membership(member_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} when reason in [:no_such_actor, :not_ready] ->
+        Logger.warning(
+          "Session.MemberCap.remove_participant: member-cap revoke skipped for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} (member not live; no " <>
+            "live cap to revoke; removal proceeds, reconcile/migration backstop)."
+        )
+
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Session.MemberCap.remove_participant: member-cap revoke FAILED for " <>
+            "member=#{URI.to_string(member_uri)} on session=" <>
+            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} — ABORTING the " <>
+            "removal (member left fully intact; let-it-crash, no silent partial)."
+        )
+
+        {:error, {:member_cap_revoke_failed, reason}}
+    end
+  end
+
+  @doc """
   Normalize a held-caps collection (list / `MapSet` / scalar) to a plain list.
   """
   @spec caps_to_list(term()) :: [term()]

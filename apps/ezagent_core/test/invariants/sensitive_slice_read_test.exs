@@ -104,7 +104,17 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
       "generic UriQuery slice resolver — slice_key derived from a parsed (cap-gated dispatch) URI query",
     # --- ExUnit case template (test support shipped in lib): generic slice peek ---
     {"apps/ezagent_core/lib/ezagent/lifecycle_case.ex", @dynamic_key} =>
-      "Lifecycle ExUnit case template — generic get_raw_slice(uri, slice_key) test helper, not production"
+      "Lifecycle ExUnit case template — generic get_raw_slice(uri, slice_key) test helper, not production",
+    # --- membership-cap unification A2.2 (#161): the two receive sites pre-load the
+    #     RECIPIENT's OWN :identity caps so `MemberReceive.authorize/1` can gate the
+    #     receive on the recipient's HELD member-cap (R1.1 held-cap, not projection).
+    #     A same-entity self-read (the recipient reading its own caps to authorize its
+    #     own receive), pre-loaded once for the dispatch — no cross-process per-message
+    #     read, no self-slice deadlock. ---
+    {"apps/ezagent_domain_session/lib/ezagent/behavior/user/receive.ex", :identity} =>
+      "user.receive pre-loads its OWN :identity caps for MemberReceive.authorize/1 held-cap receive gate (#161 A2.2)",
+    {"apps/ezagent_domain_agent/lib/ezagent/behavior/agent/receive.ex", :identity} =>
+      "agent.receive pre-loads its OWN :identity caps for MemberReceive.authorize/1 held-cap receive gate (#161 A2.2)"
   }
 
   describe "scan_source/2 (AST scanner, fixture-pinned)" do

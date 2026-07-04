@@ -565,69 +565,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # computation), so revoke the member-cap FIRST, then drop the projection.
     # Best-effort: a revoke failure is logged (reconcile heals); R1.1 means a
     # projection-drop failure has no authz window (receive reads the held cap).
-    _ = revoke_member_cap_best_effort(member_uri, ctx)
+    # (Revoke wrappers live in the sibling `MemberCap`, co-located with the grant.)
+    _ = MemberCap.revoke_member_cap_best_effort(member_uri, ctx)
 
     {ref_to_remove, effects} = leave_effects_with_ref(member_uri, ctx)
     if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
     effects
-  end
-
-  # LEAVE revoke — best-effort (log on failure; the member is de-escalating
-  # itself, and reconcile evicts any residue).
-  defp revoke_member_cap_best_effort(%URI{} = member_uri, ctx) do
-    case MemberCap.revoke_membership(member_uri, ctx) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "Session.Membership.leave: member-cap revoke failed for " <>
-            "member=#{URI.to_string(member_uri)} on session=" <>
-            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} " <>
-            "(best-effort on self-leave; reconcile_after_load/2 evicts residue)."
-        )
-
-        :ok
-    end
-  end
-
-  # REMOVE revoke — CHECKED / abort-safe (spec R3.1): a failed revoke ABORTS the
-  # removal (the caller returns `{:error, _}`, leaving the member FULLY INTACT —
-  # a loud error, never a silent partial proceed). Placed AFTER every rejecting
-  # check (teardown authority + routing prune) has passed, so a rejected removal
-  # never reaches the revoke and cap + roster stay intact (preserves test 11).
-  @spec revoke_member_cap_checked(URI.t(), map()) :: :ok | {:error, term()}
-  defp revoke_member_cap_checked(%URI{} = member_uri, ctx) do
-    case MemberCap.revoke_membership(member_uri, ctx) do
-      :ok ->
-        :ok
-
-      # The member's identity Kind is not live (cold / never-materialized) — there
-      # is NO live cap to revoke, so the removal PROCEEDS (mirrors the teardown's
-      # idempotent `:no_such_actor` handling). A persisted snapshot cap, if any, is
-      # reconciled/migrated out-of-band; R1.1 means a dropped-roster member is not
-      # fanned out. This is NOT the abort-worthy case (a LIVE member whose revoke
-      # genuinely fails to commit is).
-      {:error, reason} when reason in [:no_such_actor, :not_ready] ->
-        Logger.warning(
-          "Session.Membership.remove_participant: member-cap revoke skipped for " <>
-            "member=#{URI.to_string(member_uri)} on session=" <>
-            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} (member not live; no " <>
-            "live cap to revoke; removal proceeds, reconcile/migration backstop)."
-        )
-
-        :ok
-
-      {:error, reason} ->
-        Logger.error(
-          "Session.Membership.remove_participant: member-cap revoke FAILED for " <>
-            "member=#{URI.to_string(member_uri)} on session=" <>
-            "#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} — ABORTING the " <>
-            "removal (member left fully intact; let-it-crash, no silent partial)."
-        )
-
-        {:error, {:member_cap_revoke_failed, reason}}
-    end
   end
 
   @doc """
@@ -763,7 +706,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # security regression (§14.5 asserts revoke⇒deny, never worker-destroyed).
         # Fully separating the destructive teardown to AFTER the revoke needs a
         # chokepoint-compatible authority preflight (deferred; see final report).
-        with :ok <- revoke_member_cap_checked(participant_uri, ctx) do
+        with :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
           if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
           {:ok,
@@ -787,7 +730,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
             # rejecting check (teardown authority + prune) has passed. On failure
             # the removal ABORTS and the member is left fully intact (cap +
             # roster). No destructive step ran on this branch, so abort is clean.
-            with :ok <- revoke_member_cap_checked(participant_uri, ctx) do
+            with :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
               if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
               {:ok,

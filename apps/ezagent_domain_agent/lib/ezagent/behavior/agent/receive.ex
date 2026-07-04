@@ -279,6 +279,7 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # Membership-cap unification A2.2 (spec R1.1/R2.3) — `:receive` is EXEMPT from
   # the CapBAC layer (no delivery-presented bearer cap). The in-handler
   # `MemberReceive.authorize/1` held-cap check is the SOLE authority.
+  @doc "`:receive` is cap-exempt (authorized in-handler on the held member-cap, A2.2)."
   def cap_exempt_actions, do: [:receive]
 
   # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`

@@ -17,7 +17,7 @@ defmodule Ezagent.Session.MemberReceiveTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp session_uri, do: URI.new!("session://system/sess-#{uniq()}")
+  defp session_uri, do: URI.new!("session://system/default/sess-#{uniq()}")
 
   # The universal member-cap `cap(:session, Session, :receive, S)` with an
   # explicit `granted_by` — mirrors `MemberCap.member_cap/2` (the at-join grant).

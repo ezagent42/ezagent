@@ -22,7 +22,7 @@ defmodule Ezagent.Session.SocialwareReadHeldCapTest do
     uri
   end
 
-  defp session_uri, do: URI.new!("session://system/read-#{uniq()}")
+  defp session_uri, do: URI.new!("session://system/default/read-#{uniq()}")
 
   defp grant_member_cap(member, session, granter) do
     cap =

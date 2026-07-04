@@ -183,5 +183,6 @@ defmodule Ezagent.ActionSet.User.Receive do
   # mint is deleted). The in-handler `MemberReceive.authorize/1` held-cap check is
   # the SOLE authority. `keys(required_caps) ∪ cap_exempt == actions` still holds
   # (`:receive` is in both — same shape as `SocialwarePublisherRead`).
+  @doc "`:receive` is cap-exempt (authorized in-handler on the held member-cap, A2.2)."
   def cap_exempt_actions, do: [:receive]
 end

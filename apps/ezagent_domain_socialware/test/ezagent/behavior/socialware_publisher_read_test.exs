@@ -117,16 +117,22 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
   end
 
-  describe "(c) a current non-owner member CAN read" do
-    test "snapshot: caller ∈ members authorizes even when owner differs" do
+  # Membership-cap unification A2.3 (spec R1.1) — a non-owner reader must now HOLD
+  # the member-cap over the session, not merely appear in the roster. These
+  # predicate unit tests run WITHOUT a DB/live Kind, so the fabricated @member
+  # holds no cap ⇒ denied (the held-cap tightening). The POSITIVE path — a member
+  # that HOLDS the cap CAN read — is proven with a real member in the session-app
+  # `Ezagent.Session.SocialwareReadHeldCapTest`.
+  describe "(c) a non-owner roster-member WITHOUT the held member-cap is denied (A2.3)" do
+    test "snapshot: roster presence alone no longer authorizes — held cap required" do
       chat = owned_chat(@owner, %{@member => %{online: true}})
-      assert {:ok, %{cursor: 2}, []} = SPR.handle_snapshot(%{}, ctx(@member, chat))
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, chat))
     end
 
-    test "history: caller ∈ members authorizes" do
+    test "history: roster presence alone no longer authorizes — held cap required" do
       chat = owned_chat(@owner, %{@member => %{online: false}})
 
-      assert {:ok, %{events: _}, []} =
+      assert {:error, :unauthorized} =
                SPR.handle_history(%{from: :earliest, to: :latest}, ctx(@member, chat))
     end
   end
@@ -146,13 +152,14 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   end
 
   describe "(e) an ex-member (after LEAVE) is denied via the LIVE re-check" do
-    test "member present → authorized; same caller after LEAVE (removed from members) → denied" do
-      # While a member:
-      joined = owned_chat(@owner, %{@member => %{online: true}})
-      assert {:ok, %{cursor: 2}, []} = SPR.handle_snapshot(%{}, ctx(@member, joined))
+    test "a capless roster-member is denied both while present and after LEAVE (A2.3)" do
+      # A2.3 — the fabricated @member holds no member-cap (no live/snapshot slice
+      # here), so it is denied even while nominally present in the roster (the
+      # held-cap requirement), AND after LEAVE (roster no longer contains it). The
+      # LIVE re-check has no "in-projection ⇒ authorized" window either way.
+      present = owned_chat(@owner, %{@member => %{online: true}})
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, present))
 
-      # After LEAVE the membership map no longer contains the URI. No revoke
-      # step — the LIVE read denies immediately.
       left = owned_chat(@owner, %{})
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, left))
     end
