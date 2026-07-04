@@ -63,6 +63,9 @@ defmodule Ezagent.ActionSet.ChatTest do
       # `agent.receive` (their own Behaviors, on their own Kinds).
       # F7 PR-A — `:remove_participant` joins as the isomorphic participant-
       # removal primitive (declared right after `:leave`).
+      # Membership-cap unification Part C (spec §C.4/§C.5) — the admission
+      # approve/deny/withdraw actions join at the end (declared after
+      # :set_prompt_templates), cap-exempt + in-handler manages?/requested_by authz.
       assert SessionBehavior.actions() ==
                [
                  :send,
@@ -73,7 +76,10 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :merge_member,
                  :set_working_copy,
                  :set_legends,
-                 :set_prompt_templates
+                 :set_prompt_templates,
+                 :approve_admission,
+                 :deny_admission,
+                 :withdraw_admission
                ]
     end
 
@@ -97,6 +103,9 @@ defmodule Ezagent.ActionSet.ChatTest do
       assert SessionBehavior.init_slice(%{}) == %{
                state: %{
                  members: %{},
+                 # Membership-cap unification Part C (spec §C.2) — pending
+                 # admission requests; distinct from :members, empty by default.
+                 pending_members: %{},
                  owner_uri: nil,
                  last_seen: %{},
                  last_message_id: nil,
@@ -164,7 +173,9 @@ defmodule Ezagent.ActionSet.ChatTest do
       # F7 PR-A — :remove_participant added (isomorphic participant removal).
       assert keys ==
                [
+                 :approve_admission,
                  :attach,
+                 :deny_admission,
                  :join,
                  :leave,
                  :merge_member,
@@ -172,7 +183,8 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :send,
                  :set_legends,
                  :set_prompt_templates,
-                 :set_working_copy
+                 :set_working_copy,
+                 :withdraw_admission
                ]
     end
   end

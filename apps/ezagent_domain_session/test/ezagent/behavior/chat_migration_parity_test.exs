@@ -109,9 +109,13 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       # agent decomposition §OQ-4) — :receive removed (→ user.receive /
       # agent.receive). anon-user PR-2 — :merge_member added for login takeover.
       # F7 PR-A — :remove_participant added (isomorphic participant removal).
+      # Membership-cap unification Part C (spec §C.4/§C.5) — :approve_admission /
+      # :deny_admission / :withdraw_admission added (cap-exempt admission actions).
       assert Enum.sort(SessionBehavior.__action_names__()) ==
                [
+                 :approve_admission,
                  :attach,
+                 :deny_admission,
                  :join,
                  :leave,
                  :merge_member,
@@ -119,7 +123,8 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
                  :send,
                  :set_legends,
                  :set_prompt_templates,
-                 :set_working_copy
+                 :set_working_copy,
+                 :withdraw_admission
                ]
     end
 
