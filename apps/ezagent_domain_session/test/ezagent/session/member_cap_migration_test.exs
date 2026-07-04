@@ -20,15 +20,16 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
     uri
   end
 
-  # Seed a LEGACY session snapshot directly (members present, NO member-cap
-  # pre-granted) so the migration has something to backfill. `session://system/…`
-  # derives its workspace structurally, so `save_now/4` needs no registry binding.
+  # Seed a LEGACY session snapshot (members present, NO member-cap pre-granted)
+  # through the sanctioned `SnapshotFixtures` helper (Gates #20) so the migration
+  # has something to backfill. `session://system/…` derives its workspace
+  # structurally, so the fixture write needs no registry binding.
   defp seed_session(member_uris, owner) do
     session = URI.new!("session://system/default/mig-#{uniq()}")
     members = Map.new(member_uris, fn u -> {u, %{online: false}} end)
 
     :ok =
-      Ezagent.Kind.Snapshot.save_now(
+      Ezagent.Test.SnapshotFixtures.save_kind_snapshot(
         session,
         Ezagent.Entity.Session,
         %{session: %{members: members, owner_uri: owner}}

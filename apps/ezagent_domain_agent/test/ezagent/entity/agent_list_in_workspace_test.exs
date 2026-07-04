@@ -19,17 +19,17 @@ defmodule Ezagent.Entity.AgentListInWorkspaceTest do
   defp uniq, do: System.unique_integer([:positive])
 
   # A DORMANT agent — a persisted `kind_snapshots` row with NO live Kind / ETS
-  # entry. `save_now/4` writes the row directly (the low-level persist the
-  # Lifecycle path uses), so the agent enumerates from snapshots alone.
+  # entry, seeded through the sanctioned `SnapshotFixtures` helper (Gates #20)
+  # so the agent enumerates from snapshots alone.
   defp create_agent_snapshot_only(ws_name) do
     uri = Ezagent.URI.agent(ws_name, "dormant-#{uniq()}")
-    :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.Agent, %{})
+    :ok = Ezagent.Test.SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.Agent, %{})
     uri
   end
 
   defp create_user_snapshot(ws_name) do
     uri = Ezagent.URI.user(ws_name, "u-#{uniq()}")
-    :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{})
+    :ok = Ezagent.Test.SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.User, %{})
     uri
   end
 
