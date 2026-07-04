@@ -263,18 +263,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         err
 
       {:ok, session_template_uri, template_content} ->
+        # Freeze-pin (§4.4) MUST cover the repair/rematerialization path: the
+        # recorded SessionTemplate content is UNPINNED (only the per-session
+        # install RECORDS carry the frozen `config_id`), so re-materializing from
+        # it raw would resolve each install LIVE and let a later publish/retract
+        # change this EXISTING session's behaviors. Re-pin from the session's own
+        # install records so repair rebuilds from the SAME frozen revision the
+        # session was created with.
+        pinned_content = Installation.pin_installs_from_session(session_uri, template_content)
+
         with :ok <-
                Materializer.materialize_template_declaration(
                  session_uri,
                  session_template_uri,
-                 template_content
+                 pinned_content
                ),
              :ok <-
                materialize_template_team(
                  session_uri,
                  workspace_uri,
                  effective_owner,
-                 template_content
+                 pinned_content
                ) do
           {:ok, session_uri, %{}}
         end
@@ -314,6 +323,31 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   end
 
   defp do_create_session_with_template(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = effective_owner,
+         %URI{} = session_template_uri,
+         raw_template_content
+       ) do
+    # SPEC §4.1/§4.4 (Decision A) — freeze-pin BEFORE resolving behaviors: resolve
+    # each install to its CURRENT revision and bake the pin into the content's
+    # `installs`. The frozen content threads into BOTH behavior resolution and the
+    # per-session install records (via `finalize_fresh_session`), so a later
+    # publish does NOT change this session's behaviors. This is one of the two
+    # production `behavior_set_for_template/2` call sites the freeze MUST cover.
+    with {:ok, template_content} <-
+           Installation.freeze_template_installs(raw_template_content, workspace_uri) do
+      do_create_frozen(
+        session_uri,
+        workspace_uri,
+        effective_owner,
+        session_template_uri,
+        template_content
+      )
+    end
+  end
+
+  defp do_create_frozen(
          %URI{} = session_uri,
          %URI{} = workspace_uri,
          %URI{} = effective_owner,

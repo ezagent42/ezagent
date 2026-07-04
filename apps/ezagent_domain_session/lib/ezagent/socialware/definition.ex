@@ -25,7 +25,8 @@ defmodule Ezagent.Socialware.Definition do
             legends: %{},
             orchestrator_template_uri: nil,
             adapters: [],
-            visibility_policy: %{publish_policy: :auto, web_anon_access: false, scope: :private}
+            visibility_policy: %{publish_policy: :auto, web_anon_access: false, scope: :private},
+            owner_policy: %{type: :installer}
 
   @typedoc """
   A socialware-declared agent: the `recipe` (config义 — a RecipeRegistry name)
@@ -51,8 +52,25 @@ defmodule Ezagent.Socialware.Definition do
           legends: map(),
           orchestrator_template_uri: URI.t() | nil,
           adapters: [map()],
-          visibility_policy: map()
+          visibility_policy: map(),
+          owner_policy: owner_policy()
         }
+
+  @typedoc """
+  Owner-derivation policy (P0 §7, O-1) — how install reproduces the session's
+  `owner_uri` as DATA instead of the hard-coded `User.admin_uri()`:
+
+    * `:installer` (default) — owner = the caller performing the install (today's
+      `/sessions` owner-is-caller behavior; the migration default for every
+      pre-`owner_policy` def, §7.4);
+    * `:fixed` — owner = the declared `uri` (reproduces an anon homesite's
+      hard-coded owner as data — REQUIRED for `web_anon_access: true`, D-5 §7.3);
+    * `:none` — explicitly ownerless (chat/generic defs that route to no owner).
+  """
+  @type owner_policy ::
+          %{type: :installer}
+          | %{type: :fixed, uri: URI.t()}
+          | %{type: :none}
 
   @doc "Build and validate a socialware definition from a persisted or authored map."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
@@ -66,7 +84,9 @@ defmodule Ezagent.Socialware.Definition do
          {:ok, shape} <- behavior_list(attrs, :shape),
          {:ok, views} <- behavior_list(attrs, :views),
          {:ok, agents} <- agents_list(attrs),
-         {:ok, visibility_policy} <- visibility_policy(attrs) do
+         {:ok, visibility_policy} <- visibility_policy(attrs),
+         {:ok, owner_policy} <- owner_policy(attrs),
+         :ok <- validate_anon_owner(visibility_policy, owner_policy) do
       {:ok,
        %__MODULE__{
          name: name,
@@ -85,7 +105,8 @@ defmodule Ezagent.Socialware.Definition do
          legends: map(attrs, :legends),
          orchestrator_template_uri: optional_uri(attrs, :orchestrator_template_uri),
          adapters: list(attrs, :adapters),
-         visibility_policy: visibility_policy
+         visibility_policy: visibility_policy,
+         owner_policy: owner_policy
        }}
     end
   end
@@ -130,7 +151,8 @@ defmodule Ezagent.Socialware.Definition do
       legends: json_safe(definition.legends),
       orchestrator_template_uri: uri_string(definition.orchestrator_template_uri),
       adapters: json_safe(definition.adapters),
-      visibility_policy: stringify_visibility(definition.visibility_policy)
+      visibility_policy: stringify_visibility(definition.visibility_policy),
+      owner_policy: stringify_owner_policy(definition.owner_policy)
     }
   end
 
@@ -139,6 +161,35 @@ defmodule Ezagent.Socialware.Definition do
       body(definition)
     end
   end
+
+  @doc """
+  Deterministic content hash of the definition body (P0 §3.2) — the artifact
+  identity. Env-independent: the same manifest bytes hash identically anywhere,
+  regardless of key order or atom-vs-string keys.
+
+  Single algorithm source: delegates to `Ezagent.Socialware.ContentHash.of/1`
+  (identity layer), which `config_store` also uses to populate the stored
+  `content_hash` column, so a fresh body and its persisted form agree.
+
+  Accepts a `Definition` struct (hashed via `body/1`) or a raw body map.
+  """
+  @spec content_hash(t() | map()) :: String.t()
+  def content_hash(%__MODULE__{} = definition), do: content_hash(body(definition))
+  def content_hash(body) when is_map(body), do: Ezagent.Socialware.ContentHash.of(body)
+
+  @doc """
+  Derive the session `owner_uri` this definition installs onto (P0 §7.2, O-1),
+  the DATA replacement for the hard-coded `User.admin_uri()`
+  (`EzagentPluginHello.App.ensure_app/3`, `app.ex:50-56`):
+
+    * `:fixed` → the declared `uri`;
+    * `:installer` → the `caller` performing the install (owner-is-caller);
+    * `:none` → `nil` (an ownerless session; messages fall to the concierge).
+  """
+  @spec owner_uri(t(), URI.t() | nil) :: URI.t() | nil
+  def owner_uri(%__MODULE__{owner_policy: %{type: :fixed, uri: %URI{} = uri}}, _caller), do: uri
+  def owner_uri(%__MODULE__{owner_policy: %{type: :installer}}, caller), do: caller
+  def owner_uri(%__MODULE__{owner_policy: %{type: :none}}, _caller), do: nil
 
   defp required_string(attrs, key) do
     case get(attrs, key) do
@@ -295,6 +346,66 @@ defmodule Ezagent.Socialware.Definition do
       "scope" => policy |> Map.get(:scope, :private) |> Atom.to_string()
     }
   end
+
+  # owner_policy (P0 §7) — atom/string-key + atom/string-value tolerant on read,
+  # mirroring `visibility_policy`. `:fixed` REQUIRES a present, parseable `uri`;
+  # an unknown `type` or a `:fixed` with no/invalid uri fails LOUD (no
+  # default-swallow).
+  defp owner_policy(attrs) do
+    policy = map(attrs, :owner_policy)
+
+    case owner_policy_type(get(policy, :type, :installer)) do
+      :fixed ->
+        case owner_policy_uri(policy) do
+          %URI{} = uri -> {:ok, %{type: :fixed, uri: uri}}
+          _ -> {:error, {:invalid_socialware_owner_policy, policy}}
+        end
+
+      type when type in [:installer, :none] ->
+        {:ok, %{type: type}}
+
+      _ ->
+        {:error, {:invalid_socialware_owner_policy, policy}}
+    end
+  end
+
+  defp owner_policy_type(type) when type in [:installer, :fixed, :none], do: type
+  defp owner_policy_type("installer"), do: :installer
+  defp owner_policy_type("fixed"), do: :fixed
+  defp owner_policy_type("none"), do: :none
+  defp owner_policy_type(other), do: other
+
+  defp owner_policy_uri(policy) do
+    case get(policy, :uri) do
+      %URI{} = uri -> uri
+      value when is_binary(value) and value != "" -> safe_uri(value)
+      _ -> nil
+    end
+  end
+
+  defp safe_uri(value) do
+    Ezagent.URI.new!(value)
+  rescue
+    _ -> nil
+  end
+
+  # D-5 (§7.3) — a `web_anon_access: true` def has no logged-in installer to
+  # derive an owner from, so it MUST declare `owner_policy: %{type: :fixed}`.
+  # Both `:installer` (no installer) and `:none` (ownerless — the exact condition
+  # this feature eliminates) are FORBIDDEN for an anon-accessible def.
+  defp validate_anon_owner(%{web_anon_access: true}, %{type: type}) when type != :fixed do
+    {:error, {:anon_definition_requires_fixed_owner, type}}
+  end
+
+  defp validate_anon_owner(_visibility_policy, _owner_policy), do: :ok
+
+  defp stringify_owner_policy(%{type: :fixed, uri: uri}),
+    do: %{"type" => "fixed", "uri" => uri_string(uri)}
+
+  defp stringify_owner_policy(%{type: type}) when type in [:installer, :none],
+    do: %{"type" => Atom.to_string(type)}
+
+  defp stringify_owner_policy(_), do: %{"type" => "installer"}
 
   defp list(attrs, key) do
     case get(attrs, key, []) do

@@ -14,6 +14,15 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   @definition_key "socialware"
   @definition_layer "workspace"
 
+  # P0 §6/§11.2 (D-4) — the def-level RETRACT marker. A SEPARATE ConfigStore key
+  # under the SAME `socialware:<name>` subject + `"workspace"` layer, keyed by
+  # `(name, workspace)`. Keeping it OUT of the def `body` (its own key) means a
+  # retract never enters the artifact's content-hash, so identity survives a
+  # retract/restore cycle (§6.4). It rides the existing append-only object +
+  # pointer machinery (no new table, no migration): set/clear is a `write_and_point`
+  # of `%{"retracted" => bool}`; the current pointer is the current marker state.
+  @retract_key "socialware_retract"
+
   @doc "The fixed ConfigObject key for socialware definition bodies."
   @spec definition_key() :: String.t()
   def definition_key, do: @definition_key
@@ -41,6 +50,53 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
       {:ok, definition, object}
     else
       _ -> :error
+    end
+  end
+
+  @doc """
+  True when `(name, workspace)` carries a RETRACT marker (P0 §6). Consulted by
+  `list/1` (`list_entry_for/3`) and the `lookup/2` PUBLIC fallback
+  (`public_object/1`), always keyed by the OBJECT's OWN `workspace_uri` so a
+  retract in one workspace never hides a foreign-workspace object of the same name.
+  """
+  @spec retracted?(URI.t() | String.t(), String.t()) :: boolean()
+  def retracted?(workspace_uri, name) when is_binary(name) and name != "" do
+    ws = uri_string(workspace_uri)
+
+    case ConfigStore.resolve(@definition_layer, ws, definition_subject_uri(ws, name), @retract_key) do
+      {:ok, %ConfigObject{body: body}} -> Map.get(body, "retracted") == true
+      :none -> false
+    end
+  end
+
+  @doc """
+  Set (or clear) the def-level retract marker for `(name, workspace)` (P0 §6.2/§6.4).
+
+  Writes a NEW immutable marker object via the append-only `ConfigStore` and
+  advances the `"socialware_retract"` pointer to it. The def's own revisions are
+  never touched, so restore (`retracted? == false`) resumes the def at its
+  last-published revision with its original `content_hash`. Admin-gating lives at
+  the `ConfigGovernance.Socialware.retract/2` boundary that calls this.
+  """
+  @spec set_retracted(URI.t() | String.t(), String.t(), boolean(), URI.t() | String.t()) ::
+          {:ok, ConfigObject.t()} | {:error, term()}
+  def set_retracted(workspace_uri, name, retracted?, actor_uri)
+      when is_binary(name) and name != "" and is_boolean(retracted?) do
+    ws = uri_string(workspace_uri)
+
+    ConfigStore.write_and_point(%{
+      layer: @definition_layer,
+      workspace_uri: ws,
+      subject_uri: definition_subject_uri(ws, name),
+      key: @retract_key,
+      body: %{"retracted" => retracted?},
+      actor_uri: uri_string(actor_uri),
+      source_turn_id:
+        "socialware-retract:#{ws}:#{name}:#{System.unique_integer([:positive, :monotonic])}"
+    })
+    |> case do
+      {:ok, %{object: object}} -> {:ok, object}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -141,7 +197,12 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
           Ezagent.ActionSet.SupervisorApproval
         ],
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true},
+        # D-5 (§7.3) — anon-accessible (`web_anon_access: true`), so it MUST
+        # declare a `:fixed` owner (the system admin); `:installer`/`:none` are
+        # invalid for an anon def and `Definition.new/1` would reject the
+        # round-tripped body on read.
+        owner_policy: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()}
       }
     ]
   end
@@ -159,31 +220,50 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
            definition_subject_uri(ws, name),
            @definition_key
          ) do
+      # P0 §6 — a RETRACTED same-workspace object is filtered here too, not just in
+      # the PUBLIC fallback: `lookup/2` is the NEW-install/new-selection route
+      # (`Installation.resolve_install/2` fallback), so an owning workspace must not
+      # be able to freshly install its own retracted def by ref. A retracted object
+      # falls through to the system/public fallback (which also filters retracted),
+      # keeping `lookup` uniformly retract-aware. EXISTING pinned installs are
+      # unaffected — they resolve via `ConfigStore.fetch_object(config_id)`, never
+      # through `lookup` (grandfathering, T-Ret-b).
       {:ok, object} ->
-        {:ok, object}
-
-      :none when ws != system_ws ->
-        ConfigStore.resolve(
-          @definition_layer,
-          system_ws,
-          definition_subject_uri(system_ws, name),
-          @definition_key
-        )
-        |> case do
-          {:ok, object} -> {:ok, object}
-          :none -> public_object(name)
+        if retracted?(ws, name) do
+          resolve_object_fallback(ws, name, system_ws)
+        else
+          {:ok, object}
         end
 
       :none ->
-        public_object(name)
+        resolve_object_fallback(ws, name, system_ws)
     end
   end
+
+  # The system → public fallback chain used when a `(name, caller_ws)` object is
+  # absent OR filtered out as retracted. The system branch is only consulted for a
+  # non-system caller; the PUBLIC fallback already filters retracted objects.
+  defp resolve_object_fallback(ws, name, system_ws) when ws != system_ws do
+    ConfigStore.resolve(
+      @definition_layer,
+      system_ws,
+      definition_subject_uri(system_ws, name),
+      @definition_key
+    )
+    |> case do
+      {:ok, object} -> {:ok, object}
+      :none -> public_object(name)
+    end
+  end
+
+  defp resolve_object_fallback(_ws, name, _system_ws), do: public_object(name)
 
   defp public_object(name) do
     @definition_layer
     |> ConfigStore.list_current_objects(@definition_key)
     |> Enum.find(fn %ConfigObject{subject_uri: subject} = object ->
-      subject == definition_subject_uri(object.workspace_uri, name) and public_object?(object)
+      subject == definition_subject_uri(object.workspace_uri, name) and public_object?(object) and
+        not retracted?(object.workspace_uri, name)
     end)
     |> case do
       %ConfigObject{} = object -> {:ok, object}
@@ -203,7 +283,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
 
   defp list_entry_for(%ConfigObject{} = object, caller_ws, system_ws) do
     with {:ok, %Definition{} = definition} <- Definition.new(object.body),
-         true <- visible_to_workspace?(definition, object.workspace_uri, caller_ws, system_ws) do
+         true <- visible_to_workspace?(definition, object.workspace_uri, caller_ws, system_ws),
+         false <- retracted?(object.workspace_uri, definition.name) do
       [
         %{
           name: definition.name,
@@ -272,67 +353,45 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     end
   end
 
+  # Built-in direct-write fast path applying the SHARED idempotency RULE (P0 §5,
+  # D-2): no CR at boot, but the SAME hash-comparison as the governance path —
+  # with the former `builtin_seed_object?` PROVENANCE GUARD DELETED (§5.2). An
+  # edited built-in manifest re-promotes purely on a content-hash difference;
+  # provenance no longer gates the upgrade.
   defp seed_builtin_definition(%Definition{} = definition, opts) do
     workspace_uri = opts |> Keyword.fetch!(:workspace_uri) |> uri_string()
     subject = definition_subject_uri(workspace_uri, definition.name)
-    body = Definition.body(definition)
-    normalized_body = json_normalize(body)
+    new_hash = Definition.content_hash(Definition.body(definition))
 
     case ConfigStore.resolve(@definition_layer, workspace_uri, subject, @definition_key) do
       :none ->
         seed_definition_if_absent(definition, workspace_uri: workspace_uri)
 
-      {:ok, %ConfigObject{body: ^normalized_body}} ->
-        {:ok, :exists}
-
       {:ok, %ConfigObject{} = object} ->
-        if builtin_seed_object?(object) do
+        if Definition.content_hash(object.body) == new_hash do
+          {:ok, :exists}
+        else
           write_definition(definition,
             workspace_uri: workspace_uri,
             actor_uri: default_seed_actor(),
             caller_workspace_uri: workspace_uri,
             authority: :system_seed,
-            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, body)
+            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
           )
           |> case do
             {:ok, _object} -> {:ok, :seeded}
             {:error, reason} -> {:error, reason}
           end
-        else
-          {:ok, :exists}
         end
     end
   end
-
-  defp builtin_seed_object?(%ConfigObject{source_turn_id: source_turn_id})
-       when is_binary(source_turn_id) do
-    String.starts_with?(source_turn_id, [
-      "socialware-definition-seed:",
-      "socialware-definition-seed-upgrade:"
-    ])
-  end
-
-  defp builtin_seed_object?(_), do: false
 
   defp default_seed_actor, do: Ezagent.URI.user(:system, :admin) |> URI.to_string()
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(uri) when is_binary(uri), do: uri
 
-  defp json_normalize(body) do
-    body
-    |> Jason.encode!()
-    |> Jason.decode!()
-  end
-
-  defp builtin_upgrade_source_turn_id(workspace_uri, name, body) do
-    hash =
-      body
-      |> json_normalize()
-      |> Jason.encode!()
-      |> then(&:crypto.hash(:sha256, &1))
-      |> Base.encode16(case: :lower)
-
+  defp builtin_upgrade_source_turn_id(workspace_uri, name, hash) do
     "socialware-definition-seed-upgrade:#{workspace_uri}:#{name}:#{hash}"
   end
 

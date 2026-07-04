@@ -36,11 +36,14 @@ defmodule Ezagent.Socialware.Demo.Hello do
 
   ## Idempotency
 
-  `publish/0` first checks whether `hello` is already present as a public
-  definition; if so it returns `{:ok, :exists}` WITHOUT opening a CR. So a
-  re-boot / supervisor restart never re-opens a change request or writes a
-  duplicate. Combined with the fail-loud boot guard at the call site, a partial
-  publish crashes the boot rather than silently accumulating CRs.
+  `publish/0` routes through the shared idempotency RULE
+  (`ConfigGovernance.Socialware.publish_or_upgrade/2`, P0 §5): an unchanged
+  redeploy no-ops to `{:ok, :exists}` WITHOUT opening a CR, so a re-boot /
+  supervisor restart never re-opens a change request or writes a duplicate; an
+  EDITED manifest re-promotes to `{:ok, :upgraded}` (the old existence-check
+  silently swallowed manifest edits — R-2, §5.2). Combined with the fail-loud
+  boot guard at the call site, a partial publish crashes the boot rather than
+  silently accumulating CRs.
   """
 
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver}
@@ -74,6 +77,11 @@ defmodule Ezagent.Socialware.Demo.Hello do
     name = Keyword.get(opts, :name, @name)
     recipe_name = Keyword.get(opts, :recipe_name, @recipe)
     role_name = Keyword.get(opts, :role_name, @role)
+    # D-5 owner (below) as a JSON-manifest string. Computed on its own line (not
+    # inline in the map) so the uri-query scan's `:uri_string_key` heuristic —
+    # which flags `URI.to_string` in a `%{ … => … }` line as a possible routing
+    # KEY — does not false-positive on this owner-policy VALUE.
+    admin_owner_uri = URI.to_string(Ezagent.Entity.User.admin_uri())
 
     %{
       "name" => name,
@@ -115,23 +123,34 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "scope" => "public",
         "publish_policy" => "supervised",
         "web_anon_access" => true
+      },
+      # D-5 (§7.3) — the hello demo is `web_anon_access: true` (a headless anon
+      # homesite with no logged-in installer), so it MUST declare a `:fixed`
+      # owner. The system admin reproduces the bespoke path's hard-coded
+      # `User.admin_uri()` (`app.ex:50-56`) as DATA. Adding this field churns the
+      # def's content_hash once → a benign one-time re-promotion on deploy (§7.5).
+      "owner_policy" => %{
+        "type" => "fixed",
+        "uri" => admin_owner_uri
       }
     }
   end
 
   @doc """
   Publish the hello demo as a PUBLIC socialware in `workspace://system` via the
-  real governance flow. Idempotent: returns `{:ok, :exists}` (no CR opened) when
-  it is already published as a public definition.
+  real governance flow, through the shared idempotency RULE (P0 §5): a first
+  publish is `:published`, an unchanged redeploy no-ops to `:exists` (no CR
+  opened), and an EDITED manifest re-promotes to `:upgraded` (killing R-2 — the
+  old existence-check silently swallowed manifest edits, §5.2/§5.3).
   """
-  @spec publish() :: {:ok, :published | :exists} | {:error, term()}
+  @spec publish() :: {:ok, :published | :upgraded | :exists} | {:error, term()}
   def publish do
     ws = Ezagent.URI.workspace(:system)
+    admin = Ezagent.URI.user(:system, :admin)
+    ctx = admin_ctx(admin, ws)
 
-    if already_public?(ws) do
-      {:ok, :exists}
-    else
-      do_publish(ws)
+    with {:ok, %Definition{} = definition} <- ManifestResolver.resolve(manifest_attrs()) do
+      Governance.publish_or_upgrade(definition, ctx)
     end
   end
 
@@ -141,18 +160,6 @@ defmodule Ezagent.Socialware.Demo.Hello do
   """
   @spec published?() :: boolean()
   def published?, do: already_public?(Ezagent.URI.workspace(:system))
-
-  defp do_publish(ws) do
-    admin = Ezagent.URI.user(:system, :admin)
-    ctx = admin_ctx(admin, ws)
-
-    with {:ok, %Definition{} = definition} <- ManifestResolver.resolve(manifest_attrs()),
-         {:ok, %{cr_id: cr_id}} <- Governance.open_cr(%{name: @name}, ctx),
-         {:ok, _item} <- Governance.stage_definition(cr_id, definition, ctx),
-         {:ok, %{status: "published"}} <- Governance.publish_cr(cr_id, ctx) do
-      {:ok, :published}
-    end
-  end
 
   defp admin_ctx(admin, ws) do
     %{
