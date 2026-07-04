@@ -13,7 +13,12 @@ defmodule Ezagent.Socialware.Installation do
   @install_layer "session"
   @install_key_prefix "install:"
 
-  @type install_spec :: %{ref: String.t(), config: map()}
+  @type install_spec :: %{
+          ref: String.t(),
+          config: map(),
+          config_id: String.t() | nil,
+          content_hash: String.t() | nil
+        }
 
   @doc "Default socialware refs for legacy SessionTemplates with no installs field."
   @spec default_installs() :: [String.t()]
@@ -66,6 +71,35 @@ defmodule Ezagent.Socialware.Installation do
   def behavior_set_for_template(_content, workspace_uri),
     do: behavior_set_for_template(%{}, workspace_uri)
 
+  @doc """
+  Freeze-pin (SPEC §4.1/§4.4, Decision A) — the single shared freeze step.
+
+  Resolve every declared install in `content` to its CURRENT published
+  revision-id and BAKE that pinned `config_id` (+ env-independent `content_hash`)
+  into the content's `installs` entries. The returned content, fed to
+  `behavior_set_for_template/2` (or `install_template_installs/4`), then resolves
+  the FROZEN revision — a later publish of the def does NOT change the behaviors
+  of a session created from this content.
+
+  Idempotent: an entry that already carries a `config_id` keeps it (freezing
+  twice is a no-op). An entry whose ref cannot be resolved fails loud with the
+  same `{:unknown_socialware_install, ref}` `behavior_set_for_template/2` would
+  raise, so a mis-declared install never silently degrades to a live lookup.
+
+  §4.4: this helper MUST be applied at EVERY production `behavior_set_for_template/2`
+  call site (`SessionCreator`, `EzagentPluginHello.App.ensure_app/3`) before the
+  behavior set is resolved.
+  """
+  @spec freeze_template_installs(map(), URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
+  def freeze_template_installs(content, workspace_uri) when is_map(content) do
+    with {:ok, installs} <- parse_installs(installs_from_template(content)),
+         {:ok, frozen} <- freeze_installs(installs, workspace_uri) do
+      {:ok, put_installs(content, frozen)}
+    end
+  end
+
+  def freeze_template_installs(content, _workspace_uri), do: {:ok, content}
+
   @doc "Materialize per-session install records for a SessionTemplate's installs."
   @spec install_template_installs(URI.t(), URI.t() | String.t(), map(), URI.t() | String.t()) ::
           :ok | {:error, term()}
@@ -95,7 +129,11 @@ defmodule Ezagent.Socialware.Installation do
         content,
         actor_uri
       ) do
-    with {:ok, definitions} <- resolved_template_installs(content, workspace_uri) do
+    # SPEC §4.2 item 4 — repoint is the SOLE explicit upgrade path: it drops any
+    # frozen pin and re-resolves each ref to the CURRENT published revision, so an
+    # install advances forward (a pin-honoring resolve here would no-op).
+    with {:ok, definitions} <-
+           resolved_template_installs(strip_install_pins(content), workspace_uri) do
       Enum.reduce_while(definitions, :ok, fn {definition, object, install}, :ok ->
         case point_session_install(
                session_uri,
@@ -306,13 +344,16 @@ defmodule Ezagent.Socialware.Installation do
       ref: ref,
       seed_config: config,
       definition_subject_uri: object.subject_uri,
-      definition_config_id: object.id
+      definition_config_id: object.id,
+      # §4.3 — the durable audit/grandfathering copy of the env-independent hash
+      # alongside the pinned revision id.
+      definition_content_hash: object.content_hash
     }
   end
 
   defp resolve_definitions(installs, workspace_uri) do
     Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
-      case DefinitionRegistry.lookup(workspace_uri, install.ref) do
+      case resolve_install(install, workspace_uri) do
         {:ok, definition, object} -> {:cont, {:ok, [{definition, object, install} | acc]}}
         :error -> {:halt, {:error, {:unknown_socialware_install, install.ref}}}
       end
@@ -320,6 +361,74 @@ defmodule Ezagent.Socialware.Installation do
     |> case do
       {:ok, defs} -> {:ok, Enum.reverse(defs)}
       error -> error
+    end
+  end
+
+  # Pin-honoring resolution (SPEC §4.2 item 2): a frozen `config_id` resolves the
+  # EXACT immutable revision via `ConfigStore.fetch_object/1`; only an unpinned
+  # (`config_id == nil`) install falls back to the live current-pointer
+  # `DefinitionRegistry.lookup/2`.
+  defp resolve_install(%{config_id: config_id} = _install, _workspace_uri)
+       when is_binary(config_id) do
+    with {:ok, %ConfigObject{} = object} <- ConfigStore.fetch_object(config_id),
+         {:ok, %Definition{} = definition} <- Definition.new(object.body) do
+      {:ok, definition, object}
+    else
+      _ -> :error
+    end
+  end
+
+  defp resolve_install(install, workspace_uri) do
+    case DefinitionRegistry.lookup(workspace_uri, install.ref) do
+      {:ok, definition, object} -> {:ok, definition, object}
+      :error -> :error
+    end
+  end
+
+  # Resolve each install to its current revision and bake the pin into a canonical
+  # spec map. An entry already pinned (`config_id != nil`) keeps its pin (§4.1
+  # idempotency); a fresh entry records the resolved `object.id` + `content_hash`.
+  defp freeze_installs(installs, workspace_uri) do
+    Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
+      case resolve_install(install, workspace_uri) do
+        {:ok, _definition, %ConfigObject{} = object} ->
+          frozen = %{
+            ref: install.ref,
+            config: install.config,
+            config_id: install.config_id || object.id,
+            content_hash:
+              install.content_hash || object.content_hash ||
+                Definition.content_hash(object.body)
+          }
+
+          {:cont, {:ok, [frozen | acc]}}
+
+        :error ->
+          {:halt, {:error, {:unknown_socialware_install, install.ref}}}
+      end
+    end)
+    |> case do
+      {:ok, frozen} -> {:ok, Enum.reverse(frozen)}
+      error -> error
+    end
+  end
+
+  # Drop frozen pins back to bare refs so a re-resolve advances to the current
+  # published revision (used by the explicit `repoint` upgrade path).
+  defp strip_install_pins(content) do
+    case parsed_installs_from_template(content) do
+      {:ok, installs} -> put_installs(content, Enum.map(installs, & &1.ref))
+      {:error, _} -> content
+    end
+  end
+
+  # Write the frozen install specs back into the template content, preserving
+  # whichever key form (`:installs` / `"installs"`) the content already used.
+  defp put_installs(content, frozen) do
+    cond do
+      Map.has_key?(content, :installs) -> Map.put(content, :installs, frozen)
+      Map.has_key?(content, "installs") -> Map.put(content, "installs", frozen)
+      true -> Map.put(content, :installs, frozen)
     end
   end
 
@@ -337,10 +446,10 @@ defmodule Ezagent.Socialware.Installation do
   end
 
   defp parse_install(ref) when is_binary(ref) and ref != "",
-    do: {:ok, %{ref: ref, config: %{}}}
+    do: {:ok, %{ref: ref, config: %{}, config_id: nil, content_hash: nil}}
 
   defp parse_install(ref) when is_atom(ref) and not is_nil(ref) and not is_boolean(ref),
-    do: {:ok, %{ref: Atom.to_string(ref), config: %{}}}
+    do: {:ok, %{ref: Atom.to_string(ref), config: %{}, config_id: nil, content_hash: nil}}
 
   defp parse_install({ref, config}) when is_map(config) do
     with {:ok, parsed} <- parse_install(ref) do
@@ -354,10 +463,15 @@ defmodule Ezagent.Socialware.Installation do
         Map.get(install, "name")
 
     config = Map.get(install, :config) || Map.get(install, "config") || %{}
+    # The frozen pin travels string-keyed once the template content round-trips
+    # through JSON persistence (§4.4) — read both key forms so the pin never
+    # silently drops back to a live lookup.
+    config_id = Map.get(install, :config_id) || Map.get(install, "config_id")
+    content_hash = Map.get(install, :content_hash) || Map.get(install, "content_hash")
 
     with {:ok, parsed} <- parse_install(ref),
          true <- is_map(config) do
-      {:ok, %{parsed | config: config}}
+      {:ok, %{parsed | config: config, config_id: config_id, content_hash: content_hash}}
     else
       _ -> {:error, {:invalid_socialware_install, install}}
     end
