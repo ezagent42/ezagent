@@ -1385,10 +1385,16 @@ mount, do NOT pend):**
   NOT the admin genesis wildcard (`materializer.ex:196-208`), so a predicate that read
   `ctx.caps` would return `false` and **relocate the over-fire** (every team-template
   spawn stalls at PENDING forever). `admin_uri` holds the genesis all-caps wildcard on
-  its **identity** (`user.ex:89`, `admin_genesis_cap/0`), which satisfies
-  `holds_workspace_admin_cap?/2` (`identity.ex:858-881`, CONFIRMED private predicate
-  K2 surfaces) **when read from the caller's identity**. The over-fire guard test
-  (§14 test 27) pins this: a **materializer / admin-caller add MOUNTS, not pends**.
+  its **identity** (`user.ex:81-90`, `admin_genesis_cap/0`, the five-axis wildcard
+  `capability.ex:243-253`). **Precision (codex-verified):** the genesis wildcard is
+  matched by the admin-authority **UNION** `holds_admin_caps?/1 OR
+  holds_workspace_admin_cap?/2` (`identity.ex:800-810`, `:899-927`, `:858-881`) — NOT
+  by `holds_workspace_admin_cap?/2` **alone**, which only matches `Workspace` behavior
+  caps and would NOT recognize the genesis wildcard. So K2's `manages?/2` MUST use the
+  full admin union (or `AdminAuthority.admin?/2`) over the caller's **durable identity
+  caps by URI**, not a single workspace-admin predicate and not `ctx.caps`. The
+  over-fire guard test (§14 test 27) pins this: a **materializer / admin-caller add
+  MOUNTS, not pends**.
 
 > **⚠️ Do NOT put a bare `manages?(caller, member)` check that ignores the
 > not-self / non-system carve-outs, and do NOT read `manages?` off `ctx.caps`.** A
