@@ -24,6 +24,16 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
   setup do
+    # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
+    # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
+    # seeds it, but that write is outside this DataCase sandbox transaction (and the
+    # ETS cache can be flushed by another test) — so seed the roles here (idempotent).
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+
+    Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
+      {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
+    end)
+
     ws = "hello-e2e-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 

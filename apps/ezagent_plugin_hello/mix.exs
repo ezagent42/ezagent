@@ -73,6 +73,9 @@ defmodule EzagentPluginHello.MixProject do
       # (native has no adapter → chat is dropped). Needs the Adapter behaviour +
       # `Ezagent.AgentBridge.Payload`.
       {:ezagent_domain_agent_bridge, in_umbrella: true},
+      # `Ezagent.AgentFlavorAttributes` (flavor attribute store, read by the
+      # orchestrator migration + the hello.agent Template Class) lives here.
+      {:ezagent_domain_agent, in_umbrella: true},
       # i18n (#91, Allen 2026-06-23) — the builder narration (`Generator` turn
       # progress strings) is user-facing copy; it goes through the plugin-owned
       # `EzagentPluginHello.Gettext` backend (per-OTP-app translation namespace,

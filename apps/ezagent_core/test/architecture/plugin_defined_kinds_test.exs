@@ -49,16 +49,13 @@ defmodule EzagentCore.Architecture.PluginDefinedKindsTest do
   # prove it fires — on the REAL allowlisted offender AND on the aliased form a
   # raw `@behaviour Ezagent.Kind` grep would miss.
 
-  test "the AST matcher has teeth on real code: hello_builder IS a pre-allowlist offender" do
-    # Proves the matcher actually recognizes the grandfathered concrete Kind (the
-    # only reason the post-allowlist count is 0 is the allowlist, not a toothless
-    # matcher). This is the "names the offender" check.
-    offenders = Scan.plugin_defined_kind_offender_files()
-
-    assert "apps/ezagent_plugin_hello/lib/ezagent/entity/hello_builder.ex" in offenders,
-           "expected hello_builder (the grandfathered concrete Kind) among offenders, got: #{inspect(offenders)}"
-
-    # …and every offender is in fact sanctioned, so the gate nets zero.
+  test "no plugin-defined concrete Kinds remain (hello_builder/concierge deleted by the role×flavor migration)" do
+    # `hello_builder`/`hello_concierge` were the LAST grandfathered concrete Kinds
+    # (the module doc's "Must reach 0" target). The hello role×flavor migration
+    # (Principle 1 — agents are role × flavor, never own Kinds) deleted them, so the
+    # gate nets zero with NO allowlist left. The AST matcher's teeth are proven by
+    # the source-string POSITIVE/NEGATIVE tests below, no longer by a real offender.
+    assert Scan.plugin_defined_kind_offender_files() == []
     assert Scan.count(:plugin_defined_kinds) == 0
   end
 

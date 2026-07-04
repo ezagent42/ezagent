@@ -74,7 +74,8 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
                text: "committed",
                sender: URI.to_string(committed.sender),
                render: nil,
-               render_css: nil
+               render_css: nil,
+               nav: nil
              }
            ]
   end
@@ -92,7 +93,8 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
                text: "generic external",
                sender: URI.to_string(committed.sender),
                render: nil,
-               render_css: nil
+               render_css: nil,
+               nav: nil
              }
            ]
   end

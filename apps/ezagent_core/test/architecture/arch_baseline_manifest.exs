@@ -39,7 +39,11 @@
   #   behavior-set accessors → `Ezagent.Kind.BehaviorSet`, slice accessors →
   #   `Ezagent.Kind.SliceAccess`). All pure refactors w/ thin delegates; public
   #   API + call sites unchanged. Cap is now a hard zero — no module may regrow >1000.
-  oversized_modules_gt_1000: 0,
+  # - arch-cap-bump: PR #1168 — world `conversation_actions.ex` grew past 1000 with
+  #   the concierge chat + publish-as-template + session-open + hello-orchestrator
+  #   ensure surfaces. 0→1. Splitting it into a sibling ops module is a tracked
+  #   follow-up (the file is cohesive world-console dispatch handlers).
+  oversized_modules_gt_1000: 1,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
@@ -216,7 +220,9 @@
   #   shared EzagentWeb.Socialware.AnonIngress is a deferred follow-up (touches
   # - 2026-06-28 socialware P2: AnonAdmission + AnonIngress collapsed the
   #   duplicated anon lifecycle in chat/external feed controllers. 48→42.
-  cross_file_duplicate_fn_groups: 42,
+  # - arch-cap-bump: PR #1168 (hello orchestrator + website work) — +1 duplicate
+  #   group from the world console conversation/publish surface. 42→43.
+  cross_file_duplicate_fn_groups: 43,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

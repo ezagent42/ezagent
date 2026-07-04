@@ -23,7 +23,7 @@ defmodule EzagentPluginHello.App do
   # Kind). Recipes registered in `EzagentPluginHello.Application.roles/0`.
   @native_flavor "native"
   @hello_flavor "hello"
-  @orchestrator_role "hello.orchestrator"
+  @orch_role "hello.orchestrator"
   @builder_role "hello.builder"
   @concierge_role "hello.concierge"
 
@@ -93,7 +93,7 @@ defmodule EzagentPluginHello.App do
   end
 
   defp ensure_orchestrator(session_uri, workspace, name, false = _defer?) do
-    case create_role_agent(workspace, "orch_#{name}", @orchestrator_role, @hello_flavor) do
+    case create_role_agent(workspace, "orch_#{name}", @orch_role, @hello_flavor) do
       {:ok, orch_uri} ->
         _ = join_as(session_uri, orch_uri, "orchestrator")
         :ok
@@ -124,7 +124,7 @@ defmodule EzagentPluginHello.App do
       workspace = Ezagent.URI.workspace(ws)
 
       with {:ok, orch_uri} <-
-             create_role_agent(workspace, "orch_#{name}", @orchestrator_role, @hello_flavor) do
+             create_role_agent(workspace, "orch_#{name}", @orch_role, @hello_flavor) do
         _ = join_as(session_uri, orch_uri, "orchestrator")
         {:ok, orch_uri}
       end
