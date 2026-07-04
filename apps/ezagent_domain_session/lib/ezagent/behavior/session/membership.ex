@@ -100,7 +100,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   defp grant_member_cap_at_join(%URI{} = member_uri, ctx) do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    held = Ezagent.Identity.list_caps_for(member_uri)
+    held = member_snapshot_caps(member_uri)
 
     if already_authorized?(held, Ezagent.ActionSet.Session, :receive, session_uri, workspace_uri) do
       false
@@ -173,6 +173,31 @@ defmodule Ezagent.ActionSet.Session.Membership do
         )
 
         :ok
+    end
+  end
+
+  # NON-BLOCKING idempotency source for the at-join grant: the member's PERSISTED
+  # `:identity` caps read straight from its snapshot (`SnapshotStore.latest` — a
+  # single indexed `Repo.get`, NO cross-Kind call). This is REQUIRED because
+  # `grant_member_cap_at_join/2` runs INSIDE the Session Kind's `handle_join`: the
+  # live cap readers (`Identity.list_caps_for/1` `await_ready`s + `:call`s the
+  # member Kind; `Kind.get_slice/2` `:call`s it) would STALL the Session Kind on a
+  # not-yet-ready member (e.g. a worker mid-materialization) → cascade timeouts.
+  # The snapshot may lag an in-flight async grant by the `:on_change` window; a
+  # race just re-grants (`handle_grant_cap` dedups by `identity_key`, never
+  # duplicates). A member with no snapshot yet (brand-new) reads `[]` → grants.
+  @spec member_snapshot_caps(URI.t()) :: [Ezagent.Capability.t()]
+  defp member_snapshot_caps(%URI{} = member_uri) do
+    case Ezagent.SnapshotStore.latest(member_uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        state
+        |> Map.get(:identity, %{})
+        |> Ezagent.Kind.normalize_slice_view()
+        |> Map.get(:caps)
+        |> caps_to_list()
+
+      _ ->
+        []
     end
   end
 
