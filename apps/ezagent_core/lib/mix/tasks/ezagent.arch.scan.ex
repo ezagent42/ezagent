@@ -85,9 +85,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `Agent.base_behaviors/0`, the same kind of insertion config-evolve made.
     # SAME sanctioned `spawn_fresh/4` call site + `@spec` + `def`, six lines
     # lower; the spawn-fresh ownership boundary is unchanged.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 254},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 293},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 295},
+    # #161 A1.1 — inserting `Agent.list_in_workspace/1` (the member-cap reconcile
+    # candidate enumerator) near the top of the module shifted the same three
+    # sanctioned anchors down by +46 (254→300 call site, 293→339 `@spec`,
+    # 295→341 `def spawn_fresh/4`). SAME spawn-fresh ownership boundary; A1 added
+    # no new spawn_fresh caller, it only pushed the frozen surface lower.
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 300},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 339},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 341},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
