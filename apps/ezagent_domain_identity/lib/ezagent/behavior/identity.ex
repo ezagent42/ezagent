@@ -113,7 +113,7 @@ defmodule Ezagent.ActionSet.Identity do
   Membership-cap B.3 cap-exempt actions: the cascade sink is authorized in-VM
   (self-dispatched at the emit chokepoint), NOT via a caller-scoped cap — the
   `:receive` precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions ==
-  actions` (the `Ezagent.Behavior` parity contract).
+  actions` (the `Ezagent.ActionSet` behaviour-contract parity check).
   """
   def cap_exempt_actions, do: [:cascade_notify_managers]
 

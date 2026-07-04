@@ -122,7 +122,7 @@ defmodule Ezagent.Identity.Cascade do
   defp coerce_uri(%URI{} = uri), do: {:ok, uri}
 
   defp coerce_uri(str) when is_binary(str) do
-    {:ok, URI.new!(str)}
+    {:ok, Ezagent.URI.new!(str)}
   rescue
     _ -> :error
   end
