@@ -100,6 +100,13 @@ Three code facts:
   and plugin receives `HelloBuilder` (`hello_builder.ex:32-35`) + `HelloConcierge`
   (`hello_concierge.ex:22-25`). Editing only User/Agent silently misses plugin
   receives — codex #2's exact point.
+  > **⚠️ SUPERSEDED BY R2.3 — this enumeration is wrong; the truth is simpler.**
+  > There are exactly **TWO** registered `{Kind, :receive}` behaviors (`User.Receive`,
+  > `Agent.Receive`); dispatch is registry-first (`behavior_set.ex:262-272`).
+  > `HelloBuilder`/`HelloConcierge` declare `caps: [:receive]` but are role behaviors
+  > whose `:receive` **never runs** (`hello/bridge_adapter.ex:8-14`) — plugin agents
+  > receive THROUGH `Agent.Receive`. So the shared authz goes at exactly 2 sites, not 4.
+  > **See R2.3.**
 
 **The contract — in-handler authorization, `:receive` cap-EXEMPT (CONFIRMED-precedent).**
 Mirror the socialware read-auth pattern that already exists and is proven
@@ -188,6 +195,12 @@ set/delete) — **NOT** a persisted saga/operation-log. Sequences:
    roster) or nothing.
 
 **LEAVE / REMOVE (revoke-first, roster-drop, no authz window):**
+> **⚠️ SUPERSEDED BY R2.1.** "revoke-first" is correct for self-LEAVE but **WRONG
+> for REMOVE** — `remove_participant` has a fail-closed teardown BEFORE any mutation
+> (`membership.ex:636-645`), so a revoke-first REMOVE would revoke the cap and then
+> a teardown rejection would leave the member receive-denied while the removal
+> FAILED. R2.1 splits this into THREE sequences (JOIN / LEAVE / REMOVE); for REMOVE
+> the revoke is placed AFTER all fail-closed checks pass. **See R2.1.**
 1. **Revoke the member-cap FIRST** (the authority).
 2. **Drop the projection entry** (`leave_effects/2`, `membership.ex:525-548`).
 3. If the roster-drop fails, **there is no authz window** — R1.1 means receive
@@ -243,12 +256,21 @@ is a plan-time placement detail, not a design gap; the scan shape is confirmed.)
 
 ### R1.5 — 🟡 MED: bounded, paginated, snapshot-consistent migration
 
+> **⚠️ WRITE MODEL SUPERSEDED BY R2.2.** The READ shape below (steps 1-3: keyset
+> pagination, `where kind_type == "session"`, decode-once) is retained. But a
+> **repo-only WRITE** mirroring `GrantMigration` is NOT live-safe — `GrantMigration`
+> is explicitly stop-nodes / TEST-DB-only (`grant_migration.ex:31-42`) and a direct
+> `kind_snapshots` write does not update a live in-memory `:identity` slice. R2.2
+> keeps the repo-only READ but performs the WRITE via the **live grant path**
+> (`grant_cap_via_router/4`), idempotent, so nodes may be running. **See R2.2.**
+
 Original §8 read all sessions via `KindSnapshot.list_all` (loads every row) with a
-live owner lookup. Replace with a **repo-only, paginated, snapshot-consistent**
-migration — a pure `Ezagent.Session.MemberCapMigration` module behind a
-`mix ezagent.migrate.member_caps` front door, mirroring the
-`GrantMigration` + `ezagent.session.migrate_grants` split
-(`grant_migration.ex`, `ezagent.session.migrate_grants.ex`):
+live owner lookup. Replace with a paginated, snapshot-consistent **read** +
+live-grant **write** migration — a `Ezagent.Session.MemberCapMigration` module behind
+a `mix ezagent.migrate.member_caps` front door, mirroring the
+`GrantMigration` + `ezagent.session.migrate_grants` split for the CLI shape
+(`grant_migration.ex`, `ezagent.session.migrate_grants.ex`) — but NOT its repo-write
+mechanism (R2.2):
 
 1. **DB-level filter, NOT load-all-then-filter.** Query
    `from s in KindSnapshot, where: s.kind_type == "session"` — a WHERE clause so
@@ -270,8 +292,12 @@ migration — a pure `Ezagent.Session.MemberCapMigration` module behind a
 6. **Operator flags** (mirroring `migrate_grants`): `--dry-run` (report counts, no
    writes), `--gate` (nonzero exit if any session lacks member-caps), and a report
    of `{sessions_scanned, members_granted, skipped_already_held, ownerless_fallback}`.
-   Idempotent + non-destructive ⇒ safe on a live dev DB
-   (`feedback_destructive_migration_anti_pattern`).
+   Idempotent (skip-already-held) + writes only via the live grant path (R2.2) ⇒
+   safe on a running dev node — the writes go through the same
+   `grant_cap_via_router/4` path a normal grant uses, keeping the in-memory slice and
+   snapshot consistent (`feedback_destructive_migration_anti_pattern`). **The earlier
+   "non-destructive repo write ⇒ safe on a live dev DB" claim is WITHDRAWN — a repo
+   write is NOT live-safe; see R2.2.**
 
 ### R1.6 — Acceptance E2E (the done-gate) — see new §14.5
 
@@ -281,6 +307,246 @@ full in **§14.5**. Split: the security done-gate is an **ExUnit integration tes
 (deterministic; no reconcile timing to flake); the cross-user cascade UX is a
 **world-UI agent-browser scenario in `docs/scenarios/`** (project convention —
 `feedback_esr_e2e_standards`).
+
+---
+
+## R2 — Revision: codex round-2 fixes (2026-07-04)
+
+Codex round-2 verdict: **NO-SHIP** — and it is right. R1's core is CONFIRMED sound
+and is **NOT touched** here: roster⟂authz (R1.1), the bearer-token removal, the
+single O(1) roster read, `cap_exempt`-preserves-workspace-isolation, the R1.4
+snapshot-scan shape. R2 closes five **second-order lifecycle/sequencing** gaps R1
+left open. **Precedence: R2 > R1 > original prose.** Where R2 contradicts an R1
+sub-section or an original §, R2 is authoritative and the superseded lines are
+patched inline to point here.
+
+Each claim below is grounded in code read in this worktree, tagged **CONFIRMED**
+(verified against the tree) or **PROPOSED** (design choice for the plan).
+
+### R2.1 — 🔴 BLOCKER: REMOVE is NOT revoke-first — three distinct sequences (supersedes R1.3 LEAVE/REMOVE, §4.3, §8 removal)
+
+**The bug in R1.3.** R1.3 wrote a single "LEAVE / REMOVE (revoke-first, roster-drop,
+no authz window)" sequence. That is **wrong for REMOVE**. `remove_participant` runs a
+**FALLIBLE, fail-closed teardown BEFORE any membership mutation**:
+`do_remove_participant/3` calls the `:strict` worker reap
+(`membership.ex:636-641`); a teardown-cap-denied removal returns `{:error, _}` with
+**zero mutation — member keeps cap + monitor + roster** (`membership.ex:642-645`),
+and the `:membership_only` branch additionally fail-closes on a routing-prune error
+(`membership.ex:668-685`). The spec's own **test 11** requires exactly this: a
+teardown-cap-denied removal leaves **BOTH the member-cap AND the projection entry
+intact** (spec §14 test 11, lines 966-967). **CONFIRMED.**
+
+Under a naive "revoke-first" REMOVE, the member-cap would be revoked, then the
+teardown could reject — leaving the member **receive-denied / roster-dropped while
+the removal actually FAILED** (returns `{:error}`, roster untouched). That is a
+security-relevant divergence between "cap says removed" and "removal rejected."
+
+**JOIN and REMOVE are NOT symmetric.** Spell out **three** sequences:
+
+**JOIN — grant-first, preflight, compensate (unchanged from R1.3, restated for
+symmetry).**
+1. Preflight `Members.role_name_conflict/3` (`membership.ex:48-50`) — zero side
+   effects on conflict. CONFIRMED.
+2. Grant the member-cap — idempotent skip-already-held via `already_authorized?/5`
+   (`membership.ex:888`). CONFIRMED it exists.
+3. `do_join_apply` → projection `{:set, :members, …}` (`membership.ex:127-135`).
+4. Compensation: a commit failure AFTER the grant revokes the just-granted cap
+   (de-escalating, no authz — `grant.ex:108`). **See R2.4 for the pre-commit
+   replay/notify hazard this compensation cannot undo.**
+
+**LEAVE (self-leave) — no fallible follow-up → revoke-then-drop is safe.**
+The self-leave path `leave_effects/2` has **NO fallible teardown/prune** — it is a
+pure effect computation that demonitors immediately ("The `:leave` path has NO
+fallible follow-up step" — `membership.ex:519`, body `525-529`). So revoke the
+member-cap, then drop the projection. R1.1 means even a projection-drop failure has
+no authz window. LEAVE keeps R1.3's ordering. **CONFIRMED.**
+
+**REMOVE (`remove_participant`) — PREFLIGHT all fail-closed checks, revoke LAST,
+then roster-drop.** The revoke is placed **after every check that can reject**, so a
+rejected removal leaves cap + roster intact:
+1. Authz gate `remove_participant_authorized?/3` (`membership.ex:602-603`). CONFIRMED.
+2. Already-removed short-circuit (`membership.ex:605-606`). CONFIRMED.
+3. **Fail-closed gate — run FIRST, before any revoke:** the `:strict` teardown reap
+   (`membership.ex:636-641`). On `{:error}` return with **no revoke, cap + roster
+   intact** (`membership.ex:642-645`). CONFIRMED existing behavior.
+4. In the `{:ok, :membership_only}` branch, the routing prune is also fail-closed
+   (`membership.ex:668-685`) — still **before any revoke**.
+5. **Only after every rejecting check has passed, revoke the member-cap** (the
+   final de-escalating, effectively-infallible step: revoke is idempotent /
+   no-op-of-absent and needs no authz — `grant.ex:108`).
+6. Return the leave effects → runtime drops the projection entry.
+
+Net ordering for REMOVE: **[teardown authority + prune] → revoke → roster-drop.**
+Invariant preserved (the correctness proof is test 11): a removal rejected at the
+teardown/prune gate never reaches the revoke, so cap + roster are intact.
+
+**Revoke-insertion mechanism — PROPOSED (plan detail; the sequence + invariant is
+CONFIRMED).** Two ways to place the revoke after the gates:
+- **(primary) inline synchronous** `Ezagent.Identity.Grant.revoke_cap_via_router/4`
+  (`grant.ex:108` / `grant.ex:121` for the router form) called inside
+  `do_remove_participant` after the teardown/prune succeed, before returning the
+  leave effects. This yields the exact **"checks → revoke → drop"** order the fix
+  asks for. Cross-Kind revoke from a handler is consistent with the existing at-join
+  cross-Kind grant flow (§2.2); this is the cold removal path, never the hot
+  delivery path, so the synchronous call is acceptable.
+- **(alternative) a deferred `{:dispatch, revoke_cmd}` effect**
+  (`Grant.revoke_cap_returning_effect/4`, `grant.ex:175`) appended to the leave
+  effects. This still satisfies the **rejection invariant** (the effect is only
+  emitted once the gates pass), but inverts intra-commit order to **drop-then-revoke**
+  (the own-slice projection `{:set, :members}` commits before the deferred revoke
+  runs). Per R1.1 that intra-commit order is **not** security-critical (authz reads
+  the held cap, never the roster), so both are acceptable; **inline is primary**
+  because it matches the finding's "revoke then roster-drop" ordering exactly.
+
+**§14.5 step 5 (security done-gate) is unaffected.** REMOVE's end state is unchanged
+— the member-cap ends **revoked** — so step 5's "B removes A's agent ⇒ immediate
+receive-deny, no reconcile" still holds: the removal goes through the teardown path,
+the revoke lands (step 5 above), and R1.1's held-cap check denies the next receive.
+
+### R2.2 — 🟠 HIGH: migration enumerates via repo (paginated read), mutates via the LIVE grant path (supersedes R1.5 write model + the "safe on a live dev DB" claim in R1.5/§8)
+
+**The contradiction in R1.5.** R1.5 wanted the migration to be BOTH a repo-only
+write AND safe to run on live nodes. It cannot be both. The `GrantMigration`
+precedent it modeled on is explicitly **stop-nodes, TEST/sandbox-DB-only**: "Run
+alongside … in the same ordered cutover (**stop nodes → deploy → migrate → start**)"
+and "**TEST / sandbox DB only** here. Do NOT run against a live/dev/prod node"
+(`grant_migration.ex:31-42`). It writes `users.caps_json` + the `:identity` snapshot
+**directly** (`grant_migration.ex:13-17`). A direct `kind_snapshots` write does **not**
+update a live node's in-memory `:identity` slice; a later `:on_change` snapshot
+overwrites the migrated caps. **CONFIRMED** — the R1.5 "Idempotent + non-destructive
+⇒ safe on a live dev DB" line is false as written and is **deleted** (see patch to
+R1.5 step 6 and §8).
+
+**Resolution (reconciles R1's "bound the scan" with R2's "don't repo-write"):
+enumerate via repo, mutate via live grant.**
+1. **Enumerate via a repo-only PAGINATED READ** (unchanged shape from R1.5 steps
+   1-3): keyset pagination over `KindSnapshot` `where: s.kind_type == "session"`,
+   `order_by: s.uri`, `where: s.uri > ^last_uri`, `limit: @page`; **decode once** per
+   row via `KindSnapshot.decode_state/1` and read BOTH `members` AND `owner_uri`
+   from the **same decoded persisted state**. This is a pure READ; nodes may be
+   running. CONFIRMED the decode/keyset primitives exist (R1.5 cites
+   `kind_snapshot.ex`).
+2. **Mutate via the LIVE grant path, not a repo write.** For each `(member, session)`
+   pair, dispatch the real grant through
+   `Ezagent.Identity.Grant.grant_cap_via_router/4` (`grant.ex:121-141` → `:grant_cap`
+   dispatched via `Router.dispatch` to the member's identity Kind), which updates the
+   **live in-memory slice AND the snapshot** consistently. **CONFIRMED path.**
+3. **Idempotent by skip-already-held** via `already_authorized?/5` (`membership.ex:888`)
+   so a re-run is a no-op and the live snapshot is never churned. CONFIRMED.
+4. **Ownerless #154 fallback** (admin granter), **logged + counted**; `granted_by =
+   owner_uri` otherwise — unchanged from R1.5 step 4.
+5. **Operator flags unchanged:** `--dry-run` (report only, no grants), `--gate`
+   (nonzero exit if any session lacks member-caps), report
+   `{sessions_scanned, members_granted, skipped_already_held, ownerless_fallback}`.
+
+**Stated explicitly (drop any repo-write claim): enumerate via repo, mutate via live
+grant. Nodes may be running.** Because the write is the idempotent live grant path
+(not a raw snapshot write), the migration is genuinely safe on a running dev node —
+which is what R1.5 wanted but could not get from a direct repo write. Test 25 (spec
+§14, lines 1012-1016) is updated accordingly (see patch): assert keyset enumeration
+(no `list_all`) AND that grants go through the router grant path, not a snapshot write.
+
+### R2.3 — 🟠 HIGH: there are exactly TWO receive entry points — the surface SIMPLIFIES (supersedes R1.2 "≥4 receive behaviors", K1, test 24, and §16 risk 1)
+
+**R1.2's enumeration was wrong; the truth is simpler.** The `{Kind, :receive}`
+registry has **exactly two** entries, and dispatch is registry-first:
+- `{User, :receive}` → `Ezagent.ActionSet.User.Receive`
+  (`session_behavior_registration.ex:50`). CONFIRMED.
+- `{Agent, :receive}` → `Ezagent.ActionSet.Agent.Receive`
+  (`ezagent_domain_agent/application.ex:51`). CONFIRMED.
+- `resolve_action/3` is **registry-first** (`behavior_set.ex:262-272`): a registered
+  `{Kind, action}` always resolves to its canonical module; only a genuinely
+  unregistered action falls back to a per-instance loaded behavior. CONFIRMED.
+
+`HelloBuilder` / `HelloConcierge` declare `caps: [:receive]` (`hello_builder.ex:35`,
+`hello_concierge.ex:25`) but those `:receive` handlers **never run**: they are
+**role behaviors** on the `:agent` axis, and on the unified `Entity.Agent` "`:receive`
+… is hardwired to `Ezagent.ActionSet.Agent.Receive` … a role behavior's own
+`:receive` never runs" (`hello/bridge_adapter.ex:8-14`; `hello_builder.ex:42-44`).
+Hello/plugin agents receive **through** `Agent.Receive`, which hands down to the
+per-flavor bridge adapter. So R1.2's "≥4 receive behaviors, edit each" was chasing
+unreachable handlers. **CONFIRMED — this is a genuine simplification: 4 → 2.**
+
+**The corrected, simpler contract:**
+1. Place the shared `Ezagent.Session.MemberReceive.authorize/1` call at the **two
+   real entry points only**: `User.Receive` and `Agent.Receive`.
+2. **At `Agent.Receive`, the hook sits BEFORE the bridge-adapter short-circuit.**
+   `Agent.Receive.handle_receive/2` is the **single entry for ALL agent flavors**
+   (cc / codex / hello / curl / native). The bridge short-circuit is the
+   `Delivery.deliver_agent_receive(msg, ctx)` call at `receive.ex:210`. Placing
+   `MemberReceive.authorize/1` at the top of `handle_receive/2` — before that call
+   (the self-message loop-guard at `receive.ex:195-205` is a minor plan-detail;
+   "before the bridge call" is the invariant, not "before the guard") — gates **every
+   plugin agent** through one site. A plugin agent physically **cannot** skip it,
+   because there is no separate plugin `{Kind, :receive}` to bypass through. CONFIRMED.
+3. `reads_siblings([:sandbox])` at `receive.ex:80` becomes
+   `reads_siblings([:sandbox, :identity])` so `MemberReceive.authorize/1` reads the
+   recipient's own held caps from the pre-loaded `ctx[:siblings][:identity]` — no
+   `GenServer.call`, no self-slice deadlock. CONFIRMED the sibling pre-load mechanism.
+4. **`ReceiveAuthzParityTest` enumerates the ACTUAL registered `{Kind, :receive}`
+   behaviors** (from the `BehaviorRegistry`, dynamically) and asserts each is
+   `cap_exempt` for `:receive` AND routes through `MemberReceive.authorize/1`. It does
+   **NOT** attempt to cover the unreachable `HelloBuilder`/`HelloConcierge` role
+   `:receive` handlers. Because it reads the registry, a future Kind that registers a
+   real `{Kind, :receive}` is caught automatically. Test 24 (spec §14, lines
+   1008-1011) is updated accordingly (see patch).
+
+**This dissolves §16 open-risk 1's residual A2.** That residual asked "whether plugin
+agent Kinds carry a readable `:identity` sibling." There is **no separate plugin agent
+Kind** — every flavor is `Entity.Agent`, which carries `:identity` caps (§2.8: "Agents
+carry `:identity` caps too"). So `reads_siblings([:sandbox, :identity])` at the single
+`Agent.Receive` entry covers **every** plugin agent, and the "does the plugin Kind have
+an `:identity` slice" question is moot. §16 risk 1 is marked **RESOLVED** (see patch).
+
+### R2.4 — 🟡 MED: JOIN's pre-commit replay + notify cannot be compensated (supersedes R1.3 JOIN compensation, closing the leak)
+
+**The gap.** R1.3's JOIN compensation ("a failed `do_join` AFTER the grant revokes
+the just-granted cap") cannot undo side effects `do_join_apply` runs **before it
+returns its effects**: `Delivery.replay_messages_since/3` (`membership.ex:95`) and
+`Ezagent.Notifications.notify/2` (`membership.ex:115-125`) both execute inline,
+pre-commit. A compensating revoke can't un-replay a re-delivered message or un-send a
+"you joined" notification. **CONFIRMED.**
+
+**Resolution — PROPOSED (choose one in the plan; both bound the leak):**
+- **(preferred) Defer replay + notify to post-commit.** Emit them as post-commit
+  deferred work rather than inline, so they run only **after** the grant + join both
+  commit; a pre-commit failure that triggers the compensating revoke then has nothing
+  to un-replay/un-notify. The runtime already has a post-commit deferred path —
+  `Ezagent.Kind.DeferredDispatch.enqueue/1` (CONFIRMED precedent, documented at
+  `receive.ex:127-129`; the `{:dispatch, cmd}` effect is deferred to the back of the
+  mailbox, `receive.ex:227`). Note the effect grammar defers an **action dispatch**,
+  not a bare function call — so this means routing replay+notify through a minimal
+  post-commit `:post_join`-style dispatch, not returning `replay_messages_since` as
+  an effect directly. If that wiring reads clean, adopt it.
+- **(acceptable fallback) Bound the failure model explicitly.** If the deferred
+  wiring is architecturally awkward, state the bound: a join that commits the grant
+  then fails to commit the projection can leak **one message replay + one advisory
+  notification**. The notify is already best-effort/advisory and User-only
+  (`membership.ex:115` guards `user_uri?`), so its leak is benign; the **replay** is
+  the consequential one (a re-delivered message to a member who ends up not-joined).
+  This window is narrow (`do_join_apply` returns `{:ok, …}` unconditionally after
+  line 95 — the only failure is a runtime commit failure applying the effects), and
+  reconcile does not re-trigger it.
+
+**Prefer deferred.** The fallback is a documented bound, not a silent tolerance.
+
+### R2.5 — 🟢 LOW: delete the stale bearer-token prose in §4.2 (finding #5)
+
+§4.2 point 1 still says the member "holds one standing member-cap; delivery presents
+the cached copy" (spec lines 563-567) — the exact **bearer-token wording R1.1
+removed**. A writing-plan reading §4.2 in isolation could re-implement it. This is
+**deleted / rewritten** to the roster⟂authz model (see patch): delivery presents **no**
+receive cap; the receive *authority* is the recipient's own held member-cap, checked
+in-handler (R1.1/R1.2). CONFIRMED as a pure prose fix — the correct model already
+lives in R1.1/§6.
+
+### R2.6 — carried R1 items CONFIRMED sound, NOT re-litigated
+
+R1.1 core (delete `member_receive_caps/1`, `:receive` `cap_exempt`,
+`cap_exempt`-preserves-workspace-isolation), the single `:receive` dispatch site, and
+the R1.4 snapshot-scan shape (the session app already deps `ezagent_domain_agent`, so
+the placement is fine unless moved to core/identity) are **confirmed sound by codex
+round-2 and unchanged by R2.**
 
 ---
 
@@ -562,9 +828,12 @@ Three concrete mechanism changes make it real, not cosmetic:
 
 1. **The ephemeral per-delivery `:receive` mint is eliminated.** Today every
    fan-out mints a throwaway cap (`member_receive_caps/1`). Under S3 the member
-   holds one standing member-cap; delivery presents the cached copy. Fewer
-   allocations, and — decisively — the receive *authority* is now a durable,
-   revocable, queryable fact instead of an implicit consequence of list membership.
+   holds one standing member-cap; **delivery presents NO receive cap — the receive
+   authority is the recipient's OWN held member-cap, checked in-handler (R1.1/R1.2).**
+   (The original wording here — "delivery presents the cached copy" — was the
+   bearer-token design R1.1 removed and is corrected per R2.5.) Fewer allocations,
+   and — decisively — the receive *authority* is now a durable, revocable, queryable
+   fact instead of an implicit consequence of list membership.
 2. **join/leave change from "mutate a list" to "grant/revoke a cap."** This is
    what makes Part B trivial (§9): the grant lands on the MEMBER's own slice, so a
    membership change is a slice-change *on the member*, resolvable by the same
@@ -597,8 +866,12 @@ projection (cache). Their coherence is the real risk. Resolution:
   Preflight the role/facet check (`membership.ex:48-50`) BEFORE any grant; grant the
   member-cap FIRST (source of truth); only on grant success update the projection.
   A failed `do_join` AFTER the grant **compensates by revoking the just-granted
-  cap** (so a role conflict / monitor failure never orphans a cap). Symmetrically,
-  revoke FIRST, then drop the projection entry. This mirrors the existing
+  cap** (so a role conflict / monitor failure never orphans a cap). For removal the
+  ordering is NOT symmetric: **self-LEAVE** revokes then drops (no fallible
+  follow-up), but **REMOVE** preflights the fail-closed teardown/prune FIRST and
+  revokes only AFTER they pass (**R2.1 supersedes the earlier "symmetrically, revoke
+  FIRST" wording** — a revoke-first REMOVE would strand a receive-denied member on a
+  rejected removal). This mirrors the existing
   leave-FIRST / fail-closed-teardown discipline in `handle_remove_participant`
   (`.../membership.ex:624-687`). **R1.3 additionally specifies tests for the
   cap-only / roster-only / stale-cached-cap drift states** — and note that R1.1
@@ -742,22 +1015,26 @@ universal base tier.
   does NOT get `:send` (unconfirmed tier — §7). No new anon concept; the model gets
   *cleaner* (anon = holds member-cap, lacks send cap). The first-join owner-claim
   suppression for anon (`.../membership.ex:108`) is unaffected.
-- **Removal.** `:leave` and `:remove_participant` revoke the member-cap (revoke
-  FIRST, then drop the projection entry — §4.3), plus the existing routing-prune /
-  worker-teardown. The `{:member_left}` broadcast still fires (convergence). Because
+- **Removal.** `:leave` and `:remove_participant` revoke the member-cap, plus the
+  existing routing-prune / worker-teardown. **Ordering per R2.1 (NOT uniform
+  "revoke-first"):** self-`:leave` revokes then drops the projection (no fallible
+  follow-up); `:remove_participant` preflights the fail-closed teardown/prune and
+  revokes only AFTER they pass, then drops — so a rejected removal leaves cap + roster
+  intact (test 11). The `{:member_left}` broadcast still fires (convergence). Because
   revoke mutates the LEAVER's own `:identity` slice, removal now produces a
   slice-change on the leaver — which is exactly what closes the S1 removal-notify
   gap (§9, §11).
 - **Migration** of existing sessions (`:members` rows → member-cap grants). A
-  one-shot, **idempotent, bounded, paginated, snapshot-consistent** migration task
-  `mix ezagent.migrate.member_caps` — fully specified in **R1.5** (repo-only
-  `where kind_type == "session"` + keyset pagination; decode once and read
-  `members` + `owner_uri` from the SAME persisted state; ownerless #154 fallback
-  logged + counted; `--dry-run` / `--gate` / report). Supersedes the original
+  one-shot, **idempotent, bounded, paginated** migration task
+  `mix ezagent.migrate.member_caps` — fully specified in **R1.5 as revised by R2.2**
+  (repo-only paginated READ `where kind_type == "session"` + keyset; decode once and
+  read `members` + `owner_uri` from the SAME persisted state; **WRITE via the live
+  grant path `grant_cap_via_router/4`, not a repo write** — R2.2; ownerless #154
+  fallback logged + counted; `--dry-run` / `--gate` / report). Supersedes the original
   `KindSnapshot.list_all` + live-owner-lookup sketch. The `:members` projection
   rows are kept as-is (they become the roster cache); `reconcile_after_load/2`
-  (§4.3) is the steady-state backstop, the task is the initial seed. Idempotent +
-  non-destructive ⇒ safe on a live dev DB
+  (§4.3) is the steady-state backstop, the task is the initial seed. Idempotent
+  (skip-already-held) + live-grant write ⇒ safe on a **running** dev node (R2.2)
   (`feedback_destructive_migration_anti_pattern`).
 
 ---
@@ -840,9 +1117,12 @@ predicate reads the recipient's own `ctx[:siblings][:identity]` caps and matches
 against `ctx.caller`. **Confirmed-sound?** CONFIRMED-precedent — mirrors the proven
 socialware cap-exempt in-handler read-auth (`socialware_publisher_read.ex:56-77`);
 `agent.receive` already declares `reads_siblings` (`agent/receive.ex:80`). A
-`ReceiveAuthzParityTest` invariant covers ALL `{Kind, :receive}` behaviors incl.
-plugin receives (R1.2). No runtime consent-inversion (rejected — self-slice
-deadlock).
+`ReceiveAuthzParityTest` invariant covers the actually-registered `{Kind, :receive}`
+behaviors — **exactly two: `User.Receive` + `Agent.Receive`** (R2.3 corrects R1.2's
+"≥4 incl. plugin receives" — plugin agents receive THROUGH `Agent.Receive`, so gating
+those two sites, the `Agent.Receive` one BEFORE the bridge short-circuit
+`receive.ex:210`, covers every plugin agent). No runtime consent-inversion (rejected —
+self-slice deadlock).
 
 **K2 — Extract a PUBLIC `Ezagent.Identity.Authority`** with `manages?/2` and
 `workspace_admin?/2`. CONFIRMED it does NOT exist today; the predicates
@@ -872,9 +1152,12 @@ tuples (`{:within_workspace,_}` / `{:spawned_by,_}`) live in slices, not the JSO
 (`list_in_workspace/1` is used only to ENUMERATE candidate users; the authority
 check reads live caps.) CONFIRMED.
 
-**K6 — member-cap is lifecycle-owned; grant-first / revoke-first, fail-closed**
-(§4.3). CONFIRMED atomicity precedent: `handle_remove_participant`
-(`.../membership.ex:624-687`).
+**K6 — member-cap is lifecycle-owned; grant-first (JOIN) / fail-closed removal**
+(§4.3). **REVISED (R2.1):** removal is NOT uniformly "revoke-first" — self-`:leave`
+revokes-then-drops, but `:remove_participant` preflights its fail-closed
+teardown/prune (`membership.ex:636-645, 668-685`) and revokes only AFTER they pass,
+so a rejected removal leaves cap + roster intact (test 11). CONFIRMED atomicity
+precedent: `handle_remove_participant` (`.../membership.ex:624-687`). **See R2.1.**
 
 **Confirmed-sound, do not re-litigate** (carried from S1 review): `do_join`
 mutates `:members` today (`.../membership.ex:127-135`); `slice_changed` is
@@ -891,7 +1174,8 @@ all landing the same architecture. Phasing = review checkpoints, not scope forks
 
 - **A1 — member-cap model + migration (foundation, low risk).** Define the
   member-cap; add its grant to the at-join flow alongside `mount_participation_caps`;
-  add `reconcile_after_load/2` seeding; write + run the idempotent migration task.
+  add `reconcile_after_load/2` seeding; write + run the idempotent migration task
+  (repo READ + live-grant WRITE per **R2.2**).
   Delivery still reads the projection with the UNCHANGED read shape and STILL mints
   ephemerally (the mint is deleted in A2), so this phase is behavior-preserving and
   purely additive. Member-caps now exist and are authoritative; nothing yet depends
@@ -900,8 +1184,11 @@ all landing the same architecture. Phasing = review checkpoints, not scope forks
   `cap_exempt` + add the shared `MemberReceive.authorize/1` in-handler predicate
   (K1/R1.2) + the `ReceiveAuthzParityTest`; delete `member_receive_caps/1` (present
   NO cap — R1.1); move the socialware read predicate to held-cap (R1.1); wire
-  leave/remove to revoke the member-cap with compensation (revoke-first,
-  fail-closed, R1.3); anon holds the member-cap. Presence/monitors untouched. This
+  leave/remove to revoke the member-cap with compensation (JOIN grant-first; LEAVE
+  revoke-then-drop; REMOVE preflight-then-revoke-last per **R2.1**); defer JOIN
+  replay+notify post-commit (**R2.4**); anon holds the member-cap. The receive-authz
+  hook goes at the **two** real entry points, `Agent.Receive` before the bridge
+  short-circuit (**R2.3**). Presence/monitors untouched. This
   phase carries the blast radius (receive authz, read authz, anon, removal) and is
   where the §14.5 acceptance E2E lives.
 - **B — cascade rides on top (small, given A).** Extract `Ezagent.Identity.Authority`
@@ -1005,15 +1292,20 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
     roster-only ⇒ receive denied + reconcile evicts; join role-conflict ⇒ NO
     orphaned cap (preflight); join failure after grant ⇒ compensating revoke leaves
     neither cap nor roster.
-24. **Receive-authz parity invariant (R1.2):** every `{Kind, :receive}` behavior
-    (User/Agent/HelloBuilder/HelloConcierge + any future) is `cap_exempt` for
-    `:receive` AND routes through `MemberReceive.authorize/1` — a new receive
-    behavior that skips the helper fails.
-25. **Migration bounded (R1.5):** `mix ezagent.migrate.member_caps` on a seeded set
-    scans only `kind_type == "session"` rows via keyset pages (assert no
-    `list_all`), grants per member from the same decoded state, reports ownerless
-    fallback count; `--dry-run` writes nothing; `--gate` exits nonzero pre-migration
-    and zero post.
+24. **Receive-authz parity invariant (R1.2, corrected by R2.3):** every
+    **registered** `{Kind, :receive}` behavior — enumerated dynamically from the
+    `BehaviorRegistry`, which is exactly `User.Receive` + `Agent.Receive` today, plus
+    any future registered Kind — is `cap_exempt` for `:receive` AND routes through
+    `MemberReceive.authorize/1`. The test does NOT enumerate the unreachable
+    `HelloBuilder`/`HelloConcierge` role `:receive` handlers (R2.3); a NEW registered
+    receive behavior that skips the helper fails.
+25. **Migration bounded (R1.5, write model per R2.2):**
+    `mix ezagent.migrate.member_caps` on a seeded set enumerates only
+    `kind_type == "session"` rows via keyset pages (assert no `list_all`), and
+    **grants per member via the live grant path `grant_cap_via_router/4`, NOT a repo
+    snapshot write** (assert the router grant path is used) — reads members from the
+    same decoded state, reports ownerless fallback count; `--dry-run` writes nothing;
+    `--gate` exits nonzero pre-migration and zero post.
 26. **Agent enumeration (R1.4):** `Entity.Agent.list_in_workspace/1` returns a
     DORMANT agent (snapshot-only, not live) and excludes users/other workspaces.
 
@@ -1084,15 +1376,16 @@ separation is not actually implemented and the feature is not done.
 
 ## 16. Open risks (honest — what this spec could NOT fully close)
 
-1. **K1 receive-authz — RESOLVED in R1.2 (was PROPOSED).** The in-handler /
-   `cap_exempt` design is CONFIRMED against a proven precedent (socialware
-   read-auth), not a runtime edit. Residual PROPOSED detail: whether **plugin
-   agent Kinds carry a readable `:identity` sibling** (Users/Agents do; the four
-   receive behaviors include `HelloBuilder`/`HelloConcierge`). If a plugin agent
-   member has no `:identity` slice, `MemberReceive.authorize/1` must resolve its
-   caps via `read_entity_caps/1` fallback rather than the pre-loaded sibling. The
-   `ReceiveAuthzParityTest` surfaces any behavior that skips the helper; the plan
-   must confirm each plugin receive's identity-slice availability in A2.
+1. **K1 receive-authz — RESOLVED in R1.2, residual A2 DISSOLVED in R2.3.** The
+   in-handler / `cap_exempt` design is CONFIRMED against a proven precedent
+   (socialware read-auth), not a runtime edit. The former residual — "whether plugin
+   agent Kinds carry a readable `:identity` sibling" — **no longer exists**: there is
+   no separate plugin agent Kind. Every flavor is `Entity.Agent` (which carries
+   `:identity` caps — §2.8), and all flavors receive through the single
+   `Agent.Receive.handle_receive/2` (`hello/bridge_adapter.ex:8-14`), so
+   `reads_siblings([:sandbox, :identity])` at that one entry covers every plugin agent
+   (R2.3). No `read_entity_caps/1` fallback for a missing plugin `:identity` slice is
+   needed. RESOLVED.
 2. **Cold reverse-scan cost at very large workspaces.** `reconcile_after_load/2`
    and `managers_of/1` do a bounded per-workspace live-cap scan. Bounded ≠ cheap if
    a workspace has thousands of identities. Mitigation is option (a); flagged, not
