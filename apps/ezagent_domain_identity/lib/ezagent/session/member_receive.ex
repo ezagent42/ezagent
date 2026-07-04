@@ -116,10 +116,13 @@ defmodule Ezagent.Session.MemberReceive do
   def holds_member_cap_over?(_held, _session), do: false
 
   # The comparable key for a cap instance. A concrete `%URI{}` instance (the
-  # member-cap's shape) normalizes to its bare-instance string; a scope-tuple /
-  # `:any` instance (a broad admin cap, NOT the membership signal) yields a
-  # sentinel that never equals a session key.
-  defp instance_key(%URI{} = uri), do: URI.to_string(Ezagent.URI.instance(uri))
+  # member-cap's shape) normalizes to its bare-instance `%URI{}` (query/fragment
+  # dropped) and is compared by STRUCT equality — the same opaque-instance
+  # comparison `Ezagent.ActionSet.Agent.Receive.same_instance?/2` uses, never a
+  # stringified key (unify-uri-query: a URI is an opaque id, not parsed/serialized
+  # for keying). A scope-tuple / `:any` instance (a broad admin cap, NOT the
+  # membership signal) yields a sentinel atom that never equals a `%URI{}` key.
+  defp instance_key(%URI{} = uri), do: Ezagent.URI.instance(uri)
   defp instance_key(_), do: :__non_uri_instance__
 
   # Read the recipient's OWN held caps from the PRE-LOADED `:identity` sibling
