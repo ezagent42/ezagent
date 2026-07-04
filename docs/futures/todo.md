@@ -219,6 +219,45 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
 > back under 1000, then ratchet `oversized_modules_gt_1000` 2 → 1. Low priority — it is
 > a cohesive callback and 18 lines over.
 
+### Fast domain-level regression test for the RouteProvisioner over-fire — OPEN (LOW, #161 C)
+
+> **OPEN, 2026-07-05 (#161 C admission over-fire).** The admission gate over-fired on
+> `RouteProvisioner.provision_declared_role/4` — a member DECLARED in the session's own
+> template spec, lazily provisioned during routing, was joined under the TRIGGERING
+> message-sender's caller (e.g. an anon participant), so the gate mis-classified the
+> session realizing its own declared member as a cross-owner pull → PENDING. **Fixed**
+> by running that member-`do_join` under system-mediated (admin) authority
+> (`system_mediated_ctx/1`), identical to `Materializer.join_session_members` /
+> `DefinitionAgents` at session-CREATE. **Regression guard TODAY =** the socialware P10
+> E2E (`apps/ezagent_plugin_kb/test/e2e/socialware_p10_codex_gate_test.exs`) — it
+> reproduces the exact flow (non-system ws, anon participant → declared bot via routing)
+> and was verified fails-without-fix / passes-with-fix; it is in CI precommit. **Fix (if
+> pursued) =** add a FAST domain-level test in `session_template_materialize_test.exs`
+> driving `RouteProvisioner` with a non-managing sender. It MUST use a NON-SYSTEM
+> workspace: in the `system` (admin) workspace `manages?/2` returns true for any caller,
+> so a system-ws anon does NOT reproduce the pend (a system-ws attempt is a FALSE guard —
+> it passes even without the fix). Needs the `relay_team_content`/`persist_template`
+> harness re-pointed to a non-system ws + a non-system owner + a matching route rule.
+
+### Verify protocol_api `join_agent` does not admission-over-fire — OPEN (LOW, #161 C audit)
+
+> **OPEN, 2026-07-05 (#161 C sibling-site audit).** After fixing the RouteProvisioner
+> over-fire, I audited all `session.join` dispatch sites for the same class (a member-join
+> carrying a caller who does not manage the joined agent). All others are safe:
+> `Materializer`/`DefinitionAgents` use `caller: admin` (system-mediated); `world_live.ex`
+> + `conversation_actions.ex:836` are SELF-joins (`member == caller` → `same_entity?`
+> exempt); orchestrator uses `{:spawned_by}`. **One to verify:**
+> `chat_completions_plug.ex:185` (`ezagent_plugin_protocol_api`) joins `target_agent`
+> with `caller: entity_uri` (the API key's principal) — its full-plug integration test is
+> `@tag :skip`, so this path has NO CI coverage. In the fixtures + likely production model
+> `entity_uri` is in the **system** workspace (`entity://system/agent/py_default`,
+> `workspace://system`) → workspace-admin → `manages?` true → EXEMPT, no over-fire. **Risk
+> only if** a real API key binds a NON-system `entity_uri` to a `target_agent` it does not
+> manage → the admission gate would pend the agent-join and the OpenAI-compat endpoint
+> would hang. **Verify =** un-skip the integration test with a non-system API key, or
+> confirm API-key provisioning grants the principal manage-authority over its bound agent;
+> if it over-fires, apply the same system-mediated-caller treatment or grant-at-provision.
+
 ### `behavior/session/membership.ex` oversized (admission cluster) — OPEN (LOW, #161 C)
 
 > **OPEN, surfaced 2026-07-05 (#161 C admission gate).** `oversized_modules_gt_1000`
