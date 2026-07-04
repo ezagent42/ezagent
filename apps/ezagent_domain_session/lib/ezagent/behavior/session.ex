@@ -291,6 +291,15 @@ defmodule Ezagent.ActionSet.Session do
      %{
        # %{URI => %{online: bool}}
        members: %{},
+       # Membership-cap unification Part C admission gate (spec §C.1/§C.2, R4).
+       # A CROSS-OWNER add (a real, non-system caller who does NOT manage the
+       # member) records a PENDING admission request here — DISTINCT from
+       # `:members`, holds NO member-cap, is NOT mounted — until the member's
+       # owner/manager approves. Shape (spec §C.2):
+       #   %{member_uri => %{requested_by, requested_at, request_ref}}
+       # Persistent (survives restart, never silently lost). Legacy snapshots
+       # lack this key; readers MUST default via `ctx[:read].(:pending_members, %{})`.
+       pending_members: %{},
        owner_uri: Map.get(args, :owner_uri),
        # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
        # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`
