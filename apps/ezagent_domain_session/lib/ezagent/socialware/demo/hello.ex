@@ -118,6 +118,15 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "scope" => "public",
         "publish_policy" => "supervised",
         "web_anon_access" => true
+      },
+      # D-5 (§7.3) — the hello demo is `web_anon_access: true` (a headless anon
+      # homesite with no logged-in installer), so it MUST declare a `:fixed`
+      # owner. The system admin reproduces the bespoke path's hard-coded
+      # `User.admin_uri()` (`app.ex:50-56`) as DATA. Adding this field churns the
+      # def's content_hash once → a benign one-time re-promotion on deploy (§7.5).
+      "owner_policy" => %{
+        "type" => "fixed",
+        "uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
       }
     }
   end

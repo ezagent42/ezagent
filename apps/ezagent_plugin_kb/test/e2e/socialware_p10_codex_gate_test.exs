@@ -365,6 +365,11 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       "visibility_policy" => %{
         "publish_policy" => publish_policy,
         "web_anon_access" => true
+      },
+      # D-5 — an anon def MUST declare a :fixed owner.
+      "owner_policy" => %{
+        "type" => "fixed",
+        "uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
       }
     }
   end

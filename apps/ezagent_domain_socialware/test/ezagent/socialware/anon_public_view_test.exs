@@ -55,6 +55,12 @@ defmodule Ezagent.Socialware.PublicViewTest do
       name: name,
       bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
       shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
+      # D-5 — an anon def MUST declare a :fixed owner; a private def uses the default.
+      owner_policy:
+        if(web_anon_access,
+          do: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()},
+          else: %{type: :installer}
+        ),
       visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
     }
   end

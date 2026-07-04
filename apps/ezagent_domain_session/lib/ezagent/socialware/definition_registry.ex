@@ -197,7 +197,12 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
           Ezagent.ActionSet.SupervisorApproval
         ],
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true},
+        # D-5 (§7.3) — anon-accessible (`web_anon_access: true`), so it MUST
+        # declare a `:fixed` owner (the system admin); `:installer`/`:none` are
+        # invalid for an anon def and `Definition.new/1` would reject the
+        # round-tripped body on read.
+        owner_policy: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()}
       }
     ]
   end

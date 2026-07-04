@@ -155,6 +155,94 @@ defmodule Ezagent.Socialware.DefinitionTest do
     end
   end
 
+  describe "owner_policy (P0 §7, O-1)" do
+    @admin Ezagent.Entity.User.admin_uri()
+
+    test "T-Own-d: an owner-less body rehydrates with the :installer default" do
+      assert {:ok, %Definition{owner_policy: %{type: :installer}}} =
+               Definition.new(%{name: "chat"})
+    end
+
+    test "T-Own-b (derivation): :installer owner resolves to the caller" do
+      caller = Ezagent.URI.user("acme", "alice")
+      {:ok, definition} = Definition.new(%{name: "chat"})
+      assert Definition.owner_uri(definition, caller) == caller
+    end
+
+    test "T-Own-a (derivation): :fixed owner resolves to the declared uri" do
+      {:ok, definition} =
+        Definition.new(%{name: "site", owner_policy: %{type: :fixed, uri: @admin}})
+
+      caller = Ezagent.URI.user("acme", "alice")
+      assert Definition.owner_uri(definition, caller) == @admin
+    end
+
+    test ":none owner resolves to nil (ownerless)" do
+      {:ok, definition} = Definition.new(%{name: "chat", owner_policy: %{type: :none}})
+      assert Definition.owner_uri(definition, Ezagent.URI.user("acme", "alice")) == nil
+    end
+
+    test ":fixed accepts a string uri and round-trips through body/1" do
+      {:ok, d1} =
+        Definition.new(%{
+          "name" => "site",
+          "owner_policy" => %{"type" => "fixed", "uri" => URI.to_string(@admin)}
+        })
+
+      assert d1.owner_policy == %{type: :fixed, uri: @admin}
+      assert {:ok, d2} = Definition.new(Definition.body(d1))
+      assert d2.owner_policy == d1.owner_policy
+    end
+
+    test "rejects :fixed with no/invalid uri (fail loud, no default-swallow)" do
+      assert {:error, {:invalid_socialware_owner_policy, _}} =
+               Definition.new(%{name: "site", owner_policy: %{type: :fixed}})
+    end
+
+    test "rejects an unknown owner_policy type" do
+      assert {:error, {:invalid_socialware_owner_policy, _}} =
+               Definition.new(%{name: "site", owner_policy: %{type: :bogus}})
+    end
+  end
+
+  describe "T-Own-c: D-5 anon-owner invariant (§7.3)" do
+    @admin Ezagent.Entity.User.admin_uri()
+
+    test "REJECTS web_anon_access: true with owner_policy :installer" do
+      assert {:error, {:anon_definition_requires_fixed_owner, :installer}} =
+               Definition.new(%{
+                 name: "site",
+                 visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+               })
+    end
+
+    test "REJECTS web_anon_access: true with owner_policy :none" do
+      assert {:error, {:anon_definition_requires_fixed_owner, :none}} =
+               Definition.new(%{
+                 name: "site",
+                 owner_policy: %{type: :none},
+                 visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+               })
+    end
+
+    test "ACCEPTS web_anon_access: true with owner_policy :fixed" do
+      assert {:ok, %Definition{owner_policy: %{type: :fixed, uri: @admin}}} =
+               Definition.new(%{
+                 name: "site",
+                 owner_policy: %{type: :fixed, uri: @admin},
+                 visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+               })
+    end
+
+    test "allows web_anon_access: false with the :installer default (private def)" do
+      assert {:ok, %Definition{owner_policy: %{type: :installer}}} =
+               Definition.new(%{
+                 name: "chat",
+                 visibility_policy: %{publish_policy: :auto, web_anon_access: false}
+               })
+    end
+  end
+
   describe "round-trip" do
     test "new/1 -> body/1 -> new/1 round-trips agents" do
       {:ok, d1} =

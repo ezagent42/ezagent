@@ -52,15 +52,23 @@ defmodule EzagentPluginHello.App do
          # records. Without this a later hello publish would silently change the
          # running flagship — the surface the pin matters most for.
          {:ok, content} <- Installation.freeze_template_installs(content, workspace),
+         # SPEC §7.2 (O-1) — DERIVE the page owner from the hello def's
+         # `owner_policy` instead of hard-coding `User.admin_uri()`. The def is
+         # `:fixed` to the system admin (D-5, anon homesite), so this resolves to
+         # the same admin owner — now as DATA. The caller fallback (`:installer`)
+         # is admin here (this path is admin-authored).
+         {:ok, owner_uri} <-
+           Installation.owner_uri_for_template(content, workspace, User.admin_uri()),
          {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <-
            spawn_kind(Session, %{
              uri: session_uri,
-             # hello apps are operator-built; the admin/operator is the page OWNER
-             # (the one the orchestrator routes to the builder). Without this the
-             # session is ownerless and every message falls to the concierge.
-             owner_uri: User.admin_uri(),
+             # hello apps are operator-built; the page OWNER (the one the
+             # orchestrator routes to the builder) comes from the def's `:fixed`
+             # `owner_policy`. Without an owner the session is ownerless and every
+             # message falls to the concierge.
+             owner_uri: owner_uri,
              behaviors: behaviors
            }),
          :ok <- bind_workspace(session_uri, workspace),
@@ -243,7 +251,13 @@ defmodule EzagentPluginHello.App do
         prompt_templates: %{},
         legends: %{},
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true},
+        # D-5 (§7.3) — an anon homesite (`web_anon_access: true`) has no
+        # logged-in installer, so it MUST declare a `:fixed` owner. The system
+        # admin reproduces this path's hard-coded `owner_uri: User.admin_uri()`
+        # (below) as DATA — `ensure_app/3` now DERIVES the session owner from
+        # this policy rather than hard-coding it.
+        owner_policy: %{type: :fixed, uri: User.admin_uri()}
       },
       workspace_uri: Ezagent.URI.workspace(ws),
       actor_uri: User.admin_uri()
