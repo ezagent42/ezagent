@@ -17,7 +17,7 @@ defmodule Ezagent.Workspace.RoleTestBehavior do
   )
 
   # Override the macro-derived `:any` kind so the cap subject is `:agent` —
-  # symmetric to `Ezagent.Behavior.Sandbox.required_caps/0`. A role recipe that
+  # symmetric to `Ezagent.ActionSet.Sandbox.required_caps/0`. A role recipe that
   # requests `%{behavior: __MODULE__, action: :ping}` mints a cap on the `:agent`
   # kind axis, which this `required_caps` then matches at dispatch.
   def required_caps do

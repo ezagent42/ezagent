@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.UserCredentialsTest do
+defmodule Ezagent.ActionSet.UserCredentialsTest do
   @moduledoc """
   Tests for the dispatch-backed UserCredentials Behavior — HIGH-2
   completion (`docs/futures/todo.md` CLI ↔ GUI parity).
@@ -20,7 +20,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.UserCredentials, as: UC
+  alias Ezagent.ActionSet.UserCredentials, as: UC
   alias Ezagent.Users
 
   describe "contract surface" do
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
       # `def required_caps` (the auto-derived macro version
       # hardcodes `kind: :any`; we override to keep `kind: :user`).
       assert kind == :user
-      assert behavior == Ezagent.Behavior.UserCredentials
+      assert behavior == Ezagent.ActionSet.UserCredentials
     end
 
     test "state_slice/0 is :user_credentials" do

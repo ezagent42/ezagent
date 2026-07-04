@@ -1,6 +1,6 @@
 defmodule EzagentPluginEmPull.PullAdapterAllow do
   @moduledoc "Cap-only Allow Behavior paired (by convention) with the pull adapter."
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_em_pull]

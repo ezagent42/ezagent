@@ -85,9 +85,9 @@ defmodule EzagentPluginHello.Application do
   def hello_orchestrator_recipe do
     %{
       name: "hello.orchestrator",
-      behaviors: [Ezagent.Behavior.HelloOrchestrator],
+      behaviors: [Ezagent.ActionSet.HelloOrchestrator],
       requested_caps: [
-        %{behavior: Ezagent.Behavior.HelloOrchestrator, action: :hello_sync_result}
+        %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
       ]
     }
   end
@@ -97,8 +97,8 @@ defmodule EzagentPluginHello.Application do
   def hello_builder_recipe do
     %{
       name: "hello.builder",
-      behaviors: [Ezagent.Behavior.HelloBuilder],
-      requested_caps: [%{behavior: Ezagent.Behavior.HelloBuilder, action: :receive}]
+      behaviors: [Ezagent.ActionSet.HelloBuilder],
+      requested_caps: [%{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive}]
     }
   end
 
@@ -107,8 +107,8 @@ defmodule EzagentPluginHello.Application do
   def hello_concierge_recipe do
     %{
       name: "hello.concierge",
-      behaviors: [Ezagent.Behavior.HelloConcierge],
-      requested_caps: [%{behavior: Ezagent.Behavior.HelloConcierge, action: :receive}]
+      behaviors: [Ezagent.ActionSet.HelloConcierge],
+      requested_caps: [%{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive}]
     }
   end
 
@@ -122,11 +122,20 @@ defmodule EzagentPluginHello.Application do
     }
   end
 
-  # NO `behaviors/0`: under the role model, hello's behaviors load PER-INSTANCE via
-  # the recipe (`roles/0`) on the generic `Entity.Agent` host — the recipe is the
-  # sole behavior declaration (kanban-as-role K5). The old static
-  # `{Entity.HelloBuilder, :receive, …}` rows keyed on the now-deleted own Kinds
-  # and are dead under this model.
+  # Under the role model, hello's chat behaviors load PER-INSTANCE via the recipes
+  # (`roles/0`) on the generic `Entity.Agent` host — NOT via static `behaviors/0`
+  # rows on the now-deleted `Entity.HelloBuilder`/`HelloConcierge` Kinds. The only
+  # remaining static binding is the T2-2a view-render cap subject below.
+  @impl Ezagent.Plugin
+  def behaviors do
+    # T2-2a — register the hello view read ActionSet's `<sw>_render` action on the
+    # Session Kind. Cap-only (dispatchable? false) so this writes only the
+    # `{Session, :hello_render}` cap subject; there is no dispatch route. This is the
+    # cap `authorize_view/3` (T2-2b) checks for a hello page view.
+    [
+      {Ezagent.Entity.Session, :hello_render, Ezagent.ActionSet.HelloRender}
+    ]
+  end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
   # plus an OPT-IN boot seed (off by default).

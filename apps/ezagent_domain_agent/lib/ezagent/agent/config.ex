@@ -2,13 +2,13 @@ defmodule Ezagent.Agent.Config do
   @moduledoc """
   Console-facing facade for runtime agent config cascade reads and mutations.
 
-  The durable mutation owner remains `Ezagent.Behavior.ConfigEvolve`; this
+  The durable mutation owner remains `Ezagent.ActionSet.ConfigEvolve`; this
   module gives UI/domain callers one stable boundary for reading cascade state
   and dispatching manage-cap-gated writes.
   """
 
   alias Ezagent.{Invocation, Socialware.ConfigStore}
-  alias Ezagent.Behavior.ConfigEvolve
+  alias Ezagent.ActionSet.ConfigEvolve
 
   @default_key "agent.soul"
   @layer_order ~w(workspace user session)
@@ -42,7 +42,7 @@ defmodule Ezagent.Agent.Config do
   force-activate a cold agent — the FP5 S5 `:activate_timeout` bug, #115, where
   the world config DETAIL surface activated a cold cc agent that needs >5s to
   launch claude). After authorizing, it reads the cascade DIRECTLY from the
-  durable `ConfigStore` via `Ezagent.Behavior.ConfigEvolve.build_cascade/2` (a
+  durable `ConfigStore` via `Ezagent.ActionSet.ConfigEvolve.build_cascade/2` (a
   pure DB projection — NO process, NO activation). The cap gate is preserved by
   reconstructing the EXACT needed-cap the dispatch path builds (kind `:agent`,
   behavior `Manage`, the target agent instance + workspace) and authorizing it
@@ -85,7 +85,7 @@ defmodule Ezagent.Agent.Config do
   defp authorize_read_cascade(agent_uri, caps) do
     needed = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Manage,
+      behavior: Ezagent.ActionSet.Manage,
       action: :read_cascade,
       instance: Ezagent.URI.instance(agent_uri),
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
@@ -301,7 +301,7 @@ defmodule Ezagent.Agent.Config do
   # — an existence oracle (the #958 info-leak) — instead of `:unauthorized`.
   #
   # `read_cascade` is gated on the SAME cap the mutation needs — `cap(:agent,
-  # Manage, :any)` (see `Ezagent.Behavior.ConfigEvolve.required_caps/0`, where
+  # Manage, :any)` (see `Ezagent.ActionSet.ConfigEvolve.required_caps/0`, where
   # `apply_config_delta` and `read_cascade` are defined together) — and the
   # dispatch gate rejects an unauthorized caller BEFORE its handler reads. So
   # probing it here authorizes via the real gate (no divergent cap check) and an

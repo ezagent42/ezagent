@@ -212,7 +212,7 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc """
-  Write bytes to the PTY's stdin (called by Ezagent.Behavior.Pty.invoke(:write, ...)).
+  Write bytes to the PTY's stdin (called by Ezagent.ActionSet.Pty.invoke(:write, ...)).
 
   Returns `:ok` on success or `{:error, reason}`. Test_mode short-circuits
   to `:ok` without invoking erlexec.

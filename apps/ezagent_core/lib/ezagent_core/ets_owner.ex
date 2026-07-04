@@ -44,7 +44,7 @@ defmodule EzagentCore.EtsOwner do
     # identity) to keep core free of any identity/ConfigStore reference — the
     # umbrella no-core→identity invariant. The table is owned there too.
     # Phase 7 PR 31 (IMPL-7-1): session→workspace back-edge for
-    # Ezagent.Behavior.Session.invoke(:send) to plumb workspace_uri into
+    # Ezagent.ActionSet.Session.invoke(:send) to plumb workspace_uri into
     # Resolver. See WorkspaceRegistry moduledoc.
     {Ezagent.WorkspaceRegistry, :set},
     # Phase 7 PR 40: agent spawn lineage for {:spawned_by, _} cap

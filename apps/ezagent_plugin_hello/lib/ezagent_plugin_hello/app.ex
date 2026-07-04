@@ -14,7 +14,7 @@ defmodule EzagentPluginHello.App do
   require Logger
 
   alias Ezagent.{Capability, Invocation, Workspace, WorkspaceRegistry}
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
@@ -223,18 +223,18 @@ defmodule EzagentPluginHello.App do
       %{
         name: name,
         bases: [
-          Ezagent.Behavior.Session,
-          Ezagent.Behavior.Publisher.SessionImpl
+          Ezagent.ActionSet.Session,
+          Ezagent.ActionSet.Publisher.SessionImpl
         ],
         shape: [
-          Ezagent.Behavior.Turn,
-          Ezagent.Behavior.Surface
+          Ezagent.ActionSet.Turn,
+          Ezagent.ActionSet.Surface
         ],
         members: [],
         routing_rules: [],
         prompt_templates: %{},
         legends: %{},
-        adapters: [%{adapter_id: "web_feed", role: :customer, config: %{}}],
+        adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true}
       },
       workspace_uri: Ezagent.URI.workspace(ws),

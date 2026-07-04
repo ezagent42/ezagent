@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ConfigEvolve do
+defmodule Ezagent.ActionSet.ConfigEvolve do
   @moduledoc """
   Agent-owned config evolution (spec `docs/superpowers/specs/2026-06-11-agent-owned-config-evolve-design.md`,
   rev 4). The agent mutates its OWN config under its own authority, dissolving
@@ -159,16 +159,16 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   #
   # The sandbox write step 1 / reconcile emit is a Cmd(self, :update_config, …),
   # gated by cap(:agent, Sandbox, :update_config) — the agent holds it over
-  # itself (granted at create, see Ezagent.Behavior.Identity.create/1).
+  # itself (granted at create, see Ezagent.ActionSet.Identity.create/1).
   def required_caps do
     %{
-      apply_config_delta: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
-      repoint_config: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
+      apply_config_delta: Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any),
+      repoint_config: Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any),
       # READ is gated by the SAME agent manage-cap as the writes — "whoever
       # manages the agent may read its config" (the runtime overwrites the
       # needed-cap action to the dispatched `:read_cascade`; the manager's held
       # cap(:agent, Manage, :any, instance: agent) has action :any → matches).
-      read_cascade: Ezagent.Capability.cap(:agent, Ezagent.Behavior.Manage, :any),
+      read_cascade: Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any),
       reconcile_cascade: Ezagent.Capability.cap(:agent, __MODULE__, :reconcile_cascade)
     }
   end
@@ -228,7 +228,7 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   # ---- STEP 1 — durable apply (manager-authorized) -------------------------
   #
-  # Ported from `Ezagent.Behavior.ConfigUpdate.handle_apply_delta` (#607
+  # Ported from `Ezagent.ActionSet.ConfigUpdate.handle_apply_delta` (#607
   # object-keyed ordering) MINUS (a) the subject-authority confused-deputy
   # predicate (the manage-cap gate + self-subject replace it) and (b) the
   # `repoint_agent_layer/2` cross-entity write (step 2 = the deferred

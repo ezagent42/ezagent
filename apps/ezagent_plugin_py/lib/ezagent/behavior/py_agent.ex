@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.PyAgent do
+defmodule Ezagent.ActionSet.PyAgent do
   @moduledoc """
   PyAgent Behavior (py-agent P4b) — the STATE half of the GENERAL script-driven
   Python flavor, folded onto the UNIFIED `Ezagent.Entity.Agent` Kind (curl
@@ -228,7 +228,7 @@ defmodule Ezagent.Behavior.PyAgent do
                 %Ezagent.Capability{
                   Ezagent.Capability.cap(
                     :session,
-                    Ezagent.Behavior.Session,
+                    Ezagent.ActionSet.Session,
                     :send,
                     Ezagent.URI.instance(session),
                     Ezagent.Capability.workspace_of(session)
@@ -280,7 +280,7 @@ defmodule Ezagent.Behavior.PyAgent do
     cond do
       not is_struct(self_uri, URI) ->
         Logger.warning(
-          "Ezagent.Behavior.PyAgent.activate: non-URI self_uri " <>
+          "Ezagent.ActionSet.PyAgent.activate: non-URI self_uri " <>
             "#{inspect(self_uri)} — skipping subprocess re-spawn"
         )
 
@@ -308,7 +308,7 @@ defmodule Ezagent.Behavior.PyAgent do
 
       {:error, reason} = err ->
         Logger.error(
-          "Ezagent.Behavior.PyAgent.activate: ensure_alive failed for " <>
+          "Ezagent.ActionSet.PyAgent.activate: ensure_alive failed for " <>
             "#{URI.to_string(self_uri)}: #{inspect(reason)}. PyAgent Kind stays " <>
             "alive in DEGRADED state (no Python subprocess); next :receive " <>
             "surfaces :not_alive."
@@ -331,7 +331,7 @@ defmodule Ezagent.Behavior.PyAgent do
           {:ok, [{:set, :python_phase, phase}]}
         else
           Logger.warning(
-            "Ezagent.Behavior.PyAgent.handle_signal: pty_phase agent_uri=" <>
+            "Ezagent.ActionSet.PyAgent.handle_signal: pty_phase agent_uri=" <>
               "#{URI.to_string(agent_uri)} != self_uri=#{inspect(self_uri)}; " <>
               "dropping (topic-collision defense)"
           )

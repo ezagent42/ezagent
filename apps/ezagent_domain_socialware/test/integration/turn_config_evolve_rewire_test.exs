@@ -41,7 +41,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # caps the open→compose→claim→settle drive needs, scoped to THIS session.
   defp turn_drive_caps(session, workspace) do
     for action <- [:open, :compose, :claim, :settle, :deliver, :dispatch, :cancel] do
-      Ezagent.Capability.cap(:session, Ezagent.Behavior.Turn, action, session, workspace)
+      Ezagent.Capability.cap(:session, Ezagent.ActionSet.Turn, action, session, workspace)
     end
   end
 
@@ -134,7 +134,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     assert cmd.ctx.caller == manager.uri
     # The manager's currently-loaded caps include the agent's manage-cap.
     assert Enum.any?(cmd.ctx.caps, fn c ->
-             c.behavior == Ezagent.Behavior.Manage and c.instance == agent
+             c.behavior == Ezagent.ActionSet.Manage and c.instance == agent
            end)
   end
 
@@ -159,7 +159,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
 
       [{:dispatch, cmd}] ->
         refute Enum.any?(cmd.ctx.caps, fn c ->
-                 c.behavior == Ezagent.Behavior.Manage and c.instance == agent
+                 c.behavior == Ezagent.ActionSet.Manage and c.instance == agent
                end),
                "recovery re-dispatched with the manage-cap despite it being revoked (laundering)"
 
@@ -296,7 +296,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     }
 
     {:ok, effects} =
-      Ezagent.Behavior.Turn.handle_signal({:ezagent_recover_settlements}, signal_ctx)
+      Ezagent.ActionSet.Turn.handle_signal({:ezagent_recover_settlements}, signal_ctx)
 
     Enum.filter(effects, fn
       {:dispatch, %Ezagent.Cmd{action: :apply_config_delta}} -> true

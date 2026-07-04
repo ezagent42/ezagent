@@ -9,10 +9,10 @@ defmodule Ezagent.Entity.System do
   (`system://bootstrap/default`, `system://migration-<id>`) reuse the
   same Kind module.
 
-  Carries `Ezagent.Behavior.Routing` so global routing rule mutations
+  Carries `Ezagent.ActionSet.Routing` so global routing rule mutations
   dispatch through the regular CapBAC pipeline. Non-admin operators
   who should manage global rules receive a cap of
-  `%Ezagent.Capability{kind: :system, behavior: Ezagent.Behavior.Routing,
+  `%Ezagent.Capability{kind: :system, behavior: Ezagent.ActionSet.Routing,
   instance: system://routing/default}`. Admin's triple-`:any`
   satisfies by default.
 
@@ -26,7 +26,7 @@ defmodule Ezagent.Entity.System do
   def type_name, do: :system
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Routing]
+  def behaviors, do: [Ezagent.ActionSet.Routing]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

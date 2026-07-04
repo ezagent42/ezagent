@@ -58,17 +58,17 @@ defmodule EzagentPluginKb.KbIsolationTest do
 
       assert recipe.name == "kb"
       assert recipe.passive == true
-      assert recipe.behaviors == [Ezagent.Behavior.Kb]
+      assert recipe.behaviors == [Ezagent.ActionSet.Kb]
 
       requested =
         recipe.requested_caps
         |> Enum.map(fn c -> {c.behavior, c.action} end)
         |> MapSet.new()
 
-      actions = MapSet.new(Ezagent.Behavior.Kb.actions())
+      actions = MapSet.new(Ezagent.ActionSet.Kb.actions())
 
       expected =
-        actions |> Enum.map(fn a -> {Ezagent.Behavior.Kb, a} end) |> MapSet.new()
+        actions |> Enum.map(fn a -> {Ezagent.ActionSet.Kb, a} end) |> MapSet.new()
 
       assert requested == expected,
              "the recipe must request exactly one cap per Behavior.Kb action"

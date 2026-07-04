@@ -96,7 +96,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       create_cap =
         Ezagent.Capability.cap(
           :workspace,
-          Ezagent.Behavior.Workspace,
+          Ezagent.ActionSet.Workspace,
           :create_session,
           workspace_uri,
           workspace_uri
@@ -189,7 +189,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     end
 
     test "interface/0 returns spec for :create_session" do
-      iface = Ezagent.Behavior.Workspace.interface()
+      iface = Ezagent.ActionSet.Workspace.interface()
       assert is_map(iface[:create_session])
       assert iface[:create_session].modes == [:call]
 
@@ -198,7 +198,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     end
 
     test "required_caps/0 entry uses MODULE reference (Invariant #2)" do
-      caps = Ezagent.Behavior.Workspace.required_caps()
+      caps = Ezagent.ActionSet.Workspace.required_caps()
       cap = Map.fetch!(caps, :create_session)
 
       assert %Ezagent.Capability{} = cap
@@ -206,7 +206,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
       # Invariant #2: cap subject's `behavior` is the module reference,
       # NOT an atom shorthand.
-      assert cap.behavior == Ezagent.Behavior.Workspace
+      assert cap.behavior == Ezagent.ActionSet.Workspace
       refute is_atom(cap.behavior) and cap.behavior == :workspace
     end
   end
@@ -293,7 +293,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       assert Enum.any?(post_caps, fn cap ->
                match?(%Ezagent.Capability{}, cap) and
                  cap.kind == :workspace and
-                 cap.behavior == Ezagent.Behavior.Workspace and
+                 cap.behavior == Ezagent.ActionSet.Workspace and
                  URI.to_string(cap.instance) == URI.to_string(workspace_uri)
              end),
              "expected :create_session cap, got #{inspect(post_caps)}"
@@ -334,7 +334,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
               %Ezagent.Capability{
                 Ezagent.Capability.cap(
                   :workspace,
-                  Ezagent.Behavior.Workspace,
+                  Ezagent.ActionSet.Workspace,
                   :add_member,
                   Ezagent.URI.instance(workspace_uri),
                   Ezagent.Capability.workspace_of(workspace_uri)
@@ -360,7 +360,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       assert Enum.any?(post_caps, fn cap ->
                match?(%Ezagent.Capability{}, cap) and
                  cap.kind == :workspace and
-                 cap.behavior == Ezagent.Behavior.Workspace and
+                 cap.behavior == Ezagent.ActionSet.Workspace and
                  URI.to_string(cap.instance) == URI.to_string(workspace_uri)
              end),
              "dispatch-level add_member must also auto-grant :create_session — got #{inspect(post_caps)}"
@@ -384,7 +384,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
       refute Enum.any?(caps, fn cap ->
                match?(%Ezagent.Capability{}, cap) and
-                 cap.behavior == Ezagent.Behavior.Workspace
+                 cap.behavior == Ezagent.ActionSet.Workspace
              end),
              "agent member must NOT receive :create_session cap; got #{inspect(caps)}"
     end
@@ -396,7 +396,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     |> Enum.any?(fn
       %Ezagent.Capability{} = cap ->
         cap.kind == kind and
-          cap.behavior == Ezagent.Behavior.Manage and
+          cap.behavior == Ezagent.ActionSet.Manage and
           cap.action == :any and
           URI.to_string(cap.instance) == URI.to_string(instance_uri) and
           URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and

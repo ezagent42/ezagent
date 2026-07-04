@@ -2,7 +2,7 @@ defmodule Ezagent.ExternalMirror.TestSupport.TimeoutAdapter.Allow do
   @moduledoc """
   PR-EM-3 — Per-adapter Allow Behavior for `TimeoutAdapter`.
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @impl true
   def actions, do: [:allow_em_timeout]

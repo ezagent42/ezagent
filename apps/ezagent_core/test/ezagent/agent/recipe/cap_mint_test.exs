@@ -23,11 +23,11 @@ defmodule Ezagent.Agent.Recipe.CapMintTest do
   describe "mint/3" do
     test "mints a permitted requested cap into a concrete %Capability{} (all axes from context)" do
       c = ctx()
-      requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      requested = [%{behavior: Ezagent.ActionSet.Sandbox, action: :read}]
 
       assert [%Capability{} = cap] = CapMint.mint(requested, c, fn _ -> true end)
       assert cap.kind == :agent
-      assert cap.behavior == Ezagent.Behavior.Sandbox
+      assert cap.behavior == Ezagent.ActionSet.Sandbox
       assert cap.action == :read
       assert URI.to_string(cap.instance) == URI.to_string(c.instance)
       assert URI.to_string(cap.workspace_uri) == URI.to_string(c.workspace_uri)
@@ -38,8 +38,8 @@ defmodule Ezagent.Agent.Recipe.CapMintTest do
       # both caps are well-formed (real Behavior + atom action) so the POLICY is
       # what differentiates — permits :read, rejects :write
       requested = [
-        %{behavior: Ezagent.Behavior.Sandbox, action: :read},
-        %{behavior: Ezagent.Behavior.Sandbox, action: :write}
+        %{behavior: Ezagent.ActionSet.Sandbox, action: :read},
+        %{behavior: Ezagent.ActionSet.Sandbox, action: :write}
       ]
 
       minted = CapMint.mint(requested, ctx(), fn %{action: a} -> a == :read end)
@@ -49,9 +49,9 @@ defmodule Ezagent.Agent.Recipe.CapMintTest do
     end
 
     test "canonicalizes a string-valued behavior to its module before minting" do
-      requested = [%{behavior: "Ezagent.Behavior.Sandbox", action: "read"}]
+      requested = [%{behavior: "Ezagent.ActionSet.Sandbox", action: "read"}]
 
-      assert [%Capability{behavior: Ezagent.Behavior.Sandbox, action: :read}] =
+      assert [%Capability{behavior: Ezagent.ActionSet.Sandbox, action: :read}] =
                CapMint.mint(requested, ctx(), fn _ -> true end)
     end
 
@@ -59,8 +59,8 @@ defmodule Ezagent.Agent.Recipe.CapMintTest do
       # `:any` action is the legitimate orchestrator-style wildcard (matcher treats
       # it as match-all; Capability.any_action/0). It is well-formed (an atom), so
       # whether it mints is entirely the POLICY's decision — never an automatic grant.
-      requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :any}]
-      requested_str = [%{behavior: "Ezagent.Behavior.Sandbox", action: "any"}]
+      requested = [%{behavior: Ezagent.ActionSet.Sandbox, action: :any}]
+      requested_str = [%{behavior: "Ezagent.ActionSet.Sandbox", action: "any"}]
 
       # a policy that REFUSES the broad wildcard drops it (fail-closed)
       deny_any = fn %{action: a} -> a != :any end
@@ -72,7 +72,7 @@ defmodule Ezagent.Agent.Recipe.CapMintTest do
     end
 
     test "FAIL-CLOSED (no crash) when the policy predicate RAISES" do
-      requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      requested = [%{behavior: Ezagent.ActionSet.Sandbox, action: :read}]
       assert [] = CapMint.mint(requested, ctx(), fn _ -> raise "boom" end)
     end
 

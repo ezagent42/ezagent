@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.HelloConcierge do
+defmodule Ezagent.ActionSet.HelloConcierge do
   @moduledoc """
   The hello CONCIERGE agent Behavior — a READ-ONLY navigation/Q&A copilot for the
   public website (the §5.2 门户助手).
@@ -8,11 +8,11 @@ defmodule Ezagent.Behavior.HelloConcierge do
   answers grounded in the current page content via
   `EzagentPluginHello.Generator.concierge_answer/3` and posts a chat reply. It
   NEVER drives `Behavior.Surface` — it structurally cannot edit / generate /
-  publish the page (only the builder, `Ezagent.Behavior.HelloBuilder`, does that).
+  publish the page (only the builder, `Ezagent.ActionSet.HelloBuilder`, does that).
   That hard separation is the safety gate: even a prompt-injected concierge has no
   page-write path.
 
-  Mirrors `Ezagent.Behavior.HelloBuilder`'s `:receive` shape; no durable state.
+  Mirrors `Ezagent.ActionSet.HelloBuilder`'s `:receive` shape; no durable state.
   """
 
   use Ezagent.Lifecycle

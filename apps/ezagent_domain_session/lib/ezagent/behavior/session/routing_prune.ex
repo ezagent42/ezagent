@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Session.RoutingPrune do
+defmodule Ezagent.ActionSet.Session.RoutingPrune do
   @moduledoc """
   Session-scoped routing-row prune for a removed participant.
 

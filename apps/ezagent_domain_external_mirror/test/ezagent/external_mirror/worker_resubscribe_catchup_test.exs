@@ -7,7 +7,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
   ## The window this test exercises
 
-  Between `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` firing
+  Between `Ezagent.ActionSet.Publisher.SessionImpl.on_ready/2` firing
   `broadcast_alive/1` and the Worker's `:publisher_alive` handler
   dispatching its subscribe `:call`, the Publisher slice has:
 
@@ -220,7 +220,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
              "Task #49 codex r3 NEW CHECK C regression — event emitted during " <>
                "the empty-fanout window did NOT reach the Worker after the " <>
                "`:publisher_alive` re-subscribe. The expected fix is for " <>
-               "`Ezagent.Behavior.ExternalMirrorWorker.attempt_resubscribe/3` to " <>
+               "`Ezagent.ActionSet.ExternalMirrorWorker.attempt_resubscribe/3` to " <>
                "pass the worker's persisted `publisher_cursor` to " <>
                "`Publisher.subscribe_from` instead of `:latest` so the publisher " <>
                "ring's events past the persisted cursor are replayed on subscribe."

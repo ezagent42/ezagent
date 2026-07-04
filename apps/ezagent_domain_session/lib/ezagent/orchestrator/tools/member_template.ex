@@ -371,7 +371,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
   defp preflight_chat_action_cap(cap_set, action, %URI{} = session_uri, %URI{} = workspace_uri) do
     needed = %{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: action,
       instance: session_uri,
       workspace_uri: workspace_uri
@@ -385,7 +385,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
   defp preflight_terminate_authority(%URI{} = old_member_uri, caps) do
     needed = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :destroy,
       instance: old_member_uri,
       workspace_uri: Ezagent.Capability.workspace_of(old_member_uri)

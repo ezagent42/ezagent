@@ -5,10 +5,10 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
   Level 1 (dispatch parity).
 
   This Behavior was migrated from the legacy `invoke/4` contract to
-  the new `use Ezagent.Behavior` + `handle_<action>/2` contract in
+  the new `use Ezagent.ActionSet` + `handle_<action>/2` contract in
   Phase 2-f r3. The parity invariants checked here:
 
-  - `Ezagent.Behavior.new_style?/1` returns `true` for this module
+  - `Ezagent.ActionSet.new_style?/1` returns `true` for this module
   - The macro-derived legacy callbacks (`actions/0`, `interface/0`,
     `cap_subjects/0`) match the pre-migration shape
   - Custom `required_caps/0` preserves the `:workspace` axis (not the
@@ -44,7 +44,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(BV)
+      assert Ezagent.ActionSet.new_style?(BV)
     end
 
     test "__behavior__?/0 returns true (macro marker)" do
@@ -160,7 +160,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
   end
 
   describe "effect-application produces the same final slice as pre-migration" do
-    # Ezagent.Behavior.apply_effects/2 is the framework reducer that
+    # Ezagent.ActionSet.apply_effects/2 is the framework reducer that
     # turns the handler's effect list into the new slice map. This
     # test verifies that running handle_bind's effects through the
     # reducer yields the same {:bind_count, n+1} shape the legacy
@@ -172,7 +172,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
       {:ok, _result, effects} =
         BV.handle_bind(%{open_id: open_id, user_uri: @user_uri}, ctx(starting_slice))
 
-      {:ok, buckets} = Ezagent.Behavior.apply_effects(effects, starting_slice)
+      {:ok, buckets} = Ezagent.ActionSet.apply_effects(effects, starting_slice)
       assert buckets.state[:bind_count] == 4
       # Other slice fields survive (apply_effects only sets declared keys).
       assert buckets.state[:other_field] == "preserved"
@@ -187,7 +187,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
 
       {:ok, _result, effects} = BV.handle_unbind(%{open_id: open_id}, ctx(starting_slice))
 
-      {:ok, buckets} = Ezagent.Behavior.apply_effects(effects, starting_slice)
+      {:ok, buckets} = Ezagent.ActionSet.apply_effects(effects, starting_slice)
       assert buckets.state == starting_slice
     end
   end

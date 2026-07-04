@@ -25,7 +25,7 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Orchestrator.{McpServer, Tools}
 
   @retired_slot_tools [:add_agent_slot, :remove_agent_slot, :update_agent_template, :write_matcher]

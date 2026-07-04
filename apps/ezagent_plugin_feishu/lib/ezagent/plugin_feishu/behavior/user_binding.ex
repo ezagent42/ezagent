@@ -81,7 +81,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  Migrated from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`
   per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (the simple,
   no-transients case). The `:bind_count` slice is durable PERSISTENT
   `state` (an incidental counter; the DB table is the real SSOT) —

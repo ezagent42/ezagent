@@ -44,7 +44,7 @@ accountable entities **must not be the granter**.
 fields:
 
 - `kind` — the Kind axis (`:session`, `:user`, `:agent`, `:workspace`, `:session_template`, …) or `:any`
-- `behavior` — the Behavior module (`Ezagent.Behavior.Session`, …) or `:any`
+- `behavior` — the Behavior module (`Ezagent.ActionSet.Session`, …) or `:any`
 - `action` — IS a struct field (`defstruct` default `:any`), but it is **not in `@enforce_keys`**, so a cap built without it defaults to `action: :any` (wildcard). It is matched as a real axis: a held cap authorizes the dispatched action when `action_of(held) == needed_action` or `held` is `:any` (`capability/match.ex`). The **needed** action is the concrete dispatched action, substituted at dispatch time (`runtime.ex` `resolve_required_cap`); a *required* action is declared as the map key in a Behavior's `required_caps/0` — that's how you DECLARE a needed action, not how the held cap stores it. (History note: putting action in the struct/identity-tuple is the NEWER change — SPEC 2026-05-27 capability-action-axis — not the historical state. Some moduledocs still say "no action field"; they're stale.)
 - `instance` — a concrete `%URI{}`, `:any`, or a **scope tuple** `{:within_session, %URI{}}` / `{:within_workspace, %URI{}}` / `{:spawned_by, %URI{}}`
 - `workspace_uri` — a concrete `%URI{}` or `:any`
@@ -95,6 +95,15 @@ Two authorization styles coexist; know which gates a given action:
 - **membership-gated, cap-exempt** — a live `ChatMembership` owner/member check is the SOLE
   authority, no held cap consulted. (e.g. `Behavior.SocialwarePublisherRead`
   `:snapshot`/`:history`.)
+- **view-cap-gated** (T2 app-package, 2026-07-02) — a socialware VIEW's visibility is a
+  read cap on a view ActionSet's `<sw>_render` action (e.g. `{session, HelloRender,
+  :hello_render, <session>}`). The cap check is NOT step 5.5 (a view read is a projection
+  bypass, not a dispatch) but the unified `Ezagent.UI.SessionView.authorize_view/3` gate,
+  which every render entry routes through (`SessionViewRegistry.applicable_views/2` /
+  `external_renderers/2`). This EXTENDS cap-gating from write actions to view READS: the
+  old membership-only "whole session visible/invisible" model is retired in favor of
+  per-view caps. An anon is minted the `<sw>_render` caps of PUBLIC installed definitions'
+  views only (`Installation.anon_view_caps/1`). See architecture-invariants.md §23.
 - A handler may ALSO impose a precondition that is not authorization — e.g. `Session.handle_join`
   returns `{:error, {:member_not_registered, _}}` if the member Kind isn't live. That is a
   liveness gate, distinct from the cap check.

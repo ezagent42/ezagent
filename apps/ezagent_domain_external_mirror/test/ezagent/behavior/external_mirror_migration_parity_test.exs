@@ -1,10 +1,10 @@
-defmodule Ezagent.Behavior.ExternalMirrorMigrationParityTest do
+defmodule Ezagent.ActionSet.ExternalMirrorMigrationParityTest do
   @moduledoc """
-  Phase 2-d r3 — Migration parity for `Ezagent.Behavior.ExternalMirror`.
+  Phase 2-d r3 — Migration parity for `Ezagent.ActionSet.ExternalMirror`.
 
-  This Behavior was migrated from the legacy `@behaviour Ezagent.Behavior`
+  This Behavior was migrated from the legacy `@behaviour Ezagent.ActionSet`
   + manual `actions/0` / `interface/0` / `required_caps/0` /
-  `cap_subjects/0` / `invoke/4` shape to the new `use Ezagent.Behavior`
+  `cap_subjects/0` / `invoke/4` shape to the new `use Ezagent.ActionSet`
   + per-action `action :name, ...` macro declarations + per-action
   `handle_<action>/2` handlers per SPEC §6.2.
 
@@ -18,13 +18,13 @@ defmodule Ezagent.Behavior.ExternalMirrorMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.ExternalMirror
+  alias Ezagent.ActionSet.ExternalMirror
 
   describe "new-contract markers" do
     test "ExternalMirror is a new-style Behavior (`__behavior__?/0 == true`)" do
       assert function_exported?(ExternalMirror, :__behavior__?, 0)
       assert ExternalMirror.__behavior__?() == true
-      assert Ezagent.Behavior.new_style?(ExternalMirror)
+      assert Ezagent.ActionSet.new_style?(ExternalMirror)
     end
 
     test "every declared action has a matching handle_<action>/2 (compile-time gate)" do

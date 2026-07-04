@@ -50,7 +50,7 @@ defmodule EzagentPluginCodex.Application do
   end
 
   @impl Ezagent.Plugin
-  def roles, do: [Ezagent.Orchestrator.OrchestratorRole.recipe()]
+  def roles, do: [Ezagent.Orchestrator.OrchestratorRecipe.recipe()]
 
   @impl Ezagent.Plugin
   def config_surface do

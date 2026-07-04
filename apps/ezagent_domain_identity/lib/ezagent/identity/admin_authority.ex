@@ -8,9 +8,9 @@ defmodule Ezagent.Identity.AdminAuthority do
   The §3.3 admin shortcut for `Ezagent.Workspace.list_workspaces_for/2`
   is a UNION of FOUR predicates that today live in two modules:
 
-  - `Ezagent.Behavior.IdentityAdmin.holds_admin_caps?/1` —
+  - `Ezagent.ActionSet.IdentityAdmin.holds_admin_caps?/1` —
     `ezagent_domain_identity` (bootstrap-wildcard cap shape).
-  - `Ezagent.Behavior.IdentityAdmin.holds_cross_workspace_admin_cap?/1`
+  - `Ezagent.ActionSet.IdentityAdmin.holds_cross_workspace_admin_cap?/1`
     — `ezagent_domain_identity` (delegated structural workspace-admin).
   - `Ezagent.Capability.home_is_system?/1` — `ezagent_core` (URI host
     `system`).
@@ -72,7 +72,7 @@ defmodule Ezagent.Identity.AdminAuthority do
   change to any one is automatically reflected through this helper.
   """
 
-  alias Ezagent.Behavior.IdentityAdmin
+  alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
   @doc """

@@ -8,8 +8,8 @@ defmodule Ezagent.Entity.WorkspaceTest do
       assert WK.type_name() == :workspace
     end
 
-    test "behaviors/0 lists Ezagent.Behavior.Workspace" do
-      assert WK.behaviors() == [Ezagent.Behavior.Workspace]
+    test "behaviors/0 lists Ezagent.ActionSet.Workspace" do
+      assert WK.behaviors() == [Ezagent.ActionSet.Workspace]
     end
 
     test "persistence/0 is :ephemeral in Phase 4b (4c flips to snapshot)" do

@@ -379,6 +379,27 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
+  List currently-pointed objects for a layer/key across workspaces.
+
+  This follows current pointers, so retained immutable historical object
+  versions are not included in catalog/discovery reads.
+  """
+  @spec list_current_objects(atom() | String.t(), String.t()) :: [ConfigObject.t()]
+  def list_current_objects(layer, key) when is_binary(key) do
+    layer = normalize_layer!(layer)
+
+    Repo.all(
+      from(p in ConfigPointer,
+        join: o in ConfigObject,
+        on: o.id == p.config_id,
+        where: p.layer == ^layer and p.key == ^key,
+        order_by: [asc: p.workspace_uri, asc: p.subject_uri],
+        select: o
+      )
+    )
+  end
+
+  @doc """
   Read all currently-pointed layer objects for a subject/key.
 
   Returns entries keyed by canonical layer string (`"workspace"`, `"user"`,
@@ -420,7 +441,7 @@ defmodule Ezagent.Socialware.ConfigStore do
   cascade layer). Thin wrapper over `resolve/4` keyed by the agent's
   workspace + the standard cascade key, returning just the object id.
 
-  Used by `Ezagent.Behavior.ConfigEvolve`'s step-2 projection + boot
+  Used by `Ezagent.ActionSet.ConfigEvolve`'s step-2 projection + boot
   reconciliation to read the durable pointer the Sandbox cache must mirror.
   Returns `{:ok, object_id}` or `:none` (no user-layer pointer yet).
   """
@@ -477,7 +498,7 @@ defmodule Ezagent.Socialware.ConfigStore do
   intact (objects are append-only), so `object_for_turn(A)` still resolves A's
   historical id even after the pointer has advanced off A onto B.
 
-  Used by `Ezagent.Behavior.ConfigEvolve` to make `apply_config_delta`
+  Used by `Ezagent.ActionSet.ConfigEvolve` to make `apply_config_delta`
   idempotent on BOTH the serial pre-check AND the unique-constraint conflict
   path: re-dispatching ANY already-applied turn (current OR superseded) returns
   that turn's historical object id (a string) instead of minting a new object —

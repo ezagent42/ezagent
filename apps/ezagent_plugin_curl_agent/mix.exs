@@ -5,6 +5,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
     [
       app: :ezagent_plugin_curl_agent,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -18,6 +19,12 @@ defmodule EzagentPluginCurlAgent.MixProject do
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       start_permanent: Mix.env() == :prod,
       deps: deps()
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 
@@ -46,7 +53,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
       # `:in_process_sync` transport adapter implements
       # `Ezagent.AgentBridge.Adapter`, so the bridge domain is a direct dep.
       {:ezagent_domain_agent_bridge, in_umbrella: true},
-      # PR-9c (#53) — the curl STATE Behavior `Ezagent.Behavior.CurlAgent` is
+      # PR-9c (#53) — the curl STATE Behavior `Ezagent.ActionSet.CurlAgent` is
       # REPARENTED into the agent domain (it composes onto `Entity.Agent` as the
       # curl flavor's state half). This plugin still owns the curl flavor WIRING
       # (`behaviors/0` binds `{Entity.Agent, action} → CurlAgent`, plus the

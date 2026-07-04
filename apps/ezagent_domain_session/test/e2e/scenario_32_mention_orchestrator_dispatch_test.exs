@@ -47,7 +47,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, SessionTemplate, User}
 

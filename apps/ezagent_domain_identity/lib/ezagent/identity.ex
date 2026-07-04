@@ -103,7 +103,7 @@ defmodule Ezagent.Identity do
         # exact regression that made `list_caps_for/1` return empty for
         # orchestrator agents (OrchestratorMcpBridge unauthorized).
         kind: self_cap_kind(user_uri),
-        behavior: Ezagent.Behavior.Identity,
+        behavior: Ezagent.ActionSet.Identity,
         # SPEC 2026-05-27 capability-action-axis — self-cap is for
         # `:list_caps` (Identity.actions/0 == [:list_caps, :has_cap?,
         # :grant_cap, :revoke_cap]; the user-facing baseline is read).

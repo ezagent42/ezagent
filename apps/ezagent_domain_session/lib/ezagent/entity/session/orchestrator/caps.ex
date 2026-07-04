@@ -57,7 +57,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
 
     to_grant =
       desired
-      |> Enum.filter(&Ezagent.Behavior.IdentityAdmin.rule_cap_bounded?/1)
+      |> Enum.filter(&Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?/1)
       |> Enum.reject(fn want ->
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
@@ -104,7 +104,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
 
     desired
-    |> Enum.filter(&Ezagent.Behavior.IdentityAdmin.rule_cap_bounded?/1)
+    |> Enum.filter(&Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?/1)
     |> Enum.each(fn cap ->
       _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, tag_for(cap, owner_uri))
     end)
@@ -201,7 +201,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     |> Enum.filter(fn {kind, representative_uri} ->
       needed = %{
         kind: kind,
-        behavior: Ezagent.Behavior.Template,
+        behavior: Ezagent.ActionSet.Template,
         # SPEC 2026-05-27 capability-action-axis — orchestrator
         # template delegation spans `:read`, `:write`, `:instantiate`,
         # `:fork` (Tools.update_agent_template + save_template_as +
@@ -218,7 +218,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     |> Enum.map(fn {kind, _representative_uri} ->
       %Ezagent.Capability{
         kind: kind,
-        behavior: Ezagent.Behavior.Template,
+        behavior: Ezagent.ActionSet.Template,
         action: :any,
         instance: {:within_workspace, session_workspace},
         workspace_uri: session_workspace,

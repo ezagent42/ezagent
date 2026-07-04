@@ -25,6 +25,15 @@ End-of-day retrospective that closes the loop and feeds tomorrow's `plan`.
    track — this is what tomorrow's `plan` derives from. `review` is the **only**
    writer of `current_track`/`latest_return`; `return`/`close` do NOT touch them
    (avoids double-write). A mid-stream pivot may be reflected by the lead.
+7. **Team-facing render (MANDATORY).** Alongside `review.md`, produce
+   `docs/together/<date>/review.html` — a clean, product-first rendering of the
+   day for the whole team: **product 大局 → task stats → efficiency →
+   risks/deferred → method deltas → next-day plan**. It is a team artifact, not a
+   worklog: **omit all Claude↔lead discussion meta**, keep it self-contained
+   (inline CSS, no external assets), and match the established house style (see
+   the prior examples `docs/together/2026-06-25/review.html` and
+   `docs/together/2026-06-30/review.html`). `review.html` must exist alongside
+   `review.md`; a missing render means `review` is incomplete.
 
 ## Required accounting
 
@@ -42,4 +51,6 @@ If `plan.md` was incomplete or placeholder-only, say that directly and treat it
 as a process gap. Do not infer a clean plan from successful merges after the
 fact.
 
-**Output:** `docs/together/<date>/review.md` — input to the next day's `plan`.
+**Output:** `docs/together/<date>/review.md` **and** its team-facing
+`docs/together/<date>/review.html` render — `review.md` is the input to the next
+day's `plan`; `review.html` is the artifact the team reads.

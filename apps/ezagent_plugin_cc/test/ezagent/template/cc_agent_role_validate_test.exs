@@ -17,7 +17,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentRoleValidateTest do
   role-as-data: a non-built-in role resolves read-through over ConfigStore
   (`RecipeRegistry.lookup/1`), so the suite needs the Ecto sandbox; boot's DB role
   seed is skipped in `:test`, so we seed an arbitrary role explicitly in setup
-  inside the sandbox (matching `OrchestratorRoleTest`).
+  inside the sandbox (matching `OrchestratorRecipeTest`).
   """
   use EzagentCore.DataCase, async: false
 

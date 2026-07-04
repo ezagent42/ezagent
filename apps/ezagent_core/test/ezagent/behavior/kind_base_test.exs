@@ -1,14 +1,14 @@
-defmodule Ezagent.Behavior.KindBaseTest do
+defmodule Ezagent.ActionSet.KindBaseTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
 
   test "state_slice is :kind_base" do
     assert KindBase.state_slice() == :kind_base
   end
 
   test "create/1 captures the instance behavior set from a PRESENT :behaviors arg" do
-    behaviors = [Ezagent.Behavior.Session, Ezagent.Behavior.Surface]
+    behaviors = [Ezagent.ActionSet.Session, Ezagent.ActionSet.Surface]
     assert {:ok, %{behaviors: ^behaviors}} = KindBase.create(%{behaviors: behaviors})
   end
 
@@ -26,9 +26,9 @@ defmodule Ezagent.Behavior.KindBaseTest do
   end
 
   test "behaviors_in_slice/1 reads the captured PRESENT set from a two-container slice" do
-    {:ok, st} = KindBase.create(%{behaviors: [Ezagent.Behavior.Session]})
+    {:ok, st} = KindBase.create(%{behaviors: [Ezagent.ActionSet.Session]})
     slice = %{state: st, transients: %{}}
-    assert KindBase.behaviors_in_slice(slice) == [Ezagent.Behavior.Session]
+    assert KindBase.behaviors_in_slice(slice) == [Ezagent.ActionSet.Session]
   end
 
   test "behaviors_in_slice/1 reads back the EXPLICIT empty list as [] (present, not sentinel)" do
@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.KindBaseTest do
       uri =
         Ezagent.URI.session(:system, :default, :"kbtest-#{System.unique_integer([:positive])}")
 
-      behaviors = [Ezagent.Behavior.Session, Ezagent.Behavior.Surface]
+      behaviors = [Ezagent.ActionSet.Session, Ezagent.ActionSet.Surface]
 
       # A throwaway Kind module composing only KindBase, on_change persistence.
       defmodule KBTestKind do
@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.KindBaseTest do
         @impl true
         def type_name, do: :session
         @impl true
-        def behaviors, do: [Ezagent.Behavior.KindBase]
+        def behaviors, do: [Ezagent.ActionSet.KindBase]
         @impl true
         def persistence, do: {:snapshot, :on_change}
         @impl true
@@ -76,7 +76,7 @@ defmodule Ezagent.Behavior.KindBaseTest do
       # The persisted snapshot wins on reload; the args here are the unused
       # cold-init fallback (a snapshot already exists for this uri).
       reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: behaviors})
-      assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == behaviors
+      assert Ezagent.ActionSet.KindBase.behaviors_in_slice(reloaded[:kind_base]) == behaviors
     end
   end
 end

@@ -1,13 +1,13 @@
-defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
+defmodule Ezagent.ActionSet.NotificationsMigrationParityTest do
   @moduledoc """
-  Phase 2.5 migration parity test for `Ezagent.Behavior.Notifications`
+  Phase 2.5 migration parity test for `Ezagent.ActionSet.Notifications`
   per SPEC `2026-05-28-router-behavior-kind-architecture.md` §7.3
   Level 1 (dispatch parity).
 
   Notifications is a cap-only marker Behavior (`dispatchable?/0 ==
   false`, same shape as the per-adapter `*.Allow` markers). The
-  migration moves it from legacy `@behaviour Ezagent.Behavior` to the
-  new `use Ezagent.Behavior` + declarative `action/3` shape with a
+  migration moves it from legacy `@behaviour Ezagent.ActionSet` to the
+  new `use Ezagent.ActionSet` + declarative `action/3` shape with a
   raising `handle_subscribe/2` (the handler must exist for the macro's
   @before_compile invariant but is never invoked because
   `dispatchable?/0 == false` prevents routing — defence in depth).
@@ -31,11 +31,11 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Notifications
+  alias Ezagent.ActionSet.Notifications
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Notifications)
+      assert Ezagent.ActionSet.new_style?(Notifications)
     end
 
     test "__behavior__?/0 returns true" do

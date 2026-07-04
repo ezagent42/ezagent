@@ -82,7 +82,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     MapSet.new([
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: session_uri,
         workspace_uri: ws,
         granted_by: User.admin_uri(),
@@ -95,7 +95,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     MapSet.new([
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: session_uri,
         workspace_uri: ws,
         granted_by: User.admin_uri(),
@@ -116,7 +116,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     MapSet.new([
       %Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.ExternalMirror,
+        behavior: Ezagent.ActionSet.ExternalMirror,
         instance: :any,
         workspace_uri: :any,
         granted_by: User.admin_uri(),

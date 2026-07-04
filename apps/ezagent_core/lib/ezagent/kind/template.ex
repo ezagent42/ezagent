@@ -238,7 +238,7 @@ defmodule Ezagent.Kind.Template do
   same opaque map the plugin's `instantiate/3` consumed at original
   spawn).
 
-  Invoked by `Ezagent.Behavior.Sandbox`'s `post_init/2` continuation
+  Invoked by `Ezagent.ActionSet.Sandbox`'s `post_init/2` continuation
   AFTER the Agent Kind has been rehydrated from snapshot on phx
   restart. The hook closes the gap where the Elixir Kind survives a
   restart (OTP-supervised) but the OS-level subprocess does NOT

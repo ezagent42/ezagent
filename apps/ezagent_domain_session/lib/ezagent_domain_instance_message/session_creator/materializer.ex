@@ -19,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       |> Map.put(:orchestrator_template_uri, orchestrator_template_uri)
       |> Map.put(:session_template_uri, session_template_uri)
 
-    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
@@ -43,7 +43,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         member_declarations(template_content, session_template_uri)
       )
 
-    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
@@ -56,7 +56,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       |> Session.read_template_working_copy()
       |> Map.put(:orchestrator_uri, orchestrator_uri)
 
-    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
@@ -121,7 +121,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       ) do
     want = %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :remove_participant,
       instance: session_uri,
       workspace_uri: workspace_uri,
@@ -155,8 +155,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
 
   Grants two owner-self-rooted, scope-bounded caps:
 
-      cap(:agent, Ezagent.Behavior.Sandbox,    :destroy,   {:spawned_by, owner_uri}, ws)
-      cap(:agent, Ezagent.Behavior.Terminable, :terminate, {:spawned_by, owner_uri}, ws)
+      cap(:agent, Ezagent.ActionSet.Sandbox,    :destroy,   {:spawned_by, owner_uri}, ws)
+      cap(:agent, Ezagent.ActionSet.Terminable, :terminate, {:spawned_by, owner_uri}, ws)
 
   Both `granted_by: owner_uri` — the owner IS the lineage root, so this is
   self-rooted and #154-clean (no forged/unowned cap). `{:spawned_by, %URI{}}` is
@@ -182,8 +182,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   def grant_owner_participant_teardown_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
     wants =
       for {behavior, action} <- [
-            {Ezagent.Behavior.Sandbox, :destroy},
-            {Ezagent.Behavior.Terminable, :terminate}
+            {Ezagent.ActionSet.Sandbox, :destroy},
+            {Ezagent.ActionSet.Terminable, :terminate}
           ] do
         %Ezagent.Capability{
           kind: :agent,
@@ -222,7 +222,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       ) do
     want = %Ezagent.Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      behavior: Ezagent.ActionSet.OrchestratorAdmin,
       action: :restart,
       instance: session_uri,
       workspace_uri: workspace_uri,

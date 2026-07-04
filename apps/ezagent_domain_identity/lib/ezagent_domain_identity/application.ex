@@ -5,13 +5,13 @@ defmodule EzagentDomainIdentity.Application do
   Owns:
   - `Ezagent.Entity.User` Kind (per-user spawn fn registered here, full
     `entity://` fn registered by chat plugin which boots later)
-  - `Ezagent.Behavior.Identity` registration on User + Agent
+  - `Ezagent.ActionSet.Identity` registration on User + Agent
   - `Ezagent.Users` SQLite provisioning (Phase 4-completion Spec 05)
 
   Does NOT own (the session/im domain owns those):
-  - `:receive` registration on User/Agent — `Ezagent.Behavior.User.Receive`
-    (`user.receive`) + `Ezagent.Behavior.Agent.Receive` (`agent.receive`),
-    split out of `Ezagent.Behavior.Session` in PR-2 (im/session/agent
+  - `:receive` registration on User/Agent — `Ezagent.ActionSet.User.Receive`
+    (`user.receive`) + `Ezagent.ActionSet.Agent.Receive` (`agent.receive`),
+    split out of `Ezagent.ActionSet.Session` in PR-2 (im/session/agent
     decomposition §OQ-4).
   - Session boot or admin-join-default-session
 
@@ -44,7 +44,7 @@ defmodule EzagentDomainIdentity.Application do
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
 
-  alias Ezagent.Behavior.{
+  alias Ezagent.ActionSet.{
     Identity,
     ApiKeys,
     UserCredentials,
@@ -56,7 +56,7 @@ defmodule EzagentDomainIdentity.Application do
     ConfigGovernance
   }
 
-  alias Ezagent.Behavior.UserDefaultCredentialSource
+  alias Ezagent.ActionSet.UserDefaultCredentialSource
 
   @impl true
   def start(_type, _args) do
@@ -407,14 +407,14 @@ defmodule EzagentDomainIdentity.Application do
     # split-out `IdentityAdmin` Behavior (cap-only, privileged
     # actions). Registered against the same Kinds as `Identity`
     # since both share the `:identity` slice.
-    for action <- Ezagent.Behavior.IdentityAdmin.actions() do
-      :ok = CapabilityRegistry.register(User, action, Ezagent.Behavior.IdentityAdmin)
+    for action <- Ezagent.ActionSet.IdentityAdmin.actions() do
+      :ok = CapabilityRegistry.register(User, action, Ezagent.ActionSet.IdentityAdmin)
 
       :ok =
         CapabilityRegistry.register(
           Ezagent.Entity.Agent,
           action,
-          Ezagent.Behavior.IdentityAdmin
+          Ezagent.ActionSet.IdentityAdmin
         )
     end
 
@@ -510,7 +510,7 @@ defmodule EzagentDomainIdentity.Application do
     # "what does a fresh User get in this workspace". PR-甲-2 (#154):
     # `default_caps/1` now returns `[]` (participation + join authority are
     # granted per-session at the trusted access points — see
-    # `Ezagent.Behavior.Session.Membership.{provision_join_authority,
+    # `Ezagent.ActionSet.Session.Membership.{provision_join_authority,
     # mount_participation_caps}`). The registration is KEPT as an honest
     # no-op so the audit answer is the truthful "a fresh user gets no
     # standing session caps", and a future workspace-scoped NON-session

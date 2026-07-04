@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Surface do
+defmodule Ezagent.ActionSet.Surface do
   @moduledoc """
   Immutable socialware page surface.
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Behavior.Surface do
 
   @spec data_owner(URI.t() | :any | term()) :: URI.t() | :any | :no_owner
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    Ezagent.Behavior.Session.data_owner(session_uri)
+    Ezagent.ActionSet.Session.data_owner(session_uri)
   end
 
   def data_owner(:any), do: :any

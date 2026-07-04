@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
   > the auto-derived `mix ezagent` command, which goes through
   > `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC → step 5.6
   > cross-workspace iso → audit telemetry. The cap shape is
-  > `(:user, Ezagent.Behavior.UserCredentials, :set_password)`; a
+  > `(:user, Ezagent.ActionSet.UserCredentials, :set_password)`; a
   > user can hold this against THEIR OWN URI for self-rotation, and
   > admin holds the `:any`-instance form for cross-user reset.
   >

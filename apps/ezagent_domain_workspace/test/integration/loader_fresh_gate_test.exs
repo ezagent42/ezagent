@@ -38,7 +38,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
   # ── Fake plugin types — defined inline (NOT in lib/) ──────────────
 
   defmodule GateProbeBehavior do
-    @behaviour Ezagent.Behavior
+    @behaviour Ezagent.ActionSet
 
     @impl true
     def actions, do: [:ping]

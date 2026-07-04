@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.PtyTest do
+defmodule Ezagent.ActionSet.PtyTest do
   @moduledoc """
   PR #146 (SPEC v2 §5.7) invariant — PTY input goes through
   `Ezagent.Invocation.dispatch` against the agent's own URI (per
@@ -114,7 +114,7 @@ defmodule Ezagent.Behavior.PtyTest do
   end
 
   test "Behavior.Pty registered on Entity.Agent for :write" do
-    assert {:ok, Ezagent.Behavior.Pty} =
+    assert {:ok, Ezagent.ActionSet.Pty} =
              Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :write)
   end
 

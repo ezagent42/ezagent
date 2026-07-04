@@ -20,7 +20,7 @@ Scope:
   when the AgentBridge registry is available.
 - Adds `EzagentPluginCc.BridgeAdapter`.
 - Declares the cc adapter from `EzagentPluginCc.Application.agent_flavors/0`.
-- Rewrites `Ezagent.Behavior.Chat` Agent receive to call
+- Rewrites `Ezagent.ActionSet.Chat` Agent receive to call
   `Ezagent.AgentBridge.deliver/2`.
 
 Compatibility:

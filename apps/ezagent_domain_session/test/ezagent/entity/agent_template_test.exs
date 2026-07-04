@@ -19,13 +19,13 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   test "behaviors/0 includes Identity (caps + grant policy live on slice)" do
     behaviors = AgentTemplate.behaviors()
 
-    assert Ezagent.Behavior.Identity in behaviors,
+    assert Ezagent.ActionSet.Identity in behaviors,
            "AgentTemplate must carry Identity behavior so default_caps + slice " <>
              "edit can use the existing identity dispatch path"
   end
 
   test "behaviors/0 includes Behavior.Template (Phase 7 completion PR-1 — content slice)" do
-    assert Ezagent.Behavior.Template in AgentTemplate.behaviors(),
+    assert Ezagent.ActionSet.Template in AgentTemplate.behaviors(),
            "AgentTemplate must carry Behavior.Template so the :template content " <>
              "slice has dispatchable read/write/instantiate actions (SPEC §1.0)"
   end
@@ -476,7 +476,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "threads desired_caps into the data map when present" do
       cap = %Ezagent.Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),

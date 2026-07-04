@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.SocialwarePublisherReadRegistrationTest do
+defmodule Ezagent.ActionSet.SocialwarePublisherReadRegistrationTest do
   @moduledoc """
   Publisher-read registration / single-owner GATE on the UNIFIED Session Kind
   (boots the real domain apps).
@@ -25,7 +25,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadRegistrationTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.BehaviorRegistry, as: BR
-  alias Ezagent.Behavior.{Publisher, SocialwarePublisherRead}
+  alias Ezagent.ActionSet.{Publisher, SocialwarePublisherRead}
   alias Ezagent.Entity.Session
 
   setup_all do

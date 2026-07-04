@@ -145,14 +145,14 @@ defmodule Ezagent.Capability.Parser do
     # OR look up in BehaviorRegistry by state_slice match
     # For Phase 4 v1: accept the literal string as an atom (e.g. "chat" → :chat),
     # which matches state_slice values; downstream cap matching is by module.
-    # Convert to module via convention: "chat" → Ezagent.Behavior.Session
+    # Convert to module via convention: "chat" → Ezagent.ActionSet.Session
     capitalized =
       name
       |> String.split("_")
       |> Enum.map(&String.capitalize/1)
       |> Enum.join("")
 
-    module_str = "Elixir.Ezagent.Behavior." <> capitalized
+    module_str = "Elixir.Ezagent.ActionSet." <> capitalized
 
     try do
       module = String.to_existing_atom(module_str)

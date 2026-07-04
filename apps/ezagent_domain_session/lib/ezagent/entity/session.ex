@@ -19,7 +19,7 @@ defmodule Ezagent.Entity.Session do
   """
 
   @behaviour Ezagent.Kind
-  @behaviour Ezagent.Behavior.Publisher
+  @behaviour Ezagent.ActionSet.Publisher
 
   # Compile-time env capture (release-safe; Mix is not loaded in releases).
   # Used by the orchestrator-readiness gate's test-mode bypass. (codex Q1.)
@@ -55,12 +55,12 @@ defmodule Ezagent.Entity.Session do
   # socialware-subset instance (a chat instance's `:kind_base` excludes them).
   def behaviors,
     do: [
-      Ezagent.Behavior.Session,
-      Ezagent.Behavior.Publisher.SessionImpl,
-      Ezagent.Behavior.ExternalMirror,
-      Ezagent.Behavior.Turn,
-      Ezagent.Behavior.Surface,
-      Ezagent.Behavior.SupervisorApproval
+      Ezagent.ActionSet.Session,
+      Ezagent.ActionSet.Publisher.SessionImpl,
+      Ezagent.ActionSet.ExternalMirror,
+      Ezagent.ActionSet.Turn,
+      Ezagent.ActionSet.Surface,
+      Ezagent.ActionSet.SupervisorApproval
     ]
 
   @doc """
@@ -72,9 +72,9 @@ defmodule Ezagent.Entity.Session do
   @spec chat_behaviors() :: [module()]
   def chat_behaviors,
     do: [
-      Ezagent.Behavior.Session,
-      Ezagent.Behavior.Publisher.SessionImpl,
-      Ezagent.Behavior.ExternalMirror
+      Ezagent.ActionSet.Session,
+      Ezagent.ActionSet.Publisher.SessionImpl,
+      Ezagent.ActionSet.ExternalMirror
     ]
 
   @doc """
@@ -87,11 +87,11 @@ defmodule Ezagent.Entity.Session do
   @spec socialware_behaviors() :: [module()]
   def socialware_behaviors,
     do: [
-      Ezagent.Behavior.Session,
-      Ezagent.Behavior.Turn,
-      Ezagent.Behavior.Surface,
-      Ezagent.Behavior.SupervisorApproval,
-      Ezagent.Behavior.Publisher.SessionImpl
+      Ezagent.ActionSet.Session,
+      Ezagent.ActionSet.Turn,
+      Ezagent.ActionSet.Surface,
+      Ezagent.ActionSet.SupervisorApproval,
+      Ezagent.ActionSet.Publisher.SessionImpl
     ]
 
   @impl Ezagent.Kind
@@ -123,9 +123,9 @@ defmodule Ezagent.Entity.Session do
   def default_uri, do: Ezagent.URI.session(:system, :default, :main)
 
   # ─────────────────────────────────────────────────────────────────────
-  # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)
+  # Ezagent.ActionSet.Publisher implementation (ExternalMirror PR-EM-0)
   #
-  # The four callbacks below satisfy the `@behaviour Ezagent.Behavior.Publisher`
+  # The four callbacks below satisfy the `@behaviour Ezagent.ActionSet.Publisher`
   # contract declared at the top of this module. They route every
   # publisher action through `Ezagent.Invocation.dispatch/1` against the
   # Session's URI so caps are gated at step 5.5 + workspace isolation
@@ -133,7 +133,7 @@ defmodule Ezagent.Entity.Session do
   #
   # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
   # §2.1 + §8.1. The actual ring + cursor + subscriber bookkeeping
-  # lives in `Ezagent.Behavior.Publisher.SessionImpl` (the Behavior
+  # lives in `Ezagent.ActionSet.Publisher.SessionImpl` (the Behavior
   # added to `behaviors/0`).
   # ─────────────────────────────────────────────────────────────────────
 
@@ -143,7 +143,7 @@ defmodule Ezagent.Entity.Session do
   Override the slice-level `:retention` field via the
   `publisher_retention:` spawn arg if a per-session value is needed.
   """
-  @impl Ezagent.Behavior.Publisher
+  @impl Ezagent.ActionSet.Publisher
   def history_retention, do: 100
 
   @doc """
@@ -152,7 +152,7 @@ defmodule Ezagent.Entity.Session do
 
   ## Caller MUST supply their own ctx
 
-  The `@behaviour Ezagent.Behavior.Publisher` contract is 3-ary
+  The `@behaviour Ezagent.ActionSet.Publisher` contract is 3-ary
   (per SPEC §2.1). The 3-ary form raises with a clear pointer to
   the 4-ary `subscribe_from/4` because the V1 codebase has no
   ambient-caps mechanism: every dispatch requires explicit
@@ -166,7 +166,7 @@ defmodule Ezagent.Entity.Session do
   the caller actually holds). Production Worker callers (PR-EM-2)
   pass their own ctx; tests pass admin caps explicitly.
   """
-  @impl Ezagent.Behavior.Publisher
+  @impl Ezagent.ActionSet.Publisher
   def subscribe_from(%URI{} = _publisher_uri, subscriber_pid, _cursor)
       when is_pid(subscriber_pid) do
     raise_no_ambient_caps!(:subscribe_from, 4)
@@ -177,7 +177,7 @@ defmodule Ezagent.Entity.Session do
   subscribing. See `subscribe_from/3` for the no-ambient-caps
   rationale — use `snapshot/2` with explicit ctx.
   """
-  @impl Ezagent.Behavior.Publisher
+  @impl Ezagent.ActionSet.Publisher
   def snapshot(%URI{} = _publisher_uri) do
     raise_no_ambient_caps!(:snapshot, 2)
   end
@@ -187,7 +187,7 @@ defmodule Ezagent.Entity.Session do
   retained publisher ring. See `subscribe_from/3` for the
   no-ambient-caps rationale — use `history/4` with explicit ctx.
   """
-  @impl Ezagent.Behavior.Publisher
+  @impl Ezagent.ActionSet.Publisher
   def history(%URI{} = _publisher_uri, _from, _to) do
     raise_no_ambient_caps!(:history, 4)
   end
@@ -209,7 +209,7 @@ defmodule Ezagent.Entity.Session do
   retained event; other `{:error, _}` shapes per the standard
   dispatch envelope.
   """
-  @spec subscribe_from(URI.t(), pid(), Ezagent.Behavior.Publisher.cursor(), map()) ::
+  @spec subscribe_from(URI.t(), pid(), Ezagent.ActionSet.Publisher.cursor(), map()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor, ctx)
       when is_pid(subscriber_pid) and is_map(ctx) do
@@ -231,8 +231,8 @@ defmodule Ezagent.Entity.Session do
   @doc "4-ary `history` with explicit caller ctx — see `subscribe_from/4`."
   @spec history(
           URI.t(),
-          Ezagent.Behavior.Publisher.cursor(),
-          Ezagent.Behavior.Publisher.cursor(),
+          Ezagent.ActionSet.Publisher.cursor(),
+          Ezagent.ActionSet.Publisher.cursor(),
           map()
         ) ::
           {:ok, [Ezagent.Publisher.Event.t()]} | {:error, term()}
@@ -273,7 +273,7 @@ defmodule Ezagent.Entity.Session do
   defp raise_no_ambient_caps!(action, arity) do
     raise ArgumentError,
           "Ezagent.Entity.Session.#{action}/#{arity - 1} (the @behaviour " <>
-            "Ezagent.Behavior.Publisher 3-ary contract callback) requires an " <>
+            "Ezagent.ActionSet.Publisher 3-ary contract callback) requires an " <>
             "explicit caller ctx — use Ezagent.Entity.Session.#{action}/#{arity} " <>
             "with `ctx: %{caller: %URI{...}, caps: MapSet.new([...])}` instead. " <>
             "The V1 codebase has no ambient-caps mechanism; every dispatch " <>
@@ -297,7 +297,7 @@ defmodule Ezagent.Entity.Session do
   """
   @spec owner(URI.t() | String.t()) :: {:ok, URI.t() | nil} | {:error, term()}
   def owner(uri) do
-    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.Behavior.Session`
+    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.ActionSet.Session`
     # now stores the two-container `%{state, transients}` slice, so
     # `get_slice(uri, :session)` returns that shape and `:owner_uri` lives
     # under `:state`. Unwrap (a flat slice falls through unchanged for any

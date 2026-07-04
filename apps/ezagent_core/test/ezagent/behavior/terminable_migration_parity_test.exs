@@ -1,12 +1,12 @@
-defmodule Ezagent.Behavior.TerminableMigrationParityTest do
+defmodule Ezagent.ActionSet.TerminableMigrationParityTest do
   @moduledoc """
-  Migration parity test for `Ezagent.Behavior.Terminable` (renamed from
-  `Ezagent.Behavior.Lifecycle` in the Phase B Lifecycle migration, SPEC
+  Migration parity test for `Ezagent.ActionSet.Terminable` (renamed from
+  `Ezagent.ActionSet.Lifecycle` in the Phase B Lifecycle migration, SPEC
   `2026-05-29-lifecycle-hooks-design.md` §9 OQ-6). Originally a Phase 2.5
   dispatch-parity test per SPEC `2026-05-28-router-behavior-kind-architecture.md`
   §7.3 Level 1.
 
-  Validates that `Ezagent.Behavior.Terminable` produces the same
+  Validates that `Ezagent.ActionSet.Terminable` produces the same
   dispatch-visible outcome via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_terminate/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration —
@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.Terminable
+  alias Ezagent.ActionSet.Terminable
 
   defmodule StubAgentKind do
     @moduledoc false
@@ -42,7 +42,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
     @impl true
     def type_name, do: :terminable_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Terminable]
+    def behaviors, do: [Ezagent.ActionSet.Terminable]
     @impl true
     def persistence, do: :ephemeral
   end
@@ -81,7 +81,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Terminable)
+      assert Ezagent.ActionSet.new_style?(Terminable)
     end
 
     test "__action_names__/0 lists [:terminate]" do

@@ -1,8 +1,8 @@
-defmodule Ezagent.Behavior.Session.ConfigActions do
+defmodule Ezagent.ActionSet.Session.ConfigActions do
   @moduledoc false
   #
   # Working-copy + prompt-template management helpers extracted VERBATIM
-  # from `Ezagent.Behavior.Session` (PR-3R helper extraction). The
+  # from `Ezagent.ActionSet.Session` (PR-3R helper extraction). The
   # authorization predicates (`working_copy_write_authorized?/1`,
   # `orchestrator_cap_present?/1`) run in the same Session Kind process as
   # the `handle_set_working_copy/2` / `handle_set_prompt_templates/2`

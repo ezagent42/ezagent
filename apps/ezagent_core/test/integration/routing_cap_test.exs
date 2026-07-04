@@ -127,18 +127,18 @@ defmodule Ezagent.Integration.RoutingCapTest do
   end
 
   test "Behavior.Routing is registered on System Kind for all routing actions" do
-    for action <- Ezagent.Behavior.Routing.actions() do
-      assert {:ok, Ezagent.Behavior.Routing} =
+    for action <- Ezagent.ActionSet.Routing.actions() do
+      assert {:ok, Ezagent.ActionSet.Routing} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.System, action)
     end
   end
 
   test "Behavior.Routing is registered on Workspace + Session Kinds (scope-owning)" do
-    for action <- Ezagent.Behavior.Routing.actions() do
-      assert {:ok, Ezagent.Behavior.Routing} =
+    for action <- Ezagent.ActionSet.Routing.actions() do
+      assert {:ok, Ezagent.ActionSet.Routing} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Workspace, action)
 
-      assert {:ok, Ezagent.Behavior.Routing} =
+      assert {:ok, Ezagent.ActionSet.Routing} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Session, action)
     end
   end

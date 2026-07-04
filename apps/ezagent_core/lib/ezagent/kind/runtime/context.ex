@@ -17,7 +17,7 @@ defmodule Ezagent.Kind.Runtime.Context do
   # case, preserving deny-as-default).
   # Allen 2026-05-26 (codex CRIT-1 closure) — inject the OPT-IN
   # `ctx[:sibling_slices]` read view scoped to ONLY the slice keys the
-  # Behavior declared via `Ezagent.Behavior.reads_sibling_slices/0`
+  # Behavior declared via `Ezagent.ActionSet.reads_sibling_slices/0`
   # (legacy) / `reads_siblings/0` (Lifecycle rename, SPEC §2.2).
   #
   # Lifecycle Phase A (SPEC §2.2 / §7 OQ-7, F2) — the Phase B coexistence
@@ -38,7 +38,7 @@ defmodule Ezagent.Kind.Runtime.Context do
   # either ctx key — only the dispatching Behavior's own slice is the
   # writable target.
   def maybe_inject_sibling_slices(ctx, behavior_module, state) do
-    case Ezagent.Behavior.reads_siblings_of(behavior_module) do
+    case Ezagent.ActionSet.reads_siblings_of(behavior_module) do
       [] ->
         ctx
 

@@ -3,7 +3,7 @@ defmodule Ezagent.LifecycleTest do
   Phase A acceptance tests for `use Ezagent.Lifecycle` (SPEC
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`).
 
-  Proves the macro emits a working `@behaviour Ezagent.Behavior` under
+  Proves the macro emits a working `@behaviour Ezagent.ActionSet` under
   the two-container model, that transients are stripped at the snapshot
   boundary, that `{:set_transient, ...}` is reduced atomically alongside
   `{:set, ...}`, and — THE GATE — that transients are rebuilt (not
@@ -13,7 +13,7 @@ defmodule Ezagent.LifecycleTest do
   use Ezagent.LifecycleCase
 
   alias Ezagent.TestSupport.{LifecycleFixture, LifecycleFixtureKind, LifecycleFixtureOverride}
-  alias Ezagent.Behavior
+  alias Ezagent.ActionSet
   alias Ezagent.Kind.Snapshot
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Invocation
@@ -21,7 +21,7 @@ defmodule Ezagent.LifecycleTest do
   setup_all do
     # Ensure the fixture modules are loaded (test env lazy-loads) so
     # `function_exported?`-based introspection sees the `use
-    # Ezagent.Behavior` marker, and register the fixture's actions in
+    # Ezagent.ActionSet` marker, and register the fixture's actions in
     # the BehaviorRegistry so dispatch can resolve `:bump` (production
     # Kinds register at app boot via the plugin/registration hooks).
     Code.ensure_loaded!(LifecycleFixture)
@@ -45,10 +45,10 @@ defmodule Ezagent.LifecycleTest do
     URI.new!("system://lifecycle_fixture/inst-#{System.unique_integer([:positive])}")
   end
 
-  describe "macro emission (compile-down to @behaviour Ezagent.Behavior)" do
-    test "emits a new-style Behavior the engine recognises" do
-      assert Behavior.new_style?(LifecycleFixture)
-      assert :bump in Behavior.action_names(LifecycleFixture)
+  describe "macro emission (compile-down to @behaviour Ezagent.ActionSet)" do
+    test "emits a new-style ActionSet the engine recognises" do
+      assert ActionSet.new_style?(LifecycleFixture)
+      assert :bump in ActionSet.action_names(LifecycleFixture)
     end
 
     test "auto-derives state_slice/0 from the module name" do
@@ -92,13 +92,13 @@ defmodule Ezagent.LifecycleTest do
         {:set_transient, :hits, 3}
       ]
 
-      assert {:ok, %{state: new_slice}} = Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_slice}} = ActionSet.apply_effects(effects, slice)
       assert new_slice == %{state: %{counter: 11}, transients: %{hits: 3}}
     end
 
     test ":set_transient against a flat (non-Lifecycle) slice raises (no shim)" do
       assert_raise ArgumentError, ~r/Lifecycle two-container slice/, fn ->
-        Behavior.apply_effects([{:set_transient, :x, 1}], %{flat: true})
+        ActionSet.apply_effects([{:set_transient, :x, 1}], %{flat: true})
       end
     end
   end
@@ -430,7 +430,7 @@ defmodule Ezagent.LifecycleTest do
     # shape (no :state / :transients split), with `ever_created` marked so
     # the boot path takes the cold-load branch (create SKIPPED — the most
     # dangerous case: fresh state is empty, only the flat loaded row
-    # carries data). Mirrors a row written before the Behavior converted
+    # carries data). Mirrors a row written before the ActionSet converted
     # to `use Ezagent.Lifecycle`.
     defp persist_flat_legacy(uri_str, slice) do
       binary = :erlang.term_to_binary(%{lifecycle_fixture: slice})

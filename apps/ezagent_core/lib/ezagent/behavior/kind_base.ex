@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.KindBase do
+defmodule Ezagent.ActionSet.KindBase do
   @moduledoc """
   Base behavior present on every session instance under the unified
   socialware substrate. Its persistent `:kind_base` slice records the

@@ -291,7 +291,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
   # Phase 7 completion PR-2 (SPEC §2 "PR-2") — the durable
   # `template_working_copy` field on the Chat slice.
   describe "template_working_copy slice (PR-2)" do
-    alias Ezagent.Behavior.Session, as: SessionBehavior
+    alias Ezagent.ActionSet.Session, as: SessionBehavior
 
     test "the template_working_copy field round-trips through a Session snapshot/restore" do
       session_uri =

@@ -107,7 +107,7 @@ defmodule EzagentPluginFeishu.FeishuChatBinding do
 
   # codex r1 HIGH fix (2026-05-25): distinguish PRE-publish failure
   # from PARTIAL-publish failure. The Worker
-  # (`Ezagent.Behavior.ExternalMirrorWorker.invoke(:publish, ...)`)
+  # (`Ezagent.ActionSet.ExternalMirrorWorker.invoke(:publish, ...)`)
   # advances `publisher_cursor` on `{:error, _, _}` returns —
   # treating ANY publish failure as recoverable silently drops the
   # unsent remainder of a multi-payload mirror (text + N attachments

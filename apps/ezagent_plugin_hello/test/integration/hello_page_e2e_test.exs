@@ -19,7 +19,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
   alias EzagentPluginHello.{App, Spec, TurnDriver}
 
@@ -54,7 +54,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
         {:ok, _} -> :ok
       end
 
-    _ = Ezagent.Behavior.Session.Membership.mount_participation_caps(session_uri, anon_uri)
+    _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
     anon_uri
   end
 
@@ -117,10 +117,10 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     {:ok, slice} = Ezagent.Kind.get_slice(ctx.session, :kind_base)
     behaviors = KindBase.behaviors_in_slice(slice)
 
-    assert Ezagent.Behavior.Session in behaviors
-    assert Ezagent.Behavior.Turn in behaviors
-    assert Ezagent.Behavior.Surface in behaviors
-    assert Ezagent.Behavior.Publisher.SessionImpl in behaviors
+    assert Ezagent.ActionSet.Session in behaviors
+    assert Ezagent.ActionSet.Turn in behaviors
+    assert Ezagent.ActionSet.Surface in behaviors
+    assert Ezagent.ActionSet.Publisher.SessionImpl in behaviors
   end
 
   # --- helpers ---------------------------------------------------------------

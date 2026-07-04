@@ -29,18 +29,18 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     - `apps/ezagent_core/lib/ezagent/behavior.ex` — the engine macro
     - `apps/ezagent_core/lib/ezagent/kind/runtime.ex` — the executor
     - `apps/ezagent_core/lib/ezagent/lifecycle.ex` — the Lifecycle macro
-      (it EMITS `use Ezagent.Behavior` + `init_slice`/`state_slice`/
+      (it EMITS `use Ezagent.ActionSet` + `init_slice`/`state_slice`/
       `post_init`/`handle_continue`/`on_ready` underneath — R10-3)
     - `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex`
 
   Tests (`test/`, `*_test.exs`, `test/support/*.ex`) are NOT
   developer-tier production code: engine fixtures there legitimately
-  `use Ezagent.Behavior` directly to exercise the engine, so they are
+  `use Ezagent.ActionSet` directly to exercise the engine, so they are
   excluded.
 
   ## What it does NOT delete / gate
 
-  Per SPEC §10 R10-3, the engine contract `Ezagent.Behavior` STAYS —
+  Per SPEC §10 R10-3, the engine contract `Ezagent.ActionSet` STAYS —
   these gates scope to developer-tier files and exempt the engine
   allowlist. AC-5 "no shims" means no developer-facing back-compat, NOT
   removal of the engine contract.
@@ -193,10 +193,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
   end
 
   # ----------------------------------------------------------------------
-  # Gate 1 — no developer-tier `use Ezagent.Behavior` (must be Lifecycle)
+  # Gate 1 — no developer-tier `use Ezagent.ActionSet` (must be Lifecycle)
   # SPEC §5 / AC-1. Anchored to the directive, not moduledoc/comment
-  # mentions: `^\s*use Ezagent.Behavior` with a word boundary so
-  # `Ezagent.Behavior.Session` etc. in prose are not matched.
+  # mentions: `^\s*use Ezagent.ActionSet` with a word boundary so
+  # `Ezagent.ActionSet.Session` etc. in prose are not matched.
   # ----------------------------------------------------------------------
   defp gate_no_use_behavior(files) do
     re = ~r/^\s*use\s+Ezagent\.Behavior\b/
@@ -205,7 +205,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     |> hits(re)
     |> result(
       "gate_no_use_behavior (developer file must `use Ezagent.Lifecycle`)",
-      "  ✓ no developer-tier `use Ezagent.Behavior` (Lifecycle is sole surface)"
+      "  ✓ no developer-tier `use Ezagent.ActionSet` (Lifecycle is sole surface)"
     )
   end
 

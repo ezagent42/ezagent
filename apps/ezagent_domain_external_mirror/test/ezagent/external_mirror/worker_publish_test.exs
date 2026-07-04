@@ -472,7 +472,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       event = chat_event(msg, send_cursor: 6, cursor: 42)
 
       assert {:ok, %{ok: true} = result, effects} =
-               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+               Ezagent.ActionSet.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
 
       # NOT skipped — the retry reaches the binding.
       refute result[:skipped]
@@ -492,7 +492,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       event = chat_event(msg, send_cursor: 7, cursor: 99)
 
       assert {:ok, %{ok: true, skipped: true}, effects} =
-               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+               Ezagent.ActionSet.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
 
       # Deduped BEFORE the adapter — result is :duplicate_skip and the
       # send_key is unchanged (no {:set, :last_published_send_key, _}).
@@ -506,7 +506,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       event = chat_event(msg, send_cursor: 1, cursor: 1)
 
       assert {:ok, %{ok: true} = result, effects} =
-               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+               Ezagent.ActionSet.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
 
       refute result[:skipped]
       assert {:set, :last_published_send_key, {"msg-first", 1}} in effects
@@ -523,7 +523,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       event = chat_event_wrapped(msg, send_cursor: 7, cursor: 99)
 
       assert {:ok, %{ok: true}, effects} =
-               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+               Ezagent.ActionSet.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
 
       assert {:set, :last_publish_result, :duplicate_skip} in effects
       refute Enum.any?(effects, &match?({:set, :last_published_send_key, _}, &1))

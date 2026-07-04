@@ -18,9 +18,9 @@ defmodule Ezagent.Credential.UserDefaultSource do
 
   The validation (source exists / same workspace / same owner / same flavor) AND the
   `EzagentCore.Repo.insert` BOTH live inside the cap-checked, audited Behavior
-  `Ezagent.Behavior.UserDefaultCredentialSource` (`:set_default_credential_source`,
+  `Ezagent.ActionSet.UserDefaultCredentialSource` (`:set_default_credential_source`,
   registered on the User Kind), structurally coupled to the dispatch chokepoint —
-  exactly mirroring how `Ezagent.Behavior.ExternalMirror` does the cross-app
+  exactly mirroring how `Ezagent.ActionSet.ExternalMirror` does the cross-app
   `Repo.insert` on the core-owned `Ezagent.ExternalMirror.BindingRow` schema. Because
   no public writer exists in core, an in-VM caller cannot persist a pointer for a victim
   `owner` without going through the cap-check + the `ctx.self_uri` owner-derivation (the
@@ -71,7 +71,7 @@ defmodule Ezagent.Credential.UserDefaultSource do
   cap-checked Behavior (the SOLE persister) can `Repo.insert` it.
 
   The cross-source validations (exists / workspace / owner / flavor) and the actual
-  `EzagentCore.Repo.insert` live in `Ezagent.Behavior.UserDefaultCredentialSource`,
+  `EzagentCore.Repo.insert` live in `Ezagent.ActionSet.UserDefaultCredentialSource`,
   under the dispatch chokepoint — see the moduledoc.
   """
   @spec changeset(map(), String.t() | nil) :: Ecto.Changeset.t()

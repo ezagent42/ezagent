@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
+defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   @moduledoc """
   RF-5a — the GENERIC role step of `:create_agent` (direct-spawn route).
 
@@ -14,7 +14,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate.RoleStep do
   the agent's own lifecycle), and records the durable `passive` (non-principal)
   marker. ONE generic step — no role-specific branch.
 
-  Extracted from `Ezagent.Behavior.Workspace.AgentCreate` (oversized-module arch
+  Extracted from `Ezagent.ActionSet.Workspace.AgentCreate` (oversized-module arch
   gate) so the role concern is a separate module; the host threads the
   materialization into the spawn args (`:behaviors` override + `:passive`) and
   calls `grant_passive_marker/2` + `mint_and_grant_caps/4` after the spawn.

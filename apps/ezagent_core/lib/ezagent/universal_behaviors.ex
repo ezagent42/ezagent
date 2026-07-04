@@ -23,7 +23,7 @@ defmodule Ezagent.UniversalBehaviors do
   `lifecycle_persistence_access_test` / the manage-coverage invariant.
   """
 
-  @universal [Ezagent.Behavior.Manage]
+  @universal [Ezagent.ActionSet.Manage]
 
   @doc "All behaviors that apply to every Kind by construction."
   @spec all() :: [module()]

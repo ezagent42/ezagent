@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>dev-together 回顾 — 2026-07-02</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.hold{background:#fee2e2;color:#991b1b}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-02</h1>
+<p>回顾时间：2026-07-03。来源：<code>docs/together/2026-07-02/stack.md</code>、GitHub PR 状态、main CI。延续 0630 review 的形式：先看产品大局，再看合并结果、未合并风险、流程沉淀、次日计划。</p>
+
+<div>
+  <span class="kpi"><b>4</b>工作 PR 已合入 main</span>
+  <span class="kpi"><b>1</b>close/docs PR 已合入</span>
+  <span class="kpi"><b>5</b>官网 PR 押后 0703</span>
+  <span class="kpi"><b>0</b>盲合 · 全绿门禁</span>
+</div>
+
+<div class="big">
+<b>产品大局：</b>0702 的主线是 <b>app-package 收口</b> —— 把「一个 socialware Definition」正式确立为产品的<b>发布单元（“app”）</b>，并在<b>上线前的硬窗口</b>里，把地基改名一次性做完。
+三层模型（emacs 类比）：<b>Definition = 发布单元</b>（major/minor mode）· <b>SessionTemplate = 装配哪些模块</b> · <b>session = 运行实例</b>（左栏一条对话）。
+今天把 T1（改名+寻址+URI 门禁+role→recipe 地基）、fork（一键复制会话配置）、T2（Definition 长出 <code>agents</code>+<code>views</code>、<code>authorize_view</code> 下沉、conformance 门禁）三条线全部落 main，<b>为 0703 的导游/客服 agent 铺好了落点</b>（<code>Definition.agents</code> 正是它们的声明位置）。
+</div>
+
+<h2>§1 昨日工作统计（按任务 / PR）</h2>
+<table>
+<tr><th>任务 / PR</th><th>承载</th><th>合并状态</th><th>产品结果</th><th>review 结论</th></tr>
+<tr>
+  <td><b>#1138 T1 上线前地基</b><br>ActionSet 改名 · config:// 去-URI · URI 门禁兜底 · role→recipe</td>
+  <td>lead 线（agent 协作）</td>
+  <td><span class="pill ok">merged</span><br><code>76857dff</code></td>
+  <td>命名（ActionSet）、寻址（结构化 subject）、role/recipe 分清，全部在上线前一次收口。cap 身份 5 元组含模块名，故必须先于任何生产数据。</td>
+  <td>500+ 文件机械改名，首次即净合。附带的 grep 门禁在当天两次精准抓到旧名残留（见 §4）。</td>
+</tr>
+<tr>
+  <td><b>#1139 会话配置 fork</b><br>一键复制 session 配置 → 新建自有会话</td>
+  <td>lead 线（agent 协作）</td>
+  <td><span class="pill ok">merged</span><br><code>609cb4d6</code></td>
+  <td>官网旅程「复制一份别人的会话配置、自己重开一个」这一段打通。</td>
+  <td>合并后短暂让 main 红（旧名残留），30 分钟内 hotfix 修复（#1141）。根因归纳为流程规则 MD-1。</td>
+</tr>
+<tr>
+  <td><b>#1141 hotfix main-red</b><br>fork 的 config_fork 旧名 Behavior.Template→ActionSet.Template</td>
+  <td>lead 线</td>
+  <td><span class="pill ok">merged</span><br><code>0b8c46ab</code></td>
+  <td>—</td>
+  <td>fork 分支基线早于 T1，携带旧名；T1 的 grep 门禁在合并后即刻发现。见 §4 MD-1。</td>
+</tr>
+<tr>
+  <td><b>#1140 T2 app-package</b><br>Definition 长出 agents+views · authorize_view 下沉 SessionView · conformance 门禁</td>
+  <td>lead 线（agent 协作）</td>
+  <td><span class="pill ok">merged</span><br><code>e263785f</code></td>
+  <td>Definition 现在能声明「随会话拉起哪些 agent」(<code>agents:[{recipe, role_name}]</code>) 和「渲染面」(<code>views</code>)；<code>mix ezagent.socialware.check</code> 10 条 conformance 挂 CI。</td>
+  <td>核心 1837 tests / 0 failures。唯一失败是 #108 flake（三条独立分支同 2 个测试，最强 flake 证据）。合并到 main 后的 CI 干净全绿，flake 未复现。</td>
+</tr>
+<tr>
+  <td><b>#1142 close + review 文档</b></td>
+  <td>lead 线</td>
+  <td><span class="pill ok">merged</span><br><code>3f079f75</code></td>
+  <td>当日 dev-together 台账（stack + review + 名册）。</td>
+  <td>纯文档。本页 review.html 为团队可读渲染。</td>
+</tr>
+</table>
+
+<h2>§2 效能统计</h2>
+<div>
+  <span class="kpi"><b>3</b>opus dev-subagent 并行</span>
+  <span class="kpi"><b>5</b>codex 对抗评审轮次</span>
+  <span class="kpi"><b>2</b>真实回归自查即修</span>
+  <span class="kpi"><b>1</b>deferred 项被消解</span>
+</div>
+<p>节奏：设计 → spec → codex 对抗评审 ×3 → plan → codex 评审 ×2 → 并行 opus 开发 → lead 验收 → 串行合并。T1‖T2 并行开发；合并串行（T1 是改名基线，必须先落）。前置的 5 轮 codex 评审既挡下了外部误报，也挡下了 lead 自己一处过期符号断言 —— 相对一次改错的 500 文件改名，成本极低。</p>
+
+<h2>§3 未合并 / 风险 — 官网 PR 全部押后 0703</h2>
+<p>官网旅程的人类同学工作<b>与 app-package 主线并行、跑在当日 plan 之外</b>，今晚<b>不合</b>：全部落后 T1/T2 后的 main 8 个 commit，需 rebase；两个带 T1 前旧符号；一个压在待定的设计上。</p>
+<table>
+<tr><th>PR</th><th>作者</th><th>状态</th><th>押后理由</th></tr>
+<tr><td>#1129 官网完整旅程 E2E 文档</td><td>ruihua</td><td><span class="pill warn">rebased·CI 跑</span></td><td>内容干净，rebase 后已零冲突，CI 绿即合。</td></tr>
+<tr><td>#1131 Agent Console <code>/overview</code></td><td>gaga</td><td><span class="pill warn">rebased·CI 跑</span></td><td>碰了 world .ex+router 但未与改名撞车，rebase 零冲突，CI 绿即合。</td></tr>
+<tr><td>#1133 Agent Console route 测试</td><td>gaga</td><td><span class="pill warn">rebased·CI 跑</span></td><td>内容干净、无旧符号，rebase 零冲突，CI 绿即合。</td></tr>
+<tr><td>#1132 Agent Console lifecycle 文档</td><td>gaga</td><td><span class="pill hold">押后</span></td><td>文档里 8 处旧 <code>Ezagent.Behavior</code>/<code>config://</code> 措辞，rebase 时顺手改成 ActionSet 再合。</td></tr>
+<tr><td>#1134 Hello concierge + 发布模板 + 公开只读</td><td>zhaomato</td><td><span class="pill hold">押后·等设计</span></td><td>15 处真实旧符号（会被门禁红），且正好是<b>导游/客服 concierge</b>功能 —— 落在 T2 新增的 <code>Definition.agents</code> 上，需先定设计再改名合并。</td></tr>
+</table>
+<blockquote>T2 落的 <code>agents:[{recipe, role_name}]</code> 正是 0703 导游/客服要用的底座，所以 #1134 押后是<b>刻意</b>，不是漏。</blockquote>
+
+<h2>§4 流程沉淀（method deltas）</h2>
+<h3>MD-1（新规则 → dev-together PR）：落地大改名后，比它早切的分支合 main 前必须做旧符号 grep 门禁</h3>
+<p>大改名（T1：<code>Behavior</code>→<code>ActionSet</code>、<code>config://</code>→结构化 subject）落 main 后，<b>任何比改名早切的分支即使自身 CI 绿，合 main 也会红</b> —— 它的 CI 跑在改名前的基线上，门禁那时还不存在。fork #1139 正是如此（→ #1141）。
+<b>要加到 <code>close</code> 的规则：</b>合并任何 merge-base 落后于改名 commit 的分支前，对其新增行跑一遍改名 grep（<code>git diff main...branch | grep '^+' | grep &lt;旧符号&gt;</code>），要求 0 命中；非零则先 rebase+改名。本质是「对 rebase 后的 main 验门禁」，而不是「在过期基线上验」。</p>
+<h3>MD-2（流程债，owner=lead）：双工作流的一天要有一份 plan</h3>
+<p>当日 plan 只覆盖了 app-package 线，官网线跑在台账之外（§3）。规则「无空 plan / 清点所有任务」今天只落在 app-package 一条线上。0703 的 plan 要把两条线都登记（即使标注「携带、owner X、非关键路径」）。</p>
+<h3>MD-3（确认有效，保留）：前置对抗评审值回票价</h3>
+<p>码前 5 轮 codex 评审，把 500 文件改名做成了首次即净合。保留「SPEC/plan → codex 对抗评审 → 再实现」的规则。</p>
+
+<h2>§5 次日计划（0703）</h2>
+<ol>
+<li><b>写一份覆盖两条线的完整 plan</b>（app-package 后续 + 官网），修复 MD-2。</li>
+<li><b>先 rebase 5 个官网 PR</b>；干净的（#1129/#1131/#1133）排在带旧符号的（#1132/#1134）前面。<span class="pill ok">进行中</span></li>
+<li><b>定导游/客服 concierge 设计</b>（orchestrator 机制）—— #1134 的解锁点，落在 T2 的 <code>Definition.agents</code> 底座上。这是 0703 的关键决策。</li>
+<li><b>预防冲突：</b>#1131/#1132/#1133 都碰 Agent Console，按作者顺序串行，别并行。</li>
+<li>隔离 destructive 的 <code>PluginPackageCodexGateTest</code>，收掉 #108 flake。</li>
+</ol>
+<blockquote><b>架构决策已定（0703 讨论）：</b>所有官网 session 共用一个 <code>ezagent</code> workspace（session 级隔离足够，不做 per-访客 workspace）—— 连带把「fork 跨-workspace 变体」这个 deferred 项直接消掉。</blockquote>
+
+</body>
+</html>

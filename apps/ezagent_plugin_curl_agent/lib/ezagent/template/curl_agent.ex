@@ -339,7 +339,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
   defp target_put_api_key_cap(%URI{} = agent_uri) do
     Ezagent.Capability.cap(
       :any,
-      Ezagent.Behavior.ApiKeys,
+      Ezagent.ActionSet.ApiKeys,
       :put_api_key,
       Ezagent.URI.instance(agent_uri),
       Ezagent.Capability.workspace_of(agent_uri)

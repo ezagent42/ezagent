@@ -6,7 +6,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   # uses no Ecto.Query macros, so exclude the colliding one.
   import Ecto.Query, except: [join: 3]
 
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.{

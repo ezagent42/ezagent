@@ -212,6 +212,62 @@ defmodule Ezagent.World.WorkspacePluginData do
     _ -> []
   end
 
+  @doc """
+  Resolvable SessionTemplate names for the "New session" picker — the live
+  SessionTemplate Kinds in this workspace (the names `create_session/3` can
+  resolve, including any the operator just authored via the template form) plus
+  the always-available `"default"` bootstrap class (auto-seeded on use).
+
+  Single source of truth: `WorldLive` (sessions surface) and `AdminData`
+  (Overview landing) both call this — never re-copy the body (arch cross-file
+  duplicate-fn gate).
+  """
+  @spec session_template_names(URI.t() | term()) :: [String.t()]
+  def session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+    # F3: offer only Classes that are DIRECTLY creatable from this generic picker
+    # (it supplies only the universal `session_name` arg). A Class whose
+    # `instantiate/3` requires extra args declares `directly_creatable?/0 =>
+    # false` and is filtered out, so it can't become the dropdown default and
+    # fail closed with `{:invalid_template, …}` on create.
+    classes =
+      Ezagent.TemplateRegistry.registered_template_names()
+      |> Enum.filter(&String.starts_with?(&1, "session."))
+      |> Enum.filter(&class_directly_creatable?/1)
+      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
+
+    instances =
+      workspace_uri
+      |> Ezagent.URI.name!()
+      |> session_template_rows()
+      |> Enum.map(&Map.get(&1, "name"))
+
+    # "default" is ALWAYS the first (selected) option — the React picker takes
+    # `templates[0]` as its default, so the always-creatable bootstrap class must
+    # lead regardless of how the other names sort.
+    other =
+      (classes ++ instances)
+      |> Enum.reject(&(&1 in [nil, "", "default"]))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    ["default" | other]
+  rescue
+    _ -> ["default"]
+  end
+
+  def session_template_names(_), do: ["default"]
+
+  # F3: a registered `session.<name>` Class is offered by the generic picker only
+  # when its Template Class declares itself directly creatable (default true;
+  # advisor overrides false). An unregistered name conservatively passes (it's a
+  # non-class instance name handled elsewhere).
+  defp class_directly_creatable?(class_name) do
+    case Ezagent.TemplateRegistry.lookup(class_name) do
+      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
+      :error -> true
+    end
+  end
+
   defp template_rows(templates, workspace_name) when is_map(templates) do
     legacy_rows =
       templates

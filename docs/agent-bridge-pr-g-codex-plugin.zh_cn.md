@@ -22,7 +22,7 @@
   channel 中。
 
 Bridge 流程：
-- `Ezagent.Behavior.Chat` 将 flavor-neutral 的
+- `Ezagent.ActionSet.Chat` 将 flavor-neutral 的
   `Ezagent.AgentBridge.Payload` 交给 codex adapter。
 - `EzagentPluginCodex.BridgeAdapter.deliver/2` 向已连接 sidecar
   推送 `codex_turn` event。

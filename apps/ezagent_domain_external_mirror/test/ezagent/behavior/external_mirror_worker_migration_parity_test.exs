@@ -1,12 +1,12 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
+defmodule Ezagent.ActionSet.ExternalMirrorWorkerMigrationParityTest do
   @moduledoc """
   Phase 2-d r3 — Migration parity for
-  `Ezagent.Behavior.ExternalMirrorWorker`.
+  `Ezagent.ActionSet.ExternalMirrorWorker`.
 
   This Behavior was migrated from the legacy `@behaviour
-  Ezagent.Behavior` + manual `actions/0` / `interface/0` /
+  Ezagent.ActionSet` + manual `actions/0` / `interface/0` /
   `required_caps/0` / `cap_subjects/0` / `invoke/4` shape to the new
-  `use Ezagent.Behavior` + per-action `action :publish, ...` macro
+  `use Ezagent.ActionSet` + per-action `action :publish, ...` macro
   declaration + `handle_publish/2` handler per SPEC §6.2.
 
   Per OQ-6: ExternalMirrorWorker is a `:hot_resource` Kind;
@@ -21,13 +21,13 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.ExternalMirrorWorker
+  alias Ezagent.ActionSet.ExternalMirrorWorker
 
   describe "new-contract markers" do
     test "ExternalMirrorWorker is a new-style Behavior" do
       assert function_exported?(ExternalMirrorWorker, :__behavior__?, 0)
       assert ExternalMirrorWorker.__behavior__?() == true
-      assert Ezagent.Behavior.new_style?(ExternalMirrorWorker)
+      assert Ezagent.ActionSet.new_style?(ExternalMirrorWorker)
     end
 
     test ":publish action has matching handle_publish/2 (compile-time gate)" do
@@ -73,7 +73,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
   describe "lifecycle hooks (Lifecycle migration — Phase B)" do
     # init_slice/1 + post_init/2 + handle_continue/3 + terminate/3 are now
     # EMITTED BY the `use Ezagent.Lifecycle` macro (which compiles down to
-    # `@behaviour Ezagent.Behavior`), so they remain exported — the engine
+    # `@behaviour Ezagent.ActionSet`), so they remain exported — the engine
     # still drives the same boot/terminate path. The DEVELOPER-facing hooks
     # are now create/1 + activate/2 + handle_signal/2 + deactivate/2.
     test "engine boot callbacks stay exported (macro-emitted) + Lifecycle hooks present" do
@@ -144,11 +144,11 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
   end
 
   describe "BootReconciler framework-internal status (NOT a Behavior)" do
-    test "BootReconciler is NOT migrated to use Ezagent.Behavior" do
-      refute Ezagent.Behavior.new_style?(Ezagent.ExternalMirror.BootReconciler)
+    test "BootReconciler is NOT migrated to use Ezagent.ActionSet" do
+      refute Ezagent.ActionSet.new_style?(Ezagent.ExternalMirror.BootReconciler)
     end
 
-    test "BootReconciler does not implement the Ezagent.Behavior contract" do
+    test "BootReconciler does not implement the Ezagent.ActionSet contract" do
       refute function_exported?(Ezagent.ExternalMirror.BootReconciler, :actions, 0)
       refute function_exported?(Ezagent.ExternalMirror.BootReconciler, :state_slice, 0)
       refute function_exported?(Ezagent.ExternalMirror.BootReconciler, :handle_publish, 2)

@@ -485,7 +485,7 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp lookup_creator_uri(%URI{} = agent_uri) do
-    case Ezagent.Behavior.ApiKeys.data_owner(agent_uri) do
+    case Ezagent.ActionSet.ApiKeys.data_owner(agent_uri) do
       %URI{} = creator -> creator
       _ -> nil
     end

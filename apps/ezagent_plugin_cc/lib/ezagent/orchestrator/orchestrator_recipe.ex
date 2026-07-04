@@ -1,4 +1,4 @@
-defmodule Ezagent.Orchestrator.OrchestratorRole do
+defmodule Ezagent.Orchestrator.OrchestratorRecipe do
   @moduledoc """
   The orchestrator **Role** recipe (task #54 PR-2, design §3).
 
@@ -19,16 +19,16 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   (`EzagentPluginCc.Application.roles/0`) returns this `recipe/0`, and
   `Ezagent.Plugin.boot/1` Phase 2 registers it in `Ezagent.Agent.RecipeRegistry` by
   `name/0` ("orchestrator") — a first-class named role like any other.
-  `OrchestratorBootstrap.resolve_orchestrator_role/0` then looks it up BY NAME
+  `OrchestratorBootstrap.resolve_orchestrator_recipe/0` then looks it up BY NAME
   in that registry (the same indirection RF-5a uses), instead of re-deriving it
   from a bespoke `Recipe.Compose` call.
 
-  The design's forkable, persisted `template://<ws>/role/orchestrator` Template
+  The design's forkable, persisted `template://<ws>/recipe/orchestrator` Template
   subtype (tenant fork/override) is a documented follow-up: it needs a
   `role`-type branch in the `template://` spawn resolver (the session domain)
   and a RoleTemplate Kind, neither of which exists yet. The persisted Template
   is layered on later by re-pointing the registry source (or the
-  `resolve_orchestrator_role/0` lookup) at the live Template once that machinery
+  `resolve_orchestrator_recipe/0` lookup) at the live Template once that machinery
   lands — the `RecipeRegistry` lookup IS that re-point seam.
 
   ## Scope (PR-2)
@@ -41,7 +41,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   @skill_ref "ezagent-session-orchestrator"
 
   # The registry NAME this role is keyed by (`roles/0` → `RecipeRegistry`, RF-4)
-  # AND the name the future persisted `template://system/role/orchestrator`
+  # AND the name the future persisted `template://system/recipe/orchestrator`
   # Template subtype is keyed by. Single-sourced so the `roles/0` declaration,
   # the `RecipeRegistry.lookup/1`, and the `OrchestratorBootstrap` resolver all
   # agree on one string.
@@ -53,12 +53,12 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
 
   @doc """
   The orchestrator role recipe — the map `Ezagent.Agent.Recipe.new/1` consumes (and the
-  future `template://system/role/orchestrator` content). Flavor-agnostic: it
+  future `template://system/recipe/orchestrator` content). Flavor-agnostic: it
   names no flavor field.
 
   Carries a `:name` ("orchestrator") so the cc plugin's `roles/0` callback (RF-4)
   registers it as a first-class named role in `Ezagent.Agent.RecipeRegistry`, looked up
-  by `OrchestratorBootstrap.resolve_orchestrator_role/0` at agent-spawn time
+  by `OrchestratorBootstrap.resolve_orchestrator_recipe/0` at agent-spawn time
   (RF-9 — the orchestrator joins the unified `roles/0` + `Recipe.Compose` path).
   """
   @spec recipe() :: map()
@@ -69,10 +69,10 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
       prompt: persona(),
       behaviors: [],
       requested_caps: [
-        %{behavior: Ezagent.Behavior.Template, action: :read},
-        %{behavior: Ezagent.Behavior.Template, action: :write},
-        %{behavior: Ezagent.Behavior.Template, action: :instantiate},
-        %{behavior: Ezagent.Behavior.Template, action: :fork}
+        %{behavior: Ezagent.ActionSet.Template, action: :read},
+        %{behavior: Ezagent.ActionSet.Template, action: :write},
+        %{behavior: Ezagent.ActionSet.Template, action: :instantiate},
+        %{behavior: Ezagent.ActionSet.Template, action: :fork}
       ],
       session_template: nil
     }

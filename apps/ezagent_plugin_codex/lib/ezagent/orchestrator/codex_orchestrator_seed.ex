@@ -76,7 +76,7 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
     config_dir = Path.join(base, ".codex")
 
     File.mkdir_p!(config_dir)
-    File.write!(Path.join(base, "AGENTS.md"), Ezagent.Orchestrator.OrchestratorRole.persona())
+    File.write!(Path.join(base, "AGENTS.md"), Ezagent.Orchestrator.OrchestratorRecipe.persona())
 
     unless File.exists?(Path.join(config_dir, "config.toml")) do
       File.write!(Path.join(config_dir, "config.toml"), "approval_policy = \"never\"\n")

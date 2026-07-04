@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ChatTest do
+defmodule Ezagent.ActionSet.ChatTest do
   @moduledoc """
   Phase 2b-step 2: Chat Behavior full invoke clause tests.
 
@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
@@ -23,7 +23,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   # Phase 9 PR-6 — `MessageStore.write/2` requires the session to be
   # bound to a workspace via WorkspaceRegistry (invariant 4 + SPEC v3
-  # §7). Helper binds + queues teardown so tests calling EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Session, :send)
+  # §7). Helper binds + queues teardown so tests calling EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Session, :send)
   # or :join don't hit the "no workspace binding" raise.
   defp bind_to_default(session_uri) do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, URI.new!("workspace://team-alpha"))
@@ -189,7 +189,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # fire-and-forget — invoke still {:ok, ...}.
       assert {:ok, _, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -240,7 +240,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # NOT the in-session member list. invoke still succeeds.
       assert {:ok, _, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -270,7 +270,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # The bound `new_slice` shape is asserted below.
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -331,7 +331,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # consume the return — fan-out is fire-and-forget).
       assert {:ok, _new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -352,7 +352,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert_raise FunctionClauseError, fn ->
         EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-          Ezagent.Behavior.Session,
+          Ezagent.ActionSet.Session,
           :send,
           slice,
           %{message: msg},
@@ -397,7 +397,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -453,7 +453,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, slice1, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg1},
@@ -466,7 +466,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, slice2, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice1,
                  %{message: msg2},
@@ -503,7 +503,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, slice1, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -519,7 +519,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # `{:ok, _, %{stored: true}}`.
       assert {:ok, slice2, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice1,
                  %{message: msg},
@@ -568,7 +568,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # First send persists the original
       assert {:ok, slice1, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice,
                  %{message: original},
@@ -584,7 +584,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # MUST be the original row, not the adversarial one.
       assert {:ok, slice2, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  slice1,
                  %{message: adversarial},
@@ -627,7 +627,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :send,
                  legacy_slice,
                  %{message: msg},
@@ -766,8 +766,8 @@ defmodule Ezagent.Behavior.ChatTest do
     # notification.
     #
     # PR-2 (im/session/agent decomposition §OQ-4): this is now the
-    # first-class `Ezagent.Behavior.User.Receive`, NOT a branch inside
-    # `Ezagent.Behavior.Session`.
+    # first-class `Ezagent.ActionSet.User.Receive`, NOT a branch inside
+    # `Ezagent.ActionSet.Session`.
     test "mutates the receive slice (:last_received + :recent_messages ring)" do
       user_uri =
         URI.new!("entity://team-alpha/user/admin-recv-#{System.unique_integer([:positive])}")
@@ -780,7 +780,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.User.Receive,
+                 Ezagent.ActionSet.User.Receive,
                  :receive,
                  slice,
                  %{message: msg},
@@ -794,14 +794,14 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "state_slice is :session (no snapshot migration — shares the User Kind slice key)" do
-      assert Ezagent.Behavior.User.Receive.state_slice() == :session
+      assert Ezagent.ActionSet.User.Receive.state_slice() == :session
     end
   end
 
   describe "agent.receive — Behavior.Agent.Receive" do
     # PR-2 (im/session/agent decomposition §OQ-4): the Agent delivery
-    # path is now the first-class `Ezagent.Behavior.Agent.Receive`, NOT a
-    # branch inside `Ezagent.Behavior.Session`. Delivery mechanics still
+    # path is now the first-class `Ezagent.ActionSet.Agent.Receive`, NOT a
+    # branch inside `Ezagent.ActionSet.Session`. Delivery mechanics still
     # live in the shared `Session.Delivery.deliver_agent_receive/2` helper.
     test "returns {:ok, slice} unchanged (Agent has no chat slice state)" do
       agent_uri =
@@ -815,7 +815,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, ^slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Agent.Receive,
+                 Ezagent.ActionSet.Agent.Receive,
                  :receive,
                  slice,
                  %{message: msg},
@@ -851,7 +851,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Agent.Receive,
+        Ezagent.ActionSet.Agent.Receive,
         :receive,
         %{},
         %{message: msg},
@@ -906,7 +906,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Agent.Receive,
+        Ezagent.ActionSet.Agent.Receive,
         :receive,
         %{},
         %{message: msg},
@@ -963,7 +963,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Agent.Receive,
+        Ezagent.ActionSet.Agent.Receive,
         :receive,
         %{},
         %{message: msg},
@@ -996,7 +996,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{members: [^member_uri]}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -1026,7 +1026,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:error, {:member_not_registered, ^missing_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: missing_uri},
@@ -1059,7 +1059,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:error, {:passive_actor_cannot_join, ^passive_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: passive_uri},
@@ -1083,7 +1083,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{members: [^normal_uri]}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: normal_uri},
@@ -1113,7 +1113,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, _slice, _result} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -1124,7 +1124,7 @@ defmodule Ezagent.Behavior.ChatTest do
                       %{
                         type: :session_member_joined,
                         body: %{text: text, session_uri: ^session_uri},
-                        source: Ezagent.Behavior.Session
+                        source: Ezagent.ActionSet.Session
                       }},
                      1_000
 
@@ -1160,7 +1160,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, _slice, _result} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: agent_uri},
@@ -1207,7 +1207,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -1241,7 +1241,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :leave,
                  slice,
                  %{member: member_uri},
@@ -1302,7 +1302,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{members: members}, effects} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :merge_member,
                  slice,
                  %{from: anon_uri, to: login_uri},
@@ -1374,7 +1374,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, merged, _result, _effects} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :merge_member,
                  slice,
                  %{from: anon_uri, to: login_uri},
@@ -1388,7 +1388,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, rerun, _result, _effects} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
-                 Ezagent.Behavior.Session,
+                 Ezagent.ActionSet.Session,
                  :merge_member,
                  merged,
                  %{from: anon_uri, to: login_uri},

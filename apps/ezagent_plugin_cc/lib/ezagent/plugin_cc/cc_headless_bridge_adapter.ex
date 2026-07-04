@@ -4,7 +4,7 @@ defmodule EzagentPluginCc.CcHeadlessBridgeAdapter do
 
   `cc-headless` is an in-process synchronous transport: Agent receive calls
   this adapter, this adapter calls the supervised Python SDK sidecar, and the
-  returned result is re-dispatched to `Ezagent.Behavior.CcHeadlessAgent`'s
+  returned result is re-dispatched to `Ezagent.ActionSet.CcHeadlessAgent`'s
   `:sync_result` action for persistence and session reply.
   """
 

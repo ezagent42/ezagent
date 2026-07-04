@@ -3,7 +3,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   require Logger
 
-  alias Ezagent.Behavior.Session
+  alias Ezagent.ActionSet.Session
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
@@ -185,7 +185,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
        ) do
     cap = %Ezagent.Capability{
       kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
@@ -256,7 +256,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
     needed = %{
       kind: kind,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       action: :any,
       instance: representative,
       workspace_uri: workspace_uri

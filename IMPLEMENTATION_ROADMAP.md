@@ -207,7 +207,7 @@ Deliverable 项:
 **2. 测试员体验**：打开 LiveView `/admin` → audit log 实时流动；点「Echo 测试」→ 完整 Echo invocation 出现在 audit；用 manual dispatch form 发给远程 CC → CC 收到 → reply 回到 LiveView。**你能通过 LiveView 跟 Claude Code 通信了。**
 
 **3. Deliverables**（3 sub-step,顺序 1a → 1b → 1c）：
-- **1a ezagent_core MVP**（~400 LOC core）— `Ezagent.Kind` 宏(register→subscribe→announce_ready 三步)/ `KindRegistry`(`put_new` + `lookup`)/ `ReadyGate` / `PendingDelivery` / `Idempotency` / `Invocation.dispatch/1`(含 ReadyGate / PendingDelivery / Idempotency 接入,`:call` to not-ready fail-fast;**step 5.5 authz gate 实现为显式 permissive stub**:`authz_check/2` 永远返回 `:ok` + emit `[:ezagent, :authz, :stub_grant]` telemetry,函数注释 `PHASE-3D-STUB: DO NOT REMOVE`,Decision #82)/ `Behavior` behaviour + `BehaviorRegistry` / `InterfaceValidator` 最小版 / `Audit.Writer` GenServer + batch flush(SQLite `invocations` 表)/ `DLQ` 最小版 / **bootstrap**: BEAM 首次启动数据库空时自动创建 `user://admin` 持 all-caps,后续启动跳过;`user://admin` 的 cap 不可 revoke(防自锁死,Decision #81)/ `Ezagent.Entity.Echo` + `Ezagent.Behavior.Echo`（plugin 代码,spec 里要存在的示例 Kind,不是测试代码）
+- **1a ezagent_core MVP**（~400 LOC core）— `Ezagent.Kind` 宏(register→subscribe→announce_ready 三步)/ `KindRegistry`(`put_new` + `lookup`)/ `ReadyGate` / `PendingDelivery` / `Idempotency` / `Invocation.dispatch/1`(含 ReadyGate / PendingDelivery / Idempotency 接入,`:call` to not-ready fail-fast;**step 5.5 authz gate 实现为显式 permissive stub**:`authz_check/2` 永远返回 `:ok` + emit `[:ezagent, :authz, :stub_grant]` telemetry,函数注释 `PHASE-3D-STUB: DO NOT REMOVE`,Decision #82)/ `Behavior` behaviour + `BehaviorRegistry` / `InterfaceValidator` 最小版 / `Audit.Writer` GenServer + batch flush(SQLite `invocations` 表)/ `DLQ` 最小版 / **bootstrap**: BEAM 首次启动数据库空时自动创建 `user://admin` 持 all-caps,后续启动跳过;`user://admin` 的 cap 不可 revoke(防自锁死,Decision #81)/ `Ezagent.Entity.Echo` + `Ezagent.ActionSet.Echo`（plugin 代码,spec 里要存在的示例 Kind,不是测试代码）
 - **1b LiveView /admin**（~150 LOC plugin）— audit log 实时流(subscribe `[:ezagent, :invoke, :stop]` telemetry)/ manual dispatch form / Echo 测试按钮 / **默认 `ctx.caller = user://admin`**(无 auth UI,开发期 dogfood;CLI 同)。**依赖 1a 才能显示 audit。**
 - **1c CC stdio bridge 原型**（~80 LOC Python）— `claude --channels plugin:esr-bridge`,bridge↔CC 走 stdio(协议要求),bridge↔Ezagent 的 wire 工程师选。**文件名带 `_v1_prototype` 后缀,Phase 5 用 v2 完全替换。依赖 1b 才能看结果。**
 - 内部 tag `phase1a/1b/1c`
@@ -235,7 +235,7 @@ Deliverable 项:
 **2. 测试员体验**：进 `/sessions/test-1`,打「hello @echo」→ Echo 在 session view 回「hello」；Claude Code 也加入同一 session,@ 一下能收到；发一条匹配不到任何 rule 的消息 → DLQ unroutable 表有记录。**你能在一个 session 里多方聊天(你 + Echo + CC)。**
 
 **3. Deliverables**（2 sub-step,顺序 2a → 2b）：
-- **2a Routing core**（~180 LOC core）— `RoutingRegistry`(`declare_table` / `put_new` / `put` / `lookup` / `lookup_all`,含可选 `reverse_index`)/ `Routing.Matcher`(求值器 + 组合子 `always`/`and`/`or`/`not` + Message-field matchers `mention`/`from`/`from_member`/`text_contains`/`ref_to`/`from_external`)/ `Routing.Rules`(additive rules)/ `Ezagent.Message` struct(5 字段最小集)/ 零匹配路由 → telemetry `[:ezagent, :routing, :unroutable]` + DLQ。**plugin 部分**:`Ezagent.Behavior.Chat`(`:receive` + `:send`,`esr_behavior_chat`)/ `Ezagent.Session` Kind 雏形(具体 Kind,plugin;还没 Workspace,先做单 session 容器)
+- **2a Routing core**（~180 LOC core）— `RoutingRegistry`(`declare_table` / `put_new` / `put` / `lookup` / `lookup_all`,含可选 `reverse_index`)/ `Routing.Matcher`(求值器 + 组合子 `always`/`and`/`or`/`not` + Message-field matchers `mention`/`from`/`from_member`/`text_contains`/`ref_to`/`from_external`)/ `Routing.Rules`(additive rules)/ `Ezagent.Message` struct(5 字段最小集)/ 零匹配路由 → telemetry `[:ezagent, :routing, :unroutable]` + DLQ。**plugin 部分**:`Ezagent.ActionSet.Chat`(`:receive` + `:send`,`esr_behavior_chat`)/ `Ezagent.Session` Kind 雏形(具体 Kind,plugin;还没 Workspace,先做单 session 容器)
 - **2b LiveView session view**（~200 LOC plugin）+ **CLI 起步**（~100 LOC plugin,`esr_adapter_cli`）— `/sessions/:id` 页:Message 列表 + Send box;实时 PubSub 订阅 `<session_uri>:events`;CLI 基础命令 `esr send` / `esr session list` / `esr session inspect`，**CLI 手写,还不从 `@interface` 自动派生**(那是 Phase 4)
 - 内部 tag `phase2a/2b`
 
@@ -338,7 +338,7 @@ Deliverable 项:
 **3. Deliverables**（3 sub-step,顺序 5a → 5b → 5c;全部 plugin 代码,ezagent_core 不变）：
 - **5a Feishu adapter** — `ezagent_plugin_feishu`（Elixir adapter + Python feishu bot）/ §10.7 的 4 张参考表落到 production
 - **5b CC channel production** — `ezagent_plugin_cc`（Elixir adapter + Python channel server）—— **重写 Phase 1 的 `_v1_prototype` stdio bridge 为 v2,完全替换不修改 v1** / WS connect token 验证 + CapBAC 完整接入 / `RoutingRegistry.CCInstanceConnection` 表（多 CC 实例支持）
-- **5c Pty-Web** — `esr_plugin_pty_web`（工程师命名可调）/ `:ex_pty` 集成 / 输出走 `<pty_session_uri>:output` PubSub topic,LiveView 用 xterm.js 渲染 / 输入反向 dispatch `Ezagent.Behavior.Pty.input`,**走 Ezagent 标准路径不裸 PubSub（满足不变式 #1）**
+- **5c Pty-Web** — `esr_plugin_pty_web`（工程师命名可调）/ `:ex_pty` 集成 / 输出走 `<pty_session_uri>:output` PubSub topic,LiveView 用 xterm.js 渲染 / 输入反向 dispatch `Ezagent.ActionSet.Pty.input`,**走 Ezagent 标准路径不裸 PubSub（满足不变式 #1）**
 - 内部 tag `phase5a/5b/5c`
 
 **4. 前序依赖**：Phase 4 的完整 transport 层 + View 抽象 + 同构 CLI。
@@ -466,7 +466,7 @@ Phase 7 是 Allen 亲手驱动的最后一个 phase + **Ezagent v1 official rele
 
 **4. Ezagent 侧最小新组件**(草稿):
 - `Ezagent.Entity.MediaSession`(新 Kind,URI scheme `media://room-id`)
-- `Ezagent.Behavior.MediaSignaling`(actions: join / leave / offer / answer / ice)
+- `Ezagent.ActionSet.MediaSignaling`(actions: join / leave / offer / answer / ice)
 - 一个 plugin(e.g. `esr_plugin_dyte`)实现 token 颁发 + webhook 接收 SFU 事件,把 join/leave 当 control message 灌进 dispatch
 - 媒体字节**永不**进 Ezagent 进程 — peer ↔ SFU,SFU webhook 只发"who joined/left"
 - CapBAC gate `media.join`,routing rule 决定谁能加入哪个 media://room

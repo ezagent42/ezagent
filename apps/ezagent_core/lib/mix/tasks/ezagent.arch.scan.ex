@@ -63,7 +63,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   ]
 
   @spawn_fresh_sanctioned [
-    # PR-2 config-evolve — shifted +6 by adding `Ezagent.Behavior.ConfigEvolve`
+    # PR-2 config-evolve — shifted +6 by adding `Ezagent.ActionSet.ConfigEvolve`
     # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
     # PR-6 (im/session/agent decomposition) — shifted +41/+40 by splitting
     # `Agent.behaviors/0` into `base_behaviors/0` + `curl_behaviors/0` +
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # rewording on `Agent.behaviors/0` (standalone curl Kind now DELETED). SAME
     # sanctioned defs/call, one line lower.
     # PR-A (#53 agent→session decouple) — shifted -1 by removing
-    # `Ezagent.Behavior.Session` from `Agent.base_behaviors/0`. SAME sanctioned
+    # `Ezagent.ActionSet.Session` from `Agent.base_behaviors/0`. SAME sanctioned
     # `spawn_fresh/4` call site + `@spec` + `def`, one line higher.
     # PR-9a (#53 physical split) — `entity/agent.ex` relocated VERBATIM to the
     # new `ezagent_domain_agent` app (module name FROZEN); content unchanged so
@@ -81,7 +81,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # cc-headless sidecar insertion shifted the same sanctioned shim/spec/def
     # anchors lower; the spawn-fresh ownership boundary is unchanged.
     # CR-governance (SPEC 2026-06-26 rev 3) — shifted +6 by adding
-    # `Ezagent.Behavior.ConfigGovernance` (+ its comment block) to
+    # `Ezagent.ActionSet.ConfigGovernance` (+ its comment block) to
     # `Agent.base_behaviors/0`, the same kind of insertion config-evolve made.
     # SAME sanctioned `spawn_fresh/4` call site + `@spec` + `def`, six lines
     # lower; the spawn-fresh ownership boundary is unchanged.
@@ -114,7 +114,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 169},
     # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
     # the echo worked-example moduledoc line was condensed to a
-    # `Ezagent.Behavior.PyAgent` reference (net -1 line ABOVE this comment).
+    # `Ezagent.ActionSet.PyAgent` reference (net -1 line ABOVE this comment).
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 453}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
@@ -192,7 +192,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "Schema" => [{:changeset, 2}],
     "Ecto" => [{:changeset, 2}],
     "Lifecycle" => [{:create, 1}, {:activate, 2}, {:deactivate, 2}, {:destroy, 1}],
-    "Behavior" => [{:required_caps, 0}],
+    "ActionSet" => [{:required_caps, 0}],
     # `use Mix.Task` obligates `run/1` (the `@impl Mix.Task` callback). Two
     # one-shot snapshot-migration tasks sharing the SAME thin `run/1` dispatch
     # skeleton (parse switches → `cond` → `Ezagent.Migration.RepoOnly.run/1`) is
@@ -230,6 +230,28 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/socket.ex",
     "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/channel.ex",
     "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/token_store.ex"
+  ]
+
+  # domain-only-Kinds gate — Kinds are a domain concern. A concrete Kind is a
+  # module declaring `@behaviour Ezagent.Kind` EXACTLY (NOT `Ezagent.Kind.Template`,
+  # which is a blueprint/Template Class plugins legitimately define; the AST matcher
+  # resolves aliases so `alias Ezagent.Kind` + `@behaviour Kind` is caught too).
+  # Plugin apps
+  # (`apps/ezagent_plugin_*`) compose via Template/Behavior/View; a plugin defining
+  # a concrete Kind is architectural debt — the concept must move to a domain app
+  # (or be promoted to domain). Counts plugin-app concrete-Kind files MINUS this
+  # sanctioned allowlist, which is a ratchet that shrinks to empty as the debt is
+  # retired. `plugin_defined_kinds` (target-zero) trips on any NEW plugin Kind or
+  # any re-add of an allowlisted concept elsewhere in a plugin.
+  #
+  # Original snapshot named three offenders; two had already been retired on
+  # origin/main (the ratchet advanced past the snapshot), so only one remains:
+  #   - echo    → RETIRED: `apps/ezagent_plugin_echo` deleted entirely.
+  #   - np/py   → RETIRED: folded to `apps/ezagent_plugin_py/lib/ezagent/template/
+  #               py_agent.ex`, now an `Ezagent.Kind.Template` (correctly NOT a Kind).
+  #   - hello   → PENDING: to be promoted to a socialware. Must reach 0.
+  @plugin_defined_kind_allowlist [
+    "apps/ezagent_plugin_hello/lib/ezagent/entity/hello_builder.ex"
   ]
 
   @impl Mix.Task
@@ -281,8 +303,13 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
 
   defp do_measure do
     oversized = oversized_modules()
-    spawn_hits = grep(~r/SpawnRegistry\.spawn(?:_detailed)?\(/)
-    create_session_hits = grep(~r/\.create_session\(/)
+    # AST-based (2026-07 batch-1): resolves `alias Ezagent.SpawnRegistry, as: X`
+    # and is immune to moduledoc/comment/string mentions + function-capture
+    # (`&Mod.fun/arity`) non-calls that the old per-line grep over-counted. Emits
+    # `{file, line, :ast}` triples so `unique_files/1` + the off-chokepoint reject
+    # keep working unchanged.
+    spawn_hits = spawn_registry_call_hits()
+    create_session_hits = create_session_call_hits()
     spawn_fresh_hits = grep(~r/spawn_fresh(?:_member)?\(/, skip_comment_lines?: true)
     all_slices_hits = grep(~r/:all_slices/)
     set_effect_hits = grep(~r/\{:set,\s*:[a-z_]+,/)
@@ -312,6 +339,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       # specific fork; FF-1 is the broad fitness function for fork accretion.
       cross_file_duplicate_fn_groups: cross_file_duplicate_fn_groups(),
       cc_bridge_shim_callers: cc_bridge_shim_callers(),
+      plugin_defined_kinds: plugin_defined_kinds(),
       cc_codex_template_class_combined_loc:
         @template_class_files |> Enum.map(&line_count/1) |> Enum.sum(),
       raw_home_path_outside_core: raw_home_path_outside_core(),
@@ -767,6 +795,85 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     |> Enum.count(&file_references_shim?(&1, shim_set))
   end
 
+  # domain-only-Kinds gate — plugin-app files declaring a CONCRETE Kind
+  # (`@behaviour Ezagent.Kind` exactly; `Ezagent.Kind.Template` is a blueprint a
+  # plugin Template Class legitimately declares and is NOT flagged) minus the
+  # sanctioned `@plugin_defined_kind_allowlist`. Path-prefix scope on
+  # `apps/ezagent_plugin_` so a NEW plugin app is covered automatically. Counted by
+  # rejection (never `offenders - length(allowlist)`) so the count can never go
+  # negative and mask a regression when the debt shrinks below the allowlist.
+  #
+  # AST-based (2026-07 batch-1): the `@behaviour` value is matched on the RESOLVED
+  # module — so an aliased `alias Ezagent.Kind` + `@behaviour Kind` is caught (a
+  # raw `@behaviour Ezagent.Kind` regex would miss it) while `Ezagent.Kind.Template`
+  # (or an alias of it) is excluded by exact-module comparison, not a lookahead.
+  defp plugin_defined_kinds do
+    allow = MapSet.new(@plugin_defined_kind_allowlist)
+
+    plugin_defined_kind_offenders()
+    |> Enum.reject(&MapSet.member?(allow, &1))
+    |> length()
+  end
+
+  @doc """
+  Plugin-app lib files that declare a CONCRETE Kind (`@behaviour Ezagent.Kind`
+  exactly, alias-resolved) — the domain-only-Kinds offenders BEFORE the sanctioned
+  `@plugin_defined_kind_allowlist` is subtracted. Exposed so the gate test can
+  prove the AST matcher has TEETH on real code (the allowlisted `hello_builder.ex`
+  must appear here) even though the post-allowlist `plugin_defined_kinds` count is
+  a target-zero 0.
+  """
+  @spec plugin_defined_kind_offender_files() :: [String.t()]
+  def plugin_defined_kind_offender_files, do: plugin_defined_kind_offenders()
+
+  defp plugin_defined_kind_offenders do
+    lib_files()
+    |> Enum.filter(&String.starts_with?(&1, "apps/ezagent_plugin_"))
+    |> Enum.filter(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> count_plugin_kind_behaviours(ast, arch_allowed_lines(file)) > 0
+        {:error, _} -> false
+      end
+    end)
+  end
+
+  @doc """
+  Testable entry for the `plugin_defined_kinds` predicate: count the concrete-Kind
+  `@behaviour` declarations (`Ezagent.Kind` exactly, alias-resolved) in a SOURCE
+  STRING. Proves the robustness gain — an aliased `alias Ezagent.Kind` +
+  `@behaviour Kind` IS flagged, while `@behaviour Ezagent.Kind.Template` is NOT —
+  without writing fixture files into the scanned plugin tree.
+  """
+  @spec count_plugin_defined_kinds_in_source(String.t()) :: non_neg_integer()
+  def count_plugin_defined_kinds_in_source(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} -> count_plugin_kind_behaviours(ast, allowed_lines_in_source(source))
+      {:error, _} -> 0
+    end
+  end
+
+  defp count_plugin_kind_behaviours(ast, allowed_lines) do
+    amap = module_alias_map(ast)
+
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn node, acc ->
+        case node do
+          {:@, _, [{:behaviour, meta, [{:__aliases__, _, mods}]}]} when is_list(mods) ->
+            if resolve_full_module(mods, amap) == [:Ezagent, :Kind] and
+                 not MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0)) do
+              {node, acc + 1}
+            else
+              {node, acc}
+            end
+
+          _ ->
+            {node, acc}
+        end
+      end)
+
+    count
+  end
+
   # True iff `file` references any shim module, whether fully-qualified, via a
   # plain/grouped `alias`, or a renamed `alias ..., as: X` whose alias is then
   # used as a remote-call/reference target. `# arch-allow:` on the line suppresses.
@@ -872,6 +979,173 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   defp cc_bridge_shim_fqn_regex do
     alternation = Enum.map_join(@cc_bridge_shim_modules, "|", &dotted/1)
     Regex.compile!("(#{alternation})(?![A-Za-z0-9_])")
+  end
+
+  # --- AST-based remote-call chokepoint counters (2026-07 batch-1) ------------
+  #
+  # `spawn_registry_call_sites/modules/off_chokepoint` and
+  # `create_session_call_sites/modules` were per-line `grep`s. Both are now
+  # AST-based: a remote call `Mod.fun(args)` is matched on the RESOLVED module
+  # (so `alias Ezagent.SpawnRegistry, as: SR` + `SR.spawn(...)` is caught) and
+  # ONLY when the call has parentheses — which excludes a function capture
+  # `&Mod.fun/arity` (grep never matched those either) and mirrors the old
+  # `\.fun\(` regex. Moduledoc/comment/string mentions are gone by construction
+  # (they are not AST call nodes). `# arch-allow:` on the call line suppresses.
+  # Emits `{file, line, :ast}` triples so `unique_files/1` + `unsanctioned_count/2`
+  # keep working unchanged.
+
+  # SpawnRegistry.spawn / spawn_detailed call sites (module resolved to
+  # `Ezagent.SpawnRegistry` by last-segment, faithful to the old last-segment grep).
+  defp spawn_registry_call_hits do
+    ast_call_hits(fn last_segment, fun ->
+      fun in [:spawn, :spawn_detailed] and last_segment == :SpawnRegistry
+    end)
+  end
+
+  # `.create_session(` facade call sites (module-agnostic, mirroring the old
+  # `\.create_session\(` grep — any receiver, incl. a `facade.create_session(...)`
+  # variable receiver).
+  defp create_session_call_hits do
+    ast_call_hits(fn _last_segment, fun -> fun == :create_session end)
+  end
+
+  @doc """
+  Testable entry for the `spawn_registry_*` counters: count SpawnRegistry
+  `spawn`/`spawn_detailed` call sites in a SOURCE STRING. Proves the robustness
+  gain — an `alias Ezagent.SpawnRegistry, as: SR` + `SR.spawn(uri)` IS counted
+  (a raw `SpawnRegistry.spawn(` grep would miss the aliased form) while a
+  `&Ezagent.SpawnRegistry.spawn/1` capture and a moduledoc mention are NOT.
+  """
+  @spec count_spawn_registry_calls_in_source(String.t()) :: non_neg_integer()
+  def count_spawn_registry_calls_in_source(source) when is_binary(source) do
+    count_calls_in_source(source, fn last_segment, fun ->
+      fun in [:spawn, :spawn_detailed] and last_segment == :SpawnRegistry
+    end)
+  end
+
+  @doc """
+  Testable entry for the `create_session_*` counters: count `create_session`
+  facade call sites in a SOURCE STRING. Proves an `alias A.B, as: F` +
+  `F.create_session(...)` IS counted and a `&Mod.create_session/3` capture is NOT.
+  """
+  @spec count_create_session_calls_in_source(String.t()) :: non_neg_integer()
+  def count_create_session_calls_in_source(source) when is_binary(source) do
+    count_calls_in_source(source, fn _last_segment, fun -> fun == :create_session end)
+  end
+
+  # Walk every lib file's AST; return `[{file, line, :ast}]` for each remote-call
+  # node whose `{resolved_last_segment, fun}` satisfies `match_fun`.
+  defp ast_call_hits(match_fun) when is_function(match_fun, 2) do
+    Enum.flat_map(lib_files(), fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} ->
+          amap = module_alias_map(ast)
+          allowed = arch_allowed_lines(file)
+
+          ast
+          |> collect_remote_call_lines(amap, allowed, match_fun)
+          |> Enum.map(fn line -> {file, line, :ast} end)
+
+        {:error, _} ->
+          []
+      end
+    end)
+  end
+
+  defp count_calls_in_source(source, match_fun) when is_function(match_fun, 2) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} ->
+        collect_remote_call_lines(
+          ast,
+          module_alias_map(ast),
+          allowed_lines_in_source(source),
+          match_fun
+        )
+        |> length()
+
+      {:error, _} ->
+        0
+    end
+  end
+
+  # Lines of every parenthesized remote call `Mod.fun(args)` in `ast` whose
+  # `{resolved_last_segment, fun}` matches `match_fun` and is not `# arch-allow:`ed.
+  defp collect_remote_call_lines(ast, amap, allowed_lines, match_fun) do
+    {_ast, lines} =
+      Macro.prewalk(ast, [], fn node, acc ->
+        case node do
+          {{:., _dot_meta, [receiver, fun]}, meta, args}
+          when is_atom(fun) and is_list(args) ->
+            line = Keyword.get(meta, :line, 0)
+
+            if not Keyword.get(meta, :no_parens, false) and
+                 match_fun.(resolved_last_segment(receiver, amap), fun) and
+                 not MapSet.member?(allowed_lines, line) do
+              {node, [line | acc]}
+            else
+              {node, acc}
+            end
+
+          _ ->
+            {node, acc}
+        end
+      end)
+
+    lines
+  end
+
+  # The last module segment of a call's receiver, resolving a single-segment
+  # alias through `amap` (`SR` → `Ezagent.SpawnRegistry` → `:SpawnRegistry`).
+  # Non-alias receivers (a bare var like `facade`) resolve to `nil` (module-agnostic
+  # matchers ignore it).
+  defp resolved_last_segment({:__aliases__, _meta, mods}, amap) when is_list(mods) do
+    case mods do
+      [single] -> List.last(Map.get(amap, single, [single]))
+      _ -> List.last(mods)
+    end
+  end
+
+  defp resolved_last_segment(_receiver, _amap), do: nil
+
+  # Resolve a `@behaviour`/reference module-segment list to its FULL alias target
+  # (`[:Kind]` with `alias Ezagent.Kind` → `[:Ezagent, :Kind]`). Multi-segment
+  # refs are already absolute.
+  defp resolve_full_module([single], amap), do: Map.get(amap, single, [single])
+  defp resolve_full_module(mods, _amap) when is_list(mods), do: mods
+
+  # `%{alias_atom => full_segment_list}` for every `alias` in the AST — plain,
+  # `as:`-renamed, and grouped `alias A.B.{C, D}`. Mirrors `shim_alias_names/2`'s
+  # resolution but keyed by the full target so any module can be resolved.
+  defp module_alias_map(ast) do
+    {_ast, map} =
+      Macro.prewalk(ast, %{}, fn node, acc ->
+        case node do
+          # alias A.B.C, as: X
+          {:alias, _m, [{:__aliases__, _, mods}, opts]} when is_list(mods) and is_list(opts) ->
+            case Keyword.get(opts, :as) do
+              {:__aliases__, _, [as_atom]} -> {node, Map.put(acc, as_atom, mods)}
+              _ -> {node, Map.put(acc, List.last(mods), mods)}
+            end
+
+          # alias A.B.C  (plain)
+          {:alias, _m, [{:__aliases__, _, mods}]} when is_list(mods) ->
+            {node, Map.put(acc, List.last(mods), mods)}
+
+          # alias A.B.{C, D}  (grouped)
+          {:alias, _m, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children}]} ->
+            grouped =
+              for {:__aliases__, _, child} <- children,
+                  into: %{},
+                  do: {List.last(child), base ++ child}
+
+            {node, Map.merge(acc, grouped)}
+
+          _ ->
+            {node, acc}
+        end
+      end)
+
+    map
   end
 
   defp raw_home_path_outside_core do

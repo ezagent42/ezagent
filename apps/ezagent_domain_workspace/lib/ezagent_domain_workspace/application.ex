@@ -3,7 +3,7 @@ defmodule EzagentDomainWorkspace.Application do
   Workspace domain OTP application — Phase 6 PR 2.
 
   Owns:
-  - `Ezagent.Behavior.Workspace` registration on `Ezagent.Entity.Workspace`
+  - `Ezagent.ActionSet.Workspace` registration on `Ezagent.Entity.Workspace`
   - `Ezagent.Workspace.Supervisor` DynamicSupervisor for `workspace://*` Kinds
   - `Ezagent.Workspace.Loader.load_all/0` invocation (deferred to last
     boot site — see notes)
@@ -25,7 +25,7 @@ defmodule EzagentDomainWorkspace.Application do
   use Application
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Behavior.Workspace, as: WB
+  alias Ezagent.ActionSet.Workspace, as: WB
   alias Ezagent.Entity.Workspace, as: WK
 
   @impl true
@@ -48,7 +48,7 @@ defmodule EzagentDomainWorkspace.Application do
     # dispatch to `workspace://<name>?action=routing.<action>` against
     # the Workspace Kind. CapBAC scopes naturally to the workspace
     # instance.
-    alias Ezagent.Behavior.Routing, as: RB
+    alias Ezagent.ActionSet.Routing, as: RB
 
     Enum.each(RB.actions(), fn action ->
       :ok = CapabilityRegistry.register(WK, action, RB)

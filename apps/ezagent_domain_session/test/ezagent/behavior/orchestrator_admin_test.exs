@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.OrchestratorAdminTest do
+defmodule Ezagent.ActionSet.OrchestratorAdminTest do
   @moduledoc """
   RFC #402 (Allen 2026-05-26) — `OrchestratorAdmin` is a cap-only
   Behavior anchoring the session-owner authority to restart this
@@ -18,7 +18,7 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.OrchestratorAdmin
+  alias Ezagent.ActionSet.OrchestratorAdmin
 
   describe "Behavior contract shape" do
     test "actions/0 declares only :restart" do
@@ -59,7 +59,7 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
 
     test "invoke/4 raises (cap-only — should never be dispatched)" do
       assert_raise RuntimeError, ~r/cap-only/, fn ->
-        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.OrchestratorAdmin, :restart, %{}, %{}, %{})
+        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.OrchestratorAdmin, :restart, %{}, %{}, %{})
       end
     end
   end

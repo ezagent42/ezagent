@@ -13,7 +13,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   alias Ezagent.{Capability, Invocation, Message, MessageStore, Workspace}
   alias Ezagent.AgentBridge.TokenStore
-  alias Ezagent.Behavior.KindBase
+  alias Ezagent.ActionSet.KindBase
   alias Ezagent.Entity.{Agent, User}
   alias Ezagent.Session.SessionManager
   alias Ezagent.Socialware.{AnonAdmission, DefinitionRegistry, Installation}
@@ -77,7 +77,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     assert [%{"role_name" => "bot", "uri" => bot_uri_string}] = definition.members
     assert bot_uri_string == URI.to_string(bot_uri)
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
-    assert definition.visibility_policy == %{publish_policy: :supervised, web_anon_access: true}
+
+    assert definition.visibility_policy == %{
+             scope: :private,
+             publish_policy: :supervised,
+             web_anon_access: true
+           }
+
     assert is_binary(object.id)
 
     {:ok, %{session_uri: session_uri}} =
@@ -93,10 +99,10 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
     {:ok, kind_base} = Ezagent.Kind.get_slice(session_uri, :kind_base)
     behaviors = KindBase.behaviors_in_slice(kind_base)
-    assert Ezagent.Behavior.Session in behaviors
-    assert Ezagent.Behavior.Turn in behaviors
-    assert Ezagent.Behavior.Surface in behaviors
-    assert Ezagent.Behavior.SupervisorApproval in behaviors
+    assert Ezagent.ActionSet.Session in behaviors
+    assert Ezagent.ActionSet.Turn in behaviors
+    assert Ezagent.ActionSet.Surface in behaviors
+    assert Ezagent.ActionSet.SupervisorApproval in behaviors
 
     {:ok, %{anon_uri: anon_uri}} = AnonAdmission.admit_anonymous_participant(session_uri)
     :ok = dispatch_send(anon_uri, session_uri, "Need the tier-one hotline")
@@ -320,13 +326,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     %{
       "name" => name,
       "bases" => [
-        "Ezagent.Behavior.Session",
-        "Ezagent.Behavior.Publisher.SessionImpl"
+        "Ezagent.ActionSet.Session",
+        "Ezagent.ActionSet.Publisher.SessionImpl"
       ],
       "shape" => [
-        "Ezagent.Behavior.Turn",
-        "Ezagent.Behavior.Surface",
-        "Ezagent.Behavior.SupervisorApproval"
+        "Ezagent.ActionSet.Turn",
+        "Ezagent.ActionSet.Surface",
+        "Ezagent.ActionSet.SupervisorApproval"
       ],
       "members" => [
         %{
@@ -372,7 +378,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, workspace_uri)
 
     assert {:ok, _} =
-             Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+             Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
                session_template_uri: template_uri,
                orchestrator_uri: orchestrator_uri,
                orchestrator_template_uri:
@@ -557,7 +563,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   defp read_unfiltered_cap(session_uri, workspace_uri) do
     Capability.cap(
       :session,
-      Ezagent.Behavior.Session,
+      Ezagent.ActionSet.Session,
       :read_unfiltered,
       session_uri,
       workspace_uri
@@ -584,7 +590,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   defp grant_workspace_cap(holder, workspace_uri, action) do
     cap =
-      Capability.cap(:workspace, Ezagent.Behavior.Workspace, action, workspace_uri, workspace_uri)
+      Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        action,
+        workspace_uri,
+        workspace_uri
+      )
 
     Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
   end

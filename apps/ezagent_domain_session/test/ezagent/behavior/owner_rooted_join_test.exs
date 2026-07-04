@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.OwnerRootedJoinTest do
+defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
   @moduledoc """
   THE PR-甲-2 acceptance invariant (spec
   `2026-06-19-membership-mount-anon-model-design.md` §8 / plan Step 7b / Allen
@@ -31,7 +31,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
 
@@ -130,7 +130,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
         |> Ezagent.Identity.list_caps_for()
         |> Enum.find(fn cap ->
           match?(%Capability{}, cap) and cap.kind == :session and
-            cap.behavior == Ezagent.Behavior.Session and
+            cap.behavior == Ezagent.ActionSet.Session and
             Capability.action_of(cap) == :join and cap.instance == session_uri
         end)
 
@@ -153,7 +153,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
         |> Ezagent.Identity.list_caps_for()
         |> Enum.find(fn cap ->
           match?(%Capability{}, cap) and cap.kind == :session and
-            cap.behavior == Ezagent.Behavior.Session and
+            cap.behavior == Ezagent.ActionSet.Session and
             Capability.action_of(cap) == :join and cap.instance == session_uri
         end)
 
@@ -179,7 +179,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
         |> Ezagent.Identity.list_caps_for()
         |> Enum.find(fn cap ->
           match?(%Capability{}, cap) and cap.kind == :session and
-            cap.behavior == Ezagent.Behavior.Session and
+            cap.behavior == Ezagent.ActionSet.Session and
             Capability.action_of(cap) == :join and cap.instance == session_uri
         end)
 
@@ -214,7 +214,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
       join_cap =
         Enum.find(caps, fn cap ->
           match?(%Capability{}, cap) and cap.kind == :session and
-            cap.behavior == Ezagent.Behavior.Session and
+            cap.behavior == Ezagent.ActionSet.Session and
             Capability.action_of(cap) == :join and
             cap.instance == Ezagent.URI.instance(session_uri)
         end)
@@ -275,7 +275,7 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
       )
 
     {:ok, _} =
-      Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(
+      Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(
         session_uri,
         %{session_template_uri: tmpl_uri}
       )
@@ -287,8 +287,8 @@ defmodule Ezagent.Behavior.OwnerRootedJoinTest do
   defp definition(name, web_anon_access) do
     %{
       name: name,
-      bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
-      shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+      bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
+      shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
       visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
     }
   end

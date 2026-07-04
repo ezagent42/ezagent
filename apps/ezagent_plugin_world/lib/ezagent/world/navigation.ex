@@ -6,6 +6,7 @@ defmodule Ezagent.World.Navigation do
   @static_patch_paths MapSet.new([
                         "/",
                         "/sessions",
+                        "/overview",
                         "/identities",
                         "/identities/users",
                         "/identities/agents",

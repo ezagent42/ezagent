@@ -49,7 +49,7 @@ defmodule Ezagent.Socialware.ExternalFeedAdapterTest do
   test "live_topics returns external delivery plus session event topics", %{session: session} do
     assert ExternalFeedAdapter.live_topics(session) == [
              Ezagent.Session.ExternalDelivery.topic(session),
-             Ezagent.Behavior.Session.Delivery.session_events_topic(session)
+             Ezagent.ActionSet.Session.Delivery.session_events_topic(session)
            ]
   end
 

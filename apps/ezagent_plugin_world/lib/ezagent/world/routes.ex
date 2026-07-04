@@ -32,6 +32,15 @@ defmodule Ezagent.World.Routes do
             %{component: "sessions_table", title: "Chat", path: path}
         end
 
+      # `/overview` — the operator Overview surface (KPI overview + quick entries +
+      # continuable sessions), reachable via the "Overview" nav item. NON-default
+      # by design: the `/` landing intentionally stays Chat/Sessions. Whether
+      # Overview should become the post-login first screen is a deferred host-model
+      # decision (main-host `/` is HomeLive → redirect-loop risk; see the
+      # 2026-07-02 return doc "Deferred: first-screen landing"). Not wired to `/`.
+      path == "/overview" ->
+        %{component: "overview", title: "Overview", path: path}
+
       path == "/identities" ->
         %{
           component: "identities",

@@ -171,7 +171,7 @@ defmodule Ezagent.Session.ReadMarkerTest do
 
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Session.session_events_topic(session)
+        Ezagent.ActionSet.Session.session_events_topic(session)
       )
 
       assert {:ok, :updated} = ReadMarker.mark(session, user, msg, :displayed)

@@ -12,75 +12,23 @@
 > one-line status. Conservative rule applied: RESOLVED only with concrete
 > code/PR/test evidence; otherwise left open.
 
+## 2026-07-03 plan — 官网上线剩余缺口 (Allen 2026-07-02 eve, AFK)
+
+website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起来是 orchestrator 机制", defer to 0703:
+- **导游 agent (guide/greeter)** — default-joins EVERY user-created session, greets + explains features. Lives at SessionTemplate default layer (global default, NOT socialware-scoped). Configure at session creation.
+- **客服 agent fallback** — website session: unanswered user messages backstopped by a 客服 recipe. = website socialware's routing rule + a 客服 recipe. After T2 lands = `Definition.agents` declaration on the website socialware. VERIFY first whether #1134's concierge already covers fallback routing (avoid dup).
+- **team members → website session** — one-time seed/ops: add team.md roster to the website session.
+- These three are the "configure guide/support agent at session creation" question → orchestrator mechanism (导游=SessionTemplate default, 客服=Definition.agents). Design 0703.
+- **DONE 0702**: SessionTemplate fork user-flow ("一键复制 session 配置建新会话", journey segment 5) — subagent on `feat/session-template-fork`.
+
 ## Active follow-ups (post-2026-05-24 batch)
-
-### CI flake determinism (#108, fix/ci-flake-determinism 2026-06-27)
-
-- **`mix ci.local` is the pre-push gate** — mirrors the CI `precommit +
-  check_invariants` job end-to-end against a private partitioned DB. Run
-  `MIX_TEST_PARTITION=$USER mix ci.local` before pushing (documented in
-  CONTRIBUTING "Pre-push" section). Root-cause diagnosis:
-  `docs/together/2026-06-27/notes/ci-flake-diagnosis.md`.
-- **What landed** — (1) `Loader.load_all/0` no longer swallows
-  `DBConnection.OwnershipError`/`ConnectionError` into a silent `[]` in `:test`
-  (it re-raises, so a broken sandbox connection names its own cause instead of
-  masquerading as "workspace never appeared with children"); (2) `ProbeBehavior`
-  `required_caps/0` parity (was a compile-warning-only contract drift); (3) the
-  `ci.local` alias + docs; (4) the corrupted shared `ezagent_pg_compat_test` was
-  rebuilt (operational).
-- **STILL OPEN — central acceptance criterion NOT met** — the task's bar was
-  "seed/GC suites DETERMINISTICALLY green". In final verification on this branch
-  (`MIX_TEST_PARTITION=ciflake mix test --seed 979933 --max-cases 8`),
-  `DefaultSessionTemplateSeedTest` flaked: its `setup` raised `{:error,
-  :no_such_actor}` from `seed_default_session_template_now/0` — a SPAWN-READINESS
-  race (the seeded Session/Agent Kind not registered when queried), a DISTINCT
-  class from the sandbox-revert root cause this change set targets. No causal path
-  from this change set (the unmask never fired — `DB unavailable at boot` = 0 and
-  no loader reraise in the log; the test-only ProbeBehavior is structurally
-  isolated from the session app; the workspace app was 179/0 WITH `required_caps`
-  in the same run). FOLLOW-UP needed, scoped to seed-setup spawn-readiness (e.g.
-  await Kind `:ready` before the seed assertion / allow the spawned Kinds onto the
-  test owner). Lead to triage.
-- **Local ubuntu-CI repro harness (chore/ci-docker-local 2026-06-27)** — closes the
-  "not-darwin-reproducible" gap below: `make ci.docker` boots the *same* linux/OTP/
-  postgres-16 env CI uses in a CPU-constrained container, and `make ci.repro` hunts the
-  ubuntu-only timing race that `mix ci.local` is green on. Files:
-  `docker/Dockerfile.ci`, `docker/docker-compose.ci.yml`, `docker/ci-runner.sh`,
-  `Makefile`; guide: `docs/guide/ci-docker-local.md`. The deeper flake *fix* (Sandbox
-  shared-mode stabilisation / seed spawn-readiness) is the separate follow-up above;
-  this harness is the place to reproduce + verify it off-runner.
-- **Residual / not-darwin-reproducible** — the underlying sandbox-revert timing
-  race (Sandbox shared-mode under the FULL ubuntu umbrella at `max_cases: 8`) is
-  GREEN on macOS / RED on the runner (diagnosis §3), so it is not locally
-  reproducible on bare macOS and not provably "fixed" from a dev box — **use the
-  `make ci.repro` ubuntu-docker harness above to surface it locally.** The unmask converts the
-  whole *class* of silent-`[]` paths into a loud, diagnosable failure — the
-  durable lever, NOT a cure. If the flake recurs on CI, the unmasked error now
-  names the exact failing query/Kind. (The DataCase "stabilize shared mode" fix
-  the diagnosis proposed was deliberately NOT shipped: a probe proved `Sandbox.allow/3`
-  is a no-op under active shared mode and the revert cannot hit an `async: false`
-  test mid-body, so it would be theater.)
-- **NOT done (deliberately, evidence-backed)** — (a) FsResolver `Registry`
-  kill/restart isolation: audited — no `async: true` test in the `ezagent_core`
-  BEAM reaches `Ezagent.Resource.FsResolver.resolve` (directly or via
-  `ConfigDir.path` / `Uploads`) during the kill window, so the contracted
-  private-Registry machinery was NOT added (would be speculative). (b) The
-  contracted "on_exit unregister the probe scheme" was prototyped then REMOVED:
-  pristine main carries the leaked `probe` scheme and is 242/0 green, so the
-  leak is benign; scrubbing the scheme (but not the still-alive probe Kind in
-  `KindRegistry`) made `ezagent_web`'s `DemoSmokeTest`/`AutoDerive` raise
-  `URI scheme "probe" not registered` — a NEW deterministic failure. YAGNI:
-  the cleanup fixed a non-problem and introduced a real one.
-
-### Cross-workspace session join (2026-06-25 research, NOT yet implemented)
-- **Cross-workspace join for logged-in users** — research in `docs/together/2026-06-25/research/cross-workspace-join.md`. Blocker = `do_workspace_isolation_check` (runtime.ex:664) derives caller's ws from the caller URI → `:cross_workspace_denied`; the anon→login takeover shares the same gap. **Recommended: M2** (mint a guest principal in the session's workspace linked to the home account; generalizes the existing anon mint/binding/merge — isolation-preserving, multi-host-safe). Lead decisions pending: write-participation policy gate; guest history inheritance; whether takeover's cross-ws failure is accepted vs a bug; scope into hello vs a socialware-identity epic. hello (#982) stands on the same-workspace assumption for now.
 
 ### Role-materialization + kanban-as-role (2026-06-25, Allen "do it right")
 
 - **Role-materialization foundation (#54 follow-on)** — the role×flavor spawn
   path does not exist yet (verified 2026-06-25): `Workspace.AgentCreate` ignores
   Role; `Role.Compose.materialize` is only called by `OrchestratorRole` for cc's
-  CLAUDE.md content (not a spawn); no `template://<ws>/role/<name>` resolver
+  CLAUDE.md content (not a spawn); no `template://<ws>/recipe/<name>` resolver
   branch + no RoleTemplate Kind. Build: role Template subtype + `template://role`
   resolver branch + role-driven agent create + `Role.CapMint` integration into
   create. Prerequisite for kanban-as-role AND for orchestrator (which is also
@@ -274,7 +222,7 @@
   `:create_user` into the same Behavior as `:add_member`/`:list_members`
   meant any holder of any Workspace cap could also create users.
   PR #356 worked around by carving `:create_user` into its OWN
-  Behavior (`Ezagent.Behavior.WorkspaceUserAdmin`) — but the underlying
+  Behavior (`Ezagent.ActionSet.WorkspaceUserAdmin`) — but the underlying
   cap-shape limitation persists for every multi-action Behavior in
   the codebase (Routing, ApiKeys, UserTokens, Feishu UserBinding, …
   PR #355 Feishu UserBinding has the same flaw at lower stakes).
@@ -532,7 +480,7 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   `cli-sweep/deprecate-bypass-tasks`):**
 
   - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
-    `Ezagent.Behavior.Routing` exists; `mix ezagent routing add_rule`
+    `Ezagent.ActionSet.Routing` exists; `mix ezagent routing add_rule`
     dispatches against `system://routing/default`). **DELETED in
     cleanup-4 (2026-06-08)** — the deprecation stub was a pure
     `Mix.raise` no-op with no remaining function; its replacement has
@@ -558,10 +506,10 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
     | `mix ezagent.feishu.list` | `mix ezagent workspace list_feishu_bindings --workspace <name>` | ✅ **DONE.** Same Behavior, `:list_feishu_bindings` (read-only). |
     | ~~`mix ezagent.feishu.chat.bind`~~ | ~~`mix ezagent feishu chat_bind`~~ | **OBSOLETE.** Removed in PR-EM-6; chat→session bindings now go via `mix ezagent.external_mirror.bind <session-uri> feishu <chat_id>` (generic ExternalMirror Domain). |
     | ~~`mix ezagent.feishu.chat.unbind`~~ | ~~`mix ezagent feishu chat_unbind`~~ | **OBSOLETE.** Same as above; use `mix ezagent.external_mirror.unbind`. |
-    | `mix ezagent.user.create` | `mix ezagent workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.Behavior.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
-    | `mix ezagent.user.set_password` | `mix ezagent user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix ezagent`). |
+    | `mix ezagent.user.create` | `mix ezagent workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.ActionSet.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
+    | `mix ezagent.user.set_password` | `mix ezagent user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.ActionSet.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix ezagent`). |
     | `mix ezagent.agent.create` | `mix ezagent workspace create_agent --workspace <name> --flavor … --name …` | ✅ **ACTION EXISTS** (PR #344 / `Behavior.Workspace :create_agent`); legacy task still calls the action body directly (single-path invariant test enforces). Auto-derived `mix ezagent workspace create_agent` already wired. |
-    | `mix ezagent.user.token mint` | `mix ezagent user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
+    | `mix ezagent.user.token mint` | `mix ezagent user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.ActionSet.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
     | `mix ezagent.user.token list` | `mix ezagent user list_tokens --user <uri>` | ✅ **DONE (2026-05-26).** Same Behavior, `:list_tokens` action. Returns id / label / timestamps only — NEVER plain (regression test asserts the response shape has no `:plain` or `:token_hash` keys). |
     | `mix ezagent.user.token revoke` | `mix ezagent user revoke_token --user <uri> --token-id …` | ✅ **DONE (2026-05-26).** Same Behavior, `:revoke_token` action. Idempotent (legacy `Token.revoke/1` returns `:ok` for unknown ids). |
 
@@ -731,7 +679,7 @@ Still open after PR #300 + the batch fix that includes this todo:
   keep working in parallel because both reporters subscribe to the
   same telemetry events).
 - **DONE (low-doc-batch 2026-05-26)** — SPEC for the notifications
-  system at `docs/superpowers/specs/notifications.md` is the stable-
+  system at `docs/superpowers/specs/2026-05-24-notifications.md` is the stable-
   contract index pointing at the canonical v2 SPEC
   (`2026-05-24-notification-architecture-v2.md`). Expanded in this
   batch to include §1-§9 (Context / Goals / Architecture / Cap model /
@@ -1244,7 +1192,7 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   `docs/superpowers/specs/2026-06-01-unified-kind-creation-via-templates.md`.
 
 - **#24 narrow default user session cap (§3.11) — PROD/#21 ADJACENT BLOCKER.**
-  This gates a production Docker image because `Ezagent.Behavior.Manage` makes
+  This gates a production Docker image because `Ezagent.ActionSet.Manage` makes
   session management depend on narrowing the current broad default session cap.
   Keep it visible for the #21 prod-image review, but do not fold it into
   Dockerize or merge to `main` from this handoff branch without explicit scope.
@@ -1428,28 +1376,105 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 
 ---
 
-## 2026-06-29 session — active tasks (post-restart补录)
+## Agent console QA findings (from #1027, triaged 2026-07-03)
 
-> Session TaskList 是内存态(session-scoped),重启清空;补录进此文件(持久 source of truth)。
+> Triage of the 7 QA findings (F1–F7) raised in PR #1027 / the QA branch
+> `qa/agent-console-findings-0626` (original report basis: main `6f123b8b`,
+> 2026-06-26), re-checked against `origin/main` @ `5a6dd484`. The agent-console
+> rework that followed (SessionTemplate directly-creatable filter, socialware
+> remove-participant, agent-delete guard + detail-route error) landed most of
+> these; the fix commits carry explicit `F#:` markers, traced end-to-end below.
+> Only ONE actionable residual survives (F7's missing session-delete/archive
+> control). #1027 can be closed once this residual is recorded here.
 
-### #146 — Week 2026-06-29: 官网上线 + 内测 + 自举 + design system (IN PROGRESS)
-- FP1 官网(ezagent-served socialware, app.ezagent.chat path) → zhaomato.
-- FP2 内测 → gaga + allen (#110 DONE).
-- FP3 自举(PR-E2E trigger, B路线) → allen/zyli.
-- FP4 DS 升级(手写→shadcn) → zyli(主前端).
-- FP5 kanban #1020 → jjkysy.
-- FP6 官网 demo → ruihua.
-- FP7 leak gate → FatNine.
-- FP8 carry-in → allen.
-- plan.html v3 on main #1081(含 §4 复制开工prompt按钮 + Allen decisions).
+### F7 (residual) — no session delete / archive control — OPEN (LOW-MID)
 
-### #147 — world host-scope config-driven (IN PROGRESS, codex done, CI+merge pending)
-- Fix: router.ex host:"world." config-driven(dev/test="world." / prod=nil→apex). Handoff #1084.
+> Session conversation page still has NO delete-session / archive-session /
+> end-session control (only Invite, Restart orchestrator, per-member Remove, and
+> routing rules). Evidence: exhaustive grep across `apps/ezagent_plugin_world/lib`
+> + `apps/ezagent_plugin_world/assets/src` finds no session delete/archive/end
+> action — `@conversation_actions` (`world_live.ex:262`) has no `session.delete`;
+> `Conversation.tsx` has no delete/archive button.
+> NOTE — the ORIGINAL HIGH-impact half of F7 ("占用中的 agent 根本删不掉" — an
+> occupied agent could not be deleted via the UI) is **RESOLVED**: a per-member
+> Remove control now exists (`Conversation.tsx:728-737` → `onRemoveParticipant`
+> → `main.tsx:350` `session.remove_participant` → `conversation_actions.ex:627`
+> → `Ezagent.Session.Participants.remove_participant/3`). Traced end-to-end:
+> removal mutates the `Session.session_member_uris` slice
+> (`participants.ex:88-95`), which is exactly what the agent-delete guard
+> `agent_live_sessions/1` counts (`.../session_creator/listing.ex:37-41`) — so
+> removing the agent from its sessions clears the guard and the delete proceeds.
+> Residual is therefore lower severity: you can move an agent out session-by-
+> session, but you still cannot delete/close the now-empty session itself.
+> Suggested fix: add a session delete/archive entry (owner-cap-gated, mirror the
+> `remove_participant` dispatch pattern) on the conversation page + sessions table.
 
-### #148 — reflow Phase-1 full-data rehearsal incl credentials (PENDING, codex dispatched)
-- Harden reflow.sh: FULL data reflow incl credentials. verify-rehearsal.sh 6 gates. deploy.yml wired. Handoff #1087.
+### Dropped as FIXED (verified against `origin/main` @ `5a6dd484`)
 
-### DONE this session
-- #110 ✅ three-env deploy on current main (755b2a9b).
-- #1082 ✅ cross-env data-sync SPEC.
-- #1085 ✅ migration-rehearsal Phase-1 draft.
+- **F3 (was HIGH) — new-session default template `advisor` invalid + create
+  failure silently swallowed** — FIXED. `session_template_names/1` now always
+  leads with `"default"` (`workspace_plugin_data.ex:215`) and filters out
+  non-`directly_creatable?` classes like `advisor`
+  (`workspace_plugin_data.ex:188-231`); the React picker takes `templates[0]`
+  (`SessionsTable.tsx:29,33`). Create failures now push `create_error`
+  (`conversation_actions.ex:293-296`) which the table renders as a banner
+  (`SessionsTable.tsx:89-95`). Fix carries `F3:` markers.
+- **F4 (was MID-HIGH) — occupied-agent delete blocked correctly but banner
+  invisible (pushed to list route, not the detail page)** — FIXED. Delete error
+  now rebuilds the DETAIL route (`agent_actions.ex:188-210`, `F4:` comment) and
+  `AgentDetail` renders `action_error` where the Delete button lives
+  (`Identities.tsx:706-713`); backend guard intact (`agent_actions.ex:151`
+  `agent_live_sessions → {:ok, []}`). Banner text matches the suggested copy
+  ("…先从这些对话移出再删除").
+- **F6 (was MID) — py `script` not marked `*` / not enforced client-side; bare
+  `:missing_script` atom** — FIXED. Backend advertises
+  `script_required_flavors: ["py"]` (`identity_data.ex:155`); form marks `*` and
+  disables Create when empty (`Identities.tsx:819-820,980,1030`, `F6:` comment);
+  `:missing_script` now maps to a friendly message
+  (`identity_data.ex:369-370`).
+- **F1 (was LOW-MID) — agents list has no flavor filter** — FIXED. `AgentsTable`
+  is now wired to `FilterBar` (`Identities.tsx:552`, flavor links at 1616-1621)
+  AND has a free-text query filter whose haystack includes `agent.flavor`
+  (`Identities.tsx:526,551`).
+- **F2 (was LOW-MID) — deleted detail URL renders a hollow shell** — FIXED.
+  `AgentDetail` renders a clean not-found empty state on `agent_not_found`
+  (`Identities.tsx:672-685`, `F2:` comment); backend sets `agent_not_found`
+  when there is no live process and no snapshot (`identity_data.ex:114-133`).
+- **F5 (was LOW/cosmetic) — Entity Caps `instance` column dumped the raw
+  `%URI{}` struct** — FIXED. `CapData.instance_scope_display/1` renders the
+  canonical URI string (`cap_data.ex:31` → `encode_uri` → `URI.to_string/1`);
+  the `entity_caps` surface reads `CapData.list_entity_caps/3`
+  (`identity_data.ex:101`).
+### arch-gate AST hardening — batch 2 (high-value, hard) — OPEN
+
+> Surfaced 2026-07 (arch-gate AST conversion, lead Claude). **Batch 1 DONE**
+> (branch `gate/ast-convert-batch1`): converted 6 grep-based counters to
+> AST-based matchers in `mix/tasks/ezagent.arch.scan.ex` — `plugin_defined_kinds`
+> (alias-resolved `@behaviour Ezagent.Kind` exactly), `spawn_registry_call_sites`/
+> `_modules`/`_off_chokepoint_modules` (alias-resolved `SpawnRegistry.spawn[_detailed]`
+> remote calls, parens-only), and `create_session_call_sites`/`_modules` (the
+> `create_session` facade call). Each has a `*_in_source` testable entry point + a
+> teeth-test proving the matcher fires on an ALIASED call a raw grep would miss
+> (`spawn_chokepoint_test.exs`, `plugin_defined_kinds_test.exs`). The conversion
+> also tightened 4 loose ratchets (grep had over-counted moduledoc/comment mentions
+> and a `&Mod.fun/arity` capture — all documented in `arch_baseline_manifest.exs`).
+>
+> **Batch 2 — convert these 3 to AST + teeth-tests** (harder: semantic, not just
+> module/call-site matching):
+> - `missing_cap_check_mutating_actions` — SECURITY invariant. Today it string-scans
+>   `kind/runtime.ex` for `behavior_module.required_caps()` + `Capability.matches?`
+>   presence. AST version: verify each MUTATING action handler actually reaches a
+>   cap-gate call on its path (not merely that the strings exist somewhere), so a
+>   new mutating action without a cap check trips the gate.
+> - `kind_runtime_ordering_violations` — dispatch-pipeline ORDER invariant
+>   (`authz_check` → `workspace_isolation_check` → `invoke_behavior`). Today it uses
+>   `:binary.match` byte offsets; AST version should assert the order structurally
+>   within the pipeline function so a reformat/refactor can't fool the byte scan.
+> - `kind_runtime_reentry_violations` — no `Invocation.dispatch(`/`Router.dispatch(`
+>   inside `target_ownership_check`/`event_to_payload`. Today it regex-slices the
+>   function body; AST version should walk the actual function clause bodies.
+>
+> Note: **AST + teeth-test are complementary** — AST cuts rename/formatting
+> false-negatives (an aliased or reformatted call can't slip past); the teeth-test
+> catches a TOOTHLESS gate regardless of cause (e.g. a matcher that silently matches
+> nothing after a refactor). Batch 2 needs both, same as batch 1.

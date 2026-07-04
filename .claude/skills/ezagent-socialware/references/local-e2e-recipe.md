@@ -51,7 +51,7 @@ doesn't EOF-halt and kill the server.
 
 ```elixir
 alias Ezagent.Entity.{Session, SessionTemplate}
-alias Ezagent.Behavior.Session.ConfigActions
+alias Ezagent.ActionSet.Session.ConfigActions
 
 ws = "system"
 session_uri = Ezagent.URI.new!("session://#{ws}/default/swlive")

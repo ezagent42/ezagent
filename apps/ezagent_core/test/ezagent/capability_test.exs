@@ -23,7 +23,7 @@ defmodule Ezagent.CapabilityTest do
       cap =
         cap(
           kind: :py_agent,
-          behavior: Ezagent.Behavior.PyAgent,
+          behavior: Ezagent.ActionSet.PyAgent,
           instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py"),
           granted_by: @user_uri,
           granted_at: @now
@@ -33,7 +33,7 @@ defmodule Ezagent.CapabilityTest do
                cap,
                needed(
                  kind: :py_agent,
-                 behavior: Ezagent.Behavior.PyAgent,
+                 behavior: Ezagent.ActionSet.PyAgent,
                  instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py")
                )
              )
@@ -43,7 +43,7 @@ defmodule Ezagent.CapabilityTest do
       cap =
         cap(
           kind: :any,
-          behavior: Ezagent.Behavior.PyAgent,
+          behavior: Ezagent.ActionSet.PyAgent,
           instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py"),
           granted_by: @user_uri,
           granted_at: @now
@@ -53,7 +53,7 @@ defmodule Ezagent.CapabilityTest do
                cap,
                needed(
                  kind: :anything,
-                 behavior: Ezagent.Behavior.PyAgent,
+                 behavior: Ezagent.ActionSet.PyAgent,
                  instance: Ezagent.URI.new!("entity://team-alpha/agent/test_py")
                )
              )
@@ -229,7 +229,7 @@ defmodule Ezagent.CapabilityTest do
 
       # `:any` kind axis is substituted with the host Kind's type_name (`:agent`).
       assert n.kind == :agent
-      assert n.behavior == Ezagent.Behavior.PyAgent
+      assert n.behavior == Ezagent.ActionSet.PyAgent
       assert n.instance == URI.new!("entity://team-alpha/agent/py_default")
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
@@ -250,7 +250,7 @@ defmodule Ezagent.CapabilityTest do
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert n.kind == :session
-      assert n.behavior == Ezagent.Behavior.Session
+      assert n.behavior == Ezagent.ActionSet.Session
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
@@ -530,7 +530,7 @@ defmodule Ezagent.CapabilityTest do
     defp ws_cap(workspace_uri, kind \\ :agent_template) do
       cap(
         kind: kind,
-        behavior: Ezagent.Behavior.Template,
+        behavior: Ezagent.ActionSet.Template,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: :any,
         granted_by: Ezagent.URI.new!("entity://system/user/admin"),
@@ -545,7 +545,7 @@ defmodule Ezagent.CapabilityTest do
                c,
                needed(
                  kind: :agent_template,
-                 behavior: Ezagent.Behavior.Template,
+                 behavior: Ezagent.ActionSet.Template,
                  instance: URI.new!("template://team-alpha/agent/cc-orch"),
                  workspace_uri: :any
                )
@@ -559,7 +559,7 @@ defmodule Ezagent.CapabilityTest do
                c,
                needed(
                  kind: :agent_template,
-                 behavior: Ezagent.Behavior.Template,
+                 behavior: Ezagent.ActionSet.Template,
                  instance: URI.new!("template://team-alpha/agent/cc-orch"),
                  workspace_uri: :any
                )
@@ -574,7 +574,7 @@ defmodule Ezagent.CapabilityTest do
                c,
                needed(
                  kind: :session_template,
-                 behavior: Ezagent.Behavior.Template,
+                 behavior: Ezagent.ActionSet.Template,
                  instance:
                    URI.new!(
                      "template://team-alpha/session/code-review@" <> String.duplicate("a", 64)
@@ -620,7 +620,7 @@ defmodule Ezagent.CapabilityTest do
     test "encodes a Capability with URI fields, atoms and DateTime without raising" do
       cap = %Capability{
         kind: :user,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         action: :send,
         instance: :any,
         workspace_uri: @ws_default,

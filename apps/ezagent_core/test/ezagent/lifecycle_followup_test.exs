@@ -30,7 +30,7 @@ defmodule Ezagent.LifecycleFollowupTest do
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
 
-  alias Ezagent.Behavior
+  alias Ezagent.ActionSet
   alias Ezagent.Kind.{Runtime, Snapshot}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.{Invocation, SnapshotStore}
@@ -141,7 +141,7 @@ defmodule Ezagent.LifecycleFollowupTest do
   end
 
   # NOTE: F1b (Publisher ring strips Lifecycle transients) is tested in
-  # `ezagent_domain_session` where `Ezagent.Behavior.Publisher.SessionImpl`
+  # `ezagent_domain_session` where `Ezagent.ActionSet.Publisher.SessionImpl`
   # lives — that module is OUTSIDE ezagent_core's dependency cone (P9), so
   # the Publisher-ring regression test cannot run here. See
   # `apps/ezagent_domain_session/test/ezagent/behavior/publisher/session_impl_test.exs`.
@@ -152,10 +152,10 @@ defmodule Ezagent.LifecycleFollowupTest do
 
   describe "F2 — a Kind mixing a legacy + a Lifecycle sibling reads BOTH" do
     test "reads_siblings_of/1 unions the legacy and Lifecycle callbacks" do
-      assert Enum.sort(Behavior.reads_siblings_of(SiblingReader)) ==
+      assert Enum.sort(ActionSet.reads_siblings_of(SiblingReader)) ==
                [:legacy_sibling, :lifecycle_sibling]
 
-      assert Behavior.reads_siblings_of(LegacySibling) == []
+      assert ActionSet.reads_siblings_of(LegacySibling) == []
     end
 
     test "both ctx.sibling_slices and ctx.siblings expose flat fields for BOTH shapes" do

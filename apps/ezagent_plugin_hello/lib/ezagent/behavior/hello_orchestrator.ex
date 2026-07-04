@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.HelloOrchestrator do
+defmodule Ezagent.ActionSet.HelloOrchestrator do
   @moduledoc """
   The hello ORCHESTRATOR agent Behavior — the invisible per-session front desk.
 

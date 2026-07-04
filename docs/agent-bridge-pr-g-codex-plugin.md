@@ -23,7 +23,7 @@ Scope:
   domain channel.
 
 Bridge flow:
-- `Ezagent.Behavior.Chat` delivers a flavor-neutral
+- `Ezagent.ActionSet.Chat` delivers a flavor-neutral
   `Ezagent.AgentBridge.Payload` to the codex adapter.
 - `EzagentPluginCodex.BridgeAdapter.deliver/2` pushes a `codex_turn`
   event to the connected sidecar.

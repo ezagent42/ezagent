@@ -65,14 +65,14 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
 
   defp admit_participant(session_uri, member_uri, facets, caller, caps, fresh_spawn?) do
     with :ok <-
-           Ezagent.Behavior.Session.Membership.provision_invited_join_authority(
+           Ezagent.ActionSet.Session.Membership.provision_invited_join_authority(
              session_uri,
              member_uri,
              caller
            ) do
       case Tools.join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          :ok = Ezagent.Behavior.Session.Membership.mount_participation_caps(session_uri, member_uri)
+          :ok = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
           {:ok, member_uri}
 
         {:error, reason} ->

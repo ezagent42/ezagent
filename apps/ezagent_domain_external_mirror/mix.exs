@@ -5,6 +5,7 @@ defmodule EzagentDomainExternalMirror.MixProject do
     [
       app: :ezagent_domain_external_mirror,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -13,6 +14,12 @@ defmodule EzagentDomainExternalMirror.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps()
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
     ]
   end
 

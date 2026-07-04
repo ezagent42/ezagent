@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.UserTokensTest do
+defmodule Ezagent.ActionSet.UserTokensTest do
   @moduledoc """
   Tests for the dispatch-backed UserTokens Behavior — HIGH-2
   completion (`docs/futures/todo.md` CLI ↔ GUI parity).
@@ -16,7 +16,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.UserTokens, as: UT
+  alias Ezagent.ActionSet.UserTokens, as: UT
   alias Ezagent.Users
   alias Ezagent.Entity.Token
 
@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
       # `def required_caps` (kind: :user axis).
       for {_action, %Ezagent.Capability{} = cap} <- caps do
         assert cap.kind == :user
-        assert cap.behavior == Ezagent.Behavior.UserTokens
+        assert cap.behavior == Ezagent.ActionSet.UserTokens
       end
     end
 

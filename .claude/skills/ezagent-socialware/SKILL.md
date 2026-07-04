@@ -61,6 +61,80 @@ that remains design vocabulary, not code (see [§Future](#future-still-not-in-ma
 Pair this with the **ezagent-developer** skill — socialware sits on top of the
 same Behavior + Kind + URI + CapBAC machinery, and its invariants still apply.
 
+Authoring one **today (code + seed, before the upload channel/market)**? Follow
+the interim discipline in [`docs/guide/socialware-authoring-interim.md`](../../../docs/guide/socialware-authoring-interim.md).
+
+## The socialware Definition is the publishable unit (T2 — fattened)
+
+> **2026-07-02 (T2 app-package).** The **publishable unit is the socialware
+> `Definition`** (`Ezagent.Socialware.Definition`), NOT the SessionTemplate and
+> NOT a new "app" concept. Three layers (emacs analogy): the **Definition** =
+> publishable deliverable (a major/minor mode); the **SessionTemplate** = which
+> socialwares a session installs (`installs: [name]`); the **session** = the
+> running instance (a named left-rail conversation). The user面 never sees the
+> word "app" — always a named conversation (AutoService / website / kanban).
+
+A `Definition` now carries, besides `bases`/`shape`/`members`/`routing_rules`/
+`prompt_templates`/`legends`/`orchestrator_template_uri`/`adapters`/
+`visibility_policy`, **two more fields**:
+
+- **`agents: [%{recipe: name, role_name: name}]`** — the agents this socialware
+  brings into a session. `recipe` (config义) = a `RecipeRegistry` name (agent能干
+  什么 + `requested_caps` live in the recipe; the Definition never
+  overrides/appends caps — caps' sole source is the recipe). `role_name`
+  (routing义) = the per-session-unique routing identifier (`{:role, name}`
+  receiver). `Definition.new/1` does SHAPE-ONLY validation; recipe existence +
+  role_name uniqueness are checked by the gate + at materialize/join time.
+  **Materialization** (`SessionCreator.DefinitionAgents`): resolve recipe by
+  workspace → spawn a per-session agent → JOIN as a member with the `role_name`
+  facet (reusing the `add_managed_member` safe spawn/join/cleanup envelope) →
+  `GrantRecipeCaps` lands the recipe's `requested_caps`. Runs on create + repair
+  (idempotent).
+- **`views: [view_actionset]`** — **views-as-behavior**. A view is a render
+  ActionSet; declaring it puts it into `Definition.behaviors/1`
+  (`[Session] ++ views ++ shape ++ bases`) so it enters the spawned Session
+  behavior set. Each view declares a **UNIQUE `<sw>_render` action** (e.g.
+  `:hello_render`) — NOT a shared `:render` (which would collide in the
+  `CapabilityRegistry` `{kind, action}` uniqueness the moment two views
+  register). A view read ActionSet is **cap-only** (`dispatchable? false`,
+  `required_caps` only, no dispatch interface — the `ExternalFeedAdapter.Allow`
+  precedent).
+
+### View visibility = a view-cap, checked at ONE authorization point
+
+Old model (**retired**): a session was visible/invisible as a WHOLE
+(membership-only authorization). New model: **per-view visibility via a
+capability**, sunk into the `Ezagent.UI.SessionView` contract:
+
+- `SessionView.authorize_view(view, caller, session_uri)` is the single gate
+  every render entry routes through. A view declares its backing render ActionSet
+  via `view_behavior/0`; `authorize_view` checks the caller holds that ActionSet's
+  `<sw>_render` cap on the session. `SessionViewRegistry.applicable_views/2` +
+  `external_renderers/2` are the caller-aware, gated arities. An arch gate
+  (`view_authorize_gate_test`) asserts no renderer reads the `:surface` slice
+  while bypassing `authorize_view`.
+- **Anonymous visibility** = the anon is minted a real read-only User born with
+  the view read-caps of the session's **public** installed definitions only
+  (`Installation.anon_view_caps/1`, appended to the `session.join` cap in
+  `AnonUser.mint_for_public_session`). A view of a NON-public installed
+  definition (kanban-private in a hello-public session) contributes no cap → the
+  anon cannot render it.
+- **Two orthogonal gates.** Coarse: openness
+  (`Definition.visibility_policy.web_anon_access`) decides whether an anon is
+  minted at all (can it enter the session). Fine: the view-cap (`authorize_view`)
+  decides which views a caller sees. hello对外 / kanban对内 can coexist in one
+  session.
+
+### Conformance gate
+
+`mix ezagent.socialware.check [<name>]` runs `Ezagent.Socialware.Conformance` —
+the one rule "every declared reference resolves" as the SPEC §4 assertions
+(bases/shape/views load, view render-caps registered, agents' recipes resolve
+with registered caps + unique role_names, adapters registered, orchestrator URI
+parses, definition installable, routing receivers + every `prompt_template_ref`
+resolve). Wired into `ci.local`; a bad recipe / view / adapter / prompt_ref goes
+RED.
+
 ## The one idea: a socialware app IS a (versioned) SessionTemplate
 
 Hold this mental model first; the code is just its expression.
@@ -174,7 +248,7 @@ session_uri = Ezagent.URI.new!("session://team-alpha/default/my-app-1")
   })
 
 :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
-{:ok, _} = Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(
+{:ok, _} = Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(
   session_uri,
   %{session_template_uri: template_uri}    # the @hash URI — no name resolution
 )
@@ -266,7 +340,7 @@ caveat). Read it when you need to validate author-flow changes end to end.
 - `Ezagent.TemplateTags` — git-style mutable refs over immutable hashes; `put/5`, `move/5`, `resolve/3`; the `"current"` tag = adopt-on-create pointer.
 - `Ezagent.Socialware.PublicView` — `public_view?/1`, the public ingress gate (live-slice based, fail-closed).
 - `Ezagent.Entity.Session` — `socialware_behaviors/0`; the session Kind.
-- `Ezagent.Behavior.Session.ConfigActions` — `system_set_working_copy/2` (bind session→template version).
+- `Ezagent.ActionSet.Session.ConfigActions` — `system_set_working_copy/2` (bind session→template version).
 - `Ezagent.Orchestrator.Tools.Migration` — `migrate_session/2` (resumable re-pin) and its `migration_ledger`.
 - `Ezagent.Orchestrator.Tools.Templates` — `update_template` / `save_template_as` / `publish_current/4`.
 - `EzagentWeb.Socialware.ChatFeedController` / `CustomerController` — the two public surfaces.

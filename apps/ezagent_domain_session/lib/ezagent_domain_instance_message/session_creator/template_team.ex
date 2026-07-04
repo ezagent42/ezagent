@@ -3,12 +3,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.DefinitionEditor
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
   def materialize_template_team(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
-        %URI{} = _granted_by,
+        %URI{} = granted_by,
         template_content
       )
       when is_map(template_content) do
@@ -24,6 +25,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
                workspace_uri,
                socialware_config,
                declared_roles
+             ),
+           # T2-1b — materialize the installed socialware Definitions' `agents`
+           # (`%{recipe, role_name}`) as spawned session members with recipe
+           # caps. Runs on BOTH the fresh-create and repair paths (idempotent).
+           :ok <-
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               workspace_uri,
+               granted_by,
+               Map.get(socialware_config, :agents, [])
              ) do
         :ok
       end
@@ -164,7 +175,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       pts ->
-        case Ezagent.Behavior.Session.system_set_prompt_templates(session_uri, pts) do
+        case Ezagent.ActionSet.Session.system_set_prompt_templates(session_uri, pts) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_prompt_templates_failed, reason}}
         end
@@ -177,7 +188,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       legends ->
-        case Ezagent.Behavior.Session.system_set_legends(session_uri, legends) do
+        case Ezagent.ActionSet.Session.system_set_legends(session_uri, legends) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_legends_failed, reason}}
         end
@@ -306,11 +317,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     do: {:error, {:unknown_rule_receiver, other}}
 
   defp declared_role_names(content) when is_map(content) do
-    content
-    |> template_members_of()
-    |> Enum.map(&member_field(&1, :role_name))
+    member_roles =
+      content
+      |> template_members_of()
+      |> Enum.map(&member_field(&1, :role_name))
+
+    agent_roles =
+      content
+      |> template_agents_of()
+      |> Enum.map(&member_field(&1, :role_name))
+
+    (member_roles ++ agent_roles)
     |> Enum.filter(&(is_binary(&1) and &1 != ""))
     |> Enum.uniq()
+  end
+
+  defp template_agents_of(content) when is_map(content) do
+    case Map.get(content, :agents) || Map.get(content, "agents") do
+      list when is_list(list) -> list
+      _ -> []
+    end
   end
 
   defp template_members_of(content) when is_map(content) do

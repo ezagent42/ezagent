@@ -6,7 +6,7 @@ defmodule EzagentPluginHello.Router do
   its generation.
 
   NOT `Ezagent.Router` (the framework dispatch router) — this is hello-internal
-  message routing, invoked from `Ezagent.Behavior.HelloOrchestrator`.
+  message routing, invoked from `Ezagent.ActionSet.HelloOrchestrator`.
 
   ## Policy — intent × identity (the safety boundary is identity-first)
 

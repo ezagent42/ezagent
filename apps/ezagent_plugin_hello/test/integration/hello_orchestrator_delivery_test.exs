@@ -11,7 +11,7 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Behavior.Agent.Delivery
+  alias Ezagent.ActionSet.Agent.Delivery
   alias Ezagent.{Message, Workspace}
   alias EzagentPluginHello.App
   alias EzagentPluginHello.Application, as: HelloApp

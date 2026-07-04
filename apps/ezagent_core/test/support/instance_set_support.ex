@@ -182,16 +182,16 @@ defmodule Ezagent.Kind.InstanceSetSupport do
     @impl true
     def behaviors do
       [
-        Ezagent.Behavior.Session,
+        Ezagent.ActionSet.Session,
         # Turn is DECLARED (but NOT spawned into the chat-only instance set)
         # so the closure-denial test (Task 9) can REQUEST `Turn` and have it
         # survive `init_set/2`'s ∩-declared intersection — otherwise Turn is
         # dropped before `validate_closure!/1` and `UnclosedSetError` is never
         # raised (codex HIGH). Turn `reads_siblings :surface :required`.
-        Ezagent.Behavior.Turn,
-        Ezagent.Behavior.Surface,
+        Ezagent.ActionSet.Turn,
+        Ezagent.ActionSet.Surface,
         Ezagent.Kind.InstanceSetSupport.ProbeBehavior,
-        Ezagent.Behavior.KindBase
+        Ezagent.ActionSet.KindBase
       ]
     end
 

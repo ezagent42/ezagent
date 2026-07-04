@@ -42,7 +42,7 @@ defmodule Ezagent.Domain.AgentReadTest do
   defp sandbox_cap(agent, granter) do
     %Ezagent.Capability{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(agent),
       workspace_uri: Ezagent.Capability.workspace_of(agent),
@@ -54,7 +54,7 @@ defmodule Ezagent.Domain.AgentReadTest do
   defp list_caps_cap(entity, granter) do
     %Ezagent.Capability{
       kind: :agent,
-      behavior: Ezagent.Behavior.Identity,
+      behavior: Ezagent.ActionSet.Identity,
       action: :list_caps,
       instance: Ezagent.URI.instance(entity),
       workspace_uri: Ezagent.Capability.workspace_of(entity),

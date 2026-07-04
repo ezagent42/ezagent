@@ -94,22 +94,22 @@ defmodule Ezagent.Entity.Agent do
   @spec base_behaviors() :: [module()]
   def base_behaviors,
     do: [
-      Ezagent.Behavior.Identity,
-      Ezagent.Behavior.Sandbox,
-      Ezagent.Behavior.ApiKeys,
-      Ezagent.Behavior.CredentialGrant,
+      Ezagent.ActionSet.Identity,
+      Ezagent.ActionSet.Sandbox,
+      Ezagent.ActionSet.ApiKeys,
+      Ezagent.ActionSet.CredentialGrant,
       # Agent-owned config evolution (spec 2026-06-11 rev 4) — the agent
       # mutates its OWN config under its own authority, dissolving the #607
       # confused-deputy. Registered (CapabilityRegistry) in
       # EzagentDomainIdentity.Application, like the other identity-domain
       # behaviors that live on the Agent Kind.
-      Ezagent.Behavior.ConfigEvolve,
+      Ezagent.ActionSet.ConfigEvolve,
       # Minimal CR (change-request) config governance (SPEC
       # docs/together/2026-06-26 rev 3) — a Lifecycle sibling to ConfigEvolve
       # on the Agent Kind. stage → preview → publish → rollback over the SAME
       # ConfigStore + sandbox-materialization primitives. Registered in
       # EzagentDomainIdentity.Application alongside ConfigEvolve.
-      Ezagent.Behavior.ConfigGovernance
+      Ezagent.ActionSet.ConfigGovernance
     ]
 
   defp registry_instance_behaviors do
@@ -126,13 +126,13 @@ defmodule Ezagent.Entity.Agent do
   @doc """
   The curl-flavor per-instance behavior subset (the explicit `:behaviors`
   set threaded at a NEW curl agent spawn, PR-6). The BASE Agent behaviors
-  PLUS `Ezagent.Behavior.CurlAgent` (which owns the `:curl_agent` slice +
+  PLUS `Ezagent.ActionSet.CurlAgent` (which owns the `:curl_agent` slice +
   `reset_conversation` / `configure` / `sync_result` actions). `:api_keys`
   is already in the base set, so curl's credential need is satisfied with no
   duplication.
   """
   @spec curl_behaviors() :: [module()]
-  def curl_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+  def curl_behaviors, do: base_behaviors() ++ [Ezagent.ActionSet.CurlAgent]
 
   @doc """
   Behavior set for the `cc-headless` flavor.
@@ -142,7 +142,7 @@ defmodule Ezagent.Entity.Agent do
   session reply step.
   """
   @spec cc_headless_behaviors() :: [module()]
-  def cc_headless_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CcHeadlessAgent]
+  def cc_headless_behaviors, do: base_behaviors() ++ [Ezagent.ActionSet.CcHeadlessAgent]
 
   @doc """
   Behavior set for a `nil`/absent `:kind_base` instance (PR-6). Returns the

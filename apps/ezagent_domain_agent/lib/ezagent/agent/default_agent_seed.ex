@@ -13,7 +13,7 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
   domain.agent primitives callers would otherwise byte-duplicate — the FF-1
   `cross_file_duplicate_fn_groups` arch gate forbids that fork accretion. It
   introduces NO new mechanism: it only wires
-  `Ezagent.LocalRuntime.ensure_started_detailed/1` + `Ezagent.Behavior.Template`
+  `Ezagent.LocalRuntime.ensure_started_detailed/1` + `Ezagent.ActionSet.Template`
   `:write` (the same play `Ezagent.Orchestrator.CcOrchestratorSeed` uses).
 
   ## Grant lives in a mix task, NOT here (p7)
@@ -166,7 +166,7 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
     end
   end
 
-  # Dispatch `Ezagent.Behavior.Template` `:write` under the genesis admin entity
+  # Dispatch `Ezagent.ActionSet.Template` `:write` under the genesis admin entity
   # with an INLINE narrow `template.write` cap — the same system-mediated
   # materialization play `CcOrchestratorSeed.write_template_slice/2` uses.
   defp write_template_slice(%URI{} = uri, content) do

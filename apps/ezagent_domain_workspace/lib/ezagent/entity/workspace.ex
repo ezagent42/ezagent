@@ -50,7 +50,7 @@ defmodule Ezagent.Entity.Workspace do
   def type_name, do: :workspace
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Workspace]
+  def behaviors, do: [Ezagent.ActionSet.Workspace]
 
   # Stays `:ephemeral` even after Phase 4c persistence ships — the
   # Kind itself is rehydrated by `Ezagent.Workspace.Loader` from the

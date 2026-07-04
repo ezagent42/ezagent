@@ -164,7 +164,7 @@ defmodule Ezagent.ExternalMirror.Gates do
 
     needed = %{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       # SPEC 2026-05-27 capability-action-axis — Gate 1 enforces the
       # `:bind` action on Behavior.ExternalMirror. Narrow held caps
       # (e.g. `:unbind` or `:list_bindings`) must NOT satisfy this gate.
@@ -362,7 +362,7 @@ defmodule Ezagent.ExternalMirror.Gates do
 
   defp cap_admin_shape?(%{
          kind: :session,
-         behavior: Ezagent.Behavior.ExternalMirror,
+         behavior: Ezagent.ActionSet.ExternalMirror,
          action: :any,
          instance: :any
        }),

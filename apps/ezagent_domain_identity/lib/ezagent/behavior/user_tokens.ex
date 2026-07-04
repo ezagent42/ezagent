@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.UserTokens do
+defmodule Ezagent.ActionSet.UserTokens do
   @moduledoc """
   User-token Behavior — operator-facing bearer-token CRUD on the
   `entity_tokens` SQLite table.
@@ -70,7 +70,7 @@ defmodule Ezagent.Behavior.UserTokens do
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
   `handle_mint_token/2` / `handle_list_tokens/2` / `handle_revoke_token/2`
   returning effects. DB writes (`Token.mint/2`, `Token.revoke/1`) and

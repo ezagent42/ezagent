@@ -154,7 +154,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   ## Envelope contract (PR-EM-6 r3)
 
   Reads the real Publisher envelope as built by
-  `Ezagent.Behavior.Publisher.SessionImpl.build_payload/1`:
+  `Ezagent.ActionSet.Publisher.SessionImpl.build_payload/1`:
 
       %Ezagent.Publisher.Event{
         slice_key: :session,

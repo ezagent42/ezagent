@@ -60,7 +60,7 @@ Most scenarios assume:
 | Local-only URL | `http://127.0.0.1:10042` (operator-local; LV will load but Feishu webhooks need the public sidecar) |
 | Allen's Feishu chat_id (DM) | `oc_d9b47511b085e9d5b66c4595b3ef9bb9` |
 | Dev / smoke Feishu chat_id | `oc_83a4f1ff0bf627ffe26aa60647e5b04a` |
-| System admin | `entity://system/user/admin` (workspace-first per PR #131 — NOT `entity://user/system/admin`). **A FRESH stack has NO admin password** — the entrypoint does not set one, so first login fails until you set it: `mix ezagent.user.set_password entity://system/user/admin --password <pw>`. (The shared dev stack had `e2e-admin-2026` set manually 2026-05-30; a disposable/fresh stack does not.) **Log in with the FULL URI in the username field** — the bare handle `admin` does NOT resolve at the form yet (minor UI nit). |
+| System admin | `entity://system/user/admin` (workspace-first per PR #131 — NOT `entity://user/system/admin`). **A FRESH stack has NO admin password** — the entrypoint does not set one, so first login fails until you set it: `mix ezagent.user.set_password entity://system/user/admin --password <pw>`. (The shared dev stack had `e2e-admin-2026` set manually 2026-05-30; a disposable/fresh stack does not.) **Log in with the admin's EMAIL + password** (the seeded admin email is `admin@ezagent.chat`) — login is email+password since #87 (URI/username login was retired); the login form has no URI field. |
 | Self-serve creds (no asking Allen) | Bootstrap an admin token: `mix ezagent.user.token entity://system/user/admin --mint` → use `EZAGENT_USER_TOKEN=<tok> EZAGENT_ENTITY_URI=entity://system/user/admin mix ezagent user set_password --user <uri> --password <pw>` to set a login password, or `mix ezagent user create` + `set_password` to mint a throwaway test user. Never block on asking Allen for a password (his directive 2026-05-30). |
 | Default workspace | `workspace://system` (post-#398 rename; `workspace://default` is forbidden alias per PR #399) |
 
@@ -129,6 +129,10 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 
 ## 4. Scenario index — flat list
 
+> Cluster overview: [`homesite-journey.md`](./homesite-journey.md) maps the homesite
+> user journey (stages 0–5) across scenarios 36–39. Task split:
+> [`homesite-handoff.md`](./homesite-handoff.md) (官网/hello → zhaomato, world → zyli).
+
 | # | Title | Cat | Status | Test path |
 |---|---|---|---|---|
 | 01 | [Magic-link email login](./01-magic-link-login/scenario.md) | 1 | ⚠️ | `magic_link_invariants_test.exs` |
@@ -164,6 +168,11 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 32 | [Feishu @-mention → orchestrator dispatch](./32-feishu-mention-orchestrator-dispatch/scenario.md) | 3 | 🚧 | `scenario_32_mention_orchestrator_dispatch_test.exs` (deterministic) + live runbook |
 | 33 | [Full-star — orchestrator dispatches ALL flavors (cc + codex + curl)](./33-full-star-orchestrator-all-flavors/scenario.md) | 3 | 🚧 | `scenario_33_full_star_test.exs` (deterministic) + live runbook |
 | 34 | [Sender-locked relay (传话游戏) — legend + rule-set + prompt-template, no baton](./34-sender-locked-relay/scenario.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs` (deterministic, 8 tests green) + `scenario_34_*_live_test.exs` (live runbook, `@tag :live`) |
+| 35 | [External-user anonymous access (membership-only)](./35-external-user-anon-access/scenario.md) | 1 | 🚧 | deterministic tier PARTIAL + live agent-browser runbook — see scenario doc (issue #51) |
+| 36 | [Homesite visitor journey — browse → login-gate → gated CTAs](./36-homesite-browse/scenario.md) | 1 | 🚧 | design spec — recordable vs `docs/website-demo/v1` mock; live recorder + test pending |
+| 37 | [Homesite dialog ↔ world session (bidirectional sync)](./37-homesite-dialog-world-sync/scenario.md) | 3 | 🚧 | design spec (journey stage 3) — backend dialog wiring not connected; world→page via placeholder |
+| 38 | [Share / deploy — invite others into the SAME session (group chat)](./38-share-deploy-same-session/scenario.md) | 3 | 🚧 | design spec (journey stage 4) — deploy = same session, member, history kept |
+| 39 | [Try world → re-create the homesite session as a new owned session](./39-redeploy-publish-fork-session/scenario.md) | 3 | 🚧 | design spec (journey stage 5) — enter world, re-create a new owned session, no history |
 
 ---
 

@@ -99,23 +99,23 @@ defmodule EzagentPluginSlack.Behavior.SlackOutbound do
   core Kind — NOT a `slack://` scheme. The Slack channel ID is looked
   up from a per-session binding, not encoded in a URI.
   """
-  @behaviour Ezagent.Behavior
+  @behaviour Ezagent.ActionSet
 
   @actions [:notify_external]
   def actions, do: @actions
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def state_slice, do: :slack
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def init_slice(_args), do: %{}
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def interface do
     %{notify_external: %{args: %{message: :map}, returns: %{}, modes: [:cast]}}
   end
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def invoke(:notify_external, slice, %{message: msg}, ctx) do
     # ctx.self_uri is a session:// URI — resolve the bound Slack channel.
     case EzagentPluginSlack.Bindings.channel_for(ctx.self_uri) do

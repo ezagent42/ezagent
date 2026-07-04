@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Behavior.TurnPublishPolicyTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Turn
+  alias Ezagent.ActionSet.Turn
   alias Ezagent.MessageStore
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
@@ -23,14 +23,15 @@ defmodule EzagentDomainInstanceMessage.Behavior.TurnPublishPolicyTest do
 
     attrs = %{
       name: name,
-      bases: [Ezagent.Behavior.Session],
-      shape: [Ezagent.Behavior.Turn],
+      bases: [Ezagent.ActionSet.Session],
+      shape: [Ezagent.ActionSet.Turn],
       visibility_policy: %{publish_policy: policy, web_anon_access: false}
     }
 
     assert {:ok, object} =
              DefinitionRegistry.write_definition(attrs,
                workspace_uri: @workspace_uri,
+               caller_workspace_uri: @workspace_uri,
                actor_uri: @caller
              )
 

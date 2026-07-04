@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Publisher do
+defmodule Ezagent.ActionSet.Publisher do
   @moduledoc """
   A Kind that exposes a structured stream of its slice changes with
   history + cursor + replay semantics. Subscribers consume from a
@@ -22,11 +22,11 @@ defmodule Ezagent.Behavior.Publisher do
   Per SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
   §2.1 (Allen's option (a)): the first implementer is
   `Ezagent.Entity.Session` in `apps/ezagent_domain_session/`. The
-  Session module declares `@behaviour Ezagent.Behavior.Publisher`
+  Session module declares `@behaviour Ezagent.ActionSet.Publisher`
   and exposes the four callbacks as module functions that route
   through `Ezagent.Router.dispatch/1` against the session URI
   (subscribe/snapshot/history are dispatchable actions on the
-  `Ezagent.Behavior.Publisher.SessionImpl` Kind-Behavior — caps gate
+  `Ezagent.ActionSet.Publisher.SessionImpl` Kind-Behavior — caps gate
   via standard step 5.5).
 
   ## Subscriber message shape

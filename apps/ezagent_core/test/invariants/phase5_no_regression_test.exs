@@ -62,40 +62,40 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   describe "Phase 5: BehaviorRegistry wiring" do
     test "Chat actions are registered on the right Kinds" do
       # Session-side actions
-      assert {:ok, Ezagent.Behavior.Session} =
+      assert {:ok, Ezagent.ActionSet.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :send)
 
-      assert {:ok, Ezagent.Behavior.Session} =
+      assert {:ok, Ezagent.ActionSet.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :join)
 
-      assert {:ok, Ezagent.Behavior.Session} =
+      assert {:ok, Ezagent.ActionSet.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :leave)
 
       # Receiver-side — PR-2 (im/session/agent decomposition §OQ-4) split
       # the single `:receive` into two first-class Behaviors, each on its
       # own Kind: `user.receive` (passive inbox) / `agent.receive` (live
       # delivery). The internal `case kind_module` is retired.
-      assert {:ok, Ezagent.Behavior.User.Receive} =
+      assert {:ok, Ezagent.ActionSet.User.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :receive)
 
-      assert {:ok, Ezagent.Behavior.Agent.Receive} =
+      assert {:ok, Ezagent.ActionSet.Agent.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
     end
 
     test "Identity actions are registered" do
-      assert {:ok, Ezagent.Behavior.Identity} =
+      assert {:ok, Ezagent.ActionSet.Identity} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :list_caps)
 
-      assert {:ok, Ezagent.Behavior.Identity} =
+      assert {:ok, Ezagent.ActionSet.Identity} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :has_cap?)
     end
 
     test "Workspace actions are registered" do
-      actions = Ezagent.Behavior.Workspace.actions()
+      actions = Ezagent.ActionSet.Workspace.actions()
       assert length(actions) > 0
 
       for action <- actions do
-        assert {:ok, Ezagent.Behavior.Workspace} =
+        assert {:ok, Ezagent.ActionSet.Workspace} =
                  BehaviorRegistry.lookup(Ezagent.Entity.Workspace, action)
       end
     end

@@ -133,7 +133,7 @@ defmodule Ezagent.Template.PyAgent do
         # Behavior.PyAgent (the :py_sync_result / :py_reset / :py_configure
         # handlers). Without this the instance captures only the base set and
         # the re-dispatched :py_sync_result has no handler (no reply).
-        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.Behavior.PyAgent],
+        behaviors: Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.ActionSet.PyAgent],
         # P4b — DURABLE flavor record (cc/codex precedent). py now routes inbound
         # chat through AgentBridge, which resolves the agent's flavor to pick the
         # `:in_process_sync` transport. ETS `AgentFlavorAttributes` is volatile;
@@ -149,18 +149,46 @@ defmodule Ezagent.Template.PyAgent do
         {:ok, _pid} ->
           case start_python(agent_uri, script_path, config_dir) do
             :ok ->
-              {:ok, [agent_uri], %{fresh?: true}}
+              {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
 
             {:error, reason} ->
-              _ = Ezagent.Kind.terminate(agent_uri)
-              {:error, {:python_start_failed, reason}}
+              # DECOUPLE subprocess-liveness from MATERIALIZATION (2026-07-01).
+              # The Kind is already MATERIALIZED + alive (config/behaviors loaded,
+              # registered). A failure to bring up the Python SUBPROCESS (e.g.
+              # `:uv_not_found` on a host without uv, such as CI) must NOT roll
+              # back the materialize: session-create / socialware materialization
+              # should succeed once the agent Kind is alive + joinable. This makes
+              # the CREATE path CONSISTENT with the already-blessed restart/cold-
+              # load contract in `Ezagent.ActionSet.PyAgent.activate/2`, which
+              # ALSO keeps the Kind alive in a DEGRADED (no-subprocess) state on an
+              # `ensure_alive` failure.
+              #
+              # This is FAIL-LOUD-AT-USE, NOT silent-degrade: we log an error here
+              # AND the next `:receive` dispatch surfaces the missing subprocess
+              # loudly — `EzagentPluginPy.BridgeAdapter.run_receive/3` →
+              # `Ezagent.Domain.Python.call/4` returns `{:error, :not_alive}` when
+              # no subprocess is registered. We do NOT pretend the agent is
+              # healthy: the returned `:subprocess_degraded` meta records it.
+              Logger.error(
+                "py.agent: subprocess start failed for #{URI.to_string(agent_uri)}: " <>
+                  "#{inspect(reason)}. PyAgent Kind stays MATERIALIZED in a DEGRADED " <>
+                  "state (no Python subprocess); next :receive surfaces :not_alive."
+              )
+
+              {:ok, [agent_uri],
+               %{
+                 fresh?: true,
+                 config_dir_path: config_dir,
+                 subprocess_degraded: true,
+                 subprocess_degraded_reason: reason
+               }}
           end
 
         {:error, {:already_started, _pid}} ->
           # Adopted — ensure the subprocess is alive, do NOT undo.
           case ensure_python_alive(agent_uri, script_path, config_dir) do
             :ok ->
-              {:ok, [agent_uri], %{fresh?: false}}
+              {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 
             {:error, _reason} = err ->
               err

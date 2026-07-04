@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.Publisher.SessionImpl do
+defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   @moduledoc """
-  Kind-Behavior implementing `Ezagent.Behavior.Publisher` semantics for
+  Kind-Behavior implementing `Ezagent.ActionSet.Publisher` semantics for
   `Ezagent.Entity.Session` (the V1 publisher per SPEC
   `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §2.1,
   Allen's option (a)).
@@ -12,7 +12,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 — the transients +
   ## post-ready reference case)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. This
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`. This
   is the module the brief calls out as "transients + post-ready": it
   exercises EVERY non-trivial Lifecycle moment.
 
@@ -66,7 +66,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   + `{:set, ...}`; `subscribers`/`monitors` reads go to
   `ctx.transients[k]` and writes become `{:set_transient, k, v}` effects.
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Publisher.SessionImpl`
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Publisher.SessionImpl`
   — a domain module (`apps/ezagent_domain_session`); names a domain concept
   (`Publisher` contract + `SessionImpl` = "the Session's implementation of
   it"). NP-2 only forbids upper-layer words in `ezagent_core`; this is a
@@ -78,7 +78,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   In `apps/ezagent_domain_session/` — the SessionImpl is Session-specific
   code (reads `Session.owner/1` for `data_owner/1`), so it lives next
   to the Kind it implements. The Publisher CONTRACT
-  (`Ezagent.Behavior.Publisher`) + Event struct live in
+  (`Ezagent.ActionSet.Publisher`) + Event struct live in
   `apps/ezagent_domain_external_mirror/` (the new Domain) — chat
   depends on external_mirror for the contract; external_mirror has
   zero reverse references to chat.
@@ -106,7 +106,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   Two maps (subscribers + monitors) so `:DOWN` cleanup is O(log n) on
   the monitor ref without scanning all subscribers (same pattern as
-  `Ezagent.Behavior.Session`'s members + monitors).
+  `Ezagent.ActionSet.Session`'s members + monitors).
 
   ## post_init self-subscription
 
@@ -173,7 +173,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   # the publisher Kind module (Session does — see `Ezagent.Entity.Session`).
   @default_retention 100
 
-  # ----- Ezagent.Behavior callbacks --------------------------------------
+  # ----- Ezagent.ActionSet callbacks --------------------------------------
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Publisher.SessionImpl is registered on Session Kind only — kind axis
@@ -216,7 +216,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   @doc """
   Per SPEC §2.1: the Publisher cap is gated on the publishing Kind
   (the Session). Session caps' data_owner is the user/agent that
-  created the session (same rule as `Ezagent.Behavior.Session.data_owner/1`).
+  created the session (same rule as `Ezagent.ActionSet.Session.data_owner/1`).
   Reads via `Ezagent.Kind.get_slice/2` on the `:chat` slice's
   `:owner_uri` field — caps-data-ownership SPEC #306 §7.
 
@@ -310,7 +310,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     catch
       kind, reason ->
         Logger.warning(
-          "Ezagent.Behavior.Publisher.SessionImpl.activate: SliceChange.subscribe " <>
+          "Ezagent.ActionSet.Publisher.SessionImpl.activate: SliceChange.subscribe " <>
             "failed (#{inspect(kind)}, #{inspect(reason)}) for " <>
             "#{URI.to_string(self_uri)}; this incarnation will not mirror slice changes"
         )
@@ -340,7 +340,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   Running it in `activated/2` (which compiles to `on_ready/2`, post-flip)
   ensures the Worker's re-subscribe `:call` finds the Session `:ready`.
   The Worker also carries a defence-in-depth retry on `{:error,
-  :not_ready}` (`Ezagent.Behavior.ExternalMirrorWorker` `:publisher_alive`
+  :not_ready}` (`Ezagent.ActionSet.ExternalMirrorWorker` `:publisher_alive`
   clause) — primary fix is the ordering; the retry is belt-and-braces.
   """
   @impl Ezagent.Lifecycle
@@ -543,7 +543,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   # Default retention used when `init_slice/1` is called without
   # publisher_retention (the Session implementation reads
-  # `Ezagent.Behavior.Publisher.history_retention/0` on Session and
+  # `Ezagent.ActionSet.Publisher.history_retention/0` on Session and
   # threads it through; this constant is the documented fallback).
   @doc false
   def default_retention, do: @default_retention

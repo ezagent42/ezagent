@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Terminable do
+defmodule Ezagent.ActionSet.Terminable do
   @moduledoc """
   Terminable Behavior — dispatchable, CapBAC-gated Kind termination
   (Phase 7 completion SPEC §1.6b, codex rev-5 HIGH-3).
@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.Terminable do
   bypasses dispatch + CapBAC entirely — an orchestrator could kill ANY
   agent, not just its own workers.
 
-  `Ezagent.Behavior.Terminable` is the fix: a small CORE Behavior (no
+  `Ezagent.ActionSet.Terminable` is the fix: a small CORE Behavior (no
   plugin references — it lives in `ezagent_core` so any Kind can carry
   it) whose single `:terminate` action routes through `Invocation.dispatch/1`,
   so CapBAC step 5.5 enforces the caller's cap on
@@ -23,7 +23,7 @@ defmodule Ezagent.Behavior.Terminable do
 
   ## Naming (Phase B — SPEC `2026-05-29-lifecycle-hooks-design.md` §9 OQ-6 / §11)
 
-  Renamed from `Ezagent.Behavior.Lifecycle` on the Lifecycle migration.
+  Renamed from `Ezagent.ActionSet.Lifecycle` on the Lifecycle migration.
   The handler operates purely on `kind_module` / `supervisor/0` — it is
   fully **Kind-generic** (terminates ANY Kind's supervised process via
   dispatch + CapBAC; it only happens to be *registered on* the Agent Kind
@@ -70,7 +70,7 @@ defmodule Ezagent.Behavior.Terminable do
 
   ## Migration to `use Ezagent.Lifecycle` (Phase B — 2026-05-29)
 
-  Converted from `use Ezagent.Behavior` + `init_slice/1` to
+  Converted from `use Ezagent.ActionSet` + `init_slice/1` to
   `use Ezagent.Lifecycle` + `create/1`. The action `:terminate`,
   the `handle_terminate/2` handler, the effect list, and the
   deferred-termination + best-effort-notify side-effect functions are
@@ -211,7 +211,7 @@ defmodule Ezagent.Behavior.Terminable do
           # never got the agent-terminated notification". Log type +
           # target + exception summary.
           Logger.warning(
-            "Ezagent.Behavior.Terminable: :agent_terminated notify to " <>
+            "Ezagent.ActionSet.Terminable: :agent_terminated notify to " <>
               "#{URI.to_string(parent_uri)} raised #{inspect(error)}; " <>
               "termination of #{URI.to_string(agent_uri)} proceeds"
           )
@@ -220,7 +220,7 @@ defmodule Ezagent.Behavior.Terminable do
       catch
         kind, reason ->
           Logger.warning(
-            "Ezagent.Behavior.Terminable: :agent_terminated notify to " <>
+            "Ezagent.ActionSet.Terminable: :agent_terminated notify to " <>
               "#{URI.to_string(parent_uri)} threw #{inspect({kind, reason})}; " <>
               "termination of #{URI.to_string(agent_uri)} proceeds"
           )
@@ -290,7 +290,7 @@ defmodule Ezagent.Behavior.Terminable do
   rescue
     error ->
       Logger.warning(
-        "Ezagent.Behavior.Terminable: terminate of #{URI.to_string(self_uri)} " <>
+        "Ezagent.ActionSet.Terminable: terminate of #{URI.to_string(self_uri)} " <>
           "raised #{inspect(error)}; treating as terminated"
       )
 

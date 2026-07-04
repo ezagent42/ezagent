@@ -100,8 +100,8 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
     %{
       name: "t7c-role",
       requested_caps: [
-        %{behavior: Ezagent.Behavior.ApiKeys, action: :put_api_key},
-        %{behavior: Ezagent.Behavior.Identity, action: :list_caps}
+        %{behavior: Ezagent.ActionSet.ApiKeys, action: :put_api_key},
+        %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
       ]
     }
   end
@@ -192,8 +192,8 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
       caps = Ezagent.Identity.list_caps_for(agent_uri)
 
       behaviors = MapSet.new(caps, & &1.behavior)
-      assert Ezagent.Behavior.ApiKeys in behaviors
-      assert Ezagent.Behavior.Identity in behaviors
+      assert Ezagent.ActionSet.ApiKeys in behaviors
+      assert Ezagent.ActionSet.Identity in behaviors
 
       # least-priv: granted under the admin entity, scoped to THIS per-session URI.
       assert Enum.all?(caps, fn cap ->
@@ -208,7 +208,7 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
       bogus_recipe = %{
         name: "t7c-role",
         requested_caps: [
-          %{behavior: "Ezagent.Behavior.DefinitelyNotARealBehavior999", action: :nope}
+          %{behavior: "Ezagent.ActionSet.DefinitelyNotARealBehavior999", action: :nope}
         ]
       }
 
@@ -236,7 +236,7 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
         RecipeRegistry.seed_role_if_absent(%{
           name: role,
           behaviors: [],
-          requested_caps: [%{behavior: Ezagent.Behavior.Identity, action: :list_caps}],
+          requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
           skills: []
         })
 
@@ -260,6 +260,34 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
       assert spec.template_content.flavor == "cc"
     end
 
+    test "registered role + explicit flavor → spec carries that flavor, not the cc seed shortcut" do
+      flavor = register_stub_flavor()
+      role = "t7d-non-cc-by-role-#{uniq()}"
+      :ok = RecipeRegistry.flush_cache()
+
+      {:ok, :seeded} =
+        RecipeRegistry.seed_role_if_absent(%{
+          name: role,
+          behaviors: [],
+          requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
+          skills: []
+        })
+
+      assert {:ok, spec} =
+               SessionAgentMaterialize.by_role_spec(
+                 role,
+                 flavor,
+                 @session_uri,
+                 @workspace_uri,
+                 @owner_uri
+               )
+
+      assert spec.role == role
+      assert spec.template_content.role == role
+      assert spec.template_content.flavor == flavor
+      assert spec.template_content.project_cwd == DefaultAgentSeed.default_project_cwd(role)
+    end
+
     test "recipe config[:project_cwd] OVERRIDES the generic cwd (T7e CLI-reachability seam)" do
       role = "t7e-cwd-#{uniq()}"
       custom_cwd = "/srv/umbrella-root-#{uniq()}"
@@ -269,7 +297,7 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
         RecipeRegistry.seed_role_if_absent(%{
           name: role,
           behaviors: [],
-          requested_caps: [%{behavior: Ezagent.Behavior.Identity, action: :list_caps}],
+          requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
           skills: [],
           # the recipe DECLARES its agent's cwd — e.g. the umbrella root so the
           # agent's `mix ezagent` resolves. Round-trips through ConfigStore JSON
@@ -298,7 +326,7 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
         RecipeRegistry.seed_role_if_absent(%{
           name: role,
           behaviors: [],
-          requested_caps: [%{behavior: Ezagent.Behavior.Identity, action: :list_caps}],
+          requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
           skills: []
         })
 

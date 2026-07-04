@@ -185,21 +185,21 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
   # PR-6+7 (curl-as-flavor) — curl actions register on the UNIFIED
   # `Ezagent.Entity.Agent` Kind (the standalone curl Kind is deleted).
   defp register_curl_dispatch do
-    for action <- Ezagent.Behavior.CurlAgent.actions() do
+    for action <- Ezagent.ActionSet.CurlAgent.actions() do
       :ok =
         Ezagent.BehaviorRegistry.register(
           Ezagent.Entity.Agent,
           action,
-          Ezagent.Behavior.CurlAgent
+          Ezagent.ActionSet.CurlAgent
         )
     end
 
-    for action <- Ezagent.Behavior.ApiKeys.actions() do
+    for action <- Ezagent.ActionSet.ApiKeys.actions() do
       :ok =
         Ezagent.BehaviorRegistry.register(
           Ezagent.Entity.Agent,
           action,
-          Ezagent.Behavior.ApiKeys
+          Ezagent.ActionSet.ApiKeys
         )
     end
   end

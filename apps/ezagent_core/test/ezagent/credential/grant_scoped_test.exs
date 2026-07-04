@@ -9,7 +9,7 @@ defmodule Ezagent.Credential.GrantCapTest do
     cap = GrantCap.read_cap_for(source)
 
     # scoped, not wildcard
-    assert %Capability{action: :read, behavior: Ezagent.Behavior.Sandbox, kind: :agent} = cap
+    assert %Capability{action: :read, behavior: Ezagent.ActionSet.Sandbox, kind: :agent} = cap
     assert cap.workspace_uri != :any and cap.instance != :any
     # instance is exactly the source; workspace is its workspace:// URI
     assert URI.to_string(cap.instance) == URI.to_string(source)
@@ -20,7 +20,7 @@ defmodule Ezagent.Credential.GrantCapTest do
     # workspace_uri). Assert our derived cap satisfies it.
     needed = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(source),
       workspace_uri: Capability.workspace_of(source)
@@ -36,7 +36,7 @@ defmodule Ezagent.Credential.GrantCapTest do
 
     needed_other = %{
       kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
+      behavior: Ezagent.ActionSet.Sandbox,
       action: :read,
       instance: Ezagent.URI.instance(other),
       workspace_uri: Capability.workspace_of(other)

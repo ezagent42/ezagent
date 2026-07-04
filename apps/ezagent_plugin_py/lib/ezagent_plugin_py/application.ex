@@ -19,7 +19,7 @@ defmodule EzagentPluginPy.Application do
   ## What this plugin declares
 
   - `behaviors/0` — `{Ezagent.Entity.Agent, :py_sync_result | :py_reset |
-    :py_configure}` → `Ezagent.Behavior.PyAgent` (P4b: py folded onto the
+    :py_configure}` → `Ezagent.ActionSet.PyAgent` (P4b: py folded onto the
     UNIFIED `Entity.Agent` Kind; actions are py-namespaced to coexist with the
     other flavors' behaviors on the shared Kind).
   - `template_classes/0` — the `py.agent` Template Class.
@@ -65,8 +65,8 @@ defmodule EzagentPluginPy.Application do
 
   require Logger
 
-  alias Ezagent.Behavior.PyAgent, as: PyAgentBehavior
-  alias Ezagent.Behavior.Workspace.AgentCreate.PyTemplate
+  alias Ezagent.ActionSet.PyAgent, as: PyAgentBehavior
+  alias Ezagent.ActionSet.Workspace.AgentCreate.PyTemplate
   alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Template.PyAgent, as: PyAgentTemplate
 

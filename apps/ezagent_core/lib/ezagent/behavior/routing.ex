@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.Routing do
+defmodule Ezagent.ActionSet.Routing do
   @moduledoc """
   Routing Behavior — routing rule mutations on a **scope-owning Kind**.
 
   PR #146 (SPEC v2 §5.7) generalization of the previous
-  `Ezagent.Behavior.RoutingAdmin`. The synthetic `routing-admin://default`
+  `Ezagent.ActionSet.RoutingAdmin`. The synthetic `routing-admin://default`
   singleton Kind is dissolved; this Behavior is registered on the
   three scope classes that own routing rules:
 
@@ -35,11 +35,11 @@ defmodule Ezagent.Behavior.Routing do
   scope** (the scope-owning Kind):
 
   - For `workspace://X` targets: cap needed `kind: :workspace,
-    behavior: Ezagent.Behavior.Routing, instance: <workspace uri>`.
+    behavior: Ezagent.ActionSet.Routing, instance: <workspace uri>`.
   - For `session://default/team-alpha/Y` targets: cap needed `kind: :session,
-    behavior: Ezagent.Behavior.Routing, instance: <session uri>`.
+    behavior: Ezagent.ActionSet.Routing, instance: <session uri>`.
   - For `system://routing/default` targets: cap needed `kind: :system,
-    behavior: Ezagent.Behavior.Routing, instance: <system uri>`.
+    behavior: Ezagent.ActionSet.Routing, instance: <system uri>`.
 
   Admin's triple-`:any` cap satisfies all three; non-admins need an
   explicit grant per scope they want to mutate.
@@ -53,8 +53,8 @@ defmodule Ezagent.Behavior.Routing do
   ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
 
   Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
-  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
-  `use Ezagent.Behavior` + `action/3` + `handle_<action>/2`.
+  migrated from `@behaviour Ezagent.ActionSet` + `invoke/4` to
+  `use Ezagent.ActionSet` + `action/3` + `handle_<action>/2`.
 
   The `RuleStore.add/5` + `RuleStore.load_into_registry/1` calls stay
   in the handler body — they are SYNCHRONOUS database operations

@@ -9,10 +9,19 @@ type SessionRow = {
   workspace_uri?: string | null
 }
 
+type SocialwareRow = {
+  name: string
+  title?: string | null
+  description?: string | null
+  scope?: string | null
+  workspace_uri?: string | null
+}
+
 type SessionsState = {
   current_session_uri?: string | null
   sessions?: SessionRow[]
   templates?: string[]
+  socialwares?: SocialwareRow[]
   workspace_uri?: string | null
   create_error?: string
 }
@@ -20,17 +29,19 @@ type SessionsState = {
 type SessionsTableProps = {
   state?: SessionsState
   onJoin?: (sessionUri: string) => void
-  onCreate?: (shortName: string, templateName: string) => void
+  onCreate?: (shortName: string, templateName: string, socialwareRef?: string) => void
 }
 
 export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const sessions = state?.sessions || []
   const currentSessionUri = state?.current_session_uri
   const templates = state?.templates && state.templates.length > 0 ? state.templates : ["default"]
+  const socialwares = state?.socialwares || []
   const [creating, setCreating] = React.useState(false)
   const [filter, setFilter] = React.useState("")
   const [shortName, setShortName] = React.useState("")
   const [templateName, setTemplateName] = React.useState(templates[0])
+  const [socialwareRef, setSocialwareRef] = React.useState("")
   const selectedSession =
     sessions.find((session) => session.uri === currentSessionUri) || sessions[0] || null
 
@@ -44,10 +55,12 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
     event.preventDefault()
     const trimmed = shortName.trim()
     const template = templateName.trim() || "default"
+    const installRef = socialwareRef.trim()
     if (!trimmed) return
-    onCreate?.(trimmed, template)
+    onCreate?.(trimmed, template, installRef || undefined)
     setShortName("")
     setTemplateName(templates[0])
+    setSocialwareRef("")
     setCreating(false)
   }
 
@@ -126,6 +139,23 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 ))}
               </Select>
             </label>
+            {socialwares.length > 0 && (
+              <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-socialware">
+                Socialware
+                <Select
+                  id="world-session-socialware"
+                  value={socialwareRef}
+                  onChange={(event) => setSocialwareRef(event.target.value)}
+                >
+                  <option value="">None</option>
+                  {socialwares.map((socialware) => (
+                    <option key={socialware.name} value={socialware.name}>
+                      {socialware.title || socialware.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            )}
             <Button type="submit" size="sm" disabled={!shortName.trim()}>
               <Plus aria-hidden="true" />
               Create

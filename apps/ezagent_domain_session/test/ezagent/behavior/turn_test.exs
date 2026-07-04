@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Behavior.TurnTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Turn
+  alias Ezagent.ActionSet.Turn
   alias Ezagent.Cmd
   alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 

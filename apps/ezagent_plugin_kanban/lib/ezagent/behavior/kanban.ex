@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Kanban do
+defmodule Ezagent.ActionSet.Kanban do
   @moduledoc """
   Kanban Behavior — 思维导图节点树的动作处理者（df-prd）。
 
@@ -33,8 +33,8 @@ defmodule Ezagent.Behavior.Kanban do
 
   use Ezagent.Lifecycle
 
-  alias Ezagent.Behavior.Kanban.Connectors
-  alias Ezagent.Behavior.Kanban.Shared
+  alias Ezagent.ActionSet.Kanban.Connectors
+  alias Ezagent.ActionSet.Kanban.Shared
   alias EzagentPluginKanban.BoardConfig
   alias EzagentPluginKanban.Ci
   alias EzagentPluginKanban.Github
@@ -668,7 +668,7 @@ defmodule Ezagent.Behavior.Kanban do
   # ---------------------------------------------------------------
   # 出站连接器 handlers（df-tech 下沉）
   #
-  # 实现体已搬到 `Ezagent.Behavior.Kanban.Connectors`（压主模块 LOC）；这里只留
+  # 实现体已搬到 `Ezagent.ActionSet.Kanban.Connectors`（压主模块 LOC）；这里只留
   # `action/3` 宏要求的 `handle_<action>/2` 薄转发（契约/宏不变）。授权 + effect
   # 契约见 Connectors moduledoc：节点级动作走 `Shared.owner_or_admin?`，图级动作 =
   # 任意持 cap 成员，凭证保存 admin-gated；树写入仍是全 Behavior 唯一的

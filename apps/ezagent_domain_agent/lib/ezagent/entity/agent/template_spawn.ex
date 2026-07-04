@@ -9,7 +9,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   This is the **content-taking** spawn helper. It takes the template
   content as an ARGUMENT — it does NOT dispatch `:read` (the
-  `Ezagent.Behavior.Template` `:instantiate` action that calls it is
+  `Ezagent.ActionSet.Template` `:instantiate` action that calls it is
   ALREADY running inside the AgentTemplate Kind process with the slice
   in hand; a `:read` self-dispatch would be a `GenServer.call(self)`
   deadlock — codex rev-5 HIGH-2).
@@ -698,7 +698,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # `sandbox.update_config` self-authority cap, the step-5.5 authorizer for
   # `do_record_sandbox_state/4`'s self-dispatch (replaces the deleted
   # `system://agent-internal` principal). Shape mirrors
-  # `Ezagent.Behavior.Sandbox.required_caps/0[:update_config]` =
+  # `Ezagent.ActionSet.Sandbox.required_caps/0[:update_config]` =
   # `cap(:agent, Sandbox, :update_config)` but SCOPED to the specific agent
   # (`instance`/`workspace_uri` derived from `agent_uri`) for tightest
   # least-privilege — the runtime substitutes the same concrete instance from
@@ -711,7 +711,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     %Ezagent.Capability{
       Ezagent.Capability.cap(
         :agent,
-        Ezagent.Behavior.Sandbox,
+        Ezagent.ActionSet.Sandbox,
         :update_config,
         Ezagent.URI.instance(agent_uri),
         Ezagent.Capability.workspace_of(agent_uri)

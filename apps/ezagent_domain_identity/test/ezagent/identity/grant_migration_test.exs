@@ -6,9 +6,9 @@ defmodule Ezagent.Identity.GrantMigrationTest do
   alias Ezagent.Test.SnapshotFixtures
   alias EzagentCore.Repo
 
-  @old_behavior_string "Elixir.Ezagent.Behavior.Chat"
-  @new_behavior_string "Elixir.Ezagent.Behavior.Session"
-  @old_behavior_atom :"Elixir.Ezagent.Behavior.Chat"
+  @old_behavior_string "Elixir.Ezagent.ActionSet.Chat"
+  @new_behavior_string "Elixir.Ezagent.ActionSet.Session"
+  @old_behavior_atom :"Elixir.Ezagent.ActionSet.Chat"
   @workspace "workspace://team-alpha"
 
   # A pre-migration caps_json holding a Behavior.Chat grant (the shape
@@ -73,11 +73,11 @@ defmodule Ezagent.Identity.GrantMigrationTest do
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
-      assert %{behavior: Ezagent.Behavior.Session} = GrantMigration.rewrite_cap(cap)
+      assert %{behavior: Ezagent.ActionSet.Session} = GrantMigration.rewrite_cap(cap)
     end
 
     test "leaves a non-Chat cap unchanged" do
-      cap = %Ezagent.Capability{behavior: Ezagent.Behavior.Session, kind: :session, action: :send, instance: :any, workspace_uri: :any, granted_by: :system, granted_at: ~U[2026-01-01 00:00:00Z]}
+      cap = %Ezagent.Capability{behavior: Ezagent.ActionSet.Session, kind: :session, action: :send, instance: :any, workspace_uri: :any, granted_by: :system, granted_at: ~U[2026-01-01 00:00:00Z]}
       assert GrantMigration.rewrite_cap(cap) == cap
     end
   end
@@ -128,7 +128,7 @@ defmodule Ezagent.Identity.GrantMigrationTest do
 
       {:ok, post} = KindSnapshot.decode_state(KindSnapshot.get(uri))
       caps = post[:identity][:state][:caps] |> MapSet.to_list()
-      assert Enum.all?(caps, &(&1.behavior == Ezagent.Behavior.Session))
+      assert Enum.all?(caps, &(&1.behavior == Ezagent.ActionSet.Session))
       refute Enum.any?(caps, &(&1.behavior == @old_behavior_atom))
     end
 

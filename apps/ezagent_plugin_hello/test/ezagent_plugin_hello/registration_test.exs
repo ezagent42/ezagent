@@ -18,7 +18,7 @@ defmodule EzagentPluginHello.RegistrationTest do
 
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Behavior.{HelloBuilder, HelloConcierge, HelloOrchestrator}
+  alias Ezagent.ActionSet.{HelloBuilder, HelloConcierge, HelloOrchestrator}
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
@@ -29,8 +29,8 @@ defmodule EzagentPluginHello.RegistrationTest do
   end
 
   test ":grant_cap lives on IdentityAdmin (the privileged write behavior)" do
-    assert :grant_cap in Ezagent.Behavior.IdentityAdmin.actions()
-    refute :grant_cap in Ezagent.Behavior.Identity.actions()
+    assert :grant_cap in Ezagent.ActionSet.IdentityAdmin.actions()
+    refute :grant_cap in Ezagent.ActionSet.Identity.actions()
   end
 
   test "all three hello role recipes are published in roles/0" do

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Identity do
+defmodule Ezagent.ActionSet.Identity do
   @moduledoc """
   Identity Behavior — holds the principal's capability set in slice
   state.
@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.Identity do
   Every Entity Kind (User / Agent) carries an `:identity` slice with
   `caps :: MapSet.t(Ezagent.Capability.t())`. At dispatch step 5.5,
   `Ezagent.Kind.Runtime` reads the **caller**'s caps from the dispatch
-  ctx (which adapters populated from `Ezagent.Behavior.Identity.list_caps`
+  ctx (which adapters populated from `Ezagent.ActionSet.Identity.list_caps`
   call on the caller Kind) and matches against the needed cap.
 
   ## Why caps live in slice (not module-level constant)
@@ -41,7 +41,7 @@ defmodule Ezagent.Behavior.Identity do
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
   `handle_list_caps/2` and `handle_has_cap?/2`. Lifecycle callbacks
   (`init_slice/1`, `post_init/2`, `handle_continue/3`) are preserved
@@ -75,7 +75,7 @@ defmodule Ezagent.Behavior.Identity do
   # PR-OWN-3 (caps-data-ownership SPEC #306 §7): SPLIT — Identity
   # keeps only the safe read actions (`:list_caps`, `:has_cap?`).
   # Privileged write actions (`:grant_cap`, `:revoke_cap`) live on
-  # `Ezagent.Behavior.IdentityAdmin` (below in this file).
+  # `Ezagent.ActionSet.IdentityAdmin` (below in this file).
   action(:list_caps,
     args: %{},
     returns: %{caps: {:list, :map}},
@@ -95,7 +95,7 @@ defmodule Ezagent.Behavior.Identity do
   # =================================================================
   # Explicit `required_caps/0` — preserved as `kind: :any` (Identity
   # is registered on multiple Kinds; see check 11(b) escape in
-  # `Ezagent.Behavior` callback contract). The auto-derived macro
+  # `Ezagent.ActionSet` callback contract). The auto-derived macro
   # version also produces `:any` so this override is technically a
   # no-op, but kept explicit for parity with the pre-migration shape.
   # =================================================================
@@ -154,12 +154,12 @@ defmodule Ezagent.Behavior.Identity do
 
       caps
       |> MapSet.put(
-        self_scoped_cap(:agent, Ezagent.Behavior.Sandbox, :update_config, instance, workspace_uri)
+        self_scoped_cap(:agent, Ezagent.ActionSet.Sandbox, :update_config, instance, workspace_uri)
       )
       |> MapSet.put(
         self_scoped_cap(
           :agent,
-          Ezagent.Behavior.ConfigEvolve,
+          Ezagent.ActionSet.ConfigEvolve,
           :reconcile_cascade,
           instance,
           workspace_uri
@@ -288,13 +288,13 @@ defmodule Ezagent.Behavior.Identity do
   end
 end
 
-defmodule Ezagent.Behavior.IdentityAdmin do
+defmodule Ezagent.ActionSet.IdentityAdmin do
   @moduledoc """
   IdentityAdmin Behavior — privileged cap mutation actions on a
   principal's `:identity` slice.
 
   PR-OWN-3 (caps-data-ownership SPEC #306 §7) split-out from
-  `Ezagent.Behavior.Identity`. Reasoning (codex PR-OWN-1 round-1 MED
+  `Ezagent.ActionSet.Identity`. Reasoning (codex PR-OWN-1 round-1 MED
   + SPEC §1 reframe): caps are behavior-scoped, so a single Identity
   Behavior cap would have collapsed safe (`:list_caps`, `:has_cap?`)
   and privileged (`:grant_cap`, `:revoke_cap`) actions into one
@@ -305,12 +305,12 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   §5.2 gate routes IdentityAdmin grants only through the bootstrap
   admin path.
 
-  Shares the `:identity` slice with `Ezagent.Behavior.Identity` (both
+  Shares the `:identity` slice with `Ezagent.ActionSet.Identity` (both
   Behaviors registered against User + Agent Kinds).
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
   `handle_grant_cap/2` and `handle_revoke_cap/2`. Slice mutation
   (`MapSet` ops) is expressed as `:set` effects; cap-change
@@ -324,7 +324,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   Converted to the Lifecycle developer API per SPEC
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5 +
   OQ-7. STATE-ONLY: shares the `:identity` slice with
-  `Ezagent.Behavior.Identity` (the caps `MapSet`); no transients. Because
+  `Ezagent.ActionSet.Identity` (the caps `MapSet`); no transients. Because
   the slice key (`:identity`) differs from the module-name derivation
   (`identity_admin`), it uses the sanctioned `state_slice:` override
   escape hatch (SPEC §5 / §7 OQ-7) and carries the
@@ -380,7 +380,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   @impl Ezagent.Lifecycle
   def create(args) do
     # Defer to Identity for slice shape — both Behaviors share it.
-    Ezagent.Behavior.Identity.create(args)
+    Ezagent.ActionSet.Identity.create(args)
   end
 
   @doc "`:no_owner` for all subjects (PR-OWN-3): admin grant/revoke authority comes from the caller's admin cap, not from per-entity data-ownership."
@@ -624,13 +624,13 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     if Code.ensure_loaded?(behavior) and
          function_exported?(behavior, :data_owner, 1) do
       # SPEC `2026-05-29-dispatch-returning-effect.md` §2b — call
-      # the public re-export on `Ezagent.Behavior` rather than reaching
+      # the public re-export on `Ezagent.ActionSet` rather than reaching
       # into `Ezagent.CapabilityRegistry` directly. §11 Gate 6 grep
       # gate forbids plugin Behavior modules from talking to the
       # registry as an implementation detail; the Behavior helper is
       # the sanctioned author-facing surface. The underlying logic is
       # unchanged (the re-export is a thin delegate).
-      case Ezagent.Behavior.data_owner_of(behavior, instance) do
+      case Ezagent.ActionSet.data_owner_of(behavior, instance) do
         %URI{} = owner ->
           caller = Map.get(ctx, :caller)
 
@@ -683,7 +683,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp manager_delegated_grant?(%Ezagent.Capability{behavior: behavior, instance: instance}, ctx)
        when is_atom(behavior) do
     if Code.ensure_loaded?(behavior) and function_exported?(behavior, :data_owner, 1) do
-      case Ezagent.Behavior.data_owner_of(behavior, instance) do
+      case Ezagent.ActionSet.data_owner_of(behavior, instance) do
         %URI{} = owner ->
           Map.get(ctx, :caller) != owner and
             not holds_admin_caps?(ctx) and
@@ -721,7 +721,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     ctx
     |> caller_caps()
     |> Enum.any?(fn
-      %Ezagent.Capability{behavior: Ezagent.Behavior.Manage} = held ->
+      %Ezagent.Capability{behavior: Ezagent.ActionSet.Manage} = held ->
         Ezagent.Capability.action_of(held) == :any and
           held_instance_covers_target?(held, target)
 
@@ -843,7 +843,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :any,
         instance: :any,
         workspace_uri: :any
@@ -860,14 +860,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :any,
         workspace_uri: ^ws_uri
       } ->
         true
 
       %Ezagent.Capability{
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :any,
         workspace_uri: :any
       } ->

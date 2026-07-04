@@ -6,7 +6,7 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   Replaces `EzagentPluginFeishu.SessionBinding.resolve/1` (retired in
   this PR along with the rest of the one-off path). The data lives in
   the generic `external_mirror_bindings` projection table maintained
-  by `Ezagent.Behavior.ExternalMirror`'s `:bind` / `:unbind` actions
+  by `Ezagent.ActionSet.ExternalMirror`'s `:bind` / `:unbind` actions
   (PR-EM-3). Inbound direction reads the same table the outbound
   Worker subscribes off of — single SoT, no parallel join table.
 

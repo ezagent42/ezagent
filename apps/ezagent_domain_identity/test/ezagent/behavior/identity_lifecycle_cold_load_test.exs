@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
+defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
   @moduledoc """
   Phase B architectural-goal gate (SPEC
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6) for the
@@ -23,7 +23,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
   wrongly re-run on cold-load (wiping persisted state) or a persistent field
   that did not survive the restart.
 
-  It also exercises `Ezagent.Behavior.Identity.activate/2` — the caps_json
+  It also exercises `Ezagent.ActionSet.Identity.activate/2` — the caps_json
   reconcile folded out of the old `post_init/2` + `handle_continue/3` (OQ-8)
   — by asserting the caps re-read from `users.caps_json` is unioned into the
   rehydrated `:identity` state on a cold restart.
@@ -46,7 +46,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
     @impl true
     def type_name, do: :identity_lifecycle_apikeys_host
     @impl true
-    def behaviors, do: [Ezagent.Behavior.ApiKeys]
+    def behaviors, do: [Ezagent.ActionSet.ApiKeys]
     @impl true
     def persistence, do: {:snapshot, :on_change}
   end
@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
     @impl true
     def type_name, do: :identity_lifecycle_identity_host
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Identity]
+    def behaviors, do: [Ezagent.ActionSet.Identity]
     @impl true
     def persistence, do: {:snapshot, :on_change}
   end
@@ -69,10 +69,10 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
   # caps_json reconcile in a SEPARATE process) sees this test's transaction.
   setup do
     :ok =
-      Ezagent.BehaviorRegistry.register(ApiKeysHostKind, :put_api_key, Ezagent.Behavior.ApiKeys)
+      Ezagent.BehaviorRegistry.register(ApiKeysHostKind, :put_api_key, Ezagent.ActionSet.ApiKeys)
 
     :ok =
-      Ezagent.BehaviorRegistry.register(ApiKeysHostKind, :get_api_key, Ezagent.Behavior.ApiKeys)
+      Ezagent.BehaviorRegistry.register(ApiKeysHostKind, :get_api_key, Ezagent.ActionSet.ApiKeys)
 
     :ok
   end
@@ -156,7 +156,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
       extra_cap =
         Ezagent.Capability.cap(
           :session,
-          Ezagent.Behavior.Session,
+          Ezagent.ActionSet.Session,
           :send,
           :any,
           Ezagent.Capability.workspace_of(user_uri)
@@ -170,7 +170,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
         Ezagent.BehaviorRegistry.register(
           IdentityHostKind,
           :list_caps,
-          Ezagent.Behavior.Identity
+          Ezagent.ActionSet.Identity
         )
 
       # Spawn with EMPTY initial_caps → create/1 yields only the owner
@@ -182,7 +182,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
       {:ok, %{state: state0}} = Ezagent.Kind.get_raw_slice(user_uri, :identity)
 
       assert Enum.any?(state0.caps, fn c ->
-               c.behavior == Ezagent.Behavior.Session and c.action == :send
+               c.behavior == Ezagent.ActionSet.Session and c.action == :send
              end),
              "Identity.activate/2 did not reconcile the users.caps_json Chat.send cap into " <>
                "the :identity state — the folded post_init/handle_continue reconcile did not run"

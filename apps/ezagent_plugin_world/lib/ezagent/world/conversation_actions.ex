@@ -16,7 +16,7 @@ defmodule Ezagent.World.ConversationActions do
 
   require Logger
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -70,7 +70,16 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
-    create_session(socket, short_name, Map.get(args, "template_name", "default"))
+    create_session(
+      socket,
+      short_name,
+      Map.get(args, "template_name", "default"),
+      Map.get(args, "socialware_ref")
+    )
+  end
+
+  def handle_dispatch(socket, "session.fork_config", %{"session_uri" => sid} = args) do
+    with_session(socket, sid, &Ezagent.World.SessionForkAction.fork_config(socket, &1, args))
   end
 
   def handle_dispatch(socket, "session.publish_template", %{"session_uri" => sid, "name" => name})
@@ -238,17 +247,14 @@ defmodule Ezagent.World.ConversationActions do
   Create a new session in the caller's current workspace via
   `Ezagent.Workspace.create_session/3`, then open its `?session=` deep-link.
   """
-  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
+  @spec create_session(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t() | nil) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def create_session(socket, short_name, template_name)
+  def create_session(socket, short_name, template_name, socialware_ref \\ nil)
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    # A session name is a URI path segment (`session://<ws>/<template>/<name>`).
-    # Whitespace breaks `Ezagent.URI.new!` parsing ("URI parse failed at \":\""),
-    # so collapse internal whitespace to "-" (friendly: "hello world" → "hello-world")
-    # and reject the remaining URI-structural chars with a clear error instead of a
-    # raw ArgumentException. CJK / letters / digits / `-_.` are preserved.
+    # Session names are URI path segments, so collapse whitespace and reject
+    # remaining URI-structural chars with a clear error.
     short_name = sanitize_short_name(short_name)
     template_name = String.trim(template_name)
 
@@ -266,30 +272,44 @@ defmodule Ezagent.World.ConversationActions do
         {:noreply, push_session_create_error(socket, :invalid_workspace)}
 
       true ->
-        case create_session_result(
+        case Ezagent.World.SocialwareInstall.prepare_create_template(
                workspace_uri,
                caller,
-               short_name,
                template_name,
-               &Ezagent.Workspace.create_session/3
+               socialware_ref
              ) do
-          {:ok, %URI{} = session_uri} ->
-            # A session created from a PUBLISHED hello template needs its invisible
-            # ORCHESTRATOR front desk — the generic create path installs the
-            # socialware behaviours + seeds the captured page, but does not spawn
-            # the per-session orchestrator (which then lazily spawns builder /
-            # concierge on demand). hello no-ops for a non-page session;
-            # best-effort so it never blocks the create.
-            _ = ensure_hello_orchestrator(session_uri)
-
-            {:noreply,
-             socket
-             |> assign(:last_dispatch_status, "ok")
-             |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+          {:ok, create_template_name} ->
+            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
         end
+    end
+  end
+
+  defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    case create_session_result(
+           workspace_uri,
+           caller,
+           short_name,
+           template_name,
+           &Ezagent.Workspace.create_session/3
+         ) do
+      {:ok, %URI{} = session_uri} ->
+        # A session created from a PUBLISHED hello template needs its invisible
+        # ORCHESTRATOR front desk — the generic create path installs the socialware
+        # behaviours + seeds the captured page, but does not spawn the per-session
+        # orchestrator (which then lazily spawns builder / concierge on demand).
+        # hello no-ops for a non-page session; best-effort so it never blocks create.
+        _ = ensure_hello_orchestrator(session_uri)
+
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok")
+         |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
+
+      {:error, reason} ->
+        {:noreply, push_session_create_error(socket, reason)}
     end
   end
 

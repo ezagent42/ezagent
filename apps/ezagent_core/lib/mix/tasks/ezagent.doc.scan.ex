@@ -92,7 +92,7 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   # The public-API-creating top-level forms the gate's denominator must cover.
   # `def` alone undercounts: this codebase exposes public API via `defdelegate`
   # (e.g. the `EzagentDomainInstanceMessage` facade) and `defmacro` / `defguard`
-  # (DSL like `Ezagent.Kind.attach/2`, `Ezagent.Behavior.action/2`). Counting
+  # (DSL like `Ezagent.Kind.attach/2`, `Ezagent.ActionSet.action/2`). Counting
   # only `def` would let a branch add an undocumented delegate/macro/guard
   # without tripping the ratchet (codex 2026-06-14). Their private siblings
   # break @doc/@impl adjacency exactly like `defp`.

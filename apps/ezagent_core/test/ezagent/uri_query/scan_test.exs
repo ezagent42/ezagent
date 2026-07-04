@@ -254,6 +254,50 @@ defmodule Ezagent.UriQuery.ScanTest do
                violations_for(violations, :orchestrator_derivation)
     end
 
+    test "classifies an unknown ezagent-like scheme as unknown_scheme_construction (T1-C)" do
+      path =
+        fixture!("unknown_scheme.ex", """
+        defmodule Fixture.UnknownScheme do
+          def build do
+            raw = "config://default/socialware/autoservice"
+            other = "foo://bar/baz"
+            {raw, other}
+          end
+        end
+        """)
+
+      violations = Scan.scan_paths([path])
+      unknown = violations_for(violations, :unknown_scheme_construction)
+
+      assert Enum.any?(unknown, &(&1.snippet =~ "config://"))
+      assert Enum.any?(unknown, &(&1.snippet =~ "foo://"))
+    end
+
+    test "does not classify registered external-URL schemes (T1-C allowlist)" do
+      path =
+        fixture!("external_urls.ex", """
+        defmodule Fixture.ExternalUrls do
+          def urls do
+            [
+              "postgresql://localhost:5432/db",
+              "unix:///tmp/sock",
+              "http://example.com",
+              "https://open.feishu.cn/api",
+              "ws://127.0.0.1/socket",
+              "test://receiver/x",
+              "cc-bridge://audit/synthetic"
+            ]
+          end
+        end
+        """)
+
+      violations = Scan.scan_paths([path])
+
+      assert violations_for(violations, :unknown_scheme_construction) == []
+      assert violations_for(violations, :raw_uri_construction) == []
+      assert violations_for(violations, :raw_cross_cutting_uri_construction) == []
+    end
+
     test "current source tree has no URI-query scan violations" do
       violations = Scan.scan()
       counts = Scan.counts_by_category(violations)

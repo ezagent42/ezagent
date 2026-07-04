@@ -5,7 +5,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   use Phoenix.LiveView
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.AdminActions
   alias Ezagent.World.AgentActions
@@ -672,7 +672,8 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
-      "templates" => session_template_names(workspace_uri),
+      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "socialwares" => socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
       # world:state ({...current, ...next}) and never remounts, so a previously
@@ -681,61 +682,6 @@ defmodule EzagentPluginWorld.WorldLive do
       # nil-clear in IdentityData.put_create_error/3).
       "create_error" => nil
     }
-  end
-
-  # Resolvable SessionTemplate names for the "New session" picker — the live
-  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
-  # resolve, including any the operator just authored via the template form)
-  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
-  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
-    # Registered session Template Classes (e.g. "session.hello") shown by their
-    # friendly name ("hello") — `create_session` resolves the bare name back to
-    # the `session.<name>` class (workspace `resolve_session_class/1`). Without
-    # this the dropdown only listed per-session template INSTANCES ("hello-77")
-    # and the `hello` class itself was missing.
-    # F3: offer only Classes that are DIRECTLY creatable from this generic
-    # picker (the picker supplies only the universal `session_name` arg). A
-    # Class whose `instantiate/3` requires extra args — e.g. a vertical session
-    # class needing an `operator_uri` — declares `directly_creatable?/0 => false` and is
-    # filtered out here, so it can't become the dropdown default and fail closed
-    # with `{:invalid_template, …}` on create.
-    classes =
-      Ezagent.TemplateRegistry.registered_template_names()
-      |> Enum.filter(&String.starts_with?(&1, "session."))
-      |> Enum.filter(&class_directly_creatable?/1)
-      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
-
-    instances =
-      workspace_uri
-      |> Ezagent.URI.name!()
-      |> Ezagent.World.WorkspacePluginData.session_template_rows()
-      |> Enum.map(&Map.get(&1, "name"))
-
-    # "default" is ALWAYS the first (selected) option — the React picker takes
-    # `templates[0]` as its default, so the always-creatable bootstrap class
-    # must lead regardless of how the other names sort.
-    other =
-      (classes ++ instances)
-      |> Enum.reject(&(&1 in [nil, "", "default"]))
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    ["default" | other]
-  rescue
-    _ -> ["default"]
-  end
-
-  defp session_template_names(_), do: ["default"]
-
-  # F3: a registered `session.<name>` Class is offered by the generic picker
-  # only when its Template Class declares itself directly creatable (default
-  # true; advisor overrides false). An unregistered name conservatively passes
-  # (it's a non-class instance name handled elsewhere).
-  defp class_directly_creatable?(class_name) do
-    case Ezagent.TemplateRegistry.lookup(class_name) do
-      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
-      :error -> true
-    end
   end
 
   defp put_command_palette(state, socket) do
@@ -752,6 +698,26 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace
     }
   end
+
+  defp socialware_rows(%URI{} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.Socialware.DefinitionRegistry.list()
+    |> Enum.map(fn row ->
+      public? = Map.get(row, :public?, false)
+
+      %{
+        "name" => Map.get(row, :name),
+        "title" => Map.get(row, :title),
+        "description" => Map.get(row, :description),
+        "version" => Map.get(row, :version),
+        "scope" => Map.get(row, :scope, if(public?, do: "public", else: "private")),
+        "workspace_uri" => encode_uri(Map.get(row, :workspace_uri)),
+        "public" => public?
+      }
+    end)
+  end
+
+  defp socialware_rows(_), do: []
 
   defp caller_payload(caller, workspace, caps, system_member?) do
     %{
@@ -804,7 +770,7 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp ensure_session_subscribed(socket, %URI{} = session_uri) do
-    topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
+    topic = Ezagent.ActionSet.Session.session_events_topic(session_uri)
     subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
 
     if connected?(socket) and not MapSet.member?(subscribed, topic) do

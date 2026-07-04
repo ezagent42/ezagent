@@ -1,11 +1,11 @@
-defmodule Ezagent.Behavior.PublisherTest do
+defmodule Ezagent.ActionSet.PublisherTest do
   @moduledoc """
-  PR-EM-0 contract test for `Ezagent.Behavior.Publisher`.
+  PR-EM-0 contract test for `Ezagent.ActionSet.Publisher`.
 
   Verifies the behaviour declares the four callbacks the SPEC pins
   (`history_retention/0`, `subscribe_from/3`, `snapshot/1`, `history/3`)
   AND that `Ezagent.Entity.Session` declares `@behaviour
-  Ezagent.Behavior.Publisher` — the architectural invariant that
+  Ezagent.ActionSet.Publisher` — the architectural invariant that
   closes the loop per `feedback_completion_requires_invariant_test`
   (Allen 2026-05-05).
 
@@ -25,10 +25,10 @@ defmodule Ezagent.Behavior.PublisherTest do
 
   use ExUnit.Case, async: true
 
-  describe "Ezagent.Behavior.Publisher (the contract)" do
+  describe "Ezagent.ActionSet.Publisher (the contract)" do
     test "declares exactly four callbacks (history_retention/0, subscribe_from/3, snapshot/1, history/3)" do
       callbacks =
-        Ezagent.Behavior.Publisher.behaviour_info(:callbacks)
+        Ezagent.ActionSet.Publisher.behaviour_info(:callbacks)
         |> Enum.sort()
 
       assert callbacks == [
@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.PublisherTest do
     end
 
     test "optional callbacks list is empty (all four are required)" do
-      optionals = Ezagent.Behavior.Publisher.behaviour_info(:optional_callbacks)
+      optionals = Ezagent.ActionSet.Publisher.behaviour_info(:optional_callbacks)
       assert optionals == []
     end
   end

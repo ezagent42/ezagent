@@ -87,10 +87,12 @@ standard + conflict/merge management:
 ```
 docs/together/YYYY-MM-DD/
 ├── plan.md             # lead (plan):    tasks, scope, per-task branches, conflict map
+├── plan.html           # lead (plan):    team-facing render of plan.md (product-first, no meta)
 ├── handoffs/<task>.md  # lead (handoff): one reviewed handoff per task
 ├── returns/<task>.md   # dev  (return):  timestamped done + DoD artifact + merge request
 ├── stack.md            # lead (push):    returns in analyzed merge order
-└── review.md           # lead (review):  end-of-day retrospective + next-day suggestions
+├── review.md           # lead (review):  end-of-day retrospective + next-day suggestions
+└── review.html         # lead (review):  team-facing render of review.md (product-first, no meta)
 ```
 Durable design specs/notes still live in `docs/superpowers/`; `docs/together/` is
 the **daily operational record**.
@@ -134,6 +136,11 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
 - **Close PR state.** After `close`, every related GitHub PR is either merged
   through GitHub or explicitly closed/commented as subsumed by the `main` merge
   SHA. Never leave an open PR whose code already landed through the lead path.
+- **Team-facing render accompanies the record.** `review` writes both `review.md`
+  and its team-facing `review.html` (product-first, no Claude↔lead discussion
+  meta, self-contained inline CSS, house style) — the `.html` is the artifact the
+  team reads, `review.md` stays the machine/`plan` input. `plan` similarly carries
+  the analogous `plan.html` render. A missing `.html` means the step is incomplete.
 - **Superpowers SDD scratch.** When delegating to
   `superpowers:subagent-driven-development`, use the current Superpowers
   workspace convention: task briefs, reports, review diffs, and progress ledger

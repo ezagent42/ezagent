@@ -29,7 +29,7 @@ defmodule EzagentDomainSession.Integration.AgentManifestToolsDispatchTest do
       caps: [
         %{
           "kind" => "session",
-          "behavior" => "Ezagent.Behavior.Session",
+          "behavior" => "Ezagent.ActionSet.Session",
           "action" => "send"
         }
       ],

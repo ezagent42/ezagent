@@ -35,7 +35,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
   import Ezagent.E2E.Step
 
   alias Ezagent.AgentBridge.TokenStore
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.E2E.Scenario
   alias Ezagent.Entity.{Agent, Session, SessionTemplate, User}
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
@@ -491,7 +491,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
   defp template_cap(kind, ws) do
     %Capability{
       kind: kind,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       instance: {:within_workspace, ws},
       workspace_uri: ws,
       granted_by: User.admin_uri(),

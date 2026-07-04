@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.OrchestratorAdmin do
+defmodule Ezagent.ActionSet.OrchestratorAdmin do
   @moduledoc """
   Cap-only Behavior anchoring the session-owner authority over the
   session's orchestrator agent.
@@ -44,7 +44,7 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   ## Why cap-only
 
   No action is invoked against this Behavior — it's a pure cap shim,
-  the same pattern `Ezagent.Behavior.Notifications` uses. The dispatch
+  the same pattern `Ezagent.ActionSet.Notifications` uses. The dispatch
   CapBAC chokepoint records the cap subject + checks against caller
   caps; the handler is unreachable in practice (the LV reads the cap
   and dispatches `template.instantiate` directly).
@@ -57,20 +57,20 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   Registered against `Ezagent.Entity.Session` in
   `EzagentDomainInstanceMessage.Application.start/2`. Lives in
   `ezagent_domain_session` because `data_owner/1` delegates to
-  `Ezagent.Behavior.Session.data_owner/1` (which reads
+  `Ezagent.ActionSet.Session.data_owner/1` (which reads
   `slice.chat.owner_uri`); a `ezagent_core` location would create a
   core→domain dependency.
 
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the cap-only /
   ## no-state case)
 
-  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. This
+  Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`. This
   is the trivial conversion: cap-only Behavior with an EMPTY slice and NO
   transients. `init_slice/1` → `create/1` returning `{:ok, %{}}` (the
   persistent state is empty — the cap is the whole point); `activate/2`
   is the macro-injected no-op default (no transients to rebuild). The
   hand-rolled `def state_slice` is gone — the macro auto-derives
-  `Ezagent.Behavior.OrchestratorAdmin` → `:orchestrator_admin`, which is
+  `Ezagent.ActionSet.OrchestratorAdmin` → `:orchestrator_admin`, which is
   EXACTLY the pre-Lifecycle key, so no `state_slice:` override is needed
   (SPEC §5 step 2 / §7 OQ-7).
 
@@ -78,7 +78,7 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   `handle_restart/2` cap-only handler all pass through the Lifecycle
   macro unchanged (SPEC §3 mapping table).
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.OrchestratorAdmin`
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.OrchestratorAdmin`
   — a domain module (`apps/ezagent_domain_session`); NP-2 (layer-vocabulary)
   only forbids upper-layer concept words in `apps/ezagent_core/`, so an
   `Orchestrator`-named domain module is permitted. NP-3 (width): the name
@@ -151,24 +151,24 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
     # assert_raise on the original cap-only message keep working;
     # the runtime maps the raise to {:error, {:behavior_exception,
     # :error, %RuntimeError{...}}} for a clean propagation.
-    raise "Ezagent.Behavior.OrchestratorAdmin.:restart is cap-only — " <>
+    raise "Ezagent.ActionSet.OrchestratorAdmin.:restart is cap-only — " <>
             "the UI (OrchestratorHealthCard) consults this cap to gate the " <>
             "Restart button; the actual restart still dispatches " <>
             "template.instantiate on the cc-orchestrator template."
   end
 
   # RFC #402: the cap data-owner is the session's owner. The session
-  # URI's owner is read by `Ezagent.Behavior.Session.data_owner/1` (which
+  # URI's owner is read by `Ezagent.ActionSet.Session.data_owner/1` (which
   # reads `slice.chat.owner_uri` via `Session.owner/1`); we route
   # through there to keep one source of truth.
   @doc """
   The cap data-owner for a subject URI: the session's owner. A `session://` URI
-  routes through `Ezagent.Behavior.Session.data_owner/1` (which reads
+  routes through `Ezagent.ActionSet.Session.data_owner/1` (which reads
   `slice.chat.owner_uri`) so ownership has ONE source of truth (RFC #402); `:any`
   is its own owner, anything else has `:no_owner`.
   """
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    Ezagent.Behavior.Session.data_owner(session_uri)
+    Ezagent.ActionSet.Session.data_owner(session_uri)
   end
 
   def data_owner(:any), do: :any

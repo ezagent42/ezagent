@@ -4,7 +4,7 @@ defmodule Ezagent.Agent.RecipeTest do
   alias Ezagent.Agent.Recipe
 
   # Task #54 PR-1 §2.1 — a Role is the FLAVOR-AGNOSTIC sandbox-content recipe
-  # (the content of a `template://<ws>/role/<name>` Template). It names skills,
+  # (the content of a `template://<ws>/recipe/<name>` Template). It names skills,
   # plugins, a prompt persona, the behavior subset, REQUESTED caps (authorized
   # fail-closed at materialization — §2.3.1, never copied), and a
   # session-template REFERENCE. None of its fields may name a flavor
@@ -17,16 +17,16 @@ defmodule Ezagent.Agent.RecipeTest do
                  skills: ["orchestrator"],
                  plugins: ["np"],
                  prompt: "you are an orchestrator",
-                 behaviors: [Ezagent.Behavior.Sandbox],
-                 requested_caps: [%{behavior: Ezagent.Behavior.Pty, action: :drive}],
+                 behaviors: [Ezagent.ActionSet.Sandbox],
+                 requested_caps: [%{behavior: Ezagent.ActionSet.Pty, action: :drive}],
                  session_template: "template://system/session/orchestrator"
                })
 
       assert role.skills == ["orchestrator"]
       assert role.plugins == ["np"]
       assert role.prompt == "you are an orchestrator"
-      assert role.behaviors == [Ezagent.Behavior.Sandbox]
-      assert role.requested_caps == [%{behavior: Ezagent.Behavior.Pty, action: :drive}]
+      assert role.behaviors == [Ezagent.ActionSet.Sandbox]
+      assert role.requested_caps == [%{behavior: Ezagent.ActionSet.Pty, action: :drive}]
       assert role.session_template == "template://system/session/orchestrator"
     end
 
@@ -133,15 +133,15 @@ defmodule Ezagent.Agent.RecipeTest do
 
     test "validates + canonicalizes behavior entries (string module names → atoms; rejects non-modules)" do
       # atom modules pass through
-      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
-               Recipe.new(%{behaviors: [Ezagent.Behavior.Sandbox]})
+      assert {:ok, %{behaviors: [Ezagent.ActionSet.Sandbox]}} =
+               Recipe.new(%{behaviors: [Ezagent.ActionSet.Sandbox]})
 
       # persisted string module names are canonicalized to the module atom
-      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
-               Recipe.new(%{"behaviors" => ["Ezagent.Behavior.Sandbox"]})
+      assert {:ok, %{behaviors: [Ezagent.ActionSet.Sandbox]}} =
+               Recipe.new(%{"behaviors" => ["Ezagent.ActionSet.Sandbox"]})
 
-      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
-               Recipe.new(%{"behaviors" => ["Elixir.Ezagent.Behavior.Sandbox"]})
+      assert {:ok, %{behaviors: [Ezagent.ActionSet.Sandbox]}} =
+               Recipe.new(%{"behaviors" => ["Elixir.Ezagent.ActionSet.Sandbox"]})
 
       # non-module / malformed entries are rejected fail-loud
       assert {:error, {:invalid_role_field, :behaviors, "No.Such.Module"}} =
@@ -192,13 +192,13 @@ defmodule Ezagent.Agent.RecipeTest do
       assert {:ok, role} =
                Recipe.new(%{
                  "requested_caps" => [
-                   %{"behavior" => "Ezagent.Behavior.Chat", "action" => "send"}
+                   %{"behavior" => "Ezagent.ActionSet.Chat", "action" => "send"}
                  ]
                })
 
       # KEYS atomized (uniform → no mixed-key normalize! ambiguity); VALUES left
       # for PR-1b's normalize!/context-injection.
-      assert [%{behavior: "Ezagent.Behavior.Chat", action: "send"}] = role.requested_caps
+      assert [%{behavior: "Ezagent.ActionSet.Chat", action: "send"}] = role.requested_caps
 
       assert {:error, {:invalid_role_field, :skills, "nope"}} =
                Recipe.new(%{"skills" => "nope"})

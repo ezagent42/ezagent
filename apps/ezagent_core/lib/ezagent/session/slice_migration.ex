@@ -6,7 +6,7 @@ defmodule Ezagent.Session.SliceMigration do
 
   ## Why this exists
 
-  The internal "Chat" Behavior was renamed to `Ezagent.Behavior.Session`. Its
+  The internal "Chat" Behavior was renamed to `Ezagent.ActionSet.Session`. Its
   `state_slice/0` now AUTO-DERIVES to `:session` (was the explicit `:chat`
   override). A snapshot persisted under the OLD code carries its session state
   under the top-level `:chat` key; the NEW code reads/writes `:session`. There

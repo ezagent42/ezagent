@@ -172,7 +172,7 @@ defmodule Ezagent.Routing.Legend do
 
   `members` is the Chat slice `:members` map (`%{URI => meta}`). `legends` is
   the session legend registry. `role_resolver` is a `(role_name -> URI | nil)`
-  closure (the `Ezagent.Behavior.Session.role_name_to_uri/2` contract) used to map
+  closure (the `Ezagent.ActionSet.Session.role_name_to_uri/2` contract) used to map
   a legend's `member_set` role_names to live member URIs; a `member_set` entry
   that is already a URI string is resolved directly.
 

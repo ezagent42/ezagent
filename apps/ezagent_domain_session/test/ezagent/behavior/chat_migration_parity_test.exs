@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.ChatMigrationParityTest do
+defmodule Ezagent.ActionSet.ChatMigrationParityTest do
   @moduledoc """
   Phase 2-a r3 (2026-05-28) — migration parity tests for
-  `Ezagent.Behavior.Session` after the SPEC 2026-05-28 new-action-grammar
+  `Ezagent.ActionSet.Session` after the SPEC 2026-05-28 new-action-grammar
   migration.
 
   Covers the actions (:send / :join / :leave /
@@ -24,11 +24,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   # PR-2 (im/session/agent decomposition §OQ-4) — `:receive` split out of
   # SessionBehavior into two first-class Behaviors.
-  alias Ezagent.Behavior.User.Receive, as: UserReceive
-  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
+  alias Ezagent.ActionSet.User.Receive, as: UserReceive
+  alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   # Sandbox provided by EzagentCore.DataCase (#92).

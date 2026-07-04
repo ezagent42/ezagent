@@ -25,7 +25,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuLifecycleColdLoadTest do
   persistent-state half of the Lifecycle contract in isolation we host
   the unchanged Behaviors on test-only Kinds with `{:snapshot,
   :on_change}` (the same technique the reference
-  `Ezagent.Behavior.SandboxColdRestartTest` + the curl-agent /
+  `Ezagent.ActionSet.SandboxColdRestartTest` + the curl-agent /
   echo cold-load gates use).
   """
 

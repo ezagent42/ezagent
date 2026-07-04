@@ -36,9 +36,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     `Ezagent.Agent.RecipeRegistry` (populated at cc plugin boot from `roles/0`, RF-9)
     and compose it → `sandbox_content` (`%{skills, plugins, prompt}`). The
     registry IS the re-point seam: a later PR swaps the lookup source to the
-    persisted `template://system/role/<name>` Template without touching the
-    installer. `resolve_orchestrator_role/0` is the back-compat alias
-    (`resolve_role(OrchestratorRole.name())`).
+    persisted `template://system/recipe/<name>` Template without touching the
+    installer. `resolve_orchestrator_recipe/0` is the back-compat alias
+    (`resolve_role(OrchestratorRecipe.name())`).
   - `install_role_sandbox/2` — PURE filesystem: for each `skills` ref, resolve its
     source dir + copy it into `config_dir/skills/<ref>`, then append the cc
     skill-load hint to `CLAUDE.md`. No hardcoded skill: it installs whatever the
@@ -55,12 +55,12 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   ## Deferred (PR-2 scope)
 
   `behaviors`/`caps`→`TemplateSpawn` threading and the forkable persisted role
-  Template Kind are follow-ups — see `Ezagent.Orchestrator.OrchestratorRole`.
+  Template Kind are follow-ups — see `Ezagent.Orchestrator.OrchestratorRecipe`.
   """
 
   require Logger
 
-  alias Ezagent.Orchestrator.OrchestratorRole
+  alias Ezagent.Orchestrator.OrchestratorRecipe
 
   @orchestrator_skill_ref "ezagent-session-orchestrator"
   @skills_relroot ".claude/skills"
@@ -104,7 +104,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   seeded at plugin boot from `roles/0`) — NOT re-derived from a bespoke compose.
   This routes the role through the SAME registry indirection RF-5a uses, and is
   the documented re-point seam for the future persisted
-  `template://system/role/<name>` Template (swap the lookup source without
+  `template://system/recipe/<name>` Template (swap the lookup source without
   touching the installer).
 
   Fails closed as `{:error, {:role_unresolved, {:role_not_registered, name}}}` —
@@ -132,12 +132,12 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   end
 
   @doc """
-  Back-compat alias for the orchestrator role — `resolve_role(OrchestratorRole.name())`.
+  Back-compat alias for the orchestrator role — `resolve_role(OrchestratorRecipe.name())`.
   Kept so existing callers/tests that resolve the orchestrator specifically keep
   working; new code passes the agent's actual role name to `resolve_role/1`.
   """
-  @spec resolve_orchestrator_role() :: {:ok, map()} | {:error, term()}
-  def resolve_orchestrator_role, do: resolve_role(OrchestratorRole.name())
+  @spec resolve_orchestrator_recipe() :: {:ok, map()} | {:error, term()}
+  def resolve_orchestrator_recipe, do: resolve_role(OrchestratorRecipe.name())
 
   @doc """
   Install a composed role `sandbox_content` into `config_dir` — PURE filesystem.
@@ -224,8 +224,8 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   end
 
   @doc "Whether a template map declares the `orchestrator` role (`\"role\" => \"orchestrator\"`/`:orchestrator`). Retained for callers that branch specifically on the orchestrator; `bootstrap/2` itself now gates on the generic `role_name/1`. Anything else is `false`."
-  @spec orchestrator_role?(map()) :: boolean()
-  def orchestrator_role?(tmpl) when is_map(tmpl) do
+  @spec orchestrator_recipe?(map()) :: boolean()
+  def orchestrator_recipe?(tmpl) when is_map(tmpl) do
     case Map.get(tmpl, "role") do
       "orchestrator" -> true
       :orchestrator -> true
@@ -233,7 +233,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     end
   end
 
-  def orchestrator_role?(_), do: false
+  def orchestrator_recipe?(_), do: false
 
   @doc """
   The role NAME a template declares, or `nil` when there is no role to install

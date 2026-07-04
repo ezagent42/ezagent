@@ -42,11 +42,11 @@ dispatchable action 的 Behavior。一个 base 可以被多个 socialware 组合
 
 | Base | 代码 | 作用 |
 | --- | --- | --- |
-| orchestrator | `Ezagent.Behavior.Template` recipe content + `Orchestrator.Tools` + `SessionManager` | 已存在的编排组合。不新增 `Behavior.Orchestrator`，也不重构 `Behavior.Template`。 |
-| surface | `Ezagent.Behavior.Surface` | 渲染/外部 surface 基座，包含不可变 page versions、approved pointer 和 settlement commit。 |
-| pty | `Ezagent.Behavior.Pty` | 终端/PTY 基座。 |
-| sandbox | `Ezagent.Behavior.Sandbox` | 每个 agent 的 config directory 和插件扩展基座。 |
-| cc-headless-agent | `Ezagent.Behavior.CcHeadlessAgent` | Claude Code SDK / headless-agent 基座。 |
+| orchestrator | `Ezagent.ActionSet.Template` recipe content + `Orchestrator.Tools` + `SessionManager` | 已存在的编排组合。不新增 `Behavior.Orchestrator`，也不重构 `Behavior.Template`。 |
+| surface | `Ezagent.ActionSet.Surface` | 渲染/外部 surface 基座，包含不可变 page versions、approved pointer 和 settlement commit。 |
+| pty | `Ezagent.ActionSet.Pty` | 终端/PTY 基座。 |
+| sandbox | `Ezagent.ActionSet.Sandbox` | 每个 agent 的 config directory 和插件扩展基座。 |
+| cc-headless-agent | `Ezagent.ActionSet.CcHeadlessAgent` | Claude Code SDK / headless-agent 基座。 |
 
 orchestrator base 是对已存在 recipe + tools + executor 组合的概念简称。
 `Behavior.Template` 仍然只是 AgentTemplate / SessionTemplate Kind 上的
@@ -79,15 +79,15 @@ adapter 配置，但不会给模型增加新层，也不能作为概念进入核
 shape 是流程特有的 behavior 和 recipe，它把 base 组合成某种具体流程。
 
 对 chat 来说，shape 是 conversation turn protocol，也就是
-`Ezagent.Behavior.Turn`。Turn 拥有 `:turns` slice，只适用于 conversation flow，
+`Ezagent.ActionSet.Turn`。Turn 拥有 `:turns` slice，只适用于 conversation flow，
 所以它是 shape，不是 base。
 
 对 kanban 来说，shape 是 board/task protocol，也就是
-`Ezagent.Behavior.Kanban`：nodes、stages、claims、statuses、artifacts、
+`Ezagent.ActionSet.Kanban`：nodes、stages、claims、statuses、artifacts、
 metrics、GitHub/Miro sync 和 board configuration。
 
 Surface 不同：渲染外部 surface 可以被无关流程复用，所以
-`Ezagent.Behavior.Surface` 是 base。
+`Ezagent.ActionSet.Surface` 是 base。
 
 ## Base 如何组合成 Socialware
 
@@ -104,13 +104,15 @@ socialware definition 是 config-as-data。它定义：
 - 外部 adapters，例如 web feed、Feishu、Slack；
 - visibility policy，包括匿名 web access 和 publish policy。
 
-definition 使用 ConfigStore object 地址：
+definition 存放在结构化的非 URI ConfigStore subject 下：
 
 ```text
-config://<workspace>/socialware/<name>
+socialware:<name>
 ```
 
-不存在 `socialware://` scheme，socialware 也不是新的 Kind。
+该 subject 是一个不透明标识符，而非 `<scheme>://` URI。workspace 是独立的
+ConfigStore 字段，不嵌入 subject（T1 project B）；ConfigObject key 为
+`"socialware"`。不存在 `socialware://` scheme，socialware 也不是新的 Kind。
 
 ## 如何编写一个 Socialware
 

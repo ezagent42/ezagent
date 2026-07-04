@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorker do
+defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   @moduledoc """
-  `Ezagent.Behavior.ExternalMirrorWorker` — the per-binding Worker
+  `Ezagent.ActionSet.ExternalMirrorWorker` — the per-binding Worker
   Behavior on `Ezagent.Entity.ExternalMirrorWorker`.
 
   SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
@@ -94,12 +94,12 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
   alias Ezagent.Publisher.Event
-  alias Ezagent.Behavior.ExternalMirrorWorker.SendKey
+  alias Ezagent.ActionSet.ExternalMirrorWorker.SendKey
 
   # ----- Ezagent.Lifecycle contract (Phase B lifecycle migration) ---------
   #
   # SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §2.3
-  # / §5. Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`.
+  # / §5. Converted from `use Ezagent.ActionSet` to `use Ezagent.Lifecycle`.
   #
   # Two-container split (SPEC §0.1 / §2.1):
   #
@@ -162,7 +162,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   # state_slice/0 is AUTO-DERIVED by `use Ezagent.Lifecycle` from the
-  # module's last segment: `Ezagent.Behavior.ExternalMirrorWorker` →
+  # module's last segment: `Ezagent.ActionSet.ExternalMirrorWorker` →
   # `:external_mirror_worker` — identical to the pre-migration explicit
   # `def state_slice, do: :external_mirror_worker`, so the snapshot slice
   # key is unchanged and no `state_slice:` override is needed (SPEC §5
@@ -467,7 +467,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # Task #49 codex round-1 FAIL #6 — bounded retry on `{:error, :not_ready}`.
   #
-  # Primary fix is `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2`
+  # Primary fix is `Ezagent.ActionSet.Publisher.SessionImpl.on_ready/2`
   # broadcasting AFTER ReadyGate flips, so this retry path should be
   # cold in normal operation. It exists as defence-in-depth for two
   # cases:
@@ -752,7 +752,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # Send-key derivation (extract_event_send_key / unwrap_chat_slice /
   # fetch_send_cursor) lives in
-  # `Ezagent.Behavior.ExternalMirrorWorker.SendKey` (#25 Phase-3 PR-3O).
+  # `Ezagent.ActionSet.ExternalMirrorWorker.SendKey` (#25 Phase-3 PR-3O).
 
   defp do_invoke_publish(slice, %Event{} = event, event_send_key) do
     case slice.adapter_module.event_to_payload(event) do
@@ -809,7 +809,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   # `interface/0`, `actions/0`, `cap_subjects/0` are auto-derived by
-  # `use Ezagent.Behavior` from the `action :publish, ...` declaration
+  # `use Ezagent.ActionSet` from the `action :publish, ...` declaration
   # at the top of this module. The legacy explicit `interface/0` was
   # removed as part of the Phase 2-d r3 migration.
 
@@ -961,7 +961,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # `granted_by` axis is provenance (`identity_key/1` / `matches?/2` ignore it)
   # — no #154 grant regression. Each helper mints ONLY the cap its site needs
   # (least privilege). Public `@doc false` — pure constructors exposed for
-  # `Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest`.
+  # `Ezagent.ActionSet.ExternalMirrorWorkerSelfCapsTest`.
 
   # `:publish` self-dispatch cap — GENUINE self-authority, so `granted_by` =
   # `self_uri` (real entity per #154). Shape = `required_caps/0[:publish]`.
@@ -989,7 +989,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       %Ezagent.Capability{
         Ezagent.Capability.cap(
           :session,
-          Ezagent.Behavior.Publisher.SessionImpl,
+          Ezagent.ActionSet.Publisher.SessionImpl,
           :subscribe_from
         )
         | granted_by: Ezagent.URI.user(:system, :admin),

@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
+defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
   @moduledoc """
   Phase B (Lifecycle migration) — the cold-restart / transient-isolation
-  invariant gate for `Ezagent.Behavior.ExternalMirrorWorker`
+  invariant gate for `Ezagent.ActionSet.ExternalMirrorWorker`
   (`feedback_completion_requires_invariant_test` + SPEC
   `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §6 AC-4).
 

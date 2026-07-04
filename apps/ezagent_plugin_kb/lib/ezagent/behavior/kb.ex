@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Kb do
+defmodule Ezagent.ActionSet.Kb do
   @moduledoc """
   KB Behavior — the thin framework half of the retrieval-first KB (SPEC rev 3).
 
@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.Kb do
 
   use Ezagent.Lifecycle
 
-  alias Ezagent.Behavior.Kb.Chunker
+  alias Ezagent.ActionSet.Kb.Chunker
   alias Ezagent.Resource.FsResolver
   alias EzagentPluginKb.Store
 

@@ -19,12 +19,12 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   end
 
   # The needed-cap shape dispatch step 5.5 derives for `Session :send` on a
-  # concrete target (declared behavior `Ezagent.Behavior.Session`; instance +
+  # concrete target (declared behavior `Ezagent.ActionSet.Session`; instance +
   # workspace substituted from the target).
   defp needed_send(%URI{} = su) do
     %{
       kind: :session,
-      behavior: Ezagent.Behavior.Session,
+      behavior: Ezagent.ActionSet.Session,
       action: :send,
       instance: Ezagent.URI.instance(su),
       workspace_uri: Ezagent.Capability.workspace_of(su)
@@ -63,7 +63,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
     [cap] = MapSet.to_list(caps)
 
     assert cap.kind == :session
-    assert cap.behavior == Ezagent.Behavior.Session
+    assert cap.behavior == Ezagent.ActionSet.Session
     assert cap.action == :send
   end
 
@@ -83,7 +83,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
 
     needed_bind = %{
       kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
+      behavior: Ezagent.ActionSet.ExternalMirror,
       action: :bind,
       instance: Ezagent.URI.instance(su),
       workspace_uri: Ezagent.Capability.workspace_of(su)

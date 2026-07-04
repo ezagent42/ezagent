@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.Behavior.SupervisorApprovalTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.SupervisorApproval
+  alias Ezagent.ActionSet.SupervisorApproval
   alias Ezagent.Workspace.ResponsibilityAssignment
 
   defp ctx(session_uri, caller, slice) do
@@ -13,7 +13,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.SupervisorApprovalTest do
   end
 
   defp apply_effects({:ok, result, effects}, slice) do
-    {:ok, %{state: new_slice}} = Ezagent.Behavior.apply_effects(effects, slice)
+    {:ok, %{state: new_slice}} = Ezagent.ActionSet.apply_effects(effects, slice)
     {:ok, result, new_slice}
   end
 

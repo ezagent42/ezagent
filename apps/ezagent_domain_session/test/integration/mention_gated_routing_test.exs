@@ -28,7 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   import Ecto.Query
 
   alias Ezagent.{Invocation, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.User
   alias Ezagent.Routing.Resolver
 

@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
+defmodule Ezagent.ActionSet.ApiKeysMigrationParityTest do
   @moduledoc """
   P2-b migration parity test (SPEC #445 §7.3 Level 1 — dispatch
   parity).
 
-  Validates that the migrated `Ezagent.Behavior.ApiKeys` produces the
+  Validates that the migrated `Ezagent.ActionSet.ApiKeys` produces the
   same dispatch-visible outcome via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_<action>/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration.
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.ApiKeys
+  alias Ezagent.ActionSet.ApiKeys
 
   defmodule StubAgentKind do
     @moduledoc false
@@ -26,7 +26,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
     @impl true
     def type_name, do: :api_keys_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.ApiKeys]
+    def behaviors, do: [Ezagent.ActionSet.ApiKeys]
     @impl true
     def persistence, do: :ephemeral
   end

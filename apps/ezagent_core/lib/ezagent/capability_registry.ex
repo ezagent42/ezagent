@@ -207,7 +207,7 @@ defmodule Ezagent.CapabilityRegistry do
          }}
 
       [] ->
-        # #533 §3.4 — universal behaviors (e.g. Ezagent.Behavior.Manage)
+        # #533 §3.4 — universal behaviors (e.g. Ezagent.ActionSet.Manage)
         # are grantable on EVERY Kind by construction. On a per-Kind miss,
         # synthesize the subject for the universal behavior handling this
         # action (a per-Kind registration above always wins).
@@ -343,7 +343,7 @@ defmodule Ezagent.CapabilityRegistry do
   `:no_owner` (the safe default for Behaviors that haven't migrated
   yet — PR-OWN-2..6 sweeps them).
 
-  See `Ezagent.Behavior` `data_owner/1` callback for the contract.
+  See `Ezagent.ActionSet` `data_owner/1` callback for the contract.
   """
   @spec data_owner_of(
           behavior :: module(),

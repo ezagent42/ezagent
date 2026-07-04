@@ -1,24 +1,24 @@
 defmodule Ezagent.Identity.GrantMigration do
   @moduledoc """
   chat→session rename (Allen 2026-06-12, NO back-compat) — rewrite persisted
-  capability grants whose `behavior` is the OLD `Ezagent.Behavior.Chat` module
-  to the NEW `Ezagent.Behavior.Session`.
+  capability grants whose `behavior` is the OLD `Ezagent.ActionSet.Chat` module
+  to the NEW `Ezagent.ActionSet.Session`.
 
   ## Why this exists
 
-  The internal "Chat" Behavior was renamed to `Ezagent.Behavior.Session`. A
-  cap minted under the old code persists `behavior: Ezagent.Behavior.Chat` in
+  The internal "Chat" Behavior was renamed to `Ezagent.ActionSet.Session`. A
+  cap minted under the old code persists `behavior: Ezagent.ActionSet.Chat` in
   TWO places:
 
     1. `users.caps_json` — the caps SSOT (JSON; behavior stored as the string
-       `"Elixir.Ezagent.Behavior.Chat"`). `Ezagent.Behavior.Identity.activate/2`
+       `"Elixir.Ezagent.ActionSet.Chat"`). `Ezagent.ActionSet.Identity.activate/2`
        reconciles its in-memory caps FROM this column on every start.
     2. The `:identity` slice in `kind_snapshots` — the cache (binary term;
-       behavior stored as the atom `Ezagent.Behavior.Chat`).
+       behavior stored as the atom `Ezagent.ActionSet.Chat`).
 
   After the rename, `Capability.matches?/2` compares `behavior` by equality, so
-  a stored `Ezagent.Behavior.Chat` cap can no longer authorize a
-  `Ezagent.Behavior.Session` dispatch — the grant is silently dead. Worse, the
+  a stored `Ezagent.ActionSet.Chat` cap can no longer authorize a
+  `Ezagent.ActionSet.Session` dispatch — the grant is silently dead. Worse, the
   caps_json decoder (`Capability.from_map/1` → `String.to_existing_atom/1`)
   rescues an unresolvable old-module string to `:any`, silently BROADENING the
   cap. This migration rewrites the OLD module string/atom to the NEW one BEFORE
@@ -50,22 +50,22 @@ defmodule Ezagent.Identity.GrantMigration do
   # String forms as they appear in `caps_json` (Jason-encoded). The behavior is
   # stored via `Ezagent.Capability.Normalize.atom_or_module_to_string/1`, which
   # for a module yields the full `Elixir.`-prefixed name.
-  @old_behavior_string "Elixir.Ezagent.Behavior.Chat"
-  @new_behavior_string "Elixir.Ezagent.Behavior.Session"
+  @old_behavior_string "Elixir.Ezagent.ActionSet.Chat"
+  @new_behavior_string "Elixir.Ezagent.ActionSet.Session"
 
   # Atom forms (as stored inside a `:identity` slice's `%Capability{}` in the
   # snapshot binary). Referencing the new module here creates a normal compile
   # dependency; the old atom is referenced as a literal (it may no longer be a
   # loaded module, but `:erlang.binary_to_term` recreates the atom regardless).
-  @old_behavior_atom :"Elixir.Ezagent.Behavior.Chat"
-  @new_behavior_atom Ezagent.Behavior.Session
+  @old_behavior_atom :"Elixir.Ezagent.ActionSet.Chat"
+  @new_behavior_atom Ezagent.ActionSet.Session
 
   @doc """
   Pure transform on a raw `caps_json` STRING: rewrite every occurrence of the
-  old `Ezagent.Behavior.Chat` behavior to `Ezagent.Behavior.Session`.
+  old `Ezagent.ActionSet.Chat` behavior to `Ezagent.ActionSet.Session`.
 
   Operates on the encoded JSON text (a global string replace on the exact
-  `"Elixir.Ezagent.Behavior.Chat"` token, which only ever appears as a
+  `"Elixir.Ezagent.ActionSet.Chat"` token, which only ever appears as a
   `"behavior"` value — it is a fully-qualified module name, not a substring of
   any other cap field). Returns `{:changed, new_json}` when a rewrite happened,
   `{:unchanged, json}` otherwise.
@@ -81,7 +81,7 @@ defmodule Ezagent.Identity.GrantMigration do
 
   @doc """
   Pure transform on a decoded `%Capability{}`: rewrite its `behavior` field
-  from the old Chat module (string OR atom form) to `Ezagent.Behavior.Session`.
+  from the old Chat module (string OR atom form) to `Ezagent.ActionSet.Session`.
   Any other behavior is returned unchanged.
   """
   @spec rewrite_cap(map()) :: map()
@@ -114,7 +114,7 @@ defmodule Ezagent.Identity.GrantMigration do
   @doc """
   Go/no-go gate. Returns `{:ok, count}` where `count` is the number of
   persisted homes (users rows + `:identity` snapshot rows) that STILL reference
-  the old `Ezagent.Behavior.Chat` behavior. `0` is the green light.
+  the old `Ezagent.ActionSet.Chat` behavior. `0` is the green light.
   """
   @spec gate() :: {:ok, non_neg_integer()}
   def gate do

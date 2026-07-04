@@ -5,12 +5,31 @@ defmodule EzagentWeb.HomeLive do
   ## Three-way mount
 
   - **No session cookie** (`current_entity_uri` absent) → redirect `/login`.
-  - **Authenticated AND ≥1 session in `EzagentDomainInstanceMessage.list_sessions/0`** →
+  - **Authenticated AND ≥1 session in the caller's workspace** →
     redirect `/sessions` (the default app surface, unchanged from Phase 8).
-  - **Authenticated AND no sessions exist** → render the first-login
-    wizard inline. Operator picks a short name (default "main") and
-    submits; we call `Ezagent.Workspace.create_session/3` (which spawns
-    + binds workspace + joins admin) and then push_navigate to `/sessions`.
+  - **Authenticated AND no sessions in the caller's workspace** → render
+    the first-login wizard inline. Operator picks a short name (default
+    "main") and submits; we call `Ezagent.Workspace.create_session/3`
+    (which spawns + binds workspace + joins admin) and then push_navigate
+    to `/sessions`.
+
+  ## W0 tenant-isolation (2026-07-03)
+
+  The landing判据 MUST be workspace-scoped. The prior code called the
+  GLOBAL `EzagentDomainInstanceMessage.list_sessions/0`
+  (`KindRegistry.list_all()` across every tenant), so a freshly-logged-in
+  operator whose OWN workspace had zero sessions was bounced to `/sessions`
+  (and treated as a returning user) merely because SOME OTHER tenant had a
+  session — a wrong landing AND a cross-tenant existence leak. We now scope
+  to the operator's workspace via the existing `list_sessions/1` overload
+  (Task #55), matching exactly what `/sessions` renders.
+
+  Landing workspace = the session's SELECTED `current_workspace_uri` when
+  present (so a system member who context-switched — §6.5/§13.2 — lands on
+  the same workspace `/sessions` shows), else the caller entity's home
+  workspace (`Ezagent.Capability.workspace_of/1`). A non-workspace result
+  (`:any` for `system://`, or a malformed cookie) fails CLOSED to the
+  wizard rather than a global scan.
 
   ## Phase 8c PR-J context
 
@@ -38,15 +57,28 @@ defmodule EzagentWeb.HomeLive do
   def mount(_params, session, socket) do
     case session do
       %{"current_entity_uri" => entity_uri_str} when is_binary(entity_uri_str) ->
-        mount_authenticated(entity_uri_str, socket)
+        mount_authenticated(entity_uri_str, session, socket)
 
       _ ->
         {:ok, push_navigate(socket, to: "/login")}
     end
   end
 
-  defp mount_authenticated(entity_uri_str, socket) do
-    case EzagentDomainInstanceMessage.list_sessions() do
+  defp mount_authenticated(entity_uri_str, session, socket) do
+    # W0 — workspace-scoped landing判据 (see moduledoc). `list_sessions/1`
+    # filters the global registry down to the caller's workspace; a
+    # non-workspace scope (`:any` / malformed) fails closed to `[]` so the
+    # operator sees the wizard, never a cross-tenant redirect or a crash.
+    sessions =
+      case landing_workspace_uri(session, entity_uri_str) do
+        %URI{scheme: "workspace"} = workspace_uri ->
+          EzagentDomainInstanceMessage.list_sessions(workspace_uri)
+
+        _ ->
+          []
+      end
+
+    case sessions do
       [] ->
         # No sessions yet — render the wizard.
         socket =
@@ -224,6 +256,39 @@ defmodule EzagentWeb.HomeLive do
   end
 
   defp parse_entity_uri(_), do: Ezagent.Entity.User.admin_uri()
+
+  # W0 landing scope. Prefer the session's SELECTED workspace
+  # (`current_workspace_uri`, the slot `/sessions` renders from — set by
+  # `SessionPrincipal.put/3` and the workspace switcher; for a regular user
+  # it equals the entity workspace per the §6.5 invariant, for a
+  # context-switched system member it may differ). Fall back to the caller
+  # entity's home workspace. Callers guard on `%URI{scheme: "workspace"}`,
+  # so a nil/`:any` return fails closed.
+  defp landing_workspace_uri(session, entity_uri_str) do
+    selected =
+      case session do
+        %{"current_workspace_uri" => ws_str} when is_binary(ws_str) ->
+          parse_workspace_uri(ws_str)
+
+        _ ->
+          nil
+      end
+
+    selected || Ezagent.Capability.workspace_of(parse_entity_uri(entity_uri_str))
+  end
+
+  # Canonical parse (SPEC 2026-05-27-uri-canonicalization §3.3) tolerant of
+  # a stale/malformed selected-workspace slot → nil (caller fails closed).
+  defp parse_workspace_uri(str) when is_binary(str) do
+    case Ezagent.URI.new!(str) do
+      %URI{scheme: "workspace"} = uri -> uri
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp parse_workspace_uri(_), do: nil
 
   @impl true
   def render(assigns) do

@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.SandboxTest do
+defmodule Ezagent.ActionSet.SandboxTest do
   @moduledoc """
-  Contract test for `Ezagent.Behavior.Sandbox` (PR2 2026-05-24, Allen) —
+  Contract test for `Ezagent.ActionSet.Sandbox` (PR2 2026-05-24, Allen) —
   per-agent config_dir + extension-management scaffolding.
 
   Pure-function level: `actions/0`, `state_slice/0`, `init_slice/1`,
@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.SandboxTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Sandbox
+  alias Ezagent.ActionSet.Sandbox
 
   # ---------------------------------------------------------------
   # Legacy-shape adapter (Phase 2.5 migration helper)
@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.SandboxTest do
 
     case apply(Sandbox, handler, [args, ctx_with_read]) do
       {:ok, result, effects} when is_list(effects) ->
-        {:ok, %{state: new_slice}} = Ezagent.Behavior.apply_effects(effects, slice)
+        {:ok, %{state: new_slice}} = Ezagent.ActionSet.apply_effects(effects, slice)
         {:ok, new_slice, result}
 
       {:error, _} = err ->

@@ -1,4 +1,4 @@
-defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
+defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
   @moduledoc """
   Task #54 PR-2 — the resolve / install split of the orchestrator role loader.
 
@@ -8,15 +8,15 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
 
     * `install_role_sandbox/2` — pure filesystem, driven by an EXPLICIT skills
       list (so the installer is exercised independently of the recipe);
-    * `resolve_orchestrator_role/0` — composes the code recipe into
+    * `resolve_orchestrator_recipe/0` — composes the code recipe into
       `sandbox_content` (skills + persona prompt).
   """
-  # role-as-data: `resolve_orchestrator_role/0` now resolves the role read-through
+  # role-as-data: `resolve_orchestrator_recipe/0` now resolves the role read-through
   # over ConfigStore, so the suite needs the DataCase sandbox. The pure
   # `install_role_sandbox/2` (filesystem) tests ignore it.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Orchestrator.OrchestratorRole
+  alias Ezagent.Orchestrator.OrchestratorRecipe
   alias Ezagent.PluginCc.Template.OrchestratorBootstrap, as: Bootstrap
 
   @hint Bootstrap.hint_line()
@@ -103,7 +103,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       sandbox_content = %{
         skills: ["ezagent-session-orchestrator"],
         plugins: [],
-        prompt: OrchestratorRole.persona()
+        prompt: OrchestratorRecipe.persona()
       }
 
       assert :ok = Bootstrap.install_role_sandbox(sandbox_content, config_dir)
@@ -113,7 +113,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
     end
   end
 
-  describe "resolve_orchestrator_role/0 — registry lookup → sandbox_content (RF-9)" do
+  describe "resolve_orchestrator_recipe/0 — registry lookup → sandbox_content (RF-9)" do
     test "yields the orchestrator skill + persona, no flavor" do
       # role-as-data (RF-9): resolve looks the recipe up BY NAME read-through over
       # ConfigStore (boot SEEDS it; boot's DB seed is :test-skipped). Seed it
@@ -123,11 +123,11 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
       assert {:ok, _} =
-               Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRole.recipe())
+               Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
 
-      assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_role()
+      assert {:ok, sandbox_content} = Bootstrap.resolve_orchestrator_recipe()
       assert "ezagent-session-orchestrator" in sandbox_content.skills
-      assert sandbox_content.prompt == OrchestratorRole.persona()
+      assert sandbox_content.prompt == OrchestratorRecipe.persona()
     end
 
     test "fails closed when the orchestrator role is not seeded" do
@@ -138,11 +138,11 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
       # EMPTY — nothing seeded this test); flush the ETS cache so a prior test's
       # cached entry cannot mask the miss, then drive the fail-closed branch.
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
-      name = OrchestratorRole.name()
+      name = OrchestratorRecipe.name()
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
       assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
-               Bootstrap.resolve_orchestrator_role()
+               Bootstrap.resolve_orchestrator_recipe()
     end
   end
 
@@ -188,7 +188,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleInstallTest do
 
     test "a NON-orchestrator role's skill is copied into config_dir/skills/<ref>",
          %{config_dir: config_dir, role_name: role_name, skill_ref: skill_ref} do
-      # Pre-T2 this was a no-op (bootstrap gated on `orchestrator_role?/1`) and the
+      # Pre-T2 this was a no-op (bootstrap gated on `orchestrator_recipe?/1`) and the
       # skill never landed — this is the regression-earning assertion.
       assert :ok = Bootstrap.bootstrap(%{"role" => role_name}, config_dir)
 

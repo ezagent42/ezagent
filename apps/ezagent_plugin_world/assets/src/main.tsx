@@ -104,6 +104,13 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
     name?: string | null
     workspace_uri?: string | null
   }>
+  socialwares?: Array<{
+    name: string
+    title?: string | null
+    description?: string | null
+    scope?: string | null
+    workspace_uri?: string | null
+  }>
   workspace_uri?: string | null
 }
 
@@ -236,10 +243,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri},
                   })
                 },
-                onCreateSession: (shortName, templateName) => {
+                onCreateSession: (shortName, templateName, socialwareRef) => {
+                  const args: Record<string, string> = {short_name: shortName, template_name: templateName}
+                  if (socialwareRef) args.socialware_ref = socialwareRef
                   pushEvent?.("world:dispatch", {
                     action: "session.create",
-                    args: {short_name: shortName, template_name: templateName},
+                    args,
                   })
                 },
                 onPublishTemplate: (sessionUri, name) => {
@@ -367,6 +376,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   pushEvent?.("world:dispatch", {
                     action: "session.pty.open",
                     args: {session_uri: sessionUri, agent},
+                  })
+                },
+                onForkConfig: (sessionUri) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.fork_config",
+                    args: {session_uri: sessionUri},
                   })
                 },
                 onRestartOrchestrator: (sessionUri) => {
@@ -800,7 +815,7 @@ type RenderContext = {
   layout: WorldLayout
   state: WorldState
   onJoin: (sessionUri: string) => void
-  onCreateSession: (shortName: string, templateName: string) => void
+  onCreateSession: (shortName: string, templateName: string, socialwareRef?: string) => void
   onPublishTemplate: (sessionUri: string, name: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void

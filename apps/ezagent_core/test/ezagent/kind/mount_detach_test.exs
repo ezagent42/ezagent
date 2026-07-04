@@ -43,7 +43,7 @@ defmodule Ezagent.Kind.MountDetachTest do
   end
 
   defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-  defp base_set, do: [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
+  defp base_set, do: [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
   defp uri(prefix),
     do: Ezagent.URI.session(:system, :default, :"#{prefix}-#{System.unique_integer([:positive])}")
@@ -180,10 +180,10 @@ defmodule Ezagent.Kind.MountDetachTest do
     # Turn @required_reads :surface (owner Behavior.Surface). Spawn with both +
     # Turn so the live set is closed.
     closed = [
-      Ezagent.Behavior.Session,
-      Ezagent.Behavior.Surface,
-      Ezagent.Behavior.Turn,
-      Ezagent.Behavior.KindBase
+      Ezagent.ActionSet.Session,
+      Ezagent.ActionSet.Surface,
+      Ezagent.ActionSet.Turn,
+      Ezagent.ActionSet.KindBase
     ]
 
     spawn_instance(uri, closed)
@@ -191,20 +191,24 @@ defmodule Ezagent.Kind.MountDetachTest do
     before = live_slice(uri)
 
     # Detaching Surface would leave Turn requiring a missing :surface owner.
-    assert {:error, {:still_required, Ezagent.Behavior.Surface, _missing}} =
-             Kind.detach(uri, Ezagent.Behavior.Surface)
+    assert {:error, {:still_required, Ezagent.ActionSet.Surface, _missing}} =
+             Kind.detach(uri, Ezagent.ActionSet.Surface)
 
     # Zero residue — Surface still present.
     assert live_slice(uri) == before
-    assert Ezagent.Behavior.Surface in Kind.BehaviorSet.effective_set(SupersetSessionKind, before)
+
+    assert Ezagent.ActionSet.Surface in Kind.BehaviorSet.effective_set(
+             SupersetSessionKind,
+             before
+           )
   end
 
   test "RF-3: detaching a base behavior (KindBase) is refused" do
     uri = uri("md-base")
     spawn_instance(uri, base_set())
 
-    assert {:error, {:cannot_detach_base_behavior, Ezagent.Behavior.KindBase}} =
-             Kind.detach(uri, Ezagent.Behavior.KindBase)
+    assert {:error, {:cannot_detach_base_behavior, Ezagent.ActionSet.KindBase}} =
+             Kind.detach(uri, Ezagent.ActionSet.KindBase)
   end
 
   test "RF-3: detaching an absent behavior is a no-op" do

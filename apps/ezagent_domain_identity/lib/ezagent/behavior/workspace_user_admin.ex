@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.WorkspaceUserAdmin do
+defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   @moduledoc """
   Workspace-scoped user-admin Behavior — provisions new Ezagent users
   in a workspace via dispatch.
@@ -18,7 +18,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   structural escalation surface this Behavior closes by carving
   user-admin into its OWN cap subject:
 
-      Capability.cap(:workspace, Ezagent.Behavior.WorkspaceUserAdmin, :create_user)
+      Capability.cap(:workspace, Ezagent.ActionSet.WorkspaceUserAdmin, :create_user)
 
   An operator who needs workspace member management but NOT new-user
   provisioning is granted the Workspace cap only; the user-admin
@@ -73,7 +73,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   ## P2-b migration (2026-05-28)
 
-  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
   `handle_create_user/2`. The DB side effect (`Users.create/3` + the
   opportunistic `SpawnRegistry.spawn`) runs inline in the handler —

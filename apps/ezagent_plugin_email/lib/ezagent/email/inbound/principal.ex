@@ -22,7 +22,7 @@ defmodule Ezagent.Email.Inbound.Principal do
   Per `capbac.md` §3, a dispatch authorizes when `ctx.caps` contains a cap
   matching the needed shape (path 1 `granted_via_ctx_caps?`) — the cap is
   never persisted and `granted_by` is not consulted on this path. So this
-  mirrors `Ezagent.Behavior.Agent.Receive`'s self-authority carried inline
+  mirrors `Ezagent.ActionSet.Agent.Receive`'s self-authority carried inline
   at the dispatch (capbac §7): the cap goes straight into the injection
   `ctx.caps`, NOT through `Ezagent.Identity.Grant` (that chokepoint is for
   PERSISTED grant/revoke and is grep-gated to `:grant_cap`/`:revoke_cap`),
@@ -69,12 +69,12 @@ defmodule Ezagent.Email.Inbound.Principal do
 
   # The behavior module the dispatcher resolves for `Session :send` (so the
   # minted held-cap matches the `needed` shape step 5.5 derives). Falls back
-  # to `Ezagent.Behavior.Session` if the registry isn't populated (the static
+  # to `Ezagent.ActionSet.Session` if the registry isn't populated (the static
   # default — same module the registration declares).
   defp send_behavior do
     case Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Session, :send) do
       {:ok, behavior_module} -> behavior_module
-      :error -> Ezagent.Behavior.Session
+      :error -> Ezagent.ActionSet.Session
     end
   end
 

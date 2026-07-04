@@ -1,10 +1,10 @@
-defmodule Ezagent.Behavior.SandboxMigrationParityTest do
+defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
   @moduledoc """
-  Phase 2.5 migration parity test for `Ezagent.Behavior.Sandbox` per
+  Phase 2.5 migration parity test for `Ezagent.ActionSet.Sandbox` per
   SPEC `2026-05-28-router-behavior-kind-architecture.md` §7.3 Level 1
   (dispatch parity).
 
-  Validates that the migrated `Ezagent.Behavior.Sandbox` produces the
+  Validates that the migrated `Ezagent.ActionSet.Sandbox` produces the
   same dispatch-visible outcomes via the new-contract path
   (`Kind.Runtime.handle_dispatch/4` → `handle_<action>/2` →
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration
@@ -36,7 +36,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.Sandbox
+  alias Ezagent.ActionSet.Sandbox
 
   defmodule StubAgentKind do
     @moduledoc false
@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     @impl true
     def type_name, do: :sandbox_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Sandbox]
+    def behaviors, do: [Ezagent.ActionSet.Sandbox]
     @impl true
     def persistence, do: :ephemeral
   end
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Sandbox)
+      assert Ezagent.ActionSet.new_style?(Sandbox)
     end
 
     test "__action_names__/0 lists [:read, :update_config, :destroy]" do

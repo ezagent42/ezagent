@@ -402,7 +402,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
   defp session_template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
     %Ezagent.Capability{
       kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
+      behavior: Ezagent.ActionSet.Template,
       action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,

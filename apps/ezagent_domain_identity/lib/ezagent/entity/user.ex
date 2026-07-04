@@ -8,7 +8,7 @@ defmodule Ezagent.Entity.User do
   — admin-specific knowledge is User-Kind-shaped).
 
   - `type_name :user`
-  - `behaviors [Ezagent.Behavior.Identity]` — caps live in slice state
+  - `behaviors [Ezagent.ActionSet.Identity]` — caps live in slice state
   - `persistence {:snapshot, :on_change}` — Phase 4-completion PR 2
     landed real snapshot impl; granted caps survive restart
 
@@ -74,7 +74,7 @@ defmodule Ezagent.Entity.User do
   Wrapped in `try/rescue` so an early-boot call (before `Ezagent.Users`
   is callable) degrades to `MapSet.new()` rather than crashing the
   spawn — the post_init reconcile path in
-  `Ezagent.Behavior.Identity` repairs the slice on the next spawn
+  `Ezagent.ActionSet.Identity` repairs the slice on the next spawn
   once the DB is available (and `mix ezagent.user.create` runs
   outside boot anyway).
   """
@@ -148,7 +148,7 @@ defmodule Ezagent.Entity.User do
   `2026-06-19-membership-mount-anon-model-design.md`): "a member not pulled
   into a session has no session perms; participation is granted per-session
   at join, by the session owner." Join authority is rooted at SESSION POLICY
-  (`Ezagent.Behavior.Session.Membership.provision_join_authority/2`, owner-
+  (`Ezagent.ActionSet.Session.Membership.provision_join_authority/2`, owner-
   rooted) and the participation TIER is mounted at the trusted access points
   after a successful join (`Membership.mount_participation_caps/2`) — both
   with a real-entity `granted_by` (the session owner; admin only as the named
@@ -207,9 +207,9 @@ defmodule Ezagent.Entity.User do
   @impl Ezagent.Kind
   def behaviors,
     do: [
-      Ezagent.Behavior.Identity,
-      Ezagent.Behavior.UserCredentials,
-      Ezagent.Behavior.UserTokens
+      Ezagent.ActionSet.Identity,
+      Ezagent.ActionSet.UserCredentials,
+      Ezagent.ActionSet.UserTokens
     ]
 
   @impl Ezagent.Kind

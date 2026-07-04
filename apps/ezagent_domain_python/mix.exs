@@ -5,6 +5,7 @@ defmodule EzagentDomainPython.MixProject do
     [
       app: :ezagent_domain_python,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -22,6 +23,12 @@ defmodule EzagentDomainPython.MixProject do
   # Ezagent.Domain.Python.Server processes. erlexec is declared in
   # both deps and extra_applications (codex round-2 HIGH-2) because
   # Server calls :exec.run/2 + :exec.stop/1 directly.
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
+    ]
+  end
+
   def application do
     [
       extra_applications: [:logger, :erlexec],

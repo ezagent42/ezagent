@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Ezagent.Session.MigrateSlice do
   the top-level `:chat` state-slice key to `:session` on every persisted
   session `kind_snapshots` row.
 
-  The internal "Chat" Behavior is now `Ezagent.Behavior.Session`, whose
+  The internal "Chat" Behavior is now `Ezagent.ActionSet.Session`, whose
   `state_slice/0` auto-derives to `:session`. There is NO dual-read shim, so a
   snapshot persisted under the old `:chat`-slice code MUST be rewritten to
   `:session` BEFORE the new code serves it.

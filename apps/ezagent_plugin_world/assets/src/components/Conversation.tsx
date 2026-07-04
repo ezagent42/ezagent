@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, CheckCircle2, ChevronUp, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
 
 import {Button, Modal} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
@@ -83,6 +83,7 @@ export type ConversationState = {
 type Props = {
   state: ConversationState
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
+  onForkConfig: (sessionUri: string) => void
   onOpenPty: (sessionUri: string, agent: string) => void
   onRestartOrchestrator: (sessionUri: string) => void
   onSend: (sessionUri: string, text: string, grants: string[]) => void
@@ -110,6 +111,7 @@ type Props = {
 export function Conversation({
   state,
   onAddRoutingRule,
+  onForkConfig,
   onOpenPty,
   onRemoveParticipant,
   onRestartOrchestrator,
@@ -429,6 +431,9 @@ export function Conversation({
                 PTY
               </button>
             </div>
+            <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onForkConfig(sessionUri)} aria-label="复制配置，建新会话" title="复制配置，建新会话">
+              <Copy aria-hidden="true" />
+            </Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
               <RotateCcw aria-hidden="true" />
             </Button>

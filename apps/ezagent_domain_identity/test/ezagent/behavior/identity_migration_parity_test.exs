@@ -1,9 +1,9 @@
-defmodule Ezagent.Behavior.IdentityMigrationParityTest do
+defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
   @moduledoc """
   P2-b migration parity test (SPEC #445 §7.3 Level 1).
 
-  Validates that the migrated `Ezagent.Behavior.Identity` AND
-  `Ezagent.Behavior.IdentityAdmin` produce the same dispatch-visible
+  Validates that the migrated `Ezagent.ActionSet.Identity` AND
+  `Ezagent.ActionSet.IdentityAdmin` produce the same dispatch-visible
   outcomes via the new-contract path (`Kind.Runtime.handle_dispatch/4`
   → `handle_<action>/2` → `apply_effects/2`) as the legacy `invoke/4`
   did pre-migration.
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Invocation}
-  alias Ezagent.Behavior.{Identity, IdentityAdmin}
+  alias Ezagent.ActionSet.{Identity, IdentityAdmin}
   alias Ezagent.Capability
 
   defmodule StubUserKind do
@@ -27,7 +27,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
     @impl true
     def type_name, do: :identity_parity_stub
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.IdentityAdmin]
+    def behaviors, do: [Ezagent.ActionSet.Identity, Ezagent.ActionSet.IdentityAdmin]
     @impl true
     def persistence, do: :ephemeral
   end
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
          %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }
@@ -99,7 +99,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Session,
+        behavior: Ezagent.ActionSet.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }

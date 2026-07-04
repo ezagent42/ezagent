@@ -150,7 +150,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
           %Ezagent.Capability{
             Ezagent.Capability.cap(
               :session,
-              Ezagent.Behavior.Session,
+              Ezagent.ActionSet.Session,
               :join,
               Ezagent.URI.instance(session_uri),
               Ezagent.Capability.workspace_of(session_uri)

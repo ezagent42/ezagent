@@ -31,7 +31,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{AgentFlavorRegistry, AgentLineage, Behavior, Capability, KindRegistry}
+  alias Ezagent.{AgentFlavorRegistry, AgentLineage, ActionSet, Capability, KindRegistry}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Session.SessionManager
   alias Ezagent.AgentBridge.TokenStore
@@ -148,7 +148,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   defp template_cap(kind, workspace_uri) do
     %Capability{
       kind: kind,
-      behavior: Behavior.Template,
+      behavior: ActionSet.Template,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: User.admin_uri(),
@@ -217,7 +217,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
     {:ok, _} =
-      Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+      Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
         orchestrator_uri: orchestrator_uri,
         orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
       })
@@ -309,7 +309,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       slice = chat_slice(ctx.session_uri)
 
       for {role_name, _} <- members do
-        assert Behavior.Session.role_name_to_uri(slice.members, role_name),
+        assert ActionSet.Session.role_name_to_uri(slice.members, role_name),
                "member #{role_name} must be a live session member — got #{inspect(Map.keys(slice.members))}"
       end
 

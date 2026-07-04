@@ -5,6 +5,7 @@ defmodule EzagentDomainUi.MixProject do
     [
       app: :ezagent_domain_ui,
       version: "0.1.0",
+      package: package(),
       build_path: "../../_build",
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
@@ -23,6 +24,12 @@ defmodule EzagentDomainUi.MixProject do
   # register `EzagentDomainUi.Pty.TerminalView` as a SessionView at
   # boot. The Application boots no GenServers; it's a registration
   # hook only.
+  defp package do
+    [
+      licenses: ["Apache-2.0"]
+    ]
+  end
+
   def application do
     [
       extra_applications: [:logger],

@@ -154,10 +154,10 @@ defmodule Ezagent.Entity.SessionTemplate do
   # Phase 7 completion PR-1 (SPEC §1.0): SessionTemplate carries TWO
   # slices — `:identity` (the cap policy) and `:template` (the
   # versioned, content-addressed template CONTENT, served via
-  # `Ezagent.Behavior.Template`). SessionTemplate `:write` is
+  # `Ezagent.ActionSet.Template`). SessionTemplate `:write` is
   # write-once + hash-checked (codex rev-5 CRITICAL).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.Template]
+  def behaviors, do: [Ezagent.ActionSet.Identity, Ezagent.ActionSet.Template]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
@@ -253,7 +253,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   3. **spawns the SessionTemplate Kind** at that URI through
      `Ezagent.SpawnRegistry.spawn/1` (the `template` scheme spawn fn
      routes to `Ezagent.Kind.spawn(SessionTemplate, …)`);
-  4. dispatches `Ezagent.Behavior.Template` `:write` (`?action=template.write`)
+  4. dispatches `Ezagent.ActionSet.Template` `:write` (`?action=template.write`)
      to populate the Kind's `:template` content slice. Because
      SessionTemplate is `{:snapshot, :on_change}`, that slice mutation
      writes a `kind_snapshots` row keyed by the hash URI — the
@@ -524,7 +524,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   def fork(%URI{} = parent_uri, new_name, opts \\ [])
       when is_binary(new_name) and new_name != "" do
     # PR1 2026-05-24 (Allen): SHIM — the real fork logic now lives in
-    # `Ezagent.Behavior.Template.invoke(:fork, ...)` so AgentTemplate
+    # `Ezagent.ActionSet.Template.invoke(:fork, ...)` so AgentTemplate
     # gets fork for free. This module function preserves the existing
     # public API (caller-threaded opts, return shape) and just dispatches.
     with {:ok, caps} <- fetch_opt(opts, :caps),
@@ -679,7 +679,7 @@ defmodule Ezagent.Entity.SessionTemplate do
 
         needed = %{
           kind: :session_template,
-          behavior: Ezagent.Behavior.Template,
+          behavior: Ezagent.ActionSet.Template,
           # SPEC 2026-05-27 capability-action-axis — `create/3`'s
           # preflight predates the action-axis. It checks "does the
           # caller hold ANY Template authority in the workspace?".
@@ -716,7 +716,7 @@ defmodule Ezagent.Entity.SessionTemplate do
     with {:ok, %URI{} = workspace_uri} <- workspace_uri(workspace) do
       cap = %Ezagent.Capability{
         kind: :session_template,
-        behavior: Ezagent.Behavior.Template,
+        behavior: Ezagent.ActionSet.Template,
         # SPEC 2026-05-27 capability-action-axis — owner needs full
         # lifecycle authority on templates they create (read, write/
         # update, instantiate, fork). The `:within_workspace` instance
@@ -812,7 +812,7 @@ defmodule Ezagent.Entity.SessionTemplate do
     end
   end
 
-  # Dispatch `Ezagent.Behavior.Template` `:write` to populate the
+  # Dispatch `Ezagent.ActionSet.Template` `:write` to populate the
   # `:template` slice — the `{:snapshot, :on_change}` mutation writes
   # the `kind_snapshots` row. An identical-content retry no-ops as
   # `{:ok, …}` (the write-once Kind is not corrupted).

@@ -217,7 +217,7 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
     Module.create(
       cap_behavior_name,
       quote do
-        @behaviour Ezagent.Behavior
+        @behaviour Ezagent.ActionSet
         @impl true
         def actions, do: [unquote(allow_action)]
         @impl true

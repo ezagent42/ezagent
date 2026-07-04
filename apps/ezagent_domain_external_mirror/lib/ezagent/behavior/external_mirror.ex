@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.ExternalMirror do
+defmodule Ezagent.ActionSet.ExternalMirror do
   @moduledoc """
-  `Ezagent.Behavior.ExternalMirror` — the bind/unbind/list Behavior on
+  `Ezagent.ActionSet.ExternalMirror` — the bind/unbind/list Behavior on
   the Session Kind.
 
   SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
@@ -95,12 +95,12 @@ defmodule Ezagent.Behavior.ExternalMirror do
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, WorkerSpawn}
-  alias Ezagent.Behavior.ExternalMirror.Codec
+  alias Ezagent.ActionSet.ExternalMirror.Codec
 
   # ----- Ezagent.Lifecycle contract (Phase B lifecycle migration) ---------
   #
   # SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §2.3
-  # / §5 / §10-R1. Converted from `use Ezagent.Behavior`.
+  # / §5 / §10-R1. Converted from `use Ezagent.ActionSet`.
   #
   # Two-container split (SPEC §0.1 / §2.1):
   #
@@ -192,7 +192,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
     }
   end
 
-  # state_slice/0 is AUTO-DERIVED: `Ezagent.Behavior.ExternalMirror` →
+  # state_slice/0 is AUTO-DERIVED: `Ezagent.ActionSet.ExternalMirror` →
   # `:external_mirror` — identical to the pre-migration explicit
   # `def state_slice, do: :external_mirror`. Snapshot key unchanged; no
   # override needed (SPEC §5 step 2 / A5 verdict).
@@ -757,7 +757,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   def data_owner(_), do: :no_owner
 
   # `interface/0`, `actions/0`, `cap_subjects/0` are auto-derived by
-  # `use Ezagent.Behavior` from the `action :name, ...` declarations at
+  # `use Ezagent.ActionSet` from the `action :name, ...` declarations at
   # the top of this module. The legacy explicit versions were removed
   # as part of the Phase 2-d r3 migration. The macro's
   # `@before_compile` runs `maybe_inject_legacy_callbacks/5` which
@@ -933,7 +933,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   # Pure data-mapping / opts-codec helpers (row_to_slice_binding,
   # encode_opts, decode_opts, unique_constraint_violation?) live in
-  # `Ezagent.Behavior.ExternalMirror.Codec`; `stringify_target` is the
+  # `Ezagent.ActionSet.ExternalMirror.Codec`; `stringify_target` is the
   # canonical copy on `BindingRow` (#25 Phase-3 PR-3N extraction/dedup).
 
   @doc false

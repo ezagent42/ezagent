@@ -8,7 +8,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuAllowMigrationParityTest do
   Cap-only marker Behavior — `dispatchable?/0 == false`, used only as
   the per-adapter Cap 2 marker that `Ezagent.ExternalMirror.bind/4`
   Check 2 matches against. The migration moves this from legacy
-  `@behaviour Ezagent.Behavior` to the new `use Ezagent.Behavior` +
+  `@behaviour Ezagent.ActionSet` to the new `use Ezagent.ActionSet` +
   declarative `action/3` shape with a raising `handle_allow_feishu/2`
   (semantically a no-op — the handler must exist for the macro
   invariant but is never invoked because `dispatchable?/0 == false`
@@ -20,7 +20,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuAllowMigrationParityTest do
 
   describe "new-contract markers (SPEC §2.2)" do
     test "new_style?/1 returns true" do
-      assert Ezagent.Behavior.new_style?(Allow)
+      assert Ezagent.ActionSet.new_style?(Allow)
     end
 
     test "__behavior__?/0 returns true" do

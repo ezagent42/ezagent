@@ -37,7 +37,7 @@ defmodule Ezagent.Credential.AdoptTest do
       %Ezagent.Capability{
         Ezagent.Capability.cap(
           :user,
-          Ezagent.Behavior.UserDefaultCredentialSource,
+          Ezagent.ActionSet.UserDefaultCredentialSource,
           :set_default_credential_source,
           Ezagent.URI.instance(owner_uri),
           Ezagent.Capability.workspace_of(owner_uri)

@@ -265,7 +265,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
         "`Invocation.dispatch",
         "`Ezagent.Kind.spawn",
         "`Kind.spawn",
-        "`Ezagent.Behavior.invoke",
+        "`Ezagent.ActionSet.invoke",
         "`Behavior.invoke"
       ],
       &String.contains?(body, &1)

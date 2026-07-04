@@ -11,7 +11,7 @@
   #   PR-3S: 4 → 3 (extracted Orchestrator.Tools.MemberTemplate, tools.ex 1498 → 938)
   #   PR-3T: 3 → 2 (extracted CcAgent.Spawn, cc_agent.ex 1340 → 917)
   #   PR-3U: 2 → 1 (extracted Workspace.Listing, workspace.ex facade 1055 → 938)
-  # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
+  # Final remaining entrant: `Ezagent.ActionSet.Workspace` (1498) — the
   # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
   #   PR-3V: 1 → 0 (extracted Behavior.Workspace.AgentCreate, behavior/workspace.ex 1498 → 786) — CAMPAIGN COMPLETE
   #   PR-6 (im/session/agent decomposition §3.5): 0 → 1 — the
@@ -84,7 +84,15 @@
   #   (2 sites) + openai_chat_plug (1 site) moved off direct SpawnRegistry onto the
   #   owner-gated `Ezagent.LocalRuntime.ensure_started`, so the scanned count dropped
   #   30→27. Cap lowered to actual. 30→27.
-  spawn_registry_call_sites: 27,
+  # RATCHET-DOWN (2026-07 batch-1 AST conversion) 27→21: converted from the
+  #   per-line `SpawnRegistry.spawn(` grep to an AST remote-call matcher
+  #   (alias-resolving + parens-only). grep over-counted 5 NON-CALL mentions the
+  #   AST correctly drops — all moduledoc/comment lines that happen to contain
+  #   `spawn(`: spawn_registry.ex:21, entity/agent.ex:23 + :29 (both moduledoc),
+  #   im application.ex:211 (a commented-out `# …SpawnRegistry.spawn(…)`),
+  #   cc_agent.ex:24 (moduledoc). The AST hit-set is a strict subset of the grep
+  #   hit-set (no real call dropped), so this only tightens the ratchet.
+  spawn_registry_call_sites: 21,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
@@ -114,7 +122,10 @@
   # RATCHET-DOWN #99 C: conversation_registry + openai_chat_plug dropped their direct
   #   SpawnRegistry references (onto LocalRuntime), so the scanned module count fell
   #   26→24. Cap lowered to actual. 26→24.
-  spawn_registry_modules: 24,
+  # RATCHET-DOWN (2026-07 batch-1 AST conversion) 24→20: same AST conversion. The
+  #   3 files grep counted with only a moduledoc/comment `spawn(` mention (no real
+  #   call) — spawn_registry.ex, im application.ex, cc_agent.ex — drop out. Tighter.
+  spawn_registry_modules: 20,
   # arch-cap-bump: +1 protocol_api P0 (#82/#896) — openai_chat_plug.ex activates the
   #   pre-provisioned target agent directly through SpawnRegistry (rehydrate, not
   #   create), the same off-chokepoint rehydration shape as the cc transport's
@@ -133,8 +144,17 @@
   #   so removing their direct SpawnRegistry calls leaves off_chokepoint UNCHANGED.
   #   The architectural win shows in call_sites/modules above + the sanctioned
   #   allowlist shrinking (conv_reg/openai removed; local_runtime.ex stays). Stays 16.
-  spawn_registry_off_chokepoint_modules: 16,
-  create_session_call_sites: 6,
+  # RATCHET-DOWN (2026-07 batch-1 AST conversion) 16→14: same AST conversion. Of
+  #   the 3 doc-only modules dropped, 2 were sanctioned (no effect here) and 1 —
+  #   cc_agent.ex, an off-chokepoint plugin file with only a moduledoc `spawn(`
+  #   mention — leaves the off-chokepoint set (−1 vs grep-current 15). Tighter.
+  spawn_registry_off_chokepoint_modules: 14,
+  # RATCHET-DOWN (2026-07 batch-1 AST conversion) 6→5: converted the
+  #   `.create_session(` grep to an AST remote-call matcher (parens-only, so a
+  #   `&Ezagent.Workspace.create_session/3` function CAPTURE — which grep never
+  #   matched either — is not a call site). The cap sat 1 above grep-current (5);
+  #   AST measures the true call-site count (5) so the loose ratchet is tightened.
+  create_session_call_sites: 5,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
   # FF-1 (cleanup-1): groups of ≥2 lib files sharing a byte-identical
@@ -169,8 +189,8 @@
   # copy-paste fork of business logic.
   # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
   # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 31 → 30: the legacy
-  # `:curl_agent`-axis companion `Ezagent.Behavior.CurlAgentLegacyConfig` (whose
-  # reset/configure bodies mirrored `Ezagent.Behavior.CurlAgent`) is DELETED with
+  # `:curl_agent`-axis companion `Ezagent.ActionSet.CurlAgentLegacyConfig` (whose
+  # reset/configure bodies mirrored `Ezagent.ActionSet.CurlAgent`) is DELETED with
   # the standalone curl Kind. No rollback window (Allen) — the unified Entity.Agent
   # is the sole curl path, so the duplicate group is gone.
   # PR-6+7 RATCHET-DOWN 31 → 29: (a) the legacy `CurlAgentLegacyConfig` mirror is
@@ -205,6 +225,14 @@
   # the `/cc_socket` endpoint mount — ratcheting this to 0. This cap MUST
   # stay at 0: the shim layer is gone and no lib file may reintroduce it.
   cc_bridge_shim_callers: 0,
+  # domain-only-Kinds gate: plugin-app files declaring a CONCRETE Kind
+  # (`@behaviour Ezagent.Kind` exactly, NOT `Ezagent.Kind.Template`) minus the
+  # sanctioned allowlist in ezagent.arch.scan (`@plugin_defined_kind_allowlist`).
+  # Kinds are a domain concern; plugins compose via Template/Behavior/View. This
+  # is TARGET-ZERO: the allowlist (currently just hello_builder, pending its
+  # socialware promotion; echo/np already retired) is a ratchet that must reach
+  # empty, and any NEW plugin Kind must fail this gate.
+  plugin_defined_kinds: 0,
   # #719 §5.B(c) re-provisions the source agent credential across its own respawn
   # (durable-credential bug fix). cc_agent.ex 917→930 (+13 net: the
   # `maybe_reprovision_source_from_respawn_data/2` chokepoint + the
@@ -258,9 +286,9 @@
   # own :config_evolve slice).
   # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 135 → 121: both legacy
   # curl shims are DELETED with the standalone curl Kind (no rollback window —
-  # Allen). `Ezagent.Behavior.CurlAgentLegacyReceive` (−7 `{:set,
+  # Allen). `Ezagent.ActionSet.CurlAgentLegacyReceive` (−7 `{:set,
   # :conversation/:last_error/:last_tokens}` sites) and
-  # `Ezagent.Behavior.CurlAgentLegacyConfig` (−7 `{:set}` sites across
+  # `Ezagent.ActionSet.CurlAgentLegacyConfig` (−7 `{:set}` sites across
   # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.

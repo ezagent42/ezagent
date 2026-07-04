@@ -7,8 +7,8 @@ defmodule EzagentCore.Repo.Migrations.PrEm3ExternalMirrorBindings do
 
   The Session's `:external_mirror` slice is the single source of truth
   per **P3** — this table is a **projection** written by the `:bind` /
-  `:unbind` action bodies (`Ezagent.Behavior.ExternalMirror.invoke/4`).
-  Read at boot by `Ezagent.Behavior.ExternalMirror.init_slice/1`
+  `:unbind` action bodies (`Ezagent.ActionSet.ExternalMirror.invoke/4`).
+  Read at boot by `Ezagent.ActionSet.ExternalMirror.init_slice/1`
   (per-session rehydration) AND by
   `Ezagent.ExternalMirror.BootReconciler` (cross-session multi-node
   reconciliation, V1 single-node no-op safety net).

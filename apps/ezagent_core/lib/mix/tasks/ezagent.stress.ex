@@ -88,6 +88,9 @@ defmodule Mix.Tasks.Ezagent.Stress do
   @sink_mod Module.concat([:Ezagent, :Entity, :Agent])
 
   defp session_mod, do: @session_mod
+  # P5-0b: the Session Kind requires an explicit :kind_base behavior set threaded
+  # at spawn (chat subset). Resolved at runtime (Session lives in a higher-tier app).
+  defp session_behaviors, do: apply(@session_mod, :chat_behaviors, [])
   defp user_mod, do: @user_mod
   defp sink_mod, do: @sink_mod
   defp admin_uri, do: apply(@user_mod, :admin_uri, [])
@@ -109,7 +112,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     admin = admin_uri()
     # All stress sessions live in `workspace://system` (see scenario builders).
     ws = Ezagent.URI.workspace("system")
-    session_behavior = Module.concat([:Ezagent, :Behavior, :Session])
+    session_behavior = Module.concat([:Ezagent, :ActionSet, :Session])
 
     Enum.map([:send, :join], fn action ->
       %Ezagent.Capability{
@@ -233,7 +236,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
     {spawn_us, :ok} =
       timed(fn ->
-        spawn_kind!(session_mod(), session_uri)
+        spawn_kind!(session_mod(), session_uri, %{behaviors: session_behaviors()})
         :ok = WorkspaceRegistry.bind(session_uri, Ezagent.URI.workspace(workspace))
         await_ready!(session_uri)
 
@@ -314,7 +317,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
       timed(fn ->
         for s <- (prev + 1)..n do
           session_uri = Ezagent.URI.session(workspace, :default, "stress_b_#{s}")
-          spawn_kind!(session_mod(), session_uri)
+          spawn_kind!(session_mod(), session_uri, %{behaviors: session_behaviors()})
           :ok = WorkspaceRegistry.bind(session_uri, Ezagent.URI.workspace(workspace))
           await_ready!(session_uri)
 
@@ -474,8 +477,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
   # --- spawn helpers -----------------------------------------------------
 
-  defp spawn_kind!(kind_module, uri) do
-    case Kind.spawn(kind_module, %{uri: uri}) do
+  defp spawn_kind!(kind_module, uri, extra \\ %{}) do
+    case Kind.spawn(kind_module, Map.merge(%{uri: uri}, extra)) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
       {:error, {:already_registered, _}} -> :ok

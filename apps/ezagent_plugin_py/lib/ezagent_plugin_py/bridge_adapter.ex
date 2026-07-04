@@ -6,7 +6,7 @@ defmodule EzagentPluginPy.BridgeAdapter do
 
   P4b folds `py` onto the UNIFIED `Ezagent.Entity.Agent` Kind (curl precedent).
   On `Entity.Agent` the `:receive` action is owned by the flavor-blind base
-  `Ezagent.Behavior.Agent.Receive`, which hands the message to
+  `Ezagent.ActionSet.Agent.Receive`, which hands the message to
   `Ezagent.AgentBridge.deliver` → this per-flavor adapter. So py can no longer
   own `:receive`; its chat→script→reply splits, exactly like curl, into:
 
@@ -14,7 +14,7 @@ defmodule EzagentPluginPy.BridgeAdapter do
       `Ezagent.Domain.Python` `"receive"` round-trip and RETURNS the result.
       It PERSISTS NOTHING and emits NO effects.
 
-    * the **STATE** half — `Ezagent.Behavior.PyAgent` on `Entity.Agent`: the
+    * the **STATE** half — `Ezagent.ActionSet.PyAgent` on `Entity.Agent`: the
       `:sync_result` action persists `last_*` + replies into the session; plus
       `:reset` / `:configure` and the `activate/2` subprocess self-heal.
 

@@ -93,7 +93,7 @@ if ds_key not in [nil, ""] do
           "model" => "deepseek-chat"},
         Ezagent.URI.new!("workspace://system")) do
     {:ok, _, _} ->
-      cap = Ezagent.Capability.cap(:any, Ezagent.Behavior.ApiKeys, :put_api_key,
+      cap = Ezagent.Capability.cap(:any, Ezagent.ActionSet.ApiKeys, :put_api_key,
              Ezagent.URI.instance(curl_uri), Ezagent.Capability.workspace_of(curl_uri))
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: Ezagent.URI.with_action(curl_uri, :api_keys, :put_api_key),

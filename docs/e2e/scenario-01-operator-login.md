@@ -21,7 +21,7 @@
 ## 角色
 
 - **调用方**:匿名浏览器 session
-- **目标**:`entity://system/user/admin`(Behavior `Ezagent.Behavior.Identity`,action `:password_login`)
+- **目标**:`entity://system/user/admin`(Behavior `Ezagent.ActionSet.Identity`,action `:password_login`)
 
 ## 执行记录(逐步)
 

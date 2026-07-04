@@ -91,7 +91,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       cmd_env =
         base_env
         |> put_claude_config_dir(config_home, tmpl)
-        |> maybe_put_orchestrator_role_env(tmpl)
+        |> maybe_put_orchestrator_recipe_env(tmpl)
         |> maybe_put_cli_identity_env(agent_uri, tmpl)
 
       {:ok, {argv, cmd_env}}
@@ -194,8 +194,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
     end
   end
 
-  defp maybe_put_orchestrator_role_env(env, tmpl) when is_map(env) do
-    if CcAgent.orchestrator_role?(tmpl) do
+  defp maybe_put_orchestrator_recipe_env(env, tmpl) when is_map(env) do
+    if CcAgent.orchestrator_recipe?(tmpl) do
       Map.put(env, "EZAGENT_AGENT_ROLE", "orchestrator")
     else
       env

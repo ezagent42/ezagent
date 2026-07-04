@@ -40,7 +40,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
       # on Behavior.Workspace in the workspace.
       member_cap = %Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :create_session,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri,
@@ -58,7 +58,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
       # `action: :create_session`. The matcher MUST reject.
       needed_for_add_member = %{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :add_member,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri
@@ -100,7 +100,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
           ] do
         needed = %{
           kind: :workspace,
-          behavior: Ezagent.Behavior.Workspace,
+          behavior: Ezagent.ActionSet.Workspace,
           action: action,
           instance: @workspace_uri,
           workspace_uri: @workspace_uri
@@ -119,7 +119,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
 
       member_cap = %Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :create_session,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri,
@@ -129,7 +129,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
 
       needed_for_add_member = %{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :add_member,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri
@@ -143,7 +143,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
     test "narrow :create_session cap MATCHES the :create_session needed-cap" do
       member_cap = %Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :create_session,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri,
@@ -153,7 +153,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
 
       needed_for_create_session = %{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :create_session,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri
@@ -172,7 +172,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
       # action being dispatched).
       wildcard_held = %Capability{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :any,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri,
@@ -182,7 +182,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
 
       needed_concrete = %{
         kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
+        behavior: Ezagent.ActionSet.Workspace,
         action: :create_session,
         instance: @workspace_uri,
         workspace_uri: @workspace_uri

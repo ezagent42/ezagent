@@ -122,7 +122,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
               %Ezagent.Capability{
                 Ezagent.Capability.cap(
                   :workspace,
-                  Ezagent.Behavior.Workspace,
+                  Ezagent.ActionSet.Workspace,
                   :list_members,
                   Ezagent.URI.instance(ws_uri),
                   Ezagent.Capability.workspace_of(ws_uri)

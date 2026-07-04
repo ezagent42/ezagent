@@ -1,14 +1,14 @@
-defmodule Ezagent.Behavior.ExternalMirror.CodecTest do
+defmodule Ezagent.ActionSet.ExternalMirror.CodecTest do
   @moduledoc """
-  Unit tests for `Ezagent.Behavior.ExternalMirror.Codec` — the pure
+  Unit tests for `Ezagent.ActionSet.ExternalMirror.Codec` — the pure
   data-mapping / opts-codec helpers extracted from
-  `Ezagent.Behavior.ExternalMirror` (#25 Phase-3, PR-3N).
+  `Ezagent.ActionSet.ExternalMirror` (#25 Phase-3, PR-3N).
 
   Pure functions only: no DB, no effects, no sandbox needed.
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.ExternalMirror.Codec
+  alias Ezagent.ActionSet.ExternalMirror.Codec
   alias Ezagent.ExternalMirror.BindingRow
 
   describe "encode_opts/1 + decode_opts/1" do

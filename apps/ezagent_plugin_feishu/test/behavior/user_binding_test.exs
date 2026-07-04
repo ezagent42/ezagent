@@ -3,7 +3,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
   Unit tests for the dispatch-backed UserBinding Behavior actions.
 
   Post-Phase-2-f r3 migration: the Behavior now implements the new
-  per-action contract (`use Ezagent.Behavior` + `handle_<action>/2`).
+  per-action contract (`use Ezagent.ActionSet` + `handle_<action>/2`).
   Tests call the new handlers directly with a synthesised `ctx`
   containing a `:read` closure (Kind.Runtime builds it at step 5.5
   per SPEC §2.2).
@@ -12,7 +12,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
   is exercised by the integration test in
   `apps/ezagent_cli/test/integration/cli_lv_cap_parity_test.exs`).
   These tests are the per-action-body coverage — same shape as
-  `Ezagent.Behavior.RoutingTest`.
+  `Ezagent.ActionSet.RoutingTest`.
   """
   use EzagentCore.DataCase, async: false
 
@@ -119,7 +119,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     end
 
     test "new contract: new_style?/1 detects this Behavior" do
-      assert Ezagent.Behavior.new_style?(BV)
+      assert Ezagent.ActionSet.new_style?(BV)
     end
   end
 

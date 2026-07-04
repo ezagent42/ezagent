@@ -39,11 +39,11 @@ The external message **becomes a session message at the `chat.send` dispatch**. 
 
 ## 2. Session → agent delivery (the fan-out)
 
-`Ezagent.Behavior.Chat.handle_send/2` (`apps/ezagent_domain_instance_message/.../chat.ex:429`): persist via `MessageStore.write/2`; resolve recipients via `Ezagent.Routing.Resolver.resolve_with_ctx/4` (`:483`) — **the single source of truth for "who receives"; no hardcoded fan-out**. Default rule `{:always} → ["$session_users", "$mentions"]` (`default_rules.ex:90`): every **User** member always receives; an **agent** receives only when `@`-mentioned. Per recipient (`:512`): cross-session (`scheme == "session"`) re-enters another session's `chat.send`; otherwise `Delivery.dispatch_receive_call/3` (`chat/delivery.ex:119`) casts `<recipient>?action=chat.receive` (`mode: :ignore`). Also emits `{:notify, session_events_topic, {:chat_message, ...}}` for the LiveView stream.
+`Ezagent.ActionSet.Chat.handle_send/2` (`apps/ezagent_domain_instance_message/.../chat.ex:429`): persist via `MessageStore.write/2`; resolve recipients via `Ezagent.Routing.Resolver.resolve_with_ctx/4` (`:483`) — **the single source of truth for "who receives"; no hardcoded fan-out**. Default rule `{:always} → ["$session_users", "$mentions"]` (`default_rules.ex:90`): every **User** member always receives; an **agent** receives only when `@`-mentioned. Per recipient (`:512`): cross-session (`scheme == "session"`) re-enters another session's `chat.send`; otherwise `Delivery.dispatch_receive_call/3` (`chat/delivery.ex:119`) casts `<recipient>?action=chat.receive` (`mode: :ignore`). Also emits `{:notify, session_events_topic, {:chat_message, ...}}` for the LiveView stream.
 
 ## 3. The entity-communication pattern (already partially unified)
 
-`Ezagent.Behavior.Chat` registers `:receive` on **both** `Entity.User` and `Entity.Agent`; `handle_receive/2` (`chat.ex:559`) branches on `ctx[:kind_module]`:
+`Ezagent.ActionSet.Chat` registers `:receive` on **both** `Entity.User` and `Entity.Agent`; `handle_receive/2` (`chat.ex:559`) branches on `ctx[:kind_module]`:
 - `Entity.User` → records `:last_received` + cursor-ring slice (inbox/notification surface).
 - `Entity.Agent` → `Delivery.deliver_agent_receive/2` → builds a flavor-neutral `Ezagent.AgentBridge.Payload` → `AgentBridge.deliver_ensuring*`.
 

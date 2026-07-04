@@ -80,7 +80,7 @@ V1 的 user-facing 动词 **"create agent"** **不等于** **"agent 准备好接
 
 - **A — AgentNewLive 战术修复**: `add_template` 之后加一个 `Workspace.invoke_template(workspace_uri, tmpl_name)` step。一个额外 dispatch 调用。Trade-off: 保留了 "spawn Kind + register template + instantiate template" 三步分裂；只有 LV 这条路径知道要串起来。其它 create 路径（CLI, API）要重复这个串接。
 - **B — agent 生命周期重构为显式阶段**: UI 显示 `registered → instantiated → running` 带显式转换。"Not running" 变成 "Registered but not instantiated"。Trade-off: UI 更复杂但没隐藏 gap；user 看得到当前在哪个阶段。
-- **C — 把 "create + instantiate" 合成单个 dispatch action**（推荐 V2）: 在 Behavior 层统一 workflow。`Ezagent.Behavior.AgentLifecycle.create_and_start` 是一个 cap-gated dispatch；AgentNewLive / CLI / API 都 invoke 同一个 action。Trade-off: 需要新 Behavior；最干净的抽象；符合 Phase 9 "dispatch 是唯一路径" invariant（Decision #3，invariant 1）。
+- **C — 把 "create + instantiate" 合成单个 dispatch action**（推荐 V2）: 在 Behavior 层统一 workflow。`Ezagent.ActionSet.AgentLifecycle.create_and_start` 是一个 cap-gated dispatch；AgentNewLive / CLI / API 都 invoke 同一个 action。Trade-off: 需要新 Behavior；最干净的抽象；符合 Phase 9 "dispatch 是唯一路径" invariant（Decision #3，invariant 1）。
 
 ### 链接
 

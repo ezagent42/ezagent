@@ -92,7 +92,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   require Logger
 
-  alias Ezagent.Behavior.Session
+  alias Ezagent.ActionSet.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.DefinitionSync
   alias Ezagent.Orchestrator.Tools.Kb
@@ -777,18 +777,18 @@ defmodule Ezagent.Orchestrator.Tools do
   # === routing rule prune (F7 PR-A: extracted to shared module) ===========
   #
   # The atomic session-scoped prune primitive MOVED to
-  # `Ezagent.Behavior.Session.RoutingPrune` so the isomorphic
+  # `Ezagent.ActionSet.Session.RoutingPrune` so the isomorphic
   # `Behavior.Session.remove_participant` (F7 PR-A) and this orchestrator
   # `remove_member` path share ONE implementation (no fork — cross-op
   # consistency). These thin delegators preserve the existing internal call
   # sites + the PR-3S public `reload_registry/1` (used by
   # `Tools.MemberTemplate.repoint_routing_rules/3`).
   defp prune_routing_rules_for(%URI{} = session_uri, %URI{} = member_uri),
-    do: Ezagent.Behavior.Session.RoutingPrune.prune_routing_rules_for(session_uri, member_uri)
+    do: Ezagent.ActionSet.Session.RoutingPrune.prune_routing_rules_for(session_uri, member_uri)
 
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.repoint_routing_rules/3`.
   @doc false
-  defdelegate reload_registry(table), to: Ezagent.Behavior.Session.RoutingPrune
+  defdelegate reload_registry(table), to: Ezagent.ActionSet.Session.RoutingPrune
 
   @doc "Snapshot the live session as a new version of the current parent SessionTemplate."
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}

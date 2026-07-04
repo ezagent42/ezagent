@@ -66,7 +66,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       # 5b. Wait for the rehydrated User Kind to finish post_init
       # reconciliation (wildcard-cap-fix 2026-05-26 —
-      # `Ezagent.Behavior.Identity.post_init/2` queues a
+      # `Ezagent.ActionSet.Identity.post_init/2` queues a
       # caps_json-merge continuation for every user URI, and
       # `Ezagent.Kind.Server` keeps the Kind `:not_ready` through
       # post-init). Without this wait the synchronous `:call` dispatch

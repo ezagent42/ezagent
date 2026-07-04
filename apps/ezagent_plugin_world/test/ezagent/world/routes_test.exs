@@ -14,6 +14,22 @@ defmodule Ezagent.World.RoutesTest do
     assert route.path == "/"
   end
 
+  test "/sessions resolves to the Chat sessions surface" do
+    route = Routes.route_for(%{}, "https://example.com/sessions")
+
+    assert route.component == "sessions_table"
+    assert route.title == "Chat"
+    assert route.path == "/sessions"
+  end
+
+  test "/overview resolves to the Overview surface (non-default nav entry)" do
+    route = Routes.route_for(%{}, "https://example.com/overview")
+
+    assert route.component == "overview"
+    assert route.title == "Overview"
+    assert route.path == "/overview"
+  end
+
   test "session query resolves to the Chat conversation surface" do
     session = "session://acme/default/main"
 

@@ -7,7 +7,7 @@ If you're adding a whole new plugin (not just a Kind inside an existing plugin),
 ## Concept refresher
 
 - **Kind** = a process *type*. Identified by URI scheme + module. E.g. `:user` Kind, URIs like `user://alice`. Implements `Ezagent.Kind` behaviour (callbacks `type_name/0`, `behaviors/0`, `persistence/0`).
-- **Behavior** = an action interface + a slice schema. One Behavior module can be attached to many Kinds via `BehaviorRegistry.register(kind, action, behavior)`. E.g. `Ezagent.Behavior.Chat` provides `:send` / `:join` / `:leave` for Session Kind; `:receive` for User + Agent Kinds.
+- **Behavior** = an action interface + a slice schema. One Behavior module can be attached to many Kinds via `BehaviorRegistry.register(kind, action, behavior)`. E.g. `Ezagent.ActionSet.Chat` provides `:send` / `:join` / `:leave` for Session Kind; `:receive` for User + Agent Kinds.
 - **Template Class** = a spawn-from-config recipe. Implements `Ezagent.Kind.Template` behaviour with callbacks `template_name/0`, `validate/1`, `instantiate/3`. The Workspace plugin (and now PR 38's SessionTemplate) uses these for declarative session creation.
 
 The composition: a Kind's lifecycle is run by `Ezagent.Kind.Server` (in core); its `behaviors/0` callback lists which Behaviors initialize slices; per-Kind `BehaviorRegistry.register` decides which actions dispatch to which Behavior.
@@ -32,7 +32,7 @@ defmodule Ezagent.Entity.MyKind do
   def type_name, do: :my_kind
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity]   # which Behaviors' init_slice run at boot
+  def behaviors, do: [Ezagent.ActionSet.Identity]   # which Behaviors' init_slice run at boot
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}   # or :ephemeral / :on_terminate
@@ -98,13 +98,13 @@ Reference: `apps/ezagent_domain_instance_message/lib/esr/entity/agent_template.e
 `apps/<your_domain>/lib/<your>/behavior/<your_behavior>.ex`:
 
 ```elixir
-defmodule Ezagent.Behavior.MyBehavior do
-  @behaviour Ezagent.Behavior
+defmodule Ezagent.ActionSet.MyBehavior do
+  @behaviour Ezagent.ActionSet
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def state_slice, do: :my_slice
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def init_slice(_args) do
     %{
       # Whatever shape your Behavior maintains
@@ -112,7 +112,7 @@ defmodule Ezagent.Behavior.MyBehavior do
     }
   end
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def interface do
     %{
       bump: %{
@@ -123,7 +123,7 @@ defmodule Ezagent.Behavior.MyBehavior do
     }
   end
 
-  @impl Ezagent.Behavior
+  @impl Ezagent.ActionSet
   def invoke(:bump, slice, %{by: n}, _ctx) do
     new_slice = %{slice | counter: slice.counter + n}
     {:ok, new_slice, %{new_value: new_slice.counter}}
@@ -136,18 +136,18 @@ end
 In your plugin's `register_behaviors`:
 
 ```elixir
-:ok = Ezagent.BehaviorRegistry.register(Ezagent.Entity.MyKind, :bump, Ezagent.Behavior.MyBehavior)
+:ok = Ezagent.BehaviorRegistry.register(Ezagent.Entity.MyKind, :bump, Ezagent.ActionSet.MyBehavior)
 ```
 
-A Behavior can be registered on multiple Kinds with different action subsets per Kind. `Ezagent.Behavior.Chat` does this — Session gets `:send / :join / :leave`, User + Agent get `:receive`.
+A Behavior can be registered on multiple Kinds with different action subsets per Kind. `Ezagent.ActionSet.Chat` does this — Session gets `:send / :join / :leave`, User + Agent get `:receive`.
 
 ### Step 3 — test
 
 ```elixir
-defmodule Ezagent.Behavior.MyBehaviorTest do
+defmodule Ezagent.ActionSet.MyBehaviorTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.MyBehavior
+  alias Ezagent.ActionSet.MyBehavior
 
   test "init_slice/1 returns expected shape" do
     assert %{counter: 0} = MyBehavior.init_slice(%{})

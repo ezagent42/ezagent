@@ -6,7 +6,7 @@ defmodule Ezagent.TemplateTags do
   A **tag** is a mutable, git-style ref onto a SessionTemplate version.
   A SessionTemplate version is content-addressed and immutable — its
   `kind_snapshots` row is keyed by `template://session/<ws>/<name>@<hash>`
-  and never edited in place (`Ezagent.Behavior.Template` `:write` is
+  and never edited in place (`Ezagent.ActionSet.Template` `:write` is
   write-once + hash-checked, PR-1). A tag like `stable` or `v1.0` is the
   mutable layer on top: it can be re-pointed at any existing hash for
   the same `(workspace, name)`, exactly like a git branch/tag moves

@@ -22,7 +22,7 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
   use EzagentCore.DataCase, async: false
   import Phoenix.ConnTest
 
-  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeedAuth, DefinitionRegistry, Installation}
   alias EzagentWeb.Socialware.AnonCookie
@@ -90,8 +90,8 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
       DefinitionRegistry.seed_definition_if_absent(
         %{
           name: definition_name,
-          bases: [Ezagent.Behavior.Session, Ezagent.Behavior.Publisher.SessionImpl],
-          shape: [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface],
+          bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
+          shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
           visibility_policy: %{publish_policy: :auto, web_anon_access: web_anon_access}
         },
         workspace_uri: Ezagent.URI.workspace("team-alpha")

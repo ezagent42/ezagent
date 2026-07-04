@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.CredentialGrant do
+defmodule Ezagent.ActionSet.CredentialGrant do
   @moduledoc """
   Cap-checked credential grant management for Agent Kinds.
 
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.CredentialGrant do
               version: row.version,
               revoked_at: row.revoked_at
             }},
-           {:effect, {Ezagent.Behavior.Terminable, :schedule_termination},
+           {:effect, {Ezagent.ActionSet.Terminable, :schedule_termination},
             [self_uri, kind_module]}
          ]}
 

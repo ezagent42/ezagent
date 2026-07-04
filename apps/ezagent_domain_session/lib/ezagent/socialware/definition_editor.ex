@@ -51,6 +51,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, %ConfigObject{} = object} <-
            DefinitionRegistry.write_definition(definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ) do
       {:ok, definition, object}
@@ -108,6 +109,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, object} <-
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ),
          {:ok, _install_object} <-
@@ -141,6 +143,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
          {:ok, object} <-
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
+             caller_workspace_uri: workspace_uri,
              actor_uri: actor_uri
            ),
          install = %{install | ref: name},
@@ -249,6 +252,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp empty_config do
     %{
+      agents: [],
       members: [],
       routing_rules: [],
       prompt_templates: %{},
@@ -259,6 +263,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp merge_definition(acc, %Definition{} = definition) do
     %{
+      agents: acc.agents ++ definition.agents,
       members: acc.members ++ definition.members,
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
@@ -276,6 +281,10 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     legacy_orchestrator = uri_field(template_content, :orchestrator_template_uri)
 
     %{
+      # `agents` is a socialware-Definition-only field (recipe+role_name); there
+      # is no legacy SessionTemplate `agents` section, so it passes through the
+      # merged definition config unchanged.
+      agents: config.agents,
       members: if(legacy_members == [], do: config.members, else: legacy_members),
       routing_rules: if(legacy_rules == [], do: config.routing_rules, else: legacy_rules),
       prompt_templates: Map.merge(config.prompt_templates, legacy_prompts),
@@ -392,7 +401,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Ezagent.Behavior.Session.state_slice(), %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
 
         Map.get(chat_slice, :state, chat_slice)
 

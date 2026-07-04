@@ -25,7 +25,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
 
   The `in_umbrella` leaf test below proves the agent app declares no COMPILE
   dep on a plugin. But several plugin modules live in the SHARED `Ezagent.*`
-  namespace (`Ezagent.Behavior.CurlAgent`, `Ezagent.Behavior.PyAgent`,
+  namespace (`Ezagent.ActionSet.CurlAgent`, `Ezagent.ActionSet.PyAgent`,
   `Ezagent.Orchestrator.McpChannel`, …), so a bare-atom runtime reference to
   one — exactly the shape `Entity.Agent.behaviors/0` used to have for the curl
   state behavior — slips past the dep-graph test. The "agent domain has NO
@@ -145,15 +145,15 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   defp session_symbol?(m) do
     s = inspect(m)
 
-    String.starts_with?(s, "Ezagent.Behavior.Session") or
+    String.starts_with?(s, "Ezagent.ActionSet.Session") or
       String.starts_with?(s, "Ezagent.Entity.Session") or
-      String.starts_with?(s, "Ezagent.Behavior.Chat") or
+      String.starts_with?(s, "Ezagent.ActionSet.Chat") or
       String.contains?(s, "SessionCreator")
   end
 
   defp agent_symbol?(m) do
     s = inspect(m)
-    s == "Ezagent.Entity.Agent" or String.starts_with?(s, "Ezagent.Behavior.Agent.")
+    s == "Ezagent.Entity.Agent" or String.starts_with?(s, "Ezagent.ActionSet.Agent.")
   end
 
   defp mcp_transport_symbol?(m) do
@@ -213,7 +213,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   # truth for "which app DEFINES this module" (PR-9c agent → plugin test).
   # Resolution is by `defmodule`, NOT naming convention, because plugin
   # modules live in the shared `Ezagent.*` namespace just as much as domain
-  # ones do (`Ezagent.Behavior.CurlAgent` vs `Ezagent.Behavior.Agent.Receive`).
+  # ones do (`Ezagent.ActionSet.CurlAgent` vs `Ezagent.ActionSet.Agent.Receive`).
   defp defmodule_app_index do
     Path.wildcard(Path.join(@repo_root, "apps/*/lib/**/*.ex"))
     |> Enum.flat_map(fn file ->

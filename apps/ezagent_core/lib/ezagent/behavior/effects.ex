@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Effects do
+defmodule Ezagent.ActionSet.Effects do
   @moduledoc false
 
   @type mfa_or_fun ::
@@ -136,7 +136,7 @@ defmodule Ezagent.Behavior.Effects do
 
           _ ->
             raise ArgumentError,
-                  "Ezagent.Behavior.apply_effects/2 :dispatch_returning requires " <>
+                  "Ezagent.ActionSet.apply_effects/2 :dispatch_returning requires " <>
                     "an atom `:bind_as` option; got: #{inspect(opts)}"
         end
 
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.Effects do
 
       other ->
         raise ArgumentError,
-              "Ezagent.Behavior.apply_effects/2 encountered unknown effect: #{inspect(other)}"
+              "Ezagent.ActionSet.apply_effects/2 encountered unknown effect: #{inspect(other)}"
     end
   end
 

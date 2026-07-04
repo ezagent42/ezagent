@@ -368,7 +368,7 @@ defmodule Ezagent.Session.ReadMarker do
   defp broadcast(session_str, user_str, src_str, msg_str, observed_at) do
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
-      Ezagent.Behavior.Session.session_events_topic(session_str),
+      Ezagent.ActionSet.Session.session_events_topic(session_str),
       {:read_marker_updated, Ezagent.URI.new!(session_str), Ezagent.URI.new!(user_str),
        %{
          source: String.to_existing_atom(src_str),

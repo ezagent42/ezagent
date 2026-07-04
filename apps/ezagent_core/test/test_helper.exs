@@ -25,3 +25,21 @@ exclude = if standalone?, do: [exclude: [:umbrella_only]], else: []
 
 ExUnit.start(exclude)
 Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, :manual)
+
+# Flake-hardening (2026-07-03): pre-warm the architecture-scan cache ONCE,
+# single-threaded, before any async arch test runs.
+#
+# `Mix.Tasks.Ezagent.Arch.Scan.measure/0` memoizes a full-tree scan (~645 lib
+# files, each AST-parsed several times — measured ~4.4s cold) in `:persistent_term`;
+# the FIRST caller pays that cost, every caller after reads the cached term in ~0ms.
+# The 16 `async: true` architecture suites all funnel through `count/1` → `measure/0`,
+# so exactly ONE of them — whichever ExUnit happens to schedule first — pays the 4.4s
+# scan plus a `:persistent_term.put` (which forces a global GC across every live
+# process). Under the full-umbrella parallel run that cost lands INSIDE the contended
+# window and can breach the 60s ExUnit test timeout, failing that one arbitrary test
+# non-deterministically (green in isolation, ~flaky under load — see mix.exs note and
+# `runtime_ordering_test` / `cc_bridge_shim_test`). Warming the cache here moves the
+# cost out of the timeout-sensitive window; every arch test then only reads the
+# pre-populated term. This removes a real, movable cost — it is not a masked sleep or
+# a widened timeout.
+Mix.Tasks.Ezagent.Arch.Scan.measure()

@@ -1,8 +1,8 @@
-defmodule Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest do
+defmodule Ezagent.ActionSet.ExternalMirrorWorkerSelfCapsTest do
   @moduledoc """
   System-principal elimination (north star / Decision #154), 2026-06-19.
 
-  Pins the SELF-AUTHORITY caps the `Ezagent.Behavior.ExternalMirrorWorker`
+  Pins the SELF-AUTHORITY caps the `Ezagent.ActionSet.ExternalMirrorWorker`
   carries inline (in `ctx.caps`) on its two internal self-dispatches, now
   that the `system://worker-publish` principal is GONE.
 
@@ -19,7 +19,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Capability
-  alias Ezagent.Behavior.ExternalMirrorWorker
+  alias Ezagent.ActionSet.ExternalMirrorWorker
 
   test "the inline publish cap matches the `required_caps/0[:publish]` gate (self-authority)" do
     self_uri = Ezagent.URI.worker("team-alpha", "em_test")
@@ -54,7 +54,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest do
     expected =
       Capability.cap(
         :session,
-        Ezagent.Behavior.Publisher.SessionImpl,
+        Ezagent.ActionSet.Publisher.SessionImpl,
         :subscribe_from
       )
 
