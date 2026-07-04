@@ -22,12 +22,14 @@ defmodule EzagentCore.Architecture.MemberCapGrantSeamTest do
   `behavior.ex`, `cap(:session, __MODULE__, :receive)`, is not a grant and is excluded
   by the ≥4-arg shape.)
 
-  Scope note (no silent cap): this is the GRANT-shape signal. A future bypass that
-  reconstructs the exact 5 fields WITHOUT the `Capability.cap` constructor (e.g. a
-  hand-built `%Capability{}` struct literal) is out of this signal's scope — a tracked
-  follow-up (widen to struct-literal detection). The primary threat-X closure is proven
-  by the §14.5(A) acceptance + the C.1 gate tests; this is defense-in-depth against the
-  entry-path CLASS. Same pattern as the domain-only-Kinds fitness gate.
+  Scope note (no silent cap): this is the GRANT-shape signal — it matches a LITERAL
+  `Capability.cap(:session, _, :receive, _, _)` call. A future bypass that (a) builds
+  the cap from a hand-rolled `%Capability{}` struct literal, or (b) passes the action
+  as a VARIABLE bound to `:receive` (not the literal atom), would evade this matcher
+  (codex 2026-07-05). Verified: NO such real receive-cap construction site exists
+  outside the allowlist today. Widening to struct-literal + dataflow detection is a
+  tracked defense-in-depth follow-up; the primary threat-X closure is proven by the
+  §14.5(A) acceptance + the C.1 gate tests. Same pattern as the domain-only-Kinds gate.
   """
 
   @repo_root Path.expand("../../../..", __DIR__)

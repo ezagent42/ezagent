@@ -31,6 +31,14 @@ Three refinements are DEFERRED with rationale; none is a security hole:
   **Recommended:** a shared caller-side confirmed grant helper invoked at the add
   sites (World LV, orchestrator participants, anon admission, SessionCreator),
   abort/compensate on failure.
+  **Also covers C.2 approve (codex 2026-07-05 MED):** `approve_admission/3` re-runs
+  `do_join/5`, so its member-cap grant is the SAME async best-effort call — a post-cast
+  async-grant failure can drop `:pending_members` + mount without the cap. Fails CLOSED
+  (R1.1: no cap ⇒ no receive ⇒ no credential spend; reconcile heals the stale roster
+  entry), so it is NOT a credential-spend hole — but the approve path only becomes
+  fully R3.1 "never half-mount" once this shared confirmed-grant helper lands. The
+  overstated "R3.1 abort-safe" claim in `approve_admission/3`'s @doc has been corrected
+  to reflect the async-grant scope.
 - **Post-commit replay/notify (R3.2 / A2.5).** JOIN's `Delivery.replay_messages_since`
   + `Ezagent.Notifications.notify` still run inline pre-commit in `do_join_apply`.
   R1.1 already defangs the leak (a replayed receive to an uncommitted-join member

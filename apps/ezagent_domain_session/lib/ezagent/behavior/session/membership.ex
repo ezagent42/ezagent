@@ -303,8 +303,20 @@ defmodule Ezagent.ActionSet.Session.Membership do
   grant+mount tail C.1 withheld by re-running `do_join/5` under the approver's
   authority (`manages?(approver, member) = true` ⇒ the trigger does NOT re-pend,
   so it grants the member-cap + `do_join_apply` mounts), then drop the
-  `:pending_members` entry (as an EFFECT — so a grant/mount RAISE aborts the whole
-  approval and the request stays PENDING, R3.1 abort-safe; never a half-mount).
+  `:pending_members` entry (as an EFFECT — so a SYNCHRONOUS raise in `do_join_apply`
+  (monitor/replay/notify) aborts the whole approval and the request stays PENDING).
+
+  ⚠️ Abort-safety scope (codex 2026-07-05, #166): the abort-safety above covers
+  SYNCHRONOUS `do_join_apply` failures. The member-cap grant itself
+  (`MemberCap.grant_at_join/2`) is `:async` best-effort — its `:ok` means the grant
+  cast was BUFFERED, not committed. So a post-cast async-grant FAILURE can drop
+  `:pending_members` and mount the member into `:members` WITHOUT the member-cap. This
+  is NOT a credential-spend hole: by R1.1 (roster ⟂ authz) a roster entry that holds
+  no member-cap CANNOT receive (`MemberReceive.authorize/1` denies) ⇒ A's credential
+  is NOT spent, and `reconcile_after_load/2` ("caps win") drops the stale roster entry
+  on the next activate. It is a stale-roster edge, not a half-mount that spends. The
+  fail-closed hardening (make the at-join grant synchronous + checked across ALL join
+  paths, not just approve) is tracked as #166.
 
   Cap-EXEMPT at the CapBAC layer (the approver holds no session cap on B's
   session) — authorized HERE, in-handler, by the `manages?` predicate. Returns
