@@ -258,6 +258,53 @@ defmodule Ezagent.ActionSet.Session do
         ":chat slice (team-routing-unification §3.4/§3.7, PR-7)"
   )
 
+  # Membership-cap unification Part C (spec §C.4/§C.5, R4) — the admission
+  # approve/deny/withdraw actions. Each is CAP-EXEMPT at the CapBAC layer
+  # (`cap_exempt_actions/0` below) and authorized IN-HANDLER: the member's
+  # owner/manager holds NO session cap on B's session, so a session-scoped
+  # CapBAC gate could never let A approve. Authority is the `manages?/2`
+  # predicate (approve/deny) or `requested_by` (withdraw) — the `:receive` /
+  # `:cascade_notify_managers` cap-exempt precedent (in-handler live authz).
+  action(:approve_admission,
+    args: %{member: :uri},
+    returns: %{members: {:list, :uri}, approved: :uri},
+    caps: [:approve_admission],
+    modes: [:call],
+    description:
+      "Approve a pending cross-owner admission (spec §C.4) — manage-authority " <>
+        "gated in-handler; grants the member-cap + mounts, drops the pending entry"
+  )
+
+  action(:deny_admission,
+    args: %{member: :uri},
+    returns: %{denied: :uri},
+    caps: [:deny_admission],
+    modes: [:call],
+    description:
+      "Deny a pending admission (spec §C.5) — a manager of the member drops the " <>
+        "pending entry (pure state-drop; no cap was ever granted)"
+  )
+
+  action(:withdraw_admission,
+    args: %{member: :uri},
+    returns: %{withdrawn: :uri},
+    caps: [:withdraw_admission],
+    modes: [:call],
+    description:
+      "Withdraw a pending admission request (spec §C.5) — the requester (B) " <>
+        "drops its own pending entry (authz: requested_by == caller)"
+  )
+
+  @doc """
+  Membership-cap Part C cap-exempt actions (spec §C.4/§C.5): the admission
+  approve/deny/withdraw actions are authorized IN-HANDLER (the approver/denier by
+  `Authority.manages?/2` over the member; the withdrawer by `requested_by`), NOT
+  via a caller-scoped session cap — the member's owner holds no session cap on the
+  session. Mirrors the `:receive` / `:cascade_notify_managers` cap-exempt
+  precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions == actions`.
+  """
+  def cap_exempt_actions, do: [:approve_admission, :deny_admission, :withdraw_admission]
+
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
   # the two-container `%{state: ..., transients: %{}}` shape and runs it
@@ -291,6 +338,15 @@ defmodule Ezagent.ActionSet.Session do
      %{
        # %{URI => %{online: bool}}
        members: %{},
+       # Membership-cap unification Part C admission gate (spec §C.1/§C.2, R4).
+       # A CROSS-OWNER add (a real, non-system caller who does NOT manage the
+       # member) records a PENDING admission request here — DISTINCT from
+       # `:members`, holds NO member-cap, is NOT mounted — until the member's
+       # owner/manager approves. Shape (spec §C.2):
+       #   %{member_uri => %{requested_by, requested_at, request_ref}}
+       # Persistent (survives restart, never silently lost). Legacy snapshots
+       # lack this key; readers MUST default via `ctx[:read].(:pending_members, %{})`.
+       pending_members: %{},
        owner_uri: Map.get(args, :owner_uri),
        # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
        # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`
@@ -759,6 +815,25 @@ defmodule Ezagent.ActionSet.Session do
   @doc false
   def handle_merge_member(%{from: %URI{} = from_uri, to: %URI{} = to_uri}, ctx) do
     Membership.do_merge_member(from_uri, to_uri, ctx, __MODULE__)
+  end
+
+  # --- Part C admission actions (approve / deny / withdraw) ----------------
+  # Bodies + authz in `Membership` (spec §C.4/§C.5). Cap-exempt (see
+  # `cap_exempt_actions/0`) — authorized in-handler by `manages?`/`requested_by`.
+
+  @doc false
+  def handle_approve_admission(%{member: %URI{} = member_uri}, ctx) do
+    Membership.approve_admission(member_uri, ctx, __MODULE__)
+  end
+
+  @doc false
+  def handle_deny_admission(%{member: %URI{} = member_uri}, ctx) do
+    Membership.deny_admission(member_uri, ctx)
+  end
+
+  @doc false
+  def handle_withdraw_admission(%{member: %URI{} = member_uri}, ctx) do
+    Membership.withdraw_admission(member_uri, ctx)
   end
 
   # --- :set_working_copy -------------------------------------------------

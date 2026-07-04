@@ -26,7 +26,19 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
   """
   @spec register() :: :ok
   def register do
-    for action <- [:send, :join, :leave, :attach, :merge_member] do
+    for action <- [
+          :send,
+          :join,
+          :leave,
+          :attach,
+          :merge_member,
+          # Membership-cap unification Part C (spec §C.4/§C.5) — the admission
+          # approve/deny/withdraw actions (cap-exempt; in-handler manages?/
+          # requested_by authz).
+          :approve_admission,
+          :deny_admission,
+          :withdraw_admission
+        ] do
       :ok = CapabilityRegistry.register(Session, action, SessionBehavior)
     end
 

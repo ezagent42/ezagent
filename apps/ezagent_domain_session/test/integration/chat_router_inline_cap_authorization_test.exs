@@ -158,6 +158,37 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRouterInlineCapAuthorizat
       refute Capability.matches?(cap, needed_join),
              "the forward cap must NOT authorize session.join — action-pinned."
     end
+
+    # test 34 (spec §C.1 bypass 2 — covered by R1.1) — the receive-side twin of the
+    # :join assertion above. A same-workspace cross-session forward injects this
+    # inline `session.send`-on-the-target cap so the SOURCE session may deliver INTO
+    # the target. It must NOT confer a member `:receive` on the target: a non-member
+    # A-agent there (holding no member-cap) therefore cannot RECEIVE the forwarded
+    # message (`MemberReceive.authorize/1` denies), so the forwarding path is gated
+    # by R1.1 (the held member-cap), never a member-add bypass — credential not spent.
+    test "cross-session send cap does NOT authorize a member :receive — a non-member cannot receive a forward (test 34)" do
+      target = Ezagent.URI.new!("session://team-alpha/default/oncall")
+      source = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      cap = inline_cross_session_send_cap(target, source)
+
+      # The member-cap shape `MemberReceive.authorize/1` requires (spec R1.1 / plan
+      # §A1.1): `cap(:session, ActionSet.Session, :receive, session_uri, ws)`.
+      needed_member_receive =
+        Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :receive,
+          Ezagent.URI.instance(target),
+          Capability.workspace_of(target)
+        )
+
+      refute Capability.matches?(cap, needed_member_receive),
+             "the forward's inline session.send cap must NOT authorize a member " <>
+               ":receive on the target — a non-member A-agent there (no member-cap) " <>
+               "cannot receive the forwarded message (R1.1: receive authorizes on the " <>
+               "held member-cap, never the forward's :send cap)."
+    end
   end
 
   describe "cross-session forward same-workspace guard" do

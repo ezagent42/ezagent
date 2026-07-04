@@ -31,6 +31,14 @@ Three refinements are DEFERRED with rationale; none is a security hole:
   **Recommended:** a shared caller-side confirmed grant helper invoked at the add
   sites (World LV, orchestrator participants, anon admission, SessionCreator),
   abort/compensate on failure.
+  **Also covers C.2 approve (codex 2026-07-05 MED):** `approve_admission/3` re-runs
+  `do_join/5`, so its member-cap grant is the SAME async best-effort call — a post-cast
+  async-grant failure can drop `:pending_members` + mount without the cap. Fails CLOSED
+  (R1.1: no cap ⇒ no receive ⇒ no credential spend; reconcile heals the stale roster
+  entry), so it is NOT a credential-spend hole — but the approve path only becomes
+  fully R3.1 "never half-mount" once this shared confirmed-grant helper lands. The
+  overstated "R3.1 abort-safe" claim in `approve_admission/3`'s @doc has been corrected
+  to reflect the async-grant scope.
 - **Post-commit replay/notify (R3.2 / A2.5).** JOIN's `Delivery.replay_messages_since`
   + `Ezagent.Notifications.notify` still run inline pre-commit in `do_join_apply`.
   R1.1 already defangs the leak (a replayed receive to an uncommitted-join member
@@ -210,6 +218,63 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
 > block into a small helper (or fold it into `Session.Reconcile`) to drop session.ex
 > back under 1000, then ratchet `oversized_modules_gt_1000` 2 → 1. Low priority — it is
 > a cohesive callback and 18 lines over.
+
+### Fast domain-level regression test for the RouteProvisioner over-fire — OPEN (LOW, #161 C)
+
+> **OPEN, 2026-07-05 (#161 C admission over-fire).** The admission gate over-fired on
+> `RouteProvisioner.provision_declared_role/4` — a member DECLARED in the session's own
+> template spec, lazily provisioned during routing, was joined under the TRIGGERING
+> message-sender's caller (e.g. an anon participant), so the gate mis-classified the
+> session realizing its own declared member as a cross-owner pull → PENDING. **Fixed**
+> by running that member-`do_join` under system-mediated (admin) authority
+> (`system_mediated_ctx/1`), identical to `Materializer.join_session_members` /
+> `DefinitionAgents` at session-CREATE. **Regression guard TODAY =** the socialware P10
+> E2E (`apps/ezagent_plugin_kb/test/e2e/socialware_p10_codex_gate_test.exs`) — it
+> reproduces the exact flow (non-system ws, anon participant → declared bot via routing)
+> and was verified fails-without-fix / passes-with-fix; it is in CI precommit. **Fix (if
+> pursued) =** add a FAST domain-level test in `session_template_materialize_test.exs`
+> driving `RouteProvisioner` with a non-managing sender. It MUST use a NON-SYSTEM
+> workspace: in the `system` (admin) workspace `manages?/2` returns true for any caller,
+> so a system-ws anon does NOT reproduce the pend (a system-ws attempt is a FALSE guard —
+> it passes even without the fix). Needs the `relay_team_content`/`persist_template`
+> harness re-pointed to a non-system ws + a non-system owner + a matching route rule.
+
+### Verify protocol_api `join_agent` does not admission-over-fire — OPEN (LOW, #161 C audit)
+
+> **OPEN, 2026-07-05 (#161 C sibling-site audit).** After fixing the RouteProvisioner
+> over-fire, I audited all `session.join` dispatch sites for the same class (a member-join
+> carrying a caller who does not manage the joined agent). All others are safe:
+> `Materializer`/`DefinitionAgents` use `caller: admin` (system-mediated); `world_live.ex`
+> + `conversation_actions.ex:836` are SELF-joins (`member == caller` → `same_entity?`
+> exempt); orchestrator uses `{:spawned_by}`. **One to verify:**
+> `chat_completions_plug.ex:185` (`ezagent_plugin_protocol_api`) joins `target_agent`
+> with `caller: entity_uri` (the API key's principal) — its full-plug integration test is
+> `@tag :skip`, so this path has NO CI coverage. In the fixtures + likely production model
+> `entity_uri` is in the **system** workspace (`entity://system/agent/py_default`,
+> `workspace://system`) → workspace-admin → `manages?` true → EXEMPT, no over-fire. **Risk
+> only if** a real API key binds a NON-system `entity_uri` to a `target_agent` it does not
+> manage → the admission gate would pend the agent-join and the OpenAI-compat endpoint
+> would hang. **Verify =** un-skip the integration test with a non-system API key, or
+> confirm API-key provisioning grants the principal manage-authority over its bound agent;
+> if it over-fires, apply the same system-mediated-caller treatment or grant-at-provision.
+
+### `behavior/session/membership.ex` oversized (admission cluster) — OPEN (LOW, #161 C)
+
+> **OPEN, surfaced 2026-07-05 (#161 C admission gate).** `oversized_modules_gt_1000`
+> was ratcheted **2 → 3** because `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex`
+> crossed 1000 (was **966** on main after A1's MemberCap extraction) when C.1/C.2/C.3
+> added the ~260-line owner-approval admission cluster — `admission_pending?`, the
+> `caller_controls_member?` / `{:spawned_by, caller}` exemption chain, `record_pending_admission`,
+> `notify_pending_managers`, and the public `approve_admission` / `deny_admission` /
+> `withdraw_admission` handlers (now **1262**). **Not extracted (deliberately):** unlike
+> A1's `Session.MemberCap` leaf, the cluster is MUTUALLY RECURSIVE with the join flow it
+> guards — `do_join` calls `admission_pending?` + `record_pending_admission`, and
+> `approve_admission` calls back `do_join` — so its natural home is next to `do_join`.
+> **Fix (if pursued) =** extract a `Session.Admission` sibling holding the cluster
+> (`same_entity?` is already cluster-local; only session.ex's 3 admission handlers + the
+> `session_behavior_registration.ex` action list would repoint), accepting the
+> bidirectional `Membership ↔ Admission` runtime coupling; then ratchet 3 → 2. Low
+> priority — the coupling makes the split a judgement call, not a clear win.
 
 ### Routing explicit-URI receiver bypasses `valid_member?` — OPEN (LOW, pre-existing, audit)
 

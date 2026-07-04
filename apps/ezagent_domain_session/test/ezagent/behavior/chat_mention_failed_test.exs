@@ -97,7 +97,14 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
       # never race a transiently-non-resolved member. (`:call` join commits
       # the slice before replying — this assertion proves it deterministically
       # rather than trusting timing.)
-      {:ok, members_after_member_join} = join_session(ctx.session, ctx.member, ctx.sender)
+      # Add the AGENT member under admin authority: the Part C admission gate
+      # (spec §C.1) pends a cross-owner AGENT add, and `ctx.sender` neither manages
+      # nor spawned this agent. Admin (genesis wildcard ⇒ manages? true) mounts it
+      # directly, which is all this mention-resolution test needs. (Users are exempt
+      # from the gate, so the sender self-joins below still mount as themselves.)
+      {:ok, members_after_member_join} =
+        join_session(ctx.session, ctx.member, Ezagent.Entity.User.admin_uri())
+
       assert ctx.member in members_after_member_join
 
       {:ok, members_after_sender_join} = join_session(ctx.session, ctx.sender, ctx.sender)

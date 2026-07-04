@@ -70,20 +70,328 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # Kind is consistent with the existing at-join grant flow (spec §2.2) and
         # runs on the cold join path. The at-join member-cap machinery lives in
         # the sibling `Session.MemberCap` module.
-        granted? = MemberCap.grant_at_join(member_uri, ctx)
+        # Membership-cap unification Part C admission gate (spec §C.1 / R4) — the
+        # ONE gate, at the COMMON member-cap grant seam reached by `handle_join/2`
+        # from EVERY member-add entry path (World `invite_member/3`, orchestrator
+        # `join_member`, materializer, direct `session.join`). Fire PENDING iff
+        # `ctx.caller` is a real, non-system entity that is neither the member nor
+        # a manager of it (`Authority.manages?/2`, resolved from the caller's
+        # DURABLE identity caps by URI — NOT `ctx.caps`). A pending add grants NO
+        # member-cap and does NOT mount into `:members`, so the pending member
+        # holds no cap ⇒ receive is DENIED (R1.1) ⇒ the owner's credential is not
+        # spent, until the member's owner approves (`:approve_admission`). All
+        # non-add / manage-authorized / self / materializer mounts take the
+        # existing grant+mount path unchanged.
+        if admission_pending?(member_uri, ctx) do
+          record_pending_admission(member_uri, ctx)
+        else
+          granted? = MemberCap.grant_at_join(member_uri, ctx)
 
-        # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
-        # (monitor error, replay/notify raise, etc.) must not orphan the
-        # just-granted member-cap. `do_join_apply` returns `{:ok, _, _}` or
-        # RAISES (it has no `{:error}` return path), so the rescue is the sole
-        # compensation trigger; it revokes only what THIS call granted, then
-        # re-propagates (let-it-crash — the join still fails loudly).
-        try do
-          do_join_apply(member_uri, member_pid, ctx, facets, source_module)
-        rescue
-          e ->
-            if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)
-            reraise e, __STACKTRACE__
+          # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
+          # (monitor error, replay/notify raise, etc.) must not orphan the
+          # just-granted member-cap. `do_join_apply` returns `{:ok, _, _}` or
+          # RAISES (it has no `{:error}` return path), so the rescue is the sole
+          # compensation trigger; it revokes only what THIS call granted, then
+          # re-propagates (let-it-crash — the join still fails loudly).
+          try do
+            do_join_apply(member_uri, member_pid, ctx, facets, source_module)
+          rescue
+            e ->
+              if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)
+              reraise e, __STACKTRACE__
+          end
+        end
+    end
+  end
+
+  # --- Part C admission gate (spec §C.1/§C.2/§C.3, R4) ---------------------
+
+  # The admission trigger predicate (spec §C.1). Fire PENDING iff:
+  #   * the member is NOT already mounted (a rejoin / re-add of an established
+  #     member is never pended — it already holds its member-cap), AND
+  #   * `ctx.caller` is a REAL, non-system entity — a well-formed bare identity
+  #     principal `entity://<ws>/<user|agent|worker>/<name>` (rejects nil /
+  #     `:vm_internal` / `system://…` / malformed via `Ezagent.URI.bare_principal?/1`),
+  #     AND
+  #   * the caller is NOT the member itself (self-join / anon self-admission mount),
+  #     AND
+  #   * the caller does NOT hold manage-authority over the member
+  #     (`Ezagent.Identity.Authority.manages?/2`, resolved from the caller's DURABLE
+  #     identity caps by URI + the admin UNION — so the materializer's `admin_uri`
+  #     caller, whose ctx.caps carry only a narrow inline join cap, is exempt via
+  #     `manages?(admin_uri, member) = true` and NEVER stalls at PENDING).
+  defp admission_pending?(%URI{} = member_uri, ctx) do
+    members = ctx[:read].(:members, %{})
+    caller = Map.get(ctx, :caller)
+
+    # Scope to CREDENTIAL-BEARING members (agents/workers), spec §C.2. STRUCTURAL,
+    # not a heuristic: the A2 receive-split routes `:receive` to `Agent.Receive`
+    # (active live-worker delivery via the bridge — THE OAuth spend) for agents and
+    # to `User.Receive` (a passive inbox write) for users. So the credential-spend
+    # surface this gate protects IS exactly the non-user receive path — a USER
+    # member cannot spend a credential on receive even if delivered. Pending an
+    # invited human (orchestrator `add_participant`, world invite) would therefore
+    # be a pure over-fire with no threat-X coverage; a human's data-read access is
+    # governed by the join-cap / invite-authority layer
+    # (`provision_invited_join_authority`), NOT this gate.
+    not Map.has_key?(members, member_uri) and
+      not Ezagent.URI.type?(member_uri, :user) and
+      Ezagent.URI.bare_principal?(caller) and
+      not same_entity?(caller, member_uri) and
+      not caller_controls_member?(caller, member_uri)
+  end
+
+  # The caller has authority over the member — the admission exemption (spec §C.1
+  # (a)+(c)). True iff the caller:
+  #   * MANAGES the member (K2 `Authority.manages?/2` — a `Manage`-over-member cap,
+  #     admin union, or workspace-admin; covers owner-adds-own-agent + the
+  #     materializer's admin_uri caller via the genesis wildcard), OR
+  #   * holds a delegated `{:spawned_by, caller}`-scoped cap covering the member —
+  #     the ORCHESTRATOR / team-template spawn exemption (spec §C.1 (c)): the
+  #     orchestrator dispatches the member-join under its OWN agent URI holding
+  #     `cap(:agent, :any, {:spawned_by, orchestrator})` over the worker it just
+  #     spawned (`orchestrator/tools.ex` `join_member`, `session_manager.ex:375`).
+  #     That is genuine control (the same `{:spawned_by}` authority that gates
+  #     `remove_member`/terminate on the worker), scoped to workers the CALLER
+  #     ITSELF spawned — NOT a cross-owner pull.
+  #
+  # ⚠️ SECURITY (spec §C.1 / threat X): the second branch is restricted to the
+  # `{:spawned_by, caller}` instance scope ONLY. It MUST NOT be a general "holds
+  # any cap covering the member" check — a co-tenant B (in the SAME workspace as
+  # A's agent, the threat setup) could hold a broad `{:within_workspace, ws}` /
+  # `:any`-instance agent cap that covers A's agent, which would re-exempt the
+  # cross-owner pull and REOPEN threat X. The `{:spawned_by, caller}` gate admits
+  # only the orchestrator's own-spawned workers. (Guarded by the teeth test
+  # `within_workspace cap does NOT exempt` in `admission_gate_test.exs`.)
+  #
+  # `manages?/2` is checked FIRST so the common mounts (owner-adds-own, admin) never
+  # take the second durable-caps read (short-circuit): the spawned-by read runs only
+  # when `manages?` is false (the cross-owner-looking minority).
+  defp caller_controls_member?(%URI{} = caller, %URI{} = member_uri) do
+    Ezagent.Identity.Authority.manages?(caller, member_uri) or
+      holds_spawned_by_authority?(caller, member_uri)
+  end
+
+  defp caller_controls_member?(_, _), do: false
+
+  defp holds_spawned_by_authority?(%URI{} = caller, %URI{} = member_uri) do
+    caller
+    |> Ezagent.Identity.read_entity_caps()
+    |> Enum.any?(&spawned_by_caller_cap_covers?(&1, caller, member_uri))
+  end
+
+  # True ONLY for a `{:spawned_by, caller}`-scoped cap that covers `member_uri`.
+  # The instance-scope guard (`{:spawned_by, %URI{} = sb}` with `sb == caller`) is
+  # load-bearing — see the security note above. `cap_covers_instance?/2` then lets
+  # `Capability.matches?/2` resolve member-spawned-in-caller's-lineage
+  # (`AgentLineage.spawned_in_lineage?/2`) for ANY behavior (the orchestrator's cap
+  # is `behavior: :any`, not `Manage`).
+  defp spawned_by_caller_cap_covers?(
+         %Ezagent.Capability{instance: {:spawned_by, %URI{} = sb}} = held,
+         %URI{} = caller,
+         %URI{} = member_uri
+       ) do
+    same_entity?(sb, caller) and cap_covers_instance?(held, member_uri)
+  end
+
+  defp spawned_by_caller_cap_covers?(_held, _caller, _member_uri), do: false
+
+  # Echoes the held cap's own kind/behavior/action/workspace axes into `needed` so
+  # those four match trivially (sidestepping the asymmetric-`:any` rule), leaving
+  # the INSTANCE axis as the only real constraint — the same technique as
+  # `Authority.held_instance_covers_target?/2`.
+  defp cap_covers_instance?(%Ezagent.Capability{} = held, %URI{} = member_uri) do
+    needed = %{
+      kind: held.kind,
+      behavior: held.behavior,
+      action: Ezagent.Capability.action_of(held),
+      instance: member_uri,
+      workspace_uri: held.workspace_uri
+    }
+
+    Ezagent.Capability.matches?(held, needed)
+  end
+
+  defp cap_covers_instance?(_, _), do: false
+
+  defp same_entity?(%URI{} = a, %URI{} = b),
+    do: Ezagent.URI.instance(a) == Ezagent.URI.instance(b)
+
+  defp same_entity?(_, _), do: false
+
+  # Record a pending admission request on the `:session` slice (spec §C.2): NO
+  # member-cap granted, NO `:members` mount. Returns the join tuple with a
+  # `:pending_members` set-effect (the `:members` projection is unchanged — the
+  # pending member is not mounted on either axis). The pending MEMBER's managers
+  # are notified (spec §C.3) so the owner can approve.
+  defp record_pending_admission(%URI{} = member_uri, ctx) do
+    members = ctx[:read].(:members, %{})
+    pending = ctx[:read].(:pending_members, %{})
+    request_ref = new_request_ref()
+
+    entry = %{
+      requested_by: Map.get(ctx, :caller),
+      requested_at: DateTime.utc_now(),
+      request_ref: request_ref
+    }
+
+    new_pending = Map.put(pending, member_uri, entry)
+
+    # spec §C.3 — notify the pending MEMBER's managers (NOT the session's) with a
+    # content-free approvable-request envelope. Inline (like the join-notify in
+    # `do_join_apply`): synchronous here is safe — `managers_of/1` GenServer.calls
+    # the MANAGERS' Kinds, never re-enters this Session Kind.
+    notify_pending_managers(member_uri, ctx[:self_uri], request_ref)
+
+    {:ok, %{members: Map.keys(members), pending: member_uri},
+     [{:set, :pending_members, new_pending}]}
+  end
+
+  # An opaque handle A approves/denies (spec §C.2). Random, dependency-free.
+  defp new_request_ref, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+  # spec §C.3 — notify the pending MEMBER's managers (`managers_of(member) = A`),
+  # NOT the session's managers (= B). Content-free approvable-request envelope:
+  # `{member, session, request_ref}` only — no message body, no cap values (the
+  # same content-free discipline as the Part B cascade). Reuses Part B's
+  # `managers_of/1` machinery with the pending member as the explicit SUBJECT (the
+  # non-obvious wiring point: the generic `{entity,:caps}` cascade would resolve
+  # `managers_of(SESSION) = B`, the wrong target). Best-effort — a notify
+  # failure/raise on one recipient is swallowed so the pending record still commits.
+  defp notify_pending_managers(%URI{} = member_uri, session_uri, request_ref) do
+    body = %{
+      member: URI.to_string(member_uri),
+      session: session_uri && URI.to_string(session_uri),
+      request_ref: request_ref
+    }
+
+    member_uri
+    |> Ezagent.Identity.Cascade.managers_of()
+    |> Enum.each(fn %URI{} = manager -> notify_pending_one(manager, body) end)
+
+    :ok
+  end
+
+  defp notify_pending_one(%URI{} = manager, body) do
+    Ezagent.Notifications.notify(manager, %{
+      type: :pending_admission,
+      source: __MODULE__,
+      body: body
+    })
+  rescue
+    error ->
+      Logger.warning(
+        "Session.Membership: pending-admission notify failed for " <>
+          "#{URI.to_string(manager)} (non-fatal, advisory): #{inspect(error)}"
+      )
+
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning(
+        "Session.Membership: pending-admission notify threw for " <>
+          "#{URI.to_string(manager)} (non-fatal, advisory): #{inspect({kind, reason})}"
+      )
+
+      :ok
+  end
+
+  @doc """
+  APPROVE a pending admission request (spec §C.4) — the deferred second half of
+  join. The approver MUST hold manage-authority over the member
+  (`Ezagent.Identity.Authority.manages?/2`); on approval, re-enter the EXACT
+  grant+mount tail C.1 withheld by re-running `do_join/5` under the approver's
+  authority (`manages?(approver, member) = true` ⇒ the trigger does NOT re-pend,
+  so it grants the member-cap + `do_join_apply` mounts), then drop the
+  `:pending_members` entry (as an EFFECT — so a SYNCHRONOUS raise in `do_join_apply`
+  (monitor/replay/notify) aborts the whole approval and the request stays PENDING).
+
+  ⚠️ Abort-safety scope (codex 2026-07-05, #166): the abort-safety above covers
+  SYNCHRONOUS `do_join_apply` failures. The member-cap grant itself
+  (`MemberCap.grant_at_join/2`) is `:async` best-effort — its `:ok` means the grant
+  cast was BUFFERED, not committed. So a post-cast async-grant FAILURE can drop
+  `:pending_members` and mount the member into `:members` WITHOUT the member-cap. This
+  is NOT a credential-spend hole: by R1.1 (roster ⟂ authz) a roster entry that holds
+  no member-cap CANNOT receive (`MemberReceive.authorize/1` denies) ⇒ A's credential
+  is NOT spent, and `reconcile_after_load/2` ("caps win") drops the stale roster entry
+  on the next activate. It is a stale-roster edge, not a half-mount that spends. The
+  fail-closed hardening (make the at-join grant synchronous + checked across ALL join
+  paths, not just approve) is tracked as #166.
+
+  Cap-EXEMPT at the CapBAC layer (the approver holds no session cap on B's
+  session) — authorized HERE, in-handler, by the `manages?` predicate. Returns
+  `{:ok, result, effects}` / `{:error, reason}`.
+  """
+  @spec approve_admission(URI.t(), map(), module()) :: {:ok, map(), [term()]} | {:error, term()}
+  def approve_admission(%URI{} = member_uri, ctx, source_module) do
+    pending = ctx[:read].(:pending_members, %{})
+    caller = Map.get(ctx, :caller)
+
+    cond do
+      not Map.has_key?(pending, member_uri) ->
+        {:error, :not_pending}
+
+      not Ezagent.Identity.Authority.manages?(caller, member_uri) ->
+        {:error, :unauthorized}
+
+      true ->
+        case Ezagent.KindRegistry.lookup(member_uri) do
+          {:ok, member_pid} ->
+            with {:ok, result, join_effects} <-
+                   do_join(member_uri, member_pid, ctx, %{}, source_module) do
+              {:ok, Map.put(result, :approved, member_uri),
+               join_effects ++ [{:set, :pending_members, Map.delete(pending, member_uri)}]}
+            end
+
+          :error ->
+            {:error, {:member_not_registered, member_uri}}
+        end
+    end
+  end
+
+  @doc """
+  DENY a pending admission request (spec §C.5) — a manager of the member drops the
+  `:pending_members` entry. No cap was ever granted, so deny is a pure state-drop.
+  Cap-exempt; authorized in-handler by `manages?(actor, member)`.
+  """
+  @spec deny_admission(URI.t(), map()) :: {:ok, map(), [term()]} | {:error, term()}
+  def deny_admission(%URI{} = member_uri, ctx) do
+    pending = ctx[:read].(:pending_members, %{})
+    caller = Map.get(ctx, :caller)
+
+    cond do
+      not Map.has_key?(pending, member_uri) ->
+        {:error, :not_pending}
+
+      not Ezagent.Identity.Authority.manages?(caller, member_uri) ->
+        {:error, :unauthorized}
+
+      true ->
+        {:ok, %{denied: member_uri},
+         [{:set, :pending_members, Map.delete(pending, member_uri)}]}
+    end
+  end
+
+  @doc """
+  WITHDRAW a pending admission request (spec §C.5) — the REQUESTER (B) drops its
+  own pending request. Authz: `requested_by == actor`. Cap-exempt; authorized
+  in-handler.
+  """
+  @spec withdraw_admission(URI.t(), map()) :: {:ok, map(), [term()]} | {:error, term()}
+  def withdraw_admission(%URI{} = member_uri, ctx) do
+    pending = ctx[:read].(:pending_members, %{})
+    caller = Map.get(ctx, :caller)
+
+    case Map.get(pending, member_uri) do
+      nil ->
+        {:error, :not_pending}
+
+      %{requested_by: requested_by} ->
+        if same_entity?(caller, requested_by) do
+          {:ok, %{withdrawn: member_uri},
+           [{:set, :pending_members, Map.delete(pending, member_uri)}]}
+        else
+          {:error, :unauthorized}
         end
     end
   end
