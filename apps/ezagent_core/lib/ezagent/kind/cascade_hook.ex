@@ -49,7 +49,13 @@ defmodule Ezagent.Kind.CascadeHook do
           cursor: Map.get(ev, :cursor),
           event_at: Map.get(ev, :at)
         },
-        ctx: %{caller: self_uri, reply: :ignore}
+        # `:vm_internal` is the trusted in-VM caller marker (#154). It is the
+        # PROVENANCE SIGNAL the `:cascade_notify_managers` handler gates on: only
+        # this internal self-dispatch carries it, so an external `/api/v1` caller
+        # (whose `ctx.caller` is the authenticated entity `%URI{}`, transport-set)
+        # can never forge it. Also cleanly bypasses `workspace_isolation_check`
+        # (a `:vm_internal` caller has no workspace to mismatch).
+        ctx: %{caller: :vm_internal, reply: :ignore}
       }
 
       Ezagent.Kind.DeferredDispatch.enqueue([cmd])

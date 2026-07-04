@@ -317,11 +317,34 @@ defmodule Ezagent.ActionSet.Identity do
   managers/owners and notify them content-free of the slice change. Read-only
   (emits NO effects → no re-trigger); best-effort inside `Cascade` (a failed
   cascade is advisory and MUST NOT crash the post-commit turn).
+
+  ## Provenance gate (#161 Phase B, codex MED)
+
+  This action is `cap_exempt` AND production-reachable via
+  `POST /api/v1/:kind/:action`. Left ungated, an authenticated same-workspace
+  caller could invoke it directly to trigger a managers-scan + advisory
+  "caps changed" notify (notify-spam / false-signal vector). It is ONLY ever
+  meant to be self-dispatched by `Ezagent.Kind.CascadeHook` at the emit
+  chokepoint, which sets `ctx.caller = :vm_internal` — the trusted in-VM caller
+  marker (#154 VM-internal-trust). We proceed ONLY for that internal
+  provenance; any other caller is rejected with `{:error, :unauthorized}`
+  (no managers-scan, no notify — a clean reject, never a crash).
+
+  Why an external caller cannot forge it: `ctx.caller` is set by the transport,
+  NOT by user-supplied args. The `/api/v1` controller resolves it from the
+  bearer token (`resolve_caller/1`) to the authenticated entity's `%URI{}` — it
+  is never the atom `:vm_internal`. `:vm_internal` trusts all in-VM code (per
+  #154, that is the model), and `CascadeHook` is the sole in-VM producer of this
+  action; the security property the gate guarantees is that an EXTERNAL caller
+  can never present `:vm_internal`. Mirrors the `:receive` cap-exempt-then-
+  in-handler-check precedent (A2).
   """
-  def handle_cascade_notify_managers(args, ctx) do
+  def handle_cascade_notify_managers(args, %{caller: :vm_internal} = ctx) do
     Ezagent.Identity.Cascade.notify_managers(Map.get(ctx, :self_uri), args)
     {:ok, %{}, []}
   end
+
+  def handle_cascade_notify_managers(_args, _ctx), do: {:error, :unauthorized}
 end
 
 defmodule Ezagent.ActionSet.IdentityAdmin do
