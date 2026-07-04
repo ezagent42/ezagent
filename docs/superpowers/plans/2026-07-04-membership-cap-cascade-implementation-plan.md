@@ -4,15 +4,16 @@
 
 **Goal:** Make "member of session S" a **capability the member HOLDS** (`cap(:session, Ezagent.ActionSet.Session, :receive, instance: S, ws)` in the member's own `:identity`/`:caps` slice), demote the session `:members` slice to a delivery/presence cache, move receive- and read-authorization onto the held cap, and add a one-level manage/owner **cascade notification** on cap/membership changes.
 
-**Architecture:** Three merge-safe phases landing one architecture (spec §12): **A1** adds the member-cap as an *additive, behavior-preserving* foundation (grant-at-join + reconcile + migration) while delivery still uses the old ephemeral mint; **A2** is the atomic cutover (receive/read authz read the held cap, the ephemeral mint is deleted, leave/remove revoke the cap) — this phase carries the security done-gate; **B** rides on A2's member-slice-change to notify managers/owners. Roster (staleness-tolerant delivery targeting) is kept **⟂ separate** from receive-authorization (the recipient's *actually held* cap) — R1.1, the load-bearing invariant.
+**Architecture:** Four merge-safe phases landing one architecture (spec §12): **A1** adds the member-cap as an *additive, behavior-preserving* foundation (grant-at-join + reconcile + migration) while delivery still uses the old ephemeral mint; **A2** is the atomic cutover (receive/read authz read the held cap, the ephemeral mint is deleted, leave/remove revoke the cap) — this phase carries the **defense-in-depth** revoke→immediate-deny done-gate; **B** rides on A2's member-slice-change to notify managers/owners. A1→A2→B = **detect + react**. **C — the admission gate (owner-approval-to-mount, spec Part C / R4)** adds **PREVENTION**: a cross-owner add goes PENDING and does not mount (spend the owner's credential) until the member's owner approves — this phase carries the **PRIMARY** §14.5 done-gate and **closes the motivating threat X**. Roster (staleness-tolerant delivery targeting) is kept **⟂ separate** from receive-authorization (the recipient's *actually held* cap) — R1.1, the load-bearing invariant that also gives Part C its "pending cannot receive" property for free.
 
 **Tech Stack:** Elixir umbrella (`apps/ezagent_core`, `apps/ezagent_domain_session`, `apps/ezagent_domain_identity`, `apps/ezagent_domain_agent`, `apps/ezagent_plugin_world`), Ezagent Lifecycle/ActionSet Behaviors, CapBAC capability primitives, ExUnit, `mix ezagent.*` CLI tasks, agent-browser for the UI acceptance scenario.
 
-**Spec:** `docs/superpowers/specs/2026-07-04-membership-cap-unification-cascade-design.md`. **Precedence R3 > R2 > R1 > prose.** Read R3.1 (reframed REMOVE), R1.1 (roster⟂authz), R2.3 (2 receive sites), §14.5 (done-gate) before implementing.
+**Spec:** `docs/superpowers/specs/2026-07-04-membership-cap-unification-cascade-design.md`. **Precedence R4 > R3 > R2 > R1 > prose.** Read R4 + Part C (admission gate), R3.1 (reframed REMOVE), R1.1 (roster⟂authz), R2.3 (2 receive sites), §14.5 (done-gate — PREVENTION primary, revoke-deny defense-in-depth) before implementing.
 
 ## Global Constraints
 
-- **Precedence when the spec conflicts with itself:** R3 > R2 > R1 > original prose. Several original §§ (§4.2, §5, §6, §8, K1, K6) are patched by later R-sections; always follow the R-section.
+- **Precedence when the spec conflicts with itself:** R4 > R3 > R2 > R1 > original prose. Several original §§ (§4.2, §5, §6, §8, K1, K6) are patched by later R-sections; §15's admission deferral is superseded by R4/Part C; always follow the latest R-section.
+- **Admission gate (Part C, K7) withholds the member-cap ONLY — it is orthogonal to the join-cap, and scoped to the cross-owner INVITE path (spec §C.1), NOT the universal grant seam.** The trigger fires ONLY when a **real, non-system inviter** reaches the member-cap grant seam (the A1.2 grant folded into `do_join_apply`) WITHOUT manage-authority over the joiner. **Do NOT** wire a bare `Authority.manages?(caller, member)` on the universal seam: a system/orchestrator spawn's caller is `system://session-internal` (`membership.ex:386`) — not self/admin/manager — so a bare check pends **every normal agent spawn** forever (§16 risk 5 / §C.1 warning). Non-invite mounts (system spawn, self-join incl. anon `caller==member`, own-agent/admin invite) mount immediately, unchanged. Do not conflate the two layers: invite-authority = "may B initiate an add"; admission = "does that add mount now or wait for the owner". **Plan-time seam:** thread `inviter_uri` (and its non-system-ness) from `provision_invited_join_authority/3` (`membership.ex:406`) to the grant seam.
 - **Roster ⟂ authz (R1.1) is the non-negotiable invariant.** The `:members` projection is *delivery targeting only* and is **staleness-tolerant**. Authorization (receive AND read) is ALWAYS the recipient's/caller's **actually-held** member-cap. The projection is NEVER the authority. A stale roster entry costs a wasted delivery attempt that then fails authz — never an unauthorized receive/read.
 - **No bearer tokens.** Delivery presents **NO** receive cap in `ctx.caps`. `member_receive_caps/1` is deleted, not replaced by a cache.
 - **CapBAC discipline (read `references/capbac.md` before any grant/revoke/cap code):** granter ≠ caller; `granted_by = owner_uri` (ownerless → the #154 admin granter, logged + counted); provenance filter `Capability.granted_by_entity?/1` runs BEFORE `matches?/2`; revoke matches by 5-tuple `identity_key/1`, not full struct (invariant #19).
@@ -30,16 +31,18 @@
 | Phase | What lands | Ships behind existing behavior? | PR | Done-gate |
 |---|---|---|---|---|
 | **A1** | member-cap grant at join (all member kinds) + `Entity.Agent.list_in_workspace/1` + `reconcile_after_load/2` seeding + `mix ezagent.migrate.member_caps` | **YES** — additive, behavior-preserving; delivery still mints ephemerally | **PR-1** | Tests 1-5, 23(preflight/compensation subset), 26; migration `--dry-run`/`--gate` correct; existing suite green (mint untouched) |
-| **A2** | receive-authz cutover (`MemberReceive.authorize/1`, `:receive` cap_exempt, parity test) + **delete `member_receive_caps/1`** + socialware read → held-cap + leave/remove revoke (3 R3.1 sequences) + post-commit replay/notify + anon holds member-cap + **ExUnit security acceptance test (§14.5 A)** | **NO** — atomic cutover; must land as one | **PR-2** | Tests 6-12, 20-24; **§14.5(A) step 5 passes WITHOUT reconcile** — the single load-bearing assertion |
-| **B** | extract `Ezagent.Identity.Authority` (K2) + cascade hook at emit chokepoint (K3) + `managers_of/1` (K4/K5) + content-free notify + cascade E2E + agent-browser scenario (§14.5 B) | **YES** — additive advisory notify, off the mutating path | **PR-3** | Tests 13-19; §14.5(A) steps 2&4 (cascade+removal-notify); §14.5(B) two screenshots captured |
+| **A2** | receive-authz cutover (`MemberReceive.authorize/1`, `:receive` cap_exempt, parity test) + **delete `member_receive_caps/1`** + socialware read → held-cap + leave/remove revoke (3 R3.1 sequences) + post-commit replay/notify + anon holds member-cap + **ExUnit defense-in-depth acceptance (§14.5 A step 5)** | **NO** — atomic cutover; must land as one | **PR-2** | Tests 6-12, 20-24; **§14.5(A) step 5 (revoke ⇒ deny) passes WITHOUT reconcile** — the defense-in-depth load-bearing assertion |
+| **B** | extract `Ezagent.Identity.Authority` (K2) + cascade hook at emit chokepoint (K3) + `managers_of/1` (K4/K5) + content-free notify + cascade E2E (§14.5 A step 6) | **YES** — additive advisory notify, off the mutating path | **PR-3** | Tests 13-19; §14.5(A) step 6 (grant/revoke cascade to X, removal-notify) |
+| **C** | admission gate (Part C/K7): trigger branch (`manages?(caller, member)` → mount-now vs pending) + `:pending_members` slice + approve/deny/withdraw actions + pending-member-as-subject notify + **§14.5(A) PRIMARY prevention acceptance** + agent-browser approve-UX scenario (§14.5 B) | **YES** — additive; security half entirely composed (R1.1 + R3.1) | **PR-4** | Tests 27-32; **§14.5(A) step 2 (pending cannot receive → cred not spent) — the PRIMARY assertion that X is closed** + steps 1,3,4; §14.5(B) three screenshots captured |
 
-**Independently shippable:** A1 alone (foundation), then B alone on top of A2 (cascade is additive/advisory). **Must land together:** the whole of A2 is one atomic landing — see the A2 preamble for why (§14.5 step 5 is the done-gate that can only pass when receive-reads-held-cap AND leave/remove-revoke-held-cap both exist). **Recommended: 3 PRs (A1, A2, B).** Optional internal splits noted per phase for reviewability, but A2's sub-tasks may NOT merge independently.
+**Independently shippable:** A1 alone (foundation); B alone on top of A2 (cascade is additive/advisory); **C alone on top of A2+B** (admission is additive — its security half is entirely composed from R1.1+R3.1, its notify from B). **Must land together:** the whole of A2 is one atomic landing — see the A2 preamble for why (§14.5 step 5 is the defense-in-depth done-gate that can only pass when receive-reads-held-cap AND leave/remove-revoke-held-cap both exist). **Recommended: 4 PRs (A1, A2, B, C).** Optional internal splits noted per phase for reviewability, but A2's sub-tasks may NOT merge independently. **X is not closed until PR-4 (Phase C) lands** — A1→A2→B are detect+react; C adds the prevention that makes B's cross-owner pull unable to spend the owner's credential.
 
 **Human/lead-action steps (flagged inline with 🧑):**
 - 🧑 **Before A2:** lead sign-off on spec §16 open-risk #4 — the behavior shift "failed member-cap grant ⇒ not a member" (best-effort → fail-closed for the membership-defining cap). Spec explicitly defers this to the lead.
+- 🧑 **Before C:** lead sign-off on spec §16 open-risk #5 — cross-owner adds that previously mounted immediately now go PENDING until the owner approves. This is the intended prevention of X but a user-visible change to existing add-others'-agent collaboration flows; confirm intended. (Manage-authorized adds — own agent/self-join/admin — are unchanged.)
 - 🧑 **A1 deploy-time:** operator runs `mix ezagent.migrate.member_caps` (with `--dry-run` first, then live) in each environment. R2.2: live-grant write is safe on a running node, but the *decision to run* is an operator action.
 - 🧑 **Per phase:** `/codex:adversarial-review` gate (pre-impl + at PR open).
-- 🧑 **§14.5(B):** the agent-browser world-UI scenario needs a running disposable stack (fresh `EZAGENT_HOME`, dev mode, PORT — `feedback_disposable_stack_e2e`); operator/environment-dependent.
+- 🧑 **§14.5(B):** the agent-browser world-UI scenario needs a running disposable stack (fresh `EZAGENT_HOME`, dev mode, PORT — `feedback_disposable_stack_e2e`); operator/environment-dependent. Under Phase C this scenario captures the **approve UX** (add→pending→approve→mounted), three screenshots.
 
 ---
 
@@ -356,15 +359,15 @@ git commit -m "feat(session): mix ezagent.migrate.member_caps — repo read, liv
 
 # PHASE A2 — delivery / receive / read / removal cutover (ATOMIC, load-bearing)
 
-**Phase goal:** Flip receive- and read-authorization onto the held member-cap, delete the ephemeral mint, and make leave/remove revoke the cap — so a revoked member loses receive **immediately, without waiting for reconcile** (§14.5 step 5).
+**Phase goal:** Flip receive- and read-authorization onto the held member-cap, delete the ephemeral mint, and make leave/remove revoke the cap — so a revoked member loses receive **immediately, without waiting for reconcile** (§14.5 step 5, the **defense-in-depth** assertion). (The PRIMARY §14.5 assertion — pending cannot receive → cred not spent — is Phase C's; A2 delivers the held-cap machinery that C reuses.)
 
-**Why A2 is atomic (must land as one PR, sub-tasks may NOT merge independently):** The held-cap model is only *coherent* when both halves land together — receive-reads-held-cap (A2.1/A2.2) AND leave/remove-revoke-held-cap (A2.4). The load-bearing done-gate §14.5 step 5 ("revoke ⇒ immediate deny, proven WITHOUT reconcile") can only pass when both exist. (Note: `leave_effects/2` still `Map.delete`s the roster entry, so a left member drops out of fan-out regardless; receive-cutover *alone* would merely add a check redundant with the still-load-bearing roster-drop — it is not independently *useful*, and the security property is unproven until revoke lands. Hence one atomic landing.)
+**Why A2 is atomic (must land as one PR, sub-tasks may NOT merge independently):** The held-cap model is only *coherent* when both halves land together — receive-reads-held-cap (A2.1/A2.2) AND leave/remove-revoke-held-cap (A2.4). A2's done-gate §14.5 step 5 ("revoke ⇒ immediate deny, proven WITHOUT reconcile") can only pass when both exist. (Note: `leave_effects/2` still `Map.delete`s the roster entry, so a left member drops out of fan-out regardless; receive-cutover *alone* would merely add a check redundant with the still-load-bearing roster-drop — it is not independently *useful*, and the security property is unproven until revoke lands. Hence one atomic landing.)
 
 **Phase dependencies:** A1 (member-caps must exist and be granted at join, else no held cap to authorize against).
 
 **🧑 Before starting A2:** obtain lead sign-off on spec §16 open-risk #4 (best-effort → fail-closed for the membership-defining cap). Blocking human action.
 
-**Phase done-gate:** tests 6-12, 20-24 pass; the §14.5(A) ExUnit security acceptance test passes IN FULL, **especially step 5** — proven without re-activating the session. `/codex:adversarial-review`.
+**Phase done-gate:** tests 6-12, 20-24 pass; the §14.5(A) **defense-in-depth** assertion (step 5: revoke ⇒ immediate deny) passes — proven without re-activating the session — set up via a manage-authorized mount (A2.6, stable across Phase C). §14.5(A) steps 1-4 (prevention flow) and step 6 (cascade) are `@tag :skip`-ed with pointers to C and B. `/codex:adversarial-review`.
 
 ---
 
@@ -656,7 +659,7 @@ git commit -m "feat(session,socialware): anon holds member-cap; JOIN replay/noti
 
 **Files:**
 - Test: `apps/ezagent_domain_session/test/ezagent/session/blast_radius_guard_test.exs` (tests 6, 12)
-- Test: `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs` (§14.5 A — cross-app integration; session domain owns membership+delivery). Steps 2 & 4 (cascade) are stubbed/skipped until Phase B; steps 1, 3, 5 (security) are live in A2.
+- Test: `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs` (§14.5 A — cross-app integration; session domain owns membership+delivery). A2 lands **only the defense-in-depth assertion (step 5: revoke ⇒ deny)**, set up via a **manage-authorized mount** so it is STABLE across Phase C (a cross-owner add would go pending under C and break a naive setup). §14.5(A) steps 1-4 (prevention flow, Phase C) and step 6 (cascade, Phase B) are `@tag :skip`-ed with pointers.
 
 **Interfaces:**
 - Consumes: everything from A2.1-A2.5.
@@ -676,43 +679,48 @@ test "UI roster (member_options/1) and read-authz read the projection with uncha
 end
 ```
 
-- [ ] **Step 2: Write the §14.5(A) security acceptance test — the DONE-GATE**
+- [ ] **Step 2: Write the §14.5(A) step-5 DEFENSE-IN-DEPTH acceptance test (A2's done-gate)**
+
+Set up the mounted member via a **manage-authorized** add (owner mounts its OWN agent — mounts immediately under both pre-C and post-C), then revoke → deny. Do NOT use a cross-owner add here: under Phase C that would go pending and never mount, breaking this test.
 
 ```elixir
 # member_cap_cascade_acceptance_test.exs
-test "§14.5(A): membership-as-cap delivery + CRITICAL immediate-deny-on-revoke, no reconcile" do
-  {b_session, b} = create_session_with_owner()
-  a = create_user(workspace_of(b_session))
-  a_agent = create_cc_agent(owner: a, workspace: workspace_of(b_session))
+test "§14.5(A) step 5 [defense-in-depth]: revoke ⇒ immediate deny, no reconcile" do
+  {session, owner} = create_session_with_owner()
+  agent = create_cc_agent(owner: owner, workspace: workspace_of(session))  # owner MANAGES agent
 
-  # Step 1: cross-user add — B grants the member-cap to A's-agent
-  :ok = add_member(b_session, a_agent, by: b)
+  # manage-authorized add → mounts immediately (holds the member-cap)
+  :ok = add_member(session, agent, by: owner)
+  post(session, owner, "hello")
+  assert receive_delivered?(session, agent)                # mounted member receives
 
-  # Step 3: membership-as-cap delivery — B posts, A's-agent :receive fires
-  post(b_session, b, "hello")
-  assert receive_delivered?(b_session, a_agent)
+  # 🔴 defense-in-depth: remove ⇒ revoke ⇒ next receive DENIED, no reconcile
+  :ok = remove_participant(session, agent, by: owner)      # revoke the member-cap
+  post(session, owner, "again")
+  refute receive_delivered?(session, agent)                # DENIED immediately...
+  refute reconcile_was_run?(session)                       # ...WITHOUT re-activating the session
+end
 
-  # Step 5: 🔴 CRITICAL SECURITY PROOF — B removes A's-agent, then posts again
-  :ok = remove_participant(b_session, a_agent, by: b)     # revoke the member-cap
-  post(b_session, b, "again")
-  refute receive_delivered?(b_session, a_agent)           # DENIED immediately...
-  # ...proven WITHOUT re-activating the session (never call reconcile_after_load/2)
-  refute reconcile_was_run?(b_session)
+# §14.5(A) PRIMARY prevention flow (steps 1-4) — added in Phase C (Task C.4).
+# §14.5(A) step 6 (cascade to X) — added in Phase B (Task B.4).
+@tag :skip
+test "§14.5(A) steps 1-4 [PRIMARY prevention]: pending cannot receive → approve → mounts (Phase C)" do
+  # C.4 replaces this: B (no manage-authority) adds A's-agent → PENDING, no cap;
+  # B posts → A's-agent :receive DENIED, does NOT run, cred not spent (PRIMARY);
+  # A notified; A approves → mounts → receives.
 end
 ```
 
-> Steps 2 (cascade proof) and 4 (grant/revoke cascade to X) are added in Phase B (Task B.4). In A2 they are `@tag :skip`-ed with a pointer to B.4.
-
-- [ ] **Step 3: Run → PASS** (security steps live; cascade steps skipped).
+- [ ] **Step 3: Run → PASS** (step 5 live; prevention/cascade steps skipped).
 
 - [ ] **Step 4: Commit.**
 
 ```bash
 git add apps/ezagent_domain_session/test
-git commit -m "test(session): blast-radius guards + §14.5(A) security acceptance (immediate deny on revoke, no reconcile) (A2.6)"
+git commit -m "test(session): blast-radius guards + §14.5(A) step-5 defense-in-depth (immediate deny on revoke, no reconcile) (A2.6)"
 ```
 
-**Phase A2 done-gate (verify before opening PR-2):** tests 6-12, 20-24 green; §14.5(A) step 5 green and **proven without reconcile**; full suite green; §16 risk-4 lead sign-off obtained; `/codex:adversarial-review`. **The whole of A2 = one PR (PR-2); A2.1-A2.6 do NOT merge independently.**
+**Phase A2 done-gate (verify before opening PR-2):** tests 6-12, 20-24 green; §14.5(A) **step 5** (defense-in-depth revoke⇒deny) green and **proven without reconcile**; full suite green; §16 risk-4 lead sign-off obtained; `/codex:adversarial-review`. **The whole of A2 = one PR (PR-2); A2.1-A2.6 do NOT merge independently.** (The PRIMARY §14.5 assertion — pending cannot receive — is Phase C's gate, not A2's.)
 
 ---
 
@@ -722,7 +730,9 @@ git commit -m "test(session): blast-radius guards + §14.5(A) security acceptanc
 
 **Phase dependencies:** A2 (join/leave/remove must produce a slice-change on the MEMBER's own `:identity`/`:caps` slice — that is what B subscribes to). B is additive and advisory: it runs on the post-commit `DeferredDispatch` turn, off the mutating dispatch's critical path (a slow/failing cascade cannot roll back the mutation).
 
-**Phase done-gate:** tests 13-19 pass; §14.5(A) steps 2 & 4 (cascade + removal-notify) un-skipped and green; §14.5(B) two agent-browser screenshots captured. `/codex:adversarial-review`.
+**Phase done-gate:** tests 13-19 pass; §14.5(A) **step 6** (grant/revoke cascade to an arbitrary X → owner Y notified; removal-notify — the S1 gap closed) un-skipped and green. `/codex:adversarial-review`. (The world-UI agent-browser scenario §14.5(B) is now the **approve UX** — it moves to Phase C / Task C.4. B also delivers `Ezagent.Identity.Authority` (B.1) and `managers_of/1` (B.2), which Phase C consumes.)
+
+**Note — Part C depends on B.** Phase C reuses B.1 (`Authority.manages?/2`), B.2 (`managers_of/1`), and B.3 (content-free notify). B must land before C.
 
 ---
 
@@ -817,42 +827,298 @@ git commit -am "feat(cascade): post-commit hook at emit chokepoint + content-fre
 
 ---
 
-### Task B.4: Un-skip §14.5(A) cascade steps + removal-notify + agent-browser scenario
+### Task B.4: Un-skip §14.5(A) step 6 — grant/revoke cascade to X + removal-notify
 
 **Files:**
-- Modify: `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs` — un-skip steps 2 & 4; add spec tests 13, 14.
-- Create: `docs/scenarios/2026-07-04-member-cap-cascade.md` — the world-UI agent-browser scenario (§14.5 B).
+- Modify: `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs` — un-skip step 6; add spec tests 13, 14.
 
-- [ ] **Step 1: Un-skip / add cascade tests (13, 14, §14.5 steps 2 & 4)**
+> **Note (post-R4):** the old "step 2 = cross-owner add ⇒ A cascade-notified" no longer applies — under Part C a cross-owner add is PENDING and grants NO cap, so the `{entity,:caps}` cascade does not fire on the add. The owner-notify for a pending request is Phase C's pending-member-subject notify (test 29 / §14.5(A) step 3). Phase B proves the GENERIC cascade: a member-cap grant/revoke to an arbitrary X notifies X's owner Y (fires on the manage-authorized add, the approve-mount grant, and any removal-revoke). The agent-browser scenario (§14.5 B) is the approve UX → Phase C (Task C.4).
+
+- [ ] **Step 1: Un-skip / add cascade tests (13, 14, §14.5(A) step 6)**
 
 ```elixir
-test "§14.5 step 2: B adds A's-agent ⇒ A receives a cascade notification (13)" do ... end
-test "§14.5 step 4: grant member-cap to X (owner Y) ⇒ Y notified; on revoke ⇒ Y notified (14, S1 gap closed)" do ... end
+test "§14.5(A) step 6: grant member-cap to X (owner Y) ⇒ Y notified; on revoke ⇒ Y notified (13/14, S1 gap closed)" do ... end
 ```
 
-- [ ] **Step 2: Run → PASS** (whole §14.5(A) now green incl. steps 2 & 4).
+- [ ] **Step 2: Run → PASS** (§14.5(A) step 6 green; prevention steps 1-4 remain skipped until Phase C).
 
-- [ ] **🧑 Step 3: Write + run the §14.5(B) agent-browser scenario.** On a running disposable stack (`feedback_disposable_stack_e2e`: fresh `EZAGENT_HOME`, dev mode, PORT), drive the world UI: B opens S, adds A's cc agent via the roster/picker; capture (1) the roster showing A's agent as a member, (2) A's notification surface showing the cascade notice. Save screenshots + steps to `docs/scenarios/2026-07-04-member-cap-cascade.md`. Use the remote browser IP `100.64.0.27` (`feedback_remote_browser_ip`), never localhost. **Operator/environment-dependent step.**
+- [ ] **Step 3: Commit.**
+
+```bash
+git add apps/ezagent_domain_session/test
+git commit -m "test(cascade): §14.5(A) step 6 grant/revoke cascade to X + removal-notify green (B.4)"
+```
+
+**Phase B done-gate:** tests 13-19 green; §14.5(A) step 6 green. `/codex:adversarial-review`. **B is one PR (PR-3); ships independently on top of a merged A2. Part C (PR-4) depends on B.1/B.2/B.3.**
+
+---
+
+# PHASE C — admission gate: owner-approval-to-mount (Part C / R4, PREVENTS X)
+
+**Phase goal:** A cross-owner add (caller lacks manage-authority over the member) does NOT mount — it records a PENDING request and grants NO member-cap, so the pending agent cannot receive (R1.1) and the owner's credential is not spent, until the owner approves. This phase carries the **PRIMARY** §14.5 done-gate and **closes the motivating threat X by PREVENTION**.
+
+**Phase dependencies:** A2 (R1.1 held-cap receive-authz — gives "pending cannot receive" for free) + B (B.1 `Authority.manages?/2`, B.2 `managers_of/1`, B.3 content-free notify). Additive/advisory on top: the security half is entirely composed from R1.1 + R3.1; the notify from B.
+
+**🧑 Before starting C:** obtain lead sign-off on spec §16 open-risk #5 (cross-owner adds now go pending — a user-visible change to add-others'-agent flows). Blocking human action.
+
+**Phase done-gate:** tests 27-32 pass; the §14.5(A) PRIMARY prevention assertion (step 2: B's cross-owner add pending ⇒ A's-agent cannot receive ⇒ cred not spent) passes deterministically, plus steps 1,3,4 (pending/notify/approve→mount); §14.5(B) approve-UX agent-browser scenario captured (3 screenshots). `/codex:adversarial-review`.
+
+**Global constraint (spec §C.1):** the gate withholds the **member-cap only** and sits at the member-cap grant seam; thread `inviter_uri` from `provision_invited_join_authority/3` (`membership.ex:406`) to the grant seam. **DEMOTED — implementer picks the mechanism, constraint pinned:** (a) the pending-notify wiring (direct `managers_of(member)→notify` call vs subject-carrying hook — spec §C.3); (b) the `:pending_members` shape + approve/deny/withdraw action plumbing. Constraint = the acceptance tests below; do NOT re-specify the effect grammar.
+
+---
+
+### Task C.1: Trigger branch + `:pending_members` state (cross-owner add goes pending, no cap)
+
+**Files:**
+- Modify: `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex` — the at-join member-cap grant seam (A1.2 grant, in/near `do_join_apply` :53). **Scope the trigger to the cross-owner INVITE path (spec §C.1 invariant), NOT a bare `manages?(caller, member)` on the universal seam:** fire pending ONLY when a **real, non-system inviter** reaches the seam WITHOUT manage-authority over the joiner. Thread `inviter_uri` from `provision_invited_join_authority/3` (:406). **Do NOT pend:** inviter manages the member (own agent/admin); self-join (`caller == member`, incl. anon self-admission `anon_admission.ex:107`); system/orchestrator/team spawn under `system://session-internal` (:386) — these arrive without a real invite inviter and MUST keep mounting.
+- Modify: `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex` — add the `:pending_members` map to the `:session` slice (persistent), distinct from `:members`.
+- Test: `apps/ezagent_domain_session/test/ezagent/session/admission_gate_test.exs`
+
+> **⚠️ Over-fire trap (spec §C.1 warning, §16 risk 5):** a bare `manages?(caller, member)` on the universal grant seam pends **every system/orchestrator agent spawn** (`system://session-internal` is not self/admin/manager) → normal spawning stalls forever. The guard test below (system spawn + anon self-admission still MOUNT) fails if the trigger is wired to the universal seam instead of the invite path.
+
+**Interfaces:**
+- Consumes: `Ezagent.Identity.Authority.manages?/2` (B.1), `member_cap/2` (A1.1), the grant seam (A1.2), `inviter_uri` from `provision_invited_join_authority/3`.
+- Produces: a cross-owner invite records `:pending_members[member] = %{requested_by, requested_at, request_ref}` and grants NO member-cap; every non-invite / manage-authorized mount is immediate (unchanged).
+
+- [ ] **Step 1: Write failing tests (spec tests 27, 28, 30 + the over-fire guard)**
+
+```elixir
+# admission_gate_test.exs
+test "manage-authorized add mounts immediately, no pending (test 27)" do
+  {session, owner} = create_session_with_owner()
+  agent = create_cc_agent(owner: owner, workspace: workspace_of(session))  # owner manages agent
+  :ok = add_member(session, agent, by: owner)
+  assert Enum.any?(Ezagent.Identity.read_entity_caps(agent), &member_cap_over?(&1, session))
+  refute Map.has_key?(read_pending(session), agent)
+end
+
+test "cross-owner add goes PENDING, grants NO member-cap (test 28)" do
+  {b_session, b} = create_session_with_owner()
+  a = create_user(workspace_of(b_session))
+  a_agent = create_cc_agent(owner: a, workspace: workspace_of(b_session))
+  :ok = add_member(b_session, a_agent, by: b)                      # B does NOT manage A's agent
+  assert Map.has_key?(read_pending(b_session), a_agent)
+  refute Enum.any?(Ezagent.Identity.read_entity_caps(a_agent), &member_cap_over?(&1, b_session))
+  refute Map.has_key?(read_members(b_session), a_agent)            # not mounted
+end
+
+test "PENDING agent cannot receive → cred not spent (PRIMARY prevention, test 30)" do
+  {b_session, b} = create_session_with_owner()
+  a = create_user(workspace_of(b_session))
+  a_agent = create_cc_agent(owner: a, workspace: workspace_of(b_session))
+  :ok = add_member(b_session, a_agent, by: b)                      # pending
+  post(b_session, b, "run my prompt")
+  refute receive_delivered?(b_session, a_agent)                    # holds no cap → R1.1 denies
+  refute agent_ran?(a_agent)                                       # A's credential NOT spent
+end
+
+# 🔴 OVER-FIRE GUARD (§C.1 warning) — the trigger must NOT pend non-invite mounts.
+# Fails if someone wires the gate to the universal grant seam instead of the invite path.
+test "system/orchestrator spawn still MOUNTS, does NOT go pending (over-fire guard)" do
+  {session, _owner} = create_session_with_owner()
+  member = orchestrator_spawn_member(session)   # mount runs under system://session-internal
+  assert Enum.any?(Ezagent.Identity.read_entity_caps(member), &member_cap_over?(&1, session))
+  refute Map.has_key?(read_pending(session), member)
+end
+
+test "anon self-admission (caller == member) still MOUNTS, does NOT go pending (over-fire guard)" do
+  {session, _owner} = create_public_session()
+  anon = anon_self_admit(session)               # anon_admission.ex:107 sets caller == anon
+  assert Enum.any?(Ezagent.Identity.read_entity_caps(anon), &member_cap_over?(&1, session))
+  refute Map.has_key?(read_pending(session), anon)
+end
+```
+
+- [ ] **Step 2: Run → FAIL.**
+
+- [ ] **Step 3: Implement** the trigger scoped to the cross-owner **invite** path (a real non-system `inviter_uri` lacking manage-authority → record pending, no grant); thread `inviter_uri`. All non-invite mounts (system spawn, self/anon self-admission, own-agent/admin invite) take the existing grant+mount path unchanged. **Verify the over-fire guard tests pass** — do NOT put a bare `manages?(caller, member)` on the universal seam.
+
+- [ ] **Step 4: Run → PASS.**
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add apps/ezagent_domain_session
+git commit -m "feat(session): admission trigger branch + :pending_members — cross-owner add pending, no cap (C.1)"
+```
+
+---
+
+### Task C.2: Approve / deny / withdraw actions (approve = R3.1 grant + mount)
+
+**Files:**
+- Modify: `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex` — `:approve_admission` (grant member-cap via the R3.1 abort-safe grant + `do_join_apply` mount + drop pending), `:deny_admission` (drop pending), `:withdraw_admission` (drop pending, requester-only).
+- Register the three actions on the Session behavior (via `use Ezagent.Lifecycle`).
+- Test: `apps/ezagent_domain_session/test/ezagent/session/admission_approve_test.exs`
+
+**Interfaces:**
+- Consumes: `Ezagent.Identity.Authority.manages?/2` (B.1), the R3.1 abort-safe grant + `do_join_apply` mount (A2.4/A1.2).
+- Produces: approve → member mounted (holds the cap, can receive); deny/withdraw → pending dropped, no cap.
+
+**Authz (spec §C.4/§C.5):** approve/deny require `Authority.manages?(actor, member)`; withdraw requires `requested_by == actor`. A failed approve-grant is R3.1 abort-safe — the removal ABORTS and the request stays PENDING (loud, no half-mount).
+
+- [ ] **Step 1: Write failing tests (spec tests 31, 32)**
+
+```elixir
+# admission_approve_test.exs
+test "owner (manages member) approves → member mounts and can receive (test 31)" do
+  {b_session, b, a, a_agent} = pending_cross_owner_add()
+  :ok = approve_admission(b_session, a_agent, by: a)              # A manages A's agent
+  assert Enum.any?(Ezagent.Identity.read_entity_caps(a_agent), &member_cap_over?(&1, b_session))
+  post(b_session, b, "now allowed")
+  assert receive_delivered?(b_session, a_agent)                  # now a functional member
+  refute Map.has_key?(read_pending(b_session), a_agent)
+end
+
+test "non-manager approve is rejected, zero mutation (test 31)" do
+  {b_session, b, _a, a_agent} = pending_cross_owner_add()
+  assert {:error, _} = approve_admission(b_session, a_agent, by: b)   # B does NOT manage A's agent
+  assert Map.has_key?(read_pending(b_session), a_agent)              # untouched
+  refute Enum.any?(Ezagent.Identity.read_entity_caps(a_agent), &member_cap_over?(&1, b_session))
+end
+
+test "deny drops pending, no cap ever granted; withdraw by requester drops pending (test 32)" do
+  {b_session, b, a, a_agent} = pending_cross_owner_add()
+  :ok = deny_admission(b_session, a_agent, by: a)
+  refute Map.has_key?(read_pending(b_session), a_agent)
+  # withdraw path
+  {b_session2, b2, _a2, a_agent2} = pending_cross_owner_add()
+  :ok = withdraw_admission(b_session2, a_agent2, by: b2)          # requester withdraws
+  refute Map.has_key?(read_pending(b_session2), a_agent2)
+end
+
+test "approve whose grant COMMIT fails aborts, request stays PENDING (R3.1 abort-safe, test 32)" do
+  {b_session, _b, a, a_agent} = pending_cross_owner_add()
+  force_grant_commit_failure(a_agent)
+  assert {:error, _} = approve_admission(b_session, a_agent, by: a)
+  assert Map.has_key?(read_pending(b_session), a_agent)          # still pending, nothing mounted
+  refute Enum.any?(Ezagent.Identity.read_entity_caps(a_agent), &member_cap_over?(&1, b_session))
+end
+```
+
+- [ ] **Step 2: Run → FAIL.**
+
+- [ ] **Step 3: Implement** the three actions; approve re-enters the grant+mount tail (R3.1 abort-safe grant → `do_join_apply` → drop pending). Authz-gate each.
+
+- [ ] **Step 4: Run → PASS.**
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add apps/ezagent_domain_session
+git commit -m "feat(session): approve/deny/withdraw admission actions — approve = R3.1 grant + mount (C.2)"
+```
+
+---
+
+### Task C.3: Notify the owner of a pending request (managers_of(member) as subject)
+
+**Files:**
+- Modify: the cascade component (Phase B) OR the admission action (C.1) — fire the notify to `managers_of(pending_member)` on a new pending request.
+- Test: `apps/ezagent_domain_session/test/ezagent/session/pending_notify_test.exs`
+
+**DEMOTED — implementer picks the wiring, constraint pinned (spec §C.3, the cascade-subject trap):** the pending request notifies `managers_of(the pending MEMBER) = A`, content-free (envelope `{member, session, request_ref}`, no message/cap content). It must NOT notify `managers_of(the session) = B`. Choose: a direct `managers_of(member)→notify` call from the admission action, OR generalize the B.3 hook to carry an explicit notify-subject for a `{session, :pending_members}` change. Do NOT wire the pending change naively to the generic `{entity,:caps}` hook (it resolves managers of the SESSION = B — the wrong target).
+
+- [ ] **Step 1: Write failing test (spec test 29 — the discriminator)**
+
+```elixir
+# pending_notify_test.exs
+test "pending cross-owner add notifies the MEMBER's managers (A), NOT the session's (B) (test 29)" do
+  {b_session, b} = create_session_with_owner()
+  a = create_user(workspace_of(b_session))
+  a_agent = create_cc_agent(owner: a, workspace: workspace_of(b_session))
+  spy = install_notify_spy()
+  :ok = add_member(b_session, a_agent, by: b)                    # pending
+  assert spy.notified?(a)                                        # managers_of(a_agent) = A
+  refute spy.notified?(b)                                        # NOT managers_of(session)
+  assert spy.payload_content_free?()                            # {member, session, request_ref} only
+end
+```
+
+- [ ] **Step 2: Run → FAIL.**
+
+- [ ] **Step 3: Implement** the pending-member-subject notify per the pinned constraint.
+
+- [ ] **Step 4: Run → PASS.**
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add apps/ezagent_domain_session
+git commit -m "feat(session): notify managers_of(pending member) on a pending admission request (C.3)"
+```
+
+---
+
+### Task C.4: §14.5(A) PRIMARY prevention acceptance + approve-UX agent-browser scenario (§14.5 B)
+
+**Files:**
+- Modify: `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs` — replace the skipped steps-1-4 stub with the live PRIMARY prevention flow; keep step 5 (defense-in-depth) and step 6 (cascade).
+- Create: `docs/scenarios/2026-07-04-member-cap-cascade.md` — the world-UI agent-browser approve-UX scenario (§14.5 B).
+
+- [ ] **Step 1: Write the §14.5(A) PRIMARY prevention acceptance (steps 1-5) — the DONE-GATE**
+
+```elixir
+# member_cap_cascade_acceptance_test.exs
+test "§14.5(A) PRIMARY: cross-owner add PENDING ⇒ cannot receive (cred not spent) ⇒ approve ⇒ mounts; defense-in-depth revoke" do
+  {b_session, b} = create_session_with_owner()
+  a = create_user(workspace_of(b_session))
+  a_agent = create_cc_agent(owner: a, workspace: workspace_of(b_session))
+
+  # Step 1: cross-owner add → PENDING, no cap, not mounted
+  :ok = add_member(b_session, a_agent, by: b)
+  assert Map.has_key?(read_pending(b_session), a_agent)
+  refute Enum.any?(Ezagent.Identity.read_entity_caps(a_agent), &member_cap_over?(&1, b_session))
+
+  # Step 2: 🔴 PRIMARY PREVENTION — B posts, A's-agent does NOT receive, does NOT run, cred NOT spent
+  post(b_session, b, "run my prompt")
+  refute receive_delivered?(b_session, a_agent)
+  refute agent_ran?(a_agent)
+
+  # Step 3: owner notified of the pending request (managers_of(a_agent) = A)
+  assert notified?(a, :pending_admission, a_agent)
+
+  # Step 4: approve → mount → now receives
+  :ok = approve_admission(b_session, a_agent, by: a)
+  post(b_session, b, "now allowed")
+  assert receive_delivered?(b_session, a_agent)
+
+  # Step 5: defense-in-depth — remove ⇒ revoke ⇒ immediate deny, no reconcile
+  :ok = remove_participant(b_session, a_agent, by: b)
+  post(b_session, b, "again")
+  refute receive_delivered?(b_session, a_agent)
+  refute reconcile_was_run?(b_session)
+end
+```
+
+- [ ] **Step 2: Run → PASS** (whole §14.5(A) now green: prevention steps 1-4 + defense-in-depth step 5 + Phase B's step 6).
+
+> **Expected (not a bug):** approve (step 4) grants the member-cap, which itself fires the Part B `{entity, :caps}` cascade → A gets a **second** notice (the grant it just approved), on top of the C.3 pending-request notice (step 3). Harmless; note it so a reviewer doesn't read the double-notify as a defect. (De-dup is a future polish, not in scope.)
+
+- [ ] **🧑 Step 3: Write + run the §14.5(B) approve-UX agent-browser scenario.** On a running disposable stack (`feedback_disposable_stack_e2e`: fresh `EZAGENT_HOME`, dev mode, PORT), drive the world UI: B opens S, adds A's cc agent via the roster/picker; capture (1) A's agent shown as **PENDING** (awaiting approval), NOT a live member; (2) A's notification surface showing the **approvable pending request**; (3) after A approves, the roster showing A's agent now **mounted**. Save screenshots + steps to `docs/scenarios/2026-07-04-member-cap-cascade.md`. Use the remote browser IP `100.64.0.27` (`feedback_remote_browser_ip`), never localhost. **Operator/environment-dependent step.**
 
 - [ ] **Step 4: Commit.**
 
 ```bash
 git add apps/ezagent_domain_session/test docs/scenarios/2026-07-04-member-cap-cascade.md
-git commit -m "test(cascade): §14.5 cascade + removal-notify green; world-UI agent-browser scenario captured (B.4)"
+git commit -m "test(admission): §14.5(A) PRIMARY prevention acceptance green; approve-UX agent-browser scenario captured (C.4)"
 ```
 
-**Phase B done-gate:** tests 13-19 green; §14.5(A) fully green; §14.5(B) screenshots captured. `/codex:adversarial-review`. **B is one PR (PR-3); ships independently on top of a merged A2.**
+**Phase C done-gate:** tests 27-32 green; §14.5(A) PRIMARY (step 2) + steps 1,3,4 green deterministically; §14.5(A) fully green; §14.5(B) three approve-UX screenshots captured. `/codex:adversarial-review`. **C is one PR (PR-4); ships on top of merged A2+B. X is closed when PR-4 lands.**
 
 ---
 
 ## Self-Review
 
 **Spec coverage — every requirement maps to a task:**
-- R1.1 roster⟂authz → A2.2 (receive) + A2.3 (read) + tests 20-22. R1.2 `MemberReceive`/cap_exempt/parity → A2.1+A2.2, test 24. R1.3 JOIN grant-first+compensation → A1.2, test 23. R1.4 `Entity.Agent.list_in_workspace` → A1.1, test 26. R1.5/R2.2 migration → A1.4, test 25. R1.6/§14.5 done-gate → A2.6 (security) + B.4 (cascade/UI).
+- R1.1 roster⟂authz → A2.2 (receive) + A2.3 (read) + tests 20-22. R1.2 `MemberReceive`/cap_exempt/parity → A2.1+A2.2, test 24. R1.3 JOIN grant-first+compensation → A1.2, test 23. R1.4 `Entity.Agent.list_in_workspace` → A1.1, test 26. R1.5/R2.2 migration → A1.4, test 25. R1.6/§14.5 done-gate → A2.6 (defense-in-depth step 5) + B.4 (cascade step 6) + **C.4 (PRIMARY prevention steps 1-4 + approve-UX §14.5 B)**.
 - R2.1/R3.1 three removal sequences → A2.4, tests 10-11 + abort-safe revoke. R2.3 two receive sites, `Agent.Receive` before bridge → A2.2. R2.4/R3.2 post-commit replay/notify → A2.5. R2.5 stale §4.2 prose → obsolete (implemented as R1.1, no code owner needed).
 - R3.2 migration idempotency + grant-confirmation → A1.4 acceptance cases. Part B K2/K3/K4/K5 → B.1/B.3/B.2. §7 `:send` tiering unchanged → A1.2 (preserved). §8 presence unchanged → A2.4 test 9.
-- **§12 phasing honored** (A1 additive-first, A2 atomic cutover, B rides on top). **§16 risk 4** → 🧑 lead sign-off before A2. **§16 risk 3 cross-app placement** → Global Constraints + A1.1 note.
+- **R4/Part C/K7 admission gate → Phase C:** C.1 trigger branch + `:pending_members` (tests 27,28,30 — incl. the PRIMARY prevention core); C.2 approve/deny/withdraw = R3.1 grant+mount (tests 31,32); C.3 pending-member-subject notify (test 29, the cascade-subject discriminator); C.4 §14.5(A) PRIMARY acceptance + §14.5(B) approve UX. **Security half entirely composed** (R1.1 "pending cannot receive" + R3.1 abort-safe grant); NEW = `:pending_members` + 3 actions + trigger + pending-subject notify.
+- **§12 phasing honored** (A1 additive-first, A2 atomic cutover, B cascade, **C admission/prevention — closes X**). **§16 risk 4** → 🧑 lead sign-off before A2; **§16 risk 5** (cross-owner add now pending) → 🧑 lead sign-off before C. **§16 risk 3 cross-app placement** → Global Constraints + A1.1 note; **§C.1 inviter-threading seam** → Global Constraints + C.1.
 
-**Placeholder scan:** the only non-code "implementer picks" spots are the task-licensed DEMOTED/PROPOSED items (R3.1 revoke inline-vs-deferred; R3.2 replay/notify wiring; migration idempotency predicate + sync flag; teardown authority/execution split; `MemberReceive.authorize` predicate) — each has a pinned constraint + a concrete acceptance test. All other steps carry concrete code/commands.
+**Placeholder scan:** the only non-code "implementer picks" spots are the task-licensed DEMOTED/PROPOSED items (R3.1 revoke inline-vs-deferred; R3.2 replay/notify wiring; migration idempotency predicate + sync flag; teardown authority/execution split; `MemberReceive.authorize` predicate; **Part C: the pending-notify wiring §C.3 + `:pending_members` shape / action plumbing**) — each has a pinned constraint + a concrete acceptance test. All other steps carry concrete code/commands.
+
+**Type consistency (Part C):** `Authority.manages?/2` (B.1) → C.1 trigger + C.2 approve/deny authz. `managers_of/1` (B.2) → C.3 pending notify. `member_cap/2` (A1.1) + R3.1 grant + `do_join_apply` (A1.2/A2.4) → C.2 approve→mount. `:pending_members` slice (C.1) → C.2/C.3/C.4. Consistent.
 
 **Type consistency:** `member_cap/2` (A1.1) → used by A1.2/A1.3/A1.4/A2. `Entity.Agent.list_in_workspace/1` (A1.1) → A1.3/A1.4. `MemberReceive.authorize/1` (A2.1) → A2.2 + parity test. `Ezagent.Identity.Authority` (B.1, NEW — distinct from existing `AdminAuthority`) → B.2. `managers_of/1` (B.2) → B.3/B.4. Consistent throughout.

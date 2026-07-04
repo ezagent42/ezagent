@@ -301,12 +301,13 @@ mechanism (R2.2):
 
 ### R1.6 — Acceptance E2E (the done-gate) — see new §14.5
 
-A NEW end-to-end scenario proving the whole feature, including the CRITICAL
-security proof (immediate deny after revoke, no reconcile wait). Defined in
-full in **§14.5**. Split: the security done-gate is an **ExUnit integration test**
-(deterministic; no reconcile timing to flake); the cross-user cascade UX is a
-**world-UI agent-browser scenario in `docs/scenarios/`** (project convention —
-`feedback_esr_e2e_standards`).
+A NEW end-to-end scenario proving the whole feature. Defined in full in **§14.5**.
+**Since R4 the PRIMARY assertion is PREVENTION** (a pending cross-owner add cannot
+spend A's credential until A approves); the immediate-deny-after-revoke proof is
+RETAINED as defense-in-depth (Phase A2's gate). Split: the security done-gate is an
+**ExUnit integration test** (deterministic; no reconcile timing to flake); the
+owner-approval-to-mount UX is a **world-UI agent-browser scenario in
+`docs/scenarios/`** (project convention — `feedback_esr_e2e_standards`).
 
 ---
 
@@ -659,6 +660,48 @@ The implementer picks the mechanism against the compiler; the spec does not.
   DELETES R2.4's "acceptable fallback / bound the one-replay leak" text — round-3
   correctly read that as a *documented leak*, not a closure. Post-commit ordering is
   now the requirement, not one option among two.)
+
+---
+
+## R4 — Revision: admission gate IN SCOPE (lead decision, 2026-07-04)
+
+**What changed and why.** As shipped through R3 this spec delivered
+membership-cap + cascade-notify + revoke-on-remove = **DETECT + REACT**, and
+**explicitly deferred the join ADMISSION gate to §15 out-of-scope**. That left the
+motivating threat **X still open**: co-tenant **B can pull user A's CREDENTIALED
+agent into B's session and spend A's credentials (OAuth) running B's prompts,
+silently** — the cascade would merely *notify* A *after* the agent was already
+mounted and already receiving. Notify-after-mount is not prevention.
+
+**The lead's decision — owner-approval-to-mount.** "B can *request* to pull A's
+agent in, but it requires the OWNER's approval to actually mount." This closes X by
+**PREVENTION**, as an **ADDITIVE layer** on the S3 membership-cap model — it invents
+almost no new mechanism, it **composes the pieces R1–R3 already built**:
+
+- A cross-owner add (caller lacks manage-authority over the member) no longer
+  grants the member-cap; it records a **PENDING** request and does **NOT** mount.
+- Because no member-cap is held, **R1.1 (receive reads the HELD cap)** means the
+  pending agent **cannot receive → B's message never runs → A's credential is never
+  spent.** The security property falls out **for free** — no new authz path.
+- The owner (A) is notified via the **Part B cascade machinery** (`managers_of/1` +
+  content-free notify), now with the **pending member as the subject**.
+- Approve = the **exact R3.1 abort-safe synchronous grant** that join already
+  performs. Nothing new on the grant path.
+
+**Where this lands:** the design is **Part C** (new, below, in scope); §14.5's
+**primary** done-gate assertion is **rewritten to PREVENTION** (pending-cannot-receive
++ approve-mounts); the old revoke→immediate-deny assertion is **RETAINED as
+defense-in-depth** and remains A2's done-gate. §15 no longer defers admission.
+**Precedence: R4 > R3 > R2 > R1 > prose** for the admission gate; R4 does **not**
+touch R1.1/R2.3/R3.1 (it depends on them unchanged).
+
+Each claim is tagged **CONFIRMED** (verified against this worktree) or **PROPOSED**
+(design choice for the plan). The reused primitives —
+`provision_invited_join_authority/3` (`membership.ex:406`, the existing cross-owner
+add path), `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`) — are **CONFIRMED on
+main**; `Ezagent.Identity.Authority.manages?/2` + `managers_of/1` are **PLANNED**
+(K2/Part B, B.1/B.2); `:pending_members` + the approve/deny/withdraw actions are
+**NEW**; "R1.1 gives prevention for free" is **CONFIRMED-by-design once A2 lands**.
 
 ---
 
@@ -1222,6 +1265,203 @@ holders-of-manage-cap-over-X); do not blur them.
 
 ---
 
+## Part C — Admission gate: owner-approval-to-mount (R4, PREVENTS X)
+
+**In scope (R4).** Parts A+B make membership a revocable cap and notify managers on
+cap-change — that is DETECT+REACT. Part C adds the **PREVENTION** the lead asked for:
+a cross-owner add does not mount until the member's owner approves. It is a thin
+ADDITIVE layer — it **reuses** R1.1 (held-cap receive-authz), Part B (`managers_of/1`
++ content-free notify), R3.1 (the abort-safe grant), and K2's manage-authority
+predicate. What is genuinely new is small (§C.6).
+
+**Distinct from §15's old "who may grant" sketch.** §15 framed the deferred gate as
+"*who may grant* the member-cap over S" — a hard allow/deny on the add itself. R4 is
+**more permissive and safer**: **B MAY request** the add (no hard deny at B's
+boundary), but the add **does not mount** until A approves. The authority to *spend
+A's credential* stays with A; B gets a request, not a grant.
+
+### C.1 — The trigger: a cross-owner INVITE mounts only if the inviter manages the member
+
+**The invariant (state it at this altitude):** *any grant of a member-cap to a member
+the granter does NOT manage must route through admission.* Everything else mounts
+immediately, unchanged.
+
+**Where that invariant bites — the cross-owner INVITE, and ONLY that.** The existing
+cross-owner add is `provision_invited_join_authority(session_uri, joiner_uri,
+inviter_uri)` (`membership.ex:406`, CONFIRMED) — inviter = **B**, joiner =
+**A's-agent**. Today it grants a `Session.:join` cap and proceeds straight to the
+mount (no admission gate). The trigger fires exactly when a **real, non-system
+inviter** reaches the member-cap grant seam **without** manage-authority over the
+joiner:
+
+- **`manage-authority over the member`** := the inviter holds a `Manage`-over-member
+  cap OR is a workspace admin. `Ezagent.Identity.Authority.manages?(inviter, member)`
+  (K2 / B.1), backed by `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`, CONFIRMED:
+  minted into the creator's identity at entity-create, so `manages?(A, A's-agent)` is
+  true).
+- **Cross-owner invite, inviter does NOT manage the member → PENDING.** B pulling A's
+  agent: `manages?(B, A's-agent) = false` → record a pending request, grant **NO**
+  member-cap (§C.2).
+- **Everything else → mount immediately (CURRENT behavior, unchanged).** Explicitly:
+  (a) inviter MANAGES the member (own agent / admin); (b) **self-join** — the joiner
+  admits itself (`ctx.caller == member`; CONFIRMED anon self-admission sets
+  `caller: anon_uri`, `anon_admission.ex:107`); (c) **system / orchestrator / team-
+  template spawn** — the mount runs under `system://session-internal`
+  (`membership.ex:386`, CONFIRMED), which is not a cross-owner invite and MUST keep
+  mounting (spawning a team member is not "pulling someone else's credentialed
+  agent"). These paths do **not** arrive through `provision_invited_join_authority`
+  with a real non-system inviter, so scoping the gate to the invite path spares them.
+
+> **⚠️ Do NOT put a bare `manages?(caller, member)` check on the universal
+> member-cap grant seam.** A system-internal spawn's caller
+> (`system://session-internal`) holds no `CreatorGrant.manage_cap`, is not self, and
+> is not admin → a bare check would send **every normal agent spawn to PENDING** and
+> stall it forever (no one approves a system spawn). The gate keys on **the invite
+> path with a real non-system inviter who lacks manage-authority**, NOT on the caller
+> of every join. Per the code, the invite path is the only granter-≠-manager mount
+> path, so scoping there both closes X and spares spawns.
+
+The gate withholds the **member-cap (`:receive`)** only. It is **orthogonal to the
+existing join-cap provisioning** (`provision_invited_join_authority` may still grant
+the `:join` cap / preflight invite authority at B's boundary) — do not conflate the
+two layers: invite-authority answers "may B initiate an add?"; the admission gate
+answers "does that add mount now, or wait for A?".
+
+*(Plan-time seam, PROPOSED — flagged like the spec's other cross-app placement notes:
+the gate decision needs the **inviter identity** (and its non-system-ness) in scope at
+the **member-cap grant seam** in `do_join_apply` / A1.2, where the inviter is not
+currently threaded. Ensure `inviter_uri` flows from `provision_invited_join_authority`
+to the grant seam; system/self/spawn mounts arrive without a real invite inviter.
+This is placement, not a design gap.)*
+
+### C.2 — Pending state: recorded, NOT mounted, holds NO member-cap
+
+A cross-owner add records a **pending admission request** in a **`:pending_members`
+map on the session's `:session` slice, DISTINCT from `:members`** (PROPOSED shape;
+persistent, so a pending request survives a restart and is never silently lost):
+
+```
+:pending_members := %{ member_uri => %{
+    requested_by:  inviter_uri,     # B
+    requested_at:  DateTime,
+    request_ref:   <opaque handle>  # what A approves/denies
+} }
+```
+
+- **NO member-cap is granted** and **NO `:members` projection entry** is created. The
+  pending member is not mounted on either axis.
+- **Security falls out of R1.1 for free (CONFIRMED-by-design once A2 lands).** Because
+  the pending member holds **no member-cap**, its `:receive` chokepoint (R1.2:
+  `MemberReceive.authorize/1` reads the recipient's OWN held cap and matches
+  `ctx.caller`) **DENIES** — so **B's message never reaches A's agent, A's agent never
+  runs, and A's credential (OAuth) is never spent.** This requires **no new authz
+  path**: it is precisely R1.1's "receive reads the held cap, roster is not authority."
+- **Double barrier, one authority.** The pending member is also absent from `:members`,
+  so the delivery ROSTER never even attempts delivery — but that is a *consequence* of
+  not-mounting, not the security boundary. The **load-bearing** guarantee is the
+  held-cap check (R1.1): even a hand-forged delivery attempt to a pending member is
+  denied. Roster-absence and cap-absence agree, exactly as roster⟂authz intends.
+
+### C.3 — Notify the owner: the cascade machinery, pending member as SUBJECT
+
+The owner A is notified using **Part B's machinery** — `managers_of/1` +
+content-free notify — but note the **cascade-subject requirement** (this is the one
+non-obvious wiring point):
+
+- **Requirement (pin):** a pending request notifies **`managers_of(pending_member)`
+  = A** — the managers of the MEMBER, content-free, with an **approvable-request
+  envelope** identifying `{pending_member, session, request_ref}` (enough for A to
+  act; no message body, no cap values — same content-free discipline as the
+  `slice_changed` envelope). It must **NOT** notify managers of the *session* (= B).
+- **Why this needs stating.** Part B's generic hook (K3) fires on `{entity, :caps}`
+  slice-changes and resolves `managers_of(the entity whose caps changed)`. A pending
+  request changes the **session's** `:pending_members`, not any `:caps` — so wiring it
+  naively to the generic hook would resolve `managers_of(SESSION) = B`, the **exact
+  wrong target**. The "cascade" here is the *machinery* (`managers_of/1` + notify)
+  invoked by a **new trigger** carrying the **pending member as the explicit notify
+  subject**.
+- **DEMOTED — implementer picks the wiring (constraint pinned):** a direct
+  `managers_of(pending_member) → notify` call from the admission action, OR generalize
+  the cascade hook to carry an explicit notify-subject for a `{session,
+  :pending_members}` change. Either satisfies the requirement + test (§14 test 29). Do
+  NOT re-specify the effect grammar.
+- **The pending request IS the actionable payload.** Content-free per the envelope
+  rules; A re-fetches the request detail via a cap-gated read and approves/denies by
+  `request_ref`.
+
+### C.4 — Approve → mount (the deferred second half of join)
+
+The member's owner/manager approves; the mount is the **existing grant+mount path**,
+unchanged:
+
+- **Approve authz:** the approver MUST hold **manage-authority over the member** —
+  `Ezagent.Identity.Authority.manages?(approver, member)` (so A, the creator holding
+  `CreatorGrant.manage_cap` over A's-agent, may approve; B may not). A new
+  `:approve_admission` session action, cap-gated on this predicate.
+- **On approve:** grant `member_cap(S, ws)` via the **exact R3.1 synchronous, checked,
+  ABORT-SAFE grant** (the same grant A1.2/A2 already perform — a failed grant ABORTS
+  the approval, leaving the request pending, never a half-mounted member), THEN run the
+  normal `do_join_apply` mount (projection entry, monitor, presence) — i.e. approve
+  re-enters the join tail at exactly the point C.1 withheld. Remove the entry from
+  `:pending_members`.
+- **Now the agent is a functional member:** it holds the member-cap ⇒ R1.1 authorizes
+  its `:receive` ⇒ B's next post is delivered and A's agent runs (with A's consent,
+  spending A's credential deliberately).
+- **Role-conflict / preflight** (`Members.role_name_conflict/3`, `membership.ex:48`) is
+  re-checked at approve time (session state may have drifted since the request), same
+  zero-side-effect preflight as join.
+
+### C.5 — Deny / withdraw / timeout
+
+- **Deny (by a manager of the member, A):** drop the `:pending_members` entry. No cap
+  was ever granted, so there is nothing to revoke — deny is a pure state-drop.
+- **Withdraw (by the requester, B):** the inviter may withdraw its own pending request
+  → drop the entry. (Authz: `requested_by == withdrawer`.)
+- **Session-end:** all pending requests are dropped with the session (they live on the
+  session slice; PROPOSED: reconcile/teardown drops them, same as roster).
+- **Timeout — DEFAULT (PROPOSED, recommended):** a pending request **persists until
+  approved / denied / withdrawn / session-ends**. **No auto-expiry and — the hard
+  rule — NEVER auto-approve.** Auto-approving would re-open X; auto-denying is a
+  harmless future option, not adopted now.
+
+### C.6 — What is genuinely NEW vs COMPOSED (the honesty answer)
+
+**NEW (Part C's actual code):**
+- the **trigger branch** at the grant seam (`manages?(caller, member)` → mount-now vs
+  pending) — reuses the K2 predicate, new call site;
+- the **`:pending_members`** session slice + its lifecycle (record / drop);
+- the **approve / deny / withdraw** session actions, each authz-gated
+  (approve/deny: `manages?(actor, member)`; withdraw: `requested_by`);
+- firing the notify with the **pending member as subject** (new trigger/subject; not
+  the generic `{entity,:caps}` cascade).
+
+**COMPOSED (reused unchanged — no new mechanism):**
+- **R1.1 held-cap receive-authz** → "pending cannot receive → cred not spent," FOR
+  FREE (the whole security property);
+- **R3.1 abort-safe synchronous grant** → the approve→mount grant IS the join grant;
+- **Part B `managers_of/1` + content-free notify** → owner notification;
+- **K2 `Authority.manages?/2`** → the manage-authority predicate (trigger + approve
+  authz);
+- **the existing `do_join_apply` mount** → approve re-enters it.
+
+That the security-critical half is entirely COMPOSED (R1.1 + R3.1) is the point:
+Part C adds prevention **without a new security path** — it withholds an existing
+grant and lets the existing held-cap authz do the rest.
+
+### C.7 — Coherence with R1.1 / R2.3 / R3.1
+
+- **R1.1 / R2.3:** the pending member's `:receive` is denied at the SAME two entry
+  points (`User.Receive`, `Agent.Receive`-before-the-bridge) by the SAME
+  `MemberReceive.authorize/1` held-cap check — Part C adds no receive path, it simply
+  ensures no cap is held.
+- **R3.1:** approve's grant is the confirmed abort-safe grant; a failed approve-grant
+  leaves the request pending and the member unmounted (loud, no partial state) —
+  identical to R3.1's let-it-crash boundary on the removal revoke.
+- **Roster⟂authz:** pending is neither in the roster nor cap-held; the load-bearing
+  barrier remains the held cap.
+
+---
+
 ## 11. Key decisions (with carried-over codex fixes)
 
 **K1 — receive-authz = the recipient's HELD member-cap over the source session,
@@ -1279,6 +1519,19 @@ post-revoke destroy/drop failure is a reconciled resource leak, not a security
 regression. CONFIRMED atomicity precedent: `handle_remove_participant`
 (`.../membership.ex:624-687`). **See R3.1.**
 
+**K7 — admission = owner-approval-to-mount (R4, PREVENTS X).** A cross-owner add
+(caller lacks `Authority.manages?/2` over the member) does NOT grant the member-cap;
+it records a PENDING request and notifies `managers_of(member)`. The member holds no
+cap ⇒ R1.1 denies its receive ⇒ B's prompt never runs, A's credential never spent
+(prevention, not detection). Approve (by a manager of the member) performs the R3.1
+abort-safe grant + normal mount. A manage-authorized add (own agent / self-join /
+admin) mounts immediately, unchanged. **CONFIRMED reuse:**
+`provision_invited_join_authority/3` (`membership.ex:406`) is the cross-owner add
+path; `CreatorGrant.manage_cap/4` (`creator_grant.ex:20`) backs `manages?`; R1.1 gives
+"pending cannot receive" for free. **NEW:** `:pending_members` slice + approve/deny/
+withdraw actions + the pending-member-as-subject notify. Depends on A2 (R1.1) + Part B
+(`managers_of`, notify) + K2 (`Authority`). **See Part C.**
+
 **Confirmed-sound, do not re-litigate** (carried from S1 review): `do_join`
 mutates `:members` today (`.../membership.ex:127-135`); `slice_changed` is
 content-free + omits `:caller` (`slice_change.ex:202-239`); `notify/2` raises for
@@ -1287,10 +1540,16 @@ non-User (`notifications.ex:192-205`); `workspace_of/1` is O(1) (`capability.ex:
 
 ---
 
-## 12. Internal phasing (ONE spec, three merge-safe phases)
+## 12. Internal phasing (ONE spec, four merge-safe phases)
 
-This is a big change; implement in three phases, each independently green + merged,
+This is a big change; implement in four phases, each independently green + merged,
 all landing the same architecture. Phasing = review checkpoints, not scope forks.
+
+**The arc closes X in two steps.** A1→A2→B deliver **detect + react** — membership is
+a revocable cap and managers are notified on cap-change, but a cross-owner add still
+mounts A's agent immediately (X open, as the pre-R4 spec deferred in §15). **Phase C
+adds PREVENTION** (owner-approval-to-mount): the cross-owner add goes pending and A's
+credential is not spent until A approves. **X is closed when C lands.**
 
 - **A1 — member-cap model + migration (foundation, low risk).** Define the
   member-cap; add its grant to the at-join flow alongside `mount_participation_caps`;
@@ -1315,6 +1574,14 @@ all landing the same architecture. Phasing = review checkpoints, not scope forks
 - **B — cascade rides on top (small, given A).** Extract `Ezagent.Identity.Authority`
   (K2); add the cascade hook at the emit chokepoint (K3); implement `managers_of/1`
   (K4/K5); content-free notify. `affected_principals` is always `[X]`.
+- **C — admission gate: owner-approval-to-mount (Part C, K7 — closes X by PREVENTION).**
+  Rides on A2 (R1.1 held-cap authz) + B (`managers_of/1` + notify) + K2 (`Authority`).
+  Interpose the trigger branch at the member-cap grant seam (`manages?(caller, member)`
+  → mount-now vs pending); add the `:pending_members` slice; add approve/deny/withdraw
+  actions (approve/deny authz = `manages?(actor, member)`); notify
+  `managers_of(pending_member)` with the pending member as subject. **This phase owns
+  the rewritten §14.5 PRIMARY (prevention) done-gate.** Additive/advisory to A2+B: the
+  security half is entirely composed (R1.1 + R3.1).
 
 Each phase gets the SPEC → codex-adversarial-review gate before implementation and
 `/codex:adversarial-review` at PR open (per project convention).
@@ -1347,6 +1614,20 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
   to Users, so this is a programmer error; wrap per-recipient notify in a rescue so
   one bad recipient doesn't drop the batch, but let it surface in tests.
 - **Bad/non-dict cascade envelope:** guard-clause ignore; never crash.
+- **Approve-grant failure (Part C, security-critical):** the approve grant is the
+  R3.1 synchronous, checked, **abort-safe** grant — a failed grant **ABORTS the
+  approval, leaves the request PENDING, mounts nothing** (loud error, no half-mounted
+  member). Never silently proceed past a failed approve-grant.
+- **Approve/deny by a non-manager:** the action is authz-gated on
+  `Authority.manages?(actor, member)`; a non-manager approve/deny returns `{:error, _}`
+  with zero mutation (the pending entry is untouched) — same fail-closed discipline as
+  `remove_participant` (test 11).
+- **Duplicate / racing pending request:** a second cross-owner add for an
+  already-pending member is idempotent (no second entry, no second notify); an add for
+  an already-MOUNTED member is a no-op (it already holds the cap).
+- **Notify failure on a pending request:** the owner-notify is best-effort/advisory
+  (Part B contract) — a failed notify does NOT roll back the pending record; the
+  request persists and A can still act on it via the roster/pending surface.
 
 ---
 
@@ -1437,65 +1718,124 @@ Each phase gets the SPEC → codex-adversarial-review gate before implementation
 26. **Agent enumeration (R1.4):** `Entity.Agent.list_in_workspace/1` returns a
     DORMANT agent (snapshot-only, not live) and excludes users/other workspaces.
 
-### 14.5 Acceptance E2E — the done-gate (NEW scenario)
+**C — admission gate (owner-approval-to-mount, R4/K7)**
+27. **Trigger branch — non-invite / manage-authorized mounts immediately (unchanged);
+    over-fire guard:** an inviter who holds `Authority.manages?/2` over the member (own
+    agent / admin) mounts NOW, no pending entry. **AND the over-fire guard:** a
+    **system/orchestrator spawn** (`system://session-internal`) and a **self-join / anon
+    self-admission** (`caller == member`) **still MOUNT, do NOT go pending** — proves
+    the trigger is scoped to the cross-owner INVITE path, not a bare
+    `manages?(caller, member)` on the universal grant seam (which would stall every
+    agent spawn — §C.1 warning).
+28. **Trigger branch — cross-owner add goes PENDING, no cap:** B (no manage-authority
+    over A's-agent) adds A's-agent → a `:pending_members` entry is recorded, **NO
+    member-cap is granted** (assert absent via `read_entity_caps/1`), and NO `:members`
+    projection entry exists.
+29. **Pending notify targets the MEMBER's managers, not the session's:** the pending
+    request notifies `managers_of(A's-agent) = A`, content-free (envelope carries
+    `{member, session, request_ref}`, no message/cap content); asserts **A** is
+    notified and **B is NOT** notified via this path (the cascade-subject trap).
+30. **Pending cannot receive (the prevention core, R1.1 reuse):** with A's-agent
+    pending, B posts in S → A's-agent's `:receive` is DENIED (holds no member-cap) →
+    it does NOT run → A's credential is NOT spent. Deterministic; no reconcile.
+31. **Approve → mount:** A (holds manage-authority over A's-agent) approves the
+    request → member-cap granted via the R3.1 abort-safe grant + normal mount →
+    `:pending_members` entry removed → B's next post is delivered and A's-agent
+    receives. A non-manager (B) attempting approve → `{:error, _}`, zero mutation.
+32. **Deny / withdraw / abort-safe:** A denies → pending entry dropped, no cap ever
+    granted; B withdraws its own request → dropped; an approve whose grant COMMIT
+    FAILS aborts and leaves the request PENDING (nothing mounted) — R3.1 abort-safe.
+
+### 14.5 Acceptance E2E — the done-gate (NEW scenario, R4-revised: PREVENTION is primary)
 
 This scenario **does not exist today**; it is the feature's end-to-end done-gate.
-It proves the three properties the lead asked for. **Split by determinism:**
+Since R4 the PRIMARY, load-bearing assertion is **PREVENTION** — that X is truly
+closed because B's cross-owner pull **cannot spend A's credential at all** until A
+approves, not merely that A is notified after the fact. The old revoke→immediate-deny
+assertion is **RETAINED as defense-in-depth** (it still proves R1.1's held-cap
+guarantee, and remains **Phase A2's** done-gate). **Split by determinism.**
 
-**(A) Security done-gate → ExUnit integration test** (deterministic; the immediate
-deny must not depend on reconcile timing, which would flake in a browser test).
-Lives at `apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs`
-(cross-app integration; the session domain owns membership + delivery). Steps:
+**The PRIMARY assertion (verbatim — this is what proves X solved by prevention):**
 
-1. **Cross-user add.** User **B** adds user **A**'s cc agent to B's session **S** —
-   i.e. grants the member-cap `cap(:session, Session, :receive, instance: S)` to
-   **A's-agent's** `:identity` slice.
-2. **Cascade proof.** Assert **A receives a cascade notification** — the grant is a
-   slice-change on A's-agent → `managers_of(A's-agent)` = the creator holding
-   `CreatorGrant.manage_cap` = **A** → `Notifications.notify/2` to A (Part B / §9).
-3. **Membership-as-cap delivery.** B posts in S; assert A's-agent's `:receive`
-   fires (roster lists it AND it holds the member-cap → in-handler authz passes).
-4. **Grant/revoke cascade to an arbitrary X.** Grant a member-cap to some entity X
-   whose owner/manager is Y; assert Y is notified (and on revoke, Y is notified —
-   the S1-gap-closed removal-notify).
-5. **🔴 CRITICAL SECURITY PROOF (the done-gate).** B **removes** A's agent from S
-   (revoke the member-cap). Assert A's-agent can **NO LONGER receive** in S — B
-   posts again and A's-agent's `:receive` is DENIED — **proven WITHOUT running
-   `reconcile_after_load/2`** (the test never re-activates the session; it asserts
-   the in-handler held-cap check denies on the already-revoked cap). This is the
-   security done-gate: revoke ⇒ immediate loss of receive, no reconcile wait, no
-   bearer window.
+> **B (holding NO manage-authority over A's agent) adds A's agent to session S → A's
+> agent enters PENDING, is NOT mounted; B sends a message → A's agent does NOT receive
+> it, does NOT run, A's credential is NOT spent.** Then: **A is notified of the pending
+> request; A approves → A's agent mounts and now receives normally.** (Defense-in-depth
+> retained: after mount, A removes → revoke → cannot receive, immediate, no reconcile.)
 
-**(B) Cross-user cascade UX → world-UI agent-browser scenario** in
+**(A) Security done-gate → ExUnit integration test** (deterministic; neither the
+pending-deny nor the revoke-deny may depend on reconcile timing, which would flake in
+a browser test). Lives at
+`apps/ezagent_domain_session/test/ezagent/acceptance/member_cap_cascade_acceptance_test.exs`
+(cross-app integration; the session domain owns membership + delivery). Steps, tagged
+by owning phase:
+
+1. **[Phase C] Cross-owner add → PENDING, not mounted.** B (no manage-authority over
+   A's-agent) adds A's cc agent to B's session **S**. Assert a `:pending_members`
+   entry exists and **NO member-cap** was granted to A's-agent (assert absent via
+   `read_entity_caps/1`); no `:members` projection entry.
+2. **[Phase C] 🔴 PRIMARY PREVENTION PROOF.** B posts in S. Assert A's-agent's
+   `:receive` is **DENIED** (it holds no member-cap → R1.1 in-handler check denies) →
+   A's-agent **does NOT run**, **A's credential is NOT spent**. Deterministic: the cap
+   was never granted, so no reconcile timing is involved.
+3. **[Phase C] Owner notified of the pending request.** Assert **A** receives the
+   pending-admission notification — `managers_of(A's-agent) = A` (the creator holding
+   `CreatorGrant.manage_cap`), content-free approvable envelope — and **B is NOT**
+   notified via this path (cascade-subject correctness).
+4. **[Phase C] Approve → mount → now receives.** A (holds manage-authority over
+   A's-agent) approves → member-cap granted via the R3.1 abort-safe grant + normal
+   mount; the `:pending_members` entry is removed. B posts again → A's-agent's
+   `:receive` now **fires** (holds the member-cap). A non-manager (B) attempting the
+   approve → `{:error, _}`, zero mutation.
+5. **[Phase A2] Defense-in-depth — revoke ⇒ immediate deny, no reconcile.** With
+   A's-agent now a mounted member, B (or A) **removes** it (revoke the member-cap).
+   Assert A's-agent can **NO LONGER receive** — B posts again and `:receive` is DENIED,
+   **proven WITHOUT running `reconcile_after_load/2`** (the test never re-activates the
+   session; the in-handler held-cap check denies on the already-revoked cap). Immediate
+   loss of receive, no reconcile wait, no bearer window.
+6. **[Phase B] Grant/revoke cascade to an arbitrary X.** Grant a member-cap to some
+   entity X whose owner/manager is Y; assert Y is notified (and on revoke, Y is notified
+   — the S1-gap-closed removal-notify).
+
+**(B) Cross-owner APPROVE UX → world-UI agent-browser scenario** in
 `docs/scenarios/2026-07-04-member-cap-cascade.md` (project convention
 `feedback_esr_e2e_standards`: an agent-browser screenshot gate for user-facing
-flows). Drives the world UI: B opens S, adds A's cc agent via the roster/picker;
-capture (1) the roster showing A's agent as a member, (2) A's notification surface
-showing the cascade notice. This proves the human-visible cross-user path. The
-**security deny** stays ExUnit-only (not UI-visible / timing-sensitive).
+flows). Drives the world UI through the **prevention flow**: B opens S, adds A's cc
+agent via the roster/picker → capture (1) A's-agent shown as **PENDING** (awaiting
+approval), NOT a live member; (2) A's notification surface showing the **approvable
+pending request**; (3) after A approves, the roster showing A's-agent now **mounted**
+as a member. This proves the human-visible owner-approval-to-mount path. The
+**pending-deny and revoke-deny** stay ExUnit-only (not UI-visible / timing-sensitive).
 
-**Gate wording:** the feature is DONE when (A) passes in full — **especially step
-5** — and (B)'s two screenshots are captured. Step 5 is the single load-bearing
-assertion; if it cannot be made to pass without a reconcile, R1.1's roster/authz
-separation is not actually implemented and the feature is not done.
+**Gate wording:** the feature is DONE when (A) passes in full — **especially step 2**
+(the PRIMARY prevention proof) **and step 5** (defense-in-depth) — and (B)'s three
+screenshots are captured. **Step 2 is the single load-bearing assertion that X is
+closed by prevention**: if a cross-owner add mounts (or its message ever reaches
+A's-agent) without A's approval, the admission gate is not implemented and the feature
+is not done. Step 5 is the retained defense-in-depth (A2's own gate); if it cannot pass
+without a reconcile, R1.1's roster/authz separation is not actually implemented.
 
 **Alignment with R3.1 (reframed REMOVE invariant).** Step 5 asserts **revoke-happened
 → member cannot receive**, NOT worker-destroyed. That is *exactly* the load-bearing
 property R3.1's reframe protects: the confirmed abort-safe revoke is the security
 boundary, and the destructive `sandbox.destroy` teardown is deliberately outside the
 assertion (a post-revoke resource concern, reconciled, not security). No assertion
-change is needed — the done-gate already proves the reframed invariant.
+change is needed. **Alignment with R4 (admission):** step 2's prevention rests on the
+SAME held-cap authz — the pending member simply never holds the cap; approve (step 4)
+is the SAME R3.1 abort-safe grant. Prevention adds no new security path.
 
 ---
 
 ## 15. Out of scope
 
 - **S0 — delete legacy `Notifications.notify/3`.** Independent housekeeping.
-- **The join ADMISSION authz gate.** Whether B is *allowed* to pull A's agent in is
-  the grant/admission side (authorization). This spec is membership + the
-  after-the-fact notification. **Note S3's relevance:** because join now *is* a
-  cap grant, the admission gate becomes "who may grant the member-cap over S" — a
-  natural future tightening, but the gate itself is out of scope here.
+- **~~The join ADMISSION authz gate.~~ NOW IN SCOPE (R4) — see Part C.** Earlier
+  revisions deferred this as "whether B is *allowed* to pull A's agent in," leaving X
+  open (notify-after-mount is not prevention). The lead's owner-approval-to-mount
+  decision brings it in scope as **Part C**: a cross-owner add goes PENDING and does
+  not mount (spend A's credential) until A approves. Note this is **not** the old
+  "who may grant the member-cap" hard-deny sketch — it is more permissive (B MAY
+  request) and safer (nothing mounts without the owner). Part C is Phase C / PR-4.
 - **S2 — agent inboxes.** `Notifications.notify/2` raises for non-User URIs
   (`notifications.ex:192-205`); cascade recipients are filtered to Users. Notifying
   an AGENT (so an agent-manager gets a cascade) needs an agent-inbox primitive.
@@ -1535,3 +1875,29 @@ change is needed — the done-gate already proves the reframed invariant.
    Cleaner, but a user-visible change (a transient grant failure now yields
    non-membership rather than a silent send-less member). Reconcile heals it on next
    activate, but the window exists. Called out for the lead's sign-off.
+5. **Behavior shift (Part C, K7): cross-owner add now requires owner approval.** 🧑
+   **Lead sign-off (parallel to risk 4).** Adds that previously mounted immediately —
+   B pulling A's agent into B's session — now go **PENDING** until A approves. This is
+   the intended prevention of X, but it is a **user-visible change to existing
+   multi-user / add-others'-agent collaboration flows**: any workflow that relied on
+   silently mounting another owner's agent now stalls at pending. **Confirm this is
+   intended and won't break a needed existing flow.** Inverse (blast-radius bound —
+   the trigger is scoped to the cross-owner **invite** path, §C.1, NOT the universal
+   grant seam): **behavior-preserving, current mount path unchanged** for (a) an
+   inviter who MANAGES the member (own agent / admin); (b) **self-join** (joiner
+   admits itself, incl. anon self-admission, `caller == member`); (c) **system /
+   orchestrator / team-template spawn** under `system://session-internal`
+   (`membership.ex:386`) — normal agent spawning is untouched. **Only a cross-owner
+   invite by a real non-system inviter who lacks manage-authority changes.** (A bare
+   `manages?(caller, member)` on the universal seam would wrongly pend system spawns —
+   see the §C.1 warning; the scoping to the invite path is load-bearing, not cosmetic.)
+   *Minor, flag-don't-build (one-line open notes for the lead, not designed here):*
+   (a) whether the requester **B** is told of the eventual approve/deny outcome;
+   (b) whether **B's identity** appears in A's pending-request payload (a mild tension
+   with the content-free envelope — an approvable request needs *some* handle).
+6. **Pending-request cascade subject (Part C, §C.3).** The pending-request notify must
+   target `managers_of(the pending MEMBER)`, NOT the generic `{entity,:caps}` hook's
+   `managers_of(the changed entity = the session)`. Called out because wiring it
+   naively to the Part B hook resolves the WRONG target (B, not A). The requirement +
+   discriminating test (test 29) are pinned; the wiring is DEMOTED (direct call vs
+   subject-carrying hook) — implementer's choice, not a design gap.
