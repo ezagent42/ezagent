@@ -211,6 +211,24 @@ website-journey launch gaps (grep-confirmed zero code on main), Allen: "看起�
 > back under 1000, then ratchet `oversized_modules_gt_1000` 2 → 1. Low priority — it is
 > a cohesive callback and 18 lines over.
 
+### `behavior/session/membership.ex` oversized (admission cluster) — OPEN (LOW, #161 C)
+
+> **OPEN, surfaced 2026-07-05 (#161 C admission gate).** `oversized_modules_gt_1000`
+> was ratcheted **2 → 3** because `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex`
+> crossed 1000 (was **966** on main after A1's MemberCap extraction) when C.1/C.2/C.3
+> added the ~260-line owner-approval admission cluster — `admission_pending?`, the
+> `caller_controls_member?` / `{:spawned_by, caller}` exemption chain, `record_pending_admission`,
+> `notify_pending_managers`, and the public `approve_admission` / `deny_admission` /
+> `withdraw_admission` handlers (now **1262**). **Not extracted (deliberately):** unlike
+> A1's `Session.MemberCap` leaf, the cluster is MUTUALLY RECURSIVE with the join flow it
+> guards — `do_join` calls `admission_pending?` + `record_pending_admission`, and
+> `approve_admission` calls back `do_join` — so its natural home is next to `do_join`.
+> **Fix (if pursued) =** extract a `Session.Admission` sibling holding the cluster
+> (`same_entity?` is already cluster-local; only session.ex's 3 admission handlers + the
+> `session_behavior_registration.ex` action list would repoint), accepting the
+> bidirectional `Membership ↔ Admission` runtime coupling; then ratchet 3 → 2. Low
+> priority — the coupling makes the split a judgement call, not a clear win.
+
 ### Routing explicit-URI receiver bypasses `valid_member?` — OPEN (LOW, pre-existing, audit)
 
 > **OPEN, carried from 甲-4 adversarial review (2026-06-20).** `Routing.Resolver.expand_receiver/5`

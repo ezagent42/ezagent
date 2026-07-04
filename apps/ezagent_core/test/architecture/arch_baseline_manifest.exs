@@ -51,7 +51,21 @@
   #   at-join member-cap cluster into the sibling `Session.MemberCap`, so it does
   #   NOT count here.) session.ex burn-down (split the activate reconcile block)
   #   is a tracked follow-up in docs/futures/todo.md.
-  oversized_modules_gt_1000: 2,
+  # - arch-cap-bump: #161 C (admission gate) — `behavior/session/membership.ex`
+  #   was 966 on main (A1 had trimmed it under 1000 by extracting the at-join
+  #   member-cap cluster into `Session.MemberCap`). C.1/C.2/C.3 added the ~260-line
+  #   owner-approval admission cluster (`admission_pending?`, the
+  #   `caller_controls_member?`/`{:spawned_by}` exemption chain, `record_pending_admission`,
+  #   `notify_pending_managers`, and the public `approve_/deny_/withdraw_admission`
+  #   handlers) → 1262. Unlike the MemberCap leaf, the cluster is MUTUALLY RECURSIVE
+  #   with the join flow it guards (`do_join` calls `admission_pending?`/
+  #   `record_pending_admission`; `approve_admission` calls back `do_join`), so its
+  #   natural home is next to `do_join` — a `Session.Admission` split would be a
+  #   bidirectional-coupling extraction, not a clean leaf. Ratchet 2→3; the split
+  #   is a tracked burn-down follow-up in docs/futures/todo.md (`same_entity?` is
+  #   cluster-local; only session.ex's 3 admission handlers + the registration list
+  #   would repoint).
+  oversized_modules_gt_1000: 3,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
