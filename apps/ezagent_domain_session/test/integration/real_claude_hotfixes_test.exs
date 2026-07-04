@@ -68,12 +68,28 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
           attachments: []
         })
 
+      # A2.2 — :receive authorizes on the recipient's HELD member-cap over
+      # ctx.caller (the source session); supply it in the pre-loaded :identity
+      # sibling (the gate itself is proven in HeldCapReceiveTest).
+      member_cap = %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :receive,
+          session_uri,
+          Ezagent.Capability.workspace_of(session_uri)
+        )
+        | granted_by: URI.new!("entity://system/user/owner"),
+          granted_at: DateTime.utc_now()
+      }
+
       ctx = %{
         caller: session_uri,
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: :ignore,
         kind_module: Ezagent.Entity.Agent,
-        self_uri: agent_uri
+        self_uri: agent_uri,
+        siblings: %{identity: %{caps: MapSet.new([member_cap])}}
       }
 
       assert {:ok, _} =

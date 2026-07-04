@@ -59,6 +59,29 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
     Map.merge(SessionBehavior.init_slice(%{}).state, extras)
   end
 
+  # Membership-cap unification A2.2 — `:receive` authorizes in-handler on the
+  # recipient's HELD member-cap over `ctx.caller` (the source session). These
+  # parity tests assert receive slice MECHANICS, so they supply a source session
+  # `caller` + the recipient's matching member-cap in the pre-loaded `:identity`
+  # sibling (the held-cap gate itself is proven in `HeldCapReceiveTest`).
+  @recv_source_session URI.new!("session://team-alpha/default/recv-parity")
+
+  defp receive_ctx_extras do
+    cap = %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        @recv_source_session,
+        Ezagent.Capability.workspace_of(@recv_source_session)
+      )
+      | granted_by: URI.new!("entity://system/user/owner"),
+        granted_at: DateTime.utc_now()
+    }
+
+    %{caller: @recv_source_session, siblings: %{identity: %{caps: MapSet.new([cap])}}}
+  end
+
   defp ctx_for(chat_slice, extras \\ %{}) do
     monitors = Map.get(chat_slice, :monitors, %{})
 
@@ -253,11 +276,14 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       slice = empty_chat_slice()
 
       ctx =
-        ctx_for(slice, %{
-          self_uri: user_uri,
-          kind_module: Ezagent.Entity.User,
-          slice_change_cursor: 5
-        })
+        ctx_for(
+          slice,
+          Map.merge(receive_ctx_extras(), %{
+            self_uri: user_uri,
+            kind_module: Ezagent.Entity.User,
+            slice_change_cursor: 5
+          })
+        )
 
       assert {:ok, %{}, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
 
@@ -288,11 +314,14 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       msg = Message.new(sender, %{text: "newest", attachments: []})
 
       ctx =
-        ctx_for(slice, %{
-          self_uri: user_uri,
-          kind_module: Ezagent.Entity.User,
-          slice_change_cursor: 999
-        })
+        ctx_for(
+          slice,
+          Map.merge(receive_ctx_extras(), %{
+            self_uri: user_uri,
+            kind_module: Ezagent.Entity.User,
+            slice_change_cursor: 999
+          })
+        )
 
       {:ok, _, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
 
@@ -320,11 +349,13 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       slice = empty_chat_slice()
 
       ctx =
-        ctx_for(slice, %{
-          self_uri: agent_uri,
-          kind_module: Ezagent.Entity.Agent,
-          caller: URI.to_string(URI.new!("session://team-alpha/default/x"))
-        })
+        ctx_for(
+          slice,
+          Map.merge(receive_ctx_extras(), %{
+            self_uri: agent_uri,
+            kind_module: Ezagent.Entity.Agent
+          })
+        )
 
       assert {:ok, %{}, []} = AgentReceive.handle_receive(%{message: msg}, ctx)
     end

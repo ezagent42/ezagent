@@ -124,11 +124,18 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
 
     target_prefix = "#{URI.to_string(target_uri)}?action=#{behavior}.receive"
 
+    # Membership-cap unification A2.2 — this counter measures whether the routing
+    # RULE FIRES (resolves to `target_uri` and ATTEMPTS a `:receive` dispatch),
+    # which is upstream of and independent from receive-authorization. Post-A2.2,
+    # `:receive` is cap_exempt (no `authz == "granted"` row) AND a non-member
+    # target (this eavesdropper) is DENIED in-handler on the held-cap check — so
+    # the old `authz == "granted"` filter zeroes for ALL recipients. Count the
+    # dispatch ATTEMPT (any authz), which is the rule-firing signal the test
+    # asserts; the downstream non-member denial is by-design (R1.1) and NOT what
+    # this workspace-scoping test measures.
     EzagentCore.Repo.all(
       from(i in "invocations",
-        where:
-          fragment("? LIKE ?", i.target, ^"#{target_prefix}%") and
-            i.authz == "granted",
+        where: fragment("? LIKE ?", i.target, ^"#{target_prefix}%"),
         select: i.inserted_at
       )
     )

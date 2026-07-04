@@ -10,7 +10,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   """
 
   use EzagentCore.DataCase, async: false
-  alias Ezagent.{Message, MessageStore}
+  alias Ezagent.{Capability, Message, MessageStore}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
@@ -29,6 +29,23 @@ defmodule Ezagent.ActionSet.ChatTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, URI.new!("workspace://team-alpha"))
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     :ok
+  end
+
+  # Membership-cap unification A2.2 — `:receive` now authorizes in-handler on the
+  # recipient's HELD member-cap over `ctx.caller`. These tests assert receive slice
+  # MECHANICS / bridge payloads (the held-cap gate itself is proven in
+  # `Ezagent.Session.HeldCapReceiveTest`), so they grant the recipient the matching
+  # member-cap in the pre-loaded `:identity` sibling to clear the gate.
+  defp with_member_cap(ctx) do
+    caller = Map.fetch!(ctx, :caller)
+
+    cap = %Capability{
+      Capability.cap(:session, Ezagent.ActionSet.Session, :receive, caller, Capability.workspace_of(caller))
+      | granted_by: URI.new!("entity://system/user/owner"),
+        granted_at: DateTime.utc_now()
+    }
+
+    Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
   end
 
   describe "Behavior contract surface" do
@@ -776,7 +793,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       msg = Message.new(sender, %{text: "reply incoming", attachments: []})
 
       slice = %{}
-      ctx = %{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender}
+      ctx = with_member_cap(%{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender})
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
@@ -811,7 +828,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       msg = Message.new(sender, %{text: "hi agent", attachments: []})
 
       slice = %{}
-      ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: sender}
+      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: sender})
 
       assert {:ok, ^slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
@@ -848,7 +865,7 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
+      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,
@@ -903,7 +920,7 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
+      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,
@@ -960,7 +977,7 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
+      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,
