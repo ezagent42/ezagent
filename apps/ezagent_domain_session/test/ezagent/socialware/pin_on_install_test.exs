@@ -89,6 +89,42 @@ defmodule Ezagent.Socialware.PinOnInstallTest do
     assert Ezagent.ActionSet.Turn in behaviors
   end
 
+  test "T-Pin-d: re-seeding an already-installed ref is idempotent, not a collision" do
+    # Regression (feat/registry-p0): P0 added `definition_content_hash` to the
+    # install body. The install `source_turn_id` is DETERMINISTIC
+    # (`socialware-install:<session>:<ref>`), so the shared seed's
+    # "same-turn + different-body → collision" guard misfired whenever a
+    # re-seed's baked body differed from an already-installed pointer (a pre-P0
+    # body, OR a body pinned to a newer revision) — even though the install
+    # pointer id is per (session, ref) and can NEVER be a two-plugins-one-name
+    # clash. Boot re-seeds the persisted `main` session on every start, so this
+    # collided at boot and tore `main` down. Seeding an already-installed ref
+    # must be an idempotent no-op that HOLDS the frozen revision (only `repoint`
+    # advances a running install).
+    name = "pin-d-#{uniq()}"
+    session_uri = Ezagent.URI.session("team-pin", "generic", name)
+
+    r1 = write!(name, [Ezagent.ActionSet.Session])
+    {:ok, frozen_r1} = Installation.freeze_template_installs(%{installs: [name]}, @ws)
+
+    :ok = Installation.install_template_installs(session_uri, @ws, frozen_r1, @actor)
+    assert [%Definition{} = installed_r1] = Installation.installed_definitions(session_uri)
+    refute Ezagent.ActionSet.Turn in Definition.behaviors(installed_r1)
+
+    # a new revision publishes and a fresh freeze pins R2 — a re-seed's body now
+    # bakes a DIFFERENT config_id under the SAME deterministic source_turn_id.
+    r2 = write!(name, [Ezagent.ActionSet.Session, Ezagent.ActionSet.Turn])
+    refute r2.id == r1.id
+    {:ok, frozen_r2} = Installation.freeze_template_installs(%{installs: [name]}, @ws)
+
+    # must NOT raise `{:socialware_install_collision, ...}` — idempotent no-op.
+    assert :ok = Installation.install_template_installs(session_uri, @ws, frozen_r2, @actor)
+
+    # freeze-pin held: the running install stays at R1 (seed never advances).
+    assert [%Definition{} = still_r1] = Installation.installed_definitions(session_uri)
+    refute Ezagent.ActionSet.Turn in Definition.behaviors(still_r1)
+  end
+
   test "T-Pin-c: a fresh install records the resolved revision id + content_hash" do
     name = "pin-c-#{uniq()}"
     r1 = write!(name, [Ezagent.ActionSet.Session])

@@ -326,6 +326,29 @@ defmodule Ezagent.Socialware.Installation do
   defp seed_install(session_uri, workspace_uri, definition, object, install, actor_uri) do
     ref = install.ref
 
+    # Install seeding is idempotent on the (session, ref) INSTALL identity. The
+    # install pointer id is per (session, ref), so a pre-existing pointer is
+    # ALWAYS a prior install of THIS ref — never a two-plugins-one-name clash
+    # (that hazard, which the shared seed's divergent-body collision guard
+    # exists for, only arises at the def/role layer where a name can be
+    # double-claimed). Because `seed_install` uses a DETERMINISTIC
+    # `source_turn_id`, that guard would otherwise misfire the moment a re-seed's
+    # baked body differs from the stored one — e.g. after P0 added
+    # `definition_content_hash` to the body (a pre-P0 pointer lacks it), or when
+    # a fresh freeze pins a newer revision. Both are the SAME install of the SAME
+    # def, not a collision. Re-seeding an already-installed ref is therefore a
+    # no-op that HOLDS the frozen revision (freeze-pin §4): only the explicit
+    # `repoint_template_installs/4` upgrade path advances a running install.
+    if installed?(session_uri, ref) do
+      {:ok, :exists}
+    else
+      do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri)
+    end
+  end
+
+  defp do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri) do
+    ref = install.ref
+
     ConfigStore.seed_object_if_no_pointer(%{
       layer: @install_layer,
       workspace_uri: workspace_uri,
