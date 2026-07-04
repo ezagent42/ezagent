@@ -62,6 +62,64 @@ defmodule EzagentPluginCc.CredentialFreshnessTest do
     end
   end
 
+  # #160 — status/2 adds the distinct :missing that check/2 collapses into :unknown.
+  describe "status/2" do
+    test "an ABSENT .credentials.json is :missing (logged out / never /login)", %{dir: dir} do
+      # dir exists but no cred file written.
+      assert CredentialFreshness.status(dir, now_ms: @now) == :missing
+    end
+
+    test "a fresh present token is :fresh", %{dir: dir} do
+      write_cred(dir, %{"accessToken" => "a", "expiresAt" => @now + 3_600_000})
+      assert CredentialFreshness.status(dir, now_ms: @now) == :fresh
+    end
+
+    test "an expired present token is {:stale, :expired}", %{dir: dir} do
+      write_cred(dir, %{"accessToken" => "a", "expiresAt" => @now - 1})
+      assert CredentialFreshness.status(dir, now_ms: @now) == {:stale, :expired}
+    end
+
+    test "a token within the skew window is {:stale, :expiring_soon}", %{dir: dir} do
+      write_cred(dir, %{"accessToken" => "a", "expiresAt" => @now + 30_000})
+      assert CredentialFreshness.status(dir, now_ms: @now, skew_ms: 60_000) ==
+               {:stale, :expiring_soon}
+    end
+
+    test "a PRESENT but garbled file is :unknown (NOT :missing)", %{dir: dir} do
+      write_raw(dir, "{not json")
+      assert CredentialFreshness.status(dir, now_ms: @now) == :unknown
+    end
+
+    test "a present non-OAuth shape is :unknown (NOT :missing)", %{dir: dir} do
+      write_raw(dir, Jason.encode!(%{"apiKeyHelper" => "/usr/bin/helper"}))
+      assert CredentialFreshness.status(dir, now_ms: @now) == :unknown
+    end
+
+    test "nil config_dir is :unknown" do
+      assert CredentialFreshness.status(nil) == :unknown
+    end
+  end
+
+  describe "expires_at/1" do
+    test "returns the OAuth expiresAt epoch ms when present", %{dir: dir} do
+      write_cred(dir, %{"accessToken" => "a", "expiresAt" => @now + 3_600_000})
+      assert CredentialFreshness.expires_at(dir) == @now + 3_600_000
+    end
+
+    test "is nil when the file is absent", %{dir: dir} do
+      assert CredentialFreshness.expires_at(dir) == nil
+    end
+
+    test "is nil for a non-OAuth / garbled file", %{dir: dir} do
+      write_raw(dir, "{not json")
+      assert CredentialFreshness.expires_at(dir) == nil
+    end
+
+    test "is nil for nil config_dir" do
+      assert CredentialFreshness.expires_at(nil) == nil
+    end
+  end
+
   describe "remind/3 — never blocks; warns + telemetry + meta on a stale token" do
     setup do
       ref = make_ref()

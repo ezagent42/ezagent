@@ -59,10 +59,10 @@ defmodule Ezagent.World.IdentityData do
          %{component: "identities", filter: filter},
          base,
          workspace_uri,
-         _caller,
-         _caps
+         caller,
+         caps
        ) do
-    rows = list_entities(workspace_uri, filter)
+    rows = workspace_uri |> list_entities(filter) |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("filter", filter)
@@ -78,8 +78,8 @@ defmodule Ezagent.World.IdentityData do
     Map.put(base, "preview_uri", UserData.preview_uri(workspace_uri, ""))
   end
 
-  defp component_state(%{component: "agents_table"}, base, workspace_uri, _caller, _caps) do
-    agents = list_entities(workspace_uri, "agents")
+  defp component_state(%{component: "agents_table"}, base, workspace_uri, caller, caps) do
+    agents = workspace_uri |> list_entities("agents") |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("agents", agents)
@@ -277,6 +277,9 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("granted_caps", CapData.list_entity_caps(agent_uri, caller, caps))
     |> Map.put("project_cwd", sandbox_project_cwd(sandbox))
     |> Map.put("config_dir", sandbox_config_dir(sandbox))
+    # #160 — normalized credential status (owner + ws-admin only; nil for a
+    # caller without the target's Manage cap, so the badge simply hides).
+    |> Map.put("credential_status", agent_credential_status(agent_uri, caller, caps))
     |> Map.put("source_template", sandbox_source_template(sandbox))
     |> Map.put("config_path", config_path("agent", agent_uri_str))
     # M1: per-flavor config fields from template data + config cascade
@@ -564,6 +567,59 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp agent_sandbox_state(_agent_uri, _caller_uri, _caller_caps), do: nil
+
+  # ── #160 credential-status view ──────────────────────────────────────
+  #
+  # Enrich agent rows with a normalized `credential_status` (nil for user rows and
+  # for agents the caller may not manage). Read via the cap-gated, NON-ACTIVATING
+  # `Ezagent.Domain.Agent.read_credential_status/2` — the SAME owner+ws-admin gate
+  # as `read_config`, so a co-tenant learns nothing (#160 leak stays closed).
+  defp put_credential_statuses(rows, caller, caps) when is_list(rows) do
+    Enum.map(rows, fn
+      %{"kind" => "agent", "uri" => uri_str} = row ->
+        Map.put(row, "credential_status", agent_credential_status(uri_str, caller, caps))
+
+      row ->
+        row
+    end)
+  end
+
+  defp put_credential_statuses(rows, _caller, _caps), do: rows
+
+  defp agent_credential_status(%URI{} = agent_uri, caller, caps) do
+    case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{caller: caller, caps: caps}) do
+      {:ok, status} -> encode_credential_status(status)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp agent_credential_status(uri_str, caller, caps) when is_binary(uri_str) do
+    case Ezagent.URI.parse(uri_str) do
+      {:ok, %URI{} = uri} -> agent_credential_status(uri, caller, caps)
+      _ -> nil
+    end
+  end
+
+  defp agent_credential_status(_agent_uri, _caller, _caps), do: nil
+
+  # JSON-safe shape. `checked_at` (a DateTime) becomes an ISO8601 string (NOT the
+  # field-map `jsonable/1` would emit for a struct); `expires_at` is epoch ms or nil.
+  defp encode_credential_status(%{status: status} = s) do
+    %{
+      "status" => Atom.to_string(status),
+      "flavor" => Map.get(s, :flavor),
+      "detail" => Map.get(s, :detail),
+      "expires_at" => Map.get(s, :expires_at),
+      "checked_at" => encode_datetime(Map.get(s, :checked_at))
+    }
+  end
+
+  defp encode_credential_status(_), do: nil
+
+  defp encode_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp encode_datetime(_), do: nil
 
   defp sandbox_config_dir(%{} = sandbox) do
     case Map.get(sandbox, :config_dir_path) || Map.get(sandbox, "config_dir_path") do

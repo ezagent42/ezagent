@@ -3,6 +3,16 @@ import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Sav
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
+// #160 — normalized credential status pushed as route state (owner + ws-admin
+// only; null/absent when the caller may not manage the agent, so the badge hides).
+type CredentialStatus = {
+  status?: string
+  flavor?: string | null
+  detail?: string | null
+  expires_at?: number | null
+  checked_at?: string | null
+}
+
 type IdentityRow = {
   uri: string
   kind?: string
@@ -15,6 +25,7 @@ type IdentityRow = {
   api_keys_path?: string | null
   extensions_path?: string | null
   config_path?: string | null
+  credential_status?: CredentialStatus | null
 }
 
 type UserRow = {
@@ -107,6 +118,7 @@ export type IdentitiesState = {
   project_cwd?: string | null
   config_dir?: string | null
   config_path?: string | null
+  credential_status?: CredentialStatus | null
   source_template?: string | null
   config_fields?: ConfigFieldRow[]
   config_schema?: ConfigSchemaField[]
@@ -560,7 +572,10 @@ function AgentsTable({state}: {state: IdentitiesState}) {
             >
               <span className="flex items-center justify-between gap-2">
                 <strong className="truncate text-sm text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
-                <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{agent.flavor || "unknown"}</span>
+                <span className="flex shrink-0 items-center gap-1">
+                  <CredentialBadge credential={agent.credential_status} />
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{agent.flavor || "unknown"}</span>
+                </span>
               </span>
               <code className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{agent.uri}</code>
             </a>
@@ -597,7 +612,10 @@ function AgentsTable({state}: {state: IdentitiesState}) {
               {filteredAgents.map((agent) => (
                 <div className="grid gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto]" key={agent.uri}>
                   <div className="min-w-0">
-                    <strong className="block truncate text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                    <div className="flex items-center gap-2">
+                      <strong className="block truncate text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                      <CredentialBadge credential={agent.credential_status} />
+                    </div>
                     <code className={codeClass}>{agent.uri}</code>
                   </div>
                   <InlineLinks
@@ -718,6 +736,23 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
             <dd className="text-sm text-foreground">{value}</dd>
           </div>
         ))}
+        {/* #160 — credential status (owner + ws-admin only; absent otherwise). */}
+        {state.credential_status?.status && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2" data-world-component="agent_credential_status">
+            <dt className="text-xs font-medium text-muted-foreground">Credential</dt>
+            <dd className="flex flex-col items-end gap-1 text-right">
+              <CredentialBadge credential={state.credential_status} showNa />
+              {state.credential_status.detail && (
+                <span className="text-[11px] text-muted-foreground">{state.credential_status.detail}</span>
+              )}
+              {state.credential_status.expires_at && (
+                <span className="text-[11px] text-muted-foreground">
+                  expires {new Date(state.credential_status.expires_at).toLocaleString()}
+                </span>
+              )}
+            </dd>
+          </div>
+        )}
       </dl>
 
       {/* M1: Per-flavor config fields from template data + config cascade */}
@@ -1591,6 +1626,35 @@ function AgentRouteTabs({
   )
 }
 
+// #160 — enum → badge variant. authenticated=green, expiring=amber,
+// expired/missing=red, n_a=dash, unknown=grey (spec §5).
+const CREDENTIAL_STATUS_META: Record<string, {label: string; className: string}> = {
+  authenticated: {label: "Authenticated", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"},
+  expiring: {label: "Expiring", className: "border-amber-500/40 bg-amber-500/10 text-amber-600"},
+  expired: {label: "Expired", className: "border-destructive/40 bg-destructive/10 text-destructive"},
+  missing: {label: "Logged out", className: "border-destructive/40 bg-destructive/10 text-destructive"},
+  n_a: {label: "—", className: "border-border bg-transparent text-muted-foreground"},
+  unknown: {label: "Unknown", className: "border-border bg-muted/40 text-muted-foreground"},
+}
+
+// Compact credential badge. `:n_a` is a dash (never an alarm) and is hidden in
+// list contexts (showNa=false) to keep credential-less flavors quiet.
+function CredentialBadge({credential, showNa = false}: {credential?: CredentialStatus | null; showNa?: boolean}) {
+  const status = credential?.status
+  if (!status) return null
+  if (status === "n_a" && !showNa) return null
+  const meta = CREDENTIAL_STATUS_META[status] || CREDENTIAL_STATUS_META.unknown
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${meta.className}`}
+      title={credential?.detail || `Credential: ${meta.label}`}
+      data-world-credential-status={status}
+    >
+      {meta.label}
+    </span>
+  )
+}
+
 function IdentityCard({row}: {row: IdentityRow}) {
   return (
     <article className="space-y-2 rounded-md border border-border bg-background p-3">
@@ -1601,7 +1665,10 @@ function IdentityCard({row}: {row: IdentityRow}) {
           <code className={codeClass}>{row.uri}</code>
         </div>
       </div>
-      <p className="text-sm text-muted-foreground">{row.kind === "agent" ? `Agent ${row.flavor || "unknown"}` : "User"}</p>
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span>{row.kind === "agent" ? `Agent ${row.flavor || "unknown"}` : "User"}</span>
+        {row.kind === "agent" && <CredentialBadge credential={row.credential_status} />}
+      </p>
       <InlineLinks
         links={[
           ["Status", row.detail_path],

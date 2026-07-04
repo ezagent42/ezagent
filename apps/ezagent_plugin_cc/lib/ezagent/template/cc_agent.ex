@@ -228,6 +228,29 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     EzagentPluginCc.CredentialRefresh.provision(source, home, opts)
   end
 
+  # #160 — credential-status view. Maps the cc-native freshness classification
+  # (`EzagentPluginCc.CredentialFreshness.status/2`, which carries the distinct
+  # `:missing`) onto the flavor-agnostic normalized enum. Read-only, no network,
+  # no activation. `expires_at` is the OAuth token's epoch-ms `expiresAt` when
+  # readable (cc is the one flavor with a real expiry).
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_status(home, opts \\ []) do
+    {status, detail} =
+      case EzagentPluginCc.CredentialFreshness.status(home, opts) do
+        :fresh -> {:authenticated, nil}
+        {:stale, :expiring_soon} -> {:expiring, "OAuth token expiring soon — re-`claude /login`"}
+        {:stale, :expired} -> {:expired, "OAuth token expired — run `claude /login` in the agent's config dir"}
+        :missing -> {:missing, "No `.credentials.json` — the agent has never logged in (`claude /login`)"}
+        :unknown -> {:unknown, nil}
+      end
+
+    %{
+      status: status,
+      detail: detail,
+      expires_at: EzagentPluginCc.CredentialFreshness.expires_at(home)
+    }
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
   # cc-specific template_data fields formerly hardcoded in
   # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;

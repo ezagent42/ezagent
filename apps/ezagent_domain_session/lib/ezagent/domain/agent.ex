@@ -220,6 +220,71 @@ defmodule Ezagent.Domain.Agent do
   @spec read_status(URI.t()) :: status()
   def read_status(%URI{} = agent_uri), do: lifecycle_status(agent_uri)
 
+  @doc """
+  Read `agent_uri`'s NORMALIZED credential status (#160) WITHOUT activating it.
+
+  Authorizes ONCE with the SAME cap as `read_config/3` — `cap(:agent, Manage,
+  :read_cascade)`, instance-scoped, via the SAME two-route `authorized?/2`
+  chokepoint — so it is provably owner + ws-admin only (no co-tenant, no
+  session-member). This is the authority that keeps the #160 credential-leak
+  family closed: a co-tenant WITHOUT the target's Manage cap is denied and learns
+  NOTHING (no status, no config_dir) because authorization runs BEFORE any
+  sandbox/slice read.
+
+  Then probes the flavor's on-disk / on-slice login state as a TRUSTED INTERNAL
+  read (`Ezagent.Agent.CredentialStatus`) — reading the persisted `:sandbox` slice
+  for the credential home (file flavors) or the durable credential slice (curl),
+  both non-activating. A cold agent is NEVER force-activated; it reads its durable
+  slices or `:unknown`. `opts` (e.g. `:now_ms`/`:skew_ms`) is forwarded to the
+  flavor probe.
+  """
+  @spec read_credential_status(URI.t(), read_ctx(), keyword()) ::
+          {:ok, Ezagent.Agent.CredentialStatus.result()} | {:error, term()}
+  def read_credential_status(%URI{} = agent_uri, %{caller: _} = ctx, opts \\ []) do
+    needed = %{
+      kind: :agent,
+      behavior: Ezagent.ActionSet.Manage,
+      action: :read_cascade,
+      instance: Ezagent.URI.instance(agent_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
+    }
+
+    if authorized?(needed, ctx) do
+      config_dir = trusted_config_dir(agent_uri)
+      flavor = safe_flavor(agent_uri)
+      {:ok, Ezagent.Agent.CredentialStatus.classify(agent_uri, flavor, config_dir, opts)}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  # Trusted internal read of the persisted `:sandbox` slice's `config_dir_path`
+  # (the credential home for file flavors) — reached ONLY after authorization,
+  # so it does NOT re-run the `:sandbox/:read` gate. Non-activating (durable slice
+  # → snapshot). `nil` for a slice/direct-spawn agent with no config dir.
+  defp trusted_config_dir(%URI{} = agent_uri) do
+    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+      state when is_map(state) ->
+        case Map.get(state, :config_dir_path) || Map.get(state, "config_dir_path") do
+          p when is_binary(p) and p != "" -> p
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # Flavor resolution that never raises (the badge must degrade, not crash);
+  # reuses the canonical `resolve_flavor!/1` (UriQuery `:flavor`, non-activating).
+  defp safe_flavor(%URI{} = agent_uri) do
+    resolve_flavor!(agent_uri)
+  rescue
+    _ -> nil
+  end
+
   # ── two-route authz (SPEC §3.2, Decision D3) ─────────────────────
   #
   # route 1 (inline ctx.caps) OR route 2 (caller's slice/snapshot caps), both

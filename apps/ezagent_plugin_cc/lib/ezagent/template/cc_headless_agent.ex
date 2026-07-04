@@ -37,6 +37,11 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     Ezagent.PluginCc.Template.CcAgent.refresh_test_credentials(source, home, opts)
   end
 
+  # #160 — credential-status view. Same CLAUDE_CONFIG_DIR/.credentials.json as cc.
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_status(home, opts \\ []),
+    do: Ezagent.PluginCc.Template.CcAgent.credential_status(home, opts)
+
   # template_data_extra — delegates to CcAgent.
   @impl Ezagent.Kind.Template
   def template_data_extra(content),

@@ -54,7 +54,25 @@ defmodule Ezagent.Agent.CredentialAdapter do
   @callback refresh_test_credentials(source :: String.t(), home :: String.t(), opts :: keyword()) ::
               :ok | {:error, term()}
 
-  @optional_callbacks [refresh_test_credentials: 3]
+  @doc """
+  #160 (credential-status view) — read-only, non-activating classification of the
+  agent's on-disk login state in its credential `home` dir. Returns the flavor's
+  NORMALIZED status contribution — `status` is one of
+  `Ezagent.Agent.CredentialStatus.status/0`, plus an optional human `detail` and
+  (when the flavor can read one, e.g. cc's OAuth `expiresAt`) `expires_at` in
+  epoch ms. MUST NOT do network I/O or activate the agent (mirror
+  `EzagentPluginCc.CredentialFreshness`'s guarantees). SEPARATE from the
+  declarative all-or-none group — a flavor may declare where creds live without
+  yet supporting a status probe (the router then reports `:unknown`).
+  """
+  @callback credential_status(home :: String.t() | nil, opts :: keyword()) ::
+              %{
+                required(:status) => atom(),
+                optional(:detail) => String.t() | nil,
+                optional(:expires_at) => integer() | nil
+              }
+
+  @optional_callbacks [refresh_test_credentials: 3, credential_status: 2]
 
   @declarative_callbacks [
     {:credential_env_var, 0},
