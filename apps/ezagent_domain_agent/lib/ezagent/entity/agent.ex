@@ -54,6 +54,52 @@ defmodule Ezagent.Entity.Agent do
   @impl Ezagent.Kind
   def type_name, do: :agent
 
+  @doc """
+  List the agent URIs in `ws` — workspace-scoped, type-filtered, covering LIVE
+  **and** DORMANT agents (membership-cap unification R1.4, spec test 26).
+
+  Sourced from the persisted `kind_snapshots` rows (modeled EXACTLY on
+  `Ezagent.AgentRoleResolver`'s snapshot scan — `agent_role_resolver.ex:35-64`),
+  NOT the volatile ETS/`KindRegistry` fast path, so a dormant agent member (a
+  snapshot row with no live Kind) still enumerates after a BEAM restart — exactly
+  why the reconcile candidate scan (§4.4) and the migration need it.
+
+  Used in three places: (a) `reconcile_after_load/2` candidate enumeration (union
+  with `Users.list_in_workspace/1`); (b) the member-cap migration's agent members;
+  (c) the at-join agent member-cap path. `KindSnapshot.list_in_workspace/1` bounds
+  the tenant (K4 — no cross-workspace leak) and the `kind_type == "agent"` filter
+  excludes users/sessions/templates. A row whose `uri` cannot parse is dropped.
+  """
+  @spec list_in_workspace(URI.t()) :: [URI.t()]
+  def list_in_workspace(%URI{} = ws) do
+    ws
+    |> Ezagent.Ecto.KindSnapshot.list_in_workspace()
+    |> Enum.filter(fn row -> row.kind_type == Atom.to_string(type_name()) end)
+    |> Enum.map(fn row -> row.uri end)
+    |> Enum.map(&safe_uri/1)
+    |> Enum.reject(&is_nil/1)
+  rescue
+    error in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+      require Logger
+
+      Logger.warning(
+        "Ezagent.Entity.Agent.list_in_workspace/1: snapshot scan failed for " <>
+          "#{URI.to_string(ws)}: #{inspect(error.__struct__)}"
+      )
+
+      []
+  end
+
+  defp safe_uri(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = u} -> u
+      _ -> nil
+    end
+  end
+
+  defp safe_uri(%URI{} = uri), do: uri
+  defp safe_uri(_), do: nil
+
   # Phase 3d: Agent carries Identity Behavior alongside Chat. Default
   # initial_caps is empty (Agent has no authority to initiate; chat
   # receive only). Operators can grant caps via Identity invoke if
