@@ -128,6 +128,57 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
+  @doc """
+  Freeze-pin (repair path, §4.4) — re-pin a template's installs to the frozen
+  revisions recorded in a SESSION's own per-session install records.
+
+  Fresh create bakes the pin into the session's install records (via
+  `install_template_installs/4`) but NOT back into the shared SessionTemplate
+  content. The repair/rematerialization path re-reads that (unpinned) template
+  content, so without this it would resolve each install LIVE — a later
+  publish/retract would change an EXISTING session's behaviors on repair,
+  breaking the freeze-pin invariant. This overlays each declared install's frozen
+  `config_id` (+ `content_hash`) from the session's install record onto the
+  content, so the pin-honoring `resolved_template_installs/2` rebuilds from the
+  SAME revision the session was created with.
+
+  An install already carrying a `config_id` keeps it (idempotent). An install
+  with NO session record (e.g. a ref newly added to the template after create)
+  keeps its bare ref and resolves live — a never-installed ref is not
+  grandfathered by a pin that never existed.
+  """
+  @spec pin_installs_from_session(URI.t(), map()) :: map()
+  def pin_installs_from_session(%URI{scheme: "session"} = session_uri, content)
+      when is_map(content) do
+    case parsed_installs_from_template(content) do
+      {:ok, installs} ->
+        pinned = Enum.map(installs, &pin_install_from_session_record(session_uri, &1))
+        put_installs(content, pinned)
+
+      {:error, _} ->
+        content
+    end
+  end
+
+  def pin_installs_from_session(_session_uri, content), do: content
+
+  defp pin_install_from_session_record(%URI{} = session_uri, install) do
+    workspace = Ezagent.URI.workspace_of(session_uri)
+    key = install_key(install.ref)
+
+    case ConfigStore.resolve(@install_layer, workspace, session_uri, key) do
+      {:ok, %ConfigObject{body: body}} ->
+        %{
+          install
+          | config_id: install.config_id || Map.get(body, "definition_config_id"),
+            content_hash: install.content_hash || Map.get(body, "definition_content_hash")
+        }
+
+      :none ->
+        install
+    end
+  end
+
   @doc "Materialize per-session install records for a SessionTemplate's installs."
   @spec install_template_installs(URI.t(), URI.t() | String.t(), map(), URI.t() | String.t()) ::
           :ok | {:error, term()}

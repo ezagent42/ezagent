@@ -125,6 +125,46 @@ defmodule Ezagent.Socialware.PinOnInstallTest do
     refute Ezagent.ActionSet.Turn in Definition.behaviors(still_r1)
   end
 
+  test "T-Pin-e: pin_installs_from_session re-pins raw content to the session's frozen record (repair path)" do
+    name = "pin-e-#{uniq()}"
+    session_uri = Ezagent.URI.session("team-pin", "generic", name)
+
+    r1 = write!(name, [Ezagent.ActionSet.Session])
+    {:ok, frozen} = Installation.freeze_template_installs(%{installs: [name]}, @ws)
+    :ok = Installation.install_template_installs(session_uri, @ws, frozen, @actor)
+
+    # publish R2 — the current pointer now advances to R2.
+    r2 = write!(name, [Ezagent.ActionSet.Session, Ezagent.ActionSet.Turn])
+    refute r2.id == r1.id
+
+    # the raw (unpinned) template content the repair path re-reads.
+    raw = %{installs: [name]}
+
+    # CONTROL — raw content live-resolves to R2 (this is the pre-fix repair bug).
+    {:ok, [{_d1, live_obj, _i1}]} = Installation.resolved_template_installs(raw, @ws)
+    assert live_obj.id == r2.id
+
+    # re-pinning from the session's install record recovers R1.
+    pinned = Installation.pin_installs_from_session(session_uri, raw)
+    {:ok, [{_d2, pinned_obj, _i2}]} = Installation.resolved_template_installs(pinned, @ws)
+    assert pinned_obj.id == r1.id
+
+    {:ok, behaviors} = Installation.behavior_set_for_template(pinned, @ws)
+    refute Ezagent.ActionSet.Turn in behaviors
+  end
+
+  test "T-Pin-f: pin_installs_from_session leaves a never-installed ref unpinned (resolves live)" do
+    name = "pin-f-#{uniq()}"
+    session_uri = Ezagent.URI.session("team-pin", "generic", "#{name}-sess")
+    r1 = write!(name, [Ezagent.ActionSet.Session])
+
+    # no per-session install record exists for this session/ref — the ref keeps
+    # its bare form and still resolves the current revision live.
+    pinned = Installation.pin_installs_from_session(session_uri, %{installs: [name]})
+    {:ok, [{_d, obj, _i}]} = Installation.resolved_template_installs(pinned, @ws)
+    assert obj.id == r1.id
+  end
+
   test "T-Pin-c: a fresh install records the resolved revision id + content_hash" do
     name = "pin-c-#{uniq()}"
     r1 = write!(name, [Ezagent.ActionSet.Session])

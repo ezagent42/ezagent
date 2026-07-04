@@ -263,18 +263,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         err
 
       {:ok, session_template_uri, template_content} ->
+        # Freeze-pin (§4.4) MUST cover the repair/rematerialization path: the
+        # recorded SessionTemplate content is UNPINNED (only the per-session
+        # install RECORDS carry the frozen `config_id`), so re-materializing from
+        # it raw would resolve each install LIVE and let a later publish/retract
+        # change this EXISTING session's behaviors. Re-pin from the session's own
+        # install records so repair rebuilds from the SAME frozen revision the
+        # session was created with.
+        pinned_content = Installation.pin_installs_from_session(session_uri, template_content)
+
         with :ok <-
                Materializer.materialize_template_declaration(
                  session_uri,
                  session_template_uri,
-                 template_content
+                 pinned_content
                ),
              :ok <-
                materialize_template_team(
                  session_uri,
                  workspace_uri,
                  effective_owner,
-                 template_content
+                 pinned_content
                ) do
           {:ok, session_uri, %{}}
         end
