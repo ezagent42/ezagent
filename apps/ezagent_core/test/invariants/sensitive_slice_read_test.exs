@@ -114,7 +114,15 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     {"apps/ezagent_domain_session/lib/ezagent/behavior/user/receive.ex", :identity} =>
       "user.receive pre-loads its OWN :identity caps for MemberReceive.authorize/1 held-cap receive gate (#161 A2.2)",
     {"apps/ezagent_domain_agent/lib/ezagent/behavior/agent/receive.ex", :identity} =>
-      "agent.receive pre-loads its OWN :identity caps for MemberReceive.authorize/1 held-cap receive gate (#161 A2.2)"
+      "agent.receive pre-loads its OWN :identity caps for MemberReceive.authorize/1 held-cap receive gate (#161 A2.2)",
+    # --- agent domain: #160 credential-status router probes a slice-credentialled
+    #     flavor's credential slice (curl → :api_keys) to derive :authenticated/:missing ---
+    {"apps/ezagent_domain_agent/lib/ezagent/agent/credential_status.ex", @dynamic_key} =>
+      "CredentialStatus router reads a slice-credentialled flavor's credential slice " <>
+        "(curl → :api_keys, key non-literal from tc.credential_slice/0) for #160 status. " <>
+        "Cap-gated: Ezagent.Domain.Agent.read_credential_status/2 authorizes cap(:agent, " <>
+        "Manage, :read_cascade) (owner + ws-admin only) BEFORE the read; only the key COUNT " <>
+        "is used, never a plaintext key; non-activating snapshot read"
   }
 
   describe "scan_source/2 (AST scanner, fixture-pinned)" do

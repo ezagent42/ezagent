@@ -92,7 +92,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
      154, "operator migration tooling, app-not-started (D2)"},
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 658,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 673,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
     # as the zip-unpack target for a plugin-package hot-load. The runtime

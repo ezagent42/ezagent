@@ -66,7 +66,12 @@
   #   cluster-local; only session.ex's 3 admission handlers + the registration list
   #   would repoint).
   oversized_modules_gt_1000: 3,
-  def_count_cc_agent: 50,
+  # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
+  #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
+  #   File.exists?/expiresAt result into the normalized status enum for the
+  #   credential-status view). One new public def; cap-gated read (owner/ws-admin
+  #   only via read_credential_status/2). 50→51.
+  def_count_cc_agent: 51,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
@@ -271,7 +276,13 @@
   # arch-cap-bump: +2 #907 — cc_headless_agent + codex_remote_agent flavor template
   #   classes (thin CredentialAdapter delegations). 1682→1684.
   # arch-cap-bump: cc-headless SDK sidecar spawn/respawn replaces the stub runtime (+2 net)
-  cc_codex_template_class_combined_loc: 1684,
+  # arch-cap-bump: +37 #160 credential-status view — cc_agent + codex_agent Template
+  #   Classes add their `credential_status/2` enum adapter (cc: File.exists?/expiresAt →
+  #   enum; codex: File.read/present-absent → enum) + the read-only, cap-gated probe
+  #   docs (owner/ws-admin only via read_credential_status/2). Measured combined LOC
+  #   1684→1721 (+37); genuine per-flavor probe logic in the plugin-isolation seam,
+  #   not extractable duplication.
+  cc_codex_template_class_combined_loc: 1721,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
