@@ -7,12 +7,14 @@
 > **本文只出规格，不改代码。** 所有 file:line 对本 worktree 现读有效。
 > **role-slot 已落地（#1180）：** Definition 参与者声明用**单一 `roles` 字段**（`definition.ex:20`），`agents`/`members` 已退休；owner 只准 `%{type: :installer}`（`:fixed` 被拒，`definition.ex:412-425`）。本 spec 全部按 `roles` 现读校准。
 > **relay-back 已改为内容协议（本次修订）：** dev→pm 接力**不再用 sender-lock `{:from, URI}` + install-time URI 解析**，改成**内容触发（legend/header）+ skill 协议**——路由规则里**零参与者实例 URI**，因此快照回 Definition 不撞 #1180 `reject_participant_instance_uris`（`definition.ex:82,323`），**"拉取→二次开发→再发布" round-trip 闭环**。详见 §4。
+>
+> **S2 建模修正（board 非成员，2026-07-06）：** 早先草稿把 kanban 看板（recipe `kanban-manager` × flavor `native`）当作**第三个 agent 角色槽**塞进 `roles`——**这是建模 bug**。根因（现读核实）：看板是 `passive: true` 的**被动 workspace 级数据 actor**（`application.ex` `kanban_manager_recipe/0`），按 `entity://<ws>/agent/<id>` URI dispatch，**从来不是 session 参与者**。把它声明成角色槽 → materialize 会对它 `session.join` → 撞 RF-6 被动 join 硬门 `{:passive_actor_cannot_join, _}`（`session.ex:723`，`role_native_create_test.exs:119` 锁死）。**修正（自包含解法 a）：`roles` 只留 `pm-coordinator` + `dev-together` 两个 agent 角色槽（都 cc-headless 主动、过 join 门）；看板不进 `roles`，改由 world/owner 经既有 `/plugins/kanban` 建（`Ezagent.World.KanbanActions.create_kanban` → `Workspace.create_agent`，`kanban_actions.ex:296`），pm 用既有 kanban action caps 把 `kanban.<action>` dispatch 到 board URI。** 全文凡「三角色槽 / 三个 agent 角色槽」按本修正读作「两 agent 角色槽（pm+dev）+ board 是 workspace 级 URI-dispatch actor 非成员」。
 
 ---
 
 ## §0 一句话
 
-把 kanban 从「一个 passive 数据 agent（recipe `kanban-manager` × flavor `native`）+ 24 个 action + 一个 world 管理页」迁成**一支可安装的 socialware team**：`socialware:kanban-team` Definition，在 `roles` 字段（#1180）声明**三个 agent 角色槽**——`pm-coordinator`（cc-headless 真 brain 协调者）+ `dev-together`（cc-headless 开发者，照抄现有 dev-together skill）+ `kanban-manager`（native 看板数据 actor）。发布走「仿 hello 的 code-seed」（imperative，非插件包 manifest）。
+把 kanban 从「一个 passive 数据 agent（recipe `kanban-manager` × flavor `native`）+ 24 个 action + 一个 world 管理页」迁成**一支可安装的 socialware team**：`socialware:kanban-team` Definition，在 `roles` 字段（#1180）声明**两个 agent 角色槽**——`pm-coordinator`（cc-headless 真 brain 协调者）+ `dev-together`（cc-headless 开发者，照抄现有 dev-together skill）。**看板（`kanban-manager` × `native`）不进 `roles`**：它是 workspace 级被动 URI-dispatch 数据 actor，不是 session 成员（见顶部 S2 建模修正），由 world/owner 建、pm 用 kanban action caps dispatch 驱动。发布走「仿 hello 的 code-seed」（imperative，非插件包 manifest）。
 
 > **口径校正（load-bearing —— 别把 routing 当工作流引擎）：pm 与 dev 的真正配合，是 dev-together skill 的 git-handoff 工作流（git + markdown + CI），不是 ezagent 的消息路由接力。** pm 派活 = 写 markdown handoff（`plan.md → handoffs/<task>.md`，含 DoD）；dev 干活 = `dive`（切 task 分支 off `main`、TDD、PR 进 task 分支）；dev 交活 = `return`（CI 绿 + rebase gate + DoD 逐行对账 + 写 `returns/<task>.md` + 给 lead 一条 message）；嵌套 = dev 委托 subagent。**这些是 git + markdown + CI 的工作流，不是 `@mention`/`dispatch`。** ezagent 的路由（legend/mention → `{:role}`）**只是把「dev 交活了」这条消息送到 pm 角色的轻传输**——不是工作流本身。所以本 spec 的 `routing_rules`（§4）只承担**传输**（把完成信号投给对的角色），**工作流的实体（handoff/dive/return/CI gate）住在 dev-together skill 里**（§5.4）。
 
@@ -41,7 +43,7 @@
 ### 目标
 
 1. kanban 插件 `roles/0` 从只有 `kanban-manager`（`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/application.ex:64`）扩到**三个** recipe：加 `pm-coordinator`（cc-headless 协调者，skill-creator 规范新建 persona skill）+ `dev-together`（cc-headless，skill = **照抄** sw-kanban 现有 `.claude/skills/dev-together/` 全套）。
-2. 出 `socialware:kanban-team` Definition（`Ezagent.Socialware.Definition`，`apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex:12-28` 的 17-字段结构），声明 `roles`（三个 agent 角色槽，**零实例 URI**）+ `routing_rules` + `legends`（relay-back，内容触发）。
+2. 出 `socialware:kanban-team` Definition（`Ezagent.Socialware.Definition`，`apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex:12-28` 的 17-字段结构），声明 `roles`（**两个** agent 角色槽 pm+dev，**零实例 URI**；board 非成员，见 §3.2）+ `routing_rules` + `legends`（relay-back，内容触发）。
 3. **relay-back（dev-together→pm 接力）落成内容协议**：`Definition.routing_rules` 里一条**内容触发** matcher（`{:text_contains, "__done__"}` 头 或 `{:mention, "<legend名>"}` 走 `message.legend_triggers` 符号名）→ receiver `{:role, "pm-coordinator"}`（角色，非 URI），配合 `legends` 字段声明 `@handle`；「谁在什么时候传给谁」的行为契约**写进 pm/dev-together 的 skill**。规则里**无任何参与者实例 URI** → 快照回 Definition 不撞 #1180，**round-trip 闭环**（§4）。
 4. 发布 = code-seed（仿 hello `DefinitionRegistry.seed_definition_if_absent`，`apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex:238`），过 `mix ezagent.socialware.check` 的 12 条 conformance（`apps/ezagent_domain_session/lib/ezagent/socialware/conformance.ex:63-78`）。
 5. kanban 用户面（owner 对 pm 派活 → pm @dev-together 派活 + 推进看板 → dev-together 完成发 `__done__`/legend → relay-back 回 pm → 看板前进）用**真浏览器 Playwright e2e** 证（dev server 10042，真登录，每步截图）。
@@ -59,11 +61,11 @@
 
 | 维度 | 迁移前（main 现状，现读核实） | 迁移后（socialware:kanban-team） |
 |---|---|---|
-| **形态** | kanban-as-role：单 passive agent | 可安装 socialware Definition（team = pm + dev-together + kanban-manager 预配） |
-| **agent 声明** | `roles/0 = [kanban_manager_recipe()]`（`application.ex:64`），只有 kanban-manager | `roles/0 = [kanban_manager_recipe(), pm_coordinator_recipe(), dev_together_recipe()]`；Definition.roles 声明**三个** agent 角色槽 |
+| **形态** | kanban-as-role：单 passive agent | 可安装 socialware Definition（team = pm + dev-together 两成员预配；看板是 workspace 级 actor，非成员） |
+| **agent 声明** | `roles/0 = [kanban_manager_recipe()]`（`application.ex:64`），只有 kanban-manager | `roles/0 = [kanban_manager_recipe(), pm_coordinator_recipe(), dev_together_recipe()]`（三 recipe 不变）；但 **Definition.roles 只声明两个** agent 角色槽（pm+dev）——`kanban-manager` recipe 供 world 建 board 用，不进 Definition 成员 |
 | **pm-coordinator** | 未注册（materialize 时 `DefinitionAgents.lookup_recipe` fail-closed `{:unknown_agent_recipe, "pm-coordinator"}`，`definition_agents.ex:130-135`；注：#1185 role-slot P2 已删死代码 `SessionAgentMaterialize`/`materialize_by_role`，live materialize 走 `DefinitionAgents`）；`default_agent_seed.ex:52` 只作 role_name 字符串引用 | kanban 插件 `roles/0` 注册的 cc-headless recipe（skills=`["pm-coordinator"]` + persona，**skill-creator 规范新建**） |
 | **dev-together** | main 上是一个 **skill**（`.claude/skills/dev-together/`，8-command 团队开发流），无对应 recipe | kanban 插件 `roles/0` 注册的 cc-headless recipe（skills=`["dev-together"]`，**skill 照抄现有全套**，§5.4） |
-| **board 真相源** | `Entity.Agent` 的 `:kanban` snapshot slice（不变） | 不变——kanban-manager 仍是 board owner，Definition 只声明它为成员 |
+| **board 真相源** | `Entity.Agent` 的 `:kanban` snapshot slice（不变） | 不变——但 kanban-manager 是 **workspace 级被动 URI-dispatch actor，不是 session 成员**；Definition **不**声明它。board 由 world/owner 建（`/plugins/kanban` → `Workspace.create_agent`），pm 用 kanban action caps dispatch 到 board URI |
 | **relay-back（dev-together→pm）** | 无（备份分支 `scenario_34_sender_locked_relay_test` 曾用 sender-lock + concrete member URI 证过 —— **本次不采用该路** ） | `Definition.routing_rules` 内容触发（`text_contains`/`mention` legend）+ `{:role}` receiver + skill 软协议，**零实例 URI**，round-trip 安全（§4） |
 | **发布/安装** | 无（kanban 不是可发布单元） | code-seed（`seed_definition_if_absent` → `workspace://system`）+ per-install（`Installation.install_template_installs/4`，`installation.ex:185`） |
 | **conformance** | 无 | `mix ezagent.socialware.check kanban-team` 过 12 条（task `@reference_apps` 已含 `:ezagent_plugin_kanban`，`ezagent.socialware.check.ex:29-33`） |
@@ -87,7 +89,7 @@ Definition 顶层**无 flavor 字段**；flavor 在每个 `roles` 里的 agent �
 | `bases` | `[Ezagent.ActionSet.Session]` | Session host 行为 |
 | `shape` | `[]` | 首版无额外 flow shape |
 | `views` | `[]`（首版）| S4 加 `<kanban_render>` view（§9 Q2） |
-| `roles` | 见 §3.2 | **三个** agent 角色槽（`fill: :agent`），**零实例 URI**（#1180 硬 enforce） |
+| `roles` | 见 §3.2 | **两个** agent 角色槽 pm+dev（`fill: :agent`），**零实例 URI**（#1180 硬 enforce）；board 非成员 |
 | `routing_rules` | 见 §4 | relay-back（内容触发，零 URI） |
 | `legends` | 见 §4 | relay-back 的 `@handle`（member_set 用 role_name，`definition.ex:24,98`） |
 | `visibility_policy` | `%{publish_policy: :auto, web_anon_access: false, scope: :private}` | 私有、非公网面 |
@@ -95,23 +97,23 @@ Definition 顶层**无 flavor 字段**；flavor 在每个 `roles` 里的 agent �
 | `prompt_templates` / `adapters` / `assets` / `orchestrator_template_uri` | 空 | 首版不用 |
 | ~~`members`~~ | **已退休** | #1180 收敛进 `roles`；`Definition.new/1` fail-loud 拒 `agents`/`members` 键（`reject_retired_declaration_fields`，`definition.ex:313-318`），塞实例 URI 是攻击面（§8） |
 
-### 3.2 roles（三个 agent 角色槽）
+### 3.2 roles（两个 agent 角色槽 pm+dev；board 非成员）
 
 ```elixir
 roles: [
   %{role_name: "pm-coordinator", fill: :agent, recipe: "pm-coordinator", flavor: "cc-headless"},
-  %{role_name: "dev-together",   fill: :agent, recipe: "dev-together",   flavor: "cc-headless"},
-  %{role_name: "kanban-manager", fill: :agent, recipe: "kanban-manager", flavor: "native"}
+  %{role_name: "dev-together",   fill: :agent, recipe: "dev-together",   flavor: "cc-headless"}
 ]
 ```
 
 - agent 角色槽四字段 `role_name`/`fill`/`recipe`/`flavor` 全是**字符串**（`fill: :agent`），`role_name`/`recipe`/`flavor` 三者必填非空（`role_slot/1`，`definition.ex:284-286`）；`recipe` 是 NAME 经 `RecipeRegistry` 解析，**零 URI**。
-- **`pm-coordinator` / `dev-together` 用 `cc-headless`**（cc 插件注册的真-brain headless flavor，`apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/application.ex:112`；`cc_headless_bridge_adapter.ex:16` `def flavor, do: "cc-headless"`）——两者都是真 Claude brain 的 agent。
-- **`kanban-manager` 用 `native`**（no-engine passive host，`ezagent_plugin_native`）；它的 `passive: true` 由 recipe 携带（`application.ex:91`），角色槽只给 `flavor: "native"`。
-- 同一 Definition 混合 flavor（pm/dev-together=cc-headless、kanban-manager=native）合法（flavor 是 per-角色槽 字段）。
+- **`pm-coordinator` / `dev-together` 用 `cc-headless`**（cc 插件注册的真-brain headless flavor，`apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/application.ex:112`；`cc_headless_bridge_adapter.ex:16` `def flavor, do: "cc-headless"`）——两者都是真 Claude brain 的**主动** agent，过 RF-6 join 门。
+- **看板（`kanban-manager` × `native`）不在 `roles`**（S2 建模修正，见顶部）：它 `passive: true`（`application.ex` `kanban_manager_recipe/0`），是 workspace 级被动数据 actor，**不是 session 成员**——塞进角色槽会让 materialize 对它 `session.join` 撞 RF-6 被动 join 门 `{:passive_actor_cannot_join, _}`（`session.ex:723`）。
+  - **供给**：board 由 world/owner 经既有 `/plugins/kanban` 建（`Ezagent.World.KanbanActions.create_kanban` → `Ezagent.Workspace.create_agent`，flavor `native` × role `kanban-manager`，`kanban_actions.ex:296`）。建 board 是 operator/world-UI 动作（需 workspace cap + caller_ctx），**不是 agent 可 dispatch 的 action**，故 pm 不自建。
+  - **访问**：pm 用既有 `kanban_action_caps`（`pm_coordinator_recipe/0` `requested_caps`）把 `kanban.<action>` dispatch 到 board 的 `entity://<ws>/agent/<id>` URI，无新增 cap。
 - 若要人类参与者，用 human 槽 `%{role_name: n, fill: :human}`（运行期分配，不物化）——kanban-team 首版无 human 槽（owner 由 `owner_policy: :installer` 派生，不进 roles）。
 - **零实例 URI 由 #1180 硬 enforce**：`Definition.new/1` 递归扫 `roles` + `routing_rules` 拒任何 `entity://…/agent|user/…` 实例 URI（`reject_participant_instance_uris`，`definition.ex:323-366`）。
-- **materialize 不触发 #1178 审核**：这三个 agent 由 materializer admin-caller 走 `{:spawned_by, caller}` 豁免 spawn（`membership.ex:149-163`），不落 `:pending_members`——建 team 时一定进得去（handoff §2.4b）。
+- **materialize 不触发 #1178 审核**：这两个 agent（pm+dev）由 materializer admin-caller 走 `{:spawned_by, caller}` 豁免 spawn（`membership.ex:149-163`），不落 `:pending_members`——建 team 时一定进得去（handoff §2.4b）。
 
 ### 3.3 materialize 链路（现读，不改）
 
@@ -119,7 +121,7 @@ roles: [
 1. `install_template_prompt_templates`（:20）
 2. `install_template_legends`（:21 → :216）——装 `legends` 进活 session（`Session.system_set_legends`，`template_team.ex:222`）；**relay-back 的 `@handle` 在此落地，零 URI**
 3. `install_template_rule_sets`（:23 → :229）——装 routing_rules 进活路由；**relay-back 的内容触发 matcher（`text_contains`/`mention`）+ `{:role}` receiver 在此落地，零 URI**
-4. `DefinitionAgents.materialize_definition_agents`（`template_team.ex:33`，先经 `agent_role_slot?` 过滤只留 `fill==:agent` 的槽，`template_team.ex:48-50`；human 槽不物化）——把三个 agent 角色槽 spawn 成 live 成员，**每个在新的随机 UUID 实例 URI** spawn（`planned_agent_uri/1`，`definition_agents.ex:108,285`），`grant_recipe_caps` LAST（`definition_agents.ex:246`）
+4. `DefinitionAgents.materialize_definition_agents`（`template_team.ex:33`，先经 `agent_role_slot?` 过滤只留 `fill==:agent` 的槽，`template_team.ex:48-50`；human 槽不物化）——把**两个** agent 角色槽（pm+dev，都主动、过 join 门）spawn 成 live 成员，**每个在新的随机 UUID 实例 URI** spawn（`planned_agent_uri/1`，`definition_agents.ex:108,285`），`grant_recipe_caps` LAST（`definition_agents.ex:246`）。**board 不在这步**（非成员，由 world 单独建）
 
 > **关键**：#3（rule/legend install）**不再**依赖 #4（agent spawn）产出的 URI —— 内容触发 matcher + `{:role}` receiver 只用 role_name 与内容，与 spawn 顺序/实例 URI **完全解耦**。旧 sender-lock 方案要求「rule 解析成 dev 的运行时 URI」，被 #1180 随机-UUID spawn 打乱了 install/materialize 顺序（旧 §4.3 冲突）——本方案**从根上消除该顺序耦合**。
 
@@ -363,13 +365,13 @@ split-c 决策（`feat/kanban-split-c`，已是 main 事实：`git grep DefaultR
 | 产品步 | 内容 | Plan Task | 切片阶次 |
 |---|---|---|---|
 | **S1** | kanban `roles/0` 补 pm-coordinator recipe（skill-creator 新建 persona）+ dev-together recipe（照抄现有 skill 全套） | Task 1 | **最小切片①** |
-| **S2** | 写 kanban-team Definition（三角色槽）+ code-seed + 过 conformance + round-trip gate | Task 2 | **最小切片②** |
+| **S2** | 写 kanban-team Definition（两 agent 角色槽 pm+dev；board 非成员）+ code-seed + 过 conformance + round-trip gate | Task 2 | **最小切片②** |
 | **S3** | relay-back：内容触发 routing_rules + legends + 两 role skill 协议 + 集成测试（无机制代码改动） | Task 3 | **最小切片③** |
 | **S4** | kanban render view（gated Q2） | Task 4 | 增强（Allen 拍后） |
 | **S5** | join/admission（#1178 驱动）+ relay 硬锁（membership-role matcher，gated Q3） | Task 5 | 增强（Allen 拍后） |
 | **S6** | 真浏览器 Playwright e2e（pm 派活 / dev-together relay / 看板推进）+ 截图 | Task 6 | 闭环验收（S1-S3 后即可） |
 
-**最小切片先行**：**S1（两 recipe + 两 skill）→ S2（三角色槽 Definition）→ S3（内容触发 relay-back）**，三步跑通即「pm + dev-together + kanban + relay-back 打成一支可安装 team 且 round-trip 安全」的最小可 ship 闭环；S6 e2e 收口验收；S4/S5 待 Allen 拍板再做。
+**最小切片先行**：**S1（两 recipe + 两 skill）→ S2（两角色槽 Definition，board 非成员）→ S3（内容触发 relay-back）**，三步跑通即「pm + dev-together + kanban + relay-back 打成一支可安装 team 且 round-trip 安全」的最小可 ship 闭环；S6 e2e 收口验收；S4/S5 待 Allen 拍板再做。
 
 ---
 

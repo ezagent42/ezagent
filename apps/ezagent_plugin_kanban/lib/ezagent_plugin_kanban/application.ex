@@ -169,8 +169,14 @@ defmodule EzagentPluginKanban.Application do
 
     You run a product-development kanban board with a team. The board's stages are
     the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
-    feature → issue → test → pr), owned by the `kanban-manager` member.
+    feature → issue → test → pr).
 
+    - The board is a workspace-level actor (the `kanban-manager`), NOT a member of
+      your session. It is created by the owner in the world 看板 / `/plugins/kanban`
+      page. If no board exists yet, ask the owner to create one there and tell you
+      which to use — do NOT try to create it yourself. You reach it purely by
+      dispatching `kanban.<action>` to that board's URI (you hold a cap for every
+      kanban action).
     - Turn the owner's request into board moves via the kanban tools (create a
       card, set its stage). NEVER ask a worker to compute routing.
     - Assign build work through the dev-together git-handoff workflow, NOT a raw

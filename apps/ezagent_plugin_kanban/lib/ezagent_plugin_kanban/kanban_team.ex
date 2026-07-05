@@ -1,24 +1,47 @@
 defmodule EzagentPluginKanban.KanbanTeam do
   @moduledoc """
-  The `socialware:kanban-team` Definition (S2) — a prewired team of a
-  `pm-coordinator` (cc-headless coordinator), a `dev-together` (cc-headless
-  developer running the copied dev-together skill), and a `kanban-manager`
-  (native passive board actor). Published via code-seed (imperative
-  `seed_definition_if_absent`, the hello `EzagentPluginHello.App` play), NOT a
-  plugin package manifest (`core/manifest.ex` rejects a `:socialware` seed_ref by
-  design). S3 adds the content-triggered relay-back `routing_rules` to this body.
+  The `socialware:kanban-team` Definition (S2) — a prewired team of TWO session
+  participants: a `pm-coordinator` (cc-headless coordinator) and a `dev-together`
+  (cc-headless developer running the copied dev-together skill). Published via
+  code-seed (imperative `seed_definition_if_absent`, the hello
+  `EzagentPluginHello.App` play), NOT a plugin package manifest
+  (`core/manifest.ex` rejects a `:socialware` seed_ref by design). S3 adds the
+  content-triggered relay-back `routing_rules` to this body.
+
+  ## Board is not a member (the S2 modeling fix)
+
+  The kanban board (`kanban-manager` recipe × `native` flavor) is `passive`
+  (`Application.kanban_manager_recipe/0` `passive: true`) — a WORKSPACE-LEVEL
+  board DATA actor addressed by `entity://<ws>/agent/<id>`, dispatched to with
+  `kanban.<action>`. It is NOT a session participant. An earlier draft declared it
+  as a third agent role-slot, but that is a modeling bug: materialize would call
+  `session.join` on the passive board and hit the RF-6 passive-join gate
+  (`{:passive_actor_cannot_join, _}`, `session.ex:723`; locked by
+  `role_native_create_test`). So `roles` holds ONLY pm + dev.
+
+  How the board is supplied + reached (self-contained, no new machinery):
+
+    * **Supply** — the board is created by the world/owner via the existing
+      `/plugins/kanban` create path (`Ezagent.World.KanbanActions.create_kanban`
+      → `Ezagent.Workspace.create_agent`, flavor `native` × role `kanban-manager`,
+      `kanban_actions.ex:296`). Board creation is an operator/world-UI function
+      (needs a workspace cap + a caller_ctx), NOT an agent-dispatchable action, so
+      the pm does not self-build it.
+    * **Access** — the pm drives the board with its existing `kanban_action_caps`
+      (`Application.pm_coordinator_recipe/0` `requested_caps`): it dispatches
+      `kanban.<action>` to the board's `entity://<ws>/agent/<id>` URI. No new cap.
 
   ## Zero instance URIs (role-slot #1180, enforced) + round-trip safety
 
   Participants are declared via the `roles` field as agent role-slots
   (`%{role_name, fill: :agent, recipe, flavor}` — all strings, `recipe` is a
-  `RecipeRegistry` NAME resolved at materialize, never a URI). The three recipe
-  names are exactly the ones the kanban plugin declares in
-  `EzagentPluginKanban.Application.roles/0` (`kanban-manager` + the S1
-  `pm-coordinator` / `dev-together`). The retired `agents`/`members` fields are
-  rejected fail-loud by `Definition.new/1`
-  (`definition.ex` `reject_retired_declaration_fields`), and any participant
-  instance URI in `roles`/`routing_rules` is rejected too
+  `RecipeRegistry` NAME resolved at materialize, never a URI). The two recipe
+  names are exactly the S1 `pm-coordinator` / `dev-together` recipes the kanban
+  plugin declares in `EzagentPluginKanban.Application.roles/0` (which also
+  declares the `kanban-manager` board recipe — the workspace board actor, not a
+  member). The retired `agents`/`members` fields are rejected fail-loud by
+  `Definition.new/1` (`definition.ex` `reject_retired_declaration_fields`), and
+  any participant instance URI in `roles`/`routing_rules` is rejected too
   (`reject_participant_instance_uris`). `owner_policy` is `%{type: :installer}`
   (`:fixed` is rejected).
 
@@ -67,6 +90,11 @@ defmodule EzagentPluginKanban.KanbanTeam do
       bases: [Ezagent.ActionSet.Session],
       shape: [],
       views: [],
+      # Exactly TWO agent role-slots — the session participants. Both cc-headless
+      # (active real-brain), so both pass the RF-6 join gate and really
+      # `session.join` at materialize. The board (`kanban-manager`) is NOT here —
+      # it is a workspace-level PASSIVE URI-dispatch actor, not a session member
+      # (see moduledoc §Board is not a member).
       roles: [
         %{
           role_name: "pm-coordinator",
@@ -74,8 +102,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
           recipe: "pm-coordinator",
           flavor: "cc-headless"
         },
-        %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"},
-        %{role_name: "kanban-manager", fill: :agent, recipe: "kanban-manager", flavor: "native"}
+        %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"}
       ],
       # Relay-back: the dev-together `__done__` completion signal routes to the
       # pm-coordinator ROLE. Content-triggered (no sender-lock), zero URI — even

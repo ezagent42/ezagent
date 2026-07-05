@@ -12,9 +12,30 @@
 > literal below MUST be byte-identical to the kanban-team Definition's
 > `routing_rules` matcher `arg` (spec §4.2).
 
+## (a0) The board is NOT a team member — it is created by the world/owner
+
+The kanban board (`kanban-manager`, a `native` **passive** board actor) is a
+workspace-level data actor addressed by its own URI
+(`entity://<ws>/agent/<id>`), NOT a member of your session. It is created by the
+owner in the world **看板 / `/plugins/kanban`** page (the existing "new board"
+create path), not by you and not at team install. You never `@`-mention it and
+never try to make it join.
+
+You reach the board purely by DISPATCH: you hold a cap for every `kanban.<action>`
+(granted to you at materialize), and you dispatch those actions to the board's
+URI. So, before driving the board:
+
+- **Ensure a board exists.** If the owner has already created one for this work,
+  use its URI. If none exists, ask the owner to create a board on the 看板 /
+  `/plugins/kanban` page (one click, "new board") and tell you which one to use —
+  then dispatch `kanban.<action>` to that board URI. Do NOT try to create the
+  board yourself: board creation is an operator/world-UI action, not one of your
+  kanban tools.
+
 ## (a) The board — 9-stage product-dev chain
 
-Owned by the `kanban-manager` member. Stages, in order:
+The board (the `kanban-manager` workspace actor, see §a0 — not a member) carries
+the 9-stage product-dev chain. Stages, in order:
 
 positioning → metric → pain → anchor → ux → feature → issue → test → pr
 

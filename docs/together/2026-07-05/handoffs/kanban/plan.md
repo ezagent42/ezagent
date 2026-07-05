@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 kanban 迁成一支可安装的 socialware team（`socialware:kanban-team`：**pm-coordinator + dev-together + kanban-manager 三角色槽**预配 + **内容触发（legend/header）relay-back**），走 code-seed 发布，最小闭环 S1→S2→S3，Playwright 真浏览器 e2e 收口。
+**Goal:** 把 kanban 迁成一支可安装的 socialware team（`socialware:kanban-team`：**pm-coordinator + dev-together 两 agent 角色槽**预配 + **内容触发（legend/header）relay-back**），走 code-seed 发布，最小闭环 S1→S2→S3，Playwright 真浏览器 e2e 收口。**看板（`kanban-manager` × `native`）不进 Definition 成员**——它是 workspace 级被动 URI-dispatch 数据 actor（S2 建模修正，见下方 ⚠️），由 world/owner 建、pm 用 kanban action caps dispatch 驱动。
 
-**Architecture:** kanban 插件 `roles/0` 补 `pm-coordinator`（cc-headless，persona skill 用 **skill-creator 规范新建**）+ `dev-together`（cc-headless，skill = **照抄** sw-kanban 现有 `.claude/skills/dev-together/` 全套）两个 recipe（S1）；新模块 `EzagentPluginKanban.KanbanTeam` 声明 + code-seed `kanban-team` Definition（S2，仿 hello `seed_definition_if_absent`；用 role-slot #1180 的 `roles` 字段声明三个 agent 角色槽，`agents`/`members` 已退休、owner 只准 `:installer`）；**relay-back 靠 `Definition.routing_rules`（内容触发 matcher `text_contains`/`mention`）+ `legends`（`@handle` → role_name member_set）+ 两个 role 的 skill 软协议表达（S3）——规则里零实例 URI，无 core/session 机制改动**。
+> ⚠️ **S2 建模修正（board 非成员，2026-07-06）**：早先草稿把 `kanban-manager` 当第三个 agent 角色槽塞进 `roles` = **建模 bug**。根因：看板 `passive: true`（`application.ex kanban_manager_recipe/0`），是 workspace 级被动数据 actor 按 `entity://<ws>/agent/<id>` dispatch，从来不是 session 成员；塞进角色槽 → materialize `session.join` 撞 RF-6 被动 join 门 `{:passive_actor_cannot_join, _}`（`session.ex:723`）。修正（自包含解法 a）：`roles` 只留 pm+dev（都 cc-headless 主动、过 join 门）；board 由 world/owner 经既有 `/plugins/kanban`（`KanbanActions.create_kanban` → `Workspace.create_agent`）建，pm 用既有 kanban action caps dispatch 到 board URI。全文「三角色槽」按此读作「两 agent 角色槽 + board 非成员」。
+
+**Architecture:** kanban 插件 `roles/0` 补 `pm-coordinator`（cc-headless，persona skill 用 **skill-creator 规范新建**）+ `dev-together`（cc-headless，skill = **照抄** sw-kanban 现有 `.claude/skills/dev-together/` 全套）两个 recipe（S1，`roles/0` 三 recipe 含 kanban-manager 不变）；新模块 `EzagentPluginKanban.KanbanTeam` 声明 + code-seed `kanban-team` Definition（S2，仿 hello `seed_definition_if_absent`；用 role-slot #1180 的 `roles` 字段声明**两个** agent 角色槽 pm+dev，`agents`/`members` 已退休、owner 只准 `:installer`；board 非成员）；**relay-back 靠 `Definition.routing_rules`（内容触发 matcher `text_contains`/`mention`）+ `legends`（`@handle` → role_name member_set）+ 两个 role 的 skill 软协议表达（S3）——规则里零实例 URI，无 core/session 机制改动**。
 
 > **口径校正（别把 routing 当工作流引擎）：pm↔dev 的真正配合是 dev-together skill 的 git-handoff 工作流（git + markdown + CI：pm 写 `handoffs/<task>.md` 含 DoD → dev `dive` 切 task 分支/TDD/PR → dev `return` 过 CI+rebase gate + DoD 对账 + 写 `returns/<task>.md`），不是 ezagent 消息路由。** §4 的 `routing_rules` **只把"dev 交活了"这条完成信号消息传输到 pm 角色**（等价于交活后 @ 一下 lead），不管分支/CI/DoD。工作流实体住在 dev-together skill（Task 1 照抄那份）。**两层分开**：能力技能（dev-together git-handoff 工作流，可移植、照抄）vs 协作协议（kanban-team 里 pm 怎么跟 dev 配合，pm skill 里独立一薄层）。见 spec §5.0。
 
@@ -314,7 +316,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-## Task 2 (S2): kanban-team Definition（三角色槽）+ code-seed + conformance + round-trip gate
+## Task 2 (S2): kanban-team Definition（两 agent 角色槽 pm+dev；board 非成员）+ code-seed + conformance + round-trip gate
 
 **Files:**
 - Create: `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/kanban_team.ex`
@@ -344,13 +346,12 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     refute Map.has_key?(Map.from_struct(def), :members)
   end
 
-  test "declares pm-coordinator, dev-together, kanban-manager as agent role-slots, zero instance URIs" do
+  test "declares exactly pm-coordinator + dev-together agent role-slots, zero instance URIs" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
     agent_slots = Enum.filter(def.roles, &(&1.fill == :agent))
     role_names = Enum.map(agent_slots, & &1.role_name)
-    assert "pm-coordinator" in role_names
-    assert "dev-together" in role_names
-    assert "kanban-manager" in role_names
+    # exactly two members — pm + dev, both cc-headless active.
+    assert Enum.sort(role_names) == ["dev-together", "pm-coordinator"]
 
     Enum.each(agent_slots, fn a ->
       assert a.fill == :agent
@@ -360,12 +361,19 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
       refute String.contains?(a.role_name, "://")
     end)
 
-    kanban_slot = Enum.find(def.roles, &(&1.role_name == "kanban-manager"))
-    assert kanban_slot.flavor == "native"
     pm_slot = Enum.find(def.roles, &(&1.role_name == "pm-coordinator"))
     assert pm_slot.flavor == "cc-headless"
     dev_slot = Enum.find(def.roles, &(&1.role_name == "dev-together"))
     assert dev_slot.flavor == "cc-headless"
+  end
+
+  # S2 建模修正回归守卫：看板是 workspace 级被动 actor，不是 session 成员——
+  # 塞进角色槽会撞 RF-6 被动 join 门（session.ex:723）。
+  test "kanban-manager is NOT a role-slot (passive board actor, not a member)" do
+    {:ok, def} = Definition.new(KanbanTeam.definition_body())
+    refute "kanban-manager" in Enum.map(def.roles, & &1.role_name)
+    # 但它仍是 kanban 插件 recipe（workspace board actor）。
+    assert "kanban-manager" in Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
   end
 
   test "private, non-anon visibility with installer owner" do
@@ -389,10 +397,12 @@ Expected: FAIL — `module EzagentPluginKanban.KanbanTeam is not available`
 ```elixir
 defmodule EzagentPluginKanban.KanbanTeam do
   @moduledoc """
-  The `socialware:kanban-team` Definition (S2) — a prewired team of a
-  `pm-coordinator` (cc-headless coordinator), a `dev-together` (cc-headless
-  developer running the copied dev-together skill), and a `kanban-manager`
-  (native passive board actor). Published via code-seed (imperative
+  The `socialware:kanban-team` Definition (S2) — a prewired team of TWO session
+  participants: a `pm-coordinator` (cc-headless coordinator) and a `dev-together`
+  (cc-headless developer running the copied dev-together skill). The board
+  (`kanban-manager` × native) is NOT a member — it is a workspace-level passive
+  URI-dispatch data actor, created by the world/owner and driven by the pm via
+  kanban action caps (S2 modeling fix). Published via code-seed (imperative
   `seed_definition_if_absent`, the hello `EzagentPluginHello.App` play), NOT a
   plugin package manifest (`core/manifest.ex` rejects a `:socialware` seed_ref by
   design). S3 adds the relay-back `routing_rules` + `legends` to this body.
@@ -425,10 +435,12 @@ defmodule EzagentPluginKanban.KanbanTeam do
       bases: [Ezagent.ActionSet.Session],
       shape: [],
       views: [],
+      # Exactly two agent role-slots (pm + dev). The board (kanban-manager × native)
+      # is NOT here — it is passive (fails the RF-6 join gate) and lives as a
+      # workspace-level URI-dispatch actor, created by the world/owner.
       roles: [
         %{role_name: "pm-coordinator", fill: :agent, recipe: "pm-coordinator", flavor: "cc-headless"},
-        %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"},
-        %{role_name: "kanban-manager", fill: :agent, recipe: "kanban-manager", flavor: "native"}
+        %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"}
       ],
       routing_rules: [],
       legends: %{},
@@ -504,7 +516,7 @@ Expected: `✓ kanban-team: all 12 assertions pass`
 git add apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/kanban_team.ex \
         apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/application.ex \
         apps/ezagent_plugin_kanban/test/kanban_team_test.exs
-git commit -m "feat(kanban): S2 — kanban-team socialware Definition (3 role-slots) + code-seed + conformance
+git commit -m "feat(kanban): S2 — kanban-team socialware Definition (2 role-slots: pm+dev; board non-member) + code-seed + conformance
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -839,15 +851,15 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 2: 发现 + 安装 kanban-team**
 
-在 world sessions_table 的「socialwares」rows 找到 kanban-team（`world_live.ex:676` `socialware_rows/1`）→ 安装（`SocialwareInstall.prepare_create_template/5` → `ConversationActions.create_session/4`）。**截图 02-discover、03-installed（新建的 session，含 pm/dev-together/kanban-manager 三成员）。**
+在 world sessions_table 的「socialwares」rows 找到 kanban-team（`world_live.ex:676` `socialware_rows/1`）→ 安装（`SocialwareInstall.prepare_create_template/5` → `ConversationActions.create_session/4`）。**截图 02-discover、03-installed（新建的 session，含 pm-coordinator + dev-together 两成员；board 不在成员列表——它是 workspace 级 actor，在 Step 4 由 owner 于 `/plugins/kanban` 建）。**
 
-- [ ] **Step 3: owner 对 pm 派活**
+- [ ] **Step 3: owner 建 board + 对 pm 派活**
 
-打开该 session 聊天面，owner 发「把『登录页』这张卡推进到 test 阶段，assign 给 dev-together」。pm 建卡、@dev-together 派活。**截图 04-owner-message、05-pm-assign。**
+先在 world `/plugins/kanban`（`config_surface/0`，`application.ex:133`）由 owner「新建 board」（`KanbanActions.create_kanban` → `Workspace.create_agent`，flavor `native` × role `kanban-manager`）——board 是 workspace 级 actor，不是 team 成员。**截图 03b-board-created。** 再打开该 session 聊天面，owner 发「把『登录页』这张卡推进到 test 阶段，assign 给 dev-together（用刚建的看板）」。pm 用它的 kanban action caps 把 `kanban.<action>` dispatch 到该 board URI 建卡、@dev-together 派活。**截图 04-owner-message、05-pm-assign。**
 
 - [ ] **Step 4: 验证看板推进**
 
-打开 world `/plugins/kanban`（`config_surface/0`，`application.ex:133`）看 board 状态：卡已建、assign 给 dev-together。**截图 06-board-after-assign。**
+回到 world `/plugins/kanban` 看该 board 状态：卡已建、assign 给 dev-together。**截图 06-board-after-assign。**
 
 - [ ] **Step 5: dev-together relay-back → pm 收敛**
 
@@ -870,10 +882,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ## Self-Review（对照 spec）
 
-- **Spec 覆盖**：§3 Definition（三角色槽）→ Task 2；§4 relay-back（内容触发 legend/header + skill 协议 + round-trip 论证）→ Task 3a/3b/3c；§5 pm recipe（skill-creator）+ §5.4 dev-together recipe（照抄）→ Task 1；§5.5 pm 覆盖矩阵 → Task 1 pm skill；§6 测试策略（含 round-trip gate）→ 每 Task 的 test；§7 代码/配置分类 → Task 标注；§8 迁移标注（role-slot 已落地 / registry / membership-matcher）→ Global Constraints + Task 5；§9 discuss-first → Task 4/5 gated；§10 切片顺序 → Task 1→2→3→(6)。全覆盖。
+- **Spec 覆盖**：§3 Definition（两 agent 角色槽 pm+dev；board 非成员）→ Task 2；§4 relay-back（内容触发 legend/header + skill 协议 + round-trip 论证）→ Task 3a/3b/3c；§5 pm recipe（skill-creator）+ §5.4 dev-together recipe（照抄）→ Task 1；§5.5 pm 覆盖矩阵 → Task 1 pm skill；§6 测试策略（含 round-trip gate）→ 每 Task 的 test；§7 代码/配置分类 → Task 标注；§8 迁移标注（role-slot 已落地 / registry / membership-matcher）→ Global Constraints + Task 5；§9 discuss-first → Task 4/5 gated；§10 切片顺序 → Task 1→2→3→(6)。全覆盖。
 - **配合=git-handoff 工作流、routing=传输（口径校正）**：pm↔dev 的真正配合是 dev-together skill 的 git-handoff 工作流（handoff/dive/return/CI gate，git+markdown+CI）；§4 routing 只把"dev 交活了"的完成信号传到 pm 角色，**不是工作流引擎**。pm/dev persona + pm SKILL.md 已按此改（Task 1：派活=写/审 handoff、收活=看 `returns/<task>.md`+CI）。**两层分开**（spec §5.0）：能力技能（dev-together，可移植照抄）vs 协作协议（pm skill 里独立薄层）。**真缺口**（无 per-socialware 常驻协议注入入口）标在 Global Constraints + spec §8/§9 Q5。
 - **relay-back 已改内容协议**：sender-lock `{:from, dev-URI}` matcher + S3a 确定性 `planned_agent_uri` URI 解析 + 给 Allen 的 `{:from_role}` discuss-first —— **全删**。改成内容触发（`text_contains`/`mention` legend）+ `{:role}` receiver + skill 软协议，**规则零实例 URI → round-trip 闭环**（Task 3c gate 证）。**无 core/session 机制改动、无 #1180 落点冲突、无需 Allen re-verify。**
-- **三角色槽写进 Definition**：pm-coordinator（cc-headless）+ dev-together（cc-headless）+ kanban-manager（native），Task 2 `definition_body/0` + Task 2 test 断言。
+- **两 agent 角色槽写进 Definition**：pm-coordinator（cc-headless）+ dev-together（cc-headless），Task 2 `definition_body/0` + Task 2 test 断言。**board（kanban-manager × native）非成员**——它 passive、撞 RF-6 join 门（session.ex:723），是 workspace 级 URI-dispatch actor，由 world/owner 建、pm 用 kanban action caps dispatch 驱动（S2 建模修正，见顶部 ⚠️）。
 - **dev-together = 照抄现有全套**：Task 1 copy sw-kanban `.claude/skills/dev-together/`（SKILL.md 204 + commands/ + references/ + scripts/ + hooks/）逐个保留，spec §5.4 列了功能清单。
 - **pm = skill-creator 规范新建 + 协议独立成可切出 reference**：Task 1 pm `SKILL.md` 主体只写通用协调能力 + 一行 `@references/kanban-team-collaboration.md`；协议全部（spec §5.5 矩阵 (a)/(b)/(c)）写进独立文件 `references/kanban-team-collaboration.md`（标注「可切出模块」，§9 Q5 workflow 编排落地整块上移）；dev-together 薄 overlay `references/kanban-team-relay.md` 指向同一份、不动其 8-command 主体。
 - **routing/协议分离（spec §0.1 新增对照表）**：新加 §0.1 一张对照表——routing = 只搬消息（matcher+`{:role}` receiver）；协议 = 协作约定（住 skill 独立 reference）；唯一契约点 = 完成标记字面 == matcher `arg`。plan Global Constraints 同步一条。
