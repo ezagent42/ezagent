@@ -1,5 +1,5 @@
 defmodule Ezagent.World.IdentityDataTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   test "agent_new_form state advertises project_cwd as optional for file flavors" do
     ws = Ezagent.URI.workspace("acme")
