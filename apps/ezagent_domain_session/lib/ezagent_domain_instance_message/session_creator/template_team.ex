@@ -1,6 +1,7 @@
 defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   @moduledoc false
 
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.DefinitionEditor
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
@@ -35,7 +36,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
                granted_by,
                socialware_config
                |> Map.get(:roles, [])
-               |> Enum.filter(&(&1.fill == :agent))
+               |> Enum.filter(&agent_role_slot?/1)
              ) do
         :ok
       end
@@ -44,12 +45,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
 
+  defp agent_role_slot?(%{} = role) do
+    (Map.get(role, :fill) || Map.get(role, "fill")) in [:agent, "agent"]
+  end
+
+  defp agent_role_slot?(_role), do: false
+
   @spec provision_declared_member(URI.t(), URI.t(), URI.t(), map()) ::
           {:ok, URI.t(), map()} | {:error, term()}
   def provision_declared_member(
         %URI{} = session_uri,
-        %URI{} = _workspace_uri,
-        %URI{} = _granted_by,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by,
         declaration
       )
       when is_map(declaration) do
@@ -69,7 +76,85 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         {:error, {:agent_role_slot_materialized_at_session_create, role_name, session_uri}}
 
       _ ->
-        {:error, {:invalid_role_slot_declaration, declaration}}
+        source_template_uri = member_uri_field(declaration, :source_template_uri)
+
+        with {:ok, %URI{} = member_uri, _fresh?} <-
+               ensure_legacy_member_present(
+                 declaration,
+                 workspace_uri,
+                 granted_by,
+                 source_template_uri,
+                 role_name,
+                 session_uri
+               ) do
+          facets =
+            %{in_session_template: true}
+            |> maybe_put(:role_name, role_name)
+            |> maybe_put(:source_template_uri, source_template_uri)
+
+          {:ok, member_uri, facets}
+        end
+    end
+  end
+
+  defp ensure_legacy_member_present(
+         _member,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri
+       ) do
+    with {:ok, content, flavor} <- source_template_content_and_flavor(source_template_uri) do
+      instance_name =
+        spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
+
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+      agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
+
+      case Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             agent_uri,
+             granted_by,
+             workspace_uri,
+             caller: granted_by,
+             caps:
+               EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(
+                 granted_by
+               ),
+             source_template_uri: source_template_uri
+           ) do
+        {:ok, %{fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
+        {:error, _} = err -> err
+      end
+    end
+  end
+
+  defp ensure_legacy_member_present(
+         member,
+         _workspace_uri,
+         _granted_by,
+         nil,
+         _role_name,
+         _session_uri
+       ) do
+    case member_uri_field(member, :uri) do
+      %URI{} = member_uri ->
+        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+        {:ok, member_uri, false}
+
+      _ ->
+        {:error, :member_missing_uri}
+    end
+  end
+
+  defp source_template_content_and_flavor(%URI{} = source_template_uri) do
+    with {:ok, _pid} <- Session.ensure_template_alive(source_template_uri),
+         {:ok, content} <- Session.read_template_content(source_template_uri) do
+      case Map.get(content, :flavor) || Map.get(content, "flavor") do
+        flavor when is_binary(flavor) and flavor != "" -> {:ok, content, flavor}
+        _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
+      end
     end
   end
 
@@ -292,6 +377,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   defp member_field(member, key) when is_map(member) do
     Map.get(member, key) || Map.get(member, Atom.to_string(key))
   end
+
+  defp member_uri_field(member, key) when is_map(member) do
+    case member_field(member, key) do
+      %URI{} = uri -> uri
+      value when is_binary(value) and value != "" -> Ezagent.URI.new!(value)
+      _ -> nil
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp safe(fun) do
     fun.()

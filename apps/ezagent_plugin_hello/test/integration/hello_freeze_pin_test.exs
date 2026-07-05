@@ -70,7 +70,7 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true},
         # D-5 — anon def MUST declare a :fixed owner (matches the hello seed def).
-        owner_policy: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()}
+        owner_policy: %{type: :installer}
       })
 
     {:ok, r2} =

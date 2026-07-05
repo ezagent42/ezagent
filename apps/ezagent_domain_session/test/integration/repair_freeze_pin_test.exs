@@ -116,8 +116,8 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairFreezePinTest do
         title: "Repair pin #{name}",
         bases: [Ezagent.ActionSet.Session],
         shape: [],
-        members: [
-          %{role_name: member_role, in_session_template: true}
+        roles: [
+          %{role_name: member_role, fill: :human}
         ],
         visibility_policy: %{scope: :private, publish_policy: :auto, web_anon_access: false}
       })
@@ -148,7 +148,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairFreezePinTest do
       version_tag: nil,
       created_by: User.admin_uri(),
       created_at: nil,
-      members: [],
+      roles: [],
       prompt_templates: %{},
       legends: %{},
       routing_rules: [],

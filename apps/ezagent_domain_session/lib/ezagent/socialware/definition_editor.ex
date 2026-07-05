@@ -310,19 +310,62 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   defp merge_legacy_template_fields(config, template_content) do
+    legacy_members = list_field(template_content, :members)
     legacy_rules = list_field(template_content, :routing_rules)
     legacy_prompts = map_field(template_content, :prompt_templates)
     legacy_legends = map_field(template_content, :legends)
     legacy_orchestrator = uri_field(template_content, :orchestrator_template_uri)
 
     %{
-      roles: config.roles,
+      roles:
+        if(legacy_members == [],
+          do: config.roles,
+          else: legacy_template_member_roles(legacy_members)
+        ),
       routing_rules: if(legacy_rules == [], do: config.routing_rules, else: legacy_rules),
       prompt_templates: Map.merge(config.prompt_templates, legacy_prompts),
       legends: Map.merge(config.legends, legacy_legends),
       orchestrator_template_uri: legacy_orchestrator || config.orchestrator_template_uri
     }
   end
+
+  defp legacy_template_member_roles(members) when is_list(members) do
+    members
+    |> Enum.flat_map(&legacy_template_member_role/1)
+    |> Enum.sort_by(&inspect/1)
+  end
+
+  defp legacy_template_member_role(%{} = member) do
+    role_name = map_get(member, :role_name)
+
+    cond do
+      not (is_binary(role_name) and role_name != "") ->
+        []
+
+      match?(%URI{}, map_get(member, :source_template_uri)) ->
+        [
+          %{
+            role_name: role_name,
+            source_template_uri: map_get(member, :source_template_uri),
+            in_session_template: map_get(member, :in_session_template) == true
+          }
+        ]
+
+      match?(%URI{}, map_get(member, :uri)) and Ezagent.URI.type?(map_get(member, :uri), :user) ->
+        [
+          %{
+            uri: map_get(member, :uri),
+            role_name: role_name,
+            in_session_template: map_get(member, :in_session_template) == true
+          }
+        ]
+
+      true ->
+        []
+    end
+  end
+
+  defp legacy_template_member_role(_member), do: []
 
   defp list_field(map, key) do
     case map_get(map, key, []) do

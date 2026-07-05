@@ -21,7 +21,6 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
   alias Ezagent.Socialware.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
-  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   setup do
     prior_home = System.get_env("EZAGENT_HOME")
@@ -1157,12 +1156,8 @@ defmodule EzagentWeb.WorldConversationTest do
               "Ezagent.ActionSet.Turn",
               "Ezagent.ActionSet.Surface"
             ],
-            "members" => [
-              %{
-                "uri" => "entity://system/agent/bot",
-                "role_name" => "bot",
-                "in_session_template" => true
-              }
+            "roles" => [
+              %{"role_name" => "bot", "fill" => "human"}
             ],
             "routing_rules" => [
               %{
@@ -1188,10 +1183,8 @@ defmodule EzagentWeb.WorldConversationTest do
               "publish_policy" => "supervised",
               "web_anon_access" => true
             },
-            # D-5 — an anon def MUST declare a :fixed owner.
             "owner_policy" => %{
-              "type" => "fixed",
-              "uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+              "type" => "installer"
             }
           }
         }
@@ -1209,10 +1202,11 @@ defmodule EzagentWeb.WorldConversationTest do
                socialware_name
              )
 
-    assert [%{"role_name" => "bot"}] = definition.members
+    assert [%{role_name: "bot", fill: :human}] = definition.roles
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
     assert definition.prompt_templates == %{"answer" => "Use the KB context."}
     assert Map.has_key?(definition.legends, "support")
+    assert definition.owner_policy == %{type: :installer}
 
     assert definition.visibility_policy == %{
              scope: :private,
@@ -1308,7 +1302,9 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert Ezagent.Socialware.Installation.installed?(session_uri, manifest_name)
 
-    planned_agent = DefinitionAgents.planned_agent_uri(role_name, session_uri, installer_ws)
+    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
+    planned_agent = SessionBehavior.role_name_to_uri(members, role_name)
+    assert %URI{} = planned_agent
 
     on_exit(fn ->
       _ = Ezagent.Domain.Python.stop(planned_agent)
@@ -1337,7 +1333,6 @@ defmodule EzagentWeb.WorldConversationTest do
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert is_binary(Map.get(sandbox, :config_dir_path))
 
-    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
     assert %{^planned_agent => %{role_name: ^role_name}} = members
 
     caps = Ezagent.Identity.list_caps_for(planned_agent)

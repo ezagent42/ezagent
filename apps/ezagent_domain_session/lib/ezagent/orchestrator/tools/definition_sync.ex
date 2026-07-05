@@ -11,15 +11,13 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
         %URI{} = member_uri,
         facets
       ) do
-    with :ok <- ensure_user_member_uri(member_uri),
-         {:ok, role_name} <- role_name_from_facets(facets) do
+    with {:ok, role_name} <- role_name_from_facets(facets),
+         {:ok, slot} <- role_slot_for_member(member_uri, role_name, facets) do
       DefinitionEditor.update_primary_for_session(
         session_uri,
         workspace_uri,
         caller,
         fn definition ->
-          slot = %{role_name: role_name, fill: :human}
-
           roles =
             definition.roles
             |> Enum.reject(&(map_get(&1, :role_name) == role_name))
@@ -119,11 +117,42 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
   defp receiver_value(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp receiver_value(other), do: other
 
-  defp ensure_user_member_uri(%URI{} = uri) do
+  defp role_slot_for_member(%URI{} = uri, role_name, facets) do
     if Ezagent.URI.type?(uri, :user) do
-      :ok
+      {:ok, %{role_name: role_name, fill: :human}}
     else
-      {:error, {:socialware_member_uri_not_human, uri}}
+      agent_role_slot(uri, role_name, facets)
+    end
+  end
+
+  defp agent_role_slot(%URI{} = uri, role_name, facets) do
+    cond do
+      not Ezagent.URI.type?(uri, :agent) ->
+        {:error, {:socialware_member_uri_not_participant, uri}}
+
+      match?(%URI{}, map_get(facets, :source_template_uri)) ->
+        source_template_uri = map_get(facets, :source_template_uri)
+
+        {:ok,
+         %{
+           role_name: role_name,
+           fill: :agent,
+           recipe: Ezagent.URI.name!(source_template_uri),
+           flavor: source_template_flavor(source_template_uri)
+         }}
+
+      true ->
+        {:error, {:socialware_agent_member_missing_source_template_uri, uri}}
+    end
+  end
+
+  defp source_template_flavor(%URI{} = source_template_uri) do
+    template_name = Ezagent.URI.name!(source_template_uri)
+    [flavor | _] = String.split(template_name, "-", parts: 2)
+
+    case flavor do
+      flavor when is_binary(flavor) and flavor != "" -> flavor
+      _ -> "cc"
     end
   end
 

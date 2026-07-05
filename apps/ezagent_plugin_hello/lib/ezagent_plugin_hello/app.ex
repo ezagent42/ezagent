@@ -246,18 +246,13 @@ defmodule EzagentPluginHello.App do
           Ezagent.ActionSet.Turn,
           Ezagent.ActionSet.Surface
         ],
-        members: [],
+        roles: [],
         routing_rules: [],
         prompt_templates: %{},
         legends: %{},
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
         visibility_policy: %{publish_policy: :auto, web_anon_access: true},
-        # D-5 (§7.3) — an anon homesite (`web_anon_access: true`) has no
-        # logged-in installer, so it MUST declare a `:fixed` owner. The system
-        # admin reproduces this path's hard-coded `owner_uri: User.admin_uri()`
-        # (below) as DATA — `ensure_app/3` now DERIVES the session owner from
-        # this policy rather than hard-coding it.
-        owner_policy: %{type: :fixed, uri: User.admin_uri()}
+        owner_policy: %{type: :installer}
       },
       workspace_uri: Ezagent.URI.workspace(ws),
       actor_uri: User.admin_uri()

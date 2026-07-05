@@ -31,6 +31,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   setup do
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_world)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_codex)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_native)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kb)
     :ok = DefinitionRegistry.seed_builtin_definitions()
     :ok
@@ -339,7 +340,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
           "role_name" => "bot",
           "fill" => "agent",
           "recipe" => bot_recipe,
-          "flavor" => "curl"
+          "flavor" => "native"
         }
       ],
       "routing_rules" => [
@@ -374,7 +375,9 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "codex")
     on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: orchestrator_uri, initial_caps: caps})
+
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, workspace_uri)
 
     assert {:ok, _} =

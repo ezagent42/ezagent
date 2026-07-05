@@ -1,10 +1,11 @@
 defmodule Ezagent.Socialware.RoleSlotAcceptanceTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.{Conformance, Definition}
+  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry}
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   @workspace_uri Ezagent.URI.new!("workspace://system")
+  @actor Ezagent.URI.new!("entity://system/user/admin")
 
   test "definition declarations contain role slots, not participant instance URIs" do
     assert {:ok, definition} =
@@ -109,6 +110,13 @@ defmodule Ezagent.Socialware.RoleSlotAcceptanceTest do
                ],
                prompt_templates: %{"answer" => "Use the context."}
              })
+
+    {:ok, _obj} =
+      DefinitionRegistry.write_definition(definition,
+        workspace_uri: @workspace_uri,
+        caller_workspace_uri: @workspace_uri,
+        actor_uri: @actor
+      )
 
     assert :ok = Conformance.check(definition, @workspace_uri)
   end

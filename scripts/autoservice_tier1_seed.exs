@@ -580,7 +580,14 @@ defmodule Ezagent.AutoService.Tier1Seed do
   # was reconstructing the orchestrator's session-side caps. Modeled on the sanctioned
   # `agent_contract_g4` setup (`SessionManager.ensure_started/1`, all public API).
   # Idempotent (`ensure_started`); only for the live cc orchestrator.
-  defp maybe_ensure_session_manager(autosvc_uri, session_uri, workspace_uri, "cc", "orchestrator", admin_ctx) do
+  defp maybe_ensure_session_manager(
+         autosvc_uri,
+         session_uri,
+         workspace_uri,
+         "cc",
+         "orchestrator",
+         admin_ctx
+       ) do
     case Ezagent.Session.SessionManager.ensure_started(
            orchestrator_uri: autosvc_uri,
            session_uri: session_uri,
@@ -655,8 +662,6 @@ defmodule Ezagent.AutoService.Tier1Seed do
           name: definition_name,
           bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
           shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
-          # D-5 — an anon def (`web_anon_access: true`) MUST declare a :fixed owner.
-          owner_policy: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()},
           visibility_policy: %{publish_policy: :auto, web_anon_access: true}
         },
         workspace_uri: Ezagent.URI.workspace(ws)

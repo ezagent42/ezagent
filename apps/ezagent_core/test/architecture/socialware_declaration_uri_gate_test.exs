@@ -7,11 +7,12 @@ defmodule EzagentCore.Architecture.SocialwareDeclarationUriGateTest do
   Gate A (socialware role-slot P1): a socialware declaration must not be able to
   name a participant instance URI.
 
-  Scope: this is a static source gate over repo-authored Definition and
-  socialware-to-SessionTemplate render/materialization code, plus a recursive
-  decoded-map scanner for persisted JSON-like bodies. It intentionally does not
-  scan already-persisted DB ConfigObject rows; this pre-prod migration wipes and
-  reseeds data rather than carrying a compatibility shim.
+  Scope: this is a static source gate over repo-authored socialware Definition,
+  conformance, editor, and role-slot materialization code, plus a recursive
+  decoded-map scanner for persisted JSON-like bodies. It intentionally excludes
+  legacy SessionTemplate `members` compatibility in `TemplateTeam`: that path
+  can still lazily provision old template declarations, but it is not a
+  socialware Definition authoring or persistence surface.
   """
 
   @repo_root Path.expand("../../../..", __DIR__)
@@ -20,7 +21,6 @@ defmodule EzagentCore.Architecture.SocialwareDeclarationUriGateTest do
     "apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex",
     "apps/ezagent_domain_session/lib/ezagent/socialware/conformance.ex",
     "apps/ezagent_domain_session/lib/ezagent/socialware/definition_editor.ex",
-    "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex",
     "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex"
   ]
