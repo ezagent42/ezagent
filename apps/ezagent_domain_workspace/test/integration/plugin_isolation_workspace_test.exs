@@ -238,7 +238,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
     # 2. Plugin-author work: persist a Workspace declaring the probe as a member.
     workspace_name = "persist-#{System.unique_integer([:positive])}"
-    {:ok, _pid} = Workspace.create(workspace_name, %{members: [probe_uri]})
+    {:ok, ws_pid} = Workspace.create(workspace_name, %{members: [probe_uri]})
 
     # Sanity: probe is not yet alive (create/2 only persists + spawns the
     # Workspace Kind itself; member spawning happens via Loader).
@@ -261,6 +261,9 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     assert [{^probe_uri, {:ok, probe_pid}}] = children_results
     assert is_pid(probe_pid)
     assert Process.alive?(probe_pid)
+
+    # #108: tear down this test's own lingering Kinds before the owner stops.
+    terminate_kinds_on_exit([ws_pid, probe_pid])
 
     # 4. The probe is now in KindRegistry under its URI — Loader truly
     #    spawned it from persisted Workspace state, no ezagent_core /
@@ -292,7 +295,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
       "probe_name" => probe_name
     }
 
-    {:ok, _ws_pid} =
+    {:ok, ws_pid} =
       Workspace.create(workspace_name, %{
         session_templates: %{"main" => tmpl_data}
       })
@@ -311,6 +314,9 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     {:ok, probe_pid} = KindRegistry.lookup(probe_uri)
     assert is_pid(probe_pid)
     assert Process.alive?(probe_pid)
+
+    # #108: tear down this test's own lingering Kinds before the owner stops.
+    terminate_kinds_on_exit([ws_pid, probe_pid])
   end
 
   test "Workspace.add_template/3 fail-fast: rejects template without registered Class" do
@@ -391,6 +397,27 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   # could hit `DBConnection.OwnershipError` in a reverted shared-mode window.
   # The spawn fn runs in the (owner-allowed) test process, so `self()` is a
   # legitimate allow parent.
+  # #108 de-flake (teardown owner-exit race): tests (ii)/(ii)EXT deliberately
+  # skip `terminate_child` to prove the no-teardown reload path, so the probe
+  # (and Workspace) Kinds outlive the test under the GLOBAL
+  # `Ezagent.Workspace.Supervisor`, keep receiving PubSub, and a late
+  # `handle_info` can do DB work through the sandbox owner that is about to
+  # stop — surfacing `DBConnection.ConnectionError "owner … exited"` and
+  # flaking a *passing* test. `DataCase.drain_live_kinds/0` is bounded +
+  # best-effort, so it can miss the tail. Terminating THIS test's own Kinds
+  # on_exit closes the window: on_exit runs LIFO, so this registers AFTER (→
+  # runs BEFORE) DataCase's owner-stop. Safe here — the probes are unique-URI
+  # + `:ephemeral`, so `terminate_child` won't wake the `:not_ready` restart
+  # class the fixed-URI session suites protect against. `{:error, :not_found}`
+  # (already gone / not this supervisor's child) is ignored.
+  defp terminate_kinds_on_exit(pids) do
+    on_exit(fn ->
+      for pid <- pids, is_pid(pid) and Process.alive?(pid) do
+        DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+      end
+    end)
+  end
+
   defp allow_on_spawn_probe_fn do
     test_pid = self()
 

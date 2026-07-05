@@ -73,8 +73,20 @@ defmodule Ezagent.Resource.FsResolverTest do
 
   defp wait_for_restart(name, old_pid, attempts) do
     case Process.whereis(name) do
-      pid when is_pid(pid) and pid != old_pid -> pid
-      _ -> Process.sleep(20) && wait_for_restart(name, old_pid, attempts - 1)
+      pid when is_pid(pid) and pid != old_pid ->
+        # #108 readiness barrier: a GenServer's registered name is bound in
+        # `:gen.init_it` BEFORE `init/1` runs, but `init/1` is where the
+        # `:protected` ETS table is created AND populated
+        # (`batch_register(boot_registrations())`). Returning on mere pid
+        # existence races an empty/absent table → transient `:none` and a flaky
+        # failure under a loaded CI runner. A sync call is served only AFTER
+        # `init/1` returns, so this guarantees the boot types are registered
+        # before the caller asserts `resolve/2`.
+        _ = :sys.get_state(pid)
+        pid
+
+      _ ->
+        Process.sleep(20) && wait_for_restart(name, old_pid, attempts - 1)
     end
   end
 
