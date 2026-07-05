@@ -1,10 +1,23 @@
 name: CI
 
-# Runs the SAME merge gate the lead runs locally — `mix precommit`
-# (compile --warnings-as-errors --force + deps.unlock --unused + format + test,
-# which includes every architecture/invariant gate) plus
-# `mix ezagent.check_invariants` — on every PR and on pushes to main, so a
-# never-green branch can no longer reach `main`.
+# LAYERED merge gate (design C1). Two jobs, cheap-first:
+#
+#   job `gate`       — ubuntu-latest, ~2-3 min. The DETERMINISTIC required
+#                      gate: compile --warnings-as-errors, format, the two
+#                      static invariant tasks, and the arch/invariant ExUnit
+#                      subset (never-flake tests that catch real regressions
+#                      fast — e.g. NoBehaviorModuleReferenceTest caught a
+#                      retired-module ref that flake noise had hidden). Does
+#                      NOT run the full suite, so it is fast and stable.
+#
+#   job `full-suite` — self-hosted macOS (the lead's dev machine), needs:
+#                      [gate]. The EXACT `mix ci.local` end-to-end flow (pnpm
+#                      + ecto + `precommit` full ~1856-test suite +
+#                      check_invariants + socialware.check). Runs ONLY after
+#                      `gate` passes, so a broken branch never burns the
+#                      expensive dev-machine run. Darwin is the green-reliable
+#                      OS for the concurrent suite (ubuntu is the flake-prone
+#                      loaded runner — see #108).
 
 on:
   pull_request:
@@ -19,8 +32,8 @@ permissions:
   contents: read
 
 jobs:
-  precommit:
-    name: precommit + check_invariants
+  gate:
+    name: gate (deterministic)
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
@@ -51,14 +64,6 @@ jobs:
           otp-version: "28"
           elixir-version: "1.19"
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "25"
-
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@10.33.0 --activate
-
       - name: Cache deps + _build
         uses: actions/cache@v4
         with:
@@ -72,23 +77,67 @@ jobs:
       - name: Fetch Elixir deps
         run: mix deps.get
 
-      - name: Install JS deps (assets esbuild needs node_modules)
-        # --no-frozen-lockfile mirrors the lead's local `pnpm install`: the goal
-        # here is to populate node_modules so esbuild can resolve react/zod during
-        # `mix compile`, NOT to gate lockfile integrity (a separate concern; the
-        # CI default would otherwise be --frozen-lockfile).
-        run: |
-          pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile
-          pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile
-          pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile
+      # No pnpm/node here on purpose: the gate never runs the web app's tests,
+      # and esbuild is not a Mix compiler, so `mix compile` + the core/domain
+      # arch/invariant suite need only BEAM + Postgres.
+      - name: Compile (warnings-as-errors)
+        run: mix compile --warnings-as-errors --force
 
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      # DB before the app-booting steps below (check_invariants /
+      # socialware.check / some invariant tests boot the app).
       - name: Create + migrate test DB
         run: |
           mix ecto.create --quiet
           mix ecto.migrate --quiet
 
-      - name: mix precommit
-        run: mix precommit
-
-      - name: mix ezagent.check_invariants
+      - name: check_invariants
         run: mix ezagent.check_invariants
+
+      - name: socialware.check
+        run: mix ezagent.socialware.check
+
+      # Deterministic arch/invariant ExUnit subset only (NOT the full suite).
+      # Path-scoped from the umbrella root: each child app runs `mix test` with
+      # these paths and silently skips the dirs it does not own, so this runs
+      # exactly the arch/invariant tests across all apps (locally: 439 tests,
+      # 0 failures, exit 0). Includes NoBehaviorModuleReferenceTest,
+      # OversizedModules, the view-authorize / predicate-A gate tests, etc.
+      - name: Arch/invariant ExUnit subset
+        run: >-
+          mix test
+          apps/ezagent_core/test/architecture
+          apps/ezagent_core/test/invariants
+          apps/ezagent_domain_external_mirror/test/invariants
+          apps/ezagent_domain_identity/test/invariants
+          apps/ezagent_domain_session/test/invariants
+
+  full-suite:
+    name: full-suite (self-hosted macOS)
+    needs: [gate]
+    # Same self-hosted macOS runner label as deploy.yml. Runs the full
+    # concurrent suite on the green-reliable OS, gated behind `gate`.
+    runs-on: [self-hosted, macos, ezagent-deploy]
+    env:
+      MIX_ENV: test
+      # Private per-run test DB (`ezagent_pg_compat_test<run_id>`) so a CI run
+      # never collides with the lead's manual `MIX_TEST_PARTITION=$USER` runs
+      # or another concurrent CI run on this machine.
+      MIX_TEST_PARTITION: ${{ github.run_id }}
+      # Native local Postgres on the dev machine (not a service container).
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "55432"
+    steps:
+      - uses: actions/checkout@v4
+
+      # `mix ci.local` chains the whole gate end-to-end: deps.get, the three
+      # pnpm installs (node_modules before compile so esbuild resolves
+      # react/zod), ecto create/migrate, `precommit` (compile
+      # --warnings-as-errors --force + deps.unlock --unused + format + full
+      # test suite), ezagent.check_invariants, ezagent.socialware.check.
+      - name: mix ci.local (full precommit + invariants + socialware)
+        run: mix ci.local
