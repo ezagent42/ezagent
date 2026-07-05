@@ -6,7 +6,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
   (native passive board actor). Published via code-seed (imperative
   `seed_definition_if_absent`, the hello `EzagentPluginHello.App` play), NOT a
   plugin package manifest (`core/manifest.ex` rejects a `:socialware` seed_ref by
-  design). S3 adds the relay-back `routing_rules` + `legends` to this body.
+  design). S3 adds the content-triggered relay-back `routing_rules` to this body.
 
   ## Zero instance URIs (role-slot #1180, enforced) + round-trip safety
 
@@ -20,17 +20,42 @@ defmodule EzagentPluginKanban.KanbanTeam do
   (`definition.ex` `reject_retired_declaration_fields`), and any participant
   instance URI in `roles`/`routing_rules` is rejected too
   (`reject_participant_instance_uris`). `owner_policy` is `%{type: :installer}`
-  (`:fixed` is rejected). The S3 relay-back rule will be CONTENT-triggered (a
-  `text_contains`/`mention` matcher) with a `{:role, ...}` receiver — it carries
-  no instance URI, so this Definition survives a live-session snapshot back into a
-  Definition (round-trip) without tripping `reject_participant_instance_uris`.
+  (`:fixed` is rejected).
+
+  ## S3 relay-back — CONTENT-triggered, zero URI (round-trip safe)
+
+  The relay-back rule (dev-together → pm-coordinator hand-off signal) is a single
+  CONTENT-triggered routing rule: matcher `{:text_contains, "__done__"}` (the
+  dev's completion marker) with receiver `{:role, "pm-coordinator"}` (a declared
+  role NAME, expanded to the pm member's per-session URI at delivery via the
+  `:member_by_role` resolver). It carries NO participant instance URI and NO
+  `{:from}` sender-lock — so even after materialize spawns the pm/dev members at
+  random UUID URIs, the live rule (and a snapshot of it back into a Definition)
+  stays clean and survives `reject_participant_instance_uris`. That is the
+  round-trip advantage over a sender-lock rule (which would embed the dev's
+  spawned UUID and be rejected on read-back). The behavioral contract ("dev sends
+  `__done__` after `return`, pm reviews then advances") is a soft protocol living
+  in the two roles' skills, not encoded in routing (spec §0.1/§4.4).
   """
 
   @definition_name "kanban-team"
 
+  # The dev-together completion marker (spec §4.2). The SINGLE contract point
+  # between the routing transport and the skill protocol — this literal MUST be
+  # byte-identical to the `__done__` marker documented in
+  # `.claude/skills/pm-coordinator/references/kanban-team-collaboration.md` +
+  # `.claude/skills/dev-together/references/kanban-team-relay.md`.
+  @relay_done_marker "__done__"
+  @relay_rule_set "relay-back"
+
+  @doc "The dev-together completion marker wired into the relay-back matcher (spec §4.2 contract point)."
+  @spec relay_done_marker() :: String.t()
+  def relay_done_marker, do: @relay_done_marker
+
   @doc """
-  The `kanban-team` Definition body (config-as-data). The single source S3
-  extends with `routing_rules` + `legends`.
+  The `kanban-team` Definition body (config-as-data). Includes the S3
+  content-triggered relay-back `routing_rules` (zero instance URI, round-trip
+  safe).
   """
   @spec definition_body() :: map()
   def definition_body do
@@ -52,7 +77,19 @@ defmodule EzagentPluginKanban.KanbanTeam do
         %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"},
         %{role_name: "kanban-manager", fill: :agent, recipe: "kanban-manager", flavor: "native"}
       ],
-      routing_rules: [],
+      # Relay-back: the dev-together `__done__` completion signal routes to the
+      # pm-coordinator ROLE. Content-triggered (no sender-lock), zero URI — even
+      # after materialize spawns pm/dev at random UUID URIs, the live rule (and a
+      # snapshot of it back into a Definition) stays clean, so it survives
+      # `reject_participant_instance_uris` (round-trip safe, spec §4.4).
+      routing_rules: [
+        %{
+          "matcher" => %{"type" => "text_contains", "arg" => @relay_done_marker},
+          "receivers" => ["pm-coordinator"],
+          "rule_set" => @relay_rule_set,
+          "position" => 0
+        }
+      ],
       legends: %{},
       prompt_templates: %{},
       adapters: [],
