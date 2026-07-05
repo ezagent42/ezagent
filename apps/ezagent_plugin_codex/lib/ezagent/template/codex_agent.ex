@@ -56,6 +56,21 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     EzagentPluginCodex.CredentialRefresh.provision(source, home, opts)
   end
 
+  # #160 — credential-status view. codex has no readable expiry (`auth.json`
+  # carries no `expiresAt`; the CLI self-refreshes), so the probe only reports
+  # present/absent/unreadable and `expires_at` is always nil. Read-only, no network.
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_status(home, opts \\ []) do
+    {status, detail} =
+      case EzagentPluginCodex.CredentialFreshness.status(home, opts) do
+        :authenticated -> {:authenticated, nil}
+        :missing -> {:missing, "No `auth.json` — the agent has never logged in (`codex login`)"}
+        :unknown -> {:unknown, nil}
+      end
+
+    %{status: status, detail: detail, expires_at: nil}
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): codex's
   # template_data fields, so an orchestrator-spawned codex worker carries
   # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).

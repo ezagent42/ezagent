@@ -40,6 +40,11 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     Ezagent.PluginCodex.Template.CodexAgent.refresh_test_credentials(source, home, opts)
   end
 
+  # #160 — credential-status view. Same CODEX_HOME/auth.json as codex.
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_status(home, opts \\ []),
+    do: Ezagent.PluginCodex.Template.CodexAgent.credential_status(home, opts)
+
   # template_data_extra — delegates to CodexAgent (same model/approval/sandbox fields).
   @impl Ezagent.Kind.Template
   def template_data_extra(content),

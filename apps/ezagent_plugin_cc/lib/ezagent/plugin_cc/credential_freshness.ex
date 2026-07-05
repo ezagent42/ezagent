@@ -72,6 +72,49 @@ defmodule EzagentPluginCc.CredentialFreshness do
   end
 
   @doc """
+  #160 (credential-status view) — freshness classification that DISTINGUISHES a
+  MISSING credential file from an unclassifiable one.
+
+  `check/2` deliberately collapses a missing `.credentials.json` into `:unknown`
+  (to avoid false spawn-time alarms). The credential-status view needs the
+  distinct "logged out / never `/login`" signal, so `status/2` layers a
+  `File.exists?` probe over `check/2`:
+
+    * file absent            → `:missing`
+    * file present           → defers to `check/2` (`:fresh` | `{:stale, reason}`
+                               | `:unknown`)
+
+  Read-only, no network I/O, no activation — same guarantees as `check/2`.
+  A `nil` `config_dir` (legacy host-login agent) is `:unknown`.
+  """
+  @spec status(String.t() | nil, keyword()) :: :missing | status()
+  def status(config_dir, opts \\ [])
+
+  def status(nil, _opts), do: :unknown
+
+  def status(config_dir, opts) when is_binary(config_dir) do
+    if File.exists?(Path.join(config_dir, @cred_relpath)) do
+      check(config_dir, opts)
+    else
+      :missing
+    end
+  end
+
+  @doc """
+  The OAuth token's `expiresAt` (epoch ms) when present + readable, else `nil`.
+  Powers the credential-status view's `expires_at` field. Read-only.
+  """
+  @spec expires_at(String.t() | nil) :: integer() | nil
+  def expires_at(nil), do: nil
+
+  def expires_at(config_dir) when is_binary(config_dir) do
+    case read_oauth(Path.join(config_dir, @cred_relpath)) do
+      {:ok, %{"expiresAt" => exp}} when is_integer(exp) -> exp
+      _ -> nil
+    end
+  end
+
+  @doc """
   Spawn-time reminder. On a stale OAuth token: log a loud warning, emit
   `[:ezagent, :cc, :credential_freshness, :stale]` telemetry, and return
   `%{credential_stale: true, credential_stale_reason: reason}` for the spawn path
