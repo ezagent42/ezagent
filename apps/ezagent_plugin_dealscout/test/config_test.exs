@@ -1,0 +1,30 @@
+defmodule EzagentPluginDealScout.ConfigTest do
+  # async: false — token round-trip writes a real `system://credentials/*.yaml`
+  # file through the FsResolver seam (shared FS), so keep it serial.
+  use ExUnit.Case, async: false
+  alias EzagentPluginDealScout.Config
+
+  describe "config slice effects (profile / keywords)" do
+    test "set_profile returns a {:set, :profile, value} slice effect" do
+      assert {:set, :profile, %{stage: "seed"}} = Config.set_profile(%{}, %{stage: "seed"})
+    end
+
+    test "set_keywords returns a {:set, :keywords, value} slice effect" do
+      assert {:set, :keywords, ["具身智能", "投融资"]} =
+               Config.set_keywords(%{}, ["具身智能", "投融资"])
+    end
+  end
+
+  describe "token creds (system://credentials, fail-closed)" do
+    test "write_token then read_token round-trips" do
+      on_exit(fn -> Config.delete_token("acme") end)
+
+      assert :ok = Config.write_token("acme", "tok-123")
+      assert {:ok, "tok-123"} = Config.read_token("acme")
+    end
+
+    test "missing token is fail-closed :error (not a silent empty)" do
+      assert :error = Config.read_token("no-such-source-#{System.unique_integer([:positive])}")
+    end
+  end
+end

@@ -54,4 +54,10 @@ defmodule EzagentPluginDealScout.Application do
       [EzagentPluginDealScout.Poller]
     end
   end
+
+  # Discovery-leg recipes (role-as-data, RF-4): boot seeds each into
+  # `Ezagent.Agent.RecipeRegistry` by `name`. Flavor-agnostic — flavor is chosen
+  # per-agent on the Definition role-slot (a later Stage), never on the recipe.
+  @impl Ezagent.Plugin
+  def roles, do: EzagentPluginDealScout.Recipes.all()
 end
