@@ -353,7 +353,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
 
       case result do
         {:ok, _, _effects} = ok ->
-          with :ok <- RoleStep.grant_role_marker(agent_uri, materialized),
+          with :ok <- RoleStep.grant_recipe_marker(agent_uri, materialized),
                :ok <- RoleStep.mint_and_grant_caps(agent_uri, "py", materialized, params) do
             ok
           end
@@ -385,7 +385,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
           record_creator_lineage(agent_uri, params)
 
           with :ok <- RoleStep.grant_passive_marker(agent_uri, materialized),
-               :ok <- RoleStep.grant_role_marker(agent_uri, materialized),
+               :ok <- RoleStep.grant_recipe_marker(agent_uri, materialized),
                :ok <- RoleStep.mint_and_grant_caps(agent_uri, other_flavor, materialized, params),
                :ok <-
                  grant_agent_creator_manage_cap(

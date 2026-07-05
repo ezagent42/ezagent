@@ -67,8 +67,8 @@ defmodule Ezagent.ActionSet.SandboxTest do
                    pty_phase: nil,
                    # RF-5a/RF-6 durable passive marker — false (principal) default.
                    passive: false,
-                   # RF-7 durable role NAME — nil (no role) default.
-                   role: nil
+                   # P2 durable recipe-provenance — nil (no recipe) default.
+                   recipe: nil
                  },
                  transients: %{}
                }
@@ -89,7 +89,7 @@ defmodule Ezagent.ActionSet.SandboxTest do
                    respawn_template_data: %{"cwd" => "/tmp/agent-x"},
                    pty_phase: nil,
                    passive: false,
-                   role: nil
+                   recipe: nil
                  },
                  transients: %{}
                }
@@ -109,7 +109,7 @@ defmodule Ezagent.ActionSet.SandboxTest do
                    respawn_template_data: nil,
                    pty_phase: nil,
                    passive: false,
-                   role: nil
+                   recipe: nil
                  },
                  transients: %{}
                }

@@ -162,12 +162,18 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, _pid} = KindRegistry.lookup(planned)
     assert :ready = Ezagent.ReadyGate.status(planned)
     assert {:ok, ^flavor} = Ezagent.AgentFlavorAttributes.get(planned)
-    assert {:ok, ^role_name} = Ezagent.AgentRoleAttributes.fetch(planned)
+
+    # P2 (Gate B): the agent-level attribute records BUILD PROVENANCE (the
+    # RECIPE name), NOT the session role. Here recipe_name ("#{recipe_name}")
+    # and role_name ("#{role_name}") DIVERGE, proving the de-bake — the session
+    # role_name lives only on the membership edge (asserted below).
+    assert {:ok, ^recipe_name} = Ezagent.AgentRecipeAttributes.fetch(planned)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert Map.has_key?(sandbox, :config_dir_path)
 
+    # the SESSION role_name is on the edge, resolving to the same agent
     assert SessionBehavior.role_name_to_uri(members, role_name) == planned
 
     caps = Ezagent.Identity.list_caps_for(planned)

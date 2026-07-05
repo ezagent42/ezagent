@@ -117,17 +117,18 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   def grant_passive_marker(_agent_uri, _materialized), do: :ok
 
   @doc """
-  Build the DURABLE marker spawn-args (`:passive` RF-6 + `:role` NAME RF-7) the
-  host merges into `Sandbox.create/1`'s args — both snapshot-backed in the
-  `:sandbox` slice (the cold-restart source for the `:passive`/`:role` UriQuery
-  resolvers + `Ezagent.AgentRoleResolver.list_by_role/2`). A roleless create
+  Build the DURABLE marker spawn-args (`:passive` RF-6 + `:recipe` PROVENANCE,
+  was RF-7 `:role`) the host merges into `Sandbox.create/1`'s args — both
+  snapshot-backed in the `:sandbox` slice (the cold-restart source for the
+  `:passive`/`:recipe` UriQuery resolvers +
+  `Ezagent.AgentRecipeResolver.list_by_recipe/2`). A no-recipe create
   (`nil` materialized) contributes nothing → the slice's defaults.
   """
   @spec spawn_marker_args(map() | nil) :: map()
   def spawn_marker_args(%{} = materialized) do
     %{}
     |> maybe_put(:passive, Map.get(materialized, :passive), &is_boolean/1)
-    |> maybe_put(:role, Map.get(materialized, :role), &(is_binary(&1) and &1 != ""))
+    |> maybe_put(:recipe, Map.get(materialized, :recipe), &(is_binary(&1) and &1 != ""))
   end
 
   def spawn_marker_args(_), do: %{}
@@ -137,24 +138,28 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   end
 
   @doc """
-  Write the DURABLE role-NAME marker for a role-driven agent (RF-7).
+  Write the DURABLE RECIPE-PROVENANCE marker for a recipe-built agent (P2; was
+  the RF-7 role marker).
 
-  The `:sandbox`-slice `:role` field (threaded via the spawn args by the host) is
-  the snapshot-backed source of truth for `Ezagent.AgentRoleResolver.list_by_role/2`
-  + the `:role` UriQuery resolver. This ALSO primes the volatile ETS fast path
-  (`Ezagent.AgentRoleAttributes`) so the per-URI `:role` resolver answers
-  correctly BEFORE the first snapshot. A roleless create (`nil` materialized or
+  The `:sandbox`-slice `:recipe` field (threaded via the spawn args by the host)
+  is the snapshot-backed source of truth for
+  `Ezagent.AgentRecipeResolver.list_by_recipe/2` + the `:recipe` UriQuery
+  resolver. This ALSO primes the volatile ETS fast path
+  (`Ezagent.AgentRecipeAttributes`) so the per-URI `:recipe` resolver answers
+  correctly BEFORE the first snapshot. A no-recipe create (`nil` materialized or
   an unnamed recipe) writes nothing — an absent ETS entry + a `nil` slice field
-  both resolve to "no role".
+  both resolve to "no recipe provenance". This records BUILD PROVENANCE only,
+  never a session role (session role_name lives on the membership edge; Gate B).
   """
-  @spec grant_role_marker(URI.t(), map() | nil) :: :ok
-  def grant_role_marker(_agent_uri, nil), do: :ok
+  @spec grant_recipe_marker(URI.t(), map() | nil) :: :ok
+  def grant_recipe_marker(_agent_uri, nil), do: :ok
 
-  def grant_role_marker(%URI{} = agent_uri, %{role: role}) when is_binary(role) and role != "" do
-    Ezagent.AgentRoleAttributes.put(agent_uri, role)
+  def grant_recipe_marker(%URI{} = agent_uri, %{recipe: recipe})
+      when is_binary(recipe) and recipe != "" do
+    Ezagent.AgentRecipeAttributes.put(agent_uri, recipe)
   end
 
-  def grant_role_marker(_agent_uri, _materialized), do: :ok
+  def grant_recipe_marker(_agent_uri, _materialized), do: :ok
 
   @doc """
   Mint the role recipe's authorized caps fail-closed and grant them at the

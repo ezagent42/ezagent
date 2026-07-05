@@ -110,9 +110,10 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   grants fail-closed (`{:error, {:grant_failed, cap, reason}}` on the first
   failure). No partial: if ANY behavior is unresolvable, NOTHING is granted.
 
-  This is the SANCTIONED grant entry (p7 mix-task category); the per-session
-  materialize engine (`Ezagent.Agent.SessionAgentMaterialize`) + the kanban
-  board-scoping seed (`EzagentPluginKanban.PmCoordinatorSeed`) delegate to it.
+  This is the SANCTIONED grant entry (p7 mix-task category); the socialware
+  definition-agent materialize (`SessionCreator`'s `definition_agents`) + the
+  kanban board-scoping seed (`EzagentPluginKanban.PmCoordinatorSeed`) delegate
+  to it.
 
   ## Cap-instance scoping (Phase 3 ③ T7g Part A)
 

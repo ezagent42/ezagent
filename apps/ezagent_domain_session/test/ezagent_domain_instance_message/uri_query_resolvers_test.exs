@@ -9,15 +9,17 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
+
   alias Ezagent.{
     AgentFlavorAttributes,
     AgentPassiveAttributes,
-    AgentRoleAttributes,
-    AgentRoleResolver,
+    AgentRecipeAttributes,
+    AgentRecipeResolver,
     Invocation,
     Kind,
     UriQuery
   }
+
   alias EzagentCore.Repo
 
   setup do
@@ -36,43 +38,43 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert :none = UriQuery.resolve(:session_template, session_uri)
     assert :none = UriQuery.resolve(:member_by_role, {session_uri, "missing"})
     assert :none = UriQuery.resolve(:config_dir, agent_uri)
-    assert :none = UriQuery.resolve(:role, agent_uri)
+    assert :none = UriQuery.resolve(:recipe, agent_uri)
   end
 
   test "RF-7: :role resolves :none by default and the NAME once the attribute is stored" do
     agent_uri = Ezagent.URI.agent("system", "role-attr-#{System.unique_integer([:positive])}")
 
-    on_exit(fn -> AgentRoleAttributes.delete(agent_uri) end)
+    on_exit(fn -> AgentRecipeAttributes.delete(agent_uri) end)
 
     # No stored attribute + no snapshot → :none (no role).
-    assert :none = UriQuery.resolve(:role, agent_uri)
+    assert :none = UriQuery.resolve(:recipe, agent_uri)
 
-    :ok = AgentRoleAttributes.put(agent_uri, "kanban-manager")
-    assert {:ok, "kanban-manager"} = UriQuery.resolve(:role, agent_uri)
+    :ok = AgentRecipeAttributes.put(agent_uri, "kanban-manager")
+    assert {:ok, "kanban-manager"} = UriQuery.resolve(:recipe, agent_uri)
   end
 
   test "RF-7: :role layers ETS → durable snapshot (cold-restart fallback)" do
     agent_uri = URI.new!("entity://system/agent/role-durable-source")
 
     # No ETS entry → falls through to the durable :sandbox snapshot.
-    assert :none = AgentRoleAttributes.fetch(agent_uri)
+    assert :none = AgentRecipeAttributes.fetch(agent_uri)
 
     assert {:ok, _} =
              Ezagent.SnapshotStore.write(
                agent_uri,
-               %{sandbox: %{state: %{role: "kanban-manager"}}},
+               %{sandbox: %{state: %{recipe: "kanban-manager"}}},
                kind_type: :agent
              )
 
-    assert {:ok, "kanban-manager"} = UriQuery.resolve(:role, agent_uri)
+    assert {:ok, "kanban-manager"} = UriQuery.resolve(:recipe, agent_uri)
 
     # A stored ETS entry is authoritative + stops the layering (fast path).
-    on_exit(fn -> AgentRoleAttributes.delete(agent_uri) end)
-    :ok = AgentRoleAttributes.put(agent_uri, "other-role")
-    assert {:ok, "other-role"} = UriQuery.resolve(:role, agent_uri)
+    on_exit(fn -> AgentRecipeAttributes.delete(agent_uri) end)
+    :ok = AgentRecipeAttributes.put(agent_uri, "other-role")
+    assert {:ok, "other-role"} = UriQuery.resolve(:recipe, agent_uri)
   end
 
-  test "RF-7: list_by_role enumerates PERSISTED agents by role from the snapshot (cold-restart-safe)" do
+  test "RF-7: list_by_recipe enumerates PERSISTED agents by role from the snapshot (cold-restart-safe)" do
     role = "rf7-list-#{System.unique_integer([:positive])}"
     a1 = URI.new!("entity://system/agent/rf7-list-a1-#{System.unique_integer([:positive])}")
     a2 = URI.new!("entity://system/agent/rf7-list-a2-#{System.unique_integer([:positive])}")
@@ -82,18 +84,19 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     # entry) — exactly the DORMANT / post-restart state the kanban board faces.
     for {uri, r} <- [{a1, role}, {a2, role}, {other, "different-role"}] do
       assert {:ok, _} =
-               Ezagent.SnapshotStore.write(uri, %{sandbox: %{state: %{role: r}}},
+               Ezagent.SnapshotStore.write(uri, %{sandbox: %{state: %{recipe: r}}},
                  kind_type: :agent
                )
     end
 
-    listed = AgentRoleResolver.list_by_role(role) |> Enum.map(&URI.to_string/1) |> MapSet.new()
+    listed =
+      AgentRecipeResolver.list_by_recipe(role) |> Enum.map(&URI.to_string/1) |> MapSet.new()
 
     assert MapSet.subset?(MapSet.new([URI.to_string(a1), URI.to_string(a2)]), listed),
-           "list_by_role did not enumerate the dormant role agents from the snapshot"
+           "list_by_recipe did not enumerate the dormant role agents from the snapshot"
 
     refute URI.to_string(other) in listed,
-           "list_by_role leaked an agent of a DIFFERENT role"
+           "list_by_recipe leaked an agent of a DIFFERENT role"
   end
 
   test "flavor resolves from stored launch attributes before the Agent Kind exists" do

@@ -111,7 +111,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
                Ezagent.URI.template(:system, :agent, recipe_name)
              )
            ),
-         :ok <- record_launch_attributes(agent_uri, role_name, recipe) do
+         :ok <- record_launch_attributes(agent_uri, recipe_name, recipe) do
       {:ok, outcome}
     end
   end
@@ -198,8 +198,11 @@ defmodule Ezagent.Agent.RecipeMaterializer do
     end
   end
 
-  defp record_launch_attributes(%URI{} = agent_uri, role_name, recipe_or_content) do
-    :ok = Ezagent.AgentRoleAttributes.put(agent_uri, role_name)
+  # Records BUILD PROVENANCE (the recipe name) on the agent — never a session
+  # role. Session role_name is set on the (entity × session) membership edge by
+  # the caller's faceted `session.join` (Gate B).
+  defp record_launch_attributes(%URI{} = agent_uri, recipe_name, recipe_or_content) do
+    :ok = Ezagent.AgentRecipeAttributes.put(agent_uri, recipe_name)
 
     case passive_value(recipe_or_content) do
       value when is_boolean(value) -> Ezagent.AgentPassiveAttributes.put(agent_uri, value)

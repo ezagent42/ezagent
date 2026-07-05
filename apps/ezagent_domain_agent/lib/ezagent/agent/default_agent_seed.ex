@@ -24,7 +24,8 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
   the sanctioned operator/materialize mix task
   `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps` (a deliberate grant entry). At boot
   the default agent isn't live anyway, so the caps land at materialize-time (T7b)
-  via `Ezagent.Agent.SessionAgentMaterialize`, which delegates to that mix task.
+  via that sanctioned `GrantRecipeCaps` mix task, invoked from the live
+  materialize path.
 
   ## Flavor `cc` (2026-06-28 decision)
 
@@ -111,9 +112,8 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
 
   This is the generic default a role-agent uses absent a per-role `*_cwd` value
   DECLARED in its registered recipe (`config[:project_cwd]`) — lifted here so the
-  GENERIC by-role materialize
-  (`Ezagent.Agent.SessionAgentMaterialize.materialize_by_role/4`) can build a
-  role-agent's template content WITHOUT a compile dep on the role-owning plugin.
+  generic by-role materialize path can build a role-agent's template content
+  WITHOUT a compile dep on the role-owning plugin.
   """
   @spec default_project_cwd(String.t()) :: String.t()
   def default_project_cwd(role) when is_binary(role) do
