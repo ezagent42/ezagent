@@ -153,19 +153,74 @@ defmodule EzagentCore.Umbrella.MixProject do
       # NON-test failure that otherwise masquerades as a green-with-EXIT=1 run.
       "ci.local": [
         "deps.get",
-        "cmd --cd apps/ezagent_web/assets pnpm install --no-frozen-lockfile",
-        "cmd --cd apps/ezagent_plugin_world/assets pnpm install --no-frozen-lockfile",
-        "cmd --cd apps/ezagent_plugin_hello/assets pnpm install --no-frozen-lockfile",
+        # `mix cmd --cd <relative>` RECURSES into every umbrella child (Mix marks
+        # `cmd` recursive), so the relative `--cd` is resolved against each
+        # child app's cwd and dies with `spawn: Could not cd to
+        # apps/ezagent_web/assets` on the first child (Mix 1.19
+        # `run_in_children_projects` → `File.cd!/2`). A plain alias FUNCTION step
+        # runs ONCE from the umbrella root, so pnpm install lands in each assets
+        # dir exactly once. See `pnpm_install_assets/1`.
+        &pnpm_install_assets/1,
         "ecto.create --quiet",
         "ecto.migrate --quiet",
         "precommit",
         "ezagent.check_invariants",
-        # T2-3 — socialware Definition conformance gate. Runs from the umbrella
-        # root with a full app boot (every plugin's adapters/recipes/view caps
-        # registered), so a definition naming a nonexistent recipe / view /
-        # adapter / prompt_template_ref goes RED.
-        "ezagent.socialware.check"
+        # T2-3 — socialware Definition conformance gate. It queries the
+        # ConfigStore (DB), so it CANNOT run in this same BEAM right after `test`:
+        # `mix test` leaves the Ecto SQL Sandbox in `:manual` mode, and this mix
+        # task's process owns no checked-out connection → `DBConnection.Ownership
+        # Error`. Run it in a FRESH `mix` process (a clean BEAM with a normal
+        # pool) — the same way the CI `gate` job runs it standalone-green. See
+        # `run_socialware_check/1`.
+        &run_socialware_check/1
       ]
     ]
+  end
+
+  # The three JS-asset dirs whose node_modules must exist before `precommit`'s
+  # `mix compile` (esbuild resolves react/zod from them). Kept in sync with the
+  # `.github/workflows/ci.yml` full-suite "Install JS deps" step.
+  @assets_dirs [
+    "apps/ezagent_web/assets",
+    "apps/ezagent_plugin_world/assets",
+    "apps/ezagent_plugin_hello/assets"
+  ]
+
+  # `pnpm install` in each assets dir, run ONCE from the umbrella root (an alias
+  # function step does not recurse into child projects the way `mix cmd` does).
+  # Fails LOUD on a non-zero pnpm exit so a broken install cannot masquerade as a
+  # green run.
+  defp pnpm_install_assets(_args) do
+    Enum.each(@assets_dirs, fn dir ->
+      {_out, status} =
+        System.cmd("pnpm", ["install", "--no-frozen-lockfile"],
+          cd: dir,
+          into: IO.stream(:stdio, :line),
+          stderr_to_stdout: true
+        )
+
+      if status != 0 do
+        Mix.raise("pnpm install failed in #{dir} (exit status #{status})")
+      end
+    end)
+  end
+
+  # `mix ezagent.socialware.check` in a FRESH `mix` process. It must not run in
+  # the `ci.local` BEAM after `test`, because `mix test` leaves the Ecto SQL
+  # Sandbox in `:manual` mode and the task's DB query (ConfigStore.resolve) then
+  # dies with `DBConnection.OwnershipError` (no ownership for the task process).
+  # A child `mix` boots a clean app with a normal pool — identical to how the CI
+  # `gate` job runs it green as its own step. Inherits MIX_ENV/MIX_TEST_PARTITION
+  # from the environment, so it hits the same test DB `ecto.create` already made.
+  defp run_socialware_check(_args) do
+    {_out, status} =
+      System.cmd("mix", ["ezagent.socialware.check"],
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true
+      )
+
+    if status != 0 do
+      Mix.raise("ezagent.socialware.check failed (exit status #{status})")
+    end
   end
 end

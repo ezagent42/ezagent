@@ -120,19 +120,52 @@ jobs:
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
     runs-on: [self-hosted, macos, ezagent-deploy]
+    # Hard ceiling so a hung test (e.g. an outbound network call that stalls
+    # with no proxy — the BEAM's inet_gethost blocks forever) fails the job in
+    # minutes instead of pinning the runner for hours. The full suite finishes
+    # well under this even under load.
+    timeout-minutes: 40
     env:
       MIX_ENV: test
       # Private per-run test DB (`ezagent_pg_compat_test<run_id>`) so a CI run
-      # never collides with the lead's manual `MIX_TEST_PARTITION=$USER` runs
-      # or another concurrent CI run on this machine.
+      # never collides with another concurrent run on this machine.
       MIX_TEST_PARTITION: ${{ github.run_id }}
-      # Native local Postgres on the dev machine (not a service container).
       POSTGRES_USER: ezagent_pg_compat
       POSTGRES_PASSWORD: ezagent_pg_compat
       POSTGRES_HOST: 127.0.0.1
-      POSTGRES_PORT: "55432"
+      # CI-DEDICATED port, deliberately NOT the dev/dogfood 55432. The
+      # self-hosted runner IS the lead's dev machine, where a native dev
+      # Postgres may be listening on 55432 — CI runs its OWN ephemeral Postgres
+      # on 55440 so the two never fight over the port or share data.
+      POSTGRES_PORT: "55440"
     steps:
       - uses: actions/checkout@v4
+
+      # Ephemeral native Postgres, provisioned + torn down entirely within this
+      # job. No container runtime (OrbStack/Docker) dependency — `services:`
+      # containers need a daemon that is not reliably up on a self-hosted mac.
+      - name: Start ephemeral Postgres (native, 55440)
+        run: |
+          set -euo pipefail
+          PG_BIN="$(brew --prefix postgresql@18)/bin"
+          # Fresh per-run data dir under the job-scoped RUNNER_TEMP (GitHub wipes
+          # it per job): every run initdb's a clean cluster, so NO data ever
+          # carries over between runs. With the CI-dedicated port + the
+          # always-run teardown below, the cluster is fully hermetic — no shared
+          # or persistent state (the concern that retired the hand-kept instance).
+          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-pg"
+          # Free the CI-dedicated port from any crashed prior run. Safe: 55440 is
+          # CI-exclusive, so this never touches the dev 55432 cluster.
+          lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
+          rm -rf "$PGDATA_CI"
+          # Bootstrap superuser == the app role (trust auth on loopback only).
+          "$PG_BIN/initdb" -D "$PGDATA_CI" -U "$POSTGRES_USER" \
+            --auth-local=trust --auth-host=trust -E UTF8 >/dev/null
+          "$PG_BIN/pg_ctl" -D "$PGDATA_CI" \
+            -o "-p $POSTGRES_PORT -k /tmp -c listen_addresses=127.0.0.1" \
+            -w -l "$PGDATA_CI/server.log" start
+          "$PG_BIN/psql" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" \
+            -d postgres -c "ALTER ROLE $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD' SUPERUSER LOGIN;"
 
       # `mix ci.local` chains the whole gate end-to-end: deps.get, the three
       # pnpm installs (node_modules before compile so esbuild resolves
@@ -141,3 +174,14 @@ jobs:
       # test suite), ezagent.check_invariants, ezagent.socialware.check.
       - name: mix ci.local (full precommit + invariants + socialware)
         run: mix ci.local
+
+      # Always stop + delete the cluster, even on failure/cancel, so nothing
+      # lingers on the port or on disk between runs.
+      - name: Stop + remove ephemeral Postgres
+        if: always()
+        run: |
+          PG_BIN="$(brew --prefix postgresql@18)/bin"
+          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-pg"
+          "$PG_BIN/pg_ctl" -D "$PGDATA_CI" -m immediate stop 2>/dev/null || true
+          lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
+          rm -rf "$PGDATA_CI"
