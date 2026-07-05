@@ -133,22 +133,22 @@ jobs:
       # Postgres may be listening on 55432 — CI runs its OWN ephemeral Postgres
       # on 55440 so the two never fight over the port or share data.
       POSTGRES_PORT: "55440"
-      # Fresh per-run data dir under the job-scoped RUNNER_TEMP (GitHub wipes it
-      # per job): every run initdb's a clean cluster, so NO data ever carries
-      # over between runs. Combined with the CI-dedicated port + always-teardown
-      # below, this is a fully hermetic, self-contained Postgres — no shared or
-      # persistent state (the concern that retired the hand-maintained instance).
-      PGDATA_CI: ${{ runner.temp }}/ezagent-ci-pg
     steps:
       - uses: actions/checkout@v4
 
       # Ephemeral native Postgres, provisioned + torn down entirely within this
       # job. No container runtime (OrbStack/Docker) dependency — `services:`
       # containers need a daemon that is not reliably up on a self-hosted mac.
-      - name: Start ephemeral Postgres (native, ${{ env.POSTGRES_PORT }})
+      - name: Start ephemeral Postgres (native, 55440)
         run: |
           set -euo pipefail
           PG_BIN="$(brew --prefix postgresql@18)/bin"
+          # Fresh per-run data dir under the job-scoped RUNNER_TEMP (GitHub wipes
+          # it per job): every run initdb's a clean cluster, so NO data ever
+          # carries over between runs. With the CI-dedicated port + the
+          # always-run teardown below, the cluster is fully hermetic — no shared
+          # or persistent state (the concern that retired the hand-kept instance).
+          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-pg"
           # Free the CI-dedicated port from any crashed prior run. Safe: 55440 is
           # CI-exclusive, so this never touches the dev 55432 cluster.
           lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
@@ -176,6 +176,7 @@ jobs:
         if: always()
         run: |
           PG_BIN="$(brew --prefix postgresql@18)/bin"
+          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-pg"
           "$PG_BIN/pg_ctl" -D "$PGDATA_CI" -m immediate stop 2>/dev/null || true
           lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
           rm -rf "$PGDATA_CI"
