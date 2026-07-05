@@ -21,7 +21,7 @@ defmodule Ezagent.Socialware.PublicScopeAdminGateTest do
   defp uniq, do: System.unique_integer([:positive])
 
   defp operator_caps do
-    MapSet.new([Capability.cap(:workspace, Ezagent.Behavior.Workspace, :add_template)])
+    MapSet.new([Capability.cap(:workspace, Ezagent.ActionSet.Workspace, :add_template)])
   end
 
   defp admin_caps do
