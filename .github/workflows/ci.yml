@@ -120,6 +120,11 @@ jobs:
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
     runs-on: [self-hosted, macos, ezagent-deploy]
+    # Hard ceiling so a hung test (e.g. an outbound network call that stalls
+    # with no proxy — the BEAM's inet_gethost blocks forever) fails the job in
+    # minutes instead of pinning the runner for hours. The full suite finishes
+    # well under this even under load.
+    timeout-minutes: 40
     env:
       MIX_ENV: test
       # Private per-run test DB (`ezagent_pg_compat_test<run_id>`) so a CI run
