@@ -7,20 +7,23 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   the pm role while a plain message does NOT. Content-triggered — no sender-lock,
   no instance URI.
 
-  ## Why a bare-spawn stub flavor + a pm/dev fixture (not the full cc-headless team)
+  ## Materializes the REAL shipped 2-role team (flavor-swapped to a bare stub)
 
-  Relay is a dev-together → pm-coordinator hand-off; `kanban-manager` plays no
-  part in it. Materializing the SHIPPED kanban-team as-is would (a) spawn real
-  `cc-headless` agents (each starts a Python Claude SDK sidecar — an S6 e2e
-  concern, not a routing concern) and (b) try to `session.join` the PASSIVE
-  `kanban-manager`, which the RF-6 join gate rejects
-  (`{:passive_actor_cannot_join, _}`, `session.ex:722`). Neither touches how a
-  `{:role, name}` receiver resolves — that is a membership-EDGE lookup. So this
-  gate materializes a minimal 2-role fixture (pm + dev) whose slots use a
-  bare-spawn stub flavor (a `StubTemplate` that spawns a plain `Entity.Agent`, the
-  `definition_agents_materialize_test` pattern) but whose `routing_rules` are the
-  REAL relay rule. The full 3-role cc-headless team is exercised by the S6 browser
-  e2e.
+  Since the S2 modeling fix the SHIPPED kanban-team declares exactly TWO agent
+  role-slots — `pm-coordinator` + `dev-together` — and NO `kanban-manager` slot
+  (the board is a workspace-level passive URI-dispatch actor, not a session
+  member; declaring it would trip the RF-6 passive-join gate
+  `{:passive_actor_cannot_join, _}`, `session.ex:723`). So both role-slots now
+  really materialize + `session.join` into a live session — no passive gate hit.
+
+  The ONLY deviation from the shipped body: this fixture swaps each slot's flavor
+  `cc-headless` → a bare-spawn stub flavor (a `StubTemplate` that spawns a plain
+  `Entity.Agent`, the `definition_agents_materialize_test` pattern), because a
+  `cc-headless` spawn starts a Python Claude SDK sidecar (an S6 e2e concern, not a
+  routing concern). role_name / recipe / the REAL relay `routing_rules` are the
+  shipped ones — the fixture derives them from `KanbanTeam.definition_body/0`, not
+  hand-written. The full cc-headless team + SDK spawn is exercised by the S6
+  browser e2e.
 
   Self-containment (spec §11): kanban test tree (NOT `apps/ezagent_domain_session/
   test/`), `EzagentCore.DataCase` (exposed downstream; the domain's own DataCase
@@ -145,6 +148,9 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     dev_uri = member_uri_for_role(session_uri, "dev-together")
     on_exit(fn -> Enum.each([pm_uri, dev_uri], &terminate/1) end)
 
+    # Both role-slots really JOINED (member_by_role only resolves a URI for a
+    # joined member) — no RF-6 passive-join gate hit, because neither slot is the
+    # passive kanban-manager (the S2 modeling fix). This is the "2 roles join" gate.
     assert %URI{} = pm_uri
     assert %URI{} = dev_uri
 
@@ -196,24 +202,18 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # A minimal 2-role fixture: the SHIPPED kanban-team body, but with only the
-  # relay-relevant pm/dev slots (stub flavor for bare spawn) and its REAL relay
-  # `routing_rules` untouched.
+  # The REAL shipped kanban-team body (2 agent role-slots: pm + dev), with ONLY
+  # the flavor swapped `cc-headless` → the bare-spawn stub (no SDK sidecar). Role
+  # names / recipes / the REAL relay `routing_rules` are the shipped ones — we map
+  # over `base.roles` rather than hand-writing them, so this exercises the actual
+  # shipped role set.
   defp itest_definition_body do
     base = KanbanTeam.definition_body()
 
     %{
       base
       | name: @itest_definition,
-        roles: [
-          %{
-            role_name: "pm-coordinator",
-            fill: :agent,
-            recipe: "pm-coordinator",
-            flavor: @stub_flavor
-          },
-          %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: @stub_flavor}
-        ]
+        roles: Enum.map(base.roles, &%{&1 | flavor: @stub_flavor})
     }
   end
 

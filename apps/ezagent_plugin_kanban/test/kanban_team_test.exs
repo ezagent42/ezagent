@@ -2,10 +2,24 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
   @moduledoc """
   S2 unit gate for the `socialware:kanban-team` Definition — proves the
   config-as-data body round-trips through `Ezagent.Socialware.Definition.new/1`
-  (the validation boundary), declares exactly the three agent role-slots with the
-  correct flavors, carries ZERO participant instance URIs (role-slot #1180), and
-  is private / non-anon / installer-owned. No DB / materialize here (that is the
-  S3 integration + conformance gate).
+  (the validation boundary), declares exactly the TWO agent role-slots
+  (`pm-coordinator` + `dev-together`, both cc-headless active) with the correct
+  flavors, carries ZERO participant instance URIs (role-slot #1180), and is
+  private / non-anon / installer-owned. No DB / materialize here (that is the S3
+  integration + conformance gate).
+
+  ## Why NOT a kanban-manager role-slot (the S2 modeling fix)
+
+  The `kanban-manager` (recipe `kanban-manager` × flavor `native`) is `passive`
+  (`application.ex` `kanban_manager_recipe/0` `passive: true`). It is a
+  WORKSPACE-LEVEL board data actor addressed by `entity://<ws>/agent/<id>`, NOT a
+  session participant. Declaring it as an agent role-slot would make materialize
+  call `session.join` on it and hit the RF-6 passive-join gate
+  (`{:passive_actor_cannot_join, _}`, `session.ex:723`). So the board is NOT in
+  `roles`; the team is exactly pm + dev, and the board is created by the
+  world/owner (existing `/plugins/kanban` create path) and driven by the pm via
+  its kanban action caps dispatched to the board URI. This test asserts the fix:
+  kanban-manager is absent from `roles`.
   """
   use ExUnit.Case, async: true
 
@@ -20,13 +34,14 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     refute Map.has_key?(Map.from_struct(def), :members)
   end
 
-  test "declares pm-coordinator, dev-together, kanban-manager as agent role-slots, zero instance URIs" do
+  test "declares exactly pm-coordinator + dev-together agent role-slots, zero instance URIs" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
     agent_slots = Enum.filter(def.roles, &(&1.fill == :agent))
     role_names = Enum.map(agent_slots, & &1.role_name)
     assert "pm-coordinator" in role_names
     assert "dev-together" in role_names
-    assert "kanban-manager" in role_names
+    # exactly two agent slots — pm + dev, both active cc-headless.
+    assert Enum.sort(role_names) == ["dev-together", "pm-coordinator"]
 
     Enum.each(agent_slots, fn a ->
       assert a.fill == :agent
@@ -36,12 +51,21 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
       refute String.contains?(a.role_name, "://")
     end)
 
-    kanban_slot = Enum.find(def.roles, &(&1.role_name == "kanban-manager"))
-    assert kanban_slot.flavor == "native"
     pm_slot = Enum.find(def.roles, &(&1.role_name == "pm-coordinator"))
     assert pm_slot.flavor == "cc-headless"
     dev_slot = Enum.find(def.roles, &(&1.role_name == "dev-together"))
     assert dev_slot.flavor == "cc-headless"
+  end
+
+  test "kanban-manager is NOT a role-slot (passive board actor, not a session member) — regression guard" do
+    {:ok, def} = Definition.new(KanbanTeam.definition_body())
+    role_names = Enum.map(def.roles, & &1.role_name)
+    # The board is a workspace-level URI-dispatch actor, never a session
+    # participant — declaring it would trip the RF-6 passive-join gate at
+    # materialize (`{:passive_actor_cannot_join, _}`, session.ex:723).
+    refute "kanban-manager" in role_names
+    # but it IS still a kanban plugin recipe (the workspace board actor).
+    assert "kanban-manager" in Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
   end
 
   test "private, non-anon visibility with installer owner" do
@@ -51,11 +75,16 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     assert def.owner_policy == %{type: :installer}
   end
 
-  test "recipe names in role-slots match the kanban plugin roles/0 recipes" do
+  test "recipe names in role-slots are a subset of the kanban plugin roles/0 recipes" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
     slot_recipes = def.roles |> Enum.map(& &1.recipe) |> Enum.sort()
-    declared = EzagentPluginKanban.Application.roles() |> Enum.map(& &1.name) |> Enum.sort()
-    assert slot_recipes == declared
+    declared = EzagentPluginKanban.Application.roles() |> Enum.map(& &1.name)
+    # every declared role-slot resolves to a real kanban plugin recipe...
+    Enum.each(slot_recipes, fn r -> assert r in declared end)
+    # ...and the team is exactly the two session participants (pm + dev); the
+    # third roles/0 recipe (kanban-manager) is the workspace board actor, not a
+    # member.
+    assert slot_recipes == ["dev-together", "pm-coordinator"]
   end
 
   test "declares a content-triggered relay-back rule to the pm role, zero instance URIs (S3)" do

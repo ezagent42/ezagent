@@ -16,10 +16,12 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   the live matcher would embed the dev's spawned UUID and both the URI-guard
   assertion and `Definition.new/1` would fail here.
 
-  Fixture note: the same as `kanban_team_relay_back_test` — a bare-spawn stub
-  flavor materializes pm/dev (the cc-headless SDK spawn + passive kanban-manager
-  join are S6 e2e concerns), but the routing rule under test is the REAL relay
-  rule, and the body it snapshots INTO is the REAL shipped kanban-team body.
+  Fixture note: the same as `kanban_team_relay_back_test` — the REAL shipped
+  kanban-team body (2 agent role-slots: pm + dev; NO passive kanban-manager slot
+  since the S2 modeling fix), with ONLY the flavor swapped to a bare-spawn stub
+  (the cc-headless SDK spawn is an S6 e2e concern). Role names / recipes / the
+  routing rule under test are the shipped ones, and the body it snapshots INTO is
+  the REAL shipped kanban-team body.
 
   Self-containment (spec §11): kanban test tree, `EzagentCore.DataCase`, domain
   started at setup — same rationale as the relay-back test.
@@ -153,21 +155,16 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
 
   # --- fixture ----------------------------------------------------------------
 
+  # The REAL shipped kanban-team body (2 agent role-slots: pm + dev), with ONLY
+  # the flavor swapped `cc-headless` → bare-spawn stub. Derived from `base.roles`,
+  # not hand-written — exercises the actual shipped role set.
   defp itest_definition_body do
     base = KanbanTeam.definition_body()
 
     %{
       base
       | name: @itest_definition,
-        roles: [
-          %{
-            role_name: "pm-coordinator",
-            fill: :agent,
-            recipe: "pm-coordinator",
-            flavor: @stub_flavor
-          },
-          %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: @stub_flavor}
-        ]
+        roles: Enum.map(base.roles, &%{&1 | flavor: @stub_flavor})
     }
   end
 
