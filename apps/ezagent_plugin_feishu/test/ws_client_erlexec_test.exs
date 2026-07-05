@@ -103,13 +103,15 @@ defmodule EzagentPluginFeishu.WsClientErlexecTest do
     System.put_env("EZAGENT_FEISHU_WS", "0")
     Application.put_env(:ezagent_plugin_feishu, :reap_orphans_on_boot, true)
 
-    # Plant a stale pid file pointing at a real live process. Spawn it with
-    # `:monitor` (NOT `:link`/`run_link`) so (a) the reaper killing it does not
-    # propagate an exit to this test process, and (b) erlexec delivers a
-    # `{:DOWN, os_pid, :process, exec_pid, reason}` message to THIS process the
-    # instant the OS process actually exits. That DOWN message is the
-    # deterministic death signal we wait on below — no wall-clock liveness poll.
-    {:ok, _ep, stale_os_pid} = :exec.run([~c"/bin/sleep", ~c"300"], [:monitor])
+    # Plant a stale pid file pointing at a real live process. No `:monitor`/
+    # `:link`: the reaper's SIGTERM must not propagate an exit to this test
+    # process, and we detect the orphan's death by polling OS liveness (below),
+    # NOT by awaiting erlexec's `{:DOWN}` message. #108: DOWN delivery through
+    # the shared `:exec` port + BEAM scheduler could blow the 10s
+    # `assert_receive` backstop on a loaded CI runner (a flake); `ps`-polling —
+    # the same pattern the sibling "killing WsClient" test uses un-flagged —
+    # decouples death-detection from erlexec message scheduling.
+    {:ok, _ep, stale_os_pid} = :exec.run([~c"/bin/sleep", ~c"300"], [])
 
     key = Ezagent.URI.system("feishu", "ws")
     :ok = PidFile.write("feishu-ws", key, stale_os_pid)
@@ -118,13 +120,13 @@ defmodule EzagentPluginFeishu.WsClientErlexecTest do
     # Booting WsClient runs the init reaper, which kills + removes the stale entry.
     _pid = start_supervised!(EzagentPluginFeishu.WsClient, restart: :temporary)
 
-    # Deterministic: erlexec's monitor LWP sends DOWN exactly when the SIGTERM'd
-    # `sleep` actually exits. assert_receive returns the moment it arrives (the
-    # 10s budget is only a backstop against scheduler starvation under load, not
-    # a polling interval). Pinning ^stale_os_pid guarantees it's OUR process.
-    assert_receive {:DOWN, ^stale_os_pid, :process, _exec_pid, _reason},
-                   10_000,
-                   "init reaper did not reap the planted feishu-ws orphan #{stale_os_pid}"
+    # The init reaper SIGTERMs the planted orphan; poll real OS liveness (the
+    # file's own `eventually_dead?/2`, same as the sibling "killing WsClient"
+    # test) until it's gone. Deterministic and independent of erlexec's
+    # DOWN-message scheduling — the #108 flake was the DOWN delivery blowing the
+    # `assert_receive` backstop on a loaded runner, never the reap itself.
+    assert eventually_dead?(stale_os_pid, 10_000),
+           "init reaper did not reap the planted feishu-ws orphan #{stale_os_pid}"
 
     # The reaper's PidFile.remove runs synchronously inside init/1, so by the time
     # start_supervised! returned the stale entry is already gone.
