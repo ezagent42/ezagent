@@ -237,6 +237,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
          {:ok, workspace_uri} <- required_uri_opt(opts, :workspace_uri),
          {:ok, actor} <- required_uri_opt(opts, :actor_uri),
          :ok <- authorize_definition_write(opts, workspace_uri),
+         :ok <- authorize_public_scope_write(opts, definition),
          subject = definition_subject_uri(workspace_uri, definition.name),
          source_turn_id =
            Keyword.get_lazy(opts, :source_turn_id, fn ->
@@ -443,6 +444,47 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         end
     end
   end
+
+  # SECURITY (#165): publishing/authoring a socialware definition whose
+  # visibility scope is `:public` promotes it into the CROSS-TENANT installable
+  # catalog (`list/1` + the `lookup/2`/`resolve_installable_revision/3` public
+  # fallback), so it MUST require ADMIN authority — matching the
+  # `ConfigGovernance.Socialware.authorize_public_scope` CR path. PRIVATE writes
+  # keep their prior authority (owning-workspace caller, gated by
+  # `authorize_definition_write/2`); this gate never fires for them. The
+  # `:system_seed` authority is the trusted boot-seed path for built-ins and is
+  # exempt (its workspace is already pinned to `system`). The admin check uses
+  # the RAW `%URI{}` caller (`:actor_uri` opt) so `home_is_system?` matches, plus
+  # the caller's real `:caps` threaded from the authoring surface.
+  defp authorize_public_scope_write(opts, %Definition{} = definition) do
+    cond do
+      not public?(definition) ->
+        :ok
+
+      Keyword.get(opts, :authority) == :system_seed ->
+        :ok
+
+      Ezagent.Identity.AdminAuthority.admin?(
+        caller_uri(Keyword.get(opts, :actor_uri)),
+        Keyword.get(opts, :caps, [])
+      ) ->
+        :ok
+
+      true ->
+        {:error, :public_socialware_requires_admin}
+    end
+  end
+
+  defp caller_uri(%URI{} = uri), do: uri
+
+  defp caller_uri(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp caller_uri(_), do: nil
 
   # Built-in direct-write fast path applying the SHARED idempotency RULE (P0 §5,
   # D-2): no CR at boot, but the SAME hash-comparison as the governance path —

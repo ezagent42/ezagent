@@ -3,13 +3,14 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
 
   alias Ezagent.Socialware.DefinitionEditor
 
-  @spec member(URI.t(), URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  @spec member(URI.t(), URI.t(), URI.t(), URI.t(), map(), keyword()) :: :ok | {:error, term()}
   def member(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
         %URI{} = caller,
         %URI{} = member_uri,
-        facets
+        facets,
+        opts \\ []
       ) do
     with {:ok, role_name} <- role_name_from_facets(facets),
          {:ok, slot} <- role_slot_for_member(member_uri, role_name, facets) do
@@ -24,7 +25,10 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
             |> Kernel.++([slot])
 
           %{definition | roles: roles}
-        end
+        end,
+        # SECURITY (#165): thread caller caps so a `:public` primary def edit is
+        # admin-authorized by the domain gate rather than blanket-blocked.
+        caps: Keyword.get(opts, :caps, [])
       )
       |> ok_unit()
     end
@@ -62,13 +66,15 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
           |> Kernel.++([rule])
 
         %{definition | routing_rules: rules}
-      end
+      end,
+      caps: Keyword.get(opts, :caps, [])
     )
     |> ok_unit()
   end
 
-  @spec prompt_template(URI.t(), URI.t(), String.t(), String.t()) :: :ok | {:error, term()}
-  def prompt_template(%URI{} = session_uri, %URI{} = caller, name, template) do
+  @spec prompt_template(URI.t(), URI.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, term()}
+  def prompt_template(%URI{} = session_uri, %URI{} = caller, name, template, opts \\ []) do
     workspace_uri = Ezagent.URI.workspace_of(session_uri)
 
     DefinitionEditor.update_primary_for_session(
@@ -77,12 +83,13 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
       caller,
       fn definition ->
         %{definition | prompt_templates: Map.put(definition.prompt_templates, name, template)}
-      end
+      end,
+      caps: Keyword.get(opts, :caps, [])
     )
     |> ok_unit()
   end
 
-  @spec legend(URI.t(), URI.t(), String.t(), [String.t()], String.t(), boolean()) ::
+  @spec legend(URI.t(), URI.t(), String.t(), [String.t()], String.t(), boolean(), keyword()) ::
           :ok | {:error, term()}
   def legend(
         %URI{} = session_uri,
@@ -90,7 +97,8 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
         legend_name,
         member_role_names,
         bound_rule_set,
-        fold
+        fold,
+        opts \\ []
       ) do
     workspace_uri = Ezagent.URI.workspace_of(session_uri)
 
@@ -106,7 +114,8 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
       caller,
       fn definition ->
         %{definition | legends: Map.put(definition.legends, legend_name, entry)}
-      end
+      end,
+      caps: Keyword.get(opts, :caps, [])
     )
     |> ok_unit()
   end

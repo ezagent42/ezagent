@@ -192,6 +192,11 @@ defmodule Ezagent.World.WorkspacePluginActions do
     name = params |> Map.get("name", "") |> to_string() |> String.trim()
 
     caller = socket.assigns.current_entity_uri
+    # SECURITY (#165): thread the operator's REAL caps (mirroring
+    # `remove_workspace_member`/`revoke_credential_grant`) so the domain-side
+    # public-scope admin gate authorizes a `:public` socialware publish. Without
+    # this the ctx carried no caps and a non-admin could publish a public def.
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     with true <- name != "",
          %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
@@ -201,7 +206,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
          {:ok, content} <- session_template_content(params, workspace_uri, socialware_ref),
          :ok <- authorize_template_save(workspace_uri, caller, name, content),
          {:ok, _saved_socialware_ref} <-
-           save_prepared_socialware(socialware_definition, workspace_uri, caller),
+           save_prepared_socialware(socialware_definition, workspace_uri, caller, caps),
          {:ok, template_uri} <-
            Ezagent.Entity.SessionTemplate.create(name, content,
              caller: caller,
@@ -339,14 +344,15 @@ defmodule Ezagent.World.WorkspacePluginActions do
     end
   end
 
-  defp save_prepared_socialware(nil, _workspace_uri, _caller), do: {:ok, nil}
+  defp save_prepared_socialware(nil, _workspace_uri, _caller, _caps), do: {:ok, nil}
 
-  defp save_prepared_socialware(definition, %URI{} = workspace_uri, %URI{} = caller) do
+  defp save_prepared_socialware(definition, %URI{} = workspace_uri, %URI{} = caller, caps) do
     case Ezagent.Socialware.DefinitionEditor.save_authored_definition(
            definition,
            workspace_uri,
            caller,
-           complete: true
+           complete: true,
+           caps: caps
          ) do
       {:ok, saved, _object} -> {:ok, saved.name}
       {:error, _} = error -> error

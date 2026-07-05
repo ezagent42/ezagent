@@ -52,7 +52,10 @@ defmodule Ezagent.Socialware.DefinitionEditor do
            DefinitionRegistry.write_definition(definition,
              workspace_uri: workspace_uri,
              caller_workspace_uri: workspace_uri,
-             actor_uri: actor_uri
+             actor_uri: actor_uri,
+             # SECURITY (#165): thread the authoring caller's real caps so the
+             # domain-side public-scope admin gate can authorize a `:public` write.
+             caps: Keyword.get(opts, :caps, [])
            ) do
       {:ok, definition, object}
     end
@@ -98,14 +101,20 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   @doc "Update the primary installed definition for a live session and repoint its install."
-  @spec update_primary_for_session(URI.t(), URI.t(), URI.t(), (Definition.t() ->
-                                                                 map() | Definition.t())) ::
+  @spec update_primary_for_session(
+          URI.t(),
+          URI.t(),
+          URI.t(),
+          (Definition.t() -> map() | Definition.t()),
+          keyword()
+        ) ::
           {:ok, Definition.t(), ConfigObject.t()} | {:error, term()}
   def update_primary_for_session(
         %URI{scheme: "session"} = session_uri,
         %URI{} = workspace_uri,
         %URI{} = actor_uri,
-        updater
+        updater,
+        opts \\ []
       )
       when is_function(updater, 1) do
     with {:ok, template_content} <- template_content_for_session(session_uri, workspace_uri),
@@ -116,7 +125,11 @@ defmodule Ezagent.Socialware.DefinitionEditor do
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
              caller_workspace_uri: workspace_uri,
-             actor_uri: actor_uri
+             actor_uri: actor_uri,
+             # SECURITY (#165): a primary def may be `:public` (own or resolved via
+             # the public fallback); thread caller caps so an admin edit is
+             # authorized rather than blanket-blocked by the domain public gate.
+             caps: Keyword.get(opts, :caps, [])
            ),
          {:ok, _install_object} <-
            Installation.point_session_install(
@@ -150,7 +163,10 @@ defmodule Ezagent.Socialware.DefinitionEditor do
            DefinitionRegistry.write_definition(next_definition,
              workspace_uri: workspace_uri,
              caller_workspace_uri: workspace_uri,
-             actor_uri: actor_uri
+             actor_uri: actor_uri,
+             # SECURITY (#165): thread caller caps so an admin snapshotting a
+             # `:public` primary def is authorized by the domain public gate.
+             caps: Keyword.get(opts, :caps, [])
            ),
          install = %{install | ref: name},
          {:ok, _install_object} <-
@@ -193,6 +209,11 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       )
       when is_map(template_content) do
     with {:ok, installs} <- authored_installs(template_content, install_ref) do
+      # SECURITY (#165): this authored template content sets only
+      # composition/lineage fields — it does NOT set `public_view` (the
+      # template-level anon-unlock), so the socialware public-scope admin gate
+      # (enforced in `DefinitionRegistry.write_definition`) is the only public
+      # promotion reachable from this path. `public_view` gating is out of scope.
       {:ok,
        %{
          description: map_get(template_content, :description, ""),
