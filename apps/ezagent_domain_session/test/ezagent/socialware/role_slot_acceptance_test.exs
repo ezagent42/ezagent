@@ -1,8 +1,10 @@
 defmodule Ezagent.Socialware.RoleSlotAcceptanceTest do
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.Definition
+  alias Ezagent.Socialware.{Conformance, Definition}
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
+
+  @workspace_uri Ezagent.URI.new!("workspace://system")
 
   test "definition declarations contain role slots, not participant instance URIs" do
     assert {:ok, definition} =
@@ -78,5 +80,36 @@ defmodule Ezagent.Socialware.RoleSlotAcceptanceTest do
     assert String.contains?(first.path, "/agent/")
     assert {:ok, _uuid} = first.path |> Path.basename() |> Ecto.UUID.cast()
     refute URI.to_string(first) == URI.to_string(second)
+  end
+
+  test "legit recipe plus human-slot definition passes role conformance" do
+    recipe = "role-slot-acceptance-recipe-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{
+        name: recipe,
+        requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
+        skills: []
+      })
+
+    assert {:ok, definition} =
+             Definition.new(%{
+               name: "role-slot-conformance",
+               roles: [
+                 %{role_name: "bot", fill: :agent, recipe: recipe, flavor: "curl"},
+                 %{role_name: "visitor", fill: :human}
+               ],
+               routing_rules: [
+                 %{
+                   matcher: %{"type" => "always"},
+                   receivers: ["bot"],
+                   rule_set: "default",
+                   position: 0
+                 }
+               ],
+               prompt_templates: %{"answer" => "Use the context."}
+             })
+
+    assert :ok = Conformance.check(definition, @workspace_uri)
   end
 end
