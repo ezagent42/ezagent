@@ -165,11 +165,14 @@ defmodule EzagentCore.Umbrella.MixProject do
         "ecto.migrate --quiet",
         "precommit",
         "ezagent.check_invariants",
-        # T2-3 — socialware Definition conformance gate. Runs from the umbrella
-        # root with a full app boot (every plugin's adapters/recipes/view caps
-        # registered), so a definition naming a nonexistent recipe / view /
-        # adapter / prompt_template_ref goes RED.
-        "ezagent.socialware.check"
+        # T2-3 — socialware Definition conformance gate. It queries the
+        # ConfigStore (DB), so it CANNOT run in this same BEAM right after `test`:
+        # `mix test` leaves the Ecto SQL Sandbox in `:manual` mode, and this mix
+        # task's process owns no checked-out connection → `DBConnection.Ownership
+        # Error`. Run it in a FRESH `mix` process (a clean BEAM with a normal
+        # pool) — the same way the CI `gate` job runs it standalone-green. See
+        # `run_socialware_check/1`.
+        &run_socialware_check/1
       ]
     ]
   end
@@ -200,5 +203,24 @@ defmodule EzagentCore.Umbrella.MixProject do
         Mix.raise("pnpm install failed in #{dir} (exit status #{status})")
       end
     end)
+  end
+
+  # `mix ezagent.socialware.check` in a FRESH `mix` process. It must not run in
+  # the `ci.local` BEAM after `test`, because `mix test` leaves the Ecto SQL
+  # Sandbox in `:manual` mode and the task's DB query (ConfigStore.resolve) then
+  # dies with `DBConnection.OwnershipError` (no ownership for the task process).
+  # A child `mix` boots a clean app with a normal pool — identical to how the CI
+  # `gate` job runs it green as its own step. Inherits MIX_ENV/MIX_TEST_PARTITION
+  # from the environment, so it hits the same test DB `ecto.create` already made.
+  defp run_socialware_check(_args) do
+    {_out, status} =
+      System.cmd("mix", ["ezagent.socialware.check"],
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true
+      )
+
+    if status != 0 do
+      Mix.raise("ezagent.socialware.check failed (exit status #{status})")
+    end
   end
 end
