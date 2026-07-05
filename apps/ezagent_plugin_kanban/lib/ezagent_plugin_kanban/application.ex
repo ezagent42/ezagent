@@ -28,8 +28,42 @@ defmodule EzagentPluginKanban.Application do
   use Application
   use Ezagent.Plugin
 
+  require Logger
+
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    result = Ezagent.Plugin.boot(__MODULE__)
+    :ok = maybe_seed_kanban_team()
+    result
+  end
+
+  # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
+  @compile_env Mix.env()
+
+  # Code-seed the `kanban-team` socialware Definition at boot (mirrors hello's
+  # `maybe_publish_hello_demo`). Skipped in `:test` — the DB write at plugin boot
+  # contends with the per-test Ecto sandbox (same reason hello skips test; ExUnit
+  # seeds inside a checked-out sandbox instead). Boot-safe: any seed failure
+  # (including a stripped release without the session domain, a test-only dep)
+  # downgrades to a log and NEVER crashes boot.
+  defp maybe_seed_kanban_team do
+    if @compile_env == :test do
+      :ok
+    else
+      case EzagentPluginKanban.KanbanTeam.seed_definition() do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("kanban-team definition seed failed (boot-safe): #{inspect(reason)}")
+          :ok
+      end
+    end
+  rescue
+    e ->
+      Logger.warning("kanban-team definition seed raised (boot-safe): #{inspect(e)}")
+      :ok
+  end
 
   @impl Ezagent.Plugin
   def plugin_info do
