@@ -383,8 +383,11 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
           version: definition.version,
           title: definition.title || definition.name,
           description: definition.description || "",
+          roles: definition.roles,
           public?: public?(definition),
-          workspace_uri: object.workspace_uri
+          workspace_uri: object.workspace_uri,
+          config_id: object.id,
+          content_hash: object.content_hash
         }
       ]
     else

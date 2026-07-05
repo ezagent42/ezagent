@@ -68,6 +68,15 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &remove_participant(socket, &1, participant))
   end
 
+  def handle_dispatch(
+        socket,
+        "session.assign_role",
+        %{"session_uri" => sid, "member" => member, "role_name" => role_name}
+      )
+      when is_binary(member) and is_binary(role_name) do
+    with_session(socket, sid, &assign_role(socket, &1, member, role_name))
+  end
+
   def handle_dispatch(socket, "session.create", %{"short_name" => short_name} = args)
       when is_binary(short_name) do
     create_session(
@@ -75,7 +84,8 @@ defmodule Ezagent.World.ConversationActions do
       short_name,
       Map.get(args, "template_name", "default"),
       Map.get(args, "socialware_ref"),
-      socialware_revision(args)
+      socialware_revision(args),
+      socialware_install_config(args)
     )
   end
 
@@ -253,9 +263,17 @@ defmodule Ezagent.World.ConversationActions do
           String.t(),
           String.t(),
           String.t() | nil,
-          Ezagent.World.SocialwareInstall.revision() | nil
+          Ezagent.World.SocialwareInstall.revision() | nil,
+          map()
         ) :: {:noreply, Phoenix.LiveView.Socket.t()}
-  def create_session(socket, short_name, template_name, socialware_ref \\ nil, revision \\ nil)
+  def create_session(
+        socket,
+        short_name,
+        template_name,
+        socialware_ref \\ nil,
+        revision \\ nil,
+        install_config \\ %{}
+      )
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
@@ -283,7 +301,8 @@ defmodule Ezagent.World.ConversationActions do
                caller,
                template_name,
                socialware_ref,
-               revision
+               revision,
+               install_config
              ) do
           {:ok, create_template_name} ->
             do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
@@ -306,6 +325,13 @@ defmodule Ezagent.World.ConversationActions do
 
       _ ->
         nil
+    end
+  end
+
+  defp socialware_install_config(args) when is_map(args) do
+    case Map.get(args, "role_slots") do
+      role_slots when is_list(role_slots) -> %{"role_slots" => role_slots}
+      _ -> %{}
     end
   end
 
@@ -754,6 +780,34 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
+  @doc """
+  Assign an open socialware human role slot to a user member from the world UI.
+  """
+  @spec assign_role(Phoenix.LiveView.Socket.t(), URI.t(), String.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def assign_role(socket, %URI{} = session_uri, member_str, role_name)
+      when is_binary(member_str) and is_binary(role_name) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    case parse_member_uri(member_str) do
+      {:ok, %URI{} = member_uri} ->
+        case Ezagent.Session.RoleAssignments.assign_role(session_uri, member_uri, role_name, %{
+               caller: caller,
+               caps: caps
+             }) do
+          {:ok, _assigned} ->
+            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
+    end
+  end
+
   defp parse_member_uri(str) do
     case Ezagent.URI.parse(String.trim(str)) do
       {:ok, %URI{} = uri} -> {:ok, uri}
@@ -774,7 +828,8 @@ defmodule Ezagent.World.ConversationActions do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
           push_event(socket, "members:update", %{
-            "members" => ConversationData.member_options(session_uri)
+            "members" => ConversationData.member_options(session_uri),
+            "human_role_slots" => ConversationData.human_role_slots(session_uri)
           })
 
         _ ->

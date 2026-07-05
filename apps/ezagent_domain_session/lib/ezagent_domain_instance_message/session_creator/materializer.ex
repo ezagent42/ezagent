@@ -150,6 +150,45 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   end
 
   @doc """
+  Grant the session owner authority to assign open human role slots in the session.
+  """
+  @spec grant_owner_assign_role_cap(URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_owner_assign_role_cap(
+        %URI{} = session_uri,
+        %URI{} = owner_uri,
+        %URI{} = workspace_uri
+      ) do
+    want = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: :assign_role,
+      instance: session_uri,
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    current =
+      EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri)
+
+    if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
+      :ok
+    else
+      result =
+        Ezagent.Identity.Grant.grant_cap(
+          owner_uri,
+          want,
+          {:rule, :session_participation, owner_uri}
+        )
+
+      case result do
+        :ok -> :ok
+        {:error, reason} -> {:error, {:assign_role_cap_grant_failed, reason}}
+      end
+    end
+  end
+
+  @doc """
   Grant the session OWNER, at create, the participant-TEARDOWN authority (F7
   PR-B, SPEC §2.2 / §3.5 — the cap-model change).
 

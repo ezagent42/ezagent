@@ -111,9 +111,12 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       # F7 PR-A — :remove_participant added (isomorphic participant removal).
       # Membership-cap unification Part C (spec §C.4/§C.5) — :approve_admission /
       # :deny_admission / :withdraw_admission added (cap-exempt admission actions).
+      # Socialware role-slot P3 — :assign_role assigns human role_name on the session
+      # member edge without baking participants into definitions.
       assert Enum.sort(SessionBehavior.__action_names__()) ==
                [
                  :approve_admission,
+                 :assign_role,
                  :attach,
                  :deny_admission,
                  :join,

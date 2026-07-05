@@ -67,8 +67,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     with {:ok, resolved} <-
            Installation.resolved_template_installs(template_content, workspace_uri) do
       config =
-        Enum.reduce(resolved, empty_config(), fn {definition, _object, _install}, acc ->
-          merge_definition(acc, definition)
+        Enum.reduce(resolved, empty_config(), fn {definition, _object, install}, acc ->
+          merge_definition(acc, definition, install)
         end)
         |> merge_legacy_template_fields(template_content)
 
@@ -319,9 +319,9 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     }
   end
 
-  defp merge_definition(acc, %Definition{} = definition) do
+  defp merge_definition(acc, %Definition{} = definition, install) do
     %{
-      roles: acc.roles ++ definition.roles,
+      roles: acc.roles ++ apply_role_slot_config(definition.roles, install_config(install)),
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
       legends: Map.merge(acc.legends, definition.legends),
@@ -329,6 +329,59 @@ defmodule Ezagent.Socialware.DefinitionEditor do
         acc.orchestrator_template_uri || definition.orchestrator_template_uri
     }
   end
+
+  defp install_config(%{config: config}) when is_map(config), do: config
+  defp install_config(_install), do: %{}
+
+  defp apply_role_slot_config(roles, config) when is_list(roles) and is_map(config) do
+    choices =
+      config
+      |> map_get(:role_slots, [])
+      |> role_slot_choices_by_name()
+
+    Enum.map(roles, &apply_role_slot_choice(&1, Map.get(choices, map_get(&1, :role_name))))
+  end
+
+  defp role_slot_choices_by_name(choices) when is_list(choices) do
+    choices
+    |> Enum.filter(&is_map/1)
+    |> Map.new(fn choice -> {map_get(choice, :role_name), choice} end)
+    |> Map.delete(nil)
+  end
+
+  defp role_slot_choices_by_name(_), do: %{}
+
+  defp apply_role_slot_choice(role, nil), do: role
+
+  defp apply_role_slot_choice(%{fill: :agent} = role, choice) when is_map(choice) do
+    role
+    |> maybe_put_flavor(map_get(choice, :flavor))
+    |> maybe_put_install_mode(map_get(choice, :mode) || map_get(choice, :install_mode))
+    |> maybe_put_reuse_agent_uri(map_get(choice, :agent_uri) || map_get(choice, :reuse_agent_uri))
+  end
+
+  defp apply_role_slot_choice(role, _choice), do: role
+
+  defp maybe_put_flavor(role, flavor) when is_binary(flavor) and flavor != "",
+    do: Map.put(role, :flavor, flavor)
+
+  defp maybe_put_flavor(role, _), do: role
+
+  defp maybe_put_install_mode(role, mode) when mode in [:fresh, "fresh"],
+    do: Map.put(role, :install_mode, :fresh)
+
+  defp maybe_put_install_mode(role, mode) when mode in [:reuse, "reuse"],
+    do: Map.put(role, :install_mode, :reuse)
+
+  defp maybe_put_install_mode(role, _), do: role
+
+  defp maybe_put_reuse_agent_uri(role, %URI{} = uri), do: Map.put(role, :reuse_agent_uri, uri)
+
+  defp maybe_put_reuse_agent_uri(role, value) when is_binary(value) and value != "" do
+    Map.put(role, :reuse_agent_uri, Ezagent.URI.new!(value))
+  end
+
+  defp maybe_put_reuse_agent_uri(role, _), do: role
 
   defp merge_legacy_template_fields(config, template_content) do
     legacy_members = list_field(template_content, :members)

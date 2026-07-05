@@ -20,6 +20,8 @@ defmodule Ezagent.World.SocialwareInstall do
           optional(:content_hash) => String.t() | nil
         }
 
+  @type install_config :: map()
+
   @doc """
   Return the template name that should be used for `session.create`.
 
@@ -40,16 +42,31 @@ defmodule Ezagent.World.SocialwareInstall do
           URI.t(),
           String.t(),
           String.t() | nil,
-          revision() | nil
+          revision() | nil,
+          install_config()
         ) :: {:ok, String.t()} | {:error, term()}
-  def prepare_create_template(workspace_uri, caller, template_name, ref, revision \\ nil)
+  def prepare_create_template(
+        workspace_uri,
+        caller,
+        template_name,
+        ref,
+        revision \\ nil,
+        install_config \\ %{}
+      )
 
-  def prepare_create_template(_workspace_uri, _caller, template_name, ref, _revision)
+  def prepare_create_template(_workspace_uri, _caller, template_name, ref, _revision, _config)
       when ref in [nil, ""] do
     {:ok, template_name}
   end
 
-  def prepare_create_template(%URI{} = workspace_uri, %URI{} = caller, template_name, ref, revision)
+  def prepare_create_template(
+        %URI{} = workspace_uri,
+        %URI{} = caller,
+        template_name,
+        ref,
+        revision,
+        install_config
+      )
       when is_binary(ref) do
     ref = String.trim(ref)
 
@@ -59,6 +76,7 @@ defmodule Ezagent.World.SocialwareInstall do
       template_name = "socialware-install-#{sanitize_template_name(ref)}"
 
       with {:ok, install_entry} <- resolve_install_entry(workspace_uri, ref, revision),
+           {:ok, install_entry} <- put_install_config(install_entry, install_config),
            {:ok, template_uri} <-
              persist_install_template(workspace_uri, caller, template_name, install_entry),
            :ok <- publish_current_template(workspace_uri, template_name, template_uri, caller) do
@@ -67,7 +85,7 @@ defmodule Ezagent.World.SocialwareInstall do
     end
   end
 
-  def prepare_create_template(_workspace_uri, _caller, _template_name, _ref, _revision),
+  def prepare_create_template(_workspace_uri, _caller, _template_name, _ref, _revision, _config),
     do: {:error, :invalid_socialware_ref}
 
   # Content-hash-addressed install (P1 §O-1): a revision identity resolves the
@@ -103,6 +121,29 @@ defmodule Ezagent.World.SocialwareInstall do
     case Ezagent.Socialware.DefinitionRegistry.lookup(workspace_uri, ref) do
       {:ok, definition, object} -> {:ok, definition, object}
       :error -> {:error, {:unknown_socialware_install, ref}}
+    end
+  end
+
+  defp put_install_config(install_entry, config) when config in [%{}, nil], do: {:ok, install_entry}
+
+  defp put_install_config(install_entry, config) when is_map(config) do
+    normalized = normalize_install_config(config)
+
+    entry =
+      case install_entry do
+        ref when is_binary(ref) -> %{ref: ref, config: normalized}
+        %{} = map -> Map.put(map, :config, normalized)
+      end
+
+    {:ok, entry}
+  end
+
+  defp put_install_config(_install_entry, config), do: {:error, {:invalid_install_config, config}}
+
+  defp normalize_install_config(config) do
+    case Map.get(config, :role_slots) || Map.get(config, "role_slots") do
+      role_slots when is_list(role_slots) -> %{"role_slots" => role_slots}
+      _ -> %{}
     end
   end
 

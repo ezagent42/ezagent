@@ -118,4 +118,33 @@ defmodule Ezagent.World.SocialwareInstallTest do
     assert install.ref == name
     assert install.config_id == nil
   end
+
+  test "operator role-slot choices are carried only as install config" do
+    spawn_caller!()
+    name = "cidw-role-slots-#{uniq()}"
+    write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
+
+    role_slots = [
+      %{"role_name" => "researcher", "mode" => "fresh", "flavor" => "codex"},
+      %{
+        "role_name" => "advisor",
+        "mode" => "reuse",
+        "agent_uri" => "entity://cidw-consumer/agent/alice-advisor"
+      }
+    ]
+
+    assert {:ok, template_name} =
+             SocialwareInstall.prepare_create_template(
+               @ws_consumer,
+               @caller,
+               "default",
+               name,
+               nil,
+               %{"role_slots" => role_slots}
+             )
+
+    install = install_of(template_name, @ws_consumer)
+    assert install.ref == name
+    assert install.config == %{"role_slots" => role_slots}
+  end
 end

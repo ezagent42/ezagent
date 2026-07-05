@@ -569,6 +569,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                effective_owner,
                workspace_uri
              ),
+           :ok <-
+             Materializer.grant_owner_assign_role_cap(
+               session_uri,
+               effective_owner,
+               workspace_uri
+             ),
            # F7 PR-B — grant the owner the participant-TEARDOWN authority (the
            # `{:spawned_by, owner_uri}` cap-model change, SPEC §2.2) so the
            # session can reap workers it spawned WITHOUT the orchestrator's cap
