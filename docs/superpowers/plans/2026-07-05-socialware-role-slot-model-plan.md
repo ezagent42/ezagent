@@ -45,6 +45,8 @@
 
 - [ ] **Step 1: Write the gate + teeth test** (model on `member_cap_grant_seam_test.exs` — self-contained `Path.wildcard` + AST/string scan). Scan `apps/*/lib` socialware definition/render modules + a synthetic decoded-JSON fixture. The main assertion allowlists NOTHING (target state); the teeth test plants a `%{role_name, uri: "entity://ws/agent/x"}` member + an `entity://…/agent/…` receiver string and asserts the scanner flags both.
 - [ ] **Step 2: Run it — expect RED on the real tree** (`members`/`uri` in `definition.ex`/`template_team.ex`, URI receivers in `conformance.ex`). Capture the offender list — this is the Task 2-7 worklist. Run: `mix test apps/ezagent_core/test/architecture/socialware_declaration_uri_gate_test.exs`. Expected: teeth test PASS, main test FAIL listing the current URI sites.
+
+  > **Scope (codex plan-review LOW):** Gate A is a STATIC scan of repo-authored definitions, rendered maps, source literals, and decoded-JSON fixtures. It does NOT scan already-persisted DB `ConfigObject` rows — those are out of scope (pre-prod: the design mandates wipe/reseed, no back-compat). State this in the test moduledoc. The teeth test MUST exercise the same recursive decoded-map scanner the main assertion uses.
 - [ ] **Step 3: Commit** (`test(socialware): Gate A — no participant instance URI in a definition (starts red = worklist)`).
 
 ## Task 2: `Definition.roles` schema + retire `members`
@@ -96,32 +98,36 @@
 ## Task 5: Materialize from role slots (fresh) + retire the direct-uri clause
 
 **Files:**
-- Modify: `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex` (`provision_declared_member` `:48`, `ensure_member_present` `:76`/`:109`)
-- Modify: `apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex` (`members` render `:42-47`, `instantiate` `:138-140`)
+- Modify: `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex` — **THE real socialware recipe-agent materializer** (`materialize_definition_agents/4` `:65-96`, called from `TemplateTeam.materialize_template_team/4` `:29`). Uses role-derived URIs + `RecipeMaterializer.create_agent_from_recipe/1` today; repoint to consume `roles` (agent slots) with **uuid** URIs. (codex plan-review HIGH — the plan MUST update this, not only template_team.)
+- Modify: `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex` (`provision_declared_member` `:48`, `ensure_member_present` `:76`/`:109` direct-uri clause, `materialize_template_team` `:29`)
+- Modify: `apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex` — the persisted-content **key list at `:764`** (NOT the `:42-47` moduledoc, codex plan-review MED); drop `uri`/`source_template_uri` on the socialware-render path.
 - Test: `apps/ezagent_domain_session/test/integration/session_template_materialize_test.exs` (extend)
 
 **Interfaces:**
 - Consumes: role slots (Task 4).
-- Produces: `TemplateTeam.provision_role_slot/4` — for an `:agent` slot, materialize a FRESH agent via `RecipeMaterializer.template_content(recipe, %{flavor, agent_uri: <uuid>})` + spawn, returning `{:ok, agent_uri, %{role_name: slot.role_name}}`. The direct-`uri` `ensure_member_present` clause (`:109`) is DELETED. The socialware-render SessionTemplate `members` become role-slot-derived (no `uri`/`source_template_uri` on this path).
+- Produces: `DefinitionAgents.materialize_definition_agents/4` + `TemplateTeam.provision_role_slot/4` — for an `:agent` slot, materialize a FRESH agent via `RecipeMaterializer.create_agent_from_recipe/1` (recipe+flavor) with a **uuid** `agent_uri` (NOT role-derived), returning `{:ok, agent_uri, %{role_name: slot.role_name}}`. The direct-`uri` `ensure_member_present` clause (`:109`) is DELETED.
 
-- [ ] **Step 1: Write failing test** — a session created from a def with an agent role slot lazily provisions a FRESH uuid agent bound to the slot's `role_name`; assert the provisioned agent URI is NOT role-derived (no `<role>-` segment) and no member declaration carried a `uri`.
+- [ ] **Step 1: Write failing test** — a session created from a def with an agent role slot provisions a FRESH uuid agent bound to the slot's `role_name`; assert the provisioned agent URI is NOT role-derived (no `<role>-` segment) and no member declaration carried a `uri`.
 - [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement** — add `provision_role_slot/4` (fresh materialize from recipe+flavor, uuid agent); delete `ensure_member_present`'s direct-`uri` clause; repoint `RouteProvisioner`/`Materializer` to consume role slots; drop `uri`/`source_template_uri` on the socialware-render path in `session_template.ex`.
+- [ ] **Step 3: Implement** — update `DefinitionAgents.materialize_definition_agents/4` to iterate `roles` agent slots (uuid URIs, `create_agent_from_recipe`); add `TemplateTeam.provision_role_slot/4`; delete `ensure_member_present`'s direct-`uri` clause; repoint `RouteProvisioner`/`Materializer` to role slots; drop `uri`/`source_template_uri` on the socialware-render key list (`session_template.ex:764`).
 - [ ] **Step 4: Run → pass.**
 - [ ] **Step 5: Commit** (`feat(socialware): materialize agents from role slots (fresh recipe), retire direct-uri members`).
 
 ## Task 6: `source_template_uri` → recipe; owner = installer
 
 **Files:**
-- Modify: `apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex` (`owner_policy` `:29`/`:70` — drop `:fixed`), `installation.ex` (`owner_uri_for_template` `:103`), `orchestrator/tools.ex:115` + `orchestrator/tools/member_template.ex:622` (`source_agent_template_uri` consumers)
+- Modify: `apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex` — drop `:fixed` from `owner_policy/1` (`:70`) AND rewrite `validate_anon_owner/2` (`:396`, which today REQUIRES `:fixed` for `web_anon_access: true` — codex plan-review HIGH) to require **installer/operator ownership** semantics instead of a baked owner URI.
+- Modify: `apps/ezagent_domain_session/lib/ezagent/socialware/definition_registry.ex` — the **built-in socialware seed declares a fixed admin owner (`:290`)** (codex plan-review HIGH); change it to installer/owner-at-materialize (admin-as-installer for the boot seed).
+- Modify: `apps/ezagent_domain_session/lib/ezagent/socialware/installation.ex` (`owner_uri_for_template` `:103`)
+- Modify: `orchestrator/tools.ex` (`source_agent_template_uri` real uses `:137`/`:167`/`:207` — NOT the `:115` doc, codex plan-review MED) + `orchestrator/tools/member_template.ex` (real consumers `:102`/`:253`/`:633` — NOT the `:622` comment).
 - Test: `apps/ezagent_domain_session/test/ezagent/socialware/definition_test.exs` + `installation_test.exs`
 
 **Interfaces:**
-- Produces: `owner_policy` accepts only `%{type: :installer}` (default kept); `Definition.new/1` rejects `%{type: :fixed, owner_uri: …}` → `{:error, {:socialware_definition_declares_owner_uri, _}}`. `source_template_uri` member declarations are converted to recipe slots (author-time migration; the `source_agent_template_uri` consumers repoint to recipe).
+- Produces: `owner_policy` accepts only `%{type: :installer}` (default kept); `Definition.new/1` rejects `%{type: :fixed, owner_uri: …}` → `{:error, {:socialware_definition_declares_owner_uri, _}}`; `validate_anon_owner` passes when the installer is a non-anon principal (no baked owner URI). `Installation.owner_uri_for_template/3` returns the INSTALLER's uri. `source_agent_template_uri` consumers repoint to recipe.
 
-- [ ] **Step 1: Write failing tests** — `Definition.new(%{owner_policy: %{type: :fixed, owner_uri: "entity://ws/user/x"}, …})` → `{:error, {:socialware_definition_declares_owner_uri, _}}`; `Installation.owner_uri_for_template/3` returns the INSTALLER's uri (not a baked one).
+- [ ] **Step 1: Write failing tests** — `Definition.new(%{owner_policy: %{type: :fixed, owner_uri: "entity://ws/user/x"}, …})` → `{:error, {:socialware_definition_declares_owner_uri, _}}`; a `web_anon_access: true` def with NO fixed owner but a non-anon installer → `:ok` (installer owns); `Installation.owner_uri_for_template/3` returns the INSTALLER's uri; the built-in socialware seed publishes without a fixed owner URI.
 - [ ] **Step 2: Run → fail.**
-- [ ] **Step 3: Implement** — remove the `:fixed` branch from `owner_policy/1`; `owner_uri_for_template` derives from the installer/caller; repoint the two `source_agent_template_uri` consumers to recipe.
+- [ ] **Step 3: Implement** — remove the `:fixed` branch; rewrite `validate_anon_owner` to require a non-anon installer (not a baked URI); update the `definition_registry` boot seed to installer-owned (admin-as-installer); `owner_uri_for_template` derives from the installer/caller; repoint the two `source_agent_template_uri` consumers to recipe.
 - [ ] **Step 4: Run → pass.**
 - [ ] **Step 5: Commit** (`feat(socialware): owner=installer (drop owner_policy.fixed URI); source_template→recipe`).
 
@@ -149,7 +155,8 @@
 **Interfaces:**
 - Consumes: everything above.
 
-- [ ] **Step 1: Migrate the fixture** — the bot member `%{"role_name" => "bot", "uri" => …}` → an agent role slot `%{role_name: "bot", fill: :agent, recipe: "<echo/curl recipe>", flavor: "curl"}`; the bot becomes a FRESH recipe-materialized agent assigned `bot` on its edge (drop the pre-spawned `bot_uri`); update the `:77` assertion + `role_member_uri`-based checks.
+- [ ] **Step 1: Seed a concrete non-passive test recipe** (codex plan-review BLOCKER — there is NO `ezagent_plugin_echo` in this checkout, `curl` is a FLAVOR not a recipe, and the `kb` recipe is `passive: true` so it CANNOT be a joined bot member: `session.ex:720` rejects passive actors). In the E2E `setup`, register a minimal **non-passive** recipe via `RecipeRegistry.seed_role_if_absent(%{name: "p10-bot", requested_caps: […], passive: false, config: %{…}})` under a real flavor whose template class exists (`AgentFlavorRegistry` — use `"curl"`). Verify `RecipeRegistry.lookup(ws, "p10-bot")` resolves + the flavor's template class is registered.
+- [ ] **Step 1b: Migrate the fixture** — the bot member `%{"role_name" => "bot", "uri" => …}` → an agent role slot `%{role_name: "bot", fill: :agent, recipe: "p10-bot", flavor: "curl"}`; the bot becomes a FRESH recipe-materialized agent assigned `bot` on its edge (drop the pre-spawned `bot_uri` + its `spawn_agent`); update the `:77` assertion + `role_member_uri`-based checks. Also drop the fixed-owner data the P10 form authors (`:369`) — the session owner is the installer/admin_ctx (codex plan-review HIGH).
 - [ ] **Step 2: Run the P10 E2E → pass.** `mix test apps/ezagent_plugin_kb/test/e2e/socialware_p10_codex_gate_test.exs`.
 - [ ] **Step 3: Run Gate A → now GREEN** (all URI sites retired). `mix test apps/ezagent_core/test/architecture/socialware_declaration_uri_gate_test.exs`. Expected: PASS (teeth still trips on the planted fixture).
 - [ ] **Step 4: Full gate** — `mix ezagent.check_invariants` + `mix ezagent.uri_query.scan` + `mix test apps/ezagent_core/test/architecture apps/ezagent_core/test/invariants` + the 6 flavor plugins + `apps/ezagent_domain_session/test`. All green. [[feedback_run_check_invariants_gate]]
