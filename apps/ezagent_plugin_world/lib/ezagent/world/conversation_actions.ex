@@ -405,7 +405,11 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply,
            socket
            |> assign(:last_dispatch_status, "ok")
-           |> push_event("world:state", %{"publish_notice" => "已发布为模板"})}
+           |> push_world_state(%{
+             "publish_notice" => "已发布为模板",
+             "templates" =>
+               Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
+           })}
 
         {:error, reason} ->
           {:noreply,
