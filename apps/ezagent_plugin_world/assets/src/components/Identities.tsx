@@ -197,7 +197,7 @@ const secondaryActionLinkClass =
 const agentShellClass =
   "grid h-full min-h-0 overflow-hidden border-y border-border bg-background text-foreground lg:grid-cols-[276px_minmax(520px,1fr)]"
 const agentPanelClass = "min-h-0 overflow-y-auto bg-background p-4"
-const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions", "Terminal"] as const
+const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions"] as const
 const defaultAgentFlavors = ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"]
 const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   cc: [
@@ -625,7 +625,6 @@ function AgentsTable({state}: {state: IdentitiesState}) {
                       ["Keys", agent.api_keys_path],
                       ["Caps", agent.caps_path],
                       ["Extensions", agent.extensions_path],
-                      ["Terminal", agent.detail_path ? `${agent.detail_path}/terminal` : null],
                     ]}
                   />
                 </div>
@@ -1060,10 +1059,6 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
               ? "格式：kind.behavior（逗号分隔，如 chat.send）"
               : "请求 kind.behavior（action 默认 any）→ 系统按 CapBAC 授予（详情页显示 granted）"}
           </span>
-        </label>
-        <label className="flex items-center gap-2 text-sm text-foreground">
-          <input type="checkbox" checked={form.with_pty} onChange={(event) => setForm({...form, with_pty: event.target.checked})} />
-          <span>With PTY</span>
         </label>
         <div className="flex items-center justify-between gap-3 sm:col-span-2">
           <code className={codeClass}>{preview}</code>
@@ -1610,7 +1605,6 @@ function AgentRouteTabs({
     Keys: encoded ? `/identities/agents/${encoded}/api-keys` : null,
     Caps: encoded ? `/identities/agents/${encoded}/caps` : null,
     Extensions: encoded ? `/identities/agents/${encoded}/extensions` : null,
-    Terminal: encoded ? `/identities/agents/${encoded}/terminal` : null,
   }
 
   return (

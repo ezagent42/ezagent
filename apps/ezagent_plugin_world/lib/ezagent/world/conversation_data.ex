@@ -49,6 +49,7 @@ defmodule Ezagent.World.ConversationData do
       "workspace_uri" => encode_uri(workspace_uri),
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
+      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => members,
