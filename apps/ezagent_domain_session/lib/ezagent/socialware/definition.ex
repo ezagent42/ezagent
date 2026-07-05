@@ -356,12 +356,9 @@ defmodule Ezagent.Socialware.Definition do
   defp participant_uri_values(_value, acc), do: acc
 
   defp participant_instance_uri?(value) do
-    case URI.parse(value) do
-      %URI{scheme: "entity", path: "/" <> path} ->
-        case String.split(path, "/", trim: true) do
-          [type | _] when type in ["agent", "user"] -> true
-          _ -> false
-        end
+    case Ezagent.URI.parse(value) do
+      {:ok, %URI{} = uri} ->
+        Ezagent.URI.type?(uri, :agent) or Ezagent.URI.type?(uri, :user)
 
       _ ->
         false

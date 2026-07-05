@@ -119,8 +119,13 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
   defp receiver_value(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp receiver_value(other), do: other
 
-  defp ensure_user_member_uri(%URI{scheme: "entity", path: "/user/" <> _}), do: :ok
-  defp ensure_user_member_uri(%URI{} = uri), do: {:error, {:socialware_member_uri_not_human, uri}}
+  defp ensure_user_member_uri(%URI{} = uri) do
+    if Ezagent.URI.type?(uri, :user) do
+      :ok
+    else
+      {:error, {:socialware_member_uri_not_human, uri}}
+    end
+  end
 
   defp role_name_from_facets(facets) do
     case Map.get(facets, :role_name) || Map.get(facets, "role_name") do
