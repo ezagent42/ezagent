@@ -77,11 +77,6 @@ defmodule Ezagent.Socialware.Demo.Hello do
     name = Keyword.get(opts, :name, @name)
     recipe_name = Keyword.get(opts, :recipe_name, @recipe)
     role_name = Keyword.get(opts, :role_name, @role)
-    # D-5 owner (below) as a JSON-manifest string. Computed on its own line (not
-    # inline in the map) so the uri-query scan's `:uri_string_key` heuristic —
-    # which flags `URI.to_string` in a `%{ … => … }` line as a possible routing
-    # KEY — does not false-positive on this owner-policy VALUE.
-    admin_owner_uri = URI.to_string(Ezagent.Entity.User.admin_uri())
 
     %{
       "name" => name,
@@ -99,8 +94,8 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "Elixir.Ezagent.ActionSet.SupervisorApproval"
       ],
       "views" => ["hello_render"],
-      "agents" => [
-        %{"recipe" => recipe_name, "role_name" => role_name, "flavor" => "py"}
+      "roles" => [
+        %{"role_name" => role_name, "fill" => "agent", "recipe" => recipe_name, "flavor" => "py"}
       ],
       "prompt_templates" => %{"hello" => "Say hello: {body}"},
       "legends" => %{
@@ -123,15 +118,6 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "scope" => "public",
         "publish_policy" => "supervised",
         "web_anon_access" => true
-      },
-      # D-5 (§7.3) — the hello demo is `web_anon_access: true` (a headless anon
-      # homesite with no logged-in installer), so it MUST declare a `:fixed`
-      # owner. The system admin reproduces the bespoke path's hard-coded
-      # `User.admin_uri()` (`app.ex:50-56`) as DATA. Adding this field churns the
-      # def's content_hash once → a benign one-time re-promotion on deploy (§7.5).
-      "owner_policy" => %{
-        "type" => "fixed",
-        "uri" => admin_owner_uri
       }
     }
   end

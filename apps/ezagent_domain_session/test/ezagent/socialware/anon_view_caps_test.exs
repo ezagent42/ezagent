@@ -56,16 +56,10 @@ defmodule Ezagent.Socialware.AnonViewCapsTest do
   defp uniq, do: System.unique_integer([:positive])
 
   defp write_def(name, view_mod, anon_access?) do
-    # D-5 — an anon def (`web_anon_access: true`) MUST declare a `:fixed` owner;
-    # a private def defaults to `:installer`.
-    owner_policy =
-      if anon_access?, do: %{type: :fixed, uri: @actor}, else: %{type: :installer}
-
     {:ok, definition} =
       Definition.new(%{
         name: name,
         views: [view_mod],
-        owner_policy: owner_policy,
         visibility_policy: %{publish_policy: :auto, web_anon_access: anon_access?}
       })
 

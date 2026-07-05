@@ -12,9 +12,10 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, Invocation, Message, MessageStore, Workspace}
+  alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.AgentBridge.TokenStore
   alias Ezagent.ActionSet.KindBase
-  alias Ezagent.Entity.{Agent, User}
+  alias Ezagent.Entity.User
   alias Ezagent.Session.SessionManager
   alias Ezagent.Socialware.{AnonAdmission, DefinitionRegistry, Installation}
   alias Ezagent.World.{ConversationData, WorkspacePluginActions}
@@ -44,7 +45,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     supervisor_a = Ezagent.URI.user(ws, "supervisor-a")
     supervisor_b = Ezagent.URI.user(ws, "supervisor-b")
     stale_supervisor = Ezagent.URI.user(ws, "stale-supervisor")
-    bot_uri = Ezagent.URI.agent(ws, "bot-p10-#{uniq()}")
+    bot_recipe = "p10-bot-recipe-#{uniq()}"
 
     {:ok, _} = Workspace.create(ws, %{})
     :ok = spawn_user(author)
@@ -52,8 +53,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     :ok = spawn_user(supervisor_a)
     :ok = spawn_user(supervisor_b)
     :ok = spawn_user(stale_supervisor)
-    :ok = spawn_agent(bot_uri, workspace_uri)
-    on_exit(fn -> cleanup_agent(bot_uri) end)
+    :ok = seed_bot_recipe(bot_recipe)
 
     supervised_template = "p10-supervised-#{uniq()}"
     supervised_app = "#{supervised_template}-app"
@@ -64,7 +64,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         author,
         supervised_template,
         supervised_app,
-        bot_uri,
+        bot_recipe,
         publish_policy: "supervised"
       )
 
@@ -74,8 +74,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     assert supervised_hash == template_hash(supervised_template_uri)
 
     assert {:ok, definition, object} = DefinitionRegistry.lookup(workspace_uri, supervised_app)
-    assert [%{"role_name" => "bot", "uri" => bot_uri_string}] = definition.members
-    assert bot_uri_string == URI.to_string(bot_uri)
+    assert [%{role_name: "bot", fill: :agent, recipe: ^bot_recipe}] = definition.roles
     assert [%{"adapter_id" => "web_feed"}] = definition.adapters
 
     assert definition.visibility_policy == %{
@@ -107,7 +106,8 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     {:ok, %{anon_uri: anon_uri}} = AnonAdmission.admit_anonymous_participant(session_uri)
     :ok = dispatch_send(anon_uri, session_uri, "Need the tier-one hotline")
     assert wait_until(fn -> recent_text?(session_uri, "Need the tier-one hotline") end)
-    assert wait_until(fn -> role_member_uri(session_uri, "bot") == bot_uri end)
+    assert wait_until(fn -> match?(%URI{}, role_member_uri(session_uri, "bot")) end)
+    bot_uri = role_member_uri(session_uri, "bot")
 
     assert route_targets_role?(anon_uri, session_uri, bot_uri)
 
@@ -266,7 +266,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     auto_app = "#{auto_template}-app"
 
     %{template_uri: _auto_template_uri} =
-      author_socialware_template(workspace_uri, author, auto_template, auto_app, bot_uri,
+      author_socialware_template(workspace_uri, author, auto_template, auto_app, bot_recipe,
         publish_policy: "auto"
       )
 
@@ -289,7 +289,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
          author,
          template_name,
          socialware_name,
-         bot_uri,
+         bot_recipe,
          opts
        ) do
     {:noreply, socket} =
@@ -307,7 +307,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
           "name" => template_name,
           "description" => "P10 socialware #{template_name}",
           "socialware" =>
-            socialware_form(socialware_name, Keyword.fetch!(opts, :publish_policy), bot_uri)
+            socialware_form(socialware_name, Keyword.fetch!(opts, :publish_policy), bot_recipe)
         }
       )
 
@@ -322,7 +322,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     }
   end
 
-  defp socialware_form(name, publish_policy, bot_uri) do
+  defp socialware_form(name, publish_policy, bot_recipe) do
     %{
       "name" => name,
       "bases" => [
@@ -334,12 +334,12 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         "Ezagent.ActionSet.Surface",
         "Ezagent.ActionSet.SupervisorApproval"
       ],
-      "members" => [
+      "roles" => [
         %{
-          "uri" => URI.to_string(bot_uri),
           "role_name" => "bot",
-          "in_session_template" => true,
-          "source_template_uri" => nil
+          "fill" => "agent",
+          "recipe" => bot_recipe,
+          "flavor" => "curl"
         }
       ],
       "routing_rules" => [
@@ -365,11 +365,6 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       "visibility_policy" => %{
         "publish_policy" => publish_policy,
         "web_anon_access" => true
-      },
-      # D-5 — an anon def MUST declare a :fixed owner.
-      "owner_policy" => %{
-        "type" => "fixed",
-        "uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
       }
     }
   end
@@ -582,14 +577,16 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     end
   end
 
-  defp spawn_agent(uri, workspace_uri) do
-    case Ezagent.Kind.spawn(Agent, %{uri: uri}) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
-    |> case do
-      :ok -> Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
-      other -> other
+  defp seed_bot_recipe(name) do
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
+
+    case RecipeRegistry.seed_role_if_absent(%{
+           name: name,
+           requested_caps: [%{behavior: Ezagent.ActionSet.Identity, action: :list_caps}],
+           skills: []
+         }) do
+      {:ok, _} -> :ok
+      error -> error
     end
   end
 
@@ -614,18 +611,6 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         if Process.alive?(pid) do
           DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
         end
-
-      :error ->
-        :ok
-    end
-  rescue
-    _ -> :ok
-  end
-
-  defp cleanup_agent(agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, pid} when is_pid(pid) ->
-        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
 
       :error ->
         :ok

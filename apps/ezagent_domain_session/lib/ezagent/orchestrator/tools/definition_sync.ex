@@ -11,28 +11,25 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
         %URI{} = member_uri,
         facets
       ) do
-    declaration =
-      %{
-        uri: member_uri,
-        role_name: Map.get(facets, :role_name),
-        in_session_template: Map.get(facets, :in_session_template),
-        source_template_uri: Map.get(facets, :source_template_uri)
-      }
+    with :ok <- ensure_user_member_uri(member_uri),
+         {:ok, role_name} <- role_name_from_facets(facets) do
+      DefinitionEditor.update_primary_for_session(
+        session_uri,
+        workspace_uri,
+        caller,
+        fn definition ->
+          slot = %{role_name: role_name, fill: :human}
 
-    DefinitionEditor.update_primary_for_session(
-      session_uri,
-      workspace_uri,
-      caller,
-      fn definition ->
-        members =
-          definition.members
-          |> Enum.reject(&(map_get(&1, :role_name) == declaration.role_name))
-          |> Kernel.++([declaration])
+          roles =
+            definition.roles
+            |> Enum.reject(&(map_get(&1, :role_name) == role_name))
+            |> Kernel.++([slot])
 
-        %{definition | members: members}
-      end
-    )
-    |> ok_unit()
+          %{definition | roles: roles}
+        end
+      )
+      |> ok_unit()
+    end
   end
 
   @spec rule(URI.t(), URI.t(), URI.t(), map(), String.t() | URI.t(), keyword()) ::
@@ -121,6 +118,16 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
 
   defp receiver_value(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp receiver_value(other), do: other
+
+  defp ensure_user_member_uri(%URI{scheme: "entity", path: "/user/" <> _}), do: :ok
+  defp ensure_user_member_uri(%URI{} = uri), do: {:error, {:socialware_member_uri_not_human, uri}}
+
+  defp role_name_from_facets(facets) do
+    case Map.get(facets, :role_name) || Map.get(facets, "role_name") do
+      role_name when is_binary(role_name) and role_name != "" -> {:ok, role_name}
+      other -> {:error, {:missing_socialware_member_role_name, other}}
+    end
+  end
 
   defp map_get(map, key, default \\ nil)
 

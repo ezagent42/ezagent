@@ -33,10 +33,12 @@ defmodule EzagentCore.Architecture.SocialwareDeclarationUriGateTest do
     {:definition_body_members, ~r/\bmembers:\s*json_safe\(/},
     {:definition_body_agents, ~r/\bagents:\s*json_safe\(/},
     {:direct_member_uri_clause, ~r/member_uri_field\(member,\s*:uri\)/},
-    {:source_template_uri_declaration, ~r/member_uri_field\(declaration,\s*:source_template_uri\)/},
+    {:source_template_uri_declaration,
+     ~r/member_uri_field\(declaration,\s*:source_template_uri\)/},
     {:uri_receiver_allowed, ~r/receiver_resolvable\?\(%URI\{\}/},
     {:receiver_uri_parse_allowed, ~r/Ezagent\.URI\.parse\(r\)/},
-    {:template_members_declaration, ~r/Map\.get\(content,\s*:members\)\s*\|\|\s*Map\.get\(content,\s*"members"\)/}
+    {:template_members_declaration,
+     ~r/Map\.get\(content,\s*:members\)\s*\|\|\s*Map\.get\(content,\s*"members"\)/}
   ]
 
   test "no participant instance URI can be declared in socialware definition/render code" do

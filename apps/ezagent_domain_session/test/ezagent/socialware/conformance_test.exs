@@ -47,7 +47,7 @@ defmodule Ezagent.Socialware.ConformanceTest do
     definition =
       write_def(%{
         name: "t2-conf-ok-#{n}",
-        agents: [%{recipe: recipe, role_name: "greeter-#{n}"}],
+        roles: [%{role_name: "greeter-#{n}", fill: :agent, recipe: recipe, flavor: "curl"}],
         prompt_templates: %{"hop" => "relay: {body}"},
         routing_rules: [
           %{
@@ -67,7 +67,14 @@ defmodule Ezagent.Socialware.ConformanceTest do
     definition =
       write_def(%{
         name: "t2-conf-badrecipe-#{n}",
-        agents: [%{recipe: "no-such-recipe-#{n}", role_name: "r-#{n}"}]
+        roles: [
+          %{
+            role_name: "r-#{n}",
+            fill: :agent,
+            recipe: "no-such-recipe-#{n}",
+            flavor: "curl"
+          }
+        ]
       })
 
     assert {:error, failures} = Conformance.check(definition, @workspace_uri)
@@ -80,9 +87,10 @@ defmodule Ezagent.Socialware.ConformanceTest do
     definition =
       write_def(%{
         name: "t2-conf-badref-#{n}",
+        roles: [%{role_name: "reader-#{n}", fill: :human}],
         routing_rules: [
           %{
-            receivers: ["$session_members"],
+            receivers: ["reader-#{n}"],
             matcher: %{"type" => "mention", "value" => "x"},
             prompt_template_ref: "does-not-exist"
           }
@@ -104,9 +112,9 @@ defmodule Ezagent.Socialware.ConformanceTest do
     definition =
       write_def(%{
         name: "t2-conf-duprole-#{n}",
-        agents: [
-          %{recipe: recipe, role_name: "dup-#{n}"},
-          %{recipe: recipe, role_name: "dup-#{n}"}
+        roles: [
+          %{role_name: "dup-#{n}", fill: :agent, recipe: recipe, flavor: "curl"},
+          %{role_name: "dup-#{n}", fill: :human}
         ]
       })
 
@@ -114,7 +122,33 @@ defmodule Ezagent.Socialware.ConformanceTest do
 
     assert Enum.any?(
              failures,
-             &match?({:agent_caps_and_role_uniqueness, {:duplicate_agent_role_name, _}}, &1)
+             &match?({:agent_caps_and_role_uniqueness, {:duplicate_role_name, _}}, &1)
+           )
+  end
+
+  test "non-role receivers fail routing_receivers_resolve" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-non-role-receiver-#{n}",
+        roles: [%{role_name: "bot-#{n}", fill: :human}],
+        routing_rules: [
+          %{
+            receivers: ["$session_members"],
+            matcher: %{"type" => "mention", "value" => "x"}
+          }
+        ]
+      })
+
+    assert {:error, failures} = Conformance.check(definition, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?(
+               {:routing_receivers_resolve, {:socialware_receiver_not_a_role, [_]}},
+               &1
+             )
            )
   end
 

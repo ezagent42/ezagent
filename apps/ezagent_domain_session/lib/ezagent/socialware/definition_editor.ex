@@ -73,14 +73,20 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     end
   end
 
-  @doc "Return members declared by the installed socialware definitions."
-  @spec member_declarations_for_template(map(), URI.t() | String.t()) ::
+  @doc "Return role slots declared by the installed socialware definitions."
+  @spec role_slots_for_template(map(), URI.t() | String.t()) ::
           {:ok, [map()]} | {:error, term()}
-  def member_declarations_for_template(template_content, workspace_uri) do
+  def role_slots_for_template(template_content, workspace_uri) do
     with {:ok, config} <- config_for_template(template_content, workspace_uri) do
-      {:ok, config.members}
+      {:ok, config.roles}
     end
   end
+
+  @doc false
+  @spec member_declarations_for_template(map(), URI.t() | String.t()) ::
+          {:ok, [map()]} | {:error, term()}
+  def member_declarations_for_template(template_content, workspace_uri),
+    do: role_slots_for_template(template_content, workspace_uri)
 
   @doc "Return the first installed orchestrator template URI, if one is declared."
   @spec orchestrator_template_uri_for_template(map(), URI.t() | String.t()) ::
@@ -262,8 +268,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       definition.shape == [] ->
         {:error, {:incomplete_socialware_definition, :shape}}
 
-      definition.members == [] ->
-        {:error, {:incomplete_socialware_definition, :members}}
+      definition.roles == [] ->
+        {:error, {:incomplete_socialware_definition, :roles}}
 
       definition.routing_rules == [] ->
         {:error, {:incomplete_socialware_definition, :routing_rules}}
@@ -284,8 +290,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp empty_config do
     %{
-      agents: [],
-      members: [],
+      roles: [],
       routing_rules: [],
       prompt_templates: %{},
       legends: %{},
@@ -295,8 +300,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp merge_definition(acc, %Definition{} = definition) do
     %{
-      agents: acc.agents ++ definition.agents,
-      members: acc.members ++ definition.members,
+      roles: acc.roles ++ definition.roles,
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
       legends: Map.merge(acc.legends, definition.legends),
@@ -306,18 +310,13 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   defp merge_legacy_template_fields(config, template_content) do
-    legacy_members = list_field(template_content, :members)
     legacy_rules = list_field(template_content, :routing_rules)
     legacy_prompts = map_field(template_content, :prompt_templates)
     legacy_legends = map_field(template_content, :legends)
     legacy_orchestrator = uri_field(template_content, :orchestrator_template_uri)
 
     %{
-      # `agents` is a socialware-Definition-only field (recipe+role_name); there
-      # is no legacy SessionTemplate `agents` section, so it passes through the
-      # merged definition config unchanged.
-      agents: config.agents,
-      members: if(legacy_members == [], do: config.members, else: legacy_members),
+      roles: config.roles,
       routing_rules: if(legacy_rules == [], do: config.routing_rules, else: legacy_rules),
       prompt_templates: Map.merge(config.prompt_templates, legacy_prompts),
       legends: Map.merge(config.legends, legacy_legends),
@@ -343,8 +342,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp merge_live_config(%Definition{} = definition, live) do
     %{
       definition
-      | members: live.members,
-        routing_rules: live.routing_rules,
+      | routing_rules: live.routing_rules,
         prompt_templates: live.prompt_templates,
         legends: live.legends,
         orchestrator_template_uri:
