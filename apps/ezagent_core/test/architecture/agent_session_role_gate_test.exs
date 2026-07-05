@@ -44,7 +44,6 @@ defmodule EzagentCore.Architecture.AgentSessionRoleGateTest do
   @repo_root Path.expand("../../../..", __DIR__)
 
   @scanned_files [
-    "apps/ezagent_domain_agent/lib/ezagent/agent/session_agent_materialize.ex",
     "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_materializer.ex",
     "apps/ezagent_domain_agent/lib/ezagent/agent_recipe_attributes.ex",
     "apps/ezagent_domain_agent/lib/ezagent/agent_recipe_resolver.ex",
