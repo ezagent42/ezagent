@@ -342,7 +342,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp merge_live_config(%Definition{} = definition, live) do
     %{
       definition
-      | routing_rules: live.routing_rules,
+      | roles: live_role_slots(live.members),
+        routing_rules: live.routing_rules,
         prompt_templates: live.prompt_templates,
         legends: live.legends,
         orchestrator_template_uri:
@@ -378,6 +379,51 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       }
     end)
     |> Enum.sort_by(&inspect/1)
+  end
+
+  defp live_role_slots(members) when is_list(members) do
+    members
+    |> Enum.flat_map(&live_member_role_slot/1)
+    |> Enum.sort_by(& &1.role_name)
+  end
+
+  defp live_role_slots(_members), do: []
+
+  defp live_member_role_slot(%{
+         role_name: role_name,
+         source_template_uri: %URI{} = source_template_uri
+       })
+       when is_binary(role_name) and role_name != "" do
+    [
+      %{
+        role_name: role_name,
+        fill: :agent,
+        recipe: Ezagent.URI.name!(source_template_uri),
+        flavor: source_template_flavor(source_template_uri)
+      }
+    ]
+  end
+
+  defp live_member_role_slot(%{role_name: role_name, uri: %URI{} = uri})
+       when is_binary(role_name) and role_name != "" do
+    if Ezagent.URI.type?(uri, :user) do
+      [%{role_name: role_name, fill: :human}]
+    else
+      []
+    end
+  end
+
+  defp live_member_role_slot(_member), do: []
+
+  defp source_template_flavor(%URI{} = source_template_uri) do
+    source_template_uri
+    |> Ezagent.URI.name!()
+    |> String.split("-", parts: 2)
+    |> List.first()
+    |> case do
+      flavor when is_binary(flavor) and flavor != "" -> flavor
+      _ -> "cc"
+    end
   end
 
   defp live_rule_set_rules(%URI{} = session_uri, %URI{} = _workspace_uri, slice) do

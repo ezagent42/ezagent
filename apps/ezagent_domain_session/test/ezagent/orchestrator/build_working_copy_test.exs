@@ -74,8 +74,6 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     end
   end
 
-  defp map_get(map, key), do: Map.get(map, key, Map.get(map, Atom.to_string(key)))
-
   # Spawn a Session Kind and stamp `chat_state` into its `:chat` slice's
   # persistent `:state` container.
   defp spawn_session_with_state(session_uri, chat_state) do
@@ -168,11 +166,11 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       assert definition.orchestrator_template_uri ==
                Ezagent.URI.new!("template://system/agent/cc-orchestrator")
 
-      assert [member] = definition.members
-      assert map_get(member, :uri) == "entity://team-alpha/agent/echo_relay-cc"
-      assert map_get(member, :role_name) == "relay-cc"
-      assert map_get(member, :in_session_template) == true
-      assert map_get(member, :source_template_uri) == "template://system/agent/cc-backend"
+      assert [role] = definition.roles
+      assert role.role_name == "relay-cc"
+      assert role.fill == :agent
+      assert role.recipe == "cc-backend"
+      assert role.flavor == "cc"
     end
 
     test "a Session with no team emits composition-only content (no crash)" do
@@ -228,7 +226,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       refute_moved_team_fields(content)
 
       assert {:ok, definition, _object} = DefinitionRegistry.lookup(ws, "empty-team")
-      assert definition.members == []
+      assert definition.roles == []
       assert definition.prompt_templates == %{}
       assert definition.legends == %{}
       assert definition.routing_rules == []
@@ -284,8 +282,9 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
       assert {:ok, definition, _object} = DefinitionRegistry.lookup(ws, "gate-team")
       assert definition.prompt_templates == %{"telephone_hop" => "接龙：{body}"}
-      assert [member] = definition.members
-      assert map_get(member, :role_name) == "relay-cc"
+
+      assert [%{role_name: "relay-cc", fill: :agent, recipe: "cc-backend", flavor: "cc"}] =
+               definition.roles
     end
   end
 end
