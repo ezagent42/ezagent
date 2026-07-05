@@ -1,127 +1,119 @@
 # Socialware role-slot model — declare roles, never instances
 
 **Date:** 2026-07-05
-**Status:** DESIGN (brainstormed with Allen 2026-07-05; pending codex adversarial review + user review)
-**Motivating thread:** the #161 C over-fire fix's codex NO-SHIP — a socialware definition can name an agent by direct URI (`members[].uri`), so a system-mediated mount would spend that agent's owner's credential. Allen chose to close it *structurally* (no instance URIs in definitions at all) rather than add a per-declaration author-ownership gate.
+**Status:** DESIGN rev2 (brainstormed with Allen 2026-07-05; codex adversarial review rev1 → NOT-SOUND-as-written, all findings folded in below; pending re-review + user review)
+**Motivating thread:** the #161 C over-fire fix's codex NO-SHIP — a socialware definition can name an agent by direct URI, so a system-mediated mount would spend that agent's owner's credential. Allen chose to close it *structurally* (no instance URIs in a definition at all) rather than add a per-declaration author-ownership gate.
 
 ---
 
-## 1. Problem
+## 1. Problems (three, tangled)
 
-Three tangled problems in the socialware declaration + materialization model:
+1. **Credential-theft template-declaration vector (SECURITY — the trigger).** A `%Definition{}`'s `members: [map()]` (`definition.ex:13`) accepts a raw map carrying a direct agent-instance `uri` (`template_team.ex:110`). Nothing checks the author owns it. Co-tenant B publishes/installs a definition naming A's credentialed agent by URI → the session system-mediated-mounts it (`RouteProvisioner`/`Materializer`, admin-caller) → A's agent runs B's messages → spends A's OAuth credential. #161 C closes the *direct* `session.join` pull but exempts *declared* members (assumed vetted at authoring — a gate that does not exist; conformance checks role-name resolution, not member-URI ownership). **A second, equal declaration surface exists: the legacy `SessionTemplate` content** also carries `members`/`uri`/`source_template_uri` (`entity/session_template.ex:41`, consumed at `:136`) and can OVERRIDE config members (`definition_editor.ex:308`) — same provisioning path (codex BLOCKER). **And routing receivers** can be explicit instance URIs (`conformance.ex:266` accepts URI-parseable receivers; `resolver.ex:412` expands them), a second way to name an instance in a definition (codex HIGH).
 
-1. **Credential-theft template-declaration vector (SECURITY, the trigger).** A `%Definition{}`'s `members: [map()]` field (`definition.ex:13`) accepts a raw map that may carry a direct agent-instance `uri` (`template_team.ex:110` `member_uri_field(member, :uri)`). Nothing validates that the declared URI is an agent the author owns. So co-tenant B can publish/install a definition declaring A's credentialed agent by URI; the session then system-mediated-mounts it (via `RouteProvisioner`/`Materializer`, both admin-caller) → A's agent runs B's messages → spends A's OAuth credential. The #161 C admission gate closes the *direct-pull* path (`session.join` with `caller=B` pends) but exempts declared members (assumed vetted at authoring — an authoring gate that does not exist; conformance checks role-name resolution, not member-URI ownership).
+2. **Role is baked into the agent globally (ARCHITECTURE).** Role is written onto the agent in several durable places: the materialized URI `entity://ws/agent/<role>-<session-disc>` (`session_agent_materialize.ex:116/239`), `AgentRoleAttributes.put/2` (`recipe_materializer.ex:201`) via `record_launch_attributes/3` (`:114`), read back by `AgentRoleResolver` (`agent_role_resolver.ex:51`) and `UriQueryResolvers` (`uri_query_resolvers.ex:220`), and consumed agent-level by kanban (`shared.ex:94`) and world (`kanban_data.ex:68`). So an agent has ONE global role — it cannot be `advisor` in session A and `reviewer` in B. Role is a property of the (entity × session) relationship, not of the agent (codex HIGH — blast radius larger than a URI change).
 
-2. **Role is baked into agent identity (ARCHITECTURE bug).** `SessionAgentMaterialize.planned_agent_uri(role, session_uri, workspace_uri)` builds `entity://<ws>/agent/<role>-<session-disc>` (`session_agent_materialize.ex:116/239`) — the materialized agent's *identity* encodes its role. The same recipe cannot be `advisor` in session A and `reviewer` in session B: role is a property of the (entity × session) relationship, not of the agent.
+3. **`members` vs `agents` duality (CLARITY).** A definition declares agents through TWO parallel fields: `agents: [%{recipe, role_name, flavor}]` (`definition.ex:11/27` — recipe-by-name, conformance-validated via `RecipeRegistry`, the clean form) AND `members: [map()]` (`definition.ex:13` — loose maps with a direct `uri` or `source_template_uri`). Both read by conformance/routing; `members` required non-empty (`definition_editor.ex:265`).
 
-3. **`members` vs `agents` duality (CLARITY).** A definition declares session agents through TWO parallel fields: `agents: [%{recipe, role_name, flavor}]` (`definition.ex:11`, recipe-by-name, conformance-validated via `RecipeRegistry` — the clean form) AND `members: [map()]` (`definition.ex:13`, loose maps that carry a direct `uri` OR a `source_template_uri`). Both are read by conformance (`declared_role_names/1` reads `members` + `agents`) and routing. `members` is *required* non-empty (`definition_editor.ex:265`). Two mechanisms, overlapping responsibilities.
+## 2. Principle (Allen)
 
-## 2. The principle (Allen)
+> A socialware app declares *what kind* of participant it needs (a **role**, filled by a **recipe** for agents, or an open **role slot** for humans) — never *which instance*. Like software declaring "I need a CPU with these capabilities," never "run on this physical CPU." **Humans too** — a role slot, never a named person. And **`role_name` lives on the (entity × session) membership edge**, session-managed, reassignable, uniform for humans and agents; the agent is role-agnostic and can be a member of *multiple* sessions with a *different* role in each.
 
-> A socialware app declares *what kind* of participant it needs (a **role** filled by a **recipe** for agents, or an open **role slot** for humans) — never *which instance*. Like software declaring "I need a CPU with these capabilities," never "run on this specific physical CPU."
+## 3. Recipe / flavor / template — the build unit (settled)
 
-Two corollaries Allen drew out:
+From `recipe_materializer.ex:5`: **"a recipe owns sandbox content; flavor owns how that content is loaded."**
 
-- **Humans, too, are declared by role, never by person.** A definition never names a specific user; it declares a human role slot filled at runtime.
-- **`role_name` is a property of the (entity × session) membership edge**, managed by the session, reassignable, uniform for humans and agents. The agent itself is role-agnostic and can be a member of *multiple* sessions with a *different* role in each (advisor in A, reviewer in B).
+- **recipe** (RecipeRegistry `recipe:<name>` ConfigObject) = **flavor-free, role-free** build content (sandbox content + caps). A NAME, pure data, no URI.
+- **flavor** (`"cc"|"codex"|"curl"|"py"`) = the loader, supplied by the *declaration* at materialize time.
+- **AgentTemplate** = a recipe rendered under a concrete flavor (recipe × flavor). It is itself a URI and a pre-baked bundle.
 
-## 3. What already exists (foundation — this is a targeted refactor, not a rebuild)
-
-- **`role_name` is already a membership-edge facet.** `Members.put_member_facets/2` (`members.ex:38`) merges `:role_name` into a member's `meta` on the session's `:members` roster; `role_name_conflict/3` enforces per-session uniqueness. So "role lives on the (entity × session) edge" is *already true* for the agent path — the gap is that it is ALSO baked into the agent's URI, and humans have no declaration path.
-- **`agents: [%{recipe, role_name, flavor}]` is already the clean, no-URI, conformance-validated agent declaration** (`definition.ex:27`, `conformance.ex` `check_agent_recipes` resolves the recipe via `RecipeRegistry`; `check_role_name_uniqueness`). Recipe (config axis A) is already decoupled from role_name (routing axis B) — the recipe/responsibility split (#122/#127/#141).
-- **The #161 C admission gate** already pends a cross-owner *bind* of an agent a caller does not manage. Reuse-binding (§5) rides on this.
-
-So the model is ~half-built. The work is: **remove the two escape hatches** (the `members`-URI declaration path; the role-in-identity baking), **add** the human role slot + the operator materialize-time binding, and **consolidate** the two declaration fields into one.
+**Decision (Q1): a socialware definition points at RecipeRegistry ONLY — a recipe NAME + a flavor. Never an AgentTemplate URI, never a bare flavorless recipe.** The agent build unit is the pair `(recipe, flavor)`; materialization composes them via `RecipeMaterializer.template_content(recipe, %{flavor, agent_uri})`. This is exactly today's `agent_spec` shape, minus the URI escape hatches. `source_template_uri` declarations convert to RecipeRegistry recipe entries (§7).
 
 ## 4. Target model
 
-### 4.1 Declaration layer — `Definition.roles`
+### 4.1 Declaration — `Definition.roles` (one field, zero instance URIs)
 
-Collapse `agents` + `members` into ONE field of role slots. No instance URI is representable.
+Collapse `agents` + `members` into ONE role-slot list. No field can hold a participant instance URI.
 
 ```
 roles: [role_slot]
 role_slot ::
-  %{role_name: String.t(), fill: :agent, recipe: String.t(), flavor: String.t()}   # agent slot
-  | %{role_name: String.t(), fill: :human}                                         # human slot
+  %{role_name, fill: :agent, recipe: String.t(), flavor: String.t()}   # recipe NAME + flavor, no URI
+  | %{role_name, fill: :human}                                         # open slot, filled at runtime
 ```
 
-- `role_name` is unique per definition (the session-model slot identity + the `{:role, name}` routing receiver).
-- An **agent slot** carries a `recipe` (a `RecipeRegistry` name — pure data, no URI) + `flavor`. Exactly today's `agent_spec`, re-tagged `fill: :agent`.
-- A **human slot** carries only `role_name` (+ optional metadata like a display label / whether it's required). No person reference.
-- **`members` is retired.** The direct-`uri` and `source_template_uri` member declaration forms are removed (see §7 migration). `Definition` no longer has a field into which any instance/template URI can be written for a participant.
+- `role_name` unique per definition (the session-model slot id + the `{:role, name}` routing receiver).
+- `members` is **retired** (both the `Definition.members` field AND the legacy `SessionTemplate` `members`/`uri`/`source_template_uri` content and its override path). `Definition.new/1`, conformance, and `definition_editor` move the required-non-empty check to `roles`.
+- **Routing receivers** in a definition are restricted to `{:role, name}` — an explicit agent/user instance-URI receiver is rejected at conformance (and by the arch gate, §8).
 
-### 4.2 Materialization layer — operator decides per slot
+### 4.2 Materialization — operator decides per agent slot
 
-When an **operator** materializes/installs a socialware definition into a session, for each **agent slot** the operator chooses:
+When an **operator** materializes a definition into a session, for each **agent slot** they choose:
 
-- **Fresh** — materialize a new agent from `recipe` (§4.3), or
-- **Reuse** — bind one of the operator's **own existing** agents of that recipe (an agent can be a member of multiple sessions).
+- **Fresh** — build a new agent from `(recipe, flavor)` (§4.3), materialized under **system-mediated (admin) authority** (safe: a brand-new agent the operator owns), OR
+- **Reuse** — bind one of the operator's **own existing** agents of that recipe. **The reuse bind MUST enter through an operator-caller `session.join`** (`ctx.caller = operator`), NOT through the admin-mediated declaration helpers (`DefinitionAgents` admin ctx `definition_agents.ex:200`, `RouteProvisioner.system_mediated_ctx` `route_provisioner.ex:49`). This is load-bearing (codex HIGH): only an operator-caller join makes the #161 C admission gate fire — binding an agent the operator does NOT manage then PENDS (owner approval). If reuse rode the admin helpers it would be EXEMPT and reopen the vector.
 
-Either choice produces a **(agent × session) membership edge** carrying `role_name = slot.role_name` (via the existing `put_member_facets` facet). **Human slots** are not filled at materialization; they are open slots a human is assigned to at runtime (see §4.5).
+Either choice yields a **(agent × session) membership edge** carrying `role_name` (via the existing `Members.put_member_facets` facet). **Human slots** are not filled at materialize; they are open slots a human is assigned to at runtime (§4.5).
 
-The decision is the operator's, at materialization time — not baked into the app, not a global policy.
+### 4.3 Agent identity — role-agnostic, fresh uuid
 
-### 4.3 Agent identity — de-bake role (fresh uuid)
+A materialized agent's identity is `entity://<ws>/agent/<uuid>` — no role segment, no session segment. `planned_agent_uri(role, …)` is removed. Recipe/session provenance moves to a **stored attribute** (mirrors flavor-as-stored-attribute, #931), queried where needed — never encoded in the URI, never a global role.
 
-`planned_agent_uri(role, …)` is replaced: a materialized agent's identity is **role-independent** — `entity://<ws>/agent/<uuid>` (fresh opaque id; identity-scheme **B** from the brainstorm). The agent carries NO role attribute anywhere. Its role is *only* the `role_name` facet on each session membership edge it holds. This is what lets the same agent hold different roles across sessions.
+### 4.4 `role_name` — the (entity × session) edge, only
 
-> Rationale for a fresh uuid over recipe-derived: the brainstorm chose (b) — pure instance identity keeps "role lives on the edge" self-consistent and lets one operator run several agents of the same recipe (even filling two slots in one session) without identity collision. Recipe/session provenance moves to a queryable stored attribute (mirrors the flavor-as-stored-attribute pattern, #931), not the URI.
+`role_name` lives ONLY on the membership edge (`Members` meta facet; per-session uniqueness already enforced by `role_name_conflict/3`). Routing `{:role, name}` resolves against the session's current edges. NO agent config, URI, or `AgentRoleAttributes` stores role. This requires migrating every agent-level-role consumer (§2 item 2) to read role from the edge — done one-shot via the gate method (§8).
 
-### 4.4 `role_name`归属 — the (entity × session) edge
+### 4.5 Human role slots
 
-`role_name` lives ONLY on the membership edge (`Members` meta facet), session-managed and reassignable, uniform across kinds. Routing (`{:role, name}`) resolves against the session's current membership edges (whichever member holds that role now) — as it does today, but now the *only* home for role. No agent config, no agent URI, no per-kind branch stores role.
+Declared `%{role_name, fill: :human}`; filled at runtime: when a human joins (invite / anon admission / operator assignment) an operator assigns a `role_name` from the open human slots → sets the `role_name` facet on that human's edge. Symmetric with agents; same edge, same facet. Home for the "specify role" UI Allen flagged missing (§6).
 
-### 4.5 Human role slots (the missing UI Allen flagged)
+## 5. Security invariant (the point) — scoped precisely
 
-A human slot is declared (`%{role_name, fill: :human}`) but filled at runtime: when a human joins a session (invite / anon admission / operator assignment), an operator assigns them a `role_name` from the definition's open human slots → sets the `role_name` facet on that human's membership edge. Symmetric with the agent path; same edge, same facet. The **operator materialize/assign UI** (§6) is the surface for this.
+**No `%Definition{}` (or its persisted JSON, or the legacy `SessionTemplate` content it resolves through) may contain a PARTICIPANT / mount-target instance URI** — i.e. no `entity://…/agent/…` or `entity://…/user/…` in a role slot, a member declaration, or a routing receiver. The only participant declaration is a role slot: `role_name` + (for agents) a `recipe` NAME + `flavor`.
 
-## 5. Security invariant (the point)
-
-**No `%Definition{}` can contain a participant instance URI (agent or human).** The only participant declaration is a role slot keyed by `role_name` + (for agents) a `recipe` name. Therefore:
-
-- **The template-declaration credential vector is structurally impossible** — there is no field to write A's agent URI into. (Supersedes the deferred author-ownership gate; a definition simply cannot name an instance.)
-- **Operator reuse-binding is authz-gated.** When an operator binds an *existing* agent to a slot, that bind is an ordinary member-add subject to the #161 C admission gate: the operator can bind only agents they `manages?`; binding an agent they do not own → PENDS (owner approval). So reuse cannot pull a foreign credentialed agent either.
-- **Materialization dispatches remain system-mediated** for the *fresh* path (recipe → new agent the operator owns), unchanged and safe.
-
-Net: both the declaration path (no URI) and the reuse path (admission-gated) are closed. This is the structural closure of the vector #161 C's over-fire fix left deferred.
+- **Structural closure:** there is no field to write A's agent URI into → the template-declaration credential vector is impossible (supersedes the deferred author-ownership gate).
+- **Reuse is admission-gated** (§4.2): operator-caller join → foreign agent PENDS.
+- **Scope note (codex LOW):** the invariant targets PARTICIPANT/mount-target URIs. `Definition.owner_policy.fixed` stores an *owner* user URI (`definition.ex:66`) — that is authorship metadata, not a participant/route target, and is explicitly OUT of the invariant. The gate matches participant-declaration + receiver positions, not owner metadata.
 
 ## 6. Operator materialize UI
 
-A materialize/install wizard (World operator console):
-
-- For each **agent slot**: choose **Fresh** (spin from recipe) or **Reuse** (pick from the operator's own agents of that recipe; list filtered to `manages?`-owned + recipe-matching).
-- For each **human slot**: shown as an open role to be assigned; assignment happens when a human joins (an "assign role" control on the member, gated to the operator).
-- The wizard is the home for the "specify role" surface Allen noted is missing.
-
-(UI detail — layout/interaction — is an implementation concern for the plan, not fixed here.)
+A materialize/install wizard (World operator console): per **agent slot** choose Fresh (spin from recipe) or Reuse (pick from the operator's own `manages?`-owned, recipe-matching agents); per **human slot** an open role assigned when a human joins (an "assign role" control gated to the operator). This is the home for the missing "specify role" surface. (Layout/interaction is a plan concern.)
 
 ## 7. Migration & back-compat
 
-Pre-prod: no real published definitions carry direct-URI members (confirmed — no non-test producer of `members` with a direct agent URI on `origin/main`; the only direct-URI declarations are test fixtures, e.g. the socialware P10 E2E's `%{"role_name" => "bot", "uri" => …}`). So:
+Pre-prod: no non-test producer of `members`-with-direct-URI on `origin/main` (confirmed); direct-URI members appear only in test fixtures (the socialware P10 E2E).
 
-- **`Definition`**: add `roles`; migrate `agents` entries → `roles` with `fill: :agent`; drop `members` (+ the `source_template_uri` member form — reconcile with `roles` if any legit use exists, else remove). Update `Definition.new/1` + `conformance` + `definition_editor` (the `members == [] → incomplete` check moves to `roles`).
-- **Materialization**: rewrite `TemplateTeam.provision_declared_member` / `RouteProvisioner` / `DefinitionAgents` to consume `roles` (fresh path) + the operator's reuse bindings; delete the direct-`uri` `ensure_member_present` clause. Replace `planned_agent_uri(role, …)` with the uuid scheme; move recipe/session provenance to a stored attribute.
-- **Tests/fixtures**: migrate the P10 E2E + any seed definitions to `roles`(recipe). The bot becomes a fresh recipe-materialized agent assigned the `bot` role on its edge (no pre-spawned named bot).
-- **Arch invariant**: a fitness test that no `%Definition{}` field (or its persisted JSON) can hold an `entity://…/agent/…` or `entity://…/user/…` instance URI — the structural guarantee, with a planted-bypass teeth test (model on the #161 C `member_cap_grant_seam_test`).
+- **Definition:** add `roles`; migrate `agents` → `roles` (`fill: :agent`); DELETE `members` (field + the `source_template_uri` member form). Update `Definition.new/1` + conformance + `definition_editor` (move `members == [] → incomplete` to `roles`).
+- **Legacy `SessionTemplate` (codex BLOCKER):** retire/hard-fail `members`/`uri`/`source_template_uri` in template content + the `definition_editor.ex:308` legacy-override path; delete the direct-`uri` clause in `TemplateTeam.ensure_member_present` (`template_team.ex:109`). No provisioning path may consume a member URI.
+- **`source_template_uri` → recipe (codex MED, Allen: convert all):** every source AgentTemplate becomes a RecipeRegistry recipe entry with **equivalent version/fork semantics** (a real migration rule, not hand-wave); the slot then carries `(recipe, flavor)`. `orchestrator/tools.ex:115` + `member_template.ex:622` (the `source_agent_template_uri` consumers) repoint to recipe. Confirm no flow needs a raw AgentTemplate reference the recipe layer can't express.
+- **Role de-bake (codex HIGH):** remove `planned_agent_uri` role segment (uuid); stop writing `AgentRoleAttributes` / `record_launch_attributes` role; repoint `AgentRoleResolver`, `UriQueryResolvers` role lookups, kanban (`shared.ex`), world (`kanban_data.ex`) to read role from the session edge (or a session-scoped resolver). Enumerated + driven to completion by the gate (§8).
+- **Fixtures:** migrate the P10 E2E + seed definitions to `roles`(recipe); the bot becomes a fresh recipe-materialized agent assigned `bot` on its edge (no pre-spawned named bot).
 
-## 8. Phasing (one spec family; internal order)
+## 8. Migration strategy — gate-catches-wrong-usage, fix the reds (Allen's method)
 
-Allen chose "一次做完" — one coherent effort, internally ordered so the security core lands first and independently testable:
+Add TWO fail-closed arch/invariant gates FIRST; their red lists are the exhaustive worklist; fix each site until green; green = migration complete and non-regressible (same discipline as oversized-modules / domain-only-Kinds gates; model on `member_cap_grant_seam_test`).
 
-- **P1 — Declaration + materialization core (SECURITY).** `Definition.roles` (agent slots only, migrate `agents`); retire `members`-URI; de-bake `planned_agent_uri` → uuid; consolidate conformance/editor; migrate fixtures; the no-instance-URI arch invariant. *Acceptance:* a definition cannot declare an instance URI (structural + teeth); the P10 flow works via `roles`(recipe); the same agent can hold two roles across two sessions (edge-role E2E).
-- **P2 — Human role slots + operator materialize UI.** `fill: :human` slots; operator fresh-vs-reuse binding UI; human role-assign UI. *Acceptance:* operator materializes an app choosing fresh/reuse per slot; assigns a human to a role; reuse of a foreign agent PENDS (admission gate).
+- **Gate A — no participant instance URI in a definition.** Static/AST + persisted-JSON scan: no `entity://…/agent|user/…` (or `%URI{}`) in a role slot, member declaration, or routing receiver of a `%Definition{}` / `SessionTemplate` content. Teeth: a planted definition with a member/receiver URI trips it.
+- **Gate B — no agent-level role.** No read/write of a global agent role attribute (`AgentRoleAttributes` role field, `planned_agent_uri` role segment, `AgentRoleResolver`-style agent→role) outside the (allowlisted, → empty) edge path. Teeth: a planted agent-level role read trips it. Role must be resolved from the (entity × session) edge.
 
-## 9. Testing / acceptance
+Both gates start RED (they enumerate today's violations); the migration is "drive both to zero." This is the completion criterion.
 
-- **Security (structural):** the §7 arch invariant — no instance URI representable in `%Definition{}` — with a teeth fixture. Plus an integration test: attempt to author/publish a definition naming a foreign agent URI → rejected at the schema/`Definition.new` layer (the field does not exist), not merely at a runtime gate.
-- **Role-on-edge:** one materialized agent joined to two sessions holds distinct `role_name`s; routing `{:role, advisor}` in A and `{:role, reviewer}` in B resolve to the same agent.
-- **De-bake:** materialized agent URI contains no role segment; role read only from the membership edge.
-- **Operator reuse gate:** operator reuse-binds their own recipe-agent → mounts; binding an agent they do not manage → PENDS (#161 C).
-- **Regression:** the socialware P10 E2E (migrated to `roles`) stays green; all flavor plugins green.
+## 9. Phasing (one spec family; Allen: role de-bake is one-shot)
 
-## 10. Open questions
+- **P1 — Declaration + security core.** `Definition.roles` (agent slots, migrate `agents`); retire both `members` layers + the direct-uri clause; receivers `{:role,name}`-only; operator-caller reuse path; `source_template`→recipe; Gate A green. *Acceptance:* no instance URI representable/persistable in a definition (Gate A + teeth + an author/publish-rejects-URI integration test); P10 flow works via `roles`(recipe); reuse of a foreign agent PENDS (#161 C).
+- **P2 — Role de-bake (one-shot).** uuid identity; role only on the edge; migrate ALL agent-level-role consumers; Gate B green. *Acceptance:* one materialized agent joined to two sessions holds distinct `role_name`s; routing `{:role,advisor}`@A and `{:role,reviewer}`@B resolve to the same agent; agent URI has no role segment; Gate B green.
+- **P3 — Human role slots + operator UI.** `fill: :human`; operator fresh-vs-reuse binding UI; human role-assign UI.
 
-- **O-1 (source_template_uri form).** `members` also had a `source_template_uri` form (spawn fresh from an AgentTemplate). Is that subsumed by `recipe` (RecipeRegistry name), or is a template-URI reference still needed for some flow? Recommend: subsume into recipe (a template URI is still a URI — against the principle); confirm no flow needs a raw AgentTemplate reference the recipe layer can't express.
-- **O-2 (recipe provenance query).** With uuid identity, "which recipe/session did this agent come from" moves to a stored attribute. Confirm the query surfaces that need it (catalog, ops views) read the attribute, not the URI.
-- **O-3 (P2 boundary).** Is the human-slot + operator-UI genuinely P2 (after the security core ships), or does any current flow need human slots on day one? Recommend P2.
+(P1 closes the credential vector structurally and is independently shippable; P2 is Allen's one-shot role migration; P3 is the product completion.)
+
+## 10. Testing / acceptance
+
+- **Security (structural):** Gate A + teeth; an integration test that authoring/publishing a definition naming a foreign agent URI is rejected at the schema/`Definition.new` layer (no field exists), not merely at a runtime gate.
+- **Reuse gate:** operator reuse-binds own recipe-agent → mounts; binds an agent they don't manage → PENDS (#161 C). Proves reuse rides the operator-caller join, not an admin helper.
+- **Role-on-edge:** the two-sessions-different-role E2E (P2 acceptance); Gate B green.
+- **De-bake:** materialized agent URI has no role segment; role read only from the edge.
+- **Regression:** the P10 E2E (migrated) + all flavor plugins green.
+
+## 11. Open questions (narrowed)
+
+- **O-1 (source_template version/fork parity).** Confirm every source AgentTemplate's version/fork semantics is expressible as a RecipeRegistry recipe (the §7 conversion rule); if a template carries flavor-specific pre-rendering not reducible to (recipe, flavor), surface it.
+- **O-2 (recipe provenance query).** With uuid identity, "which recipe/session did this agent come from" is a stored attribute; confirm the catalog/ops views that need it read the attribute.
