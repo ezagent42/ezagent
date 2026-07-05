@@ -102,4 +102,49 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
 
     assert {:error, {:invalid_role_field, :requested_caps, :add_node}} = Recipe.new(bad)
   end
+
+  # kanban-team roles (S1) — the plugin's roles/0 grows from the single
+  # kanban-manager recipe to a three-role team: pm-coordinator (cc-headless
+  # coordinator) + dev-together (cc-headless developer) + kanban-manager. Both new
+  # recipes are role-slot shaped (skills + persona prompt + kanban action caps),
+  # carry NO instance URI, and round-trip through Recipe.new/1.
+  describe "kanban-team roles (S1)" do
+    test "roles/0 declares kanban-manager, pm-coordinator, and dev-together" do
+      names = Enum.map(KanbanApp.roles(), & &1.name)
+      assert "kanban-manager" in names
+      assert "pm-coordinator" in names
+      assert "dev-together" in names
+    end
+
+    test "pm_coordinator_recipe requests a cap for every kanban action" do
+      recipe = KanbanApp.pm_coordinator_recipe()
+      assert recipe.name == "pm-coordinator"
+      assert recipe.skills == ["pm-coordinator"]
+      assert is_binary(recipe.prompt) and recipe.prompt != ""
+
+      requested_actions =
+        recipe.requested_caps |> Enum.map(fn %{action: a} -> a end) |> Enum.sort()
+
+      assert requested_actions == Enum.sort(Kanban.actions())
+      assert Enum.all?(recipe.requested_caps, &(&1.behavior == Kanban))
+    end
+
+    test "dev_together_recipe wires the dev-together skill" do
+      recipe = KanbanApp.dev_together_recipe()
+      assert recipe.name == "dev-together"
+      assert recipe.skills == ["dev-together"]
+      assert is_binary(recipe.prompt) and recipe.prompt != ""
+      assert Enum.all?(recipe.requested_caps, &(&1.behavior == Kanban))
+    end
+
+    test "both new recipes round-trip through Recipe.new/1 (no instance URI, valid role-slot)" do
+      for recipe <- [KanbanApp.pm_coordinator_recipe(), KanbanApp.dev_together_recipe()] do
+        assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
+        assert role.skills == recipe.skills
+        assert is_binary(role.prompt)
+        refute String.contains?(role.prompt, "://")
+        assert length(role.requested_caps) == length(Kanban.actions())
+      end
+    end
+  end
 end

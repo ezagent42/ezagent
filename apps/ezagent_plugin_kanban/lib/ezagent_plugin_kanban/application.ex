@@ -61,7 +61,118 @@ defmodule EzagentPluginKanban.Application do
   #   * `passive: true` —— 看板是**被动数据 actor**：不可被 @ / 不可 `:join` / 不收
   #     chat（RF-6 三闸），只在直接 `kanban.<action>` dispatch 上动作。
   @impl Ezagent.Plugin
-  def roles, do: [kanban_manager_recipe()]
+  def roles, do: [kanban_manager_recipe(), pm_coordinator_recipe(), dev_together_recipe()]
+
+  # Persona-skill refs resolved by the cc `OrchestratorBootstrap` walk-up search
+  # over `.claude/skills/<ref>/SKILL.md` (orchestrator_bootstrap.ex:66,316,323-336
+  # → repo-root `.claude/skills`). `pm-coordinator` is a new skill-creator persona
+  # skill; `dev-together` already lives in that resolution root (the copied
+  # daily-team-development skill), so the recipe only references it by name.
+  @pm_skill_ref "pm-coordinator"
+  @dev_together_skill_ref "dev-together"
+
+  @doc """
+  The `pm-coordinator` role recipe (S1) — a `cc-headless` (real-brain) coordinator
+  that turns an owner's intent into kanban board moves, assigns build work to the
+  `dev-together` member, and receives dev-together's content-triggered relay-back
+  (a `__done__` header / `@完成回传` legend routes their completion message to this
+  role). Its `skills: ["pm-coordinator"]` persona (built with skill-creator; the
+  kanban-team collaboration protocol lives in an extractable
+  `references/kanban-team-collaboration.md`, spec §5.3) is installed into the
+  agent's `config_dir` by the cc `OrchestratorBootstrap` at materialize. It
+  requests a cap for EVERY kanban action (single source of truth =
+  `Ezagent.ActionSet.Kanban.actions/0`) so it can drive the board.
+
+  Role-slot shaped (`skills` + persona `prompt` + kanban action caps), carries NO
+  instance URI — round-trip safe under role-slot #1180.
+  """
+  @spec pm_coordinator_recipe() :: map()
+  def pm_coordinator_recipe do
+    %{
+      name: "pm-coordinator",
+      skills: [@pm_skill_ref],
+      prompt: pm_persona(),
+      behaviors: [],
+      requested_caps: kanban_action_caps()
+    }
+  end
+
+  @doc """
+  The `dev-together` role recipe (S1) — a `cc-headless` developer running the
+  copied dev-together daily-team-development skill (`skills: ["dev-together"]`). On
+  finishing a card it follows the kanban-team relay protocol: emit a `__done__`
+  header (or `@完成回传`) + the card id + target stage; the kanban-team
+  routing_rules content-trigger that message back to `pm-coordinator`. Declared as
+  a role slot; the relay carries NO instance URI (role-slot #1180 — round-trip
+  safe). The dev-together skill itself is unchanged (portable capability skill);
+  its only kanban-team addition is a thin `references/kanban-team-relay.md` overlay
+  pointing at the shared protocol.
+  """
+  @spec dev_together_recipe() :: map()
+  def dev_together_recipe do
+    %{
+      name: "dev-together",
+      skills: [@dev_together_skill_ref],
+      prompt: dev_together_persona(),
+      behaviors: [],
+      requested_caps: kanban_action_caps()
+    }
+  end
+
+  # A cap-template `%{behavior:, action:}` for every kanban action — the SAME
+  # single-source-of-truth derivation kanban-manager uses (`Kanban.actions/0`), so
+  # pm/dev can drive the board without re-listing actions by hand.
+  defp kanban_action_caps do
+    for action <- Ezagent.ActionSet.Kanban.actions() do
+      %{behavior: Ezagent.ActionSet.Kanban, action: action}
+    end
+  end
+
+  @spec pm_persona() :: String.t()
+  defp pm_persona do
+    """
+    # You are the kanban-team PM coordinator
+
+    You run a product-development kanban board with a team. The board's stages are
+    the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
+    feature → issue → test → pr), owned by the `kanban-manager` member.
+
+    - Turn the owner's request into board moves via the kanban tools (create a
+      card, set its stage). NEVER ask a worker to compute routing.
+    - Assign build work through the dev-together git-handoff workflow, NOT a raw
+      @mention: write a markdown handoff (`handoffs/<task>.md`, with a DoD) for the
+      `dev-together` member. They `dive` (task branch off main, TDD, PR), then
+      `return` (CI green + rebased + a per-line DoD reconciliation in
+      `returns/<task>.md`) and send a completion signal (`__done__` header or
+      `@完成回传`). That signal message is routed to you — it just tells you the
+      return is ready to review; it does NOT carry the branch/CI/DoD (those live in
+      the return + the git workflow).
+    - On the completion signal, review the dev's `returns/<task>.md` (DoD + CI +
+      rebased), then advance the relevant card and tell the owner what changed. The
+      `pr` stage is CI-gated.
+    - Act ONLY within your own session and workspace.
+
+    The kanban-team collaboration protocol (how you cooperate with the dev-together
+    member) is your `pm-coordinator` skill's
+    `references/kanban-team-collaboration.md` — read it for the details.
+    """
+  end
+
+  @spec dev_together_persona() :: String.t()
+  defp dev_together_persona do
+    """
+    # You are the kanban-team dev-together developer
+
+    You run the dev-together git-handoff workflow (see the dev-together skill): you
+    `dive` a handoff (task branch off main, TDD, PR into the task branch) and
+    `return` it (CI green + rebased on main + a per-line DoD reconciliation in
+    `returns/<task>.md`). THAT workflow is the real work — git + markdown + CI.
+    When your return is ready, send a short completion signal (`__done__` header or
+    `@完成回传`) + the card id + the target stage; that message is routed to the
+    pm-coordinator so they know to review your return. Keep it concise. Stay inside
+    your session and workspace.
+    """
+  end
 
   @doc """
   The `kanban-manager` role recipe (also the K1 gate's subject).
