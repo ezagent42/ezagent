@@ -10,13 +10,14 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
   Class spawns a bare `Entity.Agent` Kind (base behaviors incl. `Behavior.Identity`,
   NO `claude` sidecar) stands in for `cc`, so we can prove:
 
-    * **session/workspace-scoped spawn** — the agent goes live at
-      `entity://<workspace>/agent/<role>-<session-disc>` (KindRegistry hit), the
-      same shape the orchestrator uses (`cc_orchestrator-<session-disc>`).
+    * **role-agnostic spawn (P2, Gate B)** — the agent goes live at a fresh uuid
+      `entity://<workspace>/agent/<uuid>` (KindRegistry hit); NO role or session
+      segment is baked into the identity.
     * **grant landing** — once live, the recipe's least-priv caps land on THAT
-      per-session URI, readable via `Identity.list_caps_for/1` (the T7b
+      per-agent URI, readable via `Identity.list_caps_for/1` (the T7b
       `:no_such_actor` deferral is closed by materializing first).
-    * **idempotent re-materialize** — a second call returns `:already_present`.
+    * **role-agnostic identity** — a second materialize mints a DISTINCT fresh
+      agent; dedupe is the caller's concern (the session membership edge).
 
   The credential cascade (owner → per-agent config_dir) is the cc-flavor concern
   proven by T7b; the STUB flavor implements NO `CredentialAdapter`, so the cascade
@@ -124,21 +125,25 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
     :ok
   end
 
-  describe "planned_agent_uri/3 — session/workspace-scoped, mirrors the orchestrator" do
-    test "builds entity://<workspace>/agent/<role>-<session-disc>" do
+  describe "planned_agent_uri/3 — role-agnostic fresh uuid (P2, Gate B)" do
+    test "builds entity://<workspace>/agent/<uuid> — NO role or session segment" do
       uri =
         SessionAgentMaterialize.planned_agent_uri("pm-coordinator", @session_uri, @workspace_uri)
 
-      assert URI.to_string(uri) == "entity://team-alpha/agent/pm-coordinator-board-flow"
+      # role-agnostic: the URI carries neither the role name nor the session disc
+      assert URI.to_string(uri) =~ ~r"^entity://team-alpha/agent/[0-9a-f-]{36}$"
+      refute URI.to_string(uri) =~ "pm-coordinator"
+      refute URI.to_string(uri) =~ "board-flow"
     end
 
-    test "two sessions in one workspace get distinct per-session URIs" do
+    test "each call mints a distinct fresh uuid (identity is not keyed off role/session)" do
       other = Ezagent.URI.new!("session://default/team-alpha/board-flow-2")
 
       a = SessionAgentMaterialize.planned_agent_uri("dev-together", @session_uri, @workspace_uri)
       b = SessionAgentMaterialize.planned_agent_uri("dev-together", other, @workspace_uri)
 
       refute URI.to_string(a) == URI.to_string(b)
+      refute URI.to_string(a) =~ "dev-together"
     end
   end
 
@@ -147,9 +152,6 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
       flavor = register_stub_flavor()
       role = "pm-coordinator"
       session_uri = uniq_session()
-
-      expected_uri =
-        SessionAgentMaterialize.planned_agent_uri(role, session_uri, @workspace_uri)
 
       assert {:ok, %URI{} = agent_uri, :created} =
                SessionAgentMaterialize.materialize(%{
@@ -164,8 +166,9 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
 
       cleanup(agent_uri)
 
-      # the agent went live at the session/workspace-scoped URI
-      assert URI.to_string(agent_uri) == URI.to_string(expected_uri)
+      # the agent went live at a role-agnostic fresh uuid URI (P2, Gate B)
+      assert URI.to_string(agent_uri) =~ ~r"^entity://team-alpha/agent/[0-9a-f-]{36}$"
+      refute URI.to_string(agent_uri) =~ "pm-coordinator"
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
     end
   end
@@ -365,35 +368,37 @@ defmodule Ezagent.Agent.SessionAgentMaterializeTest do
     end
   end
 
-  describe "idempotent re-materialize" do
-    test "a second materialize of the same session returns :already_present" do
+  describe "role-agnostic identity (P2, Gate B)" do
+    # With uuid identity, materialize/1 is no longer idempotent on (role, session):
+    # a second call mints a DISTINCT fresh agent. Dedupe is the CALLER's concern,
+    # keyed off the (entity × session) membership edge — mirroring the live
+    # socialware path `DefinitionAgents.materialize_one/4`, which skips when
+    # `existing_member_for_role/2` already holds the role. Identity is never keyed
+    # off the role/session anymore.
+    test "a second materialize of the same (role, session) mints a DISTINCT fresh agent" do
       flavor = register_stub_flavor()
       role = "pm-coordinator"
       session_uri = uniq_session()
 
-      assert {:ok, agent_uri, :created} =
-               SessionAgentMaterialize.materialize(%{
-                 role: role,
-                 session_uri: session_uri,
-                 workspace_uri: @workspace_uri,
-                 owner_uri: @owner_uri,
-                 template_content: stub_content(flavor, role),
-                 recipe: stub_recipe(),
-                 telemetry_prefix: telemetry_prefix()
-               })
+      spec = %{
+        role: role,
+        session_uri: session_uri,
+        workspace_uri: @workspace_uri,
+        owner_uri: @owner_uri,
+        template_content: stub_content(flavor, role),
+        recipe: stub_recipe(),
+        telemetry_prefix: telemetry_prefix()
+      }
 
-      cleanup(agent_uri)
+      assert {:ok, agent_uri_1, :created} = SessionAgentMaterialize.materialize(spec)
+      cleanup(agent_uri_1)
 
-      assert {:ok, ^agent_uri, :already_present} =
-               SessionAgentMaterialize.materialize(%{
-                 role: role,
-                 session_uri: session_uri,
-                 workspace_uri: @workspace_uri,
-                 owner_uri: @owner_uri,
-                 template_content: stub_content(flavor, role),
-                 recipe: stub_recipe(),
-                 telemetry_prefix: telemetry_prefix()
-               })
+      assert {:ok, agent_uri_2, :created} = SessionAgentMaterialize.materialize(spec)
+      cleanup(agent_uri_2)
+
+      # distinct fresh uuids — no role/session baked into either identity
+      refute URI.to_string(agent_uri_1) == URI.to_string(agent_uri_2)
+      refute URI.to_string(agent_uri_1) =~ "pm-coordinator"
     end
   end
 end

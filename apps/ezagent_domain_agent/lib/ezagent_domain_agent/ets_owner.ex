@@ -13,7 +13,7 @@ defmodule EzagentDomainAgent.EtsOwner do
     {Ezagent.AgentFlavorRegistry, :set},
     {Ezagent.AgentFlavorAttributes, :set},
     {Ezagent.AgentPassiveAttributes, :set},
-    {Ezagent.AgentRoleAttributes, :set},
+    {Ezagent.AgentRecipeAttributes, :set},
     # role-as-data (SPEC §3): `Ezagent.Agent.RecipeRegistry`'s read-through ETS CACHE
     # (keyed `{ws, name}` → `%Ezagent.Agent.Recipe{}`). Relocated from
     # `EzagentCore.EtsOwner` with the registry itself (the registry now resolves

@@ -37,7 +37,7 @@ defmodule Ezagent.Agent.Recipe.Compose do
   @type materialized :: %{
           behaviors: [module() | atom()],
           passive: boolean(),
-          role: String.t() | nil,
+          recipe: String.t() | nil,
           sandbox_content: %{
             skills: [Recipe.skill_ref()],
             plugins: [Recipe.plugin_ref()],
@@ -69,11 +69,13 @@ defmodule Ezagent.Agent.Recipe.Compose do
       # attribute (RF-5a) — the routing/join/mention gates source `passive?` from
       # that attribute, never from a parsed URI.
       passive: role.passive,
-      # RF-7: carry the role NAME through to materialization so the create step
-      # records it as the durable `:sandbox`-slice `:role` field (the list-by-role
-      # read model + the `:role` UriQuery resolver source it from that snapshot,
-      # never from a parsed URI). `nil` only for an unnamed recipe.
-      role: role.name,
+      # P2 RECIPE PROVENANCE (was RF-7 role): carry the RECIPE NAME through to
+      # materialization so the create step records it as the durable
+      # `:sandbox`-slice `:recipe` field (the list-by-recipe read model + the
+      # `:recipe` UriQuery resolver source it from that snapshot, never from a
+      # parsed URI). This is build provenance, NOT a session role (Gate B).
+      # `nil` only for an unnamed recipe.
+      recipe: role.name,
       sandbox_content: %{
         skills: role.skills,
         plugins: role.plugins,

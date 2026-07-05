@@ -126,7 +126,7 @@ defmodule Ezagent.ActionSet.SandboxColdRestartTest do
              # for a non-role agent across the crash.
              passive: false,
              # RF-7 durable role NAME — nil (no role) for this non-role agent.
-             role: nil
+             recipe: nil
            }
 
     # ---- 2. Transient REBUILT to a live equivalent. ----

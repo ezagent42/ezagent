@@ -1327,7 +1327,10 @@ defmodule EzagentWeb.WorldConversationTest do
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(planned_agent)
     assert :ready = Ezagent.ReadyGate.status(planned_agent)
     assert {:ok, "py"} = Ezagent.AgentFlavorAttributes.get(planned_agent)
-    assert {:ok, ^role_name} = Ezagent.AgentRoleAttributes.fetch(planned_agent)
+    # P2 (Gate B): the agent-level attribute records BUILD PROVENANCE (the recipe
+    # name), NOT the session role_name — they diverge here. The session role_name
+    # lives on the membership edge (asserted below via `members`).
+    assert {:ok, ^recipe_name} = Ezagent.AgentRecipeAttributes.fetch(planned_agent)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)

@@ -264,25 +264,19 @@ defmodule Ezagent.Agent.SessionAgentMaterialize do
   end
 
   @doc """
-  The session/workspace-scoped per-session agent URI for `role`
-  (`entity://<workspace>/agent/<role>-<session-disc>`).
+  A fresh, ROLE-AGNOSTIC agent URI: `entity://<workspace>/agent/<uuid>` (P2).
 
-  Mirrors `Ezagent.Entity.Session.Orchestrator.planned_orchestrator_uri/2`'s
-  shape (`cc_orchestrator-<session-disc>`), generalized over `role`. The
-  discriminator is the session URI's `name` segment, so two kanban-flow sessions
-  in the same workspace get distinct per-session agents.
+  The materialized agent's identity carries NO role or session segment (Gate B):
+  role_name lives only on the (entity × session) membership edge, and recipe
+  provenance is a stored attribute — never in the URI. `role` and `session_uri`
+  are retained in the signature only as the recipe-by-name + owning-context
+  inputs for the caller; they do NOT shape the URI. Mirrors the live socialware
+  materializer `DefinitionAgents.planned_agent_uri/1` (fresh UUID instance URI).
   """
   @spec planned_agent_uri(String.t(), URI.t(), URI.t()) :: URI.t()
-  def planned_agent_uri(role, %URI{} = session_uri, %URI{} = workspace_uri)
+  def planned_agent_uri(role, %URI{} = _session_uri, %URI{} = workspace_uri)
       when is_binary(role) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    Ezagent.URI.agent(workspace_name, "#{role}-#{session_discriminator(session_uri)}")
-  end
-
-  defp session_discriminator(%URI{} = session_uri) do
-    case Ezagent.URI.name(session_uri) do
-      {:ok, name} -> name
-      :error -> session_uri.host || "session"
-    end
+    Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
   end
 end

@@ -384,7 +384,7 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
                    respawn_template_data: nil,
                    pty_phase: nil,
                    passive: false,
-                   role: nil
+                   recipe: nil
                  },
                  transients: %{}
                }

@@ -48,16 +48,19 @@ defmodule Ezagent.ActionSet.Sandbox do
                                                    # reads it from this slice (snapshot-backed)
                                                    # so a passive actor stays passive across a
                                                    # cold restart (NOT fail-open to principal).
-        role:                  nil | String.t()    # RF-7: DURABLE role NAME. The role create
-                                                   # step writes it from the requested recipe
-                                                   # (`role.name`); the `:role` UriQuery resolver
-                                                   # + `Ezagent.AgentRoleResolver.list_by_role/2`
+        recipe:                nil | String.t()    # P2 RECIPE PROVENANCE (was RF-7 `:role`).
+                                                   # DURABLE name of the RECIPE the agent was
+                                                   # built from — build provenance, NOT a session
+                                                   # role (session role_name lives only on the
+                                                   # membership edge; Gate B). The create step
+                                                   # writes it from the materialized recipe
+                                                   # (`role.name`); the `:recipe` UriQuery resolver
+                                                   # + `Ezagent.AgentRecipeResolver.list_by_recipe/2`
                                                    # read it from this slice (snapshot-backed) so
-                                                   # a DORMANT passive role agent (e.g. the
-                                                   # kanban-manager) still enumerates by role
+                                                   # a DORMANT provenance agent (e.g. the
+                                                   # kanban-manager) still enumerates by recipe
                                                    # after a BEAM restart (else the board
-                                                   # vanishes). `nil` = no role (every existing
-                                                   # agent), never enumerated by any role.
+                                                   # vanishes). `nil` = no recipe provenance.
       }
 
   Every one of these is DURABLE: the cold-load `activate/2` reads
@@ -219,22 +222,22 @@ defmodule Ezagent.ActionSet.Sandbox do
        # A snapshot rehydrate shadows this on cold-load, so it survives a
        # restart — the `:passive` UriQuery resolver reads it from this slice.
        passive: validate_passive(Map.get(args, :passive)),
-       # RF-7 DURABLE role NAME. The role create step threads `:role` into the
-       # spawn args from the requested recipe; an absent value (every non-role
-       # agent) is `nil` (not enumerated by any role). A snapshot rehydrate
-       # shadows this on cold-load, so it survives a restart — the `:role`
-       # UriQuery resolver + `Ezagent.AgentRoleResolver.list_by_role/2` read it
-       # from the persisted slice, so a DORMANT passive role agent still
-       # enumerates by role after a BEAM restart.
-       role: validate_role(Map.get(args, :role))
+       # P2 DURABLE RECIPE PROVENANCE (was RF-7 `:role`). The create step threads
+       # `:recipe` into the spawn args from the materialized recipe; an absent
+       # value (every non-recipe agent) is `nil`. A snapshot rehydrate shadows
+       # this on cold-load, so it survives a restart — the `:recipe` UriQuery
+       # resolver + `Ezagent.AgentRecipeResolver.list_by_recipe/2` read it from the
+       # persisted slice, so a DORMANT provenance agent still enumerates by
+       # recipe after a BEAM restart. NOT a session role (Gate B).
+       recipe: validate_recipe(Map.get(args, :recipe))
      }}
   end
 
-  # `role` comes from spawn args (role create step) or a rehydrated snapshot
-  # value; a non-empty string is the role NAME, anything else (nil/missing/
-  # corrupt/empty) is the no-role default `nil` — never enumerated by a role.
-  defp validate_role(r) when is_binary(r) and r != "", do: r
-  defp validate_role(_), do: nil
+  # `recipe` comes from spawn args (create step) or a rehydrated snapshot value;
+  # a non-empty string is the RECIPE NAME (build provenance), anything else
+  # (nil/missing/corrupt/empty) is the no-provenance default `nil`.
+  defp validate_recipe(r) when is_binary(r) and r != "", do: r
+  defp validate_recipe(_), do: nil
 
   # `passive` comes from spawn args (role create step) or a rehydrated snapshot
   # value; anything that is not a boolean (nil/missing/corrupt) is the

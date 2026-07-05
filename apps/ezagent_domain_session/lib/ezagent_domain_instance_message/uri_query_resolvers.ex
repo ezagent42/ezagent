@@ -14,7 +14,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   def register do
     with :ok <- Ezagent.UriQuery.register(:flavor, &__MODULE__.resolve_flavor/1),
          :ok <- Ezagent.UriQuery.register(:passive, &__MODULE__.resolve_passive/1),
-         :ok <- Ezagent.UriQuery.register(:role, &__MODULE__.resolve_role/1),
+         :ok <- Ezagent.UriQuery.register(:recipe, &__MODULE__.resolve_recipe/1),
          :ok <- Ezagent.UriQuery.register(:orchestrator, &__MODULE__.resolve_orchestrator/1),
          :ok <- Ezagent.UriQuery.register(:member_by_role, &__MODULE__.resolve_member_by_role/1),
          :ok <-
@@ -217,23 +217,25 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   def resolve_passive(_), do: {:ok, false}
 
   @doc false
-  # RF-7: resolve the durable role NAME of `agent_uri` — never parsed from the
-  # URI. RESTART-SAFE LAYERING (parallel to `resolve_passive`): ETS fast path →
+  # P2 RECIPE PROVENANCE (was RF-7 `:role`): resolve the durable RECIPE NAME an
+  # agent was built from — never parsed from the URI, and NOT a session role
+  # (session role_name lives on the membership edge; use `:member_by_role`).
+  # RESTART-SAFE LAYERING (parallel to `resolve_passive`): ETS fast path →
   # durable SNAPSHOT. A stored ETS entry is authoritative; ONLY an absent entry
-  # (`:none`) falls through to the persisted `:sandbox`-slice `:role` so a
-  # cold-loaded role agent still resolves its role after the ETS table is
-  # cleared. No live `Kind.get_slice` layer: `:role` is IMMUTABLE after create,
-  # so the snapshot is always current, and this can run on the routing hot path
-  # where a cross-Kind call could stall. A miss → `:none` (no role).
-  @spec resolve_role(term()) :: Ezagent.UriQuery.result()
-  def resolve_role(%URI{} = agent_uri) do
-    case Ezagent.AgentRoleAttributes.fetch(agent_uri) do
-      {:ok, role} -> {:ok, role}
-      :none -> Ezagent.AgentRoleResolver.role_from_durable_snapshot(agent_uri)
+  # (`:none`) falls through to the persisted `:sandbox`-slice `:recipe` so a
+  # cold-loaded provenance agent still resolves after the ETS table is cleared.
+  # No live `Kind.get_slice` layer: `:recipe` is IMMUTABLE after create, so the
+  # snapshot is always current, and this can run on the routing hot path where a
+  # cross-Kind call could stall. A miss → `:none`.
+  @spec resolve_recipe(term()) :: Ezagent.UriQuery.result()
+  def resolve_recipe(%URI{} = agent_uri) do
+    case Ezagent.AgentRecipeAttributes.fetch(agent_uri) do
+      {:ok, recipe} -> {:ok, recipe}
+      :none -> Ezagent.AgentRecipeResolver.recipe_from_durable_snapshot(agent_uri)
     end
   end
 
-  def resolve_role(_), do: :none
+  def resolve_recipe(_), do: :none
 
   # Durable passive verdict from the persisted `:sandbox` snapshot slice. Any
   # miss / non-boolean → `false` (principal). No live-Kind read (see the

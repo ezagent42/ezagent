@@ -70,7 +70,7 @@ defmodule Ezagent.Agent.Recipe.ComposeTest do
     test "does NOT emit caps (cap authorization/minting is the materialization step's job)" do
       out = Compose.materialize(role(), %{flavor_behaviors: []})
       refute Map.has_key?(out, :effective_caps)
-      assert Map.keys(out) |> Enum.sort() == [:behaviors, :passive, :role, :sandbox_content]
+      assert Map.keys(out) |> Enum.sort() == [:behaviors, :passive, :recipe, :sandbox_content]
     end
 
     test "RF-6: threads the role's `passive` marker through to the materialized output" do
