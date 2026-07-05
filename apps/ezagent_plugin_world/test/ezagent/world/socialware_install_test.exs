@@ -46,14 +46,18 @@ defmodule Ezagent.World.SocialwareInstallTest do
       DefinitionRegistry.write_definition(definition,
         workspace_uri: workspace_uri,
         caller_workspace_uri: workspace_uri,
-        actor_uri: @author
+        actor_uri: @author,
+        # #165: seeding a public catalog def now requires admin authority.
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       )
 
     object
   end
 
   defp install_of(template_name, workspace_uri) do
-    {:ok, _uri, content} = TemplateResolver.resolve_session_template!(template_name, workspace_uri)
+    {:ok, _uri, content} =
+      TemplateResolver.resolve_session_template!(template_name, workspace_uri)
+
     {:ok, [install]} = Installation.parsed_installs_from_template(content)
     install
   end
@@ -102,7 +106,13 @@ defmodule Ezagent.World.SocialwareInstallTest do
     write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
 
     assert {:ok, template_name} =
-             SocialwareInstall.prepare_create_template(@ws_consumer, @caller, "default", name, nil)
+             SocialwareInstall.prepare_create_template(
+               @ws_consumer,
+               @caller,
+               "default",
+               name,
+               nil
+             )
 
     install = install_of(template_name, @ws_consumer)
     assert install.ref == name

@@ -19,7 +19,9 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          :ok <- check_parent_alive(parent_uri),
          {:ok, parent_name} <- extract_template_name(parent_uri),
          {:ok, _definition, _object} <-
-           DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri),
+           DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri,
+             caps: caps
+           ),
          {:ok, slice} <- build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri) do
       content =
         slice
@@ -53,7 +55,8 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          :ok <- check_template_write_cap(caps, workspace_uri),
          {:ok, _definition, _object} <-
            DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri,
-             name: new_name
+             name: new_name,
+             caps: caps
            ),
          {:ok, slice} <-
            build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri, new_name) do

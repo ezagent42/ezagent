@@ -39,7 +39,9 @@ defmodule Ezagent.Socialware.RetractTest do
       DefinitionRegistry.write_definition(definition,
         workspace_uri: workspace_uri,
         caller_workspace_uri: workspace_uri,
-        actor_uri: @actor
+        actor_uri: @actor,
+        # #165: seeding a public catalog def now requires admin authority.
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       )
 
     object

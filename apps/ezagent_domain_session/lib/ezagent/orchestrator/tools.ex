@@ -171,7 +171,9 @@ defmodule Ezagent.Orchestrator.Tools do
       case join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
           with :ok <-
-                 DefinitionSync.member(session_uri, workspace_uri, caller, member_uri, facets) do
+                 DefinitionSync.member(session_uri, workspace_uri, caller, member_uri, facets,
+                   caps: caps
+                 ) do
             {:ok, member_uri}
           end
 
@@ -599,7 +601,7 @@ defmodule Ezagent.Orchestrator.Tools do
                    caller,
                    matcher_json,
                    receiver_role_name,
-                   add_opts
+                   Keyword.put(add_opts, :caps, caps)
                  ) do
             {:ok, %{id: id}}
           end
@@ -700,7 +702,8 @@ defmodule Ezagent.Orchestrator.Tools do
              ctx: ctx(caller, caps)
            }) do
         {:ok, %{prompt_templates: _} = ok} ->
-          with :ok <- DefinitionSync.prompt_template(session_uri, caller, name, template) do
+          with :ok <-
+                 DefinitionSync.prompt_template(session_uri, caller, name, template, caps: caps) do
             {:ok, ok}
           end
 
@@ -760,7 +763,8 @@ defmodule Ezagent.Orchestrator.Tools do
                    legend_name,
                    member_role_names,
                    bound_rule_set,
-                   fold
+                   fold,
+                   caps: caps
                  ) do
             {:ok, ok}
           end

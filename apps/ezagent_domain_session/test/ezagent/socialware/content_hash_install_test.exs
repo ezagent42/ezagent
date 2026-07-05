@@ -41,7 +41,9 @@ defmodule Ezagent.Socialware.ContentHashInstallTest do
       DefinitionRegistry.write_definition(definition,
         workspace_uri: workspace_uri,
         caller_workspace_uri: workspace_uri,
-        actor_uri: @actor
+        actor_uri: @actor,
+        # #165: seeding a public catalog def now requires admin authority.
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       )
 
     object
@@ -137,7 +139,9 @@ defmodule Ezagent.Socialware.ContentHashInstallTest do
     write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
 
     # No config_id supplied anywhere: the legacy name-keyed freeze path is unchanged.
-    assert {:ok, frozen} = Installation.freeze_template_installs(%{installs: [name]}, @ws_consumer)
+    assert {:ok, frozen} =
+             Installation.freeze_template_installs(%{installs: [name]}, @ws_consumer)
+
     assert {:ok, [{_d, obj, _i}]} = Installation.resolved_template_installs(frozen, @ws_consumer)
     assert is_binary(obj.content_hash)
   end
