@@ -17,9 +17,8 @@ defmodule Ezagent.Socialware.Definition do
             bases: [],
             shape: [],
             views: [],
-            agents: [],
+            roles: [],
             assets: [],
-            members: [],
             routing_rules: [],
             prompt_templates: %{},
             legends: %{},
@@ -29,11 +28,12 @@ defmodule Ezagent.Socialware.Definition do
             owner_policy: %{type: :installer}
 
   @typedoc """
-  A socialware-declared agent: the `recipe` (config义 — a RecipeRegistry name)
-  this agent runs, and its `role_name` (routing义 — the per-session unique
-  routing identifier, `{:role, name}` receiver). Both non-empty strings.
+  A socialware-declared participant role slot. Agent slots name a recipe and
+  default flavor; human slots are open runtime assignment slots.
   """
-  @type agent_spec :: %{recipe: String.t(), role_name: String.t(), flavor: String.t()}
+  @type role_slot ::
+          %{role_name: String.t(), fill: :agent, recipe: String.t(), flavor: String.t()}
+          | %{role_name: String.t(), fill: :human}
 
   @type t :: %__MODULE__{
           name: String.t(),
@@ -44,9 +44,8 @@ defmodule Ezagent.Socialware.Definition do
           bases: [module()],
           shape: [module()],
           views: [module()],
-          agents: [agent_spec()],
+          roles: [role_slot()],
           assets: [map()],
-          members: [map()],
           routing_rules: [map()],
           prompt_templates: map(),
           legends: map(),
@@ -57,25 +56,19 @@ defmodule Ezagent.Socialware.Definition do
         }
 
   @typedoc """
-  Owner-derivation policy (P0 §7, O-1) — how install reproduces the session's
-  `owner_uri` as DATA instead of the hard-coded `User.admin_uri()`:
-
-    * `:installer` (default) — owner = the caller performing the install (today's
-      `/sessions` owner-is-caller behavior; the migration default for every
-      pre-`owner_policy` def, §7.4);
-    * `:fixed` — owner = the declared `uri` (reproduces an anon homesite's
-      hard-coded owner as data — REQUIRED for `web_anon_access: true`, D-5 §7.3);
-    * `:none` — explicitly ownerless (chat/generic defs that route to no owner).
+  Owner-derivation policy — socialware definitions never carry participant or
+  owner instance URIs. The installer/caller becomes owner at install time.
   """
-  @type owner_policy ::
-          %{type: :installer}
-          | %{type: :fixed, uri: URI.t()}
-          | %{type: :none}
+  @type owner_policy :: %{type: :installer}
 
   @doc "Build and validate a socialware definition from a persisted or authored map."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
-    with {:ok, name} <- required_string(attrs, :name),
+    raw_roles = get(attrs, :roles, [])
+    routing_rules = list(attrs, :routing_rules)
+
+    with :ok <- reject_retired_declaration_fields(attrs),
+         {:ok, name} <- required_string(attrs, :name),
          {:ok, version} <- optional_string(attrs, :version, "0.1.0"),
          {:ok, title} <- optional_string(attrs, :title, nil),
          {:ok, description} <- optional_string(attrs, :description, ""),
@@ -83,9 +76,10 @@ defmodule Ezagent.Socialware.Definition do
          {:ok, bases} <- behavior_list(attrs, :bases),
          {:ok, shape} <- behavior_list(attrs, :shape),
          {:ok, views} <- behavior_list(attrs, :views),
-         {:ok, agents} <- agents_list(attrs),
+         {:ok, roles} <- roles_list(attrs),
          {:ok, visibility_policy} <- visibility_policy(attrs),
          {:ok, owner_policy} <- owner_policy(attrs),
+         :ok <- reject_participant_instance_uris(raw_roles, routing_rules),
          :ok <- validate_anon_owner(visibility_policy, owner_policy) do
       {:ok,
        %__MODULE__{
@@ -97,10 +91,9 @@ defmodule Ezagent.Socialware.Definition do
          bases: bases,
          shape: shape,
          views: views,
-         agents: agents,
+         roles: roles,
          assets: list(attrs, :assets),
-         members: list(attrs, :members),
-         routing_rules: list(attrs, :routing_rules),
+         routing_rules: routing_rules,
          prompt_templates: map(attrs, :prompt_templates),
          legends: map(attrs, :legends),
          orchestrator_template_uri: optional_uri(attrs, :orchestrator_template_uri),
@@ -143,9 +136,8 @@ defmodule Ezagent.Socialware.Definition do
       bases: Enum.map(definition.bases, &Atom.to_string/1),
       shape: Enum.map(definition.shape, &Atom.to_string/1),
       views: Enum.map(definition.views, &Atom.to_string/1),
-      agents: json_safe(definition.agents),
+      roles: json_safe(definition.roles),
       assets: json_safe(definition.assets),
-      members: json_safe(definition.members),
       routing_rules: json_safe(definition.routing_rules),
       prompt_templates: json_safe(definition.prompt_templates),
       legends: json_safe(definition.legends),
@@ -178,18 +170,10 @@ defmodule Ezagent.Socialware.Definition do
   def content_hash(body) when is_map(body), do: Ezagent.Socialware.ContentHash.of(body)
 
   @doc """
-  Derive the session `owner_uri` this definition installs onto (P0 §7.2, O-1),
-  the DATA replacement for the hard-coded `User.admin_uri()`
-  (`EzagentPluginHello.App.ensure_app/3`, `app.ex:50-56`):
-
-    * `:fixed` → the declared `uri`;
-    * `:installer` → the `caller` performing the install (owner-is-caller);
-    * `:none` → `nil` (an ownerless session; messages fall to the concierge).
+  Derive the session `owner_uri` from the caller performing the install.
   """
   @spec owner_uri(t(), URI.t() | nil) :: URI.t() | nil
-  def owner_uri(%__MODULE__{owner_policy: %{type: :fixed, uri: %URI{} = uri}}, _caller), do: uri
   def owner_uri(%__MODULE__{owner_policy: %{type: :installer}}, caller), do: caller
-  def owner_uri(%__MODULE__{owner_policy: %{type: :none}}, _caller), do: nil
 
   defp required_string(attrs, key) do
     case get(attrs, key) do
@@ -262,21 +246,19 @@ defmodule Ezagent.Socialware.Definition do
 
   defp behavior_module(other), do: {:error, {:invalid_socialware_behavior, other}}
 
-  # SHAPE-ONLY validation for the `agents` field: a list of
-  # `%{recipe: <non-empty-string>, role_name: <non-empty-string>}` (atom OR
-  # string keys — persisted JSON round-trips as strings). Normalized to
-  # atom-keyed maps. Recipe EXISTENCE (`RecipeRegistry.lookup`) and role_name
-  # per-session uniqueness are NOT resolved here — `new/1` has no workspace and
-  # a Definition is authored/validated apart from any live session. Those checks
-  # live in the workspace-aware gate (`mix ezagent.socialware.check`) and at
+  # SHAPE-ONLY validation for the `roles` field. Recipe EXISTENCE
+  # (`RecipeRegistry.lookup`) and role_name per-session uniqueness are NOT
+  # resolved here — `new/1` has no workspace and a Definition is
+  # authored/validated apart from any live session. Those checks live in the
+  # workspace-aware gate (`mix ezagent.socialware.check`) and at
   # materialization/join time (`Members.role_name_conflict`).
-  defp agents_list(attrs) do
-    case get(attrs, :agents, []) do
+  defp roles_list(attrs) do
+    case get(attrs, :roles, []) do
       list when is_list(list) ->
         list
         |> Enum.reduce_while({:ok, []}, fn item, {:ok, acc} ->
-          case agent_spec(item) do
-            {:ok, spec} -> {:cont, {:ok, [spec | acc]}}
+          case role_slot(item) do
+            {:ok, slot} -> {:cont, {:ok, [slot | acc]}}
             {:error, _} = error -> {:halt, error}
           end
         end)
@@ -286,24 +268,102 @@ defmodule Ezagent.Socialware.Definition do
         end
 
       other ->
-        {:error, {:invalid_socialware_definition_field, :agents, other}}
+        {:error, {:invalid_socialware_definition_field, :roles, other}}
     end
   end
 
-  defp agent_spec(item) when is_map(item) do
+  defp role_slot(item) when is_map(item) do
     recipe = get(item, :recipe)
     role_name = get(item, :role_name)
-    flavor = get(item, :flavor, "cc")
+    fill = fill_type(get(item, :fill))
 
-    if is_binary(recipe) and recipe != "" and is_binary(role_name) and role_name != "" and
-         is_binary(flavor) and flavor != "" do
-      {:ok, %{recipe: recipe, role_name: role_name, flavor: flavor}}
-    else
-      {:error, {:invalid_socialware_agent, item}}
+    case fill do
+      :agent ->
+        flavor = get(item, :flavor)
+
+        if non_empty_string?(recipe) and non_empty_string?(role_name) and
+             non_empty_string?(flavor) do
+          {:ok, %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}}
+        else
+          {:error, {:invalid_socialware_role_slot, item}}
+        end
+
+      :human ->
+        if non_empty_string?(role_name) do
+          {:ok, %{role_name: role_name, fill: :human}}
+        else
+          {:error, {:invalid_socialware_role_slot, item}}
+        end
+
+      _ ->
+        {:error, {:invalid_socialware_role_slot, item}}
     end
   end
 
-  defp agent_spec(other), do: {:error, {:invalid_socialware_agent, other}}
+  defp role_slot(other), do: {:error, {:invalid_socialware_role_slot, other}}
+
+  defp fill_type(:agent), do: :agent
+  defp fill_type("agent"), do: :agent
+  defp fill_type(:human), do: :human
+  defp fill_type("human"), do: :human
+  defp fill_type(other), do: other
+
+  defp non_empty_string?(value), do: is_binary(value) and value != ""
+
+  defp reject_retired_declaration_fields(attrs) do
+    case Enum.find([:agents, :members], &has_key?(attrs, &1)) do
+      nil -> :ok
+      field -> {:error, {:retired_socialware_definition_field, field}}
+    end
+  end
+
+  defp has_key?(attrs, key),
+    do: Map.has_key?(attrs, key) or Map.has_key?(attrs, Atom.to_string(key))
+
+  defp reject_participant_instance_uris(roles, routing_rules) do
+    offenders =
+      []
+      |> collect_participant_uri_offenders(:roles, roles)
+      |> collect_participant_uri_offenders(:routing_rules, routing_rules)
+
+    case offenders do
+      [] -> :ok
+      _ -> {:error, {:socialware_definition_declares_instance_uri, Enum.reverse(offenders)}}
+    end
+  end
+
+  defp collect_participant_uri_offenders(acc, section, value) do
+    value
+    |> participant_uri_values([])
+    |> Enum.reduce(acc, fn value, acc -> [{section, value} | acc] end)
+  end
+
+  defp participant_uri_values(%URI{} = uri, acc),
+    do: participant_uri_values(URI.to_string(uri), acc)
+
+  defp participant_uri_values(%{} = map, acc) do
+    Enum.reduce(map, acc, fn {_key, value}, acc -> participant_uri_values(value, acc) end)
+  end
+
+  defp participant_uri_values(list, acc) when is_list(list) do
+    Enum.reduce(list, acc, fn value, acc -> participant_uri_values(value, acc) end)
+  end
+
+  defp participant_uri_values(value, acc) when is_binary(value) do
+    if participant_instance_uri?(value), do: [value | acc], else: acc
+  end
+
+  defp participant_uri_values(_value, acc), do: acc
+
+  defp participant_instance_uri?(value) do
+    case Ezagent.URI.parse(value) do
+      {:ok, %URI{} = uri} ->
+        Ezagent.URI.type?(uri, :agent) or Ezagent.URI.type?(uri, :user)
+
+      _ ->
+        false
+    end
+  end
 
   defp visibility_policy(attrs) do
     policy = map(attrs, :visibility_policy)
@@ -347,63 +407,31 @@ defmodule Ezagent.Socialware.Definition do
     }
   end
 
-  # owner_policy (P0 §7) — atom/string-key + atom/string-value tolerant on read,
-  # mirroring `visibility_policy`. `:fixed` REQUIRES a present, parseable `uri`;
-  # an unknown `type` or a `:fixed` with no/invalid uri fails LOUD (no
-  # default-swallow).
+  # Definitions may not declare owner instance URIs. The only supported owner
+  # policy is installer-derived ownership.
   defp owner_policy(attrs) do
     policy = map(attrs, :owner_policy)
 
     case owner_policy_type(get(policy, :type, :installer)) do
       :fixed ->
-        case owner_policy_uri(policy) do
-          %URI{} = uri -> {:ok, %{type: :fixed, uri: uri}}
-          _ -> {:error, {:invalid_socialware_owner_policy, policy}}
-        end
+        {:error, {:socialware_definition_declares_owner_uri, policy}}
 
-      type when type in [:installer, :none] ->
-        {:ok, %{type: type}}
+      :installer ->
+        {:ok, %{type: :installer}}
 
       _ ->
         {:error, {:invalid_socialware_owner_policy, policy}}
     end
   end
 
-  defp owner_policy_type(type) when type in [:installer, :fixed, :none], do: type
+  defp owner_policy_type(type) when type in [:installer, :fixed], do: type
   defp owner_policy_type("installer"), do: :installer
   defp owner_policy_type("fixed"), do: :fixed
-  defp owner_policy_type("none"), do: :none
   defp owner_policy_type(other), do: other
-
-  defp owner_policy_uri(policy) do
-    case get(policy, :uri) do
-      %URI{} = uri -> uri
-      value when is_binary(value) and value != "" -> safe_uri(value)
-      _ -> nil
-    end
-  end
-
-  defp safe_uri(value) do
-    Ezagent.URI.new!(value)
-  rescue
-    _ -> nil
-  end
-
-  # D-5 (§7.3) — a `web_anon_access: true` def has no logged-in installer to
-  # derive an owner from, so it MUST declare `owner_policy: %{type: :fixed}`.
-  # Both `:installer` (no installer) and `:none` (ownerless — the exact condition
-  # this feature eliminates) are FORBIDDEN for an anon-accessible def.
-  defp validate_anon_owner(%{web_anon_access: true}, %{type: type}) when type != :fixed do
-    {:error, {:anon_definition_requires_fixed_owner, type}}
-  end
 
   defp validate_anon_owner(_visibility_policy, _owner_policy), do: :ok
 
-  defp stringify_owner_policy(%{type: :fixed, uri: uri}),
-    do: %{"type" => "fixed", "uri" => uri_string(uri)}
-
-  defp stringify_owner_policy(%{type: type}) when type in [:installer, :none],
-    do: %{"type" => Atom.to_string(type)}
+  defp stringify_owner_policy(%{type: :installer}), do: %{"type" => "installer"}
 
   defp stringify_owner_policy(_), do: %{"type" => "installer"}
 

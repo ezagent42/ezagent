@@ -135,7 +135,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
 
   defp verify_content_hash(_object, nil), do: :ok
 
-  defp verify_content_hash(%ConfigObject{content_hash: hash}, expected) when is_binary(expected) do
+  defp verify_content_hash(%ConfigObject{content_hash: hash}, expected)
+       when is_binary(expected) do
     if hash == expected do
       :ok
     else
@@ -153,7 +154,12 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   def retracted?(workspace_uri, name) when is_binary(name) and name != "" do
     ws = uri_string(workspace_uri)
 
-    case ConfigStore.resolve(@definition_layer, ws, definition_subject_uri(ws, name), @retract_key) do
+    case ConfigStore.resolve(
+           @definition_layer,
+           ws,
+           definition_subject_uri(ws, name),
+           @retract_key
+         ) do
       {:ok, %ConfigObject{body: body}} -> Map.get(body, "retracted") == true
       :none -> false
     end
@@ -287,12 +293,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
           Ezagent.ActionSet.SupervisorApproval
         ],
         adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-        visibility_policy: %{publish_policy: :auto, web_anon_access: true},
-        # D-5 (§7.3) — anon-accessible (`web_anon_access: true`), so it MUST
-        # declare a `:fixed` owner (the system admin); `:installer`/`:none` are
-        # invalid for an anon def and `Definition.new/1` would reject the
-        # round-tripped body on read.
-        owner_policy: %{type: :fixed, uri: Ezagent.Entity.User.admin_uri()}
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
       }
     ]
   end
@@ -466,7 +467,8 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
             actor_uri: default_seed_actor(),
             caller_workspace_uri: workspace_uri,
             authority: :system_seed,
-            source_turn_id: builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
+            source_turn_id:
+              builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
           )
           |> case do
             {:ok, _object} -> {:ok, :seeded}

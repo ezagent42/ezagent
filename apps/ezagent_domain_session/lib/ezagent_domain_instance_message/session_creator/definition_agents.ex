@@ -1,10 +1,10 @@
 defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   @moduledoc """
-  T2-1b — materialize a socialware `Definition`'s `agents`
-  (`[%{recipe: name, role_name: name}]`) into a live session as SPAWNED MEMBERS.
+  Materialize a socialware `Definition`'s agent role slots into a live session
+  as spawned members.
 
-  `agents` is the socialware-side declaration "these are the agents this
-  socialware brings into the session"; materialization turns each into a live,
+  Agent role slots declare "this socialware needs an agent with this role";
+  materialization turns each into a live,
   session/workspace-scoped agent that is JOINED as a session member with its
   `role_name` facet (so `{:role, name}` routing rules resolve to it) and holds
   its recipe's `requested_caps`.
@@ -14,15 +14,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   `session.join` → cleanup-on-join-failure) so a join failure never leaves an
   orphan worker:
 
-    1. **role_name uniqueness FIRST** — reject a `role_name` that collides with
-       an existing member (that is NOT this agent's own deterministic URI) OR
-       another entry in the same `agents` batch, BEFORE spawning (no wasted live
-       agent). An existing member at this agent's own deterministic URI is an
-       idempotent re-materialize (repair/restart) → skip.
+    1. **role_name uniqueness FIRST** — reject duplicate role names in the same
+       role batch. An existing live member with that role means idempotent
+       re-materialize/repair has already bound the role, so skip.
     2. **resolve recipe by workspace** — `RecipeRegistry.lookup(workspace, name)`,
        fail-closed on `:error` (never a cap-less spawn; #1116).
     3. **spawn** — recipe × declared flavor (default `cc`) →
-       `Agent.spawn_from_template_content` at the deterministic per-session URI.
+       `Agent.spawn_from_template_content` at a fresh uuid agent URI.
     4. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
        on join `{:error, _}` terminate the worker we just spawned.
     5. **grant caps LAST** — `GrantRecipeCaps.grant_recipe_caps` grants the
@@ -30,13 +28,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        successful join so join-failure cleanup only has to terminate.
 
   Authority is SYSTEM-MEDIATED materialization (mirrors
-  `Materializer.join_session_members` / `TemplateTeam.ensure_member_present`):
+  `Materializer.join_session_members`):
   the spawn runs under the session owner (`granted_by`) with
   `list_caps_for_materialization/1`, and the join/cleanup dispatch under the
   genesis admin entity with an inline least-priv cap.
 
   > **Rebase note (T1, reconciled):** T1's structured `recipe:<name>` subject has
-  > landed. `agents[].recipe` accepts EITHER a plain recipe name (`guide`) or the
+  > landed. Role `recipe` accepts EITHER a plain recipe name (`guide`) or the
   > structured subject (`recipe:guide`); `lookup_ref/1` strips a single leading
   > `recipe:` prefix so both resolve identically through `RecipeRegistry.lookup/2`
   > (which itself takes a plain name and re-derives the subject).
@@ -44,17 +42,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
-  alias Ezagent.Agent.{RecipeRegistry, SessionAgentMaterialize}
+  alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Invocation
   alias EzagentDomainInstanceMessage.SessionCreator
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
   @telemetry_prefix [:ezagent, :socialware, :definition_agents]
-  @agent_description "socialware-declared agent materialized per-session (Definition.agents, T2-1b)"
+  @agent_description "socialware-declared agent materialized per-session (Definition.roles)"
 
   @doc """
-  Materialize `agents` into `session_uri`. `granted_by` is the session owner
+  Materialize agent role slots into `session_uri`. `granted_by` is the session owner
   (the #154-clean grant/spawn root). Idempotent on the repair/restart path.
 
   Returns `:ok` or `{:error, reason}` (fail-loud — a create-path failure rolls
@@ -99,19 +97,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     recipe_name = lookup_ref(recipe_of(agent))
     role_name = role_name_of(agent)
     flavor = flavor_of(agent)
-    planned_uri = planned_agent_uri(role_name, session_uri, workspace_uri)
 
     case existing_member_for_role(session_uri, role_name) do
-      %URI{} = existing_uri ->
-        if same_uri?(existing_uri, planned_uri) do
-          # Idempotent re-materialize (repair/restart) — our agent already
-          # joined at this role_name. Skip (do not re-spawn / re-grant).
-          :ok
-        else
-          {:error, {:agent_role_name_conflict, role_name, existing_uri}}
-        end
+      %URI{} ->
+        # Idempotent re-materialize (repair/restart) — the role is already
+        # joined. Skip (do not re-spawn / re-grant).
+        :ok
 
       nil ->
+        planned_uri = planned_agent_uri(workspace_uri)
+
         with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
              :ok <-
                spawn_and_join(
@@ -143,8 +138,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   # form (T1 project B). `RecipeRegistry.lookup/2` takes a PLAIN recipe name and
   # re-derives the `recipe:<name>` subject internally, and the same plain name is
   # reused as the AgentTemplate name — so normalize a single leading `recipe:`
-  # prefix here so both a bare `guide` and a prefixed `recipe:guide` in
-  # `agents[].recipe` resolve identically. Idempotent: strips at most one prefix.
+  # prefix here so both a bare `guide` and a prefixed `recipe:guide` in role
+  # slots resolve identically. Idempotent: strips at most one prefix.
   defp lookup_ref("recipe:" <> rest) when rest != "", do: rest
   defp lookup_ref(name), do: name
 
@@ -283,15 +278,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   # --- helpers --------------------------------------------------------------
 
   @doc """
-  The deterministic per-session agent URI for `role_name`
-  (`entity://<workspace>/agent/<role_name>-<session-disc>`). Delegates to
-  `SessionAgentMaterialize.planned_agent_uri/3` (the same session-discriminator
-  shape) keyed on `role_name` (per-session unique) so two socialware agents
-  sharing a recipe get distinct URIs.
+  Fresh per-session agent URI. Definition declarations intentionally carry only
+  role data; the runtime chooses a UUID instance URI at materialization time.
   """
-  @spec planned_agent_uri(String.t(), URI.t(), URI.t()) :: URI.t()
-  defdelegate planned_agent_uri(role_name, session_uri, workspace_uri),
-    to: SessionAgentMaterialize
+  @spec planned_agent_uri(URI.t()) :: URI.t()
+  def planned_agent_uri(%URI{} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.URI.workspace_name!()
+    |> Ezagent.URI.agent(Ecto.UUID.generate())
+  end
 
   defp existing_member_for_role(%URI{} = session_uri, role_name) do
     Members.role_name_to_uri(read_members(session_uri), role_name)
@@ -329,6 +324,4 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       _ -> "cc"
     end
   end
-
-  defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
 end

@@ -124,11 +124,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [%{recipe: recipe_name, role_name: role_name}]
              )
 
-    planned = DefinitionAgents.planned_agent_uri(role_name, session_uri, @workspace_uri)
+    members = members_of(session_uri)
+    planned = SessionBehavior.role_name_to_uri(members, role_name)
     on_exit(fn -> terminate(planned) end)
 
     # (1) joined as a member carrying the role_name facet
-    members = members_of(session_uri)
     assert SessionBehavior.role_name_to_uri(members, role_name) == planned
     assert {:ok, _pid} = KindRegistry.lookup(planned)
 
@@ -155,7 +155,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
              )
 
-    planned = DefinitionAgents.planned_agent_uri(role_name, session_uri, @workspace_uri)
+    members = members_of(session_uri)
+    planned = SessionBehavior.role_name_to_uri(members, role_name)
     on_exit(fn -> terminate(planned) end)
 
     assert {:ok, _pid} = KindRegistry.lookup(planned)
@@ -167,7 +168,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert Map.has_key?(sandbox, :config_dir_path)
 
-    members = members_of(session_uri)
     assert SessionBehavior.role_name_to_uri(members, role_name) == planned
 
     caps = Ezagent.Identity.list_caps_for(planned)
@@ -192,7 +192,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                agents
              )
 
-    planned = DefinitionAgents.planned_agent_uri(role_name, session_uri, @workspace_uri)
+    members = members_of(session_uri)
+    planned = SessionBehavior.role_name_to_uri(members, role_name)
     on_exit(fn -> terminate(planned) end)
 
     # second call is a no-op skip (member already at our deterministic URI)
@@ -203,8 +204,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                @owner_uri,
                agents
              )
-
-    members = members_of(session_uri)
 
     assert map_size(
              Enum.filter(members, fn {_uri, m} -> m[:role_name] == role_name end)

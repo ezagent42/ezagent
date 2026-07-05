@@ -26,15 +26,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
                socialware_config,
                declared_roles
              ),
-           # T2-1b — materialize the installed socialware Definitions' `agents`
-           # (`%{recipe, role_name}`) as spawned session members with recipe
+           # P1 — materialize the installed socialware Definitions' agent role
+           # slots (`%{recipe, role_name, flavor}`) as spawned session members with recipe
            # caps. Runs on BOTH the fresh-create and repair paths (idempotent).
            :ok <-
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                workspace_uri,
                granted_by,
-               Map.get(socialware_config, :agents, [])
+               socialware_config
+               |> Map.get(:roles, [])
+               |> Enum.filter(&agent_role_slot?/1)
              ) do
         :ok
       end
@@ -42,6 +44,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   end
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  defp agent_role_slot?(%{} = role) do
+    (Map.get(role, :fill) || Map.get(role, "fill")) in [:agent, "agent"]
+  end
+
+  defp agent_role_slot?(_role), do: false
 
   @spec provision_declared_member(URI.t(), URI.t(), URI.t(), map()) ::
           {:ok, URI.t(), map()} | {:error, term()}
@@ -53,27 +61,43 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
       )
       when is_map(declaration) do
     role_name = member_field(declaration, :role_name)
-    source_template_uri = member_uri_field(declaration, :source_template_uri)
 
-    with {:ok, %URI{} = member_uri, _fresh?} <-
-           ensure_member_present(
-             declaration,
-             workspace_uri,
-             granted_by,
-             source_template_uri,
-             role_name,
-             session_uri
-           ) do
-      facets =
-        %{in_session_template: true}
-        |> maybe_put(:role_name, role_name)
-        |> maybe_put(:source_template_uri, source_template_uri)
+    case member_field(declaration, :fill) do
+      :human ->
+        {:error, {:human_role_slot_requires_runtime_assignment, role_name, session_uri}}
 
-      {:ok, member_uri, facets}
+      "human" ->
+        {:error, {:human_role_slot_requires_runtime_assignment, role_name, session_uri}}
+
+      :agent ->
+        {:error, {:agent_role_slot_materialized_at_session_create, role_name, session_uri}}
+
+      "agent" ->
+        {:error, {:agent_role_slot_materialized_at_session_create, role_name, session_uri}}
+
+      _ ->
+        source_template_uri = member_uri_field(declaration, :source_template_uri)
+
+        with {:ok, %URI{} = member_uri, _fresh?} <-
+               ensure_legacy_member_present(
+                 declaration,
+                 workspace_uri,
+                 granted_by,
+                 source_template_uri,
+                 role_name,
+                 session_uri
+               ) do
+          facets =
+            %{in_session_template: true}
+            |> maybe_put(:role_name, role_name)
+            |> maybe_put(:source_template_uri, source_template_uri)
+
+          {:ok, member_uri, facets}
+        end
     end
   end
 
-  defp ensure_member_present(
+  defp ensure_legacy_member_present(
          _member,
          %URI{} = workspace_uri,
          %URI{} = granted_by,
@@ -106,7 +130,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     end
   end
 
-  defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name, _session_uri) do
+  defp ensure_legacy_member_present(
+         member,
+         _workspace_uri,
+         _granted_by,
+         nil,
+         _role_name,
+         _session_uri
+       ) do
     case member_uri_field(member, :uri) do
       %URI{} = member_uri ->
         _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
@@ -295,21 +326,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     end)
   end
 
-  defp resolve_one_receiver(%URI{} = uri, _declared_roles), do: {:ok, uri}
+  defp resolve_one_receiver({:role, role}, declared_roles) when is_binary(role) do
+    if role in declared_roles do
+      {:ok, Ezagent.Routing.Receiver.role(role)}
+    else
+      {:error, {:unknown_rule_receiver, role}}
+    end
+  end
 
   defp resolve_one_receiver(r, declared_roles) when is_binary(r) do
-    cond do
-      Ezagent.Routing.Resolver.magic_token?(r) ->
-        {:ok, r}
-
-      r in declared_roles ->
-        {:ok, Ezagent.Routing.Receiver.role(r)}
-
-      true ->
-        case Ezagent.URI.parse(r) do
-          {:ok, %URI{} = uri} -> {:ok, uri}
-          {:error, _} -> {:error, {:unknown_rule_receiver, r}}
-        end
+    if r in declared_roles do
+      {:ok, Ezagent.Routing.Receiver.role(r)}
+    else
+      {:error, {:unknown_rule_receiver, r}}
     end
   end
 
@@ -317,39 +346,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     do: {:error, {:unknown_rule_receiver, other}}
 
   defp declared_role_names(content) when is_map(content) do
-    member_roles =
-      content
-      |> template_members_of()
-      |> Enum.map(&member_field(&1, :role_name))
-
-    agent_roles =
-      content
-      |> template_agents_of()
-      |> Enum.map(&member_field(&1, :role_name))
-
-    (member_roles ++ agent_roles)
+    content
+    |> template_roles_of()
+    |> Enum.map(&member_field(&1, :role_name))
     |> Enum.filter(&(is_binary(&1) and &1 != ""))
     |> Enum.uniq()
   end
 
-  defp template_agents_of(content) when is_map(content) do
-    case Map.get(content, :agents) || Map.get(content, "agents") do
+  defp template_roles_of(content) when is_map(content) do
+    case Map.get(content, :roles) || Map.get(content, "roles") do
       list when is_list(list) -> list
       _ -> []
     end
   end
-
-  defp template_members_of(content) when is_map(content) do
-    case Map.get(content, :members) || Map.get(content, "members") do
-      list when is_list(list) -> Enum.filter(list, &member_in_session_template?/1)
-      _ -> []
-    end
-  end
-
-  defp member_in_session_template?(member) when is_map(member),
-    do: member_field(member, :in_session_template) == true
-
-  defp member_in_session_template?(_), do: false
 
   defp template_routing_rules_of(content) when is_map(content) do
     case Map.get(content, :routing_rules) || Map.get(content, "routing_rules") do
@@ -372,7 +381,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   defp member_uri_field(member, key) when is_map(member) do
     case member_field(member, key) do
       %URI{} = uri -> uri
-      s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+      value when is_binary(value) and value != "" -> Ezagent.URI.new!(value)
       _ -> nil
     end
   end

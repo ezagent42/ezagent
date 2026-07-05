@@ -8,9 +8,9 @@ defmodule Ezagent.Socialware.Conformance do
   The `mix ezagent.socialware.check` task is a thin wrapper; this library is the
   unit-testable core. A green run proves the definition is materializable: its
   bases/shape/views ActionSets load, its view render caps are registered, its
-  agents' recipes resolve with registered caps + unique role_names, its adapters
-  are registered, its orchestrator URI parses, it is installable, and its
-  members/routing/prompt/legend refs (incl. every `prompt_template_ref`) resolve.
+  agent role slots' recipes resolve with registered caps + unique role_names,
+  its adapters are registered, its orchestrator URI parses, it is installable,
+  and its routing/prompt/legend refs (incl. every `prompt_template_ref`) resolve.
 
   Assertion 9 (no view render entry bypasses `authorize_view`) is a SOURCE gate
   (`EzagentCore.Architecture.ViewAuthorizeGateTest`); here it is enforced
@@ -20,7 +20,7 @@ defmodule Ezagent.Socialware.Conformance do
 
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Routing.{PromptTemplate, Resolver}
+  alias Ezagent.Routing.PromptTemplate
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
 
   @session_kind Ezagent.Entity.Session
@@ -41,8 +41,8 @@ defmodule Ezagent.Socialware.Conformance do
       |> add(:uses_plugins_installed, check_uses_plugins(definition.uses))
       |> add(:bases_shape_load, check_modules_load(definition.bases ++ definition.shape))
       |> add(:views_exist_caps_registered, check_views(definition.views))
-      |> add(:agent_recipes_resolve, check_agent_recipes(definition.agents, ws))
-      |> add(:agent_caps_and_role_uniqueness, check_agent_caps_and_roles(definition.agents, ws))
+      |> add(:agent_recipes_resolve, check_agent_recipes(definition.roles, ws))
+      |> add(:agent_caps_and_role_uniqueness, check_agent_caps_and_roles(definition.roles, ws))
       |> add(:adapters_registered, check_adapters(definition.adapters))
       |> add(
         :orchestrator_uri_parses,
@@ -142,10 +142,12 @@ defmodule Ezagent.Socialware.Conformance do
     end
   end
 
-  # --- 3: agents[].recipe resolves via RecipeRegistry ----------------------
+  # --- 3: agent role slots' recipe resolves via RecipeRegistry -------------
 
-  defp check_agent_recipes(agents, ws) do
-    Enum.reduce_while(agents, :ok, fn %{recipe: recipe}, :ok ->
+  defp check_agent_recipes(roles, ws) do
+    roles
+    |> agent_role_slots()
+    |> Enum.reduce_while(:ok, fn %{recipe: recipe}, :ok ->
       case RecipeRegistry.lookup(URI.to_string(ws), recipe) do
         {:ok, _} -> {:cont, :ok}
         :error -> {:halt, {:error, {:unknown_agent_recipe, recipe}}}
@@ -153,19 +155,19 @@ defmodule Ezagent.Socialware.Conformance do
     end)
   end
 
-  # --- 4: agents' requested_caps registered + role_name uniqueness ---------
+  # --- 4: agent requested_caps registered + role_name uniqueness -----------
 
-  defp check_agent_caps_and_roles(agents, ws) do
-    with :ok <- check_role_name_uniqueness(agents),
-         :ok <- check_agent_requested_caps(agents, ws) do
+  defp check_agent_caps_and_roles(roles, ws) do
+    with :ok <- check_role_name_uniqueness(roles),
+         :ok <- check_agent_requested_caps(agent_role_slots(roles), ws) do
       :ok
     end
   end
 
-  defp check_role_name_uniqueness(agents) do
-    role_names = Enum.map(agents, & &1.role_name)
+  defp check_role_name_uniqueness(roles) do
+    role_names = Enum.map(roles, & &1.role_name)
     dups = role_names -- Enum.uniq(role_names)
-    if dups == [], do: :ok, else: {:error, {:duplicate_agent_role_name, Enum.uniq(dups)}}
+    if dups == [], do: :ok, else: {:error, {:duplicate_role_name, Enum.uniq(dups)}}
   end
 
   defp check_agent_requested_caps(agents, ws) do
@@ -261,7 +263,7 @@ defmodule Ezagent.Socialware.Conformance do
     end
   end
 
-  # --- 8: routing_rules receivers + members/legends refs resolve -----------
+  # --- 8: routing_rules receivers resolve to declared roles ----------------
 
   defp check_routing_receivers(%Definition{routing_rules: rules} = def) do
     declared = declared_role_names(def)
@@ -271,29 +273,27 @@ defmodule Ezagent.Socialware.Conformance do
 
       case Enum.reject(receivers, &receiver_resolvable?(&1, declared)) do
         [] -> {:cont, :ok}
-        bad -> {:halt, {:error, {:unknown_rule_receiver, bad}}}
+        bad -> {:halt, {:error, {:socialware_receiver_not_a_role, bad}}}
       end
     end)
   end
 
-  defp receiver_resolvable?(%URI{}, _declared), do: true
+  defp receiver_resolvable?({:role, role_name}, declared) when is_binary(role_name),
+    do: role_name in declared
 
   defp receiver_resolvable?(r, declared) when is_binary(r) do
-    Resolver.magic_token?(r) or r in declared or
-      match?({:ok, %URI{}}, Ezagent.URI.parse(r))
+    r in declared
   end
 
   defp receiver_resolvable?(_r, _declared), do: false
 
-  defp declared_role_names(%Definition{members: members, agents: agents}) do
-    member_roles =
-      members
-      |> Enum.map(fn m -> Map.get(m, :role_name) || Map.get(m, "role_name") end)
-      |> Enum.filter(&(is_binary(&1) and &1 != ""))
-
-    agent_roles = Enum.map(agents, & &1.role_name)
-    Enum.uniq(member_roles ++ agent_roles)
+  defp declared_role_names(%Definition{roles: roles}) do
+    roles
+    |> Enum.map(& &1.role_name)
+    |> Enum.uniq()
   end
+
+  defp agent_role_slots(roles), do: Enum.filter(roles, &(&1.fill == :agent))
 
   # --- 10: routing_rules[].prompt_template_ref valid -----------------------
 

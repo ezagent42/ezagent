@@ -11,28 +11,23 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
         %URI{} = member_uri,
         facets
       ) do
-    declaration =
-      %{
-        uri: member_uri,
-        role_name: Map.get(facets, :role_name),
-        in_session_template: Map.get(facets, :in_session_template),
-        source_template_uri: Map.get(facets, :source_template_uri)
-      }
+    with {:ok, role_name} <- role_name_from_facets(facets),
+         {:ok, slot} <- role_slot_for_member(member_uri, role_name, facets) do
+      DefinitionEditor.update_primary_for_session(
+        session_uri,
+        workspace_uri,
+        caller,
+        fn definition ->
+          roles =
+            definition.roles
+            |> Enum.reject(&(map_get(&1, :role_name) == role_name))
+            |> Kernel.++([slot])
 
-    DefinitionEditor.update_primary_for_session(
-      session_uri,
-      workspace_uri,
-      caller,
-      fn definition ->
-        members =
-          definition.members
-          |> Enum.reject(&(map_get(&1, :role_name) == declaration.role_name))
-          |> Kernel.++([declaration])
-
-        %{definition | members: members}
-      end
-    )
-    |> ok_unit()
+          %{definition | roles: roles}
+        end
+      )
+      |> ok_unit()
+    end
   end
 
   @spec rule(URI.t(), URI.t(), URI.t(), map(), String.t() | URI.t(), keyword()) ::
@@ -121,6 +116,52 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
 
   defp receiver_value(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp receiver_value(other), do: other
+
+  defp role_slot_for_member(%URI{} = uri, role_name, facets) do
+    if Ezagent.URI.type?(uri, :user) do
+      {:ok, %{role_name: role_name, fill: :human}}
+    else
+      agent_role_slot(uri, role_name, facets)
+    end
+  end
+
+  defp agent_role_slot(%URI{} = uri, role_name, facets) do
+    cond do
+      not Ezagent.URI.type?(uri, :agent) ->
+        {:error, {:socialware_member_uri_not_participant, uri}}
+
+      match?(%URI{}, map_get(facets, :source_template_uri)) ->
+        source_template_uri = map_get(facets, :source_template_uri)
+
+        {:ok,
+         %{
+           role_name: role_name,
+           fill: :agent,
+           recipe: Ezagent.URI.name!(source_template_uri),
+           flavor: source_template_flavor(source_template_uri)
+         }}
+
+      true ->
+        {:error, {:socialware_agent_member_missing_source_template_uri, uri}}
+    end
+  end
+
+  defp source_template_flavor(%URI{} = source_template_uri) do
+    template_name = Ezagent.URI.name!(source_template_uri)
+    [flavor | _] = String.split(template_name, "-", parts: 2)
+
+    case flavor do
+      flavor when is_binary(flavor) and flavor != "" -> flavor
+      _ -> "cc"
+    end
+  end
+
+  defp role_name_from_facets(facets) do
+    case Map.get(facets, :role_name) || Map.get(facets, "role_name") do
+      role_name when is_binary(role_name) and role_name != "" -> {:ok, role_name}
+      other -> {:error, {:missing_socialware_member_role_name, other}}
+    end
+  end
 
   defp map_get(map, key, default \\ nil)
 

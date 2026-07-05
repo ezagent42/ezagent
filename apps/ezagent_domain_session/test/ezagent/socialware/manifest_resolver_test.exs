@@ -83,7 +83,7 @@ defmodule Ezagent.Socialware.ManifestResolverTest do
                name: "manifest-resolver",
                uses: ["resolver-fixture"],
                views: ["resolver_page"],
-               agents: [%{recipe: "guide", role_name: "guide"}]
+               roles: [%{role_name: "guide", fill: :agent, recipe: "guide", flavor: "curl"}]
              })
 
     assert definition.views == [RenderBehavior]

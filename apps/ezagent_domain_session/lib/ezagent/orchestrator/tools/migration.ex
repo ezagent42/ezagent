@@ -57,10 +57,10 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   defp changed_member_plan(%URI{} = session_uri, target_content) do
     target_members =
       target_content
-      |> map_get(:members, [])
+      |> target_role_members()
       |> Enum.reduce(%{}, fn member, acc ->
         role = map_get(member, :role_name)
-        source = normalize_uri(map_get(member, :source_template_uri))
+        source = target_source_template_uri(member)
 
         if is_binary(role) and match?(%URI{}, source),
           do: Map.put(acc, role, source),
@@ -86,6 +86,29 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
       end)
 
     {:ok, plan}
+  end
+
+  defp target_role_members(target_content) do
+    case map_get(target_content, :roles, []) do
+      roles when is_list(roles) and roles != [] -> roles
+      _ -> map_get(target_content, :members, [])
+    end
+  end
+
+  defp target_source_template_uri(member) do
+    case normalize_uri(map_get(member, :source_template_uri)) do
+      %URI{} = uri ->
+        uri
+
+      _ ->
+        case {map_get(member, :fill), map_get(member, :recipe)} do
+          {fill, recipe} when fill in [:agent, "agent"] and is_binary(recipe) and recipe != "" ->
+            Ezagent.URI.template(:system, :agent, recipe)
+
+          _ ->
+            nil
+        end
+    end
   end
 
   defp current_source_for_role(current_members, role) do

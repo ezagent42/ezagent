@@ -73,14 +73,20 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     end
   end
 
-  @doc "Return members declared by the installed socialware definitions."
-  @spec member_declarations_for_template(map(), URI.t() | String.t()) ::
+  @doc "Return role slots declared by the installed socialware definitions."
+  @spec role_slots_for_template(map(), URI.t() | String.t()) ::
           {:ok, [map()]} | {:error, term()}
-  def member_declarations_for_template(template_content, workspace_uri) do
+  def role_slots_for_template(template_content, workspace_uri) do
     with {:ok, config} <- config_for_template(template_content, workspace_uri) do
-      {:ok, config.members}
+      {:ok, config.roles}
     end
   end
+
+  @doc false
+  @spec member_declarations_for_template(map(), URI.t() | String.t()) ::
+          {:ok, [map()]} | {:error, term()}
+  def member_declarations_for_template(template_content, workspace_uri),
+    do: role_slots_for_template(template_content, workspace_uri)
 
   @doc "Return the first installed orchestrator template URI, if one is declared."
   @spec orchestrator_template_uri_for_template(map(), URI.t() | String.t()) ::
@@ -262,8 +268,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       definition.shape == [] ->
         {:error, {:incomplete_socialware_definition, :shape}}
 
-      definition.members == [] ->
-        {:error, {:incomplete_socialware_definition, :members}}
+      definition.roles == [] ->
+        {:error, {:incomplete_socialware_definition, :roles}}
 
       definition.routing_rules == [] ->
         {:error, {:incomplete_socialware_definition, :routing_rules}}
@@ -284,8 +290,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp empty_config do
     %{
-      agents: [],
-      members: [],
+      roles: [],
       routing_rules: [],
       prompt_templates: %{},
       legends: %{},
@@ -295,8 +300,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
 
   defp merge_definition(acc, %Definition{} = definition) do
     %{
-      agents: acc.agents ++ definition.agents,
-      members: acc.members ++ definition.members,
+      roles: acc.roles ++ definition.roles,
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
       legends: Map.merge(acc.legends, definition.legends),
@@ -313,17 +317,55 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     legacy_orchestrator = uri_field(template_content, :orchestrator_template_uri)
 
     %{
-      # `agents` is a socialware-Definition-only field (recipe+role_name); there
-      # is no legacy SessionTemplate `agents` section, so it passes through the
-      # merged definition config unchanged.
-      agents: config.agents,
-      members: if(legacy_members == [], do: config.members, else: legacy_members),
+      roles:
+        if(legacy_members == [],
+          do: config.roles,
+          else: legacy_template_member_roles(legacy_members)
+        ),
       routing_rules: if(legacy_rules == [], do: config.routing_rules, else: legacy_rules),
       prompt_templates: Map.merge(config.prompt_templates, legacy_prompts),
       legends: Map.merge(config.legends, legacy_legends),
       orchestrator_template_uri: legacy_orchestrator || config.orchestrator_template_uri
     }
   end
+
+  defp legacy_template_member_roles(members) when is_list(members) do
+    members
+    |> Enum.flat_map(&legacy_template_member_role/1)
+    |> Enum.sort_by(&inspect/1)
+  end
+
+  defp legacy_template_member_role(%{} = member) do
+    role_name = map_get(member, :role_name)
+
+    cond do
+      not (is_binary(role_name) and role_name != "") ->
+        []
+
+      match?(%URI{}, map_get(member, :source_template_uri)) ->
+        [
+          %{
+            role_name: role_name,
+            source_template_uri: map_get(member, :source_template_uri),
+            in_session_template: map_get(member, :in_session_template) == true
+          }
+        ]
+
+      match?(%URI{}, map_get(member, :uri)) and Ezagent.URI.type?(map_get(member, :uri), :user) ->
+        [
+          %{
+            uri: map_get(member, :uri),
+            role_name: role_name,
+            in_session_template: map_get(member, :in_session_template) == true
+          }
+        ]
+
+      true ->
+        []
+    end
+  end
+
+  defp legacy_template_member_role(_member), do: []
 
   defp list_field(map, key) do
     case map_get(map, key, []) do
@@ -343,7 +385,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp merge_live_config(%Definition{} = definition, live) do
     %{
       definition
-      | members: live.members,
+      | roles: live_role_slots(live.members),
         routing_rules: live.routing_rules,
         prompt_templates: live.prompt_templates,
         legends: live.legends,
@@ -380,6 +422,51 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       }
     end)
     |> Enum.sort_by(&inspect/1)
+  end
+
+  defp live_role_slots(members) when is_list(members) do
+    members
+    |> Enum.flat_map(&live_member_role_slot/1)
+    |> Enum.sort_by(& &1.role_name)
+  end
+
+  defp live_role_slots(_members), do: []
+
+  defp live_member_role_slot(%{
+         role_name: role_name,
+         source_template_uri: %URI{} = source_template_uri
+       })
+       when is_binary(role_name) and role_name != "" do
+    [
+      %{
+        role_name: role_name,
+        fill: :agent,
+        recipe: Ezagent.URI.name!(source_template_uri),
+        flavor: source_template_flavor(source_template_uri)
+      }
+    ]
+  end
+
+  defp live_member_role_slot(%{role_name: role_name, uri: %URI{} = uri})
+       when is_binary(role_name) and role_name != "" do
+    if Ezagent.URI.type?(uri, :user) do
+      [%{role_name: role_name, fill: :human}]
+    else
+      []
+    end
+  end
+
+  defp live_member_role_slot(_member), do: []
+
+  defp source_template_flavor(%URI{} = source_template_uri) do
+    source_template_uri
+    |> Ezagent.URI.name!()
+    |> String.split("-", parts: 2)
+    |> List.first()
+    |> case do
+      flavor when is_binary(flavor) and flavor != "" -> flavor
+      _ -> "cc"
+    end
   end
 
   defp live_rule_set_rules(%URI{} = session_uri, %URI{} = _workspace_uri, slice) do

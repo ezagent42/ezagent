@@ -101,18 +101,10 @@ defmodule Ezagent.Socialware.Installation do
   def freeze_template_installs(content, _workspace_uri), do: {:ok, content}
 
   @doc """
-  Derive the session `owner_uri` a template's installs reproduce (P0 §7.2, O-1) —
-  the DATA replacement for a hard-coded owner. The owner comes from the PRIMARY
-  (first) install's definition `owner_policy` via `Definition.owner_uri/2`:
-  `:fixed` → the declared uri, `:installer` → `caller`, `:none` → `nil`. A
-  template with no resolvable installs yields `{:ok, caller}` (owner-is-caller).
-
-  Consumed by `EzagentPluginHello.App.ensure_app/3` (the anon-homesite path,
-  §4.4) so the hello session's owner is DERIVED from the def's `:fixed` policy
-  instead of hard-coded. The general `SessionCreator` path keeps its
-  `creator_uri || admin` owner (the `:installer` semantics) in P0; threading
-  `:fixed`/`:none` there is P2, travelling when that path folds onto
-  `SocialwareInstall`.
+  Derive the session `owner_uri` a template's installs reproduce. Definitions do
+  not carry owner instance URIs; the primary install resolves owner via
+  `Definition.owner_uri/2`, which is installer/caller-derived. A template with no
+  resolvable installs yields `{:ok, caller}`.
   """
   @spec owner_uri_for_template(map(), URI.t() | String.t(), URI.t() | nil) ::
           {:ok, URI.t() | nil} | {:error, term()}
