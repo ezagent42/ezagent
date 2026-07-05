@@ -58,9 +58,30 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     assert slot_recipes == declared
   end
 
-  test "body has no routing_rules yet (S3 extends this)" do
+  test "declares a content-triggered relay-back rule to the pm role, zero instance URIs (S3)" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
-    assert def.routing_rules == []
+
+    rule =
+      Enum.find(def.routing_rules, fn r ->
+        (Map.get(r, "rule_set") || Map.get(r, :rule_set)) == "relay-back"
+      end)
+
+    assert rule, "expected a relay-back routing rule"
+
+    matcher = Map.get(rule, "matcher") || Map.get(rule, :matcher)
+    # content-trigger: text_contains "__done__" — never {:from, uri}, never a URI.
+    assert (matcher["type"] || matcher[:type]) in ["text_contains", "mention"]
+    arg = to_string(matcher["arg"] || matcher[:arg])
+    assert arg == KanbanTeam.relay_done_marker()
+    refute String.contains?(arg, "://")
+
+    receivers = Map.get(rule, "receivers") || Map.get(rule, :receivers)
+    # role_name (declared role), NOT a URI.
+    assert receivers == ["pm-coordinator"]
+
+    # the whole rule carries NO participant instance URI (round-trip safety).
+    refute inspect(rule) =~ ~r{entity://[^/]+/(agent|user)/}
+    # and no legend needed for the minimal header-triggered closure.
     assert def.legends == %{}
   end
 end
