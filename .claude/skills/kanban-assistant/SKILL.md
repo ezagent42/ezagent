@@ -43,6 +43,12 @@ protocol and the message-routing transport: the completion-marker literal
 `routing_rules` matcher `arg`. `scripts/relay-signal-check.sh` self-checks that
 alignment.
 
+How both sides touch GitHub through the `gh` CLI — auth preflight, dev-side
+push/PR-create/`register_pr`, assistant-side `gh pr view`/`checks` verification
+before advancing, and loud failure reporting — is its own protocol module:
+
+@references/gh-protocol.md
+
 The `dev-together` member's side of this protocol is
 `references/dev-together-relay-overlay.md` — a thin overlay held HERE (the
 dev-together skill directory is an owner-only team contract and is never
