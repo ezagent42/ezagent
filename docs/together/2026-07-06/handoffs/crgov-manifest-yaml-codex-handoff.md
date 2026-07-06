@@ -1,7 +1,9 @@
 # Handoff — ConfigGovernance unification (#158) + Manifest YAML (Q2b) → codex
 
 > **Task:** `crgov-manifest-yaml`
-> **Spec (authoritative):** `docs/superpowers/specs/2026-07-06-config-governance-unify-and-manifest-yaml.md` (rev2, codex-adversarial-reviewed)
+> **Spec (authoritative):** `docs/superpowers/specs/2026-07-06-config-governance-unify-and-manifest-yaml.md`
+> (rev4 — **codex-adversarially-reviewed 2026-07-06, verdict SOUND**, 4 rounds:
+> rev1 8 findings → rev2 2 BLOCKER → rev3 1 MAJOR+2 MINOR → rev4 clean)
 > **Dispatcher:** Allen · **Coordinator/validator:** Claude · **Dev:** codex
 > **Branch:** codex owns `work/crgov-manifest-yaml` (branch off current `origin/main`); coordinator merges to main after gate validation.
 
@@ -93,6 +95,16 @@ DoD:
 
 Gates: full suite green · warnings-as-errors · format · `check_invariants` +
 `mix ezagent.socialware.check` · the acceptance e2e above.
+
+## Builder-verify notes (from the final SOUND review — verify during implementation, not spec issues)
+
+1. `[R3-1]` thread the `lookup_fun` through EVERY registry-backed conformance branch
+   (conformance.ex:247 + installation.ex:448 region), not just the two named checks.
+2. `[R3-2]` confirmed in code: `publish_or_upgrade/2` normalizes via `Definition.new/1`
+   only (socialware.ex:116); editor `complete: true` is form-scoped
+   (definition_editor.ex:14) — do not add it to import.
+3. `[R3-3]` behavior strings parse as existing ActionSet modules (definition.ex:237);
+   the dogfood manifest must name real `Ezagent.ActionSet.*` modules.
 
 ## Process
 
