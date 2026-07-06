@@ -32,14 +32,13 @@ defmodule EzagentPluginDealScout.Application do
 
   `plugin_info/0` + `children/0`（爬取 `Poller` + `RetentionSweeper`）+ `roles/0`
   （发现腿 recipes）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
-  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。boot 时另 code-seed
-  `socialware:dealscout` Definition（`DefinitionSeed`，纯配置组合，Stage D）。
+  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。boot 时经真 governance
+  flow **publish** dealscout demo socialware（`Demo.publish/0`，hello #162 /
+  kanban 黄金样板 —— 取代了早期 imperative `DefinitionSeed` code-seed）。
   """
 
   use Application
   use Ezagent.Plugin
-
-  require Logger
 
   # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
   @compile_env Mix.env()
@@ -49,32 +48,42 @@ defmodule EzagentPluginDealScout.Application do
     # 不注册任何 SessionView / render ActionSet —— 显示归 hello（见 moduledoc
     # 职责边界）。本 plugin 只 boot 爬取后台。
     result = Ezagent.Plugin.boot(__MODULE__)
-    :ok = maybe_seed_dealscout_definition()
+
+    # Boot-publish the dealscout DEMO socialware as a PUBLIC catalog entry via
+    # the REAL governance flow (`ConfigGovernance.Socialware`), the hello #162
+    # golden-template play — a fresh stack ships a discoverable/installable
+    # dealscout AND every boot dogfoods the publish path (a broken publish path
+    # fails LOUD here at boot). This REPLACES the earlier imperative
+    # `DefinitionSeed.seed_definition` code-seed (`seed_definition_if_absent`):
+    # publish is the only boot seeding path now (hello/kanban parity). Runs in
+    # `start/2` AFTER `Ezagent.Plugin.boot/1` — the publish resolves
+    # `uses: ["hello", "dealscout"]` + the `hello_render` view, which need THIS
+    # plugin's plugin_info registered (hello booted earlier as a declared dep).
+    # Idempotent (`publish_or_upgrade`: :published / :exists / :upgraded);
+    # fail-loud in dev/prod (mirrors hello `maybe_publish_hello_demo` / kanban
+    # `maybe_publish_kanban_demo`), skipped in `:test` (the DB write at plugin
+    # boot contends with the per-test Ecto sandbox — ExUnit drives
+    # `Demo.publish/0` inside a checked-out sandbox instead, see
+    # `demo_publish_test.exs`).
+    :ok = maybe_publish_dealscout_demo()
+
     result
   end
 
-  # Code-seed the `dealscout` socialware Definition at boot (mirrors kanban's
-  # `maybe_seed_kanban_team` / hello's demo publish). Skipped in `:test` — the
-  # DB write at plugin boot contends with the per-test Ecto sandbox (ExUnit
-  # seeds inside a checked-out sandbox instead, see `DealScoutConformanceTest`).
-  # Boot-safe: any seed failure downgrades to a log and NEVER crashes boot.
-  defp maybe_seed_dealscout_definition do
+  defp maybe_publish_dealscout_demo do
     if @compile_env == :test do
       :ok
     else
-      case EzagentPluginDealScout.DefinitionSeed.seed_definition() do
-        {:ok, _} ->
+      case EzagentPluginDealScout.Demo.publish() do
+        {:ok, _published_exists_or_upgraded} ->
           :ok
 
         {:error, reason} ->
-          Logger.warning("dealscout definition seed failed (boot-safe): #{inspect(reason)}")
-          :ok
+          raise "EzagentPluginDealScout boot aborted — the dealscout demo socialware " <>
+                  "could not be published via the governance flow (fail-loud dogfood, " <>
+                  "hello #162 play): #{inspect(reason)}"
       end
     end
-  rescue
-    e ->
-      Logger.warning("dealscout definition seed raised (boot-safe): #{inspect(e)}")
-      :ok
   end
 
   @impl Ezagent.Plugin
