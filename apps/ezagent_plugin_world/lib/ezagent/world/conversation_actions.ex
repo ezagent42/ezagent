@@ -513,7 +513,18 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
-  @doc "Switch the conversation panel to the PTY view for a member agent."
+  @doc """
+  Switch the conversation panel to the PTY view for a member agent.
+
+  This is the ONE path besides `switch_view/3` that sets `active_view`, and it is
+  hard-wired to `"pty"` only. That is safe today because the pty view
+  (`EzagentDomainUi.Pty.TerminalView`) declares no `view_behavior/0` — it is never
+  cap-gated — and the React client only activates ids present in the enumerated
+  `views` (falling back otherwise), so no gated view can be exposed through here.
+  If pty ever GROWS a `view_behavior`, this must route through
+  `ConversationData.session_view_ids/2` like `switch_view/3`
+  (`view_cap_gate_regression_test.exs` locks that assumption).
+  """
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do

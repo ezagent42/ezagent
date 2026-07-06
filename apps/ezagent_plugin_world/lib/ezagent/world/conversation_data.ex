@@ -54,10 +54,9 @@ defmodule Ezagent.World.ConversationData do
       "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions,
       # Registry-driven view tabs (Ezagent.UI.SessionViewRegistry). Each entry is
-      # %{"id","label","icon","mode"}; mode ∈ chat|pty|external|unsupported. This
-      # replaces the hard-coded chat/pty segment + the old `is_hello` page probe:
-      # chat/pty/hello-page are now all enumerated through the caller-aware
-      # `applicable_views/2`, so a cap-gated view a caller can't see emits no tab.
+      # %{"id","label","icon","mode"}; mode ∈ chat|pty|external|unsupported. All
+      # views are enumerated through the caller-aware `applicable_views/2`, so a
+      # cap-gated view a caller can't see emits no tab.
       "views" => session_views(session_uri, caller_uri)
     }
   end
