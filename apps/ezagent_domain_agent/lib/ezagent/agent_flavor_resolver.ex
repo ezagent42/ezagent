@@ -30,18 +30,24 @@ defmodule Ezagent.AgentFlavorResolver do
   def flavor_from_durable_snapshot(%URI{} = uri) do
     case Ezagent.SnapshotStore.latest(uri) do
       {:ok, %{state: state}} when is_map(state) ->
-        state
-        |> Map.values()
-        |> Enum.find_value(:none, fn
-          slice when is_map(slice) ->
-            case slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:flavor) do
-              flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
-              _ -> nil
-            end
+        # 1) A slice with a persisted `:flavor` field — curl stores it in its
+        #    own `:curl_agent` slice.
+        case flavor_from_persisted_flavor_field(state) do
+          {:ok, _} = ok ->
+            ok
 
-          _ ->
-            nil
-        end)
+          :none ->
+            # 2) A `:sandbox` slice carrying a `template_class` /
+            #    `respawn_template_data` — py (and any subprocess flavor that
+            #    seeds the sandbox) persists its identity THERE, not as a
+            #    `:flavor` field. Without this, a cold-loaded py agent resolves
+            #    `:none` and its `:in_process_sync` chat reply is mis-routed
+            #    down the `:subprocess_ws` async branch and silently DROPPED
+            #    (the "@mention py agent → no reply" bug). Deadlock-safe: same
+            #    durable state, `resolve_flavor_from_sandbox/1` is a pure map
+            #    read + registry lookup (no `Kind.get_slice/2` self-call).
+            flavor_from_sandbox_slice(state)
+        end
 
       _ ->
         :none
@@ -56,6 +62,44 @@ defmodule Ezagent.AgentFlavorResolver do
       )
 
       :none
+  end
+
+  # A slice carrying a persisted `:flavor` field (curl → its `:curl_agent` slice).
+  # cc/codex carry no durable `:flavor` field, so they never match here and
+  # correctly resolve via the sandbox path.
+  defp flavor_from_persisted_flavor_field(state) when is_map(state) do
+    state
+    |> Map.values()
+    |> Enum.find_value(:none, fn
+      slice when is_map(slice) ->
+        case slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:flavor) do
+          flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  # Recover the flavor from a persisted `:sandbox`-shaped slice (a
+  # `template_class` / `respawn_template_data`) — how py and other
+  # subprocess-seeded flavors durably record their identity. Scans every slice
+  # (`resolve_flavor_from_sandbox/1` returns `:none` for non-sandbox slices, so
+  # a `:curl_agent`/`:identity` slice can never false-positive here).
+  defp flavor_from_sandbox_slice(state) when is_map(state) do
+    state
+    |> Map.values()
+    |> Enum.find_value(:none, fn
+      slice when is_map(slice) ->
+        case slice |> Ezagent.Kind.normalize_slice_view() |> resolve_flavor_from_sandbox() do
+          {:ok, _} = ok -> ok
+          :none -> nil
+        end
+
+      _ ->
+        nil
+    end)
   end
 
   @doc """
