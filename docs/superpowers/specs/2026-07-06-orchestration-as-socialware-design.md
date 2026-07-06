@@ -1,8 +1,11 @@
 # Orchestration as a Socialware — Reference Design
 
-**Status:** rev1 — the reference design for Allen's socialware mental model
+**Status:** rev2 — the reference design for Allen's socialware mental model
 (2026-07-06 discussion). This is the DESIGN BASELINE for later planning, not an
 implementation plan; milestones at the end are sequencing sketches only.
+rev1 codex architecture review: UNSOUND (1 BLOCKER: `requires` vs (session,ref)
+install identity; 2 MAJOR: role namespace contradiction, from_role staleness;
+1 MINOR: hop-state home) — all four resolved in rev2, marked `[A‑n]`.
 **Lineage:** role-slot P1–P3 (#1180/#1185/#1194) · hello substrate migration B'
 (#1208 + its spec) · manifest track (#1164) + manifest-YAML spec
 (`2026-07-06-config-governance-unify-and-manifest-yaml.md`) · jjkysy #1201 findings
@@ -102,13 +105,16 @@ required for v1 of the model.**
 
 Two additions earn their place later, as hardening — not as gaps:
 
-- **`{:from_role, role_name}`** — rules reference the role, not the member URI.
-  Today `{:from, uri}` binds to a concrete member; role slots mean membership is
-  an edge that can be re-assigned (P2), so rules written against URIs go stale on
-  re-assign/fork. A role-level matcher keeps the Definition's rules valid across
-  materializations (and is what the Definition authoring form should emit).
-  Interim: the materializer rewrites `from_role` → concrete `from` at install
-  (data stays role-shaped; table stays as-is).
+- **`{:from_role, role_name}` — a RUNTIME matcher, symmetric with the receiver
+  side** `[A‑3]`. Today `{:from, uri}` binds to a concrete member; role slots mean
+  membership is an edge that can be re-assigned (`session.assign_role` mutates the
+  member facet only), so any install-time rewrite of `from_role` → concrete `from`
+  goes STALE the moment a role is re-assigned — rev1's rewrite interim is
+  withdrawn. Receivers already resolve role-on-edge at delivery time; the sender
+  side must do the same: `from_role` is evaluated at match time against the
+  session's members (the resolver already receives member inputs alongside the
+  message). One resolution model on both sides of the rule; rules survive
+  re-assignment and fork by construction.
 - **Structured message tag** — `[need-build]` free-text is LLM-discipline-fragile
   (variants, dropped brackets). A `message.tag` field set by an emit-tool, with a
   `{:tag, name}` matcher, is more reliable AND makes conflict analysis exact
@@ -134,11 +140,16 @@ Precision note: with free regex predicates the analysis is conservative
 exact. `requires` (§6) runs the same analysis over the MERGED rule set of all
 composed socialwares — this is where cross-socialware conflicts get caught.
 
-**Runtime backstop (defense in depth): hop budget.** Every routed delivery
-decrements a per-message hop counter (origin messages start at a small budget,
-e.g. 8); at 0 the delivery is dropped AND traced (§3.3). Static analysis can be
-fooled by predicates; the budget cannot. This generalizes the loop-guard #1208
-hand-built inside hello into a table property every socialware inherits.
+**Runtime backstop (defense in depth): hop budget.** `[A‑4]` Hop state lives ON
+THE MESSAGE ENVELOPE — a `hops` metadata field alongside the existing
+`visibility` field (`Ezagent.Message` already carries per-message metadata that
+persists through delivery; hop count is the same class of data). Origin messages
+start at a small budget (e.g. 8); each table-forwarded RE-EMISSION decrements it;
+at 0 the delivery is dropped AND traced (§3.3). The table enforces the check; the
+message carries the state — "table property" means the enforcement point, not the
+storage. Static analysis can be fooled by predicates; the budget cannot. This
+generalizes the loop-guard #1208 hand-built inside hello into a guarantee every
+socialware inherits.
 
 ### 3.3 Routing trace (debuggability as a first-class feature)
 
@@ -172,11 +183,19 @@ the External projection.**
 - Session members (incl. the operator console) see everything, including
   `[need-build]` internal relays. No per-rule routing visibility exists — the
   routing layer is visibility-agnostic.
+- **The primitive already exists**: `Ezagent.Message` carries
+  `:external_visible | :internal` visibility today, and the external projections
+  (chat_feed / public_view) already project over visibility+auth. The BASE case —
+  keep internal relays out of the anonymous feed — is therefore expressible NOW:
+  the responser/builder relay emissions ride `:internal`. What is future work is
+  the richer filter vocabulary (by sender-ROLE and/or tag) for apps that need
+  finer projection shaping than the boolean; that lands in the projection layer,
+  never in the router.
 - The External surfaces (public_view / chat_feed / world public feed — where
   hello's real anonymous visitors live) are **projections**, and projections
   filter. The hello external feed projects only the viewer↔responser exchange;
-  internal relay traffic (tagged or role-sourced) is excluded by the projection's
-  filter (by sender-role and/or tag), not by the router.
+  internal relay traffic is excluded by message visibility (base) or the
+  projection's role/tag filter (extension), not by the router.
 - This lands on the existing architecture (SessionView/projection IS the
   surface); no new mechanism class. The D⑦ finding (public-face @mention
   silently dropped) is re-read under this model: External ingress/egress are
@@ -192,13 +211,31 @@ New Definition field `requires: [socialware-name]` (distinct from `uses:`
   `requires(S)` is installed there first (recursively; reject cycles at
   Conformance). The required socialware's views/tools become available in the
   session; its roles materialize per ITS definition.
-- **Version pinning:** rides the existing content-hash/freeze-pin install model —
-  the installed S pins the revision of R it composed with; `repoint` upgrades
-  explicitly, never silently.
-- **Namespace:** role names stay per-definition (S's `builder` and R's `builder`
-  are distinct slots — role identity is (definition, role_name), which the
-  role-on-edge model already supports). Rule sets merge for the session table;
-  the merged set goes through the §3.2 conflict analysis at install.
+- **Version model `[A‑1]` — ONE installed revision per (session, ref), by
+  design.** The install identity IS `(session, ref)` (idempotent record,
+  session-global repoint) — `requires` does not fight that with per-dependent
+  locks; it adopts it as the invariant: **a session holds exactly one revision of
+  any socialware, shared by all dependents** (flat, npm-hoist-style). Conflict
+  policy, fail-closed: if S2's `requires` pins R at a hash incompatible with the
+  R revision already installed (by S1 or directly), S2's install is REJECTED with
+  a version-conflict error naming both dependents — the operator resolves by
+  repointing/upgrading, never by silent coexistence. `repoint` of R stays
+  session-global and now REVALIDATES every installed dependent's conformance
+  against the new revision before flipping — a repoint that would break a
+  dependent fails closed with the dependent named. No new lock identity is
+  introduced; the invariant + two checks are the whole mechanism.
+- **Namespace `[A‑2]` — roles are a SHARED session-global namespace, not
+  per-definition.** (rev1 claimed `(definition, role_name)` identity; that
+  contradicts shipped semantics — role slots are plain `role_name` and session
+  membership enforces per-session role-name uniqueness. rev2 adopts reality.)
+  Composition therefore means: the merged role set of all composed definitions
+  must be collision-free — **duplicate `role_name` across composed definitions is
+  an install-time Conformance rejection** (the author renames). The flip side is
+  a feature: because the namespace is shared, S's rules may route TO a role R
+  declares (cross-socialware addressing by role name) with zero extra mechanism —
+  which is exactly what `requires orchestrator` is for.
+- Rule sets merge for the session table; the merged set goes through the §3.2
+  conflict analysis at install.
 - **Failure mode:** missing/unpublishable required socialware ⇒ install fails
   closed (same posture as `uses` plugin checks today).
 
@@ -217,7 +254,7 @@ version composes installation + table, nothing more.
 | plugin tools via `uses` + recipe/compose | ✅ shipped (manifest track) |
 | governance publish/install/freeze-pin | ✅ shipped |
 | operator console surfaces (team/role/routing) | ✅ exists as Agent Console — needs re-homing, not rebuilding |
-| `from_role` matcher (or install-time rewrite) | 🆕 (small) |
+| `from_role` RUNTIME matcher (sender-side role resolution) | 🆕 |
 | structured message tag + `{:tag, _}` matcher | 🆕 hardening (optional v1.5) |
 | role-DAG conflict analysis in Conformance | 🆕 |
 | hop budget + routing trace | 🆕 |
@@ -243,10 +280,11 @@ version composes installation + table, nothing more.
 
 ## 9. Milestone sketch (for the LATER planning pass — not commitments)
 
-- **M1 — protocol & safety on the existing table:** `from_role` (or install
-  rewrite) · role-DAG Conformance check · hop budget · routing trace · hello's
-  external-projection filter. *Outcome: Allen's hello shape is authorable and
-  safe with today's matchers.*
+- **M1 — protocol & safety on the existing table:** runtime `from_role` matcher ·
+  role-DAG Conformance check · hop budget (Message-envelope hop state) · routing
+  trace · hello's internal relays ride `:internal` visibility + external-projection
+  filter. *Outcome: Allen's hello shape is authorable and safe with today's
+  matchers.*
 - **M2 — orchestrator socialware:** tools → plugin contributions · orchestrator
   Definition (views = console) · default SessionTemplate installs it ·
   `ensure_orchestrator` retirement. (#169 reframed; subsumes the
