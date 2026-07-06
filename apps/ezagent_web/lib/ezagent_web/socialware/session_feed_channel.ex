@@ -349,20 +349,6 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
-  defp dispatch_post(session_uri, %URI{} = principal, text) do
-    msg =
-      Ezagent.Message.new(principal, %{text: text, attachments: []},
-        mentions: [orchestrator_uri(session_uri)]
-      )
-
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: Ezagent.URI.with_action(session_uri, :session, :send),
-      mode: :cast,
-      args: %{message: msg},
-      ctx: %{caller: principal, reply: :ignore}
-    })
-  end
-
   # EVERY user message goes to the invisible ORCHESTRATOR (the `hello.orchestrator`
   # front-desk agent). It — not this web layer — decides per message, by intent ×
   # identity, whether the message goes to the page builder or the read-only
@@ -370,12 +356,29 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
   # orchestrator's `EzagentPluginHello.Router`). The chat fan-out is mention-gated
   # (`Behavior.Session` §:send), so mentioning exactly the orchestrator is the whole
   # ingress; builder/concierge never receive the user message directly.
-  defp orchestrator_uri(session_uri), do: hello_agent_uri(session_uri, "orch_")
+  #
+  # The orchestrator is a PLANNED-URI member (materialized via `Definition.roles`,
+  # `EzagentPluginHello.Members`) — there is no `orch_<name>` convention URI to
+  # derive anymore. Resolve it by `role_name` off the session's live membership
+  # slice. `Definition.routing_rules`' `{:always} -> {:role, "orchestrator"}` rule
+  # is the belt to this mention's suspenders: even an empty `mentions: []` (the
+  # `:error` case, e.g. the orchestrator not yet materialized) still delivers via
+  # that rule.
+  defp dispatch_post(session_uri, %URI{} = principal, text) do
+    mentions =
+      case EzagentPluginHello.Members.role_uri(session_uri, "orchestrator") do
+        {:ok, orch_uri} -> [orch_uri]
+        :error -> []
+      end
 
-  defp hello_agent_uri(session_uri, prefix) do
-    ws = Ezagent.URI.workspace_name!(session_uri)
-    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
-    Ezagent.URI.entity(ws, :agent, "#{prefix}#{name}")
+    msg = Ezagent.Message.new(principal, %{text: text, attachments: []}, mentions: mentions)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :send),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{caller: principal, reply: :ignore}
+    })
   end
 
   defp push_viewer_snapshot(socket) do

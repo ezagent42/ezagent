@@ -755,10 +755,23 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # The session's builder agent URI, derived from the session URI:
-  # session://<ws>/hello/<name> → entity://<ws>/agent/hello_<name>
-  # (matches `App.ensure_app/2`'s builder_uri).
+  # The session's builder agent URI. The builder is a PLANNED-URI member
+  # (materialized via `Definition.roles`, `EzagentPluginHello.Members`) — the
+  # old `session://<ws>/hello/<name> -> entity://<ws>/agent/hello_<name>`
+  # convention no longer points at a live entity, so resolve by `role_name` off
+  # the session's live membership slice first. This URI is used ONLY as
+  # `Message.sender` attribution for builder narration (`TurnDriver.say`), never
+  # as a dispatch target, so a `:error` fallback to the legacy convention URI
+  # keeps generation working (and keeps the `/agent/` shape the customer SPA's
+  # sender styling expects) even if the builder isn't materialized yet.
   defp builder_uri(%URI{} = session_uri) do
+    case EzagentPluginHello.Members.role_uri(session_uri, "builder") do
+      {:ok, uri} -> uri
+      :error -> legacy_builder_uri(session_uri)
+    end
+  end
+
+  defp legacy_builder_uri(%URI{} = session_uri) do
     ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")

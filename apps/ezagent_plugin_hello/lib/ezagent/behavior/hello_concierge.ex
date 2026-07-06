@@ -43,12 +43,17 @@ defmodule Ezagent.ActionSet.HelloConcierge do
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     with true <- from_user?(msg),
          %URI{} = session_uri <- session_from_ctx(ctx),
-         text when is_binary(text) and text != "" <- extract_text(msg.body) do
+         text when is_binary(text) and text != "" <- extract_text(msg.body),
+         # Resolve the concierge member by its `role_name` facet (the
+         # `Definition.roles` materialization assigns a PLANNED URI — no longer the
+         # `concierge_<name>` convention).
+         {:ok, concierge_uri} <-
+           EzagentPluginHello.Members.role_uri(session_uri, "concierge") do
       _ =
         EzagentPluginHello.Generator.concierge_start(
           session_uri,
           text,
-          EzagentPluginHello.App.concierge_uri(session_uri)
+          concierge_uri
         )
     end
 

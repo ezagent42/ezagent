@@ -82,6 +82,13 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute Map.has_key?(cap, :kind)
   end
 
+  test "hello flavor instance_behaviors includes HelloOrchestrator" do
+    [decl] = EzagentPluginHello.Application.agent_flavors()
+    assert decl.flavor == "hello"
+    assert is_function(decl.instance_behaviors, 0)
+    assert Ezagent.ActionSet.HelloOrchestrator in decl.instance_behaviors.()
+  end
+
   test "role-as-data — roles/0 → seed_role_if_absent → read-through lookup round-trip" do
     Enum.each(HelloApp.roles(), fn recipe ->
       assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
@@ -98,5 +105,18 @@ defmodule EzagentPluginHello.RegistrationTest do
 
     assert {:ok, %Recipe{name: "hello.concierge", behaviors: [HelloConcierge], passive: false}} =
              RecipeRegistry.lookup("hello.concierge")
+  end
+
+  test "hello Definition declares the orchestrator/builder/concierge roles + inbound rule" do
+    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
+    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
+
+    role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
+    assert role_names == ["builder", "concierge", "orchestrator"]
+    assert Enum.all?(defn.roles, &(&1.fill == :agent))
+    assert Enum.find(defn.roles, &(&1.role_name == "orchestrator")).flavor == "hello"
+
+    assert [rule] = defn.routing_rules
+    assert (rule[:receivers] || rule["receivers"]) == ["orchestrator"]
   end
 end

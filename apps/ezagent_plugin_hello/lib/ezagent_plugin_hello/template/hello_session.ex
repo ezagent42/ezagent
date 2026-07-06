@@ -40,10 +40,7 @@ defmodule EzagentPluginHello.Template.HelloSession do
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
       fresh? = not LocalRuntime.kind_alive?(session_uri)
 
-      # `defer_orchestrator: true` — this runs INSIDE the workspace Kind process
-      # (`Workspace.handle_create_session`), so the orchestrator's `create_agent`
-      # must dispatch off-process to avoid a `:calling_self` deadlock.
-      case App.ensure_app(workspace_name, session_name, defer_orchestrator: true) do
+      case App.ensure_app(workspace_name, session_name) do
         {:ok, ^session_uri, _orch_uri} ->
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :hello}}
 

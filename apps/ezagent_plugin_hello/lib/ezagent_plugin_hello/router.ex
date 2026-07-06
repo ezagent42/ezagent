@@ -20,25 +20,60 @@ defmodule EzagentPluginHello.Router do
   the generation round-trip are slow; they must never block dispatch).
   """
 
-  alias EzagentPluginHello.{App, Generator}
+  alias EzagentPluginHello.{Generator, Members}
+
+  @roles ["orchestrator", "builder", "concierge"]
 
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder or concierge.
-  Spawns a supervised Task; returns its `{:ok, pid}` (fire-and-forget).
+  Spawns a supervised Task; returns its `{:ok, pid}` (fire-and-forget). No-ops
+  (`:ignored`) when `should_route?/2` rejects the sender (the orchestrator's own
+  outbound or one of its own builder/concierge members) — the loop guard.
   """
-  @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()} | :ignored
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
-    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-      case decide(owner?(session_uri, sender), user_text) do
-        :builder ->
-          _ = App.ensure_session_builder(session_uri)
-          Generator.generate(session_uri, user_text)
+    if should_route?(session_uri, sender) do
+      Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+        case decide(owner?(session_uri, sender), user_text) do
+          :builder ->
+            Generator.generate(session_uri, user_text)
 
-        :concierge ->
-          _ = App.ensure_session_concierge(session_uri)
-          Generator.concierge_answer(session_uri, user_text, App.concierge_uri(session_uri))
-      end
-    end)
+          :concierge ->
+            # The builder + concierge are now ALWAYS-materialized members
+            # (`Definition.roles`), so no on-demand spawn — resolve the concierge
+            # member by role and attribute its reply. Fail-loud if unresolved (a
+            # materialized session always has one).
+            {:ok, concierge_uri} = Members.role_uri(session_uri, "concierge")
+            Generator.concierge_answer(session_uri, user_text, concierge_uri)
+        end
+      end)
+    else
+      :ignored
+    end
+  end
+
+  @doc """
+  Loop + multi-agent guard. Route a message UNLESS its sender is the
+  orchestrator itself or one of its own managed members (builder / concierge) —
+  those are the orchestrator's OWN workers, whose output must never re-route
+  (loop). Every other sender — a user OR an external agent — IS routed, which is
+  how the orchestrator accepts more than human messages.
+
+  Fails CLOSED: if the `:session` members slice cannot be read AT ALL (no live
+  Kind / a read miss), we cannot identify our own workers and therefore cannot
+  guarantee this isn't a loop, so we do NOT route (`false`). A dropped message
+  is recoverable (the user resends); an unguarded concierge→concierge loop is
+  unbounded LLM calls. This is distinct from the readable-but-role-not-yet-
+  materialized case (a fresh/half-built session), which still routes normally —
+  see `Members.role_uris/2`, which resolves all roles from a SINGLE read so
+  "slice unreadable" and "slice readable, role just not filled" aren't conflated.
+  """
+  @spec should_route?(URI.t(), URI.t()) :: boolean()
+  def should_route?(%URI{} = session_uri, %URI{} = sender) do
+    case Members.role_uris(session_uri, @roles) do
+      {:ok, own_uris} -> not Enum.any?(own_uris, &same_uri?(&1, sender))
+      :error -> false
+    end
   end
 
   @doc """
