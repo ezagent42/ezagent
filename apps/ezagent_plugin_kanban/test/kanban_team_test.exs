@@ -3,7 +3,7 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
   S2 unit gate for the `socialware:kanban-team` Definition — proves the
   config-as-data body round-trips through `Ezagent.Socialware.Definition.new/1`
   (the validation boundary), declares exactly the TWO agent role-slots
-  (`pm-coordinator` + `dev-together`, both cc-headless active) with the correct
+  (`kanban-assistant` + `dev-together`, both cc-headless active) with the correct
   flavors, carries ZERO participant instance URIs (role-slot #1180), and is
   private / non-anon / installer-owned. No DB / materialize here (that is the S3
   integration + conformance gate).
@@ -34,14 +34,14 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     refute Map.has_key?(Map.from_struct(def), :members)
   end
 
-  test "declares exactly pm-coordinator + dev-together agent role-slots, zero instance URIs" do
+  test "declares exactly kanban-assistant + dev-together agent role-slots, zero instance URIs" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
     agent_slots = Enum.filter(def.roles, &(&1.fill == :agent))
     role_names = Enum.map(agent_slots, & &1.role_name)
-    assert "pm-coordinator" in role_names
+    assert "kanban-assistant" in role_names
     assert "dev-together" in role_names
     # exactly two agent slots — pm + dev, both active cc-headless.
-    assert Enum.sort(role_names) == ["dev-together", "pm-coordinator"]
+    assert Enum.sort(role_names) == ["dev-together", "kanban-assistant"]
 
     Enum.each(agent_slots, fn a ->
       assert a.fill == :agent
@@ -51,7 +51,7 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
       refute String.contains?(a.role_name, "://")
     end)
 
-    pm_slot = Enum.find(def.roles, &(&1.role_name == "pm-coordinator"))
+    pm_slot = Enum.find(def.roles, &(&1.role_name == "kanban-assistant"))
     assert pm_slot.flavor == "cc-headless"
     dev_slot = Enum.find(def.roles, &(&1.role_name == "dev-together"))
     assert dev_slot.flavor == "cc-headless"
@@ -84,7 +84,7 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     # ...and the team is exactly the two session participants (pm + dev); the
     # third roles/0 recipe (kanban-manager) is the workspace board actor, not a
     # member.
-    assert slot_recipes == ["dev-together", "pm-coordinator"]
+    assert slot_recipes == ["dev-together", "kanban-assistant"]
   end
 
   test "declares a content-triggered relay-back rule to the pm role, zero instance URIs (S3)" do
@@ -106,7 +106,7 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
 
     receivers = Map.get(rule, "receivers") || Map.get(rule, :receivers)
     # role_name (declared role), NOT a URI.
-    assert receivers == ["pm-coordinator"]
+    assert receivers == ["kanban-assistant"]
 
     # the whole rule carries NO participant instance URI (round-trip safety).
     refute inspect(rule) =~ ~r{entity://[^/]+/(agent|user)/}

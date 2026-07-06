@@ -10,7 +10,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   ## Materializes the REAL shipped 2-role team (flavor-swapped to a bare stub)
 
   Since the S2 modeling fix the SHIPPED kanban-team declares exactly TWO agent
-  role-slots — `pm-coordinator` + `dev-together` — and NO `kanban-manager` slot
+  role-slots — `kanban-assistant` + `dev-together` — and NO `kanban-manager` slot
   (the board is a workspace-level passive URI-dispatch actor, not a session
   member; declaring it would trip the RF-6 passive-join gate
   `{:passive_actor_cannot_join, _}`, `session.ex:723`). So both role-slots now
@@ -32,7 +32,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   The load-bearing contrast with a sender-lock relay: materialize spawns the
   pm/dev members at RANDOM UUID URIs (#1180), yet the installed live rule still
   carries only the `text_contains "__done__"` matcher + a `{:role,
-  "pm-coordinator"}` receiver — zero participant instance URI.
+  "kanban-assistant"}` receiver — zero participant instance URI.
   """
   use EzagentCore.DataCase, async: false
 
@@ -144,7 +144,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     # #1180 spawns members at RANDOM UUIDs — resolve URIs by role AFTER
     # materialize via the `:member_by_role` edge resolver (a lookup, not a
     # deterministic planned URI).
-    pm_uri = member_uri_for_role(session_uri, "pm-coordinator")
+    pm_uri = member_uri_for_role(session_uri, "kanban-assistant")
     dev_uri = member_uri_for_role(session_uri, "dev-together")
     on_exit(fn -> Enum.each([pm_uri, dev_uri], &terminate/1) end)
 
@@ -159,7 +159,10 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     rule = RuleStore.find_by_identity(table, session_uri, "relay-back", 0)
     assert %RuleStore{} = rule
     assert rule.matcher_data == %{"type" => "text_contains", "arg" => "__done__"}
-    assert Enum.map(rule.receivers, &Receiver.decode_from_store/1) == [{:role, "pm-coordinator"}]
+
+    assert Enum.map(rule.receivers, &Receiver.decode_from_store/1) == [
+             {:role, "kanban-assistant"}
+           ]
 
     # sharp anti-sender-lock proof: the spawned pm/dev UUID URIs appear NOWHERE
     # in the live rule (matcher OR receivers).
@@ -174,7 +177,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     refute Matcher.match?(matcher, msg(dev_uri, "still working"))
 
     # (b) end-to-end: a `__done__` message resolves to the pm role; a plain one
-    # does not. The {:role, "pm-coordinator"} receiver expands via the runtime
+    # does not. The {:role, "kanban-assistant"} receiver expands via the runtime
     # role resolver (session membership-edge lookup, #1185-stable).
     members = [dev_uri, pm_uri]
     role_resolver = role_resolver_for(session_uri)

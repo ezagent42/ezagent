@@ -10,7 +10,7 @@
 When running as the `dev-together` member of a kanban-team, follow the shared
 collaboration protocol (the single authoritative source):
 
-@../../pm-coordinator/references/kanban-team-collaboration.md
+@../../kanban-assistant/references/kanban-team-collaboration.md
 
 Your only team-specific addition: after a `return` (CI green + rebased + DoD
 reconciled in `returns/<task>.md`), send a short completion signal — the
