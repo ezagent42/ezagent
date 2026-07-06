@@ -1,0 +1,11 @@
+2081:[warning] AgentBridge deliver dropped for entity://system/agent/737ccd72-a58f-4a77-a6df-407649bfa629: :no_sandbox_respawn_state. Message from entity://system/user/admin: __dealscout_update__ 新线索 20 条（crawl）
+ id |     rule_set     |   receivers    |         arg          
+----+------------------+----------------+----------------------
+  5 | dealscout-update | {$role:cGFnZQ} | __dealscout_update__
+(1 row)
+
+  source   |                          user_uri                          | last_read_message_uri 
+-----------+------------------------------------------------------------+-----------------------
+ delivered | entity://system/agent/737ccd72-a58f-4a77-a6df-407649bfa629 | 739fd3f377167ccb
+(1 row)
+

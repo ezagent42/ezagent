@@ -38,6 +38,49 @@ defmodule EzagentPluginDealScout.DealScoutCrawlTest do
     assert cmd.target |> URI.to_string() =~ "action=session.send"
   end
 
+  # 2026-07-07 真浏览器 e2e 修正：内层 session.send 必须以触发者身份 dispatch
+  # （裸 %{reply: :ignore} 无 caller/caps → Kind authz :unauthorized，线索静默进不了会话）。
+  test "inject delegates the OUTER caller/caps into the inner session.send ctx (CapBAC-honest)" do
+    test_pid = self()
+
+    items = [
+      %{
+        title: "t",
+        url: "u",
+        summary: "s",
+        source: "hn",
+        ts: DateTime.utc_now(),
+        source_type: :public
+      }
+    ]
+
+    Application.put_env(:ezagent_plugin_dealscout, :fetch_fun, fn _sources -> {:ok, items} end)
+
+    Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
+      send(test_pid, {:dispatched, cmd})
+      :ok
+    end)
+
+    caller = Ezagent.URI.new!("entity://system/user/admin")
+    caps = MapSet.new([:fake_cap])
+
+    ctx = %{
+      session_uri: Ezagent.URI.new!("session://system/default/t"),
+      caller: caller,
+      caps: caps
+    }
+
+    assert {:ok, %{injected: 1}, _} = DealScoutCrawl.handle_crawl_now(%{}, ctx)
+
+    # 线索注入 + 更新信号两条都带触发者身份
+    assert_receive {:dispatched, %Ezagent.Invocation{ctx: inject_ctx}}, 500
+    assert inject_ctx.caller == caller
+    assert inject_ctx.caps == caps
+    assert_receive {:dispatched, %Ezagent.Invocation{ctx: signal_ctx}}, 500
+    assert signal_ctx.caller == caller
+    assert signal_ctx.caps == caps
+  end
+
   test "crawl_now with new leads emits ONE update signal after the items (content protocol)" do
     test_pid = self()
 
@@ -56,7 +99,7 @@ defmodule EzagentPluginDealScout.DealScoutCrawlTest do
     Application.put_env(:ezagent_plugin_dealscout, :fetch_fun, fn _sources -> {:ok, items} end)
 
     Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
-      send(test_pid, {:dispatched, cmd.args.body})
+      send(test_pid, {:dispatched, cmd.args.message.body.text})
       :ok
     end)
 
@@ -83,7 +126,7 @@ defmodule EzagentPluginDealScout.DealScoutCrawlTest do
     Application.put_env(:ezagent_plugin_dealscout, :fetch_fun, fn _sources -> {:ok, []} end)
 
     Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
-      send(test_pid, {:dispatched, cmd.args.body})
+      send(test_pid, {:dispatched, cmd.args.message.body.text})
       :ok
     end)
 
@@ -152,7 +195,7 @@ defmodule EzagentPluginDealScout.DealScoutCrawlTest do
       end)
 
       Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
-        send(test_pid, {:dispatched, cmd.args.body})
+        send(test_pid, {:dispatched, cmd.args.message.body.text})
         :ok
       end)
 
@@ -180,7 +223,7 @@ defmodule EzagentPluginDealScout.DealScoutCrawlTest do
       end)
 
       Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
-        send(test_pid, {:dispatched, cmd.args.body})
+        send(test_pid, {:dispatched, cmd.args.message.body.text})
         :ok
       end)
 
