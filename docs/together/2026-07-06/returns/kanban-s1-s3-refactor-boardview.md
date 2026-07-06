@@ -76,6 +76,17 @@ relay-signal-check.sh                        # OK（__done__ 对齐 pm protocol 
 - TDD 红基线：新增 3 个测试文件先跑出 16 failures（模块未定义 + `views == []`），实现后 23/23 绿。
 - **PR #1190**：本片 push 后 CI 重跑；上一轮（`d8267685`）已把 dev-together guard + undeclared-dep 两个红修绿。rebase-base 保持 `0a192363`。
 
+## 收口批次补记（2026-07-06，rebase 到 `e8d9fd11` 后）
+
+1. **world 死派发清理（gh 动作删除的爆炸半径配套，同 world_conversation_test 先例）**——本分支删了 kanban ActionSet 的 GitHub 主动连接器（sync_github / save_github_creds / sync_prs / push_pr），world 侧对应死派发本轮清掉：
+   - `apps/ezagent_plugin_world/lib/ezagent/world/kanban_actions.ex`：删 4 个死 `handle_dispatch` 子句（原 :115-124 sync_github/save_github_creds、:144-148 sync_prs/push_pr）+ moduledoc 连接器清单改写为现状（gh 连通 = agent 的 CLI 行为）+ act_board 注释同步。
+   - `apps/ezagent_plugin_world/lib/ezagent/world/kanban_data.ex`：**`github` 连接状态字段整体退役**（原 :62 / :99 / :157 / :166 四处读）——现读确认 `handle_get_tree`（kanban.ex:523）早已不返回 `:github`，这四处永远是 `%{"configured" => false}` 死占位，且前端唯一消费点（GH token 面板）同轮删除，故整体退役而非留占位。`config.github_repo` 保留（纯数据，拼 git 链接用）。
+   - `apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex`：`@kanban_actions` 白名单删上述 4 项（:268）。
+   - React `apps/ezagent_plugin_world/assets/src/components/Kanban.tsx`：删 GitHub token 配置面板（KanbanList）、「PR 同步」按钮（sync_prs）、issue 棒「登记 issue」按钮（sync_github）、pr 棒「出站 GitHub」按钮（push_pr，连带死变量 `hasPr`）、`KanbanState.github` 类型字段、5 条不再可产生的错误码（github_token_missing / unauthorized / not_found / unreachable / no_pr_registered）；保留「登记 PR」/「挂代码文件」（纯数据动作）+ `github_repo_missing` / `bad_pr_number`。`vite build` 绿。
+   - 验证：`mix test apps/ezagent_plugin_world/test` → 151 tests, 0 failures；`mix test apps/ezagent_plugin_kanban/test` → 83 tests, 0 failures（7 excluded）。
+
+2. **cross_file_duplicate_fn baseline bump 43→45（+2，请 Allen review）**——`apps/ezagent_core/test/architecture/arch_baseline_manifest.exs` 按既有 arch-cap-bump 注释惯例 bump：Demo.Kanban boot-publish 照 hello 黄金样板一比一照抄（Task #162 boot-publish handoff 明确指示照抄 hello 流程），其 publish/admin_ctx 与 `Ezagent.Socialware.Demo.Hello` 结构性同形——sanctioned 模式的有意镜像，非 copy-paste fork。定点 `mix test apps/ezagent_core/test/architecture/cross_file_duplicate_fn_test.exs` 绿。
+
 ## Deferred（不在本片，显式挂起）
 
 1. **S6 agent 自驱板真浏览器 e2e** — pm/dev 两个 cc-headless agent 自驱推板需要真 brain 凭证（**Q10 凭证问题**，等拍）；`docs/e2e/2026-07-06/kanban-team/` 里已有的人驱截图不当自驱证据（e2e 纪律：禁 stub 当 e2e）。

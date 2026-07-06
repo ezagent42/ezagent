@@ -15,10 +15,12 @@ defmodule Ezagent.World.KanbanActions do
   树 + `push_event("world:state")` 刷前端。**新建看板** = `Ezagent.Workspace.create_agent`
   （role × native，RF-5a），不再合成 `resource://` URI。
 
-  本模块退成**纯 dispatcher**：连接器逻辑（Github / Miro / BoardConfig / Ci 等）全部住在
-  `Ezagent.ActionSet.Kanban` 的动作里（sync_github / push_pr / register_pr /
-  attach_code_file / sync_prs / sync_miro / set_board_config / save_github_creds /
-  save_miro_creds）。world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
+  本模块退成**纯 dispatcher**：连接器逻辑（Miro / BoardConfig / Ci 等）全部住在
+  `Ezagent.ActionSet.Kanban` 的动作里（register_pr / attach_code_file / sync_miro /
+  set_board_config / save_miro_creds）。GitHub 主动连接器（sync_github / push_pr /
+  sync_prs / save_github_creds）已整体退役——gh 连通现在是 agent 的 CLI 行为，不走
+  world 派发；留下的 register_pr / attach_code_file 是纯数据（拼 git 链接挂节点）。
+  world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
   passive kanban-manager 经 `KanbanData.ensure_spawned/1` 从快照 rehydrate 起活。
   """
 
@@ -112,17 +114,6 @@ defmodule Ezagent.World.KanbanActions do
           board_id: Map.get(a, "board_id", "")
         })
 
-  def handle_dispatch(socket, "kanban.sync_github", %{"kanban_uri" => u, "id" => id}),
-    do: act(socket, u, :sync_github, %{id: id})
-
-  def handle_dispatch(socket, "kanban.save_github_creds", %{"access_token" => token} = a)
-      when is_binary(token),
-      do:
-        act_board(socket, kanban_uri(socket, a), :save_github_creds, %{
-          access_token: token,
-          repo: Map.get(a, "repo", "")
-        })
-
   def handle_dispatch(socket, "kanban.set_board_config", %{"kanban_uri" => u} = a),
     do:
       act_board(socket, u, :set_board_config, %{
@@ -140,12 +131,6 @@ defmodule Ezagent.World.KanbanActions do
 
   def handle_dispatch(socket, "kanban.register_pr", %{"kanban_uri" => u, "id" => id, "pr" => pr}),
     do: act(socket, u, :register_pr, %{id: id, pr: to_string(pr)})
-
-  def handle_dispatch(socket, "kanban.sync_prs", %{"kanban_uri" => u}),
-    do: act(socket, u, :sync_prs, %{})
-
-  def handle_dispatch(socket, "kanban.push_pr", %{"kanban_uri" => u, "id" => id}),
-    do: act(socket, u, :push_pr, %{id: id})
 
   def handle_dispatch(socket, "kanban.attach_code_file", %{
         "kanban_uri" => u,
@@ -186,8 +171,8 @@ defmodule Ezagent.World.KanbanActions do
     end
   end
 
-  # 图级动作（set_board_config / save_*_creds）：dispatch → 推全量 board 快照（含
-  # 刷新的 config / miro / github 状态），让前端连接器面同步。
+  # 图级动作（set_board_config / save_miro_creds）：dispatch → 推全量 board 快照（含
+  # 刷新的 config / miro 状态），让前端连接器面同步。
   defp act_board(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
