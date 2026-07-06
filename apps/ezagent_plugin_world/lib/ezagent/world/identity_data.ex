@@ -700,6 +700,7 @@ defmodule Ezagent.World.IdentityData do
     |> put_schema_string("label", Map.get(field, :label))
     |> put_schema_list("options", Map.get(field, :options))
     |> put_schema_any("default", Map.get(field, :default))
+    |> put_schema_any("required", Map.get(field, :required))
   end
 
   defp put_schema_string(acc, _k, nil), do: acc

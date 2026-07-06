@@ -1,7 +1,7 @@
 import React from "react"
-import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
 
-import {Button, Modal} from "./ui/primitives"
+import {Button, Input, Modal, Select} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 
@@ -39,9 +39,6 @@ type Pending = {
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const MAX_FILES = 5
 
-// lucide-react components for the server-declared SessionView icon names
-// (`icon/0` of each registered view). Unknown names draw a neutral grid glyph
-// rather than dropping the tab.
 const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidden"?: boolean}>> = {
   "message-square": MessageSquare,
   terminal: TerminalSquare,
@@ -53,8 +50,6 @@ const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidde
 
 const iconFor = (name: string) => ICONS[name] ?? LayoutGrid
 
-// Stable tab order: conversation (chat) first, pty second, the rest
-// alphabetically — so the strip doesn't reshuffle as views register.
 const orderViews = (vs: ViewTab[]) => {
   const rank = (id: string) => (id === "conversation" ? 0 : id === "pty" ? 1 : 2)
   return [...vs].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
@@ -70,26 +65,28 @@ type MemberRow = {
   display_name?: string | null
   online?: boolean
   kind?: string | null
-  role_name?: string | null
 }
 
-type HumanRoleSlot = {
-  role_name: string
-  assigned_uri?: string | null
+type InviteCandidateRow = {
+  uri: string
+  display_name?: string | null
+  kind?: string | null
+  flavor?: string | null
 }
 
-// A registry-enumerated session view tab (server `ConversationData.session_views/2`,
-// backed by `Ezagent.UI.SessionViewRegistry.applicable_views/2` — already
-// caller-aware + cap-gated). `mode` tells React HOW to draw the content:
-// chat|pty are world-native renderers, external draws through the
-// /socialware/external iframe surface, anything else is an honest
-// "unsupported" placeholder (never silently hidden).
 type ViewTab = {
   id: string
   label: string
   icon: string
   mode: string
 }
+
+const ROUTING_MAGIC_RECEIVERS: InviteCandidateRow[] = [
+  {uri: "$session_users,$mentions", display_name: "Human members + mentions", kind: "preset"},
+  {uri: "$session_users", display_name: "Human members", kind: "group"},
+  {uri: "$mentions", display_name: "Mentioned entities", kind: "dynamic"},
+  {uri: "$session_members", display_name: "All session members", kind: "group"},
+]
 
 type RoutingRule = {
   id: number
@@ -109,6 +106,8 @@ export type ConversationState = {
   agent_uri?: string | null
   session_uri?: string | null
   caller_uri?: string | null
+  create_error?: string | null
+  is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
   pty_alive?: boolean
@@ -116,14 +115,17 @@ export type ConversationState = {
   pty_phase?: string
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
+  templates?: string[]
   members?: MemberRow[]
-  human_role_slots?: HumanRoleSlot[]
+  invite_candidates?: InviteCandidateRow[]
+  routing_entity_candidates?: InviteCandidateRow[]
   views?: ViewTab[]
 }
 
 type Props = {
   state: ConversationState
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
+  onCreate?: (shortName: string, templateName: string) => void
   onForkConfig: (sessionUri: string) => void
   onOpenPty: (sessionUri: string, agent: string) => void
   onRestartOrchestrator: (sessionUri: string) => void
@@ -134,7 +136,6 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
-  onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -145,17 +146,16 @@ type Props = {
   onPublishTemplate: (sessionUri: string, name: string) => void
 }
 
-// The conversation island is keyed by session_uri in `main.tsx`, so a session
-// switch (push_patch → handle_params → world:state) remounts it fresh from the
-// server-pushed `state.messages`. Within a mount, inbound `chat:message`
-// events append (sender sees their OWN cast'd message only via this bridge),
-// and `chat:older` prepends history.
+// The conversation island stays mounted across rail session switches. Server
+// `world:state` payloads reset the local transcript for the newly selected
+// session; inbound `chat:message` appends and `chat:older` prepends history
+// within that active session.
 export function Conversation({
   state,
   onAddRoutingRule,
+  onCreate,
   onForkConfig,
   onOpenPty,
-  onAssignRole,
   onRemoveParticipant,
   onRestartOrchestrator,
   onSend,
@@ -173,17 +173,23 @@ export function Conversation({
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
+  const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
-  // Registry-driven view tabs (state.views, from SessionViewRegistry). The
-  // fallback is a degenerate chat-only strip for transitional pushes that
-  // predate the "views" key — never a hidden view.
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "Chat", icon: "message-square", mode: "chat"}]
   const views = state.views && state.views.length > 0 ? state.views : fallbackViews
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
+  // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
+  // proper home for this is world surfacing registered SessionViews (Phase 3);
+  // for now it embeds the external surface. See HelloPagePreview below.
+  // Server-detected (has a `:surface` slice) so a session from a PUBLISHED hello
+  // template — whose URI carries the template name, not `/hello/` — still gets the
+  // Page pane. Falls back to the URI check.
+  const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
-  const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlot[]>(state.human_role_slots || [])
+  const [inviteCandidates, setInviteCandidates] = React.useState<InviteCandidateRow[]>(state.invite_candidates || [])
+  const [routingEntityCandidates, setRoutingEntityCandidates] = React.useState<InviteCandidateRow[]>(state.routing_entity_candidates || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
@@ -191,21 +197,52 @@ export function Conversation({
   const [pending, setPending] = React.useState<Pending[]>([])
   const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const [creating, setCreating] = React.useState(false)
+  const [newSessionName, setNewSessionName] = React.useState("")
+  const [newSessionTemplate, setNewSessionTemplate] = React.useState(templates[0])
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
+  const [toolsOpen, setToolsOpen] = React.useState(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
   const [ruleReceivers, setRuleReceivers] = React.useState("")
+  const matcherUsesEntity = ruleMatcherType === "mention" || ruleMatcherType === "from"
+  const matcherUsesText = ruleMatcherType === "text_contains"
+  const routingReceiverCandidates = React.useMemo(
+    () => [...ROUTING_MAGIC_RECEIVERS, ...routingEntityCandidates],
+    [routingEntityCandidates],
+  )
+  const canSubmitRule = Boolean(ruleReceivers.trim()) && (!matcherUsesEntity || Boolean(ruleMatcherArg.trim())) && (!matcherUsesText || Boolean(ruleMatcherArg.trim()))
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
-  const openHumanRoles = React.useMemo(
-    () => humanRoleSlots.filter((slot) => !slot.assigned_uri),
-    [humanRoleSlots],
-  )
+  const currentSession = sessions.find((session) => session.uri === sessionUri) || null
+  const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "Conversation"
+  const sessionMeta = [countLabel(members.length, "member"), countLabel(messages.length, "turn")].join(" · ")
+
+  React.useEffect(() => {
+    setMembers(state.members || [])
+    setInviteCandidates(state.invite_candidates || [])
+    setRoutingEntityCandidates(state.routing_entity_candidates || [])
+    setMessages(state.messages || [])
+    setOldestCursor(state.oldest_cursor || null)
+    setText("")
+    setMentionQuery(null)
+    setPending([])
+    setUploadError(null)
+    setCreating(false)
+    setNewSessionName("")
+    setInviteOpen(false)
+    setInviteValue("")
+    markedRef.current = new Set()
+  }, [state.session_uri])
+
+  React.useEffect(() => {
+    if (!templates.includes(newSessionTemplate)) setNewSessionTemplate(templates[0])
+  }, [newSessionTemplate, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Inserting the member's URI path segment keeps it a single bare
@@ -267,13 +304,40 @@ export function Conversation({
     })
 
     onServerEvent("members:update", (payload) => {
-      const next = payload as {members?: MemberRow[]; human_role_slots?: HumanRoleSlot[]}
+      const next = payload as {members?: MemberRow[]; invite_candidates?: InviteCandidateRow[]; routing_entity_candidates?: InviteCandidateRow[]}
       if (next.members) setMembers(next.members)
-      if (next.human_role_slots) setHumanRoleSlots(next.human_role_slots)
+      if (next.invite_candidates) setInviteCandidates(next.invite_candidates)
+      if (next.routing_entity_candidates) setRoutingEntityCandidates(next.routing_entity_candidates)
     })
 
     return undefined
   }, [onServerEvent])
+
+  React.useEffect(() => {
+    setInviteCandidates(state.invite_candidates || [])
+  }, [state.invite_candidates])
+
+  React.useEffect(() => {
+    setRoutingEntityCandidates(state.routing_entity_candidates || [])
+  }, [state.routing_entity_candidates])
+
+  React.useEffect(() => {
+    if (inviteValue && !inviteCandidates.some((candidate) => candidate.uri === inviteValue)) {
+      setInviteValue("")
+    }
+  }, [inviteCandidates, inviteValue])
+
+  React.useEffect(() => {
+    if (ruleReceivers && !routingReceiverCandidates.some((candidate) => candidate.uri === ruleReceivers)) {
+      setRuleReceivers("")
+    }
+  }, [routingReceiverCandidates, ruleReceivers])
+
+  React.useEffect(() => {
+    if (matcherUsesEntity && ruleMatcherArg && !routingEntityCandidates.some((candidate) => candidate.uri === ruleMatcherArg)) {
+      setRuleMatcherArg("")
+    }
+  }, [matcherUsesEntity, routingEntityCandidates, ruleMatcherArg])
 
   // Keep the viewport pinned to the newest message as the stream grows.
   React.useEffect(() => {
@@ -362,6 +426,17 @@ export function Conversation({
     setUploadError(null)
   }
 
+  const submitCreate = (event: React.FormEvent) => {
+    event.preventDefault()
+    const trimmed = newSessionName.trim()
+    const template = newSessionTemplate.trim() || "default"
+    if (!trimmed) return
+    onCreate?.(trimmed, template)
+    setNewSessionName("")
+    setNewSessionTemplate(templates[0])
+    setCreating(false)
+  }
+
   const loadOlder = () => {
     if (oldestCursor && sessionUri) onLoadOlder(sessionUri, oldestCursor)
   }
@@ -371,9 +446,11 @@ export function Conversation({
     if (!sessionUri) return
     const receivers = ruleReceivers.trim()
     if (!receivers) return
+    const matcherArg = matcherUsesEntity || matcherUsesText ? ruleMatcherArg.trim() : ""
+    if ((matcherUsesEntity || matcherUsesText) && !matcherArg) return
     onAddRoutingRule(sessionUri, {
       matcher_type: ruleMatcherType,
-      matcher_arg: ruleMatcherArg.trim(),
+      matcher_arg: matcherArg,
       receivers,
     })
     setRuleMatcherType("always")
@@ -385,6 +462,7 @@ export function Conversation({
     <div
       className="grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
       data-world-component="conversation"
+      data-world-user-surface="conversation"
       data-world-chat-layout="im"
       data-expanded={expanded ? "true" : "false"}
     >
@@ -398,10 +476,61 @@ export function Conversation({
             <h2 className="text-[13px] font-bold text-foreground">Sessions</h2>
             <p className="mt-0.5 text-[11px] text-muted-foreground">Current workspace only</p>
           </div>
-          <Button size="sm" variant="secondary" aria-label="Create a new session">
-            <Plus aria-hidden="true" />
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            aria-label={creating ? "Close new session form" : "Create a new session"}
+            onClick={() => setCreating((open) => !open)}
+          >
+            {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
           </Button>
         </div>
+        {state.create_error && (
+          <p
+            className="mx-2.5 mt-2.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+            data-world-session-create-error
+          >
+            {state.create_error}
+          </p>
+        )}
+        {creating && (
+          <form
+            className="m-2.5 grid gap-2.5 rounded-lg border border-border bg-muted/30 p-3"
+            id="world-session-create-form"
+            onSubmit={submitCreate}
+          >
+            <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-name">
+              Name
+              <Input
+                id="world-conversation-session-name"
+                value={newSessionName}
+                onChange={(event) => setNewSessionName(event.target.value)}
+                placeholder="support-triage"
+                autoFocus
+              />
+            </label>
+            <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-template">
+              Template
+              <Select
+                id="world-conversation-session-template"
+                value={newSessionTemplate}
+                onChange={(event) => setNewSessionTemplate(event.target.value)}
+              >
+                {templates.map((template) => (
+                  <option key={template} value={template}>
+                    {template}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Button type="submit" size="sm" disabled={!newSessionName.trim()}>
+              <Plus aria-hidden="true" />
+              Create
+            </Button>
+          </form>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
           <div className="mb-2 min-h-[34px] rounded-[10px] border border-border bg-muted px-2.5 py-2 text-[12px] text-muted-foreground">
             Filter sessions, template, status
@@ -412,7 +541,7 @@ export function Conversation({
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {sessions.map((session) => {
                 const active = session.uri === sessionUri
-                const label = session.name || uriSegment(session.uri)
+                const label = sessionLabel(session)
 
                 return (
                   <li key={session.uri}>
@@ -429,8 +558,8 @@ export function Conversation({
                       <MessageSquare aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-semibold">{label}</span>
-                        <span className="mt-0.5 block truncate font-mono text-[11px] opacity-75" title={session.uri}>
-                          {session.uri}
+                        <span className="mt-0.5 block truncate text-[11px] opacity-75">
+                          Chat session
                         </span>
                       </span>
                     </button>
@@ -448,8 +577,8 @@ export function Conversation({
           className="flex min-h-[58px] flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-nowrap sm:items-center"
         >
           <div className="min-w-0 flex-1">
-            <h2 className="text-[13px] font-bold text-foreground">{sessionUri ? uriSegment(sessionUri) : "Conversation"}</h2>
-            <p className="mt-0.5 max-w-[48ch] truncate font-mono text-[11px] text-muted-foreground">{sessionUri || "No active session"}</p>
+            <h2 className="text-[13px] font-bold text-foreground">{sessionTitle}</h2>
+            <p className="mt-0.5 max-w-[48ch] truncate text-[11px] text-muted-foreground">{sessionUri ? sessionMeta : "No active session"}</p>
           </div>
           <div
             data-world-session-toolbar
@@ -464,7 +593,7 @@ export function Conversation({
               >
                 {sessions.map((session) => (
                   <option key={session.uri} value={session.uri}>
-                    {session.name || session.uri}
+                    {sessionLabel(session)}
                   </option>
                 ))}
               </select>
@@ -486,14 +615,61 @@ export function Conversation({
                 )
               })}
             </div>
+            <div className="relative" data-world-session-tools>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setToolsOpen((open) => !open)} aria-label="Open session tools">
+                <MoreHorizontal aria-hidden="true" />
+              </Button>
+              {toolsOpen && (
+                <div className="absolute right-0 top-[calc(100%+6px)] z-30 grid w-56 gap-1 rounded-lg border border-border bg-card p-1.5 text-sm shadow-xl">
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                    onClick={() => {
+                      if (sessionUri) onSwitchView(sessionUri, "pty")
+                      setToolsOpen(false)
+                    }}
+                  >
+                    <TerminalSquare aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                    Terminal
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                    onClick={() => {
+                      if (sessionUri) onRestartOrchestrator(sessionUri)
+                      setToolsOpen(false)
+                    }}
+                  >
+                    <RotateCcw aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                    Restart agent runner
+                  </button>
+                  {sessionUri && (
+                    <a
+                      data-world-external-mirror-link
+                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
+                      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                      onClick={() => setToolsOpen(false)}
+                    >
+                      <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                      External mirror
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                    onClick={() => {
+                      setDebugOpen((open) => !open)
+                      setToolsOpen(false)
+                    }}
+                  >
+                    <Bug aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                    Debug info
+                  </button>
+                </div>
+              )}
+            </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onForkConfig(sessionUri)} aria-label="复制配置，建新会话" title="复制配置，建新会话">
               <Copy aria-hidden="true" />
-            </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
-              <RotateCcw aria-hidden="true" />
-            </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setDebugOpen((open) => !open)} aria-label="Toggle debug panel">
-              <Bug aria-hidden="true" />
             </Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
               <Maximize2 aria-hidden="true" />
@@ -516,23 +692,6 @@ export function Conversation({
               onResize={onPtyResize}
               onServerEvent={onServerEvent}
             />
-          </div>
-        ) : activeMode === "external" ? (
-          // A view whose content lives on the external json-render surface
-          // (e.g. the hello Page). Full-pane iframe — the same
-          // /socialware/external renderer the public share URL uses.
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-world-view-mode="external">
-            <ExternalSurfaceView sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
-          </div>
-        ) : activeMode !== "chat" ? (
-          // Honest placeholder for a registered view world has no renderer for
-          // (mode "unsupported" or anything unrecognized) — shown, never
-          // silently hidden (Allen locked decision #4).
-          <div
-            className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground"
-            data-world-view-mode="unsupported"
-          >
-            此视图暂无网页渲染器 / This view has no web renderer yet.
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -570,7 +729,7 @@ export function Conversation({
                       <span className={bubbleKindClass(mine, kind)}>{kindLabel(kind, mine)}</span>
                       <div className="flex items-baseline justify-between gap-3.5">
                         <span className={mine ? "text-[12.5px] font-semibold text-primary-foreground" : "text-[12.5px] font-semibold text-foreground"}>
-                          {message.sender_display || message.sender}
+                          {message.sender_display || uriSegment(message.sender)}
                         </span>
                         {message.at && (
                           <span className={mine ? "whitespace-nowrap text-[11px] tabular-nums text-primary-foreground/80" : "whitespace-nowrap text-[11px] tabular-nums text-muted-foreground"}>
@@ -701,6 +860,11 @@ export function Conversation({
               </div>
             </form>
             </div>
+            {isHelloSession && (
+              <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
+                <HelloPagePreview sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
+              </div>
+            )}
           </div>
         )}
 
@@ -717,7 +881,17 @@ export function Conversation({
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
             <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)} aria-label="Invite a member">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={inviteCandidates.length === 0}
+            title={inviteCandidates.length === 0 ? "No available members" : "Invite a member"}
+            onClick={() => {
+              setInviteValue((current) => current || inviteCandidates[0]?.uri || "")
+              setInviteOpen(true)
+            }}
+            aria-label="Invite a member"
+          >
             <UserPlus aria-hidden="true" />
             Invite
           </Button>
@@ -734,19 +908,32 @@ export function Conversation({
               setInviteOpen(false)
             }}
           >
-            <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-input">
-              Invite by entity URI
+            <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-select">
+              Invite member
             </label>
-            <input
-              id="world-invite-input"
-              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-foreground"
+            <select
+              id="world-invite-select"
+              data-world-invite-select
+              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground"
               value={inviteValue}
               onChange={(event) => setInviteValue(event.target.value)}
-              placeholder="entity://workspace/user/name"
               autoFocus
-            />
+              disabled={inviteCandidates.length === 0}
+            >
+              <option value="" disabled>
+                {inviteCandidates.length === 0 ? "No available members" : "Select a member"}
+              </option>
+              {inviteCandidates.map((candidate) => {
+                const label = inviteCandidateLabel(candidate)
+                return (
+                  <option key={candidate.uri} value={candidate.uri}>
+                    {label} ({candidate.kind || "member"})
+                  </option>
+                )
+              })}
+            </select>
             <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={!inviteValue.trim()}>
+              <Button type="submit" size="sm" disabled={!inviteValue.trim() || inviteCandidates.length === 0}>
                 Invite
               </Button>
               <Button
@@ -767,119 +954,132 @@ export function Conversation({
           {members.length === 0 ? (
             <li className="px-2 py-2.5 text-[13px] text-muted-foreground">No members yet.</li>
           ) : (
-            members.map((member) => (
-              <li
-                key={member.uri}
-                className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted"
-                data-kind={member.kind || "other"}
-                data-online={member.online ? "true" : "false"}
-              >
-                <span
-                  className={
-                    member.online
-                      ? "h-2 w-2 flex-none rounded-full bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
-                      : "h-2 w-2 flex-none rounded-full bg-border"
-                  }
-                  aria-hidden="true"
-                />
-                <span
-                  className={
-                    member.kind === "agent"
-                      ? "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-foreground"
-                      : "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground"
-                  }
+            members.map((member) => {
+              const label = memberLabel(member)
+              return (
+                <li
+                  key={member.uri}
+                  className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted"
+                  data-kind={member.kind || "other"}
+                  data-online={member.online ? "true" : "false"}
                 >
-                  {member.display_name || member.uri}
-                </span>
-                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
-                {member.role_name ? (
-                  <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
-                    {member.role_name}
+                  <span
+                    className={
+                      member.online
+                        ? "h-2 w-2 flex-none rounded-full bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
+                        : "h-2 w-2 flex-none rounded-full bg-border"
+                    }
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground">
+                    {label}
                   </span>
-                ) : (
-                  member.kind === "user" &&
-                  openHumanRoles.length > 0 && (
-                    <select
-                      className="h-7 max-w-[126px] rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
-                      aria-label={`Assign role to ${member.display_name || member.uri}`}
-                      value=""
-                      onChange={(event) => {
-                        if (event.target.value && sessionUri) onAssignRole(sessionUri, member.uri, event.target.value)
-                      }}
+                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
+                  {member.kind === "agent" && (
+                    <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${label}`}>
+                      <TerminalSquare aria-hidden="true" />
+                    </Button>
+                  )}
+                  {member.uri !== callerUri && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
+                      aria-label={`Remove ${label}`}
+                      title="Remove from session"
                     >
-                      <option value="">Role</option>
-                      {openHumanRoles.map((slot) => (
-                        <option key={slot.role_name} value={slot.role_name}>
-                          {slot.role_name}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-                {member.kind === "agent" && (
-                  <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
-                    <TerminalSquare aria-hidden="true" />
-                  </Button>
-                )}
-                {/* F7 PR-A — re-instate the per-member remove control (the QA-pulled
-                    one). Cap-gated server-side: only the session owner (or the
-                    member itself) is authorized; an unauthorized click degrades to
-                    an error status and the member stays. */}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
-                  aria-label={`Remove ${member.display_name || member.uri}`}
-                  title="Remove from session"
-                >
-                  <UserMinus aria-hidden="true" />
-                </Button>
-              </li>
-            ))
+                      <UserMinus aria-hidden="true" />
+                    </Button>
+                  )}
+                </li>
+              )
+            })
           )}
         </ul>
 
-        <div className="border-t border-border pt-3">
-          <div className="flex items-start justify-between gap-2.5 px-4 pb-1">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routing</p>
-              <h2 className="text-[17px] font-semibold text-foreground">{routingRules.length}</h2>
-            </div>
-            <Route aria-hidden="true" className="h-[15px] w-[15px] text-muted-foreground" />
-          </div>
-          <form className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] gap-2 p-2" id="world-session-routing-form" onSubmit={submitRule}>
-            <select className={routingFieldClass} value={ruleMatcherType} onChange={(event) => setRuleMatcherType(event.target.value)} aria-label="Matcher type">
+        <details className="border-t border-border px-2 py-3" data-world-routing-drawer>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+            <span className="inline-flex items-center gap-2">
+              <Route aria-hidden="true" className="h-[15px] w-[15px]" />
+              Advanced rules
+            </span>
+            <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px]">{routingRules.length}</span>
+          </summary>
+          <form className="mt-2 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] gap-2" id="world-session-routing-form" onSubmit={submitRule}>
+            <select
+              className={routingFieldClass}
+              value={ruleMatcherType}
+              onChange={(event) => {
+                setRuleMatcherType(event.target.value)
+                setRuleMatcherArg("")
+              }}
+              aria-label="Matcher type"
+            >
               <option value="always">Always</option>
               <option value="mention">Mention</option>
               <option value="from">From</option>
               <option value="text_contains">Text contains</option>
             </select>
-            <input
-              className={routingFieldClass}
-              value={ruleMatcherArg}
-              onChange={(event) => setRuleMatcherArg(event.target.value)}
-              placeholder={ruleMatcherType === "always" ? "No matcher argument" : "matcher argument"}
-              disabled={ruleMatcherType === "always"}
-              aria-label="Matcher argument"
-            />
-            <input
+            {matcherUsesText ? (
+              <input
+                className={routingFieldClass}
+                value={ruleMatcherArg}
+                onChange={(event) => setRuleMatcherArg(event.target.value)}
+                placeholder="Text to match"
+                data-world-routing-matcher-text
+                aria-label="Matcher text"
+              />
+            ) : (
+              <select
+                className={routingFieldClass}
+                value={ruleMatcherArg}
+                onChange={(event) => setRuleMatcherArg(event.target.value)}
+                data-world-routing-matcher-select
+                disabled={ruleMatcherType === "always" || routingEntityCandidates.length === 0}
+                aria-label="Matcher entity"
+              >
+                <option value="" disabled>
+                  {ruleMatcherType === "always"
+                    ? "No matcher needed"
+                    : routingEntityCandidates.length === 0
+                      ? "No entity available"
+                      : "Select entity"}
+                </option>
+                {routingEntityCandidates.map((candidate) => (
+                  <option key={candidate.uri} value={candidate.uri}>
+                    {routingCandidateOptionLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
               className={`${routingFieldClass} col-span-2`}
               value={ruleReceivers}
               onChange={(event) => setRuleReceivers(event.target.value)}
-              placeholder="entity://system/user/admin"
+              data-world-routing-receiver-select
+              disabled={routingReceiverCandidates.length === 0}
               aria-label="Receivers"
-            />
+            >
+              <option value="" disabled>
+                {routingReceiverCandidates.length === 0 ? "No receiver available" : "Select receiver"}
+              </option>
+              {routingReceiverCandidates.map((candidate) => (
+                <option key={candidate.uri} value={candidate.uri}>
+                  {routingCandidateOptionLabel(candidate)}
+                </option>
+              ))}
+            </select>
             <div className="col-span-2">
-              <Button type="submit" size="sm" disabled={!ruleReceivers.trim()}>
+              <Button type="submit" size="sm" disabled={!canSubmitRule}>
                 <Plus aria-hidden="true" />
                 Add
               </Button>
             </div>
           </form>
-          <ul className="m-0 flex list-none flex-col gap-1.5 p-2">
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
             {routingRules.length === 0 ? (
-              <li className="px-0 py-2 text-[13px] text-muted-foreground">No session routing rules.</li>
+              <li className="px-0 py-2 text-[13px] text-muted-foreground">No advanced rules.</li>
             ) : (
               routingRules.map((rule) => (
                 <li
@@ -888,11 +1088,11 @@ export function Conversation({
                   data-enabled={rule.enabled ? "true" : "false"}
                 >
                   <div className="min-w-0">
-                    <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] font-semibold text-foreground">
+                    <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold text-foreground">
                       {rule.matcher || `Rule ${rule.id}`}
                     </strong>
                     <span className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground">
-                      {rule.receivers_text || (rule.receivers || []).join(", ")}
+                      {routingReceiversLabel(rule)}
                     </span>
                   </div>
                   <Button
@@ -914,7 +1114,7 @@ export function Conversation({
               ))
             )}
           </ul>
-        </div>
+        </details>
       </aside>
     </div>
   )
@@ -959,6 +1159,53 @@ function formatAt(at: string) {
   return date.toLocaleString()
 }
 
+function sessionLabel(session: SessionRow) {
+  if (session.name && session.name.trim()) return humanizeSessionName(session.name)
+  return humanizeSessionName(uriSegment(session.uri))
+}
+
+function humanizeSessionName(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return "Conversation"
+  const withoutPrefix = trimmed.replace(/^conv[_-]/, "")
+  return withoutPrefix
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase())
+}
+
+function memberLabel(member: MemberRow) {
+  if (member.display_name && member.display_name.trim()) return member.display_name
+  return uriSegment(member.uri)
+}
+
+function inviteCandidateLabel(candidate: InviteCandidateRow) {
+  if (candidate.display_name && candidate.display_name.trim()) return candidate.display_name
+  return uriSegment(candidate.uri)
+}
+
+function routingCandidateOptionLabel(candidate: InviteCandidateRow) {
+  const label = inviteCandidateLabel(candidate)
+  return candidate.kind ? `${label} (${candidate.kind})` : label
+}
+
+function countLabel(count: number, singular: string) {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`
+}
+
+function routingReceiversLabel(rule: RoutingRule) {
+  const receivers = rule.receivers && rule.receivers.length > 0 ? rule.receivers : splitReceiverText(rule.receivers_text)
+  return receivers.length > 0 ? receivers.map(uriSegment).join(", ") : "No receiver"
+}
+
+function splitReceiverText(value?: string | null) {
+  if (!value) return []
+  return value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 // Last path segment of an entity URI (e.g. entity://system/agent/codex-1 →
 // "codex-1") — a clean single token the server-side mention parser resolves.
 function uriSegment(uri: string) {
@@ -977,13 +1224,14 @@ function kindLabel(kind: string, mine: boolean) {
   return "Participant"
 }
 
-// Generic renderer for any SessionView classified `mode: "external"` — its
-// content lives on the public `/socialware/external` json-render surface, so
-// world embeds that surface in an iframe (the same renderer the public share
-// URL uses; a `public_view` session renders with no token/login). The overlay
-// controls (open-in-tab, publish-as-template) are operator affordances on the
-// internal console only — they never show on the public share page.
-function ExternalSurfaceView({
+// TEMPORARY internal preview of a hello session's rendered page. Embeds the
+// public `/socialware/external` surface (the working renderer) in an iframe,
+// rather than the native @json-render island. The proper home for this is world
+// surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
+// until then this is a clearly-labelled stopgap so an internal reader can see the page
+// without leaving the console. Hello sessions are `public_view`, so the customer
+// URL renders with no token/login.
+function HelloPagePreview({
   sessionUri,
   onPublishTemplate,
 }: {

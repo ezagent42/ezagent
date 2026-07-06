@@ -272,7 +272,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-foreground">{displaySessionName(session)}</span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">{session.uri}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{sessionDescription(session)}</span>
                 </span>
               </button>
             ))
@@ -286,8 +286,8 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             <h3 className="truncate text-sm font-semibold text-foreground">
               {selectedSession ? displaySessionName(selectedSession) : "Chat"}
             </h3>
-            <p className="truncate font-mono text-xs text-muted-foreground">
-              {selectedSession?.uri || state?.workspace_uri || "No session selected"}
+            <p className="truncate text-xs text-muted-foreground">
+              {selectedSession ? sessionDescription(selectedSession) : workspaceLabel(state?.workspace_uri) || "No session selected"}
             </p>
           </div>
           <div className="inline-flex rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
@@ -338,8 +338,8 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <DetailBlock label="Workspace" value={selectedSession?.workspace_uri || state?.workspace_uri || "—"} />
-          <DetailBlock label="URI" value={selectedSession?.uri || "—"} mono />
+          <DetailBlock label="Workspace" value={workspaceLabel(selectedSession?.workspace_uri || state?.workspace_uri) || "—"} />
+          <DetailBlock label="Type" value={selectedSession ? "Chat session" : "—"} />
 
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actions</p>
@@ -380,10 +380,30 @@ function filterSessions(sessions: SessionRow[], filter: string): SessionRow[] {
 }
 
 function displaySessionName(session: SessionRow): string {
-  if (session.name && session.name.trim()) return session.name
+  if (session.name && session.name.trim()) return humanizeSessionName(session.name)
 
   const parts = session.uri.split("/")
-  return parts[parts.length - 1] || session.uri
+  return humanizeSessionName(parts[parts.length - 1] || session.uri)
+}
+
+function sessionDescription(session: SessionRow): string {
+  const workspace = workspaceLabel(session.workspace_uri)
+  return workspace ? `${workspace} workspace` : "Chat session"
+}
+
+function workspaceLabel(uri?: string | null): string {
+  if (!uri) return ""
+  return uri.replace(/^workspace:\/\//, "")
+}
+
+function humanizeSessionName(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return "Conversation"
+  return trimmed
+    .replace(/^conv[_-]/, "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase())
 }
 
 function createOptionsFor(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>): CreateOptions {

@@ -1,0 +1,24 @@
+                 action                  |  authz  | count
+-----------------------------------------+---------+-------
+ cap_granted                             | n/a     |     6
+ create_agent                            | granted |     2
+ grant_cap                               | granted |    12
+ ingest                                  | granted |     2
+ instantiate                             | granted |     2
+ join                                    | granted |    26
+ list_caps                               | granted |    54
+ notification.emit:cap_granted           | info    |     4
+ notification.emit:mention_failed        | info    |     1
+ notification.emit:session_member_joined | info    |     3
+ publish                                 | granted |    20
+ py_sync_result                          | granted |     6
+ read                                    | granted |    88
+ receive                                 | granted |    12
+ reconcile_cascade                       | granted |     4
+ send                                    | granted |    16
+ set_working_copy                        | granted |     2
+ snapshot.restored                       | n/a     |     8
+ snapshot.written                        | n/a     |    63
+ subscribe_from                          | granted |     8
+ write                                   | granted |     8
+(21 ÐÐ¼ÇÂ¼)
