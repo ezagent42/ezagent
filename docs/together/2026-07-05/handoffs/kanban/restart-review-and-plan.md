@@ -1,5 +1,8 @@
 # Handoff：kanban 迁 socialware —— 能不能重启 + 怎么做
 
+> **📌 2026-07-06 statute banner（本文=历史背景，现行真相在别处）**：本文写于重启评估期，其中 S1-S6 计划/三角色槽/pm-coordinator/gh 连接器等描述**已被后续演进取代**。现行真相：**`spec.md` + `plan.md`**（board=workspace actor 非成员、两 agent 槽、relay=内容协议、看板助手改名、gh 已移除）+ **`../../2026-07-06/returns/kanban-s1-s3-refactor-boardview.md`**（DoD 对账）。本文仅作决策考古保留。
+
+
 > **日期：** 2026-07-05 · **From：** FP5（funder-socialware 侧读码）· **To：** Allen / kanban 线
 > **基准代码：** `upstream/main`（含 #1178 socialware manifest track + membership/registry P0，**以及 #1180 role-slot model P1 —— 已落地，不再是前瞻**）
 > **注意（2026-07-05 修正）：** 本 handoff 现已搬到新 worktree `sw-kanban`（分支 `feat/sw-kanban`）。下面所有 file:line 直接对本工作树现读有效。
