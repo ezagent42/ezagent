@@ -1,5 +1,7 @@
 # kanban 迁 socialware Definition Implementation Plan
 
+> **实施对齐说明（2026-07-06 收口）**：本文档是开工时的 point-in-time 规划。实施与之的偏差以代码与 PR body 为准：①角色槽收敛为 2（kanban-assistant + dev-together），board=workspace 级 URI-dispatch actor 不进 roles（RF-6）；②pm-coordinator 更名 kanban-assistant；③gh 连接器整体退役（联通=agent 用 gh/git CLI 的行为，协议在 kanban-assistant skill 的 gh-protocol 模块）；④新增 boot-publish（Demo 照 #162 黄金样板）与 BoardView/KanbanRender view 声明侧。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 kanban 迁成一支可安装的 socialware team（`socialware:kanban-team`：**kanban-assistant + dev-together 两 agent 角色槽**预配 + **内容触发（legend/header）relay-back**），走 code-seed 发布，最小闭环 S1→S2→S3，Playwright 真浏览器 e2e 收口。**看板（`kanban-manager` × `native`）不进 Definition 成员**——它是 workspace 级被动 URI-dispatch 数据 actor（S2 建模修正，见下方 ⚠️），由 world/owner 建、pm 用 kanban action caps dispatch 驱动。
