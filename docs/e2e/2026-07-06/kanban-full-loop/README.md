@@ -1,5 +1,7 @@
 # kanban 全链路真 e2e(2026-07-06)— 前半真通,agent 回合被 main PTY bug 硬阻断
 
+> **注（2026-07-06 深夜）**：本轮(r1)被 PTY bug 阻断于第 3 步；round-2（`../kanban-full-loop-r2/`）用短回合策略全链路基本跑通。本目录保留 README 与两份取证 txt 作为 PTY bug（scout handoff ①）的证据链，重复截图已删、以 r2 为准。
+
 **结论一句话**:发布 cc 变体→下拉建会话→两个真 cc agent materialize+手动 creds 认证→owner 建板→relay-back 规则落库,**这一段全部真通**;但 kanban-assistant 的 claude 侧车 **6 连崩**于 main 既有 PtyServer bug(buffer 裸字节截断 + `~r/\s+/u` regex 对 invalid UTF-8 raise),**0 次 kanban dispatch 成功**,填卡→派活→真 PR→relay→推进 无法继续。**未 stub、未伪造任何一步**;真 PR 未开(dev 从未跑到),故无 PR URL、无需清理远端分支。
 
 > 手动 creds 过渡方式声明:cc agent 认证 = watcher 脚本抢在 claude 启动前把宿主
