@@ -637,45 +637,51 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # adding a core dispatch bypass; this fallback remains the normal
         # post-spawn write path for templates that do not initialize sandbox in
         # spawn args.
-        _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
+        #
+        # FIRE-AND-FORGET (go-live 2026-07-06): do NOT block the spawning
+        # caller on the agent reaching `:ready`. This shared spawn machinery
+        # was tuned for the SYNCHRONOUS cc-orchestrator spawn (the 5s
+        # `ReadyGate.await` above), but the socialware-install path reuses it
+        # for role-slot agents of ANY flavor. A cold agent whose `activate`
+        # provisions a heavy subprocess — e.g. the `np` recipe's first
+        # `uv run` per container downloading numpy/sympy, measured ~9.6s —
+        # would hold the await past the `create_session` dispatch budget
+        # (`deadline_ms || 5000`), the observed "first socialware install per
+        # boot times out at 5s" (install completed server-side regardless).
+        #
+        # Switch to `:cast`: a cast to a not-ready target is BUFFERED via
+        # `PendingDelivery` (`invocation.ex` `{:not_ready, :cast}`) and
+        # delivered once the agent flips `:ready`; a ready target gets it
+        # immediately. Either way the spawning caller returns without
+        # blocking — so we drop the `ReadyGate.await`. The `:sandbox` slice
+        # write only feeds respawn-on-restart (`Sandbox.post_init/2`), which
+        # ALSO self-heals via `ensure_subprocess_alive`/CascadeRuntime, so a
+        # late (or, on a dead agent, dropped) write never corrupts a running
+        # agent — hence no rollback-on-write-failure anymore.
+        #
+        # Self-authority (#154): `caller: worker_uri` dispatching to
+        # `worker_uri?action=sandbox.update_config` IS the agent acting on
+        # its OWN `:sandbox` slice (capbac.md §7 actor-self). The agent's own
+        # `sandbox.update_config` cap is carried INLINE in `ctx.caps` (the
+        # step-5.5 `granted_via_ctx_caps?` authorizer), scoped to this
+        # specific agent; `granted_by` = the agent itself, never persisted
+        # through `Ezagent.Identity.Grant`.
+        _ =
+          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target,
+            mode: :cast,
+            args: %{
+              config_dir_path: config_dir,
+              template_class: template_class,
+              respawn_template_data: respawn_data
+            },
+            ctx: %{
+              caller: worker_uri,
+              caps: [sandbox_update_config_self_cap(worker_uri)]
+            }
+          })
 
-        case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-               target: target,
-               mode: :call,
-               args: %{
-                 config_dir_path: config_dir,
-                 template_class: template_class,
-                 respawn_template_data: respawn_data
-               },
-               # System-principal elimination (#154 north star, 2026-06-19) —
-               # this is the AGENT acting on its OWN sandbox: the dispatch target
-               # (`worker_uri?action=sandbox.update_config`) IS the agent whose
-               # `:sandbox` slice is written. So it is GENUINE self-authority
-               # (capbac.md §7 "actor-self → {:held_by, self}"), NOT an ambient
-               # `system://agent-internal` borrow. We carry the agent's OWN
-               # `sandbox.update_config` cap INLINE in `ctx.caps` (same precedent as
-               # `ExternalMirrorWorker.worker_publish_caps/1`): the cap is the
-               # step-5.5 authorizer (`granted_via_ctx_caps?`), which ALSO avoids
-               # the `granted_via_holds_cap?` self-call deadlock (a self-dispatch
-               # reading its own `:identity` slice via `GenServer.call` blocks on
-               # itself — runtime.ex step-5.5 comment). Scoped to the SPECIFIC
-               # agent (`instance:`/`workspace_uri:` from `worker_uri`) for
-               # tightest least-privilege; `granted_by` = the agent itself (a real
-               # entity, #154-compliant) — provenance only on an inline authorizer
-               # cap that is never granted/persisted through
-               # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
-               ctx: %{
-                 caller: worker_uri,
-                 caps: [sandbox_update_config_self_cap(worker_uri)],
-                 reply: {:caller_inbox, self()}
-               }
-             }) do
-          {:ok, _} ->
-            {:cont, :ok}
-
-          {:error, reason} ->
-            {:halt, {:error, {:sandbox_update_config_failed, worker_uri, reason}}}
-        end
+        {:cont, :ok}
       end
     end)
   end
