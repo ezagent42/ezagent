@@ -1,5 +1,16 @@
 # dealscout (DealScout) socialware — Dev Spec
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本 spec 与 plan 中一切相抵触的旧文）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = **爬取后台**。职责重划：
+>
+> - **dealscout = 后台数据**：爬取 plugin（poller / fetch / config / crawl ActionSet / recipes / sweeper）+ 它的 agent（discover / search 等 recipe）用 crawl 能力爬数据；爬完注入新线索后 **emit 一个内容更新信号** `__dealscout_update__`（`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）。
+> - **hello = 显示 + concierge**：hello 的 agent 收到信号后更新 json-render 页。**dealscout 不声明任何 view / render**——原 C6（`DealScoutRender`）/ C7（`DealScoutView`）**已删除、作废**；Definition 的 `views` 引 **`hello_render`**。
+> - **wiring = 内容协议 routing（跟 kanban-team relay 一样）**：爬取 agent 的更新信号 → Definition `routing_rules` 的 `text_contains("__dealscout_update__")` matcher（`apps/ezagent_core/lib/ezagent/routing/matcher.ex:74`）→ receiver `{:role, <hello 页面 agent 角色>}`（conformance 只认已声明角色名，`conformance.ex:281`）→ hello 的 agent 更新页面。**agent 间不数据直推、零实例 URI、dealscout 自己不渲染。**
+> - **DealScout Definition（Stage D，纯配置）方向**：`uses: [hello, dealscout]` + 组合 hello 公开面（`views` 引 `hello_render`，非 dealscout 自有 view）+ 声明 dealscout 后台 crawl + recipes + 上述 routing_rules。组合 hello 是配置、routing 到 hello 的 agent 也是配置——**不改 hello 代码**。
+>
+> 下文凡与此抵触（C6 / C7、`DealScoutRender` / `DealScoutView`、"dealscout 自己的发现流视图 / world tab"）**一律按本 banner 为准**。
+
 > **写作纪律**：本 spec 用 superpowers writing-plans 的上游 spec 纪律写——每条能力断言带 `file:line` 证据（基线 `upstream/main @ fe34b76d`，本 worktree 代码字节与该基线一致——citations 已现读核实）。产品输入 = `docs/together/2026-07-03/yao/dealscout/`（README 编号骨架 + product/1-4 = P/J/V/F + tech/issues-plan = I + model + spec-vs-code-gaps）+ `docs/together/2026-07-05/infra-reference/`（dev-readiness 评估）。
 >
 > **一句话**：DealScout = **商业 / 投融资线索的搜索与撮合平台**（deal 侦察兵：AI 千人千面发现 deal + 公开面聊天撮合），两侧都是"找机会的人"（founder 找钱 / investor 找项目，两类用户对称，非单向找 funder、非创业者撮合），两条腿——**发现腿（地基·找）**：AI 千人千面主动发现 + 主动搜索 + 爬取 + 深挖追问；**撮合腿（亮点·涌现）**：组合 hello 拿公开面 + concierge 客服，登录用户自助 join + 发言供线索，founder 看身份后 invite 深聊。技术形态 = **1 个爬取/搜索 plugin（Elixir 代码）+ 几个 recipe + 1 个组合 hello 的 Definition（纯配置数据）**。
@@ -59,9 +70,9 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 | C3 | `:httpc` 抓取 client（治中文乱码） | `lib/ezagent_plugin_dealscout/fetch.ex` | kanban `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro.ex:141`（必带 `{:body_format, :binary}`） |
 | C4 | 配置 slice（profile + keywords）+ token 写入 | `lib/ezagent_plugin_dealscout/config.ex` | kb slice `apps/ezagent_plugin_kb/lib/ezagent_plugin_kb/kb.ex:80-83`；token `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/github.ex:32-54`（`write_creds/1`） |
 | C5 | recipe 集（发现 / 搜索 / 整理 / 追问 / 深聊辅助） | `lib/ezagent_plugin_dealscout/recipes.ex` | `orchestrator_recipe.ex:64-79`（三要素 `prompt` + `requested_caps` + `behaviors`） |
-| C6 | `Ezagent.ActionSet.DealScoutRender`（cap-only render） | `lib/ezagent/behavior/dealscout_render.ex` | hello `apps/ezagent_plugin_hello/lib/ezagent/behavior/hello_render.ex:29-49` |
-| C7 | SessionView module（发现流列表视图） | `lib/ezagent_plugin_dealscout/dealscout_view.ex` | hello `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/page_view.ex` |
-| C8 | Definition seed（**纯数据配置**，仿 hello code-seed） | `lib/ezagent_plugin_dealscout/definition_seed.ex` | hello `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex:238`（`seed_definition_if_absent`） |
+| ~~C6~~ | ~~`Ezagent.ActionSet.DealScoutRender`~~ **已删（返工 banner）：显示归 hello，dealscout 不声明 render** | — | — |
+| ~~C7~~ | ~~SessionView module（发现流列表视图）~~ **已删（返工 banner）：Definition `views` 引 `hello_render`** | — | — |
+| C8 | Definition seed（**纯数据配置**，仿 hello code-seed；`views` 引 `hello_render` + routing_rules 接更新信号→hello 页面 agent） | `lib/ezagent_plugin_dealscout/definition_seed.ex`（Stage D） | hello `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex:238`（`seed_definition_if_absent`） |
 | C9 | 数据保留 sweeper（周期 GenServer） | `lib/ezagent_plugin_dealscout/retention_sweeper.ex` | `apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user/gc.ex` + `apps/ezagent_core/lib/ezagent/idempotency/sweeper.ex` |
 
 ### §2.2 复用（不新建，riding main 现成机制）
@@ -75,7 +86,7 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 
 - **agent→upload seam**（I-7）：**自包含，回主干**。core 有现成公开 API `Ezagent.Uploads.store!/3`（`apps/ezagent_core/lib/ezagent/uploads.ex:98`）+ 现成通用 effect `:effect_returning`（`apps/ezagent_core/lib/ezagent/behavior/effects.ex:23,236`，apply 任意 MFA、无 allowlist），dealscout 自己的 ActionSet handler 直接 CALL 存爬取产物 + emit `body.attachments`——**零改 core/world/web**（详见 Task 14）。
 - **公开面 concierge 回帖**（I-11）：**自包含，无平台改动**。web 收件人 `orch_<name>`（`session_feed_channel.ex:373-375`）是 hello 命令式按名重挂的成员（`ensure_session_orchestrator`，hello `app.ex:136,143`），对任何经 world 路径建的 page session 都补上、跟收件人算法逐字对齐——不需改 hello/web/core，正确组合 hello 即通（详见 §4 前提）。
-- **world tab surfacing**（I-8）：**拆两半**——(a) 注册 `DealScoutView`（`@behaviour Ezagent.UI.SessionView` + registry register）+ `dealscout_render` cap = **DECLARE，自包含**，跟 hello `PageView` 同款，留 DealScout；(b) 让它在 world 会话面板**冒成可切 tab** = 要改 world owner `switch_view` 白名单（`apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex:477`，注释明写 "registered SessionViews is Phase 3"）或建 world Phase 3 = **真越界，留 ezagent-scout**（详见 Task 15）。
+- **发现流显示**（I-5 / I-8，**返工 banner 改判**）：**显示整个归 hello**——dealscout **不声明** view / render（原"注册 `DealScoutView` + `dealscout_render` cap"方案作废、代码已删）。发现流上页 = 爬取 agent 注入线索 + emit `__dealscout_update__` 信号 → Definition routing_rules → hello 的页面 agent 更新 json-render 页（hello 的 `hello_render` view 匿名可看，零改 hello 代码）。world tab 议题随之消失（hello 页面已有公开面入口）。
 
 ---
 
@@ -93,9 +104,10 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 ### §3.2 硬要求
 
 1. **每条线索必带 `source_type` 字段**（`:public` | `:directed`），在爬取注入时写入条目 map（`fetch.ex` 出口构造条目时打标）。
-2. **hello / 发现流 UI 按 `source_type` 分类展示**（`DealScoutRender` 视图渲染时按 `:public` / `:directed` 分组或加来源标签，`dealscout_view.ex` `render/1`）。
+2. **展示归 hello，按 `source_type` 分类**（返工 banner）：hello 的页面 agent 更新 json-render 页时按 `:public` / `:directed` 分组或加来源标签——线索条目 body 里带的来源标注（`format_item/1`）是它的分类依据。dealscout **不渲染**。
 3. **token 缺失时 fail-closed**：B 场景配了定向源但无 token → 该源被**显式跳过 + telemetry**，不 silent 抓空（`fetch.ex` 读凭证失败分支）。
 4. **注入走 P14**：抓回条目构造 `%Cmd{}` 经 `Ezagent.Router.dispatch/1`（`router.ex:79`）投 `session.send`；dispatch 失败要 telemetry / DLQ 兜底，不 silent drop（Ezagent "这里失败了谁会知道" 认知负担）。action URI 用 sanctioned `Ezagent.URI.with_action`（照 `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex:172`），不裸拼 `?action=`。
+5. **爬完 emit 更新信号（内容协议，返工新增）**：`:crawl_now` / `:search` 注入了新线索（injected > 0）后，再 emit 一条 `__dealscout_update__ 新线索 N 条（crawl|search）` 消息（`dealscout_crawl.ex` `emit_update_signal/3`，标记常量 `update_signal/0`）；没新线索不发。信号 dispatch 失败记 `[:dealscout, :update_signal, :error]` telemetry，不 silent。Definition routing_rules 用 `text_contains` 命中它转给 `{:role, <hello 页面 agent 角色>}`——**零实例 URI**。
 
 ### §3.3 三条腿（发现层）
 
@@ -161,7 +173,7 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 
 ### §7.1 三层测试
 
-1. **单元 / 集成（ExUnit）**：每个 dealscout 模块（poller / fetch / config / recipe 注册 / DealScoutRender cap 注册 / Definition seed）配 ExUnit 测试。跑法从 umbrella 根：
+1. **单元 / 集成（ExUnit）**：每个 dealscout 模块（poller / fetch / config / recipe 注册 / crawl+更新信号 / Definition seed）配 ExUnit 测试。跑法从 umbrella 根：
    ```bash
    docker start ezagent-pg-compat-audit-postgres      # 先起 disposable PG
    mise exec -- mix ecto.create && mise exec -- mix ecto.migrate
@@ -194,10 +206,10 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 | **I-2** AI 主动发现 recipe + push | ①代码 | recipe 声明（Elixir `roles/0`）+ profile 匹配 push | N/A（后端 recipe） | ExUnit（recipe 进 RecipeRegistry）+ e2e：给 profile 看发现流按 profile 排序 |
 | **I-3** 主动搜索 recipe | ①代码 | recipe + query 参数化 fetch | N/A | ExUnit + e2e：chat 发 query → 结果落发现流 |
 | **I-4** 配置（profile+keyword+token） | ①代码 | config slice + `write_creds` token 存储 | **半通**（chat action 可改，world 表单不支持 Definition 级配置） | ExUnit（slice 读写 + snapshot）+ e2e：chat 改 profile → 重启还在 |
-| **I-5** DealScoutRender + SessionView + 发现流 | ①代码 | cap-only render ActionSet + view module + json-render 页 | N/A（视图代码） | ExUnit（cap 无冲突注册 + view 注册）+ **真浏览器 e2e**（session tab 渲染发现流 + 分类展示 + 截图） |
+| **I-5** 发现流显示（**返工改判：归 hello**） | ①代码（信号，已落 `dealscout_crawl.ex`）+ ②配置（routing_rules） | 爬取 agent emit `__dealscout_update__` 信号 → routing → hello 页面 agent 更新 json-render 页（dealscout 不声明 view/render） | hello 公开面即 UI | ExUnit（爬完 effect 里有更新信号 + injected=0 不发）+ **真浏览器 e2e**（爬完 → hello 页更新 + 分类展示 + 截图） |
 | **I-6** 追问 recipe + Definition seed | ①代码（recipe）+ **②配置（Definition seed）** | recipe = Elixir；Definition = 纯数据 config map | Definition **无 UI**（只能 code-seed） | ExUnit（recipe 注册 + Definition 进 registry）+ conformance gate + e2e：建 session → 发现腿 agent 自动 materialize |
 | **I-7** artifact → upload seam | ①代码（**自包含 CALL，回主干**） | dealscout handler 返 `{:effect_returning, {Ezagent.Uploads, :store!, [ws,name,tmp]}, [], bind_as: :uri}` 存产物 → emit `body.attachments:[{:ref,:uri}]`（`message.ex:60`），零改 core/world/web | N/A | ExUnit（seam 登记 upload + `body.attachments` 透传不被清空 `message.ex:43-44`）+ e2e：追问产出 → 会话显示可下载附件 → 匿名经 `/socialware/external/download` 下载 + 截图 |
-| **I-8** world tab 接线 | **拆两半**：(a) 注册 view = ①代码自包含；(b) world 冒 tab = 越界留 ezagent-scout | (a) `DealScoutView` register + `dealscout_render` cap（跟 hello `PageView` 同款）；(b) 改 world `switch_view` 白名单 `conversation_actions.ex:477` 或 world Phase 3 | **(a) 无 UI 但内容可渲染；(b) 才让它冒 tab** | (a) ExUnit（view 注册 + render 分类）；(b) **真浏览器 e2e**（world 切到 dealscout tab）**留 scout** |
+| ~~**I-8** world tab 接线~~ | **作废（返工 banner）** | 显示归 hello，dealscout 无自有 view → 无 tab 可冒；hello 页面自带公开面入口 | — | — |
 | **I-9** 数据保留 sweeper | ①代码 | 周期 GenServer + pin slice | N/A（后端）+ pin action 半通 | ExUnit（造 >10 批次 sweep 后只剩 10 + pin 留存）+ e2e：pin 一批后不被 sweep |
 | **I-10** 组合 hello Definition + 发布 | **②配置** | Definition config map（uses hello + roles 含 concierge 角色槽 + visibility_policy）；仿 hello code-seed 发布 | Definition + 发布**无 UI**（code-seed 经 governance publish） | ExUnit（Definition 进 registry + publish 成功）+ conformance gate + **真浏览器 e2e**（匿名访问公开面只读 + 截图） |
 | **I-11** 公开面登录写接线 | **③复用验证** | 复用 `session_feed_channel` 自助 join / post，零新代码 | 有 UI（web 公开面 composer） | **真浏览器 e2e**（登录用户自助 join → 发消息 → concierge 回帖 + 每步截图） |
@@ -234,14 +246,14 @@ DealScout 交付一个**今天在 dev / 热装下能跑通的最小撮合小网�
 **串行主干**（发现腿地基铺到公开面，撮合腿从公开面登录聊天长出来）：
 
 ```
-I-1 爬取骨架 → I-5 视图 → I-6 recipe+Definition seed → I-10 组合 hello 发公开面 → I-11 登录自助 join+发言
+I-1 爬取骨架 → I-5 更新信号（爬完 emit，已落 dealscout_crawl.ex）→ I-6 recipe+Definition seed（views 引 hello_render + routing_rules 信号→hello 页面 agent）→ I-10 组合 hello 发公开面 → I-11 登录自助 join+发言
 ```
 
 **可并行**（都挂 I-1 的 poller / fetch / slice）：I-2（AI 主动发现，需 I-4 profile slice）、I-3（主动搜索）、I-4（配置）、I-9（数据保留，需 I-1 先出批次）。
 
 **撮合腿次序**：I-10 → I-11 → I-12（身份看板 + 匿名只读）→ I-13（invite 深聊 + 记账），逐级依赖。
 
-**边界拆分**：I-7（upload seam）**自包含 CALL、回主干**（`Uploads.store!` + `:effect_returning`，零改 core/world/web）；I-8 **拆两半**——(a) 注册 view + render 自包含留主干、(b) world 冒 tab 越界留 ezagent-scout。
+**边界拆分**：I-7（upload seam）**自包含 CALL、回主干**（`Uploads.store!` + `:effect_returning`，零改 core/world/web）；I-8 **作废**（返工 banner：显示归 hello，无自有 view 无 tab 议题）。
 
 **最小可发布切片（今天能做，跑通"千人千面发现（找）+ 别人逛公开面登录进来聊（撮合）+ founder 看身份 invite 深聊"的真闭环）**：
 
@@ -249,7 +261,7 @@ I-1 爬取骨架 → I-5 视图 → I-6 recipe+Definition seed → I-10 组合 h
 I-1 → I-4 → I-2 / I-3 → I-5 → I-6 → I-10 → I-11 → I-12 → I-13   (+ I-9 数据保留并行)
 ```
 
-全在 dealscout plugin 自己文件、dev / 热装零改已有代码。I-7 自包含回主干；I-8(a) 注册 view 回主干、I-8(b) world 冒 tab 留 ezagent-scout；I-14 discuss-first；I-15 后续——都不卡主干。
+全在 dealscout plugin 自己文件、dev / 热装零改已有代码。I-7 自包含回主干；I-8 作废（显示归 hello）；I-14 discuss-first；I-15 后续——都不卡主干。
 
 ---
 

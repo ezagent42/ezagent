@@ -1,10 +1,21 @@
 # dealscout (DealScout) socialware Implementation Plan
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本 plan 中一切相抵触的旧文；详见 spec.md 顶部 banner）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。**dealscout 和 hello 都是 agent 驱动；wiring 跟 kanban 一样是 routing（内容协议）**：
+>
+> - **dealscout = 后台数据**：爬取 plugin + 它的 agent（discover / search recipe）用 crawl 能力爬数据 → 爬完注入新线索后 **emit 内容更新信号** `__dealscout_update__`（`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`；已落地 `dealscout_crawl.ex` `emit_update_signal/3` + 测试）。
+> - **hello = 显示 + concierge**：hello 的 agent 收信号更新 json-render 页。**dealscout 不声明 view / render**——`DealScoutRender` / `DealScoutView` **已删除**（原 Task 7 作废、Task 15 议题消失）；Definition `views` 引 **`hello_render`**。
+> - **wiring = 内容协议 routing（像 kanban-team relay dev `__done__` → 看板助手）**：Definition `routing_rules` 用 `text_contains("__dealscout_update__")` matcher → receiver `{:role, <hello 页面 agent 角色>}`（conformance 只认已声明角色名）。**不数据直推、零实例 URI、dealscout 自己不渲染。**
+> - **Definition（Stage D）方向**：`uses: [hello, dealscout]` + 组合 hello 公开面（views 引 `hello_render`）+ 声明 dealscout 后台 crawl + recipes + 上述 routing_rules。组合 hello / routing 到 hello 的 agent 都是**配置**，不改 hello 代码。
+>
+> 下文 Task 7 / Task 15 及所有 `DealScoutRender` / `DealScoutView` / "dealscout 发现流视图 / world tab" 字样**一律按本 banner 为准（作废）**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 建一个 DealScout socialware（**商业 / 投融资线索的搜索与撮合平台**，deal 侦察兵：AI 千人千面发现 deal + 公开面聊天撮合，两侧都是找机会的人）——发现腿（AI 爬取 + 主动发现 + 主动搜索 + 深挖追问）+ 撮合腿（组合 hello 公开面 + concierge，登录自助 join / 发言，founder invite 深聊），全在 `apps/ezagent_plugin_dealscout/` 自己的文件里，dev / 热装零改已有代码。
 
-**Architecture:** 一个新 OTP plugin app（Elixir 代码：爬取 GenServer / fetch client / config slice / recipe / DealScoutRender / SessionView / retention sweeper）+ 一个纯数据 Definition（config map，仿 hello code-seed 经真 governance publish 组合 hello）。发现腿是 dealscout 自己的代码；撮合腿 riding main 现成的 hello 公开面聊天 + web session_feed_channel + world invite_member。
+**Architecture:** 一个新 OTP plugin app（Elixir 代码：爬取 GenServer / fetch client / config slice / crawl ActionSet（含更新信号）/ recipe / retention sweeper——**无 view / render，显示归 hello**）+ 一个纯数据 Definition（config map，仿 hello code-seed 经真 governance publish 组合 hello：views 引 `hello_render` + routing_rules 接更新信号 → hello 页面 agent）。发现腿数据是 dealscout 自己的代码；展示与撮合腿 riding main 现成的 hello 公开面聊天 + web session_feed_channel + world invite_member。
 
 **Tech Stack:** Elixir / OTP（umbrella app），`use Ezagent.Lifecycle`（ActionSet），`use Ezagent.Plugin`（契约），`:httpc`（抓取），GenServer（轮询 / sweep），ExUnit（单测），`agent-browser` CLI + Playwright chromium（真浏览器 e2e + 截图）。
 
@@ -12,11 +23,11 @@
 
 > 每个 task 的要求隐含包含本节。值逐条 verbatim 引 spec。
 
-- **代码全进 dealscout plugin 自己文件**：新建 `apps/ezagent_plugin_dealscout/`，dev / 热装零改已有代码。**碰 dealscout 自己文件外的任何代码（core / domain / hello / 别的 plugin / web transport）都是越界**。**Task 14（upload seam）现读证明自包含、已拿回主干**（用 core 现成公开 API `Uploads.store!/3` + 通用 effect `:effect_returning`，零改 core/world/web）；**Task 15 拆两半**——(a) 注册 view + render 自包含留主干、(b) 让 view 在 world 冒 tab 才碰 world owner 代码 = 越界、留 `feat/ezagent-scout`（见各 Task 头）。
+- **代码全进 dealscout plugin 自己文件**：新建 `apps/ezagent_plugin_dealscout/`，dev / 热装零改已有代码。**碰 dealscout 自己文件外的任何代码（core / domain / hello / 别的 plugin / web transport）都是越界**。**Task 14（upload seam）现读证明自包含、已拿回主干**（用 core 现成公开 API `Uploads.store!/3` + 通用 effect `:effect_returning`，零改 core/world/web）；**Task 15 作废**（返工 banner：显示归 hello，dealscout 无自有 view，无 tab 议题）。
 - **✅ 撮合腿自包含可建（对抗审查复核，推翻上一轮悲观判定）**：公开面 concierge 回帖**正确组合 hello 即通、不需改 hello/web/core**——web 收件人 `orch_<name>`（`session_feed_channel.ex:373-375`）**不是** Definition materialize 的随机 UUID，而是 hello **命令式按名重挂**的（`ensure_session_orchestrator` → `create_role_agent(ws, "orch_#{name}", ...)`，hello `app.ex:136,143`），对**任何经 world 路径建的 page session** 都补 `orch_<session名>`（world `conversation_actions.ex:326`），跟收件人算法逐字对齐、必命中。**两个硬前提**：(1) DealScout Definition 复制 hello 公开面配置（`shape` 含 `Surface`+`Turn`、`adapters` 含 `external_feed`、`web_anon_access:true`、引 `hello_render` view、`uses:[:ezagent_plugin_hello]`、带 seed 页 → 成 page session）；(2) 建/装会话走 world 路径（socialware install→`create_session`）。**残余风险**：不走 world 路径（CLI/直接建）或无 Surface/seed 页 → orchestrator 不建 → concierge 不回（这是前提不是死锁）。spec §4 全文。**Task 11-13 不碰 hello router / `session_feed_channel.ex` / core。**
-- **ActionSet 不是 Elixir behaviour**：render / view 是 `use Ezagent.Lifecycle` 的 ActionSet（照 `apps/ezagent_plugin_hello/lib/ezagent/behavior/hello_render.ex:29`），**不写** `invoke/4`（`@optional_callbacks` only）。
+- **ActionSet 不是 Elixir behaviour**：dealscout 的 ActionSet（crawl）用 `use Ezagent.Lifecycle` 写，**不写** `invoke/4`（`@optional_callbacks` only）。（render / view ActionSet 已按返工 banner 删除——显示归 hello。）
 - **caps 只来自 recipe**：Definition struct **无 `requested_caps` 字段**（`apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex:12-28` 17 字段）。dealscout Definition 从不声明 caps，全部 caps 在 recipe 的 `requested_caps`（照 `apps/ezagent_plugin_cc/lib/ezagent/orchestrator/orchestrator_recipe.ex:70-76`）。
-- **Definition 是纯数据 DATA**：只引用 dealscout plugin 的模块名（`views: [Ezagent.ActionSet.DealScoutRender]`），本身不含一行代码，经 `DefinitionRegistry` 持久化。
+- **Definition 是纯数据 DATA**：本身不含一行代码，经 `DefinitionRegistry` 持久化。**`views` 引 hello 的 `hello_render`（非 dealscout 自有 view，返工 banner）**；routing_rules 引内容标记 + `{:role, 角色名}`，零实例 URI。
 - **flavor per-agent**：Definition 顶层无 flavor；flavor 在 `roles` 里每个 agent 角色槽 `%{role_name, fill: :agent, recipe, flavor}`（agent 槽必填、materialize 侧缺省 `"cc"`，`definition.ex:34-36,282-286`）。今天各 agent 统一跑 `"cc"` 无碍（非 cc flavor runtime materialize hook 未齐是运行时能力问题，非声明缺口）。
 - **P14 dispatch 是 Kind 间唯一通路**：注入走 `Ezagent.Router.dispatch/1`（`apps/ezagent_core/lib/ezagent/router.ex:79`），禁 `PubSub.broadcast` 到 inbound topic。action URI 用 `Ezagent.URI.with_action`（照 `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro_sync.ex:172`），不裸拼 `?action=`。
 - **`:httpc` 必带 `{:body_format, :binary}`**（照 `apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/miro.ex:141`）——不带中文乱码。
@@ -715,7 +726,9 @@ git commit -m "feat(dealscout): I-2.1/I-3.1/I-6.1 discovery-leg recipes (discove
 
 ---
 
-## Task 7: DealScoutRender + SessionView + 发现流视图 (I-5 ↑F-5)
+## ~~Task 7: DealScoutRender + SessionView + 发现流视图 (I-5 ↑F-5)~~ — **作废（2026-07-06 返工 banner）**
+
+> **本 Task 整体作废、代码已删**：`dealscout_render.ex` / `dealscout_view.ex` + 两个测试 + `application.ex` 里的 `SessionViewRegistry.register` / `behaviors/0` 注册已全部删除。**显示是 hello 的活**——发现流上页走：爬取 agent 注入线索 + emit `__dealscout_update__` 更新信号（Task 4 的 `dealscout_crawl.ex`，已落地）→ Definition routing_rules（Task 10/11 配置）→ hello 页面 agent 更新 json-render 页。以下原文仅存档，勿执行。
 
 **Files:**
 - Create: `apps/ezagent_plugin_dealscout/lib/ezagent/behavior/dealscout_render.ex`（cap-only render ActionSet）
@@ -1073,11 +1086,17 @@ git commit -m "feat(dealscout): I-9 retention sweeper (keep 10 recent + pinned) 
 - Modify: `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/application.ex`（`after_boot/0` seed Definition）
 - Test: `apps/ezagent_plugin_dealscout/test/definition_seed_test.exs`
 
+> **⚠️ 返工修订（2026-07-06 banner）落到本 Task 的三处**：
+> 1. `views` 引 **hello 的 `Ezagent.ActionSet.HelloRender`**（非 `DealScoutRender`，已删）——hello `PageView.applies_to?` 恰以 `"hello" in definition.uses or HelloRender in definition.views` 认领渲染（`apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/page_view.ex:59`），零改 hello。
+> 2. `roles` 增加 **hello 页面 agent 角色槽**（如 `%{role_name: "page", fill: :agent, recipe: "hello.builder", flavor: "native"}`——recipe 名现读 hello `Application.roles/0` 确认），它是更新信号的 receiver。
+> 3. `routing_rules` 接更新信号：`%{matcher: %{"type" => "text_contains", "arg" => "__dealscout_update__"}, receivers: [{:role, "page"}]}`（matcher JSON 形态照 `apps/ezagent_core/lib/ezagent/routing/matcher.ex:214` `to_json`；标记从 `Ezagent.ActionSet.DealScoutCrawl.update_signal/0` 取，别硬编码字面量）——**内容协议，像 kanban relay dev `__done__` → 看板助手，零实例 URI**。conformance `routing_receivers_resolve` 要求 receiver 是已声明角色名（`conformance.ex:281`），"page" 槽声明即过。
+> 下方示例代码里 `views: [Ezagent.ActionSet.DealScoutRender]` / `receiver: {:role, "discover"}` 等旧形态按本注为准改写。
+
 **Interfaces:**
-- Consumes: `Recipes.all/0`（Task 6），`DealScoutRender`（Task 7）。
+- Consumes: `Recipes.all/0`（Task 6）+ hello 的 `HelloRender` / builder recipe（配置引用，不改 hello 代码）。
 - Produces: `EzagentPluginDealScout.DefinitionSeed.attrs/1`（返回 Definition config map，17 字段子集）；`.seed/1`（调 `DefinitionRegistry.seed_definition_if_absent`）。
 
-- [ ] **Step 1: 写失败测试（Definition attrs 形状：`roles` 用 agent 角色槽 `%{role_name, fill: :agent, recipe, flavor}`、views 含 DealScoutRender、无退休 `agents`/`members` 字段、owner 是 `:installer`）**
+- [ ] **Step 1: 写失败测试（Definition attrs 形状：`roles` 用 agent 角色槽 `%{role_name, fill: :agent, recipe, flavor}` 且含 hello 页面 agent 槽、views 引 `HelloRender`、routing_rules 用 `text_contains(update_signal)` → `{:role, "page"}`、无退休 `agents`/`members` 字段、owner 是 `:installer`）**
 
 ```elixir
 # apps/ezagent_plugin_dealscout/test/definition_seed_test.exs
@@ -1087,7 +1106,13 @@ defmodule EzagentPluginDealScout.DefinitionSeedTest do
 
   test "definition attrs declare roles as agent role-slots (role_name/fill/recipe/flavor), no instance URIs" do
     attrs = DefinitionSeed.attrs("dealscout")
-    assert attrs.views == [Ezagent.ActionSet.DealScoutRender]
+    # 返工 banner：显示归 hello —— views 引 hello 的 render，非 dealscout 自有 view
+    assert attrs.views == [Ezagent.ActionSet.HelloRender]
+    # 更新信号 → hello 页面 agent 的内容协议 routing（零实例 URI）
+    assert [%{matcher: %{"type" => "text_contains", "arg" => signal_arg}, receivers: [{:role, "page"}]}] =
+             attrs.routing_rules
+
+    assert signal_arg == Ezagent.ActionSet.DealScoutCrawl.update_signal()
     # #1180 role-slot：agent 槽 %{role_name, fill: :agent, recipe, flavor}
     assert Enum.all?(attrs.roles, &match?(%{role_name: _, fill: :agent, recipe: _, flavor: _}, &1))
     # #1180：退休字段不出现（Definition.new/1 会拒 :agents / :members）
@@ -1131,15 +1156,27 @@ defmodule EzagentPluginDealScout.DefinitionSeed do
       uses: [:ezagent_plugin_hello],
       bases: [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
       shape: [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
-      views: [Ezagent.ActionSet.DealScoutRender],
+      # 返工 banner：显示归 hello —— views 引 hello 的 render（page_view.ex:59 以此认领渲染）
+      views: [Ezagent.ActionSet.HelloRender],
       # #1180 role-slot：agent 角色槽 %{role_name, fill: :agent, recipe, flavor}，flavor per-agent，今天统一 "cc"
       roles: [
         %{role_name: "discover", fill: :agent, recipe: "dealscout-discover", flavor: "cc"},
         %{role_name: "search", fill: :agent, recipe: "dealscout-search", flavor: "cc"},
         %{role_name: "organize", fill: :agent, recipe: "dealscout-organize", flavor: "cc"},
-        %{role_name: "followup", fill: :agent, recipe: "dealscout-followup", flavor: "cc"}
+        %{role_name: "followup", fill: :agent, recipe: "dealscout-followup", flavor: "cc"},
+        # hello 页面 agent 槽（更新信号的 receiver；recipe 名现读 hello Application.roles/0 确认）
+        %{role_name: "page", fill: :agent, recipe: "hello.builder", flavor: "native"}
       ],
-      routing_rules: [%{match: :in_session, receiver: {:role, "discover"}}],
+      # 内容协议 routing（像 kanban relay __done__）：爬取 agent 的更新信号 → hello 页面 agent
+      routing_rules: [
+        %{
+          matcher: %{
+            "type" => "text_contains",
+            "arg" => Ezagent.ActionSet.DealScoutCrawl.update_signal()
+          },
+          receivers: [{:role, "page"}]
+        }
+      ],
       prompt_templates: %{},
       legends: %{},
       adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
@@ -1469,7 +1506,9 @@ git commit -m "feat(dealscout): I-12/I-13 anon read-only verify + owner invite d
 
 ---
 
-## Task 15 (拆两半 — (a) 注册 view 回主干 / (b) world 冒 tab 留 ezagent-scout): world tab 接线 (I-8 ↑F-5)
+## ~~Task 15: world tab 接线 (I-8 ↑F-5)~~ — **作废（2026-07-06 返工 banner）**
+
+> dealscout 无自有 view（Task 7 作废）→ 无 tab 可冒。hello 页面自带公开面入口，world tab 议题消失。以下原文仅存档，勿执行。
 
 > **⚠️ 拆两半，别混成一个"越界 Task"**（对抗审查复核）：world **零消费** SessionView registry——`switch_view` 白名单 hardcode `["chat","pty","page"]`（`apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex:477`，注释明写 "registered SessionViews is Phase 3、未建"，`:474-475`）；连 kanban tab 都是 world hardcode（`apps/ezagent_plugin_world/lib/ezagent/world/routes.ex:108-124`，非 kanban 声明）。因此：
 > - **(a) 注册 `DealScoutView` + `dealscout_render` cap = DECLARE，自包含，留 DealScout**：`@behaviour Ezagent.UI.SessionView` + `SessionViewRegistry.register`，跟 hello `PageView` 同款——这半是"内容渲染"，dealscout 插件自己能做完（Task 7 已覆盖 view module）。
@@ -1501,10 +1540,10 @@ git commit -m "feat(dealscout): I-12/I-13 anon read-only verify + owner invite d
 - I-2 → Task 6（discover recipe）+ Task 8（push 接线）✅
 - I-3 → Task 6（search recipe）+ Task 8（search action）✅
 - I-4 → Task 5（config slice + token）✅
-- I-5 → Task 7（DealScoutRender + SessionView + 分类视图）✅
+- I-5 → **返工改判**：Task 7 作废（view/render 已删）；显示归 hello——爬取 agent emit `__dealscout_update__` 信号（Task 4，已落地 `dealscout_crawl.ex`）→ Definition routing_rules（Task 10）→ hello 页面 agent 更新页 ✅
 - I-6 → Task 6（recipe）+ Task 10（Definition seed + conformance）✅
 - I-7 → Task 14（自包含 CALL，回主干）✅
-- I-8 → Task 15（(a) 注册 view 回主干 / (b) world 冒 tab 留 ezagent-scout）✅
+- I-8 → 作废（返工 banner：dealscout 无自有 view，无 tab 议题）✅
 - I-9 → Task 9（retention sweeper）✅
 - I-10 → Task 11（组合 hello + 发布）✅
 - I-11 → Task 12（公开面登录写 e2e）✅
@@ -1524,7 +1563,7 @@ git commit -m "feat(dealscout): I-12/I-13 anon read-only verify + owner invite d
 
 **Plan complete and saved to `docs/superpowers/plans/2026-07-05-dealscout-plan.md`.**（spec 在 `docs/superpowers/specs/2026-07-05-dealscout-spec.md`）
 
-最小可发布切片顺序：**Task 1→2→3→4（I-1 爬取骨架）→ Task 5（I-4 配置）→ Task 6（I-2/I-3/I-6 recipe）→ Task 7（I-5 视图）→ Task 8（I-2/I-3 push/search）→ Task 9（I-9 保留，可并行）→ Task 10（I-6 Definition seed）→ Task 11（I-10 组合 hello 发公开面）→ Task 12（I-11 登录写）→ Task 13（I-12/I-13 身份+invite）**。Task 14 自包含回主干、Task 15(a) 注册 view 回主干（Task 15(b) world 冒 tab 留 ezagent-scout）、Task 16 非目标，都不卡主干。
+最小可发布切片顺序（返工后）：**Task 1→2→3→4（I-1 爬取骨架 + 更新信号）→ Task 5（I-4 配置）→ Task 6（I-2/I-3/I-6 recipe）→ Task 8（I-2/I-3 push/search）→ Task 9（I-9 保留，可并行）→ Task 10（I-6 Definition seed：views 引 hello_render + routing_rules 信号→hello 页面 agent）→ Task 11（I-10 组合 hello 发公开面）→ Task 12（I-11 登录写）→ Task 13（I-12/I-13 身份+invite）**。Task 7 / Task 15 作废（显示归 hello）；Task 14 自包含回主干；Task 16 非目标——都不卡主干。
 
 Two execution options:
 1. **Subagent-Driven (recommended)** — fresh subagent per task + two-stage review between tasks.

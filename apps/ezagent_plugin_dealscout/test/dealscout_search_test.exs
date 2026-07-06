@@ -46,6 +46,24 @@ defmodule EzagentPluginDealScout.DealScoutSearchTest do
     assert_receive {:dispatched, %Ezagent.Invocation{mode: :cast} = cmd}, 500
     assert cmd.target |> URI.to_string() =~ "action=session.send"
     assert cmd.args.body =~ "search"
+
+    # 注入后跟一条更新信号（内容协议，routing 的 text_contains 靶子）
+    assert_receive {:dispatched, %Ezagent.Invocation{} = signal}, 500
+    assert signal.args.body =~ DealScoutCrawl.update_signal()
+  end
+
+  test "an empty search emits no update signal" do
+    test_pid = self()
+    Application.put_env(:ezagent_plugin_dealscout, :search_fun, fn _q -> {:ok, []} end)
+
+    Application.put_env(:ezagent_plugin_dealscout, :dispatch_fun, fn cmd ->
+      send(test_pid, {:dispatched, cmd})
+      :ok
+    end)
+
+    ctx = %{session_uri: Ezagent.URI.new!("session://system/default/t"), caller: nil}
+    assert {:ok, %{injected: 0}, _} = DealScoutCrawl.handle_search(%{query: "x"}, ctx)
+    refute_receive {:dispatched, _}, 100
   end
 
   test "search_fun receives the query string" do
