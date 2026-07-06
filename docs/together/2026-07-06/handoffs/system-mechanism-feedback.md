@@ -47,6 +47,11 @@
 - **现在**：`:call` 5s 内同步物化多个 cc PTY agent，超时 UI 报错但**后端真建成**（session+agents 都在）。
 - **问题**：假失败。我们 e2e 可稳定复现，供你查 ①（cc orchestrator 冷启动）参考——形态一致：物化重活挂在同步路径。
 
+### ⑪ PtyServer invalid-UTF8 crash loop —— **cc agent 任何长回合必死**（kanban 全链路 e2e 硬阻断，新发现 2026-07-06 深夜）
+- **需要**：cc-flavor agent 的 PTY 侧车能撑过一个真思考的长回合（几分钟级、大量 TUI box-art 输出）。
+- **现在**：`ezagent_domain_pty/server.ex` 的 `trim_buffer_only` 用 `binary_part(buf, size-16K, 16K)` **裸字节**截断 buffer，会切在多字节 UTF-8 码点中间（claude TUI 大量 3 字节 box-art `─`）；随后每个 stdout chunk 都跑的 `scan_auth_observers`/`scan_auto_prompts` 里 `normalize_ws`（:787-795）的 `String.replace(s, ~r/\s+/u, " ")` 对 invalid UTF-8 **raise** → GenServer 死 → respawn claude → **进行中的回合整个丢失**。活跃回合几分钟就积满 64KB ⇒ 必死循环。e2e 实测 6 连崩、0 次成功回合（取证 `#1190 docs/e2e/2026-07-06/kanban-full-loop/04-pty-crash-forensics.txt`）；main HEAD 同在。
+- **问题**：**所有 cc agent 的真实工作回合都过不去**——比 A② 更靠前的阻断（creds 手动拷通过了，死在干活时）。修复一行级：`normalize_ws` regex 去 `/u` 或先 scrub，或 trim 对齐码点边界。domain 代码我们没私改，等你。
+
 ## C. Gate / 工具链
 
 ### ④ bare `mix ezagent.socialware.check` 静默漏检
@@ -68,6 +73,11 @@
 - **需要**（按 `HelloOrchestrator` moduledoc）：每条 user 消息投给 orchestrator。
 - **现在**：无 @mention 的 owner 消息 0 路由规则命中、无 fan-out、无回复、无 DLQ 痕迹（#1199 Stage 5 e2e 实测）；@mention 才通。
 - **问题**：doc 与行为不符——doc 过时还是缺默认路由？
+
+### ⑧ role-slot agent 的裸名 @mention 解析不到（e2e 实测）
+- **需要**：成员能 `@kanban-assistant` 这样按**角色名**提到 role-slot 物化出的 agent（协作的自然写法，协议/skill 里也这么教）。
+- **现在**：role-slot agent 的 display_name 是 uuid（EntityPresenter），world `conversation_data.ex` 的 `resolve_member_name` 两条路（URI 段/display_name）都不中 → `mentions: []` **静默不路由**；composer autocomplete 对真键盘输入也没弹。全 URI mention（`@entity://system/agent/<uuid>`）可用——e2e 用它 workaround。
+- **问题**：role-slot 语义（#1180/#1185）到了 mention 解析层断了——role_name facet 在 session 边上有，解析器没用它。所有 role-slot socialware 的"按角色名喊人"都不通。
 
 ## F. 实施更正说明（非问题，report only）
 
