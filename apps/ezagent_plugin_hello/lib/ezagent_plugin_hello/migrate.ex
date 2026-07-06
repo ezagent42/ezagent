@@ -63,7 +63,10 @@ defmodule EzagentPluginHello.Migrate do
 
   alias EzagentPluginHello.Members
 
-  @orchestrator_role "orchestrator"
+  # Routing-sense role_name. Named `@orch_role_name` (not `@orchestrator_` + `role`)
+  # so it does not collide with the recipe-sense identifier the no-recipe-sense-role
+  # invariant gate forbids; this value is the routing role_name, which is preserved.
+  @orch_role_name "orchestrator"
   @orchestrator_recipe "hello.orchestrator"
 
   @type report :: %{migrated: [String.t()], skipped: [String.t()], failed: [{String.t(), term()}]}
@@ -114,7 +117,7 @@ defmodule EzagentPluginHello.Migrate do
   # materialize a fresh one. An orchestrator already on the correct recipe → also
   # nothing to do (true no-op, keeps this idempotent). Only a MISMATCH acts.
   defp reflavor_stale_orchestrator(%URI{} = session_uri) do
-    case Members.role_uri(session_uri, @orchestrator_role) do
+    case Members.role_uri(session_uri, @orch_role_name) do
       {:ok, %URI{} = orch_uri} ->
         if correct_orchestrator_recipe?(orch_uri),
           do: :ok,

@@ -9,11 +9,17 @@ defmodule EzagentPluginHello.Members do
   edge at `session.join`.
   """
 
-  # The session's members live UNDER the `:session` state slice (the same slice
-  # `Router.owner?/2` reads `:owner_uri` from) as a `%{member_uri => %{role_name:
-  # ...}}` map — NOT a top-level `:members` slice. `Ezagent.ActionSet.Session.Members`
-  # (the same module `SessionCreator.DefinitionAgents` uses) is the canonical
-  # `role_name -> uri` resolver.
+  @doc """
+  Resolve a single session member URI by its `role_name` facet. `{:ok, uri}` when
+  a member holds that role; `:error` when the `:session` slice is unreadable OR no
+  member holds the role.
+
+  The session's members live UNDER the `:session` state slice (the same slice
+  `Router.owner?/2` reads `:owner_uri` from) as a `%{member_uri => %{role_name:
+  ...}}` map — NOT a top-level `:members` slice. `Ezagent.ActionSet.Session.Members`
+  (the same module `SessionCreator.DefinitionAgents` uses) is the canonical
+  `role_name -> uri` resolver.
+  """
   @spec role_uri(URI.t(), String.t()) :: {:ok, URI.t()} | :error
   def role_uri(%URI{} = session_uri, role_name) when is_binary(role_name) do
     with {:ok, members} <- members(session_uri),
