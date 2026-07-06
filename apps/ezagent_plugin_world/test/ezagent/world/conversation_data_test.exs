@@ -61,9 +61,10 @@ defmodule Ezagent.World.ConversationDataTest do
 
   # Stage 1 — world reads Ezagent.UI.SessionViewRegistry to emit dynamic view
   # tabs. These pin: (a) enumeration + render-mode classification, (b) the
-  # id-only whitelist source, (c) `state_for/2` emitting "views" and dropping the
-  # old `is_hello` probe, (d) the cap gate — an uncapped/anon caller sees no
+  # id-only whitelist source, (c) the cap gate — an uncapped/anon caller sees no
   # gated tab. All against a cold session URI so the read path stays DB-free.
+  # (The `state_for/2` pin lives in `Ezagent.World.ConversationDataStateForTest`
+  # below — it loads messages through the Repo, so it needs sandbox ownership.)
   describe "session_views/2 (registry-driven tabs)" do
     defmodule AlwaysView do
       @behaviour Ezagent.UI.SessionView
@@ -117,29 +118,6 @@ defmodule Ezagent.World.ConversationDataTest do
     end
   end
 
-  describe "state_for/2 (views replace is_hello)" do
-    setup do
-      :ok = Ezagent.UI.SessionViewRegistry.init()
-      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.World.ConversationView)
-      :ok
-    end
-
-    test "exposes registry views and no longer emits is_hello" do
-      s = Ezagent.URI.session("acme", "default", "s2")
-
-      state =
-        ConversationData.state_for(s, %{
-          caller_uri: nil,
-          workspace_uri: Ezagent.URI.workspace("acme"),
-          sessions: []
-        })
-
-      assert is_list(state["views"])
-      assert Enum.any?(state["views"], &(&1["id"] == "conversation"))
-      refute Map.has_key?(state, "is_hello")
-    end
-  end
-
   describe "cap-gated view filtering (migration safety)" do
     defmodule GatedRender do
       # A cap-only render ActionSet: `authorize_view/3` derives the render caps
@@ -177,5 +155,49 @@ defmodule Ezagent.World.ConversationDataTest do
       assert "conversation" in ids
       refute "test_gated" in ids
     end
+  end
+end
+
+defmodule Ezagent.World.ConversationDataStateForTest do
+  @moduledoc """
+  Stage 1 — `state_for/2` emits the registry-driven "views" array and no longer
+  emits the old `is_hello` probe.
+
+  Lives in its OWN `DataCase` module (not the async DB-free module above):
+  `state_for/2` loads recent messages through `EzagentCore.Repo`
+  (`Ezagent.MessageStore`), so the test process needs Ecto-sandbox ownership.
+  In a full-umbrella run an earlier app's test_helper flips the shared Repo to
+  `:manual` sandbox mode, so a naked query here dies with
+  `DBConnection.OwnershipError` (a per-app run stays in the default `:auto`
+  mode, which masked this). `DataCase` checks out a connection either way.
+
+  Assertions are containment-based ("conversation" is present / `is_hello` is
+  absent), NOT set-equality — in a full-umbrella BEAM other plugins' boot
+  registrations (hello page, pty, routing, external_mirror) share the same
+  named ETS registry table.
+  """
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.World.ConversationData
+
+  setup do
+    :ok = Ezagent.UI.SessionViewRegistry.init()
+    :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.World.ConversationView)
+    :ok
+  end
+
+  test "state_for/2 exposes registry views and no longer emits is_hello" do
+    s = Ezagent.URI.session("acme", "default", "s2")
+
+    state =
+      ConversationData.state_for(s, %{
+        caller_uri: nil,
+        workspace_uri: Ezagent.URI.workspace("acme"),
+        sessions: []
+      })
+
+    assert is_list(state["views"])
+    assert Enum.any?(state["views"], &(&1["id"] == "conversation"))
+    refute Map.has_key?(state, "is_hello")
   end
 end
