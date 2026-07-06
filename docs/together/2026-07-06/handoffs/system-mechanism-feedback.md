@@ -69,7 +69,8 @@
 
 ## D. 行为与文档不符
 
-### ⑦ hello 公开面：无 @mention 的 owner 消息不投 orchestrator
+### ⑦ hello 公开面：无 @mention 的 owner 消息不投 orchestrator —— ⚠️ **疑似已被 #1208 解决（待重验）**
+> #1208 把 hello 迁到标准 socialware substrate + 框架 routing table，新 orchestrator 明确"路由所有其他 sender（users 和 external agents）"。我们会做一次 e2e 重验，确认后本条结案。
 - **需要**（按 `HelloOrchestrator` moduledoc）：每条 user 消息投给 orchestrator。
 - **现在**：无 @mention 的 owner 消息 0 路由规则命中、无 fan-out、无回复、无 DLQ 痕迹（#1199 Stage 5 e2e 实测）；@mention 才通。
 - **问题**：doc 与行为不符——doc 过时还是缺默认路由？
@@ -78,6 +79,7 @@
 - **需要**：成员能 `@kanban-assistant` 这样按**角色名**提到 role-slot 物化出的 agent（协作的自然写法，协议/skill 里也这么教）。
 - **现在**：role-slot agent 的 display_name 是 uuid（EntityPresenter），world `conversation_data.ex` 的 `resolve_member_name` 两条路（URI 段/display_name）都不中 → `mentions: []` **静默不路由**；composer autocomplete 对真键盘输入也没弹。全 URI mention（`@entity://system/agent/<uuid>`）可用——e2e 用它 workaround。
 - **问题**：role-slot 语义（#1180/#1185）到了 mention 解析层断了——role_name facet 在 session 边上有，解析器没用它。所有 role-slot socialware 的"按角色名喊人"都不通。
+- **修法先例已在 main**：#1208 的 `EzagentPluginHello.Members.role_uri/2` 就是按 role_name facet 解析成员的现成查询——mention 解析器补第三条腿照它做即可。
 
 ## F. 实施更正说明（非问题，report only）
 
