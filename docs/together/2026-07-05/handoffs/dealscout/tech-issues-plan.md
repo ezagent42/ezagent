@@ -1,5 +1,10 @@
 # dealscout 开发 issue plan（技术层 · 前缀 I）
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本文中一切相抵触的旧文；完整 banner 见同目录 spec.md / plan.md 顶部）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。职责重划：**dealscout = 后台数据 + 更新信号**（爬取 plugin + 它的 agent 爬完注入新线索后 emit `__dealscout_update__`，`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）；**hello = 显示 + concierge**（hello 的 agent 收信号更新 json-render 页）。**dealscout 不声明任何 view / render**——下文凡出现 `DealScoutRender` / `DealScoutView` / "dealscout 自己的发现流 SessionView / world tab" 的设计**已删除、作废**（原 I-5 显示件归 hello；I-8 / F-4 world-tab 议题随之消失）。DealScout Definition（Stage D 已落地 `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/definition_seed.ex`）：`uses: ["hello","dealscout"]`、`views: [Ezagent.ActionSet.HelloRender]`（hello `PageView` 以此认领渲染，零改 hello）、`routing_rules` 用 `text_contains("__dealscout_update__")` → 已声明角色 `"page"`（内容协议 routing 像 kanban relay，零实例 URI）。下文与此抵触处一律按本 banner 为准。
+
+
 > **用 superpowers writing-plans 纪律写**：每个 issue = 一个能独立测试、独立交付的单元；每个开发点（I-n.m）= 一个 bite-sized step（明确碰哪些文件的 file:line、做什么、一句 DoD）。这里是**规划级颗粒度**——给"issue → 切分开发点 → 每点碰哪些文件 + DoD"，**不做逐行 TDD 代码**（那是执行时的事）。
 > **Date:** 2026-07-03（2026-07-04 撮合根重构 → 2026-07-05 找为主重构：两条腿 + 15 issue 新骨架 → **2026-07-05 撮合腿换轨（证据版）：撮合 = hello 公开面聊天（组合 hello+concierge / session_feed_channel 登录自助 join+发言 / 匿名只读硬禁 / founder invite 深聊），删旧 `#1178` admission-gate 玩法**）· **Base:** upstream/main `90e8ee29`（file:line 现读核实）
 > **底稿三件套**：同目录 `../README.md`（§1 组件清单 + §2 分步 Plan + §3 权威编号骨架 I-1..I-15）+ `../../../2026-07-05/handoffs/dealscout-code-review-and-dev-plan.md`（**Part 2** = 现有代码基础上的分步开发计划 + 今天能做 vs 缺口 + file:line）+ `../spec-vs-code-gaps.md`（flavor gap、规范纪律）。上游 F 层：`../product/4-features.md`（F 骨架 F-1..F-13，两条腿）。
