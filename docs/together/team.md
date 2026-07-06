@@ -28,6 +28,28 @@ it exists so the long GitHub key joins to the short name plans cite.
 > cadence. `agent` is off-plan support — never gets a track row in the plan.
 > `designer` / others are listed for the username↔Feishu map but get no track.
 
+## Platform accounts — go-live (2026-07-06)
+
+The seeded login accounts for the deployed platform (world). Login = email
+magic-link delivered to these `@ezagent.chat` mailboxes (mail service
+`email.ezagent.chat`). Admin = 林懿伦. These are the "available usernames" the
+go-live reseed provisions.
+
+| feishu_name | email | role | github_username |
+|---|---|---|---|
+| 林懿伦 | `lin.yilun@ezagent.chat` | **admin** | `allenwoods` |
+| 姚升悦 | `yao.shengyue@ezagent.chat` | user | `jjkysy` |
+| 陈瑞华 | `chen.ruihua@ezagent.chat` | user | `ruihuachen-designer` |
+| 李震宇 | `li.zhenyu@ezagent.chat` | user | `zyli-developer` |
+| 张宁 | `zhang.ning@ezagent.chat` | user | `zhaomaota97` |
+| 黄佳佳 | `huang.jiajia@ezagent.chat` | user | `gagameow` |
+
+> Login flow: user enters their `@ezagent.chat` email on world → app mints a
+> single-use magic-link (`/auth/magic/:token`, task #87, login-only for existing
+> accounts) → delivered via `email.ezagent.chat` → user opens it from their
+> mailbox → logged in. Old pre-2026-07-06 accounts/data are cleared on the
+> go-live reseed (agent-identity + role-on-edge data-structure change).
+
 ## Profile — background（固定）+ 强项/适合任务（review 更新）
 
 > agent 加持下所有工程师都具备**全栈/部署**能力；差异在**开发习惯、产品 sense、
