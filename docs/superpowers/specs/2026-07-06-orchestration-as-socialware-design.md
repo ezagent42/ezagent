@@ -314,7 +314,25 @@ version composes installation + table, nothing more.
 - **Dogfood throughout:** hello re-expressed per §1 at each milestone boundary;
   its manifest.yaml (the #158+Q2 spec's import lane) is the distribution vehicle.
 
-## 10. Explicit non-goals
+## 10. Review status & builder-verify notes
+
+**codex-adversarially-reviewed 2026-07-06 (architecture-level), verdict SOUND**
+(rev1 UNSOUND: 1 BLOCKER + 2 MAJOR + 1 MINOR → rev2/rev3 resolutions verified
+against code, zero findings). Builder-verify notes for the planning/impl pass:
+
+1. A-1 conflict/repoint-revalidation checks are NEW work — current repoint only
+   re-resolves and writes install records (installation.ex:194).
+2. A-3 sender-side `from_role` needs matcher plumbing — rule filtering currently
+   calls `Matcher.match?/2` with the message only; the member context must reach
+   the matcher (matcher.ex:49, resolver.ex:253). Receiver-side `{:role, name}`
+   expansion already exists (resolver.ex:435, route_provisioner.ex:8).
+3. A-4 hop field is NEW on `Ezagent.Message` (message.ex:63 — visibility exists,
+   hops does not).
+4. The routing UI/form still authors entity/session-URI receivers and validates
+   non-magic receivers as URIs (routing_view.ex:188,
+   conversation_routing_form.ex:56) — role-receiver authoring is an M1 UI item.
+
+## 11. Explicit non-goals
 
 - Per-message LLM routing in the table (never).
 - Solving the G⑩ cross-socialware content/addressing protocol here.
