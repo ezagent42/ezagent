@@ -1,0 +1,71 @@
+== 1. Demo.published?/0 (boot publish 落库证据) ==
+published?: true
+
+== 2. session 已安装的 Definition(DB-backed)==
+definition: %{
+  name: "kanban",
+  roles: [
+    %{
+      flavor: "cc-headless",
+      recipe: "kanban-assistant",
+      role_name: "kanban-assistant",
+      fill: :agent
+    },
+    %{
+      flavor: "cc-headless",
+      recipe: "dev-together",
+      role_name: "dev-together",
+      fill: :agent
+    }
+  ],
+  routing_rules: [
+    %{
+      "matcher" => %{"arg" => "__done__", "type" => "text_contains"},
+      "position" => 0,
+      "receivers" => ["kanban-assistant"],
+      "rule_set" => "relay-back"
+    }
+  ],
+  views: [Ezagent.ActionSet.KanbanRender]
+}
+
+== 3. SessionViewRegistry.applicable_views/1(view 注册 + applies_to?)==
+applicable_views/1: [
+  %{
+    id: :external_mirror,
+    label: "Bindings",
+    module: EzagentDomainUi.ExternalMirror.View,
+    icon: "link"
+  },
+  %{
+    id: :kanban_board,
+    label: "看板",
+    module: EzagentPluginKanban.BoardView,
+    icon: "square-kanban"
+  },
+  %{
+    id: :routing,
+    label: "Routing",
+    module: EzagentDomainUi.Routing.RoutingView,
+    icon: "route"
+  }
+]
+
+== 4. applicable_views/2 caller=admin(cap gate)==
+applicable_views/2: [
+  %{
+    id: :external_mirror,
+    label: "Bindings",
+    module: EzagentDomainUi.ExternalMirror.View,
+    icon: "link"
+  },
+  %{
+    id: :routing,
+    label: "Routing",
+    module: EzagentDomainUi.Routing.RoutingView,
+    icon: "route"
+  }
+]
+
+== 5. BoardView.external_render(external json-render 投影)==
+external_render: nil
