@@ -21,8 +21,16 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   页。**零实例 URI、不数据直推、dealscout 自己不渲染**——显示是 hello 的活。
   信号 dispatch 失败同样 fail-loud（`[:dealscout, :update_signal, :error]`）。
 
+  ## source/token 自动分流（Stage B 接线，live 路径）
+
+  `:crawl_now` 走 `Fetch.crawl_auto/1`（source 有无自动分流的决策点，spec
+  §3.1）：定向源清单从 **config slice** 的 `:sources` key 读（framework 注入的
+  `ctx[:read]` reader；写入侧是 `Config.set_sources/2` 的 `{:set, ...}`
+  effect）——配了源走"公开 + 定向（有 token）"，没配纯公开。`:search` 不走
+  crawl_auto（它是 query 参数化检索，走 `search_fun` 的独立腿）。
+
   seams（app env，测试注入）：
-    * `:fetch_fun`（默认 `Fetch.crawl/0`）；
+    * `:fetch_fun`（默认 `Fetch.crawl_auto/1`，收 sources 列表）；
     * `:dispatch_fun`（默认 `Ezagent.Router.dispatch/1`）。
   """
   use Ezagent.Lifecycle
@@ -61,11 +69,13 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   def data_owner(_), do: :any
 
   @doc """
-  抓一次，把每条线索经 dispatch 注入本会话；注入了新线索（injected > 0）时
-  再 emit 一条更新信号（`update_signal/0`，moduledoc §更新信号）。返回注入成功计数。
+  抓一次（`Fetch.crawl_auto/1`，sources 从 config slice 读 —— moduledoc
+  §source/token 自动分流），把每条线索经 dispatch 注入本会话；注入了新线索
+  （injected > 0）时再 emit 一条更新信号（`update_signal/0`，moduledoc
+  §更新信号）。返回注入成功计数。
   """
   def handle_crawl_now(_args, ctx) do
-    {:ok, items} = fetch_fun().()
+    {:ok, items} = fetch_fun().(config_sources(ctx))
 
     injected =
       Enum.reduce(items, 0, fn item, acc ->
@@ -163,12 +173,24 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     "[#{st}]#{origin_tag} #{t} — #{s} (#{u})"
   end
 
+  # 定向源清单从 config slice 读（framework 经 `ctx[:read]` 注入 slice reader，
+  # plugin 作者不见底层存储）。无 reader（如裸测试 ctx）降级为 []（纯公开爬）。
+  defp config_sources(ctx) do
+    case ctx[:read] do
+      read when is_function(read, 2) ->
+        EzagentPluginDealScout.Config.normalize_sources(read.(:sources, []))
+
+      _ ->
+        []
+    end
+  end
+
   defp fetch_fun,
     do:
       Application.get_env(
         :ezagent_plugin_dealscout,
         :fetch_fun,
-        &EzagentPluginDealScout.Fetch.crawl/0
+        &EzagentPluginDealScout.Fetch.crawl_auto/1
       )
 
   defp search_fun,

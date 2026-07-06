@@ -15,6 +15,35 @@ defmodule EzagentPluginDealScout.ConfigTest do
     end
   end
 
+  describe "sources（定向源清单）slice effect + 读回归一" do
+    test "set_sources returns a {:set, :sources, list} slice effect (normalized to atom keys)" do
+      assert {:set, :sources, [%{url: "https://acme/api", source: "acme"}]} =
+               Config.set_sources(%{}, [%{"url" => "https://acme/api", "source" => "acme"}])
+    end
+
+    test "set_sources is fail-closed: any malformed entry rejects the WHOLE batch" do
+      assert {:error, {:invalid_sources, [%{url: ""}]}} =
+               Config.set_sources(%{}, [%{url: "https://ok", source: "ok"}, %{url: ""}])
+    end
+
+    test "sources/1 reads the slice back (atom- or string-keyed after snapshot round-trip)" do
+      assert Config.sources(%{sources: [%{url: "u", source: "s"}]}) == [%{url: "u", source: "s"}]
+
+      assert Config.sources(%{"sources" => [%{"url" => "u", "source" => "s"}]}) ==
+               [%{url: "u", source: "s"}]
+
+      assert Config.sources(%{}) == []
+    end
+
+    test "normalize_sources drops malformed entries and tolerates non-list garbage" do
+      assert Config.normalize_sources([%{url: "u", source: "s"}, %{url: ""}, "junk"]) ==
+               [%{url: "u", source: "s"}]
+
+      assert Config.normalize_sources(nil) == []
+      assert Config.normalize_sources("junk") == []
+    end
+  end
+
   describe "token creds (system://credentials, fail-closed)" do
     test "write_token then read_token round-trips" do
       on_exit(fn -> Config.delete_token("acme") end)
