@@ -59,7 +59,9 @@ defmodule EzagentWeb.Plugs.CloudflareRemoteIp do
   # IPv4-mapped IPv6 (::ffff:a.b.c.d — how the tunnel peer appears): unwrap the
   # embedded IPv4 and re-test its private ranges.
   defp trusted_peer?({0, 0, 0, 0, 0, 0xFFFF, ab, cd}) do
-    trusted_peer?({Bitwise.bsr(ab, 8), Bitwise.band(ab, 0xFF), Bitwise.bsr(cd, 8), Bitwise.band(cd, 0xFF)})
+    trusted_peer?(
+      {Bitwise.bsr(ab, 8), Bitwise.band(ab, 0xFF), Bitwise.bsr(cd, 8), Bitwise.band(cd, 0xFF)}
+    )
   end
 
   defp trusted_peer?(_), do: false
