@@ -87,7 +87,7 @@ defmodule Ezagent.ActionSet.DealScoutPageRefreshAlt do
   end
 
   # session 投递 fan-out 的 ctx.caller 恒为发起 session 的 %URI{}
-  # （`Ezagent.Behavior.Session.Delivery.dispatch_receive_call/3`）。
+  # （`Ezagent.ActionSet.Session.Delivery.dispatch_receive_call/3`）。
   defp session_uri(%{caller: %URI{} = uri}), do: uri
   defp session_uri(_), do: nil
 
