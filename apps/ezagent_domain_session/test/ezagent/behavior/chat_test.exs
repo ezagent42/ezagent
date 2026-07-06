@@ -72,6 +72,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :join,
                  :leave,
                  :remove_participant,
+                 :assign_role,
                  :attach,
                  :merge_member,
                  :set_working_copy,
@@ -174,6 +175,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       assert keys ==
                [
                  :approve_admission,
+                 :assign_role,
                  :attach,
                  :deny_admission,
                  :join,

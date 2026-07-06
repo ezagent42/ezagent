@@ -44,6 +44,7 @@ defmodule Ezagent.World.ConversationData do
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => member_options(session_uri),
+      "human_role_slots" => human_role_slots(session_uri),
       "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions,
       # Whether to show the right-side rendered-Page pane. A hello/socialware page
@@ -117,20 +118,58 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec member_options(URI.t()) :: [map()]
   def member_options(%URI{} = session_uri) do
-    presence = member_presence(session_uri)
-    uris = Map.keys(presence)
+    member_meta = member_meta(session_uri)
+    uris = Map.keys(member_meta)
     display_map = Ezagent.EntityPresenter.display_many(uris)
 
     uris
     |> Enum.sort()
     |> Enum.map(fn uri ->
+      meta = Map.get(member_meta, uri, %{})
+
       %{
         "uri" => uri,
         "display_name" => Map.get(display_map, uri, uri),
-        "online" => Map.get(presence, uri, false),
+        "online" => is_map(meta) and Map.get(meta, :online, false) == true,
+        "role_name" => if(is_map(meta), do: Map.get(meta, :role_name), else: nil),
         "kind" => sender_kind(uri)
       }
     end)
+  end
+
+  @doc "Human role slots installed on a session, including the current assigned member URI when present."
+  @spec human_role_slots(URI.t()) :: [map()]
+  def human_role_slots(%URI{} = session_uri) do
+    members = member_meta(session_uri)
+
+    assigned_by_role =
+      Enum.reduce(members, %{}, fn
+        {uri, %{role_name: role_name}}, acc when is_binary(role_name) ->
+          Map.put_new(acc, role_name, uri)
+
+        {_uri, _meta}, acc ->
+          acc
+      end)
+
+    session_uri
+    |> Ezagent.Socialware.Installation.installed_definitions()
+    |> Enum.flat_map(& &1.roles)
+    |> Enum.flat_map(fn
+      %{fill: :human, role_name: role_name} when is_binary(role_name) ->
+        [
+          %{
+            "role_name" => role_name,
+            "assigned_uri" => Map.get(assigned_by_role, role_name)
+          }
+        ]
+
+      _ ->
+        []
+    end)
+    |> Enum.uniq_by(& &1["role_name"])
+    |> Enum.sort_by(& &1["role_name"])
+  rescue
+    _ -> []
   end
 
   @doc """
@@ -389,13 +428,13 @@ defmodule Ezagent.World.ConversationData do
   defp datetime_iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp datetime_iso(_), do: nil
 
-  # %{uri_string => online_bool} from the session slice members map (values
-  # carry an `:online` flag). Empty for a cold/unknown session.
-  defp member_presence(%URI{} = session_uri) do
+  # %{uri_string => member_meta} from the session slice members map. Empty for a
+  # cold/unknown session.
+  defp member_meta(%URI{} = session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         Map.new(members, fn {uri, meta} ->
-          {encode_uri(uri), is_map(meta) and Map.get(meta, :online, false) == true}
+          {encode_uri(uri), meta}
         end)
 
       _ ->

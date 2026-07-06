@@ -248,5 +248,34 @@ defmodule Ezagent.Socialware.DefinitionTest do
       assert {:ok, d2} = Definition.new(body)
       assert Map.get(d2, :roles) == Map.get(d1, :roles)
     end
+
+    test "human slot never accepts recipe, flavor, or participant URI payload" do
+      assert {:ok, definition} =
+               Definition.new(%{
+                 name: "human-open-slot",
+                 roles: [
+                   %{
+                     role_name: "reviewer",
+                     fill: :human,
+                     recipe: "ignored",
+                     flavor: "cc"
+                   }
+                 ]
+               })
+
+      assert definition.roles == [%{role_name: "reviewer", fill: :human}]
+
+      assert {:error, {:socialware_definition_declares_instance_uri, _}} =
+               Definition.new(%{
+                 name: "human-smuggles-user",
+                 roles: [
+                   %{
+                     role_name: "reviewer",
+                     fill: :human,
+                     uri: "entity://system/user/alice"
+                   }
+                 ]
+               })
+    end
   end
 end

@@ -104,6 +104,21 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     name
   end
 
+  defp live_agent(n, recipe_name) do
+    agent_uri = Ezagent.URI.agent("system", "reusable-#{n}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: agent_uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, @workspace_uri)
+    :ok = Ezagent.AgentRecipeAttributes.put(agent_uri, recipe_name)
+    on_exit(fn -> terminate(agent_uri) end)
+    agent_uri
+  end
+
   defp members_of(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
     %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
@@ -181,6 +196,59 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.any?(caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end)
+  end
+
+  test "reuse install choice joins the selected recipe-matching agent through the edge role" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-advisor-#{n}"
+    reusable = live_agent(n, recipe_name)
+
+    assert :ok =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   install_mode: :reuse,
+                   reuse_agent_uri: reusable
+                 }
+               ]
+             )
+
+    members = members_of(session_uri)
+    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
+    assert map_size(members) == 1
+  end
+
+  test "reuse install choice rejects an agent from a different recipe" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    other_recipe = seed_recipe("other-#{n}")
+    role_name = "reuse-mismatch-#{n}"
+    reusable = live_agent(n, other_recipe)
+
+    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   install_mode: :reuse,
+                   reuse_agent_uri: reusable
+                 }
+               ]
+             )
+
+    refute Map.has_key?(members_of(session_uri), reusable)
   end
 
   test "idempotent re-materialize (repair/restart) does not error or double-join" do

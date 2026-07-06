@@ -49,6 +49,12 @@ type MemberRow = {
   display_name?: string | null
   online?: boolean
   kind?: string | null
+  role_name?: string | null
+}
+
+type HumanRoleSlot = {
+  role_name: string
+  assigned_uri?: string | null
 }
 
 type RoutingRule = {
@@ -78,6 +84,7 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   members?: MemberRow[]
+  human_role_slots?: HumanRoleSlot[]
 }
 
 type Props = {
@@ -93,6 +100,7 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -113,6 +121,7 @@ export function Conversation({
   onAddRoutingRule,
   onForkConfig,
   onOpenPty,
+  onAssignRole,
   onRemoveParticipant,
   onRestartOrchestrator,
   onSend,
@@ -141,6 +150,7 @@ export function Conversation({
   const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
+  const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlot[]>(state.human_role_slots || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
@@ -159,6 +169,10 @@ export function Conversation({
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
+  const openHumanRoles = React.useMemo(
+    () => humanRoleSlots.filter((slot) => !slot.assigned_uri),
+    [humanRoleSlots],
+  )
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Inserting the member's URI path segment keeps it a single bare
@@ -220,8 +234,9 @@ export function Conversation({
     })
 
     onServerEvent("members:update", (payload) => {
-      const next = payload as {members?: MemberRow[]}
+      const next = payload as {members?: MemberRow[]; human_role_slots?: HumanRoleSlot[]}
       if (next.members) setMembers(next.members)
+      if (next.human_role_slots) setHumanRoleSlots(next.human_role_slots)
     })
 
     return undefined
@@ -725,6 +740,30 @@ export function Conversation({
                   {member.display_name || member.uri}
                 </span>
                 <span className="font-mono text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
+                {member.role_name ? (
+                  <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
+                    {member.role_name}
+                  </span>
+                ) : (
+                  member.kind === "user" &&
+                  openHumanRoles.length > 0 && (
+                    <select
+                      className="h-7 max-w-[126px] rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
+                      aria-label={`Assign role to ${member.display_name || member.uri}`}
+                      value=""
+                      onChange={(event) => {
+                        if (event.target.value && sessionUri) onAssignRole(sessionUri, member.uri, event.target.value)
+                      }}
+                    >
+                      <option value="">Role</option>
+                      {openHumanRoles.map((slot) => (
+                        <option key={slot.role_name} value={slot.role_name}>
+                          {slot.role_name}
+                        </option>
+                      ))}
+                    </select>
+                  )
+                )}
                 {member.kind === "agent" && (
                   <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
                     <TerminalSquare aria-hidden="true" />

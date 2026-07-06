@@ -184,6 +184,14 @@ defmodule Ezagent.ActionSet.Session do
     description: "Remove a participant (user / invited-agent) — owner-gated (F7 PR-A)"
   )
 
+  action(:assign_role,
+    args: %{member: :uri, role_name: :string},
+    returns: %{member: :uri, role_name: :string},
+    caps: [:assign_role],
+    modes: [:call],
+    description: "Assign an open human socialware role to a joined user member"
+  )
+
   # LV→world parity PR-2b — upload authorization chokepoint. The world composer
   # is a React island under `phx-update="ignore"`, so it cannot use the LiveView
   # uploader (`live_file_input`/`consume_uploaded_entries`); uploads arrive over
@@ -794,6 +802,61 @@ defmodule Ezagent.ActionSet.Session do
 
   def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do
     Membership.handle_remove_participant(participant_uri, ctx)
+  end
+
+  @doc false
+  def handle_assign_role(%{member: %URI{} = member_uri, role_name: role_name}, ctx)
+      when is_binary(role_name) do
+    with :ok <- require_user_member(member_uri),
+         :ok <- require_declared_human_role(ctx, role_name),
+         members <- ctx[:read].(:members, %{}),
+         :ok <- require_joined_member(members, member_uri),
+         :ok <- Members.role_name_conflict(members, member_uri, role_name) do
+      updated_members =
+        Map.update!(members, member_uri, fn meta ->
+          Members.put_member_facets(meta, %{role_name: role_name})
+        end)
+
+      {:ok, %{member: member_uri, role_name: role_name}, [{:set, :members, updated_members}]}
+    end
+  end
+
+  def handle_assign_role(%{member: %URI{} = member_uri}, _ctx) do
+    with :ok <- require_user_member(member_uri) do
+      {:error, :invalid_role_name}
+    end
+  end
+
+  defp require_user_member(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :user), do: :ok, else: {:error, :assign_role_requires_user_uri}
+  end
+
+  defp require_user_member(_), do: {:error, :assign_role_requires_user_uri}
+
+  defp require_joined_member(members, %URI{} = member_uri) when is_map(members) do
+    if Map.has_key?(members, member_uri), do: :ok, else: {:error, :member_not_joined}
+  end
+
+  defp require_declared_human_role(ctx, role_name) when is_binary(role_name) do
+    session_uri = ctx[:self_uri]
+
+    declared? =
+      case session_uri do
+        %URI{} ->
+          session_uri
+          |> Ezagent.Socialware.Installation.installed_definitions()
+          |> Enum.any?(fn definition ->
+            Enum.any?(definition.roles, fn
+              %{role_name: ^role_name, fill: :human} -> true
+              _ -> false
+            end)
+          end)
+
+        _ ->
+          false
+      end
+
+    if declared?, do: :ok, else: {:error, {:human_role_not_declared, role_name}}
   end
 
   # --- :attach -----------------------------------------------------------

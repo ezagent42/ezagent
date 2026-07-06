@@ -259,7 +259,7 @@ defmodule EzagentPluginWorld.WorldLive do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.create session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.assign_role session.create session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
@@ -710,6 +710,9 @@ defmodule EzagentPluginWorld.WorldLive do
         "title" => Map.get(row, :title),
         "description" => Map.get(row, :description),
         "version" => Map.get(row, :version),
+        "config_id" => Map.get(row, :config_id),
+        "content_hash" => Map.get(row, :content_hash),
+        "roles" => socialware_role_rows(Map.get(row, :roles, []), workspace_uri),
         "scope" => Map.get(row, :scope, if(public?, do: "public", else: "private")),
         "workspace_uri" => encode_uri(Map.get(row, :workspace_uri)),
         "public" => public?
@@ -718,6 +721,47 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp socialware_rows(_), do: []
+
+  defp socialware_role_rows(roles, %URI{} = workspace_uri) when is_list(roles) do
+    Enum.map(roles, fn
+      %{fill: :agent, role_name: role_name, recipe: recipe, flavor: flavor} ->
+        %{
+          "role_name" => role_name,
+          "fill" => "agent",
+          "recipe" => recipe,
+          "flavor" => flavor,
+          "agent_options" => agent_options_for_recipe(recipe, workspace_uri)
+        }
+
+      %{fill: :human, role_name: role_name} ->
+        %{"role_name" => role_name, "fill" => "human"}
+
+      _ ->
+        nil
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp socialware_role_rows(_roles, _workspace_uri), do: []
+
+  defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
+       when is_binary(recipe) and recipe != "" do
+    uris = Ezagent.AgentRecipeResolver.list_by_recipe(recipe, workspace_uri)
+    display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
+
+    Enum.map(uris, fn uri ->
+      uri_str = URI.to_string(uri)
+
+      %{
+        "uri" => uri_str,
+        "display_name" => Map.get(display_map, uri_str, uri_str)
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp agent_options_for_recipe(_recipe, _workspace_uri), do: []
 
   defp caller_payload(caller, workspace, caps, system_member?) do
     %{

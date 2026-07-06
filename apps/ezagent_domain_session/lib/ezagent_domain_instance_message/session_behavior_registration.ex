@@ -32,6 +32,7 @@ defmodule EzagentDomainInstanceMessage.SessionBehaviorRegistration do
           :leave,
           :attach,
           :merge_member,
+          :assign_role,
           # Membership-cap unification Part C (spec §C.4/§C.5) — the admission
           # approve/deny/withdraw actions (cap-exempt; in-handler manages?/
           # requested_by authz).

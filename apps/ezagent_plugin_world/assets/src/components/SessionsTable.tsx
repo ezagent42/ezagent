@@ -1,5 +1,5 @@
 import React from "react"
-import {ArrowRight, Cable, Circle, MessageSquare, Plus, X} from "lucide-react"
+import {ArrowRight, Bot, Cable, Circle, MessageSquare, Plus, UserRound, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
 
@@ -13,8 +13,37 @@ type SocialwareRow = {
   name: string
   title?: string | null
   description?: string | null
+  config_id?: string | null
+  content_hash?: string | null
   scope?: string | null
   workspace_uri?: string | null
+  roles?: SocialwareRole[]
+}
+
+type AgentOption = {
+  uri: string
+  display_name?: string | null
+}
+
+type SocialwareRole = {
+  role_name: string
+  fill: "agent" | "human"
+  recipe?: string | null
+  flavor?: string | null
+  agent_options?: AgentOption[]
+}
+
+type RoleSlotChoice = {
+  role_name: string
+  mode: "fresh" | "reuse"
+  flavor?: string
+  agent_uri?: string
+}
+
+type CreateOptions = {
+  role_slots?: RoleSlotChoice[]
+  socialware_config_id?: string
+  socialware_content_hash?: string
 }
 
 type SessionsState = {
@@ -29,7 +58,7 @@ type SessionsState = {
 type SessionsTableProps = {
   state?: SessionsState
   onJoin?: (sessionUri: string) => void
-  onCreate?: (shortName: string, templateName: string, socialwareRef?: string) => void
+  onCreate?: (shortName: string, templateName: string, socialwareRef?: string, options?: CreateOptions) => void
 }
 
 export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
@@ -42,12 +71,36 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const [shortName, setShortName] = React.useState("")
   const [templateName, setTemplateName] = React.useState(templates[0])
   const [socialwareRef, setSocialwareRef] = React.useState("")
+  const [roleChoices, setRoleChoices] = React.useState<Record<string, RoleSlotChoice>>({})
   const selectedSession =
     sessions.find((session) => session.uri === currentSessionUri) || sessions[0] || null
+  const selectedSocialware = socialwares.find((socialware) => socialware.name === socialwareRef) || null
 
   React.useEffect(() => {
     if (!templates.includes(templateName)) setTemplateName(templates[0])
   }, [templateName, templates])
+
+  React.useEffect(() => {
+    if (!selectedSocialware) {
+      setRoleChoices({})
+      return
+    }
+
+    setRoleChoices((current) => {
+      const next: Record<string, RoleSlotChoice> = {}
+
+      for (const role of selectedSocialware.roles || []) {
+        if (role.fill !== "agent") continue
+        next[role.role_name] = current[role.role_name] || {
+          role_name: role.role_name,
+          mode: "fresh",
+          flavor: role.flavor || undefined,
+        }
+      }
+
+      return next
+    })
+  }, [selectedSocialware])
 
   const filteredSessions = filterSessions(sessions, filter)
 
@@ -57,10 +110,12 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
     const template = templateName.trim() || "default"
     const installRef = socialwareRef.trim()
     if (!trimmed) return
-    onCreate?.(trimmed, template, installRef || undefined)
+    const createOptions = selectedSocialware ? createOptionsFor(selectedSocialware, roleChoices) : undefined
+    onCreate?.(trimmed, template, installRef || undefined, createOptions)
     setShortName("")
     setTemplateName(templates[0])
     setSocialwareRef("")
+    setRoleChoices({})
     setCreating(false)
   }
 
@@ -155,6 +210,36 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                   ))}
                 </Select>
               </label>
+            )}
+            {selectedSocialware && (
+              <div className="grid gap-2 border-t border-border pt-3" data-world-socialware-install-wizard>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-foreground">
+                    {selectedSocialware.title || selectedSocialware.name}
+                  </p>
+                  {selectedSocialware.description && (
+                    <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{selectedSocialware.description}</p>
+                  )}
+                </div>
+                {(selectedSocialware.roles || []).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No role slots declared.</p>
+                ) : (
+                  (selectedSocialware.roles || []).map((role) =>
+                    role.fill === "agent" ? (
+                      <AgentRoleSlot
+                        key={role.role_name}
+                        role={role}
+                        choice={roleChoices[role.role_name]}
+                        onChange={(choice) =>
+                          setRoleChoices((current) => ({...current, [role.role_name]: choice}))
+                        }
+                      />
+                    ) : (
+                      <HumanRoleSlot key={role.role_name} role={role} />
+                    ),
+                  )
+                )}
+              </div>
             )}
             <Button type="submit" size="sm" disabled={!shortName.trim()}>
               <Plus aria-hidden="true" />
@@ -299,6 +384,118 @@ function displaySessionName(session: SessionRow): string {
 
   const parts = session.uri.split("/")
   return parts[parts.length - 1] || session.uri
+}
+
+function createOptionsFor(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>): CreateOptions {
+  const roleSlots = (socialware.roles || [])
+    .filter((role) => role.fill === "agent")
+    .map((role) => {
+      const choice = choices[role.role_name] || {
+        role_name: role.role_name,
+        mode: "fresh",
+        flavor: role.flavor || undefined,
+      }
+
+      return {
+        role_name: role.role_name,
+        mode: choice.mode,
+        flavor: choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined,
+        agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
+      }
+    })
+    .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
+
+  return {
+    role_slots: roleSlots,
+    socialware_config_id: socialware.config_id || undefined,
+    socialware_content_hash: socialware.content_hash || undefined,
+  }
+}
+
+function AgentRoleSlot({
+  role,
+  choice,
+  onChange,
+}: {
+  role: SocialwareRole
+  choice?: RoleSlotChoice
+  onChange: (choice: RoleSlotChoice) => void
+}) {
+  const current = choice || {role_name: role.role_name, mode: "fresh", flavor: role.flavor || undefined}
+  const options = role.agent_options || []
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border bg-background p-2" data-world-agent-role-slot={role.role_name}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Bot className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold text-foreground">{role.role_name}</p>
+          <p className="truncate text-[11px] text-muted-foreground">{role.recipe || "recipe"} · {role.flavor || "default"}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-1 rounded-md border border-border bg-muted p-1" aria-label={`${role.role_name} install mode`}>
+        {(["fresh", "reuse"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={
+              current.mode === mode
+                ? "rounded bg-background px-2 py-1 text-xs font-semibold text-foreground shadow-sm"
+                : "rounded px-2 py-1 text-xs font-medium text-muted-foreground"
+            }
+            disabled={mode === "reuse" && options.length === 0}
+            onClick={() =>
+              onChange({
+                ...current,
+                mode,
+                agent_uri: mode === "reuse" ? current.agent_uri || options[0]?.uri : undefined,
+              })
+            }
+          >
+            {mode === "fresh" ? "Fresh" : "Reuse"}
+          </button>
+        ))}
+      </div>
+      {current.mode === "fresh" ? (
+        <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor={`role-flavor-${role.role_name}`}>
+          Flavor
+          <Input
+            id={`role-flavor-${role.role_name}`}
+            value={current.flavor || ""}
+            onChange={(event) => onChange({...current, flavor: event.target.value})}
+            placeholder={role.flavor || "default"}
+          />
+        </label>
+      ) : (
+        <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor={`role-agent-${role.role_name}`}>
+          Agent
+          <Select
+            id={`role-agent-${role.role_name}`}
+            value={current.agent_uri || options[0]?.uri || ""}
+            onChange={(event) => onChange({...current, mode: "reuse", agent_uri: event.target.value})}
+          >
+            {options.map((agent) => (
+              <option key={agent.uri} value={agent.uri}>
+                {agent.display_name || agent.uri}
+              </option>
+            ))}
+          </Select>
+        </label>
+      )}
+    </div>
+  )
+}
+
+function HumanRoleSlot({role}: {role: SocialwareRole}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-dashed border-border bg-background p-2" data-world-human-role-slot={role.role_name}>
+      <UserRound className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-semibold text-foreground">{role.role_name}</p>
+        <p className="truncate text-[11px] text-muted-foreground">Open human slot</p>
+      </div>
+    </div>
+  )
 }
 
 function DetailBlock({label, value, mono = false}: {label: string; value: string; mono?: boolean}) {

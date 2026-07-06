@@ -45,6 +45,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Invocation
+  alias Ezagent.Orchestrator.Tools.Participants
   alias EzagentDomainInstanceMessage.SessionCreator
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
@@ -96,7 +97,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
     recipe_name = lookup_ref(recipe_of(agent))
     role_name = role_name_of(agent)
-    flavor = flavor_of(agent)
 
     case existing_member_for_role(session_uri, role_name) do
       %URI{} ->
@@ -105,24 +105,86 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         :ok
 
       nil ->
-        planned_uri = planned_agent_uri(workspace_uri)
+        case install_mode_of(agent) do
+          :reuse ->
+            reuse_existing_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name)
 
-        with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-             :ok <-
-               spawn_and_join(
-                 session_uri,
-                 workspace_uri,
-                 granted_by,
-                 planned_uri,
-                 recipe,
-                 recipe_name,
-                 role_name,
-                 flavor
-               ),
-             :ok <- grant_recipe_caps(planned_uri, recipe) do
-          :ok
+          :fresh ->
+            materialize_fresh_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name)
         end
     end
+  end
+
+  defp materialize_fresh_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name) do
+    planned_uri = planned_agent_uri(workspace_uri)
+    flavor = flavor_of(agent)
+
+    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         :ok <-
+           spawn_and_join(
+             session_uri,
+             workspace_uri,
+             granted_by,
+             planned_uri,
+             recipe,
+             recipe_name,
+             role_name,
+             flavor
+           ),
+         :ok <- grant_recipe_caps(planned_uri, recipe) do
+      :ok
+    end
+  end
+
+  defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
+    with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
+         :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
+         {:ok, ^agent_uri} <-
+           Participants.add_participant(agent_uri, role_name,
+             caller: operator,
+             caps: reuse_caps(session_uri, operator),
+             workspace_uri: workspace_uri,
+             session_uri: session_uri,
+             in_session_template: true
+           ) do
+      :ok
+    else
+      nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
+      {:error, _} = error -> error
+      other -> {:error, {:reuse_agent_join_failed, role_name, other}}
+    end
+  end
+
+  defp ensure_reuse_recipe_match(%URI{} = agent_uri, recipe_name, role_name) do
+    case agent_recipe(agent_uri) do
+      {:ok, ^recipe_name} -> :ok
+      _ -> {:error, {:reuse_agent_recipe_mismatch, role_name, agent_uri}}
+    end
+  end
+
+  defp agent_recipe(%URI{} = agent_uri) do
+    case Ezagent.AgentRecipeAttributes.fetch(agent_uri) do
+      {:ok, recipe} -> {:ok, recipe}
+      :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
+    end
+  rescue
+    _ -> :none
+  end
+
+  defp reuse_caps(%URI{} = session_uri, %URI{} = operator) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    MapSet.new([
+      %Ezagent.Capability{
+        kind: :session,
+        behavior: :any,
+        action: :any,
+        instance: {:within_session, session_uri},
+        workspace_uri: workspace_uri,
+        granted_by: operator,
+        granted_at: DateTime.utc_now()
+      }
+    ])
   end
 
   # --- resolve --------------------------------------------------------------
@@ -310,13 +372,34 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp valid_agent?(%{} = agent),
-    do: is_binary(recipe_of(agent)) and is_binary(role_name_of(agent))
+  defp valid_agent?(%{} = agent) do
+    is_binary(recipe_of(agent)) and is_binary(role_name_of(agent)) and
+      (install_mode_of(agent) == :fresh or match?(%URI{}, reuse_agent_uri_of(agent)))
+  end
 
   defp valid_agent?(_), do: false
 
   defp recipe_of(agent), do: Map.get(agent, :recipe) || Map.get(agent, "recipe")
   defp role_name_of(agent), do: Map.get(agent, :role_name) || Map.get(agent, "role_name")
+
+  defp install_mode_of(agent) do
+    case Map.get(agent, :install_mode) || Map.get(agent, "install_mode") || Map.get(agent, :mode) ||
+           Map.get(agent, "mode") do
+      mode when mode in [:reuse, "reuse"] -> :reuse
+      _ -> :fresh
+    end
+  end
+
+  defp reuse_agent_uri_of(agent) do
+    case Map.get(agent, :reuse_agent_uri) || Map.get(agent, "reuse_agent_uri") ||
+           Map.get(agent, :agent_uri) || Map.get(agent, "agent_uri") do
+      %URI{} = uri -> uri
+      value when is_binary(value) and value != "" -> Ezagent.URI.new!(value)
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
 
   defp flavor_of(agent) do
     case Map.get(agent, :flavor) || Map.get(agent, "flavor") do

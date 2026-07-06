@@ -108,8 +108,11 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
     name: string
     title?: string | null
     description?: string | null
+    config_id?: string | null
+    content_hash?: string | null
     scope?: string | null
     workspace_uri?: string | null
+    roles?: Array<Record<string, unknown>>
   }>
   workspace_uri?: string | null
 }
@@ -243,9 +246,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri},
                   })
                 },
-                onCreateSession: (shortName, templateName, socialwareRef) => {
-                  const args: Record<string, string> = {short_name: shortName, template_name: templateName}
+                onCreateSession: (shortName, templateName, socialwareRef, options) => {
+                  const args: Record<string, unknown> = {short_name: shortName, template_name: templateName}
                   if (socialwareRef) args.socialware_ref = socialwareRef
+                  if (options?.role_slots) args.role_slots = options.role_slots
+                  if (options?.socialware_config_id) args.socialware_config_id = options.socialware_config_id
+                  if (options?.socialware_content_hash) args.socialware_content_hash = options.socialware_content_hash
                   pushEvent?.("world:dispatch", {
                     action: "session.create",
                     args,
@@ -358,6 +364,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   pushEvent?.("world:dispatch", {
                     action: "session.invite",
                     args: {session_uri: sessionUri, member},
+                  })
+                },
+                onAssignRole: (sessionUri, member, roleName) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.assign_role",
+                    args: {session_uri: sessionUri, member, role_name: roleName},
                   })
                 },
                 onRemoveParticipant: (sessionUri, participant) => {
@@ -815,7 +827,16 @@ type RenderContext = {
   layout: WorldLayout
   state: WorldState
   onJoin: (sessionUri: string) => void
-  onCreateSession: (shortName: string, templateName: string, socialwareRef?: string) => void
+  onCreateSession: (
+    shortName: string,
+    templateName: string,
+    socialwareRef?: string,
+    options?: {
+      role_slots?: Array<Record<string, unknown>>
+      socialware_config_id?: string
+      socialware_content_hash?: string
+    },
+  ) => void
   onPublishTemplate: (sessionUri: string, name: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
@@ -840,6 +861,7 @@ type RenderContext = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -882,6 +904,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
+          onAssignRole={context.onAssignRole}
           onRemoveParticipant={context.onRemoveParticipant}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
