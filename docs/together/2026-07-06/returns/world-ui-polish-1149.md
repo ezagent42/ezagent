@@ -7,7 +7,7 @@
 > **PR:** #1188 — https://github.com/ezagent42/ezagent/pull/1188
 > **Source task:** PR #1149 zyli-developer items #5-#10
 > **Dev:** Codex
-> **returned_at:** 2026-07-06 16:42 +0800
+> **returned_at:** 2026-07-06 17:23 +0800
 
 ## What Landed
 
@@ -41,7 +41,7 @@
 
 ## Validation
 
-Post-rebase validation after replaying #1188 onto `work/world-ui-user-surface-main-0702` at `50379176`:
+Post-rebase validation after replaying #1188 onto the refreshed #1128 branch. The final #1128 base before this return refresh was `851a621d` (`work/world-ui-user-surface-main-0702`):
 
 - `git diff --check`
   - Result: passed.
@@ -71,10 +71,18 @@ Post-rebase validation after replaying #1188 onto `work/world-ui-user-surface-ma
 
 ## Branch And Gate Status
 
-- **Post-rebase base:** `50379176` on `work/world-ui-user-surface-main-0702`.
+- **Post-rebase base:** `851a621d` on `work/world-ui-user-surface-main-0702` after the #1128 return refresh.
 - **Post-rebase commits:** #1188 now replays only the polish commit plus this return documentation on top of #1128.
-- **Local full gate:** intentionally skipped per operator instruction; monitor GitHub CI after push.
-- **GitHub PR:** #1188 remains open against `work/world-ui-user-surface-main-0702`.
+- **Local full gate:** intentionally skipped per operator instruction; GitHub CI is the source of truth after push.
+- **GitHub PR:** #1188 remains open and ready for review against `work/world-ui-user-surface-main-0702`. `gate (deterministic)` is green; `full-suite (self-hosted macOS)` was still running at the latest check.
+
+
+## 2026-07-06 Final Rebase Update
+
+- #1188 was rebased again after #1128's final return-document refresh, so it now sits on `851a621d` from `work/world-ui-user-surface-main-0702`.
+- #1199's dynamic `SessionViewRegistry` tabs remain in the conversation data and React toolbar path; #1188 filters PTY views/entry points without reverting to hard-coded Chat/PTY tabs.
+- Verified `mix ezagent.socialware.check` on the final #1128 branch: `chat` and `socialware` conformance passed.
+- GitHub #1188 `gate (deterministic)` was green at the latest check; `full-suite (self-hosted macOS)` was still in progress.
 
 ## Merge Request
 
