@@ -1,9 +1,9 @@
-# Return — world 通用消费 SessionViewRegistry（#1192 实现，Stage 1-4）
+# Return — world 通用消费 SessionViewRegistry（#1192 实现，Stage 1-5 全部完成）
 
 ## Metadata
 - **task**: world-views（jjkysy #1192 → lead GO #1195 locked decisions 的实现）
 - **branch**: `feat/sw-world-views`（HEAD 见 push；rebase-base = `0a192363` upstream/main 2026-07-06）
-- **deadline_status**: on-track（Stage 1-4 done；Stage 5 真浏览器 e2e 进行中，截图后续补推）
+- **deadline_status**: **done**（Stage 1-5 全绿；Stage 5 真浏览器 e2e 4/4 断言过，8 张真截图）
 - **scope**: 只 `apps/ezagent_plugin_world/` + 一条 `{:ezagent_domain_ui, in_umbrella: true}` dep 引用（registry 属主 **0 改动**——Allen 边界令遵守）
 
 ## What's done（4 个 stage，各自 CI 绿后 commit）
@@ -24,7 +24,7 @@
 | 先 rebase 到当前 main | **met** | rebase-base `0a192363`（含 #1189 CI 修复 + #1194 role-slot UI + #1197） |
 | cap 门回归锁必做（不 ship 不行） | **met** | `view_cap_gate_regression_test.exs` 4 断言 + pty 守卫（见上表）；未来枚举改离 `applicable_views/2` 或白名单改离 `session_view_ids/2` 即红 |
 | 只碰 world；domain_ui 0 改动，要改先 STOP flag | **met** | git diff 全在 `apps/ezagent_plugin_world/`；domain_ui 仅 dep 引用 |
-| 真浏览器 e2e 4 断言 + 每 stage 截图（Stage 5） | **deferred（进行中）** | e2e workflow 正在跑（TestView 自动冒 tab / hello Page 渲真内容 / anon cap 门 / 切 tab 换内容），截图将存 `docs/e2e/2026-07-06/world-views/` 随后续 push 补上——**deferral 属 lead 决定**，不自称 READY TO MERGE |
+| 真浏览器 e2e 4 断言 + 每 stage 截图（Stage 5） | **met** | **4/4 PASS**，8 张真截图在 `docs/e2e/2026-07-06/world-views/`：①fresh TestView 运行时注册（erpc，零生产代码）自动冒 tab（02）②hello session 冒 Chat/Bindings/Page/Routing、PTY 正确条件不出（无 pty 成员）、**Page 渲真 LLM 生成的 json-render 页**（claude CLI 38s+64s 生成 36 组件，03/04）③无 cap 用户 Page tab 不出 + server 侧 session_view_ids 佐证 cap 门单源（05）④切 tab 内容真切换 data-world-view-mode 变（06/07）+ unsupported 诚实占位（08）。隔离库跑（POSTGRES_DB=ezagent_wv_e2e_0706，避开共享 PG seed 撞车） |
 | 过 gate + full-suite | **partial** | per-app world 套件 **151 tests 0 failures**（+28 新增，无新增失败）；`compile --warnings-as-errors` 干净；format 过。full-suite（`mix ci.local`）未在本机跑全（既有 per-app 跑法 flake 见 method-friction），**PR CI 为准**（机器 gate） |
 
 ## Gate status
@@ -33,7 +33,7 @@
 - rebase-base SHA：`0a192363`
 
 ## Deferred / open decisions for lead
-1. **Stage 5 真浏览器 e2e**（进行中）——绿后截图+可能的小修随后续 push；若 lead 要求 e2e 先行可等下一 push 再 review。
+1. ~~Stage 5 e2e~~ **done**（见上）。**e2e 顺带发现一个产品观察给 lead**：hello template session 里**不带 @mention 的 owner 消息没投递到 orchestrator**（0 条 session routing rule、无 fan-out/回复/DLQ 痕迹），@mention 才通——与 HelloOrchestrator moduledoc「每条 user message 都投给 orchestrator」不符，值得看一眼是 doc 过时还是投递缺口。
 2. **React fallbackViews**（`Conversation.tsx` server 无 views payload 时回退 chat-only）——降级兜底非可见性来源，可留可删，lead 定。
 3. **switch_to_pty 硬设 "pty"**——安全前提（pty 无 view_behavior）已 doc + 守卫测试钉死；若未来 pty 要 cap-gate，必须改走白名单（测试会红提醒）。
 
