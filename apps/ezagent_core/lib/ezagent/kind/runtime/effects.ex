@@ -359,6 +359,25 @@ defmodule Ezagent.Kind.Runtime.Effects do
     execute_notifies(rest)
   end
 
+  @doc """
+  Emit a single Reputation `:receipt` fact into the EventLog.
+
+  The reputation layer's factual exhaust: `Ezagent.Kind.Runtime` calls this on
+  the SUCCESS path of an authorized cross-workspace ("cross-org") invocation.
+  It reuses the exact `:emit`-effect append path (`execute_events/2`) so it
+  inherits its guarantees: `workspace_uri` derived from the aggregate, caller
+  normalized for audit, and — critically — EVERY EventLog failure swallowed
+  (audit/receipt is observational and MUST NEVER halt or slow the dispatch).
+
+  `aggregate_uri` is the provider (the target Kind instance the receipt is
+  about); it is injected as `ctx[:self_uri]` for `execute_events/2`. Always
+  returns `:ok`; the caller discards the return.
+  """
+  @spec emit_receipt(URI.t(), map(), map()) :: :ok
+  def emit_receipt(%URI{} = aggregate_uri, payload, ctx) when is_map(payload) do
+    execute_events([{:emit, :receipt, payload}], Map.put(ctx, :self_uri, aggregate_uri))
+  end
+
   # `:emit` effects → `Ezagent.EventLog.append/4`. Each event
   # becomes a row in the audit log. Audit failures NEVER halt the
   # dispatch (audit is observational) but ARE logged.

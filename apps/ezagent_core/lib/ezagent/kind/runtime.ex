@@ -60,36 +60,30 @@ defmodule Ezagent.Kind.Runtime do
 
   - **5**: `BehaviorRegistry.lookup({kind_module, action})`
   - **5.5**: authz gate — `Ezagent.Capability.matches?` against ctx.caps
-    (Phase 3d hard flip per P3-D6). Emits `[:ezagent, :authz, :granted]`
-    or `[:ezagent, :authz, :denied]`. The Phase 1-2 permissive stub
-    (emit `:stub_grant` + always grant) is GONE; check_invariants #9
-    enforces the atom no longer appears in code.
-  - **5.6**: workspace isolation — caller and target must share a
-    workspace, OR caller must hold a cross-workspace cap
-    (`workspace_uri: :any`). Phase 9 PR-4 (SPEC v3 §5). Bypass
-    conditions: caller is `:vm_internal` (no entity URI), target is a
-    cross-cutting scheme (`system://`, `template://`, `resource://`
-    — workspace_of returns `:any`), or caller already holds a
-    cross-workspace cap. Returns `{:error, :cross_workspace_denied}`
-    on isolation violation — distinct from `:unauthorized` per
-    invariant 9, so inbound transports can surface a different
-    failure message + reaction emoji.
+    (Phase 3d, P3-D6). Emits `[:ezagent, :authz, :granted|:denied]`.
+    `authz_check/5` returns `{:ok, matched_cap}` — the capability that
+    authorized (or `nil` when via a slice-held cap / rule / exempt action)
+    — threaded into the cross-workspace Receipt (step 10.5, `Runtime.Receipt`).
+  - **5.6**: workspace isolation — caller & target share a workspace, OR
+    caller holds a cross-workspace cap (`workspace_uri: :any`). Phase 9 PR-4
+    (SPEC v3 §5). Bypass: `:vm_internal` caller, cross-cutting-scheme target
+    (`workspace_of → :any`), or a held cross-workspace cap. Returns
+    `{:error, :cross_workspace_denied}` — distinct from `:unauthorized`
+    (invariant 9) so transports surface a different message + reaction.
   - **5.7**: validate args against `behavior.interface()[action].args`
-  - **6**: extract slice = `state[behavior.state_slice()]`
-  - **7**: `behavior.invoke(action, slice, args, ctx)`
-  - **8**: shape return into `{:ok, new_slice}` or `{:ok, new_slice, result}`
-  - **9**: `put_in(state, [slice_key], new_slice)` (snapshot is Phase 3)
+  - **6-9**: extract slice → invoke → shape return → `put_in` new slice
   - **10**: emit `[:ezagent, :invoke, :stop]` telemetry
+  - **10.5**: on a cross-workspace success, `Runtime.Receipt.maybe_emit/5`
+    records one durable `:receipt` fact (reputation exhaust; never blocks).
 
-  Per DECISIONS P1-D2's trade-off note: this function must be
-  **defensive** about state shape because the shared `Ezagent.Kind.Server`
-  hosts multiple Kind types whose slices may differ in shape. Phase 1
-  only has Echo (map slice) so this is mostly theoretical for now —
-  but the function deliberately uses `Map.get` rather than struct
-  field access for forward-compat.
+  Per DECISIONS P1-D2: this function is **defensive** about state shape —
+  the shared `Kind.Server` hosts multiple Kind types with differing slice
+  shapes, so it uses `Map.get` rather than struct field access.
   """
 
   require Logger
+
+  alias Ezagent.Kind.Runtime.Receipt
 
   @type slice_state :: %{atom() => map()}
   # PR-N1 round-2 MEDIUM: 4th element = optional `slice_change_event` for
@@ -125,26 +119,17 @@ defmodule Ezagent.Kind.Runtime do
       ) do
     started_at = System.monotonic_time(:microsecond)
 
-    # Phase 2: Behaviors that span multiple Kinds (e.g. Chat: Session does
-    # send/join/leave, User/Agent do receive) need to branch on which Kind
-    # they're currently hosting + know that Kind instance's URI for fan-out.
-    # Inject both into ctx at this single point so plugins never have to
-    # plumb it themselves.
+    # Inject at this single point so plugins never plumb it themselves:
+    # `:kind_module` + `:self_uri` (multi-Kind Behaviors branch on which Kind
+    # hosts them, Phase 2), and `:session_uri` (Phase 7 PR 43 / Decision #137 —
+    # what `Capability.instance_match?/2` reads for a `{:within_session, S}`
+    # scope-tuple cap; pure O(1) URI parsing, no dispatch/registry).
     #
-    # Phase 7 PR 43 (D7-3): also inject `:session_uri` derived from the
-    # target URI. This is what `Ezagent.Capability.instance_match?/2`
-    # consumes when evaluating a `{:within_session, S}` scope-tuple
-    # cap shape (Decision #137). Without this enrichment, CapBAC has
-    # no way to know which session a dispatch is happening in, so
-    # scope-bounded delegation can't be enforced. Derivation is pure
-    # URI parsing — no dispatch, no registry lookup, O(1).
     # PR-N3 r4 (Allen 2026-05-25) — pre-allocate the `SliceChange` broadcast
     # cursor BEFORE invoke so the Behavior writes cursor-keyed slice entries that
-    # match what subscribers receive in the envelope (keeps the Behavior the SoT
-    # for its own slice). Every dispatch burns a cursor; skipping is acceptable
-    # (`SliceChange.Cursors` moduledoc — cursors are an ordering hint, not a key).
-    # `SliceChange.emit/1` reads this pre-allocated cursor from the producer event
-    # (see `SliceChange.build_broadcast_event/2`) so envelope + ring entry match.
+    # match the envelope subscribers receive (`SliceChange.emit/1` reads this
+    # cursor from the producer event). Burning a cursor per dispatch is fine —
+    # cursors are an ordering hint, not a key (`SliceChange.Cursors` moduledoc).
     slice_change_cursor = Ezagent.SliceChange.Cursors.next(self_uri)
 
     enriched_ctx =
@@ -158,19 +143,19 @@ defmodule Ezagent.Kind.Runtime do
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, state),
          :ok <- instance_set_gate(behavior_module, kind_module, state, target, enriched_ctx),
-         :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
+         # authz_check returns `{:ok, matched_cap}` (`nil` when authorized via a
+         # slice-held cap / rule / exempt action) — same allow/deny decision;
+         # matched_cap is the fact threaded into the cross-org Receipt below.
+         {:ok, matched_cap} <-
+           authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
          slice_key <- behavior_module.state_slice(),
          slice <- Map.get(state, slice_key, %{}),
-         # Allen 2026-05-26 (codex CRIT-1 closure) — scope the sibling
-         # slice exposure to ONLY what the Behavior declared via
-         # `reads_sibling_slices/0`. Default `[]` → no `:sibling_slices`
-         # key in ctx; the wide `:all_slices` injection that codex
-         # flagged as a generic secret-read escape hatch is gone. A
-         # Behavior that legitimately needs to read a sibling slice
-         # (e.g. CurlAgent reading `:api_keys` to fetch its outbound
-         # credential, deadlock-free) declares it explicitly.
+         # Allen 2026-05-26 (codex CRIT-1) — expose ONLY the sibling slices the
+         # Behavior declared via `reads_sibling_slices/0` (default `[]` → no
+         # `:sibling_slices` key). The wide `:all_slices` secret-read escape
+         # hatch is gone; a Behavior needing a sibling slice declares it.
          invoke_ctx <- maybe_inject_sibling_slices(enriched_ctx, behavior_module, state),
          # P2.5c — 4-tuple; `deferred` threaded out as a 5-tuple to Kind.Server.
          {:ok, new_slice, result_or_nil, deferred} <-
@@ -178,20 +163,11 @@ defmodule Ezagent.Kind.Runtime do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
 
-      # Step 9.5 (SPEC v2 PR-N1, Allen 2026-05-24) — slice-change
-      # event preparation. Notification v2: slice mutation IS the
-      # notification trigger.
-      #
-      # Codex PR-N1 round-2 MEDIUM fix: we no longer EMIT from here.
-      # Emit happens in `Kind.Server` AFTER `Snapshot.maybe_save/4`
-      # so a PubSub outage can never roll back a durably-persisted
-      # mutation. The event payload is computed here (we have the
-      # slice diff + action context), then returned in the result
-      # envelope for `Kind.Server` to fire post-commit.
-      #
-      # Codex PR-N1 round-1 HIGH-2 fix: bare INSTANCE URI for both
-      # topic + payload self_uri — `target` includes `?action=…`
-      # query but subscribers want one topic per Kind instance.
+      # Step 9.5 (SPEC v2 PR-N1) — slice-change event PREP (mutation IS the
+      # notification trigger). We compute the payload here (we have the slice
+      # diff) but do NOT emit: `Kind.Server` fires it AFTER `Snapshot.maybe_save/4`
+      # so a PubSub outage can't roll back a persisted mutation. `self_uri` is the
+      # bare INSTANCE URI (strip `?action=…`) so there's one topic per instance.
       slice_change_event =
         if slice_persistably_changed?(slice, new_slice) do
           %{
@@ -228,6 +204,12 @@ defmodule Ezagent.Kind.Runtime do
           kind_module: kind_module
         }
       )
+
+      # Reputation Receipt (facts layer) — exhaust of the Cap-BAC flow: on the
+      # cross-workspace success path, record a durable fact keyed on
+      # `matched_cap`. Never breaks/slows the reply (swallows all failures;
+      # return ignored). See `Ezagent.Kind.Runtime.Receipt`.
+      _ = Receipt.maybe_emit(target, action, matched_cap, behavior_module, enriched_ctx)
 
       # 3-tuple result shape carries an optional `slice_change_event`
       # for `Kind.Server` to fire after snapshot persistence. `nil`
@@ -274,30 +256,15 @@ defmodule Ezagent.Kind.Runtime do
   # lives in `Ezagent.Kind.BehaviorSet.resolve_action/3` (cohesive with the
   # per-instance set logic; keeps runtime.ex under the gt_1000 LOC gate).
 
-  # P1 (SPEC §3.1, E9) — the per-instance subset gate. The §3.1 threat is a
-  # SUPERSET Kind: one Kind module DECLARES `behaviors/0 = [Chat, Surface, …]`
-  # but a per-instance subset (the persisted `:kind_base` set) excludes some of
-  # them — an excluded DECLARED behavior must not act on that instance.
-  #
-  # So the gate denies iff the behavior is BOTH (a) in the Kind's DECLARED set
-  # (`behaviors_of/1` — the subset-able superset) AND (b) NOT in this instance's
-  # `effective_set/2`. A behavior outside `behaviors_of/1` is not part of the
-  # subset mechanism at all and is NOT gated here:
-  #
-  #   * Universal behaviors (`UniversalBehaviors.all/0`, today `Manage`) resolve
-  #     for every Kind by construction and are never in `behaviors/0`.
-  #   * Registry-only behaviors — privileged / cross-domain Behaviors registered
-  #     for a Kind at app boot WITHOUT being in its `behaviors/0` (codex
-  #     register/lookup-parity class): `Ezagent.ActionSet.IdentityAdmin`
-  #     (`identity.grant_cap`/`revoke_cap`), `UserDefaultCredentialSource`
-  #     (`set_default_credential_source`), etc. These are a separate, always-
-  #     available dispatch surface, orthogonal to the per-instance subset; they
-  #     stay reachable (cap-gated by the following `authz_check`). A module-or-
-  #     slice membership gate would wrongly deny them on every real User/Agent.
-  #
-  # This precisely targets the subset threat (a DECLARED-but-scoped-out behavior
-  # like ProbeBehavior/Surface on a chat-only superset instance → DENIED) while
-  # leaving every legitimate non-declared dispatch surface untouched.
+  # P1 (SPEC §3.1, E9) — the per-instance subset gate. Threat: a SUPERSET Kind
+  # DECLARES `behaviors/0 = [Chat, Surface, …]` but a per-instance subset (the
+  # persisted `:kind_base` set) excludes some — an excluded DECLARED behavior
+  # must not act on that instance. So deny iff the behavior is BOTH (a) in the
+  # DECLARED set (`behaviors_of/1`) AND (b) NOT in this instance's
+  # `effective_set/2`. Behaviors OUTSIDE `behaviors_of/1` aren't part of the
+  # subset mechanism and are NOT gated here — universal behaviors (`Manage`) and
+  # registry-only behaviors (`IdentityAdmin` grant/revoke, `UserDefaultCredentialSource`,
+  # …) are a separate always-available surface, still cap-gated by `authz_check`.
   defp instance_set_gate(behavior_module, kind_module, state, target, ctx) do
     declared? = behavior_module in Ezagent.Kind.behaviors_of(kind_module)
 
@@ -360,7 +327,8 @@ defmodule Ezagent.Kind.Runtime do
         caller: Map.get(ctx, :caller)
       })
 
-      :ok
+      # Authorized with no matching cap to attribute (cap-exempt action).
+      {:ok, nil}
     else
       needed = resolve_required_cap(kind_module, behavior_module, action, target)
 
@@ -384,7 +352,8 @@ defmodule Ezagent.Kind.Runtime do
           behavior_module == Ezagent.ActionSet.IdentityAdmin and
             action in [:grant_cap, :revoke_cap] ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_rule, true))
-          :ok
+          # Authorized by the rule branch — no single matching cap to attribute.
+          {:ok, nil}
 
         is_nil(needed) ->
           :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
@@ -400,17 +369,26 @@ defmodule Ezagent.Kind.Runtime do
         # star / Decision #154), so ctx.caps-first avoids the self-call
         # deadlock AND runs the cheap path first; slice-resolved caps remain
         # the second-line check for ordinary user/agent dispatches.
-        granted_via_ctx_caps?(ctx, needed) ->
-          :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
-          :ok
-
-        granted_via_holds_cap?(ctx, needed) ->
-          :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
-          :ok
-
+        #
+        # The ctx.caps-first SHORT-CIRCUIT is preserved: `granted_via_holds_cap?`
+        # runs ONLY on a ctx.caps miss. The ctx.caps path returns the matched
+        # `%Capability{}` (threaded into the cross-org Receipt); the slice path
+        # returns `{:ok, nil}` (receipt falls back to the ctx.caps cross-ws cap).
         true ->
-          :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
-          {:error, :unauthorized}
+          case granted_via_ctx_caps?(ctx, needed) do
+            {:ok, %Ezagent.Capability{} = cap} ->
+              :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
+              {:ok, cap}
+
+            :error ->
+              if granted_via_holds_cap?(ctx, needed) do
+                :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
+                {:ok, nil}
+              else
+                :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
+                {:error, :unauthorized}
+              end
+          end
       end
     end
   end
@@ -534,38 +512,55 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
+  # Returns `{:ok, cap}` with the FIRST `ctx.caps` capability that authorizes
+  # `needed_map`, else `:error`. (Was a bare boolean; now surfaces WHICH cap
+  # matched to attribute a Receipt. Allow/deny decision unchanged.)
   defp granted_via_ctx_caps?(ctx, needed_map) do
     caps = Map.get(ctx, :caps, MapSet.new())
 
     cond do
       caps == nil ->
-        false
+        :error
 
       is_struct(caps, MapSet) ->
-        Enum.any?(caps, &authorizes?(&1, needed_map))
+        find_authorizing_cap(caps, needed_map)
 
       is_list(caps) ->
-        Enum.any?(caps, &authorizes?(&1, needed_map))
+        find_authorizing_cap(caps, needed_map)
 
       true ->
-        false
+        :error
     end
+  end
+
+  defp find_authorizing_cap(caps, needed_map) do
+    Enum.find_value(caps, :error, fn cap ->
+      case authorizes?(cap, needed_map) do
+        {:ok, _} = ok -> ok
+        :error -> false
+      end
+    end)
   end
 
   # #154 predicate A: an authorizing cap counts only if it traces to a real
   # entity (`Capability.granted_by_entity?/1`) AND `matches?/2` the needed cap.
+  # Returns `{:ok, cap}` on a match (to attribute a Receipt), else `:error` —
+  # `granted_by_entity?/1` still fences every match (unchanged from the boolean).
   defp authorizes?(%Ezagent.Capability{} = cap, needed_map) do
-    Ezagent.Capability.granted_by_entity?(cap) and
-      try do
-        Ezagent.Capability.matches?(cap, needed_map)
-      rescue
-        _ -> false
-      catch
-        _, _ -> false
-      end
+    matched? =
+      Ezagent.Capability.granted_by_entity?(cap) and
+        try do
+          Ezagent.Capability.matches?(cap, needed_map)
+        rescue
+          _ -> false
+        catch
+          _, _ -> false
+        end
+
+    if matched?, do: {:ok, cap}, else: :error
   end
 
-  defp authorizes?(_, _), do: false
+  defp authorizes?(_, _), do: :error
 
   defp needed_map_to_struct(
          %{

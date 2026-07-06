@@ -116,7 +116,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # RF-1 — shifted 168→169: the `lookup_behavior` call became a 2-line
     # `Ezagent.Kind.BehaviorSet.resolve_action/3` call in `handle_dispatch`'s
     # `with` chain (per-instance action→behavior resolution, role-foundation).
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 169},
+    # Reputation-receipt (facts layer) — shifted 169→157: net -12 in
+    # `handle_dispatch` — the `{:ok, matched_cap} <- authz_check` bind + step-10.5
+    # receipt call were MORE than offset by condensing the ctx-enrichment /
+    # slice-change / sibling-slice comment blocks (runtime.ex held ≤1000 LOC gate;
+    # receipt logic itself lives in `Ezagent.Kind.Runtime.Receipt`).
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 157},
     # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
     # the echo worked-example moduledoc line was condensed to a
     # `Ezagent.ActionSet.PyAgent` reference (net -1 line ABOVE this comment).
