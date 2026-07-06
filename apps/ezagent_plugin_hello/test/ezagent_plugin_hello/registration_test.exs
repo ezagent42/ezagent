@@ -82,6 +82,13 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute Map.has_key?(cap, :kind)
   end
 
+  test "hello flavor instance_behaviors includes HelloOrchestrator" do
+    [decl] = EzagentPluginHello.Application.agent_flavors()
+    assert decl.flavor == "hello"
+    assert is_function(decl.instance_behaviors, 0)
+    assert Ezagent.ActionSet.HelloOrchestrator in decl.instance_behaviors.()
+  end
+
   test "role-as-data — roles/0 → seed_role_if_absent → read-through lookup round-trip" do
     Enum.each(HelloApp.roles(), fn recipe ->
       assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)

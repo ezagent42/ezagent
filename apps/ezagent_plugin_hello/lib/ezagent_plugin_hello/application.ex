@@ -98,6 +98,9 @@ defmodule EzagentPluginHello.Application do
       %{
         flavor: "hello",
         kind: Ezagent.Entity.Agent,
+        instance_behaviors: fn ->
+          Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.ActionSet.HelloOrchestrator]
+        end,
         template_class: EzagentPluginHello.Template.HelloAgent,
         bridge_adapter: EzagentPluginHello.BridgeAdapter,
         cap_policy: &EzagentPluginNative.CapPolicy.for_recipe/1
