@@ -50,6 +50,11 @@ defmodule EzagentPluginDealScout.DemoTest do
     assert Ezagent.ActionSet.Turn in definition.shape
     assert Ezagent.ActionSet.Session in definition.bases
 
+    # 2026-07-07 真浏览器 e2e 修正：session 本体是 `:crawl_now` 的宿主
+    # （handler 读 ctx.session_uri + session config slice），shape 必须带
+    # DealScoutCrawl,否则 live dispatch `{:unknown_action, :crawl_now}`。
+    assert DealScoutCrawl in definition.shape
+
     assert Enum.any?(definition.adapters, fn a ->
              (a[:adapter_id] || a["adapter_id"]) == "external_feed"
            end)
@@ -65,6 +70,7 @@ defmodule EzagentPluginDealScout.DemoTest do
     assert discover.flavor == "cc-headless"
 
     page = Enum.find(agent_slots, &(&1.role_name == "page"))
+
     # 【显式临时 ALT】A①（#1201 ③）落地后回切 "hello.builder"（demo.ex 槽注释）。
     assert page.recipe == "dealscout-page-alt"
     assert page.flavor == "native"

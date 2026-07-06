@@ -2,8 +2,9 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   @moduledoc """
   手动触发爬取的 ActionSet（`:crawl_now`）。
 
-  轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14
-  `Ezagent.Router.dispatch/1`（`apps/ezagent_core/lib/ezagent/router.ex:79`）投
+  轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14 的 legacy 路
+  `Ezagent.Invocation.dispatch/1`（本模块构造 `%Ezagent.Invocation{}`；
+  `Ezagent.Router.dispatch/1` 只收 `%Cmd{}`，2026-07-07 真 e2e 修正）投
   `session.send`。action URI 用 sanctioned `Ezagent.URI.with_action`（不裸拼
   `?action=`）。
 
@@ -31,7 +32,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
 
   seams（app env，测试注入）：
     * `:fetch_fun`（默认 `Fetch.crawl_auto/1`，收 sources 列表）；
-    * `:dispatch_fun`（默认 `Ezagent.Router.dispatch/1`）。
+    * `:dispatch_fun`（默认 `Ezagent.Invocation.dispatch/1`）。
   """
   use Ezagent.Lifecycle
   require Logger
@@ -79,10 +80,10 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
 
     injected =
       Enum.reduce(items, 0, fn item, acc ->
-        if inject(ctx.session_uri, item), do: acc + 1, else: acc
+        if inject(ctx.session_uri, item, ctx), do: acc + 1, else: acc
       end)
 
-    emit_update_signal(ctx.session_uri, injected, "crawl")
+    emit_update_signal(ctx.session_uri, injected, "crawl", ctx)
     {:ok, %{injected: injected}, []}
   end
 
@@ -102,25 +103,25 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     injected =
       Enum.reduce(items, 0, fn item, acc ->
         tagged = Map.put(item, :source, "search:#{source}")
-        if inject(ctx.session_uri, tagged), do: acc + 1, else: acc
+        if inject(ctx.session_uri, tagged, ctx), do: acc + 1, else: acc
       end)
 
-    emit_update_signal(ctx.session_uri, injected, "search")
+    emit_update_signal(ctx.session_uri, injected, "search", ctx)
     {:ok, %{injected: injected}, []}
   end
 
   # 内容协议更新信号：injected > 0 才发（没新线索不打扰 hello 的页面 agent）。
   # body 只有标记 + 计数 + 来源腿——零实例 URI，routing 靠 text_contains 命中。
-  defp emit_update_signal(_session_uri, 0, _origin), do: :ok
+  defp emit_update_signal(_session_uri, 0, _origin, _ctx), do: :ok
 
-  defp emit_update_signal(session_uri, injected, origin) do
+  defp emit_update_signal(session_uri, injected, origin, ctx) do
     target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     cmd = %Ezagent.Invocation{
       target: target,
       mode: :cast,
-      args: %{body: "#{@update_signal} 新线索 #{injected} 条（#{origin}）"},
-      ctx: %{reply: :ignore}
+      args: send_args("#{@update_signal} 新线索 #{injected} 条（#{origin}）", ctx),
+      ctx: delegated_ctx(ctx)
     }
 
     case dispatch_fun().(cmd) do
@@ -142,14 +143,14 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     end
   end
 
-  defp inject(session_uri, item) do
+  defp inject(session_uri, item, ctx) do
     target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     cmd = %Ezagent.Invocation{
       target: target,
       mode: :cast,
-      args: %{body: format_item(item)},
-      ctx: %{reply: :ignore}
+      args: send_args(format_item(item), ctx),
+      ctx: delegated_ctx(ctx)
     }
 
     case dispatch_fun().(cmd) do
@@ -166,6 +167,33 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
         false
     end
   end
+
+  # 2026-07-07 真浏览器 e2e 修正：`session.send` 的 args 契约是
+  # `%{message: %Ezagent.Message{}}`（session.ex:148 `args: %{message: :map}` +
+  # handle_send 的 %Message{} 匹配），不是裸 `%{body: text}`——真 dispatch 被
+  # validate_args 拒 `{:invalid_args, [{[:message], :missing}]}`（hello
+  # `TurnDriver.say_nav` 同款 idiom）。sender 取触发者（ctx.caller），无触发者
+  # 身份时回落 session 本体（爬取后台以会话名义投递）。
+  defp send_args(text, ctx) do
+    %{message: Ezagent.Message.new(sender_uri(ctx), %{text: text, attachments: []})}
+  end
+
+  defp sender_uri(%{caller: %URI{} = caller}), do: caller
+  defp sender_uri(%{session_uri: %URI{} = session_uri}), do: session_uri
+
+  # 2026-07-07 真浏览器 e2e 修正：内层 `session.send` 的 authz 需要真实身份——
+  # 裸 `%{reply: :ignore}`（无 caller / caps）在 Kind 的 cap-check 下必
+  # `:unauthorized`（fire-and-forget cast，只有日志能看见）。透传**外层触发者**
+  # 的 caller/caps（admin 或持 `session.send` cap 的发现 agent）：注入线索以
+  # 触发者身份落进会话，CapBAC 不绕过——触发者没有 send cap 时注入照样被拒。
+  defp delegated_ctx(ctx) do
+    %{reply: :ignore}
+    |> maybe_put(:caller, ctx[:caller])
+    |> maybe_put(:caps, ctx[:caps])
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp format_item(%{source_type: st, title: t, url: u, summary: s} = item) do
     origin = Map.get(item, :source)
@@ -204,6 +232,16 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   defp search_url(query),
     do: "https://hn.algolia.com/api/v1/search?query=#{URI.encode(query)}"
 
+  # 2026-07-07 真浏览器 e2e 修正：本模块构造的是 `%Ezagent.Invocation{}`，但
+  # `Ezagent.Router.dispatch/1` 只收 `%Ezagent.Cmd{}`（router.ex:79 的
+  # `def dispatch(%Cmd{} = cmd)`）→ 真 dispatch 必 FunctionClauseError（单测
+  # stub 了 :dispatch_fun 掩盖）。P14 的 legacy 路 `Ezagent.Invocation.dispatch/1`
+  # 直接收 `%Invocation{}`（hello `TurnDriver` 同款 idiom）。
   defp dispatch_fun,
-    do: Application.get_env(:ezagent_plugin_dealscout, :dispatch_fun, &Ezagent.Router.dispatch/1)
+    do:
+      Application.get_env(
+        :ezagent_plugin_dealscout,
+        :dispatch_fun,
+        &Ezagent.Invocation.dispatch/1
+      )
 end
