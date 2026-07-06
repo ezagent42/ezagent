@@ -139,8 +139,9 @@ defmodule EzagentPluginKanban.Application do
   header (or `@完成回传`) + the card id + target stage; the kanban-team
   routing_rules content-trigger that message back to `kanban-assistant`. Declared as
   a role slot; the relay carries NO instance URI (role-slot #1180 — round-trip
-  safe). The dev-together skill itself is unchanged (portable capability skill);
-  its only kanban-team addition is a thin `references/kanban-team-relay.md` overlay
+  safe). The dev-together skill itself is unchanged (owner-only team contract,
+  never modified); its kanban-team participation is a thin overlay held on the
+  kanban-assistant side (`kanban-assistant/references/dev-together-relay-overlay.md`)
   pointing at the shared protocol.
   """
   @spec dev_together_recipe() :: map()

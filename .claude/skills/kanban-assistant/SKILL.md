@@ -42,3 +42,9 @@ protocol and the message-routing transport: the completion-marker literal
 (`__done__`) must be byte-identical to the kanban-team Definition's
 `routing_rules` matcher `arg`. `scripts/relay-signal-check.sh` self-checks that
 alignment.
+
+The `dev-together` member's side of this protocol is
+`references/dev-together-relay-overlay.md` — a thin overlay held HERE (the
+dev-together skill directory is an owner-only team contract and is never
+modified). dev-together participants in a kanban-team read that overlay; it
+points back at the same shared protocol module above.

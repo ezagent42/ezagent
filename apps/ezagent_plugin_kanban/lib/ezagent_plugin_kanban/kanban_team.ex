@@ -67,7 +67,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
   # between the routing transport and the skill protocol — this literal MUST be
   # byte-identical to the `__done__` marker documented in
   # `.claude/skills/kanban-assistant/references/kanban-team-collaboration.md` +
-  # `.claude/skills/dev-together/references/kanban-team-relay.md`.
+  # `.claude/skills/kanban-assistant/references/dev-together-relay-overlay.md`.
   @relay_done_marker "__done__"
   @relay_rule_set "relay-back"
 
