@@ -28,8 +28,6 @@ defmodule EzagentPluginKanban.Application do
   use Application
   use Ezagent.Plugin
 
-  require Logger
-
   @impl Application
   def start(_type, _args) do
     result = Ezagent.Plugin.boot(__MODULE__)
@@ -38,36 +36,45 @@ defmodule EzagentPluginKanban.Application do
     # changes — the hello PageView play). The registry is init'd by
     # ezagent_domain_ui, which boots before this plugin (a declared dep).
     _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginKanban.BoardView)
-    :ok = maybe_seed_kanban_team()
+
+    # Boot-publish the kanban DEMO socialware as a PUBLIC catalog entry via the
+    # REAL governance flow (`ConfigGovernance.Socialware`), the hello #162
+    # golden-template play — a fresh stack ships a discoverable/installable
+    # kanban AND every boot dogfoods the publish path (a broken publish path
+    # fails LOUD here at boot). This REPLACES the earlier imperative
+    # `KanbanTeam.seed_definition` code-seed (`seed_definition_if_absent`):
+    # publish is the only boot seeding path now (hello parity — hello only
+    # publishes too). Runs in `start/2` AFTER the `BoardView` register above +
+    # `Ezagent.Plugin.boot/1` — the publish resolves `uses: ["kanban"]` + the
+    # `kanban_render` view, which only exist once THIS plugin registered its
+    # plugin_info + BoardView. Idempotent (`publish_or_upgrade`: :published /
+    # :exists / :upgraded); fail-loud in dev/prod (mirrors hello's
+    # `maybe_publish_hello_demo`), skipped in `:test` (the DB write at plugin
+    # boot contends with the per-test Ecto sandbox — the same reason
+    # `RoleSeedHook` skips in test; ExUnit drives `Demo.publish/0` inside a
+    # checked-out sandbox with per-run unique fixture names instead).
+    :ok = maybe_publish_kanban_demo()
+
     result
   end
 
   # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
   @compile_env Mix.env()
 
-  # Code-seed the `kanban-team` socialware Definition at boot (mirrors hello's
-  # `maybe_publish_hello_demo`). Skipped in `:test` — the DB write at plugin boot
-  # contends with the per-test Ecto sandbox (same reason hello skips test; ExUnit
-  # seeds inside a checked-out sandbox instead). Boot-safe: any seed failure
-  # (including a stripped release without the session domain, a test-only dep)
-  # downgrades to a log and NEVER crashes boot.
-  defp maybe_seed_kanban_team do
+  defp maybe_publish_kanban_demo do
     if @compile_env == :test do
       :ok
     else
-      case EzagentPluginKanban.KanbanTeam.seed_definition() do
-        {:ok, _} ->
+      case EzagentPluginKanban.Demo.publish() do
+        {:ok, _published_exists_or_upgraded} ->
           :ok
 
         {:error, reason} ->
-          Logger.warning("kanban-team definition seed failed (boot-safe): #{inspect(reason)}")
-          :ok
+          raise "EzagentPluginKanban boot aborted — the kanban demo socialware could " <>
+                  "not be published via the governance flow (fail-loud dogfood, " <>
+                  "hello #162 play): #{inspect(reason)}"
       end
     end
-  rescue
-    e ->
-      Logger.warning("kanban-team definition seed raised (boot-safe): #{inspect(e)}")
-      :ok
   end
 
   @impl Ezagent.Plugin

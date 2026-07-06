@@ -29,12 +29,23 @@
 4. **TDD**：`test/behavior/kanban_render_test.exs` + `test/board_view_test.exs` + `kanban_team_test.exs` views 断言，先红（16 failures：模块缺失 + `views == []`）后绿。
 5. **一处越出 kanban 包的 gate 维护（显式声明）**：core 的 G2 p4 probe（`cap_check_only_at_chokepoint_test.exs`，禁手写 `def cap_subjects` 出现在非允许路径）把 `kanban_render.ex` 打红——cap-only view read ActionSet 必须手写 `cap_subjects/0`（HelloRender 落地时同样在该 probe 加了 hello behavior 目录的 allowlist 条目）。按同一先例加了**单文件精确 allowlist**（只列 `kanban_render.ex`，不放行整个 kanban behavior 目录）+ 注释标同类。这是 arch-gate allowlist 维护（同 dealscout CI fix 的类别），不是 core 语义改动。
 
+## 本片：boot 自动发布（Allen 2026-07-06 handoff，照 hello #162 黄金样板）
+
+Handoff 原文入库：`docs/together/2026-07-06/handoffs/kanban-boot-publish-handoff.md`。要点：kanban socialware 每次 boot 自动发布成 public（真 governance 流），新库冷起后"新建会话 → Socialware 下拉"直接出现 kanban，跟 hello 一模一样。
+
+1. **`EzagentPluginKanban.Demo`**（`lib/ezagent_plugin_kanban/demo.ex`，新）— 一比一照 `Ezagent.Socialware.Demo.Hello`（#162），改名 + 三处数据：
+   - `manifest_attrs/1` — string-keyed、`ManifestResolver.resolve/1`-ready 的 config-authored manifest：`name "kanban"` / title·description 看板的 / `uses ["kanban"]` / `views ["kanban_render"]` / **roles = #1190 的两槽**（`kanban-assistant`×cc-headless + `dev-together`×cc-headless，string 形态照 hello 的 roles 键写法）/ **routing_rules = 只有 #1190 的 relay-back 规则**（`text_contains "__done__"` → `kanban-assistant`，**没照抄 hello 的 always→chat**，handoff 标红项）/ legends `member_set` 用我们两个角色名（fronting `relay-back` rule_set）/ `visibility_policy %{scope: public, publish_policy: supervised, web_anon_access: false}`（看板不匿名）。opts：`:name`（测试 per-run 唯一名，照 hello）+ `:flavor`（集成测试 bare-spawn stub 换 flavor 的 seam，替代原先对 `definition_body().roles` 的手工 map）。
+   - `publish/0` = `ManifestResolver.resolve(manifest_attrs())` → `Governance.publish_or_upgrade(definition, ctx)`，发进 `workspace://system`、scope public；`published?/0` + 私有 `admin_ctx`（`user://system/admin` + `manage_cap` + `admin_genesis_cap`）逐行照 hello。
+2. **boot 调用点**（`application.ex`）— 旧 `maybe_seed_kanban_team`（imperative `seed_definition_if_absent`、boot-safe 吞错）**整体替换**为 `maybe_publish_kanban_demo`：照 hello `application.ex:71` **fail-loud**（发布挂 → raise 崩 boot，dogfood 真 governance 路径）+ `:test` skip（Ecto sandbox 争用，ExUnit 驱动 publish）。**旧 seed 模块 `kanban_team.ex` 删除**（判"只走 publish 最干净"，hello 同款只有 publish 一条路；`KanbanTeam.definition_body/relay_done_marker` 的单一真相并入 `Demo`，测试 fixture 全改从 `Demo.manifest_attrs/1` resolve 派生——manifest 与 boot demo 永不 drift，hello 的 one-source-of-truth play）。`relay-signal-check.sh` 第 3 检查点路径同步 `kanban_team.ex` → `demo.ex`。
+3. **幂等三态单测**（`test/demo_publish_test.exs`，新，DataCase）— `resolve` 成功；`Demo.publish()` 第一次 `:published`、第二次 `:exists`（**同一 revision，不开新 CR**）、改 manifest（description）后 `publish_or_upgrade` → `:upgraded`（新 immutable revision，content_hash 对上）；外加 PUBLIC 跨 workspace `DefinitionRegistry.list/1` 可发现 + **发布后的 Definition 全 12 条 conformance assertion 绿**（= `mix ezagent.socialware.check kanban` 的同一保证）。manifest 形态单测（`test/demo_test.exs`，新）锁两槽/零实例 URI/relay-only（显式断言无 `always` matcher）/public+supervised+non-anon/legends 角色名。
+4. **⚠️ roles 差异（open decision，给 Allen 判）** — handoff 示例写 `kanban-manager×native` 进 roles；实施**保持 #1190 两槽、没塞 kanban-manager**。证据：`kanban-manager` recipe 是 `passive: true`（`application.ex` `kanban_manager_recipe/0`），RF-6 硬门禁在 `session.join` 拒 passive actor（`{:error, {:passive_actor_cannot_join, member_uri}}`，`apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:729-731`；`test/e2e/role_native_create_test.exs:119` 锁死）；现读确认 materialize 路径（`definition_agents.ex`/`template_team.ex`）**无 passive 特例**（grep "passive" 零命中），Definition 里放 kanban-manager 槽 → materialize 对每个 agent 槽都 `session.join` → 必炸。这正是 S2 board 建模修正修过的 bug（`cfa2cddc`）。board 维持 workspace 级 actor（`entity://<ws>/agent/<id>` URI dispatch），pm 持 kanban action caps 驱动。`demo_test.exs`「kanban-manager is NOT a role-slot」回归锁。**若 Allen 仍要 board 进 roles，需要先给 RF-6/materialize 开 passive 槽语义（平台改动，非本片自包含范围）。**
+
 ## DoD 对账（对 spec 硬要求逐行）
 
 | spec 硬要求 | 出处 | 状态 | 证据 |
 |---|---|---|---|
-| routing 只搬消息、协议住 skill、**唯一契约点 = 完成标记字面 == matcher `arg` 逐字一致** | §0.1 | ✅ | `KanbanTeam.relay_done_marker/0 == "__done__"` 单一常量进 matcher；协议文档在 `.claude/skills/kanban-assistant/references/kanban-team-collaboration.md`（+ dev-relay overlay 同侧持有）；`relay-signal-check.sh` 锁字面一致 |
-| relay-back = **内容协议**：`text_contains "__done__"`（或 legend）+ `{:role,"kanban-assistant"}` receiver，routing 里**零时序/身份判断**、零 sender-lock | §4.2/§4.0 | ✅ | `kanban_team.ex` routing_rules；`kanban_team_test.exs`「content-triggered relay-back rule … zero instance URIs」；集成测试断言 RuleStore matcher/receiver/position + 命中/不命中两向 |
+| routing 只搬消息、协议住 skill、**唯一契约点 = 完成标记字面 == matcher `arg` 逐字一致** | §0.1 | ✅ | `Demo.relay_done_marker/0 == "__done__"` 单一常量进 matcher（boot-publish 后单一真相并入 `demo.ex`）；协议文档在 `.claude/skills/kanban-assistant/references/kanban-team-collaboration.md`（+ dev-relay overlay 同侧持有）；`relay-signal-check.sh` 锁字面一致 |
+| relay-back = **内容协议**：`text_contains "__done__"`（或 legend）+ `{:role,"kanban-assistant"}` receiver，routing 里**零时序/身份判断**、零 sender-lock | §4.2/§4.0 | ✅ | `demo.ex` manifest routing_rules（原 `kanban_team.ex`）；`demo_test.exs`「relay-back rule … zero instance URIs」；集成测试断言 RuleStore matcher/receiver/position + 命中/不命中两向 |
 | **round-trip 闭环**：materialize → 快照回 Definition → `Definition.new/1` 不报 `:socialware_definition_declares_instance_uri` | §4.4/§6 | ✅ | `test/integration/kanban_team_roundtrip_test.exs`（kanban test 树，非 domain） |
 | 两个 agent 角色槽（pm+dev，cc-headless）；**board 非成员**（passive，RF-6） | §3.2 | ✅ | `cfa2cddc` 修正 + `kanban_team_test.exs`「kanban-manager is NOT a role-slot」回归锁 |
 | conformance gate 12 条全过（`views` 加了则 2/9 要求 render cap 注册） | §6 | ✅ | ExUnit 自包含 gate「passes all 12 socialware conformance assertions」绿；`mix ezagent.socialware.check kanban-team` → `✓ kanban-team: all 12 assertions pass`（本地 dev DB 已按新 body 重写后复验，见 deferred 第 3 条） |
@@ -49,6 +60,17 @@ mix compile --warnings-as-errors --force     # 干净（0 warning）
 mix test apps/ezagent_plugin_kanban/test     # 73 tests, 0 failures (7 excluded)
 mix ezagent.socialware.check kanban-team     # ✓ all 12 assertions pass（新 body：views=[KanbanRender]）
 mix format --check-formatted                 # 干净
+```
+
+boot-publish 片（2026-07-06 handoff）复验：
+
+```text
+mix compile --warnings-as-errors             # 干净（0 warning）
+mix test apps/ezagent_plugin_kanban/test     # 76 tests, 0 failures (7 excluded)
+mix test .../demo_publish_test.exs demo_test.exs  # 11 tests, 0 failures（幂等三态 + 12 条 conformance + manifest 形态）
+mix ezagent.socialware.check kanban          # ✓ kanban: all 12 assertions pass（dev boot 走新 publish 路径把 kanban 发进 registry，任务本身即冷起自证）
+mix format --check-formatted                 # 干净
+relay-signal-check.sh                        # OK（__done__ 对齐 pm protocol + dev overlay + demo.ex manifest）
 ```
 
 - TDD 红基线：新增 3 个测试文件先跑出 16 failures（模块未定义 + `views == []`），实现后 23/23 绿。

@@ -6,8 +6,8 @@
 #   2. the dev-together relay overlay (kanban-assistant-held; the dev-together
 #      skill itself is owner-only and never modified)
 #      (.claude/skills/kanban-assistant/references/dev-together-relay-overlay.md)
-#   3. the kanban-team Definition (routing_rules matcher "arg" — lands in S3;
-#      checked only if kanban_team.ex is present)
+#   3. the kanban Definition manifest (routing_rules matcher "arg" — the
+#      boot-publish demo module; checked only if demo.ex is present)
 # Run from the repo root. Exit non-zero on any mismatch.
 set -euo pipefail
 
@@ -16,7 +16,7 @@ ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 
 PM_PROTO="$ROOT/.claude/skills/kanban-assistant/references/kanban-team-collaboration.md"
 DEV_OVERLAY="$ROOT/.claude/skills/kanban-assistant/references/dev-together-relay-overlay.md"
-KANBAN_TEAM="$ROOT/apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/kanban_team.ex"
+KANBAN_TEAM="$ROOT/apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/demo.ex"
 
 fail() { echo "relay-signal-check FAIL: $1" >&2; exit 1; }
 
