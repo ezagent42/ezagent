@@ -49,7 +49,7 @@ defmodule EzagentWeb.MailerEzagentChatTest do
 
     decoded = Jason.decode!(body)
     assert decoded["address"] == "auth@ezagent.chat"
-    assert decoded["to"] == "user@example.com"
+    assert decoded["to"] == ["user@example.com"]
     assert decoded["subject"] =~ "sign-in"
   end
 

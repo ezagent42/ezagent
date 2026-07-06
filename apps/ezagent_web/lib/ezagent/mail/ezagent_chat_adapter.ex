@@ -10,7 +10,8 @@ defmodule Ezagent.Mail.EzagentChatAdapter do
 
   - `address` is the sender mailbox the key owns (taken from the email's
     `from` address). The service 403s if the key does not own it.
-  - `to` is a string (or list) of recipient addresses.
+  - `to` is an array of recipient address strings (the REST API rejects a
+    bare string).
   - `html` is omitted when the email has no HTML body.
 
   Config (per-delivery override from `EzagentWeb.Mailer`):
@@ -96,14 +97,10 @@ defmodule Ezagent.Mail.EzagentChatAdapter do
     raise ArgumentError, "EzagentChatAdapter: email has no sender address (from=#{inspect(from)})"
   end
 
-  # `to` is a list of `{name, address}`; the REST API accepts a string or array.
-  # Send a single string when there is exactly one recipient, else an array.
-  defp recipients(%Email{to: to}) do
-    case Enum.map(to, &recipient_address/1) do
-      [one] -> one
-      many -> many
-    end
-  end
+  # `to` is a list of `{name, address}`. The REST API requires `to` to be an
+  # array of strings (a bare string 400s: "to ... must be arrays of strings"),
+  # so always send a list — even for a single recipient.
+  defp recipients(%Email{to: to}), do: Enum.map(to, &recipient_address/1)
 
   defp recipient_address({_name, address}) when is_binary(address), do: address
   defp recipient_address(address) when is_binary(address), do: address
