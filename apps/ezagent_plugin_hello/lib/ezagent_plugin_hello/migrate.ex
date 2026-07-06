@@ -48,24 +48,20 @@ defmodule EzagentPluginHello.Migrate do
 
   @doc """
   Migrate one hello session: revive it in-node (cold sessions are not auto-live at
-  boot), then ensure its orchestrator. `:ignore` if it is not a page/hello session.
+  boot), then re-materialize its DECLARED `Definition.roles` team via the
+  sanctioned framework repair (`SessionCreator.repair_orchestrator/1`, which runs
+  `materialize_template_team/4`). Idempotent — a role already joined is skipped.
   """
   @spec migrate_one(URI.t()) :: {:ok, URI.t()} | :ignore | {:error, term()}
   def migrate_one(%URI{} = session_uri) do
-    # Bring the persisted session live so the join lands + the page-session check
-    # (a slice read) sees the Surface. `ensure_live` is the sanctioned respawn.
+    # Bring the persisted session live so the repair reads its bound template + the
+    # materialized members land. `ensure_live` is the sanctioned respawn.
     _ = Ezagent.SpawnRegistry.ensure_live(session_uri)
 
-    # A pre-existing orchestrator from an earlier migration is the WRONG flavor
-    # (`native`, which drops chat). Replace it in place: terminate the live agent,
-    # drop its snapshot + flavor attribute so the recreate is a FRESH `"hello"`-flavor
-    # agent (not a revive of the native one), at the SAME URI so the membership holds.
-    orch_uri = EzagentPluginHello.App.orchestrator_uri(session_uri)
-    _ = Ezagent.Kind.terminate(orch_uri)
-    _ = Ezagent.SnapshotStore.delete(orch_uri)
-    _ = Ezagent.AgentFlavorAttributes.delete(orch_uri)
-
-    EzagentPluginHello.App.ensure_session_orchestrator(session_uri)
+    case EzagentDomainInstanceMessage.SessionCreator.repair_orchestrator(session_uri) do
+      {:ok, _session_uri, _meta} -> {:ok, session_uri}
+      {:error, _} = err -> err
+    end
   rescue
     e -> {:error, e}
   end

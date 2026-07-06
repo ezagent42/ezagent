@@ -20,7 +20,9 @@ defmodule EzagentPluginHello.Router do
   the generation round-trip are slow; they must never block dispatch).
   """
 
-  alias EzagentPluginHello.{App, Generator}
+  alias EzagentPluginHello.{Generator, Members}
+
+  @roles ["orchestrator", "builder", "concierge"]
 
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder or concierge.
@@ -34,12 +36,15 @@ defmodule EzagentPluginHello.Router do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
         case decide(owner?(session_uri, sender), user_text) do
           :builder ->
-            _ = App.ensure_session_builder(session_uri)
             Generator.generate(session_uri, user_text)
 
           :concierge ->
-            _ = App.ensure_session_concierge(session_uri)
-            Generator.concierge_answer(session_uri, user_text, App.concierge_uri(session_uri))
+            # The builder + concierge are now ALWAYS-materialized members
+            # (`Definition.roles`), so no on-demand spawn — resolve the concierge
+            # member by role and attribute its reply. Fail-loud if unresolved (a
+            # materialized session always has one).
+            {:ok, concierge_uri} = Members.role_uri(session_uri, "concierge")
+            Generator.concierge_answer(session_uri, user_text, concierge_uri)
         end
       end)
     else
@@ -56,12 +61,19 @@ defmodule EzagentPluginHello.Router do
   """
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
+    # The orchestrator + its managed members (builder / concierge) are the
+    # `Definition.roles` team, resolved by `role_name` (their URIs are PLANNED and
+    # no longer name-derivable). A role not yet materialized contributes nothing —
+    # so a fresh/half-built session still routes user + external senders.
     own =
-      MapSet.new([
-        URI.to_string(App.orchestrator_uri(session_uri)),
-        URI.to_string(App.builder_uri(session_uri)),
-        URI.to_string(App.concierge_uri(session_uri))
-      ])
+      @roles
+      |> Enum.flat_map(fn role ->
+        case Members.role_uri(session_uri, role) do
+          {:ok, uri} -> [URI.to_string(uri)]
+          :error -> []
+        end
+      end)
+      |> MapSet.new()
 
     not MapSet.member?(own, URI.to_string(sender))
   end

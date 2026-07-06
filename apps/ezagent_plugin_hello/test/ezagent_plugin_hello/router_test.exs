@@ -4,9 +4,12 @@ defmodule EzagentPluginHello.RouterTest do
   boundary) + intent interpretation. Both are pure and tested here without the LLM;
   the owner→LLM branch is exercised end-to-end elsewhere.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
-  alias EzagentPluginHello.{Generator, Router}
+  alias Ezagent.Workspace
+  alias Ezagent.Agent.RecipeRegistry
+  alias EzagentPluginHello.{App, Generator, Members, Router}
+  alias EzagentPluginHello.Application, as: HelloApp
 
   describe "decide/2 — identity is the security boundary" do
     test "a NON-owner is ALWAYS routed to the concierge, whatever they type" do
@@ -35,37 +38,45 @@ defmodule EzagentPluginHello.RouterTest do
 
   describe "should_route?/2 (loop + multi-agent guard)" do
     setup do
-      session = Ezagent.URI.session("system", :hello, "guard-demo")
-      %{session: session}
+      # The guard resolves the orchestrator + managed members by `role_name` from
+      # the LIVE session, so it needs a materialized hello app (the team comes from
+      # `Definition.roles`). Reseed the recipes (boot's write is outside this
+      # DataCase sandbox) and stand up a real app.
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+
+      Enum.each(HelloApp.roles(), fn recipe ->
+        {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
+      end)
+
+      ws = "hello-router-#{System.unique_integer([:positive])}"
+      {:ok, _ws_pid} = Workspace.create(ws, %{})
+      {:ok, session, orchestrator} = App.ensure_app(ws, "guard-demo")
+
+      %{session: session, orchestrator: orchestrator}
     end
 
-    test "ignores the orchestrator's own outbound", %{session: session} do
-      self_uri = EzagentPluginHello.App.orchestrator_uri(session)
-      refute EzagentPluginHello.Router.should_route?(session, self_uri)
+    test "ignores the orchestrator's own outbound", ctx do
+      refute Router.should_route?(ctx.session, ctx.orchestrator)
     end
 
     test "ignores its own builder member", %{session: session} do
-      refute EzagentPluginHello.Router.should_route?(
-               session,
-               EzagentPluginHello.App.builder_uri(session)
-             )
+      assert {:ok, builder} = Members.role_uri(session, "builder")
+      refute Router.should_route?(session, builder)
     end
 
     test "ignores its own concierge member", %{session: session} do
-      refute EzagentPluginHello.Router.should_route?(
-               session,
-               EzagentPluginHello.App.concierge_uri(session)
-             )
+      assert {:ok, concierge} = Members.role_uri(session, "concierge")
+      refute Router.should_route?(session, concierge)
     end
 
     test "routes a user message", %{session: session} do
       user = Ezagent.URI.user("system", "admin")
-      assert EzagentPluginHello.Router.should_route?(session, user)
+      assert Router.should_route?(session, user)
     end
 
     test "routes an EXTERNAL agent message (multi-agent, not human-only)", %{session: session} do
       external = Ezagent.URI.entity("system", :agent, "some-other-agent")
-      assert EzagentPluginHello.Router.should_route?(session, external)
+      assert Router.should_route?(session, external)
     end
   end
 end

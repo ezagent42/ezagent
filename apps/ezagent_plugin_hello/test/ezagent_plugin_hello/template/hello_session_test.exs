@@ -4,6 +4,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Workspace
   alias EzagentPluginHello.Application, as: HelloApp
+  alias EzagentPluginHello.Members
   alias EzagentPluginHello.Template.HelloSession
 
   setup do
@@ -41,7 +42,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
-    test "stands up a creatable hello app: session + joined orchestrator member" do
+    test "stands up a creatable hello app: session + materialized Definition.roles team" do
       ws = "hello-tmpl-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
       workspace_uri = Ezagent.URI.workspace(ws)
@@ -52,23 +53,21 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       assert session_uri == Ezagent.URI.session(ws, :hello, "main")
 
-      # The invisible ORCHESTRATOR front desk joins as a member. `instantiate`
-      # DEFERS its create off the workspace process (avoids a :calling_self
-      # deadlock), so it appears asynchronously — poll for it. The builder/concierge
-      # are NOT created eagerly (the orchestrator spawns them on demand), so they are
-      # absent at create.
-      orch_uri = Ezagent.URI.entity(ws, :agent, "orch_main")
+      # The DECLARED team (orchestrator + builder + concierge) is materialized from
+      # `Definition.roles` — each joins as a member with its `role_name` facet at a
+      # PLANNED (UUID) URI (the `orch_`/`hello_`/`concierge_` convention is retired,
+      # so members are resolved by role, not name). Materialization is synchronous
+      # (no deadlock materializing inside the workspace process — the standard
+      # socialware create path does the same), so the team is present on return.
+      assert {:ok, orch_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
+      assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
 
-      assert eventually(fn -> match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)) end),
-             "the orchestrator should become live"
+      assert match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)),
+             "the orchestrator should be live"
 
-      assert eventually(fn ->
-               match?(
-                 %{^orch_uri => %{role_name: "orchestrator"}},
-                 Ezagent.Orchestrator.Tools.read_members(session_uri)
-               )
-             end),
-             "the orchestrator should join as a member"
+      assert %{^orch_uri => %{role_name: "orchestrator"}} =
+               Ezagent.Orchestrator.Tools.read_members(session_uri)
 
       # The orchestrator holds no within-session orchestrator cap (it is a plain
       # router member, not a session orchestrator).
@@ -76,13 +75,6 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       assert {:error, :unauthorized} =
                Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, session_uri)
-
-      # Builder/concierge are lazy — not members (the orchestrator drives their work
-      # via admin-authority TurnDriver; they are never chat members).
-      refute Map.has_key?(
-               Ezagent.Orchestrator.Tools.read_members(session_uri),
-               Ezagent.URI.entity(ws, :agent, "hello_main")
-             )
 
       # Idempotent: re-instantiating the same app reports not-fresh.
       assert {:ok, [^session_uri], %{fresh?: false}} =
@@ -101,23 +93,6 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       assert {:error, {:invalid_template, _}} =
                HelloSession.instantiate("session.hello", %{}, workspace_uri)
-    end
-  end
-
-  # Retry `fun` until it returns truthy or the budget runs out (the orchestrator is
-  # created asynchronously by `instantiate`). DataCase runs async:false in SHARED
-  # sandbox mode, so the deferred Task shares this test's DB connection.
-  defp eventually(fun, retries \\ 40, delay \\ 25) do
-    cond do
-      fun.() ->
-        true
-
-      retries <= 0 ->
-        false
-
-      true ->
-        Process.sleep(delay)
-        eventually(fun, retries - 1, delay)
     end
   end
 end

@@ -344,13 +344,11 @@ defmodule Ezagent.World.ConversationActions do
            &Ezagent.Workspace.create_session/3
          ) do
       {:ok, %URI{} = session_uri} ->
-        # A session created from a PUBLISHED hello template needs its invisible
-        # ORCHESTRATOR front desk — the generic create path installs the socialware
-        # behaviours + seeds the captured page, but does not spawn the per-session
-        # orchestrator (which then lazily spawns builder / concierge on demand).
-        # hello no-ops for a non-page session; best-effort so it never blocks create.
-        _ = ensure_hello_orchestrator(session_uri)
-
+        # A session created from a PUBLISHED hello template gets its DECLARED team
+        # (orchestrator + builder + concierge) for free: the generic create path
+        # (`Workspace.create_session/3` → `SessionCreator.create_session/3`) runs
+        # `materialize_template_team/4`, which materializes the socialware
+        # `Definition.roles` — no hello-specific orchestrator ensure is needed.
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
@@ -359,21 +357,6 @@ defmodule Ezagent.World.ConversationActions do
       {:error, reason} ->
         {:noreply, push_session_create_error(socket, reason)}
     end
-  end
-
-  defp ensure_hello_orchestrator(%URI{} = session_uri) do
-    # The invisible front-desk orchestrator — ALL user messages route to it, and it
-    # spawns the owner-facing builder + read-only concierge on demand. No-op for a
-    # non-page session; best-effort.
-    _ = EzagentPluginHello.App.ensure_session_orchestrator(session_uri)
-    :ok
-  rescue
-    e ->
-      Logger.warning(
-        "world: hello orchestrator ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
-      )
-
-      :error
   end
 
   # Publish the current session as a reusable SessionTemplate (via the orchestrator
