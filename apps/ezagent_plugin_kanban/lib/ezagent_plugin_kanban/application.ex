@@ -19,7 +19,7 @@ defmodule EzagentPluginKanban.Application do
 
   看板经 `entity://<ws>/agent/<id>` 寻址（agent 的 URI）。`roles/0` 在 boot 经
   `RecipeRegistry.register/1` 登记 `kanban-manager` recipe；create 走 RF-5a role-create
-  路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），24 个 kanban
+  路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），20 个 kanban
   behaviors 经 RF-1 在通用 `Entity.Agent` 宿主上 per-instance 加载。dispatch 到没 live 的
   agent 经 `SpawnRegistry.spawn` 从快照 rehydrate 起活（world 读模型在 dispatch 前
   `KanbanData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
@@ -86,31 +86,32 @@ defmodule EzagentPluginKanban.Application do
   # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
   #   * `behaviors: [Ezagent.ActionSet.Kanban]` —— **仅** Kanban。`Connectors`
-  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 24 个动作（含 9 个
-  #     连接器动作）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、薄转发给
-  #     `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
+  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 20 个动作（含 5 个
+  #     连接器动作：register_pr/attach_code_file/sync_miro/set_board_config/save_miro_creds，
+  #     GitHub 主动连接器已删）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
+  #     薄转发给 `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
   #   * `requested_caps` = 每个动作一个 **cap-template map** `%{behavior:, action:}`
   #     —— 不是裸 atom（`Recipe.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
   #     materialization 轴，由 `Recipe.CapMint` 按 flavor 注入 = `:agent`）。
   #   * `passive: true` —— 看板是**被动数据 actor**：不可被 @ / 不可 `:join` / 不收
   #     chat（RF-6 三闸），只在直接 `kanban.<action>` dispatch 上动作。
   @impl Ezagent.Plugin
-  def roles, do: [kanban_manager_recipe(), pm_coordinator_recipe(), dev_together_recipe()]
+  def roles, do: [kanban_manager_recipe(), kanban_assistant_recipe(), dev_together_recipe()]
 
   # Persona-skill refs resolved by the cc `OrchestratorBootstrap` walk-up search
   # over `.claude/skills/<ref>/SKILL.md` (orchestrator_bootstrap.ex:66,316,323-336
-  # → repo-root `.claude/skills`). `pm-coordinator` is a new skill-creator persona
+  # → repo-root `.claude/skills`). `kanban-assistant` is a skill-creator persona
   # skill; `dev-together` already lives in that resolution root (the copied
   # daily-team-development skill), so the recipe only references it by name.
-  @pm_skill_ref "pm-coordinator"
+  @kanban_assistant_skill_ref "kanban-assistant"
   @dev_together_skill_ref "dev-together"
 
   @doc """
-  The `pm-coordinator` role recipe (S1) — a `cc-headless` (real-brain) coordinator
+  The `kanban-assistant` role recipe (S1) — a `cc-headless` (real-brain) 看板助手
   that turns an owner's intent into kanban board moves, assigns build work to the
   `dev-together` member, and receives dev-together's content-triggered relay-back
   (a `__done__` header / `@完成回传` legend routes their completion message to this
-  role). Its `skills: ["pm-coordinator"]` persona (built with skill-creator; the
+  role). Its `skills: ["kanban-assistant"]` persona (built with skill-creator; the
   kanban-team collaboration protocol lives in an extractable
   `references/kanban-team-collaboration.md`, spec §5.3) is installed into the
   agent's `config_dir` by the cc `OrchestratorBootstrap` at materialize. It
@@ -120,12 +121,12 @@ defmodule EzagentPluginKanban.Application do
   Role-slot shaped (`skills` + persona `prompt` + kanban action caps), carries NO
   instance URI — round-trip safe under role-slot #1180.
   """
-  @spec pm_coordinator_recipe() :: map()
-  def pm_coordinator_recipe do
+  @spec kanban_assistant_recipe() :: map()
+  def kanban_assistant_recipe do
     %{
-      name: "pm-coordinator",
-      skills: [@pm_skill_ref],
-      prompt: pm_persona(),
+      name: "kanban-assistant",
+      skills: [@kanban_assistant_skill_ref],
+      prompt: kanban_assistant_persona(),
       behaviors: [],
       requested_caps: kanban_action_caps()
     }
@@ -136,7 +137,7 @@ defmodule EzagentPluginKanban.Application do
   copied dev-together daily-team-development skill (`skills: ["dev-together"]`). On
   finishing a card it follows the kanban-team relay protocol: emit a `__done__`
   header (or `@完成回传`) + the card id + target stage; the kanban-team
-  routing_rules content-trigger that message back to `pm-coordinator`. Declared as
+  routing_rules content-trigger that message back to `kanban-assistant`. Declared as
   a role slot; the relay carries NO instance URI (role-slot #1180 — round-trip
   safe). The dev-together skill itself is unchanged (portable capability skill);
   its only kanban-team addition is a thin `references/kanban-team-relay.md` overlay
@@ -162,10 +163,10 @@ defmodule EzagentPluginKanban.Application do
     end
   end
 
-  @spec pm_persona() :: String.t()
-  defp pm_persona do
+  @spec kanban_assistant_persona() :: String.t()
+  defp kanban_assistant_persona do
     """
-    # You are the kanban-team PM coordinator
+    # You are the kanban-team 看板助手 (kanban-assistant)
 
     You run a product-development kanban board with a team. The board's stages are
     the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
@@ -193,7 +194,7 @@ defmodule EzagentPluginKanban.Application do
     - Act ONLY within your own session and workspace.
 
     The kanban-team collaboration protocol (how you cooperate with the dev-together
-    member) is your `pm-coordinator` skill's
+    member) is your `kanban-assistant` skill's
     `references/kanban-team-collaboration.md` — read it for the details.
     """
   end
@@ -209,7 +210,7 @@ defmodule EzagentPluginKanban.Application do
     `returns/<task>.md`). THAT workflow is the real work — git + markdown + CI.
     When your return is ready, send a short completion signal (`__done__` header or
     `@完成回传`) + the card id + the target stage; that message is routed to the
-    pm-coordinator so they know to review your return. Keep it concise. Stay inside
+    kanban-assistant so they know to review your return. Keep it concise. Stay inside
     your session and workspace.
     """
   end

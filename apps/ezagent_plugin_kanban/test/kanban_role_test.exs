@@ -7,7 +7,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   fields) catches the three plan-folded review corrections at once:
 
     * BLOCKER-1 — `behaviors: [Ezagent.ActionSet.Kanban]` ONLY (NOT `Connectors`,
-      which is not a Behavior); all 24 actions resolve through `Behavior.Kanban`.
+      which is not a Behavior); all 20 actions resolve through `Behavior.Kanban`.
     * HIGH-1   — `requested_caps` are cap-template MAPS `%{behavior:, action:}`,
       not bare atoms (`Recipe.new/1` `canon_cap` rejects non-maps).
     * BLOCKER-2 — `passive: true` flows through `Recipe.new/1` onto `%Recipe{}`.
@@ -57,7 +57,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
 
     # BLOCKER-1: behaviors is EXACTLY [Behavior.Kanban] — Connectors is not a
-    # Behavior and must NOT appear; the 24 actions all resolve through Kanban.
+    # Behavior and must NOT appear; the 20 actions all resolve through Kanban.
     assert role.behaviors == [Kanban]
 
     # BLOCKER-2: passive flows through onto the struct.
@@ -69,8 +69,8 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     # carrying ONLY {behavior, action} (no `kind` materialization axis). The
     # count + shape pin the recipe; `==` on the whole struct would be brittle.
     actions = Kanban.actions()
-    assert length(actions) == 24, "kanban declares exactly 24 actions"
-    assert length(role.requested_caps) == 24
+    assert length(actions) == 20, "kanban declares exactly 20 actions (gh connector removed)"
+    assert length(role.requested_caps) == 20
 
     assert Enum.all?(role.requested_caps, fn cap ->
              is_map(cap) and cap.behavior == Kanban and cap.action in actions and
@@ -104,22 +104,22 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   end
 
   # kanban-team roles (S1) — the plugin's roles/0 grows from the single
-  # kanban-manager recipe to a three-role team: pm-coordinator (cc-headless
+  # kanban-manager recipe to a three-role team: kanban-assistant (cc-headless
   # coordinator) + dev-together (cc-headless developer) + kanban-manager. Both new
   # recipes are role-slot shaped (skills + persona prompt + kanban action caps),
   # carry NO instance URI, and round-trip through Recipe.new/1.
   describe "kanban-team roles (S1)" do
-    test "roles/0 declares kanban-manager, pm-coordinator, and dev-together" do
+    test "roles/0 declares kanban-manager, kanban-assistant, and dev-together" do
       names = Enum.map(KanbanApp.roles(), & &1.name)
       assert "kanban-manager" in names
-      assert "pm-coordinator" in names
+      assert "kanban-assistant" in names
       assert "dev-together" in names
     end
 
-    test "pm_coordinator_recipe requests a cap for every kanban action" do
-      recipe = KanbanApp.pm_coordinator_recipe()
-      assert recipe.name == "pm-coordinator"
-      assert recipe.skills == ["pm-coordinator"]
+    test "kanban_assistant_recipe requests a cap for every kanban action" do
+      recipe = KanbanApp.kanban_assistant_recipe()
+      assert recipe.name == "kanban-assistant"
+      assert recipe.skills == ["kanban-assistant"]
       assert is_binary(recipe.prompt) and recipe.prompt != ""
 
       requested_actions =
@@ -138,7 +138,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     end
 
     test "both new recipes round-trip through Recipe.new/1 (no instance URI, valid role-slot)" do
-      for recipe <- [KanbanApp.pm_coordinator_recipe(), KanbanApp.dev_together_recipe()] do
+      for recipe <- [KanbanApp.kanban_assistant_recipe(), KanbanApp.dev_together_recipe()] do
         assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
         assert role.skills == recipe.skills
         assert is_binary(role.prompt)

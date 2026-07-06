@@ -1,13 +1,14 @@
 # kanban-team collaboration protocol (extractable module)
 
 > This file is a SELF-CONTAINED, team-specific collaboration protocol. It lives
-> in the pm-coordinator skill for now only because the platform has no workflow-
+> in the kanban-assistant skill for now only because the platform has no workflow-
 > orchestration module yet. When that module lands (feat/ezagent-scout, spec §9
-> Q5), MOVE THIS FILE WHOLESALE into it and the pm skill reverts to pure ability.
+> Q5), MOVE THIS FILE WHOLESALE into it and the kanban-assistant skill reverts to
+> pure ability.
 > Keep it physically separable — do not weave its details into SKILL.md.
 >
 > Routing vs protocol (spec §0.1): the Definition's `routing_rules` only
-> TRANSPORT the completion signal to the pm role; THIS file is the collaboration
+> TRANSPORT the completion signal to the kanban-assistant role; THIS file is the collaboration
 > agreement. The single contract point between them: the completion-marker
 > literal below MUST be byte-identical to the kanban-team Definition's
 > `routing_rules` matcher `arg` (spec §4.2).
@@ -87,6 +88,86 @@ the "I'm done" signal back to you.
   assign it, move its stage).
 - `pr` is CI-gated: only advance a card to `pr` once CI is green on the return.
 - Summarize the change back to the owner (what card moved, to which stage, why).
+
+## (d) Driving the board with the ezagent CLI (the action-face)
+
+Your action-face is the **ezagent CLI** — you move the board by running `mix
+ezagent …` from bash. There is NO new tooling to build and NOTHING to change in
+the platform: the CLI executor already exists (`EzagentCli.Exec.exec/2` →
+`EzagentCli.Dispatch.run_action/4` → `Ezagent.Router.dispatch/1`;
+`apps/ezagent_cli/lib/ezagent_cli/dispatch.ex:21,308`). This is skill-layer
+teaching over that existing CLI — do NOT touch esr-bridge / core / the domain
+agent infrastructure; the action-face is already wired.
+
+### Who you act as
+
+The CLI refuses to run without an identity (no silent admin fallback —
+`exec.ex:44-97`, `dispatch.ex:238-271`). You act as **yourself**, the
+kanban-assistant member, with **your own caps**: your recipe was granted a cap
+for every kanban action, so you can drive the board directly. Pass your identity
+either as flags or via the environment:
+
+```bash
+mix ezagent <kind> <action> … --token "$EZAGENT_USER_TOKEN" --uri "<your-entity-uri>"
+# or set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI in the env and drop the flags
+```
+
+### Targeting the board
+
+The board is the workspace-level `kanban-manager` agent (§a0), addressed by its
+own full URI `entity://<ws>/agent/<uuid>`. You pass that URI as the instance; the
+CLI dispatches the action to it (`dispatch.ex:113-147` takes a full `entity://`
+URI as-is and appends `?action=kanban.<action>` — the kanban behavior's slice is
+`kanban`). The board is an `Entity.Agent`, so the CLI kind segment is `agent`:
+
+```bash
+mix ezagent agent <action> --agent="entity://<ws>/agent/<uuid>" [--<arg>=<value> …]
+```
+
+**Find the board URI** (never create it yourself — §a0): ask the owner which
+board to use, or enumerate the workspace's boards by recipe provenance —
+`Ezagent.AgentRecipeResolver.list_by_recipe("kanban-manager", <ws>)` (the same
+read model the world 看板 / `/plugins/kanban` page uses to list boards). A board
+is a `kanban-manager` agent, so that lookup returns exactly the boards.
+
+### The full loop (each step is one CLI dispatch to the board URI)
+
+1. **Read the board** — `kanban.get_tree` returns the whole node tree, the stage
+   chain, and per-node artifacts. Start every turn here.
+   `mix ezagent agent get_tree --agent="<board-uri>"`
+2. **Create a card** — `kanban.add_node --parent_id=<pid|""> --title="…"`
+   (`parent_id=""` builds a root card; building a root is admin-gated, adding a
+   child needs the parent's owner or admin).
+3. **Hand off to the dev** — this is NOT a CLI call. Write the markdown handoff
+   (`handoffs/<task>.md`, with a DoD) per §b. The dev `dive`s and `return`s, then
+   sends the `__done__` completion signal — routed back to you by the kanban-team
+   `routing_rules` (§b, the contract point below).
+4. **Review + advance** — on the `__done__` signal, review the dev's
+   `returns/<task>.md` (§c: DoD reconciled, CI green, rebased). THEN advance the
+   card: `kanban.set_stage --id=<card> --stage=<next>`. `pr` is CI-gated — only
+   move a card to `pr` once CI is green on the return.
+5. **Pin the produced git references (pure data, NO outbound calls)** — attach the
+   return's artifacts to the card:
+   - `kanban.register_pr --id=<card> --pr=123` — pins the GitHub PR link.
+   - `kanban.attach_code_file --id=<card> --sha=<sha> --path=<file>` — pins a
+     permanent GitHub blob link for a commit + path.
+   - `kanban.attach_artifact --id=<card> --artifact=…` — any other tool artifact.
+
+   These only RECORD git references as node data — there is no GitHub API call.
+   The old active GitHub connectors (`sync_github` / `push_pr` / `sync_prs` /
+   `save_github_creds`) were removed; the board never reaches out to GitHub. The
+   `repo` used to build a PR/blob link is board config data
+   (`kanban.set_board_config --github_repo=owner/name`), not a live credential.
+
+6. **Report back to the owner** — summarize what card moved, to which stage, and
+   why (§c).
+
+> Note: the CLI grammar above is `mix ezagent <kind> <action> --<kind>=<instance>
+> …` and the dispatch target is `<board-uri>?action=kanban.<action>`. If a given
+> build does not surface a specific action as a ready subcommand, the SAME
+> dispatch is what the CLI wraps — the mechanism (identity → target URI →
+> `Router.dispatch`) is the invariant; you are always just dispatching a
+> `kanban.<action>` to the board's URI as yourself.
 
 ## Contract point (protocol ↔ transport)
 

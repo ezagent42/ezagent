@@ -1,7 +1,7 @@
 defmodule EzagentPluginKanban.KanbanTeam do
   @moduledoc """
   The `socialware:kanban-team` Definition (S2) — a prewired team of TWO session
-  participants: a `pm-coordinator` (cc-headless coordinator) and a `dev-together`
+  participants: a `kanban-assistant` (cc-headless coordinator) and a `dev-together`
   (cc-headless developer running the copied dev-together skill). Published via
   code-seed (imperative `seed_definition_if_absent`, the hello
   `EzagentPluginHello.App` play), NOT a plugin package manifest
@@ -28,7 +28,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
       (needs a workspace cap + a caller_ctx), NOT an agent-dispatchable action, so
       the pm does not self-build it.
     * **Access** — the pm drives the board with its existing `kanban_action_caps`
-      (`Application.pm_coordinator_recipe/0` `requested_caps`): it dispatches
+      (`Application.kanban_assistant_recipe/0` `requested_caps`): it dispatches
       `kanban.<action>` to the board's `entity://<ws>/agent/<id>` URI. No new cap.
 
   ## Zero instance URIs (role-slot #1180, enforced) + round-trip safety
@@ -36,7 +36,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
   Participants are declared via the `roles` field as agent role-slots
   (`%{role_name, fill: :agent, recipe, flavor}` — all strings, `recipe` is a
   `RecipeRegistry` NAME resolved at materialize, never a URI). The two recipe
-  names are exactly the S1 `pm-coordinator` / `dev-together` recipes the kanban
+  names are exactly the S1 `kanban-assistant` / `dev-together` recipes the kanban
   plugin declares in `EzagentPluginKanban.Application.roles/0` (which also
   declares the `kanban-manager` board recipe — the workspace board actor, not a
   member). The retired `agents`/`members` fields are rejected fail-loud by
@@ -47,9 +47,9 @@ defmodule EzagentPluginKanban.KanbanTeam do
 
   ## S3 relay-back — CONTENT-triggered, zero URI (round-trip safe)
 
-  The relay-back rule (dev-together → pm-coordinator hand-off signal) is a single
+  The relay-back rule (dev-together → kanban-assistant hand-off signal) is a single
   CONTENT-triggered routing rule: matcher `{:text_contains, "__done__"}` (the
-  dev's completion marker) with receiver `{:role, "pm-coordinator"}` (a declared
+  dev's completion marker) with receiver `{:role, "kanban-assistant"}` (a declared
   role NAME, expanded to the pm member's per-session URI at delivery via the
   `:member_by_role` resolver). It carries NO participant instance URI and NO
   `{:from}` sender-lock — so even after materialize spawns the pm/dev members at
@@ -66,7 +66,7 @@ defmodule EzagentPluginKanban.KanbanTeam do
   # The dev-together completion marker (spec §4.2). The SINGLE contract point
   # between the routing transport and the skill protocol — this literal MUST be
   # byte-identical to the `__done__` marker documented in
-  # `.claude/skills/pm-coordinator/references/kanban-team-collaboration.md` +
+  # `.claude/skills/kanban-assistant/references/kanban-team-collaboration.md` +
   # `.claude/skills/dev-together/references/kanban-team-relay.md`.
   @relay_done_marker "__done__"
   @relay_rule_set "relay-back"
@@ -97,22 +97,22 @@ defmodule EzagentPluginKanban.KanbanTeam do
       # (see moduledoc §Board is not a member).
       roles: [
         %{
-          role_name: "pm-coordinator",
+          role_name: "kanban-assistant",
           fill: :agent,
-          recipe: "pm-coordinator",
+          recipe: "kanban-assistant",
           flavor: "cc-headless"
         },
         %{role_name: "dev-together", fill: :agent, recipe: "dev-together", flavor: "cc-headless"}
       ],
       # Relay-back: the dev-together `__done__` completion signal routes to the
-      # pm-coordinator ROLE. Content-triggered (no sender-lock), zero URI — even
+      # kanban-assistant ROLE. Content-triggered (no sender-lock), zero URI — even
       # after materialize spawns pm/dev at random UUID URIs, the live rule (and a
       # snapshot of it back into a Definition) stays clean, so it survives
       # `reject_participant_instance_uris` (round-trip safe, spec §4.4).
       routing_rules: [
         %{
           "matcher" => %{"type" => "text_contains", "arg" => @relay_done_marker},
-          "receivers" => ["pm-coordinator"],
+          "receivers" => ["kanban-assistant"],
           "rule_set" => @relay_rule_set,
           "position" => 0
         }

@@ -125,7 +125,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
                %{installs: [@itest_definition]}
              )
 
-    pm_uri = member_uri_for_role(session_uri, "pm-coordinator")
+    pm_uri = member_uri_for_role(session_uri, "kanban-assistant")
     dev_uri = member_uri_for_role(session_uri, "dev-together")
     on_exit(fn -> Enum.each([pm_uri, dev_uri], &terminate/1) end)
     assert %URI{} = pm_uri

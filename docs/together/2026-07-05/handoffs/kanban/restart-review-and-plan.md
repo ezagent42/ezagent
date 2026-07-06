@@ -5,6 +5,7 @@
 > **注意（2026-07-05 修正）：** 本 handoff 现已搬到新 worktree `sw-kanban`（分支 `feat/sw-kanban`）。下面所有 file:line 直接对本工作树现读有效。
 > **role-slot 已落地（#1180）：** `Ezagent.Socialware.Definition` 的参与者声明字段已从旧 `agents` + `members` **收敛成单一 `roles` 字段**（`definition.ex:20` defstruct），`members` 已退休（不在 defstruct）；owner 只能 `%{type: :installer}`（`:fixed` 被拒，`definition.ex:412-425`）。本文档下面的 Definition 写法全部按 `roles` 现读校准。
 > **本文只审阅 + 出计划，不改代码。**
+> **件① 改名记录（2026-07-06）：** 本审阅文所述的 `pm-coordinator` 协调者 recipe / role / skill **已定案改名为「看板助手（`kanban-assistant`）」**（recipe slug / role_name / skill 目录 / persona 全套；`__done__` 契约点不变）。本文是**换轨记录**——下方所有 `pm-coordinator` / `pm_coordinator_recipe` 保留旧名，用以忠实记录改名前的 main / 备份分支状态与决策过程，**不改写**（改写会篡改历史事实）。现读代码请以新名 `kanban-assistant` 为准。此外本次同批还做了：**件②** 删 GitHub 主动连接器（保留节点 git 定位数据，action 24 → 20）；**件③** 看板助手 skill 加「用 ezagent CLI 驱动板」教学。
 
 ---
 

@@ -5,7 +5,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
 
     1. the recipe's kanban actions dispatch via
        `entity://<ws>/agent/<id>?action=kanban.<a>` carrying the CALLER's caps
-       (K1 proves the recipe carries all 24; K2 proves RF-1 resolves them on
+       (K1 proves the recipe carries all 20; K2 proves RF-1 resolves them on
        the Entity.Agent host — here we exercise add_node/get_tree/claim/rename);
        the board persists on the Entity.Agent `:kanban` snapshot slice
        (`get_tree` reads it back).
