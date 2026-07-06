@@ -208,12 +208,18 @@ defmodule Ezagent.ActionSet.KanbanRender do
     _, _ -> []
   end
 
+  # encode_uri 独立一行（world kanban_data.ex 同款）：uri_query scan 的
+  # `uri_string_key` 探针要求 map-key 语境里不直接 `URI.to_string`。
   defp board_meta(%URI{} = uri) do
+    encoded = encode_uri(uri)
+
     %{
-      "uri" => URI.to_string(uri),
-      "name" => uri |> URI.to_string() |> String.split("/") |> List.last()
+      "uri" => encoded,
+      "name" => encoded |> String.split("/") |> List.last()
     }
   end
+
+  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
 
   defp get(node, key) when is_map(node), do: Map.get(node, key) || Map.get(node, to_string(key))
   defp get(_, _), do: nil
