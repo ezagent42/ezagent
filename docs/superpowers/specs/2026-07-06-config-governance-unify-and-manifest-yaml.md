@@ -1,8 +1,12 @@
 # ConfigGovernance unification (#158) + Manifest YAML serialization (Q2b) — Design
 
-**Status:** rev2 — rev1 codex adversarial review returned UNSOUND (2 BLOCKER / 4 MAJOR /
-2 MINOR); all eight findings addressed below (marked `[R‑n]`). For re-review, then
-codex implementation handoff.
+**Status:** rev3 — rev1 review: UNSOUND (8 findings, fixed as `[R‑n]`); rev2 re-review:
+UNSOUND (2 new BLOCKERs against the rev2 fixes themselves, fixed as `[R2‑n]`):
+conformance needed a candidate-aware mode (a first import can't pass a
+registry-lookup-based check before it is published), and bases/shape must BE
+YAML-authorable (no `uses`→shape expansion exists; installation derives behaviors
+from `views ++ shape ++ bases`, definition.ex:117). For final re-review, then codex
+implementation handoff.
 **Lineage:** `2026-07-03-socialware-manifest-design.md` (on main) — this spec executes its
 two remaining engineering items: the #158 governance refactor and open question Q2.
 Decisions locked by Allen 2026-07-06: **Q2 = (b)** YAML as interchange format only,
@@ -146,12 +150,28 @@ visibility_policy, assets, prompt_templates, legends, adapters, ...`). No bespok
 schema, no legacy-format compatibility. The legacy autoservice `package.yaml` format
 is **not** supported — it gets superseded (§B5).
 
-**YAML-authorable field subset:** `bases` and `shape` are `[module()]` and are
-**excluded from the YAML surface in this slice** — a config-only socialware that
-needs shape modules must receive them through a `uses` plugin's registered
-contributions (name-ref extension for bases/shape is follow-up §7.5). `render/1`
-fails loudly on a Definition whose bases/shape are non-empty rather than emitting
-un-importable module strings.
+`[R2‑2]` **bases/shape ARE YAML-authorable — as fully-qualified module-name
+strings** (e.g. `shape: ["Ezagent.Behavior.Turn", ...]`). Rev2 tried to exclude
+them, which is inconsistent with reality: no `uses`→shape expansion exists
+(`ManifestResolver.resolve/1` only validates `uses` and resolves `views`,
+manifest_resolver.ex:15), runtime installation derives its behavior set from
+`views ++ shape ++ bases` (`Definition.behaviors/1`, definition.ex:117 →
+`Installation.behavior_set_for_template/2`, installation.ex:58), and the editor's
+complete-validation rejects empty bases/shape (definition_editor.ex:284) — so a
+functional dogfood manifest REQUIRES them. Mechanism:
+
+- `parse/1` maps each string via `String.to_existing_atom("Elixir." <> name)`
+  rescued to `{:error, {:unknown_module, name}}` — **existing atoms only** (no atom
+  minting; an unloaded/unknown module fails closed), followed by
+  `Code.ensure_loaded?/1`. Conformance's `bases_shape_load` check then re-verifies.
+- `render/1` emits the symmetric module-name strings (`inspect(mod)` form without
+  the `Elixir.` prefix). Round-trip holds for bases/shape.
+- **One-way-door note:** the §3 name-ref door (authors pick registered pieces, not
+  modules) is about the RUNTIME authoring surface. This YAML channel is the
+  operator/repo-authored config-repo lane (import is operator-gated, B4), where
+  module refs are the same trust class as the code seeds they replace. Upgrading
+  bases/shape to registered contribution ids remains follow-up §7.5 and would slot
+  into `parse/1` transparently.
 
 Verified enabler: both `Definition.get/3` (definition.ex:484) and
 `ManifestResolver.get/3` (manifest_resolver.ex:156) already do dual atom/string key
@@ -179,9 +199,9 @@ known field names (never `String.to_atom` on arbitrary input).
   enumeration the resolver uses (find the `view_module` whose backing behavior is the
   module; emit `Atom.to_string(view_module.id())`), and **fail loudly** with
   `{:error, {:unrenderable_view, module}}` when a module has no registered id —
-  never silently emit a module string. Same principle for any other field where the
-  struct form differs from the authoring form (`bases`/`shape` module lists are NOT
-  YAML-authorable in this slice — see B1 field subset).
+  never silently emit a module string for `views`. (`bases`/`shape` are the one
+  deliberate exception: they render/parse as module-name strings by design — see B1
+  `[R2‑2]` — because no name registry exists for them yet.)
 - Round-trip property test: `render |> parse |> ManifestResolver.resolve` ≡ the
   original resolved Definition (modulo defaulted fields) — the test corpus must
   include a Definition whose `views` were authored as registry ids, proving the
@@ -195,12 +215,21 @@ is a four-stage fail-closed chain:
 1. `parse/1` — YAML → attrs (B2)
 2. `ManifestResolver.resolve/1` — `uses` plugin presence + view name-ref resolution
    (manifest_resolver.ex:14; note this is NOT the full validity gate)
-3. `[R‑1]` **`Conformance.check(definition, ctx.workspace_uri)`**
-   (conformance.ex:41) — the REAL materializability gate: recipes resolve, caps/role
-   uniqueness, adapters registered, orchestrator URI parses, install resolves,
-   template installable, routing receivers resolve, prompt refs valid, view caps
-   ready. `{:error, failures}` aborts the import — **nothing is published**. (The
-   hello boot-publish skips this only because its manifest is code-controlled;
+3. `[R‑1][R2‑1]` **`Conformance.check_candidate(definition, ctx.workspace_uri)`** —
+   a NEW candidate-aware entry point PR-B must add to `Conformance`
+   (conformance.ex:41), because the existing `check/2` cannot pass for a
+   *not-yet-published* definition: `check_install_resolves/2` does
+   `DefinitionRegistry.lookup(ws, name)` (conformance.ex:247) and
+   `check_template_installable` resolves through the registry-backed install path
+   (conformance.ex:254 → installation.ex:58) — a valid FIRST import would always be
+   rejected. Mechanism: `check_candidate/2` runs the same check list, but the two
+   registry-dependent checks resolve the candidate's OWN name to the in-memory
+   candidate definition (inject a lookup fn: `fn ws, ^name -> {:ok, candidate, nil};
+   ws, other -> DefinitionRegistry.lookup(ws, other) end`), so cross-references to
+   OTHER definitions still hit the real registry. `check/2` keeps its current
+   post-publish semantics unchanged (it backs `mix ezagent.socialware.check`).
+   `{:error, failures}` aborts the import — **nothing is published**. (The hello
+   boot-publish skips conformance only because its manifest is code-controlled;
    arbitrary imported files get no such trust.)
 4. **`ConfigGovernance.Socialware.publish_or_upgrade/2`** — the same governed,
    idempotent boundary the hello boot-publish uses (`{:ok, :exists}` no-op /
@@ -270,8 +299,10 @@ the whole PR (a test that fails when the goal is unmet).
 
 ## 5. Security review
 
-- YAML parsing: `YamlElixir` safe load only; no `String.to_atom` on input; parse
-  errors return tagged tuples, never raise into the caller.
+- YAML parsing: `YamlElixir` safe load only; **no atom minting from input** — field
+  keys map through a known-field whitelist, and bases/shape module strings go through
+  `String.to_existing_atom` (rescued to an error tuple) which cannot grow the atom
+  table `[R2‑2]`; parse errors return tagged tuples, never raise into the caller.
 - `[R‑3]` The library API (`parse/1`, `import/2`, `render/1`, `export/2`) is
   **content-only — no function accepts a filesystem path**. File reads exist solely
   in the operator mix task. An attacker who reaches the import API can therefore

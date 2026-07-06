@@ -53,11 +53,18 @@ logic is YAML (de)serialization + the view-id reverse-map.
 
 DoD:
 - [ ] `Ezagent.Socialware.ManifestYaml` (session app): `parse/1` (safe load, no atom
-      creation, content-only), `render/1` (canonical YAML; views emitted as registry
-      view ids via reverse-map, `{:error, {:unrenderable_view, module}}` when
-      unregistered; hard error on non-empty bases/shape), `import/2` (parse →
-      `ManifestResolver.resolve` → `Conformance.check` → `publish_or_upgrade`; R-1,
-      R-3), `export/2` (registry fetch → render).
+      minting — known-field whitelist + `String.to_existing_atom` for bases/shape
+      module strings, rescued to error tuples; content-only), `render/1` (canonical
+      YAML; views emitted as registry view ids via reverse-map,
+      `{:error, {:unrenderable_view, module}}` when unregistered; bases/shape emitted
+      as module-name strings, R2-2), `import/2` (parse → `ManifestResolver.resolve` →
+      `Conformance.check_candidate` → `publish_or_upgrade`; R-1/R2-1, R-3),
+      `export/2` (registry fetch → render).
+- [ ] `Conformance.check_candidate/2` (R2-1): same check list as `check/2`, but
+      `check_install_resolves` + `check_template_installable` resolve the candidate's
+      own name to the in-memory candidate (injected lookup fn); other names still hit
+      the real registry; `check/2` post-publish semantics unchanged. Unit test: a
+      valid UNPUBLISHED definition passes `check_candidate` and fails `check`.
 - [ ] NO library function accepts a filesystem path (R-3).
 - [ ] `mix ezagent.socialware.import <file> [--workspace <ws>]` + `export` twin:
       `File.read!` at task layer only; ctx = hello `admin_ctx/2` precedent
@@ -66,9 +73,11 @@ DoD:
 - [ ] Round-trip property test incl. a views-authored-as-ids case (R-2).
 - [ ] `apps/ezagent_domain_session/priv/socialware/autoservice/manifest.yaml` in
       canonical format (name/version/title/description/uses/roles/routing_rules/
-      views/visibility_policy subset). Legacy `package.yaml` untouched except a
-      header comment pointing at `manifest.yaml`; persona/kb stay with the seed
-      script (spec B6 non-goals).
+      views/visibility_policy + bases/shape as module strings per R2-2 — include
+      whatever the governed publish path's validation requires; verify against
+      `publish_or_upgrade`'s actual validation at implementation). Legacy
+      `package.yaml` untouched except a header comment pointing at `manifest.yaml`;
+      persona/kb stay with the seed script (spec B6 non-goals).
 - [ ] **Acceptance e2e (the completion gate):** import → conformance passes →
       publish → `DefinitionRegistry.list/1` shows it → install into a session →
       declared agents materialize → routing delivers per `routing_rules`. PLUS the
