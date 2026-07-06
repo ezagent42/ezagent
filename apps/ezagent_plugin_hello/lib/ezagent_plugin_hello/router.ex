@@ -71,7 +71,7 @@ defmodule EzagentPluginHello.Router do
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
     case Members.role_uris(session_uri, @roles) do
-      {:ok, own} -> not MapSet.member?(own, URI.to_string(sender))
+      {:ok, own_uris} -> not Enum.any?(own_uris, &same_uri?(&1, sender))
       :error -> false
     end
   end

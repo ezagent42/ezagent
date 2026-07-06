@@ -47,23 +47,24 @@ defmodule EzagentPluginHello.Members do
   Resolve MULTIPLE roles from a SINGLE slice read. Used by loop-safety guards
   that must distinguish "slice unreadable" (own-membership unknowable — caller
   should fail CLOSED) from "slice readable, a given role just isn't filled yet"
-  (that role simply contributes nothing to the resolved set). Returns `:error`
+  (that role simply contributes nothing to the resolved list). Returns `:error`
   ONLY when the members slice itself cannot be read; a readable-but-partially-
-  filled team still returns `{:ok, set}` (possibly missing some role_names).
+  filled team still returns `{:ok, list}` (possibly missing some role_names).
+
+  Yields `%URI{}` structs (NOT stringified URIs) so callers compare canonically
+  rather than keying on a fragile string form (uri_query.scan `uri_string_key`).
   """
-  @spec role_uris(URI.t(), [String.t()]) :: {:ok, MapSet.t(String.t())} | :error
+  @spec role_uris(URI.t(), [String.t()]) :: {:ok, [URI.t()]} | :error
   def role_uris(%URI{} = session_uri, role_names) when is_list(role_names) do
     case members(session_uri) do
       {:ok, members} ->
         resolved =
-          role_names
-          |> Enum.flat_map(fn role_name ->
+          Enum.flat_map(role_names, fn role_name ->
             case Ezagent.ActionSet.Session.Members.role_name_to_uri(members, role_name) do
-              %URI{} = uri -> [URI.to_string(uri)]
+              %URI{} = uri -> [uri]
               nil -> []
             end
           end)
-          |> MapSet.new()
 
         {:ok, resolved}
 
