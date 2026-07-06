@@ -33,6 +33,12 @@
 ### ③ hello 页面重建入口对组合者开放 —— ✅ **hello 作者已认领走 (a)**
 - **现在**（`49f0167f` 重验）：#1208 重构了 hello 但 `hello_builder.ex:55,74` 的 `from_user?` 门未动——agent sender 的消息仍被丢弃。路由层反而更通了（#1208 后 orchestrator 路由所有其他 sender 含 agent），**builder 的门成了最后一关**。落地后 dealscout"爬完→页面自动刷新"即闭环（信号 `__dealscout_update__` 已按内容协议就位）。
 
+### ③' native flavor 角色收不到 chat 投递 —— **③ 的前提被 live 打破（dealscout e2e 新发现，最重要）**
+- **需要**：Definition routing 把消息路由给 native flavor 的角色成员时，成员的 `:receive` 行为真的会跑。
+- **现在**（dealscout 发现腿 e2e 实测）：路由全通（规则命中 `$role:page`、`agent.receive` authz granted、read_marker delivered），但 **`AgentBridge deliver dropped :no_sandbox_respawn_state`**（`agent_bridge.ex:270`）——native flavor 无 bridge adapter，投递在 bridge 层丢弃，recipe 行为的 `handle_receive` 永远不跑。
+- **问题**：**③（from_user? 门）单独放行也不够**——hello.builder 本身就是 native flavor，门开了消息也到不了行为层。所有"native 角色做接收方"的 socialware 组合都断在这。请裁决方向：(a) core/bridge 给 native flavor 开 in-process receive 通路（无 sidecar 直接跑 recipe 行为）；(b) 约定接收方槽必须用有 adapter 的 flavor（那 hello.builder 自身也要改）。插件自注册 flavor 的路被 `sync_result_action/1` 硬编码堵住，我们插件侧无解。
+- **取证**：#1191 `docs/e2e/2026-07-07/dealscout-discover/`（04a/04b + README gap ⑧）。
+
 ### ④ role-slot agent 的裸名 @mention 解析不到
 - **需要**：成员能 `@kanban-assistant` 按**角色名**提到 role-slot 物化的 agent（协作的自然写法）。
 - **现在**（`49f0167f` 重验仍在）：物化 URI 仍是随机 uuid（`definition_agents.ex:350` `Ecto.UUID.generate()`），display_name 也是 uuid；world `conversation_data.ex:771-776` 的解析只走 URI 末段/display_name 两条腿 → 裸名 `mentions: []` **静默不路由**。全 URI mention 可用（e2e workaround）。
@@ -56,6 +62,10 @@
 - **cap probe p4 撞 cap-only view ActionSet**：`dispatchable?→false`+手写 `cap_subjects/0` 的 view 形态撞 probe；我们按 HelloRender 先例给 `kanban_render.ex` 加了单文件 allowlist（test-only），**请 review 是否认可**，或让 probe 原生豁免 `view_behavior` 形态。
 - **duplicate-fn 的 `# arch-allow:` 行级豁免与 `mix format` 不兼容**：format 会把 `do` 行尾注释挪到上一行 → 豁免失效，黄金样板同形只能走 cap bump。若 arch-allow 也认 def 行上一行的 marker 会好用很多。
 
+### ⑦' 安装/物化的两个可靠性小项（dealscout e2e 实测）
+- **stock cc-headless 物化必崩**：core `FsResolver.Registry` 的 config-dir catalog 缺 "cc-headless" 条目（scenario-05 bug③ 同源，仍在）——凡 Definition 槽用 cc-headless 建会话即崩。
+- **建会话失败的 rollback 不回收 install pointer**：同名重建会静默丢 Definition 的 routing rules（install 已存在→跳过装规则）。换名可绕，但静默丢规则很难查。
+
 ## 抽象提案（非阻塞）
 
 ### ⑧ per-socialware「协作协议」缺常驻注入点
@@ -67,7 +77,7 @@
 ## 已结案（record only）
 
 - **建 session 同步物化超 LiveView 预算** → 你的 #1202 修了（fire-and-forget post-spawn）。
-- **hello 无 @mention 不投 orchestrator** → **#1208 疑似已解**（框架 routing table 路由所有其他 sender），我们 round-2 e2e 重验中，确认后彻底结案。
+- **hello 无 @mention 不投 orchestrator** → #1208 后 hello 原生会话疑似已解，**但组合会话（dealscout uses hello）实测仍零响应**：owner 零 mention 消息已落库已路由、invocations 审计零 agent.receive、40s 无响应——组合会话没有 orchestrator ensure、也无 always 规则兜底。**升回待解决观察项**（e2e 证据 #1191 dealscout-discover/05）。
 - **kanban boot-publish roles 示例与 RF-6 冲突** → 实施按 RF-6 落成（board 不进 roles、助手经 dispatch 驱动），机制其余一比一照 hello，已在 #1190 return 记录。
 
 ## 附录 A：组合 socialware 的 agent 配合——routing 为什么不够、我们怎么解
