@@ -1,5 +1,8 @@
 # Handoff: 官方 socialware 规范 vs 实际代码——不符点与修复办法
 
+> **⚠️ 2026-07-06 返工 banner**：DealScoutRender/DealScoutView 已作废——dealscout=后台数据+爬取agent（爬完 emit `__dealscout_update__` 信号），hello=显示（views 引 `HelloRender`）；本文中提及 DealScoutRender/View 之处以此为准。
+
+
 > **Date:** 2026-07-03 · **From:** jjkysy (FP5) · **To:** Allen (lead)
 > **Base:** upstream/main（已含 #1153 规范 / #1154 Kb-字面清理 / #1150 W0-tenant / #1151 deploy）
 > **来由:** 拿官方规范 `docs/guide/socialware-authoring-interim.md`（#1153）逐条对照实际代码，校准我们的 dealscout 文档（`../dev/independent-dev-feasibility.md` / `README.md`，已按 Part 1 改）。本文件是 **Part 2**：规范承诺/现代 shape、但代码还没跟上、**本轮可修复**的点。
