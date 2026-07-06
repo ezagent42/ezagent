@@ -106,4 +106,17 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert {:ok, %Recipe{name: "hello.concierge", behaviors: [HelloConcierge], passive: false}} =
              RecipeRegistry.lookup("hello.concierge")
   end
+
+  test "hello Definition declares the orchestrator/builder/concierge roles + inbound rule" do
+    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
+    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
+
+    role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
+    assert role_names == ["builder", "concierge", "orchestrator"]
+    assert Enum.all?(defn.roles, &(&1.fill == :agent))
+    assert Enum.find(defn.roles, &(&1.role_name == "orchestrator")).flavor == "hello"
+
+    assert [rule] = defn.routing_rules
+    assert (rule[:receivers] || rule["receivers"]) == ["orchestrator"]
+  end
 end

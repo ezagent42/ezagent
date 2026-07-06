@@ -234,26 +234,43 @@ defmodule EzagentPluginHello.App do
 
   # --- internals --------------------------------------------------------
 
+  @doc "The hello socialware Definition attrs for a given socialware name (testable)."
+  @spec hello_definition_attrs(String.t()) :: map()
+  def hello_definition_attrs(name) when is_binary(name) do
+    %{
+      name: name,
+      bases: [
+        Ezagent.ActionSet.Session,
+        Ezagent.ActionSet.Publisher.SessionImpl
+      ],
+      shape: [
+        Ezagent.ActionSet.Turn,
+        Ezagent.ActionSet.Surface
+      ],
+      roles: [
+        %{role_name: "orchestrator", fill: :agent, recipe: "hello.orchestrator", flavor: "hello"},
+        %{role_name: "builder", fill: :agent, recipe: "hello.builder", flavor: "native"},
+        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"}
+      ],
+      routing_rules: [
+        %{
+          "matcher" => %{"type" => "always"},
+          "receivers" => ["orchestrator"],
+          "rule_set" => "default",
+          "position" => 0
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
+      visibility_policy: %{publish_policy: :auto, web_anon_access: true},
+      owner_policy: %{type: :installer}
+    }
+  end
+
   defp seed_hello_definition(ws, name) do
     DefinitionRegistry.seed_definition_if_absent(
-      %{
-        name: name,
-        bases: [
-          Ezagent.ActionSet.Session,
-          Ezagent.ActionSet.Publisher.SessionImpl
-        ],
-        shape: [
-          Ezagent.ActionSet.Turn,
-          Ezagent.ActionSet.Surface
-        ],
-        roles: [],
-        routing_rules: [],
-        prompt_templates: %{},
-        legends: %{},
-        adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-        visibility_policy: %{publish_policy: :auto, web_anon_access: true},
-        owner_policy: %{type: :installer}
-      },
+      hello_definition_attrs(name),
       workspace_uri: Ezagent.URI.workspace(ws),
       actor_uri: User.admin_uri()
     )
