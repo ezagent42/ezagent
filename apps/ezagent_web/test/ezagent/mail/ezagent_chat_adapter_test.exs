@@ -33,7 +33,7 @@ defmodule Ezagent.Mail.EzagentChatAdapterTest do
 
       decoded = Jason.decode!(body)
       assert decoded["address"] == "auth@ezagent.chat"
-      assert decoded["to"] == "recipient@example.com"
+      assert decoded["to"] == ["recipient@example.com"]
       assert decoded["subject"] == "Your Ezagent sign-in link"
       assert decoded["text"] =~ "auth/magic/abc"
       assert decoded["html"] =~ "auth/magic/abc"
@@ -58,10 +58,10 @@ defmodule Ezagent.Mail.EzagentChatAdapterTest do
       refute Map.has_key?(Jason.decode!(body), "html")
     end
 
-    test "sends a plain string for a single recipient, array for many" do
+    test "always sends `to` as an array, single or many recipients" do
       one = new() |> to("a@x.com") |> from("s@ezagent.chat") |> subject("s") |> text_body("t")
       {_, _, _, b1} = EzagentChatAdapter.build_request(one, @config)
-      assert Jason.decode!(b1)["to"] == "a@x.com"
+      assert Jason.decode!(b1)["to"] == ["a@x.com"]
 
       many =
         new()
@@ -101,7 +101,7 @@ defmodule Ezagent.Mail.EzagentChatAdapterTest do
       assert_received {:sent, :post, {url, headers, ~c"application/json", body}}
       assert url == ~c"https://email.ezagent.chat/api/send"
       assert {~c"authorization", ~c"Bearer emk_test_key"} in headers
-      assert Jason.decode!(body)["to"] == "recipient@example.com"
+      assert Jason.decode!(body)["to"] == ["recipient@example.com"]
     end
 
     test "non-2xx → {:error, {:http, status, body}}" do
