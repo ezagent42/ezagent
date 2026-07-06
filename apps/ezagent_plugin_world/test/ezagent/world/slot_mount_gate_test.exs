@@ -21,7 +21,7 @@ defmodule Ezagent.World.SlotMountGateTest do
                AdminSurface WorkspacePluginSurface IdentitiesSurface)
 
   # Sanctioned `:subcomponent` mounts (parent-owned, data-world-subcomponent).
-  @subcomponent_allowlist %{"Conversation.tsx" => ["PtyTerminalSurface"]}
+  @subcomponent_allowlist %{}
 
   defp component_files do
     @components |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tsx"))

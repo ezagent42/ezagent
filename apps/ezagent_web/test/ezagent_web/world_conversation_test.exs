@@ -77,7 +77,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, session_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "inbound-via-pubsub"
     assert pushed["id"] == msg.id
   end
@@ -105,7 +105,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, cold_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "cold-session-inbound"
   end
 
@@ -162,7 +162,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     # The cast'd message comes back via the inbound bridge (sender sees its
     # OWN message only through the broadcast).
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "hello world"
     assert pushed["sender"] == caller
   end

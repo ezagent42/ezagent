@@ -1,8 +1,7 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
-import {PtyTerminalSurface} from "./PtyTerminal"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
@@ -82,10 +81,10 @@ type ViewTab = {
 }
 
 const ROUTING_MAGIC_RECEIVERS: InviteCandidateRow[] = [
-  {uri: "$session_users,$mentions", display_name: "Human members + mentions", kind: "preset"},
-  {uri: "$session_users", display_name: "Human members", kind: "group"},
-  {uri: "$mentions", display_name: "Mentioned entities", kind: "dynamic"},
-  {uri: "$session_members", display_name: "All session members", kind: "group"},
+  {uri: "$session_users,$mentions", display_name: "成员与被提及实体", kind: "preset"},
+  {uri: "$session_users", display_name: "人类成员", kind: "group"},
+  {uri: "$mentions", display_name: "被提及实体", kind: "dynamic"},
+  {uri: "$session_members", display_name: "全部会话成员", kind: "group"},
 ]
 
 type RoutingRule = {
@@ -175,10 +174,13 @@ export function Conversation({
   const sessions = state.sessions || []
   const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
-  const fallbackViews: ViewTab[] = [{id: "conversation", label: "Chat", icon: "message-square", mode: "chat"}]
-  const views = state.views && state.views.length > 0 ? state.views : fallbackViews
+  const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
+  const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
+  const visibleViews = sourceViews.filter((v) => v.id !== "pty" && v.mode !== "pty")
+  const views = visibleViews.length > 0 ? visibleViews : fallbackViews
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
+  const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
   // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the external surface. See HelloPagePreview below.
@@ -203,8 +205,11 @@ export function Conversation({
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
-  const [expanded, setExpanded] = React.useState(false)
+  const [membersOpen, setMembersOpen] = React.useState(false)
   const [toolsOpen, setToolsOpen] = React.useState(false)
+  const [publishOpen, setPublishOpen] = React.useState(false)
+  const [publishName, setPublishName] = React.useState("")
+  const [published, setPublished] = React.useState(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
   const [ruleReceivers, setRuleReceivers] = React.useState("")
@@ -220,8 +225,8 @@ export function Conversation({
   const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
   const currentSession = sessions.find((session) => session.uri === sessionUri) || null
-  const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "Conversation"
-  const sessionMeta = [countLabel(members.length, "member"), countLabel(messages.length, "turn")].join(" · ")
+  const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "会话"
+  const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
 
   React.useEffect(() => {
     setMembers(state.members || [])
@@ -237,6 +242,10 @@ export function Conversation({
     setNewSessionName("")
     setInviteOpen(false)
     setInviteValue("")
+    setMembersOpen(false)
+    setPublishOpen(false)
+    setPublishName("")
+    setPublished(false)
     markedRef.current = new Set()
   }, [state.session_uri])
 
@@ -437,6 +446,21 @@ export function Conversation({
     setCreating(false)
   }
 
+  const doPublish = () => {
+    const trimmed = publishName.trim()
+    if (!trimmed || !sessionUri) return
+    onPublishTemplate(sessionUri, trimmed)
+    setPublishOpen(false)
+    setPublishName("")
+    setPublished(true)
+    window.setTimeout(() => setPublished(false), 3000)
+  }
+
+  const toggleMembers = () => {
+    if (membersOpen) setInviteOpen(false)
+    setMembersOpen(!membersOpen)
+  }
+
   const loadOlder = () => {
     if (oldestCursor && sessionUri) onLoadOlder(sessionUri, oldestCursor)
   }
@@ -459,28 +483,31 @@ export function Conversation({
   }
 
   return (
+    <>
     <div
-      className="grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
+      className={[
+        "grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)]",
+        membersOpen ? "lg:grid-cols-[276px_minmax(430px,1fr)_260px]" : "lg:grid-cols-[276px_minmax(430px,1fr)]",
+      ].join(" ")}
       data-world-component="conversation"
       data-world-user-surface="conversation"
       data-world-chat-layout="im"
-      data-expanded={expanded ? "true" : "false"}
     >
       <aside
         className="hidden min-h-0 flex-col overflow-hidden border-r border-border bg-[#fafafa] text-card-foreground lg:flex"
-        aria-label="Sessions"
+        aria-label="会话"
         data-world-session-rail
       >
         <div className="flex min-h-[58px] items-center justify-between gap-2.5 border-b border-border px-3 py-2.5">
           <div>
-            <h2 className="text-[13px] font-bold text-foreground">Sessions</h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">Current workspace only</p>
+            <h2 className="text-[13px] font-bold text-foreground">会话</h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">当前工作区</p>
           </div>
           <Button
             type="button"
             size="sm"
             variant="secondary"
-            aria-label={creating ? "Close new session form" : "Create a new session"}
+            aria-label={creating ? "关闭新建会话表单" : "新建会话"}
             onClick={() => setCreating((open) => !open)}
           >
             {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
@@ -502,7 +529,7 @@ export function Conversation({
             onSubmit={submitCreate}
           >
             <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-name">
-              Name
+              名称
               <Input
                 id="world-conversation-session-name"
                 value={newSessionName}
@@ -512,7 +539,7 @@ export function Conversation({
               />
             </label>
             <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-template">
-              Template
+              模板
               <Select
                 id="world-conversation-session-template"
                 value={newSessionTemplate}
@@ -527,16 +554,16 @@ export function Conversation({
             </label>
             <Button type="submit" size="sm" disabled={!newSessionName.trim()}>
               <Plus aria-hidden="true" />
-              Create
+              创建
             </Button>
           </form>
         )}
         <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
           <div className="mb-2 min-h-[34px] rounded-[10px] border border-border bg-muted px-2.5 py-2 text-[12px] text-muted-foreground">
-            Filter sessions, template, status
+            筛选会话、模板、状态
           </div>
           {sessions.length === 0 ? (
-            <p className="px-2 py-3 text-[13px] leading-relaxed text-muted-foreground">No sessions in this workspace.</p>
+            <p className="px-2 py-3 text-[13px] leading-relaxed text-muted-foreground">当前工作区暂无会话。</p>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {sessions.map((session) => {
@@ -559,7 +586,7 @@ export function Conversation({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-semibold">{label}</span>
                         <span className="mt-0.5 block truncate text-[11px] opacity-75">
-                          Chat session
+                          会话
                         </span>
                       </span>
                     </button>
@@ -578,7 +605,7 @@ export function Conversation({
         >
           <div className="min-w-0 flex-1">
             <h2 className="text-[13px] font-bold text-foreground">{sessionTitle}</h2>
-            <p className="mt-0.5 max-w-[48ch] truncate text-[11px] text-muted-foreground">{sessionUri ? sessionMeta : "No active session"}</p>
+            <p className="mt-0.5 max-w-[48ch] truncate text-[11px] text-muted-foreground">{sessionUri ? sessionMeta : "未选择会话"}</p>
           </div>
           <div
             data-world-session-toolbar
@@ -589,7 +616,7 @@ export function Conversation({
                 className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground lg:hidden"
                 value={sessionUri}
                 onChange={(event) => onSwitch(event.target.value)}
-                aria-label="Switch session"
+                aria-label="切换会话"
               >
                 {sessions.map((session) => (
                   <option key={session.uri} value={session.uri}>
@@ -598,40 +625,31 @@ export function Conversation({
                 ))}
               </select>
             )}
-            <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
+            <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="会话视图">
               {orderViews(views).map((v) => {
                 const Icon = iconFor(v.icon)
+                const label = viewLabel(v)
                 return (
                   <button
                     key={v.id}
                     type="button"
                     className={segmentClass(activeId === v.id)}
                     onClick={() => sessionUri && onSwitchView(sessionUri, v.id)}
-                    aria-label={`Show ${v.label}`}
+                    aria-label={"显示" + label}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
-                    {v.label}
+                    {label}
                   </button>
                 )
               })}
             </div>
             <div className="relative" data-world-session-tools>
-              <Button type="button" size="sm" variant="secondary" onClick={() => setToolsOpen((open) => !open)} aria-label="Open session tools">
+              <Button type="button" size="sm" variant="secondary" onClick={() => setToolsOpen((open) => !open)} aria-label="打开会话工具">
                 <MoreHorizontal aria-hidden="true" />
               </Button>
               {toolsOpen && (
                 <div className="absolute right-0 top-[calc(100%+6px)] z-30 grid w-56 gap-1 rounded-lg border border-border bg-card p-1.5 text-sm shadow-xl">
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
-                    onClick={() => {
-                      if (sessionUri) onSwitchView(sessionUri, "pty")
-                      setToolsOpen(false)
-                    }}
-                  >
-                    <TerminalSquare aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                    Terminal
-                  </button>
+
                   <button
                     type="button"
                     className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
@@ -641,7 +659,7 @@ export function Conversation({
                     }}
                   >
                     <RotateCcw aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                    Restart agent runner
+                    重启 agent runner
                   </button>
                   {sessionUri && (
                     <a
@@ -651,7 +669,7 @@ export function Conversation({
                       onClick={() => setToolsOpen(false)}
                     >
                       <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                      External mirror
+                      外部镜像
                     </a>
                   )}
                   <button
@@ -663,38 +681,28 @@ export function Conversation({
                     }}
                   >
                     <Bug aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                    Debug info
+                    调试信息
                   </button>
                 </div>
               )}
             </div>
+            {isHelloSession && sessionUri && (
+              <Button type="button" size="sm" onClick={() => setPublishOpen(true)} aria-label="发布为模板" data-world-publish-template-button>
+                <Upload aria-hidden="true" />
+                发布
+              </Button>
+            )}
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onForkConfig(sessionUri)} aria-label="复制配置，建新会话" title="复制配置，建新会话">
               <Copy aria-hidden="true" />
             </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
-              <Maximize2 aria-hidden="true" />
+            <Button type="button" size="sm" variant={membersOpen ? "default" : "secondary"} onClick={toggleMembers} aria-expanded={membersOpen} aria-label={membersOpen ? "收起成员面板" : "展开成员面板"} data-world-members-toggle>
+              <Users aria-hidden="true" />
+              成员 {members.length}
             </Button>
           </div>
         </div>
 
-        {activeMode === "pty" ? (
-          // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
-          // Conversation, NOT route-mounted and NOT in the layout registry. The
-          // `data-world-subcomponent` marker tells the mount gate this is a
-          // sanctioned parent-owned mount, not a registry bypass.
-          <div data-world-subcomponent="pty_terminal">
-            <PtyTerminalSurface
-              state={{
-                ...state,
-                agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
-              }}
-              onInput={onPtyInput}
-              onResize={onPtyResize}
-              onServerEvent={onServerEvent}
-            />
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-[linear-gradient(#ffffff,#ffffff),repeating-linear-gradient(0deg,transparent,transparent_31px,rgba(23,32,42,0.04)_32px)] px-4 py-4"
@@ -705,14 +713,14 @@ export function Conversation({
                 <div className="flex justify-center pb-0.5">
                   <Button size="sm" variant="secondary" onClick={loadOlder}>
                     <ChevronUp aria-hidden="true" />
-                    Load older
+                    加载更早消息
                   </Button>
                 </div>
               )}
 
               {messages.length === 0 ? (
                 <p className="m-auto max-w-[38ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">
-                  No turns in this session yet. Send the first message to start the transcript.
+                  这个会话还没有消息。发送第一条消息开始对话。
                 </p>
               ) : (
                 messages.map((message) => {
@@ -773,7 +781,7 @@ export function Conversation({
             <form className="flex items-end gap-2.5 border-t border-border bg-[#fafafa] px-4 py-3" onSubmit={submit}>
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
-                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="Mention a member">
+                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
                     {mentionMatches.map((member) => (
                       <li key={member.uri}>
                         <button
@@ -809,12 +817,12 @@ export function Conversation({
                       submit(event)
                     }
                   }}
-                  placeholder="Type a message…  @ to mention"
+                  placeholder="输入消息… 使用 @ 提及成员"
                   rows={2}
-                  aria-label="Message"
+                  aria-label="消息"
                 />
                 {pending.length > 0 && (
-                  <ul className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0" aria-label="Pending attachments">
+                  <ul className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0" aria-label="待发送附件">
                     {pending.map((p) => (
                       <li key={p.id} className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.06] py-0.5 pl-2 pr-1.5 text-xs text-foreground">
                         <Paperclip aria-hidden="true" className="h-3 w-3" />
@@ -822,7 +830,7 @@ export function Conversation({
                         <button
                           type="button"
                           className="inline-flex rounded-full p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-                          aria-label={`Remove ${p.name}`}
+                          aria-label={`移除附件 ${p.name}`}
                           onClick={() => removePending(p.id)}
                         >
                           <X aria-hidden="true" className="h-3 w-3" />
@@ -849,24 +857,23 @@ export function Conversation({
                   variant="secondary"
                   disabled={uploading || pending.length >= MAX_FILES}
                   onClick={() => fileRef.current?.click()}
-                  aria-label="Attach files"
+                  aria-label="添加附件"
                 >
                   <Paperclip aria-hidden="true" />
                 </Button>
                 <Button type="submit" size="sm" disabled={uploading || (!text.trim() && pending.length === 0)}>
                   <Send aria-hidden="true" />
-                  Send
+                  发送
                 </Button>
               </div>
             </form>
             </div>
             {isHelloSession && (
               <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
+                <HelloPagePreview sessionUri={sessionUri} />
               </div>
             )}
           </div>
-        )}
 
         {debugOpen && (
           <pre className="m-0 overflow-auto border-t border-border bg-[#111827] px-4 py-3 font-mono text-xs text-[#d1d5db]">
@@ -875,25 +882,26 @@ export function Conversation({
         )}
       </section>
 
-      <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[#fafafa] text-card-foreground" aria-label="Session members">
+      {membersOpen && (
+      <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[#fafafa] text-card-foreground" aria-label="成员">
         <div className="flex min-h-[58px] items-start justify-between gap-2.5 border-b border-border px-4 py-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">成员</p>
             <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>
           </div>
           <Button
             size="sm"
             variant="secondary"
             disabled={inviteCandidates.length === 0}
-            title={inviteCandidates.length === 0 ? "No available members" : "Invite a member"}
+            title={inviteCandidates.length === 0 ? "暂无可邀请成员" : "邀请成员"}
             onClick={() => {
               setInviteValue((current) => current || inviteCandidates[0]?.uri || "")
               setInviteOpen(true)
             }}
-            aria-label="Invite a member"
+            aria-label="邀请成员"
           >
             <UserPlus aria-hidden="true" />
-            Invite
+            邀请
           </Button>
         </div>
         {inviteOpen && (
@@ -909,7 +917,7 @@ export function Conversation({
             }}
           >
             <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-select">
-              Invite member
+              邀请成员
             </label>
             <select
               id="world-invite-select"
@@ -921,20 +929,20 @@ export function Conversation({
               disabled={inviteCandidates.length === 0}
             >
               <option value="" disabled>
-                {inviteCandidates.length === 0 ? "No available members" : "Select a member"}
+                {inviteCandidates.length === 0 ? "暂无可邀请成员" : "选择成员"}
               </option>
               {inviteCandidates.map((candidate) => {
                 const label = inviteCandidateLabel(candidate)
                 return (
                   <option key={candidate.uri} value={candidate.uri}>
-                    {label} ({candidate.kind || "member"})
+                    {label} ({kindBadgeLabel(candidate.kind)})
                   </option>
                 )
               })}
             </select>
             <div className="flex gap-2">
               <Button type="submit" size="sm" disabled={!inviteValue.trim() || inviteCandidates.length === 0}>
-                Invite
+                邀请
               </Button>
               <Button
                 type="button"
@@ -945,14 +953,14 @@ export function Conversation({
                   setInviteValue("")
                 }}
               >
-                Cancel
+                取消
               </Button>
             </div>
           </form>
         )}
         <ul className="m-0 flex list-none flex-col gap-0.5 overflow-y-auto p-2">
           {members.length === 0 ? (
-            <li className="px-2 py-2.5 text-[13px] text-muted-foreground">No members yet.</li>
+            <li className="px-2 py-2.5 text-[13px] text-muted-foreground">暂无成员。</li>
           ) : (
             members.map((member) => {
               const label = memberLabel(member)
@@ -974,20 +982,16 @@ export function Conversation({
                   <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground">
                     {label}
                   </span>
-                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
-                  {member.kind === "agent" && (
-                    <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${label}`}>
-                      <TerminalSquare aria-hidden="true" />
-                    </Button>
-                  )}
+                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{kindBadgeLabel(member.kind)}</span>
+
                   {member.uri !== callerUri && (
                     <Button
                       type="button"
                       size="sm"
                       variant="ghost"
                       onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
-                      aria-label={`Remove ${label}`}
-                      title="Remove from session"
+                      aria-label={`移除 ${label}`}
+                      title="从会话移除"
                     >
                       <UserMinus aria-hidden="true" />
                     </Button>
@@ -1002,7 +1006,7 @@ export function Conversation({
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
             <span className="inline-flex items-center gap-2">
               <Route aria-hidden="true" className="h-[15px] w-[15px]" />
-              Advanced rules
+              高级规则
             </span>
             <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px]">{routingRules.length}</span>
           </summary>
@@ -1014,21 +1018,21 @@ export function Conversation({
                 setRuleMatcherType(event.target.value)
                 setRuleMatcherArg("")
               }}
-              aria-label="Matcher type"
+              aria-label="匹配类型"
             >
-              <option value="always">Always</option>
-              <option value="mention">Mention</option>
-              <option value="from">From</option>
-              <option value="text_contains">Text contains</option>
+              <option value="always">总是</option>
+              <option value="mention">提及</option>
+              <option value="from">来自</option>
+              <option value="text_contains">文本包含</option>
             </select>
             {matcherUsesText ? (
               <input
                 className={routingFieldClass}
                 value={ruleMatcherArg}
                 onChange={(event) => setRuleMatcherArg(event.target.value)}
-                placeholder="Text to match"
+                placeholder="要匹配的文本"
                 data-world-routing-matcher-text
-                aria-label="Matcher text"
+                aria-label="匹配文本"
               />
             ) : (
               <select
@@ -1037,14 +1041,14 @@ export function Conversation({
                 onChange={(event) => setRuleMatcherArg(event.target.value)}
                 data-world-routing-matcher-select
                 disabled={ruleMatcherType === "always" || routingEntityCandidates.length === 0}
-                aria-label="Matcher entity"
+                aria-label="匹配实体"
               >
                 <option value="" disabled>
                   {ruleMatcherType === "always"
-                    ? "No matcher needed"
+                    ? "无需匹配条件"
                     : routingEntityCandidates.length === 0
-                      ? "No entity available"
-                      : "Select entity"}
+                      ? "暂无可用实体"
+                      : "选择实体"}
                 </option>
                 {routingEntityCandidates.map((candidate) => (
                   <option key={candidate.uri} value={candidate.uri}>
@@ -1059,10 +1063,10 @@ export function Conversation({
               onChange={(event) => setRuleReceivers(event.target.value)}
               data-world-routing-receiver-select
               disabled={routingReceiverCandidates.length === 0}
-              aria-label="Receivers"
+              aria-label="接收方"
             >
               <option value="" disabled>
-                {routingReceiverCandidates.length === 0 ? "No receiver available" : "Select receiver"}
+                {routingReceiverCandidates.length === 0 ? "暂无可用接收方" : "选择接收方"}
               </option>
               {routingReceiverCandidates.map((candidate) => (
                 <option key={candidate.uri} value={candidate.uri}>
@@ -1073,13 +1077,13 @@ export function Conversation({
             <div className="col-span-2">
               <Button type="submit" size="sm" disabled={!canSubmitRule}>
                 <Plus aria-hidden="true" />
-                Add
+                添加
               </Button>
             </div>
           </form>
           <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
             {routingRules.length === 0 ? (
-              <li className="px-0 py-2 text-[13px] text-muted-foreground">No advanced rules.</li>
+              <li className="px-0 py-2 text-[13px] text-muted-foreground">暂无高级规则。</li>
             ) : (
               routingRules.map((rule) => (
                 <li
@@ -1089,7 +1093,7 @@ export function Conversation({
                 >
                   <div className="min-w-0">
                     <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold text-foreground">
-                      {rule.matcher || `Rule ${rule.id}`}
+                      {rule.matcher || `规则 ${rule.id}`}
                     </strong>
                     <span className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground">
                       {routingReceiversLabel(rule)}
@@ -1108,7 +1112,7 @@ export function Conversation({
                       })
                     }
                   >
-                    {rule.enabled ? "Disable" : "Enable"}
+                    {rule.enabled ? "停用" : "启用"}
                   </Button>
                 </li>
               ))
@@ -1116,7 +1120,50 @@ export function Conversation({
           </ul>
         </details>
       </aside>
+      )}
     </div>
+
+    {published && (
+      <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
+        <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
+          <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
+          已发布为模板
+        </div>
+      </div>
+    )}
+
+    <Modal
+      open={publishOpen}
+      title="发布为模板"
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setPublishOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={doPublish} disabled={!publishName.trim()}>
+            发布
+          </Button>
+        </>
+      }
+    >
+      <label className="block text-sm">
+        <span className="mb-1.5 block text-muted-foreground">发布名称</span>
+        <input
+          autoFocus
+          value={publishName}
+          onChange={(e) => setPublishName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") doPublish()
+          }}
+          placeholder="homesite-v1"
+          className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+        />
+      </label>
+      <p className="mt-2 text-xs text-muted-foreground">
+        建议使用英文、数字和连字符。发布后可在新建会话的模板下拉里选择它，会带上当前页面与 agent，不含历史对话。
+      </p>
+    </Modal>
+    </>
   )
 }
 
@@ -1166,7 +1213,7 @@ function sessionLabel(session: SessionRow) {
 
 function humanizeSessionName(value: string) {
   const trimmed = value.trim()
-  if (!trimmed) return "Conversation"
+  if (!trimmed) return "会话"
   const withoutPrefix = trimmed.replace(/^conv[_-]/, "")
   return withoutPrefix
     .replace(/[_]+/g, " ")
@@ -1186,16 +1233,26 @@ function inviteCandidateLabel(candidate: InviteCandidateRow) {
 
 function routingCandidateOptionLabel(candidate: InviteCandidateRow) {
   const label = inviteCandidateLabel(candidate)
-  return candidate.kind ? `${label} (${candidate.kind})` : label
+  return candidate.kind ? `${label} (${kindBadgeLabel(candidate.kind)})` : label
 }
 
-function countLabel(count: number, singular: string) {
-  return `${count} ${singular}${count === 1 ? "" : "s"}`
+function kindBadgeLabel(kind?: string | null) {
+  if (kind === "agent") return "智能体"
+  if (kind === "user") return "用户"
+  if (kind === "group") return "分组"
+  if (kind === "preset") return "预设"
+  if (kind === "dynamic") return "动态"
+  if (kind === "member") return "成员"
+  return "成员"
+}
+
+function countLabel(count: number, label: string) {
+  return `${count} ${label}`
 }
 
 function routingReceiversLabel(rule: RoutingRule) {
   const receivers = rule.receivers && rule.receivers.length > 0 ? rule.receivers : splitReceiverText(rule.receivers_text)
-  return receivers.length > 0 ? receivers.map(uriSegment).join(", ") : "No receiver"
+  return receivers.length > 0 ? receivers.map(uriSegment).join(", ") : "无接收方"
 }
 
 function splitReceiverText(value?: string | null) {
@@ -1218,10 +1275,10 @@ function uriSegment(uri: string) {
 // humans carry their participant class so the transcript shows at a glance
 // who is a person and who is an agent.
 function kindLabel(kind: string, mine: boolean) {
-  if (mine) return "You"
-  if (kind === "agent") return "Agent"
-  if (kind === "user") return "User"
-  return "Participant"
+  if (mine) return "我"
+  if (kind === "agent") return "智能体"
+  if (kind === "user") return "用户"
+  return "成员"
 }
 
 // TEMPORARY internal preview of a hello session's rendered page. Embeds the
@@ -1231,101 +1288,26 @@ function kindLabel(kind: string, mine: boolean) {
 // until then this is a clearly-labelled stopgap so an internal reader can see the page
 // without leaving the console. Hello sessions are `public_view`, so the customer
 // URL renders with no token/login.
-function HelloPagePreview({
-  sessionUri,
-  onPublishTemplate,
-}: {
-  sessionUri: string
-  onPublishTemplate: (sessionUri: string, name: string) => void
-}) {
+function HelloPagePreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
-  const [publishOpen, setPublishOpen] = React.useState(false)
-  const [name, setName] = React.useState("")
-  const [published, setPublished] = React.useState(false)
-
-  // Publish the current session as a template. The dispatch is fire-and-forget
-  // (world:dispatch), so confirm optimistically — the new template appears in the
-  // New-session dropdown once the server finishes.
-  const doPublish = () => {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    onPublishTemplate(sessionUri, trimmed)
-    setPublishOpen(false)
-    setName("")
-    setPublished(true)
-    window.setTimeout(() => setPublished(false), 3000)
-  }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {/* operator-only overlay controls — never rendered on the public share page */}
+      {/* operator-only overlay control — never rendered on the public share page */}
       <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
         <a
           href={src}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
-          title="在新标签页打开公开页面 / Open public page in a new tab"
-          aria-label="Open public page in a new tab"
+          title="在新标签页打开公开页面"
+          aria-label="在新标签页打开公开页面"
         >
           <ExternalLink aria-hidden="true" className="h-4 w-4" />
         </a>
-        <button
-          type="button"
-          onClick={() => setPublishOpen(true)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
-          title="发布为模板 / Publish as template"
-          aria-label="Publish as template"
-        >
-          <Upload aria-hidden="true" className="h-4 w-4" />
-        </button>
       </div>
 
-      {/* antd `message.success`-style toast: page-wide, horizontally centered near
-          the top, white pill + green check + shadow, slides down. `fixed` so it
-          centers on the whole viewport (not tucked beside the publish button). */}
-      {published && (
-        <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
-          <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
-            <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
-            已发布为模板
-          </div>
-        </div>
-      )}
-
-      <iframe title="Rendered page" src={src} className="min-h-0 flex-1 border-0 bg-white" />
-
-      <Modal
-        open={publishOpen}
-        title="发布为模板 / Publish as template"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setPublishOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={doPublish} disabled={!name.trim()}>
-              发布
-            </Button>
-          </>
-        }
-      >
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-muted-foreground">发布物名称 · Template name</span>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") doPublish()
-            }}
-            placeholder="例如 官网模板 v1"
-            className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-        </label>
-        <p className="mt-2 text-xs text-muted-foreground">
-          发布后可在新建 session 的 Template 下拉里选到它 — 会带上当前页面与 agent,不含历史对话。
-        </p>
-      </Modal>
+      <iframe title="渲染页面预览" src={src} className="min-h-0 flex-1 border-0 bg-white" />
     </div>
   )
 }
