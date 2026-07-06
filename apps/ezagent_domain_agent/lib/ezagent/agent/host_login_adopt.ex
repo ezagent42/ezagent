@@ -140,7 +140,12 @@ defmodule Ezagent.Agent.HostLoginAdopt do
 
   # The pointer write goes through the SINGLE sanctioned chokepoint (cap-checked
   # + audited `:set_default_credential_source` dispatch on the installer's own
-  # User Kind), under the installer's live caps — never a raw insert.
+  # User Kind) — never a raw insert. The caller reaching this line is
+  # guard-verified as the host operator (`require_host_operator/1` →
+  # `Identity.admin?/1`), so the ctx carries the admin genesis cap — the same
+  # construction every operator/seed path uses (hello boot-publish, operator
+  # mix tasks). No identity-domain cap enumeration here (invariant p6: cap
+  # reads stay inside the Identity domain / display / tooling).
   defp set_pointer(installer_uri, ws_name, flavor, source_uri) do
     source = URI.to_string(source_uri)
 
@@ -148,7 +153,10 @@ defmodule Ezagent.Agent.HostLoginAdopt do
       UserDefaultSource.set_via_dispatch(
         installer_uri,
         %{flavor: flavor, source_uri: source, workspace: ws_name},
-        %{caller: installer_uri, caps: Ezagent.Identity.list_caps_for(installer_uri)}
+        %{
+          caller: installer_uri,
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+        }
       )
 
     case result do
@@ -173,8 +181,11 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   # `mix ezagent.credential.adopt` operates under). Any other installer keeps
   # the standard #17 resolution for THEIR identity (DoD 6 / #161: host
   # credentials never flow to agents a co-tenant caused to exist).
+  # Invariant p13: the decision goes through the CANONICAL
+  # `Ezagent.Identity.admin?/1` — never a hand-written comparison against a
+  # fixed principal URI.
   defp require_host_operator(%URI{} = installer_uri) do
-    if URI.to_string(installer_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
+    if Ezagent.Identity.admin?(installer_uri) do
       :ok
     else
       :not_host_operator
