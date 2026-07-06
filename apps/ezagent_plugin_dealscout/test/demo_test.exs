@@ -65,7 +65,8 @@ defmodule EzagentPluginDealScout.DemoTest do
     assert discover.flavor == "cc-headless"
 
     page = Enum.find(agent_slots, &(&1.role_name == "page"))
-    assert page.recipe == "hello.builder"
+    # 【显式临时 ALT】A①（#1201 ③）落地后回切 "hello.builder"（demo.ex 槽注释）。
+    assert page.recipe == "dealscout-page-alt"
     assert page.flavor == "native"
 
     Enum.each(agent_slots, fn slot ->
@@ -74,16 +75,17 @@ defmodule EzagentPluginDealScout.DemoTest do
     end)
   end
 
-  test "the :flavor option swaps ONLY the discover slot (page stays hello.builder × native)" do
+  test "the :flavor option swaps ONLY the discover slot (page stays the ALT recipe × native)" do
     definition = resolve!(flavor: "dealscout-demo-stub")
     discover = Enum.find(definition.roles, &(&1.role_name == "discover"))
     page = Enum.find(definition.roles, &(&1.role_name == "page"))
 
     assert discover.flavor == "dealscout-demo-stub"
     assert discover.recipe == "dealscout-discover"
-    # page 槽是 hello 组合的一部分（页面生成 recipe × native），不随 stub 换。
+    # page 槽是页面刷新腿（临时 ALT recipe × native），不随 stub 换。
+    # A①（#1201 ③）落地后回切 "hello.builder"。
     assert page.flavor == "native"
-    assert page.recipe == "hello.builder"
+    assert page.recipe == "dealscout-page-alt"
   end
 
   test "role-slot recipes resolve to plugin-declared recipe names (config references real recipes)" do
