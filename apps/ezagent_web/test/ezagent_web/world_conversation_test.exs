@@ -899,9 +899,14 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert pushed_uri == URI.to_string(session_uri)
 
-    assert_push_event(view, "world:url", %{
-      "path" => pushed_path
-    })
+    assert_push_event(
+      view,
+      "world:url",
+      %{
+        "path" => pushed_path
+      },
+      1_000
+    )
 
     assert pushed_path == "/sessions?session=#{URI.encode_www_form(URI.to_string(session_uri))}"
   end

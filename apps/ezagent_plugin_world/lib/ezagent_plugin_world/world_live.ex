@@ -5,7 +5,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   use Phoenix.LiveView
 
-  alias Ezagent.Behavior.Session.Membership
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.AdminActions
   alias Ezagent.World.AgentActions

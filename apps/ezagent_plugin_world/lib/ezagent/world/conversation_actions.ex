@@ -49,8 +49,7 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
     with_session(socket, sid, fn uri ->
-      to = "/sessions?session=" <> URI.encode_www_form(URI.to_string(uri))
-      {:noreply, push_patch(socket, to: to)}
+      Ezagent.World.ConversationSessionState.switch_session(socket, uri)
     end)
   end
 
@@ -779,16 +778,20 @@ defmodule Ezagent.World.ConversationActions do
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
-        case Ezagent.Session.Participants.remove_participant(
-               session_uri,
-               participant_uri,
-               %{caller: caller, caps: caps}
-             ) do
-          {:ok, _result} ->
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+        if URI.to_string(participant_uri) == URI.to_string(caller) do
+          {:noreply, assign(socket, :last_dispatch_status, "error:self_remove_not_allowed")}
+        else
+          case Ezagent.Session.Participants.remove_participant(
+                 session_uri,
+                 participant_uri,
+                 %{caller: caller, caps: caps}
+               ) do
+            {:ok, _result} ->
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
         end
 
       :error ->

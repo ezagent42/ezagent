@@ -58,7 +58,7 @@ defmodule Ezagent.World.ConversationSessionState do
   @spec ensure_session_subscribed(Phoenix.LiveView.Socket.t(), URI.t()) ::
           Phoenix.LiveView.Socket.t()
   def ensure_session_subscribed(socket, %URI{} = session_uri) do
-    topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
+    topic = Ezagent.ActionSet.Session.session_events_topic(session_uri)
     subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
 
     if connected?(socket) and not MapSet.member?(subscribed, topic) do
