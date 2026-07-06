@@ -107,19 +107,52 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       nil ->
         case install_mode_of(agent) do
           :reuse ->
-            reuse_existing_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name)
+            reuse_existing_agent(
+              session_uri,
+              workspace_uri,
+              granted_by,
+              agent,
+              recipe_name,
+              role_name
+            )
 
           :fresh ->
-            materialize_fresh_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name)
+            materialize_fresh_agent(
+              session_uri,
+              workspace_uri,
+              granted_by,
+              agent,
+              recipe_name,
+              role_name
+            )
         end
     end
   end
 
-  defp materialize_fresh_agent(session_uri, workspace_uri, granted_by, agent, recipe_name, role_name) do
+  defp materialize_fresh_agent(
+         session_uri,
+         workspace_uri,
+         granted_by,
+         agent,
+         recipe_name,
+         role_name
+       ) do
     planned_uri = planned_agent_uri(workspace_uri)
     flavor = flavor_of(agent)
 
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
+         # #17 cascade resolves the installer's user-default source), ensure the
+         # INSTALLER's host login is adopted as that source. No-ops for
+         # credential-less flavors (py/curl), for flavors/nodes without a host
+         # login, and for non-host-operator installers; the spawn below then
+         # inherits through the UNCHANGED cascade (no ad-hoc copy here).
+         :ok <-
+           Ezagent.Agent.HostLoginAdopt.ensure_installer_source(
+             granted_by,
+             workspace_uri,
+             flavor
+           ),
          :ok <-
            spawn_and_join(
              session_uri,

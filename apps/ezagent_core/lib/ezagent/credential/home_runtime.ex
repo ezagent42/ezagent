@@ -16,6 +16,26 @@ defmodule Ezagent.Credential.HomeRuntime do
           | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
           | {:error, term()}
 
+  # #1201 A② — the SHARED host-login-home derivation for file-backed flavors
+  # (cc/codex delegate here with their env var + default dirname, mirroring the
+  # CLIs' own resolution order: env override, else `~/<dirname>`). Lives here —
+  # not per-flavor — per the FF-1 `cross_file_duplicate_fn_groups` gate.
+  @doc false
+  @spec host_login_dir(String.t(), String.t()) :: String.t() | nil
+  def host_login_dir(env_var, home_dirname)
+      when is_binary(env_var) and is_binary(home_dirname) do
+    case System.get_env(env_var) do
+      dir when is_binary(dir) and dir != "" ->
+        dir
+
+      _ ->
+        case System.user_home() do
+          home when is_binary(home) -> Path.join(home, home_dirname)
+          _ -> nil
+        end
+    end
+  end
+
   @doc false
   @spec put_agent_config_dir(map(), String.t() | nil) :: map()
   def put_agent_config_dir(tmpl, nil) when is_map(tmpl), do: tmpl

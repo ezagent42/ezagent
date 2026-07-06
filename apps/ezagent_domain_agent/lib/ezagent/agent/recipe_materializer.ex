@@ -210,13 +210,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
     end
   end
 
-  defp template_class_for(flavor) do
-    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-      {:ok, %{template_class: tc}} when is_atom(tc) -> {:ok, tc}
-      {:ok, _decl} -> {:error, {:flavor_has_no_template_class, flavor}}
-      :error -> {:error, {:unknown_flavor, flavor}}
-    end
-  end
+  defp template_class_for(flavor), do: Ezagent.AgentFlavorRegistry.template_class_for(flavor)
 
   defp config_dir_ref(template_class, %URI{} = agent_uri) do
     if config_dir_flavor?(template_class) do

@@ -71,7 +71,13 @@
   #   File.exists?/expiresAt result into the normalized status enum for the
   #   credential-status view). One new public def; cap-gated read (owner/ws-admin
   #   only via read_credential_status/2). 50→51.
-  def_count_cc_agent: 51,
+  # arch-cap-bump: +1 #1201 A② — cc_agent adds the `host_login_dir/0`
+  #   CredentialAdapter optional callback (installer host-login inheritance for
+  #   socialware-materialized agents). One-line delegation to the SHARED
+  #   `Ezagent.Credential.HomeRuntime.host_login_dir/2` derivation (env override
+  #   else `~/.claude`), consumed only via
+  #   `CredentialAdapter.host_login_source_dir/1`. 51→52.
+  def_count_cc_agent: 52,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
@@ -288,7 +294,13 @@
   #   docs (owner/ws-admin only via read_credential_status/2). Measured combined LOC
   #   1684→1721 (+37); genuine per-flavor probe logic in the plugin-isolation seam,
   #   not extractable duplication.
-  cc_codex_template_class_combined_loc: 1721,
+  # arch-cap-bump: +24 #1201 A② installer host-login inheritance — cc_agent +
+  #   codex_agent Template Classes add the `host_login_dir/0` CredentialAdapter
+  #   optional callback. Both are ONE-LINE delegations (env var + default dirname)
+  #   to the SHARED `Ezagent.Credential.HomeRuntime.host_login_dir/2` body — the
+  #   derivation logic itself is NOT duplicated per flavor; the +24 is the two
+  #   @impl defs + their doc comments. Measured 1721→1745.
+  cc_codex_template_class_combined_loc: 1745,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
