@@ -249,7 +249,13 @@
   #   duplicated anon lifecycle in chat/external feed controllers. 48→42.
   # - arch-cap-bump: PR #1168 (hello orchestrator + website work) — +1 duplicate
   #   group from the world console conversation/publish surface. 42→43.
-  cross_file_duplicate_fn_groups: 43,
+  # - arch-cap-bump: hello B'-direct substrate migration (#1208) — +1 duplicate
+  #   group: plugin `migrate.ex` `agent_recipe/1` mirrors the domain-PRIVATE
+  #   `DefinitionAgents.agent_recipe/1` (2-step ETS→durable recipe lookup). The
+  #   plugin cannot call a private domain helper under the plugin-only boundary,
+  #   so the fork is forced; a future domain-side public helper would collapse
+  #   it back. 43→44.
+  cross_file_duplicate_fn_groups: 44,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
