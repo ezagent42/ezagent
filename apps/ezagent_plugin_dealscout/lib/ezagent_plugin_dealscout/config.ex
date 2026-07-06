@@ -51,6 +51,61 @@ defmodule EzagentPluginDealScout.Config do
     {:set, :pinned_batches, Enum.uniq([batch_id | pinned])}
   end
 
+  # --- sources（定向源清单）→ state slice --------------------------------------
+
+  @doc """
+  设定向源清单 —— 返回 `{:set, :sources, list}` slice effect（key=`:sources`，
+  每项 `%{url, source}`）。任一项形状不对 **fail-closed** 拒整批（不 silent
+  丢单项），token 本身仍走 `write_token/2` 的凭证文件路（本清单只记"抓哪些
+  定向源"）。`Fetch.crawl_auto/1` 的运行时分流从这个 slice key 读（爬取
+  ActionSet 经 `ctx[:read]`）。
+  """
+  @spec set_sources(map(), [map()]) ::
+          {:set, :sources, [%{url: String.t(), source: String.t()}]}
+          | {:error, {:invalid_sources, [term()]}}
+  def set_sources(_current, sources) when is_list(sources) do
+    case Enum.split_with(sources, &(normalize_source(&1) != :invalid)) do
+      {valid, []} -> {:set, :sources, Enum.map(valid, &normalize_source/1)}
+      {_valid, bad} -> {:error, {:invalid_sources, bad}}
+    end
+  end
+
+  @doc """
+  从 config slice 当前值读定向源清单（`crawl_auto/1` 的输入形状）。**宽松读**：
+  slice 经 snapshot/JSON round-trip 后 map key 可能变字符串，这里统一归一成
+  `%{url: binary, source: binary}`；形状不对的条目丢弃（写入侧 `set_sources/2`
+  已 fail-closed 挡过，读到坏条目只可能是外部手写，降级为跳过）。
+  """
+  @spec sources(term()) :: [%{url: String.t(), source: String.t()}]
+  def sources(current) when is_map(current) do
+    normalize_sources(Map.get(current, :sources, Map.get(current, "sources", [])))
+  end
+
+  def sources(_), do: []
+
+  @doc "把任意 slice 读回值归一成 `[%{url, source}]`（atom/string key 双读，坏条目丢弃）。"
+  @spec normalize_sources(term()) :: [%{url: String.t(), source: String.t()}]
+  def normalize_sources(sources) when is_list(sources) do
+    sources
+    |> Enum.map(&normalize_source/1)
+    |> Enum.reject(&(&1 == :invalid))
+  end
+
+  def normalize_sources(_), do: []
+
+  defp normalize_source(entry) when is_map(entry) do
+    url = Map.get(entry, :url, Map.get(entry, "url"))
+    source = Map.get(entry, :source, Map.get(entry, "source"))
+
+    if is_binary(url) and url != "" and is_binary(source) and source != "" do
+      %{url: url, source: source}
+    else
+      :invalid
+    end
+  end
+
+  defp normalize_source(_), do: :invalid
+
   # --- token → system://credentials/dealscout_<source>.yaml -------------------
 
   @doc """
