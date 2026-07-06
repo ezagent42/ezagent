@@ -141,7 +141,14 @@ defmodule EzagentPluginDealScout.Demo do
       ],
       "shape" => [
         "Elixir.Ezagent.ActionSet.Turn",
-        "Elixir.Ezagent.ActionSet.Surface"
+        "Elixir.Ezagent.ActionSet.Surface",
+        # 2026-07-07 真浏览器 e2e 发现并修正：`:crawl_now` 的 handler 读
+        # `ctx.session_uri`（只在 session:// 目标上派生）+ `ctx[:read]`（session
+        # 的 config slice）→ 宿主必须是 **session 本体**。此前 shape 没带
+        # DealScoutCrawl，任何 live dispatch 都 `{:unknown_action, :crawl_now}`
+        # （发现 recipe 的 `requested_caps` 只管 agent 作为 caller 的持权，不给
+        # session 装 handler）。单测直接调 handle_crawl_now 掩盖了这个缺口。
+        "Elixir.Ezagent.ActionSet.DealScoutCrawl"
       ],
       # 显示归 hello：引 hello 的 render view（页面读权限门），dealscout 无
       # 自有 view / render。

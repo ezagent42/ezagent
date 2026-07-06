@@ -21,7 +21,12 @@ defmodule EzagentPluginDealScout.Fetch do
           source_type: :public | :directed
         }
 
-  @default_public_source ~c"https://hacker-news.firebaseio.com/v0/topstories.json"
+  # 2026-07-07 真出网 e2e 发现并修正：原 @default_public_source 指
+  # topstories.json（返回**整数 id 数组**，不是条目对象），真跑必
+  # FunctionClauseError 崩 Poller / crawl_now（单测 stub 的 body 都是对象数组，
+  # 掩盖了真源形状）。改指 HN Algolia front_page 检索（公开、无 token、返回
+  # `%{"hits" => [%{...}]}` 条目对象），`parse_items/2` 同步支持该 envelope。
+  @default_public_source ~c"https://hn.algolia.com/api/v1/search?tags=front_page"
 
   @doc "抓固定公开源，返回 source_type: :public 的条目列表。"
   @spec crawl() :: {:ok, [item]} | {:error, term()}
@@ -97,24 +102,70 @@ defmodule EzagentPluginDealScout.Fetch do
     {:ok, public ++ directed}
   end
 
-  @doc "把 body 解析成信息条目，每条打 source_type。"
+  @doc """
+  把 body 解析成信息条目，每条打 source_type。
+
+  支持两种真源形状（2026-07-07 真出网 e2e 修正）：
+    * 裸对象数组 `[%{...}]`（定向源约定形状）——**非 map 条目丢弃**（真公开源
+      可能混入 id 整数等，真跑不能 crash 整批）；
+    * HN Algolia 检索 envelope `%{"hits" => [%{...}]}`（默认公开源 + `:search`
+      腿的真实返回形状）。
+  其余形状（如 topstories 的纯 id 数组解不出对象）降级为 `[]`。
+  """
   @spec parse_items(binary(), :public | :directed) :: [item]
   def parse_items(body, source_type) when is_binary(body) do
     case Jason.decode(body) do
-      {:ok, list} when is_list(list) -> Enum.map(list, &to_item(&1, source_type))
+      {:ok, %{"hits" => hits}} when is_list(hits) -> items_from_list(hits, source_type)
+      {:ok, list} when is_list(list) -> items_from_list(list, source_type)
       _ -> []
     end
+  end
+
+  defp items_from_list(list, source_type) do
+    list
+    |> Enum.filter(&is_map/1)
+    |> Enum.map(&to_item(&1, source_type))
   end
 
   defp to_item(m, source_type) when is_map(m) do
     %{
       title: Map.get(m, "title", ""),
-      url: Map.get(m, "url", ""),
-      summary: Map.get(m, "summary", ""),
+      url: item_url(m),
+      summary: item_summary(m),
       source: Map.get(m, "source", "public"),
       ts: DateTime.utc_now(),
       source_type: source_type
     }
+  end
+
+  # Algolia hit 的 url 可为 null（Ask HN 等站内帖）→ 回落 HN 讨论页。
+  defp item_url(m) do
+    case Map.get(m, "url") do
+      url when is_binary(url) and url != "" -> url
+      _ -> fallback_discussion_url(m)
+    end
+  end
+
+  defp fallback_discussion_url(%{"objectID" => id}) when is_binary(id),
+    do: "https://news.ycombinator.com/item?id=#{id}"
+
+  defp fallback_discussion_url(_), do: ""
+
+  # 条目无显式 summary 时（真源普遍没有），用 points/author 拼一条可读摘要，
+  # 页面展示不至于空白。
+  defp item_summary(m) do
+    case Map.get(m, "summary") do
+      s when is_binary(s) and s != "" ->
+        s
+
+      _ ->
+        points = Map.get(m, "points")
+        author = Map.get(m, "author")
+
+        [if(points, do: "#{points} points"), if(author, do: "by #{author}")]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.join(" ")
+    end
   end
 
   # Test seam: the low-level HTTP transport (`:httpc.request/4` arity). Tests
