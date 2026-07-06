@@ -35,22 +35,27 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   @spec update_signal() :: String.t()
   def update_signal, do: @update_signal
 
-  @impl Ezagent.ActionSet
-  def actions, do: [:crawl_now, :search]
+  # `action/2` 宏声明（照 `Ezagent.ActionSet.Kanban`）：`actions/0` /
+  # `cap_subjects/0` / `required_caps/0` / `interface/0` 全由宏生成——
+  # cap-check 形状留在 core 契约里（invariant p4：插件不手写 `cap_subjects`）。
+  # 生成的 needed-cap kind 轴是 `:any`：运行时（`Kind.Runtime` check 11b）按
+  # 目标宿主 type_name 替换后授权（硬写 kind 会让 role×flavor 路的 recipe
+  # 铸出的 held cap 必拒——照 kanban 的注释先例）。
+  action(:crawl_now,
+    args: %{},
+    returns: %{injected: :integer},
+    caps: [:crawl_now],
+    modes: [:call],
+    description: "Trigger a dealscout crawl and inject results into this session."
+  )
 
-  @impl Ezagent.ActionSet
-  def cap_subjects,
-    do: [
-      {:crawl_now, "Trigger a dealscout crawl and inject results into this session."},
-      {:search, "Run a dealscout active search (query) and inject results into this session."}
-    ]
-
-  @impl Ezagent.ActionSet
-  def required_caps,
-    do: %{
-      crawl_now: Ezagent.Capability.cap(:session, __MODULE__, :crawl_now),
-      search: Ezagent.Capability.cap(:session, __MODULE__, :search)
-    }
+  action(:search,
+    args: %{query: :string, source: {:option, :string}},
+    returns: %{injected: :integer},
+    caps: [:search],
+    modes: [:call],
+    description: "Run a dealscout active search (query) and inject results into this session."
+  )
 
   @impl Ezagent.ActionSet
   def data_owner(_), do: :any
