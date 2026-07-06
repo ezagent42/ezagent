@@ -18,15 +18,21 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   require Logger
 
   @impl Ezagent.ActionSet
-  def actions, do: [:crawl_now]
+  def actions, do: [:crawl_now, :search]
 
   @impl Ezagent.ActionSet
   def cap_subjects,
-    do: [{:crawl_now, "Trigger a dealscout crawl and inject results into this session."}]
+    do: [
+      {:crawl_now, "Trigger a dealscout crawl and inject results into this session."},
+      {:search, "Run a dealscout active search (query) and inject results into this session."}
+    ]
 
   @impl Ezagent.ActionSet
   def required_caps,
-    do: %{crawl_now: Ezagent.Capability.cap(:session, __MODULE__, :crawl_now)}
+    do: %{
+      crawl_now: Ezagent.Capability.cap(:session, __MODULE__, :crawl_now),
+      search: Ezagent.Capability.cap(:session, __MODULE__, :search)
+    }
 
   @impl Ezagent.ActionSet
   def data_owner(_), do: :any
@@ -38,6 +44,27 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     injected =
       Enum.reduce(items, 0, fn item, acc ->
         if inject(ctx.session_uri, item), do: acc + 1, else: acc
+      end)
+
+    {:ok, %{injected: injected}, []}
+  end
+
+  @doc """
+  主动搜索（`:search`）——把 `%{query, source}` 参数化抓取的候选注入发现流，标记为
+  搜索结果（`source: "search:<source>"`，`DealScoutRender` 分类展示时可辨）。
+  走跟 `:crawl_now` 完全相同的 P14 注入路径，失败同样 fail-loud（telemetry）。
+
+  seam（app env，测试注入）：`:search_fun`（默认 `default_search/1`，参数化打
+  `Fetch.fetch/3`）。
+  """
+  def handle_search(%{query: query} = args, ctx) do
+    {:ok, items} = search_fun().(query)
+    source = Map.get(args, :source, "public")
+
+    injected =
+      Enum.reduce(items, 0, fn item, acc ->
+        tagged = Map.put(item, :source, "search:#{source}")
+        if inject(ctx.session_uri, tagged), do: acc + 1, else: acc
       end)
 
     {:ok, %{injected: injected}, []}
@@ -68,8 +95,11 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     end
   end
 
-  defp format_item(%{source_type: st, title: t, url: u, summary: s}),
-    do: "[#{st}] #{t} — #{s} (#{u})"
+  defp format_item(%{source_type: st, title: t, url: u, summary: s} = item) do
+    origin = Map.get(item, :source)
+    origin_tag = if origin in [nil, ""], do: "", else: " {#{origin}}"
+    "[#{st}]#{origin_tag} #{t} — #{s} (#{u})"
+  end
 
   defp fetch_fun,
     do:
@@ -78,6 +108,17 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
         :fetch_fun,
         &EzagentPluginDealScout.Fetch.crawl/0
       )
+
+  defp search_fun,
+    do: Application.get_env(:ezagent_plugin_dealscout, :search_fun, &default_search/1)
+
+  # 参数化搜索：把 query 转成对公开搜索源的检索（HN Algolia，公开、无 token），
+  # 结果标 `:public`。指定源检索走 `Fetch.fetch_directed/2`（Task 5 token 注入）。
+  defp default_search(query),
+    do: EzagentPluginDealScout.Fetch.fetch(search_url(query), [], :public)
+
+  defp search_url(query),
+    do: "https://hn.algolia.com/api/v1/search?query=#{URI.encode(query)}"
 
   defp dispatch_fun,
     do: Application.get_env(:ezagent_plugin_dealscout, :dispatch_fun, &Ezagent.Router.dispatch/1)
