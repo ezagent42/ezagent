@@ -29,15 +29,18 @@ defmodule EzagentPluginDealScout.Recipes do
   @spec all() :: [map()]
   def all, do: [discover(), search(), organize(), followup()]
 
-  # ① 主动发现 —— 按 profile 千人千面挑高分机会。
+  # ① 主动发现 —— 按 profile 千人千面挑高分机会（驱动爬取的主体之一：持 crawl cap，
+  # 可主动触发 :crawl_now；爬完注入新线索后 ActionSet 自动 emit 更新信号
+  # `__dealscout_update__`，由 Definition routing_rules 转给 hello 的页面 agent 更新展示）。
   defp discover do
     %{
       name: "dealscout-discover",
       behaviors: [],
       prompt:
         "你是 DealScout 的发现副驾。读用户 profile + 新抓回的线索条目，按千人千面匹配" <>
-          "挑出高分机会，主动推进发现流；每条机会保留来源类型（public / directed）标注。",
-      requested_caps: [@send_cap]
+          "挑出高分机会，主动推进发现流（可触发 crawl_now 主动爬取）；每条机会保留来源" <>
+          "类型（public / directed）标注。",
+      requested_caps: [@send_cap, @crawl_cap]
     }
   end
 

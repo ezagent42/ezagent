@@ -2,9 +2,22 @@ defmodule EzagentPluginDealScout.Application do
   @moduledoc """
   dealscout socialware plugin — the `Ezagent.Plugin` contract module.
 
-  DealScout = 商业 / 投融资线索的搜索与撮合平台（deal 侦察兵）。两条腿：
-  **发现腿（地基·本 Stage A）**——AI 千人千面主动发现 + 主动搜索 + 爬取 + 深挖追问；
-  **撮合腿（后续 Stage）**——组合 hello 拿公开面 + concierge 客服。
+  DealScout = 商业 / 投融资线索的搜索与撮合平台（deal 侦察兵）。
+
+  ## 职责边界（2026-07-06 拍板）
+
+  层级 plugin → socialware → ezagent。DealScout 整体是一个 **socialware（纯配置
+  组合）**，本 plugin 是它唯一的真代码件——**爬取后台**（poller / fetch / config /
+  crawl ActionSet / recipes / sweeper）。**显示是 hello 的活**：本 plugin **不声明**
+  任何 SessionView / render ActionSet（曾有的 `DealScoutView` / `DealScoutRender`
+  已删）；DealScout Definition 的 `views` 引 hello 的 `hello_render`。
+
+  两个 socialware 的 agent 用**内容协议 routing** 连（跟 kanban-team relay 一样）：
+  dealscout 的爬取 agent 爬完注入新线索后 emit 一个更新信号
+  （`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，`"__dealscout_update__"`，
+  像 kanban 的 `__done__`）→ Definition 的 routing_rules 用 `text_contains`
+  matcher 命中 → 转给 `{:role, <hello 页面 agent 角色>}` → hello 的 agent 更新
+  json-render 页。零实例 URI、不数据直推、dealscout 自己不渲染。
 
   ## Plugin authoring contract
 
@@ -15,13 +28,11 @@ defmodule EzagentPluginDealScout.Application do
   declaration — the author never touches a `*Registry` API. The
   `:ezagent_plugin_check` Mix compiler is the non-bypassable gate.
 
-  ## Stage A scaffold (this stage)
+  ## Declared surface
 
-  Only `plugin_info/0` + `children/0` are declared — a minimal, compilable,
-  gate-passing plugin shell that supervises the crawl `Poller`. `roles/0` /
-  `after_boot/0` / `config_surface/0` (discovery recipes, view registration)
-  land in later stages; every other `Ezagent.Plugin` callback keeps its
-  `use`-macro default (`[]` / `nil` / `:ok`).
+  `plugin_info/0` + `children/0`（爬取 `Poller` + `RetentionSweeper`）+ `roles/0`
+  （发现腿 recipes）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
+  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。
   """
 
   use Application
@@ -32,16 +43,9 @@ defmodule EzagentPluginDealScout.Application do
 
   @impl Application
   def start(_type, _args) do
-    result = Ezagent.Plugin.boot(__MODULE__)
-
-    # Register the discovery-feed SessionView (DECLARE, self-contained). The
-    # registry is init'd by `ezagent_domain_ui`, which boots before this plugin
-    # (a declared dep). world renders any registered SessionView generically —
-    # no world edit here. "Surfacing it as a switchable world tab" is the
-    # world-views branch's job (platform layer), NOT this plugin.
-    _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginDealScout.DealScoutView)
-
-    result
+    # 不注册任何 SessionView / render ActionSet —— 显示归 hello（见 moduledoc
+    # 职责边界）。本 plugin 只 boot 爬取后台。
+    Ezagent.Plugin.boot(__MODULE__)
   end
 
   @impl Ezagent.Plugin
@@ -71,13 +75,4 @@ defmodule EzagentPluginDealScout.Application do
   # per-agent on the Definition role-slot (a later Stage), never on the recipe.
   @impl Ezagent.Plugin
   def roles, do: EzagentPluginDealScout.Recipes.all()
-
-  # Register the `<sw>_render` view read ActionSet's `:dealscout_render` action on
-  # the Session Kind (cap-only, `dispatchable? false`). Writes only the
-  # `{Session, :dealscout_render}` cap subject — no dispatch route. This is the cap
-  # `Ezagent.UI.SessionView.authorize_view/3` checks for the DealScout feed view.
-  @impl Ezagent.Plugin
-  def behaviors do
-    [{Ezagent.Entity.Session, :dealscout_render, Ezagent.ActionSet.DealScoutRender}]
-  end
 end

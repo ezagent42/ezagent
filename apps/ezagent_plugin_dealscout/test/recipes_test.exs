@@ -19,6 +19,14 @@ defmodule EzagentPluginDealScout.RecipesTest do
     end
   end
 
+  test "the crawl-driving agents (discover / search) hold the :crawl_now cap" do
+    crawl_cap = %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
+    by_name = Map.new(Recipes.all(), &{&1.name, &1})
+
+    assert crawl_cap in by_name["dealscout-discover"].requested_caps
+    assert crawl_cap in by_name["dealscout-search"].requested_caps
+  end
+
   test "every recipe is a flavor-agnostic, boot-seedable Ezagent.Agent.Recipe" do
     # `roles/0` recipes are seeded through `Ezagent.Agent.Recipe.new/1` at boot
     # (RecipeRegistry.seed_role_if_absent → validate_recipe → Recipe.new). A recipe
