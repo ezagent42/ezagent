@@ -19,6 +19,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+  alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
@@ -658,12 +659,12 @@ defmodule Ezagent.World.ConversationActions do
   @spec add_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def add_routing_rule(socket, %URI{} = session_uri, params) when is_map(params) do
-    with {:ok, leaf_matcher} <- build_session_form_matcher(params),
+    with {:ok, leaf_matcher} <- ConversationRoutingForm.build_matcher(params),
          receivers when is_list(receivers) and receivers != [] <-
-           parse_session_receivers(Map.get(params, "receivers", "")),
-         :ok <- revalidate_session_matcher_arg(socket, params),
-         :ok <- revalidate_session_receivers(socket, receivers),
-         matcher = wrap_in_session(leaf_matcher, session_uri),
+           ConversationRoutingForm.parse_receivers(Map.get(params, "receivers", "")),
+         :ok <- ConversationRoutingForm.revalidate_matcher_arg(socket, params),
+         :ok <- ConversationRoutingForm.revalidate_receivers(socket, receivers),
+         matcher = ConversationRoutingForm.wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, session_uri, :add_rule, %{
              table: MentionRouting,
@@ -1026,100 +1027,6 @@ defmodule Ezagent.World.ConversationActions do
 
   defp caller_can_restart_orchestrator?(socket, %URI{}) do
     Ezagent.Identity.admin?(socket.assigns.current_entity_uri)
-  end
-
-  defp build_session_form_matcher(params) when is_map(params) do
-    type = Map.get(params, "matcher_type")
-    arg = Map.get(params, "matcher_arg")
-
-    case {type, arg} do
-      {"mention", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.mention(text)}
-
-      {"from", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.from(text)}
-
-      {"text_contains", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.text_contains(text)}
-
-      {"always", _} ->
-        {:ok, Ezagent.Routing.Matcher.always()}
-
-      _ ->
-        {:error, :invalid_matcher_form}
-    end
-  end
-
-  defp build_session_form_matcher(_), do: {:error, :invalid_matcher_form}
-
-  defp parse_session_receivers(value) do
-    values =
-      cond do
-        is_list(value) -> value
-        is_binary(value) -> String.split(value, ",", trim: true)
-        true -> []
-      end
-
-    for item <- values,
-        text = String.trim(to_string(item)),
-        text != "",
-        do: text
-  end
-
-  defp revalidate_session_matcher_arg(socket, %{
-         "matcher_type" => type,
-         "matcher_arg" => arg
-       })
-       when type in ["mention", "from"] and is_binary(arg) and arg != "" do
-    revalidate_session_uris(socket, [arg], [:entity])
-  end
-
-  defp revalidate_session_matcher_arg(_socket, _params), do: :ok
-
-  defp revalidate_session_receivers(socket, receivers) do
-    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
-      if Ezagent.Routing.Resolver.magic_token?(receiver) do
-        {:cont, :ok}
-      else
-        case revalidate_session_uris(socket, [receiver], [:entity, :session]) do
-          :ok -> {:cont, :ok}
-          {:error, _} = err -> {:halt, err}
-        end
-      end
-    end)
-  end
-
-  defp revalidate_session_uris(socket, uris, kinds) do
-    caller_uri = socket.assigns.current_entity_uri
-    workspace_uri = socket.assigns.current_workspace_uri
-
-    Enum.reduce_while(uris, :ok, fn uri, :ok ->
-      if uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-        {:cont, :ok}
-      else
-        {:halt, {:error, {:invalid_uri, uri}}}
-      end
-    end)
-  end
-
-  defp uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-    Module.concat([Ezagent.UI, UriOptions])
-    |> apply(:valid_for?, [caller_uri, workspace_uri, uri, kinds])
-  rescue
-    _ -> false
-  end
-
-  defp wrap_in_session(matcher, %URI{} = session_uri) do
-    case matcher do
-      {:in_session, _} ->
-        matcher
-
-      leaf ->
-        Ezagent.Routing.Matcher.all_of([
-          Ezagent.Routing.Matcher.in_session(session_uri),
-          leaf
-        ])
-    end
   end
 
   defp safe_table_atom(s) when is_binary(s) do
