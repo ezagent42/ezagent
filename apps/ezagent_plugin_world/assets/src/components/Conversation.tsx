@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
 
 import {Button, Modal} from "./ui/primitives"
 import {PtyTerminalSurface} from "./PtyTerminal"
@@ -39,6 +39,27 @@ type Pending = {
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const MAX_FILES = 5
 
+// lucide-react components for the server-declared SessionView icon names
+// (`icon/0` of each registered view). Unknown names draw a neutral grid glyph
+// rather than dropping the tab.
+const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidden"?: boolean}>> = {
+  "message-square": MessageSquare,
+  terminal: TerminalSquare,
+  route: Route,
+  link: Link2,
+  "panel-top": PanelTop,
+  sparkles: Sparkles,
+}
+
+const iconFor = (name: string) => ICONS[name] ?? LayoutGrid
+
+// Stable tab order: conversation (chat) first, pty second, the rest
+// alphabetically — so the strip doesn't reshuffle as views register.
+const orderViews = (vs: ViewTab[]) => {
+  const rank = (id: string) => (id === "conversation" ? 0 : id === "pty" ? 1 : 2)
+  return [...vs].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
+}
+
 type SessionRow = {
   uri: string
   name?: string | null
@@ -55,6 +76,19 @@ type MemberRow = {
 type HumanRoleSlot = {
   role_name: string
   assigned_uri?: string | null
+}
+
+// A registry-enumerated session view tab (server `ConversationData.session_views/2`,
+// backed by `Ezagent.UI.SessionViewRegistry.applicable_views/2` — already
+// caller-aware + cap-gated). `mode` tells React HOW to draw the content:
+// chat|pty are world-native renderers, external draws through the
+// /socialware/external iframe surface, anything else is an honest
+// "unsupported" placeholder (never silently hidden).
+type ViewTab = {
+  id: string
+  label: string
+  icon: string
+  mode: string
 }
 
 type RoutingRule = {
@@ -75,7 +109,6 @@ export type ConversationState = {
   agent_uri?: string | null
   session_uri?: string | null
   caller_uri?: string | null
-  is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
   pty_alive?: boolean
@@ -85,6 +118,7 @@ export type ConversationState = {
   sessions?: SessionRow[]
   members?: MemberRow[]
   human_role_slots?: HumanRoleSlot[]
+  views?: ViewTab[]
 }
 
 type Props = {
@@ -140,14 +174,13 @@ export function Conversation({
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
   const routingRules = state.routing_rules || []
-  const activeView = state.active_view === "pty" ? "pty" : "chat"
-  // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
-  // proper home for this is world surfacing registered SessionViews (Phase 3);
-  // for now it embeds the external surface. See HelloPagePreview below.
-  // Server-detected (has a `:surface` slice) so a session from a PUBLISHED hello
-  // template — whose URI carries the template name, not `/hello/` — still gets the
-  // Page pane. Falls back to the URI check.
-  const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
+  // Registry-driven view tabs (state.views, from SessionViewRegistry). The
+  // fallback is a degenerate chat-only strip for transitional pushes that
+  // predate the "views" key — never a hidden view.
+  const fallbackViews: ViewTab[] = [{id: "conversation", label: "Chat", icon: "message-square", mode: "chat"}]
+  const views = state.views && state.views.length > 0 ? state.views : fallbackViews
+  const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
+  const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlot[]>(state.human_role_slots || [])
@@ -437,14 +470,21 @@ export function Conversation({
               </select>
             )}
             <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
-              <button type="button" className={segmentClass(activeView === "chat")} onClick={() => sessionUri && onSwitchView(sessionUri, "chat")} aria-label="Show chat">
-                <MessageSquare aria-hidden="true" className="h-[15px] w-[15px]" />
-                Chat
-              </button>
-              <button type="button" className={segmentClass(activeView === "pty")} onClick={() => sessionUri && onSwitchView(sessionUri, "pty")} aria-label="Show terminal">
-                <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
-                PTY
-              </button>
+              {orderViews(views).map((v) => {
+                const Icon = iconFor(v.icon)
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    className={segmentClass(activeId === v.id)}
+                    onClick={() => sessionUri && onSwitchView(sessionUri, v.id)}
+                    aria-label={`Show ${v.label}`}
+                  >
+                    <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
+                    {v.label}
+                  </button>
+                )
+              })}
             </div>
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onForkConfig(sessionUri)} aria-label="复制配置，建新会话" title="复制配置，建新会话">
               <Copy aria-hidden="true" />
@@ -461,7 +501,7 @@ export function Conversation({
           </div>
         </div>
 
-        {activeView === "pty" ? (
+        {activeMode === "pty" ? (
           // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
           // Conversation, NOT route-mounted and NOT in the layout registry. The
           // `data-world-subcomponent` marker tells the mount gate this is a
@@ -476,6 +516,23 @@ export function Conversation({
               onResize={onPtyResize}
               onServerEvent={onServerEvent}
             />
+          </div>
+        ) : activeMode === "external" ? (
+          // A view whose content lives on the external json-render surface
+          // (e.g. the hello Page). Full-pane iframe — the same
+          // /socialware/external renderer the public share URL uses.
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-world-view-mode="external">
+            <ExternalSurfaceView sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
+          </div>
+        ) : activeMode !== "chat" ? (
+          // Honest placeholder for a registered view world has no renderer for
+          // (mode "unsupported" or anything unrecognized) — shown, never
+          // silently hidden (Allen locked decision #4).
+          <div
+            className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground"
+            data-world-view-mode="unsupported"
+          >
+            此视图暂无网页渲染器 / This view has no web renderer yet.
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -644,17 +701,12 @@ export function Conversation({
               </div>
             </form>
             </div>
-            {isHelloSession && (
-              <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
-              </div>
-            )}
           </div>
         )}
 
         {debugOpen && (
           <pre className="m-0 overflow-auto border-t border-border bg-[#111827] px-4 py-3 font-mono text-xs text-[#d1d5db]">
-            {JSON.stringify({sessionUri, activeView, members: members.length, messages: messages.length}, null, 2)}
+            {JSON.stringify({sessionUri, activeId, activeMode, members: members.length, messages: messages.length}, null, 2)}
           </pre>
         )}
       </section>
@@ -925,14 +977,13 @@ function kindLabel(kind: string, mine: boolean) {
   return "Participant"
 }
 
-// TEMPORARY internal preview of a hello session's rendered page. Embeds the
-// public `/socialware/external` surface (the working renderer) in an iframe,
-// rather than the native @json-render island. The proper home for this is world
-// surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
-// until then this is a clearly-labelled stopgap so an internal reader can see the page
-// without leaving the console. Hello sessions are `public_view`, so the customer
-// URL renders with no token/login.
-function HelloPagePreview({
+// Generic renderer for any SessionView classified `mode: "external"` — its
+// content lives on the public `/socialware/external` json-render surface, so
+// world embeds that surface in an iframe (the same renderer the public share
+// URL uses; a `public_view` session renders with no token/login). The overlay
+// controls (open-in-tab, publish-as-template) are operator affordances on the
+// internal console only — they never show on the public share page.
+function ExternalSurfaceView({
   sessionUri,
   onPublishTemplate,
 }: {
