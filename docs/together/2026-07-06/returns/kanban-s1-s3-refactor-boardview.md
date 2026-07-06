@@ -27,6 +27,7 @@
 2. **`EzagentPluginKanban.BoardView`**（`lib/ezagent_plugin_kanban/board_view.ex`，新）— `@behaviour Ezagent.UI.SessionView`：`id :kanban_board` / `label "看板"` / `icon "square-kanban"` / `applies_to?/1`（session 装了 kanban-team Definition（`views` 含 KanbanRender）才 true，**fail-safe** 任何异常 → false）/ `view_behavior/0 → KanbanRender`（T2-2b cap-gated，`authorize_view/3` 查 `{Session, :kanban_render}`）/ `external_render?/0 → true` + `external_render/1`（json-render tree）/ `render/1`（internal HEEx 列/卡只读渲染）。`Application.start/2` 里 `SessionViewRegistry.register/1` 注册（照 hello PageView）。
 3. **`kanban_team.ex`** — Definition `views: [Ezagent.ActionSet.KanbanRender]`；**`application.ex`** — `behaviors/0` 回归一条静态绑定 `{Ezagent.Entity.Session, :kanban_render, KanbanRender}`（cap subject，conformance 断言 2/9 的要件）；**`mix.exs`** — `{:ezagent_domain_ui, in_umbrella: true}` prod dep（registry ETS 先 init 再注册，照 hello 的启动次序）。
 4. **TDD**：`test/behavior/kanban_render_test.exs` + `test/board_view_test.exs` + `kanban_team_test.exs` views 断言，先红（16 failures：模块缺失 + `views == []`）后绿。
+5. **一处越出 kanban 包的 gate 维护（显式声明）**：core 的 G2 p4 probe（`cap_check_only_at_chokepoint_test.exs`，禁手写 `def cap_subjects` 出现在非允许路径）把 `kanban_render.ex` 打红——cap-only view read ActionSet 必须手写 `cap_subjects/0`（HelloRender 落地时同样在该 probe 加了 hello behavior 目录的 allowlist 条目）。按同一先例加了**单文件精确 allowlist**（只列 `kanban_render.ex`，不放行整个 kanban behavior 目录）+ 注释标同类。这是 arch-gate allowlist 维护（同 dealscout CI fix 的类别），不是 core 语义改动。
 
 ## DoD 对账（对 spec 硬要求逐行）
 

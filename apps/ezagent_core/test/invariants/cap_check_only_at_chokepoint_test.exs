@@ -93,7 +93,14 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # (`HelloRender`, declaring `cap_subjects/0` for `:hello_render`) — a
         # normal Behavior impl co-located under the plugin's behavior dir, same
         # class as every other ActionSet listed above.
-        "apps/ezagent_plugin_hello/lib/ezagent/behavior/"
+        "apps/ezagent_plugin_hello/lib/ezagent/behavior/",
+        # S4 — the kanban-team board view's cap-only view read ActionSet
+        # (`KanbanRender`, declaring `cap_subjects/0` for `:kanban_render`) —
+        # the SAME class as `HelloRender` directly above (cap-only, no dispatch
+        # surface; `SessionView.authorize_view/3` checks its render cap).
+        # Precise FILE allowlist (not the whole kanban behavior dir — the other
+        # kanban ActionSet declares via the `action/2` macro and stays probed).
+        "apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban_render.ex"
       ]
     },
     %{
