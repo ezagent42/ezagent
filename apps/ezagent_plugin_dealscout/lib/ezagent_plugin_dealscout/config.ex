@@ -40,6 +40,17 @@ defmodule EzagentPluginDealScout.Config do
   @spec set_keywords(map(), [String.t()]) :: {:set, :keywords, [String.t()]}
   def set_keywords(_current, keywords) when is_list(keywords), do: {:set, :keywords, keywords}
 
+  @doc """
+  pin 一个爬取批次 —— 返回 `{:set, :pinned_batches, [id]}` slice effect（去重）。被 pin
+  的批次即使超期也被 `RetentionSweeper.prune/2` 保留（成员限定：改自己那份配置需持
+  config cap，匿名 / 房外人无此 cap，spec §6）。
+  """
+  @spec pin_batch(map(), String.t()) :: {:set, :pinned_batches, [String.t()]}
+  def pin_batch(current, batch_id) when is_binary(batch_id) do
+    pinned = Map.get(current, :pinned_batches, [])
+    {:set, :pinned_batches, Enum.uniq([batch_id | pinned])}
+  end
+
   # --- token → system://credentials/dealscout_<source>.yaml -------------------
 
   @doc """
