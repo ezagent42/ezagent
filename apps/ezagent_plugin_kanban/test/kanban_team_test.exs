@@ -87,6 +87,14 @@ defmodule EzagentPluginKanban.KanbanTeamTest do
     assert slot_recipes == ["dev-together", "kanban-assistant"]
   end
 
+  test "declares the KanbanRender board view (S4, plugin-declared → world consumes generically)" do
+    {:ok, def} = Definition.new(KanbanTeam.definition_body())
+    # the Definition references the kanban plugin's view read ActionSet — the
+    # conformance gate (assertions 2/9) then requires its `{Session,
+    # :kanban_render}` cap to be registered (Application.behaviors/0 does that).
+    assert def.views == [Ezagent.ActionSet.KanbanRender]
+  end
+
   test "declares a content-triggered relay-back rule to the pm role, zero instance URIs (S3)" do
     {:ok, def} = Definition.new(KanbanTeam.definition_body())
 

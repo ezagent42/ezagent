@@ -33,6 +33,11 @@ defmodule EzagentPluginKanban.Application do
   @impl Application
   def start(_type, _args) do
     result = Ezagent.Plugin.boot(__MODULE__)
+    # S4 — register the board SessionView (declaration side; world consumes the
+    # registry generically per world-views #1192/#1199, so this needs ZERO world
+    # changes — the hello PageView play). The registry is init'd by
+    # ezagent_domain_ui, which boots before this plugin (a declared dep).
+    _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginKanban.BoardView)
     :ok = maybe_seed_kanban_team()
     result
   end
@@ -263,8 +268,20 @@ defmodule EzagentPluginKanban.Application do
   # model the kanban behaviors load PER-INSTANCE via the `kanban-manager` recipe
   # (RF-1 `BehaviorSet.resolve_action` on the generic `Entity.Agent` host); the
   # host declares NOTHING kanban-specific (K2's invariant), so those static rows
-  # are dead (`Entity.Agent` is the resolution key, never the Kanban Kind). The
-  # recipe (`roles/0`) is now the sole behavior declaration. Defaults to `[]`.
+  # are dead (`Entity.Agent` is the resolution key, never the Kanban Kind).
+  #
+  # S4 — the ONE static binding that returned (the hello play): the board view's
+  # `<sw>_render` cap subject on the Session Kind. Cap-only (`dispatchable?/0 →
+  # false`) so this writes only the `{Session, :kanban_render}` cap subject —
+  # no dispatch route. This is the cap `SessionView.authorize_view/3` (T2-2b)
+  # checks for the kanban board view, and what the socialware conformance gate
+  # (assertions 2/9) requires for `Definition.views: [KanbanRender]`.
+  @impl Ezagent.Plugin
+  def behaviors do
+    [
+      {Ezagent.Entity.Session, :kanban_render, Ezagent.ActionSet.KanbanRender}
+    ]
+  end
 
   @impl Ezagent.Plugin
   def children do
