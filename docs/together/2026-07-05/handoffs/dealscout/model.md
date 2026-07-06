@@ -1,5 +1,8 @@
 # dealscout 支撑概念模型（session 生命周期 + 访问权限 + 数据保留 + 撮合机制）
 
+> **⚠️ 2026-07-06 返工 banner**：DealScoutRender/DealScoutView 已作废——dealscout=后台数据+爬取agent（爬完 emit `__dealscout_update__` 信号），hello=显示（views 引 `HelloRender`）；本文中提及 DealScoutRender/View 之处以此为准。
+
+
 > 承接用户澄清（2026-07-03 → 2026-07-05 找为主重构 → 2026-07-05 撮合腿证据版校正，核实过代码）。DealScout 从"被开发"到"被使用"，经过 **3 种角色不同的 session**；认证/权限挂在 session 成员身份上、分**配置层 vs 使用层**两层；爬取/搜索数据有**保留策略**；**撮合机制 = hello 公开面聊天——DealScout 组合 hello 拿公开面 + concierge 客服，登录用户在公开面自助 join+发言供线索、匿名只读、founder 看身份后 invite 深聊**（不是 `#1178` 申请加入私有 session——现读代码确认 `#1178` admission gate 是 agent 门、防偷用别人 agent 刷凭证，DealScout 用不上）。编号文档（`README.md` 骨架 + `product/*` + `tech/*`）都坐在本模型上。
 >
 > **结构**：§1 session 3 角色（作者 / admin 装配组合发布 / 公开共享）· §2 权限两层 + 登录三档 · §3 公开面 concierge 客服（登录发言→concierge、匿名只读）· §4 数据保留 · §5 撮合机制 = hello 公开面聊天 + founder invite 深聊 · §6 发现层三条腿（撮合网络怎么形成）。
