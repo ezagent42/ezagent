@@ -18,16 +18,21 @@ defmodule EzagentPluginDealScout.Recipes do
 
   这些 recipe 经 `EzagentPluginDealScout.Application.roles/0` 声明进插件契约，
   boot 时按 `name` 注册进 `Ezagent.Agent.RecipeRegistry`。
+
+  另有一个**显式临时 ALT** recipe（`page_refresh_alt/0`，非发现腿）：A①
+  （#1201 ③，hello builder `from_user?` 门放行带标记信号）落地后随
+  `Ezagent.ActionSet.DealScoutPageRefreshAlt` 一起整体删除。
   """
 
   # caps 只在这里（recipe 的 requested_caps 是 caps 的唯一来源）。cap-template
   # 形状 `%{behavior: <ActionSet>, action: <atom>}`，照 orchestrator_recipe。
   @send_cap %{behavior: Ezagent.ActionSet.Session, action: :send}
   @crawl_cap %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
+  @page_refresh_cap %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :receive}
 
-  @doc "发现腿 4 个 recipe 的声明数据（`roles/0` 的 seed 源）。"
+  @doc "全部 recipe 声明数据（`roles/0` 的 seed 源）：发现腿 4 个 + 临时 ALT 1 个。"
   @spec all() :: [map()]
-  def all, do: [discover(), search(), organize(), followup()]
+  def all, do: [discover(), search(), organize(), followup(), page_refresh_alt()]
 
   # ① 主动发现 —— 按 profile 千人千面挑高分机会（驱动爬取的主体之一：持 crawl cap，
   # 可主动触发 :crawl_now；爬完注入新线索后 ActionSet 自动 emit 更新信号
@@ -71,6 +76,20 @@ defmodule EzagentPluginDealScout.Recipes do
       behaviors: [],
       prompt: "你对单条机会做多轮深挖追问，逐步产出可下载的尽调材料。",
       requested_caps: [@send_cap]
+    }
+  end
+
+  # ⑤ 【显式临时 ALT，非发现腿】page 槽的更新信号 receiver：收到带
+  # `__dealscout_update__` 的消息 → 调 hello 公开生成入口重建页面
+  # （`Ezagent.ActionSet.DealScoutPageRefreshAlt`）。code-driven（照
+  # `hello.builder` recipe 的形状：无 prompt，behaviors 挂 ActionSet，
+  # requested_caps 只有自己的 `:receive`）。**A①（#1201 ③）落地后随 ALT
+  # ActionSet 一起整体删除，Demo 的 page 槽回切 `hello.builder`。**
+  defp page_refresh_alt do
+    %{
+      name: "dealscout-page-alt",
+      behaviors: [Ezagent.ActionSet.DealScoutPageRefreshAlt],
+      requested_caps: [@page_refresh_cap]
     }
   end
 end
