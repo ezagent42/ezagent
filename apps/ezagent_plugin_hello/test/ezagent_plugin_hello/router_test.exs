@@ -79,4 +79,27 @@ defmodule EzagentPluginHello.RouterTest do
       assert Router.should_route?(session, external)
     end
   end
+
+  describe "should_route?/2 — fails CLOSED when the members slice is unreadable" do
+    test "a session URI with no live Kind (members slice unreadable) is NOT routed" do
+      # No `App.ensure_app` call for this session — no live Kind is spawned at
+      # this URI, so `Ezagent.Kind.get_slice/2` returns `{:error, :not_found}`.
+      # Loop-safety cannot be guaranteed without knowing our own members, so the
+      # guard must fail CLOSED (refuse to route) rather than fail OPEN (which
+      # would let an unbounded loop through if the read miss ever coincided with
+      # a live orchestrator sending its own builder/concierge output back in).
+      ghost_session =
+        Ezagent.URI.session(
+          "hello-router-ghost-#{System.unique_integer([:positive])}",
+          :hello,
+          "no-such-session"
+        )
+
+      user = Ezagent.URI.user("system", "admin")
+      external = Ezagent.URI.entity("system", :agent, "some-other-agent")
+
+      refute Router.should_route?(ghost_session, user)
+      refute Router.should_route?(ghost_session, external)
+    end
+  end
 end

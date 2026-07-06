@@ -58,24 +58,22 @@ defmodule EzagentPluginHello.Router do
   those are the orchestrator's OWN workers, whose output must never re-route
   (loop). Every other sender — a user OR an external agent — IS routed, which is
   how the orchestrator accepts more than human messages.
+
+  Fails CLOSED: if the `:session` members slice cannot be read AT ALL (no live
+  Kind / a read miss), we cannot identify our own workers and therefore cannot
+  guarantee this isn't a loop, so we do NOT route (`false`). A dropped message
+  is recoverable (the user resends); an unguarded concierge→concierge loop is
+  unbounded LLM calls. This is distinct from the readable-but-role-not-yet-
+  materialized case (a fresh/half-built session), which still routes normally —
+  see `Members.role_uris/2`, which resolves all roles from a SINGLE read so
+  "slice unreadable" and "slice readable, role just not filled" aren't conflated.
   """
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
-    # The orchestrator + its managed members (builder / concierge) are the
-    # `Definition.roles` team, resolved by `role_name` (their URIs are PLANNED and
-    # no longer name-derivable). A role not yet materialized contributes nothing —
-    # so a fresh/half-built session still routes user + external senders.
-    own =
-      @roles
-      |> Enum.flat_map(fn role ->
-        case Members.role_uri(session_uri, role) do
-          {:ok, uri} -> [URI.to_string(uri)]
-          :error -> []
-        end
-      end)
-      |> MapSet.new()
-
-    not MapSet.member?(own, URI.to_string(sender))
+    case Members.role_uris(session_uri, @roles) do
+      {:ok, own} -> not MapSet.member?(own, URI.to_string(sender))
+      :error -> false
+    end
   end
 
   @doc """
