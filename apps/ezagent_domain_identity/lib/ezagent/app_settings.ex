@@ -4,7 +4,12 @@ defmodule Ezagent.AppSettings do
   `app_settings` table. JSON-encodes values.
 
   Keys in use:
-  - `"smtp_config"` — `%{"host","port","username","password","from_address","tls"}`
+  - `"smtp_config"` — the outbound-mail transport config. Holds EITHER shape:
+    - SMTP relay: `%{"host","port","username","password","from_address","tls"}`
+    - `email.ezagent.chat` REST API: `%{"from_address","base_url","api_key"}`
+    (The key name is historical; it is the single "mail config" slot. Which
+    shape is required depends on the compile-pinned Swoosh adapter — see
+    `EzagentWeb.Mailer`.)
   - `"registration_domains"` — list of allowed email domains for new registration
 
   Both keys are written by the admin SMTP-settings UI (Phase 8). This
@@ -21,6 +26,7 @@ defmodule Ezagent.AppSettings do
   end
 
   @smtp_required ~w(host port username password from_address)
+  @mail_api_required ~w(base_url api_key)
 
   @doc "Decoded value for `key`, or `nil` if unset / unparseable."
   @spec get(String.t()) :: term() | nil
@@ -52,7 +58,7 @@ defmodule Ezagent.AppSettings do
     :ok
   end
 
-  @doc "True only when `smtp_config` exists with every required field non-empty."
+  @doc "True only when `smtp_config` has every SMTP-relay field non-empty."
   @spec smtp_configured?() :: boolean()
   def smtp_configured? do
     case get("smtp_config") do
@@ -60,6 +66,29 @@ defmodule Ezagent.AppSettings do
       _ -> false
     end
   end
+
+  @doc """
+  True when `smtp_config` has the `email.ezagent.chat` REST-API fields
+  (`base_url` + `api_key`) non-empty. This is the readiness check for the
+  `Ezagent.Mail.EzagentChatAdapter` prod transport.
+  """
+  @spec mail_api_configured?() :: boolean()
+  def mail_api_configured? do
+    case get("smtp_config") do
+      %{} = cfg -> Enum.all?(@mail_api_required, &present?(Map.get(cfg, &1)))
+      _ -> false
+    end
+  end
+
+  @doc """
+  Transport-agnostic mail readiness: true when a usable outbound-mail transport
+  is configured — EITHER a complete SMTP relay OR the REST API. Use this for
+  gates that only ask "can we send auth email at all?" (login form visibility,
+  magic-link send, boot-seed idempotency), independent of which adapter is
+  compile-pinned.
+  """
+  @spec mail_configured?() :: boolean()
+  def mail_configured?, do: smtp_configured?() or mail_api_configured?()
 
   @doc """
   task #87 Decision 10 — is self-registration open? Default **false** (closed):

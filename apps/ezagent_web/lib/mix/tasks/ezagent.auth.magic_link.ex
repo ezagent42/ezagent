@@ -74,9 +74,9 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
     Mix.shell().info("")
 
     cond do
-      not Ezagent.AppSettings.smtp_configured?() ->
-        Mix.shell().error("DROP reason=smtp_not_configured")
-        Mix.shell().info("→ Admin must configure SMTP at /admin/settings → SMTP first.")
+      not Ezagent.AppSettings.mail_configured?() ->
+        Mix.shell().error("DROP reason=mail_not_configured")
+        Mix.shell().info("→ Admin must configure mail (SMTP or REST) at /admin/settings first.")
         Mix.shell().info("→ Inspect current config with:")
         Mix.shell().info("    Ezagent.AppSettings.get(\"smtp_config\")")
         System.halt(1)

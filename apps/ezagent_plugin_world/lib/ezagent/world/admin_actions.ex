@@ -101,7 +101,7 @@ defmodule Ezagent.World.AdminActions do
           "error:recipient_required"
         )
 
-      not Ezagent.AppSettings.smtp_configured?() ->
+      not Ezagent.AppSettings.mail_configured?() ->
         put_settings(
           socket,
           %{
