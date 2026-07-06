@@ -9,7 +9,7 @@
 把 hello session 从"hello 自建的 `Router.route` 直接分发到 builder/concierge"迁到**标准 socialware substrate**:
 
 - session = **public_view 版本化 `SessionTemplate`**,带 socialware `Definition`(`shape: [Turn, Surface, SupervisorApproval]`, `views: ["hello_render"]`)。
-- builder / concierge = **声明式 `Definition.agents`**(固定 role_name),不再由 hello 代码 ad-hoc `ensure_*` + 直调 `Generator`。
+- builder / concierge / orchestrator = **声明式 `Definition.roles`**(每个 `%{role_name, fill: :agent, recipe, flavor}`;**注意:字段名是 `roles` 不是 `agents`**——`agents`/`members` 是被 `reject_retired_declaration_fields/1` 拒绝的退役字段),不再由 hello 代码 ad-hoc `ensure_*` + 直调 `Generator`。
 - 分发走**框架 routing table**(`Definition.routing_rules` → `RoutingRegistry` → `Resolver`),而非 hello 自建的 web 层 mention + `Router.route`。
 - 编排器**保留**为 hello 自己的 role×flavor 成员(自带 hello persona),**逐条消息**做 `owner? + 意图分类`决策;决策留在 Elixir,routing table 只搬运。
 - 顺带修掉当前的两个缺陷:**只接受人的消息**(拒绝 agent 消息)和 **loop 隐患**(缺 `from_user?` 守卫)。
@@ -38,44 +38,45 @@
 ## 架构
 
 ```
-人 或 agent 发消息
-  → 框架 routing rule {:always} → 编排器成员      (routing table,静态)
-  → HelloOrchestrator.:receive
-       · from_user? / from_agent? 都接(修 human-only + loop 守卫)
+人 或 外部 agent 发消息 → session.send(sender 保留原始发送者)
+  → 框架 routing table(默认 mention-gate 规则 + 可选 Definition inbound 规则)
+        投递到编排器成员                              (routing table 只承载入站→编排器)
+  → 编排器成员经 "hello" flavor bridge adapter → HelloOrchestrator.:hello_sync_result
+       · 守卫:发送者是自己 / 自己的 builder|concierge 成员 → 忽略(不路由,防 loop)
        · owner?(session, sender)  (读 :owner_uri slice,ownerless→fail-open)
-       · owner 且 build 意图(LLM 分类,复用 Generator/claude_code 管道)→ 目标=builder
-         其余(非 owner 恒定,或 owner 非 build 意图)→ 目标=concierge
-       · emit relay,mention {:role, target}                (routing table 定向投递)
-  → target 成员.:receive
-       · builder  → Generator.generate → TurnDriver.drive (admin-genesis) → Surface put_version+set_shell
-       · concierge→ Generator.concierge_answer(署名 concierge)
+       · owner 且 build 意图(LLM 分类,复用 Generator/claude_code)→ 目标=builder
+         其余(非 owner 恒定 / owner 非 build 意图 / 外部 agent)→ 目标=concierge
+       · 进程内直接 handoff(不进 routing table,避免 $session_users 泄漏 + 跨 agent 铸 cap):
+           - builder   → Generator.generate(session)         → TurnDriver.drive(admin-genesis) → Surface
+           - concierge → Generator.concierge_answer(session, concierge_uri)  (署名 concierge 成员)
   → 页面上屏 / 只读回复
 ```
 
-**loop 安全**:编排器的 `:receive` 加 `from_user? / 目标成员回执` 守卫——编排器只对"需要路由的入站消息"动作,对 builder/concierge 产出的回执/自身 outbound 不再路由。当前代码缺这个守卫(moduledoc 声称 loop-safe 但未实现),B' 补上并加回归测试。
+**为什么 orchestrator→成员是直接 handoff 而非走 routing table**:核实(2026-07-06)默认路由规则把 `$session_users` 与 `$mentions` 绑在一条(`default_rules.ex:20`),`$session_users` 无条件广播给每个 user 成员——若把 relay 发进 session,内部路由会**泄漏到 owner+访客的公开 feed**;且投给成员 `:receive` 需跨 agent 现铸 `:receive` cap(脆弱,2026-07-03 spec 已因此弃用)。框架自己的 cc-orchestrator 也**不**逐条 relay 走 table(它装静态规则或在 LLM 内决策)。故 per-message 决策+投递留在编排器 Elixir,与框架一致。
+
+**loop 安全 + 多 agent**:守卫从"只接 user"改为"**忽略自己 + 自己的 builder/concierge 成员**,其余(user + 外部 agent)都路由"。这同时:(a)修掉当前 `Router.route` 无守卫的 loop 隐患(moduledoc 声称 loop-safe 但代码未实现);(b)兑现"不止人的消息"——外部 agent 消息按非 owner 走 concierge。加回归测试。
 
 ## 组件与改动
 
 ### 1. SessionTemplate / Definition(标准 socialware)
 - hello session 用 **public_view 版本化 `SessionTemplate`**(`SessionTemplate.persist_version_as_system/2` 或 world 授权路径),content 含 `public_view: true`。
-- `Definition`:`shape: [Turn, Surface, SupervisorApproval]`,`views: ["hello_render"]`(demo `hello.ex` 已示范),`agents: [orchestrator, builder, concierge]`,`routing_rules: [...]`。
+- `Definition`:`shape: [Turn, Surface, SupervisorApproval]`,`views: ["hello_render"]`(demo `hello.ex` 已示范),`roles: [orchestrator, builder, concierge]`(**字段名 `roles` 非 `agents`**),`routing_rules: [...]`。
 
-### 2. 编排器(保留,微调)
-- hello role `hello.orchestrator` × hello 自定义 flavor,自带 persona(role recipe `prompt`)。
-- 行为 `Ezagent.ActionSet.HelloOrchestrator`:`:receive` 里做 `owner? + 意图分类 + emit relay`(不再直调 `Router.route` 的 ad-hoc `ensure_*`)。
-- **决策留 Elixir**(可确定性 + 复用现有 `owner?` / `classify_intent`)。
+### 2. 编排器(保留,微调 + flavor 承载行为)
+- role `hello.orchestrator` × **`"hello"` flavor**;自带 persona(role recipe `prompt`)。
+- 行为 `Ezagent.ActionSet.HelloOrchestrator` 处理 `:hello_sync_result`(经 "hello" flavor 的 in_process_sync bridge adapter;`:receive` 被 flavor-blind 的 `Agent.Receive` 占用,不能被 role 行为覆盖——故走 bridge adapter 这条既有路)。
+- **关键改动:把 `HelloOrchestrator` 挂到 `"hello"` flavor 的 `instance_behaviors`**——因为改走 `Definition.roles` materialize 后 `recipe.behaviors` 被丢弃,若只在 recipe 声明,`:hello_sync_result` action 不会进实例 behavior set。参照 py flavor。
+- `:hello_sync_result` 里做 `守卫 + owner? + 意图分类 + 直接 handoff`(见数据流);**决策留 Elixir**(可确定性 + 复用现有 `owner?` / `classify_intent`)。
 
-### 3. builder / concierge(声明式成员)
-- 声明为 `Definition.agents`(固定 role_name `"builder"` / `"concierge"`),caps 走 recipe `requested_caps`(`GrantRecipeCaps`,`definition_agents.ex:134,303-308`)。
-- **行为挂在 flavor 的 `instance_behaviors`**,**不放 `recipe.behaviors`**(Definition.agents 路径丢弃 `recipe.behaviors`,`recipe_materializer.ex:68-74`;已证实)。参照 py flavor `instance_behaviors: fn -> base ++ [PyAgentBehavior] end`。
-- **flavor 粒度(已定):每个 role 一个 flavor**——`instance_behaviors` 对该 flavor 的**每个** agent 的 `:receive` 都触发,所以三个 role 不能共用一个 flavor(否则 builder 也会跑 concierge 行为)。故:`hello-orchestrator` flavor(带 `HelloOrchestrator`)、`hello-builder` flavor(带 builder 行为)、`hello-concierge` flavor(带 concierge 行为),各自 `instance_behaviors` 只含自己那一枚。(备选"单 flavor + 按 role 分派的单行为"更省 flavor 但要在行为里读 role 分支;首版取"每 role 一 flavor"求简单直白,planning 阶段若发现 flavor 注册成本高可再收敛。)
-- builder `:receive` → `Generator.generate` → `TurnDriver`;concierge `:receive` → `Generator.concierge_answer`。页面生成路径**不变**。
+### 3. builder / concierge(声明式成员,identity-only)
+- 声明为 `Definition.roles`(`fill: :agent`,固定 role_name `"builder"` / `"concierge"`,`flavor: "native"`),caps 走 recipe `requested_caps`(`GrantRecipeCaps`,`definition_agents.ex:134,303-308`)。materialize 由 `TemplateTeam.materialize_template_team` → `DefinitionAgents.materialize_definition_agents`(消费 `roles` 过滤 `fill: :agent`)。
+- **B'-direct 下 builder/concierge 是 identity-only 成员**:编排器直接调 `Generator`(署名到成员 URI),不触发它们的 `:receive`。因此它们**不需要**自定义 flavor / instance_behaviors —— 只需作为声明成员存在(用于:身份/署名、@-mention、world 展示、模板捕获、migrate)。现有 `HelloBuilder`/`HelloConcierge` 的 `:receive` 成为**休眠回退**(`Definition.roles` 路径丢 recipe.behaviors 后甚至不会被装上,天然 inert;保留模块供未来 B'-table)。
+- **简化(相对早先"每 role 一 flavor"):只有编排器需要行为承载 flavor(§2 的 "hello" flavor);builder/concierge 用现成 `"native"` flavor,零新 flavor。** 页面生成路径 `Generator → TurnDriver`(admin-genesis chokepoint)**不变**。
 
-### 4. routing table
-- `Definition.routing_rules`:
-  - 入站(人+agent)→ 编排器成员(`{:always}` 或等价,投给 orchestrator role_name)。
-  - 编排器 relay:编排器 emit 的消息 mention `{:role,"builder"}` / `{:role,"concierge"}` → 该成员(`Resolver.expand_receiver({:role, name})`)。
-- 移除 hello 自建的 web 层 owner/访客分流 + `Router.route` 直分发。
+### 4. routing table(只承载入站→编排器)
+- **入站→编排器**:走框架 routing table。hello 现状已用默认 mention-gate 规则(web `dispatch_post` 发 `session.send` + `mentions: [orchestrator_uri]`,`session_feed_channel.ex:352-379`)达成;B' 保留此机制,并**可选**在 `Definition.routing_rules` 显式声明一条入站→`{:role,"orchestrator"}` 规则(把路由意图写进模板 = 更名正言顺;additive,不改 `$session_users` 现有行为)。
+- **orchestrator→成员不进 routing table**(见数据流的"为什么");这一跳是编排器 Elixir 内的直接 `Generator` handoff。
+- 移除 hello 自建的 web 层 owner/访客分流(该判定移入编排器);`Router` 逻辑保留但加守卫。
 
 ### 5. 版本化 / 迁移
 - session 绑定到版本化模板的 `@hash` URI(避开 `"current"` tag 未自动发布的坑)。
@@ -85,15 +86,15 @@
 
 | 诉求 | 兑现 |
 |---|---|
-| 名正言顺 | ✅ substrate 全标准(Definition/routing table/版本化模板/Turn/Surface)。⚠️ 编排器是 hello role×flavor 成员,非 stock cc-orchestrator |
-| 多 agent 接力(不止人的消息) | ✅ routing rule 把 agent 消息也投编排器;`from_user?` 守卫改为"接所有需路由入站" |
+| 名正言顺 | ✅ substrate 全标准(Definition.roles 声明式团队 / 入站走 routing table / 版本化模板 / Turn/Surface)。⚠️ 编排器是 hello role×flavor 成员,非 stock cc-orchestrator;orchestrator→成员是 Elixir 直投(与框架 orchestrator 一致,它也不逐条 relay 走 table) |
+| 多 agent 接力(不止人的消息) | ✅ 守卫改为"忽略自己+自己的 builder/concierge,其余(user+外部 agent)都路由";外部 agent 按非 owner 走 concierge |
 | 动态团队管理 | 🟡 builder/concierge 声明式;编排器动态 `add_managed_member` 留后续 |
 | 版本化 + 迁移 | ✅ 框架 SessionTemplate 版本化 + `migrate_session` |
 
 ## 约束与风险
 
-1. **决策在 Elixir,不在 routing table**(刻意;routing table 表达不了 owner/意图)。
-2. **成员行为必须挂 flavor `instance_behaviors`**,不能放 `recipe.behaviors`(已证实丢弃)。
+1. **决策 + orchestrator→成员投递都在 Elixir,不进 routing table**(刻意;routing table 表达不了 owner/意图,且走 table 会经 `$session_users` 泄漏内部 relay 到公开 feed)。routing table 只承载入站→编排器。
+2. **编排器行为必须挂 `"hello"` flavor `instance_behaviors`**,不能只放 `recipe.behaviors`(`Definition.roles` 路径已证实丢弃)。builder/concierge identity-only,零新 flavor。
 3. **拓荒**:全仓库无 cc-orchestrator+Surface 先例;但 B' 不用 cc-orchestrator,走 hello 已验证的 role×flavor + `TurnDriver`,风险显著低。
 4. **迁移**:现有 v3 session 重建或 `migrate_session`。
 5. **首版不碰核心**;`orchestrator.ex:94`("字面 cc-orchestrator" 升级)留给 Allen。
@@ -104,6 +105,8 @@
 - 不建 native-role AgentTemplate 装配 / 成员 Surface 委托 cap / RoleTemplate Kind(均 deferred core)。
 - 首版不做编排器动态 `add_managed_member`(声明式成员够用)。
 - 不把路由决策改成 LLM 自然语言编排(保留 Elixir 可确定性)。
+- **不把 orchestrator→成员这一跳走 routing table**(B'-table);会泄漏 + 需私有 rule-set,留作后续。
+- 不给 builder/concierge 建自定义 flavor(identity-only,`:receive` 休眠)。
 
 ## 验收(e2e)
 
@@ -119,5 +122,6 @@
 - cc-orchestrator 无 Surface 工具:`apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server/tool_catalog.ex`;recipe 只申请 Template caps:`orchestrator_recipe.ex:71-76`。
 - 页面 chokepoint:`apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/turn_driver.ex:40-82,150-159`(admin-genesis);`apps/ezagent_domain_session/lib/ezagent/session/surface_seed.ex:71-112`。
 - persona 写死:`apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator.ex:94`;`orchestrator_template_uri` 被忽略。
-- Definition.agents 授 caps:`definition_agents.ex:134,303-308`;丢弃 recipe.behaviors:`recipe_materializer.ex:68-74`;custom flavor instance_behaviors:py `application.ex:108`。
-- routing 定向:`resolver.ex:435-460`;`route_provisioner.ex:10-17`;`members.ex:83-86`。mention-gate 默认:`default_rules.ex:20,90-91`;`resolver.ex:356-371,388-405`。
+- `Definition.roles`(`fill: :agent`)授 caps:`definition_agents.ex:134,303-308`;`roles` 过滤 + materialize 入口:`template_team.ex:8-52`;丢弃 recipe.behaviors:`recipe_materializer.ex:68-74`;custom flavor instance_behaviors:py `application.ex:108`。Definition 无 `agents` 字段(退役):`definition.ex:313-321`。
+- routing 定向:`resolver.ex:435-460`;`route_provisioner.ex:10-17`;`members.ex:83-86`。mention-gate 默认(`$session_users`+`$mentions` 绑一条,user 无条件广播):`default_rules.ex:20,90-91`;`resolver.ex:356-371,388-405`。
+- 入站投递现状:`session_feed_channel.ex:352-379`(`session.send` + `mentions:[orchestrator_uri]`,sender=user)。发消息 = dispatch `session.send`(`session.ex:147,540`);`Message.new/3` mentions/sender(`message.ex:142`);Delivery 保留 msg.sender 逐成员投:`delivery.ex:169-185`。agent 入 session 发消息先例(无 mention):`plugin_cc/bridge_adapter.ex:131-192`。无"逐条 relay 给成员"先例。
