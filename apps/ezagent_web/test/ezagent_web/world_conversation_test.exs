@@ -77,7 +77,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, session_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "inbound-via-pubsub"
     assert pushed["id"] == msg.id
   end
@@ -105,7 +105,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, cold_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "cold-session-inbound"
   end
 
@@ -162,7 +162,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     # The cast'd message comes back via the inbound bridge (sender sees its
     # OWN message only through the broadcast).
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "hello world"
     assert pushed["sender"] == caller
   end
@@ -532,6 +532,33 @@ defmodule EzagentWeb.WorldConversationTest do
     refute invitee in Enum.map(Map.keys(members), &URI.to_string/1)
   end
 
+  test "session.remove_participant refuses to remove the current viewer from members", %{
+    conn: conn
+  } do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    caller_uri = Ezagent.Entity.User.admin_uri()
+
+    # Opening the conversation self-joins the current viewer; the members panel
+    # must not offer or accept the same remove action for that viewer.
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.remove_participant",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "participant" => URI.to_string(caller_uri)
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:self_remove_not_allowed")
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert URI.to_string(caller_uri) in Enum.map(Map.keys(members), &URI.to_string/1)
+  end
+
   test "PR-4: session.create persists a new session and opens its conversation", %{conn: conn} do
     short_name = "world-pr4-#{System.unique_integer([:positive])}"
 
@@ -554,6 +581,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert_push_event(view, "world:state", %{
       "component" => "conversation",
+      "create_error" => nil,
       "current_session_uri" => pushed_uri
     })
 
@@ -660,6 +688,13 @@ defmodule EzagentWeb.WorldConversationTest do
     assert install.content_hash == object.content_hash
   end
 
+  # Stage 1/2 (world-views) INTENDED behavior change: the switch whitelist is
+  # no longer a hard-coded tab list — it is the caller-aware registry set
+  # (`ConversationData.session_view_ids/2`), the SAME source that produces the
+  # visible tabs. So a registry-applicable view ("conversation") switches, and
+  # an id outside that set is rejected with `error:bad_view` instead of being
+  # blindly activated (the old always-switchable "pty" assertion asserted the
+  # retired hard-coded behavior).
   test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
@@ -670,10 +705,26 @@ defmodule EzagentWeb.WorldConversationTest do
     |> element("#world-root")
     |> render_hook("world:dispatch", %{
       "action" => "session.view.switch",
-      "args" => %{"session_uri" => URI.to_string(session_uri), "view" => "pty"}
+      "args" => %{"session_uri" => URI.to_string(session_uri), "view" => "conversation"}
     })
 
-    assert_push_event(view, "world:state", %{"active_view" => "pty"})
+    assert_push_event(view, "world:state", %{"active_view" => "conversation"})
+
+    # An id not in the registry-driven set for this session is rejected —
+    # no active_view push, dispatch status surfaces the reject.
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.view.switch",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "view" => "not_a_registered_view"
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:bad_view")
+    refute_push_event(view, "world:state", %{"active_view" => "not_a_registered_view"}, 100)
   end
 
   test "PR-4: switching to a member PTY records the active agent", %{conn: conn} do
@@ -829,9 +880,8 @@ defmodule EzagentWeb.WorldConversationTest do
     assert html =~ ~s(data-last-dispatch="error:empty_message")
   end
 
-  test "session.switch push_patches to the ?session= deep-link", %{conn: conn} do
+  test "session.switch pushes conversation state without a LiveView route remount", %{conn: conn} do
     session_uri = world_session_uri()
-    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions")
 
@@ -842,8 +892,41 @@ defmodule EzagentWeb.WorldConversationTest do
       "args" => %{"session_uri" => URI.to_string(session_uri)}
     })
 
-    assert_patch(view, "/sessions?session=#{encoded}")
-    assert has_element?(view, "#world-root[data-world-component='conversation']")
+    assert_push_event(view, "world:state", %{
+      "component" => "conversation",
+      "session_uri" => pushed_uri
+    })
+
+    assert pushed_uri == URI.to_string(session_uri)
+
+    assert_push_event(
+      view,
+      "world:url",
+      %{
+        "path" => pushed_path
+      },
+      1_000
+    )
+
+    assert pushed_path == "/sessions?session=#{URI.encode_www_form(URI.to_string(session_uri))}"
+  end
+
+  test "conversation route state includes the Chat path for primary nav highlighting", %{
+    conn: conn
+  } do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    assert_push_event(view, "world:state", %{
+      "component" => "conversation",
+      "session_uri" => pushed_uri,
+      "path" => "/sessions",
+      "title" => "Chat"
+    })
+
+    assert pushed_uri == URI.to_string(session_uri)
   end
 
   test "ConversationData.build_message embeds parsed mentions + verified attachments", %{
@@ -1084,7 +1167,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     for {type, envelope} <- envelopes do
       send(view.pid, envelope)
-      assert_push_event(view, "world:inbound", %{"type" => ^type})
+      assert_push_event(view, "world:inbound", %{"type" => ^type}, 1_000)
     end
   end
 

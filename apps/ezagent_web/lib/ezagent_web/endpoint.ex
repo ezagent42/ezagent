@@ -83,6 +83,13 @@ defmodule EzagentWeb.Endpoint do
     param_key: "request_logger",
     cookie_key: "request_logger"
 
+  # Behind cloudflared the socket peer is the tunnel's private IP for EVERY
+  # request; recover the real client IP from `CF-Connecting-IP` (trusted only
+  # when the peer is private/loopback) so per-IP rate limits don't collapse
+  # into one global bucket. MUST run before RequestId/Telemetry/Router so all
+  # logging + `EzagentWeb.RateLimiter` keys see the corrected `remote_ip`.
+  plug EzagentWeb.Plugs.CloudflareRemoteIp
+
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 

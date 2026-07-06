@@ -19,6 +19,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+  alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
@@ -49,8 +50,7 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
     with_session(socket, sid, fn uri ->
-      to = "/sessions?session=" <> URI.encode_www_form(URI.to_string(uri))
-      {:noreply, push_patch(socket, to: to)}
+      Ezagent.World.ConversationSessionState.switch_session(socket, uri)
     end)
   end
 
@@ -388,7 +388,11 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply,
            socket
            |> assign(:last_dispatch_status, "ok")
-           |> push_event("world:state", %{"publish_notice" => "已发布为模板"})}
+           |> push_world_state(%{
+             "publish_notice" => "已发布为模板",
+             "templates" =>
+               Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
+           })}
 
         {:error, reason} ->
           {:noreply,
@@ -477,21 +481,37 @@ defmodule Ezagent.World.ConversationActions do
     :exit, reason -> {:error, {:create_session_exit, reason}}
   end
 
-  @doc "Switch the active conversation sub-view (`chat` or `pty`)."
+  @doc """
+  Switch the active session view. The whitelist is the caller-aware registry set
+  (`ConversationData.session_view_ids/2`) — the SAME source that produces the
+  visible tabs — so a view a caller can't see is neither a tab nor switchable-to
+  (no bypass of the `authorize_view/3` cap gate). An id outside that set is
+  rejected with `error:bad_view`.
+  """
   @spec switch_view(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  # "page" (TEMPORARY): the hello operator page-preview view. Proper world
-  # surfacing of registered SessionViews is Phase 3; this just toggles the
-  # active view so the React UI can embed the customer surface.
-  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty", "page"] do
-    {:noreply, push_world_state(socket, %{"active_view" => view})}
+  def switch_view(socket, %URI{} = session_uri, view) when is_binary(view) do
+    caller = socket.assigns.current_entity_uri
+
+    if view in ConversationData.session_view_ids(session_uri, caller) do
+      {:noreply, push_world_state(socket, %{"active_view" => view})}
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
+    end
   end
 
-  def switch_view(socket, %URI{}, _view) do
-    {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
-  end
+  @doc """
+  Switch the conversation panel to the PTY view for a member agent.
 
-  @doc "Switch the conversation panel to the PTY view for a member agent."
+  This is the ONE path besides `switch_view/3` that sets `active_view`, and it is
+  hard-wired to `"pty"` only. That is safe today because the pty view
+  (`EzagentDomainUi.Pty.TerminalView`) declares no `view_behavior/0` — it is never
+  cap-gated — and the React client only activates ids present in the enumerated
+  `views` (falling back otherwise), so no gated view can be exposed through here.
+  If pty ever GROWS a `view_behavior`, this must route through
+  `ConversationData.session_view_ids/2` like `switch_view/3`
+  (`view_cap_gate_regression_test.exs` locks that assumption).
+  """
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do
@@ -626,12 +646,12 @@ defmodule Ezagent.World.ConversationActions do
   @spec add_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def add_routing_rule(socket, %URI{} = session_uri, params) when is_map(params) do
-    with {:ok, leaf_matcher} <- build_session_form_matcher(params),
+    with {:ok, leaf_matcher} <- ConversationRoutingForm.build_matcher(params),
          receivers when is_list(receivers) and receivers != [] <-
-           parse_session_receivers(Map.get(params, "receivers", "")),
-         :ok <- revalidate_session_matcher_arg(socket, params),
-         :ok <- revalidate_session_receivers(socket, receivers),
-         matcher = wrap_in_session(leaf_matcher, session_uri),
+           ConversationRoutingForm.parse_receivers(Map.get(params, "receivers", "")),
+         :ok <- ConversationRoutingForm.revalidate_matcher_arg(socket, params),
+         :ok <- ConversationRoutingForm.revalidate_receivers(socket, receivers),
+         matcher = ConversationRoutingForm.wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, session_uri, :add_rule, %{
              table: MentionRouting,
@@ -746,16 +766,20 @@ defmodule Ezagent.World.ConversationActions do
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
-        case Ezagent.Session.Participants.remove_participant(
-               session_uri,
-               participant_uri,
-               %{caller: caller, caps: caps}
-             ) do
-          {:ok, _result} ->
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+        if URI.to_string(participant_uri) == URI.to_string(caller) do
+          {:noreply, assign(socket, :last_dispatch_status, "error:self_remove_not_allowed")}
+        else
+          case Ezagent.Session.Participants.remove_participant(
+                 session_uri,
+                 participant_uri,
+                 %{caller: caller, caps: caps}
+               ) do
+            {:ok, _result} ->
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
         end
 
       :error ->
@@ -810,9 +834,24 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
+          members = ConversationData.member_options(session_uri)
+
           push_event(socket, "members:update", %{
-            "members" => ConversationData.member_options(session_uri),
-            "human_role_slots" => ConversationData.human_role_slots(session_uri)
+            "members" => members,
+            "human_role_slots" => ConversationData.human_role_slots(session_uri),
+            "invite_candidates" =>
+              ConversationData.invite_candidates(
+                session_uri,
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              ),
+            "routing_entity_candidates" =>
+              ConversationData.routing_entity_candidates(
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              )
           })
 
         _ ->
@@ -975,100 +1014,6 @@ defmodule Ezagent.World.ConversationActions do
 
   defp caller_can_restart_orchestrator?(socket, %URI{}) do
     Ezagent.Identity.admin?(socket.assigns.current_entity_uri)
-  end
-
-  defp build_session_form_matcher(params) when is_map(params) do
-    type = Map.get(params, "matcher_type")
-    arg = Map.get(params, "matcher_arg")
-
-    case {type, arg} do
-      {"mention", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.mention(text)}
-
-      {"from", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.from(text)}
-
-      {"text_contains", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.text_contains(text)}
-
-      {"always", _} ->
-        {:ok, Ezagent.Routing.Matcher.always()}
-
-      _ ->
-        {:error, :invalid_matcher_form}
-    end
-  end
-
-  defp build_session_form_matcher(_), do: {:error, :invalid_matcher_form}
-
-  defp parse_session_receivers(value) do
-    values =
-      cond do
-        is_list(value) -> value
-        is_binary(value) -> String.split(value, ",", trim: true)
-        true -> []
-      end
-
-    for item <- values,
-        text = String.trim(to_string(item)),
-        text != "",
-        do: text
-  end
-
-  defp revalidate_session_matcher_arg(socket, %{
-         "matcher_type" => type,
-         "matcher_arg" => arg
-       })
-       when type in ["mention", "from"] and is_binary(arg) and arg != "" do
-    revalidate_session_uris(socket, [arg], [:entity])
-  end
-
-  defp revalidate_session_matcher_arg(_socket, _params), do: :ok
-
-  defp revalidate_session_receivers(socket, receivers) do
-    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
-      if Ezagent.Routing.Resolver.magic_token?(receiver) do
-        {:cont, :ok}
-      else
-        case revalidate_session_uris(socket, [receiver], [:entity, :session]) do
-          :ok -> {:cont, :ok}
-          {:error, _} = err -> {:halt, err}
-        end
-      end
-    end)
-  end
-
-  defp revalidate_session_uris(socket, uris, kinds) do
-    caller_uri = socket.assigns.current_entity_uri
-    workspace_uri = socket.assigns.current_workspace_uri
-
-    Enum.reduce_while(uris, :ok, fn uri, :ok ->
-      if uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-        {:cont, :ok}
-      else
-        {:halt, {:error, {:invalid_uri, uri}}}
-      end
-    end)
-  end
-
-  defp uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-    Module.concat([Ezagent.UI, UriOptions])
-    |> apply(:valid_for?, [caller_uri, workspace_uri, uri, kinds])
-  rescue
-    _ -> false
-  end
-
-  defp wrap_in_session(matcher, %URI{} = session_uri) do
-    case matcher do
-      {:in_session, _} ->
-        matcher
-
-      leaf ->
-        Ezagent.Routing.Matcher.all_of([
-          Ezagent.Routing.Matcher.in_session(session_uri),
-          leaf
-        ])
-    end
   end
 
   defp safe_table_atom(s) when is_binary(s) do

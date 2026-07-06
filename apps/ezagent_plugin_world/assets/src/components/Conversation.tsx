@@ -1,8 +1,7 @@
 import React from "react"
-import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, Maximize2, MessageSquare, Paperclip, Plus, RotateCcw, Route, Send, TerminalSquare, Upload, UserMinus, UserPlus, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
-import {Button, Modal} from "./ui/primitives"
-import {PtyTerminalSurface} from "./PtyTerminal"
+import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
@@ -39,6 +38,22 @@ type Pending = {
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const MAX_FILES = 5
 
+const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidden"?: boolean}>> = {
+  "message-square": MessageSquare,
+  terminal: TerminalSquare,
+  route: Route,
+  link: Link2,
+  "panel-top": PanelTop,
+  sparkles: Sparkles,
+}
+
+const iconFor = (name: string) => ICONS[name] ?? LayoutGrid
+
+const orderViews = (vs: ViewTab[]) => {
+  const rank = (id: string) => (id === "conversation" ? 0 : id === "pty" ? 1 : 2)
+  return [...vs].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
+}
+
 type SessionRow = {
   uri: string
   name?: string | null
@@ -49,13 +64,28 @@ type MemberRow = {
   display_name?: string | null
   online?: boolean
   kind?: string | null
-  role_name?: string | null
 }
 
-type HumanRoleSlot = {
-  role_name: string
-  assigned_uri?: string | null
+type InviteCandidateRow = {
+  uri: string
+  display_name?: string | null
+  kind?: string | null
+  flavor?: string | null
 }
+
+type ViewTab = {
+  id: string
+  label: string
+  icon: string
+  mode: string
+}
+
+const ROUTING_MAGIC_RECEIVERS: InviteCandidateRow[] = [
+  {uri: "$session_users,$mentions", display_name: "成员与被提及实体", kind: "preset"},
+  {uri: "$session_users", display_name: "人类成员", kind: "group"},
+  {uri: "$mentions", display_name: "被提及实体", kind: "dynamic"},
+  {uri: "$session_members", display_name: "全部会话成员", kind: "group"},
+]
 
 type RoutingRule = {
   id: number
@@ -75,6 +105,7 @@ export type ConversationState = {
   agent_uri?: string | null
   session_uri?: string | null
   caller_uri?: string | null
+  create_error?: string | null
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -83,13 +114,17 @@ export type ConversationState = {
   pty_phase?: string
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
+  templates?: string[]
   members?: MemberRow[]
-  human_role_slots?: HumanRoleSlot[]
+  invite_candidates?: InviteCandidateRow[]
+  routing_entity_candidates?: InviteCandidateRow[]
+  views?: ViewTab[]
 }
 
 type Props = {
   state: ConversationState
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
+  onCreate?: (shortName: string, templateName: string) => void
   onForkConfig: (sessionUri: string) => void
   onOpenPty: (sessionUri: string, agent: string) => void
   onRestartOrchestrator: (sessionUri: string) => void
@@ -100,7 +135,6 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
-  onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
@@ -111,17 +145,16 @@ type Props = {
   onPublishTemplate: (sessionUri: string, name: string) => void
 }
 
-// The conversation island is keyed by session_uri in `main.tsx`, so a session
-// switch (push_patch → handle_params → world:state) remounts it fresh from the
-// server-pushed `state.messages`. Within a mount, inbound `chat:message`
-// events append (sender sees their OWN cast'd message only via this bridge),
-// and `chat:older` prepends history.
+// The conversation island stays mounted across rail session switches. Server
+// `world:state` payloads reset the local transcript for the newly selected
+// session; inbound `chat:message` appends and `chat:older` prepends history
+// within that active session.
 export function Conversation({
   state,
   onAddRoutingRule,
+  onCreate,
   onForkConfig,
   onOpenPty,
-  onAssignRole,
   onRemoveParticipant,
   onRestartOrchestrator,
   onSend,
@@ -139,8 +172,15 @@ export function Conversation({
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
+  const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
-  const activeView = state.active_view === "pty" ? "pty" : "chat"
+  const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
+  const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
+  const visibleViews = sourceViews.filter((v) => v.id !== "pty" && v.mode !== "pty")
+  const views = visibleViews.length > 0 ? visibleViews : fallbackViews
+  const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
+  const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
+  const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
   // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
   // proper home for this is world surfacing registered SessionViews (Phase 3);
   // for now it embeds the external surface. See HelloPagePreview below.
@@ -150,7 +190,8 @@ export function Conversation({
   const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
-  const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlot[]>(state.human_role_slots || [])
+  const [inviteCandidates, setInviteCandidates] = React.useState<InviteCandidateRow[]>(state.invite_candidates || [])
+  const [routingEntityCandidates, setRoutingEntityCandidates] = React.useState<InviteCandidateRow[]>(state.routing_entity_candidates || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
@@ -158,21 +199,59 @@ export function Conversation({
   const [pending, setPending] = React.useState<Pending[]>([])
   const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const [creating, setCreating] = React.useState(false)
+  const [newSessionName, setNewSessionName] = React.useState("")
+  const [newSessionTemplate, setNewSessionTemplate] = React.useState(templates[0])
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
-  const [expanded, setExpanded] = React.useState(false)
+  const [membersOpen, setMembersOpen] = React.useState(false)
+  const [toolsOpen, setToolsOpen] = React.useState(false)
+  const [publishOpen, setPublishOpen] = React.useState(false)
+  const [publishName, setPublishName] = React.useState("")
+  const [published, setPublished] = React.useState(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
   const [ruleReceivers, setRuleReceivers] = React.useState("")
+  const matcherUsesEntity = ruleMatcherType === "mention" || ruleMatcherType === "from"
+  const matcherUsesText = ruleMatcherType === "text_contains"
+  const routingReceiverCandidates = React.useMemo(
+    () => [...ROUTING_MAGIC_RECEIVERS, ...routingEntityCandidates],
+    [routingEntityCandidates],
+  )
+  const canSubmitRule = Boolean(ruleReceivers.trim()) && (!matcherUsesEntity || Boolean(ruleMatcherArg.trim())) && (!matcherUsesText || Boolean(ruleMatcherArg.trim()))
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
-  const openHumanRoles = React.useMemo(
-    () => humanRoleSlots.filter((slot) => !slot.assigned_uri),
-    [humanRoleSlots],
-  )
+  const currentSession = sessions.find((session) => session.uri === sessionUri) || null
+  const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "会话"
+  const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
+
+  React.useEffect(() => {
+    setMembers(state.members || [])
+    setInviteCandidates(state.invite_candidates || [])
+    setRoutingEntityCandidates(state.routing_entity_candidates || [])
+    setMessages(state.messages || [])
+    setOldestCursor(state.oldest_cursor || null)
+    setText("")
+    setMentionQuery(null)
+    setPending([])
+    setUploadError(null)
+    setCreating(false)
+    setNewSessionName("")
+    setInviteOpen(false)
+    setInviteValue("")
+    setMembersOpen(false)
+    setPublishOpen(false)
+    setPublishName("")
+    setPublished(false)
+    markedRef.current = new Set()
+  }, [state.session_uri])
+
+  React.useEffect(() => {
+    if (!templates.includes(newSessionTemplate)) setNewSessionTemplate(templates[0])
+  }, [newSessionTemplate, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Inserting the member's URI path segment keeps it a single bare
@@ -234,13 +313,40 @@ export function Conversation({
     })
 
     onServerEvent("members:update", (payload) => {
-      const next = payload as {members?: MemberRow[]; human_role_slots?: HumanRoleSlot[]}
+      const next = payload as {members?: MemberRow[]; invite_candidates?: InviteCandidateRow[]; routing_entity_candidates?: InviteCandidateRow[]}
       if (next.members) setMembers(next.members)
-      if (next.human_role_slots) setHumanRoleSlots(next.human_role_slots)
+      if (next.invite_candidates) setInviteCandidates(next.invite_candidates)
+      if (next.routing_entity_candidates) setRoutingEntityCandidates(next.routing_entity_candidates)
     })
 
     return undefined
   }, [onServerEvent])
+
+  React.useEffect(() => {
+    setInviteCandidates(state.invite_candidates || [])
+  }, [state.invite_candidates])
+
+  React.useEffect(() => {
+    setRoutingEntityCandidates(state.routing_entity_candidates || [])
+  }, [state.routing_entity_candidates])
+
+  React.useEffect(() => {
+    if (inviteValue && !inviteCandidates.some((candidate) => candidate.uri === inviteValue)) {
+      setInviteValue("")
+    }
+  }, [inviteCandidates, inviteValue])
+
+  React.useEffect(() => {
+    if (ruleReceivers && !routingReceiverCandidates.some((candidate) => candidate.uri === ruleReceivers)) {
+      setRuleReceivers("")
+    }
+  }, [routingReceiverCandidates, ruleReceivers])
+
+  React.useEffect(() => {
+    if (matcherUsesEntity && ruleMatcherArg && !routingEntityCandidates.some((candidate) => candidate.uri === ruleMatcherArg)) {
+      setRuleMatcherArg("")
+    }
+  }, [matcherUsesEntity, routingEntityCandidates, ruleMatcherArg])
 
   // Keep the viewport pinned to the newest message as the stream grows.
   React.useEffect(() => {
@@ -329,6 +435,32 @@ export function Conversation({
     setUploadError(null)
   }
 
+  const submitCreate = (event: React.FormEvent) => {
+    event.preventDefault()
+    const trimmed = newSessionName.trim()
+    const template = newSessionTemplate.trim() || "default"
+    if (!trimmed) return
+    onCreate?.(trimmed, template)
+    setNewSessionName("")
+    setNewSessionTemplate(templates[0])
+    setCreating(false)
+  }
+
+  const doPublish = () => {
+    const trimmed = publishName.trim()
+    if (!trimmed || !sessionUri) return
+    onPublishTemplate(sessionUri, trimmed)
+    setPublishOpen(false)
+    setPublishName("")
+    setPublished(true)
+    window.setTimeout(() => setPublished(false), 3000)
+  }
+
+  const toggleMembers = () => {
+    if (membersOpen) setInviteOpen(false)
+    setMembersOpen(!membersOpen)
+  }
+
   const loadOlder = () => {
     if (oldestCursor && sessionUri) onLoadOlder(sessionUri, oldestCursor)
   }
@@ -338,9 +470,11 @@ export function Conversation({
     if (!sessionUri) return
     const receivers = ruleReceivers.trim()
     if (!receivers) return
+    const matcherArg = matcherUsesEntity || matcherUsesText ? ruleMatcherArg.trim() : ""
+    if ((matcherUsesEntity || matcherUsesText) && !matcherArg) return
     onAddRoutingRule(sessionUri, {
       matcher_type: ruleMatcherType,
-      matcher_arg: ruleMatcherArg.trim(),
+      matcher_arg: matcherArg,
       receivers,
     })
     setRuleMatcherType("always")
@@ -349,37 +483,92 @@ export function Conversation({
   }
 
   return (
+    <>
     <div
-      className="grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)] lg:grid-cols-[276px_minmax(430px,1fr)_260px]"
+      className={[
+        "grid h-full min-h-0 overflow-hidden border border-border bg-card shadow-[var(--shadow-card)]",
+        membersOpen ? "lg:grid-cols-[276px_minmax(430px,1fr)_260px]" : "lg:grid-cols-[276px_minmax(430px,1fr)]",
+      ].join(" ")}
       data-world-component="conversation"
+      data-world-user-surface="conversation"
       data-world-chat-layout="im"
-      data-expanded={expanded ? "true" : "false"}
     >
       <aside
         className="hidden min-h-0 flex-col overflow-hidden border-r border-border bg-[#fafafa] text-card-foreground lg:flex"
-        aria-label="Sessions"
+        aria-label="会话"
         data-world-session-rail
       >
         <div className="flex min-h-[58px] items-center justify-between gap-2.5 border-b border-border px-3 py-2.5">
           <div>
-            <h2 className="text-[13px] font-bold text-foreground">Sessions</h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">Current workspace only</p>
+            <h2 className="text-[13px] font-bold text-foreground">会话</h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">当前工作区</p>
           </div>
-          <Button size="sm" variant="secondary" aria-label="Create a new session">
-            <Plus aria-hidden="true" />
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            aria-label={creating ? "关闭新建会话表单" : "新建会话"}
+            onClick={() => setCreating((open) => !open)}
+          >
+            {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
           </Button>
         </div>
+        {state.create_error && (
+          <p
+            className="mx-2.5 mt-2.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+            data-world-session-create-error
+          >
+            {state.create_error}
+          </p>
+        )}
+        {creating && (
+          <form
+            className="m-2.5 grid gap-2.5 rounded-lg border border-border bg-muted/30 p-3"
+            id="world-session-create-form"
+            onSubmit={submitCreate}
+          >
+            <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-name">
+              名称
+              <Input
+                id="world-conversation-session-name"
+                value={newSessionName}
+                onChange={(event) => setNewSessionName(event.target.value)}
+                placeholder="support-triage"
+                autoFocus
+              />
+            </label>
+            <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-template">
+              模板
+              <Select
+                id="world-conversation-session-template"
+                value={newSessionTemplate}
+                onChange={(event) => setNewSessionTemplate(event.target.value)}
+              >
+                {templates.map((template) => (
+                  <option key={template} value={template}>
+                    {template}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Button type="submit" size="sm" disabled={!newSessionName.trim()}>
+              <Plus aria-hidden="true" />
+              创建
+            </Button>
+          </form>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
           <div className="mb-2 min-h-[34px] rounded-[10px] border border-border bg-muted px-2.5 py-2 text-[12px] text-muted-foreground">
-            Filter sessions, template, status
+            筛选会话、模板、状态
           </div>
           {sessions.length === 0 ? (
-            <p className="px-2 py-3 text-[13px] leading-relaxed text-muted-foreground">No sessions in this workspace.</p>
+            <p className="px-2 py-3 text-[13px] leading-relaxed text-muted-foreground">当前工作区暂无会话。</p>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {sessions.map((session) => {
                 const active = session.uri === sessionUri
-                const label = session.name || uriSegment(session.uri)
+                const label = sessionLabel(session)
 
                 return (
                   <li key={session.uri}>
@@ -396,8 +585,8 @@ export function Conversation({
                       <MessageSquare aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-semibold">{label}</span>
-                        <span className="mt-0.5 block truncate font-mono text-[11px] opacity-75" title={session.uri}>
-                          {session.uri}
+                        <span className="mt-0.5 block truncate text-[11px] opacity-75">
+                          会话
                         </span>
                       </span>
                     </button>
@@ -415,8 +604,8 @@ export function Conversation({
           className="flex min-h-[58px] flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-nowrap sm:items-center"
         >
           <div className="min-w-0 flex-1">
-            <h2 className="text-[13px] font-bold text-foreground">{sessionUri ? uriSegment(sessionUri) : "Conversation"}</h2>
-            <p className="mt-0.5 max-w-[48ch] truncate font-mono text-[11px] text-muted-foreground">{sessionUri || "No active session"}</p>
+            <h2 className="text-[13px] font-bold text-foreground">{sessionTitle}</h2>
+            <p className="mt-0.5 max-w-[48ch] truncate text-[11px] text-muted-foreground">{sessionUri ? sessionMeta : "未选择会话"}</p>
           </div>
           <div
             data-world-session-toolbar
@@ -427,58 +616,93 @@ export function Conversation({
                 className="max-w-[280px] rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] text-foreground lg:hidden"
                 value={sessionUri}
                 onChange={(event) => onSwitch(event.target.value)}
-                aria-label="Switch session"
+                aria-label="切换会话"
               >
                 {sessions.map((session) => (
                   <option key={session.uri} value={session.uri}>
-                    {session.name || session.uri}
+                    {sessionLabel(session)}
                   </option>
                 ))}
               </select>
             )}
-            <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
-              <button type="button" className={segmentClass(activeView === "chat")} onClick={() => sessionUri && onSwitchView(sessionUri, "chat")} aria-label="Show chat">
-                <MessageSquare aria-hidden="true" className="h-[15px] w-[15px]" />
-                Chat
-              </button>
-              <button type="button" className={segmentClass(activeView === "pty")} onClick={() => sessionUri && onSwitchView(sessionUri, "pty")} aria-label="Show terminal">
-                <TerminalSquare aria-hidden="true" className="h-[15px] w-[15px]" />
-                PTY
-              </button>
+            <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="会话视图">
+              {orderViews(views).map((v) => {
+                const Icon = iconFor(v.icon)
+                const label = viewLabel(v)
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    className={segmentClass(activeId === v.id)}
+                    onClick={() => sessionUri && onSwitchView(sessionUri, v.id)}
+                    aria-label={"显示" + label}
+                  >
+                    <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
+                    {label}
+                  </button>
+                )
+              })}
             </div>
+            <div className="relative" data-world-session-tools>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setToolsOpen((open) => !open)} aria-label="打开会话工具">
+                <MoreHorizontal aria-hidden="true" />
+              </Button>
+              {toolsOpen && (
+                <div className="absolute right-0 top-[calc(100%+6px)] z-30 grid w-56 gap-1 rounded-lg border border-border bg-card p-1.5 text-sm shadow-xl">
+
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                    onClick={() => {
+                      if (sessionUri) onRestartOrchestrator(sessionUri)
+                      setToolsOpen(false)
+                    }}
+                  >
+                    <RotateCcw aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                    重启 agent runner
+                  </button>
+                  {sessionUri && (
+                    <a
+                      data-world-external-mirror-link
+                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
+                      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                      onClick={() => setToolsOpen(false)}
+                    >
+                      <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                      外部镜像
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
+                    onClick={() => {
+                      setDebugOpen((open) => !open)
+                      setToolsOpen(false)
+                    }}
+                  >
+                    <Bug aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+                    调试信息
+                  </button>
+                </div>
+              )}
+            </div>
+            {isHelloSession && sessionUri && (
+              <Button type="button" size="sm" onClick={() => setPublishOpen(true)} aria-label="发布为模板" data-world-publish-template-button>
+                <Upload aria-hidden="true" />
+                发布
+              </Button>
+            )}
             <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onForkConfig(sessionUri)} aria-label="复制配置，建新会话" title="复制配置，建新会话">
               <Copy aria-hidden="true" />
             </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onRestartOrchestrator(sessionUri)} aria-label="Restart orchestrator">
-              <RotateCcw aria-hidden="true" />
-            </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setDebugOpen((open) => !open)} aria-label="Toggle debug panel">
-              <Bug aria-hidden="true" />
-            </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setExpanded((open) => !open)} aria-label="Toggle expanded layout">
-              <Maximize2 aria-hidden="true" />
+            <Button type="button" size="sm" variant={membersOpen ? "default" : "secondary"} onClick={toggleMembers} aria-expanded={membersOpen} aria-label={membersOpen ? "收起成员面板" : "展开成员面板"} data-world-members-toggle>
+              <Users aria-hidden="true" />
+              成员 {members.length}
             </Button>
           </div>
         </div>
 
-        {activeView === "pty" ? (
-          // Nested PTY = a `:subcomponent` slot (handoff §2): owned and mounted by
-          // Conversation, NOT route-mounted and NOT in the layout registry. The
-          // `data-world-subcomponent` marker tells the mount gate this is a
-          // sanctioned parent-owned mount, not a registry bypass.
-          <div data-world-subcomponent="pty_terminal">
-            <PtyTerminalSurface
-              state={{
-                ...state,
-                agent_uri: state.agent_uri || state.active_pty_agent_uri || null,
-              }}
-              onInput={onPtyInput}
-              onResize={onPtyResize}
-              onServerEvent={onServerEvent}
-            />
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-[linear-gradient(#ffffff,#ffffff),repeating-linear-gradient(0deg,transparent,transparent_31px,rgba(23,32,42,0.04)_32px)] px-4 py-4"
@@ -489,14 +713,14 @@ export function Conversation({
                 <div className="flex justify-center pb-0.5">
                   <Button size="sm" variant="secondary" onClick={loadOlder}>
                     <ChevronUp aria-hidden="true" />
-                    Load older
+                    加载更早消息
                   </Button>
                 </div>
               )}
 
               {messages.length === 0 ? (
                 <p className="m-auto max-w-[38ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">
-                  No turns in this session yet. Send the first message to start the transcript.
+                  这个会话还没有消息。发送第一条消息开始对话。
                 </p>
               ) : (
                 messages.map((message) => {
@@ -513,7 +737,7 @@ export function Conversation({
                       <span className={bubbleKindClass(mine, kind)}>{kindLabel(kind, mine)}</span>
                       <div className="flex items-baseline justify-between gap-3.5">
                         <span className={mine ? "text-[12.5px] font-semibold text-primary-foreground" : "text-[12.5px] font-semibold text-foreground"}>
-                          {message.sender_display || message.sender}
+                          {message.sender_display || uriSegment(message.sender)}
                         </span>
                         {message.at && (
                           <span className={mine ? "whitespace-nowrap text-[11px] tabular-nums text-primary-foreground/80" : "whitespace-nowrap text-[11px] tabular-nums text-muted-foreground"}>
@@ -557,7 +781,7 @@ export function Conversation({
             <form className="flex items-end gap-2.5 border-t border-border bg-[#fafafa] px-4 py-3" onSubmit={submit}>
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
-                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="Mention a member">
+                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
                     {mentionMatches.map((member) => (
                       <li key={member.uri}>
                         <button
@@ -593,12 +817,12 @@ export function Conversation({
                       submit(event)
                     }
                   }}
-                  placeholder="Type a message…  @ to mention"
+                  placeholder="输入消息… 使用 @ 提及成员"
                   rows={2}
-                  aria-label="Message"
+                  aria-label="消息"
                 />
                 {pending.length > 0 && (
-                  <ul className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0" aria-label="Pending attachments">
+                  <ul className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0" aria-label="待发送附件">
                     {pending.map((p) => (
                       <li key={p.id} className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.06] py-0.5 pl-2 pr-1.5 text-xs text-foreground">
                         <Paperclip aria-hidden="true" className="h-3 w-3" />
@@ -606,7 +830,7 @@ export function Conversation({
                         <button
                           type="button"
                           className="inline-flex rounded-full p-0.5 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-                          aria-label={`Remove ${p.name}`}
+                          aria-label={`移除附件 ${p.name}`}
                           onClick={() => removePending(p.id)}
                         >
                           <X aria-hidden="true" className="h-3 w-3" />
@@ -633,41 +857,51 @@ export function Conversation({
                   variant="secondary"
                   disabled={uploading || pending.length >= MAX_FILES}
                   onClick={() => fileRef.current?.click()}
-                  aria-label="Attach files"
+                  aria-label="添加附件"
                 >
                   <Paperclip aria-hidden="true" />
                 </Button>
                 <Button type="submit" size="sm" disabled={uploading || (!text.trim() && pending.length === 0)}>
                   <Send aria-hidden="true" />
-                  Send
+                  发送
                 </Button>
               </div>
             </form>
             </div>
             {isHelloSession && (
               <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} onPublishTemplate={onPublishTemplate} />
+                <HelloPagePreview sessionUri={sessionUri} />
               </div>
             )}
           </div>
-        )}
 
         {debugOpen && (
           <pre className="m-0 overflow-auto border-t border-border bg-[#111827] px-4 py-3 font-mono text-xs text-[#d1d5db]">
-            {JSON.stringify({sessionUri, activeView, members: members.length, messages: messages.length}, null, 2)}
+            {JSON.stringify({sessionUri, activeId, activeMode, members: members.length, messages: messages.length}, null, 2)}
           </pre>
         )}
       </section>
 
-      <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[#fafafa] text-card-foreground" aria-label="Session members">
+      {membersOpen && (
+      <aside className="flex min-h-0 flex-col overflow-hidden border-l border-border bg-[#fafafa] text-card-foreground" aria-label="成员">
         <div className="flex min-h-[58px] items-start justify-between gap-2.5 border-b border-border px-4 py-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Members</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">成员</p>
             <h2 className="text-[17px] font-semibold text-foreground">{members.length}</h2>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)} aria-label="Invite a member">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={inviteCandidates.length === 0}
+            title={inviteCandidates.length === 0 ? "暂无可邀请成员" : "邀请成员"}
+            onClick={() => {
+              setInviteValue((current) => current || inviteCandidates[0]?.uri || "")
+              setInviteOpen(true)
+            }}
+            aria-label="邀请成员"
+          >
             <UserPlus aria-hidden="true" />
-            Invite
+            邀请
           </Button>
         </div>
         {inviteOpen && (
@@ -682,20 +916,33 @@ export function Conversation({
               setInviteOpen(false)
             }}
           >
-            <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-input">
-              Invite by entity URI
+            <label className="text-[11px] text-muted-foreground" htmlFor="world-invite-select">
+              邀请成员
             </label>
-            <input
-              id="world-invite-input"
-              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-foreground"
+            <select
+              id="world-invite-select"
+              data-world-invite-select
+              className="w-full rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground"
               value={inviteValue}
               onChange={(event) => setInviteValue(event.target.value)}
-              placeholder="entity://workspace/user/name"
               autoFocus
-            />
+              disabled={inviteCandidates.length === 0}
+            >
+              <option value="" disabled>
+                {inviteCandidates.length === 0 ? "暂无可邀请成员" : "选择成员"}
+              </option>
+              {inviteCandidates.map((candidate) => {
+                const label = inviteCandidateLabel(candidate)
+                return (
+                  <option key={candidate.uri} value={candidate.uri}>
+                    {label} ({kindBadgeLabel(candidate.kind)})
+                  </option>
+                )
+              })}
+            </select>
             <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={!inviteValue.trim()}>
-                Invite
+              <Button type="submit" size="sm" disabled={!inviteValue.trim() || inviteCandidates.length === 0}>
+                邀请
               </Button>
               <Button
                 type="button"
@@ -706,128 +953,137 @@ export function Conversation({
                   setInviteValue("")
                 }}
               >
-                Cancel
+                取消
               </Button>
             </div>
           </form>
         )}
         <ul className="m-0 flex list-none flex-col gap-0.5 overflow-y-auto p-2">
           {members.length === 0 ? (
-            <li className="px-2 py-2.5 text-[13px] text-muted-foreground">No members yet.</li>
+            <li className="px-2 py-2.5 text-[13px] text-muted-foreground">暂无成员。</li>
           ) : (
-            members.map((member) => (
-              <li
-                key={member.uri}
-                className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted"
-                data-kind={member.kind || "other"}
-                data-online={member.online ? "true" : "false"}
-              >
-                <span
-                  className={
-                    member.online
-                      ? "h-2 w-2 flex-none rounded-full bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
-                      : "h-2 w-2 flex-none rounded-full bg-border"
-                  }
-                  aria-hidden="true"
-                />
-                <span
-                  className={
-                    member.kind === "agent"
-                      ? "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-foreground"
-                      : "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground"
-                  }
+            members.map((member) => {
+              const label = memberLabel(member)
+              return (
+                <li
+                  key={member.uri}
+                  className="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 hover:bg-muted"
+                  data-kind={member.kind || "other"}
+                  data-online={member.online ? "true" : "false"}
                 >
-                  {member.display_name || member.uri}
-                </span>
-                <span className="font-mono text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{member.kind || "other"}</span>
-                {member.role_name ? (
-                  <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold text-foreground">
-                    {member.role_name}
+                  <span
+                    className={
+                      member.online
+                        ? "h-2 w-2 flex-none rounded-full bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
+                        : "h-2 w-2 flex-none rounded-full bg-border"
+                    }
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-foreground">
+                    {label}
                   </span>
-                ) : (
-                  member.kind === "user" &&
-                  openHumanRoles.length > 0 && (
-                    <select
-                      className="h-7 max-w-[126px] rounded-md border border-border bg-background px-2 text-[11px] text-foreground"
-                      aria-label={`Assign role to ${member.display_name || member.uri}`}
-                      value=""
-                      onChange={(event) => {
-                        if (event.target.value && sessionUri) onAssignRole(sessionUri, member.uri, event.target.value)
-                      }}
+                  <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{kindBadgeLabel(member.kind)}</span>
+
+                  {member.uri !== callerUri && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
+                      aria-label={`移除 ${label}`}
+                      title="从会话移除"
                     >
-                      <option value="">Role</option>
-                      {openHumanRoles.map((slot) => (
-                        <option key={slot.role_name} value={slot.role_name}>
-                          {slot.role_name}
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-                {member.kind === "agent" && (
-                  <Button type="button" size="sm" variant="secondary" onClick={() => sessionUri && onOpenPty(sessionUri, member.uri)} aria-label={`Open terminal for ${member.display_name || member.uri}`}>
-                    <TerminalSquare aria-hidden="true" />
-                  </Button>
-                )}
-                {/* F7 PR-A — re-instate the per-member remove control (the QA-pulled
-                    one). Cap-gated server-side: only the session owner (or the
-                    member itself) is authorized; an unauthorized click degrades to
-                    an error status and the member stays. */}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
-                  aria-label={`Remove ${member.display_name || member.uri}`}
-                  title="Remove from session"
-                >
-                  <UserMinus aria-hidden="true" />
-                </Button>
-              </li>
-            ))
+                      <UserMinus aria-hidden="true" />
+                    </Button>
+                  )}
+                </li>
+              )
+            })
           )}
         </ul>
 
-        <div className="border-t border-border pt-3">
-          <div className="flex items-start justify-between gap-2.5 px-4 pb-1">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Routing</p>
-              <h2 className="text-[17px] font-semibold text-foreground">{routingRules.length}</h2>
-            </div>
-            <Route aria-hidden="true" className="h-[15px] w-[15px] text-muted-foreground" />
-          </div>
-          <form className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] gap-2 p-2" id="world-session-routing-form" onSubmit={submitRule}>
-            <select className={routingFieldClass} value={ruleMatcherType} onChange={(event) => setRuleMatcherType(event.target.value)} aria-label="Matcher type">
-              <option value="always">Always</option>
-              <option value="mention">Mention</option>
-              <option value="from">From</option>
-              <option value="text_contains">Text contains</option>
-            </select>
-            <input
+        <details className="border-t border-border px-2 py-3" data-world-routing-drawer>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+            <span className="inline-flex items-center gap-2">
+              <Route aria-hidden="true" className="h-[15px] w-[15px]" />
+              高级规则
+            </span>
+            <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px]">{routingRules.length}</span>
+          </summary>
+          <form className="mt-2 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] gap-2" id="world-session-routing-form" onSubmit={submitRule}>
+            <select
               className={routingFieldClass}
-              value={ruleMatcherArg}
-              onChange={(event) => setRuleMatcherArg(event.target.value)}
-              placeholder={ruleMatcherType === "always" ? "No matcher argument" : "matcher argument"}
-              disabled={ruleMatcherType === "always"}
-              aria-label="Matcher argument"
-            />
-            <input
+              value={ruleMatcherType}
+              onChange={(event) => {
+                setRuleMatcherType(event.target.value)
+                setRuleMatcherArg("")
+              }}
+              aria-label="匹配类型"
+            >
+              <option value="always">总是</option>
+              <option value="mention">提及</option>
+              <option value="from">来自</option>
+              <option value="text_contains">文本包含</option>
+            </select>
+            {matcherUsesText ? (
+              <input
+                className={routingFieldClass}
+                value={ruleMatcherArg}
+                onChange={(event) => setRuleMatcherArg(event.target.value)}
+                placeholder="要匹配的文本"
+                data-world-routing-matcher-text
+                aria-label="匹配文本"
+              />
+            ) : (
+              <select
+                className={routingFieldClass}
+                value={ruleMatcherArg}
+                onChange={(event) => setRuleMatcherArg(event.target.value)}
+                data-world-routing-matcher-select
+                disabled={ruleMatcherType === "always" || routingEntityCandidates.length === 0}
+                aria-label="匹配实体"
+              >
+                <option value="" disabled>
+                  {ruleMatcherType === "always"
+                    ? "无需匹配条件"
+                    : routingEntityCandidates.length === 0
+                      ? "暂无可用实体"
+                      : "选择实体"}
+                </option>
+                {routingEntityCandidates.map((candidate) => (
+                  <option key={candidate.uri} value={candidate.uri}>
+                    {routingCandidateOptionLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
               className={`${routingFieldClass} col-span-2`}
               value={ruleReceivers}
               onChange={(event) => setRuleReceivers(event.target.value)}
-              placeholder="entity://system/user/admin"
-              aria-label="Receivers"
-            />
+              data-world-routing-receiver-select
+              disabled={routingReceiverCandidates.length === 0}
+              aria-label="接收方"
+            >
+              <option value="" disabled>
+                {routingReceiverCandidates.length === 0 ? "暂无可用接收方" : "选择接收方"}
+              </option>
+              {routingReceiverCandidates.map((candidate) => (
+                <option key={candidate.uri} value={candidate.uri}>
+                  {routingCandidateOptionLabel(candidate)}
+                </option>
+              ))}
+            </select>
             <div className="col-span-2">
-              <Button type="submit" size="sm" disabled={!ruleReceivers.trim()}>
+              <Button type="submit" size="sm" disabled={!canSubmitRule}>
                 <Plus aria-hidden="true" />
-                Add
+                添加
               </Button>
             </div>
           </form>
-          <ul className="m-0 flex list-none flex-col gap-1.5 p-2">
+          <ul className="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
             {routingRules.length === 0 ? (
-              <li className="px-0 py-2 text-[13px] text-muted-foreground">No session routing rules.</li>
+              <li className="px-0 py-2 text-[13px] text-muted-foreground">暂无高级规则。</li>
             ) : (
               routingRules.map((rule) => (
                 <li
@@ -836,11 +1092,11 @@ export function Conversation({
                   data-enabled={rule.enabled ? "true" : "false"}
                 >
                   <div className="min-w-0">
-                    <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px] font-semibold text-foreground">
-                      {rule.matcher || `Rule ${rule.id}`}
+                    <strong className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-[11px] font-semibold text-foreground">
+                      {rule.matcher || `规则 ${rule.id}`}
                     </strong>
                     <span className="block max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap text-xs text-muted-foreground">
-                      {rule.receivers_text || (rule.receivers || []).join(", ")}
+                      {routingReceiversLabel(rule)}
                     </span>
                   </div>
                   <Button
@@ -856,15 +1112,58 @@ export function Conversation({
                       })
                     }
                   >
-                    {rule.enabled ? "Disable" : "Enable"}
+                    {rule.enabled ? "停用" : "启用"}
                   </Button>
                 </li>
               ))
             )}
           </ul>
-        </div>
+        </details>
       </aside>
+      )}
     </div>
+
+    {published && (
+      <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
+        <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
+          <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
+          已发布为模板
+        </div>
+      </div>
+    )}
+
+    <Modal
+      open={publishOpen}
+      title="发布为模板"
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setPublishOpen(false)}>
+            取消
+          </Button>
+          <Button onClick={doPublish} disabled={!publishName.trim()}>
+            发布
+          </Button>
+        </>
+      }
+    >
+      <label className="block text-sm">
+        <span className="mb-1.5 block text-muted-foreground">发布名称</span>
+        <input
+          autoFocus
+          value={publishName}
+          onChange={(e) => setPublishName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") doPublish()
+          }}
+          placeholder="homesite-v1"
+          className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+        />
+      </label>
+      <p className="mt-2 text-xs text-muted-foreground">
+        建议使用英文、数字和连字符。发布后可在新建会话的模板下拉里选择它，会带上当前页面与 agent，不含历史对话。
+      </p>
+    </Modal>
+    </>
   )
 }
 
@@ -907,6 +1206,63 @@ function formatAt(at: string) {
   return date.toLocaleString()
 }
 
+function sessionLabel(session: SessionRow) {
+  if (session.name && session.name.trim()) return humanizeSessionName(session.name)
+  return humanizeSessionName(uriSegment(session.uri))
+}
+
+function humanizeSessionName(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return "会话"
+  const withoutPrefix = trimmed.replace(/^conv[_-]/, "")
+  return withoutPrefix
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase())
+}
+
+function memberLabel(member: MemberRow) {
+  if (member.display_name && member.display_name.trim()) return member.display_name
+  return uriSegment(member.uri)
+}
+
+function inviteCandidateLabel(candidate: InviteCandidateRow) {
+  if (candidate.display_name && candidate.display_name.trim()) return candidate.display_name
+  return uriSegment(candidate.uri)
+}
+
+function routingCandidateOptionLabel(candidate: InviteCandidateRow) {
+  const label = inviteCandidateLabel(candidate)
+  return candidate.kind ? `${label} (${kindBadgeLabel(candidate.kind)})` : label
+}
+
+function kindBadgeLabel(kind?: string | null) {
+  if (kind === "agent") return "智能体"
+  if (kind === "user") return "用户"
+  if (kind === "group") return "分组"
+  if (kind === "preset") return "预设"
+  if (kind === "dynamic") return "动态"
+  if (kind === "member") return "成员"
+  return "成员"
+}
+
+function countLabel(count: number, label: string) {
+  return `${count} ${label}`
+}
+
+function routingReceiversLabel(rule: RoutingRule) {
+  const receivers = rule.receivers && rule.receivers.length > 0 ? rule.receivers : splitReceiverText(rule.receivers_text)
+  return receivers.length > 0 ? receivers.map(uriSegment).join(", ") : "无接收方"
+}
+
+function splitReceiverText(value?: string | null) {
+  if (!value) return []
+  return value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
 // Last path segment of an entity URI (e.g. entity://system/agent/codex-1 →
 // "codex-1") — a clean single token the server-side mention parser resolves.
 function uriSegment(uri: string) {
@@ -919,10 +1275,10 @@ function uriSegment(uri: string) {
 // humans carry their participant class so the transcript shows at a glance
 // who is a person and who is an agent.
 function kindLabel(kind: string, mine: boolean) {
-  if (mine) return "You"
-  if (kind === "agent") return "Agent"
-  if (kind === "user") return "User"
-  return "Participant"
+  if (mine) return "我"
+  if (kind === "agent") return "智能体"
+  if (kind === "user") return "用户"
+  return "成员"
 }
 
 // TEMPORARY internal preview of a hello session's rendered page. Embeds the
@@ -932,101 +1288,26 @@ function kindLabel(kind: string, mine: boolean) {
 // until then this is a clearly-labelled stopgap so an internal reader can see the page
 // without leaving the console. Hello sessions are `public_view`, so the customer
 // URL renders with no token/login.
-function HelloPagePreview({
-  sessionUri,
-  onPublishTemplate,
-}: {
-  sessionUri: string
-  onPublishTemplate: (sessionUri: string, name: string) => void
-}) {
+function HelloPagePreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
-  const [publishOpen, setPublishOpen] = React.useState(false)
-  const [name, setName] = React.useState("")
-  const [published, setPublished] = React.useState(false)
-
-  // Publish the current session as a template. The dispatch is fire-and-forget
-  // (world:dispatch), so confirm optimistically — the new template appears in the
-  // New-session dropdown once the server finishes.
-  const doPublish = () => {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    onPublishTemplate(sessionUri, trimmed)
-    setPublishOpen(false)
-    setName("")
-    setPublished(true)
-    window.setTimeout(() => setPublished(false), 3000)
-  }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      {/* operator-only overlay controls — never rendered on the public share page */}
+      {/* operator-only overlay control — never rendered on the public share page */}
       <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
         <a
           href={src}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
-          title="在新标签页打开公开页面 / Open public page in a new tab"
-          aria-label="Open public page in a new tab"
+          title="在新标签页打开公开页面"
+          aria-label="在新标签页打开公开页面"
         >
           <ExternalLink aria-hidden="true" className="h-4 w-4" />
         </a>
-        <button
-          type="button"
-          onClick={() => setPublishOpen(true)}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-card/90 text-foreground shadow-sm backdrop-blur transition hover:bg-muted"
-          title="发布为模板 / Publish as template"
-          aria-label="Publish as template"
-        >
-          <Upload aria-hidden="true" className="h-4 w-4" />
-        </button>
       </div>
 
-      {/* antd `message.success`-style toast: page-wide, horizontally centered near
-          the top, white pill + green check + shadow, slides down. `fixed` so it
-          centers on the whole viewport (not tucked beside the publish button). */}
-      {published && (
-        <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
-          <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
-            <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
-            已发布为模板
-          </div>
-        </div>
-      )}
-
-      <iframe title="Rendered page" src={src} className="min-h-0 flex-1 border-0 bg-white" />
-
-      <Modal
-        open={publishOpen}
-        title="发布为模板 / Publish as template"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setPublishOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={doPublish} disabled={!name.trim()}>
-              发布
-            </Button>
-          </>
-        }
-      >
-        <label className="block text-sm">
-          <span className="mb-1.5 block text-muted-foreground">发布物名称 · Template name</span>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") doPublish()
-            }}
-            placeholder="例如 官网模板 v1"
-            className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-          />
-        </label>
-        <p className="mt-2 text-xs text-muted-foreground">
-          发布后可在新建 session 的 Template 下拉里选到它 — 会带上当前页面与 agent,不含历史对话。
-        </p>
-      </Modal>
+      <iframe title="渲染页面预览" src={src} className="min-h-0 flex-1 border-0 bg-white" />
     </div>
   )
 }

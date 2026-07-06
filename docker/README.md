@@ -77,3 +77,36 @@ docker compose --env-file docker/.env -f docker/docker-compose.prod.yml up -d
 > DB durability: Postgres data lives in the `prod_pg` named volume. Back it up
 > with `pg_dump` on a schedule (the D1 leg of the §5 backup design in
 > `docs/notes/2026-06-24-cf-container-deploy-cost-analysis.md`).
+
+## Auth email — `smtp_config.json` (magic-link / confirm / password-reset)
+
+Outbound auth email is delivered by the compile-pinned Swoosh adapter. In prod
+(`config/config.exs`) that adapter is `Ezagent.Mail.EzagentChatAdapter`, which
+POSTs to the `email.ezagent.chat` REST API (Cloudflare Email Sending — REST
+only, **not** an SMTP relay). The transport config lives in the `smtp_config`
+app-setting; the entrypoint seeds it from a read-only secrets mount on first
+boot (`entrypoint.prod.sh` copies `/secrets/smtp_config.json` →
+`<profile>/credentials/smtp_config.json`, then the app auto-seeds it into
+`AppSettings` — idempotent, gated on `AppSettings.mail_configured?/0`).
+
+Drop the **REST-shaped** `smtp_config.json` into the secrets mount:
+
+```json
+{
+  "from_address": "auth@ezagent.chat",
+  "base_url": "https://email.ezagent.chat",
+  "api_key": "emk_..."
+}
+```
+
+- `from_address` — a mailbox the `api_key` owns (sent as `address` on
+  `POST /api/send`; the service 403s otherwise). Also the visible `From:`.
+- `base_url` — the mail service origin (no trailing `/api`).
+- `api_key` — a mailbox key (`emk_…`) minted for that mailbox (see the
+  mail-server runbook: `POST /api/mailboxes`).
+
+Readiness (`AppSettings.mail_api_configured?/0`) requires non-empty `base_url` +
+`api_key`. The legacy SMTP shape
+(`{"host","port","username","password","from_address","tls"}`) is still accepted
+by the SMTP adapter — `smtp_config` is the single mail-config slot for either
+transport.

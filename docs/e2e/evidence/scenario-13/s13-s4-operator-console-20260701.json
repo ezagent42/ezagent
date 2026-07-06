@@ -1,0 +1,22 @@
+{
+  "body": "ez\nezagent/system\nChat\nAgents\nManage\nNew chat\nAdmin\nSessions\n\nCurrent workspace only\n\nFilter sessions, template, status\n/default/e2e-auto\nsession://system/default/e2e-auto\ntier1\n\nsession://autosvc/default/tier1\n\nChat\nPTY\n\nNo turns in this session yet. Send the first message to start the transcript.\n\nSend\n\nMEMBERS\n\n3\nInvite\nanon-U3ob2MLhxFE2B0WoIF0JSA\nUSER\nanon-es32XvafiCCRVdyKLjoeyw\nUSER\nAdmin\nUSER\n\nROUTING\n\n1\nAlways\nMention\nFrom\nText contains\nAdd\n{:in_session, \"session://autosvc/default/tier1\"}\nentity://autosvc/agent/autoservice\nDisable",
+  "conversation": true,
+  "members": [
+    {
+      "kind": "user",
+      "online": "true",
+      "text": "anon-U3ob2MLhxFE2B0WoIF0JSAuser"
+    },
+    {
+      "kind": "user",
+      "online": "true",
+      "text": "anon-es32XvafiCCRVdyKLjoeywuser"
+    },
+    {
+      "kind": "user",
+      "online": "true",
+      "text": "Adminuser"
+    }
+  ],
+  "url": "http://world.localhost:10044/sessions?session=session%3A%2F%2Fautosvc%2Fdefault%2Ftier1"
+}

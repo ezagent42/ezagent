@@ -46,7 +46,13 @@ defmodule Ezagent.World.ConversationActionsTest do
       assert ConversationActions.sanitize_short_name("hello world") == "hello-world"
       assert ConversationActions.sanitize_short_name("  multi   space  ") == "multi-space"
 
-      uri = Ezagent.URI.session("ezagent", "hello", ConversationActions.sanitize_short_name("hello world"))
+      uri =
+        Ezagent.URI.session(
+          "ezagent",
+          "hello",
+          ConversationActions.sanitize_short_name("hello world")
+        )
+
       assert %URI{} = uri
       assert URI.to_string(uri) == "session://ezagent/hello/hello-world"
     end
@@ -72,5 +78,39 @@ defmodule Ezagent.World.ConversationActionsTest do
       msg = ConversationActions.session_create_error_message(:invalid_short_name)
       assert is_binary(msg) and msg != ""
     end
+  end
+
+  # Stage 1 — switch_view whitelist is the caller-aware registry set, not the old
+  # hard-coded ["chat","pty","page"]. A visible (enumerated) view id is accepted;
+  # anything else is rejected `error:bad_view`, same-source as the tab visibility.
+  describe "switch_view/3 (dynamic registry whitelist)" do
+    setup do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.World.ConversationView)
+      %{session: Ezagent.URI.session("acme", "default", "sw1")}
+    end
+
+    test "accepts an enumerated view id and rejects an unknown one", %{session: session} do
+      socket = build_socket(current_entity_uri: Ezagent.URI.user("acme", "admin"))
+
+      assert {:noreply, ok_socket} =
+               ConversationActions.switch_view(socket, session, "conversation")
+
+      assert ok_socket.assigns.world_state["active_view"] == "conversation"
+
+      assert {:noreply, bad_socket} =
+               ConversationActions.switch_view(socket, session, "does_not_exist")
+
+      assert bad_socket.assigns.last_dispatch_status == "error:bad_view"
+    end
+  end
+
+  # Minimal LiveView socket stub: enough assigns for switch_view + push_world_state
+  # (which merges "active_view" into :world_state and pushes a "world:state" event).
+  defp build_socket(assigns) do
+    base =
+      Phoenix.Component.assign(%Phoenix.LiveView.Socket{}, :world_state, %{})
+
+    Enum.reduce(assigns, base, fn {k, v}, acc -> Phoenix.Component.assign(acc, k, v) end)
   end
 end

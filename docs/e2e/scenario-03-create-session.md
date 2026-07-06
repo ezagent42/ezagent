@@ -15,6 +15,8 @@
 - admin 已登录;workspace `workspace://system`
 - scenario-02 已建 echo agent `entity://system/agent/zyli-echo-1`
 
+> 2026-07-02 当前 World UI 备注:Invite 成员已从手写完整 URI 输入改为下拉选择器,可直接选择 `<agent-name> (agent)`;新的执行记录见 [`world-scenario-03-create-session.md`](./world-scenario-03-create-session.md)。
+
 ## 角色
 
 - **调用方**:admin(`entity://system/user/admin`)
