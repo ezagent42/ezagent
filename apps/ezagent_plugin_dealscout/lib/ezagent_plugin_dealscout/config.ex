@@ -32,16 +32,16 @@ defmodule EzagentPluginDealScout.Config do
 
   # --- profile / keywords → state slice effect --------------------------------
 
-  @doc "设 profile —— 返回写入 Lifecycle state slice 的 `{:set, :profile, value}` effect。"
+  @doc "设 profile —— 返回写入 Lifecycle state slice 的 `{:set, key, value}` effect（key=`:profile`）。"
   @spec set_profile(map(), map()) :: {:set, :profile, map()}
   def set_profile(_current, profile) when is_map(profile), do: {:set, :profile, profile}
 
-  @doc "设关键词 —— 返回 `{:set, :keywords, value}` slice effect。"
+  @doc "设关键词 —— 返回 `{:set, key, value}` slice effect（key=`:keywords`）。"
   @spec set_keywords(map(), [String.t()]) :: {:set, :keywords, [String.t()]}
   def set_keywords(_current, keywords) when is_list(keywords), do: {:set, :keywords, keywords}
 
   @doc """
-  pin 一个爬取批次 —— 返回 `{:set, :pinned_batches, [id]}` slice effect（去重）。被 pin
+  pin 一个爬取批次 —— 返回 `{:set, key, value}` slice effect（key=`:pinned_batches`，去重）。被 pin
   的批次即使超期也被 `RetentionSweeper.prune/2` 保留（成员限定：改自己那份配置需持
   config cap，匿名 / 房外人无此 cap，spec §6）。
   """

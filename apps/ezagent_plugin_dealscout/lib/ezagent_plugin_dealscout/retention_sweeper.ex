@@ -8,7 +8,7 @@ defmodule EzagentPluginDealScout.RetentionSweeper do
   `:pinned_batches` slice），丢弃超期且未 pin 的。
 
   `prune/2` 是纯函数（好测、无副作用）；`sweep_once/0` 是运行期接线点（读 slice →
-  `prune` → `{:set, :discoveries, kept}` 写回），失败要 telemetry，不 silent drop
+  `prune` → `{:set, key, value}` effect（key=`:discoveries`）写回），失败要 telemetry，不 silent drop
   （Ezagent 是 router 不是 req/resp app）。
 
   seams（app env，测试注入）：`:sweep_interval_ms`（默认 1h）、`:skip_sweeper`
