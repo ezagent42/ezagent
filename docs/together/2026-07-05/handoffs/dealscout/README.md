@@ -1,5 +1,10 @@
 # dealscout（DealScout）socialware —— 入口文档 + 权威编号源
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本文中一切相抵触的旧文；完整 banner 见同目录 spec.md / plan.md 顶部）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。职责重划：**dealscout = 后台数据 + 更新信号**（爬取 plugin + 它的 agent 爬完注入新线索后 emit `__dealscout_update__`，`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）；**hello = 显示 + concierge**（hello 的 agent 收信号更新 json-render 页）。**dealscout 不声明任何 view / render**——下文凡出现 `DealScoutRender` / `DealScoutView` / "dealscout 自己的发现流 SessionView / world tab" 的设计**已删除、作废**（原 I-5 显示件归 hello；I-8 / F-4 world-tab 议题随之消失）。DealScout Definition（Stage D 已落地 `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/definition_seed.ex`）：`uses: ["hello","dealscout"]`、`views: [Ezagent.ActionSet.HelloRender]`（hello `PageView` 以此认领渲染，零改 hello）、`routing_rules` 用 `text_contains("__dealscout_update__")` → 已声明角色 `"page"`（内容协议 routing 像 kanban relay，零实例 URI）。下文与此抵触处一律按本 banner 为准。
+
+
 > **一句话**：DealScout = **一个商业 / 投融资线索的搜索与撮合平台**（名字 = **deal 侦察兵**，主动发现投融资 + 商业机会）。核心 = **AI 千人千面发现 deal（找为主）+ 公开面聊天撮合（亮点）**；**两侧都是"找机会的人"**——需求方 founder（找钱、找路演、找商机）和供给方 investor（找项目、找标的、找情报出口）对称，**不是**单向"帮谁找 funder"、也**不是**"创业者撮合"。两类用户都用同**两条腿**：**发现腿**（地基·AI 千人千面**主动发现** + **主动搜索**机会，今天就能做）和**撮合腿**（涌现的亮点·**组合 hello 拿公开面 + concierge 客服**，登录用户在公开面**自助 join + 发言供线索**、founder 看到发言者身份后 **invite 他进私有 session 深聊**）。产品取向是 **找为主、撮合为亮点、北极星分期**。技术上 = **1 个爬取/搜索 plugin（自定义 token 绕登录，自建入站源 adapter）+ 几个自定义 recipe（含 AI 主动发现/搜索/追问）+ 组合 hello 的公开面 + concierge 客服 + 1 个自定义视图，拼成一个 Definition 发布**。
 >
 > **Date:** 2026-07-03（2026-07-04 撮合根重构 → 2026-07-05 找为主重构 → **2026-07-05 撮合腿证据版校正**）· **Base:** upstream/main `90e8ee29`（file:line 实读核实，HEAD `8814547d` 现读复核）

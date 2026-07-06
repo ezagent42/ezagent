@@ -1,5 +1,10 @@
 # Handoff：dealscout —— 现有代码审阅报告 + 开发计划
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本文中一切相抵触的旧文；完整 banner 见同目录 spec.md / plan.md 顶部）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。职责重划：**dealscout = 后台数据 + 更新信号**（爬取 plugin + 它的 agent 爬完注入新线索后 emit `__dealscout_update__`，`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）；**hello = 显示 + concierge**（hello 的 agent 收信号更新 json-render 页）。**dealscout 不声明任何 view / render**——下文凡出现 `DealScoutRender` / `DealScoutView` / "dealscout 自己的发现流 SessionView / world tab" 的设计**已删除、作废**（原 I-5 显示件归 hello；I-8 / F-4 world-tab 议题随之消失）。DealScout Definition（Stage D 已落地 `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/definition_seed.ex`）：`uses: ["hello","dealscout"]`、`views: [Ezagent.ActionSet.HelloRender]`（hello `PageView` 以此认领渲染，零改 hello）、`routing_rules` 用 `text_contains("__dealscout_update__")` → 已声明角色 `"page"`（内容协议 routing 像 kanban relay，零实例 URI）。下文与此抵触处一律按本 banner 为准。
+
+
 > **Date:** 2026-07-05 · **From:** jjkysy (FP5) · **Base:** upstream/main `90e8ee29`（skill-1 索引基线，file:line 现读核实）
 > **一句话:** ezagent socialware 全流程已闭环到 ~8.5 成，dealscout 今天就能在此基础上开跑；本文=① 现有代码审阅（socialware 生命周期完成度）② 引用 0703 产品/issue 的开发计划（今天能做 vs 缺口）。
 > **配套:** 产品定位/旅程/视图/功能 = `../../2026-07-03/yao/dealscout/product/1-4`；开发 issue = `.../tech/issues-plan.md`；概念模型 = `.../model.md`；编号骨架 = `.../README.md §3`。
@@ -54,7 +59,7 @@
 | **I-1 爬取 plugin 骨架** | ✅ | 轮询 GenServer 照 `email/inbound.ex:58`、`:httpc` body_format:binary 照 `miro.ex:141`、dispatch 注入 `router.ex:79` |
 | **新增：搜索 + AI 主动发现**（找地基的核心）| ✅ | 复用爬取基建 + recipe（搜索用 cc-headless）；主动发现=副驾按 profile 千人千面匹配推送 |
 | **I-2 关键词+token 配置** | ✅ | state slice `kb.ex:80-83` + write_creds `github.ex:32-54` |
-| **I-3 DealScoutRender+SessionView+信息流** | ✅ | 照 `hello_render.ex:29` + `page_view.ex` |
+| ~~**I-3 DealScoutRender+SessionView+信息流**~~ **作废（返工 banner）：显示归 hello，dealscout 无自有 view/render** | — | 爬取信号 `__dealscout_update__` → Definition routing → hello 页面 agent 更新页 |
 | **I-4 3+1 recipe + Definition** | ✅ | roles/0 + materialize `definition_agents.ex:63`；flavor 可 per-agent 声明（#1180 role-slot agent 槽 flavor `definition.ex:282-286`）|
 | **I-6 发布公开面** | ✅（+顺带补 republish 一键公开）| visibility_policy web_anon_access + `anon_view_caps` `installation.ex:264` |
 | **换 I-10/I-11：公开面聊天撮合**（原访客登记 / 早期误定的 #1178 申请加入）| ✅ riding hello 公开面 | 组合 hello + concierge `router.ex:13-14` / `hello_concierge.ex:43`；登录自助 join+post `session_feed_channel.ex:197-228`；匿名只读 `:325-330`；founder invite 深聊 `conversation_actions.ex:683` |
